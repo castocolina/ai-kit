@@ -160,12 +160,13 @@ function finish(status, fields) {
   const row = STATUS_TABLE[status] || { exit: 1, action: 'stop' };
   let action = fields.action ?? row.action;
   const tree = fields.tree ?? 'unknown';
-  if (action === 'fallback' && (tree === 'dirty' || tree === 'unknown')) action = 'stop';
   let exit = fields.exit ?? row.exit;
   if (status === 'billing' && fields.cli && CONFIG.routerBacked[fields.cli]) {
     action = 'retry-later';
     exit = 75;
   }
+  // Neither another CLI nor a later retry may run over edits this run left (or may have left).
+  if ((action === 'fallback' || action === 'retry-later') && tree !== 'clean') action = 'stop';
   const elapsed = fields.elapsed ?? Math.max(0, Math.round((Date.now() - runStartedMs) / 1000));
   const line = `AIKIT-XAI status=${status} cli=${fields.cli ?? '-'} model=${fields.model ?? '-'} ` +
     `exit=${exit} cli_rc=${fields.cli_rc ?? '-'} elapsed=${elapsed}s out=${fields.out ?? 0} ` +
@@ -812,6 +813,13 @@ const FAKE_MODES = {
   perm: () => { process.stderr.write('permission denied\n'); process.exit(1); },
   quota: () => { process.stderr.write('quota exceeded\n'); process.exit(1); },
   dirtycrash: () => { fs.appendFileSync('a.txt', 'd\n'); process.stderr.write('boom\n'); process.exit(7); },
+  dirtyquota: () => { fs.appendFileSync('a.txt', 'dq\n'); process.stderr.write('quota exceeded\n'); process.exit(1); },
+  dirtybilling: () => { fs.appendFileSync('a.txt', 'db\n'); process.stderr.write('402 payment required\n'); process.exit(1); },
+  gitfailquota: () => {
+    fs.writeFileSync((process.env.HOME || '') + '/.fake-git-fail', '1');
+    process.stderr.write('quota exceeded\n');
+    process.exit(1);
+  },
   reedit: () => { fs.appendFileSync('dirty.txt', 'more\n'); process.stdout.write('# Summary\nok'); },
   hang: () => {
     const gc = spawn(process.execPath, ['-e', 'while(true){}'], { stdio: 'ignore' });
@@ -1378,6 +1386,26 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/quota exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=retry-later$/,
+      },
+      {
+        name: 'dirty-quota',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/dirtyquota'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/dirtyquota exit=75 cli_rc=1 .* tree=dirty action=stop$/,
+      },
+      {
+        name: 'dirty-billing-router',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/dirtybilling'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/dirtybilling exit=75 cli_rc=1 .* tree=dirty action=stop$/,
+      },
+      {
+        name: 'git-after-quota',
+        args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/gitfailquota', '--model-cursor', 'fake-ok-cursor'],
+        exit: 1,
+        status: /^AIKIT-XAI status=unverified cli=pi model=fake\/gitfailquota exit=1 cli_rc=1 .* tree=unknown action=stop$/,
+        check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null),
       },
       {
         name: 'crash',
@@ -2044,18 +2072,16 @@ async function main(argv) {
       process.stdout.write(r.text);
       return finish('ok', { ...liveFields, tree, exit: 0, cli_rc: 0, out: r.outBytes || 0 });
     }
-    const status = r.status || 'crash';
-    if (o.mode === 'review' && before && after && tree === 'dirty') {
-      return finish('contract_violation', { ...liveFields, tree, cli_rc: r.cli_rc ?? '-', exit: 1 });
+    if (after === null) {
+      return finish('unverified', { ...liveFields, tree: 'unknown', cli_rc: r.cli_rc ?? '-', exit: 1 });
     }
-    const treeField = after === null ? 'unknown' : tree;
-    liveFields.tree = treeField;
-    last = { status, cli: c.name, model: c.model, tree: treeField, cli_rc: r.cli_rc };
-    if (tryNextCli(status, treeField)) {
+    const status = r.status || 'crash';
+    last = { status, cli: c.name, model: c.model, tree, cli_rc: r.cli_rc };
+    if (tryNextCli(status, tree)) {
       log(`cross-ai: ${c.name} ${status}, trying the next CLI`);
       continue;
     }
-    return finish(status, { ...liveFields, tree: treeField, cli_rc: r.cli_rc, cli: c.name, model: c.model });
+    return finish(status, { ...liveFields, tree, cli_rc: r.cli_rc, cli: c.name, model: c.model });
   }
   if (!sawModel && last && last.kind === 'no_model') {
     return finish('no_model', { ...liveFields, tree: 'clean', exit: 2 });
