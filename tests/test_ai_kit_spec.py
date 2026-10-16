@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-k
 # `detection.detect_tool_availability(...)`, which need the module in scope alongside the
 # individually-named imports below.
 from ai_kit_spec import (
+    cache,
     cli,
     commands,
     config_io,
@@ -1165,6 +1166,23 @@ class TestCacheWriteBytes(unittest.TestCase):
             with open(path, "rb") as f:
                 self.assertEqual(f.read(), original)
             self.assertEqual(glob.glob(os.path.join(d, "*.tmp")), [])
+
+    def test_umask_file_mode_follows_umask(self):
+        old = os.umask(0o027)
+        try:
+            self.assertEqual(cache.umask_file_mode(), 0o640)
+        finally:
+            os.umask(old)
+
+    @unittest.skipUnless(os.path.isfile("/proc/self/status"), "needs /proc")
+    def test_umask_file_mode_never_zeroes_the_process_umask(self):
+        """IN-11: reading the umask must not set it to 0, even briefly."""
+        with unittest.mock.patch("ai_kit_spec.cache.os.umask") as umask:
+            mode = cache.umask_file_mode()
+        umask.assert_not_called()
+        current = os.umask(0o022)
+        os.umask(current)
+        self.assertEqual(mode, 0o666 & ~current)
 
     def test_cache_write_text_utf8_round_trip_unchanged(self):
         with tempfile.TemporaryDirectory() as d:

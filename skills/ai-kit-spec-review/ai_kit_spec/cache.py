@@ -42,11 +42,25 @@ def cache_write_bytes(path: str, data: bytes, mode: int | None = None) -> None:
         raise
 
 
+def _proc_umask() -> int | None:
+    try:
+        with open("/proc/self/status", encoding="ascii") as f:
+            for line in f:
+                if line.startswith("Umask:"):
+                    return int(line.split()[1], 8)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 def umask_file_mode() -> int:
-    """The mode a plain ``open()`` would give a new file. Reading the umask means setting it,
-    so only single-threaded callers may use this."""
-    umask = os.umask(0)
-    os.umask(umask)
+    """The mode a plain ``open()`` would give a new file. Linux reports the umask in
+    /proc/self/status; elsewhere reading it means setting it for a moment, which a
+    concurrently file-creating thread could observe (single-threaded callers only)."""
+    umask = _proc_umask()
+    if umask is None:
+        umask = os.umask(0)
+        os.umask(umask)
     return 0o666 & ~umask
 
 

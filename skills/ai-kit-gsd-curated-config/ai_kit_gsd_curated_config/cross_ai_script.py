@@ -202,9 +202,7 @@ def _publish(write_path: str, data: bytes) -> None:
     cache = gsd_catalog.load_ai_kit_spec_module("cache")
     if cache is None:
         raise OSError(gsd_catalog.SIBLING_MISSING)
-    umask = os.umask(0)
-    os.umask(umask)
-    cache.cache_write_bytes(write_path, data, mode=0o666 & ~umask)
+    cache.cache_write_bytes(write_path, data, mode=cache.umask_file_mode())
 
 
 def _divert_to_new(plan: ScriptPlan, note: str) -> ScriptPlan:

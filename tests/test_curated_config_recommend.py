@@ -1915,7 +1915,9 @@ class TestCliRecommendIo(unittest.TestCase):
             self.assertEqual(code, 0)
             real_tmp = os.path.realpath(tmp)
             affinity_real = os.path.realpath(plan_io.AFFINITY_PATH)
-            touched = {p for p in opened if not p.endswith((".py", ".pyc"))}
+            # The plan write reads its own umask from /proc (IN-11): process state, not data.
+            own_status = os.path.realpath("/proc/self/status")
+            touched = {p for p in opened if not p.endswith((".py", ".pyc")) and p != own_status}
             self.assertIn(os.path.realpath(inv_path), touched)
             self.assertIn(affinity_real, touched)
             for path in touched:
