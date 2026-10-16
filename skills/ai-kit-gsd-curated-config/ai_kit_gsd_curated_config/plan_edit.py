@@ -59,10 +59,18 @@ def parse_value(key: str, raw: str, current: Any) -> object:
     return _parse_fallback(raw)
 
 
+def _load_json(key: str, raw: str, label: str) -> object:
+    try:
+        return json.loads(raw)
+    except (ValueError, RecursionError) as exc:
+        raise PlanEditError(f"{key}: expected a JSON {label} (got {raw!r})") from exc
+
+
 def _parse_string_list(key: str, raw: str) -> list[str]:
-    parsed = json.loads(raw)
+    label = 'list of strings, e.g. \'["name"]\''
+    parsed = _load_json(key, raw, label)
     if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
-        raise PlanEditError(f"{key}: expected a JSON list of strings")
+        raise PlanEditError(f"{key}: expected a JSON {label}")
     return parsed
 
 
@@ -83,7 +91,7 @@ def _parse_int(key: str, raw: str) -> int:
 
 
 def _parse_json_type(key: str, raw: str, expected: type, label: str):
-    parsed = json.loads(raw)
+    parsed = _load_json(key, raw, label)
     if not isinstance(parsed, expected):
         raise PlanEditError(f"{key}: expected a JSON {label}")
     return parsed

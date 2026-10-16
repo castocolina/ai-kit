@@ -232,6 +232,25 @@ class TestPlanSetRefusals(unittest.TestCase):
                 self.assertIn("rejected", err)
             self.assertEqual(_read_bytes(plan_path), raw)
 
+    def test_bare_value_for_json_keys_is_a_refusal(self):
+        """B WR-02 / C-W7: a bare word for a JSON-typed key is exit 2, never a traceback."""
+        for key in (
+            "review.default_reviewers",
+            "agent_skills.gsd-planner",
+            "agent_skills_security.trusted_global_roots",
+            "script:cross-ai.prefer",
+        ):
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as tmp:
+                self._assert_refusal(tmp, (key, "codex"), "expected a JSON list of strings")
+        self.assertRaisesRegex(
+            plan_edit.PlanEditError,
+            "expected a JSON object",
+            plan_edit.parse_value,
+            "models",
+            "{oops",
+            {"a": 1},
+        )
+
     def test_timeout_floor(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._assert_refusal(tmp, ("workflow.cross_ai_timeout", "1799"), "1800")
