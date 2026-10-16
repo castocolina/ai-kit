@@ -102,5 +102,10 @@
       "gsd-code-reviewer": "xhigh",
       "gsd-ui-auditor": "xhigh"
     }
+  },
+  "model_overrides": {
+    "gsd-planner": "fable",
+    "gsd-roadmapper": "fable",
+    "gsd-pattern-mapper": "fable"
   }
 }
