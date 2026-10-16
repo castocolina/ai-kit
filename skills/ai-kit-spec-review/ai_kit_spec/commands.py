@@ -1,6 +1,8 @@
 import shlex
 from typing import NamedTuple
 
+from ai_kit_spec.detection import runtime_id
+
 # ── Policy resolution ────────────────────────────────────────────────────
 
 class ResolvedReviewer(NamedTuple):
@@ -224,7 +226,7 @@ def _build_cursor_agent_execute_command(target_dir=None, **_params):
 
     No {prompt} placeholder -- confirmed live (see _build_cursor_agent_command's own docstring):
     `-p`/`--print` reads the prompt from stdin, matching GSD's stdin-only delivery contract."""
-    quoted = _require_target_dir("cursor-agent", target_dir)
+    quoted = _require_target_dir("cursor", target_dir)
     return (f"cursor-agent --sandbox enabled --workspace {quoted} -p --output-format text "
             f"--model {{model}} --trust --force")
 
@@ -253,9 +255,9 @@ _COMMAND_BUILDERS = {
     (_REVIEW, "claude"): _build_claude_command,
     (_REVIEW, "grok"): _build_grok_command,
     (_REVIEW, "opencode"): _build_opencode_command,
-    (_REVIEW, "cursor-agent"): _build_cursor_agent_command,
+    (_REVIEW, "cursor"): _build_cursor_agent_command,
     (_EXECUTE, "codex"): _build_codex_execute_command,
-    (_EXECUTE, "cursor-agent"): _build_cursor_agent_execute_command,
+    (_EXECUTE, "cursor"): _build_cursor_agent_execute_command,
     (_EXECUTE, "opencode"): _build_opencode_execute_command,
 }
 
@@ -264,7 +266,7 @@ _COMMAND_BUILDERS = {
 # for the live re-tests that ruled out every confinement flag each CLI actually exposes). A caller
 # dispatching to one of these MUST append ai_kit_spec.execute_dispatch's own soft-confinement
 # guidance to the prompt -- it is the only mitigation that exists for these two.
-NO_HARD_SANDBOX_CLIS = {"cursor-agent", "opencode"}
+NO_HARD_SANDBOX_CLIS = {"cursor", "opencode"}
 
 # The CLIs with a real, live-verified execute builder in the registry above. Derived, never
 # hand-maintained: deleting a registry entry automatically drops it from this set (and makes any
@@ -278,7 +280,7 @@ def execute_cli_error(cli) -> str | None:
     """None when `cli` is a supported execute CLI (exact, case-sensitive match -- the same
     convention as KNOWN_CLIS), otherwise the human-readable error naming the supported set.
     Callers must fail before any spawn or config write when this returns a message."""
-    if cli in SUPPORTED_EXECUTE_CLIS:
+    if runtime_id(cli) in SUPPORTED_EXECUTE_CLIS:
         return None
     return (f"{cli!r} cannot be an execution CLI; supported execute CLIs: "
             f"{', '.join(SUPPORTED_EXECUTE_CLIS)}")
@@ -295,6 +297,7 @@ def _build_command(kind: str, cli: str, **params) -> str:
     review modes). For `kind == execute`, an unregistered `cli` raises execute_cli_error's
     message naming the supported execute CLIs -- an explicit claude/grok executor choice is a
     hard error (D-15), never a fallback to another CLI."""
+    cli = runtime_id(cli)
     builder = _COMMAND_BUILDERS.get((kind, cli))
     if builder is None:
         if kind == _EXECUTE:
@@ -347,7 +350,7 @@ def build_reviewer_model_id(cli: str, base_model: str, effort=None, fast=None,
     (see build_reviewer_command), so this returns base_model unchanged
     for them rather than raising (no params to lose, unlike an
     unrecognized cli in build_reviewer_command)."""
-    if cli == "cursor-agent":
+    if runtime_id(cli) == "cursor":
         return build_cursor_agent_model_id(base_model, effort=effort, fast=fast, context=context)
     return base_model
 

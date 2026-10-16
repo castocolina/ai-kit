@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import NamedTuple
 
 from ai_kit_spec.commands import NO_HARD_SANDBOX_CLIS, build_execute_command
+from ai_kit_spec.detection import runtime_id
 from ai_kit_spec.dispatch import dispatch_with_heartbeat
 from ai_kit_spec.dispatch_guidance import build_dispatch_reinforcement_guidance
 from ai_kit_spec.tooling_guidance import (
@@ -77,7 +78,7 @@ def _compose_execute_prompt(
     )
     if tool_guidance:
         guidance_sections.append(tool_guidance)
-    if cli in NO_HARD_SANDBOX_CLIS:
+    if runtime_id(cli) in NO_HARD_SANDBOX_CLIS:
         guidance_sections.append(seams.build_soft_confinement_fn(spec.target_dir))
     full_prompt = "\n\n".join(guidance_sections) + "\n\n" + spec.prompt
     return argv, full_prompt

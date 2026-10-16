@@ -29,9 +29,11 @@ if _ai_kit_spec_shim is not None:
 
 build_execute_command: Callable[..., str] | None
 execute_cli_error: Callable[[str], str | None] | None
+runtime_id: Callable[[str], str] | None
 
 try:
     from ai_kit_spec.commands import build_execute_command, execute_cli_error
+    from ai_kit_spec.detection import runtime_id
 except ImportError:
     # `ai_kit_spec` is optional at import time (module docstring above): if its skill
     # directory can't be resolved, or the sibling install is missing/broken, this module must
@@ -39,16 +41,22 @@ except ImportError:
     # `build_execution_command` below checks for this sentinel and returns `None` (its own
     # documented "no match" contract) instead of calling it. Without the sibling there is no
     # supported-CLI list to validate `--cli` against either, so execute_cli_error is None and
-    # the documented `no_builder` degrade path applies.
+    # the documented `no_builder` degrade path applies. reviewer_slug then keeps the name as
+    # given.
     build_execute_command = None
     execute_cli_error = None
+    runtime_id = None
 
-# The only three CLI names this plan's two ladders can ever resolve to. Looking up any other
-# key raises KeyError -- never silently substitutes the raw CLI name as a fallback slug, which
-# would write an invalid key config-set would reject anyway. Note cursor-agent maps to the
-# SHORTER slug "cursor", never the raw CLI binary name (confirmed live against
-# capability-registry.cjs's real reviewer-slug vocabulary).
-CLI_TO_REVIEWER_SLUG = {"opencode": "opencode", "cursor-agent": "cursor", "claude": "claude"}
+# Closed reviewer slugs. Unknown names are rejected before any config write.
+REVIEWER_SLUGS = ("claude", "cursor", "opencode")
+
+
+def reviewer_slug(cli) -> str | None:
+    """Map a runtime id, or the legacy `cursor-agent` name, onto a reviewer slug."""
+    name = cli if runtime_id is None else runtime_id(cli)
+    if name in REVIEWER_SLUGS:
+        return name
+    return None
 
 
 def reject_execute_cli(cli):

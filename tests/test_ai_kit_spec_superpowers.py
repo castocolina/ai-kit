@@ -393,7 +393,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
         self.assertEqual(result["mode"], "external_cli")
         self.assertEqual(result["cli"], "codex")
         self.assertIn("claude-cli/opus-5", stderr.getvalue())
-        self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
+        self.assertIn("codex, cursor, opencode", stderr.getvalue())
 
     def test_cli_claude_purpose_execute_raises_value_error_naming_the_supported_clis(self):
         # D-15: an explicit purpose = "execute" claude entry is a hard error, never a fallback.
@@ -415,7 +415,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 ),
                 options=dispatch_injection.BuildInjectionOptions(quota={}),
             )
-        self.assertIn("codex, cursor-agent, opencode", str(ctx.exception))
+        self.assertIn("codex, cursor, opencode", str(ctx.exception))
 
     def test_cli_purpose_execute_exits_2_with_the_supported_list_on_stderr(self):
         candidates = [
@@ -458,7 +458,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 )
         self.assertEqual(rc, 2)
         self.assertEqual(out.getvalue(), "")
-        self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
+        self.assertIn("codex, cursor, opencode", stderr.getvalue())
         self.assertIn("ai-kit-spec-execute-superpowers:", stderr.getvalue())
 
     def test_resolve_injection_prints_the_d15_skip_warning_once(self):

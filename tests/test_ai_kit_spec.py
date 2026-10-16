@@ -1220,7 +1220,7 @@ class TestDetectInstalledClis(unittest.TestCase):
         result = detect_installed_clis(which_fn=fake_which)
         self.assertEqual(result["claude"], "/usr/bin/claude")
         self.assertEqual(result["codex"], "/usr/bin/codex")
-        self.assertIsNone(result["cursor-agent"])
+        self.assertIsNone(result["cursor"])
 
     def test_covers_all_known_clis(self):
         result = detect_installed_clis(which_fn=lambda n: None)
@@ -1406,13 +1406,11 @@ class TestRuntimePrecedenceMatrix(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {"PI_CODING_AGENT": "1"}, clear=True):
             self.assertEqual(detection.detect_current_runtime(env=None), "pi")
 
-    def test_known_clis_include_pi_last(self):
-        # 18 D-25 moved pi enumeration here from Phase 22.
+    def test_known_clis_follow_runtime_table(self):
         self.assertEqual(
             detection.KNOWN_CLIS,
-            ("claude", "codex", "opencode", "grok", "cursor-agent", "pi"),
+            ("pi", "opencode", "cursor", "codex", "claude", "grok"),
         )
-        self.assertEqual(detection.KNOWN_CLIS[-1], "pi")
 
     def test_docstring_confidence_labels_for_pi_and_codex_thread_id(self):
         # P1: pi and codex stay visibly flagged as not (yet) live-verified -- they must never
@@ -1603,7 +1601,7 @@ class TestFindCodegraphAlternative(unittest.TestCase):
             }
         }
         result = detection.find_codegraph_alternative("grok", "grok-4.6", snapshot)
-        self.assertEqual(result, "cursor-agent")
+        self.assertEqual(result, "cursor")
 
     def test_returns_none_when_cli_already_supports_codegraph(self):
         snapshot = {"clis": {"cursor-agent": {"installed": True, "models": ["cursor-grok-4.6"]}}}
@@ -1920,8 +1918,8 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         snapshot = build_runtimes_snapshot(
             which_fn=fake_which, run_fn=lambda *a, **k: FakeResult()
         )
-        self.assertTrue(snapshot["clis"]["cursor-agent"]["installed"])
-        self.assertEqual(snapshot["clis"]["cursor-agent"]["models"], ["auto"])
+        self.assertTrue(snapshot["clis"]["cursor"]["installed"])
+        self.assertEqual(snapshot["clis"]["cursor"]["models"], ["auto"])
 
     def test_non_multi_provider_clis_have_no_models_key(self):
         def fake_which(name):
@@ -2529,7 +2527,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
     def test_snapshot_carries_current_schema_version(self):
         snapshot = build_runtimes_snapshot(which_fn=lambda n: None, run_fn=lambda *a, **k: None)
         self.assertEqual(snapshot["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
-        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 4)
+        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 5)
 
     def test_fresh_but_unversioned_cache_redetects_and_stamps(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2547,7 +2545,10 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
-            self.assertEqual(recorded, list(detection.KNOWN_CLIS))  # detection ran
+            self.assertEqual(
+                recorded,
+                [b for row in detection.RUNTIMES.values() for b in row.binaries] + ["node"],
+            )  # detection ran
             self.assertIn("clis", json.loads(buf.getvalue()))
             cached = cache_read_json(path)
             assert cached is not None
@@ -2571,7 +2572,10 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
-            self.assertEqual(recorded, list(detection.KNOWN_CLIS))
+            self.assertEqual(
+                recorded,
+                [b for row in detection.RUNTIMES.values() for b in row.binaries] + ["node"],
+            )
             cached = cache_read_json(path)
             assert cached is not None
             self.assertEqual(
@@ -2595,7 +2599,10 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
-            self.assertEqual(recorded, list(detection.KNOWN_CLIS))
+            self.assertEqual(
+                recorded,
+                [b for row in detection.RUNTIMES.values() for b in row.binaries] + ["node"],
+            )
             cached = cache_read_json(path)
             assert cached is not None
             self.assertEqual(
@@ -2641,7 +2648,10 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
-            self.assertEqual(recorded, list(detection.KNOWN_CLIS))
+            self.assertEqual(
+                recorded,
+                [b for row in detection.RUNTIMES.values() for b in row.binaries] + ["node"],
+            )
 
     def test_unreadable_or_non_object_cache_redetects_without_raising(self):
         for seed_text in ("not json", "[1, 2]"):
@@ -2661,7 +2671,10 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
                         run_fn=lambda *a, **k: None,
                     )
                 self.assertEqual(code, 0)
-                self.assertEqual(recorded, list(detection.KNOWN_CLIS))
+                self.assertEqual(
+                    recorded,
+                    [b for row in detection.RUNTIMES.values() for b in row.binaries] + ["node"],
+                )
 
     def test_version_predicate_rejects_non_int_values(self):
         f = detection.runtimes_schema_is_current
@@ -2674,9 +2687,10 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             {"schema_version": 1},
             {"schema_version": 2},
             {"schema_version": 3},
+            {"schema_version": 4},
         ):
             self.assertFalse(f(bad))
-        for good in ({"schema_version": 4}, {"schema_version": 5}):
+        for good in ({"schema_version": 5}, {"schema_version": 6}):
             self.assertTrue(f(good))
 
     def test_cache_is_stale_stays_schema_agnostic(self):
@@ -3983,7 +3997,7 @@ class TestMainCli(unittest.TestCase):
         def raising_dispatch(*a, **kw):
             raise ValueError(
                 "'gemini' cannot be an execution CLI; supported execute CLIs: "
-                "codex, cursor-agent, opencode"
+                "codex, cursor, opencode"
             )
 
         with tempfile.TemporaryDirectory() as d:
@@ -5351,7 +5365,7 @@ class TestBuildExecuteCommand(unittest.TestCase):
         self.assertIn("--force", cmd)
         self.assertIn("--trust", cmd)
         self.assertIn("--model {model}", cmd)
-        self.assertIn("cursor-agent", commands.NO_HARD_SANDBOX_CLIS)
+        self.assertIn("cursor", commands.NO_HARD_SANDBOX_CLIS)
 
     def test_opencode_execute_has_no_hard_sandbox_but_is_dispatchable(self):
         # Accepted-risk decision (2026-08-30): no CLI flag confines opencode's writes at all
@@ -5376,14 +5390,14 @@ class TestBuildExecuteCommand(unittest.TestCase):
         # never a fallback to another CLI.
         with self.assertRaises(ValueError) as ctx:
             commands.build_execute_command("grok", target_dir="/scratch/run1")
-        self.assertIn("codex, cursor-agent, opencode", str(ctx.exception))
+        self.assertIn("codex, cursor, opencode", str(ctx.exception))
 
     def test_claude_execute_is_a_hard_error_naming_the_supported_clis(self):
         # D-15 (Phase 16.1): same deletion for claude -- claude is the main agent and was never
         # a valid execute target; the explicit choice must fail before any spawn.
         with self.assertRaises(ValueError) as ctx:
             commands.build_execute_command("claude", target_dir="/scratch/run1")
-        self.assertIn("codex, cursor-agent, opencode", str(ctx.exception))
+        self.assertIn("codex, cursor, opencode", str(ctx.exception))
 
     def test_execute_error_message_is_shared_by_the_factory_and_the_checker(self):
         # Both paths surface the SAME supported-list message: the registry factory above and
@@ -5441,7 +5455,7 @@ class TestExecuteCliRejection(unittest.TestCase):
             with self.subTest(cli=cli_name):
                 code, stderr = self._rejected_dispatch_run(cli_name)
                 self.assertEqual(code, 2)
-                self.assertIn("codex, cursor-agent, opencode", stderr)
+                self.assertIn("codex, cursor, opencode", stderr)
 
     def test_rejection_is_idempotent_across_reruns(self):
         # D-15: nothing is written before the check, so a rejected executor fails identically
@@ -5451,7 +5465,7 @@ class TestExecuteCliRejection(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_supported_execute_clis_and_builders_are_gone(self):
-        self.assertEqual(commands.SUPPORTED_EXECUTE_CLIS, ("codex", "cursor-agent", "opencode"))
+        self.assertEqual(commands.SUPPORTED_EXECUTE_CLIS, ("codex", "cursor", "opencode"))
         self.assertFalse(
             hasattr(commands, "_build_claude_execute_command")
             or hasattr(commands, "_build_grok_execute_command")
@@ -5483,7 +5497,7 @@ class TestExecuteLadderScreen(unittest.TestCase):
         self.assertEqual([c["key"] for c in result], ["oc"])
         self.assertEqual(len(warnings), 1)
         self.assertIn("cla", warnings[0])
-        self.assertIn("codex, cursor-agent, opencode", warnings[0])
+        self.assertIn("codex, cursor, opencode", warnings[0])
 
     def test_purpose_both_grok_entry_is_skipped_with_a_warning(self):
         warnings = []
@@ -5497,7 +5511,7 @@ class TestExecuteLadderScreen(unittest.TestCase):
         candidates = [{"key": "cla", "cli": "claude", "model": "m", "purpose": "execute"}]
         with self.assertRaises(ValueError) as ctx:
             self._screen(candidates, warn_fn=lambda _msg: self.fail("must raise, not warn"))
-        self.assertIn("codex, cursor-agent, opencode", str(ctx.exception))
+        self.assertIn("codex, cursor, opencode", str(ctx.exception))
         self.assertIn("cla", str(ctx.exception))
 
     def test_purpose_review_claude_entry_passes_through_untouched(self):

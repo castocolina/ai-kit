@@ -25,11 +25,10 @@ RUNTIMES_TTL_SECONDS = 30 * 24 * 3600   # ~30 days: CLI/model presence is near-s
 # opencode 2.x `/api/model` image source (clis.opencode.image_input_source), so snapshots
 # written before it re-detect even while their TTL is still fresh. Version 4 (18 D-25) adds
 # clis.pi from pi's RPC get_available_models.
-RUNTIMES_SCHEMA_VERSION = 4
+# 18.1 D-04/D-13: clis keyed by runtime id, node recorded
+RUNTIMES_SCHEMA_VERSION = 5
 
 # ── Runtime/CLI detection ───────────────────────────────────────────────
-
-KNOWN_CLIS = ("claude", "codex", "opencode", "grok", "cursor-agent", "pi")
 
 PI_RPC_ARGS = (
     "--mode", "rpc", "--offline", "--no-session", "--no-extensions",
@@ -37,11 +36,99 @@ PI_RPC_ARGS = (
 )
 PI_RPC_REQUEST = '{"id":"1","type":"get_available_models"}\n'
 
+# One-line verification labels copied from detect_current_runtime's docstring (Pitfall 9).
+_LABEL_PI = (
+    "source-inspected-only — confirmed in the installed "
+    "`@earendil-works/pi-coding-agent` package's `dist/config.js`, not live-verified "
+    "from a real pi session (16 D-03; live validation is Phase 22)."
+)
+_LABEL_OPENCODE = (
+    "live-verified (01.2) via a live spawned `opencode run` subprocess."
+)
+_LABEL_CURSOR = (
+    "source-inspected-only — confirmed via the installed cursor-agent bundle's own "
+    "`index.js`, not a live subprocess."
+)
+_LABEL_CODEX_THREAD = (
+    "observed in real codex session shell snapshots under `~/.codex/sessions` (the "
+    "snapshot preamble exports `CODEX_THREAD_ID` from `__CODEX_SNAPSHOT_OVERRIDE_1`; "
+    "20 occurrences, 16 D-02) — not yet live-verified from a codex host (Phase 20, "
+    "EVAL-04)."
+)
+_LABEL_CODEX_VERSION = (
+    "source-inspected-only — confirmed via openai/codex's open-source `exec_env.rs`, "
+    "not a live subprocess."
+)
+_LABEL_CLAUDE = "live-verified (01.2) via the process's own env dump."
+
+
+class Runtime(NamedTuple):
+    binaries: tuple[str, ...]
+    host_signals: tuple[tuple[str, str], ...]
+    scrub_signals: tuple[str, ...] = ()
+    list_argv: tuple[str, ...] | None = None
+    native_selectors: tuple[str, ...] = ()
+    review_only: bool = False
+    model_suffix: str | None = None
+    mcp_list: bool = False
+    multi_provider: bool = False
+    runner: bool = True
+
+
+# Insertion order is host precedence. grok is a row, never a detected host (D-03).
+RUNTIMES: dict[str, Runtime] = {
+    "pi": Runtime(
+        ("pi",),
+        (("PI_CODING_AGENT", _LABEL_PI),),
+        list_argv=PI_RPC_ARGS,
+        model_suffix=r":(?:off|minimal|low|medium|high|xhigh|max)$",
+    ),
+    "opencode": Runtime(
+        ("opencode",),
+        (("OPENCODE", _LABEL_OPENCODE),),
+        list_argv=("models",),
+        model_suffix=r"#[^#/]+$",
+        mcp_list=True,
+        multi_provider=True,
+    ),
+    "cursor": Runtime(
+        ("cursor-agent", "agent"),
+        (("CURSOR_AGENT", _LABEL_CURSOR),),
+        list_argv=("models",),
+        model_suffix=r"\[[^\]]*\]$",
+        mcp_list=True,
+        multi_provider=True,
+    ),
+    "codex": Runtime(
+        ("codex",),
+        (("CODEX_THREAD_ID", _LABEL_CODEX_THREAD), ("CODEX_VERSION", _LABEL_CODEX_VERSION)),
+        scrub_signals=("CODEX_SANDBOX",),
+        list_argv=("debug", "models"),
+        mcp_list=True,
+    ),
+    "claude": Runtime(
+        ("claude",),
+        (("CLAUDECODE", _LABEL_CLAUDE),),
+        scrub_signals=("CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"),
+        native_selectors=("fable", "opus", "sonnet", "haiku"),
+        review_only=True,
+        mcp_list=True,
+    ),
+    "grok": Runtime(
+        ("grok",),
+        (),
+        scrub_signals=("GROK_AGENT",),
+        runner=False,
+    ),
+}
+
+KNOWN_CLIS = tuple(RUNTIMES)
+
 # 16 D-04: what Claude Code's own `--model` flag resolves (real `claude --help`, version
 # 2.1.281, lists fable/opus/sonnet; haiku is the fourth Agent-tool alias documented in
 # ai-kit-spec-config SKILL.md). Hardcoded because Claude Code has no list-models command --
 # these aliases are the only stable short names the CLI itself documents.
-CLAUDE_MODEL_ALIASES = ("fable", "opus", "sonnet", "haiku")
+CLAUDE_MODEL_ALIASES = RUNTIMES["claude"].native_selectors
 
 # 16 D-04: DATED FALLBACK, not a live list -- these four ids were verified present in
 # models.dev's `anthropic` provider on 2026-09-23 (16-RESEARCH.md), one per current family
@@ -51,28 +138,60 @@ CLAUDE_FALLBACK_MODEL_IDS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonn
                              "claude-haiku-4-5-20251001")
 CLAUDE_FALLBACK_AS_OF = "2026-09-23"
 
+_LEGACY_RUNTIME_NAMES = {"cursor-agent": "cursor", "agent": "cursor"}
+_GUARDED_BINARIES = {"agent": "cursor-agent"}
+_GENERIC_HOST_MARKERS = ("AI_AGENT",)
+
 
 def cache_runtimes_path(env: dict) -> str:
     return os.path.join(cache_base(env), "runtimes.json")
 
 
-def detect_installed_clis(which_fn=shutil.which) -> dict:
-    """{cli_name: absolute_path_or_None} for each KNOWN_CLIS entry."""
-    return {cli: which_fn(cli) for cli in KNOWN_CLIS}
+def runtime_id(name: str) -> str:
+    """Map a legacy binary name onto its runtime id; any other name is unchanged."""
+    return _LEGACY_RUNTIME_NAMES.get(name, name)
 
 
-# Fixed check order per 16 D-01, as amended by Phase 20 D-02 (replaces 01.2 D-02's claude-first
-# order). When CLIs nest, env vars accumulate and the innermost CLI must win, so claude --
-# usually the outer orchestrator -- is checked last. The label "cursor" still differs from
-# KNOWN_CLIS's "cursor-agent" binary-name entry on purpose (01.2 D-09); this tuple never
-# touches KNOWN_CLIS.
-_RUNTIME_ENV_SIGNALS = (
-    ("pi", "PI_CODING_AGENT"),
-    ("opencode", "OPENCODE"),
-    ("cursor", "CURSOR_AGENT"),
-    ("codex", "CODEX_THREAD_ID"),
-    ("codex", "CODEX_VERSION"),
-    ("claude", "CLAUDECODE"),
+def normalize_runtime_keys(mapping) -> dict:
+    """Copy with keys passed through runtime_id. An id key wins over its legacy alias."""
+    if not isinstance(mapping, dict):
+        return {}
+    merged: dict = {}
+    exact: dict = {}
+    for key, value in mapping.items():
+        rid = runtime_id(key) if isinstance(key, str) else key
+        if rid == key:
+            exact[rid] = value
+        else:
+            merged[rid] = value
+    merged.update(exact)
+    return merged
+
+
+def resolve_runtime_binary(rid, which_fn=shutil.which, realpath_fn=os.path.realpath):
+    """First PATH hit for rid. A guarded name is kept only when its real basename matches."""
+    for name in RUNTIMES[rid].binaries:
+        found = which_fn(name)
+        if not found:
+            continue
+        expected = _GUARDED_BINARIES.get(name)
+        if expected is not None and os.path.basename(realpath_fn(found)) != expected:
+            continue
+        return found
+    return None
+
+
+def detect_installed_clis(which_fn=shutil.which, realpath_fn=os.path.realpath) -> dict:
+    """{runtime id: absolute path or None} for each RUNTIMES row."""
+    return {
+        rid: resolve_runtime_binary(rid, which_fn=which_fn, realpath_fn=realpath_fn)
+        for rid in RUNTIMES
+    }
+
+
+# ids come from RUNTIMES, binaries are a row detail.
+_RUNTIME_ENV_SIGNALS = tuple(
+    (rid, var) for rid, row in RUNTIMES.items() for var, _label in row.host_signals
 )
 
 # Every variable runtime detection reads (D-14), plus host identity markers not tied to a
@@ -80,10 +199,11 @@ _RUNTIME_ENV_SIGNALS = (
 # GROK_AGENT), so a cross-AI child spawned by dispatch never mistakes itself for the host.
 # Phase 18 note: cross-ai.mjs's own SCRUB_ENV lacks AI_AGENT and CODEX_VERSION -- this set is
 # the authoritative superset.
-HOST_SIGNAL_ENV_VARS = frozenset({var for _, var in _RUNTIME_ENV_SIGNALS} | {
-    "AI_AGENT", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT",
-    "CODEX_SANDBOX", "GROK_AGENT",
-})
+HOST_SIGNAL_ENV_VARS = frozenset(
+    {var for _rid, var in _RUNTIME_ENV_SIGNALS}
+    | {var for row in RUNTIMES.values() for var in row.scrub_signals}
+    | set(_GENERIC_HOST_MARKERS)
+)
 
 
 def detect_current_runtime(env: Mapping[str, object] | None = None) -> str:
@@ -134,6 +254,14 @@ def detect_current_runtime(env: Mapping[str, object] | None = None) -> str:
     return "unknown"
 
 
+def _list_argv(rid: str) -> tuple[str, ...]:
+    """Model-list argv tail for a runtime that enumerates; empty when the row has none."""
+    argv = RUNTIMES[rid].list_argv
+    if argv is None:
+        return ()
+    return argv
+
+
 def detect_opencode_models(binary: str, run_fn=subprocess.run) -> list:
     """Runs `<binary> models`; one model id per non-blank line. opencode is
     one of the known-installed multi-provider CLIs (confirmed live: lists
@@ -142,7 +270,7 @@ def detect_opencode_models(binary: str, run_fn=subprocess.run) -> list:
     own `codex debug models` (detect_codex_models); claude and grok have
     no list subcommand."""
     try:
-        result = _run_opencode(run_fn, [binary, "models"], timeout=15)
+        result = _run_opencode(run_fn, [binary, *_list_argv("opencode")], timeout=15)
     except (OSError, subprocess.TimeoutExpired):
         return []
     return [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
@@ -160,7 +288,7 @@ def detect_cursor_agent_models(binary: str, run_fn=subprocess.run) -> list:
     `privacyCache` key of ~/.cursor/cli-config.json (reproduced under a scratch
     HOME in 16.1), so a before/after config fingerprint changes."""
     try:
-        result = run_fn([binary, "models"], capture_output=True, text=True,
+        result = run_fn([binary, *_list_argv("cursor")], capture_output=True, text=True,
                          check=False, timeout=15)
     except (OSError, subprocess.TimeoutExpired):
         return []
@@ -252,7 +380,7 @@ def detect_codex_models(binary: str, run_fn=subprocess.run) -> list:
     and never raises — an OSError/TimeoutExpired, invalid JSON, or an
     unexpected shape all return [] rather than crashing detection."""
     try:
-        result = run_fn([binary, "debug", "models"], capture_output=True, text=True,
+        result = run_fn([binary, *_list_argv("codex")], capture_output=True, text=True,
                         check=False, timeout=15)
     except (OSError, subprocess.TimeoutExpired):
         return []
@@ -348,7 +476,7 @@ def detect_pi_models(binary: str, run_fn=subprocess.run) -> list | None:
     TimeoutExpired, or parser None -> None; a parsed listing (even empty) -> the list."""
     try:
         result = run_fn(
-            [binary, *PI_RPC_ARGS],
+            [binary, *_list_argv("pi")],
             input=PI_RPC_REQUEST,
             capture_output=True,
             text=True,
@@ -792,6 +920,15 @@ def claude_runtime_fields(catalog_raw) -> dict:
             "models_source": "dated-fallback", "models_as_of": CLAUDE_FALLBACK_AS_OF}
 
 
+def _snapshot_node(which_fn) -> dict:
+    """Display-only node presence. Dispatch resolves node live (D-13)."""
+    path = which_fn("node")
+    record = {"installed": bool(path)}
+    if path:
+        record["path"] = path
+    return record
+
+
 def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
                             catalog_fn=None, popen_fn: Callable[..., Any] = subprocess.Popen,
                             urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN) -> dict:
@@ -799,7 +936,7 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
     "path"?: str, "models"?: [str], "reasoning_modes"?: {model_id: [effort, ...]},
     "aliases"?: [str], "models_source"?: str, "models_as_of"?: str, "image_input"?: {id: bool},
     "image_input_source"?: str, "image_input_probe"?: "failed"}}}.
-    `models` is populated for opencode/cursor-agent always, for codex when `codex debug models`
+    `models` is populated for opencode/cursor always, for codex when `codex debug models`
     enumeration succeeds, for pi when RPC `get_available_models` succeeds, and for claude from
     the 16 D-04 hybrid (aliases + full ids); `reasoning_modes` maps each enumerated model id
     to CLI-reported effort/thinking levels (codex/pi), only for ids with a non-empty list;
@@ -827,7 +964,7 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
             elif image_input_source == OPENCODE_API_IMAGE_SOURCE:
                 # A failed 2.x probe is a recorded gap, never silently "no data" (D-24).
                 entry["image_input_probe"] = "failed"
-        elif cli == "cursor-agent":
+        elif cli == "cursor":
             entry["models"] = detect_cursor_agent_models(binpath, run_fn=run_fn)
         elif cli == "codex":
             codex_models = detect_codex_models(binpath, run_fn=run_fn)
@@ -852,6 +989,7 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
             # `if not binpath` branch above already continued first).
             entry.update(claude_runtime_fields(catalog_fn() if catalog_fn is not None else None))
         snapshot["clis"][cli] = entry
+    snapshot["node"] = _snapshot_node(which_fn)
     return snapshot
 
 
@@ -929,17 +1067,17 @@ def resolve_agents_tooling_path(env=None) -> str | None:
 # dispatch on a guaranteed failure. Both `get` and `list` output include a `Status:`/inline
 # health indicator; look for an explicit failure signal in the relevant text before declaring
 # healthy, never assume health from presence alone.
-_SUPPORTED_CODEGRAPH_CLIENTS = frozenset({"claude", "codex", "cursor-agent", "opencode"})
+_SUPPORTED_CODEGRAPH_CLIENTS = frozenset(
+    rid for rid, row in RUNTIMES.items() if row.mcp_list
+)
 
 _MCP_GET_COMMANDS = {
     "claude": ("claude", "mcp", "get", "codegraph"),
     "codex": ("codex", "mcp", "get", "codegraph"),
 }
 _MCP_LIST_COMMANDS = {
-    "claude": ("claude", "mcp", "list"),
-    "codex": ("codex", "mcp", "list"),
-    "cursor-agent": ("cursor-agent", "mcp", "list"),
-    "opencode": ("opencode", "mcp", "list"),
+    rid: (row.binaries[0], "mcp", "list")
+    for rid, row in RUNTIMES.items() if row.mcp_list
 }
 
 # Confirmed live in claude's own output ("✔ Connected" / "✘ Failed to connect — ..."); codex/
@@ -966,7 +1104,7 @@ class CodegraphProbe(NamedTuple):
 
 
 def codegraph_install_command(cli: str) -> str:
-    return f"codegraph install --target={cli} --location=global --yes --init"
+    return f"codegraph install --target={runtime_id(cli)} --location=global --yes --init"
 
 
 def _probe_codegraph_from_get(cli: str, result, hint: str) -> CodegraphProbe | None:
@@ -995,6 +1133,7 @@ def probe_codegraph(cli: str, run_fn=subprocess.run,
     """Report-only codegraph MCP probe for one CLI. Never installs or registers anything --
     when the server is missing or unhealthy, ``install_command`` carries the suggested command
     for the user (or tools-installer) to run. Timeout/OSError yields unknown registered/healthy."""
+    cli = runtime_id(cli)
     if cli not in _SUPPORTED_CODEGRAPH_CLIENTS:
         return CodegraphProbe(
             False, False, None, f"codegraph MCP is not supported for client {cli!r}")
@@ -1024,7 +1163,7 @@ def check_codegraph_mcp_usable(cli: str, run_fn=subprocess.run) -> bool:
     """True when ``probe_codegraph`` reports codegraph registered and not known unhealthy --
     health may be unknown (codex exposes none), so this never claims "healthy". The execute
     adapters' index step still requires ``healthy is True`` (D-20)."""
-    probe = probe_codegraph(cli, run_fn)
+    probe = probe_codegraph(runtime_id(cli), run_fn)
     return probe.registered is True and probe.healthy is not False
 
 
@@ -1032,7 +1171,9 @@ def check_codegraph_mcp_usable(cli: str, run_fn=subprocess.run) -> bool:
 # list - codex's enumerated slugs included - only ever serves that one vendor's models, so
 # it can never be a *target* alternative for another CLI's model here; only these two
 # multi-provider CLIs can).
-_CODEGRAPH_CAPABLE_MULTI_PROVIDER_CLIS = ("cursor-agent", "opencode")
+_CODEGRAPH_CAPABLE_MULTI_PROVIDER_CLIS = tuple(
+    rid for rid, row in RUNTIMES.items() if row.multi_provider
+)
 
 
 def find_codegraph_alternative(cli: str, model: str, runtimes_snapshot: dict) -> str | None:
@@ -1042,11 +1183,15 @@ def find_codegraph_alternative(cli: str, model: str, runtimes_snapshot: dict) ->
     informational only, never a hard filter. Model-id naming conventions differ across CLIs
     (e.g. "grok-4.6" vs. "cursor-grok-4.6-high") so this is a substring heuristic, not a
     guarantee; a missed match degrades silently to None, never a false claim."""
+    cli = runtime_id(cli)
+    clis = normalize_runtime_keys(
+        runtimes_snapshot.get("clis") if isinstance(runtimes_snapshot, dict) else None
+    )
     if cli in _SUPPORTED_CODEGRAPH_CLIENTS:
         return None
     needle = model.lower()
     for candidate_cli in _CODEGRAPH_CAPABLE_MULTI_PROVIDER_CLIS:
-        entry = runtimes_snapshot.get("clis", {}).get(candidate_cli, {})
+        entry = clis.get(candidate_cli, {})
         if not entry.get("installed"):
             continue
         for candidate_model in entry.get("models", []):

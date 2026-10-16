@@ -41,7 +41,7 @@ except ImportError:
 # order for plan-review explicitly and gives no contrary order for execution, so this module
 # applies the same order to both for one consistent, documented search policy rather than
 # inventing a second one).
-_RUNTIME_ORDER = ("opencode", "cursor-agent")
+_RUNTIME_ORDER = ("opencode", "cursor")
 
 # `best_review_candidate` has no "no match" return value at all -- this is it.
 NATIVE_LAST_RESORT = ("claude", "opus", "native-last-resort")
@@ -105,7 +105,7 @@ REVIEW_RULES = (
 
 def _walk_rules(pool, rules):
     """Walks `rules` in declared order; for EACH rule, searches `pool.get("opencode", [])` then
-    `pool.get("cursor-agent", [])` before moving to the next rule. Returns the FIRST
+    `pool.get("cursor", [])` before moving to the next rule. Returns the FIRST
     `(cli, model, rule_label)` match found in that nested order, or `None` if no rule matches
     anything in either list."""
     for label, predicate in rules:

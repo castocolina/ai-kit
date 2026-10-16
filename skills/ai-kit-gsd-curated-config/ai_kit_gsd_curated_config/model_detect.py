@@ -74,15 +74,15 @@ def detect_runtimes_snapshot(python_bin, ai_kit_spec_path, run_fn=subprocess.run
 def build_candidate_pool(runtimes_snapshot):
     """Pure function, no I/O, taking the ALREADY-parsed snapshot dict. Returns
     a `{cli_name: [model_id, ...]}` pool containing a CLI only when that CLI is
-    installed AND its snapshot entry carries a `"models"` list: opencode/cursor-agent
-    always, and since Phase 16 also codex (when `codex debug models` enumerates its
-    user-selectable slugs) and claude (when its snapshot entry carries a models list) --
-    never an empty-list placeholder for a CLI that was never enumerable in the first
-    place (grok never appears as a key). An installed CLI whose `"models"`
-    key is present but genuinely empty (`[]`) DOES appear as a key with an empty list -- that is
-    a real "installed, zero models detected" result, distinct from "never enumerable".
-    The existing ladder walk itself still only ever searches opencode and cursor-agent
-    (its own tuple is unchanged)."""
+    installed AND its snapshot entry carries a `"models"` list: the opencode and cursor
+    runtimes always (cursor's binary is `cursor-agent`), and since Phase 16 also codex
+    (when `codex debug models` enumerates its user-selectable slugs) and claude (when its
+    snapshot entry carries a models list) -- never an empty-list placeholder for a CLI
+    that was never enumerable in the first place (grok never appears as a key). An
+    installed CLI whose `"models"` key is present but genuinely empty (`[]`) DOES appear
+    as a key with an empty list -- that is a real "installed, zero models detected"
+    result, distinct from "never enumerable". The ladder walk searches `opencode` then
+    `cursor`."""
     pool = {}
     clis = (runtimes_snapshot or {}).get("clis", {}) or {}
     for cli_name, entry in clis.items():

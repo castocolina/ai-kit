@@ -552,7 +552,7 @@ class TestBuildCandidatePool(unittest.TestCase):
         snapshot = {
             "clis": {
                 "opencode": {"installed": True, "models": ["a", "b"]},
-                "cursor-agent": {"installed": False},
+                "cursor": {"installed": False},
                 "claude": {"installed": True},
             }
         }
@@ -562,16 +562,16 @@ class TestBuildCandidatePool(unittest.TestCase):
         snapshot = {
             "clis": {
                 "opencode": {"installed": False},
-                "cursor-agent": {"installed": True, "models": ["x"]},
+                "cursor": {"installed": True, "models": ["x"]},
             }
         }
-        self.assertEqual(model_detect.build_candidate_pool(snapshot), {"cursor-agent": ["x"]})
+        self.assertEqual(model_detect.build_candidate_pool(snapshot), {"cursor": ["x"]})
 
     def test_neither_installed(self):
         snapshot = {
             "clis": {
                 "opencode": {"installed": False},
-                "cursor-agent": {"installed": False},
+                "cursor": {"installed": False},
             }
         }
         self.assertEqual(model_detect.build_candidate_pool(snapshot), {})
@@ -646,14 +646,14 @@ class TestBestExecutionCandidate(unittest.TestCase):
         )
 
     def test_cursor_agent_only_fallback_when_opencode_has_no_match(self):
-        pool = {"opencode": ["unrelated-model"], "cursor-agent": ["router-env/my-executor"]}
+        pool = {"opencode": ["unrelated-model"], "cursor": ["router-env/my-executor"]}
         self.assertEqual(
             preference_match.best_execution_candidate(pool),
-            ("cursor-agent", "router-env/my-executor", "coding-or-executor"),
+            ("cursor", "router-env/my-executor", "coding-or-executor"),
         )
 
     def test_no_match_returns_none(self):
-        pool = {"opencode": ["unrelated-model"], "cursor-agent": ["also-unrelated"]}
+        pool = {"opencode": ["unrelated-model"], "cursor": ["also-unrelated"]}
         self.assertIsNone(preference_match.best_execution_candidate(pool))
 
 
@@ -686,10 +686,10 @@ class TestBestReviewCandidate(unittest.TestCase):
         )
 
     def test_cursor_agent_only_fallback(self):
-        pool = {"opencode": ["unrelated"], "cursor-agent": ["router-env/my-plan-review"]}
+        pool = {"opencode": ["unrelated"], "cursor": ["router-env/my-plan-review"]}
         self.assertEqual(
             preference_match.best_review_candidate(pool),
-            ("cursor-agent", "router-env/my-plan-review", "plan-review"),
+            ("cursor", "router-env/my-plan-review", "plan-review"),
         )
 
     def test_empty_pool_returns_native_last_resort(self):
@@ -726,14 +726,19 @@ class TestBuildExecutionCommand(unittest.TestCase):
         self.assertIsNone(result)
 
 
-class TestCliToReviewerSlug(unittest.TestCase):
+class TestReviewerSlug(unittest.TestCase):
     def test_cursor_agent_maps_to_cursor_not_itself(self):
-        self.assertEqual(cross_ai_build.CLI_TO_REVIEWER_SLUG["cursor-agent"], "cursor")
-        self.assertNotEqual(cross_ai_build.CLI_TO_REVIEWER_SLUG["cursor-agent"], "cursor-agent")
+        self.assertEqual(cross_ai_build.reviewer_slug("cursor-agent"), "cursor")
+        self.assertNotEqual(cross_ai_build.reviewer_slug("cursor-agent"), "cursor-agent")
 
     def test_opencode_and_claude_map_to_themselves(self):
-        self.assertEqual(cross_ai_build.CLI_TO_REVIEWER_SLUG["opencode"], "opencode")
-        self.assertEqual(cross_ai_build.CLI_TO_REVIEWER_SLUG["claude"], "claude")
+        self.assertEqual(cross_ai_build.reviewer_slug("opencode"), "opencode")
+        self.assertEqual(cross_ai_build.reviewer_slug("claude"), "claude")
+
+    def test_id_matches_the_legacy_name_and_unknown_names_are_none(self):
+        self.assertEqual(cross_ai_build.reviewer_slug("cursor"), "cursor")
+        self.assertIsNone(cross_ai_build.reviewer_slug("grok"))
+        self.assertIsNone(cross_ai_build.reviewer_slug("codex"))
 
 
 class TestApplyExecutionCli(unittest.TestCase):
@@ -856,7 +861,7 @@ class TestApplyExecutionCli(unittest.TestCase):
                         env_fn=self.env_fn,
                     )
                 self.assertEqual(exit_code, 2)
-                self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
+                self.assertIn("codex, cursor, opencode", stderr.getvalue())
                 config_set_calls = [call for call in run.calls if "config-set" in call]
                 self.assertEqual(config_set_calls, [])
                 # A rerun fails identically: nothing was written before the check.
@@ -882,7 +887,9 @@ class TestApplyReviewCli(unittest.TestCase):
         _make_fake_install(self.fake_install_root)
         self.env_fn = lambda: {"CLAUDE_CONFIG_DIR": self.fake_install_root}
 
-    def _run_apply_review(self, config_get_stdout, config_get_returncode=0, config_get_stderr=""):
+    def _run_apply_review(
+        self, config_get_stdout, config_get_returncode=0, config_get_stderr="", cli_name="opencode"
+    ):
         results = [
             # config-get review.default_reviewers, read before any write
             (config_get_returncode, config_get_stdout, config_get_stderr),
@@ -900,7 +907,7 @@ class TestApplyReviewCli(unittest.TestCase):
                     "--project-dir",
                     "/fake/project",
                     "--cli",
-                    "opencode",
+                    cli_name,
                     "--model",
                     "router-env/my-plan-review",
                 ],
@@ -1005,6 +1012,75 @@ class TestApplyReviewCli(unittest.TestCase):
             if "config-set" in call and call[3] == "review.default_reviewers"
         ]
         self.assertEqual(json.loads(review_writes[0][4]), ["opencode"])
+
+    def test_cursor_and_legacy_name_both_write_cursor(self):
+        for cli_name in ("cursor", "cursor-agent"):
+            with self.subTest(cli=cli_name):
+                exit_code, run, summary = self._run_apply_review("[]", cli_name=cli_name)
+                self.assertEqual(exit_code, 0)
+                self.assertIn("cursor", summary["default_reviewers"])
+                review_writes = [
+                    call for call in run.calls
+                    if "config-set" in call and call[3] == "review.default_reviewers"
+                ]
+                self.assertEqual(json.loads(review_writes[0][4]), ["cursor"])
+
+    def test_grok_exits_2_and_lists_reviewer_slugs(self):
+        run = make_fake_run([])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            exit_code = cli.main(
+                ["apply-review", "--project-dir", "/fake/project",
+                 "--cli", "grok", "--model", "m"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 2)
+        self.assertIn("claude, cursor, opencode", err.getvalue())
+        self.assertEqual([call for call in run.calls if "config-set" in call], [])
+
+
+class TestV1CursorSnapshot(unittest.TestCase):
+    def _snapshot(self, models):
+        return json.dumps({
+            "schema_version": 5,
+            "clis": {
+                "opencode": {"installed": True, "models": ["unrelated-model"]},
+                "cursor": {"installed": True, "models": models},
+            },
+            "node": {"installed": True},
+        })
+
+    def test_execution_candidate_prints_the_cursor_id(self):
+        run = make_fake_run([(0, self._snapshot(["router-env/my-executor"]), "")])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = cli.main(
+                ["detect-execution-candidate"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=lambda: {},
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["cli"], "cursor")
+        self.assertEqual(payload["model"], "router-env/my-executor")
+
+    def test_review_candidate_uses_the_cursor_model(self):
+        run = make_fake_run([(0, self._snapshot(["router-env/my-plan-review"]), "")])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = cli.main(
+                ["detect-review-candidate"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=lambda: {},
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["cli"], "cursor")
+        self.assertEqual(payload["model"], "router-env/my-plan-review")
 
 
 class TestDetectClaudeMdPath(unittest.TestCase):

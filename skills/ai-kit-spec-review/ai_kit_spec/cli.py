@@ -45,6 +45,8 @@ from ai_kit_spec.detection import (
     detect_tool_availability,
     find_codegraph_alternative,
     group_models_by_family,
+    normalize_runtime_keys,
+    runtime_id,
     runtimes_schema_is_current,
 )
 from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
@@ -243,14 +245,16 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
     p_vendor.add_argument("--model", required=True)
 
     p_build_cmd = sub.add_parser("build-command")
-    p_build_cmd.add_argument("--cli", required=True)
+    p_build_cmd.add_argument("--runtime", "--cli", dest="runtime", required=True,
+                              help="runtime id, e.g. opencode, cursor")
     p_build_cmd.add_argument("--effort", default=None)
     p_build_cmd.add_argument("--service-tier", default=None)
     p_build_cmd.add_argument("--mode", default="plan",
-                              help="cursor-agent only: 'plan' or 'ask' (both read-only)")
+                              help="cursor only: 'plan' or 'ask' (both read-only)")
 
     p_build_model = sub.add_parser("build-model-id")
-    p_build_model.add_argument("--cli", required=True)
+    p_build_model.add_argument("--runtime", "--cli", dest="runtime", required=True,
+                                help="runtime id, e.g. opencode, cursor")
     p_build_model.add_argument("--base-model", required=True)
     p_build_model.add_argument("--effort", default=None)
     p_build_model.add_argument("--fast", choices=["true", "false"], default=None)
@@ -261,11 +265,12 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
         "--runtimes-json", required=True,
         help="path to a detect-runtimes snapshot (as saved via --save/--if-stale)"
     )
-    p_group.add_argument("--cli", required=True,
-                          help="which CLI's models array to group, e.g. opencode, cursor-agent")
+    p_group.add_argument("--runtime", "--cli", dest="runtime", required=True,
+                          help="which runtime's models array to group, e.g. opencode, cursor")
 
     p_alt = sub.add_parser("check-codegraph-alternative")
-    p_alt.add_argument("--cli", required=True)
+    p_alt.add_argument("--runtime", "--cli", dest="runtime", required=True,
+                        help="runtime id, e.g. opencode, cursor")
     p_alt.add_argument("--model", required=True)
     p_alt.add_argument("--runtimes-json", required=True)
 
@@ -273,9 +278,10 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
 
 def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
     p_dispatch = sub.add_parser("dispatch-execute")
-    p_dispatch.add_argument("--cli", required=True,
-                             help="never 'native'/None here -- a native candidate executes "
-                                  "in-process and never reaches this subcommand at all")
+    p_dispatch.add_argument("--runtime", "--cli", dest="runtime", required=True,
+                             help="runtime id, e.g. opencode, cursor; never 'native'/None here "
+                                  "-- a native candidate executes in-process and never reaches "
+                                  "this subcommand at all")
     p_dispatch.add_argument("--model", required=True)
     p_dispatch.add_argument("--effort", default=None,
                              help="structural param a builder may or may not use, same as "
@@ -335,8 +341,8 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
     p_check.add_argument("--key", default="candidate")
     p_check.add_argument("--model", default="")
     p_check.add_argument("--vendor", default="")
-    p_check.add_argument("--cli", default=None,
-                          help="omit for a native (no-CLI) candidate — always available")
+    p_check.add_argument("--runtime", "--cli", dest="runtime", default=None,
+                          help="runtime id, e.g. opencode, cursor; omit for a native candidate")
     p_check.add_argument("--command", dest="reviewer_command", default=None,
                           help="required when --cli is set; the command template to test")
     p_check.add_argument("--extra-json", default=None,
@@ -405,14 +411,15 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
 def _discovered_catalog_candidates(
     runtimes: dict, args: argparse.Namespace, deps: CliDeps
 ) -> list:
+    clis = normalize_runtime_keys(runtimes.get("clis"))
     discovered = [
         {"cli": cli_name, "model_id": model_id}
-        for cli_name, cli_data in runtimes.get("clis", {}).items()
+        for cli_name, cli_data in clis.items()
         for model_id in cli_data.get("models", [])
     ]
     single_provider_clis = {
         name
-        for name, data in runtimes.get("clis", {}).items()
+        for name, data in clis.items()
         if data.get("installed") and "models" not in data
     }
     if single_provider_clis:
@@ -751,10 +758,11 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
         params["effort"] = args.effort
     if args.service_tier:
         params["service_tier"] = args.service_tier
-    if args.cli == "cursor-agent":
+    rid = runtime_id(args.runtime)
+    if rid == "cursor":
         params["mode"] = args.mode
     try:
-        print(build_reviewer_command(args.cli, **params))
+        print(build_reviewer_command(rid, **params))
     except ValueError as exc:
         print(f"build-command: {exc}", file=sys.stderr)
         return 1
@@ -762,26 +770,29 @@ def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
 
 def _cmd_build_model_id(args: argparse.Namespace, deps: CliDeps) -> int:
     fast = {"true": True, "false": False, None: None}[args.fast]
-    print(build_reviewer_model_id(args.cli, args.base_model, effort=args.effort,
+    print(build_reviewer_model_id(runtime_id(args.runtime), args.base_model, effort=args.effort,
                                    fast=fast, context=args.context))
     return 0
 
 def _cmd_group_models(args: argparse.Namespace, deps: CliDeps) -> int:
     snapshot = cache_read_json(args.runtimes_json) or {}
-    models = snapshot.get("clis", {}).get(args.cli, {}).get("models", [])
+    clis = normalize_runtime_keys(snapshot.get("clis"))
+    models = clis.get(runtime_id(args.runtime), {}).get("models", [])
     print(json.dumps(group_models_by_family(models)))
     return 0
 
 def _cmd_check_codegraph_alternative(args: argparse.Namespace, deps: CliDeps) -> int:
     snapshot = cache_read_json(args.runtimes_json) or {}
-    alternative = find_codegraph_alternative(args.cli, args.model, snapshot)
+    snapshot = {**snapshot, "clis": normalize_runtime_keys(snapshot.get("clis"))}
+    alternative = find_codegraph_alternative(runtime_id(args.runtime), args.model, snapshot)
     print(json.dumps({"alternative_cli": alternative}))
     return 0
 
 def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
     # D-15 hardening: an explicit claude/grok executor choice is rejected before the prompt
     # is read or any dispatch function is called -- nothing is spawned, ever.
-    rejection = execute_cli_error(args.cli)
+    rid = runtime_id(args.runtime)
+    rejection = execute_cli_error(rid)
     if rejection:
         print(f"ai-kit-spec: {rejection}", file=sys.stderr)
         return 2
@@ -796,7 +807,7 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
             format_block = f.read()
     tool_availability = (json.loads(args.tool_availability_json)
                           if args.tool_availability_json else {})
-    candidate = {"cli": args.cli, "model": args.model, "effort": args.effort,
+    candidate = {"cli": rid, "model": args.model, "effort": args.effort,
                  "service_tier": args.service_tier}
     try:
         result = deps.dispatch_execute_fn(
@@ -867,8 +878,9 @@ def _cmd_dispatch_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
 
 def _cmd_check_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     extra = json.loads(args.extra_json) if args.extra_json else {}
+    rid = None if args.runtime is None else runtime_id(args.runtime)
     resolved = ResolvedReviewer(key=args.key, model=args.model, vendor=args.vendor,
-                                 cli=args.cli, command=args.reviewer_command, extra=extra)
+                                 cli=rid, command=args.reviewer_command, extra=extra)
     result = probe_reviewer_quota(resolved, run_fn=deps.run_fn)
     print(json.dumps(result))
     return 0

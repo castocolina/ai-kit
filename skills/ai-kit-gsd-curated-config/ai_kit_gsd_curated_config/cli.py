@@ -284,11 +284,12 @@ def _config_set_exit(ctx: _GsdCtx, key, value, label):
 
 def _apply_review_writes(ctx: _GsdCtx, args):
     """Return reviewer list on success, else an exit code."""
-    slug = cross_ai_build.CLI_TO_REVIEWER_SLUG.get(args.cli)
+    slug = cross_ai_build.reviewer_slug(args.cli)
     if slug is None:
+        allowed = ", ".join(sorted(cross_ai_build.REVIEWER_SLUGS))
         print(
             f"ai-kit-gsd-curated-config: unrecognized --cli {args.cli!r} "
-            f"(expected one of {sorted(cross_ai_build.CLI_TO_REVIEWER_SLUG)})",
+            f"(expected one of {allowed}; legacy cursor-agent is accepted as cursor)",
             file=sys.stderr,
         )
         return 2

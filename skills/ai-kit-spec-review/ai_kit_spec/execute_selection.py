@@ -5,6 +5,7 @@ import sys
 from typing import NamedTuple
 
 from ai_kit_spec import commands
+from ai_kit_spec.detection import runtime_id
 
 
 class ExecuteResolveOptions(NamedTuple):
@@ -86,7 +87,7 @@ def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
         if exempt_fn is not None and exempt_fn(c):
             kept.append(c)
             continue
-        if cli is not None and cli not in commands.SUPPORTED_EXECUTE_CLIS \
+        if cli is not None and runtime_id(cli) not in commands.SUPPORTED_EXECUTE_CLIS \
                 and purpose_matches(c.get("purpose"), "execute"):
             cli_err = commands.execute_cli_error(cli) or ""
             if c.get("purpose") == "execute":

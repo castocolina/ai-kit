@@ -368,7 +368,7 @@ class TestAssembleCandidates(unittest.TestCase):
                                   {"key": "r", "model": "m", "cli": "codex",
                                    "purpose": "review"}]}
         candidates, top = adapter.assemble_candidates("/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
-        with self.assertRaisesRegex(ValueError, "codex, cursor-agent, opencode"):
+        with self.assertRaisesRegex(ValueError, "codex, cursor, opencode"):
             _resolve_gsd_dispatch(candidates, top, {}, _ctx(), "/repo")
 
     def test_native_cli_none_entry_derives_tier_from_its_own_model_field(self):
@@ -592,7 +592,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         self.assertEqual(result["mode"], "fallback_notice")
         self.assertEqual(result["provenance"], "fallback")
         self.assertIn("gemini/gemini-3.1-pro", stderr.getvalue())
-        self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
+        self.assertIn("codex, cursor, opencode", stderr.getvalue())
         # C-WR-02: the reason is the screen, never a context-size rejection.
         self.assertEqual(result["reason"], "no_usable_dispatch")
         self.assertIn("gemini/gemini-3.1-pro", result["message"])
@@ -830,7 +830,7 @@ class TestCliResolveDispatch(unittest.TestCase):
                             stdout=io.StringIO())
         self.assertEqual(code, 2)
         self.assertEqual(fake.config_set_calls(), [])
-        self.assertIn("codex, cursor-agent, opencode", stderr.getvalue())
+        self.assertIn("codex, cursor, opencode", stderr.getvalue())
         self.assertIn("ai-kit-spec-execute-gsd:", stderr.getvalue())
 
     def test_resolve_dispatch_purpose_none_grok_entry_is_skipped_with_a_warning(self):
@@ -867,7 +867,7 @@ class TestCliResolveDispatch(unittest.TestCase):
         self.assertEqual(result["cli"], "codex")
         warnings = [line for line in stderr.getvalue().splitlines() if "grok/grok-4.6" in line]
         self.assertEqual(len(warnings), 1)
-        self.assertIn("codex, cursor-agent, opencode", warnings[0])
+        self.assertIn("codex, cursor, opencode", warnings[0])
 
     def test_resolve_dispatch_write_failed_result_exits_1_carrying_the_undo_log(self):
         import json
