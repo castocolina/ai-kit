@@ -164,7 +164,18 @@ def _catalog_fields(project_dir, opts, host_name, env, run_fn):
         "candidate_heuristic_fields": list(catalog_adapter.CANDIDATE_HEURISTIC_FIELDS),
         "catalog_warnings": cat.warnings,
         "installed_runtimes": installed,
+        "runtime_enumeration": enumeration_status(clis, installed),
     }, None
+
+
+def enumeration_status(clis: dict, installed: list[str]) -> dict[str, str]:
+    """Per installed runtime: ``failed`` (no ``models`` list: the listing failed), ``empty``
+    or ``ok``, so recommend never reports a failed listing as a ceiling outcome (C-W12)."""
+    out: dict[str, str] = {}
+    for name in installed:
+        models = clis[name].get("models")
+        out[name] = "failed" if not isinstance(models, list) else "ok" if models else "empty"
+    return out
 
 
 def _item(kind: str, scope: str, value, why: str, **extra) -> dict:
@@ -404,6 +415,7 @@ def _assemble_inventory(project_dir, host_name, host_source, core: host.GsdCore,
         "ponytail_visibility": ponytail,
         "system_one_backend": parts["system_one_backend"],
         "installed_runtimes": parts["installed_runtimes"],
+        "runtime_enumeration": parts["runtime_enumeration"],
         "conflicts": conflicts,
         "info": info,
         "warnings": sorted(warnings),

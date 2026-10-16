@@ -422,6 +422,20 @@ class TestGracefulRefreshTimeout(unittest.TestCase):
         graceful.assert_called_once()
 
 
+class TestEnumerationStatus(unittest.TestCase):
+    def test_failed_empty_ok(self):
+        """C-W12: a missing models list (listing failed) stays apart from an empty one."""
+        clis = {
+            "pi": {"installed": True},
+            "opencode": {"installed": True, "models": []},
+            "cursor-agent": {"installed": True, "models": ["composer-2.5"]},
+        }
+        self.assertEqual(
+            inventory.enumeration_status(clis, sorted(clis)),
+            {"cursor-agent": "ok", "opencode": "empty", "pi": "failed"},
+        )
+
+
 class TestCatalogStates(unittest.TestCase):
     def _run_with_fetch(self, home, project, catalog, spec_answers):
         runtimes = {"clis": {"codex": {"installed": True, "models": ["gpt-5.6-sol"]}}}

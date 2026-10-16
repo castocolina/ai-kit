@@ -1678,6 +1678,34 @@ class TestCrossAi(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.assertIn("pi, cursor-agent, opencode", notes[0]["text"])
 
+    def test_empty_runner_pool_names_the_enumeration_cause(self):
+        """C-W12: a failed or empty model listing is not a price-ceiling outcome."""
+        for state, tail in (("failed", " (listing failed)"), ("empty", " (listing empty)"),
+                            (None, "")):
+            inv = make_inventory(host="claude")
+            inv["installed_runtimes"] = ["pi"]
+            if state is not None:
+                inv["runtime_enumeration"] = {"pi": state}
+            plan = build(inv, rigor="standard", cross_ai_exec="y")
+            why = plan["artifacts"][0]["why"]
+            with self.subTest(state=state):
+                self.assertIn(f"pi: no pi models enumerated{tail}", why)
+                self.assertNotIn("within ceiling", why)
+
+    def test_no_lane_reason_without_a_non_host_lane_binary(self):
+        """C-W12: only the host CLI installed is 'no installed non-host lane CLI'."""
+        inv = make_inventory(
+            host="claude",
+            candidates=[cand("claude-opus-5-5", runtime="claude", vendor="anthropic",
+                             score_axes=3, purpose_scores={"planning": 90.0})],
+            review_lanes=_fixture_review_lanes(),
+            extra_accepted=_review_lane_accepted_keys(),
+        )
+        inv["installed_runtimes"] = ["claude"]
+        plan = build(inv, rigor="standard", cross_ai_review="y")
+        why = entry_map(plan)["workflow.plan_review_convergence"]["why"]
+        self.assertIn("no installed non-host lane CLI", why)
+
     def test_explicit_flag_not_defaulted(self):
         plan = build(make_inventory(), rigor="mvp", cross_ai_review="y")
         self.assertEqual(plan["cross_ai"]["review"], {"answer": "y", "defaulted": False})

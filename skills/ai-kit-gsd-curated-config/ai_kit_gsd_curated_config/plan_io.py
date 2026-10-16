@@ -176,6 +176,11 @@ def _validate_inventory_tail(inv: dict) -> str | None:
     runtimes = inv["installed_runtimes"]
     if not all(isinstance(name, str) for name in runtimes):
         return "key installed_runtimes: expected list of str"
+    enumeration = inv.get("runtime_enumeration", {})
+    if not isinstance(enumeration, dict) or not all(
+        state in ("failed", "empty", "ok") for state in enumeration.values()
+    ):
+        return "key runtime_enumeration: expected object of failed/empty/ok"
     for problem in (
         _missing(inv, "skills") or _validate_skills(inv.get("skills")),
         _missing(inv, "ponytail_visibility") or _validate_ponytail_visibility(
