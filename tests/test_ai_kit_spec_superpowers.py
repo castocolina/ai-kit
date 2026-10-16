@@ -144,7 +144,8 @@ class TestAssembleCandidates(unittest.TestCase):
             dispatch_injection.BuildInjectionRequest(task, candidates, {}, {}, top_n_keys),
             options=dispatch_injection.BuildInjectionOptions(quota={}),
         )
-        self.assertEqual(result, {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"})
+        self.assertEqual(result, {"mode": "native", "key": "claude/opus-5",
+                                  "runtime": None, "model": "opus"})
 
     def test_purpose_field_is_threaded_through_from_config(self):
         def fake_cfg_resolve(cwd, env):
@@ -234,20 +235,24 @@ class TestComputeLadderKeys(unittest.TestCase):
             },
         ]
         task = "### Task 1\n**Files:**\n- Create: `a.py`\n"
-        result = dispatch_injection.compute_ladder_keys(task, candidates, {}, {}, ["claude/opus-5"])
+        result = dispatch_injection.compute_ladder_keys(
+            dispatch_injection.BuildInjectionRequest(
+                task, candidates, {}, {}, ["claude/opus-5"]))
         self.assertEqual(result, ["claude/opus-5", "codex/terra"])
 
 
 class TestBuildDispatchInjection(unittest.TestCase):
-    def test_host_selectable_alias_becomes_native_candidate(self):
+    def test_stored_runtime_is_kept_for_routing(self):
+        # Routing, not assembly, decides native vs subprocess. A host-selectable alias keeps
+        # its stored runtime so a later route walk can still see it.
         resolved = {"policy": {"ladder": ["claude/opus"]},
                     "reviewers": [{"key": "claude/opus", "runtime": "claude",
                                    "model": "opus"}]}
         candidates, _ = dispatch_injection.assemble_candidates(
             "/repo", {"CLAUDECODE": "1"}, cfg_resolve_fn=lambda cwd, env: resolved)
-        self.assertIsNone(candidates[0]["runtime"])
+        self.assertEqual(candidates[0]["runtime"], "claude")
 
-    def test_native_claude_mode_when_top_candidate_has_quota(self):
+    def test_native_mode_when_top_candidate_has_quota(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
             {
@@ -264,7 +269,10 @@ class TestBuildDispatchInjection(unittest.TestCase):
             ),
             options=dispatch_injection.BuildInjectionOptions(quota={}),
         )
-        self.assertEqual(result, {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"})
+        self.assertEqual(
+            result,
+            {"mode": "native", "key": "claude/opus-5", "runtime": None, "model": "opus"},
+        )
 
     def test_external_cli_mode_when_top_candidate_is_another_cli(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
@@ -277,23 +285,17 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 "context_limit": 1_000_000,
             }
         ]
-        result = dispatch_injection.build_dispatch_injection(
-            dispatch_injection.BuildInjectionRequest(
-                task, candidates, {"server/api.py": 1000}, {}, ["codex/terra"]
-            ),
-            options=dispatch_injection.BuildInjectionOptions(quota={}),
-        )
-        self.assertEqual(
-            result,
-            {
-                "mode": "external_cli",
-                "key": "codex/terra",
-                "runtime": "codex",
-                "model": "gpt-5.6-terra",
-                "effort": None,
-                "service_tier": None,
-            },
-        )
+        with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
+            dispatch_injection.build_dispatch_injection(
+                dispatch_injection.BuildInjectionRequest(
+                    task, candidates, {"server/api.py": 1000}, {}, ["codex/terra"]
+                ),
+                options=dispatch_injection.BuildInjectionOptions(quota={}),
+            )
+        # No routes mapping fails closed: an unknown host and empty inventory skip a
+        # subprocess candidate as not installed, and that skip is permanent.
+        self.assertEqual(ctx.exception.reasons, {"codex/terra": "not_installed"})
+        self.assertFalse(ctx.exception.any_quota_recoverable)
 
     def test_escalates_past_a_quota_exhausted_top_candidate(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
@@ -318,19 +320,17 @@ class TestBuildDispatchInjection(unittest.TestCase):
             dispatch_injection.BuildInjectionRequest(
                 task, candidates, {}, {}, ["claude/opus-5", "codex/terra"]
             ),
-            options=dispatch_injection.BuildInjectionOptions(quota=quota),
+            options=dispatch_injection.BuildInjectionOptions(
+                quota=quota,
+                routes={"claude/opus-5": "native", "codex/terra": "subprocess"},
+            ),
         )
         self.assertEqual(result["mode"], "external_cli")
         self.assertEqual(result["key"], "codex/terra")
 
-    def test_drops_a_quota_available_candidate_with_no_usable_dispatch_mechanism(self):
-        # CRITICAL finding: a candidate can have quota AND still be undispatchable (its cli has no
-        # registered execute-mode builder -- build_execute_command raises ValueError for it). This
-        # must be dropped, not returned as a broken external_cli injection that blows up later.
-        # "gemini" is used here because it has NO entry in ai_kit_spec.commands._COMMAND_BUILDERS
-        # at all (review builders are exactly codex/claude/grok/opencode/cursor-agent, and gemini
-        # is not among them either) -- so this fixture matches a real gap in today's code rather
-        # than simulating one that doesn't exist.
+    def test_unknown_runtime_is_skipped_and_the_next_candidate_runs(self):
+        # Replaces the deleted builder probe: an out-of-table runtime is a permanent skip
+        # route, recorded even when a cached quota row says it is unavailable for quota.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
             {
@@ -348,31 +348,28 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 "context_limit": 1_000_000,
             },
         ]
-        quota = {"gemini/main": {"available": True}, "codex/terra": {"available": True}}
-
-        def fake_build_execute_command(cli, **params):
-            if cli == "gemini":
-                raise ValueError("no execute-mode builder registered for cli='gemini'")
-            return "codex exec --sandbox workspace-write -m {model}"
-
-        result = dispatch_injection.build_dispatch_injection(
-            dispatch_injection.BuildInjectionRequest(
-                task, candidates, {}, {}, ["gemini/main", "codex/terra"]
-            ),
-            dispatch_injection.BuildInjectionOptions(
-                quota=quota,
-                seams=dispatch_injection.BuildInjectionSeams(
-                    build_execute_command_fn=fake_build_execute_command,
+        quota = {
+            "gemini/main": {"available": False, "reason": "quota"},
+            "codex/terra": {"available": True},
+        }
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            result = dispatch_injection.build_dispatch_injection(
+                dispatch_injection.BuildInjectionRequest(
+                    task, candidates, {}, {}, ["gemini/main", "codex/terra"]
                 ),
-            ),
-        )
+                dispatch_injection.BuildInjectionOptions(
+                    quota=quota,
+                    routes={"gemini/main": "unknown_runtime", "codex/terra": "subprocess"},
+                ),
+            )
         self.assertEqual(result["key"], "codex/terra")
+        self.assertIn("skipping gemini/main for execution: route unknown_runtime",
+                      stderr.getvalue())
 
-    def test_cli_claude_ladder_entry_is_skipped_with_warning(self):
-        # D-15 (Phase 16.1): claude has NO execute builder anymore -- the old (_EXECUTE, "claude")
-        # registration was deleted. A purpose-unset ladder entry naming claude is skipped with a
-        # stderr warning (never silently, never routed to external_cli or folded into
-        # native_claude); an explicit purpose = "execute" choice is a hard ValueError.
+    def test_claude_off_its_native_route_is_recorded_as_review_only(self):
+        # D-15 screen order: a purpose-unset claude candidate is exempt from the execute screen.
+        # Off its native route the walk records review_only, a permanent skip, and continues.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
             {
@@ -396,12 +393,16 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 dispatch_injection.BuildInjectionRequest(
                     task, candidates, {}, {}, ["claude-cli/opus-5", "codex/terra"]
                 ),
-                options=dispatch_injection.BuildInjectionOptions(quota={}),
+                options=dispatch_injection.BuildInjectionOptions(
+                    quota={},
+                    routes={"claude-cli/opus-5": "review_only", "codex/terra": "subprocess"},
+                ),
             )
         self.assertEqual(result["mode"], "external_cli")
         self.assertEqual(result["runtime"], "codex")
-        self.assertIn("claude-cli/opus-5", stderr.getvalue())
-        self.assertIn("codex, cursor, opencode", stderr.getvalue())
+        self.assertIn("skipping claude-cli/opus-5 for execution: route review_only",
+                      stderr.getvalue())
+        self.assertNotIn("cannot be an execution CLI", stderr.getvalue())
 
     def test_cli_claude_purpose_execute_raises_value_error_naming_the_supported_clis(self):
         # D-15: an explicit purpose = "execute" claude entry is a hard error, never a fallback.
@@ -490,10 +491,12 @@ class TestBuildDispatchInjection(unittest.TestCase):
                     cache_read_json_fn=lambda path: {},
                     cache_write_json_fn=lambda path, data: None,
                     refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
+                    route_all_fn=lambda entries, _ctx: {
+                        "g": "review_only", "c": "subprocess"},
                     stdout=out,
                 )
         self.assertEqual(rc, 0)
-        self.assertEqual(stderr.getvalue().count("skipping 'g'"), 1)
+        self.assertEqual(stderr.getvalue().count("skipping g for execution: route review_only"), 1)
 
     def test_no_surviving_candidates_raises_value_error(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
@@ -557,7 +560,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
                 dispatch_injection.BuildInjectionRequest(task, candidates, {}, {}, ["codex/terra"]),
-                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+                options=dispatch_injection.BuildInjectionOptions(
+                    quota=quota, routes={"codex/terra": "subprocess"}),
             )
         self.assertEqual(ctx.exception.reasons, {"codex/terra": "auth"})
         self.assertTrue(ctx.exception.all_auth_failures)
@@ -586,7 +590,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
                 dispatch_injection.BuildInjectionRequest(task, candidates, {}, {}, ["codex/terra"]),
-                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+                options=dispatch_injection.BuildInjectionOptions(
+                    quota=quota, routes={"codex/terra": "subprocess"}),
             )
         self.assertEqual(ctx.exception.reasons, {"codex/terra": "timeout"})
         self.assertFalse(ctx.exception.any_quota_recoverable)
@@ -614,7 +619,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
                 dispatch_injection.BuildInjectionRequest(task, candidates, {}, {}, ["codex/terra"]),
-                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+                options=dispatch_injection.BuildInjectionOptions(
+                    quota=quota, routes={"codex/terra": "subprocess"}),
             )
         self.assertEqual(ctx.exception.reasons, {"codex/terra": "configuration"})
         self.assertFalse(ctx.exception.any_quota_recoverable)
@@ -641,7 +647,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
                 dispatch_injection.BuildInjectionRequest(task, candidates, {}, {}, ["codex/terra"]),
-                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+                options=dispatch_injection.BuildInjectionOptions(
+                    quota=quota, routes={"codex/terra": "subprocess"}),
             )
         self.assertEqual(ctx.exception.reasons, {"codex/terra": "dispatch_unavailable"})
         self.assertFalse(ctx.exception.any_quota_recoverable)
@@ -670,7 +677,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
         with self.assertRaises(dispatch_injection.QuotaExhaustedError) as ctx:
             dispatch_injection.build_dispatch_injection(
                 dispatch_injection.BuildInjectionRequest(task, candidates, {}, {}, ["codex/terra"]),
-                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+                options=dispatch_injection.BuildInjectionOptions(
+                    quota=quota, routes={"codex/terra": "subprocess"}),
             )
         self.assertEqual(ctx.exception.reasons, {"codex/terra": "real_error"})
         self.assertFalse(ctx.exception.any_quota_recoverable)
@@ -709,7 +717,10 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 dispatch_injection.BuildInjectionRequest(
                     task, candidates, {}, {}, ["claude/opus-5", "codex/terra"]
                 ),
-                options=dispatch_injection.BuildInjectionOptions(quota=quota),
+                options=dispatch_injection.BuildInjectionOptions(
+                    quota=quota,
+                    routes={"claude/opus-5": "native", "codex/terra": "subprocess"},
+                ),
             )
         self.assertTrue(ctx.exception.any_quota_recoverable)
         self.assertFalse(ctx.exception.all_auth_failures)
@@ -832,8 +843,9 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
         self.assertEqual(captured["candidate"]["effort"], "high")
         self.assertEqual(result["returncode"], 0)
 
-    def test_native_claude_injection_raises_value_error(self):
-        injection = {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"}
+    def test_native_injection_raises_value_error(self):
+        injection = {"mode": "native", "runtime": "claude", "model": "opus",
+                     "key": "claude/opus-5"}
         with self.assertRaises(ValueError):
             dispatch_injection.dispatch_superpowers_task(
                 dispatch_injection.DispatchTaskRequest(injection, "prompt", "/dir", 60, 900)
@@ -980,8 +992,14 @@ class TestCliSubcommandHandlers(unittest.TestCase):
         self.assertEqual(set(superpowers_cli._COMMANDS), set(subparsers.choices))
 
 
+def _session_routes(entries, _ctx):
+    """A runtime-less candidate is the session default; a named runtime dispatches."""
+    return {entry["key"]: "native" if entry.get("runtime") is None else "subprocess"
+            for entry in entries}
+
+
 class TestCliResolveInjection(unittest.TestCase):
-    def test_resolve_injection_prints_native_claude_json(self):
+    def test_resolve_injection_prints_native_json(self):
         candidates = [
             {
                 "key": "claude/opus-5",
@@ -1016,6 +1034,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
+                route_all_fn=_session_routes,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1023,7 +1042,8 @@ class TestCliResolveInjection(unittest.TestCase):
         self.assertEqual(
             result,
             {
-                "mode": "native_claude",
+                "mode": "native",
+                "runtime": None,
                 "model": "opus",
                 "key": "claude/opus-5",
                 "ladder_keys": ["claude/opus-5"],
@@ -1073,6 +1093,7 @@ class TestCliResolveInjection(unittest.TestCase):
                         }
                     }
                 ),
+                route_all_fn=_session_routes,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1107,7 +1128,8 @@ class TestCliResolveInjection(unittest.TestCase):
 
         def fake_build_dispatch_injection(request, _options=None):
             captured["sizes"] = request.files_touched_sizes
-            return {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"}
+            return {"mode": "native", "runtime": None, "model": "opus",
+                    "key": "claude/opus-5"}
 
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "big.py"), "w") as f:
@@ -1131,6 +1153,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
+                route_all_fn=_session_routes,
                 stdout=io.StringIO(),
             )
         self.assertEqual(captured["sizes"], {"big.py": 4000})
@@ -1178,6 +1201,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
+                route_all_fn=_session_routes,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1228,6 +1252,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
+                route_all_fn=_session_routes,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1301,6 +1326,7 @@ class TestCliResolveInjection(unittest.TestCase):
                         }
                     }
                 ),
+                route_all_fn=_session_routes,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1367,6 +1393,7 @@ class TestCliResolveInjection(unittest.TestCase):
                 cache_read_json_fn=lambda path: {},
                 cache_write_json_fn=lambda path, data: None,
                 refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
+                route_all_fn=_session_routes,
                 stdout=out,
             )
         self.assertEqual(rc, 0)
@@ -1379,14 +1406,196 @@ class TestCliResolveInjection(unittest.TestCase):
         self.assertTrue(result["any_quota_recoverable"])
 
 
+def _fresh_snapshot(clis):
+    """A schema-current runtimes cache row. Claude rows carry the dated fallback ids."""
+    from ai_kit_spec.detection import (
+        CLAUDE_FALLBACK_MODEL_IDS,
+        CLAUDE_MODEL_ALIASES,
+        RUNTIMES_SCHEMA_VERSION,
+    )
+
+    rows = {}
+    for rid, models in clis.items():
+        row = {"installed": True, "path": f"/fake/{rid}"}
+        if rid == "claude":
+            row["aliases"] = list(CLAUDE_MODEL_ALIASES)
+            row["models"] = list(models if models is not None else CLAUDE_FALLBACK_MODEL_IDS)
+        elif models is not None:
+            row["models"] = list(models)
+        rows[rid] = row
+    return {"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": rows}
+
+
+def _routed_native(entry, host):
+    """A session default, or a claude alias while this process is on Claude Code."""
+    runtime = entry.get("runtime")
+    model = entry.get("model", "")
+    session_default = runtime is None and not entry.get("command")
+    alias = runtime == "claude" and model in {"opus", "sonnet", "haiku", "fable"}
+    return session_default or (alias and host == "claude")
+
+
+def _route_all_recording(calls):
+    """route_all that records its context and returns native for a claude alias, else subprocess."""
+
+    def route_all_fn(entries, ctx):
+        calls.append(ctx)
+        routes = {}
+        for entry in entries:
+            runtime = entry.get("runtime")
+            model = entry.get("model", "")
+            if _routed_native(entry, ctx.host):
+                routes[entry["key"]] = "native"
+            elif runtime == "claude" or entry.get("command"):
+                routes[entry["key"]] = "review_only"
+            elif model == "missing":
+                routes[entry["key"]] = "bad_model"
+            elif model == "unchecked":
+                routes[entry["key"]] = "unverified"
+            else:
+                routes[entry["key"]] = "subprocess"
+        return routes
+
+    return route_all_fn
+
+
+class TestResolveInjectionRouting(unittest.TestCase):
+    """resolve-injection routes per call and speaks host-agnostic payload names."""
+
+    def _run(self, candidates, env, quota=None, refresh=None, top_n=None):
+        from ai_kit_spec.cache import cache_write_json
+        from ai_kit_spec.detection import cache_runtimes_path
+
+        calls = []
+        refreshed = []
+
+        def recording_refresh(config, keys, existing, _ttl):
+            refreshed.append(list(keys))
+            if refresh is not None:
+                return refresh(config, keys, existing, _ttl)
+            return dict(quota or {})
+
+        out, stderr = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_file = os.path.join(tmp, "task-1-brief.md")
+            with open(task_file, "w", encoding="utf-8") as handle:
+                handle.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
+            home = os.path.join(tmp, "home")
+            cache = os.path.join(tmp, "cache")
+            os.makedirs(home)
+            os.makedirs(cache)
+            scratch_env = {"HOME": home, "XDG_CACHE_HOME": cache, **env}
+            cache_write_json(cache_runtimes_path(scratch_env), _fresh_snapshot({
+                "claude": None, "codex": ["gpt-5.6-sol"],
+            }))
+            with contextlib.redirect_stderr(stderr):
+                rc = superpowers_cli.main(
+                    ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
+                     "--quota-path", os.path.join(tmp, "quota.json")],
+                    assemble_candidates_fn=lambda cwd, _env: (
+                        candidates, top_n or [c["key"] for c in candidates]),
+                    cache_read_json_fn=lambda _path: dict(quota or {}),
+                    cache_write_json_fn=lambda _path, _data: None,
+                    refresh_quota_cache_fn=recording_refresh,
+                    route_all_fn=_route_all_recording(calls),
+                    env_fn=lambda: scratch_env,
+                    stdout=out,
+                )
+        return rc, out.getvalue(), stderr.getvalue(), refreshed, calls
+
+    def test_claude_host_returns_native_and_opencode_host_returns_external_cli(self):
+        candidates = [
+            {"key": "c-opus", "runtime": "claude", "model": "opus", "vendor": "anthropic",
+             "purpose": "both", "task_affinity": None, "context_limit": None},
+            {"key": "cx", "runtime": "codex", "model": "gpt-5.6-sol", "vendor": "openai",
+             "task_affinity": None, "context_limit": None},
+        ]
+        rc, stdout, stderr, _refreshed, calls = self._run(candidates, {"CLAUDECODE": "1"})
+        self.assertEqual(rc, 0, stderr)
+        result = json.loads(stdout)
+        self.assertEqual(result["mode"], "native")
+        self.assertEqual(result["key"], "c-opus")
+        self.assertEqual(result["runtime"], "claude")
+        self.assertEqual(result["model"], "opus")
+        self.assertEqual(calls[0].mode, "exec")
+        self.assertEqual(calls[0].host, "claude")
+
+        rc, stdout, stderr, _refreshed, _calls = self._run(candidates, {"OPENCODE": "1"})
+        self.assertEqual(rc, 0, stderr)
+        result = json.loads(stdout)
+        self.assertEqual(result["mode"], "external_cli")
+        self.assertEqual(result["key"], "cx")
+        self.assertEqual(result["runtime"], "codex")
+        self.assertIn("skipping c-opus for execution: route review_only", stderr)
+
+    def test_bad_model_after_refresh_is_permanent(self):
+        candidates = [
+            {"key": "cx", "runtime": "codex", "model": "missing", "vendor": "openai",
+             "task_affinity": None, "context_limit": None},
+        ]
+        rc, stdout, stderr, _refreshed, _calls = self._run(
+            candidates, {"OPENCODE": "1"},
+            quota={"cx": {"available": False, "reason": "quota"}})
+        self.assertEqual(rc, 0, stderr)
+        result = json.loads(stdout)
+        self.assertEqual(result["reasons"], {"cx": "bad_model"})
+        self.assertFalse(result["any_quota_recoverable"])
+        self.assertIn("skipping cx for execution: route bad_model", stderr)
+
+    def test_unverified_model_list_dispatches_and_names_the_key(self):
+        candidates = [
+            {"key": "cx", "runtime": "codex", "model": "unchecked", "vendor": "openai",
+             "task_affinity": None, "context_limit": None},
+        ]
+        rc, stdout, stderr, _refreshed, _calls = self._run(candidates, {"OPENCODE": "1"})
+        self.assertEqual(rc, 0, stderr)
+        result = json.loads(stdout)
+        self.assertEqual(result["mode"], "external_cli")
+        self.assertEqual(result["key"], "cx")
+        self.assertIn("dispatching cx unverified", stderr)
+        self.assertIn("codex", stderr)
+
+    def test_native_quota_exemption_never_probes_or_blocks_a_native_route(self):
+        candidates = [
+            {"key": "c-opus", "runtime": "claude", "model": "opus", "vendor": "anthropic",
+             "purpose": "both", "task_affinity": None, "context_limit": None},
+            {"key": "cx", "runtime": "codex", "model": "gpt-5.6-sol", "vendor": "openai",
+             "task_affinity": None, "context_limit": None},
+        ]
+        stale = {"c-opus": {"available": False, "reason": "auth"}}
+        rc, stdout, _stderr, refreshed, _calls = self._run(
+            candidates, {"CLAUDECODE": "1"}, quota=stale)
+        self.assertEqual(rc, 0)
+        result = json.loads(stdout)
+        self.assertEqual(result["mode"], "native")
+        self.assertEqual(result["key"], "c-opus")
+        self.assertEqual(refreshed, [["cx"]])
+
+    def test_screen_order_records_review_only_unless_purpose_is_execute(self):
+        full = {"key": "c-full", "runtime": "claude", "model": "claude-opus-5-5",
+                "vendor": "anthropic", "task_affinity": None, "context_limit": None}
+        rc, stdout, stderr, _refreshed, _calls = self._run([full], {"CLAUDECODE": "1"})
+        self.assertEqual(rc, 0, stderr)
+        result = json.loads(stdout)
+        self.assertEqual(result["reasons"], {"c-full": "review_only"})
+        self.assertNotIn("cannot be an execution CLI", stderr)
+        self.assertIn("skipping c-full for execution: route review_only", stderr)
+
+        explicit = dict(full, purpose="execute")
+        rc, stdout, stderr, _refreshed, _calls = self._run([explicit], {"CLAUDECODE": "1"})
+        self.assertEqual(rc, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("cannot be an execution CLI", stderr)
+
+
 class TestCliDispatchTask(unittest.TestCase):
-    def test_dispatch_task_refuses_a_native_claude_injection_with_a_clear_error(self):
+    def test_dispatch_task_refuses_a_native_injection_with_a_clear_error(self):
         # HIGH finding: dispatch-task is the only real entry point that ever reaches
-        # dispatch_superpowers_task -- a native_claude injection must fail here with a clear,
+        # dispatch_superpowers_task -- a native injection must fail here with a clear,
         # actionable error BEFORE any tooling-detection code runs (which indexes
-        # injection["runtime"], absent on a native_claude injection, and would otherwise die with a
-        # bare, unexplained KeyError instead of a diagnosable message).
-        injection = {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"}
+        # injection["runtime"], and would otherwise die with a bare, unexplained KeyError
+        # instead of a diagnosable message).
+        injection = {"mode": "native", "runtime": None, "model": "opus", "key": "claude/opus-5"}
         with tempfile.TemporaryDirectory() as tmp:
             prompt_file = os.path.join(tmp, "prompt.txt")
             with open(prompt_file, "w") as f:
@@ -1422,7 +1631,7 @@ class TestCliDispatchTask(unittest.TestCase):
                     stdout=io.StringIO(),
                 )
         self.assertIn("external_cli", str(ctx.exception))
-        self.assertIn("native_claude", str(ctx.exception))
+        self.assertIn("mode='native'", str(ctx.exception))
         self.assertIn("Agent tool", str(ctx.exception))
 
     def test_preserves_implementer_authored_report_when_the_cli_writes_it_directly(self):

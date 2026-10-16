@@ -420,11 +420,13 @@ def check_broad_except_allowlist(relpath, src):
     ]
 
 
-# Built by concatenation so this file never contains the retired field's literal text.
+# Built by concatenation so this file never contains a retired literal's text.
 _RETIRED_FIELD = "native" + "_runtime"
+_RETIRED_MODE = "native" + "_claude"
 _RETIRED_LITERALS = {
     "cursor-agent": frozenset({"skills/ai-kit-spec-review/ai_kit_spec/detection.py"}),
     _RETIRED_FIELD: frozenset({"skills/ai-kit-spec-review/ai_kit_spec/config_io.py"}),
+    _RETIRED_MODE: frozenset(),
 }
 
 
@@ -741,6 +743,11 @@ class TestArchNonVacuity(unittest.TestCase):
         config_io = "skills/ai-kit-spec-review/ai_kit_spec/config_io.py"
         self.assertEqual(1, len(check_retired_literals("skills/other.py", retired)))
         self.assertEqual([], check_retired_literals(config_io, retired))
+        mode = ast.parse(f'x = "{_RETIRED_MODE}"')
+        dispatch = ("skills/ai-kit-spec-execute-superpowers/"
+                    "ai_kit_spec_superpowers/dispatch_injection.py")
+        self.assertEqual(1, len(check_retired_literals(dispatch, mode)))
+        self.assertEqual(1, len(check_retired_literals("skills/other.py", mode)))
 
     def test_rule9_flags_unlisted_broad_except(self):
         src = (

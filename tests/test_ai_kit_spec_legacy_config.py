@@ -378,7 +378,9 @@ class TestLegacyNotes(unittest.TestCase):
 
 
 class TestLegacyAdapters(unittest.TestCase):
-    def test_superpowers_host_selects_native_alias_but_not_from_other_host(self):
+    def test_superpowers_keeps_the_stored_runtime_for_the_route_walk(self):
+        # 18.1-10: assembly no longer masks a host-selectable alias. Both hosts keep the stored
+        # runtime; routing decides native vs review_only per call.
         from ai_kit_spec_superpowers.dispatch_injection import assemble_candidates
 
         entry, _ = normalize_legacy_entry(
@@ -388,7 +390,7 @@ class TestLegacyAdapters(unittest.TestCase):
                                     "reviewers": [dict(entry)]}
         claude, _ = assemble_candidates("/repo", {"CLAUDECODE": "1"}, resolve)
         other, _ = assemble_candidates("/repo", {"OPENCODE": "1", "CLAUDECODE": ""}, resolve)
-        self.assertIsNone(claude[0]["runtime"])
+        self.assertEqual(claude[0]["runtime"], "claude")
         self.assertEqual(other[0]["runtime"], "claude")
 
     def test_gsd_uses_legacy_native_alias_independent_of_host(self):

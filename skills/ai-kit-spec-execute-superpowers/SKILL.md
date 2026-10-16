@@ -25,9 +25,9 @@ Each item is repeated at its point of use; this is the index.
 - **Never** call `resolve-injection` with `--exclude-keys-json` alone, omitting
   `--excluded-reasons-json` — every prior-wave permanent reason then reads as
   `"no_usable_dispatch"` (Step 2).
-- **Never** read `key`/`cli` off an injection result before checking `$INJECTION_MODE` —
+- **Never** read `key`/`runtime` off an injection result before checking `$INJECTION_MODE` —
   `quota_exhausted` and `no_candidate` carry neither field (Step 2).
-- **Never** put `$INJECTION_CLI` into an exclusion set — it is a bare CLI name, not a ladder key,
+- **Never** put `$INJECTION_RUNTIME` into an exclusion set — it is a runtime id, not a ladder key,
   so it excludes nothing (Step 3).
 - **Never** fold `$ESCALATION_EXCLUDE_JSON` into `$EXCLUDED_KEYS_JSON` — it marks healthy,
   never-tried candidates excluded only to enforce a capability floor (Step 3;
@@ -129,28 +129,31 @@ On yes, run `python3 "$TOOLS_PY" trust-local --cwd "$CWD"` and re-run this step'
 again this run, even though the line repeats on every task and fix round. Never trust on the
 user's behalf.
 
-**Branch on `$INJECTION_MODE` before reading any other field.** Only `native_claude` and
-`external_cli` carry `key`/`cli`:
+**Branch on `$INJECTION_MODE` before reading any other field.** Only `native` and
+`external_cli` carry `key`/`runtime`:
 
 ```bash
 if [ "$INJECTION_MODE" != "quota_exhausted" ] && [ "$INJECTION_MODE" != "no_candidate" ]; then
   INJECTION_KEY="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["key"])' "$INJECTION_JSON")"
-  INJECTION_CLI="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("cli") or "")' "$INJECTION_JSON")"
-  printf 'INJECTION_KEY=%s\nINJECTION_CLI=%s\n' "$INJECTION_KEY" "$INJECTION_CLI"
+  INJECTION_RUNTIME="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("runtime") or "")' \
+    "$INJECTION_JSON")"
+  printf 'INJECTION_KEY=%s\nINJECTION_RUNTIME=%s\n' "$INJECTION_KEY" "$INJECTION_RUNTIME"
 fi
 ```
 
 Record both when the block ran. `$INJECTION_KEY` is the ladder key (e.g. `codex/terra`);
-`$INJECTION_CLI` is only the bare CLI name (e.g. `codex`).
+`$INJECTION_RUNTIME` is the runtime id (e.g. `codex`), empty for the session default.
 
 - **`no_candidate`** — nothing configured for this task survives affinity/context narrowing (read
   `detail`, e.g. every `context_limit` is below the task's `required_context`). A curation gap, not
   quota: do **not** schedule `CronCreate`. STOP this wave and report `detail`.
 - **`quota_exhausted`** — read `any_quota_recoverable`
   (`python3 -c 'import json,sys; print(json.loads(sys.argv[1])["any_quota_recoverable"])' "$INJECTION_JSON"`).
-  It, not `all_auth_failures`, is the gate. `reasons` holds one of seven values per key:
-  `"quota"`, `"auth"`, `"timeout"`, `"configuration"`, `"dispatch_unavailable"`, `"real_error"`,
-  `"no_usable_dispatch"`. Only `"quota"` is worth waiting for.
+  It, not `all_auth_failures`, is the gate. `reasons` holds `"quota"`, `"auth"`,
+  `"billing_or_access"`,
+  `"capacity"`, `"git_timeout"`, `"timeout"`, `"configuration"`, `"dispatch_unavailable"`,
+  `"real_error"`, or a route name (`"bad_model"`, `"review_only"`, `"not_installed"`,
+  `"no_inventory"`, `"unknown_runtime"`, `"no_model"`). Only `"quota"` is worth waiting for.
   - **`any_quota_recoverable == False`** — every candidate failed for a reason waiting never fixes.
     Do **not** schedule `CronCreate`. STOP this wave and tell the user which key needs what fix,
     read off `reasons`: `"auth"` needs login or entitlement, `"configuration"` a fixed `command`
@@ -166,14 +169,15 @@ Record both when the block ran. `$INJECTION_KEY` is the ladder key (e.g. `codex/
     `"re-check quota via probe-quota and, once restored, resume ai-kit-spec-execute-superpowers
     from $RESUME_STATE_PATH"`. Tell the user the job is session-scoped: it vanishes when the
     session exits, fires only while the session is idle, and expires after 7 days.
-- **Otherwise** `$INJECTION_JSON` carries `mode`, `key`, `model`, `ladder_keys`, and for
-  `external_cli` also `cli`, `effort`, `service_tier`. Go to Step 3.
+- **Otherwise** `$INJECTION_JSON` carries `mode`, `key`, `runtime`, `model`, `ladder_keys`, and for
+  `external_cli` also `effort`, `service_tier`. Go to Step 3.
 
 ## Step 3: Dispatch the implementer — apply the injection
 
-**`mode == "native_claude"`:** subagent-driven-development's own process, unchanged. Pass `model`
-as the `Agent` tool's `model` parameter and record the returned agent identity; fix-loop rounds
-1–3 resume that same agent. Its round 4/5 model bump is that skill's own judgment, with no ladder.
+**`mode == "native"`:** the host's own subagent, unchanged. On Claude Code, pass `model` as the
+`Agent` tool's `model` parameter (omit it when empty) and record the returned agent identity;
+fix-loop rounds 1–3 resume that same agent. Its round 4/5 model bump is that skill's own judgment,
+with no ladder.
 
 **`mode == "external_cli"`:** a CLI process exits when done, so there is no live agent to resume.
 Every dispatch, first attempt and every fix round, uses subagent-driven-development's documented

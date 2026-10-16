@@ -14,16 +14,16 @@ A dev or worktree checkout has no plugin root and is not under `~/.claude/skills
 real git toplevel and then the cwd keeps every candidate an executable check, so the agent never
 has to substitute a path by hand.
 
-## Why mode is checked before `key`/`cli`
+## Why mode is checked before `key`/`runtime`
 
 The `quota_exhausted` shape (`mode`, `task_type`, `tried`, `reasons`, `all_auth_failures`,
 `any_quota_recoverable`) and the `no_candidate` shape (`mode`, `task_type`, `detail`,
-`ladder_keys`) carry no `key`/`cli`. Reading `["key"]` first raised `KeyError` on exactly the cases
-Step 2 exists to handle.
+`ladder_keys`) carry no `key`/`runtime`. Reading `["key"]` first raised `KeyError` on exactly the
+cases Step 2 exists to handle.
 
-## Why `$INJECTION_KEY`, never `$INJECTION_CLI`, goes into exclusions
+## Why `$INJECTION_KEY`, never `$INJECTION_RUNTIME`, goes into exclusions
 
-`$INJECTION_KEY` is the ladder key (`codex/terra`). `$INJECTION_CLI` is the bare CLI name
+`$INJECTION_KEY` is the ladder key (`codex/terra`). `$INJECTION_RUNTIME` is the runtime id
 (`codex`), which matches no ladder key, so excluding it excludes nothing and the ladder retries the
 same exhausted candidate forever.
 

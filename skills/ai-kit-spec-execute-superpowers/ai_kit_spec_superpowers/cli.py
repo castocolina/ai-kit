@@ -5,7 +5,7 @@ resolve-injection (live-quota candidate resolution), dispatch-task (the actual w
 dispatch, which preserves an implementer-authored report file rather than overwriting it with
 stdout -- CRITICAL finding), classify-dispatch-failure, resume-exclusions (computes what's safe
 to PERSIST as a resumable-state exclusion set without permanently excluding a merely
-quota-exhausted candidate -- CRITICAL finding), write-resumable-state. There is no native_claude
+quota-exhausted candidate -- CRITICAL finding), write-resumable-state. There is no native
 dispatch subcommand -- that mode is dispatched in-process via the Agent tool, by Task 4's
 SKILL.md directly, never subprocess-invoked here (same native/cross-AI split ai_kit_spec_gsd.cli
 already uses). No separate prepare-tooling subcommand either (removed a prior revision, CRITICAL
@@ -15,6 +15,8 @@ actually existed."""
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
 from collections.abc import Callable
 from typing import Any, NamedTuple, TextIO
@@ -22,6 +24,8 @@ from typing import Any, NamedTuple, TextIO
 from ai_kit_spec.cache import cache_read_json, cache_write_json
 from ai_kit_spec.config_io import ConfigError
 from ai_kit_spec.detection import (
+    LOOPBACK_URLOPEN,
+    detect_current_runtime,
     detect_tool_availability,
     probe_codegraph,
     resolve_agents_tooling_path,
@@ -29,6 +33,7 @@ from ai_kit_spec.detection import (
 )
 from ai_kit_spec.dispatch import write_resumable_state as _write_resumable_state_default
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
+from ai_kit_spec.routing import RouteContext, RuntimesSeams, route_all, unroutable_quota
 
 from ai_kit_spec_superpowers.dispatch_injection import (
     BuildInjectionOptions,
@@ -71,6 +76,12 @@ class CliDeps(NamedTuple):
     probe_codegraph_fn: Callable[..., Any] = probe_codegraph
     run_codegraph_index_fn: Callable[[str], bool] = run_codegraph_index
     write_resumable_state_fn: Callable[..., None] = _write_resumable_state_default
+    route_all_fn: Callable[..., dict] = route_all
+    which_fn: Callable[..., Any] = shutil.which
+    run_fn: Callable[..., Any] = subprocess.run
+    popen_fn: Callable[..., Any] = subprocess.Popen
+    urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN
+    env_fn: Callable[[], dict] = lambda: dict(os.environ)
     stdout: TextIO = sys.stdout
 
 
@@ -92,6 +103,7 @@ class ResolveTaskLoadResult(NamedTuple):
     excluded_reasons: dict
     candidates: list
     top_n_keys: list
+    routes: dict
 
 
 class ResolveInjectionRunInputs(NamedTuple):
@@ -125,11 +137,10 @@ def _merged_quota_exhaustion_payload(deps: CliDeps, ctx: QuotaExhaustionEmitCont
 
 
 def _compute_ladder_or_exit(
-    deps: CliDeps, task_markdown: str, full_candidates: list, sizes: dict, full_top_n_keys: list,
+    deps: CliDeps, request: BuildInjectionRequest, routes: dict,
 ) -> list | int:
     try:
-        return deps.compute_ladder_keys_fn(task_markdown, full_candidates, sizes, {},
-                                           full_top_n_keys)
+        return deps.compute_ladder_keys_fn(request, routes)
     except ValueError as exc:
         if "cannot be an execution CLI" in str(exc):
             print(f"ai-kit-spec-execute-superpowers: {exc}", file=sys.stderr)
@@ -137,17 +148,34 @@ def _compute_ladder_or_exit(
         raise
 
 
+def _probe_keys(candidates: list, routes: dict) -> list:
+    """Only a subprocess or unverified candidate is quota-probed. A native route has nothing to
+    shell out to, and a skip route is permanent, so probing either would only write a stale row."""
+    return [c["key"] for c in candidates if routes.get(c["key"]) in ("subprocess", "unverified")]
+
+
+def _native_probe_rows(candidates: list, routes: dict) -> dict:
+    """Native rows to drop from the in-memory quota. A runtime-less session default is native too,
+    but it was never a subprocess, so a row a caller stored for it is real quota and stays."""
+    named = {c["key"] for c in candidates if c.get("runtime") is not None}
+    return {key: "native" for key, decision in routes.items()
+            if decision == "native" and key in named}
+
+
 def _refresh_quota_for_candidates(
-    deps: CliDeps, quota_path: str, candidates: list, existing_quota: dict,
+    deps: CliDeps, quota_path: str, candidates: list, existing_quota: dict, routes: dict,
 ) -> dict:
+    """Probes subprocess and unverified candidates only, then drops every native-routed row from
+    the returned dict. The cache file keeps what the refresh wrote; the drop is in memory, so a
+    stale subprocess failure can never block a candidate this call routes native."""
     quota = deps.refresh_quota_cache_fn(
         {"reviewers": [
             {"key": c["key"], "model": c["model"], "vendor": c["vendor"], "runtime": c["runtime"],
              "command": c.get("command")} for c in candidates
         ]},
-        [c["key"] for c in candidates], existing_quota, QUOTA_TTL_SECONDS)
+        _probe_keys(candidates, routes), existing_quota, QUOTA_TTL_SECONDS)
     deps.cache_write_json_fn(quota_path, quota)
-    return quota
+    return unroutable_quota(quota, _native_probe_rows(candidates, routes))
 
 
 def _handle_build_value_error(
@@ -165,13 +193,24 @@ def _handle_build_value_error(
     raise exc
 
 
+def _routes_for(deps: CliDeps, candidates: list) -> dict:
+    """One exec-mode routing of the full roster. The host is this process; the inventory is the
+    runtimes cache, refreshed once for a runtime whose listing missed."""
+    env = deps.env_fn()
+    seams = RuntimesSeams(deps.which_fn, deps.run_fn, deps.popen_fn, deps.urlopen_fn)
+    return deps.route_all_fn(
+        candidates, RouteContext(detect_current_runtime(env), "exec", env, seams))
+
+
 def _resolve_task_inputs(args: argparse.Namespace, deps: CliDeps) -> ResolveTaskLoadResult | int:
-    full_candidates, full_top_n_keys = deps.assemble_candidates_fn(args.cwd, dict(os.environ))
+    full_candidates, full_top_n_keys = deps.assemble_candidates_fn(args.cwd, deps.env_fn())
     with open(args.task_file, encoding="utf-8") as f:
         task_markdown = f.read()
     sizes = deps.derive_files_touched_sizes_fn(task_markdown, args.cwd)
+    routes = _routes_for(deps, full_candidates)
     ladder_keys = _compute_ladder_or_exit(
-        deps, task_markdown, full_candidates, sizes, full_top_n_keys)
+        deps, BuildInjectionRequest(task_markdown, full_candidates, sizes, {}, full_top_n_keys),
+        routes)
     if isinstance(ladder_keys, int):
         return ladder_keys
     exclude, escalation_exclude, excluded_reasons = _parse_resolve_excludes(args)
@@ -180,7 +219,7 @@ def _resolve_task_inputs(args: argparse.Namespace, deps: CliDeps) -> ResolveTask
     top_n_keys = [k for k in full_top_n_keys if k not in all_exclude]
     return ResolveTaskLoadResult(
         task_markdown, sizes, ladder_keys, deps.classify_task_fn(task_markdown),
-        exclude, excluded_reasons, candidates, top_n_keys)
+        exclude, excluded_reasons, candidates, top_n_keys, routes)
 
 
 def _emit_quota_exhausted(deps: CliDeps, ctx: QuotaExhaustionEmitContext) -> None:
@@ -199,12 +238,12 @@ def _run_resolve_injection_build(deps: CliDeps, inputs: ResolveInjectionRunInput
     loaded = inputs.loaded
     existing_quota = deps.cache_read_json_fn(inputs.args.quota_path) or {}
     quota = _refresh_quota_for_candidates(
-        deps, inputs.args.quota_path, loaded.candidates, existing_quota)
+        deps, inputs.args.quota_path, loaded.candidates, existing_quota, loaded.routes)
     request = BuildInjectionRequest(
         loaded.task_markdown, loaded.candidates, loaded.sizes, {}, loaded.top_n_keys)
     try:
         result = deps.build_dispatch_injection_fn(
-            request, BuildInjectionOptions(quota=quota))
+            request, BuildInjectionOptions(quota=quota, routes=loaded.routes))
         result["ladder_keys"] = loaded.ladder_keys
         deps.stdout.write(json.dumps(result))
         return 0
@@ -265,7 +304,7 @@ def _load_dispatch_task_files(args: argparse.Namespace) -> tuple[dict, str, str]
     if injection.get("mode") != "external_cli":
         raise ValueError(
             f"dispatch-task only handles mode='external_cli' injections, got "
-            f"mode={injection.get('mode')!r}; a native_claude injection dispatches via the "
+            f"mode={injection.get('mode')!r}; a native injection dispatches via the "
             f"Agent tool directly, never through this CLI subprocess path")
     with open(args.prompt_file, encoding="utf-8") as f:
         prompt = f.read()

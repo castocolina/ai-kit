@@ -1,3 +1,5 @@
+> History: moved from the skill directory in Phase 18.1 (D-09); mode names below are the pre-18.1 ones.
+
 # Smoke Test Results — ai-kit-spec-execute-superpowers
 
 Live smoke test of the `ai-kit-spec-execute-superpowers` adapter, covering Task 6's Steps 1, 2,
