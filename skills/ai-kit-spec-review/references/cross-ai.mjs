@@ -274,8 +274,8 @@ const RUNTIMES = {
     exec: (m, c) => withCodexKnobs(['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '-C', c.cwd, '-m', m,
       '--json', '-o', c.outFile, '-'], c),
     review: (m, c) => withCodexKnobs(['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '-C', c.cwd, '-m', m, '--json', '-o', c.outFile, '-'], c),
-    resume: (m, c, sid, mode) => ['exec', 'resume', ...(mode === 'exec' ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
-      '--skip-git-repo-check', '-m', m, '--json', '-o', c.outFile, sid, '-'],
+    resume: (m, c, sid, mode) => withCodexKnobs(['exec', 'resume', ...(mode === 'exec' ? ['--dangerously-bypass-approvals-and-sandbox'] : []),
+      '--skip-git-repo-check', '-m', m, '--json', '-o', c.outFile, sid, '-'], c),
     parse: (out, c) => {
       let sid = null, error = null;
       for (const j of jsonLines(out)) {
@@ -406,6 +406,8 @@ function logDeadline(cwd, env, o) {
 }
 function retryArgv(name, rt, model, ctx, sid, mode, prompt) {
   if (mode === 'review') {
+    // A fresh run: pi would reopen (resume) an existing --session-id.
+    ctx.sid = crypto.randomUUID();
     return { argv: withExtra(name, rt.review(model, ctx)), input: prompt };
   }
   if (sid && rt.resume) {
@@ -1939,7 +1941,8 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'argv-retry-codex-exec',
-        args: ['--print-argv', '--mode', 'exec', '--prefer', 'codex', '--model-codex', 'x'],
+        args: ['--print-argv', '--mode', 'exec', '--prefer', 'codex', '--model-codex', 'x',
+          '--codex-effort', 'high', '--codex-service-tier', 'flex'],
         config: { prefer: ['codex'] },
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -1949,7 +1952,26 @@ async function blackBoxSelfTest() {
           const parsed = JSON.parse(m[1]);
           if (!parsed.includes('resume')) return 'missing resume';
           if (!parsed.includes('--dangerously-bypass-approvals-and-sandbox')) return 'missing bypass';
+          for (const k of ['model_reasoning_effort=high', 'service_tier=flex']) if (!parsed.includes(k)) return `retry argv missing ${k}`;
           return null;
+        },
+      },
+      {
+        // SPEC R5: a review retry is a fresh run, so pi gets a new session id.
+        name: 'argv-retry-pi-review',
+        args: ['--print-argv', '--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
+          const first = JSON.parse(line.split('\t')[2]);
+          const m = (r.stderr || '').match(/cross-ai: retry pi argv=(\S+)/);
+          if (!m) return 'missing retry line';
+          const retry = JSON.parse(m[1]);
+          const sid = (a) => a[a.indexOf('--session-id') + 1];
+          if (sid(retry) === sid(first)) return 'retry reuses the session id';
+          const same = (a) => JSON.stringify(a.filter((t) => t !== sid(a)));
+          return same(retry) === same(first) ? null : 'retry argv differs beyond the session id';
         },
       },
       {
