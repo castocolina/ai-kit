@@ -640,9 +640,10 @@ def _record_runner_marker(
 
 
 def _clear_runner_marker(config_path: str, snapshot: str | None) -> None:
+    # Marker first: a held marker must never name a snapshot that is already gone.
+    config_backup.update_marker(config_path, runner=None)
     if snapshot:
         config_backup.discard_snapshot(snapshot)
-    config_backup.update_marker(config_path, runner=None)
 
 
 def _rollback(progress: Progress, config_path: str) -> str | None:

@@ -339,6 +339,27 @@ class TestRunnerSnapshot(unittest.TestCase):
             config_backup.discard_snapshot(os.path.join(tmp, "ghost.ai-kit-apply-backup"))
 
 
+class TestClearRunnerMarkerOrder(unittest.TestCase):
+    def test_failed_marker_update_keeps_snapshot(self) -> None:
+        """B IN-03: the marker never points at a snapshot that is already gone."""
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, ".planning", "config.json")
+            _write_config(config_path, b"{}")
+            config_backup.acquire_marker(config_path, True, _fixed_now)
+            snap = os.path.join(tmp, "cross-ai.mjs" + config_backup.SNAPSHOT_SUFFIX)
+            _write_config(snap, b"old runner")
+            with mock.patch.object(
+                config_backup, "update_marker", side_effect=OSError("marker busy")
+            ), self.assertRaises(OSError):
+                apply_mod._clear_runner_marker(config_path, snap)
+            self.assertTrue(os.path.isfile(snap))
+            apply_mod._clear_runner_marker(config_path, snap)
+            self.assertFalse(os.path.isfile(snap))
+            marker = config_backup.read_marker(config_path)
+            assert marker is not None
+            self.assertIsNone(marker["runner"])
+
+
 class TestRecoveryText(unittest.TestCase):
     def _config(self, tmp: str) -> str:
         return os.path.join(tmp, ".planning", "config.json")
