@@ -339,7 +339,7 @@ class TestAssembleCandidates(unittest.TestCase):
         def fake_cfg_resolve(cwd, env):
             return {"policy": {"ladder": ["codex/gpt-5.6-sol"]},
                     "reviewers": [{"key": "codex/gpt-5.6-sol", "model": "gpt-5.6-sol",
-                                    "vendor": "openai", "cli": "codex"}]}
+                                    "vendor": "openai", "runtime": "codex"}]}
         candidates, top_n_keys = adapter.assemble_candidates(
             "/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
         self.assertEqual(candidates, [{"key": "codex/gpt-5.6-sol", "model": "gpt-5.6-sol",
@@ -354,7 +354,7 @@ class TestAssembleCandidates(unittest.TestCase):
         # the GSD path; without effort the codex reasoning flag is dropped from the hook.
         def fake_cfg_resolve(cwd, env):
             return {"policy": {"ladder": []},
-                    "reviewers": [{"key": "c", "model": "m", "cli": "codex",
+                    "reviewers": [{"key": "c", "model": "m", "runtime": "codex",
                                    "purpose": "review", "effort": "high",
                                    "service_tier": "flex"}]}
         candidates, _ = adapter.assemble_candidates("/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
@@ -363,20 +363,30 @@ class TestAssembleCandidates(unittest.TestCase):
 
     def test_purpose_execute_on_an_unsupported_cli_is_a_hard_error_end_to_end(self):
         def fake_cfg_resolve(cwd, env):
-            return {"policy": {"ladder": ["g", "r"]},
-                    "reviewers": [{"key": "g", "model": "m", "cli": "grok", "purpose": "execute"},
-                                  {"key": "r", "model": "m", "cli": "codex",
-                                   "purpose": "review"}]}
+            return {
+                "policy": {"ladder": ["g", "r"]},
+                "reviewers": [
+                    {"key": "g", "model": "m", "runtime": "grok", "purpose": "execute"},
+                    {"key": "r", "model": "m", "runtime": "codex", "purpose": "review"},
+                ],
+            }
         candidates, top = adapter.assemble_candidates("/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
         with self.assertRaisesRegex(ValueError, "codex, cursor, opencode"):
             _resolve_gsd_dispatch(candidates, top, {}, _ctx(), "/repo")
+
+    def test_claude_alias_runtime_derives_a_gsd_tier(self):
+        def fake_cfg_resolve(cwd, env):
+            return {"policy": {"ladder": ["opus"]},
+                    "reviewers": [{"key": "opus", "model": "opus", "runtime": "claude"}]}
+        candidates, _ = adapter.assemble_candidates("/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
+        self.assertEqual(candidates[0]["tier"], "opus")
 
     def test_native_cli_none_entry_derives_tier_from_its_own_model_field(self):
         # This repo's own "opus-native"-shaped entries: model IS already a tier alias.
         def fake_cfg_resolve(cwd, env):
             return {"policy": {"ladder": ["opus-native"]},
                     "reviewers": [{"key": "opus-native", "model": "opus", "vendor": "",
-                                    "cli": None}]}
+                                    "runtime": None}]}
         candidates, _ = adapter.assemble_candidates("/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
         self.assertEqual(candidates[0]["tier"], "opus")
 
@@ -384,7 +394,7 @@ class TestAssembleCandidates(unittest.TestCase):
         def fake_cfg_resolve(cwd, env):
             return {"policy": {"ladder": ["codex/gpt-5.6-sol"]},
                     "reviewers": [{"key": "codex/gpt-5.6-sol", "model": "gpt-5.6-sol",
-                                    "vendor": "openai", "cli": "codex", "tier": "sonnet",
+                                    "vendor": "openai", "runtime": "codex", "tier": "sonnet",
                                     "command": "codex exec -m {model} -- {prompt}",
                                     "task_affinity": "backend", "context_limit": 128000}]}
         candidates, _ = adapter.assemble_candidates("/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
@@ -468,7 +478,6 @@ class TestResolveGsdDispatch(unittest.TestCase):
             or gsd_config.ApplyResult([key for key, _ in changes], None, None, [], []))
         self.assertEqual(result["runtime"], "claude")
         self.assertEqual(result["tier"], "opus")
-        self.assertNotIn("cli", result)
         self.assertEqual(result["model"], "quality")
         self.assertTrue(result["written"])
         self.assertEqual(seen, [[("model_profile", "quality")]])
@@ -530,7 +539,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         self.assertEqual(result["error"], "config-set failed")
 
     @mock.patch("ai_kit_spec_gsd.adapter.build_cross_ai_command")
-    def test_falls_through_to_cross_ai_when_no_tier_and_no_native_runtime(self, mock_build):
+    def test_falls_through_to_cross_ai_when_no_tier_and_not_alias_native(self, mock_build):
         # D-15 (Phase 16.1): only SUPPORTED_EXECUTE_CLIS entries survive the ladder screen, so
         # this uses opencode (supported, no curated tier) instead of the removed grok path.
         mock_build.return_value = "opencode run -m router-env/my-coding -C /repo"
@@ -541,7 +550,6 @@ class TestResolveGsdDispatch(unittest.TestCase):
             candidates, ["opencode/router-env-my-coding"], {}, _ctx(), "/repo")
         self.assertEqual(result["mode"], "cross_ai_hook")
         self.assertEqual(result["runtime"], "opencode")
-        self.assertNotIn("cli", result)
         self.assertEqual(result["cross_ai_command"],
                          "opencode run -m router-env/my-coding -C /repo")
         self.assertEqual(result["provenance"], "resolved_candidate")

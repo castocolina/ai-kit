@@ -8,6 +8,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
 
 sys.path.insert(0, "skills/ai-kit-spec-review")
+sys.path.insert(0, "skills/ai-kit-spec-execute-superpowers")
+sys.path.insert(0, "skills/ai-kit-spec-execute-gsd")
 
 from ai_kit_spec.cli import main
 from ai_kit_spec.config_io import (
@@ -360,6 +362,42 @@ class TestLegacyNotes(unittest.TestCase):
         self.assertEqual(len(mapped), 2)
         self.assertTrue(all("old" in note for note in notes))
         self.assertFalse(any("new" in note for note in notes))
+
+
+class TestLegacyAdapters(unittest.TestCase):
+    def test_superpowers_host_selects_native_alias_but_not_from_other_host(self):
+        from ai_kit_spec_superpowers.dispatch_injection import assemble_candidates
+
+        entry, _ = normalize_legacy_entry(
+            {"key": "opus", "model": "opus", "native_runtime": "claude"}
+        )
+        resolve = lambda cwd, env: {"policy": {"ladder": ["opus"]},
+                                    "reviewers": [dict(entry)]}
+        claude, _ = assemble_candidates("/repo", {"CLAUDECODE": "1"}, resolve)
+        other, _ = assemble_candidates("/repo", {"OPENCODE": "1", "CLAUDECODE": ""}, resolve)
+        self.assertIsNone(claude[0]["runtime"])
+        self.assertEqual(other[0]["runtime"], "claude")
+
+    def test_gsd_uses_legacy_native_alias_independent_of_host(self):
+        from ai_kit_spec_gsd.adapter import assemble_candidates
+
+        entry, _ = normalize_legacy_entry(
+            {"key": "opus", "model": "opus", "native_runtime": "claude"}
+        )
+        resolve = lambda cwd, env: {"policy": {"ladder": ["opus"]},
+                                    "reviewers": [dict(entry)]}
+        candidates, _ = assemble_candidates("/repo", {"OPENCODE": "1"}, resolve)
+        self.assertEqual(candidates[0]["tier"], "opus")
+        self.assertIsNone(candidates[0]["runtime"])
+
+    def test_gsd_explicit_claude_runtime_model_id_is_not_an_alias_tier(self):
+        from ai_kit_spec_gsd.adapter import assemble_candidates
+
+        resolve = lambda cwd, env: {"policy": {"ladder": ["explicit"]},
+                                    "reviewers": [{"key": "explicit", "model": "claude-opus-5-5",
+                                                   "runtime": "claude"}]}
+        candidates, _ = assemble_candidates("/repo", {}, resolve)
+        self.assertIsNone(candidates[0]["tier"])
 
 
 class TestHostCanSelect(unittest.TestCase):

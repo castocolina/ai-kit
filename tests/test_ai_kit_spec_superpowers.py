@@ -81,11 +81,11 @@ class TestAssembleCandidates(unittest.TestCase):
         fake_resolved = {
             "policy": {"ladder": ["claude/opus-5", "codex/terra"]},
             "reviewers": [
-                {"key": "claude/opus-5", "model": "opus", "cli": None, "vendor": "anthropic"},
+                {"key": "claude/opus-5", "model": "opus", "runtime": None, "vendor": "anthropic"},
                 {
                     "key": "codex/terra",
                     "model": "gpt-5.6-terra",
-                    "cli": "codex",
+                    "runtime": "codex",
                     "vendor": "openai",
                     "task_affinity": "backend",
                     "context_limit": 1_000_000,
@@ -116,14 +116,14 @@ class TestAssembleCandidates(unittest.TestCase):
                 {
                     "key": "claude/opus-5",
                     "model": "opus",
-                    "cli": None,
+                    "runtime": None,
                     "vendor": "anthropic",
                     "strength": "planning",
                 },
                 {
                     "key": "codex/terra",
                     "model": "gpt-5.6-terra",
-                    "cli": "codex",
+                    "runtime": "codex",
                     "vendor": "openai",
                     "strength": "coding",
                     "effort": "high",
@@ -154,7 +154,7 @@ class TestAssembleCandidates(unittest.TestCase):
                     {
                         "key": "a",
                         "model": "m",
-                        "cli": "codex",
+                        "runtime": "codex",
                         "vendor": "openai",
                         "command": "codex exec -m {model}",
                         "purpose": "execute",
@@ -171,7 +171,7 @@ class TestAssembleCandidates(unittest.TestCase):
         def fake_cfg_resolve(cwd, env):
             return {
                 "policy": {"ladder": ["a"]},
-                "reviewers": [{"key": "a", "model": "m", "cli": "codex", "vendor": "openai"}],
+                "reviewers": [{"key": "a", "model": "m", "runtime": "codex", "vendor": "openai"}],
             }
 
         candidates, _ = dispatch_injection.assemble_candidates(
@@ -219,7 +219,7 @@ class TestComputeLadderKeys(unittest.TestCase):
             {
                 "key": "claude/opus-5",
                 "model": "opus",
-                "cli": None,
+                "runtime": None,
                 "vendor": "anthropic",
                 "task_affinity": None,
                 "context_limit": None,
@@ -227,7 +227,7 @@ class TestComputeLadderKeys(unittest.TestCase):
             {
                 "key": "codex/terra",
                 "model": "gpt-5.6-terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "vendor": "openai",
                 "task_affinity": None,
                 "context_limit": None,
@@ -239,6 +239,14 @@ class TestComputeLadderKeys(unittest.TestCase):
 
 
 class TestBuildDispatchInjection(unittest.TestCase):
+    def test_host_selectable_alias_becomes_native_candidate(self):
+        resolved = {"policy": {"ladder": ["claude/opus"]},
+                    "reviewers": [{"key": "claude/opus", "runtime": "claude",
+                                   "model": "opus"}]}
+        candidates, _ = dispatch_injection.assemble_candidates(
+            "/repo", {"CLAUDECODE": "1"}, cfg_resolve_fn=lambda cwd, env: resolved)
+        self.assertIsNone(candidates[0]["runtime"])
+
     def test_native_claude_mode_when_top_candidate_has_quota(self):
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
@@ -280,7 +288,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
             {
                 "mode": "external_cli",
                 "key": "codex/terra",
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "effort": None,
                 "service_tier": None,
@@ -391,7 +399,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 options=dispatch_injection.BuildInjectionOptions(quota={}),
             )
         self.assertEqual(result["mode"], "external_cli")
-        self.assertEqual(result["cli"], "codex")
+        self.assertEqual(result["runtime"], "codex")
         self.assertIn("claude-cli/opus-5", stderr.getvalue())
         self.assertIn("codex, cursor, opencode", stderr.getvalue())
 
@@ -790,7 +798,7 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
         injection = {
             "mode": "external_cli",
             "key": "codex/terra",
-            "cli": "codex",
+            "runtime": "codex",
             "model": "gpt-5.6-terra",
             "effort": "high",
             "service_tier": None,
@@ -802,7 +810,7 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
                 candidate=spec.candidate, prompt=spec.prompt, target_dir=spec.target_dir
             )
             return {
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "command": "codex exec ...",
                 "returncode": 0,
@@ -842,7 +850,7 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
         injection = {
             "mode": "external_cli",
             "key": "codex/terra",
-            "cli": "codex",
+            "runtime": "codex",
             "model": "gpt-5.6-terra",
             "effort": None,
             "service_tier": None,
@@ -1376,7 +1384,7 @@ class TestCliDispatchTask(unittest.TestCase):
         # HIGH finding: dispatch-task is the only real entry point that ever reaches
         # dispatch_superpowers_task -- a native_claude injection must fail here with a clear,
         # actionable error BEFORE any tooling-detection code runs (which indexes
-        # injection["cli"], absent on a native_claude injection, and would otherwise die with a
+        # injection["runtime"], absent on a native_claude injection, and would otherwise die with a
         # bare, unexplained KeyError instead of a diagnosable message).
         injection = {"mode": "native_claude", "model": "opus", "key": "claude/opus-5"}
         with tempfile.TemporaryDirectory() as tmp:
@@ -1428,7 +1436,7 @@ class TestCliDispatchTask(unittest.TestCase):
         injection = {
             "mode": "external_cli",
             "key": "codex/terra",
-            "cli": "codex",
+            "runtime": "codex",
             "model": "gpt-5.6-terra",
             "effort": None,
             "service_tier": None,
@@ -1442,7 +1450,7 @@ class TestCliDispatchTask(unittest.TestCase):
             with open(report_path, "w") as f:
                 f.write("## TDD Evidence\n\nfull detailed report with real test output...\n")
             return {
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "command": "codex exec ...",
                 "returncode": 0,
@@ -1503,7 +1511,7 @@ class TestCliDispatchTask(unittest.TestCase):
         injection = {
             "mode": "external_cli",
             "key": "codex/terra",
-            "cli": "codex",
+            "runtime": "codex",
             "model": "gpt-5.6-terra",
             "effort": None,
             "service_tier": None,
@@ -1511,7 +1519,7 @@ class TestCliDispatchTask(unittest.TestCase):
 
         def fake_dispatch(request, guidance=None, seams=None):
             return {
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "command": "codex exec ...",
                 "returncode": 0,
@@ -1569,7 +1577,7 @@ class TestCliDispatchTask(unittest.TestCase):
         injection = {
             "mode": "external_cli",
             "key": "codex/terra",
-            "cli": "codex",
+            "runtime": "codex",
             "model": "gpt-5.6-terra",
             "effort": None,
             "service_tier": None,
@@ -1577,7 +1585,7 @@ class TestCliDispatchTask(unittest.TestCase):
 
         def fake_dispatch(request, guidance=None, seams=None):
             return {
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "command": "codex exec ...",
                 "returncode": 0,
@@ -1634,7 +1642,7 @@ class TestCliDispatchTask(unittest.TestCase):
         injection = {
             "mode": "external_cli",
             "key": "codex/terra",
-            "cli": "codex",
+            "runtime": "codex",
             "model": "gpt-5.6-terra",
             "effort": None,
             "service_tier": None,
@@ -1646,7 +1654,7 @@ class TestCliDispatchTask(unittest.TestCase):
                 guidance.codegraph_registered if guidance is not None else False
             )
             return {
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "command": "codex exec ...",
                 "returncode": 0,
@@ -1704,7 +1712,7 @@ class TestCliDispatchTask(unittest.TestCase):
         injection = {
             "mode": "external_cli",
             "key": "codex/terra",
-            "cli": "codex",
+            "runtime": "codex",
             "model": "gpt-5.6-terra",
             "effort": None,
             "service_tier": None,
@@ -1716,7 +1724,7 @@ class TestCliDispatchTask(unittest.TestCase):
                 guidance.codegraph_registered if guidance is not None else False
             )
             return {
-                "cli": "codex",
+                "runtime": "codex",
                 "model": "gpt-5.6-terra",
                 "command": "codex exec ...",
                 "returncode": 0,

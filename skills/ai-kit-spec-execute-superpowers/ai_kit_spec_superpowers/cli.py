@@ -142,7 +142,7 @@ def _refresh_quota_for_candidates(
 ) -> dict:
     quota = deps.refresh_quota_cache_fn(
         {"reviewers": [
-            {"key": c["key"], "model": c["model"], "vendor": c["vendor"], "cli": c["runtime"],
+            {"key": c["key"], "model": c["model"], "vendor": c["vendor"], "runtime": c["runtime"],
              "command": c.get("command")} for c in candidates
         ]},
         [c["key"] for c in candidates], existing_quota, QUOTA_TTL_SECONDS)
@@ -282,7 +282,7 @@ def _dispatch_guidance_for_cli(
         tool_availability=deps.detect_tool_availability_fn(),
         agents_tooling_path=deps.resolve_agents_tooling_path_fn(),
         codegraph_registered=_codegraph_registered_for_cli(
-            injection["cli"], args.target_dir, deps),
+            injection["runtime"], args.target_dir, deps),
     )
 
 

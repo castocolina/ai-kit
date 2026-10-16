@@ -128,7 +128,7 @@ def _refresh_quota_for_candidates(
 ) -> dict:
     quota = deps.refresh_quota_cache_fn(
         {"reviewers": [
-            {"key": c["key"], "model": c["model"], "vendor": c["vendor"], "cli": c["runtime"],
+            {"key": c["key"], "model": c["model"], "vendor": c["vendor"], "runtime": c["runtime"],
              "command": c.get("command")}
             for c in candidates
         ]},

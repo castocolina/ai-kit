@@ -14,6 +14,7 @@ from typing import Any, NamedTuple
 
 from ai_kit_spec.commands import build_execute_command
 from ai_kit_spec.config_io import cfg_resolve
+from ai_kit_spec.detection import detect_current_runtime
 from ai_kit_spec.error_classifier import classify_error
 from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
 from ai_kit_spec.execute_selection import (
@@ -23,6 +24,7 @@ from ai_kit_spec.execute_selection import (
     screen_execute_clis,
 )
 from ai_kit_spec.quota import entry_reason, resolve_ladder_pick
+from ai_kit_spec.routing import host_can_select
 
 from ai_kit_spec_superpowers.task_classification import (
     classify_task,
@@ -169,12 +171,19 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
     `KeyError`."""
     resolved = cfg_resolve_fn(cwd, env)
     candidates = []
+    host = detect_current_runtime(env)
     for r in resolved.get("reviewers", []):
         if "key" not in r:
             continue
+        runtime = r.get("runtime")
+        command = r.get("command")
+        native = (runtime is None and not command) or host_can_select(
+            runtime, r.get("model", ""), host
+        )
         candidates.append({
-            "key": r["key"], "model": r.get("model", ""), "runtime": r.get("cli"),
-            "vendor": r.get("vendor", ""), "command": r.get("command"),
+            "key": r["key"], "model": r.get("model", ""),
+            "runtime": None if native else runtime,
+            "vendor": r.get("vendor", ""), "command": command,
             "task_affinity": r.get("task_affinity"), "context_limit": r.get("context_limit"),
             "purpose": r.get("purpose"),
             "effort": r.get("effort"), "service_tier": r.get("service_tier"),
@@ -230,15 +239,15 @@ _PROBE_TARGET_DIR = "/__ai_kit_spec_execute_superpowers_dispatch_probe__"
 
 
 def _is_dispatchable(candidate: dict, build_execute_command_fn) -> bool:
-    """True for a native candidate (cli is None -- always executes in-process via the Agent
-    tool). For ANY CLI-set candidate, True only if build_execute_command_fn actually has a
-    registered execute-mode builder for its cli (raises ValueError otherwise, design spec
+    """True for a native candidate (runtime and command are None -- runs in-process via the Agent
+    tool). For ANY routed candidate, True only if build_execute_command_fn actually has a
+    registered execute-mode builder for its runtime (raises ValueError otherwise, design spec
     Section 12's "execute-mode builder not yet live-verified for a CLI: refuse ... never
     attempt an unverified invocation" rule). Since Phase 16.1's D-15 screen, claude and grok
     have no execute builder at all -- resolve_execute_candidates drops/warns them before this
     probe would even see them -- so this is a backstop, not the primary D-15 gate."""
     cli = candidate.get("runtime")
-    if cli is None:
+    if cli is None and not candidate.get("command"):
         return True
     try:
         build_execute_command_fn(cli, target_dir=_PROBE_TARGET_DIR, effort=candidate.get("effort"),
@@ -284,10 +293,10 @@ def compute_ladder_keys(task_markdown: str, candidates: list, files_touched_size
 
 def _injection_for_candidate(candidate: dict) -> dict:
     cli = candidate["runtime"]
-    if cli is None:
+    if cli is None and not candidate.get("command"):
         return {"mode": "native_claude", "model": candidate["model"], "key": candidate["key"]}
     return {
-        "mode": "external_cli", "key": candidate["key"], "cli": cli,
+        "mode": "external_cli", "key": candidate["key"], "runtime": cli,
         "model": candidate["model"], "effort": candidate.get("effort"),
         "service_tier": candidate.get("service_tier"),
     }
@@ -357,7 +366,7 @@ def dispatch_superpowers_task(request: DispatchTaskRequest,
     guide = guidance or SuperpowersDispatchGuidance()
     seam = seams or SuperpowersDispatchSeams()
     injection = request.injection
-    candidate = {"runtime": injection["cli"], "model": injection["model"],
+    candidate = {"runtime": injection["runtime"], "model": injection["model"],
                  "effort": injection.get("effort"), "service_tier": injection.get("service_tier")}
     return seam.dispatch_execute_fn(
         ExecuteDispatchSpec(

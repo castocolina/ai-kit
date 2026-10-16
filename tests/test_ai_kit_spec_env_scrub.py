@@ -89,7 +89,7 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
             key="k",
             model="m",
             vendor="v",
-            cli="codex",
+            runtime="codex",
             command=_command_template(script, out),
             extra={},
         )

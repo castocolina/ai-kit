@@ -3508,23 +3508,19 @@ class TestProbeReviewerQuota(unittest.TestCase):
         probe_reviewer_quota(resolved, run_fn=fake_run)
         self.assertEqual(captured.get("input"), "Only say: Hello world!")
 
-    def test_cli_entry_with_missing_command_is_unavailable_not_true(self):
-        # regression: a cli-set entry with no command template can never
-        # actually be dispatched — must classify as unavailable, not
-        # silently `available: True` (which would let it win a ladder
-        # walk and only fail later, in real dispatch)
+    def test_session_default_is_available_without_a_probe(self):
         resolved = ResolvedReviewer(
-            key="codex-gpt", model="gpt-5.2", vendor="openai",
-            runtime="codex", command=None, extra={},
+            key="session-default", model="", vendor="",
+            runtime=None, command=None, extra={},
         )
         result = probe_reviewer_quota(
             resolved,
             run_fn=lambda *a, **k: (_ for _ in ()).throw(
-                AssertionError("should never shell out for a malformed command")
+                AssertionError("session default should never shell out")
             ),
         )
-        self.assertFalse(result["available"])
-        self.assertEqual(result["reason"], "configuration")
+        self.assertTrue(result["available"])
+        self.assertIsNone(result["reason"])
 
 
 class TestErrorClassifier(unittest.TestCase):
@@ -4435,6 +4431,24 @@ class TestMainCli(unittest.TestCase):
             self.assertEqual(code, 0)
             parsed = json.loads(buf.getvalue())
             self.assertEqual(parsed[0]["model"], "gpt-5.2-mini")  # local override applied
+
+    def test_probe_quota_does_not_probe_a_host_selectable_alias(self):
+        with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
+            config_dir = os.path.join(home, ".config", "ai-kit")
+            os.makedirs(config_dir)
+            cfg_write_toml(
+                os.path.join(config_dir, "review-spec.toml"),
+                {"policy": {"ladder": ["native"]},
+                 "reviewers": [{"key": "native", "model": "opus", "runtime": "claude"}]},
+            )
+            quota_path = os.path.join(cwd, "quota.json")
+            fake_run = mock.Mock(side_effect=AssertionError("host-selectable reviewer probed"))
+            with mock.patch.object(os, "environ", {"HOME": home, "CLAUDECODE": "1"}):
+                self.assertEqual(main(["probe-quota", "--cwd", cwd,
+                                       "--quota-path", quota_path], run_fn=fake_run), 0)
+            fake_run.assert_not_called()
+            written = cache_read_json(quota_path)
+            self.assertNotIn("native", written or {})
 
     def test_probe_quota_refreshes_stale_entries_and_writes_cache(self):
         with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home:
@@ -5697,6 +5711,17 @@ class TestExecuteLadderScreen(unittest.TestCase):
             self._screen(candidates, warn_fn=lambda _msg: self.fail("must raise, not warn"))
         self.assertIn("codex, cursor, opencode", str(ctx.exception))
         self.assertIn("cla", str(ctx.exception))
+
+    def test_custom_command_is_dropped_and_execute_purpose_raises(self):
+        warnings = []
+        candidate = {"key": "custom", "runtime": None, "command": "mycli {model}"}
+        result = self._screen([candidate], warn_fn=warnings.append)
+        self.assertEqual(result, [])
+        self.assertTrue(any("custom" in warning and "custom command" in warning
+                            for warning in warnings))
+        candidate["purpose"] = "execute"
+        with self.assertRaisesRegex(ValueError, "custom entries run only as reviewers"):
+            self._screen([candidate], warn_fn=lambda _: None)
 
     def test_purpose_review_claude_entry_passes_through_untouched(self):
         warnings = []

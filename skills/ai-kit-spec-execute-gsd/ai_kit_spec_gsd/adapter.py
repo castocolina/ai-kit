@@ -44,13 +44,18 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
     for r in resolved.get("reviewers", []):
         if "key" not in r:
             continue
-        cli = r.get("cli")
+        runtime = r.get("runtime")
+        command = r.get("command")
         tier = r.get("tier")
-        if tier is None and cli is None:
+        alias_native = (runtime is None and not command) or (
+            runtime == "claude" and r.get("model") in {"opus", "sonnet", "haiku", "opusplan"}
+        )
+        if tier is None and alias_native:
             tier = r.get("model")
         candidates.append({
-            "key": r["key"], "model": r.get("model", ""), "runtime": cli,
-            "vendor": r.get("vendor", ""), "command": r.get("command"),
+            "key": r["key"], "model": r.get("model", ""),
+            "runtime": None if alias_native else runtime,
+            "vendor": r.get("vendor", ""), "command": command,
             "task_affinity": r.get("task_affinity"), "context_limit": r.get("context_limit"),
             "tier": tier, "purpose": r.get("purpose"),
             "effort": r.get("effort"), "service_tier": r.get("service_tier"),

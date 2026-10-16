@@ -84,6 +84,15 @@ def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
     kept = []
     for c in candidates:
         cli = c.get("runtime")
+        if c.get("command") and cli is None and purpose_matches(
+            c.get("purpose"), "execute"
+        ):
+            message = (f"reviewer {c['key']!r} is a custom command entry; "
+                       "custom entries run only as reviewers")
+            if c.get("purpose") == "execute":
+                raise ValueError(message)
+            emit_warn(f"ai-kit-spec: skipping {c['key']!r} for execution: {message}")
+            continue
         if exempt_fn is not None and exempt_fn(c):
             kept.append(c)
             continue
