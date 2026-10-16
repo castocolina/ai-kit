@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -880,6 +881,19 @@ class TestTrustedRoots(unittest.TestCase):
         self.assertTrue(why.startswith("approve with plan-set"))
         self.assertIn(vault, why)
         self.assertIn("~/.agents/skills/react-dev", why)
+
+    def test_merged_why_command_is_shell_quoted(self):
+        """C-W9: a root holding a quote still yields one runnable plan-set argument."""
+        wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
+        inv = _inv_existing_roots(["~/Bob's skills/x"])
+        candidates, _notes = skills.trusted_roots(wired, inv)
+        why = skills.merged_trusted_roots_why(candidates, inv)
+        command = why.split(" or keep the current value", 1)[0]
+        argv = shlex.split(command.removeprefix("approve with "))
+        self.assertEqual(argv[:2], ["plan-set", "agent_skills_security.trusted_global_roots"])
+        self.assertEqual(
+            json.loads(argv[2]), ["~/Bob's skills/x", "~/.agents/skills/react-dev"]
+        )
 
     def test_ancestor_home_root_covers(self):
         wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}

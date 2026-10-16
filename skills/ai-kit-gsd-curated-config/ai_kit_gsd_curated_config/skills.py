@@ -7,6 +7,7 @@ silently and never named in output (D-03).
 from __future__ import annotations
 
 import json
+import shlex
 from typing import Any, NamedTuple
 
 from . import presets
@@ -344,7 +345,7 @@ def merged_trusted_roots_why(candidates: list[dict], inv: dict) -> str:
     merged = existing_roots(inv) + [item["value"] for item in candidates]
     payload = json.dumps(merged, separators=(",", ":"))
     return (
-        f"approve with plan-set agent_skills_security.trusted_global_roots '{payload}' "
+        f"approve with plan-set agent_skills_security.trusted_global_roots {shlex.quote(payload)} "
         f"{_TRUSTED_ROOTS_WHY_TAIL}"
     )
 
