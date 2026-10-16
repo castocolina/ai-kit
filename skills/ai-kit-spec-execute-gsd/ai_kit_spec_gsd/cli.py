@@ -16,6 +16,7 @@ from typing import Any, NamedTuple, TextIO
 
 from ai_kit_spec import gsd_tools
 from ai_kit_spec.cache import cache_read_json, cache_write_json
+from ai_kit_spec.commands import execute_cli_error
 from ai_kit_spec.config_io import ConfigError
 from ai_kit_spec.detection import (
     detect_tool_availability,
@@ -24,6 +25,7 @@ from ai_kit_spec.detection import (
     run_codegraph_index,
 )
 from ai_kit_spec.dispatch import write_resumable_state as _write_resumable_state_default
+from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, ExecuteSeams, build_execute_guidance
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
 from ai_kit_spec.tooling_guidance import (
     build_tooling_guidance,
@@ -275,6 +277,88 @@ def _cmd_print_summary_format_block(args: argparse.Namespace, deps: CliDeps) -> 
     return 0
 
 
+# The confinement sentence names no directory: the guidance file is tracked, so it can hold
+# no absolute path (T-18.1-64).
+_CONFINEMENT_PHRASE = "the current working directory (this project's root)"
+
+
+def _home_relative(path: str, home: str) -> str | None:
+    """`~/rest` when `path` is under `home` in either spelling, else None.
+
+    Both the path and the home are compared as given and after `os.path.realpath`, so a
+    symlinked home (for example `/home` pointing at `/var/home`) is caught either way. Any
+    other absolute path returns None: the caller omits it rather than writing it.
+    """
+    if not path or not home or not os.path.isabs(path):
+        return None
+    homes = {home, os.path.realpath(home)}
+    candidates = {path, os.path.realpath(path)}
+    for root in homes:
+        if not root:
+            continue
+        prefix = root if root.endswith(os.sep) else root + os.sep
+        for candidate in candidates:
+            if candidate.startswith(prefix):
+                return "~/" + candidate[len(prefix):]
+    return None
+
+
+def _tracked_tooling_guidance(cli, tool_availability, agents_tooling_path, codegraph_registered,
+                               shared_reference_path=None) -> str:
+    """`build_tooling_guidance` with every path mapped to `~/`, or omitted with a note.
+
+    The composed text is written into a tracked file, so a path outside the home directory
+    is dropped instead of recorded. One stderr note names each dropped path's variable.
+    """
+    home = os.path.expanduser("~")
+    mapped = []
+    for name, value in (("SHARED_TOOLING_PATH", shared_reference_path),
+                         ("AGENTS_TOOLING_PATH", agents_tooling_path)):
+        if not value:
+            mapped.append(None)
+            continue
+        relative = _home_relative(value, home)
+        if relative is None:
+            print(f"print-dispatch-guidance: {name} is outside the home directory; "
+                  f"omitted from the tracked guidance file", file=sys.stderr)
+        mapped.append(relative)
+    return build_tooling_guidance(
+        cli, tool_availability, mapped[1], codegraph_registered, shared_reference_path=mapped[0],
+    )
+
+
+def _guidance_leaks_home(text: str) -> bool:
+    """True when the text still carries the home directory in either spelling."""
+    home = os.path.expanduser("~")
+    spellings = [spelling for spelling in (home, os.path.realpath(home)) if spelling]
+    return any(spelling in text for spelling in spellings)
+
+
+def _cmd_print_dispatch_guidance(args: argparse.Namespace, deps: CliDeps) -> int:
+    """The guidance file's body for one runtime and model, or exit 2 when it cannot be safe.
+
+    An unsupported runtime raises ValueError inside the composer; a composed text that still
+    holds an absolute home path is refused rather than written (T-18.1-64).
+    """
+    rejection = execute_cli_error(args.runtime)
+    if rejection:
+        # An unsupported runtime has no guidance worth writing (claude is review-only).
+        print(f"print-dispatch-guidance: {rejection}", file=sys.stderr)
+        return 2
+    spec = ExecuteDispatchSpec(
+        {"runtime": args.runtime, "model": args.model}, "", _CONFINEMENT_PHRASE, 0, 0,
+        format_block=GSD_SUMMARY_FORMAT_BLOCK,
+    )
+    seams = ExecuteSeams(build_tooling_guidance_fn=_tracked_tooling_guidance)
+    text = build_execute_guidance(spec, seams)
+    if _guidance_leaks_home(text):
+        print("print-dispatch-guidance: the guidance would carry an absolute home path; "
+              "not written", file=sys.stderr)
+        return 2
+    deps.stdout.write(text)
+    return 0
+
+
 def _cmd_write_resumable_state(args: argparse.Namespace, deps: CliDeps) -> int:
     state = json.loads(args.state_json)
     deps.write_resumable_state_fn(args.path, state)
@@ -331,6 +415,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("print-summary-format-block")
 
+    p_dispatch_guidance = sub.add_parser("print-dispatch-guidance")
+    p_dispatch_guidance.add_argument("--runtime", "--cli", dest="runtime", required=True)
+    p_dispatch_guidance.add_argument("--model", required=True)
+
     p_resume = sub.add_parser("write-resumable-state")
     p_resume.add_argument("--path", required=True)
     p_resume.add_argument("--state-json", required=True)
@@ -346,6 +434,7 @@ _COMMANDS = {
     "prepare-tooling": _cmd_prepare_tooling,
     "prepare-cross-ai-guidance": _cmd_prepare_cross_ai_guidance,
     "print-summary-format-block": _cmd_print_summary_format_block,
+    "print-dispatch-guidance": _cmd_print_dispatch_guidance,
     "write-resumable-state": _cmd_write_resumable_state,
 }
 

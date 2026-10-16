@@ -12,8 +12,8 @@ description: Resolves the best available model/CLI for a GSD (Get Sh*t Done) pha
 - **Never hand-edit `.planning/config.json`** — every write goes through the shim, which calls
   gsd-tools' own `config-set` (validation, locking, workstream-aware path) and records ownership.
 - **Never write `workflow.cross_ai_command` without checking the plan's `cross_ai: true`
-  frontmatter**, and never put the raw vendor CLI string there — it names our `dispatch-execute`
-  wrapper (Step 2).
+  frontmatter**, and never put the raw vendor CLI string there — the hook names the project's own
+  supervised runner (Step 2), never a raw vendor CLI string.
 - **Never run `trust-local` without an explicit yes**, and never ask twice in one wave.
 - **Never parse an empty result** — exit 2 from any shim call means STOP and relay stderr.
 
@@ -49,13 +49,20 @@ for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" 
   [ -d "$d" ] && { REVIEW_SPEC_SKILL_DIR="$d"; break; }
 done
 TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/ai-kit-spec.py"
-printf 'GSD_SHIM=%s\nTOOLS_PY=%s\n' "$GSD_SHIM" "$TOOLS_PY"
+for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-gsd-curated-config}" \
+         "$HOME/.claude/skills/ai-kit-gsd-curated-config" \
+         "$(dirname "$GSD_SKILL_DIR")/ai-kit-gsd-curated-config"; do
+  [ -d "$d" ] && { CURATED_SKILL_DIR="$d"; break; }
+done
+CURATED_PY="$CURATED_SKILL_DIR/ai-kit-gsd-curated-config.py"
+printf 'GSD_SHIM=%s\nTOOLS_PY=%s\nCURATED_PY=%s\n' "$GSD_SHIM" "$TOOLS_PY" "$CURATED_PY"
 ```
 
-**Record both printed lines as this wave's own literal values.** Every later step's
+**Record all three printed lines as this wave's own literal values.** Every later step's
 `python3 $GSD_SHIM <subcommand> ...` invocation uses this resolved `$GSD_SHIM` path — never a bare
 `python3 -m ai_kit_spec_gsd.cli`. `$TOOLS_PY` resolves `ai-kit-spec-review`'s own shim for its
-`cache-path --kind quota` subcommand.
+`cache-path --kind quota` subcommand. `$CURATED_PY` resolves `ai-kit-gsd-curated-config`'s shim,
+which Step 2 uses to render or upgrade the project runner.
 
 **Every separate `Bash` tool call in this harness starts a fresh shell** — a variable set in one
 call is gone by the next. Steps 1–3 below are written as separate `Bash` calls; every `$VAR`
@@ -176,42 +183,48 @@ default runs unmodified). Never schedule a wake for these.
   earlier keys from that call were reverted (any in `revert_failed` still hold the new value);
   exit 2 means gsd-tools could not be resolved, as in Step 1. Show the output to the user and STOP.
 
-  **`workflow.cross_ai_command` is NOT the raw external CLI command
-  (`$RESULT_CROSS_AI_COMMAND`) — it is OUR OWN `dispatch-execute` subcommand, wrapping it.**
-  (2026-08-30 direction: dispatch happens directly, at resolution time, through our own
-  instrumented path — never a bare vendor CLI string GSD merely forwards a prompt into.) This
-  gets us real heartbeat, real model/effort/service-tier control, and real cross-AI dispatch
-  reinforcement guidance (composed fresh at dispatch time, not parked in a file GSD may or may
-  not carry through its own PLAN.md `<objective>`/`<tasks>` extraction) — while GSD's own
-  `cross_ai_delegation` step keeps doing its own real, unmodified bookkeeping (writing the
-  plan's SUMMARY.md, updating STATE.md/ROADMAP.md, marking the plan handled). GSD still owns
-  the piping/capture/retry mechanics (Task 1 finding 1) — this only changes WHAT command that
-  hook names, not who calls it or when:
+  **`workflow.cross_ai_command` is NOT the raw external CLI command — it names the project's own
+  supervised runner**, and the guidance file is tracked next to it under `.planning/scripts/`.
+  GSD's own `cross_ai_delegation` step keeps doing its own real, unmodified bookkeeping (writing
+  the plan's SUMMARY.md, updating STATE.md/ROADMAP.md, marking the plan handled) and still owns
+  the piping/capture/retry mechanics — this only changes WHAT command that hook names, not who
+  calls it or when. The runner is rendered or upgraded here, so the hook works without a prior
+  curated-config apply:
   ```bash
   RESULT_MODEL="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("model") or "")' "$RESULT_JSON")"
-  FORMAT_BLOCK_PATH="$(dirname "$GSD_CONFIG_PATH")/.ai-kit-spec-execute-gsd-summary-format.md"
-  python3 "$GSD_SHIM" print-summary-format-block > "$FORMAT_BLOCK_PATH"
-  CROSS_AI_TIMEOUT_SECONDS=900   # GSD's own outer `timeout` wrapper, written below
-  DISPATCH_TIMEOUT_SECONDS=840   # our own inner timeout -- always some margin under GSD's outer
-                                  # one, so dispatch_with_heartbeat's own graceful kill-and-drain
-                                  # completes before GSD's blunt outer `timeout` SIGKILLs the
-                                  # whole pipeline uncleanly (mid-write, no partial output saved)
-  # NO manual quoting around $TOOLS_PY/$RESULT_RUNTIME/$RESULT_MODEL/$CWD/$FORMAT_BLOCK_PATH below --
-  # this is deliberate, required by how GSD expands this value. Read only if you need to know why:
+  # NO manual quoting around the stored command's tokens -- this is deliberate, required by how
+  # GSD expands this value. Read only if you need to know why:
   # references/dispatch-notes.md#why-no-manual-quoting-around-workflowcross_ai_commands-values
-  WRAPPER_COMMAND="python3 $TOOLS_PY dispatch-execute --runtime $RESULT_RUNTIME --model $RESULT_MODEL --target-dir $CWD --prompt-file - --stdout-only --timeout $DISPATCH_TIMEOUT_SECONDS --format-block-file $FORMAT_BLOCK_PATH"
-  python3 "$GSD_SHIM" write-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
-    --set "cross_ai_command=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$WRAPPER_COMMAND")" \
-    --set cross_ai_execution=true \
-    --set "cross_ai_timeout=$CROSS_AI_TIMEOUT_SECONDS"
-  printf 'FORMAT_BLOCK_PATH=%s\n' "$FORMAT_BLOCK_PATH"
+  # The producer runs first and its status is checked before anything is written: a failure or
+  # empty guidance must never reach ensure-runner, and a not-ready runner writes nothing.
+  GUIDANCE="$(python3 "$GSD_SHIM" print-dispatch-guidance --runtime "$RESULT_RUNTIME" --model "$RESULT_MODEL")"
+  GUIDANCE_RC=$?
+  if [ "$GUIDANCE_RC" -ne 0 ] || [ -z "$GUIDANCE" ] || [ ! -f "$CURATED_PY" ]; then
+    echo "ai-kit-spec-execute-gsd: dispatch guidance unavailable (exit $GUIDANCE_RC); nothing written"
+    python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
+      --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout
+  else
+    printf '%s\n' "$GUIDANCE" | python3 "$CURATED_PY" ensure-runner --cwd "$CWD" --guidance-file - > "$CWD.ensure"
+    ENSURE_RC=${PIPESTATUS[1]}
+    ENSURE="$(cat "$CWD.ensure")"
+    if [ "$ENSURE_RC" -eq 0 ]; then
+      python3 "$GSD_SHIM" write-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
+        --set "cross_ai_command=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$RESULT_CROSS_AI_COMMAND")" \
+        --set cross_ai_execution=true \
+        --set cross_ai_timeout=900
+    else
+      echo "ai-kit-spec-execute-gsd: the project runner is not ready (exit $ENSURE_RC); nothing written"
+      echo "$ENSURE"
+      python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
+        --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout
+    fi
+  fi
   ```
-  `dispatch-execute`'s own `--stdout-only` mode prints ONLY the dispatched CLI's raw stdout (no
-  JSON envelope) and exits with its real returncode — exactly the contract GSD's own recipe
-  needs (`echo "$TASK_PROMPT" | timeout "${CROSS_AI_TIMEOUT}s" ${CROSS_AI_CMD} > $CANDIDATE_SUMMARY
-  2>$ERROR_LOG`); heartbeat and diagnostics go to stderr only (`$ERROR_LOG`), never mixed into the
-  captured summary. Live-verified end-to-end 2026-08-30 against this exact invocation shape (piped
-  stdin prompt, `timeout`-wrapped, stdout redirected to a file, real exit code) for codex.
+  A non-zero producer exit, empty guidance, a missing curated shim, or an `ensure-runner` exit of
+  1 (not ready: a user-edited runner gets a `.new` file plus the printed notes) or 2 (error)
+  writes nothing: show the printed notes to the user, run the mode-transition cleanup above, and
+  continue as `fallback_notice`. Exit 0 writes the hook and the 900-second timeout. The guidance
+  file goes before the prompt and the runner's own preamble is off, so nothing is said twice.
 
   **Explicit scope boundary (Global Constraints): this workflow-level write alone does NOT make
   GSD delegate to cross-AI.** Real GSD also requires the TARGET PLAN's own frontmatter to carry
@@ -267,10 +280,10 @@ marker-guarded) means it reaches GSD's own execution regardless of which dispatc
 chose — GSD's own `/gsd-execute-phase` skill reads this same phase content whether it's running a
 native subagent or delegating through `cross_ai_command`.
 
-**`RESULT_MODE = "cross_ai_hook"` needs no separate guidance-append step here anymore** (superseded
-2026-08-30 by Step 2's direct-dispatch wrapper). Read only if you need the history of why this
-step used to append guidance here and why that changed:
-`references/dispatch-notes.md#history-step-2s-wrapper-supersedes-the-old-guidance-append-step`.
+**`RESULT_MODE = "cross_ai_hook"` needs no separate guidance-append step here anymore**: Step 2
+writes the guidance into the tracked file the hook places before the prompt. Read only if you
+need the history of why this step used to append guidance here and why that changed:
+`references/dispatch-notes.md#history-the-guidance-file-supersedes-the-old-guidance-append-step`.
 
 **Then invoke GSD's own `/gsd-execute-phase` skill directly, via the `Skill` tool, for `$PHASE_ID`
 — this is the entire remaining job of this skill.** There is no subprocess to run, no stdout to

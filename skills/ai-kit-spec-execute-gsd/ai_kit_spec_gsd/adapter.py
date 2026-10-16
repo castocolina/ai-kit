@@ -9,6 +9,7 @@ import sys
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
+from ai_kit_spec.commands import execute_cli_error
 from ai_kit_spec.config_io import cfg_resolve
 from ai_kit_spec.execute_selection import (
     ExecuteResolveOptions,
@@ -17,6 +18,7 @@ from ai_kit_spec.execute_selection import (
     screen_execute_clis,
 )
 from ai_kit_spec.quota import resolve_ladder_pick
+from ai_kit_spec.runner_dispatch import PI_EXEC_NOTE, PROJECT_GUIDANCE_PATH
 
 from ai_kit_spec_gsd.gsd_config import (
     KNOWN_GSD_TIERS,
@@ -195,14 +197,35 @@ def _try_candidate_dispatch(
     result = _dispatch_non_claude_tier(candidate, gsd_config, ctx, dispatch, seams)
     if result is not None:
         return result
-    cross_ai_command = build_cross_ai_command(candidate, dispatch.target_dir)
-    if cross_ai_command is not None:
-        cli = candidate["runtime"]
-        return {"mode": "cross_ai_hook", "cross_ai_command": cross_ai_command,
-                "runtime": cli,
-                "key": candidate["key"], "model": candidate["model"],
-                "provenance": "resolved_candidate"}
+    command = build_cross_ai_command(candidate, dispatch.target_dir)
+    if command is not None:
+        runtime = candidate["runtime"]
+        result = {"mode": "cross_ai_hook", "cross_ai_command": command,
+                  "runtime": runtime,
+                  "key": candidate["key"], "model": candidate["model"],
+                  "guidance_path": PROJECT_GUIDANCE_PATH,
+                  "provenance": "resolved_candidate"}
+        if runtime == "pi":
+            # D-35: visible before the hook is enabled; self-test verified only.
+            print(PI_EXEC_NOTE, file=sys.stderr)
+            result["notes"] = [PI_EXEC_NOTE]
+        return result
     return None
+
+
+def _unsafe_hook_notice(candidate: dict, target_dir: str) -> dict | None:
+    """The notice for an exec runtime whose model the unquoted hook cannot carry (M9).
+
+    None for anything else, so a runtime with no builder at all still falls through the
+    ladder to a later usable candidate. A hook that did build is not this case either.
+    """
+    if build_cross_ai_command(candidate, target_dir) is not None:
+        return None
+    if execute_cli_error(candidate.get("runtime")) is not None:
+        return None
+    return _fallback_notice(
+        candidate["key"], "unsafe_hook_token",
+        "the model id contains a character GSD's unquoted hook expansion cannot carry")
 
 
 def _ladder_exhausted_notice(
@@ -222,6 +245,41 @@ def _ladder_exhausted_notice(
     return _fallback_notice(top_key, reason_code, reason_prose)
 
 
+class _RankedLadder(NamedTuple):
+    """The screened ladder, or an early notice when nothing can be resolved."""
+
+    ranked: list | None
+    notice: dict | None
+
+
+def _screened_ladder(candidates: list, top_n_keys: list, required_context: int) -> _RankedLadder:
+    """Rank the roster, or the notice for an empty, screened-out or context-rejected one."""
+    if not candidates:
+        return _RankedLadder(None, _fallback_notice(
+            None, "no_configured_candidate",
+            "ai-kit-spec-execute has no configured candidate at all (review-spec.toml has no "
+            "[[reviewers]] entries) -- nothing to select from"))
+    ranked = resolve_execute_candidates(
+        candidates,
+        ExecuteResolveOptions(
+            None, required_context, {}, top_n_keys,
+            warn_fn=lambda msg: print(msg, file=sys.stderr),
+            screen_exempt_fn=_native_tier_route),
+    )
+    if ranked:
+        return _RankedLadder(ranked, None)
+    if not screen_execute_clis(candidates, lambda _msg: None, _native_tier_route):
+        return _RankedLadder(None, _fallback_notice(
+            candidates[0]["key"], "no_usable_dispatch",
+            "no configured candidate has a usable native GSD tier or a CLI with an execute "
+            "builder (each was skipped with a warning above)"))
+    return _RankedLadder(None, _fallback_notice(
+        None, "all_candidates_context_rejected",
+        f"every one of the {len(candidates)} configured candidate(s) was rejected on context "
+        f"size -- each candidate's curated context_limit is smaller than this phase's "
+        f"estimated required_context of {required_context}"))
+
+
 def resolve_gsd_dispatch(
     inputs: DispatchInputs,
     dispatch: DispatchContext,
@@ -229,43 +287,21 @@ def resolve_gsd_dispatch(
 ) -> dict:
     seams = seams or DispatchSeams()
     candidates = inputs.candidates
-    top_n_keys = inputs.top_n_keys
     gsd_config = inputs.gsd_config
     ctx = inputs.ctx
     quota = dict(dispatch.quota or {})
 
-    if not candidates:
-        return _fallback_notice(
-            None, "no_configured_candidate",
-            "ai-kit-spec-execute has no configured candidate at all (review-spec.toml has no "
-            "[[reviewers]] entries) -- nothing to select from")
+    screened = _screened_ladder(candidates, inputs.top_n_keys, dispatch.required_context)
+    if screened.notice is not None or not screened.ranked:
+        return screened.notice or _fallback_notice(None, "no_usable_dispatch", "no candidate")
 
-    ranked = resolve_execute_candidates(
-        candidates,
-        ExecuteResolveOptions(
-            None, dispatch.required_context, {}, top_n_keys,
-            warn_fn=lambda msg: print(msg, file=sys.stderr),
-            screen_exempt_fn=_native_tier_route),
-    )
-    if not ranked and not screen_execute_clis(candidates, lambda _msg: None, _native_tier_route):
-        return _fallback_notice(
-            candidates[0]["key"], "no_usable_dispatch",
-            "no configured candidate has a usable native GSD tier or a CLI with an execute "
-            "builder (each was skipped with a warning above)")
-    if not ranked:
-        return _fallback_notice(
-            None, "all_candidates_context_rejected",
-            f"every one of the {len(candidates)} configured candidate(s) was rejected on context "
-            f"size -- each candidate's curated context_limit is smaller than this phase's "
-            f"estimated required_context of {dispatch.required_context}")
-
-    by_key = {c["key"]: c for c in ranked}
-    remaining_ladder = candidates_to_ladder(ranked)
-    top_key = ranked[0]["key"]
+    by_key = {c["key"]: c for c in screened.ranked}
+    remaining_ladder = candidates_to_ladder(screened.ranked)
+    top_key = screened.ranked[0]["key"]
 
     while remaining_ladder:
         pick = seams.resolve_ladder_pick_fn(
-            ranked, remaining_ladder, skip_vendor="", quota=quota)
+            screened.ranked, remaining_ladder, skip_vendor="", quota=quota)
         if pick is None:
             break
         candidate = by_key[pick.key]
@@ -273,5 +309,11 @@ def resolve_gsd_dispatch(
         if result is not None:
             return result
         remaining_ladder = [k for k in remaining_ladder if k != pick.key]
+
+    # The ladder's own first choice whose model the unquoted hook cannot carry is a reason of
+    # its own, not a generic exhausted-ladder notice (plan review M9).
+    notice = _unsafe_hook_notice(by_key[top_key], dispatch.target_dir)
+    if notice is not None:
+        return notice
 
     return _ladder_exhausted_notice(top_key, remaining_ladder, by_key, dispatch.target_dir)

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import glob
+import io
 import json
 import os
 import re
@@ -138,7 +140,10 @@ const okLines = () => {
   ];
   for (const l of lines) console.log(l);
 };
-process.stdin.on('data', () => {}).on('end', () => {
+let stdin = '';
+process.stdin.on('data', (chunk) => { stdin += chunk; }).on('end', () => {
+  const stdinLog = process.env.FAKE_STDIN;
+  if (stdinLog) fs.appendFileSync(stdinLog, stdin);
   if (mode === 'empty') process.exit(0);
   if (mode === 'quota') { process.stderr.write('quota exceeded\\n'); process.exit(1); }
   if (mode === 'auth') { process.stderr.write('401 unauthorized\\n'); process.exit(1); }
@@ -549,6 +554,80 @@ class TestExecStatusesE2E(unittest.TestCase):
             self.assertTrue(result["command"].startswith(node_bin or ""), msg=result["command"])
             with open(os.path.join(repo, "a.txt"), encoding="utf-8") as handle:
                 self.assertIn("oc", handle.read())
+            self.assertEqual(pids_with_cwd_under(tmp), [])
+
+
+class TestGsdHookE2E(unittest.TestCase):
+    """The hook string, run through GSD's own run-with-timeout, drives the project runner."""
+
+    def setUp(self):
+        if _real_node_executable() is None:
+            self.skipTest("node not on PATH: GSD hook e2e skipped")
+        bash_bin = shutil.which("bash") or next(
+            (p for p in ("/bin/bash", "/usr/bin/bash") if os.path.isfile(p)), None
+        )
+        if bash_bin is None:
+            self.skipTest("bash not found: GSD hook e2e skipped")
+        self.bash_bin = bash_bin
+        gsd_tools = os.path.join(REPO_ROOT, ".claude", "gsd-core", "bin", "gsd-tools.cjs")
+        if not os.path.isfile(gsd_tools):
+            self.skipTest(f"GSD's gsd-tools.cjs is absent ({gsd_tools}): GSD hook e2e skipped")
+        self.gsd_tools = gsd_tools
+
+    def test_hook_as_gsd_runs_it(self):
+        sys.path.insert(
+            0, os.path.join(REPO_ROOT, "skills", "ai-kit-spec-execute-gsd")
+        )
+        from ai_kit_gsd_curated_config import cli as curated_cli
+        from ai_kit_spec_gsd import cli as gsd_cli
+        from ai_kit_spec_gsd.gsd_cross_ai import build_cross_ai_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = os.path.join(tmp, "repo")
+            os.makedirs(repo)
+            _git_init(repo)
+            env = runner_env(tmp)
+            env["FAKE_CALLS"] = os.path.join(tmp, "calls.log")
+            env["FAKE_STDIN"] = os.path.join(tmp, "bin", "stdin.log")
+            write_fake_opencode(os.path.join(tmp, "bin"))
+            out = io.StringIO()
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                rc = gsd_cli.main([
+                    "print-dispatch-guidance", "--runtime", "opencode", "--model", "fake/ok",
+                ], stdout=out)
+            self.assertEqual(rc, 0, msg=err.getvalue())
+            guidance = out.getvalue()
+            self.assertTrue(guidance.strip())
+            curated_cli._stdin.text = guidance
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    ensure_rc = curated_cli.main([
+                        "ensure-runner", "--cwd", repo, "--guidance-file", "-",
+                    ])
+            finally:
+                curated_cli._stdin.text = None
+            self.assertEqual(ensure_rc, 0)
+            hook = build_cross_ai_command(
+                {"runtime": "opencode", "model": "fake/ok", "key": "oc"}
+            )
+            assert hook is not None
+            proc = subprocess.run(
+                [self.bash_bin, "-c",
+                 'echo "$P" | node "$GSD_TOOLS" run-with-timeout 60 -- ${CROSS_AI_CMD}'],
+                cwd=repo, env={**env, "GSD_TOOLS": self.gsd_tools, "CROSS_AI_CMD": hook,
+                               "P": "TASK-BODY"},
+                capture_output=True, text=True, timeout=90, check=False,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+            self.assertIn("done", proc.stdout)
+            with open(env["FAKE_STDIN"], encoding="utf-8") as handle:
+                seen = handle.read()
+            body = seen.find("TASK-BODY")
+            self.assertGreater(body, 0)
+            self.assertLess(seen.find("phase:"), body)
+            self.assertIn("the current working directory (this project's root)", seen)
+            self.assertNotIn("<executor_rules>", seen)
             self.assertEqual(pids_with_cwd_under(tmp), [])
 
 

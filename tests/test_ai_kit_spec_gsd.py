@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -290,15 +291,17 @@ class TestBuildCrossAiCommand(unittest.TestCase):
         # Bug fix (2026-08-30): a cli name being in KNOWN_GSD_RUNTIMES must NOT by itself block
         # the cross-AI hook -- adapter.py already tried (and failed) the curated-tier native route
         # before ever calling this function, so a live-verified execute builder must still be used.
+        # The hook now names the project runner, codex confined (D-26, D-27).
         candidate = {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
         result = gsd_cross_ai.build_cross_ai_command(candidate, "/repo")
         self.assertEqual(
             result,
-            "codex exec --sandbox workspace-write --skip-git-repo-check -C /repo -m gpt-5.6-sol")
+            "node .planning/scripts/cross-ai.mjs --prefer codex --model-codex gpt-5.6-sol "
+            "--mode exec --codex-sandbox workspace-write --no-preamble --prepend-file "
+            ".planning/scripts/cross-ai-guidance.md")
 
     def test_no_live_verified_builder_returns_none_not_raise(self):
-        # A CLI with no registered execute-mode builder at all (Foundation's real
-        # build_execute_command raises ValueError for it) must degrade to None, never raise.
+        # A runtime the runner cannot execute (gemini) must degrade to None, never raise.
         candidate = {"runtime": "gemini", "model": "gemini-3.1-pro", "key": "gemini/gemini-3.1-pro"}
         self.assertIsNone(gsd_cross_ai.build_cross_ai_command(candidate, "/repo"))
 
@@ -306,13 +309,14 @@ class TestBuildCrossAiCommand(unittest.TestCase):
         # Injected fake builder -- exercises this module's plumbing without depending on which
         # CLIs Foundation has actually implemented today.
         def fake_execute_command(cli, target_dir, effort=None, service_tier=None):
-            return f"future-cli exec --write -C {target_dir} -m {{model}}"
+            return f"future-cli exec --write -m {{model}} (dir {target_dir!r})"
         candidate = {"runtime": "future-cli", "model": "gpt-5.6-terra",
                      "key": "future-cli/gpt-5.6-terra"}
         result = gsd_cross_ai.build_cross_ai_command(
             candidate, "/repo/worktree", execute_command_fn=fake_execute_command)
         assert result is not None
-        self.assertEqual(result, "future-cli exec --write -C /repo/worktree -m gpt-5.6-terra")
+        # The hook is project-root-relative, so the injected builder gets no directory.
+        self.assertEqual(result, "future-cli exec --write -m gpt-5.6-terra (dir '')")
         # This IS the literal string, no wrapper/shim indirection whatsoever (Task 1 finding 1 --
         # GSD itself pipes the phase prompt into this command's own stdin and captures its own
         # stdout; a wrapper would only get in the way of that).
@@ -332,6 +336,61 @@ class TestBuildCrossAiCommand(unittest.TestCase):
             candidate, "/repo/worktree", execute_command_fn=fake_execute_command)
         self.assertEqual(captured["effort"], "high")
         self.assertEqual(captured["service_tier"], "priority")
+
+
+class TestCrossAiHookResult(unittest.TestCase):
+    """The hook result the SKILL writes, or a visible reason when no safe hook exists."""
+
+    def _candidate(self, runtime, model, **extra):
+        candidate = {"runtime": runtime, "model": model, "key": f"{runtime}/x",
+                     "vendor": "v", "task_affinity": None, "context_limit": None,
+                     "tier": None}
+        candidate.update(extra)
+        return candidate
+
+    def test_codex_hook_names_the_project_runner_with_confinement(self):
+        result = _resolve_gsd_dispatch(
+            [self._candidate("codex", "gpt-5.6-sol", effort="high")], ["codex/x"], {},
+            _ctx(), "/repo")
+        self.assertEqual(result["mode"], "cross_ai_hook")
+        self.assertEqual(
+            result["cross_ai_command"],
+            "node .planning/scripts/cross-ai.mjs --prefer codex --model-codex gpt-5.6-sol "
+            "--mode exec --codex-effort high --codex-sandbox workspace-write --no-preamble "
+            "--prepend-file .planning/scripts/cross-ai-guidance.md")
+        self.assertEqual(result["guidance_path"], ".planning/scripts/cross-ai-guidance.md")
+        # The result holds only project-root-relative paths, never an absolute one.
+        self.assertIsNone(re.search(r"(?:^|\s)/", json.dumps(result)))
+
+    def test_unsafe_model_token_is_a_fallback_notice_with_nothing_written(self):
+        for model in ("has space", "star*"):
+            with self.subTest(model=model):
+                result = _resolve_gsd_dispatch(
+                    [self._candidate("opencode", model)], ["opencode/x"], {}, _ctx(), "/repo")
+                self.assertEqual(result["mode"], "fallback_notice")
+                self.assertEqual(result["reason"], "unsafe_hook_token")
+                self.assertNotIn("cross_ai_command", result)
+
+    def test_pi_exec_note_is_visible_for_pi_and_absent_for_codex(self):
+        import contextlib
+        import io
+
+        from ai_kit_spec.runner_dispatch import PI_EXEC_NOTE
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            pi = _resolve_gsd_dispatch(
+                [self._candidate("pi", "fake/ok")], ["pi/x"], {}, _ctx(), "/repo")
+        self.assertEqual(pi["mode"], "cross_ai_hook")
+        self.assertIn(PI_EXEC_NOTE, stderr.getvalue())
+        self.assertIn(PI_EXEC_NOTE, pi["notes"])
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            codex = _resolve_gsd_dispatch(
+                [self._candidate("codex", "m")], ["codex/x"], {}, _ctx(), "/repo")
+        self.assertEqual(codex["mode"], "cross_ai_hook")
+        self.assertNotIn(PI_EXEC_NOTE, stderr.getvalue())
+        self.assertNotIn("notes", codex)
 
 
 class TestAssembleCandidates(unittest.TestCase):
@@ -1348,6 +1407,180 @@ class TestBuildGsdCrossAiGuidance(unittest.TestCase):
         self.assertIn("incrementally", result)
         self.assertIn("never report success", result)
 
+
+
+class TestPrintDispatchGuidance(unittest.TestCase):
+    """The guidance body the SKILL writes next to the project runner (D-30, T-18.1-64)."""
+
+    def _run(self, runtime, model, home):
+        import contextlib
+        import io
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (mock.patch.dict(os.environ, {"HOME": home, "AGENTS_TOOLING_PATH": ""}),
+              contextlib.redirect_stderr(stderr)):
+            rc = cli.main(
+                ["print-dispatch-guidance", "--runtime", runtime, "--model", model],
+                stdout=stdout)
+        return rc, stdout.getvalue(), stderr.getvalue()
+
+    def test_opencode_carries_the_format_block_and_the_confinement_sentence(self):
+        with tempfile.TemporaryDirectory() as home:
+            rc, out, _err = self._run("opencode", "fake/ok", home)
+        self.assertEqual(rc, 0)
+        self.assertIn("phase:", out)
+        self.assertIn("## Accomplishments", out)
+        self.assertIn("the current working directory (this project's root)", out)
+
+    def test_codex_has_no_soft_confinement_sentence(self):
+        with tempfile.TemporaryDirectory() as home:
+            rc, out, _err = self._run("codex", "m", home)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("NO operating-system-level write confinement", out)
+        self.assertNotIn("the current working directory (this project's root)", out)
+
+    def test_paths_outside_the_scratch_home_are_omitted_with_a_note(self):
+        with tempfile.TemporaryDirectory() as home:
+            rc, out, err = self._run("opencode", "fake/ok", home)
+        self.assertEqual(rc, 0)
+        self.assertNotIn(home, out)
+        checkout = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.assertNotIn(checkout, out)
+        self.assertIn("SHARED_TOOLING_PATH is outside the home directory", err)
+
+    def test_unsupported_runtime_exits_2(self):
+        with tempfile.TemporaryDirectory() as home:
+            rc, _out, err = self._run("claude", "opus", home)
+        self.assertEqual(rc, 2)
+        self.assertIn("claude", err)
+
+
+class TestHomeRelative(unittest.TestCase):
+    """Pure path mapping: a tracked guidance file may only hold `~`-relative paths."""
+
+    def test_a_path_under_home_becomes_tilde_relative(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = os.path.join(tmp, "home")
+            path = os.path.join(home, "x", "ref.md")
+            os.makedirs(os.path.dirname(path))
+            self.assertEqual(cli._home_relative(path, home), "~/x/ref.md")
+
+    def test_both_spellings_of_a_symlinked_home_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real_home = os.path.join(tmp, "real-home")
+            os.makedirs(os.path.join(real_home, "x"))
+            home = os.path.join(tmp, "home")
+            os.symlink(real_home, home)
+            under_real = os.path.join(real_home, "x", "ref.md")
+            under_link = os.path.join(home, "x", "ref.md")
+            self.assertEqual(cli._home_relative(under_real, home), "~/x/ref.md")
+            self.assertEqual(cli._home_relative(under_link, real_home), "~/x/ref.md")
+
+    def test_a_path_outside_home_is_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = os.path.join(tmp, "home")
+            os.makedirs(home)
+            elsewhere = os.path.join(tmp, "elsewhere", "ref.md")
+            os.makedirs(os.path.dirname(elsewhere))
+            self.assertIsNone(cli._home_relative(elsewhere, home))
+
+
+def _step2_hook_block() -> str:
+    """The fenced bash block of SKILL.md that captures the guidance producer."""
+    skill = os.path.join(
+        os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute-gsd", "SKILL.md"
+    )
+    with open(skill, encoding="utf-8") as handle:
+        text = handle.read()
+    for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
+        if "print-dispatch-guidance" in block:
+            return block
+    raise AssertionError("SKILL.md has no bash block that runs print-dispatch-guidance")
+
+
+class TestStep2HookSnippet(unittest.TestCase):
+    """The SKILL's Step 2 block, run with stub producer and consumer scripts."""
+
+    def setUp(self):
+        bash_bin = shutil.which("bash") or next(
+            (p for p in ("/bin/bash", "/usr/bin/bash") if os.path.isfile(p)), None
+        )
+        if bash_bin is None:
+            self.skipTest("bash not found: Step 2 hook snippet skipped")
+        self.bash_bin = bash_bin
+
+    def _run(self, producer: str, consumer: str):
+        block = _step2_hook_block()
+        with tempfile.TemporaryDirectory() as tmp:
+            log = os.path.join(tmp, "calls.log")
+            producer_path = os.path.join(tmp, "producer.py")
+            consumer_path = os.path.join(tmp, "consumer.py")
+            with open(producer_path, "w", encoding="utf-8") as handle:
+                handle.write(producer.format(log=log))
+            with open(consumer_path, "w", encoding="utf-8") as handle:
+                handle.write(consumer.format(log=log))
+            env = {
+                "PATH": os.environ.get("PATH", ""),
+                "GSD_SHIM": producer_path,
+                "CURATED_PY": consumer_path,
+                "CWD": os.path.join(tmp, "project"),
+                "RUN_ID": "run-1",
+                "RESULT_JSON": json.dumps({
+                    "cross_ai_command": "node .planning/scripts/cross-ai.mjs",
+                    "runtime": "opencode",
+                    "model": "fake/ok",
+                }),
+            }
+            proc = subprocess.run(
+                [self.bash_bin, "-c", block], cwd=tmp, env=env,
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            if os.path.isfile(log):
+                with open(log, encoding="utf-8") as handle:
+                    logged = handle.read()
+            else:
+                logged = ""
+            return proc, logged
+
+    def test_a_failing_producer_never_reaches_the_consumer(self):
+        producer = "import sys\nsys.exit(2)\n"
+        consumer = "import sys\nopen({log!r}, 'a').write('CONSUMER\\n')\nsys.exit(0)\n"
+        _proc, logged = self._run(producer, consumer)
+        self.assertNotIn("CONSUMER", logged)
+        self.assertNotIn("cross_ai_command=", logged)
+
+    def test_empty_producer_output_never_reaches_the_consumer(self):
+        producer = "import sys\nsys.exit(0)\n"
+        consumer = "import sys\nopen({log!r}, 'a').write('CONSUMER\\n')\nsys.exit(0)\n"
+        _proc, logged = self._run(producer, consumer)
+        self.assertNotIn("CONSUMER", logged)
+        self.assertNotIn("cross_ai_command=", logged)
+
+    def test_ready_consumer_gets_the_guidance_and_writes_the_hook(self):
+        producer = (
+            "import sys\n"
+            "open({log!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+            "sys.stdout.write('GUIDE' if 'print-dispatch-guidance' in sys.argv else '')\n"
+        )
+        consumer = (
+            "import sys\n"
+            "open({log!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n' + sys.stdin.read())\n"
+        )
+        _proc, logged = self._run(producer, consumer)
+        self.assertIn("ensure-runner --cwd", logged)
+        self.assertIn("--guidance-file -", logged)
+        self.assertIn("GUIDE\n", logged)
+        self.assertIn("cross_ai_command=", logged)
+
+    def test_a_not_ready_consumer_writes_no_hook(self):
+        producer = "import sys\nsys.stdout.write('GUIDE')\n"
+        consumer = (
+            "import sys\n"
+            "open({log!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+            "sys.exit(1 if 'ensure-runner' in sys.argv else 0)\n"
+        )
+        _proc, logged = self._run(producer, consumer)
+        self.assertNotIn("cross_ai_command=", logged)
 
 
 class TestMainCli(unittest.TestCase):
