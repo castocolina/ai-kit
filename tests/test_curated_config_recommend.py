@@ -1917,11 +1917,13 @@ class TestCliRecommendIo(unittest.TestCase):
             affinity_real = os.path.realpath(plan_io.AFFINITY_PATH)
             # The plan write reads its own umask from /proc (IN-11): process state, not data.
             own_status = os.path.realpath("/proc/self/status")
-            # Lazy imports may open a writable stdlib's __pycache__ dir (root in the docker
-            # clean room): interpreter bytecode, not recommend's data I/O.
+            # Lazy imports may write a writable stdlib's __pycache__ (root in the docker clean
+            # room), including its atomic `x.pyc.<id>` temp: bytecode, not recommend's data I/O.
             touched = {
                 p for p in opened
-                if not p.endswith((".py", ".pyc", "__pycache__")) and p != own_status
+                if not p.endswith((".py", ".pyc"))
+                and "__pycache__" not in p.split(os.sep)
+                and p != own_status
             }
             self.assertIn(os.path.realpath(inv_path), touched)
             self.assertIn(affinity_real, touched)
