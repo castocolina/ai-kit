@@ -21,12 +21,12 @@
     {
       "number": "18",
       "name": "Cross-AI, Skills & Apply Pipeline",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "18.1",
       "name": "One runtime model",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "number": "19",
@@ -76,8 +76,8 @@
   ],
   "next": {
     "command": "/gsd:progress --next",
-    "label": "Advance to the next step",
-    "reason": "Phase 18 of 14 · 7% · executing"
+    "label": "Advance to the next step (plan phase 18.1)",
+    "reason": "Phase 18.1 of 14 — needs a plan"
   },
-  "updated_at": "2026-10-15T18:38:18.872Z"
+  "updated_at": "2026-10-16T03:27:17.539Z"
 }

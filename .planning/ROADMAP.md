@@ -67,7 +67,7 @@ runtime hosting the session. Source spec:
 - [x] **Phase 16: ai_kit_spec Extensions** - Host detection, model enumeration, and catalog/ranker extensions for pi and codex, plus richer catalog fields (completed 2026-10-15)
 - [x] **Phase 16.1: Hardening** (INSERTED) - Gate scope, sibling-first imports, security and correctness fixes from the 2026-10-13 audit; closes Phase 16 (completed 2026-10-15)
 - [x] **Phase 17: Curated-Config Inventory & Recommendation Engine** - Read-only project/host inventory and a pure `recommend` function that produces an explainable `plan.json` (completed 2026-10-15)
-- [ ] **Phase 18: Cross-AI, Skills & Apply Pipeline** - Plan adjustment, cross-AI review/execution wiring, skill-affinity mapping, and a safe backup/restore apply flow
+- [x] **Phase 18: Cross-AI, Skills & Apply Pipeline** - Plan adjustment, cross-AI review/execution wiring, skill-affinity mapping, and a safe backup/restore apply flow (completed 2026-10-16)
 - [ ] **Phase 18.1: One runtime model** (INSERTED) - Model candidates become (runtime, model) pairs; `native_runtime` and the `native_claude`/cursor-agent naming go away
 - [ ] **Phase 19: Evaluation on Claude** - Skill pressure-testing, `/skill-judge` gate, and a live smoke run + `resolve-model` proof from the claude host
 - [ ] **Phase 20: Live Validation on Codex + Opencode** - Live smoke runs from the codex and opencode hosts, resolving the two open verifications from the spec
@@ -310,7 +310,7 @@ with the v2 flow living alongside the unchanged v1 CLI.
   7. When a System One backend is detected (local Laya or a TypeSafe key), `jev-fast-decision` is
      recommended in `agent_skills` for `gsd-advisor-researcher` and `gsd-assumptions-analyzer`
      (the discuss-phase decision agents), and is never recommended when no backend is present.
-**Plans**: 22/22 plans executed (strictly serial waves 1-22, cross-AI executed)
+**Plans**: 22/22 plans complete (strictly serial waves 1-22, cross-AI executed)
 
 Plans:
 **Wave 1**

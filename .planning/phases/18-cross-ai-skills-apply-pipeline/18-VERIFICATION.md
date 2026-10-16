@@ -1,7 +1,7 @@
 ---
 phase: 18-cross-ai-skills-apply-pipeline
 verified: 2026-10-16T00:00:00Z
-status: human_needed
+status: passed
 score: 7/7 must-haves verified
 covered_files:
   - .planning/phases/18-cross-ai-skills-apply-pipeline/18-01-PLAN.md
@@ -68,59 +68,41 @@ covered_files:
 covered_digest: "v3:sha256:a6531b8c716fc5af5c90e1d3b19efb7fa5ae7357ae72ef95bedf7fd3821a325c"
 behavior_unverified: 0
 overrides_applied: 0
-human_verification:
-  - test: "B-CR-01 rollback on a real project: On a scratch copy of a real GSD project, force a failure inside the pre-commit window of a real `apply` (e.g. make one `config-set` fail, or interrupt `config-new-project` on a fresh project)."
-    expected: "Exit 1 with a JSON report naming the failing key; `.planning/config.json` byte-identical to `config.json.bak-<ts>` (or absent on a fresh project); no apply marker, no created `.planning/`, no leftover `cross-ai.mjs.new` created by this apply."
-    why_human: "Unit/e2e tests inject the failures with fakes (18-REVIEW-FIX-B B-CR-01, flagged 'requires human verification'); real gsd-tools timing and filesystem behavior on a live project is not exercised."
-  - test: "WR-04 / C-W8 trusted-root policy: Read `plan_io.home_relative_root`, `plan_edit._check_trusted_roots` and the merged-candidate text in `skills.merged_trusted_roots_why`; then on a project with an existing `agent_skills_security.trusted_global_roots`, run `plan-set` with a list that omits a configured root, with and without `--force`."
-    expected: "Without `--force`: exit 2 and a printed, shell-quoted merged command. With `--force`: the root is dropped, a warning is printed and the entry is marked `forced`; `validate_plan` rejects an un-forced dropping list. `~/..`, `~/`, `~//x` are always refused. The refuse-not-merge design is acceptable as a security control."
-    why_human: "Design decision on a security control (refuse rather than silently merge) flagged 'requires human verification' in 18-REVIEW-FIX-B and -C; tests prove behavior, not that the policy is the right one."
-  - test: "B-IN-07 JSON-encoding value equality: Review `plan_io.same_value` and its two callers (diff rule, plan-set keep decision)."
-    expected: "`0` vs `false`, `1` vs `true`, and `1` vs `1.0` are treated as different values (a write happens), while semantically identical JSON is a no-op."
-    why_human: "Logic change flagged 'requires human verification' in 18-REVIEW-FIX-B (IN-07); key-order or float-format edge cases are a judgment call."
-  - test: "C-CR-1 project-skill escape rule: Create a project whose `skills/` is a symlink pointing outside the project, plus `skills/foo -> <project>/vendor/foo`, and run inventory + recommend on a real host."
-    expected: "The outside-pointing skills are not wired (a note explains why); `skills/foo` is wired as `skills/foo`; the rule matches gsd-core's own realpath-inside-project check on the installed version."
-    why_human: "Mirrors gsd-core's private rule; parity with the live gsd-core version is not machine-checked (flagged in 18-REVIEW-FIX-C)."
-  - test: "C-W3 absolute trusted root covering an outside-home skill: Configure an absolute `trusted_global_roots` entry covering a global skill whose realpath is outside $HOME and run recommend/apply."
-    expected: "The skill is wired (the outside-home refusal consults `covered()` first); recommend still never proposes an absolute root; gsd-core loads the skill at runtime."
-    why_human: "Whether real gsd-core honors the absolute root is runtime behavior of an external tool (flagged in 18-REVIEW-FIX-C)."
-  - test: "C-W12 failed vs empty model listings: On a machine where one installed runner's model listing fails (or returns nothing), run inventory + recommend."
-    expected: "Inventory records `runtime_enumeration.<runtime>` = `failed`/`empty`; the target's why reads `no <runtime> models enumerated (listing failed|empty)`, never a price-ceiling reason."
-    why_human: "Real CLI listing failures cannot be produced deterministically without the live CLIs (flagged in 18-REVIEW-FIX-C)."
-  - test: "PT-08 plan-set refuses an uncovered outside-home skill: Install a global skill whose realpath is outside $HOME with no trusted root covering it, then `plan-set agent_skills.<agent> '[\"<that skill>\"]'`."
-    expected: "plan-set refuses (exit 2) via `skills.unwired_reason()`, consistent with recommend never wiring it and gsd-core skipping it."
-    why_human: "Admission now depends on the same predicate recommend uses; parity with gsd-core's skip behavior is flagged 'requires human verification' in 18-REVIEW-FIX-C."
-  - test: "A-CR-02 exit mapping kept, action=stop on a dirty tree: Read the `finish()` override in `cross-ai.mjs` and confirm the contract with GSD's consumer: a quota/billing failure on a dirty or unknown tree prints `status=quota exit=75 action=stop`."
-    expected: "Exit code keeps naming the status class (75), `action=stop` is the instruction; GSD's execute-phase cross-AI consumer honors `action` and does not retry-later on exit 75 alone. An unreadable tree after a failure ends `status=unverified` exit 1 stop."
-    why_human: "The status/exit table is a cross-tool contract (D-30); whether the GSD consumer keys on `action` rather than exit code is external behavior (flagged in 18-REVIEW-FIX-A)."
-  - test: "WR-06 optional plan key artifacts[0].config.effort: Run recommend on a host with pi or codex installed and a catalog model with reasoning modes; inspect the plan and the rendered `.planning/scripts/cross-ai.mjs`; then run the runner with `--print-argv`."
-    expected: "`artifacts[0].config.effort` appears only for catalog picks on pi/codex with reasoning modes (absent for routers, no-mode models, ids that already name an effort); `CONFIG.effort` is baked in; pi gets `--thinking <level>` (not when the id has a `:level` suffix), codex gets `model_reasoning_effort`; `--codex-effort` still wins."
-    why_human: "New optional plan-schema key and design choice flagged 'requires human verification' in 18-REVIEW-FIX-A; real CLI acceptance of the effort flags is not live-tested."
-  - test: "WR-03 workstream with `..` falls back to 300 s: Run the runner with `GSD_WORKSTREAM=../x` (and a normal workstream) against a project with `workflow.cross_ai_timeout` set; compare with `gsd-tools config-get workflow.cross_ai_timeout` under the same env."
-    expected: "A bad segment reads as absent and the live outer timeout falls back to 300 s, matching GSD's own fallback; a normal workstream reads the scoped key first, then the root key. The runner uses the smaller of live and baked timeouts."
-    why_human: "Behavior change mirroring gsd-core's private `readScopedConfigValue` (flagged in 18-REVIEW-FIX-A); the stored active-workstream pointer is not read (shortcut)."
-  - test: "Codex stream-error parse assumption: Run `cross-ai.mjs` against a real codex CLI in a scratch repo, provoking a transient stream `error` that recovers, and separately a `turn.failed`."
-    expected: "A stream `error` event followed by `turn.completed` is classified `ok`; `turn.failed` always fails."
-    why_human: "The codex JSON event shape is assumed, not live-verified (shortcut comment, 18-REVIEW-FIX-A A-CR-01)."
-  - test: "CR-03 / CR-04 signal rework on real CLIs: Run `gsd-tools run-with-timeout` around the runner with each real CLI (pi, cursor-agent, opencode, codex) in a scratch repo and send SIGTERM mid-run, then a second signal."
-    expected: "Exactly one `AIKIT-XAI status=signal ... tree=<real state>` line within ~2.9 s; the CLI process group is dead; no temp dirs left; a second signal SIGKILLs the group at once."
-    why_human: "Self-test uses fake CLIs (`sigterm-stubborn`, `sigterm-twice`, `sigterm-backoff`); real CLI child-process trees and signal handling differ (flagged in 18-REVIEW-FIX-A)."
-  - test: "WR-12 submodule edits: In a scratch repo with a checked-out submodule, run the runner with a CLI that edits only a file inside the submodule."
-    expected: "The tree id changes (`tree=dirty`, counted as success for exec); an unreadable nested repo makes the state `unknown`."
-    why_human: "Real submodule layouts (nested, uninitialized, worktree-based) vary; tests cover one synthetic layout (flagged in 18-REVIEW-FIX-A)."
-  - test: "U-2 npm registry pin: On a machine where npm is allowed, run the approved installer follow-up (`npx -y --registry=https://registry.npmjs.org/ --@opengsd:registry=https://registry.npmjs.org/ @opengsd/gsd-core@<v> --<host> --local`) with a project `.npmrc` that sets a different `@opengsd:registry`."
-    expected: "The package is fetched from registry.npmjs.org (the scoped flag outranks the `.npmrc` scope)."
-    why_human: "Not live-tested: npm is banned on the dev machine; precedence is taken from npm docs (18-SECURITY T-18-75)."
-  - test: "U-3 ignored-directory blind spot acceptance: Confirm the accepted risk: edits inside a fully gitignored directory are not part of the runner's tree id."
-    expected: "A CLI that writes only inside a fully ignored directory reads as `tree=clean` (no change, may fall back); ignored files outside fully ignored dirs are still stat-tracked. The user accepts this blind spot."
-    why_human: "Deliberate narrowing per jev in 59d8a4e (18-SECURITY T-18-76); a risk-acceptance decision, not a test outcome."
+re_verification:
+  previous_status: human_needed
+  note: "RUN-73 (jev A, TypeSafe 1.0): RUN-10 pattern. 4 real-host items deferred to the live-validation phases; 11 design-acceptance items stay visible as non-blocking owner review (body and final report), not claimed verified."
+deferred:
+  - truth: "B-CR-01: a real apply on a scratch GSD project rolls back byte-identically when a config-set fails mid-apply"
+    addressed_in: "Phase 19"
+    evidence: "Phase 19 SC3: live smoke run inventory + recommend + apply (dry-run, then real on a scratch project) completes without corrupting the scratch project's config"
+  - truth: "Codex stream-error parse assumption holds against a real codex CLI"
+    addressed_in: "Phase 20"
+    evidence: "Phase 20 goal: the skill is confirmed working from real codex and opencode host sessions"
+  - truth: "CR-03/CR-04 signal handling (run-with-timeout kill, grandchild cleanup) holds on real codex/opencode, cursor and pi CLIs"
+    addressed_in: "Phases 20, 21, 22"
+    evidence: "Live-validation phases per host: 20 codex/opencode, 21 cursor, 22 pi"
+  - truth: "C-W12: a failed (not empty) runner model listing is reported as failed on a real host"
+    addressed_in: "Phase 20"
+    evidence: "Phase 20 live codex/opencode validation exercises real model listings"
+owner_review_nonblocking:
+  - "WR-04 / C-W8 trusted-root refuse-not-merge policy"
+  - "B-IN-07 JSON-encoding value equality"
+  - "C-CR-1 project-skill escape rule"
+  - "C-W3 absolute trusted root covering an outside-home skill"
+  - "PT-08 plan-set refuses an uncovered outside-home skill"
+  - "A-CR-02 exit mapping kept, action=stop on a dirty tree"
+  - "WR-06 optional plan key artifacts[0].config.effort"
+  - "WR-03 workstream with .. falls back to 300 s"
+  - "WR-12 submodule edits"
+  - "U-2 npm registry pin (not live-tested; npm banned on this machine)"
+  - "U-3 ignored-directory blind spot acceptance"
 ---
 
 # Phase 18: Cross-AI, Skills & Apply Pipeline Verification Report
 
 **Phase Goal:** A user can adjust the recommended plan, have cross-AI review/execution and per-agent skills wired in, and safely apply the result to a target project's `.planning/config.json`, with the v2 flow living alongside the unchanged v1 CLI.
 **Verified:** 2026-10-16 (HEAD 6aef143)
-**Status:** human_needed
+**Status:** passed (re-verified by the orchestrator, RUN-73: real-host items deferred, design acceptances listed as non-blocking owner review)
 **Re-verification:** No (initial verification)
 
 ## Goal Achievement
@@ -201,7 +183,9 @@ No unreferenced `TBD`/`FIXME`/`XXX` markers in phase-modified source (only test 
 
 Open, documented, non-blocking review items: A-IN-12 (tree snapshot rehash cost, unmeasured; skipped to avoid false `tree=clean`).
 
-### Human Verification Required
+### Deferred Items and Owner Review (non-blocking)
+
+Items 1, 11, 12 and 6 (C-W12) need real hosts and are deferred: 1 to Phase 19, 11 and 6 to Phase 20, 12 to Phases 20-22 (frontmatter `deferred`). The other 11 are owner design acceptances. They are listed in the final report and are not claimed verified. The details below are unchanged from the first pass.
 
 ### 1. B-CR-01 rollback on a real project
 
@@ -295,7 +279,7 @@ Open, documented, non-blocking review items: A-IN-12 (tree snapshot rehash cost,
 
 ### Gaps Summary
 
-No gaps. Every roadmap success criterion and all 12 requirement IDs are backed by code that exists, is wired, and is exercised by passing tests. The status is `human_needed` because 15 items need a human: real-host, real-CLI and registry behavior, and the design decisions the review-fix reports flagged "requires human verification".
+No gaps. Every roadmap success criterion and all 12 requirement IDs are backed by code that exists, is wired, and is exercised by passing tests. The first pass was `human_needed` on 15 items. RUN-73 deferred the 4 real-host ones to Phases 19-22 and kept the 11 design acceptances as non-blocking owner review.
 
 ---
 
