@@ -626,12 +626,10 @@ async function listModels(cli, binPath, env, limit) {
 async function treeState(cwd, limit) {
   const git = which('git', process.env.PATH || '');
   if (!git) return null;
-  const headR = await runChild(git, ['rev-parse', 'HEAD'], { cwd, capMs: GIT_CAP_MS, limit });
-  if (headR.timedOut || headR.spawnErr) return null;
-  let head = null;
-  if (headR.code === 0) head = headR.stdout.trim();
-  else if (/unborn|unknown revision|bad object/i.test(headR.stderr)) head = null;
-  else if (headR.code !== 0) return null;
+  // --verify -q: exit 1 with no message on an unborn HEAD, in any locale; 128 outside a repo.
+  const headR = await runChild(git, ['rev-parse', '--verify', '-q', 'HEAD'], { cwd, capMs: GIT_CAP_MS, limit });
+  if (headR.timedOut || headR.spawnErr || (headR.code !== 0 && headR.code !== 1)) return null;
+  const head = headR.code === 0 ? headR.stdout.trim() : null;
   const idxDir = makeTemp('xai-idx-');
   const env = { ...process.env, GIT_INDEX_FILE: path.join(idxDir, 'index') };
   try {
@@ -857,6 +855,12 @@ const sub = process.argv.slice(2);
 if (sub[0] === 'write-tree') {
   if (fs.existsSync(path.join(home, '.fake-git-hang'))) { while (true) {} }
   if (fs.existsSync(path.join(home, '.fake-git-fail'))) process.exit(128);
+}
+if (sub[0] === 'rev-parse' && fs.existsSync(path.join(home, '.fake-git-l10n'))) {
+  // A non-English locale: same exit code, translated message.
+  const l = spawnSync(realGit, sub, { stdio: ['inherit', 'inherit', 'pipe'] });
+  if (l.status !== 0) process.stderr.write("fatal: mehrdeutiges Argument 'HEAD': unbekannte Revision\\n");
+  process.exit(l.status ?? 1);
 }
 const r = spawnSync(realGit, sub, { stdio: 'inherit' });
 process.exit(r.status ?? 1);
@@ -1716,6 +1720,18 @@ async function blackBoxSelfTest() {
         check: (_r, ctx) => (ctx.elapsedMs >= 10000 ? `elapsed ${ctx.elapsedMs}` : null),
       },
 
+      {
+        name: 'unborn-head-l10n',
+        setup: (c) => {
+          fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true });
+          spawnSync('git', ['init', '-q'], { cwd: c.repo, env: c.env });
+          fs.writeFileSync(path.join(c.home, '.fake-git-l10n'), '1');
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+      },
       {
         name: 'bad-model',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/missing', '--model-cursor', 'fake-ok-cursor'],
