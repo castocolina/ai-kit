@@ -1073,6 +1073,26 @@ _JEV_SESSION_NOTE = (
 )
 
 
+def _agent_skill_entries(
+    ctx: PlanCtx, resolved: dict[str, list[str]], affinity: dict, facts: dict[str, bool],
+) -> list:
+    families = affinity.get("families")
+    fam_list = families if isinstance(families, list) else []
+    pi_effect = [_PI_AGENT_SKILLS_EFFECT] if ctx.host == "pi" else []
+    entries = []
+    for agent, names in sorted(resolved.items()):
+        effects = pi_effect + skills.entry_caveats(names, ctx.inv)
+        entries.append(make_entry(
+            ctx,
+            f"agent_skills.{agent}",
+            names,
+            "affinity",
+            _skills_agent_why(agent, names, fam_list, facts),
+            **({"effect": "; ".join(effects)} if effects else {}),
+        ))
+    return entries
+
+
 def _skills_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     """Wire installed skills to agents from curated affinity (18 D-02, D-04, D-33)."""
     affinity = ctx.opts.affinity
@@ -1080,20 +1100,7 @@ def _skills_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
         return [], []
     facts = skills.skill_facts(ctx.inv, prior_entries, ctx.existing)
     resolved, notes = skills.resolve(affinity, ctx.inv, facts, ctx.opts.rigor)
-    families = affinity.get("families")
-    fam_list = families if isinstance(families, list) else []
-    pi_extra = {"effect": _PI_AGENT_SKILLS_EFFECT} if ctx.host == "pi" else {}
-    entries = [
-        make_entry(
-            ctx,
-            f"agent_skills.{agent}",
-            names,
-            "affinity",
-            _skills_agent_why(agent, names, fam_list, facts),
-            **pi_extra,
-        )
-        for agent, names in sorted(resolved.items())
-    ]
+    entries = _agent_skill_entries(ctx, resolved, affinity, facts)
     wired = skills.wired_skills(resolved, ctx.inv)
     candidates, _root_notes = skills.trusted_roots(wired, ctx.inv)
     if candidates:

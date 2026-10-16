@@ -431,5 +431,22 @@ def proposals(affinity: dict, inv: dict) -> list[dict]:
     return notes
 
 
+PLUGIN_LAYERING_EFFECT = "unverified: enabledPlugins per-key layering assumed (D-32)"
+URL_ONLY_EFFECT = "backend reachable, not verified as System One"
+
+
+def entry_caveats(names: list[str], inv: dict) -> list[str]:
+    """Unverified facts an ``agent_skills.<agent>`` entry rests on (C-W11)."""
+    caveats: list[str] = []
+    rows = [locate(name, inv) for name in names]
+    if any(row is not None and row.get("root_kind") == "plugin" for row in rows):
+        caveats.append(PLUGIN_LAYERING_EFFECT)
+    backend = inv.get("system_one_backend")
+    via = backend.get("via") if isinstance(backend, dict) else None
+    if "jev-fast-decision" in names and via == ["url_reachable"]:
+        caveats.append(URL_ONLY_EFFECT)
+    return caveats
+
+
 def jev_is_wired(resolved: dict[str, list[str]]) -> bool:
     return any("jev-fast-decision" in names for names in resolved.values())

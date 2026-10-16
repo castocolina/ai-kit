@@ -41,6 +41,7 @@
   },
   "entries": [
     {
+      "effect": "unverified: enabledPlugins per-key layering assumed (D-32)",
       "existing": null,
       "key": "agent_skills.gsd-code-fixer",
       "op": "set",
@@ -51,6 +52,7 @@
       "why": "family ponytail-core: ponytail"
     },
     {
+      "effect": "unverified: enabledPlugins per-key layering assumed (D-32)",
       "existing": null,
       "key": "agent_skills.gsd-code-reviewer",
       "op": "set",
@@ -62,6 +64,7 @@
       "why": "family ponytail-reviewers: ponytail-review, ponytail-audit"
     },
     {
+      "effect": "unverified: enabledPlugins per-key layering assumed (D-32)",
       "existing": null,
       "key": "agent_skills.gsd-eval-auditor",
       "op": "set",
@@ -73,6 +76,7 @@
       "why": "family ponytail-reviewers: ponytail-review, ponytail-audit"
     },
     {
+      "effect": "unverified: enabledPlugins per-key layering assumed (D-32)",
       "existing": null,
       "key": "agent_skills.gsd-executor",
       "op": "set",
@@ -84,6 +88,7 @@
       "why": "family ponytail-core: ponytail; family frontend: react-dev"
     },
     {
+      "effect": "unverified: enabledPlugins per-key layering assumed (D-32)",
       "existing": null,
       "key": "agent_skills.gsd-nyquist-auditor",
       "op": "set",
@@ -95,6 +100,7 @@
       "why": "family ponytail-reviewers: ponytail-review, ponytail-audit"
     },
     {
+      "effect": "unverified: enabledPlugins per-key layering assumed (D-32)",
       "existing": null,
       "key": "agent_skills.gsd-planner",
       "op": "set",
@@ -105,6 +111,7 @@
       "why": "family ponytail-core: ponytail"
     },
     {
+      "effect": "unverified: enabledPlugins per-key layering assumed (D-32)",
       "existing": null,
       "key": "agent_skills.gsd-security-auditor",
       "op": "set",
@@ -116,6 +123,7 @@
       "why": "family ponytail-reviewers: ponytail-review, ponytail-audit"
     },
     {
+      "effect": "unverified: enabledPlugins per-key layering assumed (D-32)",
       "existing": null,
       "key": "agent_skills.gsd-ui-auditor",
       "op": "set",
@@ -138,6 +146,7 @@
       "why": "family frontend: react-dev"
     },
     {
+      "effect": "unverified: enabledPlugins per-key layering assumed (D-32)",
       "existing": null,
       "key": "agent_skills.gsd-verifier",
       "op": "set",

@@ -1205,6 +1205,40 @@ class TestSkillNotes(unittest.TestCase):
         for entry in skill_entries:
             self.assertEqual(entry["effect"], "no effect on pi (no GSD agent files installed)")
 
+    def test_plugin_wired_entry_flagged_unverified(self):
+        """C-W11: wiring that rests on the assumed enabledPlugins layering says so."""
+        inv = _inv(skills=[
+            _skill_row("ponytail", "plugin", plugin="ponytail"),
+            _skill_row("systematic-debugging", "global"),
+        ])
+        em = entry_map(_plan_with_affinity(inv))
+        self.assertIn("enabledPlugins", em["agent_skills.gsd-planner"]["effect"])
+        self.assertIn("unverified", em["agent_skills.gsd-planner"]["effect"])
+        inv = _inv(skills=[_skill_row("ponytail", "global")])
+        self.assertNotIn("effect", entry_map(_plan_with_affinity(inv))["agent_skills.gsd-planner"])
+
+    def test_url_only_jev_entry_flagged(self):
+        """C-W11: a backend seen only by TCP reachability is not presented as System One."""
+        for via, flagged in ((["url_reachable"], True), (["url_reachable", "key_present"], False)):
+            inv = _inv(
+                skills=[_skill_row("jev-fast-decision", "global")],
+                backend={"detected": True, "via": via, "note": ""},
+                extra_accepted=[
+                    "agent_skills.gsd-advisor-researcher",
+                    "agent_skills.gsd-assumptions-analyzer",
+                ],
+            )
+            inv["gsd_core"]["agent_to_phase_type"] = {
+                **inv["gsd_core"]["agent_to_phase_type"],
+                "gsd-advisor-researcher": "research",
+                "gsd-assumptions-analyzer": "research",
+            }
+            entry = entry_map(_plan_with_affinity(inv))["agent_skills.gsd-advisor-researcher"]
+            with self.subTest(via=via):
+                self.assertEqual(
+                    "not verified as System One" in entry.get("effect", ""), flagged
+                )
+
     def test_trusted_root_entry_on_escaping_global(self):
         inv = _inv(
             project={"frontend": True, "intel_index_present": False, "db": False},
