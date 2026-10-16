@@ -414,7 +414,18 @@ class TestPonytailVisibility(unittest.TestCase):
             "cursor": None,
             "pi": None,
         }
-        vis = skill_scan.ponytail_visibility(roots)
+        cwd_reads: list[str] = []
+        real = os.path.realpath
+
+        def spy(path, *args, **kwargs):
+            if path == "":
+                cwd_reads.append(path)
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(skill_scan.os.path, "realpath", spy):
+            vis = skill_scan.ponytail_visibility(roots, home)
+        # C-IN-04: the real home is used, never realpath("") (the process cwd).
+        self.assertEqual(cwd_reads, [])
         self.assertEqual(vis["codex"], ["ponytail", "ponytail-review"])
         for host_name in host.HOSTS:
             if host_name != "codex":

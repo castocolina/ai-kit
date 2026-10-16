@@ -383,7 +383,7 @@ def _assemble_inventory(project_dir, host_name, host_source, core: host.GsdCore,
     home = parts["home"]
     skills_roots = parts["tables"].get("skills_roots") or {}
     skills = skill_scan.scan_skills(project_dir, host_name, skills_roots, home)
-    ponytail = skill_scan.ponytail_visibility(skills_roots)
+    ponytail = skill_scan.ponytail_visibility(skills_roots, home)
     if any(row.get("root_kind") == "plugin" for row in skills):
         info.append(
             _item(

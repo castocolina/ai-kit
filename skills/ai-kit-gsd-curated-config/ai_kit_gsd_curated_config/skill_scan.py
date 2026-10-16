@@ -270,8 +270,9 @@ def scan_skills(
     return entries
 
 
-def ponytail_visibility(skills_roots: dict) -> dict[str, list[str]]:
-    """Per-host ponytail skill names visible under each host global skills root."""
+def ponytail_visibility(skills_roots: dict, home: str) -> dict[str, list[str]]:
+    """Per-host ponytail skill names under each host's global skills root only: Claude
+    plugin skills are not counted here (they are ``skills`` rows with ``root_kind: plugin``)."""
     out: dict[str, list[str]] = {h: [] for h in host.HOSTS}
     if not isinstance(skills_roots, dict):
         return out
@@ -280,7 +281,7 @@ def ponytail_visibility(skills_roots: dict) -> dict[str, list[str]]:
         root = skills_roots.get(host_name)
         if not isinstance(root, str) or not root:
             continue
-        found = {e["name"] for e in scan_root(root, "global", root, "") if e["name"] in pony_set}
+        found = {e["name"] for e in scan_root(root, "global", root, home) if e["name"] in pony_set}
         out[host_name] = sorted(found)
     return out
 
