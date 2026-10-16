@@ -292,6 +292,22 @@ class TestPlanSetRefusals(unittest.TestCase):
             self.assertTrue(entry.get("forced"))
             self.assertIn("full permissions", err)
 
+    def test_canonical_command_clears_forced(self):
+        """B IN-01: re-setting the canonical runner drops a stale forced flag."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = _write_pair(tmp)
+            key = "workflow.cross_ai_command"
+            code, _, err = _run_plan_set(plan_path, inv_path, key, "node other.mjs", force=True)
+            self.assertEqual(code, 0, err)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, key, "node .planning/scripts/cross-ai.mjs"
+            )
+            self.assertEqual(code, 0, err)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            entry = next(e for e in plan["entries"] if e["key"] == key)
+            self.assertNotIn("forced", entry)
+
     def test_skill_not_installed(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._assert_refusal(

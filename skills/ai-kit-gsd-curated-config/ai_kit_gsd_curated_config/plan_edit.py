@@ -579,7 +579,7 @@ def _apply_entry(entry: dict, value: Any, forced: bool) -> None:
     entry.pop("candidates", None)
     if forced:
         entry["forced"] = True
-    elif "forced" in entry and entry.get("key") != "workflow.cross_ai_command":
+    else:
         entry.pop("forced", None)
     if existing is not None and value == existing:
         entry["op"] = "keep"
