@@ -785,7 +785,10 @@ class TestAffinityResolve(unittest.TestCase):
         }
         inv = _inv(skills=[])
         resolved, _ = skills.resolve(affinity, inv, skills.skill_facts(inv, [], {}), "standard")
-        self.assertNotIn("gsd-debugger", resolved)
+        self.assertNotIn("gsd-planner", resolved)  # C-IN-06: the family's own agent
+        inv = _inv(skills=[_skill_row("a", "global")])
+        resolved, _ = skills.resolve(affinity, inv, skills.skill_facts(inv, [], {}), "standard")
+        self.assertEqual(resolved, {"gsd-planner": ["a"]})
 
     def test_dedupe_same_skill_two_families(self):
         affinity = {
