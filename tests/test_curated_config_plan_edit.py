@@ -839,12 +839,25 @@ class TestScriptPseudoKeys(unittest.TestCase):
 class TestPlanUnset(unittest.TestCase):
     def test_set_same_as_existing_is_keep(self):
         with tempfile.TemporaryDirectory() as tmp:
-            inv_path, plan_path, _inv, plan = _write_pair(tmp)
             key = "workflow.plan_review_convergence"
+            inv = build_golden_inventory("claude")
+            inv["existing_config"]["values"].setdefault("workflow", {})[
+                "plan_review_convergence"
+            ] = True
+            inv_path = os.path.join(tmp, "inventory.json")
+            plan_path = os.path.join(tmp, "plan.json")
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(inv))
+            code, plan, raw, err = run_recommend(
+                inv, "--profile", "adaptive", "--rigor", "standard"
+            )
+            self.assertEqual(code, 0, err)
+            assert plan is not None and raw is not None
+            with open(plan_path, "wb") as handle:
+                handle.write(raw)
             entry = next(e for e in plan["entries"] if e["key"] == key)
             existing = entry.get("existing")
-            if existing is None:
-                self.skipTest("no existing snapshot for convergence")
+            self.assertIs(existing, True)
             code, _, err = _run_plan_set(
                 plan_path, inv_path, key, "true" if existing else "false"
             )
