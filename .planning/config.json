@@ -104,8 +104,6 @@
     }
   },
   "model_overrides": {
-    "gsd-planner": "fable",
-    "gsd-roadmapper": "fable",
-    "gsd-pattern-mapper": "fable"
+    "gsd-planner": "fable"
   }
 }
