@@ -598,6 +598,7 @@ function withExtra(cli, argv) {
 
 for (const [sig, n] of [['SIGTERM', 15], ['SIGINT', 2], ['SIGHUP', 1]]) {
   process.on(sig, async () => {
+    if (selfTestRoot) { selfTestAbort(n); return; }
     aborting = n;
     if (currentFinalize) await currentFinalize('signal');
     const code = finish('signal', { ...liveFields, exit: 128 + n, tree: liveFields.tree });
@@ -753,11 +754,23 @@ function writeCopy(tmp, name, override) {
   return p;
 }
 
+// Every fake records "<name> <pid>" in $FAKE_PIDS so a case can reap what it spawned.
+const FAKE_PRELUDE = String.raw`
+const calls = process.env.FAKE_CALLS;
+const log = (line) => { if (calls) fs.appendFileSync(calls, line + '\n'); };
+const recordPid = (name, pid) => { if (process.env.FAKE_PIDS) fs.appendFileSync(process.env.FAKE_PIDS, name + ' ' + pid + '\n'); };
+recordPid(process.argv[1].split('/').pop(), process.pid);
+const argOf = (flag) => { const i = process.argv.indexOf(flag); return i >= 0 ? process.argv[i + 1] || '' : ''; };
+`;
+
+function writeExe(binDir, name, imports, body) {
+  const p = path.join(binDir, name);
+  fs.writeFileSync(p, `#!/usr/bin/env node\nimport fs from 'node:fs';\n${imports}${FAKE_PRELUDE}${body}`);
+  fs.chmodSync(p, 0o755);
+}
+
 function writeGitWrapper(binDir, realGit) {
-  const body = `#!/usr/bin/env node
-import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
+  writeExe(binDir, 'git', "import { spawnSync } from 'node:child_process';\nimport path from 'node:path';\n", `
 const realGit = ${JSON.stringify(realGit)};
 const home = process.env.HOME || '';
 const sub = process.argv.slice(2);
@@ -767,22 +780,15 @@ if (sub[0] === 'write-tree') {
 }
 const r = spawnSync(realGit, sub, { stdio: 'inherit' });
 process.exit(r.status ?? 1);
-`;
-  const p = path.join(binDir, 'git');
-  fs.writeFileSync(p, body);
-  fs.chmodSync(p, 0o755);
+`);
 }
 
 function writeFakePi(binDir) {
-  const body = String.raw`#!/usr/bin/env node
-import fs from 'node:fs';
-import { spawn } from 'node:child_process';
+  writeExe(binDir, 'pi', "import { spawn, spawnSync } from 'node:child_process';\n", String.raw`
 const args = process.argv;
-let model = '';
-for (let i = 0; i < args.length; i++) if (args[i] === '--model') model = args[++i] || '';
+const model = argOf('--model');
 const fakeMode = model.startsWith('fake/') ? model.slice(5) : '';
-const calls = process.env.FAKE_CALLS;
-const log = (line) => { if (calls) fs.appendFileSync(calls, line + '\n'); };
+const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('gc', pid); };
 const STICKY_FAKE = new Set(['hang', 'gcescape', 'outer-race']);
 let stdinBuf = '';
 const FAKE_MODES = {
@@ -803,23 +809,23 @@ const FAKE_MODES = {
   reedit: () => { fs.appendFileSync('dirty.txt', 'more\n'); process.stdout.write('# Summary\nok'); },
   hang: () => {
     const gc = spawn(process.execPath, ['-e', 'while(true){}'], { stdio: 'ignore' });
-    fs.writeFileSync('gc.pid', String(gc.pid));
+    recordGc(gc.pid);
     setInterval(() => {}, 1 << 30);
   },
   gcpipe: () => {
     const gc = spawn(process.execPath, ['-e', 'while(true){}'], { stdio: 'inherit' });
-    fs.writeFileSync('gc.pid', String(gc.pid));
+    recordGc(gc.pid);
     fs.appendFileSync('a.txt', 'gp\n');
     process.stdout.write('# Summary\nok');
   },
   gcterm: () => {
     const gc = spawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{});while(true){}'], { stdio: 'inherit' });
-    fs.writeFileSync('gc.pid', String(gc.pid));
+    recordGc(gc.pid);
     fs.appendFileSync('a.txt', 'gt\n');
     process.stdout.write('# Summary\nok');
   },
   gcescape: () => {
-    const gc = spawn(process.execPath, ['-e', 'const fs=require("fs");fs.writeFileSync("gc.pid",String(process.pid));setInterval(()=>process.stderr.write("gc-late"+String.fromCharCode(10)),100);setInterval(()=>{},1<<30);'], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const gc = spawn(process.execPath, ['-e', 'const fs=require("fs");fs.writeFileSync("gc.pid",String(process.pid));if(process.env.FAKE_PIDS)fs.appendFileSync(process.env.FAKE_PIDS,"gc "+process.pid+String.fromCharCode(10));setInterval(()=>process.stderr.write("gc-late"+String.fromCharCode(10)),100);setInterval(()=>{},1<<30);'], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     gc.stderr.on('data', (d) => process.stderr.write(d));
     gc.unref();
     setInterval(() => {}, 1 << 30);
@@ -851,8 +857,9 @@ const FAKE_MODES = {
     fs.appendFileSync('a.txt', 'commit-line\n');
     const r = spawnSync('git', ['add', 'a.txt'], { stdio: 'inherit' });
     if (r.status !== 0) process.exit(r.status || 1);
-    const c = spawnSync('git', ['commit', '-m', 'fake'], { stdio: 'inherit' });
+    const c = spawnSync('git', ['commit', '-q', '-m', 'fake'], { stdio: 'inherit' });
     if (c.status !== 0) process.exit(c.status || 1);
+    fs.writeFileSync((process.env.HOME || '') + '/.fake-committed', '1');
     process.stdout.write('# Review\ncommitted');
   },
   'review-edit': () => {
@@ -881,7 +888,7 @@ const FAKE_MODES = {
     fs.writeFileSync((process.env.HOME || '') + '/.fake-git-hang', '1');
     const gc = spawn(process.execPath, ['-e', 'process.on("SIGTERM",()=>{setInterval(()=>process.stderr.write("gc-late"+String.fromCharCode(10)),100);});while(true){}'], { stdio: ['ignore', 'pipe', 'pipe'] });
     gc.stderr.on('data', (d) => process.stderr.write(d));
-    fs.writeFileSync('gc.pid', String(gc.pid));
+    recordGc(gc.pid);
     process.on('SIGTERM', () => {
       process.stderr.write('gc-late\n');
       try { process.kill(gc.pid, 'SIGTERM'); } catch { /* esrch */ }
@@ -903,7 +910,6 @@ if (modeIdx >= 0 && args[modeIdx + 1] === 'rpc') {
   }
 } else {
 log('pi ' + (fakeMode || model));
-stdinBuf = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (d) => { stdinBuf += d; });
 process.stdin.on('end', () => {
@@ -913,19 +919,14 @@ process.stdin.on('end', () => {
   if (!STICKY_FAKE.has(fakeMode)) process.exit(0);
 });
 }
-`;
-  const p = path.join(binDir, 'pi');
-  fs.writeFileSync(p, body);
-  fs.chmodSync(p, 0o755);
+`);
 }
 
 function writeFakeCursor(binDir) {
-  const body = String.raw`#!/usr/bin/env node
-import fs from 'node:fs';
-const calls = process.env.FAKE_CALLS;
+  writeExe(binDir, 'cursor-agent', '', String.raw`
 const sub = process.argv.slice(2);
 if (sub[0] === 'models') {
-  if (calls) fs.appendFileSync(calls, 'cursor-agent models\n');
+  log('cursor-agent models');
   console.log('Available models');
   console.log('');
   if (process.env.FAKE_CURSOR_LIST !== 'empty') {
@@ -933,9 +934,8 @@ if (sub[0] === 'models') {
   }
   process.exit(0);
 }
-let model = '';
-for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === '--model') model = process.argv[++i] || '';
-if (calls) fs.appendFileSync(calls, 'cursor-agent ' + model + '\n');
+const model = argOf('--model');
+log('cursor-agent ' + model);
 process.stdin.on('data', () => {}).on('end', () => {
   if (model === 'fake-err-cursor') {
     console.log(JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized', session_id: 'c2' }));
@@ -944,25 +944,19 @@ process.stdin.on('data', () => {}).on('end', () => {
   fs.appendFileSync('a.txt', 'cursor\n');
   console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '## Summary\nok', session_id: 'c1' }));
 });
-`;
-  const p = path.join(binDir, 'cursor-agent');
-  fs.writeFileSync(p, body);
-  fs.chmodSync(p, 0o755);
+`);
 }
 
 function writeFakeOpencode(binDir) {
-  const body = String.raw`#!/usr/bin/env node
-import fs from 'node:fs';
-const calls = process.env.FAKE_CALLS;
+  writeExe(binDir, 'opencode', '', String.raw`
 const sub = process.argv.slice(2);
 if (sub[0] === 'models') {
-  if (calls) fs.appendFileSync(calls, 'opencode models\n');
+  log('opencode models');
   console.log('fake/ok');
   process.exit(0);
 }
-let model = '';
-for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === '--model') model = process.argv[++i] || '';
-if (calls) fs.appendFileSync(calls, 'opencode ' + model + '\n');
+const model = argOf('--model');
+log('opencode ' + model);
 process.stdin.on('data', () => {}).on('end', () => {
   fs.appendFileSync('a.txt', 'oc\n');
   const lines = [
@@ -972,55 +966,35 @@ process.stdin.on('data', () => {}).on('end', () => {
   ];
   for (const l of lines) console.log(l);
 });
-`;
-  const p = path.join(binDir, 'opencode');
-  fs.writeFileSync(p, body);
-  fs.chmodSync(p, 0o755);
+`);
 }
 
 function writeFakeClaude(binDir) {
-  const body = String.raw`#!/usr/bin/env node
-import fs from 'node:fs';
-const calls = process.env.FAKE_CALLS;
-let model = '';
-for (let i = 0; i < process.argv.length; i++) if (process.argv[i] === '--model') model = process.argv[++i] || '';
-if (calls) fs.appendFileSync(calls, 'claude ' + model + '\n');
+  writeExe(binDir, 'claude', '', String.raw`
+log('claude ' + argOf('--model'));
 process.stdin.on('data', () => {}).on('end', () => {
   console.log(JSON.stringify({ type: 'result', result: 'ok', session_id: 'x', is_error: false }));
   process.exit(0);
 });
-`;
-  const p = path.join(binDir, 'claude');
-  fs.writeFileSync(p, body);
-  fs.chmodSync(p, 0o755);
+`);
 }
 
 function writeFakeCodex(binDir) {
-  const body = String.raw`#!/usr/bin/env node
-import fs from 'node:fs';
-const calls = process.env.FAKE_CALLS;
+  writeExe(binDir, 'codex', '', String.raw`
 const sub = process.argv.slice(2);
 if (sub[0] === 'debug' && sub[1] === 'models') {
-  if (calls) fs.appendFileSync(calls, 'codex models\n');
+  log('codex models');
   console.log(JSON.stringify({ models: [{ slug: 'fake-ok-codex', visibility: 'list' }] }));
   process.exit(0);
 }
-let model = '';
-let outFile = '';
-for (let i = 0; i < process.argv.length; i++) {
-  if (process.argv[i] === '-m') model = process.argv[++i] || '';
-  if (process.argv[i] === '-o') outFile = process.argv[++i] || '';
-}
-if (calls) fs.appendFileSync(calls, 'codex ' + model + '\n');
+const outFile = argOf('-o');
+log('codex ' + argOf('-m'));
 process.stdin.on('data', () => {}).on('end', () => {
   fs.appendFileSync('a.txt', 'cx\n');
   if (outFile) fs.writeFileSync(outFile, '## Summary\nok');
   console.log(JSON.stringify({ type: 'thread.started', thread_id: 't1' }));
 });
-`;
-  const p = path.join(binDir, 'codex');
-  fs.writeFileSync(p, body);
-  fs.chmodSync(p, 0o755);
+`);
 }
 
 function statusLineOk(stderr, pattern) {
@@ -1048,63 +1022,132 @@ function pidLingers(pid, ms = 3000) {
   return false;
 }
 
-function runSelfTestCaseSync(tmp, spec, repo, home, calls, copy, env) {
-  const t0 = Date.now();
-  const r = spawnSync(process.execPath, [copy, ...(spec.args || [])], {
-    cwd: repo, env, input: spec.stdin ?? 'prompt\n', encoding: 'utf8', timeout: 30000,
-  });
-  const elapsedMs = Date.now() - t0;
-  if (r.status !== spec.exit) return `exit ${r.status} expected ${spec.exit}`;
-  const err = statusLineOk(r.stderr || '', spec.status);
-  if (err) return err;
-  const callLines = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n').filter(Boolean) : [];
-  if (spec.check) {
-    const cErr = spec.check(r, { repo, home, calls: callLines, elapsedMs });
-    if (cErr) return cErr;
+// Linux: every self-test process runs with its cwd under the self-test tmp dir.
+const HAVE_PROC = fs.existsSync('/proc/self/cwd');
+function pidsUnder(root) {
+  if (!HAVE_PROC) return [];
+  const out = [];
+  for (const n of fs.readdirSync('/proc')) {
+    if (!/^\d+$/.test(n) || Number(n) === process.pid) continue;
+    let cwd = '';
+    try { cwd = fs.readlinkSync(`/proc/${n}/cwd`); } catch { continue; }
+    if (cwd === root || cwd.startsWith(root + path.sep)) out.push(Number(n));
   }
-  return null;
+  return out;
 }
 
-function runSelfTestCaseSpawn(tmp, spec, repo, home, calls, copy, env) {
+function recordedPids(pidFile) {
+  const out = {};
+  for (const line of readOr(pidFile, '').split('\n')) {
+    const [name, pid] = line.split(' ');
+    if (Number(pid) > 0) (out[name] ||= []).push(Number(pid));
+  }
+  return out;
+}
+
+// Kill every process a case left behind: its runner group, the fakes' own groups and any
+// escaped grandchild. On Linux only pids whose cwd is under `root` are touched (no pid reuse
+// hits); elsewhere the recorded pids are the best available list.
+function reapUnder(root, pidFiles) {
+  const pids = new Set(pidsUnder(root));
+  if (!HAVE_PROC) for (const f of pidFiles) for (const list of Object.values(recordedPids(f))) list.forEach((p) => pids.add(p));
+  for (const pid of pids) {
+    for (const target of [-pid, pid]) {
+      try { process.kill(target, 'SIGKILL'); } catch { /* gone or not a group */ }
+    }
+  }
+}
+
+function waitFor(pred, ms) {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + ms;
+    const tick = () => {
+      if (pred()) return resolve(true);
+      if (Date.now() >= deadline) return resolve(false);
+      setTimeout(tick, 25);
+    };
+    tick();
+  });
+}
+
+const caseRunners = new Set();
+
+// One harness for every case: the runner gets its own process group, so a hung or failing
+// case can always be reaped as a unit.
+function runCaseProcess(spec, c) {
   return new Promise((resolve) => {
     const t0 = Date.now();
-    const child = spawn(process.execPath, [copy, ...(spec.args || [])], {
-      cwd: repo, env, stdio: ['pipe', 'pipe', 'pipe'],
+    const child = spawn(process.execPath, [c.copy, ...(spec.args || [])], {
+      cwd: c.repo, env: c.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true,
     });
-    child.stdin.write(spec.stdin ?? 'prompt\n');
-    child.stdin.end();
+    caseRunners.add(child);
+    let stdout = '';
     let stderr = '';
-    child.stderr.on('data', (d) => { stderr += d.toString('utf8'); });
-    const sigAt = setTimeout(() => child.kill('SIGTERM'), 1000);
-    const hard = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch { /* gone */ }
-      resolve('spawn case hung past 30s');
-    }, 30000);
-    child.on('exit', (code) => {
-      clearTimeout(sigAt);
+    let sigMs = null;
+    let code = null;
+    let done = false;
+    const end = (reason) => {
+      if (done) return;
+      done = true;
       clearTimeout(hard);
-      const elapsedMs = Date.now() - t0;
-      if (code !== spec.exit) return resolve(`exit ${code} expected ${spec.exit}`);
-      const err = statusLineOk(stderr, spec.status);
-      if (err) return resolve(err);
-      if (elapsedMs > 3000) return resolve(`elapsed ${elapsedMs}ms > 3000ms after signal`);
-      const callLines = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n').filter(Boolean) : [];
-      if (spec.check) {
-        const cErr = spec.check({ stderr, status: code }, { repo, home, calls: callLines, elapsedMs });
-        if (cErr) return resolve(cErr);
-      }
-      resolve(null);
+      caseRunners.delete(child);
+      resolve({ reason, status: code, stdout, stderr, elapsedMs: Date.now() - t0, sinceSignalMs: sigMs === null ? null : Date.now() - sigMs });
+    };
+    const hard = setTimeout(() => end('case hung past 30s'), 30000);
+    child.stdout.on('data', (d) => { stdout += d.toString('utf8'); });
+    child.stderr.on('data', (d) => {
+      stderr += d.toString('utf8');
+    });
+    child.stdin.on('error', () => { /* runner exited early */ });
+    child.stdin.end(spec.stdin ?? 'prompt\n');
+    if (spec.signal) {
+      waitFor(() => spec.signal.when(c), 10000).then((ready) => {
+        if (done) return;
+        if (!ready) { end('signal precondition never met'); return; }
+        sigMs = Date.now();
+        try { child.kill(spec.signal.sig); } catch { /* exited */ }
+        if (spec.signal.again) setTimeout(() => { try { child.kill(spec.signal.again); } catch { /* exited */ } }, 200);
+      });
+    }
+    child.on('exit', (exitCode) => {
+      code = exitCode;
+      Promise.race([new Promise((r) => child.on('close', r)), sleep(2000)]).then(() => end(null));
     });
   });
+}
+
+async function checkCase(spec, c) {
+  const r = await runCaseProcess(spec, c);
+  if (r.reason) return r.reason;
+  if (r.status !== spec.exit) return `exit ${r.status} expected ${spec.exit}`;
+  if (!spec.closeStderr) {
+    const err = statusLineOk(r.stderr || '', spec.status);
+    if (err) return err;
+  }
+  if (spec.signal && r.sinceSignalMs > (spec.signal.withinMs ?? 2900)) return `exit ${r.sinceSignalMs}ms after the signal`;
+  const callLines = fs.existsSync(c.calls) ? fs.readFileSync(c.calls, 'utf8').trim().split('\n').filter(Boolean) : [];
+  const ctx = { ...c, calls: callLines, elapsedMs: r.elapsedMs, pids: recordedPids(c.pidFile) };
+  return spec.check ? spec.check(r, ctx) : null;
+}
+
+// Fails unless each named recorded process (or gc.pid) existed and is dead now.
+function deadCheck(ctx, names) {
+  for (const name of names) {
+    const list = ctx.pids[name] || [];
+    if (!list.length) return `no ${name} pid recorded`;
+    for (const pid of list) if (pidLingers(pid)) return `${name} ${pid} still alive`;
+  }
+  return null;
 }
 
 async function runSelfTestCase(tmp, spec) {
   const repo = path.join(tmp, `r-${spec.name}`);
   fs.mkdirSync(repo, { recursive: true });
-  spawnSync('git', ['init', '-q'], { cwd: repo, env: hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') }) });
+  const gitEnv = hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') });
+  spawnSync('git', ['init', '-q'], { cwd: repo, env: gitEnv });
   fs.writeFileSync(path.join(repo, 'a.txt'), 'base\n');
-  spawnSync('git', ['add', 'a.txt'], { cwd: repo, env: hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') }) });
-  spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo, env: hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') }) });
+  spawnSync('git', ['add', 'a.txt'], { cwd: repo, env: gitEnv });
+  spawnSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo, env: gitEnv });
   if (spec.planningConfig != null) {
     fs.mkdirSync(path.join(repo, '.planning'), { recursive: true });
     fs.writeFileSync(path.join(repo, '.planning', 'config.json'), JSON.stringify(spec.planningConfig));
@@ -1112,19 +1155,37 @@ async function runSelfTestCase(tmp, spec) {
   if (spec.workstream) {
     const wdir = path.join(repo, '.planning', 'workstreams', spec.workstream.ws);
     fs.mkdirSync(wdir, { recursive: true });
-    fs.writeFileSync(path.join(wdir, 'config.json'), JSON.stringify(spec.workstream.config));
+    if (spec.workstream.config) fs.writeFileSync(path.join(wdir, 'config.json'), JSON.stringify(spec.workstream.config));
   }
   const home = path.join(tmp, `home-${spec.name}`);
   fs.mkdirSync(home, { recursive: true });
   const calls = path.join(tmp, `calls-${spec.name}.log`);
+  const pidFile = path.join(tmp, `pids-${spec.name}.log`);
   const copy = writeCopy(tmp, spec.name, spec.config || {});
-  const env = hermeticEnv(tmp, { HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), FAKE_CALLS: calls, ...(spec.env || {}) });
-  if (spec.setup) {
-    const se = spec.setup({ repo, home, tmp, calls });
-    if (se) return se;
+  const env = hermeticEnv(tmp, {
+    HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), FAKE_CALLS: calls, FAKE_PIDS: pidFile, ...(spec.env || {}),
+  });
+  const c = { tmp, repo, home, calls, pidFile, copy, env };
+  let reason;
+  try {
+    reason = (spec.setup && spec.setup(c)) || await checkCase(spec, c);
+  } finally {
+    reapUnder(repo, [pidFile]);
   }
-  if (spec.spawn) return runSelfTestCaseSpawn(tmp, spec, repo, home, calls, copy, env);
-  return runSelfTestCaseSync(tmp, spec, repo, home, calls, copy, env);
+  if (!spec.expectFailure) return reason;
+  if (!reason) return 'case was expected to fail';
+  return spec.afterReap({ ...c, pids: recordedPids(pidFile) });
+}
+
+// Self-test mode owns SIGTERM/SIGINT/SIGHUP: reap every case process, drop the tmp dir, exit.
+let selfTestRoot = null;
+function selfTestAbort(n) {
+  for (const child of caseRunners) killGroup(child, 'SIGKILL');
+  if (selfTestRoot) {
+    reapUnder(selfTestRoot, fs.readdirSync(selfTestRoot).filter((f) => f.startsWith('pids-')).map((f) => path.join(selfTestRoot, f)));
+    fs.rmSync(selfTestRoot, { recursive: true, force: true });
+  }
+  process.exit(128 + n);
 }
 
 async function blackBoxSelfTest() {
@@ -1134,6 +1195,7 @@ async function blackBoxSelfTest() {
     return 1;
   }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-st-'));
+  selfTestRoot = tmp;
   try {
     const binDir = path.join(tmp, 'bin');
     fs.mkdirSync(binDir, { recursive: true });
@@ -1359,12 +1421,7 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '2'],
         exit: 124,
         status: /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 cli_rc=.* elapsed=\d+s out=\d+ tree=.* action=stop$/,
-        check: (_r, ctx) => {
-          const pidFile = path.join(ctx.repo, 'gc.pid');
-          if (!fs.existsSync(pidFile)) return null;
-          const pid = Number(fs.readFileSync(pidFile, 'utf8'));
-          return pidLingers(pid) ? 'grandchild still alive' : null;
-        },
+        check: (_r, ctx) => deadCheck(ctx, ['gc']),
       },
       {
         name: 'not-installed-codex',
@@ -1375,10 +1432,27 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'sigterm-hang',
-        spawn: true,
         args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '60'],
+        signal: { when: (c) => fs.existsSync(path.join(c.repo, 'gc.pid')), sig: 'SIGTERM' },
         exit: 143,
         status: /^AIKIT-XAI status=signal .* exit=143 .* action=stop$/,
+        check: (_r, ctx) => deadCheck(ctx, ['pi', 'gc']),
+      },
+      {
+        // The harness itself: a runner killed mid-case leaves its CLI group behind; the
+        // per-case reaper must still kill it.
+        name: 'reap-after-failure',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '60'],
+        signal: { when: (c) => fs.existsSync(path.join(c.repo, 'gc.pid')), sig: 'SIGKILL' },
+        exit: 0,
+        status: /^$/,
+        expectFailure: true,
+        afterReap: (c) => {
+          const dead = deadCheck(c, ['pi', 'gc']);
+          if (dead) return dead;
+          const left = pidsUnder(c.repo);
+          return left.length ? `survivors ${left.join(',')}` : null;
+        },
       },
       {
         name: 'gcescape',
@@ -1392,11 +1466,7 @@ async function blackBoxSelfTest() {
           const statusIdx = lines.findIndex((l) => l.startsWith('AIKIT-XAI '));
           if (!(r.stderr || '').includes('gc-late')) return 'no gc-late';
           if (late.some((l) => lines.indexOf(l) >= statusIdx && statusIdx >= 0)) return 'gc-late after status';
-          const pidFile = path.join(ctx.repo, 'gc.pid');
-          if (fs.existsSync(pidFile)) {
-            try { process.kill(Number(fs.readFileSync(pidFile, 'utf8')), 'SIGKILL'); } catch { /* esrch */ }
-          }
-          return null;
+          return ctx.pids.gc ? null : 'no gc pid recorded';
         },
       },
       {
@@ -1404,24 +1474,14 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/gcpipe', '--timeout', '60'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/gcpipe exit=0 .* action=stop$/,
-        check: (_r, ctx) => {
-          if (ctx.elapsedMs >= 15000) return `elapsed ${ctx.elapsedMs}`;
-          const pidFile = path.join(ctx.repo, 'gc.pid');
-          if (!fs.existsSync(pidFile)) return null;
-          return pidLingers(Number(fs.readFileSync(pidFile, 'utf8'))) ? 'gc alive' : null;
-        },
+        check: (_r, ctx) => (ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['gc'])),
       },
       {
         name: 'gcterm',
         args: ['--prefer', 'pi', '--model-pi', 'fake/gcterm', '--timeout', '60'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/gcterm exit=0 .* action=stop$/,
-        check: (_r, ctx) => {
-          if (ctx.elapsedMs >= 15000) return `elapsed ${ctx.elapsedMs}`;
-          const pidFile = path.join(ctx.repo, 'gc.pid');
-          if (!fs.existsSync(pidFile)) return null;
-          return pidLingers(Number(fs.readFileSync(pidFile, 'utf8'))) ? 'gc alive' : null;
-        },
+        check: (_r, ctx) => (ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['gc'])),
       },
       {
         name: 'git-before-fail',
@@ -1553,6 +1613,7 @@ async function blackBoxSelfTest() {
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-commit'],
         exit: 1,
         status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/review-commit exit=1 .* action=stop$/,
+        check: (_r, ctx) => (fs.existsSync(path.join(ctx.home, '.fake-committed')) ? null : 'fake never committed'),
       },
       {
         name: 'review-edit',
@@ -1816,16 +1877,20 @@ async function blackBoxSelfTest() {
           const late = lines.filter((l) => l.includes('gc-late'));
           if (!late.length) return 'no gc-late';
           if (late.some((l) => lines.indexOf(l) >= statusIdx)) return 'gc-late after status';
-          const pidFile = path.join(ctx.repo, 'gc.pid');
-          if (fs.existsSync(pidFile) && pidLingers(Number(fs.readFileSync(pidFile, 'utf8')))) return 'gc alive';
-          return null;
+          return deadCheck(ctx, ['gc']);
         },
       },
 
     ];
 
+    const only = (process.env.AIKIT_XAI_SELFTEST_CASES || '').split(',').filter(Boolean);
+    const selected = only.length ? cases.filter((c) => only.includes(c.name)) : cases;
+    if (selected.length !== (only.length || cases.length)) {
+      process.stderr.write(`self-test: unknown case in AIKIT_XAI_SELFTEST_CASES=${only.join(',')}\n`);
+      return 2;
+    }
     let failed = false;
-    for (const c of cases) {
+    for (const c of selected) {
       const reason = await runSelfTestCase(tmp, c);
       if (reason) {
         failed = true;
@@ -1836,7 +1901,9 @@ async function blackBoxSelfTest() {
     process.stdout.write('self-test ok\n');
     return 0;
   } finally {
+    reapUnder(tmp, []);
     fs.rmSync(tmp, { recursive: true, force: true });
+    selfTestRoot = null;
   }
 }
 

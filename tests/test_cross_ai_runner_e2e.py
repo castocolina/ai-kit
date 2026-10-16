@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -68,6 +71,40 @@ def runner_env(tmp: str) -> dict[str, str]:
     }
 
 
+def run_group(argv: list[str], timeout: int, **kwargs) -> subprocess.CompletedProcess:
+    """`subprocess.run` in a new session; a timeout kills the whole group, not just the
+    leader, so no fake CLI outlives the test."""
+    with subprocess.Popen(
+        argv,
+        start_new_session=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        **kwargs,
+    ) as proc:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            out, err = proc.communicate()
+            raise
+        return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+
+
+def pids_with_cwd_under(root: str) -> list[int]:
+    out = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            cwd = os.readlink(f"/proc/{name}/cwd")
+        except OSError:
+            continue
+        if cwd == root or cwd.startswith(root + os.sep):
+            out.append(int(name))
+    return out
+
+
 class TestRunnerTemplate(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -85,17 +122,49 @@ class TestRunnerTemplate(unittest.TestCase):
         node_bin = _real_node_executable()
         assert node_bin is not None
         with tempfile.TemporaryDirectory() as tmp:
-            proc = subprocess.run(
-                [node_bin, TEMPLATE, "--self-test"],
-                cwd=REPO_ROOT,
-                env=runner_env(tmp),
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
+            proc = run_group(
+                [node_bin, TEMPLATE, "--self-test"], 180, cwd=REPO_ROOT, env=runner_env(tmp)
             )
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         self.assertIn("self-test ok", proc.stdout)
+
+    @unittest.skipUnless(os.path.isdir("/proc/self"), "needs /proc to find survivors")
+    def test_interrupted_self_test_leaves_nothing(self):
+        node_bin = _real_node_executable()
+        assert node_bin is not None
+        with tempfile.TemporaryDirectory() as tmp:
+            st_tmp = os.path.join(tmp, "st")
+            os.makedirs(st_tmp)
+            env = {
+                **runner_env(tmp),
+                "TMPDIR": st_tmp,
+                "AIKIT_XAI_SELFTEST_CASES": "sigterm-hang",
+            }
+            with subprocess.Popen(
+                [node_bin, TEMPLATE, "--self-test"],
+                cwd=REPO_ROOT,
+                env=env,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ) as proc:
+                try:
+                    deadline = time.monotonic() + 30
+                    pattern = os.path.join(st_tmp, "xai-st-*", "r-sigterm-hang", "gc.pid")
+                    while not glob.glob(pattern):
+                        self.assertLess(time.monotonic(), deadline, "fake CLI never started")
+                        time.sleep(0.05)
+                    proc.send_signal(signal.SIGTERM)
+                    rc = proc.wait(timeout=15)
+                finally:
+                    if proc.poll() is None:
+                        os.killpg(proc.pid, signal.SIGKILL)
+            survivors = pids_with_cwd_under(st_tmp)
+            for pid in survivors:
+                os.kill(pid, signal.SIGKILL)
+            self.assertEqual(rc, 128 + signal.SIGTERM)
+            self.assertEqual(survivors, [])
+            self.assertEqual(os.listdir(st_tmp), [])
 
 
 class TestRenderedRunner(unittest.TestCase):
@@ -144,14 +213,8 @@ class TestRenderedRunner(unittest.TestCase):
             with open(script_path, "rb") as f:
                 written = f.read()
             self.assertEqual(cross_ai_script.script_state(written), "pristine")
-            proc = subprocess.run(
-                [node_bin, script_path, "--self-test"],
-                cwd=tmp,
-                env=runner_env(tmp),
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
+            proc = run_group(
+                [node_bin, script_path, "--self-test"], 180, cwd=tmp, env=runner_env(tmp)
             )
             self.assertEqual(proc.returncode, 0, msg=proc.stderr)
 
