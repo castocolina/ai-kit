@@ -16,15 +16,12 @@ from . import (
     followups,
     gsd_catalog,
     host,
+    inventory,
     plan_io,
     presets,
     skills,
 )
 
-_PROBE_UNAVAILABLE = (
-    "gsd-core at {root} (version {version}): isValidConfigKey unavailable "
-    "(require failed or export missing)"
-)
 _FORCED_CMD_WARNING = (
     "workflow.cross_ai_command overrides the runner; "
     "gsd-core runs it with full permissions"
@@ -48,11 +45,9 @@ class Inputs(NamedTuple):
 
 class Target(NamedTuple):
     tools: Any
-    paths: gsd_catalog.GsdCorePaths
+    core: host.GsdCore
     config_path: str
     env: dict
-    version: str | None
-    core_root: str
 
 
 def load_inputs(
@@ -208,14 +203,7 @@ def _target_for_core(inputs: Inputs, deps: ApplyDeps, core: host.GsdCore) -> Tar
     bind_err = _config_binding_error(config_path, inputs.inv["existing_config"].get("path"))
     if bind_err:
         return bind_err
-    model_catalog = gsd_catalog.resolve_model_catalog_cjs_path(core.tools_path)
-    config_schema = gsd_catalog.resolve_config_schema_cjs_path(core.tools_path)
-    if model_catalog is None or config_schema is None:
-        missing = "model-catalog.cjs" if model_catalog is None else "config-schema.cjs"
-        ver = core.version or "unknown"
-        return f"gsd-core at {core.root} (version {ver}): missing lib/{missing}"
-    paths = gsd_catalog.GsdCorePaths(node_bin, model_catalog, config_schema)
-    return Target(tools, paths, config_path, env, core.version, core.root)
+    return Target(tools, core, config_path, env)
 
 
 def resolve_target(inputs: Inputs, deps: ApplyDeps) -> tuple[Target | None, str | None]:
@@ -256,19 +244,13 @@ def preflight(
         if msg:
             problems.append(msg)
     keys = write_keys(inputs.plan)
-    ver = target.version or "unknown"
-    try:
-        tables = gsd_catalog.query_gsd_tables(
-            target.paths,
-            inputs.project_dir,
-            keys,
-            deps.run_fn,
-            target.env,
-        )
-    except gsd_catalog.NodeQueryError as exc:
-        return [f"gsd-core at {target.core_root} (version {ver}): {exc}"]
+    probe_deps = host.InventoryDeps(deps.which_fn, deps.run_fn, lambda: target.env)
+    tables, error = inventory.probe_gsd_tables(
+        target.core, target.tools.node_bin, inputs.project_dir, keys, probe_deps
+    )
     if tables is None:
-        return [_PROBE_UNAVAILABLE.format(root=target.core_root, version=ver)]
+        return [error or "gsd-core table probe failed"]
+    ver = target.core.version or "unknown"
     rejected = set(tables["valid_keys"]["rejected"])
     for key in keys:
         if key in rejected:
@@ -324,7 +306,7 @@ def dry_run_report(
         "dry_run": True,
         "plan": inputs.plan_path,
         "config_path": target.config_path,
-        "gsd_core_version": target.version,
+        "gsd_core_version": target.core.version,
         "diff": diff,
         "artifacts": script_preview(inputs, template),
         "warnings": warnings,

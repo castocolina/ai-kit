@@ -1065,8 +1065,8 @@ class TestDryRunPredictedReconcile(unittest.TestCase):
             }
         }
         inputs = apply_mod.Inputs(plan, "plan.json", inv, "inv.json", tmp)
-        paths = apply_mod.gsd_catalog.GsdCorePaths("node", "model-catalog.cjs", "schema.cjs")
-        target = apply_mod.Target(None, paths, config_path, {}, "1.16.0", "/core")
+        core = apply_mod.host.GsdCore("/core/bin/gsd-tools.cjs", "/core", "local", "1.16.0", ())
+        target = apply_mod.Target(None, core, config_path, {})
         return apply_mod.dry_run_report(inputs, target, {}, b"")
 
     def test_absent_config_lists_predicted_removals(self) -> None:

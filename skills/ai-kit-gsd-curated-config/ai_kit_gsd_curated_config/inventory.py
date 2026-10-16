@@ -119,7 +119,9 @@ def _missing_lib_error(core, filename: str) -> str:
     return f"gsd-core at {core.root} (version {ver}): missing lib/{filename}"
 
 
-def _probe_gsd_tables(core, node_bin, project_dir, probe_keys, deps):
+def probe_gsd_tables(core, node_bin, project_dir, probe_keys, deps):
+    """gsd-core's tables for ``probe_keys`` (shared with apply's pre-flight): ``(tables, None)``
+    or ``(None, one-line error)``."""
     if node_bin is None:
         return None, "could not resolve 'node' on PATH"
     model_catalog = gsd_catalog.resolve_model_catalog_cjs_path(core.tools_path)
@@ -416,7 +418,7 @@ def _load_configs(project_dir, deps, host_name, core: host.GsdCore):
     existing, ex_warn = _existing_config(project_dir, core.tools_path, node_bin, deps)
     global_defaults, gl_warn = _global_defaults(env)
     probe = _probe_keys(host_name, existing["values"], global_defaults["values"])
-    tables, table_err = _probe_gsd_tables(core, node_bin, project_dir, probe, deps)
+    tables, table_err = probe_gsd_tables(core, node_bin, project_dir, probe, deps)
     if tables is None:
         return None, table_err
     lane_tables, lane_warns = _normalize_lane_tables(tables)
