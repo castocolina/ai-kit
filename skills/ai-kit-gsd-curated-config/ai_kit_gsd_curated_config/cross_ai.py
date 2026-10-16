@@ -9,6 +9,19 @@ from typing import NamedTuple
 from . import presets, roles
 
 CROSS_AI_COMMAND = "node .planning/scripts/cross-ai.mjs"
+# Keys whose value gsd-core runs as a shell command or script (D-44, U-1). The mapped value is
+# the only one plan-set admits without --force; None means ai-kit never sets the key.
+COMMAND_KEYS = {
+    "workflow.cross_ai_command": CROSS_AI_COMMAND,
+    "workflow.plan_bounce_script": None,
+    "workflow.code_review_command": None,
+    "workflow.test_command": None,
+    "workflow.build_command": None,
+}
+
+
+def forced_command_warning(key: str) -> str:
+    return f"{key} is a forced command; gsd-core runs it with full permissions"
 SCRIPT_PATH = ".planning/scripts/cross-ai.mjs"
 TEMPLATE_NAME = "cross-ai.mjs"
 TEMPLATE_VERSION = 2

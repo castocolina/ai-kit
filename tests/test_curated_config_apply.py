@@ -1593,6 +1593,15 @@ class TestApplyWritePath(unittest.TestCase):
             self.assertTrue(any("full permissions" in w for w in report["warnings"]))
 
 
+    def test_forced_command_key_warning_names_the_key(self) -> None:
+        """U-1: dry-run and apply warn for every forced command key, not only the runner."""
+        plan = {"entries": [{"key": "workflow.test_command", "op": "set", "value": "x",
+                             "forced": True}]}
+        warnings = apply_mod._apply_warnings(plan)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("workflow.test_command", warnings[0])
+        self.assertIn("full permissions", warnings[0])
+
     def test_absent_config_new_project_precedes_config_set(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, config_path = _setup_scratch_project(tmp)

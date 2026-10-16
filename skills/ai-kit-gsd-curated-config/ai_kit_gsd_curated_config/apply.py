@@ -12,6 +12,7 @@ from typing import Any, NamedTuple
 
 from . import (
     config_backup,
+    cross_ai,
     cross_ai_script,
     followups,
     gsd_catalog,
@@ -20,11 +21,6 @@ from . import (
     plan_io,
     presets,
     skills,
-)
-
-_FORCED_CMD_WARNING = (
-    "workflow.cross_ai_command overrides the runner; "
-    "gsd-core runs it with full permissions"
 )
 
 
@@ -263,8 +259,9 @@ def preflight(
 def _apply_warnings(plan: dict) -> list[str]:
     warnings: list[str] = []
     for entry in plan.get("entries") or []:
-        if entry.get("key") == "workflow.cross_ai_command" and entry.get("forced"):
-            warnings.append(_FORCED_CMD_WARNING)
+        key = entry.get("key")
+        if key in cross_ai.COMMAND_KEYS and entry.get("forced"):
+            warnings.append(cross_ai.forced_command_warning(key))
     return warnings
 
 

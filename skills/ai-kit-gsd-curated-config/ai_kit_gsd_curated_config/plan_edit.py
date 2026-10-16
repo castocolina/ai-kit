@@ -495,8 +495,8 @@ def _special_keys(
 ) -> tuple[Any, bool]:
     if key == "workflow.cross_ai_timeout":
         return _check_timeout(value), False
-    if key == "workflow.cross_ai_command":
-        return _check_cross_ai_command(call, value, warnings)
+    if key in cross_ai.COMMAND_KEYS:
+        return _check_command_key(call, key, value, warnings)
     if key.startswith("agent_skills."):
         return _check_agent_skills(call.inv, key, value), False
     if key == "agent_skills_security.trusted_global_roots":
@@ -511,17 +511,19 @@ def _check_timeout(value: Any) -> int:
     return value
 
 
-def _check_cross_ai_command(call: EditCall, value: Any, warnings: list[str]) -> tuple[Any, bool]:
-    if value == cross_ai.CROSS_AI_COMMAND:
+def _check_command_key(
+    call: EditCall, key: str, value: Any, warnings: list[str],
+) -> tuple[Any, bool]:
+    recommended = cross_ai.COMMAND_KEYS[key]
+    if value == recommended:
         return value, False
     if not call.force:
+        want = f"must be {recommended}" if recommended else "is left unset by ai-kit"
         raise PlanEditError(
-            "workflow.cross_ai_command must be node .planning/scripts/cross-ai.mjs; "
-            "gsd-core runs this command with full permissions; pass --force to override"
+            f"{key} {want}; gsd-core runs this command with full permissions; "
+            "pass --force to override"
         )
-    warnings.append(
-        "workflow.cross_ai_command overrides the runner; gsd-core runs it with full permissions"
-    )
+    warnings.append(cross_ai.forced_command_warning(key))
     return value, True
 
 

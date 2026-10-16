@@ -264,8 +264,9 @@ python3 "$ENTRYPOINT" apply-workflow-defaults --project-dir <target> --ui-phase 
   schema check and the plan's own validation; use the subcommands.
 - **Never run `inventory` on an untrusted checkout** — it executes that project's JavaScript.
 - **Never pass `--force` to `plan-set` by habit.** It bypasses the candidate check, the
-  trusted-root drop refusal and the full-permissions guard on `workflow.cross_ai_command`;
-  use it only for a value the user explicitly chose.
+  trusted-root drop refusal and the full-permissions guard on every key gsd-core runs as a
+  command (`workflow.cross_ai_command`, `plan_bounce_script`, `code_review_command`,
+  `test_command`, `build_command`); use it only for a value the user explicitly chose.
 - **Never run v1 `apply-execution`/`apply-review` on a project v2 `apply` configured.**
   `apply-execution` overwrites `workflow.cross_ai_command` with a direct CLI command, so
   `.planning/scripts/cross-ai.mjs` silently stops being used.

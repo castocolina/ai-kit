@@ -660,11 +660,11 @@ def _validate_entry_value(key: str, value, entry: dict) -> str | None:
         if problem:
             return problem
     if (
-        key == "workflow.cross_ai_command"
-        and value != cross_ai.CROSS_AI_COMMAND
+        key in cross_ai.COMMAND_KEYS
+        and value != cross_ai.COMMAND_KEYS[key]
         and not entry.get("forced")
     ):
-        return f"{key}: must be {cross_ai.CROSS_AI_COMMAND!r} unless forced"
+        return f"{key}: must be {cross_ai.COMMAND_KEYS[key]!r} unless forced"
     if key == "agent_skills_security.trusted_global_roots":
         return _validate_trusted_roots(key, value, entry)
     if key.startswith("agent_skills."):

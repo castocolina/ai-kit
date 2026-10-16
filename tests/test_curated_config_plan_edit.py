@@ -299,6 +299,32 @@ class TestPlanSetRefusals(unittest.TestCase):
             self.assertTrue(entry.get("forced"))
             self.assertIn("full permissions", err)
 
+    def test_every_command_key_guarded(self):
+        """U-1: each command-valued gsd-core key gets the D-44 guard."""
+        for key in sorted(set(cross_ai.COMMAND_KEYS) - {"workflow.cross_ai_command"}):
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as tmp:
+                self._assert_refusal(tmp, (key, "./evil.sh"), "full permissions")
+                inv_path, plan_path, _inv, _plan = _write_pair(tmp)
+                code, _, err = _run_plan_set(plan_path, inv_path, key, "./evil.sh", force=True)
+                self.assertEqual(code, 0, err)
+                self.assertIn("full permissions", err)
+                plan, _ = plan_io.load_plan(plan_path)
+                assert plan is not None
+                entry = next(e for e in plan["entries"] if e["key"] == key)
+                self.assertEqual((entry["value"], entry.get("forced")), ("./evil.sh", True))
+
+    def test_command_key_set_covers_gsd_core_command_keys(self):
+        self.assertTrue(
+            {
+                "workflow.cross_ai_command",
+                "workflow.plan_bounce_script",
+                "workflow.code_review_command",
+                "workflow.test_command",
+                "workflow.build_command",
+            }
+            <= set(cross_ai.COMMAND_KEYS)
+        )
+
     def test_canonical_command_clears_forced(self):
         """B IN-01: re-setting the canonical runner drops a stale forced flag."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -548,6 +574,23 @@ class TestPlanValidator(unittest.TestCase):
                 entry["value"] = "node other.mjs"
                 entry["forced"] = True
         self.assertIsNone(plan_io.validate_plan(plan))
+
+    def test_unforced_command_key_rejected(self):
+        """U-1: a hand-edited command value needs forced, for every command key."""
+        for key in sorted(cross_ai.COMMAND_KEYS):
+            with self.subTest(key=key):
+                plan = self._golden_plan()
+                plan["entries"] = [e for e in plan["entries"] if e["key"] != key]
+                plan["entries"].append(
+                    {"key": key, "op": "set", "value": "./evil.sh", "source": "user"}
+                )
+                problem = plan_io.validate_plan(plan)
+                assert problem is not None
+                self.assertIn(key, problem)
+                plan["entries"][-1]["forced"] = True
+                if key == "workflow.cross_ai_command":
+                    continue  # its forced path is test_forced_command_ok (execution coupling)
+                self.assertIsNone(plan_io.validate_plan(plan))
 
     def test_needs_choice_none_ok(self):
         plan = self._golden_plan()
