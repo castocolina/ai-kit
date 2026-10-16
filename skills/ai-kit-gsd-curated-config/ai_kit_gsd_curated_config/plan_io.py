@@ -101,18 +101,41 @@ def _validate_inventory(inv) -> str | None:
     return tail
 
 
+_ROOT_KINDS = ("project", "global", "plugin")
+
+
 def _skill_entry_problem(entry, index: int) -> str | None:
     if not isinstance(entry, dict):
         return f"key skills[{index}]: expected dict"
     for key, expected in (
         ("name", str),
         ("root_kind", str),
+        ("root", str),
+        ("real_dir", str),
+        ("description", str),
         ("escapes_root", bool),
         ("addressable", bool),
     ):
         val = entry.get(key)
         if not isinstance(val, expected):
             return f"key skills[{index}].{key}: expected {expected.__name__}"
+    return _skill_value_problem(entry, f"key skills[{index}]")
+
+
+def _skill_value_problem(entry: dict, where: str) -> str | None:
+    """Values recommend and apply consume verbatim: trusted-root candidates, skill refs (C-W10)."""
+    if entry["root_kind"] not in _ROOT_KINDS:
+        return f"{where}.root_kind: expected one of {', '.join(_ROOT_KINDS)}"
+    home_rel = entry.get("real_dir_home")
+    if home_rel is not None and not (isinstance(home_rel, str) and home_rel.startswith("~/")):
+        return f"{where}.real_dir_home: expected null or a ~/ path"
+    plugin = entry.get("plugin")
+    if plugin is not None and not isinstance(plugin, str):
+        return f"{where}.plugin: expected str or null"
+    if entry["addressable"] and not _SKILL_NAME.fullmatch(entry["name"]):
+        return f"{where}.name: not a valid skill name for an addressable row"
+    if entry["addressable"] and plugin is not None and not _SKILL_NAME.fullmatch(plugin):
+        return f"{where}.plugin: not a valid plugin name for an addressable row"
     return None
 
 

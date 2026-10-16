@@ -2053,6 +2053,33 @@ class TestInventoryValidation(unittest.TestCase):
             self.assertIn(name, err, name)
             self.assertIn("rerun inventory", err, name)
 
+    def test_skill_row_fields_validated(self):
+        """C-W10: every skills[] field recommend and apply consume is checked at load."""
+        good = {
+            "name": "ok", "root_kind": "plugin", "root": "p@m", "plugin": "p",
+            "real_dir": "<home>/p/ok", "real_dir_home": "~/p/ok", "escapes_root": False,
+            "addressable": True, "description": "",
+        }
+        inv = make_inventory()
+        inv["skills"] = [dict(good)]
+        self.assertEqual(self._run(inv)[0], 0)
+        unaddressable = dict(good, name="bad name", plugin="bad.plugin", addressable=False)
+        inv["skills"] = [unaddressable]
+        self.assertEqual(self._run(inv)[0], 0)
+        bad_rows = {
+            "name": {"name": "foo\n"},
+            "plugin": {"plugin": "bad.plugin"},
+            "real_dir_home": {"real_dir_home": "/abs/ok"},
+            "real_dir": {"real_dir": None},
+            "root": {"root": 3},
+            "description": {"description": None},
+            "root_kind": {"root_kind": "vendor"},
+        }
+        for field, change in bad_rows.items():
+            inv = make_inventory()
+            inv["skills"] = [dict(good, **change)]
+            self._assert_fail_closed(inv, f"skills[0].{field}")
+
     def _assert_fail_closed(self, inv, needle):
         code, plan, plan_bytes, err = self._run(inv)
         self.assertEqual((code, plan, plan_bytes), (2, None, None), needle)
