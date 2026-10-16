@@ -39,10 +39,19 @@ def _backup_basename(stamp: str, n: int) -> str:
     return f"{BACKUP_PREFIX}{stamp}{suffix}"
 
 
-def _umask_file_mode() -> int:
-    umask = os.umask(0)
-    os.umask(umask)
-    return 0o666 & ~umask
+def _cache() -> Any:
+    cache = gsd_catalog.load_ai_kit_spec_module("cache")
+    if cache is None:
+        raise OSError(gsd_catalog.SIBLING_MISSING)
+    return cache
+
+
+def _atomic_copy(src: str, dst: str) -> None:
+    """Bytes and mode of ``src`` onto ``dst`` through the shared atomic writer."""
+    with open(src, "rb") as handle:
+        data = handle.read()
+    mode = stat.S_IMODE(os.stat(src).st_mode)
+    _cache().cache_write_bytes(os.path.abspath(dst), data, mode=mode)
 
 
 def _claim_copy(data: bytes, mode: int, final: str) -> bool:
@@ -141,26 +150,14 @@ def restore_backup(config_path: str, backup_path: str | None) -> None:
         if os.path.isfile(config_path):
             os.unlink(config_path)
         return
-    with open(backup_path, "rb") as handle:
-        data = handle.read()
-    mode = stat.S_IMODE(os.stat(backup_path).st_mode)
-    cache = gsd_catalog.load_ai_kit_spec_module("cache")
-    if cache is None:
-        raise OSError(gsd_catalog.SIBLING_MISSING)
-    cache.cache_write_bytes(os.path.abspath(config_path), data, mode=mode)
+    _atomic_copy(backup_path, config_path)
 
 
 def snapshot_file(path: str) -> str | None:
     if not os.path.isfile(path):
         return None
-    with open(path, "rb") as handle:
-        data = handle.read()
-    mode = stat.S_IMODE(os.stat(path).st_mode)
     target = os.path.abspath(path) + SNAPSHOT_SUFFIX
-    cache = gsd_catalog.load_ai_kit_spec_module("cache")
-    if cache is None:
-        raise OSError(gsd_catalog.SIBLING_MISSING)
-    cache.cache_write_bytes(target, data, mode=mode)
+    _atomic_copy(path, target)
     return target
 
 
@@ -185,7 +182,7 @@ def acquire_marker(config_path: str, config_existed: bool, now_fn: Callable[[], 
         "committed": False,
     }
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    return _claim_copy(body, _umask_file_mode(), marker_path(target))
+    return _claim_copy(body, _cache().umask_file_mode(), marker_path(target))
 
 
 def read_marker(config_path: str) -> dict[str, Any] | None:
@@ -203,11 +200,8 @@ def update_marker(config_path: str, **fields: Any) -> None:
     if current is None or current.get("corrupt"):
         raise OSError("apply marker missing or corrupt")
     merged = {**current, **fields}
-    cache = gsd_catalog.load_ai_kit_spec_module("cache")
-    if cache is None:
-        raise OSError(gsd_catalog.SIBLING_MISSING)
     text = json.dumps(merged, indent=2, sort_keys=True) + "\n"
-    cache.cache_write_text(marker_path(config_path), text)
+    _cache().cache_write_text(marker_path(config_path), text)
 
 
 def clear_marker(config_path: str) -> None:

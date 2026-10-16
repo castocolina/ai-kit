@@ -411,10 +411,7 @@ def write_plan(path: str, plan: dict) -> None:
     parent = os.path.dirname(target)
     if not os.path.isdir(parent):
         raise FileNotFoundError(f"directory {parent} does not exist")
-    # Reading the umask means setting it; safe here because the CLI is single-threaded.
-    umask = os.umask(0)
-    os.umask(umask)
-    cache.cache_write_text(target, canonical_json(plan), mode=0o666 & ~umask)
+    cache.cache_write_text(target, canonical_json(plan), mode=cache.umask_file_mode())
 
 
 _PLAN_ERROR_SUFFIX = "; rerun recommend"

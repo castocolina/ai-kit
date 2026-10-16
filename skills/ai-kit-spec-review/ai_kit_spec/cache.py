@@ -42,6 +42,14 @@ def cache_write_bytes(path: str, data: bytes, mode: int | None = None) -> None:
         raise
 
 
+def umask_file_mode() -> int:
+    """The mode a plain ``open()`` would give a new file. Reading the umask means setting it,
+    so only single-threaded callers may use this."""
+    umask = os.umask(0)
+    os.umask(umask)
+    return 0o666 & ~umask
+
+
 def cache_write_text(path: str, text: str, mode: int | None = None) -> None:
     """UTF-8 text wrapper around :func:`cache_write_bytes`."""
     cache_write_bytes(path, text.encode("utf-8"), mode=mode)
