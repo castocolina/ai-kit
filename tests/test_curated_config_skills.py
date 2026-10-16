@@ -138,6 +138,30 @@ class TestSkillInventoryEndToEnd(unittest.TestCase):
         self.assertEqual(set(ponytail_vis.keys()), set(host.HOSTS))
         self.assertTrue(all(not names for names in ponytail_vis.values()))
 
+    def test_host_list_passed_and_null_current_root_warns(self):
+        """C-IN-07: the node query reads host.HOSTS; a null root for this host warns."""
+        root = tempfile.mkdtemp()
+        home = make_home(os.path.join(root, "home"))
+        project = os.path.join(root, "project")
+        os.makedirs(project)
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"))
+        seen_hosts: list = []
+
+        def answer(cmd):
+            seen_hosts.append(json.loads(cmd[7]))
+            body = tables_answer(json.loads(cmd[6]), home)
+            body["skills_roots"]["codex"] = None
+            return json.dumps(body)
+
+        code, parsed, _err = run_inventory(
+            project, _inventory_env(home), FakeRun(node_stdout=answer), "--host", "codex"
+        )
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertEqual(seen_hosts, [list(host.HOSTS)])
+        self.assertTrue(any("codex" in w and "global skills" in w for w in parsed["warnings"]))
+
     def test_codex_host_skips_plugin_skills(self):
         root = tempfile.mkdtemp()
         home = make_home(os.path.join(root, "home"))

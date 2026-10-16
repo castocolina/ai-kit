@@ -77,11 +77,14 @@ def resolve_config_schema_cjs_path(gsd_tools_path, isfile_fn=os.path.isfile):
 
 
 class GsdCorePaths(NamedTuple):
-    """Resolved node binary and the two gsd-core lib modules for one inventory query."""
+    """Resolved node binary and the two gsd-core lib modules for one inventory query, plus
+    the host ids whose global skills roots it reads (``host.HOSTS``; passed in because
+    ``host`` imports this module)."""
 
     node_bin: str
     model_catalog: str
     config_schema: str
+    skills_hosts: tuple[str, ...] = ()
 
 
 def resolve_node_binary(which_fn=shutil.which):
@@ -158,7 +161,7 @@ _GSD_TABLES_QUERY_SCRIPT = (
     "effort_key: x.effortConfigKey || null, default_effort: x.defaultEffort || null})); "
     "} catch (e) { review_lanes = null; } let skills_roots = null; "
     "try { const rh = require(lib + '/runtime-homes.cjs'); "
-    "const rts = ['claude', 'codex', 'opencode', 'cursor', 'pi']; skills_roots = {}; "
+    "const rts = JSON.parse(process.argv[5]); skills_roots = {}; "
     "for (const rt of rts) { try { skills_roots[rt] = rh.getGlobalSkillsBase(rt); "
     "} catch (e) { skills_roots[rt] = null; } } } catch (e) { skills_roots = null; } "
     "const extra = []; const agents = m.AGENT_TO_PHASE_TYPE || {}; "
@@ -278,6 +281,7 @@ def query_gsd_tables(paths: GsdCorePaths, project_dir, keys, run_fn=subprocess.r
                 paths.config_schema,
                 project_dir,
                 json.dumps(keys),
+                json.dumps(list(paths.skills_hosts)),
             ],
             capture_output=True,
             text=True,

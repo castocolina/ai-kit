@@ -106,7 +106,7 @@ def real_gsd_paths() -> tuple[gsd_catalog.GsdCorePaths, str] | str:
     config_schema = gsd_catalog.resolve_config_schema_cjs_path(str(tools))
     if not model_catalog or not config_schema:
         return "gsd-core lib/model-catalog.cjs or lib/config-schema.cjs missing"
-    paths = gsd_catalog.GsdCorePaths(node_bin, model_catalog, config_schema)
+    paths = gsd_catalog.GsdCorePaths(node_bin, model_catalog, config_schema, host.HOSTS)
     return paths, version
 
 class TestRealIntegration(_RealGsdTestCase):

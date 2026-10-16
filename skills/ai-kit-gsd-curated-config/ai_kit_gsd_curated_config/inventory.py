@@ -129,7 +129,7 @@ def probe_gsd_tables(core, node_bin, project_dir, probe_keys, deps):
     if model_catalog is None or config_schema is None:
         missing = "model-catalog.cjs" if model_catalog is None else "config-schema.cjs"
         return None, _missing_lib_error(core, missing)
-    paths = gsd_catalog.GsdCorePaths(node_bin, model_catalog, config_schema)
+    paths = gsd_catalog.GsdCorePaths(node_bin, model_catalog, config_schema, host.HOSTS)
     ver = core.version or "unknown"
     try:
         tables = gsd_catalog.query_gsd_tables(
@@ -349,12 +349,15 @@ def classify_conflicts(
 _LANE_REGISTRY_WARN = (
     "gsd-core review-lane registry unavailable; review lanes need plan-set"
 )
+_HOST_ROOT_WARN = (
+    "gsd-core reported no global skills root for {host}; its global skills are not inventoried"
+)
 _SKILLS_ROOTS_WARN = (
     "gsd-core skills roots unavailable; global and plugin skills are not inventoried"
 )
 
 
-def _normalize_lane_tables(tables: dict) -> tuple[dict, list[str]]:
+def _normalize_lane_tables(tables: dict, host_name: str) -> tuple[dict, list[str]]:
     """Ensure lane/root fields exist for schema 2; warn when gsd-core reported null."""
     out = dict(tables)
     warnings: list[str] = []
@@ -368,6 +371,8 @@ def _normalize_lane_tables(tables: dict) -> tuple[dict, list[str]]:
     elif out["skills_roots"] is None:
         out["skills_roots"] = {}
         warnings.append(_SKILLS_ROOTS_WARN)
+    elif out["skills_roots"] and out["skills_roots"].get(host_name) is None:
+        warnings.append(_HOST_ROOT_WARN.format(host=host_name))
     return out, warnings
 
 
@@ -433,7 +438,7 @@ def _load_configs(project_dir, deps, host_name, core: host.GsdCore):
     tables, table_err = probe_gsd_tables(core, node_bin, project_dir, probe, deps)
     if tables is None:
         return None, table_err
-    lane_tables, lane_warns = _normalize_lane_tables(tables)
+    lane_tables, lane_warns = _normalize_lane_tables(tables, host_name)
     return {
         "existing_config": existing,
         "global_defaults": global_defaults,
