@@ -730,7 +730,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   let argv = withExtra(name, rt[mode](model, ctx)); let input = prompt;
   try {
     for (let attempt = 0; ; attempt++) {
-      log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${Math.max(0, Math.round(budgetMs(1000, runDeadline) / 1000))}s`);
+      log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${Math.round(budgetMs(Number.POSITIVE_INFINITY, runDeadline) / 1000)}s`);
       log(`cross-ai: argv=${JSON.stringify(argv)}`);
       const r = await runOnce(binPath, argv, input, env, ctx.cwd, name);
       if (aborting) return { ok: false, code: 128 + aborting, outBytes: r.outBytes, cli_rc: r.code };
@@ -807,7 +807,7 @@ function parseArgs(argv) {
     else throw new Error(`unknown argument: ${a}`);
   }
   if (o.mode === 'exec' && o.cursorMode) throw new Error('--cursor-mode is review-only');
-  for (const n of [...(o.prefer || []), ...Object.keys(o.models)]) if (!RUNTIMES[n]) throw new Error(`unknown cli: ${n} (known: ${Object.keys(RUNTIMES).join(', ')})`);
+  for (const n of [...(o.prefer || []), ...Object.keys(o.models)]) if (!Object.hasOwn(RUNTIMES, n)) throw new Error(`unknown cli: ${n} (known: ${Object.keys(RUNTIMES).join(', ')})`);
   return o;
 }
 
@@ -1854,7 +1854,8 @@ async function blackBoxSelfTest() {
         env: { FAKE_PI_LIST: 'hang' },
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok', '--timeout', '4'],
         exit: 124,
-        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/ok exit=124 .* action=stop$/,
+        // The CLI never ran, so it has no exit code to report (IN-07).
+        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/ok exit=124 cli_rc=- .* action=stop$/,
         check: (r, ctx) => {
           if (!(r.stderr || '').includes('model list unavailable (timeout)')) return 'missing timeout note';
           if (ctx.elapsedMs >= 10000) return `elapsed ${ctx.elapsedMs}`;
@@ -1868,10 +1869,11 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/flaky'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/flaky exit=0 .* action=stop$/,
-        check: (_r, ctx) => {
+        check: (r, ctx) => {
           const flaky = ctx.calls.filter((l) => l === 'pi flaky');
           if (flaky.length !== 2) return `flaky calls=${flaky.length}`;
-          const st = spawnSync('git', ['status', '--porcelain'], { cwd: ctx.repo, encoding: 'utf8' });
+          if (!/attempt=1 timeout=2\d\ds/.test(r.stderr)) return 'attempt line lacks the time left'; // IN-01
+          const st = spawnSync('git', ['status', '--porcelain'], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
           const lines = (st.stdout || '').trim().split('\n').filter(Boolean);
           if (lines.length !== 1 || !lines[0].endsWith(' a.txt')) return `porcelain=${lines.join('|')}`;
           return null;
@@ -1951,6 +1953,20 @@ async function blackBoxSelfTest() {
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
         check: (r) => ((r.stderr || '').includes('claude is review-only') ? null : 'missing review-only line'),
+      },
+      {
+        // IN-09: a review-only CLI anywhere in an exec prefer list is refused before any run.
+        name: 'claude-exec-late-usage',
+        args: ['--prefer', 'pi,claude', '--mode', 'exec', '--model-pi', 'fake/ok', '--model-claude', 'fake-ok'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (_r, ctx) => (ctx.calls.length ? `calls=${ctx.calls.join(',')}` : null),
+      },
+      {
+        name: 'prefer-proto-key',
+        args: ['--prefer', 'constructor', '--model-constructor', 'x'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
       },
       {
         name: 'claude-review-ok',
@@ -2254,6 +2270,11 @@ async function main(argv) {
     name, rt: RUNTIMES[name], model: models[name],
     bin: RUNTIMES[name].bins.map((b) => which(b, process.env.PATH || '')).find(Boolean) || null,
   }));
+  const reviewOnly = o.mode === 'exec' ? cands.find((c) => !c.rt.exec) : null;
+  if (reviewOnly) {
+    log(`cross-ai: ${reviewOnly.name} is review-only (no exec formula)`);
+    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
 
   const dl = logDeadline(process.cwd(), process.env, o);
   if (dl.error) {
@@ -2266,10 +2287,6 @@ async function main(argv) {
       codexEffort: o.codexEffort, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
     };
     for (const c of cands) {
-      if (o.mode === 'exec' && !c.rt.exec) {
-        log(`cross-ai: ${c.name} is review-only (no exec formula)`);
-        return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
-      }
       const argvOut = c.model ? withExtra(c.name, c.rt[o.mode](c.model, ctx)) : null;
       process.stdout.write(`${c.name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(argvOut) : 'NO MODEL'}\n`);
       if (c.model && argvOut) {
@@ -2299,10 +2316,6 @@ async function main(argv) {
       log(`cross-ai: no model configured for ${c.name} (--model-${c.name}), skipping`);
       last = last || { kind: 'no_model' };
       continue;
-    }
-    if (o.mode === 'exec' && !c.rt.exec) {
-      log(`cross-ai: ${c.name} is review-only (no exec formula)`);
-      return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
     sawModel = true;
     liveFields.cli = c.name;
@@ -2351,7 +2364,7 @@ async function main(argv) {
       return finish(r.status, { ...liveFields, tree: treeField, cli_rc: r.cli_rc ?? '-', exit: 1 });
     }
     if (r.timedOut) {
-      return finish('timeout', { ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? 124 });
+      return finish('timeout', { ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? '-' });
     }
     if (o.mode === 'review' && before && after && tree === 'dirty') {
       return finish('contract_violation', { ...liveFields, tree, cli_rc: r.cli_rc ?? '-', exit: 1 });
