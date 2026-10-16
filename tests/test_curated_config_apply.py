@@ -988,6 +988,50 @@ class TestDiffKinds(unittest.TestCase):
             self.assertNotEqual(row["to"], ["react-dev"])
 
 
+class TestDryRunPredictedReconcile(unittest.TestCase):
+    """B WR-06: a fresh-project dry run shows the reconcile removals apply will make."""
+
+    def _report(self, tmp: str, config_exists: bool) -> dict:
+        config_path = os.path.join(tmp, ".planning", "config.json")
+        if config_exists:
+            _write_config(config_path, b"{}")
+        plan = {
+            "host": "claude",
+            "entries": [{"key": "model_profile", "op": "set", "value": "quality"}],
+            "artifacts": [],
+        }
+        inv = {
+            "global_defaults": {
+                "values": {
+                    "model_profile": "balanced",
+                    "resolve_model_ids": "omit",
+                    "model_policy": {"budget": "low"},
+                    "custom_unrelated": "keepme",
+                }
+            }
+        }
+        inputs = apply_mod.Inputs(plan, "plan.json", inv, "inv.json", tmp)
+        paths = apply_mod.gsd_catalog.GsdCorePaths("node", "model-catalog.cjs", "schema.cjs")
+        target = apply_mod.Target(None, paths, config_path, {}, "1.16.0", "/core")
+        return apply_mod.dry_run_report(inputs, target, {}, b"")
+
+    def test_absent_config_lists_predicted_removals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._report(tmp, config_exists=False)
+            predicted = {row["key"]: row for row in report["diff"] if row.get("predicted")}
+            self.assertEqual(set(predicted), {"model_policy.budget", "resolve_model_ids"})
+            self.assertEqual(predicted["resolve_model_ids"]["kind"], "remove")
+            self.assertEqual(predicted["resolve_model_ids"]["from"], "omit")
+            keys = [row["key"] for row in report["diff"]]
+            self.assertEqual(keys, sorted(keys))
+            self.assertTrue(any("unverified" in w for w in report["warnings"]))
+
+    def test_existing_config_has_no_predicted_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._report(tmp, config_exists=True)
+            self.assertFalse(any(row.get("predicted") for row in report["diff"]))
+
+
 class TestDryRunDeterminism(unittest.TestCase):
     def test_empty_plan_diff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

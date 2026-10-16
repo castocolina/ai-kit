@@ -304,20 +304,48 @@ def _apply_warnings(plan: dict) -> list[str]:
     return warnings
 
 
+_PREDICTED_WARNING = (
+    "remove rows marked predicted are the managed keys config-new-project is expected to copy "
+    "from the inventory's global defaults; the copy itself is unverified until apply runs"
+)
+
+
+def _predicted_reconcile(inputs: Inputs) -> list[dict]:
+    """R12 on a fresh project: the reconcile apply runs after config-new-project."""
+    copied = (inputs.inv.get("global_defaults") or {}).get("values") or {}
+    return [
+        {
+            "key": key,
+            "kind": "remove",
+            "from": presets.get_dotted(copied, key),
+            "to": None,
+            "predicted": True,
+        }
+        for key, _ in reconcile_writes(inputs.plan, copied, inputs.plan["host"])
+    ]
+
+
 def dry_run_report(
     inputs: Inputs,
     target: Target,
     live: dict,
     template: bytes,
 ) -> dict:
+    diff = diff_entries(inputs.plan, live, inputs.inv)
+    warnings = _apply_warnings(inputs.plan)
+    if not os.path.isfile(target.config_path):
+        predicted = _predicted_reconcile(inputs)
+        if predicted:
+            diff = sorted(diff + predicted, key=lambda row: row["key"])
+            warnings.append(_PREDICTED_WARNING)
     return {
         "dry_run": True,
         "plan": inputs.plan_path,
         "config_path": target.config_path,
         "gsd_core_version": target.version,
-        "diff": diff_entries(inputs.plan, live, inputs.inv),
+        "diff": diff,
         "artifacts": script_preview(inputs, template),
-        "warnings": _apply_warnings(inputs.plan),
+        "warnings": warnings,
     }
 
 
