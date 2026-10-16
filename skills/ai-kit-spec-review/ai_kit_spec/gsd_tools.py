@@ -236,6 +236,9 @@ def config_set_strict(
             timeout=60,
             env=None if call.env is None else dict(call.env),
         )
+    except subprocess.TimeoutExpired:
+        # str(exc) would carry the argv, and with it the value being written.
+        return False, f"config-set {key} timed out after 60s"
     except (OSError, subprocess.SubprocessError) as exc:
         return False, str(exc)
     if result.returncode == 0:

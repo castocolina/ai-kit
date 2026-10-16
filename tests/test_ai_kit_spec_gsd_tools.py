@@ -394,6 +394,19 @@ class TestConfigSetStrict(unittest.TestCase):
         self.assertFalse(ok2)
         self.assertEqual(output2, "spawn failed")
 
+    def test_timeout_message_never_echoes_the_value(self):
+        """IN-10: str(TimeoutExpired) carries the argv, and so the value."""
+
+        def slow(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw["timeout"])
+
+        call = gsd_tools.ConfigCall(self.TOOLS, "/p", slow)
+        ok, output = gsd_tools.config_set_strict(call, "some.key", "s3cret-value")
+        self.assertFalse(ok)
+        self.assertNotIn("s3cret-value", output)
+        self.assertIn("some.key", output)
+        self.assertIn("timed out", output)
+
     def test_env_none_passes_through(self):
         seen = {}
 
