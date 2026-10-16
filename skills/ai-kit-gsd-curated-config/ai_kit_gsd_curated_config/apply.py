@@ -223,7 +223,7 @@ def _target_for_core(inputs: Inputs, deps: ApplyDeps, core: host.GsdCore) -> Tar
     if not config_path:
         ver = core.version or "unknown"
         return f"gsd-core at {core.root} (version {ver}): config-path failed"
-    bind_err = _config_binding_error(config_path, inputs.inv["existing_config"]["path"])
+    bind_err = _config_binding_error(config_path, inputs.inv["existing_config"].get("path"))
     if bind_err:
         return bind_err
     model_catalog = gsd_catalog.resolve_model_catalog_cjs_path(core.tools_path)

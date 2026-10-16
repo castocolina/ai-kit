@@ -839,6 +839,23 @@ class TestApplyRefusals(unittest.TestCase):
             self.assertIn(ws_config, err)
             self.assertIn(config_path, err)
 
+    def test_inventory_without_config_path(self) -> None:
+        """B IN-04: a missing existing_config.path is the clean rerun message, not KeyError."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, _inv, fake = _decided_plan(tmp)
+            plan, _ = plan_io.load_plan(plan_path)
+            inv, _ = plan_io.load_inventory(inv_path)
+            assert plan is not None and inv is not None
+            inv["existing_config"].pop("path")
+            inputs = apply_mod.Inputs(plan, plan_path, inv, inv_path, project)
+            deps = apply_mod.ApplyDeps(
+                lambda name: "node" if name == "node" else None, fake, lambda: dict(env)
+            )
+            target, error = apply_mod.resolve_target(inputs, deps)
+            self.assertIsNone(target)
+            assert error is not None
+            self.assertIn("rerun inventory", error)
+
     def test_relative_inventory_config_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
