@@ -10,21 +10,26 @@ source: cursor-agent --help, live against a real authenticated install (2026.08.
 
 # cursor — reviewer profile
 
-**Binary name hazard — use bare `agent` only when its real path's basename is `cursor-agent`.**
-Cursor and Grok both ship an `agent` binary, so PATH order is ambiguous. Resolve its `realpath`
-before accepting bare `agent`; an unguarded probe of `agent` remains forbidden. Prefer the explicit
-`cursor-agent` binary whenever possible.
+A cursor reviewer stores the pair `runtime = "cursor"` and `model`. Dispatch
+runs it through the supervised runner, which builds the argv; the entry stores
+no `command`. Bracket model ids (`base[effort=high,fast=false,context=1m]`) are
+accepted: the runner strips the `\[[^\]]*\]$` suffix and checks the bare id
+against `cursor-agent models`, and the suffix itself is not validated.
 
-**Read-only dispatch — use `--mode plan` (not just `--sandbox`).**
-`cursor-agent --help` documents `--mode plan` as "read-only/planning
-(analyze, propose plans, no edits)" and `--mode ask` as "Q&A style ...
-(read-only)" — this is the real, confirmed read-only guarantee, stronger
-than the generic `--sandbox <enabled|disabled>` flag (which only
-"explicitly enable or disable sandbox mode (overrides config)" — no
-read-only guarantee documented on its own). Use `--mode plan` for review
-dispatch; `ai-kit-spec.py`'s `build_reviewer_command("cursor-agent",
-mode=...)` builder refuses any other mode with a `ValueError` rather
-than building a write-capable command.
+**Binary name hazard — `agent` counts only when its realpath ends in `cursor-agent`.**
+Cursor and Grok both ship an `agent` binary, so PATH order is ambiguous. The
+runner accepts `cursor-agent` first, and falls back to bare `agent` only when
+`realpath` of that binary ends in `cursor-agent`. An unguarded `agent` is not a
+cursor binary.
+
+**Review now defaults to `--mode ask`.** Both `--mode plan` ("read-only/planning
+(analyze, propose plans, no edits)") and `--mode ask` ("Q&A style ... (read-only)")
+are documented read-only in `cursor-agent --help`, and both are stronger than
+`--sandbox`, which only toggles sandbox mode and documents no read-only guarantee.
+The runner's review formula passes `--mode ask` unless the entry sets
+`cursor_mode = "plan"`, which keeps the old plan behavior. A migrated entry whose
+stored command used `--mode plan` keeps `cursor_mode = "plan"` automatically.
+Exec is a different formula (`--force --sandbox disabled`), not a review mode.
 
 **Prerequisite — `~/.cursor/` must be writable by the invoking user,
 independent of the target repo's own read-only posture.** Confirmed
@@ -37,7 +42,7 @@ makes cursor-agent fail with an unrelated-looking `ENOENT`/`EROFS` error
 on that internal write, **not** a message about the actual review. If a
 dispatch fails with an error mentioning `~/.cursor/`, this is the cause
 — it is not a signal about model/quota availability and should not be
-treated as one.
+treated as one. The same writes happen under `--mode ask`.
 
 **Fresh/unseen directories require `--trust` — confirmed live 2026-08-31.**
 A `target_dir`/workspace cursor-agent has never run against before (e.g. a
@@ -47,8 +52,8 @@ this makes `probe-quota`/`check-reviewer` falsely report the candidate
 unavailable on a brand-new project. `--help`: "Trust the current
 workspace without prompting" — it only skips that interactive
 confirmation, it grants no additional write capability beyond what
-`--mode`/`--force` already control, so both `build_reviewer_command` and
-`build_execute_command` always include it now.
+`--mode`/`--force` already control, so the runner's review and exec
+formulas both pass `--trust`.
 
 **Free-plan model gating — confirmed live, and it looks like a bug if
 you don't know about it.** On a Cursor Free plan, only `--model auto`
@@ -93,42 +98,24 @@ re-infer it by reading model names.
 **Effort/fast/context tuning is encoded in the `--model` argument
 itself, not a separate flag** — confirmed live (`--help`): "Parameterized
 models accept quoted bracket overrides, e.g.
-`claude-opus-4-8[context=1m,effort=high,fast=false]`". `ai-kit-spec.py`'s
-`build_reviewer_model_id("cursor-agent", base_model, effort=...,
-fast=..., context=...)` builds this string for the reviewer entry's own
-`model` field — never hand-write the bracket syntax in
-`review-spec.toml` directly.
+`claude-opus-4-8[context=1m,effort=high,fast=false]`".
+`build-model-id --runtime cursor` builds this string for the entry's `model`
+field — never hand-write the bracket syntax in `review-spec.toml` directly.
 
-Non-interactive: `-p`/`--print`. **Use `--output-format text` (or omit
-the flag — `text` is the default), never `json`**: `ai-kit-spec.py`'s
-report parsing expects the reviewer output template's raw markdown on
-stdout, not a JSON wrapper. `status`/`whoami` reports auth status
-(confirmed live: `✓ Logged in as <email>`).
+The runner's review formula (ask is the default; `cursor_mode = "plan"`
+swaps the mode) is:
 
-**No `{prompt}` in this template — prompt delivery is stdin-only,
-confirmed live**: `--print`/`-p` is a boolean flag (`--help`: "Print
-responses to console ... (default: false)"), not a value-taking one — set
-alone, with no positional prompt argument, cursor-agent reads the prompt
-from stdin instead. `review-spec/SKILL.md`'s Step 1 external dispatch and
-`probe_reviewer_quota` both redirect the already-on-disk prompt file as
-this process's stdin unconditionally, so this needs no special-casing at
-the dispatch step.
-
-```bash
-cursor-agent -p --output-format text --mode plan --model {model}
+```text
+cursor-agent -p --output-format json --model <model> --mode ask \
+  --trust --workspace <cwd>
 ```
 
-(`ai-kit-spec.py`'s `build_reviewer_command("cursor-agent", mode="plan")`
-returns exactly this template — do not hand-write it; `{model}` is a bare
-config `command` template placeholder, unquoted. `render_reviewer_command`
-still accepts a `{prompt}` placeholder too (one argv element, no extra
-quoting) for a hand-written open-hatch template that prefers to inline
-it — this profile's own template simply doesn't use it.)
+It parses the last JSON `result` event, so this profile uses `json` rather
+than `text`. The prompt arrives on stdin (`-p` is a boolean flag), and a
+table-runtime entry stores no `{prompt}` placeholder. `status`/`whoami`
+reports auth (`✓ Logged in as <email>`, confirmed live).
 
 **Quota/plan-gating probe — confirmed live**: a trivial call against a
 named model on a Free-plan account returns the `ActionRequiredError`
 above with exit code 1; the same call with `--model auto` succeeds with
-exit code 0 and clean plain-text output. This is the reference
-implementation for testing this profile's `probe_reviewer_quota`
-classification end to end — availability is classified from exit status
-and stderr only; no CLI-specific parser is required.
+exit code 0. Availability is classified from the runner's status line.

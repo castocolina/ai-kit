@@ -527,3 +527,96 @@ class TestStatusMapDrift(unittest.TestCase):
         )
         for status, code, want in cases:
             self.assertEqual(reason_for_status(status, code), want, status)
+
+
+# Built by concatenation so neither retired name is a literal in this file.
+_RETIRED_FIELD = "native" + "_runtime"
+_RETIRED_MODE = "native" + "_claude"
+
+PAIR_RULE_PARAGRAPH = (
+    "A reviewer or executor is a (runtime, model) pair. Each call runs it natively when its "
+    "runtime is the current host and the host can select that model; otherwise it runs as a "
+    "subprocess through the supervised runner. An entry with neither a runtime nor a model is "
+    "the session default, which the host always runs natively. Today only Claude Code selects "
+    "a model per call (its sonnet, opus, haiku and fable aliases); every other host runs only "
+    "its session default natively."
+)
+
+_REPO_ROOT = os.path.join(os.path.dirname(__file__), "..")
+
+REWRITTEN = [
+    "skills/ai-kit-spec-review/SKILL.md",
+    "skills/ai-kit-spec-config/SKILL.md",
+]
+REFERENCES = [
+    "skills/ai-kit-spec-review/references/cross-ai-dispatch.md",
+    "skills/ai-kit-spec-review/references/cli-profiles/claude.md",
+    "skills/ai-kit-spec-review/references/cli-profiles/codex.md",
+    "skills/ai-kit-spec-review/references/cli-profiles/cursor.md",
+    "skills/ai-kit-spec-review/references/cli-profiles/opencode.md",
+    "skills/ai-kit-spec-review/references/cli-profiles/grok.md",
+    "skills/ai-kit-spec-config/references/cli-model-selection.md",
+]
+
+_FORBIDDEN = (
+    _RETIRED_FIELD,
+    _RETIRED_MODE,
+    "cursor-agent.md",
+    "`cli` is `null`",
+    "`cli`-omitted",
+    "cli=None",
+)
+
+
+def _read_repo(relpath):
+    with open(os.path.join(_REPO_ROOT, relpath), encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _agents_architecture():
+    """AGENTS.md text from `## Architecture` up to, but not including, the next heading."""
+    text = _read_repo("AGENTS.md")
+    start = text.index("## Architecture")
+    rest = text[start + len("## Architecture"):]
+    end = rest.find("\n## ")
+    return text[start:] if end < 0 else text[start:start + len("## Architecture") + end]
+
+
+class TestWordingGrep(unittest.TestCase):
+    def test_forbidden_tokens(self):
+        scopes = [(path, _read_repo(path)) for path in (*REWRITTEN, *REFERENCES)]
+        scopes.append(("AGENTS.md##Architecture", _agents_architecture()))
+        hits = [
+            f"{path}: {token}"
+            for path, text in scopes
+            for token in _FORBIDDEN
+            if token in text
+        ]
+        self.assertEqual(hits, [])
+
+    def test_pair_rule_paragraph(self):
+        missing = [path for path in REWRITTEN if PAIR_RULE_PARAGRAPH not in _read_repo(path)]
+        self.assertEqual(missing, [])
+
+    def test_review_only_label(self):
+        paths = (
+            "skills/ai-kit-spec-review/SKILL.md",
+            "skills/ai-kit-spec-review/references/cli-profiles/claude.md",
+        )
+        missing = [path for path in paths if "review-only" not in _read_repo(path)]
+        self.assertEqual(missing, [])
+
+    def test_node_floor(self):
+        text = _read_repo("skills/ai-kit-spec-review/SKILL.md")
+        self.assertIn("Node 24 (GSD's declared floor); older versions untested", text)
+
+    def test_codex_confinement_statement(self):
+        text = _read_repo("skills/ai-kit-spec-review/references/cli-profiles/codex.md")
+        for token in (
+            "--codex-sandbox workspace-write",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "/tmp",
+            "$TMPDIR",
+            "unverified",
+        ):
+            self.assertIn(token, text, token)

@@ -11,33 +11,35 @@ source: live smoke test against a real installed claude CLI, piping a
 
 # claude — reviewer profile
 
-Non-interactive: `-p`/`--print` (print response and exit). Model selection:
-`--model <model>`. Output shaping: `--output-format <format>` (only works
-with `--print`).
+`claude` is review-only. The runtime table sets `review_only`, routing skips an
+exec-mode `claude` candidate on any other host, and the runner has a review
+formula and no exec formula (an exec attempt exits 2). It is a review target,
+never an execution CLI.
 
-**No `{prompt}` in this template — prompt delivery is stdin-only,
-confirmed live**: `claude -p` with no positional prompt argument reads
-the prompt from stdin instead. `review-spec/SKILL.md`'s Step 1 external
-dispatch and `probe_reviewer_quota` both redirect the already-on-disk
-prompt file as this process's stdin unconditionally (not gated on
-whether a given entry's `command` still has a literal `{prompt}`) — an
-unread stdin pipe here is harmless, so this needs no special-casing.
+The runner's review formula (review mode) is:
 
-```bash
-claude -p --model {model} --output-format text
+```text
+claude -p --model <model> --output-format json --permission-mode plan
 ```
 
-`{model}` above is the literal `command`-template placeholder every
-reviewer entry's `command` field can reference — written bare, never
-wrapped in extra quotes. `render_reviewer_command` (in `ai-kit-spec.py`)
-still accepts a `{prompt}` placeholder too — it becomes one argv element
-with no extra quoting — for a hand-written open-hatch `command` that
-prefers to inline the prompt instead of relying on stdin; this profile's
-own template simply doesn't use it. Copy this shape directly into a
-`command` field.
+ai-kit does not store that argv. A review entry stores the pair
+`runtime = "claude"` and `model`, and dispatch runs it through the supervised
+runner. `<model>` is the entry's model: one of the four aliases (`sonnet`,
+`opus`, `haiku`, `fable`) when this host is Claude Code and selects per call,
+or a full id the runner passes to `--model`.
 
-Quota/context-window introspection: unconfirmed syntax — research
-whether a dedicated Claude usage
-subcommand exists; otherwise rely on the same "low-effort call, detect a
-usage-limit error" mechanism confirmed for `codex` (`codex.md`, this same
-`cli-profiles/` directory).
+Read-only enforcement is not live-verified. The formula passes
+`--permission-mode plan`; that is the runner's review shape, not a confirmed
+guarantee that the CLI cannot write.
+
+Prompt delivery is stdin. The runner pipes the prompt; there is no `{prompt}`
+placeholder because a table-runtime entry stores no `command`.
+
+On a Claude Code host the same pair can run natively instead: the host's own
+subagent takes the alias, and no subprocess starts. That per-call alias
+selection is Claude Code only.
+
+Quota and context-window introspection: unconfirmed syntax. No dedicated usage
+subcommand is confirmed here; availability is classified from the runner's
+status line (`AIKIT-XAI status=...`), the same way every other runner runtime
+is classified.

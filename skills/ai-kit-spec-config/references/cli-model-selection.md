@@ -1,6 +1,10 @@
-# Step 2.2 — Pick which CLIs and models to register
+# Step 2.2 — Pick which runtimes and models to register
 
-Loaded only when this wizard run is registering CLI-sourced reviewers (Step 2.2). Native-only runs skip this file.
+Loaded only when this wizard run is registering subprocess reviewers (Step 2.2). A
+session-default-only run skips this file. Each candidate registered from here is a
+(runtime, model) pair: Step 2.4 stores `runtime` and `model` (plus that runtime's knobs),
+and the runner builds the argv. Only a runtime outside the runner table, grok today,
+stores a `command` instead.
 
 For every CLI the user wants to consider (from Step 1's detection), build the ranked
 candidate list via the model-discovery catalog rather than guessing or searching per model.
@@ -26,7 +30,7 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
    hundreds of individual unmatched searches and confirmation prompts for what is really only a
    handful of base families. Group it first:
    ```bash
-   python3 "$TOOLS_PY" group-models --runtimes-json "$RUNTIMES_JSON" --cli <id>
+   python3 "$TOOLS_PY" group-models --runtimes-json "$RUNTIMES_JSON" --runtime <id>
    ```
    This prints `{"<family>": ["<variant-id>", ...], ...}` — one entry per base model family,
    each holding its own tier/effort/fast variants (the grouping is a plain suffix-stripping
@@ -269,10 +273,10 @@ for purpose in ('review', 'execute'):
    candidate, which list(s) it
    was confirmed from** — REVIEW only, EXECUTE only, or both — this becomes that entry's
    `purpose` value (`"review"`, `"execute"`, or `"both"`) carried forward into Step 2.4's
-   command-building and Step 3's write below. **A candidate that comes through this ranked flow
+   pair and Step 3's write below. **A candidate that comes through this ranked flow
    always gets an explicit `purpose` written — never left absent.** Absent `purpose` is reserved
    strictly for a pre-migration `review-spec.toml` entry that predates this design; every NEW
-   entry this wizard writes, from this step or from Step 2.7's native-entry flow below, states
+   entry this wizard writes, from this step or from Step 2.7's session-default flow below, states
    its `purpose` explicitly (an absent `purpose` reads as "matches both roles" on the consumer
    side, which must never be an accident of a newly-written entry, only the documented
    legacy-compat default). This IS the answer to what used to be a separate `purpose`
@@ -281,7 +285,7 @@ for purpose in ('review', 'execute'):
    codegraph-capable alternative.** For each model confirmed onto such a CLI in the previous
    item, run:
    ```bash
-   python3 "$TOOLS_PY" check-codegraph-alternative --cli <id> --model <model-id> \
+   python3 "$TOOLS_PY" check-codegraph-alternative --runtime <id> --model <model-id> \
      --runtimes-json "$RUNTIMES_JSON"
    ```
    When `alternative_cli` is non-null, tell the user in one line before they finalize: `"<model>

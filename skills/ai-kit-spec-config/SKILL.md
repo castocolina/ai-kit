@@ -71,8 +71,14 @@ already be installed."
 - **Never silently pre-filter model families based on your own judgment** — always let the user decide, informed by your research (user agency over paternalism).
 - **Never paste a multi-provider CLI's raw model list ungrouped** — always run `group-models` first (raw lists can be hundreds of ids; grouping makes them readable).
 - **Never write to the global config without asking** — unless `--global` or `--local` was explicitly passed (global changes affect all projects; default is local).
-- **Never skip asking about native reviewer entries** — the only zero-external-dependency reviewer option, worth having available as a fallback (placed last in `policy.ladder`) even when the user primarily wants external CLI reviewers.
-- **Never omit or soften `(running under: unknown)`** — when `detect-current-runtime` returns `"unknown"`, render that annotation literally in Step 2.7's native-entry ask. An `unknown` host gets a session-default native entry (no `runtime`, `model = ""`), never a guessed runtime. Dropping the annotation or rewording it to "not detected" is the same silent-omit as leaving `purpose` unset on a brand-new entry.
+- **Never skip asking about session-default reviewer entries** — the only
+  zero-external-dependency reviewer option, worth having available as a fallback (placed last
+  in `policy.ladder`) even when the user primarily wants external CLI reviewers.
+- **Never omit or soften `(running under: unknown)`** — when `detect-current-runtime` returns
+  `"unknown"`, render that annotation literally in Step 2.7's session-default ask. An
+  `unknown` host gets a session-default entry (no `runtime`, `model = ""`), never a guessed
+  runtime. Dropping the annotation or rewording it to "not detected" is the same silent-omit
+  as leaving `purpose` unset on a brand-new entry.
 - **Never skip announcing the target path before asking reviewer questions** — user must know where config is headed from the start.
 - **Never re-derive the write target at Step 3** — use what Step 2 already resolved and announced (consistency guarantee).
 - **Never translate literal identifiers** — `purpose` values (REVIEW/EXECUTE), model ids, catalog keys, CLI/runtime names, and field labels stay in their literal, invariant form regardless of what language the rest of this conversation is in. Narrate and explain in the user's own language, but never garble an identifier a user or this skill needs to match against config values by translating it.
@@ -159,7 +165,7 @@ at a glance.
 | Build the actual command/model-id | Step 2.4 |
 | Verify a candidate actually works | Step 2.5 |
 | Tag a reviewer as UI/coding/planning-oriented | Step 2.6 |
-| Register a native (no-CLI) reviewer | Step 2.7 |
+| Register a session-default (no-runtime) reviewer | Step 2.7 |
 | Set the priority/fallback order | Step 2.8 |
 
 #### Step 2.1 — Resolve the write target
@@ -183,7 +189,7 @@ all — registering every installed CLI indiscriminately is exactly what this st
 opening framing at the top of Step 2 warns against.
 
 **Do NOT load** `references/cli-model-selection.md` when Step 1 found no installed CLI,
-or the user declined every installed CLI at the ask above. Native entries never go
+or the user declined every installed CLI at the ask above. Session-default entries never go
 through this catalog/ranking flow — continue at Step 2.3/2.7.
 
 **MANDATORY — READ ENTIRE FILE:** when the user kept at least one CLI, before grouping
@@ -205,65 +211,158 @@ python3 "$TOOLS_PY" infer-vendor --model <model-id>
 ```
 When this prints `{"vendor": null}` (no known prefix — e.g. an `ollama-cloud/*` id, or a genuinely new model this table hasn't seen yet), ask the user directly for the real vendor rather than guessing — this is the one case a human still has to supply the answer, and it should be rare (the table in `ai-kit-spec.py`'s `_MODEL_VENDOR_PREFIXES` already covers every model family confirmed live in the CLI profiles).
 
-#### Step 2.4 — Build the model id and runner knobs
+#### Step 2.4 — Store the pair and its runner knobs
 
-For each CLI the user wants, read its profile under `$CLI_PROFILES_DIR/<id>.md` for anything CLI-specific this step doesn't already cover (prerequisites, known quirks, plan/entitlement gating — `cursor.md` documents several). **Load only the profile(s) for CLIs actually selected at Step 2.2 — do NOT read the whole `$CLI_PROFILES_DIR` directory or preemptively load profiles for CLIs the user declined.** Each profile is a few KB of quirks relevant to exactly one CLI; loading unselected ones adds noise without informing any decision in this run.
+For each runtime the user wants, read its profile under `$CLI_PROFILES_DIR/<id>.md` for
+anything runtime-specific this step doesn't already cover (prerequisites, known quirks,
+plan/entitlement gating — `cursor.md` documents several). **Load only the profile(s) for
+runtimes actually selected at Step 2.2 — do NOT read the whole `$CLI_PROFILES_DIR` directory
+or preemptively load profiles for runtimes the user declined.** Each profile is a few KB of
+quirks relevant to exactly one runtime; loading unselected ones adds noise without informing
+any decision in this run.
 
-**A runtime the runner knows stores no `command`.** Store `runtime` and `model`, and ask for the knobs that runtime takes as entry fields: `effort` and `service_tier` for codex, `cursor_mode` for cursor (default `ask`). The runner builds the argv from those fields at dispatch. `build-command --runtime <id>` is an optional preview of what the runner runs — it prints the argv and says that review-spec.toml stores `runtime` and `model`; do not store its output as a `command`.
+**A runtime the runner knows stores no `command`.** Store the pair: `runtime` and `model`,
+plus the knobs that runtime takes as entry fields (`effort` and `service_tier` for codex,
+`cursor_mode` for cursor, default `ask`). The runner builds the argv from those fields at
+dispatch. `build-command --runtime <id>` is an optional preview of that argv — it prints the
+argv and says that review-spec.toml stores `runtime` and `model`; do not store its output as a
+`command`.
 ```bash
 python3 "$TOOLS_PY" build-command --runtime <id> \
   [--effort <e>] [--service-tier <t>] [--mode plan|ask]
 ```
-**codex's `model` field must be the BARE model id — never suffix an effort/tier tag onto it.** Confirmed live 2026-08-29: `codex exec -m gpt-5.6-sol-high` is REJECTED outright ("The 'gpt-5.6-sol-high' model is not supported..."); the correct pair is `model = "gpt-5.6-sol"` with `effort = "high"` stored on the entry (the runner passes it as codex's own effort flag, not in the model string). This is the opposite convention from cursor below, where effort/fast/context ARE baked into the model-id string — do not carry that pattern over to codex. codex has no `models`/`list-models` subcommand (confirmed via `codex --help`), but `detect-runtimes` enumerates its user-selectable models from the real binary's `codex debug models` output (entries with `visibility: "list"` only) into `clis.codex.models` — when `$RUNTIMES_JSON` carries that list, pick the model id from it. When it does not (an older codex without `debug models`, or an enumeration that failed and degraded to no list), treat the exact current model id as unfamiliar and research it per Step 2.2's rule before proposing it to the user, rather than typing a remembered id from training knowledge.
+**codex's `model` field must be the BARE model id — never suffix an effort/tier tag onto it.**
+Confirmed live 2026-08-29: `codex exec -m gpt-5.6-sol-high` is REJECTED outright ("The
+'gpt-5.6-sol-high' model is not supported..."); the correct pair is `model = "gpt-5.6-sol"`
+with `effort = "high"` stored on the entry (the runner passes it as `--codex-effort`, not in
+the model string). This is the opposite convention from cursor below, where effort/fast/context
+ARE baked into the model-id string — do not carry that pattern over to codex. codex has no
+`models`/`list-models` subcommand (confirmed via `codex --help`), but `detect-runtimes`
+enumerates its user-selectable models from the real binary's `codex debug models` output
+(entries with `visibility: "list"` only) into `clis.codex.models` — when `$RUNTIMES_JSON`
+carries that list, pick the model id from it. When it does not (an older codex without
+`debug models`, or an enumeration that failed and degraded to no list), treat the exact current
+model id as unfamiliar and research it per Step 2.2's rule before proposing it to the user,
+rather than typing a remembered id from training knowledge.
 
-For `cursor` specifically, effort/fast/context are encoded in the model id itself, not a runner flag — ask the user for any of those they want, then:
+For `cursor` specifically, effort/fast/context are encoded in the model id itself, not a runner
+flag — ask the user for any of those they want, then:
 ```bash
-python3 "$TOOLS_PY" build-model-id --cli cursor --base-model <id> \
+python3 "$TOOLS_PY" build-model-id --runtime cursor --base-model <id> \
   [--effort <e>] [--fast true|false] [--context <c>]
 ```
-and use the printed id as this entry's `model` field (unchanged from the plain id when no overrides were given). `build-model-id` stays for these cursor bracket ids.
+and use the printed id as this entry's `model` field (unchanged from the plain id when no
+overrides were given). `build-model-id` stays for these cursor bracket ids.
 
-**Grok has no runner formula.** `build-command --runtime grok` prints the command to store on a custom entry with no `runtime`, trust-gated like any custom command. Any other CLI outside the runner table — a CLI this catalog of profiles hasn't caught up with yet, a brand-new provider, or a fully custom local script — is a custom entry with a hand-written `command` and no `runtime`. `review-spec.toml`'s `command` field accepts a plain template with just `{model}`/`{prompt}` as placeholders. Hand-written templates are split into argv the way a shell splits words; `{model}`, `{prompt}`, and any `extra` fields each fill a whole argument (`{prompt}` needs no quoting). Shell operators (`;`, `|`, `&&`, `>`), `$` expansions, and backticks are rejected with an error naming the reviewer — wrap a pipeline in a script and register the script. This is the intended open escape hatch: any CLI/script that can be invoked non-interactively with a model and a prompt can become a reviewer entry.
+**Grok has no runner formula.** `build-command --runtime grok` prints the command to store on a
+custom entry with no `runtime`, trust-gated like any custom command. Any other CLI outside the
+runner table — a CLI this catalog of profiles hasn't caught up with yet, a brand-new provider,
+or a fully custom local script — is that same escape hatch: a custom entry with a hand-written
+`command` and no `runtime`. `review-spec.toml`'s `command` field accepts a plain template with
+just `{model}`/`{prompt}` as placeholders. Hand-written templates are split into argv the way a
+shell splits words; `{model}`, `{prompt}`, and any `extra` fields each fill a whole argument
+(`{prompt}` needs no quoting). Shell operators (`;`, `|`, `&&`, `>`), `$` expansions, and
+backticks are rejected with an error naming the reviewer — wrap a pipeline in a script and
+register the script. This is the intended open escape hatch: any CLI/script that can be invoked
+non-interactively with a model and a prompt can become a reviewer entry.
 
-#### Step 2.5 — Test the candidate before saving
+#### Step 2.5 — Test the pair before saving
 
-**Before finalizing any CLI entry, actually test it — don't just trust that the model id and command work.** Run:
+**Before finalizing any table-runtime entry, actually test the pair — don't just trust that
+the model id works.** Run:
 ```bash
 python3 "$TOOLS_PY" check-reviewer --key <candidate-key> --model <model-id> \
   --vendor <vendor> --runtime <id> \
   [--extra-json '<json>']
 ```
-This makes one real call through the CLI (the same mechanism `probe-quota` uses later) and prints `{"available": bool, "detail": "..."}`. If `available` is `false`, show the user the `detail` message verbatim (it is the CLI's own real error text — e.g. a bad model id, an auth problem, or a plan/entitlement gate like `cursor`'s Free-plan restriction) and ask whether to save the entry anyway (it may just be a temporary quota exhaustion, worth keeping for later) or drop it.
+A custom entry (no `runtime`) is tested the same way with `--command '<template>'` instead of
+`--runtime`. This makes one real call through the runner or the custom launcher (the same
+mechanism `probe-quota` uses later) and prints `{"available": bool, "detail": "..."}`. If
+`available` is `false`, show the user the `detail` message verbatim (it is the CLI's own real
+error text — e.g. a bad model id, an auth problem, or a plan/entitlement gate like `cursor`'s
+Free-plan restriction) and ask whether to save the entry anyway (it may just be a temporary
+quota exhaustion, worth keeping for later) or drop it.
 
 **If the profile's `read_only:` field says `unconfirmed`**, print one line before writing that entry: "Note: `<id>` has no confirmed read-only invocation — this reviewer runs with the CLI's normal write permissions against your working tree." — inform, don't block; the user is choosing to accept that CLI's default risk.
 
 #### Step 2.6 — Ask about the optional strength attribute; `purpose` comes from Step 2.2
 
-**Also ask, for every entry (CLI or native), an optional `strength`**: `"ui"`, `"coding"`, `"planning"`, or left unset — free text otherwise, not validated. This is informational only — captured in `review-spec.toml` for a human (or a future version of this design) to read, but **not yet consumed by any resolution logic today** (`resolve_reviewers`/`resolve_ladder_pick` ignore it completely). Tell the user this plainly if they ask what it does: it doesn't change dispatch behavior yet, it just gets saved.
+**Also ask, for every entry (a pair or the session default), an optional `strength`**: `"ui"`,
+`"coding"`, `"planning"`, or left unset — free text otherwise, not validated. This is
+informational only — captured in `review-spec.toml` for a human (or a future version of this
+design) to read, but **not yet consumed by any resolution logic today**
+(`resolve_reviewers`/`resolve_ladder_pick` ignore it completely). Tell the user this plainly if
+they ask what it does: it doesn't change dispatch behavior yet, it just gets saved.
 
-**`purpose` is NOT asked here** — it was already captured at Step 2.2 (which ranked list(s), REVIEW/EXECUTE/both, the user confirmed each candidate from). Carry that value forward unchanged into this entry's fields; do not re-ask, and do not silently drop it.
+**`purpose` is NOT asked here** — it was already captured at Step 2.2 (which ranked list(s),
+REVIEW/EXECUTE/both, the user confirmed each candidate from). Carry that value forward unchanged
+into this entry's fields; do not re-ask, and do not silently drop it.
 
-#### Step 2.7 — Ask about native reviewer entries
+#### Step 2.7 — Ask about the session default
+
+A reviewer or executor is a (runtime, model) pair. Each call runs it natively when its runtime is the current host and the host can select that model; otherwise it runs as a subprocess through the supervised runner. An entry with neither a runtime nor a model is the session default, which the host always runs natively. Today only Claude Code selects a model per call (its sonnet, opus, haiku and fable aliases); every other host runs only its session default natively.
 
 Before asking, detect which runtime is hosting *this* session (never cached, always live):
 ```bash
 python3 "$TOOLS_PY" detect-current-runtime
 ```
-Capture the printed `host` (`pi` / `opencode` / `cursor` / `codex` / `claude` / `unknown`). That value is shown in the prompt below and decides each native entry's shape at Step 3. When several CLIs are nested, the innermost one wins (pi > opencode > cursor > codex > claude), so a codex or opencode session started from Claude Code records that CLI, not claude.
+Capture the printed `host` (`pi` / `opencode` / `cursor` / `codex` / `claude` / `unknown`).
+That value is shown in the prompt below and decides the entry's shape at Step 3. When several
+CLIs are nested, the innermost one wins (pi > opencode > cursor > codex > claude), so a codex or
+opencode session started from Claude Code records that CLI, not claude.
 
-**Also ask, explicitly — do not skip this**: whether to register one or more **native** (no `runtime`) reviewer entries — dispatched via whatever runtime is hosting *this* session (running under: <host>), not any one specific model or vendor. Substitute the captured value into that annotation verbatim. When `detect-current-runtime` returns `"unknown"`, still render `(running under: unknown)` literally — never omitted, never softened to "not detected" or dropped from the prompt. The `(running under: <host>)` annotation above names the actual host for this run. When that host is Claude Code, its own dispatch mechanism is the `Agent` tool's four tier aliases (`sonnet`/`opus`/`haiku`/`fable`) — a different host substitutes its own alias/selection mechanism here. "Native" itself is a runtime-agnostic concept: the same config shape (no `runtime`) is what any host's run of this skill uses for *its* own current-session model. Don't imply in prose or example keys that native means "Claude" or "opus" specifically — call it the current-runtime/native entry, and let its `key` describe the tier (e.g. `native-primary`, `native-fallback`), not the vendor.
+**Also ask, explicitly — do not skip this**: whether to register one or more entries that this
+host runs itself (running under: <host>), not any one specific vendor. Substitute the captured
+value into that annotation verbatim. When `detect-current-runtime` returns `"unknown"`, still
+render `(running under: unknown)` literally — never omitted, never softened to "not detected"
+or dropped from the prompt. Let the entry's `key` describe its place in the ladder (e.g.
+`session-primary`, `session-fallback`), not a vendor.
 
-Worth asking regardless of `policy.mode`, since it's the only zero-external-dependency reviewer option available (never rate-limited/API-gated the way an external CLI can be) — useful as either a primary pick or a pure fallback, depending on where the user places it in `policy.ladder` at Step 2.8. **A native entry is never automatically prioritized over external ones** — `resolve_reviewers` (`ai-kit-spec.py`) treats every ladder entry identically regardless of native/external; only its position in `policy.ladder` decides priority, and quota/availability failures (never native-vs-external status) decide fallback (changed 2026-08-29 — an earlier design gave native entries an automatic guaranteed-baseline slot in `double` mode regardless of ladder position; a real config hit this and got a silently reordered ladder, so it was removed). If the user wants a native entry as pure fallback, place it LAST in the ladder order at Step 2.8. **When the captured `host` is `"claude"`**, each native entry is `runtime = "claude"` plus one of the four `Agent`-tool aliases (`sonnet`/`opus`/`haiku`/`fable`), never a full model id like `"opus-5"`; ask the user to pick one of those four rather than typing a version string. On any other host, or `unknown`, the native entry is the session default (no `runtime`, `model = ""`), because only Claude Code aliases are verified per-call selectable today (Phases 20-22 extend this).
+Worth asking regardless of `policy.mode`, since it's the only zero-external-dependency reviewer
+option available (never rate-limited/API-gated the way an external CLI can be) — useful as
+either a primary pick or a pure fallback, depending on where the user places it in
+`policy.ladder` at Step 2.8. **A host-run entry is never automatically prioritized over a
+subprocess one** — `resolve_reviewers` (`ai-kit-spec.py`) treats every ladder entry
+identically; only its position in `policy.ladder` decides priority, and quota/availability
+failures decide fallback (changed 2026-08-29 — an earlier design gave host-run entries an
+automatic guaranteed-baseline slot in `double` mode regardless of ladder position; a real
+config hit this and got a silently reordered ladder, so it was removed). If the user wants one
+as pure fallback, place it LAST in the ladder order at Step 2.8. **When the captured `host` is
+`"claude"`**, the entry is the pair `runtime = "claude"` plus one of the four aliases
+(`sonnet`/`opus`/`haiku`/`fable`), never a full model id like `"opus-5"`; ask the user to pick
+one of those four rather than typing a version string. On any other host, or `unknown`, the
+entry is the session default (no `runtime`, `model = ""`), because only Claude Code's aliases
+are verified per-call selectable today (Phases 20-22 extend this).
 
-**Also ask, for each native entry, the same `purpose` question Step 2.2 answers for CLI-sourced candidates**: should this native entry be used for review, execute, or both? (`"review"` | `"execute"` | `"both"`.) A native entry never goes through Step 2.2's catalog/ranking flow — there is no CLI model id to look up in models.dev/Artificial Analysis for a `sonnet`/`opus`/`haiku`/`fable` alias — so without this question it would get no `purpose` at all, and the consumer side reads an absent `purpose` as "matches both review and execute": an assumption that must be a deliberate, documented legacy-compat default, never an accident of how a brand-new entry happened to get written. A native entry is a real, always-available reviewer/executor choice — it deserves the same explicit curation as any ranked CLI candidate, not a silent default. Carry the answer into this entry's `purpose` field at Step 3's write, exactly like a Step 2.2-sourced entry — never leave it unset for a newly-registered native entry. Carry the captured host into the entry as described above — never silently omitted (D-04).
+**Also ask, for each such entry, the same `purpose` question Step 2.2 answers for ranked
+candidates**: review, execute, or both? (`"review"` | `"execute"` | `"both"`.) A
+session-default entry never goes through Step 2.2's catalog/ranking flow — there is no model id
+to look up — so without this question it would get no `purpose` at all, and the consumer side
+reads an absent `purpose` as "matches both review and execute": an assumption that must be a
+deliberate, documented legacy-compat default, never an accident of how a brand-new entry
+happened to get written. Carry the answer into this entry's `purpose` field at Step 3's write,
+exactly like a Step 2.2-sourced entry — never leave it unset for a newly-registered one. Carry
+the captured host into the entry as described above — never silently omitted (D-04).
 
 #### Step 2.8 — Set policy.mode, policy.ladder order, and strategy
 
-Then ask: `policy.mode` (`single` or `double`) and the `policy.ladder` order — this is the **priority fallback list**: the order reviewers are tried in, first available wins the primary slot (`double` mode also seats an independent secondary). Default the order to the order the user answered the per-CLI and native-entry questions in, combined, but let them reorder; once confirmed, echo it back as a numbered list so the user sees the exact fallback order before it's written (`cfg_render_toml` also writes this same list as a `#`-comment above `[policy]` in the file itself, so it stays readable to anyone opening `review-spec.toml` directly later, not just at setup time). If the resolved write target (above) is **local**, also ask whether this local config should be `local-only` or the default `global-merge` — set the JSON config's top-level `strategy` key to `"local-only"` if so (`cfg_render_toml` renders it as a bare `strategy = "..."` line at the top of the file); omit the key entirely for the default (global-merge applies, no line needed).
+Then ask: `policy.mode` (`single` or `double`) and the `policy.ladder` order — this is the
+**priority fallback list**: the order reviewers are tried in, first available wins the primary
+slot (`double` mode also seats an independent secondary). Default the order to the order the
+user answered the per-runtime and session-default questions in, combined, but let them reorder;
+once confirmed, echo it back as a numbered list so the user sees the exact fallback order
+before it's written (`cfg_render_toml` also writes this same list as a `#`-comment above
+`[policy]` in the file itself, so it stays readable to anyone opening `review-spec.toml`
+directly later, not just at setup time). If the resolved write target (above) is **local**,
+also ask whether this local config should be `local-only` or the default `global-merge` — set
+the JSON config's top-level `strategy` key to `"local-only"` if so (`cfg_render_toml` renders
+it as a bare `strategy = "..."` line at the top of the file); omit the key entirely for the
+default (global-merge applies, no line needed).
 
-The `strategy` question does not apply when the resolved target is global — `strategy` only ever describes how a *local* config relates to the global one.
+The `strategy` question does not apply when the resolved target is global — `strategy` only
+ever describes how a *local* config relates to the global one.
 
-**When at least one external-CLI reviewer is being registered** (native-only configs have no
+**When at least one subprocess reviewer is being registered** (a session-default-only config has no
 subprocess to time out), also ask whether to customize `policy.timeout_tiers` from its default
 `[600, 1200, 1800]` — 10, then 20, then 30 minutes, each tier a fresh attempt after the previous
 one is killed, so the tiers are **cumulative**: the worst case is their sum (60 minutes), not a
@@ -282,10 +381,10 @@ Build the JSON shape `skills/ai-kit-spec-review/ai-kit-spec.py`'s `render-toml` 
 expects (`{"strategy": "...", "policy": {...}, "reviewers": [...]}` — the
 `strategy` key only when Step 2 asked for `local-only`). **Each object in
 `reviewers` now also carries `purpose` (`"review"`/`"execute"`/`"both"`, from
-Step 2.2 for a CLI-sourced entry or Step 2.7 for a native one — every entry
-this wizard newly registers gets an explicit `purpose`, CLI-sourced or native
-alike; absent `purpose` is reserved for a pre-migration entry this run is
-merely carrying forward unchanged, never for a brand-new one).
+Step 2.2 for a ranked pair or Step 2.7 for a session-default one — every entry
+this wizard newly registers gets an explicit `purpose`; absent `purpose` is
+reserved for a pre-migration entry this run is merely carrying forward
+unchanged, never for a brand-new one).
 Every entry carries `runtime` and `model` (or neither, for the session default);
 `command` appears only on a custom entry for a CLI outside the table or a
 hand-tuned command; `render-toml` rejects anything else and prints why. Also

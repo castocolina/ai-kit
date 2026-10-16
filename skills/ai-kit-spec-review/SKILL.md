@@ -16,11 +16,11 @@ You are the orchestrator running as the `ai-kit-spec-review` skill (invocable vi
   cross-AI reviewer resolution at all. `--source-vendor=<vendor>` (default
   `anthropic`) — the document's authoring vendor, used by Step 0.7's ladder
   walk to prefer an independent perspective. Defaults to `anthropic` because
-  the orchestrator has no way to introspect its own model's vendor and a
-  native Claude Code session is the overwhelmingly common case; pass the
-  real vendor explicitly when running against a third-party endpoint. This
-  is a **vendor** (`anthropic`, `openai`, `xai`, ...) matching the `vendor`
-  field in `review-spec.toml` reviewer entries, not a model id.
+  the orchestrator has no way to introspect its own model's vendor; pass the
+  real vendor explicitly when this host's model comes from another vendor.
+  A Claude Code session is one example of an `anthropic` author, not the
+  rule. This is a **vendor** (`anthropic`, `openai`, `xai`, ...) matching the
+  `vendor` field in `review-spec.toml` reviewer entries, not a model id.
 
 ## Step 0 — Persist before dispatch (ALWAYS)
 
@@ -159,7 +159,7 @@ at its archetype and list the gaps.
 
 ## Step 0.7 — Resolve the reviewer list (cross-AI)
 
-Runs once per invocation, after Step 0.6. Before walking the cross-AI ladder, ask yourself: is cross-AI support actually installed and requested here, or does this invocation degrade cleanly to native-only (`--no-cross-ai`, or `ai-kit-spec.py` simply not present)? Answering that first avoids resolving quota/runtime state nobody asked for.
+Runs once per invocation, after Step 0.6. Before walking the cross-AI ladder, ask yourself: is cross-AI support actually installed and requested here, or does this invocation degrade cleanly to the session default (`--no-cross-ai`, or `ai-kit-spec.py` simply not present)? Answering that first avoids resolving quota/runtime state nobody asked for.
 
 **MANDATORY — READ ENTIRE FILE**: Before running any command below, read [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md) completely — it has the exact VERBATIM bash snippets, resolution order, and fail-closed rules for resolving `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `RUNTIMES_JSON`, `QUOTA_JSON`, `SHARED_TOOLING_PATH`, `TOOL_AVAILABILITY_JSON`, `RUN_TMP_DIR`, and ultimately `REVIEWER_LIST`. Do not attempt to reconstruct these from memory. Skip loading it only when this run is already known to be `--no-cross-ai` with no config to consider (still confirm `TOOLS_PY`'s absence per the reference's point 0 if unsure).
 
@@ -204,6 +204,11 @@ after the file was deleted.
 - **Framework profile cache** (`CACHE_DIR`): `~/.claude/cache/framework-profiles/*.md` (absolute,
   user-global) — learned/refreshed profiles the orchestrator writes for frameworks not covered by a
   seed. Create the dir on first write.
+- **Runner:** subprocess dispatch needs Node 24 (GSD's declared floor); older versions untested.
+  Without Node, subprocess entries are skipped as `dispatch_unavailable`
+  (`ai-kit-spec: subprocess dispatch needs Node`) and the session default still runs.
+- **`claude` is review-only:** the runtime table flags it review-only, so it is a review target
+  and never an execution CLI. Routing skips an exec-mode `claude` candidate on any other host.
 
 ## NEVER (hard landmines)
 
@@ -223,35 +228,47 @@ Run this loop. Each iteration is one reviewer dispatch followed by (conditionall
 
 ### Step 1 — Dispatch reviewer(s) (every iteration)
 
-Entries whose route is a skip never reach `REVIEWER_LIST`: `resolve-reviewers` prints why on
-stderr (`ai-kit-spec: skipping reviewer <key>: route <route>`).
+A reviewer or executor is a (runtime, model) pair. Each call runs it natively when its runtime is the current host and the host can select that model; otherwise it runs as a subprocess through the supervised runner. An entry with neither a runtime nor a model is the session default, which the host always runs natively. Today only Claude Code selects a model per call (its sonnet, opus, haiku and fable aliases); every other host runs only its session default natively.
+
+`resolve-reviewers` adds a per-call `route` and never stores it. A skip (`bad_model`,
+`no_inventory`, `not_installed`, `unknown_runtime`, `no_model`, `review_only`) never reaches
+`REVIEWER_LIST`: stderr prints `ai-kit-spec: skipping reviewer <key>: route <route>`. The routes
+that do dispatch are `native`, `subprocess`, `unverified` and `custom`.
 
 For each entry in `REVIEWER_LIST`:
 
-- **`route` is `native`** (the host's own subagent; on Claude Code the `Agent` tool with the
-  alias): use the `Agent` tool exactly as before —
+- **`route` is `native`** (this host runs the pair itself). On every host except Claude Code that
+  is only the session default, so omit `model` and let the host use its current session. Claude
+  Code is the one labelled case of per-call selection: its `Agent` tool takes one of the four
+  aliases and nothing else.
   - `subagent_type`: `general-purpose`
-  - `model`: the entry's `model`, **omitted entirely when `model == ""`**
-    (the `NO_CONFIG_FALLBACK`/session-default case — never substitute a
-    hardcoded name here; an empty `model` means "let the `Agent` tool use
-    its own default"). A non-empty `model` value here **must be one of the
-    four `Agent`-tool model aliases** (`sonnet`/`opus`/`haiku`/`fable` —
-    Claude Code's `Agent` tool does not accept a full model id like
-    `"opus-5"`); `ai-kit-spec-config` is responsible for writing
-    exactly one of these four strings for every native reviewer entry, so
-    surface anything else as a config error rather than passing it through.
+  - `model`: the entry's alias when the host is Claude Code, **omitted entirely when
+    `model == ""`** (the `NO_CONFIG_FALLBACK`/session-default case — never substitute a
+    hardcoded name; an empty `model` means "let the host use its session"). A non-empty
+    `model` on any other host is a config error. On Claude Code it must be one of
+    `sonnet`/`opus`/`haiku`/`fable` (not a full model id like `"opus-5"`);
+    `ai-kit-spec-config` writes exactly that shape, so surface anything else as a config
+    error rather than passing it through.
   - `description`: `ai-kit-spec-review iter N reviewer (<key>)`
   - `prompt`: the template below, invoking the `ai-kit-spec-review-checklist` skill
-  - After the `Agent` tool returns its report text, write it verbatim to
+  - After the host tool returns its report text, write it verbatim to
     `$RUN_TMP_DIR/iter<N>-<key>.md` via the `Write` tool (mirroring the
-    external branch below, which redirects `Bash` stdout to the same
+    subprocess branch below, which redirects `Bash` stdout to the same
     path). Step 1.5's merge reads both reviewers' reports from files
     unconditionally — a native reviewer's report must land on disk exactly
-    like an external one's, or `merge-reports` has no file to
+    like a subprocess one's, or `merge-reports` has no file to
     open for it and crashes the loop the first time `policy.mode =
     "double"` actually runs.
 
-- **`route` is `subprocess`, `unverified` or `custom`** (dispatch-reviewer, unchanged steps):
+- **`route` is `subprocess`, `unverified` or `custom`** (`dispatch-reviewer`):
+  a `subprocess` or `unverified` entry names a table runtime and runs through the supervised
+  runner (`node` plus the runner template), which builds the argv from `runtime` and `model`.
+  A `custom` entry has a `command` and no `runtime`; the fixed-argv launcher (same supervision
+  core, no shell) runs that command, and its stderr is classified for quota, auth and
+  configuration. `unverified` means the runtime's model list was unavailable after one
+  refresh: neither ai-kit nor the runner checks the model before the CLI runs. The runner has
+  no `unverified` status — that word is only this route — and stderr prints
+  `ai-kit-spec: dispatching reviewer <key> unverified: ...`.
   1. Write the prompt text below to `$RUN_TMP_DIR/iter<N>-<key>-prompt.txt`
      via the `Write` tool, with `{prompt}` filled in as:
 
@@ -297,9 +314,9 @@ For each entry in `REVIEWER_LIST`:
        --reviewers-json "$RUN_TMP_DIR/reviewers.json" --index <0 for primary, 1 for secondary>)"
      ```
   3. Dispatch via `dispatch-reviewer` — **one** call, no separate render step, instead of a
-     hand-built `nohup`/redirect pipeline. One tested Python path composes the prompt, renders
-     the entry's `command` template against it, and runs it; never ad hoc shell assembled fresh
-     per run:
+     hand-built `nohup`/redirect pipeline. One tested Python path composes the prompt and runs
+     the entry (a table runtime through the runner, a custom entry through the launcher); never
+     assemble that argv in the shell:
      ```bash
      python3 "$TOOLS_PY" dispatch-reviewer \
        --reviewers-json "$RUN_TMP_DIR/reviewers.json" \
@@ -412,7 +429,7 @@ single reviewer's report would — the merge already reproduces that line
 (`Approved` when no findings survived the merge, `Issues Found — fix and
 re-invoke` when they did, or `Failure — <lanes>` when a lane could not be
 merged). When `REVIEWER_LIST` has only 1 entry, skip the
-merge call — that entry's raw report (or the native `Agent` tool's output,
+merge call — that entry's raw report (or the host tool's output,
 written to the same `iter<N>-<key>.md` path per Step 1) is
 `EFFECTIVE_REPORT_PATH` directly, unchanged from today's behavior. If
 `EFFECTIVE_REPORT_PATH` does not exist on disk at all — the single-mode

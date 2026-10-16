@@ -54,13 +54,13 @@ Runs once per invocation, after Step 0.6.
    installed, never block the review over it. If `TOOLS_PY` exists but
    `CHECKLIST_SKILL_MD` does not (a broken/partial install —
    `ai-kit-spec-review-checklist` missing while `ai-kit-spec-review` itself is
-   present), still proceed with native dispatch (`cli` absent entries
-   need no checklist path), but skip any reviewer entry whose `cli` is
-   set: an external CLI can't be told to `Read` a file that doesn't
-   exist, so treat that entry the way a config error is treated —
-   dropped from `REVIEWER_LIST`, never dispatched, and this iteration
-   surfaces via whatever entries remain (or `NO_CONFIG_FALLBACK` if none
-   do).
+   present), still proceed with native dispatch (the session default and a
+   host-selectable pair need no checklist path), but skip any subprocess
+   reviewer (a table runtime or a custom `command`): an external CLI can't
+   be told to `Read` a file that doesn't exist, so treat that entry the way
+   a config error is treated — dropped from `REVIEWER_LIST`, never
+   dispatched, and this iteration surfaces via whatever entries remain (or
+   `NO_CONFIG_FALLBACK` if none do).
 
    Also call `detect-tools`, cached the same way `ai-kit-spec-config`'s own
    Step 1 does it — but since this orchestrator has no long-lived cache
@@ -113,10 +113,10 @@ Runs once per invocation, after Step 0.6.
    `detect-runtimes`, and do not write `$RUN_TMP_DIR/reviewers.json`** —
    points 3–5 below are entirely skipped, not just their side effects;
    this is the "skip it entirely, minimal overhead" case the flag exists
-   for. Because this entry's `cli` is always `null`, Step 1's dispatch
-   never needs `reviewers.json` for it either (only the external branch
-   reads that file), so nothing downstream is left dangling. Go directly
-   to Step 1.
+   for. Because this entry is the session default (no `runtime`, no
+   `command`), Step 1's dispatch never needs `reviewers.json` for it either
+   (only the subprocess branch reads that file), so nothing downstream is
+   left dangling. Go directly to Step 1.
 3. **Required — check before the call below, not optionally**: the
    `--if-stale` call immediately after this destroys the evidence a
    missing-file check would find (it creates the file), so this order is
@@ -167,11 +167,17 @@ Runs once per invocation, after Step 0.6.
      --cross-ai \
      > "$RUN_TMP_DIR/reviewers.json"
    ```
-   Each object in the output carries a `route` key (`native`, `subprocess`, `unverified` or
-   `custom`) decided for this run and never stored. Stderr names every reviewer that was left
-   out (`ai-kit-spec: skipping reviewer <key>: route <route>`) and every one dispatched
+   Each object in the output carries a `route` decided for this run and never stored:
+   `native` (this host runs the pair itself), `subprocess` (a table runtime through the
+   supervised runner), `unverified` (the same runner path, but the runtime's model list was
+   unavailable after one refresh, so neither ai-kit nor the runner checks the model first) or
+   `custom` (a `command` and no `runtime`, through the fixed-argv launcher). A skip never
+   appears here. Stderr names every reviewer that was left out
+   (`ai-kit-spec: skipping reviewer <key>: route <route>`, for `bad_model`, `no_inventory`,
+   `not_installed`, `unknown_runtime`, `no_model` or `review_only`) and every one dispatched
    unchecked (`ai-kit-spec: dispatching reviewer <key> unverified: the <runtime> model list is
-   unavailable, so neither ai-kit nor the runner can check <model> before it runs`).
+   unavailable, so neither ai-kit nor the runner can check <model> before it runs`). The runner
+   itself has no `unverified` status; that word is only this route.
    `resolve-reviewers` itself calls `cfg_resolve(cwd, env)`,
    which already handles the local-vs-global/`strategy` resolution — this
    step never re-implements that logic, it only picks which `--cwd` to
@@ -193,24 +199,26 @@ Runs once per invocation, after Step 0.6.
    over this in-context and passes the same file's path (plus the entry's
    index) to `dispatch-reviewer` for external dispatch.
 
-## Step 1 external-CLI dispatch — full rationale for `dispatch-reviewer`
+## Step 1 subprocess dispatch — full rationale for `dispatch-reviewer`
 
-SKILL.md's Step 1 (external-CLI branch, point 3) gives the exact command for calling
+SKILL.md's Step 1 (subprocess branch, point 3) gives the exact command for calling
 `dispatch-reviewer`. This section is the rationale behind that command's two hard rules —
 consult it only if you're tempted to deviate from the command as given.
 
 **Why you must not render the command yourself and pass it back in.** `dispatch-reviewer` takes
-the reviewer entry (`--reviewers-json` + `--index`), not a pre-rendered command string, and calls
-`render_reviewer_command` internally *after* it has prefixed the tooling guidance onto the
-prompt. That ordering is load-bearing twice over: some CLIs (grok) inline the prompt into their
-own command line via `{prompt}` rather than reading stdin, so guidance composed after the render
-would never reach them; and pre-rendering the argv yourself bypasses the single
-`render_reviewer_command` split point (templates become argv the way a shell splits words;
-`{prompt}` is one argument with no extra quoting; shell operators, `$`, and backticks in a
-template are rejected with an error naming the reviewer). There is likewise **no**
-`--codegraph-registered` flag to compute: `dispatch-reviewer` runs the same live
-`check_codegraph_mcp_usable` check itself whenever the entry has a `cli` (the same
-internal-resolution pattern the execute family's `prepare-tooling` already uses), so the
+the reviewer entry (`--reviewers-json` + `--index`), not a pre-rendered command string. A
+`subprocess` or `unverified` entry runs through the supervised runner: `node` plus the runner
+template, with `--prefer <runtime>`, `--model-<runtime> <model>`, `--mode review` and the entry's
+timeout. A `custom` entry (a `command`, no `runtime`) is rendered by `render_reviewer_command`
+*after* the tooling guidance is prefixed onto the prompt, then run by the fixed-argv launcher on
+the same supervision core. That ordering is load-bearing for a custom entry: some of them (grok)
+inline the prompt via `{prompt}` rather than reading stdin, so guidance composed after the render
+would never reach them, and pre-rendering the argv yourself bypasses the single split point
+(templates become argv the way a shell splits words; `{prompt}` is one argument with no extra
+quoting; shell operators, `$`, and backticks in a template are rejected with an error naming the
+reviewer). There is likewise **no** `--codegraph-registered` flag to compute: `dispatch-reviewer`
+runs the same live `check_codegraph_mcp_usable` check itself whenever the entry has a `runtime`
+(the same internal-resolution pattern the execute family's `prepare-tooling` already uses), so the
 orchestrator never has to evaluate it. `$SHARED_TOOLING_PATH` and `$TOOL_AVAILABILITY_JSON` are
 surfaced to the reviewer as named `SHARED_TOOLING_PATH = …` / `TOOL_AVAILABILITY = …` lines at
 the top of the composed prompt.
@@ -225,11 +233,46 @@ config whose tiers you know are short) pass an explicit `timeout` close to the h
 a dispatch that never produces the report file exactly like a nonzero exit: the file is absent,
 so the fail-closed rules apply unchanged.
 
-**If `dispatch-reviewer` exits nonzero** (a malformed or missing `command` template on this
-reviewer entry, or an empty `timeout_tiers` — config errors, not runtime failures), this
+**If `dispatch-reviewer` exits nonzero** (an empty `timeout_tiers`, or a custom entry whose
+`command` template is malformed or missing — config errors, not runtime failures), this
 reviewer's slot failed to dispatch. Delete `$RUN_TMP_DIR/iter<N>-<key>.md` (the `>` redirect
 already created it) —
 leaving it absent is what makes Step 1.5's `merge-reports` (double mode) exit non-zero and
 print `### Status: Failure — <lanes>` naming the failed lane(s), or the missing-file case
 (single mode) fail closed through Step 2's "No Status line" rule — never treat either outcome
 as Approved.
+
+## Outside a git work tree (D-34)
+
+The runner does not require a git work tree. Outside one it still runs the CLI, reports
+`tree=unknown` on its status line, and says so: `cross-ai: <cwd> is not inside a git work tree;
+running without the tree check (tree=unknown); no other CLI runs after one has run`.
+Once one CLI has run, it never tries another: there is no proof that the first one wrote nothing.
+In review mode it also says read-only cannot be verified:
+`cross-ai: review mode cannot verify the read-only contract outside a git work tree`.
+Inside a work tree a git failure stops the run instead. A check that times out is `git_timeout`;
+any other git failure is `git_error`. Neither is the `unverified` route above — the runner has no
+`unverified` status.
+
+## Status line to reason
+
+The runner prints one last stderr line, `AIKIT-XAI status=<status> ...`, and ai-kit maps that
+`status` through `STATUS_TO_REASON`. A custom entry has no status line: the launcher classifies
+its stderr instead (quota, auth, configuration, and the remaining closed reasons).
+
+| Runner `status` | Reason |
+|---|---|
+| `ok` | success (no reason) |
+| `quota`, `quota_wait` | `quota` |
+| `auth` | `auth` |
+| `billing`, `billing_or_access` | `billing_or_access` |
+| `capacity` | `capacity` |
+| `timeout`, `idle_stall` | `timeout` |
+| `bad_model`, `bad_prompt`, `permission_blocked`, `usage`, `no_model`, `empty_stdin` | `configuration` |
+| `not_installed` | `dispatch_unavailable` |
+| `no_change`, `empty_answer`, `crash`, `contract_violation`, `signal`, `git_error` | `real_error` |
+| `git_timeout` | `git_timeout` |
+
+No status line at all falls back to the exit code: 0 is success, 127 is `dispatch_unavailable`
+(which is also how a missing `node` is reported — subprocess dispatch needs Node), and every
+other code is `real_error`.

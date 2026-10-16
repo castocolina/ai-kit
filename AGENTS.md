@@ -64,23 +64,19 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 
 ## Architecture
 
-- `detect_installed_clis()` (binary-on-PATH) and `detect_current_runtime()`
-  (which CLI hosts *this* process) are deliberately different questions —
-  never conflate them. `KNOWN_CLIS` in
-  `skills/ai-kit-spec-review/ai_kit_spec/detection.py` is the single source
-  of truth for which CLIs ai-kit knows about.
-- A model-catalog entry with `cli: None` means "native" (host-agnostic
-  wording — never Claude/opus-specific). `native_runtime` is only ever set
-  on entries with `cli: None`.
-  > **Amended 2026-09-09** (Phase 1.2 plan 01.2-02): `cli: None`/`cli`-omitted
-  > semantics actually live in `review-spec.toml`'s native `[[reviewers]]`
-  > entries (and the candidate dicts `quota.py` builds from them) — not in
-  > `model_catalog.py`, whose catalog entries never carry a `cli` key at all.
-  > `native_runtime` schema validation exists in both files: `config_io.py`
-  > is the functionally-reachable path (native review-spec.toml entries),
-  > `model_catalog.py`'s is forward-compatible-only (no live producer sets a
-  > `cli` key there today). Both reject `native_runtime` co-present with a
-  > non-null `cli` on the same entry.
+- The `RUNTIMES` table in `skills/ai-kit-spec-review/ai_kit_spec/detection.py`
+  is the single source of truth for runtime ids, binaries, host signals,
+  listing, native selectors and the review-only flag. `KNOWN_CLIS` derives
+  from it. `detect_installed_clis()` (binary-on-PATH) and
+  `detect_current_runtime()` (which CLI hosts *this* process) stay different
+  questions — never conflate them.
+- A reviewer or executor entry is a (runtime, model) pair, the session default
+  (neither a runtime nor a model), or a trust-gated custom `command` entry
+  (a command and no runtime). Native versus subprocess is decided per call by
+  `ai_kit_spec/routing.py` and never stored. Every subprocess runs through the
+  runner template via `ai_kit_spec/runner_dispatch.py`; a custom entry runs
+  through the custom launcher on the same core. Legacy reviewer fields still
+  load in memory, with a note naming the entry and the re-save command.
 - `model-catalog.json` reserves the top-level key `_meta` for cache metadata such as
   `schema_version`; every other top-level key is a `provider/model` entry. Code that iterates
   the catalog must skip `_meta` (the sibling skills that read this file already skip non-model
