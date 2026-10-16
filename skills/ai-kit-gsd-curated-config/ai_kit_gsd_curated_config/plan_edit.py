@@ -3,14 +3,12 @@ from __future__ import annotations
 
 import copy
 import json
-import re
 import shlex
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from . import cross_ai, plan_io, presets
+from . import cross_ai, plan_io, presets, skills
 
-_SKILL_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 _LIST_KEYS_PREFIXES = ("agent_skills.",)
 LIST_KEYS = (
     "review.default_reviewers",
@@ -483,19 +481,6 @@ def _fast_twin_warnings(inv: dict, value: Any) -> list[str]:
     return out
 
 
-def _skill_installed(name: str, inv: dict) -> bool:
-    if not _SKILL_NAME.fullmatch(name):
-        return False
-    rows = inv.get("skills") or []
-    return any(
-        isinstance(row, dict)
-        and row.get("name") == name
-        and row.get("addressable") is True
-        and not (row.get("root_kind") == "project" and row.get("escapes_root"))
-        for row in rows
-    )
-
-
 def _special_keys(
     call: EditCall, key: str, entry: dict, value: Any, warnings: list[str],
 ) -> tuple[Any, bool]:
@@ -535,8 +520,12 @@ def _check_agent_skills(inv: dict, key: str, value: Any) -> list:
     if not isinstance(value, list):
         raise PlanEditError(f"{key}: expected a list of skill names")
     for name in value:
-        if not _skill_installed(name, inv):
-            raise PlanEditError(f"skill {name} is not installed or not addressable on this host")
+        # The same rule recommend wires by (PT-08), so plan-set never admits a skipped skill.
+        reason = skills.unwired_reason(name, inv) if isinstance(name, str) else ""
+        if reason is not None:
+            raise PlanEditError(
+                reason or f"skill {name} is not installed or not addressable on this host"
+            )
     return value
 
 

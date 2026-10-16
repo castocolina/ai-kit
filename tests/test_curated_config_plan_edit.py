@@ -597,6 +597,30 @@ class TestPlanValidator(unittest.TestCase):
         for root in bad:
             self.assertFalse(plan_io.home_relative_root(root), root)
 
+    def test_agent_skill_check_matches_recommend(self):
+        """PT-08: plan-set admits exactly the skills recommend would wire."""
+        def row(name, kind, **extra):
+            return {"name": name, "root_kind": kind, "root": "r", "plugin": None,
+                    "real_dir": "<r>/" + name, "real_dir_home": None,
+                    "escapes_root": False, "addressable": True, "description": "", **extra}
+
+        inv = {"skills": [
+            row("ok", "global"),
+            row("esc", "project", escapes_root=True),
+            row("away", "global", escapes_root=True),
+            row("bad name", "global", addressable=False),
+        ], "existing_config": {"values": {}}}
+        self.assertEqual(plan_edit._check_agent_skills(inv, "k", ["ok"]), ["ok"])
+        for name, needle in (
+            ("esc", "outside the project"),
+            ("away", "outside the home directory"),
+            ("bad name", "not installed"),
+            ("ghost", "not installed"),
+        ):
+            with self.subTest(name=name), self.assertRaises(plan_edit.PlanEditError) as ctx:
+                plan_edit._check_agent_skills(inv, "k", [name])
+            self.assertIn(needle, str(ctx.exception))
+
     def test_agent_skill_invalid_name(self):
         plan = self._golden_plan()
         for entry in plan["entries"]:

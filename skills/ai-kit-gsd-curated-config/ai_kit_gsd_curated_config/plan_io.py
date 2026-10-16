@@ -9,9 +9,8 @@ performs no I/O itself (REC-01).
 import json
 import os
 import posixpath
-import re
 
-from . import cross_ai, gsd_catalog, host, presets
+from . import cross_ai, gsd_catalog, host, presets, skill_scan
 from . import skills as skills_mod
 from .plan_schema import PLAN_SCHEMA_VERSION, canonical_json, inventory_digest
 
@@ -132,9 +131,10 @@ def _skill_value_problem(entry: dict, where: str) -> str | None:
     plugin = entry.get("plugin")
     if plugin is not None and not isinstance(plugin, str):
         return f"{where}.plugin: expected str or null"
-    if entry["addressable"] and not _SKILL_NAME.fullmatch(entry["name"]):
+    valid = skill_scan.SKILL_NAME_RE.fullmatch
+    if entry["addressable"] and not valid(entry["name"]):
         return f"{where}.name: not a valid skill name for an addressable row"
-    if entry["addressable"] and plugin is not None and not _SKILL_NAME.fullmatch(plugin):
+    if entry["addressable"] and plugin is not None and not valid(plugin):
         return f"{where}.plugin: not a valid plugin name for an addressable row"
     return None
 
@@ -437,7 +437,6 @@ def write_plan(path: str, plan: dict) -> None:
 
 
 _PLAN_ERROR_SUFFIX = "; rerun recommend"
-_SKILL_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def sibling_inventory_path(plan_path: str) -> str:
@@ -706,7 +705,7 @@ def _validate_agent_skills(key: str, value) -> str | None:
     if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
         return f"{key}: expected list of str"
     for name in value:
-        if not _SKILL_NAME.fullmatch(name):
+        if not skill_scan.SKILL_NAME_RE.fullmatch(name):
             return f"{key}: skill name {name!r} is invalid"
     return None
 
