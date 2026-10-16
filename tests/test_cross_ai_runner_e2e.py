@@ -5,6 +5,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -241,8 +242,10 @@ class TestRenderedRunner(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(proc.returncode, 0, msg=proc.stderr)
-            self.assertIn("cross-ai: deadline 1770s (outer 1800s)", proc.stderr)
-            self.assertLess(1770, 1800)
+            match = re.search(r"cross-ai: deadline (\d+)s \(outer (\d+)s\)", proc.stderr)
+            assert match is not None, proc.stderr
+            self.assertEqual(int(match.group(2)), 1800)
+            self.assertLess(int(match.group(1)), 1800)  # SPEC R6: strictly below the timeout
 
 
 if __name__ == "__main__":
