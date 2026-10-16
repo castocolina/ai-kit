@@ -16,7 +16,14 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-gsd-curated-config"),
 )
 
-from ai_kit_gsd_curated_config import cli, gsd_catalog, plan_edit, plan_io, plan_schema
+from ai_kit_gsd_curated_config import (
+    cli,
+    cross_ai,
+    gsd_catalog,
+    plan_edit,
+    plan_io,
+    plan_schema,
+)
 
 from tests.test_curated_config_golden import build_golden_inventory
 from tests.test_curated_config_recommend import run_recommend
@@ -79,7 +86,7 @@ def _partial_runner_plan(inv, plan):
     config["models"] = {"pi": pi_model}
     config["router_backed"] = {"pi": config["router_backed"].get("pi", False)}
     art["choices"] = {
-        "cursor": {"candidates": plan_edit.runtime_candidates(inv, "cursor")},
+        "cursor": {"candidates": plan_edit.runtime_candidates(inv, "cursor", plan["rigor"])},
     }
     art["status"] = "needs_choice"
     cmd = next(e for e in plan["entries"] if e["key"] == "workflow.cross_ai_command")
@@ -596,6 +603,26 @@ class TestPlanValidator(unittest.TestCase):
             self.assertTrue(plan_io.home_relative_root(root), root)
         for root in bad:
             self.assertFalse(plan_io.home_relative_root(root), root)
+
+    def test_runner_choices_match_recommend(self):
+        """PT-09: plan-set/plan-unset list the runner choices recommend lists."""
+        from tests.test_curated_config_recommend import cand, make_inventory
+
+        rows = [
+            cand("a-model", runtime="pi", is_host=False, price=1.0),
+            cand("a-model-fast", runtime="pi", is_host=False, price=0.5,
+                 fast_twin_of="a-model"),
+            cand("router-env/x", runtime="pi", is_host=False, price=0.1, is_router=True),
+            cand("b-model", runtime="pi", is_host=False, price=2.0),
+        ]
+        inv = make_inventory(host="claude", candidates=rows)
+        inv["installed_runtimes"] = ["pi"]
+        for rigor in ("mvp", "standard", "rigorous"):
+            target = cross_ai.exec_targets(inv, rigor)[0]
+            self.assertIsNone(target.model)
+            self.assertEqual(plan_edit.runtime_candidates(inv, "pi", rigor), target.candidates)
+        listed = [c["model"] for c in plan_edit.runtime_candidates(inv, "pi", "standard")]
+        self.assertEqual(listed, ["a-model", "b-model"])
 
     def test_agent_skill_check_matches_recommend(self):
         """PT-08: plan-set admits exactly the skills recommend would wire."""

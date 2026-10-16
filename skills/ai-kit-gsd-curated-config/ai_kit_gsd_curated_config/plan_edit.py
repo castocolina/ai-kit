@@ -7,7 +7,7 @@ import shlex
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from . import cross_ai, plan_io, presets, skills
+from . import cross_ai, plan_io, presets, roles, skills
 
 _LIST_KEYS_PREFIXES = ("agent_skills.",)
 LIST_KEYS = (
@@ -106,23 +106,14 @@ def _parse_fallback(raw: str):
     return parsed
 
 
-def runtime_candidates(inv: dict, runner_id: str) -> list[dict]:
-    """Up to three inventory models for ``runner_id``, cheapest first."""
+def runtime_candidates(inv: dict, runner_id: str, rigor: str) -> list[dict]:
+    """The ``needs_choice`` rows recommend lists for ``runner_id`` (PT-09): routers and
+    fast twins excluded, within the rigor's price ceiling first."""
     runtime = cross_ai.RUNNER_CLI[runner_id]
-    rows = [
-        row
-        for row in inv.get("candidates") or []
-        if isinstance(row, dict) and row.get("runtime") == runtime
-    ]
-    rows.sort(key=_price_sort_key)
-    return [{"model": row["model"], "price": row.get("price")} for row in rows[:3]]
-
-
-def _price_sort_key(row: dict) -> tuple:
-    price = row.get("price")
-    if isinstance(price, (int, float)):
-        return (price, row.get("model") or "")
-    return (float("inf"), row.get("model") or "")
+    cands = [c for c in inv.get("candidates") or [] if c.get("runtime") == runtime]
+    # .get: a hand-edited rigor reads as no ceiling, like rigorous.
+    ceiling = roles.host_ceiling(cands, presets.PRICE_PERCENTILE.get(rigor))
+    return roles.choice_candidates(cands, "execution", ceiling.value)
 
 
 def plan_unset(call: EditCall, key: str) -> tuple[dict, list[str]]:
@@ -254,7 +245,9 @@ def _plan_set_script_prefer(call: EditCall, raw: str) -> tuple[dict, list[str]]:
         if runner_id in models:
             continue
         if runner_id not in choices:
-            choices[runner_id] = {"candidates": runtime_candidates(call.inv, runner_id)}
+            choices[runner_id] = {
+                "candidates": runtime_candidates(call.inv, runner_id, call.plan["rigor"]),
+            }
     _finish_script_artifact(artifact)
     _sync_artifact_command(plan, artifact)
     plan["entries"] = sorted(plan.get("entries") or [], key=lambda row: row["key"])
@@ -274,7 +267,7 @@ def _plan_unset_script_model(call: EditCall, key: str) -> tuple[dict, list[str]]
     config.setdefault("models", {}).pop(runner_id, None)
     config.setdefault("router_backed", {}).pop(runner_id, None)
     artifact.setdefault("choices", {})[runner_id] = {
-        "candidates": runtime_candidates(call.inv, runner_id),
+        "candidates": runtime_candidates(call.inv, runner_id, call.plan["rigor"]),
     }
     _finish_script_artifact(artifact)
     _sync_artifact_command(plan, artifact)
