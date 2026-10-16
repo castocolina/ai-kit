@@ -957,7 +957,7 @@ class TestTrustedRoots(unittest.TestCase):
             "z-skill": _escaping_global("z-skill", "~/.vault/z-skill"),
             "a-skill": _escaping_global("a-skill", "~/.vault/a-skill"),
         }
-        candidates, _notes = skills.trusted_roots(wired, _inv())
+        candidates = skills.trusted_roots(wired, _inv())
         self.assertEqual(
             [item["value"] for item in candidates],
             ["~/.vault/a-skill", "~/.vault/z-skill"],
@@ -968,7 +968,7 @@ class TestTrustedRoots(unittest.TestCase):
             "one": _escaping_global("one", "~/.vault/shared"),
             "two": _escaping_global("two", "~/.vault/shared"),
         }
-        candidates, _notes = skills.trusted_roots(wired, _inv())
+        candidates = skills.trusted_roots(wired, _inv())
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["value"], "~/.vault/shared")
 
@@ -980,19 +980,19 @@ class TestTrustedRoots(unittest.TestCase):
             _skill_row("react-dev", "project"),
             _escaping_global("react-dev", "~/.agents/skills/react-dev"),
         ])
-        candidates, _notes = skills.trusted_roots(wired, inv)
+        candidates = skills.trusted_roots(wired, inv)
         self.assertEqual(candidates, [])
 
     def test_existing_roots_cover_all_proposed(self):
         wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
         inv = _inv_existing_roots(["~/.agents/skills/react-dev"])
-        candidates, _notes = skills.trusted_roots(wired, inv)
+        candidates = skills.trusted_roots(wired, inv)
         self.assertEqual(candidates, [])
 
     def test_partial_existing_trust_merged_why(self):
         wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
         inv = _inv_existing_roots(["~/vault"])
-        candidates, _notes = skills.trusted_roots(wired, inv)
+        candidates = skills.trusted_roots(wired, inv)
         self.assertEqual(candidates[0]["value"], "~/.agents/skills/react-dev")
         why = skills.merged_trusted_roots_why(candidates, inv)
         self.assertIn('["~/vault","~/.agents/skills/react-dev"]', why)
@@ -1003,7 +1003,7 @@ class TestTrustedRoots(unittest.TestCase):
         vault = os.path.join(root, "vault")
         wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
         inv = _inv_existing_roots([vault])
-        candidates, _notes = skills.trusted_roots(wired, inv)
+        candidates = skills.trusted_roots(wired, inv)
         why = skills.merged_trusted_roots_why(candidates, inv)
         self.assertTrue(why.startswith("approve with plan-set"))
         self.assertIn(vault, why)
@@ -1013,7 +1013,7 @@ class TestTrustedRoots(unittest.TestCase):
         """C-W9: a root holding a quote still yields one runnable plan-set argument."""
         wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
         inv = _inv_existing_roots(["~/Bob's skills/x"])
-        candidates, _notes = skills.trusted_roots(wired, inv)
+        candidates = skills.trusted_roots(wired, inv)
         why = skills.merged_trusted_roots_why(candidates, inv)
         command = why.split(" or keep the current value", 1)[0]
         argv = shlex.split(command.removeprefix("approve with "))
@@ -1025,7 +1025,7 @@ class TestTrustedRoots(unittest.TestCase):
     def test_ancestor_home_root_covers(self):
         wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
         inv = _inv_existing_roots(["~/.agents/skills"])
-        candidates, _notes = skills.trusted_roots(wired, inv)
+        candidates = skills.trusted_roots(wired, inv)
         self.assertEqual(candidates, [])
 
     def test_absolute_ancestor_covers(self):
@@ -1041,13 +1041,13 @@ class TestTrustedRoots(unittest.TestCase):
             ),
         }
         inv = _inv_existing_roots([parent])
-        candidates, _notes = skills.trusted_roots(wired, inv)
+        candidates = skills.trusted_roots(wired, inv)
         self.assertEqual(candidates, [])
 
     def test_similar_prefix_does_not_cover(self):
         wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
         inv = _inv_existing_roots(["~/.agents/skills-other"])
-        candidates, _notes = skills.trusted_roots(wired, inv)
+        candidates = skills.trusted_roots(wired, inv)
         self.assertEqual(len(candidates), 1)
 
     def test_covered_lexical(self):
@@ -1125,7 +1125,7 @@ class TestTrustedRoots(unittest.TestCase):
         resolved, notes = skills.resolve(affinity, inv, skills.skill_facts(inv, [], {}), "standard")
         self.assertEqual(resolved, {"gsd-planner": ["away"]})
         self.assertEqual(notes, [])
-        candidates, _ = skills.trusted_roots(skills.wired_skills(resolved, inv), inv)
+        candidates = skills.trusted_roots(skills.wired_skills(resolved, inv), inv)
         self.assertEqual(candidates, [])
 
     def test_project_outside_home_still_wired(self):

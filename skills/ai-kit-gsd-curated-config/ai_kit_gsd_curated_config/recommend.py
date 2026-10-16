@@ -1126,7 +1126,7 @@ def _skills_layer(ctx: PlanCtx, prior_entries: list) -> tuple[list, list]:
     resolved, notes = skills.resolve(affinity, ctx.inv, facts, ctx.opts.rigor)
     entries = _agent_skill_entries(ctx, resolved, affinity, facts)
     wired = skills.wired_skills(resolved, ctx.inv)
-    candidates, _root_notes = skills.trusted_roots(wired, ctx.inv)
+    candidates = skills.trusted_roots(wired, ctx.inv)
     if candidates:
         entries.append(
             make_entry(

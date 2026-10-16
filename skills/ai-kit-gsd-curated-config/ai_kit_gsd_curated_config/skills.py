@@ -133,23 +133,6 @@ def _has_usable_project_copy(name: str, inv: dict) -> bool:
     )
 
 
-def _escaping_project_only(name: str, inv: dict) -> bool:
-    rows = _addressable_rows(name, inv)
-    if not rows:
-        return False
-    has_escaping = any(
-        row.get("root_kind") == "project" and row.get("escapes_root") for row in rows
-    )
-    if not has_escaping:
-        return False
-    has_other = any(
-        row.get("root_kind") in ("global", "plugin")
-        or (row.get("root_kind") == "project" and not row.get("escapes_root"))
-        for row in rows
-    )
-    return not has_other
-
-
 def locate(name: str, inv: dict) -> dict | None:
     """Best installed, addressable inventory row for ``name`` (project, global, plugin)."""
     matches = _addressable_rows(name, inv)
@@ -186,19 +169,10 @@ def reference_for(entry: dict) -> str:
 
 def existing_roots(inv: dict) -> list[str]:
     """Recorded ``agent_skills_security.trusted_global_roots`` from the inventory."""
-    existing = inv.get("existing_config")
-    if not isinstance(existing, dict):
-        return []
-    values = existing.get("values")
-    if not isinstance(values, dict):
-        return []
-    sec = values.get("agent_skills_security")
-    if not isinstance(sec, dict):
-        return []
-    roots = sec.get("trusted_global_roots")
-    if not isinstance(roots, list):
-        return []
-    return [item for item in roots if isinstance(item, str)]
+    roots = presets.get_dotted(
+        inv["existing_config"]["values"], "agent_skills_security.trusted_global_roots"
+    )
+    return [item for item in roots if isinstance(item, str)] if isinstance(roots, list) else []
 
 
 def covered(value: str, real_dir: str, roots: list[str]) -> bool:
@@ -226,7 +200,8 @@ def unwired_reason(name: str, inv: dict) -> str | None:
     """``None`` when ``name`` can be wired; else the note text (``""``: not installed, silent)."""
     row = locate(name, inv)
     if row is None:
-        if _escaping_project_only(name, inv):
+        # locate() skips only escaping project copies, so any addressable row left is one.
+        if _addressable_rows(name, inv):
             return f"not wired: {name} (its project copy resolves outside the project)"
         return ""
     if (
@@ -324,11 +299,10 @@ def wired_skills(resolved: dict[str, list[str]], inv: dict) -> dict[str, dict]:
     return wired
 
 
-def trusted_roots(wired: dict, inv: dict) -> tuple[list[dict], list[dict]]:
+def trusted_roots(wired: dict, inv: dict) -> list[dict]:
     """``needs_choice`` candidates for escaping global skills (18 D-34, D-41)."""
     roots = existing_roots(inv)
     raw: list[dict] = []
-    notes: list[dict] = []
     for skill, row in sorted(wired.items()):
         if row.get("root_kind") != "global" or not row.get("escapes_root"):
             continue
@@ -352,7 +326,7 @@ def trusted_roots(wired: dict, inv: dict) -> tuple[list[dict], list[dict]]:
             continue
         seen.add(item["value"])
         candidates.append(item)
-    return candidates, notes
+    return candidates
 
 
 def trusted_roots_candidate(candidates: list[dict], inv: dict) -> dict:
