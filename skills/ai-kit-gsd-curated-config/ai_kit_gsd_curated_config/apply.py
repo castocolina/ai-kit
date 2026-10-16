@@ -897,25 +897,36 @@ def _attach_followups(report: dict, inputs: Inputs, deps: ApplyDeps) -> None:
     )
 
 
+def prepare(
+    inputs: Inputs, deps: ApplyDeps, encode: Callable[[str, object], str]
+) -> tuple[Target | None, bytes | None, str | None]:
+    """The one validator path for dry run and apply (R12): needs_choice refusal, destination,
+    pre-flight, template. ``(target, template, None)`` or an error (target None when the
+    destination itself failed)."""
+    open_choices = needs_choice_keys(inputs.plan)
+    if open_choices:
+        return None, None, "apply refused while needs_choice remains: " + ", ".join(
+            open_choices
+        )
+    target, error = resolve_target(inputs, deps)
+    if target is None:
+        return None, None, error
+    problems = preflight(inputs, target, deps, encode)
+    if problems:
+        return target, None, problems[0]
+    template, error = cross_ai_script.load_template()
+    return target, template, error
+
+
 def run_apply(
     inputs: Inputs, deps: ApplyDeps, encode: Callable[[str, object], str]
 ) -> tuple[int, dict]:
-    plan = inputs.plan
-    open_choices = needs_choice_keys(plan)
-    if open_choices:
-        msg = "apply refused while needs_choice remains: " + ", ".join(open_choices)
-        return 2, {"error": msg, "applied": False}
-    target, error = resolve_target(inputs, deps)
+    target, template, error = prepare(inputs, deps, encode)
     if target is None:
         return 2, {"error": error, "applied": False}
-    report = _fail_report(inputs.project_dir, target.config_path, plan)
-    problems = preflight(inputs, target, deps, encode)
-    if problems:
-        report["error"] = problems[0]
-        return 2, report
-    template, tmpl_err = cross_ai_script.load_template()
+    report = _fail_report(inputs.project_dir, target.config_path, inputs.plan)
     if template is None:
-        report["error"] = tmpl_err
+        report["error"] = error
         return 2, report
     gsd_mod = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
     if gsd_mod is None:

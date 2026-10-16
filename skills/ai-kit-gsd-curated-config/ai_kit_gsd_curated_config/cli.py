@@ -18,7 +18,6 @@ from . import (
     config_backup,
     critical_agents,
     cross_ai_build,
-    cross_ai_script,
     frontend_detect,
     gsd_catalog,
     host,
@@ -583,34 +582,17 @@ def _cmd_plan_unset(args, which_fn, run_fn, env_fn) -> int:
     return _run_plan_edit(args, lambda call: plan_edit.plan_unset(call, args.key))
 
 
-def _apply_dry_run_report(args, deps: apply_mod.ApplyDeps) -> tuple[dict | None, str | None]:
-    error: str | None = None
+def _apply_dry_run_report(args, deps, encode) -> tuple[dict | None, str | None]:
     inputs, error = apply_mod.load_inputs(args.plan, args.inventory, args.project_dir)
     if inputs is None:
         return None, error
-    open_choices = apply_mod.needs_choice_keys(inputs.plan)
-    if open_choices:
-        error = "apply refused while needs_choice remains: " + ", ".join(open_choices)
-        return None, error
-    target, error = apply_mod.resolve_target(inputs, deps)
-    if target is None:
+    target, template, error = apply_mod.prepare(inputs, deps, encode)
+    if target is None or template is None:
         return None, error
     try:
         live = apply_mod.read_live_config(target.config_path)
     except ValueError as exc:
         return None, str(exc)
-    encode = _gsd_tools_encode()
-    template = None
-    if encode is not None:
-        problems = apply_mod.preflight(inputs, target, deps, encode)
-        if problems:
-            error = problems[0]
-        else:
-            template, error = cross_ai_script.load_template()
-    else:
-        error = gsd_catalog.SIBLING_MISSING
-    if error or template is None:
-        return None, error
     return apply_mod.dry_run_report(inputs, target, live, template), None
 
 
@@ -681,8 +663,11 @@ def _cmd_followups(args, which_fn, run_fn, env_fn) -> int:
 
 def _cmd_apply(args, which_fn, run_fn, env_fn) -> int:
     deps = apply_mod.ApplyDeps(which_fn, run_fn, env_fn)
+    encode = _gsd_tools_encode()
+    if encode is None:
+        return 2
     if args.dry_run:
-        report, error = _apply_dry_run_report(args, deps)
+        report, error = _apply_dry_run_report(args, deps, encode)
         if report is None:
             print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
             return 2
@@ -691,9 +676,6 @@ def _cmd_apply(args, which_fn, run_fn, env_fn) -> int:
     inputs, error = apply_mod.load_inputs(args.plan, args.inventory, args.project_dir)
     if inputs is None:
         print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
-        return 2
-    encode = _gsd_tools_encode()
-    if encode is None:
         return 2
     code, report = apply_mod.run_apply(inputs, deps, encode)
     print(json.dumps(report))
