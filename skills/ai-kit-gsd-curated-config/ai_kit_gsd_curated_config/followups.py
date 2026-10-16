@@ -3,6 +3,7 @@
 `@opengsd/gsd-core` to the inventory-resolved version (never an npm dist-tag name)."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -315,10 +316,16 @@ def _build_effort_row(
     return FollowUp("effort_sync", argv, ctx.project_dir, _EFFORT_PURPOSE, "", detail)
 
 
-def _approve_with(ctx: FollowupCtx, required: list[FollowUp]) -> str:
+def block_fingerprint(required: list[dict]) -> str:
+    """Binds an approval to the exact rows the user saw (id, argv, cwd)."""
+    rows = [{"id": r["id"], "argv": r["argv"], "cwd": r["cwd"]} for r in required]
+    return hashlib.sha256(json.dumps(rows, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def _approve_with(ctx: FollowupCtx, required: list[dict]) -> str:
     if not required:
         return ""
-    ids = {row.id for row in required}
+    ids = {row["id"] for row in required}
     ordered = [i for i in REQUIRE_IDS if i in ids]
     argv = [
         "followups",
@@ -331,6 +338,8 @@ def _approve_with(ctx: FollowupCtx, required: list[FollowUp]) -> str:
         "--approve",
         "--require",
         ",".join(ordered),
+        "--fingerprint",
+        block_fingerprint(required),
     ]
     return shlex.join(argv)
 
@@ -355,13 +364,9 @@ def build_followups(
         host_name, ctx, inv, has_installer, notes
     ):
         effort = _build_effort_row(host_name, ctx, has_installer, notes)
-    required: list[FollowUp] = []
-    if installer is not None:
-        required.append(installer)
-    if effort is not None:
-        required.append(effort)
+    required = [_followup_dict(row) for row in (installer, effort) if row is not None]
     return {
-        "required": [_followup_dict(row) for row in required],
+        "required": required,
         "recommended": _intel_recommended(plan, inv),
         "notes": notes,
         "disclosures": _disclosures() if has_installer else [],

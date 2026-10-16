@@ -952,6 +952,17 @@ class TestFollowupsApprovalGate(unittest.TestCase):
             assert block2 is not None
             self.assertEqual(block2["required"], req)
             tail = shlex.split(report["followups"]["approve_with"])
+            self.assertIn("--fingerprint", tail)
+            # B IN-08: an approval bound to other rows than the rebuilt ones runs nothing.
+            stale = [*tail[: tail.index("--fingerprint") + 1], "0" * 16]
+            calls_before = len(fake.argv_log)
+            code_stale, parsed_stale, err_stale = _run_followups_cli(stale, env, fake)
+            self.assertEqual(code_stale, 2)
+            self.assertIsNone(parsed_stale)
+            self.assertIn("changed since they were listed", err_stale)
+            self.assertFalse(
+                any("--apply" in row for row in fake.argv_log[calls_before:])
+            )
             code3, parsed3, _ = _run_followups_cli(tail, env, fake)
             self.assertEqual(code3, 0)
             assert parsed3 is not None

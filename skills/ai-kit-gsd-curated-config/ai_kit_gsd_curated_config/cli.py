@@ -625,16 +625,22 @@ def _followup_force_ids(raw: str) -> tuple[tuple[str, ...] | None, list[str] | N
     return tuple(raw_ids), None
 
 
-def _apply_marker_held(config_path: str) -> bool:
-    """R14: follow-ups run after a successful apply, never over a half-written config."""
+def _approval_refused(args, config_path: str, block: dict) -> bool:
+    """R14: never over a held apply marker (a half-written config) and only for the exact
+    rows the user approved."""
     marker = config_backup.read_marker(config_path)
-    if marker is None:
+    if marker is not None:
+        reason = config_backup.recovery_text(marker, config_path)
+    elif args.fingerprint and args.fingerprint != followups_mod.block_fingerprint(
+        block["required"]
+    ):
+        reason = (
+            "the follow-ups changed since they were listed (plan, inventory or local "
+            "gsd-core); list them again"
+        )
+    else:
         return False
-    print(
-        "ai-kit-gsd-curated-config: followups --approve refused; "
-        + config_backup.recovery_text(marker, config_path),
-        file=sys.stderr,
-    )
+    print(f"ai-kit-gsd-curated-config: followups --approve refused; {reason}", file=sys.stderr)
     return True
 
 
@@ -647,8 +653,6 @@ def _cmd_followups(args, which_fn, run_fn, env_fn) -> int:
     target, error = apply_mod.resolve_target(inputs, deps)
     if target is None:
         print(f"ai-kit-gsd-curated-config: {error}", file=sys.stderr)
-        return 2
-    if args.approve and _apply_marker_held(target.config_path):
         return 2
     force_ids, bad = _followup_force_ids(args.require)
     if bad is not None:
@@ -668,6 +672,8 @@ def _cmd_followups(args, which_fn, run_fn, env_fn) -> int:
     if not args.approve:
         print(json.dumps(block))
         return 0
+    if _approval_refused(args, target.config_path, block):
+        return 2
     code, results = followups_mod.run_followups(block, inputs.plan["host"], ctx)
     print(json.dumps({"results": results}))
     return code
@@ -703,6 +709,11 @@ def _register_followups_parser(sub) -> None:
     p_followups.add_argument("--project-dir", required=True)
     p_followups.add_argument("--approve", action="store_true")
     p_followups.add_argument("--require", default="")
+    p_followups.add_argument(
+        "--fingerprint",
+        default=None,
+        help="from approve_with; refuses when the rebuilt follow-ups differ from the listed ones",
+    )
 
 
 def _register_plan_edit_parsers(sub) -> None:
