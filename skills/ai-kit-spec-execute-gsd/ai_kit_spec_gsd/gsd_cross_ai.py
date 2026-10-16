@@ -3,9 +3,10 @@ general shell-command hook, already fully implemented by GSD itself (Task 1 find
 module builds ONE string; GSD's own cross_ai_delegation step does the piping/capture/retry. No
 wrapper program, no subprocess dispatch, no heartbeat routing lives in this plan at all.
 
-Only the CLIs in ai_kit_spec.commands.SUPPORTED_EXECUTE_CLIS (currently codex, cursor-agent,
-opencode) ever get a command built here; claude and grok have no execute builder (Phase 16.1
-D-15 removed both), so their ValueError degrades to None like any other unsupported CLI."""
+Only the CLIs in ai_kit_spec.commands.SUPPORTED_EXECUTE_CLIS (the table's runner runtimes
+that are not review-only) ever get a command built here; claude and grok have no execute
+builder (Phase 16.1 D-15 removed both), so their ValueError degrades to None like any other
+unsupported CLI."""
 from ai_kit_spec.commands import build_execute_command
 
 

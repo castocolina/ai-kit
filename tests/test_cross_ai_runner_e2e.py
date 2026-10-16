@@ -20,6 +20,11 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "skills", "ai-kit-spec-review"))
 
 from ai_kit_gsd_curated_config import cross_ai_script
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
+from ai_kit_spec.execute_dispatch import (
+    ExecuteDispatchSpec,
+    ExecuteSeams,
+    dispatch_execute,
+)
 from ai_kit_spec.reviewer_dispatch import (
     ReviewerDispatchSpec,
     ReviewerSeams,
@@ -470,6 +475,80 @@ class TestReviewStatusesE2E(unittest.TestCase):
             assert result["status"] is not None
             self.assertEqual(result["status"]["tree"], "unknown")
             self.assertTrue(any("is not inside a git work tree" in line for line in lines))
+            self.assertEqual(pids_with_cwd_under(tmp), [])
+
+
+class TestExecStatusesE2E(unittest.TestCase):
+    """dispatch_execute runs a fake opencode exec through the real runner template."""
+
+    def setUp(self):
+        if _real_node_executable() is None:
+            self.skipTest("node not on PATH: exec status e2e skipped")
+        if shutil.which("git") is None:
+            self.skipTest("git not on PATH: exec status e2e skipped")
+
+    def _execute(self, tmp, model, target, timeout, env):
+        write_fake_opencode(os.path.join(tmp, "bin"))
+        lines: list[str] = []
+        seams = ExecuteSeams(
+            runner_seams=RunnerSeams(env_fn=lambda: env, print_fn=lines.append),
+        )
+        result = dispatch_execute(
+            ExecuteDispatchSpec(
+                {"runtime": "opencode", "model": model}, "do it", target, 30, timeout,
+            ),
+            seams,
+        )
+        return result, lines
+
+    def test_statuses(self):
+        cases = (
+            ("fake/nochange", "real_error", "no_change", 30),
+            ("fake/empty", "real_error", "empty_answer", 30),
+            ("fake/quota", "quota", "quota", 30),
+            ("fake/auth", "auth", "auth", 30),
+            ("fake/billing", "billing_or_access", "billing", 30),
+            ("fake/capacity", "capacity", "capacity", 30),
+            ("fake/crash", "real_error", "crash", 30),
+            ("fake/hang", "timeout", "timeout", 3),
+            ("fake/missing", "configuration", "bad_model", 30),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = os.path.join(tmp, "repo")
+            os.makedirs(repo)
+            _git_init(repo)
+            env = runner_env(tmp)
+            for model, reason, status, timeout in cases:
+                with self.subTest(model=model):
+                    result, lines = self._execute(tmp, model, repo, timeout, env)
+                    self.assertEqual(result["reason"], reason, msg="".join(lines))
+                    assert result["status"] is not None
+                    self.assertEqual(result["status"]["status"], status)
+                    self.assertEqual(pids_with_cwd_under(tmp), [])
+            scratch = os.path.join(tmp, "scratch")
+            os.makedirs(scratch)
+            non_git = {**env, "GIT_CEILING_DIRECTORIES": os.path.dirname(scratch)}
+            with self.subTest(model="non-git"):
+                result, lines = self._execute(tmp, "fake/ok", scratch, 30, non_git)
+                self.assertIsNone(result["reason"], msg="".join(lines))
+                assert result["status"] is not None
+                self.assertEqual(result["status"]["status"], "ok")
+                self.assertEqual(result["status"]["tree"], "unknown")
+                self.assertEqual(pids_with_cwd_under(tmp), [])
+
+    def test_exec_ok(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = os.path.join(tmp, "repo")
+            os.makedirs(repo)
+            _git_init(repo)
+            env = runner_env(tmp)
+            result, lines = self._execute(tmp, "fake/ok", repo, 30, env)
+            self.assertEqual(result["returncode"], 0, msg="".join(lines))
+            self.assertIsNone(result["reason"])
+            node_bin = shutil.which("node")
+            self.assertTrue(result["command"].startswith(node_bin or ""), msg=result["command"])
+            with open(os.path.join(repo, "a.txt"), encoding="utf-8") as handle:
+                self.assertIn("oc", handle.read())
             self.assertEqual(pids_with_cwd_under(tmp), [])
 
 

@@ -102,6 +102,7 @@ from ai_kit_spec.review_reports import (
     render_merged_report,
     report_status,
 )
+from ai_kit_spec.runner_dispatch import RunnerResult
 from ai_kit_spec.vendor import infer_vendor_from_model
 
 # Fixture provenance (JSON cannot hold comments, so the record lives here, next to the
@@ -4086,7 +4087,7 @@ class TestMainCli(unittest.TestCase):
         def raising_dispatch(*a, **kw):
             raise ValueError(
                 "'gemini' cannot be an execution CLI; supported execute CLIs: "
-                "codex, cursor, opencode"
+                "codex, cursor, opencode, pi"
             )
 
         with tempfile.TemporaryDirectory() as d:
@@ -4925,109 +4926,96 @@ class TestDispatchExecute(unittest.TestCase):
         candidate = {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
         captured = {}
 
-        def fake_dispatch(command, prompt, heartbeat_interval, timeout):
-            captured["command"] = command
+        def fake_runner(spec, prompt, seams):
+            captured["spec"] = spec
             captured["prompt"] = prompt
-            captured["heartbeat_interval"] = heartbeat_interval
-            captured["timeout"] = timeout
-            return {"returncode": 0, "stdout": "done", "stderr": "", "timed_out": False}
+            return RunnerResult(
+                0, "done", {"status": "ok"}, None, False,
+                ["node", "runner", "--mode", "exec"], "",
+            )
 
-        result = execute_dispatch.dispatch_execute(
-            execute_dispatch.ExecuteDispatchSpec(
-                candidate=candidate,
-                prompt="do the task",
-                target_dir="/scratch/run1",
-                heartbeat_interval=30,
-                timeout=600,
-            ),
-            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
-        )
-        self.assertEqual(
-            captured["command"],
-            [
-                "codex",
-                "exec",
-                "--sandbox",
-                "workspace-write",
-                "--skip-git-repo-check",
-                "-C",
-                "/scratch/run1",
-                "-m",
-                "gpt-5.6-sol",
-            ],
-        )
+        with tempfile.TemporaryDirectory() as target:
+            result = execute_dispatch.dispatch_execute(
+                execute_dispatch.ExecuteDispatchSpec(
+                    candidate=candidate,
+                    prompt="do the task",
+                    target_dir=target,
+                    heartbeat_interval=30,
+                    timeout=600,
+                ),
+                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+            )
+        self.assertEqual(captured["spec"].runtime, "codex")
+        self.assertEqual(captured["spec"].mode, "exec")
+        self.assertEqual(captured["spec"].timeout_s, 600)
+        self.assertEqual(captured["spec"].cwd, target)
+        self.assertEqual(captured["spec"].codex_sandbox, "workspace-write")
         self.assertIn("codex, model gpt-5.6-sol", captured["prompt"])
         self.assertIn("do not re-select", captured["prompt"])
         self.assertIn("incrementally", captured["prompt"])
         self.assertTrue(captured["prompt"].endswith("do the task"))
-        self.assertEqual(captured["heartbeat_interval"], 30)
-        self.assertEqual(captured["timeout"], 600)
         self.assertEqual(result["runtime"], "codex")
         self.assertEqual(result["model"], "gpt-5.6-sol")
         self.assertEqual(result["stdout"], "done")
+        self.assertEqual(result["reason"], None)
+        self.assertEqual(result["returncode"], 0)
+
+    def _confinement_prompt(self, runtime):
+        captured = {}
+
+        def fake_runner(spec, prompt, seams):
+            del spec, seams
+            captured["prompt"] = prompt
+            return RunnerResult(0, "", {"status": "ok"}, None, False, ["node"], "")
+
+        with tempfile.TemporaryDirectory() as target:
+            execute_dispatch.dispatch_execute(
+                execute_dispatch.ExecuteDispatchSpec(
+                    candidate={"runtime": runtime, "model": "auto", "key": f"{runtime}/auto"},
+                    prompt="do the task",
+                    target_dir=target,
+                    heartbeat_interval=30,
+                    timeout=600,
+                ),
+                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+            )
+            captured["target"] = target
+        return captured
 
     def test_no_hard_sandbox_cli_gets_soft_confinement_guidance_appended(self):
-        candidate = {"runtime": "cursor-agent", "model": "auto", "key": "cursor-agent/auto"}
-        captured = {}
-
-        def fake_dispatch(command, prompt, heartbeat_interval, timeout):
-            captured["prompt"] = prompt
-            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
-
-        execute_dispatch.dispatch_execute(
-            execute_dispatch.ExecuteDispatchSpec(
-                candidate=candidate,
-                prompt="do the task",
-                target_dir="/scratch/run1",
-                heartbeat_interval=30,
-                timeout=600,
-            ),
-            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
-        )
-        self.assertIn("NO operating-system-level write confinement", captured["prompt"])
-        self.assertIn("/scratch/run1", captured["prompt"])
+        for runtime in ("cursor", "opencode", "pi"):
+            with self.subTest(runtime=runtime):
+                captured = self._confinement_prompt(runtime)
+                self.assertIn("NO operating-system-level write confinement", captured["prompt"])
+                self.assertIn(captured["target"], captured["prompt"])
 
     def test_hard_sandbox_cli_gets_no_soft_confinement_guidance(self):
-        candidate = {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
-        captured = {}
-
-        def fake_dispatch(command, prompt, heartbeat_interval, timeout):
-            captured["prompt"] = prompt
-            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
-
-        execute_dispatch.dispatch_execute(
-            execute_dispatch.ExecuteDispatchSpec(
-                candidate=candidate,
-                prompt="do the task",
-                target_dir="/scratch/run1",
-                heartbeat_interval=30,
-                timeout=600,
-            ),
-            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
-        )
+        captured = self._confinement_prompt("codex")
         self.assertNotIn("NO operating-system-level write confinement", captured["prompt"])
 
     def test_includes_tool_guidance_when_provided(self):
         candidate = {"runtime": "cursor-agent", "model": "sonnet", "key": "cursor-agent/sonnet"}
         captured = {}
 
-        def fake_dispatch(command, prompt, heartbeat_interval, timeout):
+        def fake_runner(spec, prompt, seams):
+            del spec, seams
             captured["prompt"] = prompt
-            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+            return RunnerResult(0, "", {"status": "ok"}, None, False, ["node"], "")
 
-        execute_dispatch.dispatch_execute(
-            execute_dispatch.ExecuteDispatchSpec(
-                candidate=candidate,
-                prompt="do the task",
-                target_dir="/scratch/run1",
-                heartbeat_interval=30,
-                timeout=600,
-                tool_availability={"codegraph": True},
-                agents_tooling_path="/repo/AGENTS-TOOLING.md",
-                codegraph_registered=True,
-            ),
-            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
-        )
+        with tempfile.TemporaryDirectory() as target:
+            execute_dispatch.dispatch_execute(
+                execute_dispatch.ExecuteDispatchSpec(
+                    candidate=candidate,
+                    prompt="do the task",
+                    target_dir=target,
+                    heartbeat_interval=30,
+                    timeout=600,
+                    tool_availability={"codegraph": True},
+                    agents_tooling_path="/repo/AGENTS-TOOLING.md",
+                    codegraph_registered=True,
+                ),
+                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+            )
         self.assertIn("/repo/AGENTS-TOOLING.md", captured["prompt"])
         self.assertIn("codegraph_explore", captured["prompt"])
 
@@ -5039,21 +5027,23 @@ class TestDispatchExecute(unittest.TestCase):
         }
         captured = {}
 
-        def fake_dispatch(command, prompt, heartbeat_interval, timeout):
+        def fake_runner(spec, prompt, seams):
+            del spec, seams
             captured["prompt"] = prompt
-            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+            return RunnerResult(0, "", {"status": "ok"}, None, False, ["node"], "")
 
-        execute_dispatch.dispatch_execute(
-            execute_dispatch.ExecuteDispatchSpec(
-                candidate=candidate,
-                prompt="do the task",
-                target_dir="/scratch/run1",
-                heartbeat_interval=30,
-                timeout=600,
-                format_block="FORMAT-BLOCK-MARKER",
-            ),
-            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
-        )
+        with tempfile.TemporaryDirectory() as target:
+            execute_dispatch.dispatch_execute(
+                execute_dispatch.ExecuteDispatchSpec(
+                    candidate=candidate,
+                    prompt="do the task",
+                    target_dir=target,
+                    heartbeat_interval=30,
+                    timeout=600,
+                    format_block="FORMAT-BLOCK-MARKER",
+                ),
+                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+            )
         self.assertIn("FORMAT-BLOCK-MARKER", captured["prompt"])
 
     def test_threads_effort_and_service_tier_from_the_candidate_into_the_real_builder(self):
@@ -5066,22 +5056,66 @@ class TestDispatchExecute(unittest.TestCase):
         }
         captured = {}
 
-        def fake_dispatch(command, prompt, heartbeat_interval, timeout):
-            captured["command"] = command
-            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+        def fake_runner(spec, prompt, seams):
+            del prompt, seams
+            captured["spec"] = spec
+            return RunnerResult(0, "", {"status": "ok"}, None, False, ["node"], "")
 
-        execute_dispatch.dispatch_execute(
-            execute_dispatch.ExecuteDispatchSpec(
-                candidate=candidate,
-                prompt="do the task",
-                target_dir="/scratch/run1",
-                heartbeat_interval=30,
-                timeout=600,
-            ),
-            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
-        )
-        self.assertIn('model_reasoning_effort="high"', captured["command"])
-        self.assertIn('service_tier="priority"', captured["command"])
+        with tempfile.TemporaryDirectory() as target:
+            execute_dispatch.dispatch_execute(
+                execute_dispatch.ExecuteDispatchSpec(
+                    candidate=candidate,
+                    prompt="do the task",
+                    target_dir=target,
+                    heartbeat_interval=30,
+                    timeout=600,
+                ),
+                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+            )
+        self.assertEqual(captured["spec"].effort, "high")
+        self.assertEqual(captured["spec"].service_tier, "priority")
+        self.assertEqual(captured["spec"].codex_sandbox, "workspace-write")
+
+    def test_missing_target_dir_is_refused_before_any_spawn(self):
+        def fake_runner(spec, prompt, seams):
+            del spec, prompt, seams
+            self.fail("runner must not be called for a missing target dir")
+
+        with self.assertRaises(ValueError) as ctx:
+            execute_dispatch.dispatch_execute(
+                execute_dispatch.ExecuteDispatchSpec(
+                    candidate={"runtime": "opencode", "model": "m"},
+                    prompt="do the task",
+                    target_dir="/no/such/dir",
+                    heartbeat_interval=30,
+                    timeout=600,
+                ),
+                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+            )
+        self.assertIn("/no/such/dir", str(ctx.exception))
+        self.assertIn("does not exist", str(ctx.exception))
+
+    def test_pi_exec_prints_the_live_verification_note(self):
+        printed = []
+
+        def fake_runner(spec, prompt, seams):
+            del spec, prompt, seams
+            return RunnerResult(0, "", {"status": "ok"}, None, False, ["node"], "")
+
+        with tempfile.TemporaryDirectory() as target:
+            execute_dispatch.dispatch_execute(
+                execute_dispatch.ExecuteDispatchSpec(
+                    candidate={"runtime": "pi", "model": "m"},
+                    prompt="do the task",
+                    target_dir=target,
+                    heartbeat_interval=30,
+                    timeout=600,
+                ),
+                seams=execute_dispatch.ExecuteSeams(
+                    runner_fn=fake_runner, print_fn=printed.append
+                ),
+            )
+        self.assertTrue(any("Phase 22" in line for line in printed))
 
 
 class TestDispatchWithHeartbeat(unittest.TestCase):
@@ -5503,14 +5537,14 @@ class TestBuildExecuteCommand(unittest.TestCase):
         # never a fallback to another CLI.
         with self.assertRaises(ValueError) as ctx:
             commands.build_execute_command("grok", target_dir="/scratch/run1")
-        self.assertIn("codex, cursor, opencode", str(ctx.exception))
+        self.assertIn("codex, cursor, opencode, pi", str(ctx.exception))
 
     def test_claude_execute_is_a_hard_error_naming_the_supported_clis(self):
         # D-15 (Phase 16.1): same deletion for claude -- claude is the main agent and was never
         # a valid execute target; the explicit choice must fail before any spawn.
         with self.assertRaises(ValueError) as ctx:
             commands.build_execute_command("claude", target_dir="/scratch/run1")
-        self.assertIn("codex, cursor, opencode", str(ctx.exception))
+        self.assertIn("codex, cursor, opencode, pi", str(ctx.exception))
 
     def test_execute_error_message_is_shared_by_the_factory_and_the_checker(self):
         # Both paths surface the SAME supported-list message: the registry factory above and
@@ -5568,7 +5602,7 @@ class TestExecuteCliRejection(unittest.TestCase):
             with self.subTest(cli=cli_name):
                 code, stderr = self._rejected_dispatch_run(cli_name)
                 self.assertEqual(code, 2)
-                self.assertIn("codex, cursor, opencode", stderr)
+                self.assertIn("codex, cursor, opencode, pi", stderr)
 
     def test_rejection_is_idempotent_across_reruns(self):
         # D-15: nothing is written before the check, so a rejected executor fails identically
@@ -5578,7 +5612,7 @@ class TestExecuteCliRejection(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_supported_execute_clis_and_builders_are_gone(self):
-        self.assertEqual(commands.SUPPORTED_EXECUTE_CLIS, ("codex", "cursor", "opencode"))
+        self.assertEqual(commands.SUPPORTED_EXECUTE_CLIS, ("codex", "cursor", "opencode", "pi"))
         self.assertFalse(
             hasattr(commands, "_build_claude_execute_command")
             or hasattr(commands, "_build_grok_execute_command")
@@ -5610,7 +5644,7 @@ class TestExecuteLadderScreen(unittest.TestCase):
         self.assertEqual([c["key"] for c in result], ["oc"])
         self.assertEqual(len(warnings), 1)
         self.assertIn("cla", warnings[0])
-        self.assertIn("codex, cursor, opencode", warnings[0])
+        self.assertIn("codex, cursor, opencode, pi", warnings[0])
 
     def test_purpose_both_grok_entry_is_skipped_with_a_warning(self):
         warnings = []
@@ -5624,7 +5658,7 @@ class TestExecuteLadderScreen(unittest.TestCase):
         candidates = [{"key": "cla", "runtime": "claude", "model": "m", "purpose": "execute"}]
         with self.assertRaises(ValueError) as ctx:
             self._screen(candidates, warn_fn=lambda _msg: self.fail("must raise, not warn"))
-        self.assertIn("codex, cursor, opencode", str(ctx.exception))
+        self.assertIn("codex, cursor, opencode, pi", str(ctx.exception))
         self.assertIn("cla", str(ctx.exception))
 
     def test_custom_command_is_dropped_and_execute_purpose_raises(self):
@@ -11813,15 +11847,16 @@ class TestProbeArgv(unittest.TestCase):
 
 
 class TestDispatchExecuteArgv(unittest.TestCase):
-    """D-10: execute dispatch splits the template, formats per token, reports shlex.join."""
+    """D-10: execute dispatch reports shlex.join of the runner argv, never a shell string."""
 
     def test_target_dir_with_braces_reaches_the_child_verbatim_as_one_argument(self):
         candidate = {"runtime": "opencode", "model": "m", "key": "opencode/m"}
         captured = {}
 
-        def fake_dispatch(argv, prompt, heartbeat_interval, timeout):
+        def fake_popen(argv, **kwargs):
             captured["argv"] = argv
-            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+            captured["kwargs"] = kwargs
+            raise OSError("spawn stopped after argv capture")
 
         with tempfile.TemporaryDirectory() as d:
             target = os.path.join(d, "dir with {x}")
@@ -11835,33 +11870,43 @@ class TestDispatchExecuteArgv(unittest.TestCase):
                     timeout=600,
                 ),
                 seams=execute_dispatch.ExecuteSeams(
-                    build_tooling_guidance_fn=lambda *a, **kw: "", dispatch_fn=fake_dispatch
+                    build_tooling_guidance_fn=lambda *a, **kw: "",
+                    runner_seams=runner_dispatch.RunnerSeams(popen_fn=fake_popen),
                 ),
             )
-        self.assertIn(target, captured["argv"])
-        self.assertEqual(result["command"], shlex.join(captured["argv"]))
+        self.assertIsInstance(captured["argv"], list)
+        self.assertNotIn("shell", captured["kwargs"])
+        self.assertTrue(captured["kwargs"]["start_new_session"])
+        self.assertIn(target, captured["kwargs"]["cwd"])
+        self.assertIn("--child-pgid-file", captured["argv"])
+        self.assertNotIn("--child-pgid-file", result["command"])
+        self.assertEqual(result["reason"], "dispatch_unavailable")
 
     def test_result_command_is_shlex_join_of_the_argv(self):
         candidate = {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
         captured = {}
 
-        def fake_dispatch(argv, prompt, heartbeat_interval, timeout):
-            captured["argv"] = argv
-            return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+        def fake_runner(spec, prompt, seams):
+            del prompt, seams
+            captured["spec"] = spec
+            argv = ["node", "runner", "--model-codex", spec.model, "--mode", "exec"]
+            return RunnerResult(0, "", {"status": "ok"}, None, False, argv, "")
 
-        result = execute_dispatch.dispatch_execute(
-            execute_dispatch.ExecuteDispatchSpec(
-                candidate=candidate,
-                prompt="do the task",
-                target_dir="/scratch/run1",
-                heartbeat_interval=30,
-                timeout=600,
-            ),
-            seams=execute_dispatch.ExecuteSeams(dispatch_fn=fake_dispatch),
-        )
-        self.assertEqual(result["command"], shlex.join(captured["argv"]))
-        self.assertIn("-m", captured["argv"])
-        self.assertIn("gpt-5.6-sol", captured["argv"])
+        with tempfile.TemporaryDirectory() as target:
+            result = execute_dispatch.dispatch_execute(
+                execute_dispatch.ExecuteDispatchSpec(
+                    candidate=candidate,
+                    prompt="do the task",
+                    target_dir=target,
+                    heartbeat_interval=30,
+                    timeout=600,
+                ),
+                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+            )
+        self.assertEqual(result["command"], shlex.join(
+            ["node", "runner", "--model-codex", "gpt-5.6-sol", "--mode", "exec"]
+        ))
+        self.assertEqual(captured["spec"].codex_sandbox, "workspace-write")
 
 
 

@@ -425,7 +425,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 ),
                 options=dispatch_injection.BuildInjectionOptions(quota={}),
             )
-        self.assertIn("codex, cursor, opencode", str(ctx.exception))
+        self.assertIn("codex, cursor, opencode, pi", str(ctx.exception))
 
     def test_cli_purpose_execute_exits_2_with_the_supported_list_on_stderr(self):
         candidates = [
@@ -472,7 +472,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 )
         self.assertEqual(rc, 2)
         self.assertEqual(out.getvalue(), "")
-        self.assertIn("codex, cursor, opencode", stderr.getvalue())
+        self.assertIn("codex, cursor, opencode, pi", stderr.getvalue())
         self.assertIn("ai-kit-spec-execute-superpowers:", stderr.getvalue())
 
     def test_resolve_injection_prints_the_d15_skip_warning_once(self):
@@ -858,11 +858,13 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
 
     def test_real_dispatch_execute_path_produces_a_real_workspace_write_command(self):
         # Confirms this wrapper genuinely reaches ai_kit_spec.execute_dispatch.dispatch_execute's
-        # OWN real command-building (HIGH finding: never a raw dispatch_with_heartbeat call, never
-        # a "{target_dir}" placeholder) by calling the real, un-mocked dispatch_execute and only
-        # substituting ITS OWN dispatch_fn (the actual subprocess launch) -- the same pattern
-        # tests.test_ai_kit_spec's own execute_dispatch.dispatch_execute tests already use.
+        # OWN real runner spec (HIGH finding: never a raw dispatch_with_heartbeat call, never a
+        # "{target_dir}" placeholder) by calling the real, un-mocked dispatch_execute and only
+        # substituting ITS OWN runner_fn (the actual subprocess launch).
+        import tempfile
+
         from ai_kit_spec.execute_dispatch import dispatch_execute as real_dispatch_execute
+        from ai_kit_spec.runner_dispatch import RunnerResult
 
         injection = {
             "mode": "external_cli",
@@ -872,29 +874,33 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
             "effort": None,
             "service_tier": None,
         }
-        captured_command = {}
+        captured = {}
 
-        def fake_dispatch_fn(argv, prompt, heartbeat_interval, timeout):
-            captured_command["value"] = argv
-            return {"returncode": 0, "stdout": "DONE", "stderr": "", "timed_out": False}
+        def fake_runner(spec, prompt, seams):
+            del prompt, seams
+            captured["spec"] = spec
+            argv = ["node", "runner", "--codex-sandbox", spec.codex_sandbox or ""]
+            return RunnerResult(0, "DONE", {"status": "ok"}, None, False, argv, "")
 
         def dispatch_execute_with_fake_subprocess(spec):
             from ai_kit_spec.execute_dispatch import ExecuteSeams
 
-            return real_dispatch_execute(spec, seams=ExecuteSeams(dispatch_fn=fake_dispatch_fn))
+            return real_dispatch_execute(spec, seams=ExecuteSeams(runner_fn=fake_runner))
 
-        result = dispatch_injection.dispatch_superpowers_task(
-            dispatch_injection.DispatchTaskRequest(
-                injection, "do the task", "/real/scratch/dir", 60, 900
-            ),
-            seams=dispatch_injection.SuperpowersDispatchSeams(
-                dispatch_execute_fn=dispatch_execute_with_fake_subprocess,
-            ),
-        )
-        # argv dispatch: the reported "command" is the shlex.join of the dispatched argv
-        self.assertIn("workspace-write", captured_command["value"])
-        self.assertIn("/real/scratch/dir", captured_command["value"])
-        self.assertEqual(result["command"], shlex.join(captured_command["value"]))
+        with tempfile.TemporaryDirectory() as target:
+            result = dispatch_injection.dispatch_superpowers_task(
+                dispatch_injection.DispatchTaskRequest(
+                    injection, "do the task", target, 60, 900
+                ),
+                seams=dispatch_injection.SuperpowersDispatchSeams(
+                    dispatch_execute_fn=dispatch_execute_with_fake_subprocess,
+                ),
+            )
+        self.assertEqual(captured["spec"].codex_sandbox, "workspace-write")
+        self.assertEqual(captured["spec"].cwd, target)
+        self.assertEqual(result["command"], shlex.join(
+            ["node", "runner", "--codex-sandbox", "workspace-write"]
+        ))
 
 
 class TestUnavailabilityReason(unittest.TestCase):
@@ -912,54 +918,33 @@ class TestUnavailabilityReason(unittest.TestCase):
 class TestClassifyDispatchFailure(unittest.TestCase):
     def test_ok_on_zero_returncode(self):
         self.assertEqual(
-            dispatch_injection.classify_dispatch_failure(
-                {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
-            ),
-            "ok",
+            dispatch_injection.classify_dispatch_failure({"returncode": 0}), "ok",
         )
 
-    def test_quota_on_quota_signal_and_nonzero_returncode(self):
+    def test_quota_on_runner_reason(self):
         self.assertEqual(
             dispatch_injection.classify_dispatch_failure(
-                {
-                    "returncode": 1,
-                    "stdout": "",
-                    "stderr": "Error: usage limit reached",
-                    "timed_out": False,
-                }
+                {"returncode": 75, "reason": "quota"}
             ),
             "quota",
         )
 
     def test_answer_text_on_success_is_never_classified(self):
         # R8/D-13: the model's answer (stdout) is never classified -- an answer saying
-        # "quota exceeded" with exit 0 and empty stderr is a success.
+        # "quota exceeded" with exit 0 is a success, whatever reason text rides along.
         self.assertEqual(
             dispatch_injection.classify_dispatch_failure(
-                {"returncode": 0, "stdout": "quota exceeded", "stderr": "", "timed_out": False}
+                {"returncode": 0, "stdout": "quota exceeded", "reason": "quota"}
             ),
             "ok",
         )
 
-    def test_quota_on_stderr_quota_signal_and_nonzero_returncode(self):
-        self.assertEqual(
-            dispatch_injection.classify_dispatch_failure(
-                {"returncode": 1, "stdout": "", "stderr": "Rate limit exceeded", "timed_out": False}
-            ),
-            "quota",
-        )
-
-    def test_real_error_on_auth_signal_even_with_nonzero_returncode(self):
+    def test_real_error_on_auth_reason(self):
         # HIGH finding: an auth/entitlement/setup failure must classify as real_error, never
         # quota -- it will never be fixed by an hourly quota-wake retry.
         self.assertEqual(
             dispatch_injection.classify_dispatch_failure(
-                {
-                    "returncode": 1,
-                    "stdout": "",
-                    "stderr": "Error: not authenticated",
-                    "timed_out": False,
-                }
+                {"returncode": 69, "reason": "auth"}
             ),
             "real_error",
         )
@@ -967,23 +952,15 @@ class TestClassifyDispatchFailure(unittest.TestCase):
     def test_real_error_on_unrelated_nonzero_returncode(self):
         self.assertEqual(
             dispatch_injection.classify_dispatch_failure(
-                {"returncode": 1, "stdout": "SyntaxError", "stderr": "", "timed_out": False}
+                {"returncode": 1, "reason": "real_error"}
             ),
             "real_error",
         )
 
-    def test_real_error_on_stderr_auth_signal(self):
+    def test_real_error_on_timeout_result(self):
         self.assertEqual(
             dispatch_injection.classify_dispatch_failure(
-                {"returncode": 1, "stderr": "not logged in", "timed_out": False}
-            ),
-            "real_error",
-        )
-
-    def test_real_error_on_timeout_even_with_quota_looking_text(self):
-        self.assertEqual(
-            dispatch_injection.classify_dispatch_failure(
-                {"returncode": -9, "stdout": "rate limit", "stderr": "", "timed_out": True}
+                {"returncode": -9, "reason": "timeout", "timed_out": True}
             ),
             "real_error",
         )
@@ -2011,12 +1988,7 @@ class TestCodegraphUnknownHealth(unittest.TestCase):
 class TestCliClassifyDispatchFailure(unittest.TestCase):
     def test_prints_the_classification_string(self):
         out = io.StringIO()
-        result = {
-            "returncode": 1,
-            "stdout": "",
-            "stderr": "usage limit reached",
-            "timed_out": False,
-        }
+        result = {"returncode": 75, "reason": "quota"}
         rc = superpowers_cli.main(
             ["classify-dispatch-failure", "--dispatch-result-json", json.dumps(result)], stdout=out
         )

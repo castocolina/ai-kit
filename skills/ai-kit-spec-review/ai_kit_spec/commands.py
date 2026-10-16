@@ -1,7 +1,7 @@
 import shlex
 from typing import NamedTuple
 
-from ai_kit_spec.detection import runtime_id
+from ai_kit_spec.detection import RUNTIMES, runtime_id
 
 # ── Policy resolution ────────────────────────────────────────────────────
 
@@ -265,12 +265,13 @@ _COMMAND_BUILDERS = {
 # guidance to the prompt -- it is the only mitigation that exists for these two.
 NO_HARD_SANDBOX_CLIS = {"cursor", "opencode"}
 
-# The CLIs with a real, live-verified execute builder in the registry above. Derived, never
-# hand-maintained: deleting a registry entry automatically drops it from this set (and makes any
-# explicit choice of it a hard error via execute_cli_error, below). claude and grok were removed
-# on purpose (Phase 16.1 D-15): both builders nested `sh -c` and could not run under GSD's
-# no-shell word splitting.
-SUPPORTED_EXECUTE_CLIS = tuple(sorted(cli for kind, cli in _COMMAND_BUILDERS if kind == _EXECUTE))
+# The runner runtimes that are not review-only. Derived from the runtime table, never
+# hand-maintained: a review-only or runner-less row drops out of this set (and makes any
+# explicit choice of it a hard error via execute_cli_error, below). claude is review-only and
+# grok has no runner (Phase 16.1 D-15, Phase 18.1 D-14): both are a hard error here.
+SUPPORTED_EXECUTE_CLIS = tuple(sorted(
+    rt for rt, row in RUNTIMES.items() if row.runner and not row.review_only
+))
 
 
 def execute_cli_error(cli) -> str | None:

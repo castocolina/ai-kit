@@ -81,6 +81,7 @@ from ai_kit_spec.review_reports import (
 from ai_kit_spec.reviewer_dispatch import ReviewerDispatchSpec, ReviewerSeams, dispatch_reviewer
 from ai_kit_spec.routing import RouteContext, RuntimesSeams, host_can_select
 from ai_kit_spec.runner_dispatch import (
+    PI_EXEC_NOTE,
     RunnerSpec,
     build_runner_argv,
     run_custom_command,
@@ -315,7 +316,10 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
                                   "target framework's own stdin-piping hook (e.g. GSD's "
                                   "workflow.cross_ai_command, which always pipes its task prompt "
                                   "via stdin into whatever command that key names)")
-    p_dispatch.add_argument("--heartbeat-interval", type=int, default=30)
+    p_dispatch.add_argument(
+        "--heartbeat-interval", type=int, default=30,
+        help="accepted for compatibility; the runner prints its own heartbeat",
+    )
     p_dispatch.add_argument("--timeout", type=int, required=True)
     p_dispatch.add_argument("--format-block-file", default=None,
                              help="e.g. GSD's own real SUMMARY.md shape -- omit for a dispatch "
@@ -896,6 +900,8 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
     except ValueError as exc:
         print(f"dispatch-execute: {exc}", file=sys.stderr)
         return 1
+    if rid == "pi":
+        print(PI_EXEC_NOTE, file=sys.stderr)
     if args.stdout_only:
         sys.stdout.write(result["stdout"])
         # Propagate the dispatched CLI's own real returncode (not a collapsed 0/1) -- GSD's

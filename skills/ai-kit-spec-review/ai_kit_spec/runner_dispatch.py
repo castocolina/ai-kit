@@ -101,9 +101,18 @@ class _ChildRun(NamedTuple):
     error: BaseException | None = None
 
 
-def _default_print(line: str) -> None:
+def stderr_print(line: str) -> None:
     """One stderr line, read at call time so a redirected sys.stderr is honored."""
     print(line, file=sys.stderr)
+
+
+_default_print = stderr_print
+
+# pi exec uses the runner's formula, which only its hermetic self-test covers today.
+PI_EXEC_NOTE = (
+    "ai-kit-spec: pi exec uses the runner's pi formula, verified by its hermetic "
+    "self-test only; live verification is Phase 22"
+)
 
 
 def runner_flags(spec: RunnerSpec) -> list[str]:

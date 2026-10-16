@@ -371,7 +371,7 @@ class TestAssembleCandidates(unittest.TestCase):
                 ],
             }
         candidates, top = adapter.assemble_candidates("/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
-        with self.assertRaisesRegex(ValueError, "codex, cursor, opencode"):
+        with self.assertRaisesRegex(ValueError, "codex, cursor, opencode, pi"):
             _resolve_gsd_dispatch(candidates, top, {}, _ctx(), "/repo")
 
     def test_claude_alias_runtime_derives_a_gsd_tier(self):
@@ -601,7 +601,7 @@ class TestResolveGsdDispatch(unittest.TestCase):
         self.assertEqual(result["mode"], "fallback_notice")
         self.assertEqual(result["provenance"], "fallback")
         self.assertIn("gemini/gemini-3.1-pro", stderr.getvalue())
-        self.assertIn("codex, cursor, opencode", stderr.getvalue())
+        self.assertIn("codex, cursor, opencode, pi", stderr.getvalue())
         # C-WR-02: the reason is the screen, never a context-size rejection.
         self.assertEqual(result["reason"], "no_usable_dispatch")
         self.assertIn("gemini/gemini-3.1-pro", result["message"])
@@ -848,7 +848,7 @@ class TestCliResolveDispatch(unittest.TestCase):
                             stdout=io.StringIO())
         self.assertEqual(code, 2)
         self.assertEqual(fake.config_set_calls(), [])
-        self.assertIn("codex, cursor, opencode", stderr.getvalue())
+        self.assertIn("codex, cursor, opencode, pi", stderr.getvalue())
         self.assertIn("ai-kit-spec-execute-gsd:", stderr.getvalue())
 
     def test_resolve_dispatch_purpose_none_grok_entry_is_skipped_with_a_warning(self):
@@ -885,7 +885,7 @@ class TestCliResolveDispatch(unittest.TestCase):
         self.assertEqual(result["runtime"], "codex")
         warnings = [line for line in stderr.getvalue().splitlines() if "grok/grok-4.6" in line]
         self.assertEqual(len(warnings), 1)
-        self.assertIn("codex, cursor, opencode", warnings[0])
+        self.assertIn("codex, cursor, opencode, pi", warnings[0])
 
     def test_resolve_dispatch_write_failed_result_exits_1_carrying_the_undo_log(self):
         import json

@@ -1,32 +1,46 @@
 """Direct process dispatch for ai-kit-spec-execute's own resolved candidates -- bypasses any
 target framework's own config-write/hook indirection (e.g. GSD's workflow.cross_ai_command,
 which only exists to tell GSD's OWN execute-phase step what to shell out to, and only fires
-after a whole GSD-specific config round-trip). This module IS the dispatch: it builds the real
-command via commands.build_execute_command, composes a reinforced prompt (model-selection
-override, incremental progress, honest failure reporting, tool/MCP guidance, and -- for the two
-CLIs with no OS-level write confinement -- an explicit soft-confinement instruction), and runs
-it for real via dispatch.dispatch_with_heartbeat as an ARGV list with no shell (D-10). A native
-(cli is None) candidate is never routed here -- it has no subprocess to dispatch at all; the
-caller executes it in-process."""
+after a whole GSD-specific config round-trip). This module IS the dispatch: it composes the
+exec guidance (model-selection override, incremental progress, honest failure reporting,
+tool/MCP guidance, and -- for every runtime the OS does not confine -- an explicit
+soft-confinement instruction) and runs one candidate through the cross-AI runner in exec mode
+(D-11). A native (runtime is None) candidate is never routed here -- it has no subprocess to
+dispatch at all; the caller executes it in-process.
+
+The runner runs every exec CLI with full permissions except codex, which runs under
+`--codex-sandbox workspace-write` (D-27). That sandbox still allows writes to /tmp and
+$TMPDIR regardless of the target dir. Soft confinement is prompt guidance, not a security
+boundary (D-27)."""
+import os
 import shlex
 from collections.abc import Callable
 from typing import NamedTuple
 
-from ai_kit_spec.commands import NO_HARD_SANDBOX_CLIS, build_execute_command
-from ai_kit_spec.detection import runtime_id
-from ai_kit_spec.dispatch import dispatch_with_heartbeat
+from ai_kit_spec.commands import execute_cli_error
 from ai_kit_spec.dispatch_guidance import build_dispatch_reinforcement_guidance
+from ai_kit_spec.runner_dispatch import (
+    PI_EXEC_NOTE,
+    RunnerSeams,
+    RunnerSpec,
+    run_runner,
+    stderr_print,
+)
 from ai_kit_spec.tooling_guidance import (
     build_tooling_guidance,
     resolve_shared_tooling_reference_path,
 )
 
+# Runtimes the runner confines when ai-kit passes `--codex-sandbox`. Every other exec runtime
+# runs with the runner's full permissions, so it gets the soft-confinement prose instead.
+OS_SANDBOXED_EXEC = frozenset({"codex"})
+
 
 def build_soft_confinement_guidance(target_dir: str) -> str:
-    """The only mitigation available for cursor-agent/opencode (NO_HARD_SANDBOX_CLIS, see
-    commands.py) -- neither CLI's own flags genuinely confine writes (confirmed live, twice
-    each), so the sole remaining defense is telling the dispatched CLI, explicitly and
-    unambiguously, that target_dir is the only place it may write at all."""
+    """Prompt guidance for a runtime the runner does not OS-confine (everything outside
+    OS_SANDBOXED_EXEC). Neither cursor nor opencode nor pi has a flag that genuinely confines
+    writes, so the only mitigation is telling the dispatched CLI, explicitly, that target_dir
+    is the only place it may write. This is guidance, not a security boundary."""
     return (
         f"This dispatch has NO operating-system-level write confinement -- you must never "
         f"write, move, rename, or delete any file outside {target_dir} for any reason, even "
@@ -36,14 +50,17 @@ def build_soft_confinement_guidance(target_dir: str) -> str:
 
 
 class ExecuteSeams(NamedTuple):
-    build_execute_command_fn: Callable[..., str] = build_execute_command
+    runner_fn: Callable = run_runner
+    runner_seams: RunnerSeams = RunnerSeams()
+    print_fn: Callable[[str], None] = stderr_print
     build_tooling_guidance_fn: Callable[..., str] = build_tooling_guidance
     build_reinforcement_fn: Callable[..., str] = build_dispatch_reinforcement_guidance
     build_soft_confinement_fn: Callable[[str], str] = build_soft_confinement_guidance
-    dispatch_fn: Callable[..., dict] = dispatch_with_heartbeat
 
 
 class ExecuteDispatchSpec(NamedTuple):
+    """`heartbeat_interval` is accepted and unused: the runner prints its own heartbeat."""
+
     candidate: dict
     prompt: str
     target_dir: str
@@ -55,52 +72,85 @@ class ExecuteDispatchSpec(NamedTuple):
     codegraph_registered: bool = False
 
 
-def _compose_execute_prompt(
-    spec: ExecuteDispatchSpec, seams: ExecuteSeams
-) -> tuple[list[str], str]:
+def build_execute_guidance(spec: ExecuteDispatchSpec, seams: ExecuteSeams) -> str:
+    """The one composer of the exec guidance: reinforcement (with the format block), tooling
+    guidance, and soft confinement for every runtime the OS does not confine.
+
+    The runner runs every exec CLI with full permissions except codex under `--codex-sandbox
+    workspace-write`, which still allows writes to /tmp and $TMPDIR. Soft confinement is prompt
+    guidance, not a security boundary."""
     candidate = spec.candidate
-    cli = candidate["runtime"]
-    command_template = seams.build_execute_command_fn(
-        cli,
-        target_dir=spec.target_dir,
-        effort=candidate.get("effort"),
-        service_tier=candidate.get("service_tier"),
-    )
-    argv = [token.format(model=candidate["model"]) for token in shlex.split(command_template)]
-    resolved_label = f"{cli}, model {candidate['model']}"
-    guidance_sections = [seams.build_reinforcement_fn(resolved_label, spec.format_block)]
+    runtime = candidate["runtime"]
+    sections = [
+        seams.build_reinforcement_fn(
+            f"{runtime}, model {candidate['model']}", spec.format_block
+        )
+    ]
     tool_guidance = seams.build_tooling_guidance_fn(
-        cli,
+        runtime,
         spec.tool_availability or {},
         spec.agents_tooling_path,
         spec.codegraph_registered,
         shared_reference_path=resolve_shared_tooling_reference_path(),
     )
     if tool_guidance:
-        guidance_sections.append(tool_guidance)
-    if runtime_id(cli) in NO_HARD_SANDBOX_CLIS:
-        guidance_sections.append(seams.build_soft_confinement_fn(spec.target_dir))
-    full_prompt = "\n\n".join(guidance_sections) + "\n\n" + spec.prompt
-    return argv, full_prompt
+        sections.append(tool_guidance)
+    if runtime not in OS_SANDBOXED_EXEC:
+        sections.append(seams.build_soft_confinement_fn(spec.target_dir))
+    return "\n\n".join(sections)
+
+
+def _runner_spec(candidate: dict, spec: ExecuteDispatchSpec) -> RunnerSpec:
+    """One exec-mode runner spec. Only codex keeps its OS write confinement (D-27)."""
+    runtime = candidate["runtime"]
+    sandbox = "workspace-write" if runtime == "codex" else None
+    return RunnerSpec(
+        runtime, candidate["model"], "exec", spec.timeout, cwd=spec.target_dir,
+        effort=candidate.get("effort"), service_tier=candidate.get("service_tier"),
+        codex_sandbox=sandbox,
+    )
+
+
+def _refuse_candidate(candidate: dict, target_dir: str) -> str:
+    """The ValueError text for a candidate that must not be spawned, or "" when it may."""
+    runtime = candidate["runtime"]
+    if runtime is None:
+        return (
+            "dispatch_execute is for cross-AI (runtime-set) candidates only -- a native "
+            "(runtime is None) candidate executes in-process and never reaches this function"
+        )
+    rejection = execute_cli_error(runtime)
+    if rejection:
+        return rejection
+    if not os.path.isdir(target_dir):
+        return f"target dir {target_dir} does not exist"
+    return ""
 
 
 def dispatch_execute(
     spec: ExecuteDispatchSpec,
     seams: ExecuteSeams | None = None,
 ) -> dict:
-    """Resolves `spec.candidate`'s real execute-mode command, composes the prompt, and runs it."""
+    """Composes the exec guidance and runs the candidate through the runner in exec mode."""
     active = seams or ExecuteSeams()
-    cli = spec.candidate["runtime"]
-    if cli is None:
-        raise ValueError(
-            "dispatch_execute is for cross-AI (runtime-set) candidates only -- a native "
-            "(runtime is None) candidate executes in-process and never reaches this function"
-        )
-    argv, full_prompt = _compose_execute_prompt(spec, active)
-    result = active.dispatch_fn(argv, full_prompt, spec.heartbeat_interval, spec.timeout)
+    candidate = spec.candidate
+    refusal = _refuse_candidate(candidate, spec.target_dir)
+    if refusal:
+        raise ValueError(refusal)
+    if candidate["runtime"] == "pi":
+        active.print_fn(PI_EXEC_NOTE)
+    result = active.runner_fn(
+        _runner_spec(candidate, spec),
+        build_execute_guidance(spec, active) + "\n\n" + spec.prompt,
+        active.runner_seams,
+    )
     return {
-        "runtime": cli,
-        "model": spec.candidate["model"],
-        "command": shlex.join(argv),
-        **result,
+        "runtime": candidate["runtime"],
+        "model": candidate["model"],
+        "command": shlex.join(result.argv),
+        "stdout": result.stdout,
+        "returncode": result.returncode,
+        "timed_out": result.timed_out,
+        "reason": result.reason,
+        "status": result.status,
     }

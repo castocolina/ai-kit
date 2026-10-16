@@ -13,7 +13,6 @@ from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 
 from ai_kit_spec.config_io import cfg_resolve
-from ai_kit_spec.error_classifier import classify_error
 from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
 from ai_kit_spec.execute_selection import (
     ExecuteResolveOptions,
@@ -398,19 +397,15 @@ def dispatch_superpowers_task(request: DispatchTaskRequest,
 
 
 def classify_dispatch_failure(dispatch_result: dict) -> str:
-    """Classifies a completed dispatch_superpowers_task result via the ONE shared classifier
-    (ai_kit_spec.error_classifier.classify_error, D-13): "ok" (returncode 0 -- the model's
-    answer on stdout is never classified), "quota" when the classifier reads the nonzero
-    exit's STDERR as a time-bound rate/usage limit (retry with the next ladder candidate,
-    never this same one), or "real_error" (anything else, including a timeout and every
-    auth/entitlement/setup signal -- HIGH finding: those never get better by waiting, so
-    they must never come back "quota" and trigger the caller's hourly CronCreate wake loop
-    -- surfaced honestly to the harness's own BLOCKED/fix-loop path instead, design spec
-    Section 12's explicit "never silently retry disguised as quota-wait" rule)."""
-    timed_out = bool(dispatch_result.get("timed_out"))
-    returncode = dispatch_result.get("returncode", 0)
-    if returncode == 0:
+    """Classifies a completed dispatch_superpowers_task result from the runner's own reason:
+    "ok" (returncode 0), "quota" when the runner reported reason `quota` (retry with the next
+    ladder candidate, never this same one), or "real_error" for anything else, including a
+    timeout and every auth/entitlement/setup signal -- HIGH finding: those never get better by
+    waiting, so they must never come back "quota" and trigger the caller's hourly CronCreate
+    wake loop -- surfaced honestly to the harness's own BLOCKED/fix-loop path instead, design
+    spec Section 12's explicit "never silently retry disguised as quota-wait" rule."""
+    if dispatch_result.get("returncode", 0) == 0:
         return "ok"
-    if classify_error(returncode, dispatch_result.get("stderr", ""), timed_out) == "quota":
+    if dispatch_result.get("reason") == "quota":
         return "quota"
     return "real_error"
