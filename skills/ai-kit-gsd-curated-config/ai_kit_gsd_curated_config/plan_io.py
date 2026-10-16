@@ -8,6 +8,7 @@ performs no I/O itself (REC-01).
 """
 import json
 import os
+import posixpath
 import re
 
 from . import cross_ai, gsd_catalog, host, presets
@@ -622,17 +623,30 @@ def _validate_entry_value(key: str, value, entry: dict) -> str | None:
     return None
 
 
+def home_relative_root(root: str) -> bool:
+    """``~/<sub>`` that stays strictly inside $HOME once normalized: gsd-core joins the rest
+    onto the home dir, so ``~/..`` would widen the trusted roots outside it."""
+    if not root.startswith("~/"):
+        return False
+    rest = posixpath.normpath(root[2:])
+    return rest not in (".", "..", "/") and not rest.startswith(("../", "/"))
+
+
 def _validate_trusted_roots(key: str, value, entry: dict) -> str | None:
     if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
         return f"{key}: expected list of str"
     existing = entry.get("existing")
     existing_list = existing if isinstance(existing, list) else []
     for element in value:
-        if element in existing_list:
+        if element in existing_list or home_relative_root(element):
             continue
-        if element.startswith("~/"):
-            continue
-        return f"{key}: trusted root {element!r} must be ~/-relative unless already configured"
+        return (
+            f"{key}: trusted root {element!r} must be ~/-relative inside $HOME "
+            "unless already configured"
+        )
+    dropped = [root for root in existing_list if root not in value]
+    if dropped and not entry.get("forced"):
+        return f"{key}: drops already-configured root(s) {dropped!r} without --force"
     return None
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import shlex
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
@@ -489,15 +490,6 @@ def _skill_installed(name: str, inv: dict) -> bool:
     )
 
 
-def _trusted_root_ok(element: str, entry: dict, pool: set[Any]) -> bool:
-    existing = entry.get("existing")
-    if isinstance(existing, list) and element in existing:
-        return True
-    if element in pool:
-        return True
-    return element.startswith("~/")
-
-
 def _special_keys(
     call: EditCall, key: str, entry: dict, value: Any, warnings: list[str],
 ) -> tuple[Any, bool]:
@@ -508,7 +500,7 @@ def _special_keys(
     if key.startswith("agent_skills."):
         return _check_agent_skills(call.inv, key, value), False
     if key == "agent_skills_security.trusted_global_roots":
-        return _check_trusted_roots(key, entry, value), False
+        return _check_trusted_roots(call, entry, value, warnings)
     return value, False
 
 
@@ -549,17 +541,29 @@ def _check_agent_skills(inv: dict, key: str, value: Any) -> list:
     return value
 
 
-def _check_trusted_roots(key: str, entry: dict, value: Any) -> list[str]:
+def _check_trusted_roots(
+    call: EditCall, entry: dict, value: Any, warnings: list[str],
+) -> tuple[list[str], bool]:
+    """Refuse a list that silently drops configured roots (C-W8); the ``~/`` shape of each
+    root is ``validate_plan``'s job (it also covers hand edits)."""
+    key = "agent_skills_security.trusted_global_roots"
     if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
         raise PlanEditError(f"{key}: expected a list of root paths")
-    pool = _candidate_values(entry)
-    for element in value:
-        if not _trusted_root_ok(element, entry, pool):
-            raise PlanEditError(
-                f"trusted root {element!r} must be ~/-relative (only an already-configured "
-                "root keeps another form)"
-            )
-    return value
+    existing = entry.get("existing")
+    existing_list = existing if isinstance(existing, list) else []
+    dropped = [root for root in existing_list if root not in value]
+    if not dropped:
+        return value, False
+    shown = ", ".join(dropped)
+    if not call.force:
+        merged = existing_list + [root for root in value if root not in existing_list]
+        payload = shlex.quote(json.dumps(merged, separators=(",", ":")))
+        raise PlanEditError(
+            f"{key}: the list drops already-configured root(s) {shown}; keep them with "
+            f"plan-set {key} {payload}, or pass --force to drop them"
+        )
+    warnings.append(f"{key}: --force drops already-configured root(s) {shown}")
+    return value, True
 
 
 def _apply_entry(entry: dict, value: Any, forced: bool) -> None:

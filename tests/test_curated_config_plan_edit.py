@@ -5,6 +5,7 @@ import copy
 import io
 import json
 import os
+import shlex
 import sys
 import tempfile
 import unittest
@@ -334,8 +335,39 @@ class TestPlanSetRefusals(unittest.TestCase):
                     "agent_skills_security.trusted_global_roots",
                     '["/abs/path"]',
                 ),
-                "~/-relative",
+                "not a candidate",
             )
+            # --force passes the candidate gate but never the ~/ shape rule (validate_plan).
+            inv_path, plan_path, _inv, _plan = _write_pair(tmp)
+            raw = _read_bytes(plan_path)
+            for bad in ('["/abs/path"]', '["~/../.."]', '["~/a/../../b"]', '["~/"]'):
+                code, _, err = _run_plan_set(
+                    plan_path,
+                    inv_path,
+                    "agent_skills_security.trusted_global_roots",
+                    bad,
+                    force=True,
+                )
+                self.assertEqual(code, 2, bad)
+                self.assertIn("~/-relative", err)
+            self.assertEqual(_read_bytes(plan_path), raw)
+
+    def test_trusted_root_traversal_after_decision(self):
+        """B WR-04: once decided, ``~/..`` traversal is still refused without --force."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = _write_pair(tmp)
+            key = "agent_skills_security.trusted_global_roots"
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, key, '["~/.agents/skills/react-dev"]'
+            )
+            self.assertEqual(code, 0, err)
+            raw = _read_bytes(plan_path)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, key, '["~/.agents/skills/react-dev","~/../.."]'
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("~/-relative", err)
+            self.assertEqual(_read_bytes(plan_path), raw)
 
     def test_forged_existing_trusted_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -504,6 +536,14 @@ class TestPlanValidator(unittest.TestCase):
         self.assertIsNotNone(problem)
         assert problem is not None
         self.assertIn("trusted_global_roots", problem)
+
+    def test_home_relative_root(self):
+        ok = ("~/.agents/skills/x", "~/a/../b", "~/vault")
+        bad = ("~/", "~/..", "~/../..", "~/a/../../b", "/abs", "~//etc", "~user/x")
+        for root in ok:
+            self.assertTrue(plan_io.home_relative_root(root), root)
+        for root in bad:
+            self.assertFalse(plan_io.home_relative_root(root), root)
 
     def test_agent_skill_invalid_name(self):
         plan = self._golden_plan()
@@ -903,6 +943,50 @@ class TestPlanSetExtra(unittest.TestCase):
                 code, _, err = _run_plan_set(plan_path, inv_path, key, value, force=True)
                 self.assertEqual(code, 2, err)
                 self.assertEqual(_read_bytes(plan_path), raw)
+
+    def _existing_vault_pair(self, tmp):
+        inv_path, plan_path, inv, plan = _write_pair(tmp)
+        vault = os.path.join(tmp, "vault")
+        for entry in plan["entries"]:
+            if entry["key"] == "agent_skills_security.trusted_global_roots":
+                entry["existing"] = [vault]
+        inv_values = inv["existing_config"]["values"]
+        inv_values.setdefault("agent_skills_security", {})["trusted_global_roots"] = [vault]
+        with open(inv_path, "w", encoding="utf-8") as handle:
+            handle.write(plan_io.canonical_json(inv))
+        _save_plan(plan_path, inv, plan)
+        return inv_path, plan_path, vault
+
+    def test_dropping_existing_root_needs_force(self):
+        """C-W8 (validator side): approving the candidate alone must not drop ~/vault."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, vault = self._existing_vault_pair(tmp)
+            key = "agent_skills_security.trusted_global_roots"
+            raw = _read_bytes(plan_path)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, key, '["~/.agents/skills/react-dev"]'
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("drops already-configured root(s)", err)
+            self.assertEqual(_read_bytes(plan_path), raw)
+            # The suggested command is shell-safe and keeps the configured root first.
+            suggested = err.split("keep them with ", 1)[1].split(", or pass", 1)[0]
+            argv = shlex.split(suggested)
+            self.assertEqual(argv[:2], ["plan-set", key])
+            self.assertEqual(json.loads(argv[2]), [vault, "~/.agents/skills/react-dev"])
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, key, '["~/.agents/skills/react-dev"]', force=True
+            )
+            self.assertEqual(code, 0, err)
+            self.assertIn("--force drops", err)
+            saved, _ = plan_io.load_plan(plan_path)
+            assert saved is not None
+            entry = next(e for e in saved["entries"] if e["key"] == key)
+            self.assertTrue(entry["forced"])
+            entry.pop("forced")
+            problem = plan_io.validate_plan(saved)
+            assert problem is not None
+            self.assertIn("drops already-configured", problem)
 
     def test_configured_absolute_root_kept(self):
         with tempfile.TemporaryDirectory() as tmp:
