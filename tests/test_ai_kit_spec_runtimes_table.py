@@ -13,7 +13,7 @@ from contextlib import redirect_stdout
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import commands, detection
+from ai_kit_spec import commands, detection, execute_dispatch
 from ai_kit_spec.cli import main
 from ai_kit_spec.detection import normalize_runtime_keys, runtime_id
 from ai_kit_spec.error_classifier import REASONS, STATUS_TO_REASON, reason_for_status
@@ -234,18 +234,17 @@ class TestLegacyEntryPoints(unittest.TestCase):
             "cursor",
         )
 
-    def test_builders_accept_the_legacy_name(self):
-        self.assertEqual(
-            commands.build_reviewer_command("cursor"),
-            commands.build_reviewer_command("cursor-agent"),
-        )
-        self.assertTrue(commands.build_reviewer_command("cursor").startswith("cursor-agent -p"))
+    def test_legacy_name_matches_the_runtime_id(self):
         self.assertIsNone(commands.execute_cli_error("cursor"))
         self.assertIsNone(commands.execute_cli_error("cursor-agent"))
         rejection = commands.execute_cli_error("claude")
         self.assertIsNotNone(rejection)
         assert rejection is not None
         self.assertIn("cannot be an execution CLI", rejection)
+        self.assertEqual(
+            commands.build_reviewer_model_id("cursor", "m", effort="high"),
+            commands.build_reviewer_model_id("cursor-agent", "m", effort="high"),
+        )
         self.assertEqual(
             commands.build_reviewer_model_id("cursor", "m", effort="high"),
             "m[effort=high]",
@@ -278,10 +277,8 @@ class TestLegacyEntryPoints(unittest.TestCase):
 class TestRegistryIdsInTable(unittest.TestCase):
     def test_command_and_codegraph_registries_use_table_ids(self):
         ids = set(detection.RUNTIMES)
-        builder_clis = {cli_name for _kind, cli_name in commands._COMMAND_BUILDERS}
-        self.assertTrue(builder_clis <= ids)
         self.assertTrue(set(commands.SUPPORTED_EXECUTE_CLIS) <= ids)
-        self.assertTrue(set(commands.NO_HARD_SANDBOX_CLIS) <= ids)
+        self.assertTrue(set(execute_dispatch.OS_SANDBOXED_EXEC) <= ids)
         self.assertTrue(set(detection._SUPPORTED_CODEGRAPH_CLIENTS) <= ids)
         self.assertTrue(set(detection._MCP_LIST_COMMANDS) <= ids)
         self.assertTrue(set(detection._CODEGRAPH_CAPABLE_MULTI_PROVIDER_CLIS) <= ids)

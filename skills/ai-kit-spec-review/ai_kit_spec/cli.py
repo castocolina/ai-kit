@@ -23,7 +23,7 @@ from ai_kit_spec.catalog_build import (
 )
 from ai_kit_spec.commands import (
     ResolvedReviewer,
-    build_reviewer_command,
+    build_grok_command,
     build_reviewer_model_id,
     execute_cli_error,
     render_reviewer_command,
@@ -41,6 +41,7 @@ from ai_kit_spec.config_io import (
 )
 from ai_kit_spec.detection import (
     LOOPBACK_URLOPEN,
+    RUNTIMES,
     build_runtimes_snapshot,
     cache_runtimes_path,
     detect_current_runtime,
@@ -827,20 +828,27 @@ def _cmd_infer_vendor(args: argparse.Namespace, deps: CliDeps) -> int:
     return 0
 
 def _cmd_build_command(args: argparse.Namespace, deps: CliDeps) -> int:
-    params = {}
-    if args.effort:
-        params["effort"] = args.effort
-    if args.service_tier:
-        params["service_tier"] = args.service_tier
     rid = runtime_id(args.runtime)
-    if rid == "cursor":
-        params["mode"] = args.mode
-    try:
-        print(build_reviewer_command(rid, **params))
-    except ValueError as exc:
-        print(f"build-command: {exc}", file=sys.stderr)
-        return 1
-    return 0
+    row = RUNTIMES.get(rid)
+    if row is not None and row.runner:
+        spec = RunnerSpec(
+            rid, "{model}", "review", 600,
+            effort=args.effort, service_tier=args.service_tier,
+            cursor_mode=args.mode if rid == "cursor" else None,
+        )
+        argv = build_runner_argv(spec, "<runner>", "node")
+        print(json.dumps({"kind": "runner", "argv": argv}))
+        print(f"build-command: review-spec.toml stores runtime and model for {rid}; "
+              f"the runner builds this argv at dispatch", file=sys.stderr)
+        return 0
+    if rid == "grok":
+        print(json.dumps({"kind": "custom", "command": build_grok_command()}))
+        print("build-command: grok has no runner formula; store this as a custom entry's "
+              "command with no runtime (trust-gated like any custom command)", file=sys.stderr)
+        return 0
+    print(f"build-command: {rid} has no runner formula; register it as a custom entry with a "
+          f"hand-written command", file=sys.stderr)
+    return 1
 
 def _cmd_build_model_id(args: argparse.Namespace, deps: CliDeps) -> int:
     fast = {"true": True, "false": False, None: None}[args.fast]

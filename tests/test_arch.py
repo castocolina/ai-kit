@@ -442,6 +442,39 @@ def check_retired_literals(relpath, tree):
     return hits
 
 
+# Rule 11: one supervision core. A new process session is how a supervisor owns a
+# killable group, so it may appear only in the runner and the two probes that are not
+# supervisors (the opencode server probe, and the curated-config catalog probe).
+_START_NEW_SESSION_ALLOWED = frozenset({
+    "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py",
+    "skills/ai-kit-spec-review/ai_kit_spec/detection.py",
+    "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/catalog_adapter.py",
+})
+_SUPERVISOR_OWNER = "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py"
+
+
+def supervisor_spawn_count(tree):
+    """How many calls start a new session with the constant True."""
+    return len(check_one_supervisor("", tree))
+
+
+def check_one_supervisor(relpath, tree):
+    """Rule 11: a `start_new_session=True` call outside the allowlist is a second supervisor."""
+    hits = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg != "start_new_session":
+                continue
+            if not (isinstance(kw.value, ast.Constant) and kw.value.value is True):
+                continue
+            hits.append(f"{relpath}:{kw.lineno}: start_new_session=True")
+    if relpath in _START_NEW_SESSION_ALLOWED:
+        return []
+    return hits
+
+
 # --------------------------------------------------------------------------- #
 # Live-tree tests — every rule must pass against the real render module.
 # --------------------------------------------------------------------------- #
@@ -518,6 +551,27 @@ class TestArchitecture(unittest.TestCase):
         self.assertEqual([], violations)
         expected = set().union(*_RETIRED_LITERALS.values())
         self.assertEqual(expected, seen_allowlist)
+
+    def test_rule11_one_supervisor(self):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        violations = []
+        owner_count = 0
+        for top in ("skills", "tools"):
+            for dirpath, _dirnames, filenames in os.walk(os.path.join(repo_root, top)):
+                for filename in filenames:
+                    if not filename.endswith(".py"):
+                        continue
+                    path = os.path.join(dirpath, filename)
+                    relpath = os.path.relpath(path, repo_root).replace(os.sep, "/")
+                    with open(path, encoding="utf-8") as handle:
+                        tree = ast.parse(handle.read(), filename=path)
+                    violations.extend(check_one_supervisor(relpath, tree))
+                    if relpath == _SUPERVISOR_OWNER:
+                        owner_count = supervisor_spawn_count(tree)
+        self.assertEqual([], violations)
+        self.assertIsNotNone(owner_count)
+        assert owner_count is not None
+        self.assertGreaterEqual(owner_count, 1)
 
     def test_rule9_broad_except_only_in_listed_backstops(self):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -748,6 +802,14 @@ class TestArchNonVacuity(unittest.TestCase):
                     "ai_kit_spec_superpowers/dispatch_injection.py")
         self.assertEqual(1, len(check_retired_literals(dispatch, mode)))
         self.assertEqual(1, len(check_retired_literals("skills/other.py", mode)))
+
+    def test_rule11_flags_a_second_supervisor(self):
+        bad = ast.parse('subprocess.Popen(["x"], start_new_session=True)\n')
+        self.assertEqual(1, len(check_one_supervisor("skills/other.py", bad)))
+        self.assertEqual([], check_one_supervisor(_SUPERVISOR_OWNER, bad))
+        self.assertEqual(0, supervisor_spawn_count(ast.parse("x = 1\n")))
+        variable = ast.parse("subprocess.Popen([\"x\"], start_new_session=flag)\n")
+        self.assertEqual([], check_one_supervisor("skills/other.py", variable))
 
     def test_rule9_flags_unlisted_broad_except(self):
         src = (

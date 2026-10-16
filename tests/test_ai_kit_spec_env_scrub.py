@@ -1,5 +1,5 @@
 """HARD-04 (D-14/R9) end-to-end pin: a REAL child process spawned through every cross-AI
-dispatcher (dispatch_with_heartbeat, dispatch_with_polling, quota.probe_reviewer_quota,
+dispatcher (the runner, the custom launcher, quota.probe_reviewer_quota,
 execute_dispatch.dispatch_execute, reviewer_dispatch.dispatch_reviewer) with all eleven
 host-signal variables set in the parent environment sees none of them, while PATH and HOME
 pass through; with no host signal set, the child sees the same names the parent had.
@@ -10,6 +10,7 @@ sys.path setup below is relative to this test file's own __file__, never an abso
 import json
 import os
 import shlex
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,7 +19,14 @@ import unittest.mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
 from ai_kit_spec import dispatch, execute_dispatch, quota, reviewer_dispatch
-from ai_kit_spec.runner_dispatch import RunnerResult, RunnerSeams
+from ai_kit_spec.runner_dispatch import (
+    CustomSpec,
+    RunnerResult,
+    RunnerSeams,
+    RunnerSpec,
+    run_custom_command,
+    run_runner,
+)
 
 HOST_SIGNALS = [
     "AI_AGENT",
@@ -57,33 +65,49 @@ def _read_child_env_names(outfile: str) -> set:
         return set(json.load(f))
 
 
+def _dump_popen(outfile: str):
+    """A Popen seam that runs the env-dump script instead of the runner's argv.
+
+    The runner builds `node <template> ...` and feeds the prompt on stdin; this seam keeps
+    every other spawn detail (the env, the session) and points the child at the dump."""
+    script = os.path.join(os.path.dirname(outfile), "dump_env.py")
+
+    def spawn(argv, **kwargs):
+        del argv
+        return subprocess.Popen([sys.executable, script, outfile], **kwargs)
+
+    return spawn
+
+
 def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
     """Runs one real child through EACH of the five dispatchers, each writing its own
     environment-name dump to its own temp file, and returns {dispatcher: name-set}."""
     results = {}
     signals = {s: "1" for s in HOST_SIGNALS}
     with unittest.mock.patch.dict(os.environ, signals):
-        # 1. dispatch_with_heartbeat
-        out = os.path.join(tmp, "heartbeat.json")
-        result = dispatch.dispatch_with_heartbeat(
-            shlex.split(_command_template(script, out)),
+        # 1. the runner: the one supervision core for a table runtime
+        out = os.path.join(tmp, "runner.json")
+        result = run_runner(
+            RunnerSpec("opencode", "m", "review", timeout),
             "p",
-            heartbeat_interval=1,
-            timeout=timeout,
-            seams=dispatch.HeartbeatDispatchSeams(print_fn=lambda *_a: None),
+            seams=RunnerSeams(
+                which_fn=lambda _name: sys.executable,
+                runner_path_fn=lambda: script,
+                popen_fn=_dump_popen(out),
+                print_fn=lambda *_a: None,
+            ),
         )
-        assert result["returncode"] == 0, result
-        results["dispatch_with_heartbeat"] = _read_child_env_names(out)
-        # 2. dispatch_with_polling
-        out = os.path.join(tmp, "polling.json")
-        result = dispatch.dispatch_with_polling(
-            [sys.executable, script, out],
+        assert result.returncode == 0, result
+        results["run_runner"] = _read_child_env_names(out)
+        # 2. the custom launcher
+        out = os.path.join(tmp, "custom.json")
+        result = run_custom_command(
+            CustomSpec("k", [sys.executable, script, out], [timeout]),
             "p",
-            timeout_tiers=[timeout],
-            seams=dispatch.PollingDispatchSeams(print_fn=lambda *_a: None),
+            seams=RunnerSeams(print_fn=lambda *_a: None),
         )
-        assert result["returncode"] == 0, result
-        results["dispatch_with_polling"] = _read_child_env_names(out)
+        assert result.returncode == 0, result
+        results["run_custom_command"] = _read_child_env_names(out)
         # 3. probe_reviewer_quota: the runner seam's env_fn is what the child would get
         captured = {}
 

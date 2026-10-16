@@ -4,7 +4,7 @@ ai-kit-spec-execute-superpowers. Never bypasses subagent-driven-development (des
 injection's output is an INPUT to that harness's own "Dispatch the implementer" step, not a
 replacement for it, and dispatch_superpowers_task is the ONLY place an external_cli injection
 actually runs a subprocess -- always through the existing, live-verified
-ai_kit_spec.execute_dispatch.dispatch_execute path, never a raw dispatch_with_heartbeat call and
+ai_kit_spec.execute_dispatch.dispatch_execute path, never a second supervisor and
 never a target_dir placeholder baked in ahead of the real dispatch call (HIGH finding)."""
 import os
 import re
@@ -368,8 +368,8 @@ def dispatch_superpowers_task(request: DispatchTaskRequest,
     a real, caller-supplied path at the moment of dispatch -- never resolved ahead of time and
     never a placeholder string (HIGH finding). Always routes through
     ai_kit_spec.execute_dispatch.dispatch_execute, which builds the real execute-mode command,
-    composes the reinforcement/tooling/soft-confinement prose, and performs the real dispatch via
-    dispatch_with_heartbeat -- this function adds no dispatch mechanics of its own."""
+    composes the reinforcement/tooling/soft-confinement prose, and runs it through the one
+    supervision core -- this function adds no dispatch mechanics of its own."""
     if request.injection.get("mode") != "external_cli":
         raise ValueError(
             f"dispatch_superpowers_task is for mode='external_cli' injections only -- got "

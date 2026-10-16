@@ -62,7 +62,7 @@ from ai_kit_spec.cli import main
 from ai_kit_spec.commands import (
     ResolvedReviewer,
     build_cursor_agent_model_id,
-    build_reviewer_command,
+    build_grok_command,
     build_reviewer_model_id,
     render_reviewer_command,
 )
@@ -3105,84 +3105,14 @@ class TestFilterLadderByPurpose(unittest.TestCase):
         self.assertFalse(fell_back)
 
 
-class TestBuildReviewerCommand(unittest.TestCase):
-    def test_codex_bakes_effort_and_service_tier_as_separate_dash_c_flags(self):
-        cmd = build_reviewer_command("codex", effort="low", service_tier="fast")
-        self.assertIn("-m {model}", cmd)
-        self.assertIn("model_reasoning_effort='\"low\"'", cmd)
-        self.assertIn("service_tier='\"fast\"'", cmd)
-        self.assertNotIn("{prompt}", cmd)  # stdin-only — confirmed live
-        self.assertIn("--sandbox read-only", cmd)
-
-    def test_codex_omits_unset_knobs(self):
-        cmd = build_reviewer_command("codex")
-        self.assertNotIn("model_reasoning_effort", cmd)
-        self.assertNotIn("service_tier", cmd)
-
-    def test_claude_command_shape(self):
-        # no {prompt} — confirmed live: `claude -p` with no positional
-        # prompt reads it from stdin
-        self.assertEqual(
-            build_reviewer_command("claude"), "claude -p --model {model} --output-format text"
-        )
-
+class TestBuildGrokCommand(unittest.TestCase):
     def test_grok_command_shape(self):
         # corrected 2026-08-29: `-p -` does NOT read from stdin -- it sends the literal
         # string "-" as the prompt (confirmed live). {prompt} is the correct placeholder,
-        # shlex-quoted by render_reviewer_command like every other builder.
+        # substituted raw into one argv element by render_reviewer_command.
         self.assertEqual(
-            build_reviewer_command("grok"), "grok -p {prompt} -m {model} --output-format plain"
+            build_grok_command(), "grok -p {prompt} -m {model} --output-format plain"
         )
-
-    def test_gemini_no_longer_registered(self):
-        # removed 2026-08-29 -- Gemini CLI is deprecated; never fall back to
-        # a guessed shape for a CLI outside the registry
-        with self.assertRaises(ValueError):
-            build_reviewer_command("gemini")
-
-    def test_opencode_command_shape(self):
-        # no {prompt} — confirmed live: `opencode run -m {model}` with no
-        # positional message reads it from stdin
-        self.assertEqual(build_reviewer_command("opencode"), "opencode run -m {model}")
-
-    def test_cursor_agent_defaults_to_plan_mode(self):
-        cmd = build_reviewer_command("cursor-agent")
-        self.assertIn("--mode plan", cmd)
-        self.assertIn("--trust", cmd)
-        self.assertIn("--model {model}", cmd)
-        # no {prompt} — confirmed live: cursor-agent's -p/--print is a
-        # boolean flag; with it set the process reads stdin instead
-        self.assertNotIn("{prompt}", cmd)
-        self.assertIn("cursor-agent -p ", cmd)
-
-    def test_cursor_agent_accepts_ask_mode(self):
-        cmd = build_reviewer_command("cursor-agent", mode="ask")
-        self.assertIn("--mode ask", cmd)
-
-    def test_cursor_agent_rejects_a_write_capable_mode(self):
-        with self.assertRaises(ValueError):
-            build_reviewer_command("cursor-agent", mode="default")
-
-    def test_unknown_cli_raises_value_error(self):
-        with self.assertRaises(ValueError):
-            build_reviewer_command("nonexistent-cli")
-
-    def test_built_command_renders_through_render_reviewer_command(self):
-        # the factory's output must still be a valid command template —
-        # {model} fillable exactly like a hand-written one. codex's
-        # template has no {prompt} (stdin-only, confirmed live), so
-        # render_reviewer_command just leaves the prompt text unused here
-        # — delivery happens via probe_reviewer_quota's/the orchestrator's
-        # stdin redirect instead, not by string substitution.
-        cmd = build_reviewer_command("codex", effort="high")
-        resolved = ResolvedReviewer(
-            key="codex-gpt", model="gpt-5.2", vendor="openai",
-            runtime="codex", command=cmd, extra={},
-        )
-        filled = render_reviewer_command(resolved, "hello")
-        self.assertIn("gpt-5.2", filled)
-        self.assertIn('model_reasoning_effort="high"', filled)
-        self.assertNotIn("hello", filled)
 
 
 class TestBuildReviewerModelId(unittest.TestCase):
@@ -4584,35 +4514,65 @@ class TestMainCli(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIsNone(json.loads(buf.getvalue())["vendor"])
 
-    def test_build_command_prints_the_built_template(self):
+    def test_build_command_codex_prints_runner_argv(self):
         import io
-        from contextlib import redirect_stdout
+        from contextlib import redirect_stderr, redirect_stdout
 
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            code = main(["build-command", "--cli", "codex", "--effort", "high"])
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(["build-command", "--runtime", "codex", "--effort", "high"])
         self.assertEqual(code, 0)
-        self.assertIn("model_reasoning_effort='\"high\"'", buf.getvalue())
-
-    def test_build_command_unknown_cli_exits_nonzero(self):
-        import io
-        from contextlib import redirect_stderr
-
-        buf = io.StringIO()
-        with redirect_stderr(buf):
-            code = main(["build-command", "--cli", "nonexistent-cli"])
-        self.assertEqual(code, 1)
-        self.assertIn("no command builder", buf.getvalue())
+        body = json.loads(out.getvalue())
+        self.assertEqual(body["kind"], "runner")
+        argv = body["argv"]
+        self.assertIn("--prefer", argv)
+        self.assertIn("codex", argv)
+        self.assertIn("--model-codex", argv)
+        self.assertIn("{model}", argv)
+        self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
+        self.assertIn("review-spec.toml stores runtime and model", err.getvalue())
+        self.assertIn("codex", err.getvalue())
 
     def test_build_command_cursor_agent_passes_mode_flag(self):
         import io
-        from contextlib import redirect_stdout
+        from contextlib import redirect_stderr, redirect_stdout
 
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            code = main(["build-command", "--cli", "cursor-agent", "--mode", "ask"])
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(["build-command", "--cli", "cursor-agent", "--mode", "plan"])
         self.assertEqual(code, 0)
-        self.assertIn("--mode ask", buf.getvalue())
+        body = json.loads(out.getvalue())
+        self.assertEqual(body["kind"], "runner")
+        argv = body["argv"]
+        self.assertEqual(argv[argv.index("--cursor-mode") + 1], "plan")
+        self.assertIn("review-spec.toml stores runtime and model", err.getvalue())
+
+    def test_build_command_grok_prints_custom_template(self):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(["build-command", "--runtime", "grok"])
+        self.assertEqual(code, 0)
+        body = json.loads(out.getvalue())
+        self.assertEqual(body, {
+            "kind": "custom",
+            "command": "grok -p {prompt} -m {model} --output-format plain",
+        })
+        self.assertIn("custom entry", err.getvalue())
+
+    def test_build_command_unknown_runtime_exits_nonzero(self):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(["build-command", "--runtime", "gemini"])
+        self.assertEqual(code, 1)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("hand-written command", err.getvalue())
+        self.assertIn("gemini", err.getvalue())
 
     def test_build_model_id_applies_cursor_agent_overrides(self):
         import io
@@ -5118,449 +5078,22 @@ class TestDispatchExecute(unittest.TestCase):
         self.assertTrue(any("Phase 22" in line for line in printed))
 
 
-class TestDispatchWithHeartbeat(unittest.TestCase):
-    def test_default_print_fn_writes_heartbeat_to_stderr_not_stdout(self):
-        # A caller capturing stdout as a real artifact (e.g. dispatch-execute's --stdout-only
-        # mode, used as a drop-in GSD workflow.cross_ai_command) must never see heartbeat text
-        # mixed into it -- the default print_fn must write to stderr, never stdout.
-        import io
-        from contextlib import redirect_stderr, redirect_stdout
-
-        class FakeProcess:
-            def __init__(self):
-                self.stdin = unittest.mock.MagicMock()
-                self.returncode = 0
-                self._attempts = 0
-
-            def communicate(self, input=None, timeout=None):
-                self._attempts += 1
-                if self._attempts < 2:
-                    raise subprocess.TimeoutExpired(cmd="x", timeout=timeout or 0.0)
-                return ("done", "")
-
-        fake_time = iter([0, 1, 2]).__next__
-        out, err = io.StringIO(), io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            dispatch.dispatch_with_heartbeat(
-                ["echo", "hi"],
-                "prompt text",
-                heartbeat_interval=1,
-                timeout=30,
-                seams=dispatch.HeartbeatDispatchSeams(
-                    popen_fn=lambda *a, **k: FakeProcess(), time_fn=fake_time
-                ),
-            )
-        self.assertEqual(out.getvalue(), "")
-        self.assertIn("still running", err.getvalue())
-
-    def test_prints_timestamped_heartbeat_while_process_runs(self):
-        class FakeProcess:
-            def __init__(self):
-                self.stdin = unittest.mock.MagicMock()
-                self.returncode = 0
-                self._attempts = 0
-
-            def communicate(self, input=None, timeout=None):
-                self._attempts += 1
-                if self._attempts < 3:
-                    raise subprocess.TimeoutExpired(cmd="x", timeout=timeout or 0.0)
-                return ("done", "")
-
-        printed = []
-        fake_time = iter([0, 1, 2, 3]).__next__
-        dispatch.dispatch_with_heartbeat(
-            ["echo", "hi"],
-            "prompt text",
-            heartbeat_interval=1,
-            timeout=30,
-            seams=dispatch.HeartbeatDispatchSeams(
-                popen_fn=lambda *a, **k: FakeProcess(), time_fn=fake_time, print_fn=printed.append
-            ),
-        )
-        self.assertTrue(any("still running" in line for line in printed))
-
-    def test_delivers_prompt_via_communicate_never_via_manual_stdin_write(self):
-        class FakeProcess:
-            returncode = 0
-
-            def __init__(self):
-                self.stdin = unittest.mock.MagicMock()
-
-            def communicate(self, input=None, timeout=None):
-                assert input == "the prompt", "prompt must be delivered via communicate(input=...)"
-                return ("done", "")
-
-        proc = FakeProcess()
-        dispatch.dispatch_with_heartbeat(
-            ["cat"],
-            "the prompt",
-            heartbeat_interval=60,
-            timeout=30,
-            seams=dispatch.HeartbeatDispatchSeams(
-                popen_fn=lambda *a, **k: proc, print_fn=lambda *a: None
-            ),
-        )
-        proc.stdin.write.assert_not_called()
-
-    def test_returns_stdout_stderr_and_returncode_on_clean_completion(self):
-        class FakeProcess:
-            returncode = 0
-            stdin = unittest.mock.MagicMock()
-
-            def communicate(self, input=None, timeout=None):
-                return ("all good", "")
-
-        result = dispatch.dispatch_with_heartbeat(
-            ["echo", "hi"],
-            "prompt",
-            heartbeat_interval=60,
-            timeout=30,
-            seams=dispatch.HeartbeatDispatchSeams(
-                popen_fn=lambda *a, **k: FakeProcess(), print_fn=lambda *a: None
-            ),
-        )
+class TestExecuteCliError(unittest.TestCase):
+    def test_execute_error_message_names_the_supported_clis(self):
+        # execute_cli_error is the pre-spawn screen every CLI calls first.
+        claude = commands.execute_cli_error("claude")
+        grok = commands.execute_cli_error("grok")
         self.assertEqual(
-            result, {"returncode": 0, "stdout": "all good", "stderr": "", "timed_out": False}
-        )
-
-    def test_kills_process_group_and_still_returns_output_collected_before_the_kill(self):
-        class FakeProcess:
-            returncode = None
-            stdin = unittest.mock.MagicMock()
-            pid = 1234
-
-            def __init__(self):
-                self.killed = False
-
-            def communicate(self, input=None, timeout=None):
-                if self.killed:
-                    self.returncode = -9
-                    return ("partial output before kill", "")
-                raise subprocess.TimeoutExpired(cmd="x", timeout=timeout or 0.0)
-
-        proc = FakeProcess()
-        killed_targets = []
-
-        def fake_kill_fn(p):
-            killed_targets.append(p)
-            p.killed = True
-
-        result = dispatch.dispatch_with_heartbeat(
-            ["sleep", "999"],
-            "prompt",
-            heartbeat_interval=1000,
-            timeout=1,
-            seams=dispatch.HeartbeatDispatchSeams(
-                popen_fn=lambda *a, **k: proc,
-                time_fn=iter([0, 2]).__next__,
-                kill_fn=fake_kill_fn,
-                print_fn=lambda *a: None,
-            ),
-        )
-        self.assertTrue(result["timed_out"])
-        self.assertEqual(killed_targets, [proc])
-        self.assertEqual(result["stdout"], "partial output before kill")
-
-
-class TestDispatchWithPolling(unittest.TestCase):
-    class _FakeProc:
-        def __init__(self, returncode_after_polls):
-            self._polls_left = returncode_after_polls
-            self.returncode = None
-            self.pid = 4242
-            self.killed = False
-
-        def poll(self):
-            if self._polls_left <= 0:
-                self.returncode = 0
-            else:
-                self._polls_left -= 1
-            return self.returncode
-
-        def wait(self, timeout=None):
-            return self.returncode
-
-    def _fake_kill(self, proc):
-        proc.killed = True
-        proc.returncode = -9
-
-    def test_single_tier_success_writes_prompt_and_returns_captured_output(self):
-        written = {}
-
-        def fake_popen(command, stdin, stdout, stderr, start_new_session, env):
-            del start_new_session
-            del env
-            written["command"] = command
-            written["prompt"] = stdin.read()
-            # flush(): a REAL child writes straight to the dup'd fd, so its output is on
-            # disk the moment it is produced; a fake that writes through this Python file
-            # object has to flush to emulate that (dispatch_with_polling deliberately does
-            # not flush a handle it never writes to itself).
-            stdout.write(b"real report text")
-            stdout.flush()
-            stderr.write(b"")
-            return self._FakeProc(returncode_after_polls=1)
-
-        times = iter([0.0, 10.0, 20.0])
-        result = dispatch.dispatch_with_polling(
-            ["echo", "hi"],
-            "the prompt",
-            timeout_tiers=[600],
-            seams=dispatch.PollingDispatchSeams(
-                poll_interval=50,
-                popen_fn=fake_popen,
-                time_fn=lambda: next(times),
-                sleep_fn=lambda s: None,
-                kill_fn=self._fake_kill,
-                print_fn=lambda *a: None,
-            ),
-        )
-
-        self.assertEqual(written["command"], ["echo", "hi"])
-        self.assertEqual(written["prompt"], b"the prompt")
-        self.assertEqual(result["stdout"], "real report text")
-        self.assertEqual(result["returncode"], 0)
-        self.assertFalse(result["timed_out"])
-        self.assertEqual(result["tiers_tried"], 1)
-        self.assertEqual(result["final_timeout"], 600)
-
-    def test_first_tier_times_out_and_escalates_to_second_tier_which_succeeds(self):
-        attempts = []
-        killed = []
-
-        def recording_kill(proc):
-            killed.append(proc)
-            self._fake_kill(proc)
-
-        def fake_popen(command, stdin, stdout, stderr, start_new_session, env):
-            del start_new_session
-            del env
-            attempt_index = len(attempts)
-            attempts.append(attempt_index)
-            if attempt_index == 0:
-                # Never finishes within tier 1's budget -- polls_left huge.
-                return self._FakeProc(returncode_after_polls=10_000)
-            stdout.write(b"finished on tier 2")
-            stdout.flush()
-            return self._FakeProc(returncode_after_polls=0)
-
-        # Tier 1 (timeout=10): start=0.0, first poll check at elapsed=15 (>10 -> timeout).
-        # Tier 2 (timeout=600): start=15.0, next call elapsed=16 (<600 -> proceed), proc
-        # finishes on first poll() call (returncode_after_polls=0).
-        times = iter([0.0, 15.0, 15.0, 16.0])
-        result = dispatch.dispatch_with_polling(
-            ["slow-cmd"],
-            "p",
-            timeout_tiers=[10, 600],
-            seams=dispatch.PollingDispatchSeams(
-                poll_interval=50,
-                popen_fn=fake_popen,
-                time_fn=lambda: next(times),
-                sleep_fn=lambda s: None,
-                kill_fn=recording_kill,
-                print_fn=lambda *a: None,
-            ),
-        )
-
-        self.assertEqual(len(attempts), 2)
-        # The tier-1 process must actually have been KILLED, not merely abandoned -- a killed
-        # process group is the whole point of the escalation (a survivor would keep burning
-        # quota against the same prompt while tier 2 runs).
-        self.assertEqual([p.killed for p in killed], [True])
-        self.assertFalse(result["timed_out"])
-        self.assertEqual(result["tiers_tried"], 2)
-        self.assertEqual(result["final_timeout"], 600)
-        self.assertEqual(result["stdout"], "finished on tier 2")
-
-    def test_all_tiers_exhausted_returns_timed_out_with_last_tier_partial_output(self):
-        def fake_popen(command, stdin, stdout, stderr, start_new_session, env):
-            del start_new_session
-            del env
-            stdout.write(b"partial from last tier")
-            stdout.flush()
-            return self._FakeProc(returncode_after_polls=10_000)
-
-        times = iter([0.0, 15.0, 15.0, 25.0])
-        result = dispatch.dispatch_with_polling(
-            ["never-finishes"],
-            "p",
-            timeout_tiers=[10, 10],
-            seams=dispatch.PollingDispatchSeams(
-                poll_interval=50,
-                popen_fn=fake_popen,
-                time_fn=lambda: next(times),
-                sleep_fn=lambda s: None,
-                kill_fn=self._fake_kill,
-                print_fn=lambda *a: None,
-            ),
-        )
-
-        self.assertTrue(result["timed_out"])
-        self.assertEqual(result["tiers_tried"], 2)
-        self.assertEqual(result["stdout"], "partial from last tier")
-
-    def test_progress_lines_report_byte_growth_between_polls(self):
-        printed = []
-
-        def fake_popen(command, stdin, stdout, stderr, start_new_session, env):
-            del start_new_session
-            del env
-            stdout.write(b"x" * 100)
-            stdout.flush()
-            return self._FakeProc(returncode_after_polls=10_000)
-
-        # Two poll checks before the tier's own timeout hits.
-        times = iter([0.0, 5.0, 8.0, 12.0])
-        dispatch.dispatch_with_polling(
-            ["cmd"],
-            "p",
-            timeout_tiers=[10],
-            seams=dispatch.PollingDispatchSeams(
-                poll_interval=3,
-                popen_fn=fake_popen,
-                time_fn=lambda: next(times),
-                sleep_fn=lambda s: None,
-                kill_fn=self._fake_kill,
-                print_fn=lambda *a: printed.append(" ".join(map(str, a))),
-            ),
-        )
-
-        self.assertTrue(any("100 bytes" in line or "total 100" in line for line in printed))
-
-    def test_finished_process_is_noticed_without_waiting_a_full_poll_interval(self):
-        # Regression: the loop used to sleep min(poll_interval, remaining) between poll()
-        # checks, so a child that exited in one second still went unnoticed for up to 150s.
-        # poll_interval must govern the PROGRESS LINE only, never completion detection.
-        sleeps = []
-        printed = []
-        ticks = {"t": 0.0}
-
-        def fake_time():
-            now = ticks["t"]
-            ticks["t"] += 1.0
-            return now
-
-        def fake_popen(command, stdin, stdout, stderr, start_new_session, env):
-            del start_new_session
-            del env
-            stdout.write(b"done fast")
-            stdout.flush()
-            return self._FakeProc(returncode_after_polls=2)
-
-        result = dispatch.dispatch_with_polling(
-            ["fast-cmd"],
-            "p",
-            timeout_tiers=[600],
-            seams=dispatch.PollingDispatchSeams(
-                poll_interval=150,
-                popen_fn=fake_popen,
-                time_fn=fake_time,
-                sleep_fn=sleeps.append,
-                kill_fn=self._fake_kill,
-                print_fn=lambda *a: printed.append(" ".join(map(str, a))),
-            ),
-        )
-
-        self.assertFalse(result["timed_out"])
-        self.assertEqual(result["stdout"], "done fast")
-        self.assertTrue(sleeps, "expected the loop to have slept at least once")
-        self.assertLessEqual(max(sleeps), 5, "each wait must be a short slice, not poll_interval")
-        self.assertLessEqual(
-            sum(sleeps), 10, "a process finishing in seconds must not cost a whole poll_interval"
-        )
-        self.assertEqual(
-            printed, [], "no progress line is due before poll_interval seconds have elapsed"
-        )
-
-    def test_empty_timeout_tiers_raises_value_error_instead_of_returning_none(self):
-        # Reachable from a config with `timeout_tiers = []`; returning None used to surface
-        # downstream as an opaque TypeError where the CLI subscripts result["stdout"].
-        with self.assertRaises(ValueError):
-            dispatch.dispatch_with_polling(
-                [],
-                "p",
-                timeout_tiers=[],
-                seams=dispatch.PollingDispatchSeams(popen_fn=lambda *a, **k: None),
-            )
-
-
-class TestBuildExecuteCommand(unittest.TestCase):
-    def test_codex_uses_workspace_write_sandbox_with_target_dir(self):
-        cmd = commands.build_execute_command("codex", target_dir="/scratch/run1")
-        self.assertIn("--sandbox workspace-write", cmd)
-        self.assertIn("--skip-git-repo-check", cmd)
-        self.assertIn("-C /scratch/run1", cmd)
-        self.assertIn("-m {model}", cmd)
-
-    def test_codex_execute_honors_effort_and_service_tier(self):
-        # Fixed 2026-08-31: the execute builder used to silently drop these via its own bare
-        # **_params while the review builder honored them -- a real asymmetry the unified
-        # (kind, cli) registry exists specifically to prevent.
-        cmd = commands.build_execute_command(
-            "codex", target_dir="/scratch/run1", effort="high", service_tier="priority"
-        )
-        self.assertIn("-c model_reasoning_effort='\"high\"'", cmd)
-        self.assertIn("-c service_tier='\"priority\"'", cmd)
-
-    def test_cursor_agent_execute_has_no_hard_sandbox_but_is_dispatchable(self):
-        # Accepted-risk decision (2026-08-30): no CLI flag genuinely confines cursor-agent's
-        # writes (re-confirmed live even with --sandbox enabled) -- it's registered anyway,
-        # marked in NO_HARD_SANDBOX_CLIS so callers know to add soft-confinement prompt guidance.
-        cmd = commands.build_execute_command("cursor-agent", target_dir="/scratch/run1")
-        self.assertIn("--sandbox enabled", cmd)
-        self.assertIn("--workspace /scratch/run1", cmd)
-        self.assertIn("--force", cmd)
-        self.assertIn("--trust", cmd)
-        self.assertIn("--model {model}", cmd)
-        self.assertIn("cursor", commands.NO_HARD_SANDBOX_CLIS)
-
-    def test_opencode_execute_has_no_hard_sandbox_but_is_dispatchable(self):
-        # Accepted-risk decision (2026-08-30): no CLI flag confines opencode's writes at all
-        # (re-confirmed live with --dir + --auto) -- registered anyway, same as cursor-agent.
-        cmd = commands.build_execute_command("opencode", target_dir="/scratch/run1")
-        self.assertIn("--dir /scratch/run1", cmd)
-        self.assertIn("--auto", cmd)
-        self.assertIn("-m {model}", cmd)
-        self.assertIn("opencode", commands.NO_HARD_SANDBOX_CLIS)
-
-    def test_codex_requires_target_dir(self):
-        with self.assertRaises(ValueError):
-            commands.build_execute_command("codex")
-
-    def test_target_dir_with_shell_metacharacters_is_quoted(self):
-        cmd = commands.build_execute_command("codex", target_dir="/tmp/a b$(x)")
-        self.assertIn(shlex.quote("/tmp/a b$(x)"), cmd)
-
-    def test_grok_execute_is_a_hard_error_naming_the_supported_clis(self):
-        # D-15 (Phase 16.1): the grok execute builder was deleted -- it nested `sh -c` and
-        # could not run under GSD's no-shell word splitting. An explicit choice is an error,
-        # never a fallback to another CLI.
-        with self.assertRaises(ValueError) as ctx:
-            commands.build_execute_command("grok", target_dir="/scratch/run1")
-        self.assertIn("codex, cursor, opencode, pi", str(ctx.exception))
-
-    def test_claude_execute_is_a_hard_error_naming_the_supported_clis(self):
-        # D-15 (Phase 16.1): same deletion for claude -- claude is the main agent and was never
-        # a valid execute target; the explicit choice must fail before any spawn.
-        with self.assertRaises(ValueError) as ctx:
-            commands.build_execute_command("claude", target_dir="/scratch/run1")
-        self.assertIn("codex, cursor, opencode, pi", str(ctx.exception))
-
-    def test_execute_error_message_is_shared_by_the_factory_and_the_checker(self):
-        # Both paths surface the SAME supported-list message: the registry factory above and
-        # execute_cli_error (the pre-spawn screen every CLI calls first).
-        self.assertEqual(
-            commands.execute_cli_error("claude"),
+            claude,
             f"'claude' cannot be an execution CLI; supported execute CLIs: "
             f"{', '.join(commands.SUPPORTED_EXECUTE_CLIS)}",
         )
-        with self.assertRaises(ValueError) as ctx:
-            commands.build_execute_command("claude")
-        self.assertIn(str(commands.execute_cli_error("claude")), str(ctx.exception))
-
-    def test_unknown_cli_raises_value_error(self):
-        with self.assertRaises(ValueError):
-            commands.build_execute_command("nonexistent-cli")
+        self.assertIsNotNone(claude)
+        self.assertIsNotNone(grok)
+        assert claude is not None and grok is not None
+        self.assertIn("codex, cursor, opencode, pi", claude)
+        self.assertIn("codex, cursor, opencode, pi", grok)
+        self.assertIsNotNone(commands.execute_cli_error("nonexistent-cli"))
 
 
 class TestExecuteCliRejection(unittest.TestCase):
@@ -5611,18 +5144,16 @@ class TestExecuteCliRejection(unittest.TestCase):
         second = self._rejected_dispatch_run("claude")
         self.assertEqual(first, second)
 
-    def test_supported_execute_clis_and_builders_are_gone(self):
+    def test_supported_execute_clis_are_the_runner_table(self):
         self.assertEqual(commands.SUPPORTED_EXECUTE_CLIS, ("codex", "cursor", "opencode", "pi"))
-        self.assertFalse(
-            hasattr(commands, "_build_claude_execute_command")
-            or hasattr(commands, "_build_grok_execute_command")
-        )
 
-    def test_review_builders_for_claude_and_grok_are_unchanged(self):
-        # R10/D-15 boundary: only the EXECUTE builders were deleted; the review side keeps
-        # its claude and grok builders.
-        self.assertTrue(commands.build_reviewer_command("claude"))
-        self.assertTrue(commands.build_reviewer_command("grok"))
+    def test_grok_keeps_its_custom_entry_generator(self):
+        # R10/D-29 boundary: the table builders are gone; grok still generates the custom
+        # command a review-spec.toml entry stores.
+        self.assertEqual(
+            commands.build_grok_command(),
+            "grok -p {prompt} -m {model} --output-format plain",
+        )
 
 
 class TestExecuteLadderScreen(unittest.TestCase):
@@ -11718,74 +11249,6 @@ class TestDispatchReviewerRealChild(unittest.TestCase):
             self.assertEqual(child_env_keys & set(signals), set())
             self.assertIn("PATH", child_env_keys)
             self.assertIn("HOME", child_env_keys)
-
-
-class TestFakePopenArgvContract(unittest.TestCase):
-    """Fakes recording popen kwargs must see: no shell, a scrubbed env, a new session."""
-
-    def test_heartbeat_popen_receives_argv_no_shell_and_scrubbed_env(self):
-        class FakeProcess:
-            returncode = 0
-            stdin = unittest.mock.MagicMock()
-
-            def communicate(self, input=None, timeout=None):
-                return ("done", "")
-
-        recorded = {}
-
-        def fake_popen(*a, **kw):
-            recorded["argv"] = a[0] if a else kw.get("args")
-            recorded.update(kw)
-            return FakeProcess()
-
-        # C-WR-08: set the signal in the parent so the assertion fails if the scrub is off.
-        with unittest.mock.patch.dict(os.environ, {"AI_AGENT": "1"}):
-            dispatch.dispatch_with_heartbeat(
-                ["echo", "hi"],
-                "prompt",
-                heartbeat_interval=60,
-                timeout=30,
-                seams=dispatch.HeartbeatDispatchSeams(
-                    popen_fn=fake_popen, print_fn=lambda *a: None),
-            )
-        self.assertEqual(recorded["argv"], ["echo", "hi"])
-        self.assertFalse(recorded.get("shell", False))
-        self.assertNotIn("AI_AGENT", recorded["env"])
-        self.assertTrue(recorded["start_new_session"])
-
-    def test_heartbeat_empty_argv_raises_value_error(self):
-        with self.assertRaises(ValueError):
-            dispatch.dispatch_with_heartbeat(
-                [],
-                "p",
-                heartbeat_interval=60,
-                timeout=30,
-                seams=dispatch.HeartbeatDispatchSeams(print_fn=lambda *a: None),
-            )
-
-    def test_polling_empty_argv_raises_value_error(self):
-        with self.assertRaises(ValueError):
-            dispatch.dispatch_with_polling(
-                [],
-                "p",
-                timeout_tiers=[60],
-                seams=dispatch.PollingDispatchSeams(popen_fn=lambda *a, **k: None),
-            )
-
-    def test_heartbeat_spawn_oserror_maps_to_returncode_127(self):
-        def failing_popen(*a, **kw):
-            raise OSError("No such file or directory: 'nope-cli'")
-
-        result = dispatch.dispatch_with_heartbeat(
-            ["nope-cli"],
-            "p",
-            heartbeat_interval=60,
-            timeout=30,
-            seams=dispatch.HeartbeatDispatchSeams(popen_fn=failing_popen, print_fn=lambda *a: None),
-        )
-        self.assertEqual(result["returncode"], 127)
-        self.assertIn("No such file or directory", result["stderr"])
-        self.assertFalse(result["timed_out"])
 
 
 class TestProbeArgv(unittest.TestCase):

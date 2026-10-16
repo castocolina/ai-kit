@@ -858,7 +858,7 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
 
     def test_real_dispatch_execute_path_produces_a_real_workspace_write_command(self):
         # Confirms this wrapper genuinely reaches ai_kit_spec.execute_dispatch.dispatch_execute's
-        # OWN real runner spec (HIGH finding: never a raw dispatch_with_heartbeat call, never a
+        # OWN real runner spec (HIGH finding: never a second supervisor, never a
         # "{target_dir}" placeholder) by calling the real, un-mocked dispatch_execute and only
         # substituting ITS OWN runner_fn (the actual subprocess launch).
         import tempfile
