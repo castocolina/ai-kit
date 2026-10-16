@@ -332,38 +332,32 @@ def _validate_candidates(candidates: list) -> str | None:
     return None
 
 
-def load_affinity(path: str) -> tuple[dict | None, str | None]:
-    """Reads and validates ``skill_affinity.json``. Returns ``(doc, None)`` or an error."""
+def _load_doc(path: str, label: str, suffix: str, validate) -> tuple[dict | None, str | None]:
+    """Read one JSON document and validate it: ``(doc, None)`` or a one-line error."""
     try:
         with open(path, encoding="utf-8") as handle:
             doc = json.load(handle)
     except OSError as exc:
         reason = exc.strerror or "unreadable"
-        return None, f"skill_affinity {path}: cannot read ({reason}){_AFFINITY_SUFFIX}"
-    except ValueError:
-        return None, f"skill_affinity {path}: invalid JSON{_AFFINITY_SUFFIX}"
-    problem = skills_mod.validate_affinity(doc)
+        return None, f"{label} {path}: cannot read ({reason}){suffix}"
+    except (ValueError, RecursionError):  # JSONDecodeError, UnicodeDecodeError, deep nesting
+        return None, f"{label} {path}: invalid JSON{suffix}"
+    problem = validate(doc)
     if problem:
-        return None, f"skill_affinity {path}: {problem}{_AFFINITY_SUFFIX}"
+        return None, f"{label} {path}: {problem}{suffix}"
     return doc, None
+
+
+def load_affinity(path: str) -> tuple[dict | None, str | None]:
+    """Reads and validates ``skill_affinity.json``. Returns ``(doc, None)`` or an error."""
+    return _load_doc(path, "skill_affinity", _AFFINITY_SUFFIX, skills_mod.validate_affinity)
 
 
 def load_inventory(path: str) -> tuple[dict | None, str | None]:
     """Reads and validates the inventory JSON. Returns `(inventory, None)` on
     success, else `(None, "<one-line error>; rerun inventory")`. This is the only
     file the recommend CLI path reads."""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            inventory = json.load(handle)
-    except OSError as exc:
-        reason = exc.strerror or "unreadable"
-        return None, f"inventory {path}: cannot read ({reason}){_ERROR_SUFFIX}"
-    except ValueError:  # JSONDecodeError and UnicodeDecodeError
-        return None, f"inventory {path}: invalid JSON{_ERROR_SUFFIX}"
-    problem = _validate_inventory(inventory)
-    if problem:
-        return None, f"inventory {path}: {problem}{_ERROR_SUFFIX}"
-    return inventory, None
+    return _load_doc(path, "inventory", _ERROR_SUFFIX, _validate_inventory)
 
 
 def out_path_problem(out: str, inventory_path: str, inventory: dict) -> str | None:
@@ -425,23 +419,13 @@ def sibling_inventory_path(plan_path: str) -> str:
 
 def load_plan(path: str) -> tuple[dict | None, str | None]:
     """Read and validate a schema-2 plan. Returns ``(plan, None)`` or ``(None, error)``."""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            plan = json.load(handle)
-    except OSError as exc:
-        reason = exc.strerror or "unreadable"
-        return None, f"plan {path}: cannot read ({reason}){_PLAN_ERROR_SUFFIX}"
-    except ValueError:
-        return None, f"plan {path}: invalid JSON{_PLAN_ERROR_SUFFIX}"
+    return _load_doc(path, "plan", _PLAN_ERROR_SUFFIX, _plan_problem)
+
+
+def _plan_problem(plan) -> str | None:
     if not isinstance(plan, dict):
-        return None, f"plan {path}: top-level JSON is not an object{_PLAN_ERROR_SUFFIX}"
-    problem = _plan_envelope_problem(plan)
-    if problem:
-        return None, f"plan {path}: {problem}{_PLAN_ERROR_SUFFIX}"
-    problem = validate_plan(plan)
-    if problem:
-        return None, f"plan {path}: {problem}{_PLAN_ERROR_SUFFIX}"
-    return plan, None
+        return "top-level JSON is not an object"
+    return _plan_envelope_problem(plan) or validate_plan(plan)
 
 
 def load_plan_and_inventory(
