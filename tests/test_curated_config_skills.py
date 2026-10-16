@@ -1027,6 +1027,30 @@ class TestTrustedRoots(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.assertIn("outside the home directory", notes[0]["text"])
 
+    def test_outside_home_global_covered_by_absolute_root_wired(self):
+        """C-W3: an already-configured absolute trusted root covers an outside-home skill."""
+        affinity = {
+            "schema_version": 1,
+            "as_of": "t",
+            "families": [
+                {"id": "f", "skills": ["away"], "agents": ["gsd-planner"], "when": None},
+            ],
+        }
+        inv = _inv_existing_roots(["/opt/skills"], skills=[
+            _skill_row(
+                "away",
+                "global",
+                escapes_root=True,
+                real_dir="/opt/skills/away",
+                real_dir_home=None,
+            ),
+        ])
+        resolved, notes = skills.resolve(affinity, inv, skills.skill_facts(inv, [], {}), "standard")
+        self.assertEqual(resolved, {"gsd-planner": ["away"]})
+        self.assertEqual(notes, [])
+        candidates, _ = skills.trusted_roots(skills.wired_skills(resolved, inv), inv)
+        self.assertEqual(candidates, [])
+
     def test_project_outside_home_still_wired(self):
         affinity = {
             "schema_version": 1,

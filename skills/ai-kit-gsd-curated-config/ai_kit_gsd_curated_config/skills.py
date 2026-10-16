@@ -214,25 +214,29 @@ def _record_unwired(ctx: _ResolveCtx, skill: str, text: str) -> None:
     ctx.notes.append({"kind": "skill_unwired", "key": skill, "text": text})
 
 
-def _can_wire(name: str, ctx: _ResolveCtx) -> bool:
-    row = locate(name, ctx.inv)
+def unwired_reason(name: str, inv: dict) -> str | None:
+    """``None`` when ``name`` can be wired; else the note text (``""``: not installed, silent)."""
+    row = locate(name, inv)
     if row is None:
-        if _escaping_project_only(name, ctx.inv):
-            _record_unwired(
-                ctx,
-                name,
-                f"not wired: {name} (its project copy resolves outside the project)",
-            )
-        return False
+        if _escaping_project_only(name, inv):
+            return f"not wired: {name} (its project copy resolves outside the project)"
+        return ""
     if (
         row.get("root_kind") == "global"
         and row.get("escapes_root")
-        and not _has_usable_project_copy(name, ctx.inv)
+        and not _has_usable_project_copy(name, inv)
         and not row.get("real_dir_home")
+        and not covered("", row.get("real_dir") or "", existing_roots(inv))
     ):
-        _record_unwired(ctx, name, f"not wired: {name} resolves outside the home directory")
-        return False
-    return True
+        return f"not wired: {name} resolves outside the home directory"
+    return None
+
+
+def _can_wire(name: str, ctx: _ResolveCtx) -> bool:
+    reason = unwired_reason(name, ctx.inv)
+    if reason:
+        _record_unwired(ctx, name, reason)
+    return reason is None
 
 
 def _wire_agent(ctx: _ResolveCtx, fam_id: str, agent: str, skill_names: list) -> None:
