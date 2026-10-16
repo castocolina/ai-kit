@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 # Bootstraps every package root this plan's tests need. ai_kit_spec_superpowers (this plan) and
 # ai_kit_spec (Plan 1, Foundation) both live outside this file's own directory, on no search path
@@ -448,7 +449,11 @@ class TestBuildDispatchInjection(unittest.TestCase):
             with open(task_file, "w") as f:
                 f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
             quota_path = os.path.join(tmp, "quota.json")
-            with contextlib.redirect_stderr(stderr):
+            # Pin a non-Claude host: under Claude Code, claude/opus routes native and is exempt.
+            host_free = {k: v for k, v in os.environ.items()
+                         if k not in detection.HOST_SIGNAL_ENV_VARS}
+            with contextlib.redirect_stderr(stderr), \
+                    unittest.mock.patch.dict(os.environ, host_free, clear=True):
                 rc = superpowers_cli.main(
                     [
                         "resolve-injection",
