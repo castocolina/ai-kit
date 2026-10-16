@@ -975,5 +975,31 @@ def _decided_plan_followups(tmp):
     return project, env, inv_path, plan_path, config_path, inv, fake
 
 
+
+class TestFollowupSubprocessTimeouts(unittest.TestCase):
+    """B WR-01: a timed-out subprocess is a failed row, never an escaped exception."""
+
+    @staticmethod
+    def _raise_timeout(cmd, **_kw):
+        raise subprocess.TimeoutExpired(cmd, 600)
+
+    def test_effort_dry_run_timeout_is_unavailable(self) -> None:
+        self.assertIsNone(
+            followups.effort_dry_run_count(["node", "t", "effort"], self._raise_timeout, {})
+        )
+
+    def test_effort_dry_run_non_object_json_is_unavailable(self) -> None:
+        def run(cmd, **_kw):
+            return subprocess.CompletedProcess(cmd, 0, "[1, 2]", "")
+
+        self.assertIsNone(followups.effort_dry_run_count(["node"], run, {}))
+
+    def test_run_one_timeout_is_a_failed_result(self) -> None:
+        row = followups.FollowUp("installer", ["npx", "-y", "x"], "/p", "", "", "")
+        result = followups._run_one(row, self._raise_timeout, {})
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("timed out", result["stderr_tail"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -516,7 +516,7 @@ def verify_skills(
                 timeout=120,
                 env=env,
             )
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
             out[agent] = {"error": str(exc)}
             continue
         if proc.returncode != 0:
@@ -526,6 +526,9 @@ def verify_skills(
             data = json.loads(proc.stdout)
         except json.JSONDecodeError as exc:
             out[agent] = {"error": f"unparseable agent-skills JSON: {exc}"}
+            continue
+        if not isinstance(data, dict):
+            out[agent] = {"error": "agent-skills JSON is not an object"}
             continue
         warnings = data.get("warnings")
         out[agent] = {"warnings": warnings if isinstance(warnings, list) else []}
@@ -675,9 +678,12 @@ def _cleanup_committed(ctx: CleanupCtx) -> None:
                 f"{tail}; do not restore the backup"
             )
 
-    report["skill_check"] = verify_skills(
-        ctx.target, ctx.inputs, ctx.deps, _wired_agents(ctx.inputs.plan)
-    )
+    try:
+        report["skill_check"] = verify_skills(
+            ctx.target, ctx.inputs, ctx.deps, _wired_agents(ctx.inputs.plan)
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # post-commit: warn only
+        report["warnings"].append(f"skill check failed after commit: {exc}")
 
     if _marker_committed_or_gone(config_path) and progress.snapshot:
         try:
@@ -931,7 +937,10 @@ def _execute_apply(ctx: ExecuteCtx) -> tuple[int, dict]:
     _cleanup_committed(
         CleanupCtx(progress, config_path, project_dir, ctx.target, ctx.inputs, ctx.deps, ctx.report)
     )
-    _attach_followups(ctx.report, ctx.inputs, ctx.deps)
+    try:
+        _attach_followups(ctx.report, ctx.inputs, ctx.deps)
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # post-commit: warn only
+        ctx.report["warnings"].append(f"follow-ups could not be listed after commit: {exc}")
     return 0, ctx.report
 
 

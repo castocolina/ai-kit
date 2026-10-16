@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import subprocess
 import sys
 from typing import Any, NamedTuple
 
@@ -128,13 +129,15 @@ def effort_dry_run_count(argv: list[str], run_fn: Any, env: dict) -> int | None:
             timeout=120,
             env=env,
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError, subprocess.SubprocessError):
         return None
     if proc.returncode != 0:
         return None
     try:
         body = json.loads(proc.stdout or "{}")
     except json.JSONDecodeError:
+        return None
+    if not isinstance(body, dict):
         return None
     changes = body.get("changes")
     if not isinstance(changes, list):
@@ -384,7 +387,7 @@ def _run_one(row: FollowUp, run_fn: Any, env: dict) -> dict:
         rc = proc.returncode
         out = proc.stdout or ""
         err = proc.stderr or ""
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
         rc = 1
         out = ""
         err = str(exc)

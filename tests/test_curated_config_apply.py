@@ -1809,6 +1809,77 @@ class TestPreCommitExceptions(unittest.TestCase):
             self._assert_fresh_rolled_back(project, config_path)
 
 
+class _AgentSkillsTimeoutRun(_RecordingRun):
+    def __call__(self, cmd, **kw):
+        row = [str(part) for part in cmd]
+        if len(row) >= 4 and row[0] == "node" and row[3] == "agent-skills":
+            raise subprocess.TimeoutExpired(cmd, 120)
+        return super().__call__(cmd, **kw)
+
+
+class TestPostCommitNeverRaises(unittest.TestCase):
+    """B WR-01: after the commit point the skill check and follow-ups only warn."""
+
+    def test_skill_check_timeout_still_cleans_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (
+                project,
+                env,
+                inv_path,
+                plan_path,
+                config_path,
+                _inv,
+                fake,
+                runner,
+                _before_bytes,
+                _before_mode,
+            ) = _setup_reapply_change(tmp)
+            rec = _AgentSkillsTimeoutRun(fake, config_path=config_path)
+            code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            self.assertTrue(report["applied"])
+            rows = [r for k, r in report["skill_check"].items() if k != "skipped"]
+            self.assertTrue(rows)
+            for row in rows:
+                self.assertIn("timed out", row["error"])
+            self.assertIsNone(config_backup.read_marker(config_path))
+            self.assertFalse(os.path.isfile(runner + config_backup.SNAPSHOT_SUFFIX))
+
+    def test_skill_check_non_object_json_is_an_error_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _config_path, _inv, fake = _decided_plan(tmp)
+
+            class ListRun(_RecordingRun):
+                def __call__(self, cmd, **kw):
+                    row = [str(part) for part in cmd]
+                    if len(row) >= 4 and row[0] == "node" and row[3] == "agent-skills":
+                        return subprocess.CompletedProcess(cmd, 0, "[1]", "")
+                    return super().__call__(cmd, **kw)
+
+            code, report = _write_apply(plan_path, inv_path, project, env, ListRun(fake))
+            self.assertEqual(code, 0)
+            rows = [r for k, r in report["skill_check"].items() if k != "skipped"]
+            self.assertTrue(rows)
+            for row in rows:
+                self.assertIn("not an object", row["error"])
+
+    def test_unexpected_post_commit_errors_only_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, config_path, _inv, fake = _decided_plan(tmp)
+            rec = _RecordingRun(fake)
+            with mock.patch.object(
+                apply_mod, "verify_skills", side_effect=RuntimeError("probe exploded")
+            ), mock.patch.object(
+                apply_mod.followups, "build_followups", side_effect=RuntimeError("npx gone")
+            ):
+                code, report = _write_apply(plan_path, inv_path, project, env, rec)
+            self.assertEqual(code, 0)
+            self.assertTrue(report["applied"])
+            self.assertTrue(any("probe exploded" in w for w in report["warnings"]))
+            self.assertTrue(any("npx gone" in w for w in report["warnings"]))
+            self.assertIsNone(config_backup.read_marker(config_path))
+
+
 class TestCommitPointEdges(unittest.TestCase):
     def test_agent_skills_failure_still_commits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -380,8 +380,12 @@ def check_no_shell_true(tree):
 
 
 # Rule 9: the only places allowed to swallow every exception. Each is a documented
-# backstop that keeps one failure from blanking the status line or killing a TUI.
+# backstop that keeps one failure from blanking the status line or killing a TUI, or
+# (curated-config apply) from crashing a committed apply, where SPEC R13 says only warn.
+_CURATED_APPLY = "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/apply.py"
 _BROAD_EXCEPT_BACKSTOPS = frozenset({
+    (_CURATED_APPLY, "_cleanup_committed"),
+    (_CURATED_APPLY, "_execute_apply"),
     ("tools/wizard_app.py", "_apply_housekeeping"),
     ("tools/wizard_app.py", "_run_commit"),
     ("tools/status-line.py", "core_safe_build"),
