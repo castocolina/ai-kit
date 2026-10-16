@@ -41,18 +41,23 @@ def _runtime_cands(inv: dict, runner_id: str) -> list:
     return [c for c in inv["candidates"] if c.get("runtime") == runtime]
 
 
-def _pick_for_runner(runner_id: str, cands: list, rigor: str) -> Target:
-    ceiling = roles.host_ceiling(cands, presets.PRICE_PERCENTILE[rigor])
-    routers = sorted(
-        [
+def _declared_routers(pool: list, purpose: str) -> list:
+    """Confirmed routers whose name declares ``purpose``, sorted by model id."""
+    return sorted(
+        (
             c
-            for c in cands
+            for c in pool
             if c.get("is_router")
             and c.get("router_confirmed")
-            and c.get("name_declared_purpose") == "execute"
-        ],
+            and c.get("name_declared_purpose") == purpose
+        ),
         key=lambda c: c["model"],
     )
+
+
+def _pick_for_runner(runner_id: str, cands: list, rigor: str) -> Target:
+    ceiling = roles.host_ceiling(cands, presets.PRICE_PERCENTILE[rigor])
+    routers = _declared_routers(cands, "execute")
     if routers:
         model = routers[0]["model"]
         return Target(runner_id, model, "router-declared", _ROUTER_WHY, True, [])
@@ -99,10 +104,13 @@ def exec_default(host: str, targets: list) -> tuple[str, str]:
     return ("n", f"execution stays on the host for {host} (spec §6)")
 
 
+def timeout_ok(value) -> bool:
+    """The one runner-timeout rule (PT-07): an int, not a bool, at least MIN_TIMEOUT_S."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= MIN_TIMEOUT_S
+
+
 def timeout_value(existing) -> int:
-    if isinstance(existing, int) and not isinstance(existing, bool) and existing >= MIN_TIMEOUT_S:
-        return existing
-    return MIN_TIMEOUT_S
+    return existing if timeout_ok(existing) else MIN_TIMEOUT_S
 
 
 def manager_flags_value(existing) -> str:
@@ -207,19 +215,6 @@ def _vendor_keep(excluded: set[str | None]):
     return keep
 
 
-def _review_routers(pool: list[dict]) -> list[dict]:
-    return sorted(
-        [
-            c
-            for c in pool
-            if c.get("is_router")
-            and c.get("router_confirmed")
-            and c.get("name_declared_purpose") == "review"
-        ],
-        key=lambda c: c["model"],
-    )
-
-
 def _lane_rank_key(lane: Lane) -> tuple:
     if lane.source == "router-declared":
         return (0, lane.slug)
@@ -244,7 +239,7 @@ def _pick_lane(lane: dict, inv: dict, rigor: str, excluded: set[str | None]) -> 
     pool = lane_pool(lane, inv)
     if not pool:
         return None
-    routers = _review_routers(pool)
+    routers = _declared_routers(pool, "review")
     if routers:
         why = f"{_REVIEW_ROUTER_WHY}; exempt from vendor-different rule (D-04)"
         return _lane_row(lane, routers[0], rigor, "router-declared", why)

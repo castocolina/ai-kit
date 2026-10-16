@@ -578,11 +578,9 @@ def _validate_execution_coupling(plan: dict) -> str | None:
 
 
 def timeout_problem(label: str, value) -> str | None:
-    """The one runner-timeout rule (PT-07): an int, not a bool, at least MIN_TIMEOUT_S."""
-    floor = cross_ai.MIN_TIMEOUT_S
-    if isinstance(value, int) and not isinstance(value, bool) and value >= floor:
+    if cross_ai.timeout_ok(value):
         return None
-    return f"{label} must be an integer >= {floor} (got {value!r})"
+    return f"{label} must be an integer >= {cross_ai.MIN_TIMEOUT_S} (got {value!r})"
 
 
 def _validate_runner_timeout(plan: dict) -> str | None:
