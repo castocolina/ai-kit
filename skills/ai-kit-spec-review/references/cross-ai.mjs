@@ -129,7 +129,11 @@ const STATUS_TABLE = {
 const FINALIZE_CAP_MS = 10000;
 const KILL_GRACE_MS = 2000;
 const PIPE_DRAIN_MS = 2000;
+// gsd-tools run-with-timeout SIGKILLs the runner 3 s after forwarding a signal, and the CLI
+// runs in its own group, so the whole signal path (grace, kill, drain, tree) fits in 2.5 s.
+const SIGNAL_BUDGET_MS = 2500;
 const SIGNAL_GRACE_MS = 1000;
+const SIGNAL_DRAIN_MS = 500;
 const GIT_CAP_MS = 10000;
 const LIST_CAP_MS = 15000;
 const PI_RPC_ARGS = [
@@ -141,14 +145,30 @@ const PI_RPC_REQUEST = '{"id":"1","type":"get_available_models"}\n';
 let runStartedMs = Date.now();
 let liveFields = { cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean' };
 let finished = false;
+let finishedExit = 1;
 let runDeadline = 0;
 let finalizeBy = 0;
 let current = null;
 let currentFinalize = null;
 let aborting = 0;
+let signalBy = 0;
+let backstop = null;
+const tempDirs = new Set();
+const sleepers = new Set();
 
 function budgetMs(capMs, limit) {
-  return Math.max(0, Math.min(capMs, limit - Date.now()));
+  const end = aborting ? Math.min(limit, signalBy) : limit;
+  return Math.max(0, Math.min(capMs, end - Date.now()));
+}
+
+function makeTemp(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.add(dir);
+  return dir;
+}
+function dropTemp(dir) {
+  fs.rmSync(dir, { recursive: true, force: true });
+  tempDirs.delete(dir);
 }
 
 function log(text) {
@@ -157,6 +177,7 @@ function log(text) {
 }
 
 function finish(status, fields) {
+  if (finished) return finishedExit;
   const row = STATUS_TABLE[status] || { exit: 1, action: 'stop' };
   let action = fields.action ?? row.action;
   const tree = fields.tree ?? 'unknown';
@@ -173,10 +194,12 @@ function finish(status, fields) {
     `tree=${tree} action=${action}`;
   process.stderr.write(`${line}\n`);
   finished = true;
+  finishedExit = exit;
   return exit;
 }
 
 function exitFlushed(code) {
+  if (backstop) clearTimeout(backstop);
   const go = () => process.exit(code);
   const flushFd = (fd) => {
     try { fs.fsyncSync(fd); } catch { /* no fsync on this stream */ }
@@ -391,9 +414,6 @@ function runChild(bin, argv, opts = {}) {
   if (spawnMs <= 0) {
     return Promise.resolve({ code: null, signal: null, timedOut: true, spawnErr: null, stdout: '', stderr: '' });
   }
-  const signalPath = aborting > 0;
-  const graceCap = signalPath ? SIGNAL_GRACE_MS : KILL_GRACE_MS;
-  const drainCap = signalPath ? SIGNAL_GRACE_MS : PIPE_DRAIN_MS;
   return new Promise((resolve) => {
     let settled = false;
     let child = null;
@@ -404,29 +424,26 @@ function runChild(bin, argv, opts = {}) {
     let signal = null;
     const outChunks = [];
     const errChunks = [];
-    let hb = null;
 
+    // Caps are read when each wait starts, so a signal mid-finalize shortens what is left.
     const finalize = async (reason) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      if (hb) clearInterval(hb);
       if (currentFinalize === finalize) currentFinalize = null;
-      if (child) killGroup(child, 'SIGTERM');
-      if (child && child.exitCode === null && reason !== 'exit') {
-        await waitForExit(child, budgetMs(graceCap, finalizeBy));
-      }
       if (child) {
-        await Promise.all([
-          drainStream(child.stdout, budgetMs(drainCap, finalizeBy)),
-          drainStream(child.stderr, budgetMs(drainCap, finalizeBy)),
-        ]);
+        killGroup(child, 'SIGTERM');
+        if (child.exitCode === null && reason !== 'exit') {
+          await waitForExit(child, budgetMs(aborting ? SIGNAL_GRACE_MS : KILL_GRACE_MS, finalizeBy));
+        }
+        killGroup(child, 'SIGKILL');
+        const drainMs = budgetMs(aborting ? SIGNAL_DRAIN_MS : PIPE_DRAIN_MS, finalizeBy);
+        await Promise.all([drainStream(child.stdout, drainMs), drainStream(child.stderr, drainMs)]);
         child.stdout?.removeAllListeners('data');
         child.stderr?.removeAllListeners('data');
         child.stdin?.destroy();
         child.stdout?.destroy();
         child.stderr?.destroy();
-        killGroup(child, 'SIGKILL');
       }
       if (current === child) current = null;
       resolve({
@@ -572,7 +589,7 @@ async function treeState(cwd, limit) {
   if (headR.code === 0) head = headR.stdout.trim();
   else if (/unborn|unknown revision|bad object/i.test(headR.stderr)) head = null;
   else if (headR.code !== 0) return null;
-  const idxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-idx-'));
+  const idxDir = makeTemp('xai-idx-');
   const env = { ...process.env, GIT_INDEX_FILE: path.join(idxDir, 'index') };
   try {
     const addR = await runChild(git, ['add', '-A'], { cwd, env, capMs: GIT_CAP_MS, limit });
@@ -581,7 +598,7 @@ async function treeState(cwd, limit) {
     if (wtR.timedOut || wtR.spawnErr || wtR.code !== 0) return null;
     return { head, tree: wtR.stdout.trim() };
   } finally {
-    fs.rmSync(idxDir, { recursive: true, force: true });
+    dropTemp(idxDir);
   }
 }
 
@@ -598,12 +615,24 @@ function withExtra(cli, argv) {
 }
 
 for (const [sig, n] of [['SIGTERM', 15], ['SIGINT', 2], ['SIGHUP', 1]]) {
-  process.on(sig, async () => {
+  process.on(sig, () => {
     if (selfTestRoot) { selfTestAbort(n); return; }
+    if (aborting) {
+      // A second signal skips what is left of the grace period.
+      if (current) killGroup(current, 'SIGKILL');
+      return;
+    }
+    // main() owns the outcome: every wait below is now capped by signalBy, the CLI gets its
+    // grace and SIGKILL, the tree is read once more and main prints status=signal.
     aborting = n;
-    if (currentFinalize) await currentFinalize('signal');
-    const code = finish('signal', { ...liveFields, exit: 128 + n, tree: liveFields.tree });
-    exitFlushed(code);
+    signalBy = Date.now() + SIGNAL_BUDGET_MS;
+    for (const wake of [...sleepers]) wake();
+    if (currentFinalize) currentFinalize('signal');
+    backstop = setTimeout(() => {
+      if (current) killGroup(current, 'SIGKILL');
+      for (const dir of [...tempDirs]) dropTemp(dir);
+      exitFlushed(finish('signal', { ...liveFields, exit: 128 + n, tree: 'unknown' }));
+    }, SIGNAL_BUDGET_MS + 200);
   });
 }
 
@@ -625,12 +654,17 @@ async function runOnce(bin, argv, input, env, cwd, label) {
   return { ...r, stderr: errTail || r.stderr, outBytes };
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// A signal wakes every sleeper so the backoff never outlives the signal budget.
+const sleep = (ms) => new Promise((resolve) => {
+  const wake = () => { clearTimeout(t); sleepers.delete(wake); resolve(); };
+  const t = setTimeout(wake, ms);
+  sleepers.add(wake);
+});
 
 async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const backoff = opts.backoffS || CONFIG.backoffS;
   const beforeSig = opts.beforeSig ?? null;
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cross-ai-'));
+  const tmp = makeTemp('cross-ai-');
   const ctx = {
     cwd: process.cwd(), sid: crypto.randomUUID(), outFile: path.join(tmp, 'last-message.md'),
     codexEffort: opts.codexEffort, codexServiceTier: opts.codexServiceTier, cursorMode: opts.cursorMode,
@@ -675,13 +709,14 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         }
       }
       await sleep(wait);
+      if (aborting) return { ok: false, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
       const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
       const retry = retryArgv(name, rt, model, ctx, sid, mode, prompt);
       argv = retry.argv;
       input = retry.input;
     }
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    dropTemp(tmp);
   }
 }
 
@@ -790,7 +825,7 @@ const args = process.argv;
 const model = argOf('--model');
 const fakeMode = model.startsWith('fake/') ? model.slice(5) : '';
 const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('gc', pid); };
-const STICKY_FAKE = new Set(['hang', 'gcescape', 'outer-race']);
+const STICKY_FAKE = new Set(['hang', 'gcescape', 'outer-race', 'stubborn']);
 let stdinBuf = '';
 const FAKE_MODES = {
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
@@ -821,6 +856,13 @@ const FAKE_MODES = {
     process.exit(1);
   },
   reedit: () => { fs.appendFileSync('dirty.txt', 'more\n'); process.stdout.write('# Summary\nok'); },
+  stubborn: () => {
+    process.on('SIGTERM', () => {});
+    process.on('SIGINT', () => {});
+    fs.appendFileSync('a.txt', 'stubborn\n');
+    fs.writeFileSync('cli.ready', '1');
+    setInterval(() => {}, 1 << 30);
+  },
   hang: () => {
     const gc = spawn(process.execPath, ['-e', 'while(true){}'], { stdio: 'ignore' });
     recordGc(gc.pid);
@@ -1482,8 +1524,35 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '60'],
         signal: { when: (c) => fs.existsSync(path.join(c.repo, 'gc.pid')), sig: 'SIGTERM' },
         exit: 143,
-        status: /^AIKIT-XAI status=signal .* exit=143 .* action=stop$/,
+        // gc.pid is an untracked file the fake wrote, so the real tree is dirty.
+        status: /^AIKIT-XAI status=signal cli=pi model=fake\/hang exit=143 .* tree=dirty action=stop$/,
         check: (_r, ctx) => deadCheck(ctx, ['pi', 'gc']),
+      },
+      {
+        // CR-03/CR-04: a CLI that ignores SIGTERM after editing; the runner must report the
+        // real tree and SIGKILL the group well inside run-with-timeout's 3 s grace.
+        name: 'sigterm-stubborn',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/stubborn', '--timeout', '60'],
+        signal: { when: (c) => fs.existsSync(path.join(c.repo, 'cli.ready')), sig: 'SIGTERM', withinMs: 2900 },
+        exit: 143,
+        status: /^AIKIT-XAI status=signal cli=pi model=fake\/stubborn exit=143 .* tree=dirty action=stop$/,
+        check: (_r, ctx) => deadCheck(ctx, ['pi']),
+      },
+      {
+        name: 'sigterm-twice',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/stubborn', '--timeout', '60'],
+        signal: { when: (c) => fs.existsSync(path.join(c.repo, 'cli.ready')), sig: 'SIGTERM', again: 'SIGINT', withinMs: 2900 },
+        exit: 143,
+        status: /^AIKIT-XAI status=signal cli=pi model=fake\/stubborn exit=143 .* action=stop$/,
+        check: (_r, ctx) => deadCheck(ctx, ['pi']),
+      },
+      {
+        name: 'sigterm-backoff',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded', '--timeout', '60'],
+        config: { backoffS: [20] },
+        signal: { when: (c) => readOr(c.calls, '').includes('pi overloaded'), sig: 'SIGTERM', withinMs: 2900 },
+        exit: 143,
+        status: /^AIKIT-XAI status=signal cli=pi model=fake\/overloaded exit=143 .* tree=clean action=stop$/,
       },
       {
         // The harness itself: a runner killed mid-case leaves its CLI group behind; the
@@ -2009,6 +2078,7 @@ async function main(argv) {
   let last = null;
   let sawModel = false;
   for (const c of cands) {
+    if (aborting) break;
     if (!c.bin) { log(`cross-ai: ${c.name} not installed, skipping`); continue; }
     if (!c.model) {
       log(`cross-ai: no model configured for ${c.name} (--model-${c.name}), skipping`);
@@ -2023,6 +2093,7 @@ async function main(argv) {
     liveFields.cli = c.name;
     liveFields.model = c.model;
     const before = await treeState(process.cwd(), runDeadline);
+    if (aborting) break;
     if (before === null) {
       return finish('unverified', { ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1 });
     }
@@ -2041,20 +2112,26 @@ async function main(argv) {
     } else if (listing.reason !== 'no listing') {
       log(`cross-ai: ${c.name} model list unavailable (${listing.reason}); not preflighted`);
     }
+    if (aborting) break;
+    // From here until the next snapshot nothing proves the tree clean (CR-03).
+    liveFields.tree = 'unknown';
     const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, {
       beforeSig: stateSig(before), codexEffort: o.codexEffort, codexServiceTier: o.codexServiceTier,
       cursorMode: o.cursorMode,
     });
     liveFields.out = r.outBytes || 0;
     liveFields.cli_rc = r.cli_rc ?? '-';
-    const after = await treeState(process.cwd(), finalizeBy);
+    let after = await treeState(process.cwd(), finalizeBy);
+    // A signal during this snapshot killed its git child: read once more on the signal budget.
+    if (aborting && after === null) after = await treeState(process.cwd(), finalizeBy);
     const tree = treeLabel(before, after);
     liveFields.tree = tree;
+    if (aborting) break;
     if (r.status === 'contract_violation' || r.status === 'unverified') {
       const treeField = r.status === 'unverified' ? 'unknown' : tree;
       return finish(r.status, { ...liveFields, tree: treeField, cli_rc: r.cli_rc ?? '-', exit: 1 });
     }
-    if (r.timedOut || aborting) {
+    if (r.timedOut) {
       return finish('timeout', { ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? 124 });
     }
     if (o.mode === 'review' && before && after && tree === 'dirty') {
@@ -2083,6 +2160,7 @@ async function main(argv) {
     }
     return finish(status, { ...liveFields, tree, cli_rc: r.cli_rc, cli: c.name, model: c.model });
   }
+  if (aborting) return finish('signal', { ...liveFields, exit: 128 + aborting });
   if (!sawModel && last && last.kind === 'no_model') {
     return finish('no_model', { ...liveFields, tree: 'clean', exit: 2 });
   }
