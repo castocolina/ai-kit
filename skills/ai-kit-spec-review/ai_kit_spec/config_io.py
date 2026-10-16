@@ -1,13 +1,16 @@
 import os
+import shlex
 import sys
 
 from ai_kit_spec.cache import cache_write_text
+from ai_kit_spec.detection import RUNTIMES, runtime_id
 from ai_kit_spec.trust import is_trusted
 
 try:
     import tomllib as _tomllib_impl
+
     tomllib = _tomllib_impl
-except ModuleNotFoundError:        # Python < 3.11 — degrade to env-only config.
+except ModuleNotFoundError:  # Python < 3.11 — degrade to env-only config.
     tomllib = None  # type: ignore[assignment]  # stdlib boundary: optional module absent on <3.11
 
 # ── Config (TOML) ────────────────────────────────────────────────────────
@@ -15,6 +18,219 @@ except ModuleNotFoundError:        # Python < 3.11 — degrade to env-only confi
 DEFAULT_POLICY = {"mode": "single", "ladder": [], "timeout_tiers": [600, 1200, 1800]}
 
 _KNOWN_REVIEWER_FIELDS = {"key", "model", "vendor", "cli", "command"}
+
+_MODE_SLOT = "{mode}"
+# Copied from commands._build_codex_command, _build_claude_command and
+# _build_opencode_command; cursor's binary is sourced from the runtime table.
+_FACTORY_ARGV: dict[str, tuple[str, ...]] = {
+    "codex": ("codex", "exec", "--sandbox", "read-only", "--skip-git-repo-check", "-m", "{model}"),
+    "claude": ("claude", "-p", "--model", "{model}", "--output-format", "text"),
+    "opencode": ("opencode", "run", "-m", "{model}"),
+    "cursor": (
+        RUNTIMES["cursor"].binaries[0],
+        "-p",
+        "--output-format",
+        "text",
+        "--mode",
+        _MODE_SLOT,
+        "--trust",
+        "--model",
+        "{model}",
+    ),
+}
+_CODEX_KNOB_ORDER = ("model_reasoning_effort", "service_tier")
+_LEGACY_NOTED: set[str] = set()
+
+
+def _codex_command_knobs(remainder) -> dict | None:
+    if len(remainder) % 2 or len(remainder) > 4:
+        return None
+    knobs = {}
+    previous = -1
+    for flag, assignment in zip(remainder[::2], remainder[1::2], strict=True):
+        if flag != "-c" or "=" not in assignment:
+            return None
+        key, value = assignment.split("=", 1)
+        if key not in _CODEX_KNOB_ORDER:
+            return None
+        order = _CODEX_KNOB_ORDER.index(key)
+        if order <= previous:
+            return None
+        previous = order
+        value = value.strip("'\\\"")
+        knobs["effort" if key == "model_reasoning_effort" else "service_tier"] = value
+    return knobs
+
+
+def _legacy_command_knobs(rid, command) -> dict | None:
+    """Return factory knobs only when command exactly matches a known argv shape."""
+    if not isinstance(command, str):
+        return None
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return None
+    head = _FACTORY_ARGV.get(rid)
+    if head is None or len(argv) < len(head):
+        return None
+    knobs = _factory_head_knobs(head, argv)
+    if knobs is None:
+        return None
+    remainder = argv[len(head) :]
+    if rid == "codex":
+        codex_knobs = _codex_command_knobs(remainder)
+        return {**knobs, **codex_knobs} if codex_knobs is not None else None
+    return knobs if not remainder else None
+
+
+def _factory_head_knobs(head, argv) -> dict | None:
+    knobs = {}
+    for index, expected in enumerate(head):
+        token = argv[index]
+        if expected == _MODE_SLOT:
+            if token not in ("plan", "ask"):
+                return None
+            knobs["cursor_mode"] = token
+        elif token != expected:
+            return None
+    return knobs
+
+
+def _normalize_legacy_cli(result: dict, key) -> list[str]:
+    cli = result["cli"]
+    rid = runtime_id(cli)
+    command = result.get("command")
+    result.pop("cli", None)
+    result.pop("native_runtime", None)
+    row = RUNTIMES.get(rid)
+    if row is None or not row.runner:
+        if "command" in result:
+            return [f"{key}: cli={cli} has no runner formula; kept as a custom command entry"]
+        result["runtime"] = rid
+        return [f"{key}: cli={cli} has no runner formula and no command; this entry is skipped"]
+    if "command" not in result:
+        result["runtime"] = rid
+        return [f"{key}: cli={cli} -> runtime={rid}"]
+    knobs = _legacy_command_knobs(rid, command)
+    if knobs is None:
+        return [
+            f"{key}: cli={cli}: command has flags the runner formula does not reproduce; "
+            "kept as a custom command entry"
+        ]
+    result["runtime"] = rid
+    result.pop("command", None)
+    kept = []
+    for knob, value in knobs.items():
+        if knob not in result:
+            result[knob] = value
+            kept.append(knob)
+    suffix = f"; kept {', '.join(kept)}" if kept else ""
+    return [
+        f"{key}: cli={cli} -> runtime={rid}; command dropped (the runner builds the argv){suffix}"
+    ]
+
+
+def _normalize_legacy_native(result: dict, key) -> list[str]:
+    value = result.pop("native_runtime")
+    if value == "unknown" or value is None:
+        model = result.pop("model", None)
+        result.pop("runtime", None)
+        return (
+            [f"{key}: native_runtime=unknown: model '{model}' dropped, now the session default"]
+            if model
+            else []
+        )
+    rid = runtime_id(value)
+    if "runtime" not in result:
+        result["runtime"] = rid
+    return [f"{key}: native_runtime={value} -> runtime={result['runtime']}"]
+
+
+def normalize_legacy_entry(entry) -> tuple[dict, list[str]]:
+    """Copy and normalize one legacy reviewer entry without raising or mutating it."""
+    if not isinstance(entry, dict):
+        return entry, []
+    result = dict(entry)
+    key = result.get("key", "<unknown>")
+    notes = []
+    for field in ("cli", "runtime", "native_runtime"):
+        value = result.get(field)
+        if field in result and value is not None and not isinstance(value, str):
+            return result, [
+                f"{key}: '{field}' is not a string; left unchanged "
+                "(save rejects it, dispatch skips it)"
+            ]
+
+    if "command" in result and not isinstance(result["command"], str):
+        return result, [f"{key}: 'command' is not a string; left unchanged"]
+    if result.get("cli") is not None:
+        notes.extend(_normalize_legacy_cli(result, key))
+    elif "native_runtime" in result:
+        notes.extend(_normalize_legacy_native(result, key))
+    if isinstance(result.get("runtime"), str):
+        old = result["runtime"]
+        rid = runtime_id(old)
+        if rid != old:
+            result["runtime"] = rid
+            notes.append(f"{key}: runtime={old} -> {rid}")
+    return result, notes
+
+
+def normalize_legacy_reviewers(reviewers) -> tuple[list, list[str]]:
+    """Normalize reviewer entries while preserving order and malformed non-dicts."""
+    normalized = []
+    notes = []
+    if not isinstance(reviewers, list):
+        return normalized, notes
+    for entry in reviewers:
+        mapped, entry_notes = normalize_legacy_entry(entry)
+        normalized.append(mapped)
+        notes.extend(entry_notes)
+    return normalized, notes
+
+
+def infer_legacy_native(reviewers) -> tuple[list, list[str]]:
+    """Apply the separate legacy alias inference after reviewer merging."""
+    normalized = []
+    notes = []
+    for entry in reviewers:
+        if not isinstance(entry, dict):
+            normalized.append(entry)
+            continue
+        mapped = dict(entry)
+        model = mapped.get("model")
+        if (
+            not mapped.get("runtime")
+            and "command" not in mapped
+            and isinstance(model, str)
+            and model
+        ):
+            key = mapped.get("key", "<unknown>")
+            if model in RUNTIMES["claude"].native_selectors:
+                mapped["runtime"] = "claude"
+                notes.append(
+                    f"{key}: model '{model}' had no runtime; inferred runtime=claude "
+                    "(pre-1.2 native meaning)"
+                )
+            else:
+                mapped["model"] = ""
+                notes.append(
+                    f"{key}: model '{model}' had no runtime; dropped, now the session default"
+                )
+        normalized.append(mapped)
+    return normalized, notes
+
+
+def _emit_legacy_note(label, notes, warn_fn) -> None:
+    """Emit one privacy-safe migration note per label in this process."""
+    if not notes or label in _LEGACY_NOTED:
+        return
+    _LEGACY_NOTED.add(label)
+    warn_fn(
+        f"ai-kit-spec: {label}: legacy reviewer fields loaded in memory "
+        f"({'; '.join(notes)}); the file is unchanged -- re-save it with the "
+        "ai-kit-spec-config wizard or render-toml --out"
+    )
 
 
 def cfg_local_path(cwd: str) -> str:
@@ -160,7 +376,8 @@ def cfg_resolve(cwd: str, env: dict, warn_fn=None) -> dict:
                 f"ai-kit-spec: ignoring untrusted project-local config {local_path}; "
                 f"review its commands with `ai-kit-spec.py trust-local --cwd {cwd} --show`, "
                 f"then trust it with `ai-kit-spec.py trust-local --cwd {cwd}` "
-                f"(any edit needs a new trust)")
+                f"(any edit needs a new trust)"
+            )
     return cfg_combine(local, env)
 
 
@@ -170,12 +387,16 @@ def cfg_combine(local: dict, env: dict) -> dict:
     --show`, so the consent display renders the same merged entries dispatch would run."""
     if not local:
         global_cfg = cfg_load_toml(cfg_global_path(env))
-        return {"policy": {**DEFAULT_POLICY, **global_cfg.get("policy", {})},
-                "reviewers": global_cfg.get("reviewers", [])}
+        return {
+            "policy": {**DEFAULT_POLICY, **global_cfg.get("policy", {})},
+            "reviewers": global_cfg.get("reviewers", []),
+        }
     strategy = local.get("strategy", "global-merge")
     if strategy == "local-only":
-        return {"policy": {**DEFAULT_POLICY, **local.get("policy", {})},
-                "reviewers": local.get("reviewers", [])}
+        return {
+            "policy": {**DEFAULT_POLICY, **local.get("policy", {})},
+            "reviewers": local.get("reviewers", []),
+        }
     global_cfg = cfg_load_toml(cfg_global_path(env))
     merged_policy = {**DEFAULT_POLICY, **global_cfg.get("policy", {}), **local.get("policy", {})}
     merged_reviewers = cfg_merge_reviewers(
@@ -218,22 +439,29 @@ def validate_reviewer_fields(entry: dict) -> str | None:
     # pathway instead of writing corrupted TOML.
     for field, value in entry.items():
         if isinstance(value, dict):
-            return (f"{key}: '{field}' has a nested-object value, which this TOML schema "
-                     "does not support (no dict branch in the writer)")
+            return (
+                f"{key}: '{field}' has a nested-object value, which this TOML schema "
+                "does not support (no dict branch in the writer)"
+            )
     # HIGH finding: `entry["purpose"] not in _VALID_PURPOSE` raises TypeError when `purpose` is
     # an unhashable value (a list/dict) rather than rejecting it as a schema-validation error --
     # the type check MUST run first, short-circuiting before the set-membership test ever sees
     # an unhashable value (spec Section 8: "schema-invalid... entry is rejected and reported",
     # never an unhandled exception).
     if "purpose" in entry and (
-            not isinstance(entry["purpose"], str) or entry["purpose"] not in _VALID_PURPOSE):
+        not isinstance(entry["purpose"], str) or entry["purpose"] not in _VALID_PURPOSE
+    ):
         return f"{key}: 'purpose' must be one of {sorted(_VALID_PURPOSE)}"
     if "native_runtime" in entry and (
-            not isinstance(entry["native_runtime"], str)
-            or entry["native_runtime"] not in _VALID_NATIVE_RUNTIME):
+        not isinstance(entry["native_runtime"], str)
+        or entry["native_runtime"] not in _VALID_NATIVE_RUNTIME
+    ):
         return f"{key}: 'native_runtime' must be one of {sorted(_VALID_NATIVE_RUNTIME)}"
-    if "native_runtime" in entry and entry.get("native_runtime") is not None \
-            and entry.get("cli") is not None:
+    if (
+        "native_runtime" in entry
+        and entry.get("native_runtime") is not None
+        and entry.get("cli") is not None
+    ):
         return f"{key}: 'native_runtime' must not be set on an entry with a non-null 'cli'"
     for field in ("is_router", "fallback_quota"):
         if field in entry and not isinstance(entry[field], bool):
@@ -264,7 +492,8 @@ def _cfg_render_policy_lines(policy: dict, dropped_keys: set, rejections: list) 
     if dangling:
         rejections.append(
             f"policy.ladder: dropped dangling reference(s) to rejected reviewer key(s) "
-            f"{sorted(dangling)}")
+            f"{sorted(dangling)}"
+        )
     if ladder:
         lines.append("# Priority fallback order (first available reviewer wins the")
         if policy.get("mode") == "double":
@@ -304,7 +533,8 @@ def cfg_render_toml(config: dict) -> str:
     (resolve_ladder_pick can never satisfy it), so the two must never diverge."""
     lines: list[str] = []
     valid_reviewers, rejections, dropped_keys = _cfg_partition_reviewers(
-        config.get("reviewers", []))
+        config.get("reviewers", [])
+    )
 
     if "strategy" in config:
         lines.append(f"strategy = {_toml_value(config['strategy'])}")
@@ -314,8 +544,10 @@ def cfg_render_toml(config: dict) -> str:
         lines.extend(_cfg_render_policy_lines(policy, dropped_keys, rejections))
     lines.extend(_cfg_render_reviewer_lines(valid_reviewers))
     if rejections:
-        print(f"WARNING: {len(rejections)} issue(s) found and NOT written: "
-              f"{'; '.join(rejections)}", file=sys.stderr)
+        print(
+            f"WARNING: {len(rejections)} issue(s) found and NOT written: {'; '.join(rejections)}",
+            file=sys.stderr,
+        )
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
