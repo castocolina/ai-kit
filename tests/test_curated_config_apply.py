@@ -503,7 +503,9 @@ def _decide_all_choices(plan_path: str, inv_path: str) -> None:
             if isinstance(first, dict) and "model" in first:
                 raw = first["model"]
             elif isinstance(first, dict) and "value" in first:
-                raw = json.dumps([first["value"]])
+                # The trusted-roots candidate value is already the whole list (C-W8).
+                value = first["value"]
+                raw = json.dumps(value if isinstance(value, list) else [value])
             elif isinstance(first, bool):
                 raw = "true" if first else "false"
             elif isinstance(first, (list, dict)):
