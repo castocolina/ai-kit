@@ -1050,6 +1050,16 @@ class TestTrustedRoots(unittest.TestCase):
         candidates = skills.trusted_roots(wired, inv)
         self.assertEqual(len(candidates), 1)
 
+    def test_too_broad_roots_never_cover(self):
+        """C-IN-08: gsd-core drops /, ~ and the home dir itself, so they cover nothing."""
+        for root in ("/", "~", "~/", "/home/user", "/home/user/"):
+            with self.subTest(root=root):
+                self.assertFalse(
+                    skills.covered("~/.vault/x", "/home/user/.vault/x", [root])
+                )
+                self.assertFalse(skills.covered("", "/opt/x", [root]))
+        self.assertTrue(skills.covered("~/.vault/x", "/home/user/.vault/x", ["/home/user/.vault"]))
+
     def test_covered_lexical(self):
         self.assertTrue(
             skills.covered("~/.agents/skills/x", "/any", ["~/.agents/skills"])

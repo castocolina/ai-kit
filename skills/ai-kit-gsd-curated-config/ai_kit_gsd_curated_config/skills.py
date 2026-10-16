@@ -175,12 +175,24 @@ def existing_roots(inv: dict) -> list[str]:
     return [item for item in roots if isinstance(item, str)] if isinstance(roots, list) else []
 
 
+def _home_of(value: str, real_dir: str) -> str | None:
+    """The absolute home dir implied by a row's ``real_dir_home``/``real_dir`` pair."""
+    tail = value[1:]  # "~/a/b" -> "/a/b"
+    if value.startswith("~/") and real_dir.endswith(tail):
+        return real_dir[: len(real_dir) - len(tail)]
+    return None
+
+
 def covered(value: str, real_dir: str, roots: list[str]) -> bool:
     """True when an existing trusted root already covers ``value`` (lexical shortcut)."""
     # shortcut: lexical comparison; a root reached only through a symlink is proposed again
     # (harmless duplicate approval); gsd-core canonicalizes roots at use
+    home = _home_of(value, real_dir)
     for root in roots:
         trimmed = root.rstrip("/")
+        # gsd-core drops the filesystem root and the home dir itself as too broad (C-IN-08).
+        if trimmed in ("", "~", home):
+            continue
         if trimmed.startswith("~/"):
             if value == trimmed or value.startswith(trimmed + "/"):
                 return True
