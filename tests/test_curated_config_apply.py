@@ -43,7 +43,11 @@ from tests.test_curated_config_inventory import (
     run_inventory,
     seed_cache,
 )
-from tests.test_curated_config_plan_edit import _partial_runner_plan, _run_plan_set
+from tests.test_curated_config_plan_edit import (
+    _partial_runner_plan,
+    _run_plan_set,
+    _strict_encode,
+)
 from tests.test_curated_config_recommend import run_recommend
 from tests.test_curated_config_skills import add_plugin, add_skill
 
@@ -1194,16 +1198,6 @@ class TestDryRunTracer(unittest.TestCase):
                 joined = " ".join(str(part) for part in cmd)
                 self.assertNotIn("config-set", joined)
                 self.assertNotIn("config-new-project", joined)
-
-
-
-from ai_kit_gsd_curated_config import gsd_catalog
-
-
-def _strict_encode():
-    mod = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
-    assert mod is not None
-    return mod.encode_value_strict
 
 
 def _write_apply(plan_path, inv_path, project, env, run_fn):

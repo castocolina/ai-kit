@@ -25,6 +25,7 @@ from tests.test_curated_config_apply import (
     _decide_all_choices,
     _minimal_plan,
     _RecordingRun,
+    _scratch_env,
     _setup_scratch_project,
     _tables_fake,
     _write_apply,
@@ -33,15 +34,6 @@ from tests.test_curated_config_apply import (
 from tests.test_curated_config_golden import tables_answer
 from tests.test_curated_config_inventory import FakeRun, make_gsd_install, seed_cache
 from tests.test_curated_config_recommend import make_inventory, run_recommend
-
-
-def _scratch_env(home: str, gsd_home: str, xdg: str) -> dict[str, str]:
-    return {
-        "HOME": home,
-        "GSD_HOME": gsd_home,
-        "XDG_CACHE_HOME": xdg,
-        "PATH": "",
-    }
 
 
 def _effort_stdout(cmd):

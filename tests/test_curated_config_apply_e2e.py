@@ -28,21 +28,22 @@ from ai_kit_gsd_curated_config import (
     cli,
     config_backup,
     cross_ai_script,
-    gsd_catalog,
     plan_io,
     presets,
 )
 from ai_kit_spec import gsd_tools
 
 from tests.test_curated_config_apply import (
-    FakeRun,
+    _config_set_keys,
     _decide_all_choices,
     _fixed_now,
     _scratch_env,
+    _strict_encode,
+    _tables_fake,
     scratch_inventory,
 )
 from tests.test_curated_config_e2e import REPO_ROOT, _real_node_executable, _RealGsdTestCase
-from tests.test_curated_config_golden import load_fixture, tables_answer
+from tests.test_curated_config_golden import load_fixture
 from tests.test_curated_config_inventory import seed_cache
 from tests.test_curated_config_plan_edit import _run_plan_set
 from tests.test_curated_config_recommend import run_recommend
@@ -84,33 +85,12 @@ def _seed_home(home: str) -> None:
     )
 
 
-def _tables_fake(config_path: str, home: str) -> FakeRun:
-    return FakeRun(
-        node_stdout=lambda argv, h=home: json.dumps(tables_answer(json.loads(argv[6]), h)),
-        config_path_stdout=config_path,
-    )
-
-
 def _real_run(child_env: dict):
     def run(cmd, **kw):
         call_env = kw.pop("env", None) or {}
         return subprocess.run(cmd, env={**child_env, **call_env}, **kw)
 
     return run
-
-
-def _strict_encode():
-    mod = gsd_catalog.load_ai_kit_spec_module("gsd_tools")
-    assert mod is not None
-    return mod.encode_value_strict
-
-
-def _config_set_keys(log: list[list[str]]) -> list[str]:
-    keys: list[str] = []
-    for row in log:
-        if len(row) >= 5 and row[2] == "query" and row[3] == "config-set":
-            keys.append(row[4])
-    return keys
 
 
 class _ConfigSetWrapper:
