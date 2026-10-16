@@ -97,9 +97,9 @@
   "effort": {
     "default": "high",
     "agent_overrides": {
-      "gsd-planner": "xhigh",
+      "gsd-planner": "high",
       "gsd-plan-checker": "xhigh",
-      "gsd-code-reviewer": "xhigh",
+      "gsd-code-reviewer": "high",
       "gsd-ui-auditor": "xhigh"
     }
   },
