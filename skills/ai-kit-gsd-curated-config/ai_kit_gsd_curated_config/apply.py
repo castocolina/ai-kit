@@ -17,7 +17,6 @@ from . import (
     gsd_catalog,
     host,
     plan_io,
-    plan_schema,
     presets,
     skills,
 )
@@ -62,21 +61,9 @@ def load_inputs(
     project_dir = os.path.abspath(project_dir)
     if not os.path.isdir(project_dir):
         return None, f"--project-dir {project_dir} is not a directory"
-    plan, error = plan_io.load_plan(plan_path)
-    if plan is None:
+    plan, inv, error = plan_io.load_plan_and_inventory(plan_path, inv_path)
+    if plan is None or inv is None:
         return None, error
-    inv, inv_err = plan_io.load_inventory(inv_path)
-    if inv is None:
-        return None, inv_err
-    digest = plan_schema.inventory_digest(inv)
-    if plan.get("inventory_digest") != digest:
-        return None, (
-            "inventory digest does not match the plan's inventory_digest "
-            f"(plan {plan['inventory_digest']!r}, inventory {digest!r})"
-        )
-    inv_problem = plan_io.check_plan_inventory(plan, inv)
-    if inv_problem:
-        return None, inv_problem
     return Inputs(plan, plan_path, inv, inv_path, project_dir), None
 
 

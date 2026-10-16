@@ -13,7 +13,7 @@ import re
 
 from . import cross_ai, gsd_catalog, host, presets
 from . import skills as skills_mod
-from .plan_schema import PLAN_SCHEMA_VERSION, canonical_json
+from .plan_schema import PLAN_SCHEMA_VERSION, canonical_json, inventory_digest
 
 _AFFINITY_SUFFIX = "; fix skill_affinity.json"
 _PKG_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -445,6 +445,29 @@ def load_plan(path: str) -> tuple[dict | None, str | None]:
     if problem:
         return None, f"plan {path}: {problem}{_PLAN_ERROR_SUFFIX}"
     return plan, None
+
+
+def load_plan_and_inventory(
+    plan_path: str, inv_path: str
+) -> tuple[dict | None, dict | None, str | None]:
+    """Both documents, bound by the inventory digest (D-17, D-42) and the plan fields the
+    digest does not cover; ``(plan, inv, None)`` or ``(None, None, error)``."""
+    plan, error = load_plan(plan_path)
+    if plan is None:
+        return None, None, error
+    inv, error = load_inventory(inv_path)
+    if inv is None:
+        return None, None, error
+    digest = inventory_digest(inv)
+    if plan.get("inventory_digest") != digest:
+        return None, None, (
+            "inventory digest does not match the plan's inventory_digest "
+            f"(plan {plan['inventory_digest']!r}, inventory {digest!r})"
+        )
+    problem = check_plan_inventory(plan, inv)
+    if problem:
+        return None, None, problem
+    return plan, inv, None
 
 
 def check_plan_inventory(plan: dict, inv: dict) -> str | None:
