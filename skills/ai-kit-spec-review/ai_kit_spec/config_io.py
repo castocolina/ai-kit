@@ -17,7 +17,7 @@ except ModuleNotFoundError:  # Python < 3.11 — degrade to env-only config.
 
 DEFAULT_POLICY = {"mode": "single", "ladder": [], "timeout_tiers": [600, 1200, 1800]}
 
-_KNOWN_REVIEWER_FIELDS = {"key", "model", "vendor", "cli", "command"}
+_KNOWN_REVIEWER_FIELDS = {"key", "model", "vendor", "runtime", "command"}
 
 _MODE_SLOT = "{mode}"
 # Copied from commands._build_codex_command, _build_claude_command and
@@ -325,6 +325,9 @@ def cfg_parse_toml_bytes(raw: bytes, path: str) -> dict:
         raise ConfigError(path, str(exc)) from exc
 
 
+_VARIANT_FIELDS = ("runtime", "command")
+
+
 def cfg_merge_reviewers(global_list: list, local_list: list) -> list:
     """Merge [[reviewers]] by key: local fields override/extend matching
     global entries; local-only keys are appended; global-only keys are
@@ -340,6 +343,10 @@ def cfg_merge_reviewers(global_list: list, local_list: list) -> list:
         key = r["key"]
         if key in by_key:
             by_key[key].update(r)
+            if any(r.get(field) is not None for field in _VARIANT_FIELDS):
+                for field in _VARIANT_FIELDS:
+                    if field not in r:
+                        by_key[key].pop(field, None)
         else:
             by_key[key] = dict(r)
     global_keys = [r["key"] for r in global_list]
@@ -378,31 +385,37 @@ def cfg_resolve(cwd: str, env: dict, warn_fn=None) -> dict:
                 f"then trust it with `ai-kit-spec.py trust-local --cwd {cwd}` "
                 f"(any edit needs a new trust)"
             )
-    return cfg_combine(local, env)
+    return cfg_combine(local, env, warn_fn=emit_warn, local_path=local_path)
 
 
-def cfg_combine(local: dict, env: dict) -> dict:
+def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None) -> dict:
     """Combine an already-parsed (and already-trusted, or empty) local config with the
     global one, honoring the local `strategy`. Shared by cfg_resolve and `trust-local
     --show`, so the consent display renders the same merged entries dispatch would run."""
-    if not local:
-        global_cfg = cfg_load_toml(cfg_global_path(env))
-        return {
-            "policy": {**DEFAULT_POLICY, **global_cfg.get("policy", {})},
-            "reviewers": global_cfg.get("reviewers", []),
-        }
-    strategy = local.get("strategy", "global-merge")
-    if strategy == "local-only":
-        return {
-            "policy": {**DEFAULT_POLICY, **local.get("policy", {})},
-            "reviewers": local.get("reviewers", []),
-        }
-    global_cfg = cfg_load_toml(cfg_global_path(env))
-    merged_policy = {**DEFAULT_POLICY, **global_cfg.get("policy", {}), **local.get("policy", {})}
-    merged_reviewers = cfg_merge_reviewers(
-        global_cfg.get("reviewers", []), local.get("reviewers", [])
+    emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
+    global_path = cfg_global_path(env)
+    global_cfg = cfg_load_toml(global_path)
+    local_reviewers, local_notes = normalize_legacy_reviewers(local.get("reviewers", []))
+    global_reviewers, global_notes = normalize_legacy_reviewers(
+        global_cfg.get("reviewers", [])
     )
-    return {"policy": merged_policy, "reviewers": merged_reviewers}
+    if local:
+        _emit_legacy_note(local_path or "project-local review-spec.toml", local_notes, emit_warn)
+    _emit_legacy_note(global_path, global_notes, emit_warn)
+    strategy = local.get("strategy", "global-merge") if local else "global-merge"
+    if not local:
+        merged = global_reviewers
+        policy = {**DEFAULT_POLICY, **global_cfg.get("policy", {})}
+    elif strategy == "local-only":
+        merged = local_reviewers
+        policy = {**DEFAULT_POLICY, **local.get("policy", {})}
+    else:
+        policy = {**DEFAULT_POLICY, **global_cfg.get("policy", {}), **local.get("policy", {})}
+        merged = cfg_merge_reviewers(global_reviewers, local_reviewers)
+    merged, inferred_notes = infer_legacy_native(merged)
+    _emit_legacy_note(f"merged review-spec.toml ({local_path or 'local'}, {global_path})",
+                      inferred_notes, emit_warn)
+    return {"policy": policy, "reviewers": merged}
 
 
 def _toml_value(v) -> str:

@@ -2887,7 +2887,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
 class TestResolveLadderPick(unittest.TestCase):
     def setUp(self):
         self.reviewers = [
-            {"key": "codex-gpt", "model": "gpt-5.2", "vendor": "openai"},
+            {"key": "codex-gpt", "model": "gpt-5.2", "vendor": "openai", "runtime": "codex"},
             {"key": "grok-flagship", "model": "grok-4.6", "vendor": "xai"},
         ]
 
@@ -2959,7 +2959,7 @@ class TestResolveReviewers(unittest.TestCase):
                     "key": "codex-gpt",
                     "model": "gpt-5.2",
                     "vendor": "openai",
-                    "cli": "codex",
+                    "runtime": "codex",
                     "command": "codex exec -m {model} {prompt}",
                 },
             ],
@@ -3041,7 +3041,7 @@ class TestResolveReviewers(unittest.TestCase):
         }
         result = resolve_reviewers(config, quota={}, source_vendor="anthropic", cross_ai=True)
         self.assertEqual(result[0].key, "codex-gpt")  # first ladder entry, external
-        self.assertEqual(result[0].cli, "codex")
+        self.assertEqual(result[0].runtime, "codex")
         self.assertEqual(result[1].key, "claude-opus")  # first different-vendor entry
 
     def test_double_mode_with_only_external_entry_picks_it_as_primary_and_drops_secondary(self):
@@ -3254,7 +3254,8 @@ class TestBuildReviewerCommand(unittest.TestCase):
         # stdin redirect instead, not by string substitution.
         cmd = build_reviewer_command("codex", effort="high")
         resolved = ResolvedReviewer(
-            key="codex-gpt", model="gpt-5.2", vendor="openai", cli="codex", command=cmd, extra={}
+            key="codex-gpt", model="gpt-5.2", vendor="openai",
+            runtime="codex", command=cmd, extra={},
         )
         filled = render_reviewer_command(resolved, "hello")
         self.assertIn("gpt-5.2", filled)
@@ -3288,7 +3289,7 @@ class TestRenderReviewerCommand(unittest.TestCase):
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
-            cli="codex",
+            runtime="codex",
             command="codex exec -m {model} {prompt}",
             extra={},
         )
@@ -3303,7 +3304,7 @@ class TestRenderReviewerCommand(unittest.TestCase):
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
-            cli="codex",
+            runtime="codex",
             command=cmd,
             extra={"service_tier": "fast"},
         )
@@ -3321,7 +3322,7 @@ class TestRenderReviewerCommand(unittest.TestCase):
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
-            cli="codex",
+            runtime="codex",
             command="codex exec -m {model} {prompt}",
             extra={},
         )
@@ -3330,15 +3331,12 @@ class TestRenderReviewerCommand(unittest.TestCase):
         # argv dispatch, no shell: the prompt survives verbatim as ONE argv element
         self.assertEqual(out[-1], dangerous_prompt)
 
-    def test_missing_command_raises_value_error_not_attribute_error(self):
-        # a cli-set entry with no command is a malformed config (schema:
-        # command is "required iff cli present") — must be a reportable
-        # ValueError, never a raw AttributeError from `None.format(...)`
+    def test_runtime_entry_builds_command_without_template(self):
         resolved = ResolvedReviewer(
-            key="codex-gpt", model="gpt-5.2", vendor="openai", cli="codex", command=None, extra={}
+            key="codex-gpt", model="gpt-5.2", vendor="openai", runtime="codex",
+            command=None, extra={},
         )
-        with self.assertRaises(ValueError):
-            render_reviewer_command(resolved, "hello")
+        self.assertIn("gpt-5.2", render_reviewer_command(resolved, "hello"))
 
     def test_malformed_template_raises_value_error_not_key_error(self):
         # {unknown_field} isn't {model}/{prompt}/in extra -> str.format
@@ -3347,7 +3345,7 @@ class TestRenderReviewerCommand(unittest.TestCase):
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
-            cli="codex",
+            runtime="codex",
             command="codex -m {model} {unknown_field} {prompt}",
             extra={},
         )
@@ -3356,7 +3354,7 @@ class TestRenderReviewerCommand(unittest.TestCase):
 
     def test_attribute_placeholder_raises_value_error_not_attribute_error(self):
         # A-IN-02: "{model.foo}" makes str.format raise AttributeError.
-        resolved = ResolvedReviewer(key="k", model="m", vendor="v", cli="codex",
+        resolved = ResolvedReviewer(key="k", model="m", vendor="v", runtime="codex",
                                     command="x {model.foo}", extra={})
         with self.assertRaises(ValueError):
             render_reviewer_command(resolved, "hello")
@@ -3370,7 +3368,7 @@ class TestRenderReviewerCommand(unittest.TestCase):
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
-            cli="codex",
+            runtime="codex",
             command="codex -m {model} {prompt}",
             extra={"prompt": "oops"},
         )
@@ -3381,7 +3379,8 @@ class TestRenderReviewerCommand(unittest.TestCase):
 class TestProbeReviewerQuota(unittest.TestCase):
     def test_native_entry_is_always_available(self):
         resolved = ResolvedReviewer(
-            key="claude-opus", model="opus", vendor="anthropic", cli=None, command=None, extra={}
+            key="claude-opus", model="opus", vendor="anthropic",
+            runtime=None, command=None, extra={},
         )
         result = probe_reviewer_quota(
             resolved,
@@ -3396,7 +3395,7 @@ class TestProbeReviewerQuota(unittest.TestCase):
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
-            cli="codex",
+            runtime="codex",
             command="echo ok",
             extra={},
         )
@@ -3415,7 +3414,7 @@ class TestProbeReviewerQuota(unittest.TestCase):
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
-            cli="codex",
+            runtime="codex",
             command="false",
             extra={},
         )
@@ -3435,7 +3434,7 @@ class TestProbeReviewerQuota(unittest.TestCase):
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
-            cli="codex",
+            runtime="codex",
             command="echo hi",
             extra={},
         )
@@ -3454,7 +3453,7 @@ class TestProbeReviewerQuota(unittest.TestCase):
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
-            cli="codex",
+            runtime="codex",
             command="codex exec",
             extra={},
         )
@@ -3474,7 +3473,7 @@ class TestProbeReviewerQuota(unittest.TestCase):
             key="codex-gpt",
             model="gpt-5.2",
             vendor="openai",
-            cli="codex",
+            runtime="codex",
             command="sleep 999",
             extra={},
         )
@@ -3492,7 +3491,8 @@ class TestProbeReviewerQuota(unittest.TestCase):
         # makes codex/claude/grok/opencode/cursor-agent's stdin-only
         # command templates (no {prompt} placeholder) actually work
         resolved = ResolvedReviewer(
-            key="codex-gpt", model="gpt-5.2", vendor="openai", cli="codex", command="cat", extra={}
+            key="codex-gpt", model="gpt-5.2", vendor="openai",
+            runtime="codex", command="cat", extra={},
         )
         captured = {}
 
@@ -3514,7 +3514,8 @@ class TestProbeReviewerQuota(unittest.TestCase):
         # silently `available: True` (which would let it win a ladder
         # walk and only fail later, in real dispatch)
         resolved = ResolvedReviewer(
-            key="codex-gpt", model="gpt-5.2", vendor="openai", cli="codex", command=None, extra={}
+            key="codex-gpt", model="gpt-5.2", vendor="openai",
+            runtime="codex", command=None, extra={},
         )
         result = probe_reviewer_quota(
             resolved,
@@ -4033,7 +4034,7 @@ class TestMainCli(unittest.TestCase):
             captured["timeout"] = spec.timeout
             captured["format_block"] = spec.format_block
             return {
-                "cli": spec.candidate["runtime"],
+                "runtime": spec.candidate["runtime"],
                 "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
@@ -4086,7 +4087,7 @@ class TestMainCli(unittest.TestCase):
         def fake_dispatch(spec, **kw):
             captured["format_block"] = spec.format_block
             return {
-                "cli": spec.candidate["runtime"],
+                "runtime": spec.candidate["runtime"],
                 "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
@@ -4134,7 +4135,7 @@ class TestMainCli(unittest.TestCase):
         def fake_dispatch(spec, **kw):
             captured["candidate"] = spec.candidate
             return {
-                "cli": spec.candidate["runtime"],
+                "runtime": spec.candidate["runtime"],
                 "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
@@ -4218,7 +4219,7 @@ class TestMainCli(unittest.TestCase):
         def fake_dispatch(spec, **kw):
             captured["prompt"] = spec.prompt
             return {
-                "cli": spec.candidate["runtime"],
+                "runtime": spec.candidate["runtime"],
                 "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
@@ -4257,7 +4258,7 @@ class TestMainCli(unittest.TestCase):
 
         def fake_dispatch(spec, **kw):
             return {
-                "cli": spec.candidate["runtime"],
+                "runtime": spec.candidate["runtime"],
                 "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 0,
@@ -4299,7 +4300,7 @@ class TestMainCli(unittest.TestCase):
 
         def fake_dispatch(spec, **kw):
             return {
-                "cli": spec.candidate["runtime"],
+                "runtime": spec.candidate["runtime"],
                 "model": spec.candidate["model"],
                 "command": "x",
                 "returncode": 3,
@@ -4402,7 +4403,8 @@ class TestMainCli(unittest.TestCase):
                 os.path.join(home, ".config", "ai-kit", "review-spec.toml"),
                 {
                     "policy": {"mode": "single", "ladder": ["codex-gpt"]},
-                    "reviewers": [{"key": "codex-gpt", "model": "gpt-5.2", "vendor": "openai"}],
+                    "reviewers": [{"key": "codex-gpt", "model": "gpt-5.2",
+                                  "vendor": "openai", "runtime": "codex"}],
                 },
             )
             os.makedirs(os.path.join(cwd, ".aikit"))
@@ -6017,7 +6019,7 @@ class TestDispatchReviewer(unittest.TestCase):
                     "key": "k",
                     "model": "m",
                     "vendor": "v",
-                    "cli": "codex",
+                    "runtime": "codex",
                     "command": "codex exec -m {model}",
                     "extra": {},
                 },
@@ -11616,7 +11618,7 @@ class TestArgvRendering(unittest.TestCase):
 
     def _resolved(self, command, extra=None):
         return ResolvedReviewer(
-            key="k", model="m", vendor="v", cli="codex", command=command, extra=extra or {}
+            key="k", model="m", vendor="v", runtime="codex", command=command, extra=extra or {}
         )
 
     def test_split_command_template_tokenizes(self):
@@ -11833,7 +11835,8 @@ class TestProbeArgv(unittest.TestCase):
 
     def test_probe_calls_run_fn_with_argv_no_shell_and_scrubbed_env(self):
         resolved = ResolvedReviewer(
-            key="k", model="m", vendor="v", cli="codex", command="codex exec -m {model}", extra={}
+            key="k", model="m", vendor="v", runtime="codex",
+            command="codex exec -m {model}", extra={},
         )
         captured = {}
 
@@ -11860,7 +11863,7 @@ class TestProbeArgv(unittest.TestCase):
             key="k",
             model="m",
             vendor="v",
-            cli="codex",
+            runtime="codex",
             command="definitely-not-a-real-binary-xyz --flag",
             extra={},
         )
@@ -11870,7 +11873,7 @@ class TestProbeArgv(unittest.TestCase):
 
     def test_probe_on_shell_syntax_template_is_unavailable_naming_the_key(self):
         resolved = ResolvedReviewer(
-            key="k", model="m", vendor="v", cli="codex", command="codex exec $HOME", extra={}
+            key="k", model="m", vendor="v", runtime="codex", command="codex exec $HOME", extra={}
         )
         result = probe_reviewer_quota(
             resolved,

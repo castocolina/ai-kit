@@ -13,7 +13,7 @@ from ai_kit_spec.execute_selection import purpose_matches
 QUOTA_TTL_SECONDS = 3600                 # 1 hour: quota/context headroom is highly dynamic
 
 NO_CONFIG_FALLBACK = ResolvedReviewer(key="session-default", model="", vendor="",
-                                       cli=None, command=None, extra={})
+                                       runtime=None, command=None, extra={})
 
 _DETAIL_MAX_CHARS = 300
 
@@ -37,7 +37,7 @@ def to_resolved(entry: dict) -> ResolvedReviewer:
     ResolvedReviewer's docstring) — "no override"."""
     return ResolvedReviewer(
         key=entry["key"], model=entry.get("model", ""), vendor=entry.get("vendor", ""),
-        cli=entry.get("cli"), command=entry.get("command"),
+        runtime=entry.get("runtime"), command=entry.get("command"),
         extra={k: v for k, v in entry.items() if k not in _KNOWN_REVIEWER_FIELDS},
     )
 
@@ -231,7 +231,7 @@ def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run) ->
     harmless to a CLI that takes its prompt inline instead, so one code
     path serves both without the caller needing to introspect the
     template first."""
-    if not resolved.cli:
+    if not resolved.runtime and not resolved.command:
         return {"available": True, "checked_at": time.time(), "reason": None, "detail": ""}
     probe_prompt = "Only say: Hello world!"
     try:

@@ -77,6 +77,7 @@ from ai_kit_spec.review_reports import (
     report_status,
 )
 from ai_kit_spec.reviewer_dispatch import ReviewerDispatchSpec, dispatch_reviewer
+from ai_kit_spec.routing import host_can_select
 from ai_kit_spec.vendor import infer_vendor_from_model
 
 
@@ -426,8 +427,8 @@ def _discovered_catalog_candidates(
         cwd = args.cwd or os.getcwd()
         resolved = cfg_resolve(cwd, deps.env_fn())
         for reviewer in resolved.get("reviewers", []):
-            if reviewer.get("cli") in single_provider_clis and reviewer.get("model"):
-                discovered.append({"runtime": reviewer["cli"], "model_id": reviewer["model"]})
+            if reviewer.get("runtime") in single_provider_clis and reviewer.get("model"):
+                discovered.append({"runtime": reviewer["runtime"], "model_id": reviewer["model"]})
     for raw in args.extra_candidate:
         cli_name, _, model_id = raw.partition(":")
         if cli_name and model_id:
@@ -628,6 +629,11 @@ def _cmd_apply_heuristic_correction(args: argparse.Namespace, deps: CliDeps) -> 
 def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
     config = cfg_resolve(args.cwd, dict(os.environ))
     ladder = config.get("policy", {}).get("ladder", [])
+    host = detect_current_runtime(deps.env_fn())
+    reviewers = {r.get("key"): r for r in config.get("reviewers", [])}
+    ladder = [key for key in ladder
+              if not host_can_select(reviewers.get(key, {}).get("runtime"),
+                                     reviewers.get(key, {}).get("model", ""), host)]
     existing = cache_read_json(args.quota_path) or {}
     updated = refresh_quota_cache(config, ladder, existing, QUOTA_TTL_SECONDS, run_fn=deps.run_fn)
     cache_write_json(args.quota_path, updated)
@@ -682,7 +688,8 @@ def _cmd_render_command(args: argparse.Namespace, deps: CliDeps) -> int:
         reviewers = json.load(f)
     r = reviewers[args.index]
     resolved = ResolvedReviewer(key=r["key"], model=r["model"], vendor=r["vendor"],
-                                 cli=r["cli"], command=r["command"], extra=r["extra"])
+                                 runtime=r.get("runtime"), command=r.get("command"),
+                                 extra=r.get("extra", {}))
     with open(args.prompt_file, encoding="utf-8") as f:
         prompt = f.read()
     try:
@@ -714,7 +721,7 @@ def _trust_local_argv_lines(config: dict, env: dict) -> list[dict]:
     local_keys = {r.get("key") for r in config.get("reviewers", [])}
     lines = []
     for r in cfg_combine(config, env)["reviewers"]:
-        if "command" not in r or r.get("key") not in local_keys:
+        if not (r.get("runtime") or r.get("command")) or r.get("key") not in local_keys:
             continue
         try:
             argv = render_reviewer_command(to_resolved(r), "<prompt>")
@@ -880,7 +887,7 @@ def _cmd_check_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     extra = json.loads(args.extra_json) if args.extra_json else {}
     rid = None if args.runtime is None else runtime_id(args.runtime)
     resolved = ResolvedReviewer(key=args.key, model=args.model, vendor=args.vendor,
-                                 cli=rid, command=args.reviewer_command, extra=extra)
+                                 runtime=rid, command=args.reviewer_command, extra=extra)
     result = probe_reviewer_quota(resolved, run_fn=deps.run_fn)
     print(json.dumps(result))
     return 0

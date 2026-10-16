@@ -37,17 +37,17 @@ class ReviewerDispatchSpec(NamedTuple):
 def _reviewer_full_prompt(
     spec: ReviewerDispatchSpec, seams: ReviewerSeams
 ) -> tuple[str | None, str]:
-    cli = spec.reviewer_entry.get("cli")
-    codegraph_registered = bool(cli) and seams.codegraph_health_fn(cli)
+    runtime = spec.reviewer_entry.get("runtime")
+    codegraph_registered = bool(runtime) and seams.codegraph_health_fn(runtime)
     tooling_guidance = seams.build_tooling_guidance_fn(
-        cli,
+        runtime,
         spec.tool_availability or {},
         spec.agents_tooling_path,
         codegraph_registered,
         shared_reference_path=seams.resolve_shared_reference_fn(),
     )
     full_prompt = (tooling_guidance + "\n\n" + spec.prompt) if tooling_guidance else spec.prompt
-    return cli, full_prompt
+    return runtime, full_prompt
 
 
 def dispatch_reviewer(
@@ -56,13 +56,13 @@ def dispatch_reviewer(
 ) -> dict:
     """Compose the reviewer prompt and run the entry's command via dispatch_with_polling."""
     active = seams or ReviewerSeams()
-    cli, full_prompt = _reviewer_full_prompt(spec, active)
+    runtime, full_prompt = _reviewer_full_prompt(spec, active)
     entry = spec.reviewer_entry
     resolved = ResolvedReviewer(
         key=entry.get("key", ""),
         model=entry.get("model", ""),
         vendor=entry.get("vendor", ""),
-        cli=cli,
+        runtime=runtime,
         command=entry.get("command"),
         extra=entry.get("extra") or {},
     )

@@ -6,17 +6,14 @@ from ai_kit_spec.detection import runtime_id
 # ── Policy resolution ────────────────────────────────────────────────────
 
 class ResolvedReviewer(NamedTuple):
-    """A reviewer chosen for this run. cli/command are None for native
-    (current-runtime) dispatch. model == "" means "no override — inherit
-    the current session's own default model" (never a hardcoded name).
-    extra holds any reviewer-entry fields beyond key/model/vendor/cli/
-    command (e.g. effort, service_tier) for the caller to interpolate into
-    `command`."""
+    """A reviewer chosen for this run. runtime None with model == "" is the
+    session default; command set with no runtime is a custom entry. Other
+    runtime/model pairs use the selected runtime. Extra holds other fields."""
 
     key: str
     model: str
     vendor: str
-    cli: str | None
+    runtime: str | None
     command: str | None
     extra: dict
 
@@ -379,15 +376,28 @@ def render_reviewer_command(resolved: "ResolvedReviewer", prompt: str) -> list[s
     itself defines a `model`/`prompt` key (a hand-written config collision with the two
     reserved placeholder names). A malformed `review-spec.toml` entry must surface as a
     reportable config error, never crash the caller."""
-    if not resolved.command:
+    if resolved.command:
+        try:
+            tokens = split_command_template(resolved.key, resolved.command)
+            return [token.format(model=resolved.model, prompt=prompt, **resolved.extra)
+                    for token in tokens]
+        except (KeyError, IndexError, ValueError, TypeError, AttributeError) as exc:
+            raise ValueError(f"reviewer {resolved.key!r}: {exc}") from exc
+    if resolved.runtime and not resolved.model:
+        raise ValueError(f"reviewer {resolved.key!r} has a runtime but no model")
+    if not resolved.runtime:
         raise ValueError(
-            f"reviewer {resolved.key!r} has cli={resolved.cli!r} set but no command template"
+            f"reviewer {resolved.key} has no runtime or command; "
+            "the session default is run by the host"
         )
+    template = build_reviewer_command(
+        resolved.runtime, effort=resolved.extra.get("effort"),
+        service_tier=resolved.extra.get("service_tier"),
+        mode=resolved.extra.get("cursor_mode", "plan"),
+    )
     try:
-        tokens = split_command_template(resolved.key, resolved.command)
+        tokens = split_command_template(resolved.key, template)
         return [token.format(model=resolved.model, prompt=prompt, **resolved.extra)
                 for token in tokens]
     except (KeyError, IndexError, ValueError, TypeError, AttributeError) as exc:
-        raise ValueError(
-            f"reviewer {resolved.key!r} has a malformed command template: {exc}"
-        ) from exc
+        raise ValueError(f"reviewer {resolved.key!r}: {exc}") from exc

@@ -1,11 +1,15 @@
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 sys.path.insert(0, "skills/ai-kit-spec-review")
 
+from ai_kit_spec.cli import main
 from ai_kit_spec.config_io import (
     _emit_legacy_note,
     _legacy_command_knobs,
@@ -54,6 +58,37 @@ class TestLegacyTracer(unittest.TestCase):
             with open(path, "rb") as stream:
                 self.assertEqual(stream.read(), before)
 
+
+class TestLegacyLoad(unittest.TestCase):
+    def test_tracer(self):
+        command = ("codex exec --sandbox read-only --skip-git-repo-check -m {model} "
+                   "-c model_reasoning_effort='\"high\"'")
+        with tempfile.TemporaryDirectory() as root:
+            home = os.path.join(root, "home")
+            xdg = os.path.join(root, "xdg")
+            os.makedirs(os.path.join(xdg, "ai-kit"))
+            path = os.path.join(xdg, "ai-kit", "review-spec.toml")
+            text = ('[[reviewers]]\nkey = "cx"\ncli = "codex"\nmodel = "gpt-5.6-sol"\n'
+                    f"command = {json.dumps(command)}\n[policy]\nladder = [\"cx\"]\n")
+            with open(path, "w", encoding="utf-8") as stream:
+                stream.write(text)
+            env = {"HOME": home, "XDG_CONFIG_HOME": xdg}
+            out, err = io.StringIO(), io.StringIO()
+            with open(path, "rb") as stream:
+                before = stream.read()
+            with mock.patch.dict(os.environ, env), \
+                    redirect_stdout(out), redirect_stderr(err):
+                self.assertEqual(main(["resolve-reviewers", "--cwd", root, "--cross-ai",
+                                       "--quota-path", os.path.join(root, "quota.json")]), 0)
+            result = json.loads(out.getvalue())[0]
+            self.assertEqual(result["runtime"], "codex")
+            self.assertIsNone(result["command"])
+            self.assertEqual(result["extra"]["effort"], "high")
+            self.assertIn(path, err.getvalue())
+            self.assertIn("cx", err.getvalue())
+            self.assertEqual(err.getvalue().count("legacy reviewer fields loaded"), 1)
+            with open(path, "rb") as stream:
+                self.assertEqual(stream.read(), before)
 
 class TestLegacyForms(unittest.TestCase):
     def test_legacy_form_matrix(self):
