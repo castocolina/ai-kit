@@ -1121,6 +1121,16 @@ class TestProposals(unittest.TestCase):
         self.assertEqual(notes[0]["kind"], "skill_proposal")
         self.assertIn("Draws charts", notes[0]["text"])
 
+    def test_proposal_shows_runnable_json_list(self):
+        """C-W7: the proposal's plan-set value is the JSON list plan-set parses."""
+        inv = _inv(skills=[_skill_row("chart", "global", description="Draws charts")])
+        text = skills.proposals(_shipped_affinity(), inv)[0]["text"]
+        command = text.split("wire with ", 1)[1].split(" (", 1)[0]
+        argv = shlex.split(command)
+        self.assertEqual(argv[:2], ["plan-set", "agent_skills.<agent>"])
+        self.assertEqual(json.loads(argv[2]), ["chart"])
+        self.assertIn("whole list", text)
+
     def test_empty_description_skipped(self):
         inv = _inv(skills=[_skill_row("quiet", "global", description="")])
         self.assertEqual(skills.proposals(_shipped_affinity(), inv), [])

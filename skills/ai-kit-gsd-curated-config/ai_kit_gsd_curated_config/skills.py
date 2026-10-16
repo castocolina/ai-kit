@@ -404,8 +404,9 @@ def proposals(affinity: dict, inv: dict) -> list[dict]:
             "kind": "skill_proposal",
             "key": name,
             "text": (
-                f"unknown skill {name} ({kind}): {desc}; "
-                "wire with plan-set agent_skills.<agent>"
+                f"unknown skill {name} ({kind}): {desc}; wire with plan-set "
+                f"agent_skills.<agent> {shlex.quote(json.dumps([name]))} "
+                "(the value is the agent's whole list: keep its current skills in it)"
             ),
         })
     extra = len(eligible) - PROPOSAL_CAP
