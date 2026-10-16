@@ -5,6 +5,8 @@
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means not a git repo or git failed; with no CLI run it is clean.
+ * Gitignored files count by stat signature (mode, size, mtime, ctime), so a background
+ * writer into an ignored dir (a cache, an indexer) also reads dirty.
  *
  * GSD runs:  echo "$TASK_PROMPT" | gsd-tools run-with-timeout $T -- node .planning/scripts/cross-ai.mjs [flags]
  *   - The prompt arrives on stdin. stdout becomes the plan's SUMMARY candidate, and stderr is GSD's error log.
@@ -634,6 +636,19 @@ async function treeState(cwd, limit, depth = 0) {
     if (addR.timedOut || addR.spawnErr || addR.code !== 0) return null;
     const wtR = await runChild(git, ['write-tree'], { cwd, env, capMs: GIT_CAP_MS, limit });
     if (wtR.timedOut || wtR.spawnErr || wtR.code !== 0) return null;
+    // git add -A skips ignored files, so fold in a stat signature of each one (U-3): hashing
+    // contents would be too slow for node_modules-sized trees, and a write changes ctime.
+    const ignR = await runChild(git, ['ls-files', '-z', '-o', '-i', '--exclude-standard'], { cwd, env, capMs: GIT_CAP_MS, limit });
+    if (ignR.timedOut || ignR.spawnErr || ignR.code !== 0) return null;
+    const ignHash = crypto.createHash('sha256');
+    for (const rel of ignR.stdout.split('\0').filter(Boolean).sort()) {
+      let sig = 'gone';
+      try {
+        const st = fs.lstatSync(path.join(cwd, rel));
+        sig = `${st.mode}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+      } catch { /* removed since the listing */ }
+      ignHash.update(`${rel}\0${sig}\0`);
+    }
     // git add records a submodule (or any nested repo) as its HEAD only, so snapshot each
     // checked-out one too: edits inside it must count.
     const lsR = await runChild(git, ['ls-files', '-s', '-z'], { cwd, env, capMs: GIT_CAP_MS, limit });
@@ -648,7 +663,7 @@ async function treeState(cwd, limit, depth = 0) {
       if (sub === null) return null;
       nested += `\t${rel}=${stateSig(sub)}`;
     }
-    return { head, tree: wtR.stdout.trim() + nested };
+    return { head, tree: `${wtR.stdout.trim()}\tignored=${ignHash.digest('hex')}${nested}` };
   } finally {
     dropTemp(idxDir);
   }
@@ -929,6 +944,7 @@ const FAKE_MODES = {
   },
   reedit: () => { fs.appendFileSync('dirty.txt', 'more\n'); process.stdout.write('# Summary\nok'); },
   subedit: () => { fs.appendFileSync('sub/f.txt', 'edit\n'); process.stdout.write('# Summary\nok'); },
+  ignorededit: () => { fs.appendFileSync('ign/x.txt', 'edit\n'); process.stdout.write('# Summary\nok'); },
   stubborn: () => {
     process.on('SIGTERM', () => {});
     process.on('SIGINT', () => {});
@@ -1271,6 +1287,17 @@ function nestedRepoSetup(c) {
   for (const [cwd, argv] of [[sub, ['init', '-q']], [sub, ['add', 'f.txt']], [sub, ['commit', '-q', '-m', 's']],
     [c.repo, ['add', 'sub']], [c.repo, ['commit', '-q', '-m', 'gitlink']]]) {
     const g = spawnSync('git', argv, { cwd, env: c.env, encoding: 'utf8' });
+    if (g.status !== 0) return `setup git ${argv.join(' ')}: ${g.stderr}`;
+  }
+  return null;
+}
+
+function ignoredFileSetup(c) {
+  fs.writeFileSync(path.join(c.repo, '.gitignore'), 'ign/\n');
+  fs.mkdirSync(path.join(c.repo, 'ign'));
+  fs.writeFileSync(path.join(c.repo, 'ign', 'x.txt'), 'seed\n');
+  for (const argv of [['add', '.gitignore'], ['commit', '-q', '-m', 'ignore']]) {
+    const g = spawnSync('git', argv, { cwd: c.repo, env: c.env, encoding: 'utf8' });
     if (g.status !== 0) return `setup git ${argv.join(' ')}: ${g.stderr}`;
   }
   return null;
@@ -1765,6 +1792,21 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/subedit'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/subedit exit=0 .* tree=dirty action=stop$/,
+      },
+      {
+        // U-3: an edit only to a gitignored file still reads dirty.
+        name: 'ignored-edit',
+        setup: ignoredFileSetup,
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ignorededit'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ignorededit exit=0 .* tree=dirty action=stop$/,
+      },
+      {
+        name: 'ignored-review-ok',
+        setup: ignoredFileSetup,
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/review-ok exit=0 .* tree=clean action=stop$/,
       },
       {
         name: 'submodule-review-ok',
