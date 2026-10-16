@@ -2238,6 +2238,17 @@ def _skill_md_text() -> str:
         return handle.read()
 
 
+_ENTRYPOINT = '"$ENTRYPOINT"'
+# Choice-valued placeholders get a valid value so argparse checks the rest of the line.
+_PLACEHOLDER_VALUES = {
+    "<profile>": "adaptive",
+    "<rigor>": "standard",
+    "<y|n>": "y",
+    "<true|false>": "true",
+    "<host>": "claude",
+}
+
+
 def _bash_fenced_lines(text: str) -> list[str]:
     lines: list[str] = []
     in_bash = False
@@ -2249,16 +2260,19 @@ def _bash_fenced_lines(text: str) -> list[str]:
                 continue
             in_bash = False
             continue
-        if in_bash and _SCRIPT_NAME in raw and "python3" in raw:
+        if in_bash and "python3" in raw and (_SCRIPT_NAME in raw or _ENTRYPOINT in raw):
             lines.append(raw.strip())
     return lines
 
 
 def _argv_after_script(command_line: str) -> list[str]:
-    replaced = re.sub(r"<[^>]+>", "x", command_line)
-    parts = shlex.split(replaced)
+    replaced = command_line
+    for placeholder, value in _PLACEHOLDER_VALUES.items():
+        replaced = replaced.replace(placeholder, value)
+    replaced = re.sub(r"<[^>]+>", "x", replaced)
+    parts = shlex.split(replaced.split(" > ", 1)[0])  # drop a stdout redirect
     for idx, token in enumerate(parts):
-        if token.endswith(_SCRIPT_NAME):
+        if token.endswith(_SCRIPT_NAME) or token == "$ENTRYPOINT":
             return parts[idx + 1 :]
     raise AssertionError(f"no script name in command line: {command_line!r}")
 
@@ -2275,6 +2289,19 @@ class TestSkillDocCommands(unittest.TestCase):
             if cmd in _V2_SUBCOMMANDS:
                 seen_v2.add(cmd)
         self.assertEqual(seen_v2, _V2_SUBCOMMANDS)
+
+    def test_examples_use_entrypoint_and_no_habitual_force(self) -> None:
+        """Skill-judge M1/I4: every example runs "$ENTRYPOINT"; none passes --force."""
+        lines = _bash_fenced_lines(_skill_md_text())
+        self.assertTrue(lines)
+        for line in lines:
+            self.assertIn(_ENTRYPOINT, line, line)
+            self.assertNotIn("--force", line, line)
+
+    def test_no_machine_specific_claims(self) -> None:
+        text = _skill_md_text()
+        for phrase in ("on this machine", "this maintainer's machine"):
+            self.assertNotIn(phrase, text)
 
     def test_v2_is_primary(self) -> None:
         headings = re.findall(r"^## (.+)$", _skill_md_text(), re.MULTILINE)
@@ -2307,6 +2334,21 @@ class TestSkillDocCommands(unittest.TestCase):
             "approve_with",
             "--require",
             "committed",
+            # Batch B behavior and the skill-judge review (18-REVIEW.md).
+            "predicted",
+            "--fingerprint",
+            "already-configured",
+            '> "$WORK/inventory.json"',
+            "inventory.json",
+            ".planning/",
+            "script:cross-ai.model.",
+            "script:cross-ai.prefer",
+            "ponytail_visibility",
+            "System One",
+            "ensure-project",
+            "overwrites `workflow.cross_ai_command`",
+            "Ask the user",
+            "a refusal you can fix",
         )
         missing = [phrase for phrase in required if phrase not in text]
         self.assertEqual(missing, [])
