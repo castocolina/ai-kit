@@ -1,6 +1,7 @@
 """Post-apply follow-ups (installer, effort sync): listed in one block; nothing runs without
 `followups --approve`. Machine-level installs are never run. The installer argv pins
-`@opengsd/gsd-core` to the inventory-resolved version (never an npm dist-tag name)."""
+`@opengsd/gsd-core` to the inventory-resolved version (never an npm dist-tag name) and to the
+public registry, so the target project's `.npmrc` cannot redirect the download (U-2)."""
 from __future__ import annotations
 
 import hashlib
@@ -17,6 +18,7 @@ from . import gsd_catalog, host, presets
 HOST_DIRS = {"claude": ".claude", "codex": ".codex", "opencode": ".opencode"}
 EFFORT_SYNC_HOSTS = ("claude", "codex", "opencode")
 PACKAGE = "@opengsd/gsd-core"
+NPM_REGISTRY = "https://registry.npmjs.org/"
 # An exact release (with optional prerelease); the VERSION file may sit in an untrusted checkout.
 _SEMVER = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?")
 REQUIRE_IDS = ("installer", "effort_sync")
@@ -45,7 +47,16 @@ class FollowupCtx(NamedTuple):
 
 
 def installer_argv(version: str, host_name: str) -> list[str]:
-    return ["npx", "-y", f"{PACKAGE}@{version}", f"--{host_name}", "--local"]
+    # Both flags: a scoped `@opengsd:registry` in .npmrc outranks a plain --registry.
+    return [
+        "npx",
+        "-y",
+        f"--registry={NPM_REGISTRY}",
+        f"--@opengsd:registry={NPM_REGISTRY}",
+        f"{PACKAGE}@{version}",
+        f"--{host_name}",
+        "--local",
+    ]
 
 
 def local_gsd_tools(project_dir: str, host_name: str, deps: host.InventoryDeps) -> str | None:
@@ -170,6 +181,8 @@ def _inventory_version(inv: dict) -> str | None:
 def _disclosures() -> list[str]:
     return [
         "npx -y downloads and runs an npm package from the registry",
+        f"the argv pins the registry to {NPM_REGISTRY} so the project's .npmrc cannot "
+        "redirect it; its other settings (proxy, auth, scripts) still apply",
         "pnpm dlx is the equivalent of npx -y (unverified under the pnpm shim)",
         "a non-Claude --local install rewrites ~/.gsd/defaults.json and scans home "
         "host dirs unless --no-legacy-cleanup is passed; the locked argv above omits it",

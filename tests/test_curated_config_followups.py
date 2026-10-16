@@ -146,7 +146,15 @@ class TestFollowupsTracer(unittest.TestCase):
             self.assertEqual(len(req), 1)
             self.assertEqual(
                 req[0]["argv"],
-                ["npx", "-y", "@opengsd/gsd-core@1.16.0", "--opencode", "--local"],
+                [
+                    "npx",
+                    "-y",
+                    "--registry=https://registry.npmjs.org/",
+                    "--@opengsd:registry=https://registry.npmjs.org/",
+                    "@opengsd/gsd-core@1.16.0",
+                    "--opencode",
+                    "--local",
+                ],
             )
             self.assertEqual(req[0]["cwd"], project)
             npx_calls = [c for c in rec.argv_log if c and c[0] == "npx"]
@@ -460,6 +468,7 @@ class TestDisclosures(unittest.TestCase):
         self.assertIn("pnpm dlx", text)
         self.assertIn("defaults.json", text)
         self.assertIn("no-legacy-cleanup", text)
+        self.assertIn(".npmrc", text)  # U-2
         rec = block["recommended"]
         self.assertTrue(rec and rec[0]["id"] == "map_codebase")
         if block["required"]:
