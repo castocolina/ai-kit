@@ -1,8 +1,9 @@
 """The pure recommendation engine (REC-01): inventory + profile + rigor + the two
 cross-AI answers -> one canonical, sorted, explainable plan dict. No subprocess, no
 network, no clock, no environment, no filesystem: everything arrives through the
-inventory. Imports only `typing` names, `.cross_ai`, `.presets`, `.roles` and
-`.plan_schema` (guarded by the tests' AST import check).
+inventory (and the affinity document the CLI loads). Imports only `typing` names,
+`.cross_ai`, `.presets`, `.roles`, `.skills` and `.plan_schema` (guarded by the tests' AST
+import check).
 """
 from typing import Any, NamedTuple
 

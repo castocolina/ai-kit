@@ -1839,7 +1839,15 @@ class TestPurity(unittest.TestCase):
 
     def test_build_plan_pure_and_deterministic(self):
         inv = make_inventory(host="codex", rejected=("dynamic_routing.enabled",))
-        opts = recommend.RecommendOpts("adaptive", "rigorous", "y", "y")
+        inv["skills"] = [{
+            "name": "ponytail", "root_kind": "global", "root": "r", "plugin": None,
+            "real_dir": "<r>/ponytail", "real_dir_home": None, "escapes_root": False,
+            "addressable": True, "description": "d",
+        }]
+        # C-IN-02: the skills layer runs under the raisers too (loaded before patching open).
+        affinity, err = plan_io.load_affinity(plan_io.AFFINITY_PATH)
+        self.assertIsNone(err)
+        opts = recommend.RecommendOpts("adaptive", "rigorous", "y", "y", affinity)
         raiser = mock.MagicMock(side_effect=AssertionError("purity violation"))
         with mock.patch.object(subprocess, "run", raiser), \
              mock.patch.object(subprocess, "Popen", raiser), \
@@ -1850,6 +1858,7 @@ class TestPurity(unittest.TestCase):
             first = recommend.build_plan(inv, opts)
             second = recommend.build_plan(inv, opts)
         self.assertEqual(plan_io.canonical_json(first), plan_io.canonical_json(second))
+        self.assertIn("agent_skills.gsd-planner", {e["key"] for e in first["entries"]})
 
     def test_recommend_and_presets_import_nothing_forbidden(self):
         for module in ("recommend", "presets", "roles", "plan_schema", "cross_ai", "skills"):
