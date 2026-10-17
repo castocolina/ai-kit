@@ -102,7 +102,7 @@ from ai_kit_spec.review_reports import (
     render_merged_report,
     report_status,
 )
-from ai_kit_spec.runner_dispatch import RunnerResult
+from ai_kit_spec.runner_dispatch import PI_EXEC_NOTE, RunnerResult
 from ai_kit_spec.vendor import infer_vendor_from_model
 
 # Fixture provenance (JSON cannot hold comments, so the record lives here, next to the
@@ -3926,6 +3926,28 @@ class TestMainCli(unittest.TestCase):
         self.assertEqual(captured["heartbeat_interval"], 30)  # default
         self.assertEqual(captured["timeout"], 600)
         self.assertIsNone(captured["format_block"])
+
+    def test_dispatch_execute_prints_the_pi_note_once(self):
+        def fake_runner(spec, prompt, seams):
+            del spec, prompt, seams
+            return RunnerResult(0, "done", None, None, False, [], "")
+
+        def dispatch(spec):
+            return execute_dispatch.dispatch_execute(
+                spec, execute_dispatch.ExecuteSeams(runner_fn=fake_runner))
+
+        with tempfile.TemporaryDirectory() as d:
+            prompt_path = os.path.join(d, "prompt.txt")
+            with open(prompt_path, "w", encoding="utf-8") as f:
+                f.write("task")
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                code = main(["dispatch-execute", "--runtime", "pi", "--model", "p/m",
+                             "--target-dir", d, "--prompt-file", prompt_path,
+                             "--timeout", "60"],
+                            dispatch_execute_fn=dispatch)
+        self.assertEqual(code, 0)
+        self.assertEqual(err.getvalue().count(PI_EXEC_NOTE), 1)
 
     def test_dispatch_execute_reads_optional_format_block_file(self):
         import io

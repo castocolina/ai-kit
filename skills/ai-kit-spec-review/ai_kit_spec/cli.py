@@ -82,7 +82,6 @@ from ai_kit_spec.review_reports import (
 from ai_kit_spec.reviewer_dispatch import ReviewerDispatchSpec, ReviewerSeams, dispatch_reviewer
 from ai_kit_spec.routing import RouteContext, RuntimesSeams, host_can_select
 from ai_kit_spec.runner_dispatch import (
-    PI_EXEC_NOTE,
     RunnerSpec,
     build_runner_argv,
     run_custom_command,
@@ -908,8 +907,6 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
     except ValueError as exc:
         print(f"dispatch-execute: {exc}", file=sys.stderr)
         return 1
-    if rid == "pi":
-        print(PI_EXEC_NOTE, file=sys.stderr)
     if args.stdout_only:
         sys.stdout.write(result["stdout"])
         # Propagate the dispatched CLI's own real returncode (not a collapsed 0/1) -- GSD's
