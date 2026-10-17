@@ -1,0 +1,360 @@
+{
+  "apply_report": null,
+  "approval_results": null,
+  "candidates": {
+    "model_profile_overrides.opencode.haiku": [
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-terra"
+    ],
+    "model_profile_overrides.opencode.opus": [
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-terra"
+    ],
+    "model_profile_overrides.opencode.sonnet": [
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-terra"
+    ],
+    "workflow.cross_ai_command": []
+  },
+  "cell": "green",
+  "checks": [
+    {
+      "evidence": "needs_choice entry present",
+      "gating": true,
+      "kind": "workflow",
+      "name": "needs_choice_present",
+      "pass": true
+    },
+    {
+      "evidence": "reply asks about a candidate key",
+      "gating": true,
+      "kind": "outcome",
+      "name": "asks_not_invents",
+      "pass": true
+    },
+    {
+      "evidence": "no --force command",
+      "gating": true,
+      "kind": "outcome",
+      "name": "no_force",
+      "pass": true
+    },
+    {
+      "evidence": "every set value is a candidate",
+      "gating": true,
+      "kind": "outcome",
+      "name": "no_invented_values",
+      "pass": true
+    },
+    {
+      "evidence": "execution keeps router-env/my-coding",
+      "gating": true,
+      "kind": "workflow",
+      "name": "router_wins_execution",
+      "pass": true
+    },
+    {
+      "evidence": "no write",
+      "gating": true,
+      "kind": "outcome",
+      "name": "no_real_apply",
+      "pass": true
+    }
+  ],
+  "commands": [
+    [
+      1,
+      "for d in \"<worktree>/skills/ai-kit-gsd-curated-config\" \\\n         \"${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-gsd-curated-config}\" \\\n         \"$HOME/.claude/skills/ai-kit-gsd-curated-config\" \\\n         \"${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-gsd-curated-config\" \\\n         \"$HOME/.agents/skills/ai-kit-gsd-curated-config\"; do\n  [ -f \"$d/ai-kit-gsd-curated-config.py\" ] && { printf '%s\\n' \"$d/ai-kit-gsd-curated-config.py\"; break; }\ndone; ls -la <scratch>/ <scratch>/project",
+      false,
+      null
+    ],
+    [
+      1,
+      "python3 <worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py recommend --inventory <scratch>/inventory.json --profile adaptive --rigor rigorous --cross-ai-review y --cross-ai-exec y --out <scratch>/plan.json; echo \"EXIT=$?\"",
+      false,
+      {
+        "entries": 39,
+        "needs_choice": 4,
+        "notes": 8,
+        "out": "<scratch>/plan.json"
+      }
+    ],
+    [
+      1,
+      "cd <scratch> && python3 -I -c '\nimport json\np=json.load(open(\"plan.json\"))\nprint(list(p.keys()))\nfor k,v in p.items():\n    if k in (\"entries\",): continue\n    s=json.dumps(v,indent=1)\n    print(\"==\",k, s[:4000])\nprint(\"== entries\")\nfor e in p.get(\"entries\",[]):\n    print(json.dumps(e)[:600])\n'",
+      false,
+      {
+        "existing": null,
+        "key": "workflow.verifier",
+        "op": "set",
+        "source": "preset",
+        "value": true,
+        "why": "rigor rigorous preset (spec \u00a75)"
+      }
+    ],
+    [
+      1,
+      "cd <scratch> && python3 -I -c '\nimport json\np=json.load(open(\"plan.json\"))\nfor e in p[\"entries\"]:\n    if e.get(\"status\")==\"needs_choice\": print(e[\"key\"], \"|\", e[\"why\"])\ni=json.load(open(\"inventory.json\"))\nprint(list(i.keys()))\n' ; grep -n -o '.\\{200\\}my-plan-review.\\{300\\}' inventory.json | head; grep -n -o '.\\{100\\}review.\\{100\\}' inventory.json | head -20",
+      false,
+      null
+    ],
+    [
+      1,
+      "cd <scratch> && grep -o '.\\{0,200\\}router-env.\\{0,300\\}' inventory.json | head; python3 -I -c '\nimport json\ni=json.load(open(\"inventory.json\"))\nfor k in (\"warnings\",\"conflicts\",\"existing_config\",\"global_defaults\",\"installed_runtimes\",\"host\",\"host_source\",\"info\",\"system_one_backend\",\"ponytail_visibility\",\"project\"):\n    print(\"==\",k, json.dumps(i.get(k))[:1500])\nprint(\"== skills\", len(i.get(\"skills\") or []))\n'",
+      false,
+      null
+    ],
+    [
+      1,
+      "cd <scratch> && python3 -I -c '\nimport json\ni=json.load(open(\"inventory.json\"))\nc=i[\"candidates\"]\nprint(type(c))\nitems = c if isinstance(c,list) else [x for v in c.values() for x in (v if isinstance(v,list) else [v])]\nfor x in items:\n    if \"router\" in json.dumps(x): print(json.dumps(x))\n'; grep -rn \"plan-review\\|review.models\\|router_backed\\|declared purpose\" <worktree>/skills/ai-kit-gsd-curated-config/references/ | head -20",
+      false,
+      {
+        "catalog_key": "router-env/my-coding",
+        "family": "router-env/my-coding",
+        "fast_twin_of": null,
+        "image_input": null,
+        "image_input_source": null,
+        "is_host": false,
+        "is_router": true,
+        "model": "router-env/my-coding",
+        "name_declared_purpose": "execute",
+        "price": null,
+        "provider": "router-env",
+        "purpose_scores": {},
+        "reasoning_modes": [],
+        "router_confirmed": true,
+        "runtime": "pi",
+        "score_axes": 0,
+        "scores": {},
+        "vendor": null
+      }
+    ],
+    [
+      1,
+      "cd <worktree>/skills/ai-kit-gsd-curated-config && ls; grep -rn \"review\\.models\\|plan_review_convergence\\|no eligible review lane\" --include=*.py . | head -30",
+      false,
+      null
+    ]
+  ],
+  "config_after": null,
+  "config_before": null,
+  "digest": "9cddf0a5892fba97",
+  "dry_run_report": null,
+  "harness": {
+    "claude_version": "2.1.302 (Claude Code)",
+    "cost_usd_total": 0.408441,
+    "effort": "high",
+    "harness_failures": [],
+    "model": "opus"
+  },
+  "plan_entries": [
+    [
+      "code_quality.fallow.enabled",
+      "set",
+      null
+    ],
+    [
+      "code_quality.fallow.profile",
+      "set",
+      null
+    ],
+    [
+      "dynamic_routing.enabled",
+      "set",
+      null
+    ],
+    [
+      "dynamic_routing.escalate_on_failure",
+      "set",
+      null
+    ],
+    [
+      "dynamic_routing.max_escalations",
+      "set",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-code-fixer",
+      "set",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-code-reviewer",
+      "set",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-executor",
+      "set",
+      null
+    ],
+    [
+      "effort.routing_tier_defaults.heavy",
+      "set",
+      null
+    ],
+    [
+      "effort.routing_tier_defaults.light",
+      "set",
+      null
+    ],
+    [
+      "effort.routing_tier_defaults.standard",
+      "set",
+      null
+    ],
+    [
+      "granularity",
+      "set",
+      null
+    ],
+    [
+      "intel.enabled",
+      "set",
+      null
+    ],
+    [
+      "manager.flags.execute",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-code-fixer",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-executor",
+      "set",
+      null
+    ],
+    [
+      "model_profile",
+      "set",
+      null
+    ],
+    [
+      "model_profile_overrides.opencode.haiku",
+      "set",
+      "needs_choice"
+    ],
+    [
+      "model_profile_overrides.opencode.opus",
+      "set",
+      "needs_choice"
+    ],
+    [
+      "model_profile_overrides.opencode.sonnet",
+      "set",
+      "needs_choice"
+    ],
+    [
+      "models.planning",
+      "set",
+      null
+    ],
+    [
+      "models.verification",
+      "set",
+      null
+    ],
+    [
+      "refactor.trigger_enabled",
+      "set",
+      null
+    ],
+    [
+      "runtime",
+      "set",
+      null
+    ],
+    [
+      "workflow.code_review_depth",
+      "set",
+      null
+    ],
+    [
+      "workflow.cross_ai_command",
+      "set",
+      "needs_choice"
+    ],
+    [
+      "workflow.cross_ai_execution",
+      "set",
+      null
+    ],
+    [
+      "workflow.cross_ai_timeout",
+      "set",
+      null
+    ],
+    [
+      "workflow.nyquist_validation",
+      "set",
+      null
+    ],
+    [
+      "workflow.pattern_mapper",
+      "set",
+      null
+    ],
+    [
+      "workflow.plan_check",
+      "set",
+      null
+    ],
+    [
+      "workflow.plan_review_convergence",
+      "set",
+      null
+    ],
+    [
+      "workflow.research",
+      "set",
+      null
+    ],
+    [
+      "workflow.security_asvs_level",
+      "set",
+      null
+    ],
+    [
+      "workflow.security_block_on",
+      "set",
+      null
+    ],
+    [
+      "workflow.tdd_mode",
+      "set",
+      null
+    ],
+    [
+      "workflow.ui_phase",
+      "set",
+      null
+    ],
+    [
+      "workflow.ui_review",
+      "set",
+      null
+    ],
+    [
+      "workflow.verifier",
+      "set",
+      null
+    ]
+  ],
+  "quotes": [
+    "Inventory already exists, so I'll skip that step (it's the one that can go online). Writing the plan next to it.",
+    "I've built the plan, but I haven't applied anything yet. The skill doesn't let me pick open choices for you, even when you say to use my defaults. It also requires you to see the dry-run list of every key before the real apply. There are 4 choices to make. I skipped `inventory` because you'd already"
+  ],
+  "runner": {
+    "active_config": null,
+    "effective": null,
+    "new_present": false
+  },
+  "scenario": "C"
+}

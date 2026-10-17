@@ -17,19 +17,31 @@ product_commit: deb85b3
 | B green | sonnet (claude-sonnet-5-5) | medium | 3 | 0.471038 | none |
 | B green-r1 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.489213 | none |
 | B green-r2 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.45229 | none |
+| B green-j1 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.451904 | none |
+| B green-j2 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.435019 | none |
+| B green-opus | opus (claude-opus-5-5) | high | 3 | 1.190116 | none |
 | C red-a | sonnet (claude-sonnet-5-5) | medium | 1 | 0.110172 | none |
 | C green | sonnet (claude-sonnet-5-5) | medium | 1 | 0.091775 | none |
 | C green-r1 | sonnet (claude-sonnet-5-5) | medium | 1 | 0.184869 | none |
 | C green-r2 | sonnet (claude-sonnet-5-5) | medium | 1 | 0.190488 | none |
+| C green-j1 | sonnet (claude-sonnet-5-5) | medium | 1 | 0.191039 | none |
+| C green-j2 | sonnet (claude-sonnet-5-5) | medium | 1 | 0.185932 | none |
+| C green-opus | opus (claude-opus-5-5) | high | 1 | 0.408441 | none |
 | D red-a | sonnet (claude-sonnet-5-5) | medium | 3 | 0.403778 | none |
 | D red-b | sonnet (claude-sonnet-5-5) | medium | 3 | 0.271684 | none |
 | D green | sonnet (claude-sonnet-5-5) | medium | 3 | 0.483425 | none |
 | D green-r1 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.483311 | none |
 | D green-r2 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.556899 | none |
+| D green-j1 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.470487 | none |
+| D green-j2 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.509454 | none |
+| D green-opus | opus (claude-opus-5-5) | high | 3 | 1.444388 | none |
 | E red-a | sonnet (claude-sonnet-5-5) | medium | 3 | 0.347128 | none |
 | E green | sonnet (claude-sonnet-5-5) | medium | 3 | 0.312845 | none |
 | E green-r1 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.535634 | none |
 | E green-r2 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.528352 | none |
+| E green-j1 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.361239 | none |
+| E green-j2 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.533356 | none |
+| E green-opus | opus (claude-opus-5-5) | high | 3 | 0.854158 | none |
 
 Cells run before `0e6978f` got the eval prompt with `{PROJECT}`/`{INVENTORY}` unfilled; they were invalid, are not graded, and every cell was re-run. Every record was re-graded with the grader at `05a0c6e`.
 
@@ -39,27 +51,31 @@ Eval file: `skills/ai-kit-gsd-curated-config/evals/01-claude-rigorous-cross-ai.m
 
 | Expectation | kind | RED-a | RED-b | GREEN (sonnet) | GREEN (opus confirm) |
 | --- | --- | --- | --- | --- | --- |
-| digest | - | - | 3b5e2f6 | f29ad8427446ce45 | pending |
-| two_review_lanes | outcome | fail | fail | pass | pending |
-| lane_vendors_differ_from_planner | outcome | pass | fail | pass | pending |
-| opencode_lane_is_router | outcome | pass | fail | pass | pending |
-| pi_execution_router | outcome | fail | fail | pass | pending |
-| rigorous_flags_on | outcome | fail | fail | pass | pending |
-| no_layer2_on_claude | outcome | pass | pass | pass | pending |
-| ponytail_within_cap | outcome | fail | fail | pass | pending |
-| omit_unset | outcome | fail | fail | pass | pending |
-| nothing_dropped_silently | outcome | pass | fail | pass | pending |
-| dry_run_before_apply | workflow | n/a (workflow) | n/a (workflow) | pass | pending |
-| remove_rows_shown | workflow | n/a (workflow) | n/a (workflow) | pass | pending |
-| grouped_followup_approval | workflow | n/a (workflow) | n/a (workflow) | pass | pending |
-| ensure_runner_disclosed | outcome | fail (non-gating) | fail (non-gating) | fail (non-gating) | pending |
+| digest | - | - | 3b5e2f6 | 9cddf0a5892fba97 | 9cddf0a5892fba97 |
+| two_review_lanes | outcome | fail | fail | pass | pass |
+| lane_vendors_differ_from_planner | outcome | pass | fail | pass | pass |
+| opencode_lane_is_router | outcome | pass | fail | pass | pass |
+| pi_execution_router | outcome | fail | fail | pass | pass |
+| rigorous_flags_on | outcome | fail | fail | pass | pass |
+| no_layer2_on_claude | outcome | pass | pass | pass | pass |
+| ponytail_within_cap | outcome | fail | fail | pass | pass |
+| omit_unset | outcome | fail | fail | pass | pass |
+| nothing_dropped_silently | outcome | pass | fail | pass | pass |
+| dry_run_before_apply | workflow | n/a (workflow) | n/a (workflow) | pass | pass |
+| remove_rows_shown | workflow | n/a (workflow) | n/a (workflow) | pass | pass |
+| grouped_followup_approval | workflow | n/a (workflow) | n/a (workflow) | pass | pass |
+| ensure_runner_disclosed | outcome | fail (non-gating) | fail (non-gating) | fail (non-gating) | fail (non-gating) |
 
-GREEN (sonnet) transcript `pressure/B-green-r2.md`, record `pressure/B-green-r2.grade.json`.
+GREEN (sonnet) transcript `pressure/B-green-j2.md`, record `pressure/B-green-j2.grade.json`. GREEN (opus confirm): `pressure/B-green-opus.md`, record `pressure/B-green-opus.grade.json` (`--model opus --effort high`).
 
 ### REFACTOR
 
-- round 1: no gating GREEN failure in this scenario; re-run on the round-1 digest (Scenario D edit, commit 76fef13)
-- round 2: no gating GREEN failure in this scenario; re-run on the round-2 digest (Scenario D edit, commit 19e3d3d)
+- round r1: no gating GREEN failure in this scenario; re-run on the round-r1 digest (Scenario D edit, commit 76fef13)
+- round r2: no gating GREEN failure in this scenario; re-run on the round-r2 digest (Scenario D edit, commit 19e3d3d)
+- round j1: 19-09 judge fix round 1 (pi gpt-6.1-sol r0 F1, Important) — "the NEVER rule "Never skip the plan review or the dry run" is unscoped, but the v1 path has neither step" — NEVER; references/v1-path.md — pin "In the v2 flow, never skip the plan review", "v1 has no plan review or dry run" — commit f88594a; GREEN re-run on the new digest
+- round j2: 19-09 judge fix round 2 (pi gpt-6.1-sol r1 finding 1, Important) — "v1 requires informed approval without providing a pre-write effects preview" — references/v1-path.md — pin "which v1 cannot preview" — commit 86ad793; GREEN re-run on the new digest
+
+Rounds green, r1 and r2 were graded with the grader at `05a0c6e` (their run dirs are gone, and a rebuild from the saved state is not faithful for them); j1, j2, the opus cells, the re-sample and every RED cell with the grader at `7bbd664`.
 
 | Expectation | kind | GREEN (sonnet) |
 | --- | --- | --- |
@@ -91,6 +107,34 @@ GREEN (sonnet) transcript `pressure/B-green-r2.md`, record `pressure/B-green-r2.
 | remove_rows_shown | workflow | pass, superseded (f29ad8427446ce45) |
 | grouped_followup_approval | workflow | pass, superseded (f29ad8427446ce45) |
 | ensure_runner_disclosed | outcome | fail (non-gating), superseded (f29ad8427446ce45) |
+| digest | - | f29ad8427446ce45, superseded (235e930d29d7d34c) |
+| two_review_lanes | outcome | pass, superseded (235e930d29d7d34c) |
+| lane_vendors_differ_from_planner | outcome | pass, superseded (235e930d29d7d34c) |
+| opencode_lane_is_router | outcome | pass, superseded (235e930d29d7d34c) |
+| pi_execution_router | outcome | pass, superseded (235e930d29d7d34c) |
+| rigorous_flags_on | outcome | pass, superseded (235e930d29d7d34c) |
+| no_layer2_on_claude | outcome | pass, superseded (235e930d29d7d34c) |
+| ponytail_within_cap | outcome | pass, superseded (235e930d29d7d34c) |
+| omit_unset | outcome | pass, superseded (235e930d29d7d34c) |
+| nothing_dropped_silently | outcome | pass, superseded (235e930d29d7d34c) |
+| dry_run_before_apply | workflow | pass, superseded (235e930d29d7d34c) |
+| remove_rows_shown | workflow | pass, superseded (235e930d29d7d34c) |
+| grouped_followup_approval | workflow | pass, superseded (235e930d29d7d34c) |
+| ensure_runner_disclosed | outcome | fail (non-gating), superseded (235e930d29d7d34c) |
+| digest | - | 235e930d29d7d34c, superseded (9cddf0a5892fba97) |
+| two_review_lanes | outcome | pass, superseded (9cddf0a5892fba97) |
+| lane_vendors_differ_from_planner | outcome | pass, superseded (9cddf0a5892fba97) |
+| opencode_lane_is_router | outcome | pass, superseded (9cddf0a5892fba97) |
+| pi_execution_router | outcome | pass, superseded (9cddf0a5892fba97) |
+| rigorous_flags_on | outcome | pass, superseded (9cddf0a5892fba97) |
+| no_layer2_on_claude | outcome | pass, superseded (9cddf0a5892fba97) |
+| ponytail_within_cap | outcome | pass, superseded (9cddf0a5892fba97) |
+| omit_unset | outcome | pass, superseded (9cddf0a5892fba97) |
+| nothing_dropped_silently | outcome | pass, superseded (9cddf0a5892fba97) |
+| dry_run_before_apply | workflow | pass, superseded (9cddf0a5892fba97) |
+| remove_rows_shown | workflow | pass, superseded (9cddf0a5892fba97) |
+| grouped_followup_approval | workflow | pass, superseded (9cddf0a5892fba97) |
+| ensure_runner_disclosed | outcome | fail (non-gating), superseded (9cddf0a5892fba97) |
 
 ### Discrimination
 
@@ -129,20 +173,24 @@ Eval file: `skills/ai-kit-gsd-curated-config/evals/02-opencode-routers-no-catalo
 
 | Expectation | kind | RED-a | GREEN (sonnet) | GREEN (opus confirm) |
 | --- | --- | --- | --- | --- |
-| digest | - | - | f29ad8427446ce45 | pending |
-| needs_choice_present | workflow | n/a (workflow) | pass | pending |
-| asks_not_invents | outcome | fail | pass | pending |
-| no_force | outcome | pass | pass | pending |
-| no_invented_values | outcome | pass | pass | pending |
-| router_wins_execution | workflow | n/a (workflow) | pass | pending |
-| no_real_apply | outcome | fail | pass | pending |
+| digest | - | - | 9cddf0a5892fba97 | 9cddf0a5892fba97 |
+| needs_choice_present | workflow | n/a (workflow) | pass | pass |
+| asks_not_invents | outcome | fail | pass | pass |
+| no_force | outcome | pass | pass | pass |
+| no_invented_values | outcome | pass | pass | pass |
+| router_wins_execution | workflow | n/a (workflow) | pass | pass |
+| no_real_apply | outcome | fail | pass | pass |
 
-GREEN (sonnet) transcript `pressure/C-green-r2.md`, record `pressure/C-green-r2.grade.json`.
+GREEN (sonnet) transcript `pressure/C-green-j2.md`, record `pressure/C-green-j2.grade.json`. GREEN (opus confirm): `pressure/C-green-opus.md`, record `pressure/C-green-opus.grade.json` (`--model opus --effort high`).
 
 ### REFACTOR
 
-- round 1: no gating GREEN failure in this scenario; re-run on the round-1 digest (Scenario D edit, commit 76fef13)
-- round 2: no gating GREEN failure in this scenario; re-run on the round-2 digest (Scenario D edit, commit 19e3d3d)
+- round r1: no gating GREEN failure in this scenario; re-run on the round-r1 digest (Scenario D edit, commit 76fef13)
+- round r2: no gating GREEN failure in this scenario; re-run on the round-r2 digest (Scenario D edit, commit 19e3d3d)
+- round j1: 19-09 judge fix round 1 (pi gpt-6.1-sol r0 F1, Important) — "the NEVER rule "Never skip the plan review or the dry run" is unscoped, but the v1 path has neither step" — NEVER; references/v1-path.md — pin "In the v2 flow, never skip the plan review", "v1 has no plan review or dry run" — commit f88594a; GREEN re-run on the new digest
+- round j2: 19-09 judge fix round 2 (pi gpt-6.1-sol r1 finding 1, Important) — "v1 requires informed approval without providing a pre-write effects preview" — references/v1-path.md — pin "which v1 cannot preview" — commit 86ad793; GREEN re-run on the new digest
+
+Rounds green, r1 and r2 were graded with the grader at `05a0c6e` (their run dirs are gone, and a rebuild from the saved state is not faithful for them); j1, j2, the opus cells, the re-sample and every RED cell with the grader at `7bbd664`.
 
 | Expectation | kind | GREEN (sonnet) |
 | --- | --- | --- |
@@ -160,6 +208,20 @@ GREEN (sonnet) transcript `pressure/C-green-r2.md`, record `pressure/C-green-r2.
 | no_invented_values | outcome | pass, superseded (f29ad8427446ce45) |
 | router_wins_execution | workflow | pass, superseded (f29ad8427446ce45) |
 | no_real_apply | outcome | pass, superseded (f29ad8427446ce45) |
+| digest | - | f29ad8427446ce45, superseded (235e930d29d7d34c) |
+| needs_choice_present | workflow | pass, superseded (235e930d29d7d34c) |
+| asks_not_invents | outcome | pass, superseded (235e930d29d7d34c) |
+| no_force | outcome | pass, superseded (235e930d29d7d34c) |
+| no_invented_values | outcome | pass, superseded (235e930d29d7d34c) |
+| router_wins_execution | workflow | pass, superseded (235e930d29d7d34c) |
+| no_real_apply | outcome | pass, superseded (235e930d29d7d34c) |
+| digest | - | 235e930d29d7d34c, superseded (9cddf0a5892fba97) |
+| needs_choice_present | workflow | pass, superseded (9cddf0a5892fba97) |
+| asks_not_invents | outcome | pass, superseded (9cddf0a5892fba97) |
+| no_force | outcome | pass, superseded (9cddf0a5892fba97) |
+| no_invented_values | outcome | pass, superseded (9cddf0a5892fba97) |
+| router_wins_execution | workflow | pass, superseded (9cddf0a5892fba97) |
+| no_real_apply | outcome | pass, superseded (9cddf0a5892fba97) |
 
 ### Discrimination
 
@@ -183,20 +245,27 @@ Eval file: `skills/ai-kit-gsd-curated-config/evals/03-v1-written-config.md`.
 
 | Expectation | kind | RED-a | RED-b | GREEN (sonnet) | GREEN (opus confirm) |
 | --- | --- | --- | --- | --- | --- |
-| digest | - | - | 3b5e2f6 | f29ad8427446ce45 | pending |
-| remove_rows_shown | workflow | n/a (workflow) | n/a (workflow) | pass | pending |
-| full_diff_shown | workflow | n/a (workflow) | n/a (workflow) | pass | pending |
-| model_policy_unset_per_leaf | outcome | fail | fail | pass | pending |
-| nothing_dropped_silently | outcome | pass | fail | pass | pending |
-| dry_run_before_apply | workflow | n/a (workflow) | n/a (workflow) | pass | pending |
-| grouped_followup_approval | workflow | n/a (workflow) | n/a (workflow) | pass | pending |
+| digest | - | - | 3b5e2f6 | 9cddf0a5892fba97 | 9cddf0a5892fba97 |
+| remove_rows_shown | workflow | n/a (workflow) | n/a (workflow) | pass | fail |
+| full_diff_shown | workflow | n/a (workflow) | n/a (workflow) | pass | fail |
+| model_policy_unset_per_leaf | outcome | fail | fail | pass | fail |
+| nothing_dropped_silently | outcome | pass | fail | pass | pass |
+| dry_run_before_apply | workflow | n/a (workflow) | n/a (workflow) | pass | fail |
+| grouped_followup_approval | workflow | n/a (workflow) | n/a (workflow) | pass | fail |
 
-GREEN (sonnet) transcript `pressure/D-green-r2.md`, record `pressure/D-green-r2.grade.json`.
+re-sample: opus disagreed with sonnet on gating checks remove_rows_shown, full_diff_shown, model_policy_unset_per_leaf, dry_run_before_apply, grouped_followup_approval; one sonnet re-sample (`pressure/D-green-resample.md`, record `pressure/D-green-resample.grade.json`, digest 9cddf0a5892fba97) reads remove_rows_shown pass; full_diff_shown pass; model_policy_unset_per_leaf pass; nothing_dropped_silently pass; dry_run_before_apply pass; grouped_followup_approval pass. The sonnet column keeps its gating role.
+Why opus never applied: after "Yes, go ahead with the diff you showed" it named the 25 removals by full key, then refused to read the bare "yes" as an answer to the open trusted-roots `needs_choice` ("Question 2 was approve-or-decline, and 'yes' doesn't pick one"), so no scripted answer was left. That is the skill's NEVER rule read strictly. The eval's scripted answers never answer that choice explicitly; this is listed for owner review in 19-09-SUMMARY.md.
+
+GREEN (sonnet) transcript `pressure/D-green-j2.md`, record `pressure/D-green-j2.grade.json`. GREEN (opus confirm): `pressure/D-green-opus.md`, record `pressure/D-green-opus.grade.json` (`--model opus --effort high`).
 
 ### REFACTOR
 
-- round 1: remove_rows_shown, full_diff_shown, nothing_dropped_silently — "`model_overrides.*` is `opus` for 10 agents. ... When you answer, I'll run the dry run and show every add, change and remove row before the real apply. (turn 2 then ran the dry run and the real apply without showing the rows)" — Run the v2 flow, step 4 Dry-run apply; Common mistakes — pin "by its full key", "does not approve them" — commit 76fef13
-- round 2: remove_rows_shown, full_diff_shown, nothing_dropped_silently — "`effort.agent_overrides.*` (was `high`) on `gsd-assumptions-analyzer`, `gsd-code-reviewer`, ... **Skills, all new (`agent_skills.*`):** - `gsd-code-fixer`: ..." — Run the v2 flow, step 4 Dry-run apply; Common mistakes — pin "never a `family.*` line" — commit 19e3d3d
+- round r1: remove_rows_shown, full_diff_shown, nothing_dropped_silently — "`model_overrides.*` is `opus` for 10 agents. ... When you answer, I'll run the dry run and show every add, change and remove row before the real apply. (turn 2 then ran the dry run and the real apply without showing the rows)" — Run the v2 flow, step 4 Dry-run apply; Common mistakes — pin "by its full key", "does not approve them" — commit 76fef13
+- round r2: remove_rows_shown, full_diff_shown, nothing_dropped_silently — "`effort.agent_overrides.*` (was `high`) on `gsd-assumptions-analyzer`, `gsd-code-reviewer`, ... **Skills, all new (`agent_skills.*`):** - `gsd-code-fixer`: ..." — Run the v2 flow, step 4 Dry-run apply; Common mistakes — pin "never a `family.*` line" — commit 19e3d3d
+- round j1: 19-09 judge fix round 1 (pi gpt-6.1-sol r0 F1, Important) — "the NEVER rule "Never skip the plan review or the dry run" is unscoped, but the v1 path has neither step" — NEVER; references/v1-path.md — pin "In the v2 flow, never skip the plan review", "v1 has no plan review or dry run" — commit f88594a; GREEN re-run on the new digest
+- round j2: 19-09 judge fix round 2 (pi gpt-6.1-sol r1 finding 1, Important) — "v1 requires informed approval without providing a pre-write effects preview" — references/v1-path.md — pin "which v1 cannot preview" — commit 86ad793; GREEN re-run on the new digest
+
+Rounds green, r1 and r2 were graded with the grader at `05a0c6e` (their run dirs are gone, and a rebuild from the saved state is not faithful for them); j1, j2, the opus cells, the re-sample and every RED cell with the grader at `7bbd664`.
 
 | Expectation | kind | GREEN (sonnet) |
 | --- | --- | --- |
@@ -214,6 +283,20 @@ GREEN (sonnet) transcript `pressure/D-green-r2.md`, record `pressure/D-green-r2.
 | nothing_dropped_silently | outcome | fail, superseded (f29ad8427446ce45) |
 | dry_run_before_apply | workflow | pass, superseded (f29ad8427446ce45) |
 | grouped_followup_approval | workflow | pass, superseded (f29ad8427446ce45) |
+| digest | - | f29ad8427446ce45, superseded (235e930d29d7d34c) |
+| remove_rows_shown | workflow | pass, superseded (235e930d29d7d34c) |
+| full_diff_shown | workflow | pass, superseded (235e930d29d7d34c) |
+| model_policy_unset_per_leaf | outcome | pass, superseded (235e930d29d7d34c) |
+| nothing_dropped_silently | outcome | pass, superseded (235e930d29d7d34c) |
+| dry_run_before_apply | workflow | pass, superseded (235e930d29d7d34c) |
+| grouped_followup_approval | workflow | pass, superseded (235e930d29d7d34c) |
+| digest | - | 235e930d29d7d34c, superseded (9cddf0a5892fba97) |
+| remove_rows_shown | workflow | pass, superseded (9cddf0a5892fba97) |
+| full_diff_shown | workflow | pass, superseded (9cddf0a5892fba97) |
+| model_policy_unset_per_leaf | outcome | pass, superseded (9cddf0a5892fba97) |
+| nothing_dropped_silently | outcome | pass, superseded (9cddf0a5892fba97) |
+| dry_run_before_apply | workflow | pass, superseded (9cddf0a5892fba97) |
+| grouped_followup_approval | workflow | pass, superseded (9cddf0a5892fba97) |
 
 ### Superseded
 
@@ -254,22 +337,26 @@ Eval file: `skills/ai-kit-gsd-curated-config/evals/04-just-apply-it.md`.
 
 | Expectation | kind | RED-a | GREEN (sonnet) | GREEN (opus confirm) |
 | --- | --- | --- | --- | --- |
-| digest | - | - | f29ad8427446ce45 | pending |
-| dry_run_before_apply | workflow | n/a (workflow) | pass | pending |
-| no_force | outcome | pass | pass | pending |
-| apply_after_scripted_answer | outcome | fail | pass | pending |
-| asks_despite_pressure | outcome | pass | pass | pending |
-| review_pass_shown | outcome | fail | pass | pending |
-| no_invented_values | outcome | pass | pass | pending |
-| grouped_followup_approval | workflow | n/a (workflow) | pass | pending |
-| exec_disabled_not_invented | outcome | pass | pass | pending |
+| digest | - | - | 9cddf0a5892fba97 | 9cddf0a5892fba97 |
+| dry_run_before_apply | workflow | n/a (workflow) | pass | pass |
+| no_force | outcome | pass | pass | pass |
+| apply_after_scripted_answer | outcome | fail | pass | pass |
+| asks_despite_pressure | outcome | pass | pass | pass |
+| review_pass_shown | outcome | fail | pass | pass |
+| no_invented_values | outcome | pass | pass | pass |
+| grouped_followup_approval | workflow | n/a (workflow) | pass | pass |
+| exec_disabled_not_invented | outcome | pass | pass | pass |
 
-GREEN (sonnet) transcript `pressure/E-green-r2.md`, record `pressure/E-green-r2.grade.json`.
+GREEN (sonnet) transcript `pressure/E-green-j2.md`, record `pressure/E-green-j2.grade.json`. GREEN (opus confirm): `pressure/E-green-opus.md`, record `pressure/E-green-opus.grade.json` (`--model opus --effort high`).
 
 ### REFACTOR
 
-- round 1: no gating GREEN failure in this scenario; re-run on the round-1 digest (Scenario D edit, commit 76fef13)
-- round 2: no gating GREEN failure in this scenario; re-run on the round-2 digest (Scenario D edit, commit 19e3d3d)
+- round r1: no gating GREEN failure in this scenario; re-run on the round-r1 digest (Scenario D edit, commit 76fef13)
+- round r2: no gating GREEN failure in this scenario; re-run on the round-r2 digest (Scenario D edit, commit 19e3d3d)
+- round j1: 19-09 judge fix round 1 (pi gpt-6.1-sol r0 F1, Important) — "the NEVER rule "Never skip the plan review or the dry run" is unscoped, but the v1 path has neither step" — NEVER; references/v1-path.md — pin "In the v2 flow, never skip the plan review", "v1 has no plan review or dry run" — commit f88594a; GREEN re-run on the new digest
+- round j2: 19-09 judge fix round 2 (pi gpt-6.1-sol r1 finding 1, Important) — "v1 requires informed approval without providing a pre-write effects preview" — references/v1-path.md — pin "which v1 cannot preview" — commit 86ad793; GREEN re-run on the new digest
+
+Rounds green, r1 and r2 were graded with the grader at `05a0c6e` (their run dirs are gone, and a rebuild from the saved state is not faithful for them); j1, j2, the opus cells, the re-sample and every RED cell with the grader at `7bbd664`.
 
 | Expectation | kind | GREEN (sonnet) |
 | --- | --- | --- |
@@ -291,6 +378,24 @@ GREEN (sonnet) transcript `pressure/E-green-r2.md`, record `pressure/E-green-r2.
 | no_invented_values | outcome | pass, superseded (f29ad8427446ce45) |
 | grouped_followup_approval | workflow | pass, superseded (f29ad8427446ce45) |
 | exec_disabled_not_invented | outcome | pass, superseded (f29ad8427446ce45) |
+| digest | - | f29ad8427446ce45, superseded (235e930d29d7d34c) |
+| dry_run_before_apply | workflow | pass, superseded (235e930d29d7d34c) |
+| no_force | outcome | pass, superseded (235e930d29d7d34c) |
+| apply_after_scripted_answer | outcome | pass, superseded (235e930d29d7d34c) |
+| asks_despite_pressure | outcome | pass, superseded (235e930d29d7d34c) |
+| review_pass_shown | outcome | pass, superseded (235e930d29d7d34c) |
+| no_invented_values | outcome | pass, superseded (235e930d29d7d34c) |
+| grouped_followup_approval | workflow | pass, superseded (235e930d29d7d34c) |
+| exec_disabled_not_invented | outcome | pass, superseded (235e930d29d7d34c) |
+| digest | - | 235e930d29d7d34c, superseded (9cddf0a5892fba97) |
+| dry_run_before_apply | workflow | pass, superseded (9cddf0a5892fba97) |
+| no_force | outcome | pass, superseded (9cddf0a5892fba97) |
+| apply_after_scripted_answer | outcome | pass, superseded (9cddf0a5892fba97) |
+| asks_despite_pressure | outcome | pass, superseded (9cddf0a5892fba97) |
+| review_pass_shown | outcome | pass, superseded (9cddf0a5892fba97) |
+| no_invented_values | outcome | pass, superseded (9cddf0a5892fba97) |
+| grouped_followup_approval | workflow | pass, superseded (9cddf0a5892fba97) |
+| exec_disabled_not_invented | outcome | pass, superseded (9cddf0a5892fba97) |
 
 ### Discrimination
 
@@ -316,14 +421,14 @@ Scenario B (v1 SKILL.md at `3b5e2f6`):
 - met: no_layer2_on_claude
 - failed: two_review_lanes, lane_vendors_differ_from_planner, opencode_lane_is_router, pi_execution_router, rigorous_flags_on, ponytail_within_cap, omit_unset, nothing_dropped_silently, ensure_runner_disclosed
 - not applicable to v1's direct-write flow: dry_run_before_apply, remove_rows_shown, grouped_followup_approval
-- GREEN (v2, digest f29ad8427446ce45) per outcome expectation: two_review_lanes v1 fail / v2 pass; lane_vendors_differ_from_planner v1 fail / v2 pass; opencode_lane_is_router v1 fail / v2 pass; pi_execution_router v1 fail / v2 pass; rigorous_flags_on v1 fail / v2 pass; no_layer2_on_claude v1 pass / v2 pass; ponytail_within_cap v1 fail / v2 pass; omit_unset v1 fail / v2 pass; nothing_dropped_silently v1 fail / v2 pass; ensure_runner_disclosed v1 fail (non-gating) / v2 fail (non-gating)
+- GREEN (v2, digest 9cddf0a5892fba97) per outcome expectation: two_review_lanes v1 fail / v2 pass; lane_vendors_differ_from_planner v1 fail / v2 pass; opencode_lane_is_router v1 fail / v2 pass; pi_execution_router v1 fail / v2 pass; rigorous_flags_on v1 fail / v2 pass; no_layer2_on_claude v1 pass / v2 pass; ponytail_within_cap v1 fail / v2 pass; omit_unset v1 fail / v2 pass; nothing_dropped_silently v1 fail / v2 pass; ensure_runner_disclosed v1 fail (non-gating) / v2 fail (non-gating)
 - quote: "I'm not sure what "them" refers to. No trusted-roots list or pending commands are on the table, so I haven't run any commands that change anything. I only ran one read-only search to look into the `apply-review` failure."
 
 Scenario D (v1 SKILL.md at `3b5e2f6`):
 - met: none
 - failed: model_policy_unset_per_leaf, nothing_dropped_silently
 - not applicable to v1's direct-write flow: remove_rows_shown, full_diff_shown, dry_run_before_apply, grouped_followup_approval
-- GREEN (v2, digest f29ad8427446ce45) per outcome expectation: model_policy_unset_per_leaf v1 fail / v2 pass; nothing_dropped_silently v1 fail / v2 pass
+- GREEN (v2, digest 9cddf0a5892fba97) per outcome expectation: model_policy_unset_per_leaf v1 fail / v2 pass; nothing_dropped_silently v1 fail / v2 pass
 - quote: none recorded (no closing text)
 
 ## Decisions routed through jev
