@@ -332,6 +332,8 @@ None outstanding. The 3 todos that seeded v1.1 were moved to
 
 ### Blockers/Concerns
 
+**Phase 24 review flag (2026-10-17).** Phase 24 shows "Executed", not "Complete": it ran on 2026-10-14 as a single plan outside the convergence flow, with no cross-AI review, code review or VERIFICATION.md. Its 13 SPEC acceptance boxes are unchecked and SDC-01..04 are Pending. When the v1.3 run reaches it, verify against all 13 SPEC requirements and run code review (ponytail and skill-judge) plus cross-AI review before marking it Complete; gaps become gap-closure plans. See ROADMAP Phase 24 "Review flag".
+
 **Phase 7 plan-review convergence — reviewer lane structurally blocked, not converged (2026-09-11).**
 `/gsd-review --phase 7 --opencode` returned a numerically "clean" CYCLE_SUMMARY
 (0 HIGH / 0 actionable) on cycle 1, but `07-REVIEWS.md`'s own coverage block

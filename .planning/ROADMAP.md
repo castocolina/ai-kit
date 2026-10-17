@@ -574,6 +574,7 @@ quality over simplicity, except under `workflow.mvp_mode`. Learned from the tool
 run of 2026-10-13/14 and this milestone's own Phases 16.1–23.
 **Depends on**: Phase 16.1's gate widening (D-01, D-06) for R13's regex-based gate coverage (24 D-23); otherwise none inside v1.3 (it drives GSD workflows; it is dogfooded on Phases 16.1–23)
 **Requirements**: SDC-01, SDC-02, SDC-03, SDC-04
+**Review flag** (2026-10-17, uz): executed on 2026-10-14 as one plan (24-01) outside the convergence flow: no cross-AI review, code review or VERIFICATION.md; the 13 SPEC acceptance boxes are unchecked and SDC-01..04 are Pending although 24-01-SUMMARY claims them. Do not mark Complete until a full verification against all 13 SPEC requirements, a code review (ponytail and skill-judge) and a cross-AI review pass; any gap becomes a gap-closure plan.
 **Success Criteria** (what must be TRUE):
 
   1. Given a phase range (`--from N --to M`, or a list), the skill runs spec then discuss for each
