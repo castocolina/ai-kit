@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
@@ -35,6 +36,7 @@ _KILL_GRACE_S = 10  # slack after the runner's own outer timeout before the back
 _TERM_GRACE_S = 4  # SIGTERM to SIGKILL; above the runner's 2.5 s signal budget
 _DRAIN_S = 2  # how long the stderr relay may run after the child is gone
 _STDERR_TAIL_CHARS = 2048
+_STDERR_TAIL_LINES = 64  # lines kept in memory; the result keeps their last _STDERR_TAIL_CHARS
 _POLL_SLICE_S = 0.2
 _STATUS_PREFIX = "AIKIT-XAI "
 
@@ -96,7 +98,7 @@ class CustomSpec(NamedTuple):
 
 
 class _RelayState(NamedTuple):
-    tail: list[str]
+    tail: deque[str]
     status_line: list[str | None]
 
 
@@ -187,14 +189,13 @@ class RunnerSeams(NamedTuple):
 
 
 def _start_stderr_relay(stream, seams: RunnerSeams) -> tuple[threading.Thread, _RelayState]:
-    state = _RelayState(tail=[], status_line=[None])
+    state = _RelayState(tail=deque(maxlen=_STDERR_TAIL_LINES), status_line=[None])
 
     def relay() -> None:
         for raw in iter(stream.readline, ""):
             line = raw.rstrip("\n")
             seams.print_fn(line)
             state.tail.append(line)
-            del state.tail[:-_STDERR_TAIL_CHARS]
             if line.startswith(_STATUS_PREFIX):
                 state.status_line[0] = line
 
