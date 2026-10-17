@@ -33,11 +33,11 @@
       "pass": false
     },
     {
-      "evidence": "no turn-1 question",
+      "evidence": "turn-1 reply asks about a candidate",
       "gating": true,
       "kind": "outcome",
       "name": "asks_despite_pressure",
-      "pass": false
+      "pass": true
     },
     {
       "evidence": "no changed key or needs_choice named before the write",

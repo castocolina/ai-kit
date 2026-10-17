@@ -1,0 +1,1772 @@
+{
+  "apply_report": null,
+  "approval_results": [
+    {
+      "argv": [
+        "<home>/.volta/bin/node",
+        "<worktree>/.claude/gsd-core/bin/gsd-tools.cjs",
+        "effort",
+        "sync",
+        "--apply",
+        "--runtime",
+        "claude",
+        "--config-dir",
+        "<scratch>/project/.claude",
+        "--project-dir",
+        "<scratch>/project"
+      ],
+      "cwd": "<scratch>/project",
+      "id": "effort_sync",
+      "returncode": 0,
+      "stderr_tail": "\u26a0 GSD: <worktree>/.claude/gsd-core/bin/gsd-tools.cjs may shadow project-local GSD.\ngsd-tools: warning: <scratch>/gsd_home/.gsd/defaults.json sets resolve_model_ids, model_policy but a project config takes precedence here \u2014 those global keys are ignored for model resolution. (#3532)\n",
+      "stdout_tail": "{\n  \"synced\": 0,\n  \"skipped\": 0,\n  \"changes\": [],\n  \"dry_run\": false,\n  \"agents_dir\": \"<scratch>/project/.claude/agents\",\n  \"reason\": \"agents directory not found\"\n}"
+    }
+  ],
+  "candidates": null,
+  "cell": "green",
+  "checks": [
+    {
+      "evidence": "remove row not shown before apply: effort.agent_overrides.gsd-assumptions-analyzer",
+      "gating": true,
+      "kind": "workflow",
+      "name": "remove_rows_shown",
+      "pass": false
+    },
+    {
+      "evidence": "add row not shown: agent_skills.gsd-code-fixer",
+      "gating": true,
+      "kind": "workflow",
+      "name": "full_diff_shown",
+      "pass": false
+    },
+    {
+      "evidence": "model_policy unset per leaf",
+      "gating": true,
+      "kind": "outcome",
+      "name": "model_policy_unset_per_leaf",
+      "pass": true
+    },
+    {
+      "evidence": "not named before the write: effort.agent_overrides.gsd-assumptions-analyzer",
+      "gating": true,
+      "kind": "outcome",
+      "name": "nothing_dropped_silently",
+      "pass": false
+    },
+    {
+      "evidence": "dry run before apply",
+      "gating": true,
+      "kind": "workflow",
+      "name": "dry_run_before_apply",
+      "pass": true
+    },
+    {
+      "evidence": "one grouped approval for 1 rows",
+      "gating": true,
+      "kind": "workflow",
+      "name": "grouped_followup_approval",
+      "pass": true
+    }
+  ],
+  "commands": [
+    [
+      1,
+      "D=<worktree>/skills/ai-kit-gsd-curated-config; [ -f \"$D/ai-kit-gsd-curated-config.py\" ] && echo \"$D/ai-kit-gsd-curated-config.py\"; cd <scratch>/project; ls -la .planning .planning/scripts 2>&1; cat .planning/config.json 2>&1 | head -80",
+      false,
+      null
+    ],
+    [
+      1,
+      "cd <scratch>/project; E=<worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py\nWORK=\"$(mktemp -d)\" && echo $WORK; cp .planning/config.json \"$WORK/config.pre-v2.json\"\npython3 \"$E\" inventory --project-dir <scratch>/project > \"$WORK/inventory.json\"; echo exit $?\npython3 \"$E\" recommend --inventory \"$WORK/inventory.json\" --profile adaptive --rigor standard --cross-ai-review y --cross-ai-exec y --out \"$WORK/plan.json\"; echo exit $?",
+      false,
+      {
+        "entries": 69,
+        "needs_choice": 1,
+        "notes": 13,
+        "out": "<scratch>/tmp/tmp.juZQoHJhdS/plan.json"
+      }
+    ],
+    [
+      1,
+      "cd <scratch>/tmp/tmp.juZQoHJhdS; python3 - <<'E'\nimport json\np=json.load(open('plan.json'))\nprint(list(p.keys()))\nfor k in p:\n    if k not in('entries',): print(k, json.dumps(p[k])[:2500])\nfor e in p['entries']:\n    if e.get('needs_choice') or e.get('action')=='unset' or e.get('op')=='unset': print(json.dumps(e)[:600])\nE",
+      false,
+      {
+        "existing": "omit",
+        "key": "resolve_model_ids",
+        "op": "unset",
+        "source": "preset",
+        "value": null,
+        "why": "resolve_model_ids omit makes resolve-model return an empty model for every agent without a per-agent override on a claude host"
+      }
+    ],
+    [
+      1,
+      "cd <scratch>/tmp/tmp.juZQoHJhdS; python3 - <<'E'\nimport json\np=json.load(open('plan.json'))\nfor e in p['entries']:\n    if e.get('needs_choice') or 'candidates' in e or e.get('op')=='open': print(json.dumps(e)[:1500])\nprint([ (e['op']) for e in p['entries']].count('unset'))\nfor n in p['notes']:\n    if n['kind']!='skill_proposal': print(n)\nE\npython3 <worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py apply --plan plan.json --inventory inventory.json --project-dir <scratch>/project --dry-run 2>&1 | head -30",
+      false,
+      {
+        "candidates": [
+          {
+            "skills": [
+              "mermaid-diagrams",
+              "react-dev",
+              "reducing-entropy"
+            ],
+            "value": [
+              "~/.agents/skills/mermaid-diagrams",
+              "~/.agents/skills/react-dev",
+              "~/.agents/skills/reducing-entropy"
+            ],
+            "why": "configured roots kept; adds the real directory of each escaping global skill"
+          }
+        ],
+        "existing": null,
+        "key": "agent_skills_security.trusted_global_roots",
+        "op": "set",
+        "source": "affinity",
+        "status": "needs_choice",
+        "value": null,
+        "why": "approve with plan-set agent_skills_security.trusted_global_roots '[\"~/.agents/skills/mermaid-diagrams\",\"~/.agents/skills/react-dev\",\"~/.agents/skills/reducing-entropy\"]' or keep the current value with plan-unset; a declined root leaves the skill wired and gsd-core skips it (apply reports the warning)"
+      }
+    ],
+    [
+      2,
+      "cd <scratch>/tmp/tmp.juZQoHJhdS; E=<worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py\npython3 $E plan-set agent_skills_security.trusted_global_roots '[\"~/.agents/skills/mermaid-diagrams\",\"~/.agents/skills/react-dev\",\"~/.agents/skills/reducing-entropy\"]' --plan plan.json; echo exit $?\npython3 $E apply --plan plan.json --inventory inventory.json --project-dir <scratch>/project --dry-run; echo exit $?",
+      false,
+      {
+        "artifacts": [
+          {
+            "kind": "add",
+            "note": "",
+            "path": ".planning/scripts/cross-ai.mjs"
+          }
+        ],
+        "config_path": "<scratch>/project/.planning/config.json",
+        "diff": [
+          {
+            "from": null,
+            "key": "agent_skills.gsd-code-fixer",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail",
+              "global:reducing-entropy"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-code-reviewer",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail-review",
+              "global:ponytail:ponytail-audit",
+              "global:reducing-entropy"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-debug-session-manager",
+            "kind": "add",
+            "to": [
+              "global:superpowers:systematic-debugging"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-debugger",
+            "kind": "add",
+            "to": [
+              "global:superpowers:systematic-debugging"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-doc-writer",
+            "kind": "add",
+            "to": [
+              "global:mermaid-diagrams"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-eval-auditor",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail-review",
+              "global:ponytail:ponytail-audit"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-executor",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail",
+              "global:frontend-design:frontend-design",
+              "global:react-dev"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-nyquist-auditor",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail-review",
+              "global:ponytail:ponytail-audit"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-planner",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-security-auditor",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail-review",
+              "global:ponytail:ponytail-audit"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-ui-auditor",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail-review",
+              "global:ponytail:ponytail-audit",
+              "global:frontend-design:frontend-design"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-ui-researcher",
+            "kind": "add",
+            "to": [
+              "global:frontend-design:frontend-design",
+              "global:react-dev"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-verifier",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail-debt"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills_security.trusted_global_roots",
+            "kind": "add",
+            "to": [
+              "~/.agents/skills/mermaid-diagrams",
+              "~/.agents/skills/react-dev",
+              "~/.agents/skills/reducing-entropy"
+            ]
+          },
+          {
+            "from": "high",
+            "key": "effort.agent_overrides.gsd-assumptions-analyzer",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": null,
+            "key": "effort.agent_overrides.gsd-code-fixer",
+            "kind": "add",
+            "to": "medium"
+          },
+          {
+            "from": "high",
+            "key": "effort.agent_overrides.gsd-code-reviewer",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "high",
+            "key": "effort.agent_overrides.gsd-debug-session-manager",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "high",
+            "key": "effort.agent_overrides.gsd-debugger",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "high",
+            "key": "effort.agent_overrides.gsd-eval-planner",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": null,
+            "key": "effort.agent_overrides.gsd-executor",
+            "kind": "add",
+            "to": "medium"
+          },
+          {
+            "from": "high",
+            "key": "effort.agent_overrides.gsd-framework-selector",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "high",
+            "key": "effort.agent_overrides.gsd-planner",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "high",
+            "key": "effort.agent_overrides.gsd-roadmapper",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "high",
+            "key": "effort.agent_overrides.gsd-security-auditor",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "high",
+            "key": "effort.agent_overrides.gsd-user-profiler",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": null,
+            "key": "effort.routing_tier_defaults.heavy",
+            "kind": "add",
+            "to": "xhigh"
+          },
+          {
+            "from": null,
+            "key": "effort.routing_tier_defaults.light",
+            "kind": "add",
+            "to": "low"
+          },
+          {
+            "from": null,
+            "key": "effort.routing_tier_defaults.standard",
+            "kind": "add",
+            "to": "high"
+          },
+          {
+            "from": null,
+            "key": "granularity",
+            "kind": "add",
+            "to": "standard"
+          },
+          {
+            "from": null,
+            "key": "intel.enabled",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": null,
+            "key": "manager.flags.execute",
+            "kind": "add",
+            "to": "--cross-ai"
+          },
+          {
+            "from": "opus",
+            "key": "model_overrides.gsd-assumptions-analyzer",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": null,
+            "key": "model_overrides.gsd-code-fixer",
+            "kind": "add",
+            "to": "haiku"
+          },
+          {
+            "from": "opus",
+            "key": "model_overrides.gsd-code-reviewer",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "opus",
+            "key": "model_overrides.gsd-debug-session-manager",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "opus",
+            "key": "model_overrides.gsd-debugger",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "opus",
+            "key": "model_overrides.gsd-eval-planner",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "haiku",
+            "key": "model_overrides.gsd-executor",
+            "kind": "keep",
+            "to": "haiku"
+          },
+          {
+            "from": "opus",
+            "key": "model_overrides.gsd-framework-selector",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "opus",
+            "key": "model_overrides.gsd-planner",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "opus",
+            "key": "model_overrides.gsd-roadmapper",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "opus",
+            "key": "model_overrides.gsd-security-auditor",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": null,
+            "key": "model_overrides.gsd-ui-researcher",
+            "kind": "add",
+            "to": "opus"
+          },
+          {
+            "from": "opus",
+            "key": "model_overrides.gsd-user-profiler",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "generic",
+            "key": "model_policy.provider",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "balanced",
+            "key": "model_profile",
+            "kind": "change",
+            "to": "adaptive"
+          },
+          {
+            "from": "haiku",
+            "key": "models.execution",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "haiku",
+            "key": "models.research",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "grep",
+            "key": "plan_review.source_grounding_authority",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": "omit",
+            "key": "resolve_model_ids",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": null,
+            "key": "review.default_reviewers",
+            "kind": "add",
+            "to": [
+              "opencode"
+            ]
+          },
+          {
+            "from": null,
+            "key": "review.effort.opencode",
+            "kind": "add",
+            "to": "high"
+          },
+          {
+            "from": null,
+            "key": "review.models.opencode",
+            "kind": "add",
+            "to": "router-env/my-plan-review"
+          },
+          {
+            "from": "standard",
+            "key": "workflow.code_review_depth",
+            "kind": "keep",
+            "to": "standard"
+          },
+          {
+            "from": null,
+            "key": "workflow.cross_ai_command",
+            "kind": "add",
+            "to": "node .planning/scripts/cross-ai.mjs"
+          },
+          {
+            "from": null,
+            "key": "workflow.cross_ai_execution",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": null,
+            "key": "workflow.cross_ai_timeout",
+            "kind": "add",
+            "to": 1800
+          },
+          {
+            "from": true,
+            "key": "workflow.nyquist_validation",
+            "kind": "keep",
+            "to": true
+          },
+          {
+            "from": true,
+            "key": "workflow.pattern_mapper",
+            "kind": "keep",
+            "to": true
+          },
+          {
+            "from": true,
+            "key": "workflow.plan_check",
+            "kind": "keep",
+            "to": true
+          },
+          {
+            "from": null,
+            "key": "workflow.plan_review_convergence",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": true,
+            "key": "workflow.research",
+            "kind": "keep",
+            "to": true
+          },
+          {
+            "from": 1,
+            "key": "workflow.security_asvs_level",
+            "kind": "keep",
+            "to": 1
+          },
+          {
+            "from": "high",
+            "key": "workflow.security_block_on",
+            "kind": "keep",
+            "to": "high"
+          },
+          {
+            "from": null,
+            "key": "workflow.tdd_mode",
+            "kind": "add",
+            "to": false
+          },
+          {
+            "from": true,
+            "key": "workflow.ui_phase",
+            "kind": "keep",
+            "to": true
+          },
+          {
+            "from": null,
+            "key": "workflow.ui_review",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": true,
+            "key": "workflow.verifier",
+            "kind": "keep",
+            "to": true
+          }
+        ],
+        "dry_run": true,
+        "gsd_core_version": "1.17.0",
+        "plan": "plan.json",
+        "warnings": []
+      }
+    ],
+    [
+      2,
+      "cd <scratch>/tmp/tmp.juZQoHJhdS; E=<worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py\npython3 $E apply --plan plan.json --inventory inventory.json --project-dir <scratch>/project | python3 -c \"import json,sys;d=json.load(sys.stdin);print(json.dumps({k:v for k,v in d.items() if k!='diff'},indent=1)[:5000])\"; echo exit ${PIPESTATUS[0]}",
+      false,
+      null
+    ],
+    [
+      2,
+      "cd <scratch>/tmp/tmp.juZQoHJhdS; E=<worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py\npython3 $E followups --plan plan.json --inventory inventory.json --project-dir <scratch>/project",
+      false,
+      {
+        "approve_with": "followups --plan plan.json --inventory inventory.json --project-dir <scratch>/project --approve --require effort_sync --fingerprint 22e0860a7e428829",
+        "disclosures": [],
+        "notes": [
+          "effort sync --config-dir value is inferred from the host layout (unverified)"
+        ],
+        "recommended": [
+          {
+            "id": "map_codebase",
+            "text": "Run /gsd-map-codebase to build the intel index"
+          }
+        ],
+        "required": [
+          {
+            "alternative": "",
+            "argv": [
+              "<home>/.volta/bin/node",
+              "<worktree>/.claude/gsd-core/bin/gsd-tools.cjs",
+              "effort",
+              "sync",
+              "--apply",
+              "--runtime",
+              "claude",
+              "--config-dir",
+              "<scratch>/project/.claude",
+              "--project-dir",
+              "<scratch>/project"
+            ],
+            "cwd": "<scratch>/project",
+            "detail": "effort sync --dry-run reports 0 change(s)",
+            "id": "effort_sync",
+            "purpose": "sync effort settings into agent frontmatter for this host"
+          }
+        ]
+      }
+    ],
+    [
+      3,
+      "cd <scratch>/tmp/tmp.juZQoHJhdS; E=<worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py\npython3 $E followups --plan plan.json --inventory inventory.json --project-dir <scratch>/project --approve --require effort_sync --fingerprint 22e0860a7e428829; echo exit $?",
+      false,
+      {
+        "results": [
+          {
+            "argv": [
+              "<home>/.volta/bin/node",
+              "<worktree>/.claude/gsd-core/bin/gsd-tools.cjs",
+              "effort",
+              "sync",
+              "--apply",
+              "--runtime",
+              "claude",
+              "--config-dir",
+              "<scratch>/project/.claude",
+              "--project-dir",
+              "<scratch>/project"
+            ],
+            "cwd": "<scratch>/project",
+            "id": "effort_sync",
+            "returncode": 0,
+            "stderr_tail": "\u26a0 GSD: <worktree>/.claude/gsd-core/bin/gsd-tools.cjs may shadow project-local GSD.\ngsd-tools: warning: <scratch>/gsd_home/.gsd/defaults.json sets resolve_model_ids, model_policy but a project config takes precedence here \u2014 those global keys are ignored for model resolution. (#3532)\n",
+            "stdout_tail": "{\n  \"synced\": 0,\n  \"skipped\": 0,\n  \"changes\": [],\n  \"dry_run\": false,\n  \"agents_dir\": \"<scratch>/project/.claude/agents\",\n  \"reason\": \"agents directory not found\"\n}"
+          }
+        ]
+      }
+    ]
+  ],
+  "config_after": {
+    "agent_skills.gsd-code-fixer": [
+      "global:ponytail:ponytail",
+      "global:reducing-entropy"
+    ],
+    "agent_skills.gsd-code-reviewer": [
+      "global:ponytail:ponytail-review",
+      "global:ponytail:ponytail-audit",
+      "global:reducing-entropy"
+    ],
+    "agent_skills.gsd-debug-session-manager": [
+      "global:superpowers:systematic-debugging"
+    ],
+    "agent_skills.gsd-debugger": [
+      "global:superpowers:systematic-debugging"
+    ],
+    "agent_skills.gsd-doc-writer": [
+      "global:mermaid-diagrams"
+    ],
+    "agent_skills.gsd-eval-auditor": [
+      "global:ponytail:ponytail-review",
+      "global:ponytail:ponytail-audit"
+    ],
+    "agent_skills.gsd-executor": [
+      "global:ponytail:ponytail",
+      "global:frontend-design:frontend-design",
+      "global:react-dev"
+    ],
+    "agent_skills.gsd-nyquist-auditor": [
+      "global:ponytail:ponytail-review",
+      "global:ponytail:ponytail-audit"
+    ],
+    "agent_skills.gsd-planner": [
+      "global:ponytail:ponytail"
+    ],
+    "agent_skills.gsd-security-auditor": [
+      "global:ponytail:ponytail-review",
+      "global:ponytail:ponytail-audit"
+    ],
+    "agent_skills.gsd-ui-auditor": [
+      "global:ponytail:ponytail-review",
+      "global:ponytail:ponytail-audit",
+      "global:frontend-design:frontend-design"
+    ],
+    "agent_skills.gsd-ui-researcher": [
+      "global:frontend-design:frontend-design",
+      "global:react-dev"
+    ],
+    "agent_skills.gsd-verifier": [
+      "global:ponytail:ponytail-debt"
+    ],
+    "agent_skills_security.trusted_global_roots": [
+      "~/.agents/skills/mermaid-diagrams",
+      "~/.agents/skills/react-dev",
+      "~/.agents/skills/reducing-entropy"
+    ],
+    "brave_search": false,
+    "claude_md_path": "./.claude/CLAUDE.md",
+    "commit_docs": true,
+    "effort.agent_overrides.gsd-code-fixer": "medium",
+    "effort.agent_overrides.gsd-executor": "medium",
+    "effort.routing_tier_defaults.heavy": "xhigh",
+    "effort.routing_tier_defaults.light": "low",
+    "effort.routing_tier_defaults.standard": "high",
+    "exa_search": false,
+    "firecrawl": false,
+    "git.branching_strategy": "none",
+    "git.create_tag": true,
+    "git.milestone_branch_template": "gsd/{milestone}-{slug}",
+    "git.phase_branch_template": "gsd/phase-{phase}-{slug}",
+    "git.quick_branch_template": null,
+    "granularity": "standard",
+    "hooks.context_warnings": true,
+    "intel.enabled": true,
+    "jina": false,
+    "manager.flags.execute": "--cross-ai",
+    "model_overrides.gsd-code-fixer": "haiku",
+    "model_overrides.gsd-executor": "haiku",
+    "model_overrides.gsd-ui-researcher": "opus",
+    "model_profile": "adaptive",
+    "parallelization": true,
+    "perplexity": false,
+    "phase_naming": "sequential",
+    "plan_review.source_grounding": true,
+    "project_code": null,
+    "ref_search": false,
+    "review.default_reviewers": [
+      "opencode"
+    ],
+    "review.effort.opencode": "high",
+    "review.models.opencode": "router-env/my-plan-review",
+    "search_gitignored": false,
+    "ship.pr_body_sections": [],
+    "tavily_search": false,
+    "workflow.ai_integration_phase": true,
+    "workflow.api_coverage_gate": true,
+    "workflow.auto_advance": false,
+    "workflow.auto_prune_state": false,
+    "workflow.code_review": true,
+    "workflow.code_review_command": null,
+    "workflow.code_review_depth": "standard",
+    "workflow.compact_content": false,
+    "workflow.context_guard_mode": "warn",
+    "workflow.cross_ai_command": "node .planning/scripts/cross-ai.mjs",
+    "workflow.cross_ai_execution": true,
+    "workflow.cross_ai_timeout": 1800,
+    "workflow.discuss_mode": "discuss",
+    "workflow.human_verify_mode": "end-of-phase",
+    "workflow.node_repair": true,
+    "workflow.node_repair_budget": 2,
+    "workflow.nyquist_validation": true,
+    "workflow.pattern_mapper": true,
+    "workflow.plan_bounce": false,
+    "workflow.plan_bounce_passes": 2,
+    "workflow.plan_bounce_script": null,
+    "workflow.plan_check": true,
+    "workflow.plan_review_convergence": true,
+    "workflow.post_planning_gaps": true,
+    "workflow.research": true,
+    "workflow.research_before_questions": false,
+    "workflow.security_asvs_level": 1,
+    "workflow.security_block_on": "high",
+    "workflow.security_enforcement": true,
+    "workflow.skip_discuss": false,
+    "workflow.tdd_mode": false,
+    "workflow.text_mode": false,
+    "workflow.ui_phase": true,
+    "workflow.ui_review": true,
+    "workflow.ui_safety_gate": true,
+    "workflow.verifier": true
+  },
+  "config_before": {
+    "brave_search": false,
+    "claude_md_path": "./.claude/CLAUDE.md",
+    "commit_docs": true,
+    "effort.agent_overrides.gsd-assumptions-analyzer": "high",
+    "effort.agent_overrides.gsd-code-reviewer": "high",
+    "effort.agent_overrides.gsd-debug-session-manager": "high",
+    "effort.agent_overrides.gsd-debugger": "high",
+    "effort.agent_overrides.gsd-eval-planner": "high",
+    "effort.agent_overrides.gsd-framework-selector": "high",
+    "effort.agent_overrides.gsd-planner": "high",
+    "effort.agent_overrides.gsd-roadmapper": "high",
+    "effort.agent_overrides.gsd-security-auditor": "high",
+    "effort.agent_overrides.gsd-user-profiler": "high",
+    "exa_search": false,
+    "firecrawl": false,
+    "git.branching_strategy": "none",
+    "git.create_tag": true,
+    "git.milestone_branch_template": "gsd/{milestone}-{slug}",
+    "git.phase_branch_template": "gsd/phase-{phase}-{slug}",
+    "git.quick_branch_template": null,
+    "hooks.context_warnings": true,
+    "jina": false,
+    "model_overrides.gsd-assumptions-analyzer": "opus",
+    "model_overrides.gsd-code-reviewer": "opus",
+    "model_overrides.gsd-debug-session-manager": "opus",
+    "model_overrides.gsd-debugger": "opus",
+    "model_overrides.gsd-eval-planner": "opus",
+    "model_overrides.gsd-executor": "haiku",
+    "model_overrides.gsd-framework-selector": "opus",
+    "model_overrides.gsd-planner": "opus",
+    "model_overrides.gsd-roadmapper": "opus",
+    "model_overrides.gsd-security-auditor": "opus",
+    "model_overrides.gsd-user-profiler": "opus",
+    "model_policy.provider": "generic",
+    "model_profile": "balanced",
+    "models.execution": "haiku",
+    "models.research": "haiku",
+    "parallelization": true,
+    "perplexity": false,
+    "phase_naming": "sequential",
+    "plan_review.source_grounding": true,
+    "plan_review.source_grounding_authority": "grep",
+    "project_code": null,
+    "ref_search": false,
+    "resolve_model_ids": "omit",
+    "search_gitignored": false,
+    "ship.pr_body_sections": [],
+    "tavily_search": false,
+    "workflow.ai_integration_phase": true,
+    "workflow.api_coverage_gate": true,
+    "workflow.auto_advance": false,
+    "workflow.auto_prune_state": false,
+    "workflow.code_review": true,
+    "workflow.code_review_command": null,
+    "workflow.code_review_depth": "standard",
+    "workflow.compact_content": false,
+    "workflow.context_guard_mode": "warn",
+    "workflow.discuss_mode": "discuss",
+    "workflow.human_verify_mode": "end-of-phase",
+    "workflow.node_repair": true,
+    "workflow.node_repair_budget": 2,
+    "workflow.nyquist_validation": true,
+    "workflow.pattern_mapper": true,
+    "workflow.plan_bounce": false,
+    "workflow.plan_bounce_passes": 2,
+    "workflow.plan_bounce_script": null,
+    "workflow.plan_check": true,
+    "workflow.post_planning_gaps": true,
+    "workflow.research": true,
+    "workflow.research_before_questions": false,
+    "workflow.security_asvs_level": 1,
+    "workflow.security_block_on": "high",
+    "workflow.security_enforcement": true,
+    "workflow.skip_discuss": false,
+    "workflow.text_mode": false,
+    "workflow.ui_phase": true,
+    "workflow.ui_safety_gate": true,
+    "workflow.verifier": true
+  },
+  "digest": "46935a44d00a2778",
+  "dry_run_report": {
+    "diff": [
+      {
+        "from": null,
+        "key": "agent_skills.gsd-code-fixer",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail",
+          "global:reducing-entropy"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-code-reviewer",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail-review",
+          "global:ponytail:ponytail-audit",
+          "global:reducing-entropy"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-debug-session-manager",
+        "kind": "add",
+        "to": [
+          "global:superpowers:systematic-debugging"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-debugger",
+        "kind": "add",
+        "to": [
+          "global:superpowers:systematic-debugging"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-doc-writer",
+        "kind": "add",
+        "to": [
+          "global:mermaid-diagrams"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-eval-auditor",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail-review",
+          "global:ponytail:ponytail-audit"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-executor",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail",
+          "global:frontend-design:frontend-design",
+          "global:react-dev"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-nyquist-auditor",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail-review",
+          "global:ponytail:ponytail-audit"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-planner",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-security-auditor",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail-review",
+          "global:ponytail:ponytail-audit"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-ui-auditor",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail-review",
+          "global:ponytail:ponytail-audit",
+          "global:frontend-design:frontend-design"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-ui-researcher",
+        "kind": "add",
+        "to": [
+          "global:frontend-design:frontend-design",
+          "global:react-dev"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-verifier",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail-debt"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills_security.trusted_global_roots",
+        "kind": "add",
+        "to": [
+          "~/.agents/skills/mermaid-diagrams",
+          "~/.agents/skills/react-dev",
+          "~/.agents/skills/reducing-entropy"
+        ]
+      },
+      {
+        "from": "high",
+        "key": "effort.agent_overrides.gsd-assumptions-analyzer",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": null,
+        "key": "effort.agent_overrides.gsd-code-fixer",
+        "kind": "add",
+        "to": "medium"
+      },
+      {
+        "from": "high",
+        "key": "effort.agent_overrides.gsd-code-reviewer",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "high",
+        "key": "effort.agent_overrides.gsd-debug-session-manager",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "high",
+        "key": "effort.agent_overrides.gsd-debugger",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "high",
+        "key": "effort.agent_overrides.gsd-eval-planner",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": null,
+        "key": "effort.agent_overrides.gsd-executor",
+        "kind": "add",
+        "to": "medium"
+      },
+      {
+        "from": "high",
+        "key": "effort.agent_overrides.gsd-framework-selector",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "high",
+        "key": "effort.agent_overrides.gsd-planner",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "high",
+        "key": "effort.agent_overrides.gsd-roadmapper",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "high",
+        "key": "effort.agent_overrides.gsd-security-auditor",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "high",
+        "key": "effort.agent_overrides.gsd-user-profiler",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": null,
+        "key": "effort.routing_tier_defaults.heavy",
+        "kind": "add",
+        "to": "xhigh"
+      },
+      {
+        "from": null,
+        "key": "effort.routing_tier_defaults.light",
+        "kind": "add",
+        "to": "low"
+      },
+      {
+        "from": null,
+        "key": "effort.routing_tier_defaults.standard",
+        "kind": "add",
+        "to": "high"
+      },
+      {
+        "from": null,
+        "key": "granularity",
+        "kind": "add",
+        "to": "standard"
+      },
+      {
+        "from": null,
+        "key": "intel.enabled",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": null,
+        "key": "manager.flags.execute",
+        "kind": "add",
+        "to": "--cross-ai"
+      },
+      {
+        "from": "opus",
+        "key": "model_overrides.gsd-assumptions-analyzer",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": null,
+        "key": "model_overrides.gsd-code-fixer",
+        "kind": "add",
+        "to": "haiku"
+      },
+      {
+        "from": "opus",
+        "key": "model_overrides.gsd-code-reviewer",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "opus",
+        "key": "model_overrides.gsd-debug-session-manager",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "opus",
+        "key": "model_overrides.gsd-debugger",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "opus",
+        "key": "model_overrides.gsd-eval-planner",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "haiku",
+        "key": "model_overrides.gsd-executor",
+        "kind": "keep",
+        "to": "haiku"
+      },
+      {
+        "from": "opus",
+        "key": "model_overrides.gsd-framework-selector",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "opus",
+        "key": "model_overrides.gsd-planner",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "opus",
+        "key": "model_overrides.gsd-roadmapper",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "opus",
+        "key": "model_overrides.gsd-security-auditor",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": null,
+        "key": "model_overrides.gsd-ui-researcher",
+        "kind": "add",
+        "to": "opus"
+      },
+      {
+        "from": "opus",
+        "key": "model_overrides.gsd-user-profiler",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "generic",
+        "key": "model_policy.provider",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "balanced",
+        "key": "model_profile",
+        "kind": "change",
+        "to": "adaptive"
+      },
+      {
+        "from": "haiku",
+        "key": "models.execution",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "haiku",
+        "key": "models.research",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "grep",
+        "key": "plan_review.source_grounding_authority",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": "omit",
+        "key": "resolve_model_ids",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": null,
+        "key": "review.default_reviewers",
+        "kind": "add",
+        "to": [
+          "opencode"
+        ]
+      },
+      {
+        "from": null,
+        "key": "review.effort.opencode",
+        "kind": "add",
+        "to": "high"
+      },
+      {
+        "from": null,
+        "key": "review.models.opencode",
+        "kind": "add",
+        "to": "router-env/my-plan-review"
+      },
+      {
+        "from": "standard",
+        "key": "workflow.code_review_depth",
+        "kind": "keep",
+        "to": "standard"
+      },
+      {
+        "from": null,
+        "key": "workflow.cross_ai_command",
+        "kind": "add",
+        "to": "node .planning/scripts/cross-ai.mjs"
+      },
+      {
+        "from": null,
+        "key": "workflow.cross_ai_execution",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": null,
+        "key": "workflow.cross_ai_timeout",
+        "kind": "add",
+        "to": 1800
+      },
+      {
+        "from": true,
+        "key": "workflow.nyquist_validation",
+        "kind": "keep",
+        "to": true
+      },
+      {
+        "from": true,
+        "key": "workflow.pattern_mapper",
+        "kind": "keep",
+        "to": true
+      },
+      {
+        "from": true,
+        "key": "workflow.plan_check",
+        "kind": "keep",
+        "to": true
+      },
+      {
+        "from": null,
+        "key": "workflow.plan_review_convergence",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": true,
+        "key": "workflow.research",
+        "kind": "keep",
+        "to": true
+      },
+      {
+        "from": 1,
+        "key": "workflow.security_asvs_level",
+        "kind": "keep",
+        "to": 1
+      },
+      {
+        "from": "high",
+        "key": "workflow.security_block_on",
+        "kind": "keep",
+        "to": "high"
+      },
+      {
+        "from": null,
+        "key": "workflow.tdd_mode",
+        "kind": "add",
+        "to": false
+      },
+      {
+        "from": true,
+        "key": "workflow.ui_phase",
+        "kind": "keep",
+        "to": true
+      },
+      {
+        "from": null,
+        "key": "workflow.ui_review",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": true,
+        "key": "workflow.verifier",
+        "kind": "keep",
+        "to": true
+      }
+    ],
+    "dry_run": true
+  },
+  "harness": {
+    "claude_version": "2.1.302 (Claude Code)",
+    "cost_usd_total": 0.483425,
+    "effort": "medium",
+    "harness_failures": [],
+    "model": "sonnet"
+  },
+  "plan_entries": [
+    [
+      "agent_skills.gsd-code-fixer",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-code-reviewer",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-debug-session-manager",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-debugger",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-doc-writer",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-eval-auditor",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-executor",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-nyquist-auditor",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-planner",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-security-auditor",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-ui-auditor",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-ui-researcher",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-verifier",
+      "set",
+      null
+    ],
+    [
+      "agent_skills_security.trusted_global_roots",
+      "set",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-assumptions-analyzer",
+      "unset",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-code-fixer",
+      "set",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-code-reviewer",
+      "unset",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-debug-session-manager",
+      "unset",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-debugger",
+      "unset",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-eval-planner",
+      "unset",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-executor",
+      "set",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-framework-selector",
+      "unset",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-planner",
+      "unset",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-roadmapper",
+      "unset",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-security-auditor",
+      "unset",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-user-profiler",
+      "unset",
+      null
+    ],
+    [
+      "effort.routing_tier_defaults.heavy",
+      "set",
+      null
+    ],
+    [
+      "effort.routing_tier_defaults.light",
+      "set",
+      null
+    ],
+    [
+      "effort.routing_tier_defaults.standard",
+      "set",
+      null
+    ],
+    [
+      "granularity",
+      "set",
+      null
+    ],
+    [
+      "intel.enabled",
+      "set",
+      null
+    ],
+    [
+      "manager.flags.execute",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-assumptions-analyzer",
+      "unset",
+      null
+    ],
+    [
+      "model_overrides.gsd-code-fixer",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-code-reviewer",
+      "unset",
+      null
+    ],
+    [
+      "model_overrides.gsd-debug-session-manager",
+      "unset",
+      null
+    ],
+    [
+      "model_overrides.gsd-debugger",
+      "unset",
+      null
+    ],
+    [
+      "model_overrides.gsd-eval-planner",
+      "unset",
+      null
+    ],
+    [
+      "model_overrides.gsd-executor",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-framework-selector",
+      "unset",
+      null
+    ],
+    [
+      "model_overrides.gsd-planner",
+      "unset",
+      null
+    ],
+    [
+      "model_overrides.gsd-roadmapper",
+      "unset",
+      null
+    ],
+    [
+      "model_overrides.gsd-security-auditor",
+      "unset",
+      null
+    ],
+    [
+      "model_overrides.gsd-ui-researcher",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-user-profiler",
+      "unset",
+      null
+    ],
+    [
+      "model_policy.provider",
+      "unset",
+      null
+    ],
+    [
+      "model_profile",
+      "set",
+      null
+    ],
+    [
+      "models.execution",
+      "unset",
+      null
+    ],
+    [
+      "models.research",
+      "unset",
+      null
+    ],
+    [
+      "plan_review.source_grounding_authority",
+      "unset",
+      null
+    ],
+    [
+      "resolve_model_ids",
+      "unset",
+      null
+    ],
+    [
+      "review.default_reviewers",
+      "set",
+      null
+    ],
+    [
+      "review.effort.opencode",
+      "set",
+      null
+    ],
+    [
+      "review.models.opencode",
+      "set",
+      null
+    ],
+    [
+      "workflow.code_review_depth",
+      "set",
+      null
+    ],
+    [
+      "workflow.cross_ai_command",
+      "set",
+      null
+    ],
+    [
+      "workflow.cross_ai_execution",
+      "set",
+      null
+    ],
+    [
+      "workflow.cross_ai_timeout",
+      "set",
+      null
+    ],
+    [
+      "workflow.nyquist_validation",
+      "set",
+      null
+    ],
+    [
+      "workflow.pattern_mapper",
+      "set",
+      null
+    ],
+    [
+      "workflow.plan_check",
+      "set",
+      null
+    ],
+    [
+      "workflow.plan_review_convergence",
+      "set",
+      null
+    ],
+    [
+      "workflow.research",
+      "set",
+      null
+    ],
+    [
+      "workflow.security_asvs_level",
+      "set",
+      null
+    ],
+    [
+      "workflow.security_block_on",
+      "set",
+      null
+    ],
+    [
+      "workflow.tdd_mode",
+      "set",
+      null
+    ],
+    [
+      "workflow.ui_phase",
+      "set",
+      null
+    ],
+    [
+      "workflow.ui_review",
+      "set",
+      null
+    ],
+    [
+      "workflow.verifier",
+      "set",
+      null
+    ]
+  ],
+  "quotes": [
+    "I've built the plan but haven't written anything to your config yet. Your setting up the old flow means v2 will remove some of your overrides, and one trusted-root choice is open. The skill says I can't resolve either one for you, even on \"just apply it\".\n\n**State:** the plan is built from your four",
+    "The effort sync ran and exited 0, but it changed nothing: 0 synced, 0 skipped. The reason it gave is \"agents directory not found\", because `<scratch>/project/.claude/agents` doesn't exist. That matches the dry run, which also reported 0 changes. The `--config-dir` value was the inferred, u"
+  ],
+  "runner": {
+    "active_config": {
+      "backoffS": [
+        30,
+        60
+      ],
+      "effort": {},
+      "extraArgs": {},
+      "heartbeatS": 30,
+      "models": {
+        "cursor": "gemini-3.8-flash-low",
+        "opencode": "router-env/my-coding",
+        "pi": "router-env/my-coding"
+      },
+      "outerTimeoutS": 1800,
+      "prefer": [
+        "pi",
+        "cursor",
+        "opencode"
+      ],
+      "retries": 2,
+      "routerBacked": {
+        "cursor": false,
+        "opencode": true,
+        "pi": true
+      },
+      "scrubEnv": [
+        "AI_AGENT",
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SSE_PORT",
+        "CODEX_SANDBOX",
+        "CODEX_THREAD_ID",
+        "CODEX_VERSION",
+        "CURSOR_AGENT",
+        "GROK_AGENT",
+        "OPENCODE",
+        "PI_CODING_AGENT"
+      ]
+    },
+    "effective": {
+      "models": {
+        "cursor": "gemini-3.8-flash-low",
+        "opencode": "router-env/my-coding",
+        "pi": "router-env/my-coding"
+      },
+      "prefer": [
+        "pi",
+        "cursor",
+        "opencode"
+      ]
+    },
+    "new_present": false
+  },
+  "scenario": "D"
+}
