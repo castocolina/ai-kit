@@ -133,8 +133,11 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
 
 4. **Dry-run apply** (refuses while `needs_choice` remains; the inventory digest must match).
    Show the user every `add`, `change` and `remove` row by its full key before the real apply
-   (`effort.agent_overrides.gsd-planner: high`, not "effort overrides on 10 agents"), then end
-   the turn and apply only after the user answers. A "go ahead" given before those rows were
+   (`effort.agent_overrides.gsd-planner: high`, not "effort overrides on 10 agents"), one line
+   per key with the dotted key written out whole, never a `family.*` line or heading with the
+   agents listed under it, even when many keys share a value: a v1 migration is a long list,
+   and that list is what the user approves. Then end the turn and apply only after the user
+   answers. A "go ahead" given before those rows were
    shown does not approve them: the plan review summarizes, and the dry run is the first
    place the user sees every key that changes.
    On a project with no config yet, `remove` rows marked `"predicted": true` are the keys
@@ -288,6 +291,7 @@ loading off). The opencode bare profile is **partial**: `~/.agents/skills` and
 | `plan-set agent_skills.<agent> ponytail` | A bare word is not a JSON list | `'["ponytail"]'`, keeping the agent's other skills |
 | Restoring the backup after a committed apply with cleanup warnings | Config and runner already match the plan; the restore undoes it | Delete only the named leftovers |
 | Dry run and real apply in one turn | The user approves rows they never saw, and a family summary hides which overrides go | Show every row by full key, end the turn, apply on the answer |
+| `effort.agent_overrides.*` (was `high`) on a list of agents | The user cannot match a line to a dry-run row, so one dropped key goes unnoticed | One line per full dotted key and its value |
 | Running `approve_with` without the entrypoint, or edited | It starts at the subcommand; the fingerprint binds it to the listed rows | `python3 "$ENTRYPOINT"` + the exact string |
 
 ## Reporting rule

@@ -2422,6 +2422,8 @@ class TestSkillDocCommands(unittest.TestCase):
             # dry run and apply in one turn).
             "by its full key",
             "does not approve them",
+            # 19-07 REFACTOR 2: D green-r1 remove_rows_shown/full_diff_shown (family.* lines).
+            "never a `family.*` line",
         )
         missing = [phrase for phrase in required if phrase not in text]
         self.assertEqual(missing, [])
