@@ -285,7 +285,7 @@ class TestBuildCrossAiCommand(unittest.TestCase):
     def test_native_cli_none_returns_none(self):
         # cli=None is native/current-session dispatch -- never needs the cross-AI hook.
         candidate = {"runtime": None, "model": "opus", "key": "opus-native"}
-        self.assertIsNone(gsd_cross_ai.build_cross_ai_command(candidate, "/repo"))
+        self.assertIsNone(gsd_cross_ai.build_cross_ai_command(candidate))
 
     def test_cli_in_known_gsd_runtimes_still_builds_when_it_has_a_real_execute_builder(self):
         # Bug fix (2026-08-30): a cli name being in KNOWN_GSD_RUNTIMES must NOT by itself block
@@ -293,7 +293,7 @@ class TestBuildCrossAiCommand(unittest.TestCase):
         # before ever calling this function, so a live-verified execute builder must still be used.
         # The hook now names the project runner, codex confined (D-26, D-27).
         candidate = {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol"}
-        result = gsd_cross_ai.build_cross_ai_command(candidate, "/repo")
+        result = gsd_cross_ai.build_cross_ai_command(candidate)
         self.assertEqual(
             result,
             "node .planning/scripts/cross-ai.mjs --prefer codex --model-codex gpt-5.6-sol "
@@ -303,39 +303,14 @@ class TestBuildCrossAiCommand(unittest.TestCase):
     def test_no_live_verified_builder_returns_none_not_raise(self):
         # A runtime the runner cannot execute (gemini) must degrade to None, never raise.
         candidate = {"runtime": "gemini", "model": "gemini-3.1-pro", "key": "gemini/gemini-3.1-pro"}
-        self.assertIsNone(gsd_cross_ai.build_cross_ai_command(candidate, "/repo"))
+        self.assertIsNone(gsd_cross_ai.build_cross_ai_command(candidate))
 
-    def test_builds_the_real_command_string_with_model_filled_in(self):
-        # Injected fake builder -- exercises this module's plumbing without depending on which
-        # CLIs Foundation has actually implemented today.
-        def fake_execute_command(cli, target_dir, effort=None, service_tier=None):
-            return f"future-cli exec --write -m {{model}} (dir {target_dir!r})"
-        candidate = {"runtime": "future-cli", "model": "gpt-5.6-terra",
-                     "key": "future-cli/gpt-5.6-terra"}
-        result = gsd_cross_ai.build_cross_ai_command(
-            candidate, "/repo/worktree", execute_command_fn=fake_execute_command)
-        assert result is not None
-        # The hook is project-root-relative, so the injected builder gets no directory.
-        self.assertEqual(result, "future-cli exec --write -m gpt-5.6-terra (dir '')")
-        # This IS the literal string, no wrapper/shim indirection whatsoever (Task 1 finding 1 --
-        # GSD itself pipes the phase prompt into this command's own stdin and captures its own
-        # stdout; a wrapper would only get in the way of that).
-        self.assertNotIn("ai-kit-spec-gsd.py", result)
-
-    def test_threads_effort_and_service_tier_into_the_execute_builder(self):
-        captured = {}
-
-        def fake_execute_command(cli, target_dir, effort=None, service_tier=None):
-            captured["effort"] = effort
-            captured["service_tier"] = service_tier
-            return f"codex exec -C {target_dir} -m {{model}}"
-
+    def test_threads_effort_and_service_tier_into_the_hook(self):
         candidate = {"runtime": "codex", "model": "gpt-5.6-sol", "key": "codex/gpt-5.6-sol",
                      "effort": "high", "service_tier": "priority"}
-        gsd_cross_ai.build_cross_ai_command(
-            candidate, "/repo/worktree", execute_command_fn=fake_execute_command)
-        self.assertEqual(captured["effort"], "high")
-        self.assertEqual(captured["service_tier"], "priority")
+        hook = gsd_cross_ai.build_cross_ai_command(candidate)
+        assert hook is not None
+        self.assertIn("--codex-effort high --codex-service-tier priority", hook)
 
 
 class TestCrossAiHookResult(unittest.TestCase):

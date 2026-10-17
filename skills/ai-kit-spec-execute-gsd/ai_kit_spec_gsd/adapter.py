@@ -199,7 +199,7 @@ def _try_candidate_dispatch(
     result = _dispatch_non_claude_tier(candidate, gsd_config, ctx, dispatch, seams)
     if result is not None:
         return result
-    command = build_cross_ai_command(candidate, dispatch.target_dir)
+    command = build_cross_ai_command(candidate)
     if command is not None:
         runtime = candidate["runtime"]
         result = {"mode": "cross_ai_hook", "cross_ai_command": command,
@@ -215,13 +215,13 @@ def _try_candidate_dispatch(
     return None
 
 
-def _unsafe_hook_notice(candidate: dict, target_dir: str) -> dict | None:
+def _unsafe_hook_notice(candidate: dict) -> dict | None:
     """The notice for an exec runtime whose model the unquoted hook cannot carry (M9).
 
     None for anything else, so a runtime with no builder at all still falls through the
     ladder to a later usable candidate. A hook that did build is not this case either.
     """
-    if build_cross_ai_command(candidate, target_dir) is not None:
+    if build_cross_ai_command(candidate) is not None:
         return None
     if execute_cli_error(candidate.get("runtime")) is not None:
         return None
@@ -231,11 +231,11 @@ def _unsafe_hook_notice(candidate: dict, target_dir: str) -> dict | None:
 
 
 def _ladder_exhausted_notice(
-    top_key: str, remaining_ladder: list, by_key: dict, target_dir: str,
+    top_key: str, remaining_ladder: list, by_key: dict,
 ) -> dict:
     has_retryable_remaining = any(
         by_key[k].get("tier") in KNOWN_GSD_TIERS
-        or build_cross_ai_command(by_key[k], target_dir) is not None
+        or build_cross_ai_command(by_key[k]) is not None
         for k in remaining_ladder
     )
     reason_code = "quota_exhausted" if has_retryable_remaining else "no_usable_dispatch"
@@ -314,8 +314,8 @@ def resolve_gsd_dispatch(
 
     # The ladder's own first choice whose model the unquoted hook cannot carry is a reason of
     # its own, not a generic exhausted-ladder notice (plan review M9).
-    notice = _unsafe_hook_notice(by_key[top_key], dispatch.target_dir)
+    notice = _unsafe_hook_notice(by_key[top_key])
     if notice is not None:
         return notice
 
-    return _ladder_exhausted_notice(top_key, remaining_ladder, by_key, dispatch.target_dir)
+    return _ladder_exhausted_notice(top_key, remaining_ladder, by_key)
