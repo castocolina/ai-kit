@@ -14,54 +14,47 @@ factory subcommands rather than being hand-typed, because a wrong quote or
 guessed model id fails silently or errors out at dispatch time far from
 where the mistake was made.
 
+**Host tools.** `Bash` below means the host's shell tool; `AskUserQuestion` (with
+`multiSelect`) means its structured-question tool; `Read` means its file reader. On a host
+without a structured-question tool, ask in plain conversation instead: number the options,
+accept several numbers where a step says `multiSelect: true`, and wait for the answer before
+the next step. Never answer a question on the user's behalf because no tool exists for it.
+
 ### Step 0 — Locate `ai-kit-spec.py` and the CLI profiles
 
-`ai-kit-spec.py` and its `references/cli-profiles/` live inside the
-**`ai-kit-spec-review`** skill's own directory (a sibling of this skill, not
-this skill's own directory, and not a top-level `tools/`/`references/` —
-see `ai-kit-spec-review/SKILL.md`'s Step 0.7 point 0 for why).
-Resolve them the identical way `ai-kit-spec-review/SKILL.md` itself resolves
-these same two paths (its own Step 0.7 point 0) — same three candidates,
-self-contained, no shared variable between the two skills — so both
-agree on one procedure:
+`ai-kit-spec.py` and its `references/cli-profiles/` live inside the sibling
+**`ai-kit-spec-review`** skill's directory (see its Step 0.7 point 0 for why). Resolve them
+with the same candidate order that skill uses, self-contained:
 
 ```bash
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" \
-         "$HOME/.claude/skills/ai-kit-spec-review" \
-         "$(dirname "<absolute path to THIS SKILL.md>")/../ai-kit-spec-review"; do
+for d in "$(dirname "<absolute path to THIS SKILL.md>")/../ai-kit-spec-review" \
+         "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" \
+         "$HOME/.claude/skills/ai-kit-spec-review"; do
   [ -d "$d" ] && { REVIEW_SPEC_SKILL_DIR="$d"; break; }
 done
 TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/ai-kit-spec.py"
 CLI_PROFILES_DIR="$REVIEW_SPEC_SKILL_DIR/references/cli-profiles"
 if [ -f "$TOOLS_PY" ]; then
   RUNTIMES_JSON="$(python3 "$TOOLS_PY" cache-path --kind runtimes)"
+  SCRATCH="$(mktemp -d -t ai-kit-spec-config-XXXXXX)"
 fi
-printf '%s\n' "$TOOLS_PY" "$CLI_PROFILES_DIR" "$RUNTIMES_JSON"
+printf '%s\n' "$TOOLS_PY" "$CLI_PROFILES_DIR" "$RUNTIMES_JSON" "$SCRATCH"
 ```
 
-(The third candidate is `ai-kit-spec-config`'s own sibling — matching
-`SEEDS_DIR`'s own third candidate — since this skill's directory and
-`ai-kit-spec-review`'s are installed alongside each other in every shape:
-plugin, `~/.claude/skills`, or a direct dev checkout. `cache-path`
-resolves the `${XDG_CACHE_HOME:-$HOME/.cache}`-aware path through
-`ai-kit-spec.py`'s own `cache_runtimes_path` — the same call
-`ai-kit-spec-review/SKILL.md` itself uses
-— so both skills always agree on where this file lives.)
+The sibling is tried first so the module that runs is the one installed beside the
+`SKILL.md` you are following, not an older copy elsewhere. `SCRATCH` is this run's private
+scratch directory (mode 0700, unique per run): every temporary file below goes inside it,
+never at a fixed `/tmp/<name>` path another run could share or pre-plant, and Step 4 (or the
+`--check-only` stop) removes it. `cache-path` resolves the `${XDG_CACHE_HOME:-$HOME/.cache}`-aware
+runtimes path through `ai-kit-spec.py` itself, so both skills agree on where it lives.
 
-**Resolve this whole block once, in one `Bash` call, and record
-`TOOLS_PY`/`CLI_PROFILES_DIR`/`RUNTIMES_JSON` from its `printf` output as
-literal absolute paths — not shell environment variables.** Every `Bash`
-tool call in this harness starts a fresh shell, so a variable assigned in
-one call is gone by the next; every `$TOOLS_PY`/`$CLI_PROFILES_DIR`/
-`$RUNTIMES_JSON` reference in Steps 1–3 below means "the literal path
-captured here", substituted directly, exactly the way `ai-kit-spec-review/SKILL.md`'s
-own `TOOLS_PY`/`RUN_TMP_DIR` work (its own Step 0.7 points 0/1) — this
-skill has its own separate `AskUserQuestion` interaction (Step 2) between
-this resolution and Step 3's write, guaranteeing at least one call
-boundary in between. If `TOOLS_PY` does not exist at the resolved path,
-stop and report: "ai-kit-spec-review's own `ai-kit-spec.py` module is missing —
-this skill configures cross-AI review for `ai-kit-spec-review`, which must
-already be installed."
+**Resolve this whole block once, in one `Bash` call, and record its four printed lines as
+literal absolute paths — not shell environment variables.** Every `Bash` call starts a fresh
+shell, so every `$TOOLS_PY`/`$CLI_PROFILES_DIR`/`$RUNTIMES_JSON`/`$SCRATCH` below means "the
+literal path captured here", substituted directly. If `TOOLS_PY` does not exist at the
+resolved path, stop and report: "ai-kit-spec-review's own `ai-kit-spec.py` module is missing —
+this skill configures cross-AI review for `ai-kit-spec-review`, which must already be
+installed."
 
 ## NEVER
 
@@ -108,7 +101,7 @@ note each `[[reviewers]]` entry's `key`/`runtime` (or legacy `cli`) if it exists
 raw on-disk read only, not `cfg_resolve`'s merged view.) If any entries exist, probe their **quota availability** — the core
 purpose of `--check-only` — using a throwaway path:
 ```bash
-python3 "$TOOLS_PY" probe-quota --cwd "$(pwd)" --no-save-runtimes --quota-path "$(mktemp)"
+python3 "$TOOLS_PY" probe-quota --cwd "$(pwd)" --no-save-runtimes --quota-path "$SCRATCH/quota.json"
 ```
 `probe-quota` has no `--local`/`--global` flag — it always runs the full
 `cfg_resolve` merge, so output may include keys from both local and
@@ -134,9 +127,9 @@ dispatch time), but "no writes" means nothing is persisted to ai-kit's
 caches or config: the throwaway `--quota-path` keeps quota rows out of the
 real `quota.json`, and `--no-save-runtimes` keeps `probe-quota`'s routing
 step from writing the runtimes cache (a cold or stale cache is rebuilt in
-memory only, and a targeted refresh is never written back). Then stop; do
-not save the runtimes snapshot, matching this skill's `--check-only`
-contract.
+memory only, and a targeted refresh is never written back). Then
+`rm -rf "$SCRATCH"` and stop; do not save the runtimes snapshot, matching this
+skill's `--check-only` contract.
 
 **Otherwise**, persist the snapshot before continuing to Step 2:
 ```bash
@@ -186,10 +179,14 @@ candidate list via the model-discovery catalog rather than guessing or searching
 **Order matters here: unmatched candidates are researched and confirmed BEFORE anything is
 ranked** — an unconfirmed guess must never appear in a ranked list the user is about to trust.
 
-For each installed CLI from Step 1 (beyond the current session's own runtime), use
+For each installed CLI from Step 1, the current session's own runtime included, use
 `AskUserQuestion` to ask whether the user wants it available as a cross-AI reviewer at
 all — registering every installed CLI indiscriminately is exactly what this step's own
-opening framing at the top of Step 2 warns against.
+opening framing at the top of Step 2 warns against. A pair on the host's own runtime is a
+real option: routing runs it as a subprocess whenever the host cannot select that model per
+call (a pi session can register another pi model this way). Only Claude Code's four aliases
+on a Claude Code host run natively, and those are Step 2.7's session-default ask, not this
+catalog flow.
 
 **Do NOT load** `references/cli-model-selection.md` when Step 1 found no installed CLI,
 or the user declined every installed CLI at the ask above. Session-default entries never go
@@ -222,7 +219,9 @@ plan/entitlement gating — `cursor.md` documents several). **Load only the prof
 runtimes actually selected at Step 2.2 — do NOT read the whole `$CLI_PROFILES_DIR` directory
 or preemptively load profiles for runtimes the user declined.** Each profile is a few KB of
 quirks relevant to exactly one runtime; loading unselected ones adds noise without informing
-any decision in this run.
+any decision in this run. **When a selected runtime has no profile file** (pi has none
+today), say so in one line and continue: the runner table, `build-command --runtime <id>`'s
+preview and Step 2.5's live test are then the only sources — never invent quirks for it.
 
 **A runtime the runner knows stores no `command`.** Store the pair: `runtime` and `model`,
 plus the knobs that runtime takes as entry fields (`effort` and `service_tier` for codex,
@@ -395,14 +394,15 @@ hand-tuned command; `render-toml` rejects anything else and prints why. Also
 (omit when `false`/unknown rather than writing a redundant `false` for every
 entry — the consumer side already treats an absent field as "no preference,"
 exactly like today's `task_affinity`; that fallback exists for legacy
-compatibility, not as this wizard's normal path for a new entry). Write it to a
-temp JSON file, then let `--out` do the write directly (atomic, creating
+compatibility, not as this wizard's normal path for a new entry). Write it to
+`$SCRATCH/config.json`, then let `--out` do the write directly (atomic, creating
 parent dirs as needed) rather than piping
 stdout through a second write yourself:
 
 ```bash
-python3 "$TOOLS_PY" render-toml --json-config <temp.json> --out <target path> \
-  2> /tmp/render-toml-stderr.txt
+python3 "$TOOLS_PY" render-toml --json-config "$SCRATCH/config.json" --out <target path> \
+  > "$SCRATCH/rendered.toml" 2> "$SCRATCH/render-toml-stderr.txt"
+echo "render-toml exit $?"
 ```
 
 `<target path>` is the write target Step 2 resolved and already
@@ -412,15 +412,22 @@ because the user picked "update the existing global config" at Step 2's
 ask. Never re-derive the target here independently of what Step 2
 already resolved and told the user. (The runtimes snapshot was already
 persisted in Step 1 via `--save` — no separate write needed here.)
-**Capture stderr to `/tmp/render-toml-stderr.txt`** — `cfg_render_toml`
+**Capture stderr to `$SCRATCH/render-toml-stderr.txt`** — `cfg_render_toml`
 prints a `WARNING:` line there for every `[[reviewers]]` entry it
 rejected-and-dropped instead of writing (e.g. a malformed entry), and
 this is the ONLY place that warning is ever emitted — Step 4 below reads
-this file to decide whether to surface it.
+this file to decide whether to surface it. `$SCRATCH/rendered.toml` holds
+the exact bytes written.
 
 ### Step 4 — Report
 
-**First, check `/tmp/render-toml-stderr.txt` for any `WARNING:`-prefixed
+**First, check the printed exit status.** Anything but `render-toml exit 0` means
+nothing was written (a rejected config can end in a traceback, with no `WARNING:`
+line at all): show `$SCRATCH/render-toml-stderr.txt` verbatim, report "Config NOT
+written", keep `$SCRATCH` for inspection and stop — never offer trust for a file
+this run did not write.
+
+**On exit 0, check `$SCRATCH/render-toml-stderr.txt` for any `WARNING:`-prefixed
 line.** If one or more are present, the write still succeeded but
 `cfg_render_toml` silently dropped at least one `[[reviewers]]` entry —
 never report a plain success in this case. Surface it clearly, e.g.:
@@ -435,8 +442,9 @@ summary confirming the write, always including the exact absolute path
 confirmation that the write actually happened, not just the plan to do
 it): "Config written to: `<target path>`." Then, either way, the
 resolved `policy.mode`, and the **priority fallback order** as its own
-explicit numbered list (the same list already echoed back during Step 2,
-now confirmed as written) — e.g.:
+explicit numbered list, read from the `policy.ladder` line of
+`$SCRATCH/rendered.toml` (what was actually written, which omits any
+rejected entry), never re-typed from Step 2's confirmed list — e.g.:
 ```
 Priority fallback order:
   1. codex-gpt
@@ -445,7 +453,8 @@ Priority fallback order:
 ```
 not folded into a single vague sentence about "reviewers configured in
 some order" — the point of this report is that the user can see the
-exact fallback sequence without having to open the file.
+exact fallback sequence without having to open the file. If that ladder
+differs from the one confirmed in Step 2, name the missing keys.
 
 **When the write target was local** (`./.aikit/review-spec.toml`), tell the user the file
 stays inactive for cross-AI review until trusted. Run
@@ -463,3 +472,5 @@ to the file's exact content: any edit needs a new trust. `trust-local --cwd <pro
 Outside `--check-only`, when `probe-quota` prints `ignoring untrusted project-local config`,
 apply the same `--show` / ask / trust sequence, then re-run `probe-quota` before treating its
 output as authoritative for that project's local entries.
+
+Finally, `rm -rf "$SCRATCH"` (only on a successful write; a failed one keeps it, above).

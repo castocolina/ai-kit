@@ -4,7 +4,8 @@ Loaded only when this wizard run is registering subprocess reviewers (Step 2.2).
 session-default-only run skips this file. Each candidate registered from here is a
 (runtime, model) pair: Step 2.4 stores `runtime` and `model` (plus that runtime's knobs),
 and the runner builds the argv. Only a runtime outside the runner table, grok today,
-stores a `command` instead.
+stores a `command` instead. `$TOOLS_PY`, `$RUNTIMES_JSON` and `$SCRATCH` are the literal
+paths SKILL.md's Step 0 printed; every temporary file here goes under `$SCRATCH`.
 
 For every CLI the user wants to consider (from Step 1's detection), build the ranked
 candidate list via the model-discovery catalog rather than guessing or searching per model.
@@ -20,9 +21,11 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
     ```
     **The CLIs to consider were already chosen in SKILL.md's Step 2.2 stub** — do not re-ask.
     Group each kept multi-provider CLI's raw model list BEFORE any of it is
-    discovered/matched/ranked. For each CLI the user kept, if it's multi-provider
-    (`opencode` or `cursor`, the runtime table's `multi_provider` rows; a pi, codex or claude
-    list is single-provider), **never hand its raw
+    discovered/matched/ranked. Two separate properties matter here: whether a CLI is
+    **multi-provider** (`opencode` or `cursor`, the runtime table's `multi_provider` rows;
+    pi, codex, claude and grok are single-provider) and whether it **lists models** (a
+    `models` array in the snapshot: every runtime but grok, unless its listing failed). Only a
+    multi-provider CLI gets grouped. For each multi-provider CLI the user kept, **never hand its raw
     model list to `fetch-model-catalog` as-is** — a
     multi-provider CLI's raw list can be very long (confirmed live: cursor's catalog is
    ~200 ids, a handful of base model families each multiplied out by effort/thinking/fast-tier
@@ -39,19 +42,18 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
    single-member family, which is fine). Present the **families**, not the raw ids, and let the
    user pick a family (defaulting to its base id) or drill into a specific tier/effort variant
    only if they want one. **Always ask this via `AskUserQuestion` with `multiSelect: true`,
-   consistently across every multi-provider CLI (opencode, cursor, claude, or any other) —
-   never single-select here, and never decide select-mode per CLI on your own judgment.** A user
-   may legitimately want more than one family registered from the same CLI (e.g. both a flagship
-   and a fast tier); deciding single- vs multi-select per CLI case-by-case has been observed in
-   practice to produce inconsistent behavior across CLIs in the same run (confirmed live: one run
-   presented opencode as multi-select and claude as single-select with no principled reason for
-   the difference). Collect the chosen model id(s) per CLI, then write a FILTERED runtimes
-   snapshot — a copy of `$RUNTIMES_JSON` whose `clis.<cli>.models` arrays are narrowed to only
-   the CLIs kept and models chosen above (single-provider CLIs, which have no `models` array to
-   narrow, pass through unchanged) — and use that filtered file, not the raw `$RUNTIMES_JSON`,
-   as `--runtimes-json` in item 3's `fetch-model-catalog` call below:
+   consistently across every multi-provider CLI — never single-select here, and never decide
+   select-mode per CLI on your own judgment.** A user may legitimately want more than one family
+   registered from the same CLI (e.g. both a flagship and a fast tier); deciding single- vs
+   multi-select case-by-case has been observed live to produce inconsistent behavior across
+   CLIs in the same run. Collect the chosen model id(s) per CLI, then write a FILTERED runtimes
+   snapshot — a copy of `$RUNTIMES_JSON` keeping only the CLIs the user kept, with each
+   multi-provider CLI's `models` narrowed to the ids chosen above (every other kept CLI passes
+   through unchanged, its `models` array included when it has one) — and use that filtered
+   file, not the raw `$RUNTIMES_JSON`, as `--runtimes-json` in item 3's `fetch-model-catalog`
+   call below:
    ```bash
-   FILTERED_RUNTIMES_JSON="/tmp/filtered-runtimes.json"
+   FILTERED_RUNTIMES_JSON="$SCRATCH/filtered-runtimes.json"
    python3 -c "
 import json
 snap = json.load(open('$RUNTIMES_JSON'))
@@ -67,9 +69,8 @@ json.dump(snap, open('$FILTERED_RUNTIMES_JSON', 'w'))
    this step scopes discovery upstream, at the input snapshot, before the subcommand ever runs,
    rather than duplicating the family-grouping judgment call this step already makes with the
    user.
-2. **For any single-provider CLI (no `models` array — e.g. grok, or codex when `codex debug
-   models` enumeration yielded nothing) the user wants to
-   consider that has NO existing `review-spec.toml` entry yet** (first-time setup): ask the
+2. **For any kept CLI with no `models` array (grok always; codex or pi when its listing
+   failed) that has NO existing `review-spec.toml` entry yet** (first-time setup): ask the
    user for a candidate model id now (never guess or trust training knowledge — WebSearch it for
    recency first, per this skill's `NEVER` list; confirmed live 2026-08-28 that guessing here,
    `gpt-5.6-sol-high` instead of the real `gpt-5.6-sol`, produces a candidate that fails
@@ -77,8 +78,9 @@ json.dump(snap, open('$FILTERED_RUNTIMES_JSON', 'w'))
    flags (repeatable) for the next command — this is what lets a brand-new
    single-provider-CLI candidate flow through the SAME matching/enrichment/ranking path as
    everything else, instead of being registered blind.
-3. Refresh the catalog (this also picks up anything already in `review-spec.toml` for an
-   already-configured single-provider CLI automatically). **Capture its printed JSON to a
+3. Refresh the catalog (this also picks up, automatically, every model already registered in
+   `review-spec.toml` for a kept CLI with no `models` array — a pair's `runtime`, or a custom
+   grok entry, recognized by the binary its `{model}` command launches). **Capture its printed JSON to a
    file** — `fetch-model-catalog` prints the FULL reconciled `discovered` candidate list
    (runtimes snapshot + registered single-provider-CLI models + `--extra-candidate`, exactly
    what the subcommand itself used) alongside `unmatched`/`rejections`, so this step never has
@@ -88,7 +90,7 @@ json.dump(snap, open('$FILTERED_RUNTIMES_JSON', 'w'))
    ```bash
    python3 "$TOOLS_PY" fetch-model-catalog --runtimes-json "$FILTERED_RUNTIMES_JSON" \
      --catalog-path "$CATALOG_JSON" --cwd "$(pwd)" --if-stale \
-     [--extra-candidate <cli>:<model-id> ...] > /tmp/fetch-model-catalog-result.json
+     [--extra-candidate <cli>:<model-id> ...] > "$SCRATCH/fetch-model-catalog-result.json"
    ```
    `--if-stale` here gates the models.dev/Artificial Analysis NETWORK calls only — candidate
    discovery/reconciliation always runs, so a brand-new model is reflected in this run's
@@ -141,7 +143,7 @@ print(canonical_key('<confirmed provider>', bare))
    This is the ONLY path that ever writes an unmatched candidate to the catalog
    (`fetch-model-catalog` itself deliberately never does):
    ```bash
-   cat > /tmp/confirm-entry.json <<'JSON'
+   cat > "$SCRATCH/confirm-entry.json" <<'JSON'
 {"model_id": "<value of $CONFIRMED_KEY>",
  "entry": {"provider": "<confirmed provider>",
            "runtimes": {"<cli>": {"model_id": "<unmatched.model_id>"}},
@@ -152,7 +154,7 @@ print(canonical_key('<confirmed provider>', bare))
            "heuristic_confirmed": ["is_router", "batch_mode", "fallback_quota"]}}
 JSON
    python3 "$TOOLS_PY" confirm-catalog-entry --catalog-path "$CATALOG_JSON" \
-     --entry-json /tmp/confirm-entry.json
+     --entry-json "$SCRATCH/confirm-entry.json"
    ```
    `heuristic_confirmed` records that the user was JUST asked to confirm all three fields
    above, in this same step — without it, Step 8 later in this same wizard run would re-ask
@@ -186,16 +188,21 @@ JSON
    python3 -c "
 import json, sys
 sys.path.insert(0, '$(dirname "$TOOLS_PY")')
+from ai_kit_spec.detection import RUNTIMES
 from ai_kit_spec.model_catalog import current_candidate_keys
 from ai_kit_spec.model_ranker import load_ranking_weights, score_candidates
 catalog = json.load(open('$CATALOG_JSON'))
-fetch_result = json.load(open('/tmp/fetch-model-catalog-result.json'))
+fetch_result = json.load(open('$SCRATCH/fetch-model-catalog-result.json'))
 discovered = fetch_result['discovered']
 current = current_candidate_keys(catalog, discovered)
 entries = [{'key': k, **v} for k, v in catalog.items() if k in current]
 name_declared = [e for e in entries if e.get('name_declared_purpose')]
 scored = [e for e in entries if not e.get('name_declared_purpose')]
 weights = load_ranking_weights()
+# Review-only (claude as a subprocess) and runner-less (grok) runtimes never execute.
+no_exec = {rid for rid, row in RUNTIMES.items() if row.review_only or not row.runner}
+def via(e, purpose):
+    return '/'.join(r for r in e.get('runtimes', {}) if purpose == 'review' or r not in no_exec)
 def field(e, path, label):
     v = e.get('scores', {}).get(path) if path in ('intelligence_index', 'coding_index', 'agentic_index') else e.get(path)
     if v is None:
@@ -205,11 +212,11 @@ def field(e, path, label):
     return f'{label} {v}{tag}'
 
 for purpose in ('review', 'execute'):
-    ranked = score_candidates(scored, purpose, weights)[:5]
+    ranked = score_candidates([e for e in scored if via(e, purpose)], purpose, weights)[:5]
     print(purpose.upper())
-    for e in [d for d in name_declared if d.get('name_declared_purpose') == purpose]:
-        runtimes_str = '/'.join(e.get('runtimes', {}).keys())
-        print(f\"  • {e['key']}  via {runtimes_str}  (declared by name -- not scored)\")
+    for e in [d for d in name_declared
+              if d.get('name_declared_purpose') == purpose and via(d, purpose)]:
+        print(f\"  • {e['key']}  via {via(e, purpose)}  (declared by name -- not scored)\")
     for i, e in enumerate(ranked, 1):
         ctx = max((rt.get('ctx_window') for rt in e.get('runtimes', {}).values()
                    if rt.get('ctx_window')), default=None)
@@ -222,13 +229,22 @@ for purpose in ('review', 'execute'):
                  ('batch✓' if e.get('batch_mode') else None),
                  ('fallback✓' if e.get('fallback_quota') else None)]
         detail = ', '.join(p for p in parts if p)
-        print(f\"  {i}. {e['key']}  score {e['score']}\" + (f'  ({detail})' if detail else ''))
+        print(f\"  {i}. {e['key']}  via {via(e, purpose)}  score {e['score']}\"
+              + (f'  ({detail})' if detail else ''))
 "
    ```
    (The per-field breakdown is deliberate: each field is tagged individually, because `ctx` is
    always models.dev-sourced while `intelligence`/`coding`/`agentic`/`speed` are Artificial
    Analysis-sourced — a single whole-entry tag on the score line could not express that. `coding`
-   in particular carries EXECUTE's largest weight, so it must be visible.)
+   in particular carries one of EXECUTE's largest weights, so it must be visible.)
+
+   **EXECUTE lists only pairs that can execute.** `via(e, 'execute')` drops every runtime the
+   runtime table marks review-only or runner-less — claude as a subprocess, and grok, whose
+   custom command runs only as a reviewer — so a candidate reachable only through those never
+   appears in the EXECUTE block, and its EXECUTE-side `via` names only executable runtimes.
+   Execution routing would skip such a pick anyway (`review_only`). The one claude pair that
+   does execute is a Claude Code alias on a Claude Code host, registered through Step 2.7's
+   session-default ask, not this ranked flow.
 6. Present the top candidates per purpose to the user in this shape (adapt scores/labels to what
    the catalog actually returned — illustrative, not literal output; the exact field set shown
    for a given candidate always matches whatever the `field()` calls above actually found
@@ -264,9 +280,9 @@ for purpose in ('review', 'execute'):
    ```
    **The SAME catalog key appearing in both lists is expected, not a mistake** — REVIEW and
    EXECUTE score the exact same candidate pool with genuinely different weight profiles
-   (`references/ranking-weights.toml`: `coding_index` weight triples for EXECUTE, 0.10→0.30,
-   while `intelligence_index` is halved, 0.30→0.15 — see `model_ranker.py`'s `DEFAULT_WEIGHTS`
-   for the full table), and a model that's strong across every axis (a "combo" flagship, common
+   (`load_ranking_weights()` reads `ai-kit-spec-review`'s `references/ranking-weights.toml`:
+   EXECUTE weights `coding_index` well above REVIEW and `intelligence_index` well below it —
+   read that file for the current values rather than quoting numbers here), and a model that's strong across every axis (a "combo" flagship, common
    among today's frontier models) can legitimately score well under both weightings at once. When
    one key shows up in both lists, **always annotate it** (`— also ranked #N in <OTHER_PURPOSE>
    above`, as above) so the user sees it's the same entry ranked twice on purpose, not a
@@ -309,11 +325,11 @@ for purpose in ('review', 'execute'):
    `apply-heuristic-correction` subcommand — never a raw `json.dump`/`open`, which bypasses this
    repo's atomic, validated cache-write path:
    ```bash
-   cat > /tmp/heuristic-correction.json <<'JSON'
+   cat > "$SCRATCH/heuristic-correction.json" <<'JSON'
 {"is_router": false}
 JSON
    python3 "$TOOLS_PY" apply-heuristic-correction --catalog-path "$CATALOG_JSON" \
-     --model-id "<key>" --corrections-json /tmp/heuristic-correction.json
+     --model-id "<key>" --corrections-json "$SCRATCH/heuristic-correction.json"
    ```
    This call marks `is_router` confirmed in the catalog entry's `heuristic_confirmed` list
    regardless of whether `false` differs from the heuristic's original guess — the JSON body
