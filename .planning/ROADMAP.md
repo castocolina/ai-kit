@@ -68,7 +68,7 @@ runtime hosting the session. Source spec:
 - [x] **Phase 16.1: Hardening** (INSERTED) - Gate scope, sibling-first imports, security and correctness fixes from the 2026-10-13 audit; closes Phase 16 (completed 2026-10-15)
 - [x] **Phase 17: Curated-Config Inventory & Recommendation Engine** - Read-only project/host inventory and a pure `recommend` function that produces an explainable `plan.json` (completed 2026-10-15)
 - [x] **Phase 18: Cross-AI, Skills & Apply Pipeline** - Plan adjustment, cross-AI review/execution wiring, skill-affinity mapping, and a safe backup/restore apply flow (completed 2026-10-16)
-- [ ] **Phase 18.1: One runtime model** (INSERTED) - Model candidates become (runtime, model) pairs; `native_runtime` and the `native_claude`/cursor-agent naming go away
+- [x] **Phase 18.1: One runtime model** (INSERTED) - Model candidates become (runtime, model) pairs; `native_runtime` and the `native_claude`/cursor-agent naming go away (completed 2026-10-17)
 - [ ] **Phase 19: Evaluation on Claude** - Skill pressure-testing, `/skill-judge` gate, and a live smoke run + `resolve-model` proof from the claude host
 - [ ] **Phase 20: Live Validation on Codex + Opencode** - Live smoke runs from the codex and opencode hosts, resolving the two open verifications from the spec
 - [ ] **Phase 21: Cursor Live Validation** - Live smoke run from the cursor host (independent; may run any time after Phase 19)
@@ -396,7 +396,7 @@ names. Source: `.planning/research/2026-10-13-audit/18-runtime-detection-and-sub
      runtime id, whose binary is `cursor-agent`.
   3. The affected SKILL.md files and AGENTS.md's Architecture section use the one-model wording,
      and every rewritten SKILL.md passes `/skill-judge` in code review.
-**Plans**: 22/22 plans executed
+**Plans**: 22/22 plans complete
 
 - [x] 18.1-01-PLAN.md — Introduce the one runtime-id table (D-01) in `ai_kit_spec/detection.py` and switch ai_kit_spec to the ids
 - [x] 18.1-02-PLAN.md — Move curated-config v2 to runtime ids, dropping its own cursor/cursor-agent translation
