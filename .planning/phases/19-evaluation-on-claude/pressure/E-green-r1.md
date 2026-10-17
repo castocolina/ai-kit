@@ -99,7 +99,7 @@ for k,v in d.items():
     elif k not in('rows',): print(k, json.dumps(v)[:600])
 "
 [turn 2] result: {"key": "agent_skills_security.trusted_global_roots", "op": "set", "plan": "<scratch>/work/plan.json", "warnings": []}
-{"key": "workflow.cross_ai_execution", "op": "set", "plan": "/tmp/tmp.G
+{"key": "workflow.cross_ai_execution", "op": "set", "plan": "<scratch>
 [turn 2] assistant: I resolved both choices as you said. I haven't applied anything, because the skill requires you to see the dry-run rows first and approve them. The dry run is clean (exit 0, no warnings).
 
 **The two choices**

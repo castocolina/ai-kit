@@ -3,9 +3,9 @@
 3	description: Curated, one-question GSD config setup for a target project's `.planning/config.json` — asks only `model_profile` (quality/balanced/budget/adapti
 [turn 1] bash: ls -la .planning && cat .planning/config.json; cat package.json; ls AGENTS.md CLAUDE.md 2>&1; cp -p .planning/config.json /tmp/config.json.bak-$(date +%s) 2>&1
 [turn 1] result: total 4
-drwxr-xr-x. 2 bazzite bazzite   60 Oct 17 17:43 .
-drwxr-xr-x. 5 bazzite bazzite  140 Oct 17 17:43 ..
--rw-r--r--. 1 bazzite bazzite 2669 Oct 17 17:43 config.json
+drwxr-xr-x. 2 <user> <user>   60 Oct 17 17:43 .
+drwxr-xr-x. 5 <user> <user>  140 Oct 17 17:43 ..
+-rw-r--r--. 1 <user> <user> 2669 Oct 17 17:43 config.json
 {
   "model_profile": "balanced"
 [turn 1] bash: cd /tmp && E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; P=<scratch>/project
@@ -25,9 +25,9 @@ rc=0
 python3 $E apply-execution --project-dir $P --cli opencode --model router-env/my-coding; echo rc=$?
 python3 $E apply-review --project-dir $P --cli opencode --model router-env/my-plan-review; echo rc=$?
 [turn 1] result: total 0
-drwxr-xr-x. 2 bazzite bazzite  60 Oct 17 17:43 .
-drwxr-xr-x. 5 bazzite bazzite 140 Oct 17 17:43 ..
-lrwxrwxrwx. 1 bazzite bazzite  94 Oct 17 17:43 gsd-core -> <home>/git/personal/ai-
+drwxr-xr-x. 2 <user> <user>  60 Oct 17 17:43 .
+drwxr-xr-x. 5 <user> <user> 140 Oct 17 17:43 ..
+lrwxrwxrwx. 1 <user> <user>  94 Oct 17 17:43 gsd-core -> <home>/git/personal/ai-
 [turn 1] bash: cd /tmp && E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; P=<scratch>/project
 python3 $E apply-claude-md-path --project-dir $P --path ./AGENTS.md; echo rc=$?
 python3 $E apply-workflow-defaults --project-dir $P --ui-phase true --ui-review true; echo rc=$?
@@ -62,9 +62,9 @@ A copy of your old config is at `/tmp/config.json.bak-1792269833`. The project i
 I didn't run the project's tests or any GSD command after the change. The `cross_ai_command` that got written is `node .planning/scripts/cross-ai.mjs --prefer opencode ...`, not the bare `opencode run ...` form the skill's docs describe. I didn't check whether `.planning/scripts/cross-ai.mjs` exists. It's worth a quick look before release.
 [turn 2] bash: ls -la <scratch>/project/.planning/scripts/ 2>&1; which opencode
 [turn 2] result: total 132
-drwxr-xr-x. 2 bazzite bazzite     60 Oct 17 17:44 .
-drwxr-xr-x. 3 bazzite bazzite     80 Oct 17 17:44 ..
--rw-r--r--. 1 bazzite bazzite 131999 Oct 17 17:44 cross-ai.mjs
+drwxr-xr-x. 2 <user> <user>     60 Oct 17 17:44 .
+drwxr-xr-x. 3 <user> <user>     80 Oct 17 17:44 ..
+-rw-r--r--. 1 <user> <user> 131999 Oct 17 17:44 cross-ai.mjs
 <home>/.opencod
 [turn 2] assistant: There's nothing left to apply. The diff I showed is the change that's already in `.planning/config.json`, because I wrote it as I went. If you wanted to approve it before it went in, that didn't happen, and I'm sorry. The original is saved at `/tmp/config.json.bak-1792269833`. To undo the change, copy that file back over `.planning/config.json`.
 

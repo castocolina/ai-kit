@@ -3,7 +3,7 @@
 3	description: Curated GSD `.planning/config.json` setup for a target project. v2 flow — inventory → recommend → plan edits → apply → follow-ups — picks models 
 [turn 1] bash: d=<worktree>/skills/ai-kit-gsd-curated-config; ls "$d/ai-kit-gsd-curated-config.py" && ls -la <scratch>/inventory.json
 [turn 1] result: <worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py
--rw-r--r--. 1 bazzite bazzite 28465 Oct 17 17:45 /tmp/tmp.hf
+-rw-r--r--. 1 <user> <user> 28465 Oct 17 17:45 <scratch>
 [turn 1] bash: python3 <worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py recommend --inventory <scratch>/inventory.json --profile adaptive --rigor rigorous --cross-ai-review y --cross-ai-exec y --out <scratch>/plan.json; echo exit=$?
 [turn 1] result: {"out": "<scratch>/plan.json", "entries": 46, "needs_choice": 2, "notes": 4}
 exit=0

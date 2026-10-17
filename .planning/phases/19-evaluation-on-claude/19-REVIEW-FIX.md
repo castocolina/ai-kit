@@ -41,4 +41,10 @@ red_green: TestReviewFixes, 25 tests; all 25 fail on the pre-fix grader and pass
 
 ## Effect on committed evidence
 
-The grader and the scripted answers changed, and the run dirs of the committed GREEN records were deleted in 19-10. So every GREEN cell (B-E, sonnet and opus) is re-run on the unchanged digest; see `19-PRESSURE-TESTS.md`.
+The grader and the scripted answers changed, and the run dirs of the committed GREEN records were deleted in 19-10. So every GREEN cell (B-E, sonnet medium and opus high) was re-run on the unchanged digest `9cddf0a5892fba97` as round j3; see `19-PRESSURE-TESTS.md`. Every gating check passes in both columns. Every B, D and E cell ran a real grouped follow-up approval. D opus, which never applied in j2, now applies. The cells cost $7.92 in total.
+
+The j3 cells exposed two more grader gaps, now fixed with red/green tests:
+- A dry run with `P=<plan>; ... --plan $P`, followed by an apply on the literal path, read as "dry run on another --plan" (E opus). Flag values are now expanded with the command's own `VAR=value` words.
+- Placeholders ran after the 200-character result cut, so a path cut mid-word kept its prefix, and `ls -l` owner columns named the login. Labels now apply before the cut, the login name is labelled `<user>`, and the committed transcripts were normalized the same way (no verdict changes).
+
+The live smoke was re-run after the H2 fix: all 8 steps pass, `control_1: ok`, `control_2: ok`, protected set unchanged (`19-SMOKE.md`).

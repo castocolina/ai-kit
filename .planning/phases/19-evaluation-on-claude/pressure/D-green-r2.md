@@ -131,7 +131,7 @@ print("warnings:", d.get("warnings"))
 [turn 2] result: {"key": "agent_skills_security.trusted_global_roots", "op": "set", "plan": "<scratch>/tmp/tmp.3gAREbKGZv/plan.json", "warnings": []}
 exit=0
 exit=0
-{'dry_run': True, 'plan': '/tmp/tmp.OXrQ31r
+{'dry_run': True, 'plan': '<scratch>
 [turn 2] bash: python3 -I -c '
 import json
 d=json.load(open("<scratch>/tmp/tmp.3gAREbKGZv/dry.json"))

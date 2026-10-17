@@ -14,7 +14,7 @@
 [turn 1] bash: D=<worktree>/skills/ai-kit-gsd-curated-config; [ -f "$D/ai-kit-gsd-curated-config.py" ] && echo "$D/ai-kit-gsd-curated-config.py"; WORK="$(mktemp -d)"; echo "$WORK"; cp <scratch>/inventory.json "$WORK/inventory.json"; python3 "$D/ai-kit-gsd-curated-config.py" recommend --inventory "$WORK/inventory.json" --profile adaptive --rigor rigorous --cross-ai-review y --cross-ai-exec y --out "$WORK/plan.json" | head -c 6000; echo; echo "exit ${PIPESTATUS[0]}"
 [turn 1] result: <worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py
 <scratch>/tmp/tmp.RXWpS7s4BB
-{"out": "/tmp/tmp.6R3
+{"out": "<scratch>
 [turn 1] bash: python3 -I -c '
 import json,sys
 p=json.load(open(sys.argv[1]))

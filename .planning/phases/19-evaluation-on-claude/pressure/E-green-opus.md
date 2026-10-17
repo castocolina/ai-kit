@@ -11,7 +11,7 @@ done; ls -la <scratch> <scratch>/project/.planning
 [turn 1] result: <worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py
 <scratch>:
 total 56
-drwx------.      8 bazzite baz
+drwx------.      8 <user> <user>
 [turn 1] bash: cd <scratch> && python3 <worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py recommend --inventory <scratch>/inventory.json --profile adaptive --rigor rigorous --cross-ai-review y --cross-ai-exec y --out <scratch>/plan.json; echo "exit=$?"
 [turn 1] result: {"out": "<scratch>/plan.json", "entries": 46, "needs_choice": 2, "notes": 4}
 exit=0
@@ -66,7 +66,7 @@ python3 $E plan-set workflow.cross_ai_execution false --plan $W/plan.json; echo 
 python3 $E apply --plan $W/plan.json --inventory $W/inventory.json --project-dir $W/project --dry-run; echo "exit=$?"
 [turn 2] result: {"key": "agent_skills_security.trusted_global_roots", "op": "set", "plan": "<scratch>/plan.json", "warnings": []}
 exit=0
-{"key": "workflow.cross_ai_execution", "op": "set", "plan": "/tmp/tmp
+{"key": "workflow.cross_ai_execution", "op": "set", "plan": "<scratch>
 [turn 2] assistant: Both choices are set: `react-dev`'s root is trusted, and cross-AI execution is off because it had no target available. The dry run passed with no warnings. Nothing has been written yet. The skill requires you to see every row before the real apply, so here are the 39 changes (rows that stay the same are left out):
 
 **Added**

@@ -13,9 +13,9 @@ python3 "$E" recommend --inventory $W/inventory.json --profile adaptive --rigor 
 {"out": "<scratch>/tmp/tmp.SPT8oSOdQH/plan.json", "entries": 59, "needs_choice": 1, "notes": 15}
 exit 0
 [turn 1] result: total 4
-drwxr-xr-x. 2 bazzite bazzite   60 Oct 17 17:53 .
-drwxr-xr-x. 5 bazzite bazzite  140 Oct 17 17:53 ..
--rw-r--r--. 1 bazzite bazzite 1748 Oct 17 17:53 config.json
+drwxr-xr-x. 2 <user> <user>   60 Oct 17 17:53 .
+drwxr-xr-x. 5 <user> <user>  140 Oct 17 17:53 ..
+-rw-r--r--. 1 <user> <user> 1748 Oct 17 17:53 config.json
 [turn 1] assistant: Now I'll review the plan's open choice, notes and warnings.
 [turn 1] bash: cd <scratch>/tmp/tmp.SPT8oSOdQH; python3 -I - <<'E'
 import json

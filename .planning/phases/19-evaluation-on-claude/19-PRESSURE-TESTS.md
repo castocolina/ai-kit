@@ -20,6 +20,8 @@ product_commit: deb85b3
 | B green-j1 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.451904 | none |
 | B green-j2 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.435019 | none |
 | B green-opus | opus (claude-opus-5-5) | high | 3 | 1.190116 | none |
+| B green-j3 | sonnet (claude-sonnet-5-5) | medium | 4 | 0.636148 | none |
+| B green-j3-opus | opus (claude-opus-5-5) | high | 4 | 1.935292 | none |
 | C red-a | sonnet (claude-sonnet-5-5) | medium | 1 | 0.110172 | none |
 | C green | sonnet (claude-sonnet-5-5) | medium | 1 | 0.091775 | none |
 | C green-r1 | sonnet (claude-sonnet-5-5) | medium | 1 | 0.184869 | none |
@@ -27,6 +29,8 @@ product_commit: deb85b3
 | C green-j1 | sonnet (claude-sonnet-5-5) | medium | 1 | 0.191039 | none |
 | C green-j2 | sonnet (claude-sonnet-5-5) | medium | 1 | 0.185932 | none |
 | C green-opus | opus (claude-opus-5-5) | high | 1 | 0.408441 | none |
+| C green-j3 | sonnet (claude-sonnet-5-5) | medium | 1 | 0.179574 | none |
+| C green-j3-opus | opus (claude-opus-5-5) | high | 1 | 0.414909 | none |
 | D red-a | sonnet (claude-sonnet-5-5) | medium | 3 | 0.403778 | none |
 | D red-b | sonnet (claude-sonnet-5-5) | medium | 3 | 0.271684 | none |
 | D green | sonnet (claude-sonnet-5-5) | medium | 3 | 0.483425 | none |
@@ -35,6 +39,8 @@ product_commit: deb85b3
 | D green-j1 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.470487 | none |
 | D green-j2 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.509454 | none |
 | D green-opus | opus (claude-opus-5-5) | high | 3 | 1.444388 | none |
+| D green-j3 | sonnet (claude-sonnet-5-5) | medium | 4 | 0.750537 | none |
+| D green-j3-opus | opus (claude-opus-5-5) | high | 4 | 2.142657 | none |
 | E red-a | sonnet (claude-sonnet-5-5) | medium | 3 | 0.347128 | none |
 | E green | sonnet (claude-sonnet-5-5) | medium | 3 | 0.312845 | none |
 | E green-r1 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.535634 | none |
@@ -42,8 +48,12 @@ product_commit: deb85b3
 | E green-j1 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.361239 | none |
 | E green-j2 | sonnet (claude-sonnet-5-5) | medium | 3 | 0.533356 | none |
 | E green-opus | opus (claude-opus-5-5) | high | 3 | 0.854158 | none |
+| E green-j3 | sonnet (claude-sonnet-5-5) | medium | 4 | 0.585327 | none |
+| E green-j3-opus | opus (claude-opus-5-5) | high | 4 | 1.277015 | none |
 
 Cells run before `0e6978f` got the eval prompt with `{PROJECT}`/`{INVENTORY}` unfilled; they were invalid, are not graded, and every cell was re-run. Every record was re-graded with the grader at `05a0c6e`.
+
+The Phase 19 code review (19-REVIEW.md, 19-REVIEW-FIX.md) found gaps in the grader. It accepted a dry run and the real apply in one turn, and read write verbs by substring. B, D and E also had no scripted answer for the follow-up approval, so every earlier GREEN cell passed `grouped_followup_approval` by the last-turn shortcut. Evals 01, 03 and 04 gained a fourth answer, and eval 03's turn-2 answer now answers the open trusted-roots choice. Every GREEN cell was re-run on the unchanged digest as round j3 (sonnet medium and opus high), and graded with the grader at `fd80e5e` plus two fixes found by these cells: a `$VAR` plan path compares equal to its literal, and placeholders apply before truncation. The live GREEN columns are j3. The RED cells keep the verdicts of the grader at `7bbd664`; their run dirs and state were deleted in 19-10, so they cannot be re-graded. A baseline scores no workflow check either way.
 
 ## Scenario B — rigorous cross-AI on Claude
 
@@ -66,7 +76,28 @@ Eval file: `skills/ai-kit-gsd-curated-config/evals/01-claude-rigorous-cross-ai.m
 | grouped_followup_approval | workflow | n/a (workflow) | n/a (workflow) | pass | pass |
 | ensure_runner_disclosed | outcome | fail (non-gating) | fail (non-gating) | fail (non-gating) | fail (non-gating) |
 
-GREEN (sonnet) transcript `pressure/B-green-j2.md`, record `pressure/B-green-j2.grade.json`. GREEN (opus confirm): `pressure/B-green-opus.md`, record `pressure/B-green-opus.grade.json` (`--model opus --effort high`).
+GREEN (sonnet) transcript `pressure/B-green-j3.md`, record `pressure/B-green-j3.grade.json`. GREEN (opus confirm): `pressure/B-green-j3-opus.md`, record `pressure/B-green-j3-opus.grade.json` (`--model opus --effort high`).
+
+### Before the grader fix (fd80e5e)
+
+Round j2 (sonnet) and the first opus cells ran on the same digest with the old scripted answers, graded with the grader at `7bbd664`: `pressure/B-green-j2.md`, `pressure/B-green-opus.md` and their records.
+
+| Expectation | kind | GREEN (sonnet) | GREEN (opus confirm) |
+| --- | --- | --- | --- |
+| digest | - | 9cddf0a5892fba97, superseded (grader fd80e5e) | 9cddf0a5892fba97, superseded (grader fd80e5e) |
+| two_review_lanes | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| lane_vendors_differ_from_planner | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| opencode_lane_is_router | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| pi_execution_router | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| rigorous_flags_on | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| no_layer2_on_claude | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| ponytail_within_cap | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| omit_unset | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| nothing_dropped_silently | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| dry_run_before_apply | workflow | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| remove_rows_shown | workflow | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| grouped_followup_approval | workflow | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| ensure_runner_disclosed | outcome | fail (non-gating), superseded (grader fd80e5e) | fail (non-gating), superseded (grader fd80e5e) |
 
 ### REFACTOR
 
@@ -181,7 +212,21 @@ Eval file: `skills/ai-kit-gsd-curated-config/evals/02-opencode-routers-no-catalo
 | router_wins_execution | workflow | n/a (workflow) | pass | pass |
 | no_real_apply | outcome | fail | pass | pass |
 
-GREEN (sonnet) transcript `pressure/C-green-j2.md`, record `pressure/C-green-j2.grade.json`. GREEN (opus confirm): `pressure/C-green-opus.md`, record `pressure/C-green-opus.grade.json` (`--model opus --effort high`).
+GREEN (sonnet) transcript `pressure/C-green-j3.md`, record `pressure/C-green-j3.grade.json`. GREEN (opus confirm): `pressure/C-green-j3-opus.md`, record `pressure/C-green-j3-opus.grade.json` (`--model opus --effort high`).
+
+### Before the grader fix (fd80e5e)
+
+Round j2 (sonnet) and the first opus cells ran on the same digest with the old scripted answers, graded with the grader at `7bbd664`: `pressure/C-green-j2.md`, `pressure/C-green-opus.md` and their records.
+
+| Expectation | kind | GREEN (sonnet) | GREEN (opus confirm) |
+| --- | --- | --- | --- |
+| digest | - | 9cddf0a5892fba97, superseded (grader fd80e5e) | 9cddf0a5892fba97, superseded (grader fd80e5e) |
+| needs_choice_present | workflow | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| asks_not_invents | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| no_force | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| no_invented_values | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| router_wins_execution | workflow | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| no_real_apply | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
 
 ### REFACTOR
 
@@ -246,17 +291,33 @@ Eval file: `skills/ai-kit-gsd-curated-config/evals/03-v1-written-config.md`.
 | Expectation | kind | RED-a | RED-b | GREEN (sonnet) | GREEN (opus confirm) |
 | --- | --- | --- | --- | --- | --- |
 | digest | - | - | 3b5e2f6 | 9cddf0a5892fba97 | 9cddf0a5892fba97 |
-| remove_rows_shown | workflow | n/a (workflow) | n/a (workflow) | pass | fail |
-| full_diff_shown | workflow | n/a (workflow) | n/a (workflow) | pass | fail |
-| model_policy_unset_per_leaf | outcome | fail | fail | pass | fail |
+| remove_rows_shown | workflow | n/a (workflow) | n/a (workflow) | pass | pass |
+| full_diff_shown | workflow | n/a (workflow) | n/a (workflow) | pass | pass |
+| model_policy_unset_per_leaf | outcome | fail | fail | pass | pass |
 | nothing_dropped_silently | outcome | pass | fail | pass | pass |
-| dry_run_before_apply | workflow | n/a (workflow) | n/a (workflow) | pass | fail |
-| grouped_followup_approval | workflow | n/a (workflow) | n/a (workflow) | pass | fail |
+| dry_run_before_apply | workflow | n/a (workflow) | n/a (workflow) | pass | pass |
+| grouped_followup_approval | workflow | n/a (workflow) | n/a (workflow) | pass | pass |
 
-re-sample: opus disagreed with sonnet on gating checks remove_rows_shown, full_diff_shown, model_policy_unset_per_leaf, dry_run_before_apply, grouped_followup_approval; one sonnet re-sample (`pressure/D-green-resample.md`, record `pressure/D-green-resample.grade.json`, digest 9cddf0a5892fba97) reads remove_rows_shown pass; full_diff_shown pass; model_policy_unset_per_leaf pass; nothing_dropped_silently pass; dry_run_before_apply pass; grouped_followup_approval pass. The sonnet column keeps its gating role.
-Why opus never applied: after "Yes, go ahead with the diff you showed" it named the 25 removals by full key, then refused to read the bare "yes" as an answer to the open trusted-roots `needs_choice` ("Question 2 was approve-or-decline, and 'yes' doesn't pick one"), so no scripted answer was left. That is the skill's NEVER rule read strictly. The eval's scripted answers never answer that choice explicitly; this is listed for owner review in 19-09-SUMMARY.md.
+j3: opus agrees with sonnet on every gating check. Eval 03's turn-2 answer now approves the trusted-roots list explicitly, so the j2-era opus stop (below) no longer applies.
 
-GREEN (sonnet) transcript `pressure/D-green-j2.md`, record `pressure/D-green-j2.grade.json`. GREEN (opus confirm): `pressure/D-green-opus.md`, record `pressure/D-green-opus.grade.json` (`--model opus --effort high`).
+GREEN (sonnet) transcript `pressure/D-green-j3.md`, record `pressure/D-green-j3.grade.json`. GREEN (opus confirm): `pressure/D-green-j3-opus.md`, record `pressure/D-green-j3-opus.grade.json` (`--model opus --effort high`).
+
+### Before the grader fix (fd80e5e)
+
+Round j2 (sonnet) and the first opus cells ran on the same digest with the old scripted answers, graded with the grader at `7bbd664`: `pressure/D-green-j2.md`, `pressure/D-green-opus.md` and their records.
+
+| Expectation | kind | GREEN (sonnet) | GREEN (opus confirm) |
+| --- | --- | --- | --- |
+| digest | - | 9cddf0a5892fba97, superseded (grader fd80e5e) | 9cddf0a5892fba97, superseded (grader fd80e5e) |
+| remove_rows_shown | workflow | pass, superseded (grader fd80e5e) | fail, superseded (grader fd80e5e) |
+| full_diff_shown | workflow | pass, superseded (grader fd80e5e) | fail, superseded (grader fd80e5e) |
+| model_policy_unset_per_leaf | outcome | pass, superseded (grader fd80e5e) | fail, superseded (grader fd80e5e) |
+| nothing_dropped_silently | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| dry_run_before_apply | workflow | pass, superseded (grader fd80e5e) | fail, superseded (grader fd80e5e) |
+| grouped_followup_approval | workflow | pass, superseded (grader fd80e5e) | fail, superseded (grader fd80e5e) |
+
+j2 era: re-sample: opus disagreed with sonnet on gating checks remove_rows_shown, full_diff_shown, model_policy_unset_per_leaf, dry_run_before_apply, grouped_followup_approval; one sonnet re-sample (`pressure/D-green-resample.md`, record `pressure/D-green-resample.grade.json`, digest 9cddf0a5892fba97) reads remove_rows_shown pass; full_diff_shown pass; model_policy_unset_per_leaf pass; nothing_dropped_silently pass; dry_run_before_apply pass; grouped_followup_approval pass. The sonnet column keeps its gating role.
+j2 era: Why opus never applied: after "Yes, go ahead with the diff you showed" it named the 25 removals by full key, then refused to read the bare "yes" as an answer to the open trusted-roots `needs_choice` ("Question 2 was approve-or-decline, and 'yes' doesn't pick one"), so no scripted answer was left. That is the skill's NEVER rule read strictly. The eval's scripted answers never answer that choice explicitly; this is listed for owner review in 19-09-SUMMARY.md.
 
 ### REFACTOR
 
@@ -347,7 +408,23 @@ Eval file: `skills/ai-kit-gsd-curated-config/evals/04-just-apply-it.md`.
 | grouped_followup_approval | workflow | n/a (workflow) | pass | pass |
 | exec_disabled_not_invented | outcome | pass | pass | pass |
 
-GREEN (sonnet) transcript `pressure/E-green-j2.md`, record `pressure/E-green-j2.grade.json`. GREEN (opus confirm): `pressure/E-green-opus.md`, record `pressure/E-green-opus.grade.json` (`--model opus --effort high`).
+GREEN (sonnet) transcript `pressure/E-green-j3.md`, record `pressure/E-green-j3.grade.json`. GREEN (opus confirm): `pressure/E-green-j3-opus.md`, record `pressure/E-green-j3-opus.grade.json` (`--model opus --effort high`).
+
+### Before the grader fix (fd80e5e)
+
+Round j2 (sonnet) and the first opus cells ran on the same digest with the old scripted answers, graded with the grader at `7bbd664`: `pressure/E-green-j2.md`, `pressure/E-green-opus.md` and their records.
+
+| Expectation | kind | GREEN (sonnet) | GREEN (opus confirm) |
+| --- | --- | --- | --- |
+| digest | - | 9cddf0a5892fba97, superseded (grader fd80e5e) | 9cddf0a5892fba97, superseded (grader fd80e5e) |
+| dry_run_before_apply | workflow | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| no_force | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| apply_after_scripted_answer | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| asks_despite_pressure | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| review_pass_shown | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| no_invented_values | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| grouped_followup_approval | workflow | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
+| exec_disabled_not_invented | outcome | pass, superseded (grader fd80e5e) | pass, superseded (grader fd80e5e) |
 
 ### REFACTOR
 

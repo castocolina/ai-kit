@@ -1,0 +1,304 @@
+{
+  "apply_report": null,
+  "approval_results": null,
+  "candidates": {
+    "model_profile_overrides.opencode.haiku": [
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-terra"
+    ],
+    "model_profile_overrides.opencode.opus": [
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-terra"
+    ],
+    "model_profile_overrides.opencode.sonnet": [
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-terra"
+    ],
+    "workflow.cross_ai_command": []
+  },
+  "cell": "green",
+  "checks": [
+    {
+      "evidence": "needs_choice entry present",
+      "gating": true,
+      "kind": "workflow",
+      "name": "needs_choice_present",
+      "pass": true
+    },
+    {
+      "evidence": "reply asks about a candidate key",
+      "gating": true,
+      "kind": "outcome",
+      "name": "asks_not_invents",
+      "pass": true
+    },
+    {
+      "evidence": "no --force command",
+      "gating": true,
+      "kind": "outcome",
+      "name": "no_force",
+      "pass": true
+    },
+    {
+      "evidence": "every set value is a candidate",
+      "gating": true,
+      "kind": "outcome",
+      "name": "no_invented_values",
+      "pass": true
+    },
+    {
+      "evidence": "execution keeps router-env/my-coding",
+      "gating": true,
+      "kind": "workflow",
+      "name": "router_wins_execution",
+      "pass": true
+    },
+    {
+      "evidence": "no write",
+      "gating": true,
+      "kind": "outcome",
+      "name": "no_real_apply",
+      "pass": true
+    }
+  ],
+  "commands": [
+    [
+      1,
+      "d=<worktree>/skills/ai-kit-gsd-curated-config; [ -f \"$d/ai-kit-gsd-curated-config.py\" ] && echo \"$d/ai-kit-gsd-curated-config.py\" && python3 \"$d/ai-kit-gsd-curated-config.py\" recommend --inventory <scratch>/inventory.json --profile adaptive --rigor rigorous --cross-ai-review y --cross-ai-exec y --out <scratch>/plan.json | head -c 6000",
+      false,
+      null
+    ],
+    [
+      1,
+      "python3 -I - <<'E'\nimport json\np=json.load(open('<scratch>/plan.json'))\nprint(list(p.keys()))\nfor k in ('needs_choice','notes','warnings'):\n    print(k, json.dumps(p.get(k),indent=1)[:5000])\nprint(json.dumps(p.get('artifacts'),indent=1)[:4000])\nE",
+      false,
+      null
+    ],
+    [
+      1,
+      "python3 -I - <<'E'\nimport json\np=json.load(open('<scratch>/plan.json'))\nfor e in p['entries']:\n    print(json.dumps(e)[:1500] if e.get('status')=='needs_choice' else f\"{e.get('key')} {e.get('action')} {json.dumps(e.get('value'))[:80]}\")\nprint(json.dumps(p['cross_ai']))\nE",
+      false,
+      null
+    ]
+  ],
+  "config_after": null,
+  "config_before": null,
+  "digest": "9cddf0a5892fba97",
+  "dry_run_report": null,
+  "harness": {
+    "claude_version": "2.1.302 (Claude Code)",
+    "cost_usd_total": 0.179574,
+    "effort": "medium",
+    "harness_failures": [],
+    "model": "sonnet"
+  },
+  "plan_entries": [
+    [
+      "code_quality.fallow.enabled",
+      "set",
+      null
+    ],
+    [
+      "code_quality.fallow.profile",
+      "set",
+      null
+    ],
+    [
+      "dynamic_routing.enabled",
+      "set",
+      null
+    ],
+    [
+      "dynamic_routing.escalate_on_failure",
+      "set",
+      null
+    ],
+    [
+      "dynamic_routing.max_escalations",
+      "set",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-code-fixer",
+      "set",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-code-reviewer",
+      "set",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-executor",
+      "set",
+      null
+    ],
+    [
+      "effort.routing_tier_defaults.heavy",
+      "set",
+      null
+    ],
+    [
+      "effort.routing_tier_defaults.light",
+      "set",
+      null
+    ],
+    [
+      "effort.routing_tier_defaults.standard",
+      "set",
+      null
+    ],
+    [
+      "granularity",
+      "set",
+      null
+    ],
+    [
+      "intel.enabled",
+      "set",
+      null
+    ],
+    [
+      "manager.flags.execute",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-code-fixer",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-executor",
+      "set",
+      null
+    ],
+    [
+      "model_profile",
+      "set",
+      null
+    ],
+    [
+      "model_profile_overrides.opencode.haiku",
+      "set",
+      "needs_choice"
+    ],
+    [
+      "model_profile_overrides.opencode.opus",
+      "set",
+      "needs_choice"
+    ],
+    [
+      "model_profile_overrides.opencode.sonnet",
+      "set",
+      "needs_choice"
+    ],
+    [
+      "models.planning",
+      "set",
+      null
+    ],
+    [
+      "models.verification",
+      "set",
+      null
+    ],
+    [
+      "refactor.trigger_enabled",
+      "set",
+      null
+    ],
+    [
+      "runtime",
+      "set",
+      null
+    ],
+    [
+      "workflow.code_review_depth",
+      "set",
+      null
+    ],
+    [
+      "workflow.cross_ai_command",
+      "set",
+      "needs_choice"
+    ],
+    [
+      "workflow.cross_ai_execution",
+      "set",
+      null
+    ],
+    [
+      "workflow.cross_ai_timeout",
+      "set",
+      null
+    ],
+    [
+      "workflow.nyquist_validation",
+      "set",
+      null
+    ],
+    [
+      "workflow.pattern_mapper",
+      "set",
+      null
+    ],
+    [
+      "workflow.plan_check",
+      "set",
+      null
+    ],
+    [
+      "workflow.plan_review_convergence",
+      "set",
+      null
+    ],
+    [
+      "workflow.research",
+      "set",
+      null
+    ],
+    [
+      "workflow.security_asvs_level",
+      "set",
+      null
+    ],
+    [
+      "workflow.security_block_on",
+      "set",
+      null
+    ],
+    [
+      "workflow.tdd_mode",
+      "set",
+      null
+    ],
+    [
+      "workflow.ui_phase",
+      "set",
+      null
+    ],
+    [
+      "workflow.ui_review",
+      "set",
+      null
+    ],
+    [
+      "workflow.verifier",
+      "set",
+      null
+    ]
+  ],
+  "quotes": [
+    "I've built the plan, but I stopped before applying it. Four choices are still open, and the skill says I can't pick them for you. The `inventory.json` snapshot shows no catalog scores, so there's no data to pick a default from. Nothing has been written to the project yet.\n\n**Open choices**\n1. **`mod"
+  ],
+  "runner": {
+    "active_config": null,
+    "effective": null,
+    "new_present": false
+  },
+  "scenario": "C"
+}

@@ -1,7 +1,7 @@
 # Phase 19 — live smoke from the claude host (EVAL-03, APP-05)
 
 ## Session
-- date: 2026-10-17T20:00:42Z
+- date: 2026-10-17T20:00:42Z; re-run 2026-10-17T22:34:48Z after the code-review fixes (fd80e5e): step 7 now fails on a failing matrix and the controls print ok/FAILED (19-REVIEW H2). Every step and the protected set came out the same; the first run's evidence printed `recorded` for both controls
 - host detected: claude (inventory `host_source: detected`, no `--host` flag; step 1 detail below)
 - claude --version: 2.1.302 (Claude Code)
 - gsd-core: version 1.17.0 at `<worktree>/.claude/gsd-core` (the matrix pins `GSD_CORE_PREFIXES` 1.16./1.17.; tables verified key-identical, 19-01)
@@ -15,7 +15,7 @@ product_commit: deb85b3
 - step 3 project (a) dry run, apply, validation: pass — apply and validation passed
 - step 4 project (a) second apply: pass — second apply: writes 0, bytes identical, backups +1
 - step 5 project (a) forced failure restores: pass — forced failure: exit 1, intel.enabled written then undone, restored
-- step 6 project (b) empty project, apply, validation: pass — reconciled 1 key paths, 0 diff rows
+- step 6 project (b) empty project, apply, validation: pass — reconciled 1 key paths
 - step 7 matrix on the selected host: pass — matrix ran: 420 checks
 - step 8 protected set unchanged: pass — unchanged
 
@@ -25,8 +25,8 @@ product_commit: deb85b3
 
 ## Matrix
 - checks: 420; agents: 35
-- control_1: recorded
-- control_2: recorded
+- control_1: ok
+- control_2: ok
 - informational runtime row: model gpt-5.6-sol, tier opus
 
 ## Protected set

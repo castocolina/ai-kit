@@ -11,7 +11,7 @@ done; ls -la <scratch>/project <scratch>/project/.planning <scratch>/project/.cl
 [turn 1] result: <worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py
 <scratch>/project:
 total 8
-drwxr-xr-x.  5 bazzite 
+drwxr-xr-x.  5 <user> 
 [turn 1] bash: WORK="$(mktemp -d)" && printf '%s\n' "$WORK" && python3 <worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py inventory --project-dir <scratch>/project > "$WORK/inventory.json"; echo "exit=$?"; wc -c "$WORK/inventory.json"
 [turn 1] result: <scratch>/tmp/tmp.uTPJ2xwlTQ
 exit=0
