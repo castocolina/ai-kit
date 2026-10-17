@@ -4548,6 +4548,30 @@ class TestMainCli(unittest.TestCase):
             written = cfg_load_toml(out_path)
             self.assertEqual(written["policy"]["mode"], "double")
 
+    def test_render_toml_out_refuses_existing_file_without_replace(self):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        with tempfile.TemporaryDirectory() as d:
+            json_path = os.path.join(d, "config.json")
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump({"policy": {"mode": "double", "ladder": ["a"]}, "reviewers": []}, f)
+            out_path = os.path.join(d, "review-spec.toml")
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write("# user config\n")
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                code = main(["render-toml", "--json-config", json_path, "--out", out_path])
+            self.assertEqual(code, 1)
+            self.assertIn("refusing to replace", err.getvalue())
+            with open(out_path, encoding="utf-8") as f:
+                self.assertEqual(f.read(), "# user config\n")
+            with redirect_stdout(io.StringIO()):
+                code = main(["render-toml", "--json-config", json_path, "--out", out_path,
+                             "--replace"])
+            self.assertEqual(code, 0)
+            self.assertEqual(cfg_load_toml(out_path)["policy"]["mode"], "double")
+
     def test_infer_vendor_prints_matched_vendor(self):
         import io
         from contextlib import redirect_stdout

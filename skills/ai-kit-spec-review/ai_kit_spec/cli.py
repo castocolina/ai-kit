@@ -245,6 +245,10 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
             "instead of only printing it"
         ),
     )
+    p_toml.add_argument(
+        "--replace", action="store_true",
+        help="allow --out to replace an existing file (only after the user approved it)",
+    )
 
     p_render = sub.add_parser("render-command")
     p_render.add_argument("--reviewers-json", required=True,
@@ -740,6 +744,11 @@ def _cmd_merge_reports(args: argparse.Namespace, deps: CliDeps) -> int:
     return 0
 
 def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
+    if args.out and os.path.exists(args.out) and not args.replace:
+        # Data safety: an existing config is replaced only with explicit consent.
+        print(f"render-toml: refusing to replace existing {args.out} (nothing written); "
+              "pass --replace only after the user approved replacing it", file=sys.stderr)
+        return 1
     with open(args.json_config, encoding="utf-8") as f:
         config = json.load(f)
     rendered = cfg_render_toml(config)

@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-config
-description: Cross-AI reviewer config setup — detects installed CLIs/models, asks which to use as reviewers and in what priority order, then writes review-spec.toml. Writes per-project ./.aikit/review-spec.toml by default (always announces the exact path), asks before updating an existing global config. Use when the user requests cross-AI review setup or when ai-kit-spec-review warns no config exists. Supports --check-only (report availability, no writes), --local (force local write without asking), and --global (force ~/.config/ai-kit/review-spec.toml directly).
+description: Cross-AI reviewer config setup — detects installed CLIs/models, asks which to use as reviewers and in what priority order, then writes review-spec.toml. Writes per-project ./.aikit/review-spec.toml by default (always announces the exact path), asks before replacing any existing config (local or global). Use when the user requests cross-AI review setup or when ai-kit-spec-review warns no config exists. Supports --check-only (report availability, no writes), --local (force local write without asking), and --global (force ~/.config/ai-kit/review-spec.toml directly).
 ---
 
 ## Your task
@@ -116,7 +116,9 @@ probes keys reachable from `policy.ladder`; (3) an untrusted local file is
 ignored entirely (stderr prints `ignoring untrusted project-local config`),
 so none of its keys are probed. For any raw-read key with no match in probe
 output, report `available: unknown (not probed — absent from policy.ladder,
-shadowed by local-only strategy, or the local config is untrusted)` rather
+shadowed by local-only strategy, the local config is untrusted, a native/session-default
+entry that is never externally probed, or a permanent skip route the probe output names)`
+rather
 than silently dropping it or guessing. When the untrusted line appears, relay
 it and print the `trust-local --cwd <project root> --show` command for the
 user to run later — `--check-only` never runs the trusting `trust-local`
@@ -167,8 +169,16 @@ at a glance.
 #### Step 2.1 — Resolve the write target
 
 **Resolve the write target first, before asking anything else about reviewers.** Default is **local** (`./.aikit/review-spec.toml`) — a per-project config is the safer default since it can't silently affect other projects. `--global` forces `~/.config/ai-kit/review-spec.toml` directly, skipping the ask below. `--local` also forces local directly, skipping the ask (both flags are an explicit choice, so neither needs confirming). With **neither flag passed** (the common case): `Read` `~/.config/ai-kit/review-spec.toml` to check whether a global config already exists.
-- If it does **not** exist, proceed with the local default silently — nothing would be overwritten either way, so asking would just be friction.
-- If it **does** exist, use `AskUserQuestion` to ask explicitly before writing anywhere: "A global review-spec.toml already exists at `~/.config/ai-kit/review-spec.toml`. Write a new per-project config at `./.aikit/review-spec.toml` instead (recommended — doesn't touch the existing global config), or update the existing global config?" — with the local option first/default. Only proceed to overwrite the global file if the user explicitly picks that option here.
+- If it does **not** exist, proceed with the local default silently.
+- If it **does** exist, use `AskUserQuestion` to ask explicitly before writing anywhere: "A global review-spec.toml already exists at `~/.config/ai-kit/review-spec.toml`. Write a per-project config at `./.aikit/review-spec.toml` instead (recommended — doesn't touch the existing global config), or replace the existing global config?" — with the local option first/default. Picking "replace" here is the replacement consent below for the global file.
+
+**Replacement gate (every flag combination).** `Read` the resolved target itself. If it
+already exists and the user has not already approved replacing that exact file above, use
+`AskUserQuestion`: "`<resolved absolute path>` already exists. Replace it with the config
+built in this run (its current reviewers and policy are lost unless you re-enter them), or
+stop and keep it?" — with "stop" first/default. `--local`/`--global` choose the target, never
+consent to replace it. On "stop", end the run without writing. Only an explicit "replace"
+lets Step 3 pass `--replace`; without it `render-toml --out` refuses an existing file.
 
 **Once the target is resolved, announce it immediately** — print "Writing to: `<resolved absolute path>`" before asking any of the reviewer questions below, so the user knows where this run's answers are headed from the start (not just in Step 4's closing report, which restates the same path after the write actually happens).
 
@@ -321,7 +331,8 @@ or dropped from the prompt. Let the entry's `key` describe its place in the ladd
 `session-primary`, `session-fallback`), not a vendor.
 
 Worth asking regardless of `policy.mode`, since it's the only zero-external-dependency reviewer
-option available (never rate-limited/API-gated the way an external CLI can be) — useful as
+option available (it needs no extra CLI and no external quota probe; the session's own
+quota still applies and is not observable here) — useful as
 either a primary pick or a pure fallback, depending on where the user places it in
 `policy.ladder` at Step 2.8. **A host-run entry is never automatically prioritized over a
 subprocess one** — `resolve_reviewers` (`ai-kit-spec.py`) treats every ladder entry
@@ -401,31 +412,35 @@ stdout through a second write yourself:
 
 ```bash
 python3 "$TOOLS_PY" render-toml --json-config "$SCRATCH/config.json" --out <target path> \
-  > "$SCRATCH/rendered.toml" 2> "$SCRATCH/render-toml-stderr.txt"
+  [--replace] > "$SCRATCH/rendered.toml" 2> "$SCRATCH/render-toml-stderr.txt"
 echo "render-toml exit $?"
 ```
 
 `<target path>` is the write target Step 2 resolved and already
 announced — `./.aikit/review-spec.toml` by default (or explicitly via
 `--local`), `~/.config/ai-kit/review-spec.toml` only via `--global` or
-because the user picked "update the existing global config" at Step 2's
+because the user picked "replace the existing global config" at Step 2's
 ask. Never re-derive the target here independently of what Step 2
-already resolved and told the user. (The runtimes snapshot was already
+already resolved and told the user. Add `--replace` only when Step 2.1's replacement gate
+got an explicit "replace" for an existing target. (The runtimes snapshot was already
 persisted in Step 1 via `--save` — no separate write needed here.)
 **Capture stderr to `$SCRATCH/render-toml-stderr.txt`** — `cfg_render_toml`
 prints a `WARNING:` line there for every `[[reviewers]]` entry it
 rejected-and-dropped instead of writing (e.g. a malformed entry), and
 this is the ONLY place that warning is ever emitted — Step 4 below reads
 this file to decide whether to surface it. `$SCRATCH/rendered.toml` holds
-the exact bytes written.
+the same TOML as written (stdout adds one trailing newline, so compare with `diff`, not
+`cmp`).
 
 ### Step 4 — Report
 
-**First, check the printed exit status.** Anything but `render-toml exit 0` means
-nothing was written (a rejected config can end in a traceback, with no `WARNING:`
-line at all): show `$SCRATCH/render-toml-stderr.txt` verbatim, report "Config NOT
-written", keep `$SCRATCH` for inspection and stop — never offer trust for a file
-this run did not write.
+**First, check the printed exit status.** Anything but `render-toml exit 0` means the
+write is not confirmed (a rejected config can end in a traceback, with no `WARNING:` line;
+a `refusing to replace existing` line means nothing was written; a failure after the write,
+such as printing stdout, can leave the target already replaced): show
+`$SCRATCH/render-toml-stderr.txt` verbatim, `Read` the target and report "Config write NOT
+confirmed" with what the target now holds, keep `$SCRATCH` for inspection and stop — never
+offer trust after a nonzero exit.
 
 **On exit 0, check `$SCRATCH/render-toml-stderr.txt` for any `WARNING:`-prefixed
 line.** If one or more are present, the write still succeeded but

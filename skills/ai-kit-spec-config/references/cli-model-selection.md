@@ -179,8 +179,10 @@ JSON
    (never recomputed from `$RUNTIMES_JSON` alone — that would silently drop every
    single-provider-CLI candidate), THEN rank per purpose. A catalog entry for a CLI/model no
    longer present in the current snapshot is excluded from ranking and from anything shown to
-   the user, without being deleted from the cache. This is a Python call, not a subcommand; run
-   it inline via `python3 -c` — note the explicit `sys.path.insert`, required because this runs
+   the user, without being deleted from the cache; a kept entry's in-memory `runtimes` is
+   narrowed to the pairs in the current snapshot, so a stale cached mapping never makes it
+   eligible, shown, or sized through a runtime it no longer runs on. This is a Python call,
+   not a subcommand; run it inline via `python3 -c` — note the explicit `sys.path.insert`, required because this runs
    from an arbitrary cwd, not from inside `ai-kit-spec-review`'s own directory the way `python3
    "$TOOLS_PY"` does (that script's own directory is added to `sys.path` automatically by the
    interpreter; a `python3 -c` snippet gets no such help):
@@ -195,7 +197,11 @@ catalog = json.load(open('$CATALOG_JSON'))
 fetch_result = json.load(open('$SCRATCH/fetch-model-catalog-result.json'))
 discovered = fetch_result['discovered']
 current = current_candidate_keys(catalog, discovered)
-entries = [{'key': k, **v} for k, v in catalog.items() if k in current]
+pairs = {(c['runtime'], c['model_id']) for c in discovered}
+# Keep only this snapshot's runtime/model pairs: a stale cached mapping must not route.
+entries = [{'key': k, **v, 'runtimes': {r: rt for r, rt in v.get('runtimes', {}).items()
+                                        if (r, rt.get('model_id')) in pairs}}
+           for k, v in catalog.items() if k in current]
 name_declared = [e for e in entries if e.get('name_declared_purpose')]
 scored = [e for e in entries if not e.get('name_declared_purpose')]
 weights = load_ranking_weights()
