@@ -131,15 +131,14 @@ def _route_shape(entry: RouteInput, mode: str) -> str | None:
     if _is_custom(entry):
         return "review_only" if mode == "exec" else "custom"
     runtime = entry.runtime
-    if isinstance(runtime, str) and runtime in RUNTIMES and (
-        not isinstance(entry.model, str) or entry.model == ""
-    ):
+    # An out-of-table runtime is a visible skip even without a model (D-20).
+    if runtime is not None and (not isinstance(runtime, str) or runtime not in RUNTIMES):
+        return "unknown_runtime"
+    if runtime is not None and (not isinstance(entry.model, str) or entry.model == ""):
         return "no_model"
-    # A model-less entry is the session default even when a runtime survived a migration.
+    # No runtime and no model: the session default (D-07).
     if entry.model == "" or entry.model is None:
         return "native"
-    if not isinstance(runtime, str) or runtime not in RUNTIMES:
-        return "unknown_runtime"
     return None
 
 
