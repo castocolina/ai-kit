@@ -2653,6 +2653,23 @@ class TestSmoke(unittest.TestCase):
             {"entries": [*base, unset("model_policy.provider"), unset("resolve_model_ids")]}
         )
 
+    def test_report_json_reads_chained_command_output(self) -> None:
+        """Live GREEN regression (19-07): chained `plan-set; apply --dry-run; echo exit=$?`
+        output was read as unparseable, so a real dry run graded as refused."""
+
+        def evs(text: str) -> list[dict]:
+            return [
+                {"kind": "bash", "id": "t1", "command": "x"},
+                {"kind": "tool_result", "tool_use_id": "t1", "text": text},
+            ]
+
+        chained = '{"key": "k", "op": "set"}\nexit=0\n{"dry_run": true, "diff": []}\nexit=0'
+        point = {"id": "t1"}
+        self.assertEqual(ev.report_json(evs(chained), point), {"dry_run": True, "diff": []})
+        applied = '{"applied": true, "writes": []}\nexit=0'
+        self.assertEqual(ev.report_json(evs(applied), point), {"applied": True, "writes": []})
+        self.assertIsNone(ev.report_json(evs("refused: needs_choice\nexit=2"), point))
+
     def test_tree_hash_detects_change(self) -> None:
         root = os.path.join(self.tmp, "planning")
         os.makedirs(root)

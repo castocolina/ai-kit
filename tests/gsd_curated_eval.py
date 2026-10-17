@@ -1072,9 +1072,32 @@ def result_of(evs: list[dict], point: dict | None) -> dict | None:
 
 
 def report_json(evs: list[dict], point: dict | None) -> dict | None:
-    """The paired result's text parsed as a JSON object, or None when absent or unparseable."""
+    """The paired result's report object, or None when absent or unparseable.
+
+    One Bash call may chain commands (`plan-set ...; apply --dry-run ...; echo exit=$?`), so
+    the text can hold several JSON objects plus shell lines (19-07): the `apply` report
+    (a `dry_run` or `applied` key) wins, else the last object."""
     result = result_of(evs, point)
-    return None if result is None else _json_or_none(result.get("text") or "")
+    if result is None:
+        return None
+    objects = _json_objects(result.get("text") or "")
+    reports = [o for o in objects if "dry_run" in o or "applied" in o]
+    return (reports or objects or [None])[-1]
+
+
+def _json_objects(text: str) -> list[dict]:
+    """Every top-level JSON object in `text`, in order (non-JSON text between them skipped)."""
+    decoder, out, at = json.JSONDecoder(), [], 0
+    while (start := text.find("{", at)) != -1:
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            at = start + 1
+            continue
+        if isinstance(value, dict):
+            out.append(value)
+        at = end
+    return out
 
 
 def _is_noop_write(event: dict, evs: list[dict], config_existed: bool) -> bool:
