@@ -2428,6 +2428,8 @@ class TestSkillDocCommands(unittest.TestCase):
             "In the v2 flow, never skip the plan review",
             # 19-09: judge r1 F1 (gpt-6.1-sol): v1 asks before each apply-* write.
             "v1 has no plan review or dry run",
+            # 19-09: judge r2 1 (gpt-6.1-sol r1): the v1 rule names what it cannot preview.
+            "which v1 cannot preview",
         )
         missing = [phrase for phrase in required if phrase not in text]
         self.assertEqual(missing, [])
