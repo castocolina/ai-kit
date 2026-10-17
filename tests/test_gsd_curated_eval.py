@@ -2605,6 +2605,28 @@ class TestSmoke(unittest.TestCase):
         )
         self.assertIn(("workflow.flag", "false", False), calls)
 
+    def test_shadow_check_reads_assigned_and_quoted_paths(self) -> None:
+        """Live RED-b regression (19-06): `E=<v1 copy>/...py; python3 "$E"` is the v1 copy, not a
+        shadowed entrypoint; a path outside the copy behind the same assignment still fails."""
+        run_dir = os.path.join(self.tmp, "run")
+        inside = os.path.join(run_dir, "v1-skill", "x", "ai-kit-gsd-curated-config.py")
+        fixture = {"run_dir": run_dir}
+
+        def bash(command: str) -> list[dict]:
+            return [{"kind": "bash", "command": command}]
+
+        self.assertEqual(
+            ev._shadow_failures("red-b", bash(f'E={inside}; python3 "$E" apply'), fixture), []
+        )
+        self.assertEqual(
+            ev._shadow_failures("red-b", bash(f"python3 '{inside}' apply"), fixture), []
+        )
+        outside = os.path.join(self.tmp, "other", "ai-kit-gsd-curated-config.py")
+        self.assertEqual(
+            ev._shadow_failures("red-b", bash(f"E={outside}; python3 $E"), fixture),
+            [f"entrypoint_shadowed: {outside}"],
+        )
+
     def test_tree_hash_detects_change(self) -> None:
         root = os.path.join(self.tmp, "planning")
         os.makedirs(root)

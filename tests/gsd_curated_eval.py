@@ -3172,7 +3172,9 @@ def _shadow_failures(cell: str, evs: list[dict], fixture: dict) -> list[str]:
         for token in event["command"].split():
             if "ai-kit-gsd-curated-config.py" not in token:
                 continue
-            resolved = os.path.normpath(token)
+            # `E=<path>` assignments and shell quotes wrap the path the agent actually runs.
+            path = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=", "", token).strip("\"';")
+            resolved = os.path.normpath(path)
             if not resolved.startswith(os.path.normpath(str(allowed))):
                 return [f"entrypoint_shadowed: {resolved}"]
     return []
