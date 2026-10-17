@@ -215,18 +215,9 @@ def _cmd_detect_review_candidate(args, which_fn, run_fn, env_fn):
     return 0
 
 
-class _Stdin:
-    """Guidance text a test injects; None reads the real stdin."""
-
-    text: str | None = None
-
-
-_stdin = _Stdin()
-
-
 def _read_guidance_file(path: str) -> str:
     if path == "-":
-        return sys.stdin.read() if _stdin.text is None else _stdin.text
+        return sys.stdin.read()
     with open(path, encoding="utf-8") as handle:
         return handle.read()
 
@@ -237,7 +228,7 @@ def _cmd_ensure_runner(args, which_fn, run_fn, env_fn):
     if args.guidance_file is not None:
         try:
             guidance = _read_guidance_file(args.guidance_file)
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             print(json.dumps({
                 "ready": False, "runner": None, "guidance": None, "notes": [],
                 "error": f"cannot read {args.guidance_file}: {exc}",

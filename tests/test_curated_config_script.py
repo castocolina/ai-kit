@@ -381,12 +381,9 @@ class TestEnsureRunner(unittest.TestCase):
 
 def _run_ensure(argv, stdin_text=None):
     out = io.StringIO()
-    cli._stdin.text = stdin_text
-    try:
-        with contextlib.redirect_stdout(out):
-            code = cli.main(["ensure-runner", *argv])
-    finally:
-        cli._stdin.text = None
+    stdin = io.StringIO("" if stdin_text is None else stdin_text)
+    with contextlib.redirect_stdout(out), unittest.mock.patch("sys.stdin", stdin):
+        code = cli.main(["ensure-runner", *argv])
     return code, json.loads(out.getvalue())
 
 
@@ -573,6 +570,16 @@ class TestEnsureRunnerErrors(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("cannot read", result["error"])
             self.assertIn("cross-ai-guidance.md", result["error"])
+
+    def test_non_utf8_guidance_file_exits_2_with_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            guide = os.path.join(tmp, "guide.md")
+            with open(guide, "wb") as handle:
+                handle.write(b"\xff\xfe not utf-8")
+            code, result = _run_ensure(["--cwd", tmp, "--guidance-file", guide])
+            self.assertEqual(code, 2)
+            self.assertFalse(result["ready"])
+            self.assertIn(f"cannot read {guide}", result["error"])
 
     def test_empty_guidance_rejected_before_any_write(self):
         for text in ("", "   \n\t"):

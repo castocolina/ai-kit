@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "skills", "ai-kit-gsd-curated-config"))
@@ -600,14 +601,13 @@ class TestGsdHookE2E(unittest.TestCase):
             self.assertEqual(rc, 0, msg=err.getvalue())
             guidance = out.getvalue()
             self.assertTrue(guidance.strip())
-            curated_cli._stdin.text = guidance
-            try:
-                with contextlib.redirect_stdout(io.StringIO()):
-                    ensure_rc = curated_cli.main([
-                        "ensure-runner", "--cwd", repo, "--guidance-file", "-",
-                    ])
-            finally:
-                curated_cli._stdin.text = None
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                mock.patch("sys.stdin", io.StringIO(guidance)),
+            ):
+                ensure_rc = curated_cli.main([
+                    "ensure-runner", "--cwd", repo, "--guidance-file", "-",
+                ])
             self.assertEqual(ensure_rc, 0)
             hook = build_cross_ai_command(
                 {"runtime": "opencode", "model": "fake/ok", "key": "oc"}
