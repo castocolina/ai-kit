@@ -1,0 +1,2067 @@
+{
+  "apply_report": {
+    "failed_key": null,
+    "followups": {
+      "approve_with": "followups --plan <scratch>/tmp/tmp.kjl0VmDZPy/plan.json --inventory <scratch>/tmp/tmp.kjl0VmDZPy/inventory.json --project-dir <scratch>/project --approve --require effort_sync --fingerprint 27b86105f939f32d",
+      "required": [
+        "effort_sync"
+      ]
+    },
+    "reconciled": [],
+    "writes": [
+      {
+        "key": "agent_skills.gsd-code-fixer",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills.gsd-code-reviewer",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills.gsd-debug-session-manager",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills.gsd-debugger",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills.gsd-doc-writer",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills.gsd-eval-auditor",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills.gsd-executor",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills.gsd-nyquist-auditor",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills.gsd-planner",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills.gsd-security-auditor",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills.gsd-ui-auditor",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills.gsd-ui-researcher",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills.gsd-verifier",
+        "op": "set"
+      },
+      {
+        "key": "agent_skills_security.trusted_global_roots",
+        "op": "set"
+      },
+      {
+        "key": "code_quality.fallow.enabled",
+        "op": "set"
+      },
+      {
+        "key": "code_quality.fallow.profile",
+        "op": "set"
+      },
+      {
+        "key": "dynamic_routing.enabled",
+        "op": "set"
+      },
+      {
+        "key": "dynamic_routing.escalate_on_failure",
+        "op": "set"
+      },
+      {
+        "key": "dynamic_routing.max_escalations",
+        "op": "set"
+      },
+      {
+        "key": "effort.agent_overrides.gsd-code-fixer",
+        "op": "set"
+      },
+      {
+        "key": "effort.agent_overrides.gsd-code-reviewer",
+        "op": "set"
+      },
+      {
+        "key": "effort.agent_overrides.gsd-executor",
+        "op": "set"
+      },
+      {
+        "key": "effort.routing_tier_defaults.heavy",
+        "op": "set"
+      },
+      {
+        "key": "effort.routing_tier_defaults.light",
+        "op": "set"
+      },
+      {
+        "key": "effort.routing_tier_defaults.standard",
+        "op": "set"
+      },
+      {
+        "key": "granularity",
+        "op": "set"
+      },
+      {
+        "key": "intel.enabled",
+        "op": "set"
+      },
+      {
+        "key": "manager.flags.execute",
+        "op": "set"
+      },
+      {
+        "key": "model_overrides.gsd-code-fixer",
+        "op": "set"
+      },
+      {
+        "key": "model_overrides.gsd-dom-verifier",
+        "op": "set"
+      },
+      {
+        "key": "model_overrides.gsd-executor",
+        "op": "set"
+      },
+      {
+        "key": "model_overrides.gsd-ui-auditor",
+        "op": "set"
+      },
+      {
+        "key": "model_overrides.gsd-ui-researcher",
+        "op": "set"
+      },
+      {
+        "key": "model_profile",
+        "op": "set"
+      },
+      {
+        "key": "models.planning",
+        "op": "set"
+      },
+      {
+        "key": "models.verification",
+        "op": "set"
+      },
+      {
+        "key": "plan_review.source_grounding_authority",
+        "op": "unset"
+      },
+      {
+        "key": "refactor.trigger_enabled",
+        "op": "set"
+      },
+      {
+        "key": "resolve_model_ids",
+        "op": "unset"
+      },
+      {
+        "key": "review.default_reviewers",
+        "op": "set"
+      },
+      {
+        "key": "review.effort.codex",
+        "op": "set"
+      },
+      {
+        "key": "review.effort.opencode",
+        "op": "set"
+      },
+      {
+        "key": "review.models.codex",
+        "op": "set"
+      },
+      {
+        "key": "review.models.opencode",
+        "op": "set"
+      },
+      {
+        "key": "workflow.code_review_depth",
+        "op": "set"
+      },
+      {
+        "key": "workflow.cross_ai_command",
+        "op": "set"
+      },
+      {
+        "key": "workflow.cross_ai_execution",
+        "op": "set"
+      },
+      {
+        "key": "workflow.cross_ai_timeout",
+        "op": "set"
+      },
+      {
+        "key": "workflow.plan_review_convergence",
+        "op": "set"
+      },
+      {
+        "key": "workflow.security_asvs_level",
+        "op": "set"
+      },
+      {
+        "key": "workflow.security_block_on",
+        "op": "set"
+      },
+      {
+        "key": "workflow.tdd_mode",
+        "op": "set"
+      },
+      {
+        "key": "workflow.ui_review",
+        "op": "set"
+      }
+    ]
+  },
+  "approval_results": null,
+  "candidates": null,
+  "cell": "green",
+  "checks": [
+    {
+      "evidence": "2 review lanes",
+      "gating": true,
+      "kind": "outcome",
+      "name": "two_review_lanes",
+      "pass": true
+    },
+    {
+      "evidence": "every lane vendor differs from the planner",
+      "gating": true,
+      "kind": "outcome",
+      "name": "lane_vendors_differ_from_planner",
+      "pass": true
+    },
+    {
+      "evidence": "review.models.opencode=router-env/my-plan-review",
+      "gating": true,
+      "kind": "outcome",
+      "name": "opencode_lane_is_router",
+      "pass": true
+    },
+    {
+      "evidence": "effective target pi/router-env/my-coding",
+      "gating": true,
+      "kind": "outcome",
+      "name": "pi_execution_router",
+      "pass": true
+    },
+    {
+      "evidence": "intel and dynamic_routing enabled",
+      "gating": true,
+      "kind": "outcome",
+      "name": "rigorous_flags_on",
+      "pass": true
+    },
+    {
+      "evidence": "no layer-2 claude keys",
+      "gating": true,
+      "kind": "outcome",
+      "name": "no_layer2_on_claude",
+      "pass": true
+    },
+    {
+      "evidence": "lists within cap 5; ponytail present",
+      "gating": true,
+      "kind": "outcome",
+      "name": "ponytail_within_cap",
+      "pass": true
+    },
+    {
+      "evidence": "no resolve_model_ids",
+      "gating": true,
+      "kind": "outcome",
+      "name": "omit_unset",
+      "pass": true
+    },
+    {
+      "evidence": "2 dropped keys named before the write",
+      "gating": true,
+      "kind": "outcome",
+      "name": "nothing_dropped_silently",
+      "pass": true
+    },
+    {
+      "evidence": "dry run before apply",
+      "gating": true,
+      "kind": "workflow",
+      "name": "dry_run_before_apply",
+      "pass": true
+    },
+    {
+      "evidence": "2 remove rows shown before apply",
+      "gating": true,
+      "kind": "workflow",
+      "name": "remove_rows_shown",
+      "pass": true
+    },
+    {
+      "evidence": "grouped question asked; no scripted answer left to approve",
+      "gating": true,
+      "kind": "workflow",
+      "name": "grouped_followup_approval",
+      "pass": true
+    },
+    {
+      "evidence": "not disclosed",
+      "gating": false,
+      "kind": "outcome",
+      "name": "ensure_runner_disclosed",
+      "pass": false
+    }
+  ],
+  "commands": [
+    [
+      1,
+      "for d in \"<worktree>/skills/ai-kit-gsd-curated-config\" \\\n         \"${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-gsd-curated-config}\" \\\n         \"$HOME/.claude/skills/ai-kit-gsd-curated-config\"; do\n  [ -f \"$d/ai-kit-gsd-curated-config.py\" ] && { printf '%s\\n' \"$d/ai-kit-gsd-curated-config.py\"; break; }\ndone; WORK=\"$(mktemp -d)\" && printf '%s\\n' \"$WORK\"",
+      false,
+      null
+    ],
+    [
+      1,
+      "E=<worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; W=<scratch>/tmp/tmp.kjl0VmDZPy\npython3 \"$E\" inventory --project-dir <scratch>/project > $W/inventory.json; echo exit=$?\npython3 \"$E\" recommend --inventory $W/inventory.json --profile adaptive --rigor rigorous --cross-ai-review y --cross-ai-exec y --out $W/plan.json; echo exit=$?",
+      false,
+      {
+        "entries": 59,
+        "needs_choice": 1,
+        "notes": 15,
+        "out": "<scratch>/tmp/tmp.kjl0VmDZPy/plan.json"
+      }
+    ],
+    [
+      1,
+      "cd <scratch>/tmp/tmp.kjl0VmDZPy; python3 -I -c \"\nimport json;p=json.load(open('plan.json'));print(list(p.keys()))\nfor k in p:\n  if k not in('entries',):print(k,json.dumps(p[k],indent=1)[:6000])\nprint([e for e in p['entries'] if e.get('needs_choice') or e.get('status')=='needs_choice'] if isinstance(p['entries'],list) else '')\n\"",
+      false,
+      null
+    ],
+    [
+      1,
+      "cd <scratch>/tmp/tmp.kjl0VmDZPy; python3 -I -c \"\nimport json;p=json.load(open('plan.json'))\nfor e in p['entries']:\n  if 'review' in e['key'] or 'cross_ai' in e['key'] or e.get('op')=='unset' or e.get('status')!='ok': print(e['key'],e.get('op'),e.get('status'),json.dumps(e.get('value')),e.get('existing'),e.get('why','')[:200])\n\"",
+      false,
+      null
+    ],
+    [
+      2,
+      "E=<worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; W=<scratch>/tmp/tmp.kjl0VmDZPy\npython3 \"$E\" plan-set agent_skills_security.trusted_global_roots '[\"~/.agents/skills/mermaid-diagrams\",\"~/.agents/skills/react-dev\",\"~/.agents/skills/reducing-entropy\"]' --plan $W/plan.json; echo exit=$?\npython3 \"$E\" apply --plan $W/plan.json --inventory $W/inventory.json --project-dir <scratch>/project --dry-run; echo exit=$?",
+      false,
+      {
+        "artifacts": [
+          {
+            "kind": "add",
+            "note": "",
+            "path": ".planning/scripts/cross-ai.mjs"
+          }
+        ],
+        "config_path": "<scratch>/project/.planning/config.json",
+        "diff": [
+          {
+            "from": null,
+            "key": "agent_skills.gsd-code-fixer",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail",
+              "global:reducing-entropy"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-code-reviewer",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail-review",
+              "global:ponytail:ponytail-audit",
+              "global:reducing-entropy"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-debug-session-manager",
+            "kind": "add",
+            "to": [
+              "global:superpowers:systematic-debugging"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-debugger",
+            "kind": "add",
+            "to": [
+              "global:superpowers:systematic-debugging"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-doc-writer",
+            "kind": "add",
+            "to": [
+              "global:mermaid-diagrams"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-eval-auditor",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail-review",
+              "global:ponytail:ponytail-audit"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-executor",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail",
+              "global:superpowers:test-driven-development",
+              "global:frontend-design:frontend-design",
+              "global:react-dev"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-nyquist-auditor",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail-review",
+              "global:ponytail:ponytail-audit"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-planner",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail",
+              "global:superpowers:test-driven-development"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-security-auditor",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail-review",
+              "global:ponytail:ponytail-audit"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-ui-auditor",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail-review",
+              "global:ponytail:ponytail-audit",
+              "global:frontend-design:frontend-design",
+              "global:react-dev"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-ui-researcher",
+            "kind": "add",
+            "to": [
+              "global:frontend-design:frontend-design",
+              "global:react-dev"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills.gsd-verifier",
+            "kind": "add",
+            "to": [
+              "global:ponytail:ponytail-debt"
+            ]
+          },
+          {
+            "from": null,
+            "key": "agent_skills_security.trusted_global_roots",
+            "kind": "add",
+            "to": [
+              "~/.agents/skills/mermaid-diagrams",
+              "~/.agents/skills/react-dev",
+              "~/.agents/skills/reducing-entropy"
+            ]
+          },
+          {
+            "from": null,
+            "key": "code_quality.fallow.enabled",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": null,
+            "key": "code_quality.fallow.profile",
+            "kind": "add",
+            "to": "standard"
+          },
+          {
+            "from": null,
+            "key": "dynamic_routing.enabled",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": null,
+            "key": "dynamic_routing.escalate_on_failure",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": null,
+            "key": "dynamic_routing.max_escalations",
+            "kind": "add",
+            "to": 1
+          },
+          {
+            "from": null,
+            "key": "effort.agent_overrides.gsd-code-fixer",
+            "kind": "add",
+            "to": "medium"
+          },
+          {
+            "from": null,
+            "key": "effort.agent_overrides.gsd-code-reviewer",
+            "kind": "add",
+            "to": "xhigh"
+          },
+          {
+            "from": null,
+            "key": "effort.agent_overrides.gsd-executor",
+            "kind": "add",
+            "to": "medium"
+          },
+          {
+            "from": null,
+            "key": "effort.routing_tier_defaults.heavy",
+            "kind": "add",
+            "to": "xhigh"
+          },
+          {
+            "from": null,
+            "key": "effort.routing_tier_defaults.light",
+            "kind": "add",
+            "to": "low"
+          },
+          {
+            "from": null,
+            "key": "effort.routing_tier_defaults.standard",
+            "kind": "add",
+            "to": "high"
+          },
+          {
+            "from": null,
+            "key": "granularity",
+            "kind": "add",
+            "to": "fine"
+          },
+          {
+            "from": null,
+            "key": "intel.enabled",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": null,
+            "key": "manager.flags.execute",
+            "kind": "add",
+            "to": "--cross-ai"
+          },
+          {
+            "from": null,
+            "key": "model_overrides.gsd-code-fixer",
+            "kind": "add",
+            "to": "haiku"
+          },
+          {
+            "from": null,
+            "key": "model_overrides.gsd-dom-verifier",
+            "kind": "add",
+            "to": "opus"
+          },
+          {
+            "from": null,
+            "key": "model_overrides.gsd-executor",
+            "kind": "add",
+            "to": "haiku"
+          },
+          {
+            "from": null,
+            "key": "model_overrides.gsd-ui-auditor",
+            "kind": "add",
+            "to": "opus"
+          },
+          {
+            "from": null,
+            "key": "model_overrides.gsd-ui-researcher",
+            "kind": "add",
+            "to": "opus"
+          },
+          {
+            "from": "balanced",
+            "key": "model_profile",
+            "kind": "change",
+            "to": "adaptive"
+          },
+          {
+            "from": null,
+            "key": "models.planning",
+            "kind": "add",
+            "to": "opus"
+          },
+          {
+            "from": null,
+            "key": "models.verification",
+            "kind": "add",
+            "to": "sonnet"
+          },
+          {
+            "from": "grep",
+            "key": "plan_review.source_grounding_authority",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": null,
+            "key": "refactor.trigger_enabled",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": "omit",
+            "key": "resolve_model_ids",
+            "kind": "remove",
+            "to": null
+          },
+          {
+            "from": null,
+            "key": "review.default_reviewers",
+            "kind": "add",
+            "to": [
+              "opencode",
+              "codex"
+            ]
+          },
+          {
+            "from": null,
+            "key": "review.effort.codex",
+            "kind": "add",
+            "to": "xhigh"
+          },
+          {
+            "from": null,
+            "key": "review.effort.opencode",
+            "kind": "add",
+            "to": "high"
+          },
+          {
+            "from": null,
+            "key": "review.models.codex",
+            "kind": "add",
+            "to": "gpt-5.6-sol"
+          },
+          {
+            "from": null,
+            "key": "review.models.opencode",
+            "kind": "add",
+            "to": "router-env/my-plan-review"
+          },
+          {
+            "from": "standard",
+            "key": "workflow.code_review_depth",
+            "kind": "change",
+            "to": "deep"
+          },
+          {
+            "from": null,
+            "key": "workflow.cross_ai_command",
+            "kind": "add",
+            "to": "node .planning/scripts/cross-ai.mjs"
+          },
+          {
+            "from": null,
+            "key": "workflow.cross_ai_execution",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": null,
+            "key": "workflow.cross_ai_timeout",
+            "kind": "add",
+            "to": 1800
+          },
+          {
+            "from": true,
+            "key": "workflow.nyquist_validation",
+            "kind": "keep",
+            "to": true
+          },
+          {
+            "from": true,
+            "key": "workflow.pattern_mapper",
+            "kind": "keep",
+            "to": true
+          },
+          {
+            "from": true,
+            "key": "workflow.plan_check",
+            "kind": "keep",
+            "to": true
+          },
+          {
+            "from": null,
+            "key": "workflow.plan_review_convergence",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": true,
+            "key": "workflow.research",
+            "kind": "keep",
+            "to": true
+          },
+          {
+            "from": 1,
+            "key": "workflow.security_asvs_level",
+            "kind": "change",
+            "to": 2
+          },
+          {
+            "from": "high",
+            "key": "workflow.security_block_on",
+            "kind": "change",
+            "to": "medium"
+          },
+          {
+            "from": null,
+            "key": "workflow.tdd_mode",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": true,
+            "key": "workflow.ui_phase",
+            "kind": "keep",
+            "to": true
+          },
+          {
+            "from": null,
+            "key": "workflow.ui_review",
+            "kind": "add",
+            "to": true
+          },
+          {
+            "from": true,
+            "key": "workflow.verifier",
+            "kind": "keep",
+            "to": true
+          }
+        ],
+        "dry_run": true,
+        "gsd_core_version": "1.17.0",
+        "plan": "<scratch>/tmp/tmp.kjl0VmDZPy/plan.json",
+        "warnings": []
+      }
+    ],
+    [
+      3,
+      "E=<worktree>/skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; W=<scratch>/tmp/tmp.kjl0VmDZPy\npython3 \"$E\" apply --plan $W/plan.json --inventory $W/inventory.json --project-dir <scratch>/project; echo exit=$?",
+      false,
+      {
+        "applied": true,
+        "backup": {
+          "path": ".planning/config.json.bak-20261017T211412Z",
+          "reused": false
+        },
+        "config_path": ".planning/config.json",
+        "created_config": false,
+        "error": null,
+        "failed_key": null,
+        "followups": {
+          "approve_with": "followups --plan <scratch>/tmp/tmp.kjl0VmDZPy/plan.json --inventory <scratch>/tmp/tmp.kjl0VmDZPy/inventory.json --project-dir <scratch>/project --approve --require effort_sync --fingerprint 27b86105f939f32d",
+          "disclosures": [],
+          "notes": [
+            "effort sync --config-dir value is inferred from the host layout (unverified)"
+          ],
+          "recommended": [
+            {
+              "id": "map_codebase",
+              "text": "Run /gsd-map-codebase to build the intel index"
+            }
+          ],
+          "required": [
+            {
+              "alternative": "",
+              "argv": [
+                "<home>/.volta/bin/node",
+                "<worktree>/.claude/gsd-core/bin/gsd-tools.cjs",
+                "effort",
+                "sync",
+                "--apply",
+                "--runtime",
+                "claude",
+                "--config-dir",
+                "<scratch>/project/.claude",
+                "--project-dir",
+                "<scratch>/project"
+              ],
+              "cwd": "<scratch>/project",
+              "detail": "effort sync --dry-run reports 0 change(s)",
+              "id": "effort_sync",
+              "purpose": "sync effort settings into agent frontmatter for this host"
+            }
+          ]
+        },
+        "pruned": [],
+        "reconciled": [],
+        "restore_error": null,
+        "script": {
+          "active": true,
+          "kind": "add",
+          "note": "",
+          "path": ".planning/scripts/cross-ai.mjs"
+        },
+        "skill_check": {
+          "gsd-code-fixer": {
+            "warnings": []
+          },
+          "gsd-code-reviewer": {
+            "warnings": []
+          },
+          "gsd-debug-session-manager": {
+            "warnings": []
+          },
+          "gsd-debugger": {
+            "warnings": []
+          },
+          "gsd-doc-writer": {
+            "warnings": []
+          },
+          "gsd-eval-auditor": {
+            "warnings": []
+          },
+          "gsd-executor": {
+            "warnings": []
+          },
+          "gsd-nyquist-auditor": {
+            "warnings": []
+          },
+          "gsd-planner": {
+            "warnings": []
+          },
+          "gsd-security-auditor": {
+            "warnings": []
+          },
+          "gsd-ui-auditor": {
+            "warnings": []
+          },
+          "gsd-ui-researcher": {
+            "warnings": []
+          },
+          "gsd-verifier": {
+            "warnings": []
+          }
+        },
+        "skipped": 6,
+        "warnings": [],
+        "writes": [
+          {
+            "key": "agent_skills.gsd-code-fixer",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills.gsd-code-reviewer",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills.gsd-debug-session-manager",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills.gsd-debugger",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills.gsd-doc-writer",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills.gsd-eval-auditor",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills.gsd-executor",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills.gsd-nyquist-auditor",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills.gsd-planner",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills.gsd-security-auditor",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills.gsd-ui-auditor",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills.gsd-ui-researcher",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills.gsd-verifier",
+            "op": "set"
+          },
+          {
+            "key": "agent_skills_security.trusted_global_roots",
+            "op": "set"
+          },
+          {
+            "key": "code_quality.fallow.enabled",
+            "op": "set"
+          },
+          {
+            "key": "code_quality.fallow.profile",
+            "op": "set"
+          },
+          {
+            "key": "dynamic_routing.enabled",
+            "op": "set"
+          },
+          {
+            "key": "dynamic_routing.escalate_on_failure",
+            "op": "set"
+          },
+          {
+            "key": "dynamic_routing.max_escalations",
+            "op": "set"
+          },
+          {
+            "key": "effort.agent_overrides.gsd-code-fixer",
+            "op": "set"
+          },
+          {
+            "key": "effort.agent_overrides.gsd-code-reviewer",
+            "op": "set"
+          },
+          {
+            "key": "effort.agent_overrides.gsd-executor",
+            "op": "set"
+          },
+          {
+            "key": "effort.routing_tier_defaults.heavy",
+            "op": "set"
+          },
+          {
+            "key": "effort.routing_tier_defaults.light",
+            "op": "set"
+          },
+          {
+            "key": "effort.routing_tier_defaults.standard",
+            "op": "set"
+          },
+          {
+            "key": "granularity",
+            "op": "set"
+          },
+          {
+            "key": "intel.enabled",
+            "op": "set"
+          },
+          {
+            "key": "manager.flags.execute",
+            "op": "set"
+          },
+          {
+            "key": "model_overrides.gsd-code-fixer",
+            "op": "set"
+          },
+          {
+            "key": "model_overrides.gsd-dom-verifier",
+            "op": "set"
+          },
+          {
+            "key": "model_overrides.gsd-executor",
+            "op": "set"
+          },
+          {
+            "key": "model_overrides.gsd-ui-auditor",
+            "op": "set"
+          },
+          {
+            "key": "model_overrides.gsd-ui-researcher",
+            "op": "set"
+          },
+          {
+            "key": "model_profile",
+            "op": "set"
+          },
+          {
+            "key": "models.planning",
+            "op": "set"
+          },
+          {
+            "key": "models.verification",
+            "op": "set"
+          },
+          {
+            "key": "plan_review.source_grounding_authority",
+            "op": "unset"
+          },
+          {
+            "key": "refactor.trigger_enabled",
+            "op": "set"
+          },
+          {
+            "key": "resolve_model_ids",
+            "op": "unset"
+          },
+          {
+            "key": "review.default_reviewers",
+            "op": "set"
+          },
+          {
+            "key": "review.effort.codex",
+            "op": "set"
+          },
+          {
+            "key": "review.effort.opencode",
+            "op": "set"
+          },
+          {
+            "key": "review.models.codex",
+            "op": "set"
+          },
+          {
+            "key": "review.models.opencode",
+            "op": "set"
+          },
+          {
+            "key": "workflow.code_review_depth",
+            "op": "set"
+          },
+          {
+            "key": "workflow.cross_ai_command",
+            "op": "set"
+          },
+          {
+            "key": "workflow.cross_ai_execution",
+            "op": "set"
+          },
+          {
+            "key": "workflow.cross_ai_timeout",
+            "op": "set"
+          },
+          {
+            "key": "workflow.plan_review_convergence",
+            "op": "set"
+          },
+          {
+            "key": "workflow.security_asvs_level",
+            "op": "set"
+          },
+          {
+            "key": "workflow.security_block_on",
+            "op": "set"
+          },
+          {
+            "key": "workflow.tdd_mode",
+            "op": "set"
+          },
+          {
+            "key": "workflow.ui_review",
+            "op": "set"
+          }
+        ]
+      }
+    ]
+  ],
+  "config_after": {
+    "agent_skills.gsd-code-fixer": [
+      "global:ponytail:ponytail",
+      "global:reducing-entropy"
+    ],
+    "agent_skills.gsd-code-reviewer": [
+      "global:ponytail:ponytail-review",
+      "global:ponytail:ponytail-audit",
+      "global:reducing-entropy"
+    ],
+    "agent_skills.gsd-debug-session-manager": [
+      "global:superpowers:systematic-debugging"
+    ],
+    "agent_skills.gsd-debugger": [
+      "global:superpowers:systematic-debugging"
+    ],
+    "agent_skills.gsd-doc-writer": [
+      "global:mermaid-diagrams"
+    ],
+    "agent_skills.gsd-eval-auditor": [
+      "global:ponytail:ponytail-review",
+      "global:ponytail:ponytail-audit"
+    ],
+    "agent_skills.gsd-executor": [
+      "global:ponytail:ponytail",
+      "global:superpowers:test-driven-development",
+      "global:frontend-design:frontend-design",
+      "global:react-dev"
+    ],
+    "agent_skills.gsd-nyquist-auditor": [
+      "global:ponytail:ponytail-review",
+      "global:ponytail:ponytail-audit"
+    ],
+    "agent_skills.gsd-planner": [
+      "global:ponytail:ponytail",
+      "global:superpowers:test-driven-development"
+    ],
+    "agent_skills.gsd-security-auditor": [
+      "global:ponytail:ponytail-review",
+      "global:ponytail:ponytail-audit"
+    ],
+    "agent_skills.gsd-ui-auditor": [
+      "global:ponytail:ponytail-review",
+      "global:ponytail:ponytail-audit",
+      "global:frontend-design:frontend-design",
+      "global:react-dev"
+    ],
+    "agent_skills.gsd-ui-researcher": [
+      "global:frontend-design:frontend-design",
+      "global:react-dev"
+    ],
+    "agent_skills.gsd-verifier": [
+      "global:ponytail:ponytail-debt"
+    ],
+    "agent_skills_security.trusted_global_roots": [
+      "~/.agents/skills/mermaid-diagrams",
+      "~/.agents/skills/react-dev",
+      "~/.agents/skills/reducing-entropy"
+    ],
+    "brave_search": false,
+    "claude_md_path": "./.claude/CLAUDE.md",
+    "code_quality.fallow.enabled": true,
+    "code_quality.fallow.profile": "standard",
+    "commit_docs": true,
+    "dynamic_routing.enabled": true,
+    "dynamic_routing.escalate_on_failure": true,
+    "dynamic_routing.max_escalations": 1,
+    "effort.agent_overrides.gsd-code-fixer": "medium",
+    "effort.agent_overrides.gsd-code-reviewer": "xhigh",
+    "effort.agent_overrides.gsd-executor": "medium",
+    "effort.routing_tier_defaults.heavy": "xhigh",
+    "effort.routing_tier_defaults.light": "low",
+    "effort.routing_tier_defaults.standard": "high",
+    "exa_search": false,
+    "firecrawl": false,
+    "git.branching_strategy": "none",
+    "git.create_tag": true,
+    "git.milestone_branch_template": "gsd/{milestone}-{slug}",
+    "git.phase_branch_template": "gsd/phase-{phase}-{slug}",
+    "git.quick_branch_template": null,
+    "granularity": "fine",
+    "hooks.context_warnings": true,
+    "intel.enabled": true,
+    "jina": false,
+    "manager.flags.execute": "--cross-ai",
+    "model_overrides.gsd-code-fixer": "haiku",
+    "model_overrides.gsd-dom-verifier": "opus",
+    "model_overrides.gsd-executor": "haiku",
+    "model_overrides.gsd-ui-auditor": "opus",
+    "model_overrides.gsd-ui-researcher": "opus",
+    "model_profile": "adaptive",
+    "models.planning": "opus",
+    "models.verification": "sonnet",
+    "parallelization": true,
+    "perplexity": false,
+    "phase_naming": "sequential",
+    "plan_review.source_grounding": true,
+    "project_code": null,
+    "ref_search": false,
+    "refactor.trigger_enabled": true,
+    "review.default_reviewers": [
+      "opencode",
+      "codex"
+    ],
+    "review.effort.codex": "xhigh",
+    "review.effort.opencode": "high",
+    "review.models.codex": "gpt-5.6-sol",
+    "review.models.opencode": "router-env/my-plan-review",
+    "search_gitignored": false,
+    "ship.pr_body_sections": [],
+    "tavily_search": false,
+    "workflow.ai_integration_phase": true,
+    "workflow.api_coverage_gate": true,
+    "workflow.auto_advance": false,
+    "workflow.auto_prune_state": false,
+    "workflow.code_review": true,
+    "workflow.code_review_command": null,
+    "workflow.code_review_depth": "deep",
+    "workflow.compact_content": false,
+    "workflow.context_guard_mode": "warn",
+    "workflow.cross_ai_command": "node .planning/scripts/cross-ai.mjs",
+    "workflow.cross_ai_execution": true,
+    "workflow.cross_ai_timeout": 1800,
+    "workflow.discuss_mode": "discuss",
+    "workflow.human_verify_mode": "end-of-phase",
+    "workflow.node_repair": true,
+    "workflow.node_repair_budget": 2,
+    "workflow.nyquist_validation": true,
+    "workflow.pattern_mapper": true,
+    "workflow.plan_bounce": false,
+    "workflow.plan_bounce_passes": 2,
+    "workflow.plan_bounce_script": null,
+    "workflow.plan_check": true,
+    "workflow.plan_review_convergence": true,
+    "workflow.post_planning_gaps": true,
+    "workflow.research": true,
+    "workflow.research_before_questions": false,
+    "workflow.security_asvs_level": 2,
+    "workflow.security_block_on": "medium",
+    "workflow.security_enforcement": true,
+    "workflow.skip_discuss": false,
+    "workflow.tdd_mode": true,
+    "workflow.text_mode": false,
+    "workflow.ui_phase": true,
+    "workflow.ui_review": true,
+    "workflow.ui_safety_gate": true,
+    "workflow.verifier": true
+  },
+  "config_before": {
+    "brave_search": false,
+    "claude_md_path": "./.claude/CLAUDE.md",
+    "commit_docs": true,
+    "exa_search": false,
+    "firecrawl": false,
+    "git.branching_strategy": "none",
+    "git.create_tag": true,
+    "git.milestone_branch_template": "gsd/{milestone}-{slug}",
+    "git.phase_branch_template": "gsd/phase-{phase}-{slug}",
+    "git.quick_branch_template": null,
+    "hooks.context_warnings": true,
+    "jina": false,
+    "model_profile": "balanced",
+    "parallelization": true,
+    "perplexity": false,
+    "phase_naming": "sequential",
+    "plan_review.source_grounding": true,
+    "plan_review.source_grounding_authority": "grep",
+    "project_code": null,
+    "ref_search": false,
+    "resolve_model_ids": "omit",
+    "search_gitignored": false,
+    "ship.pr_body_sections": [],
+    "tavily_search": false,
+    "workflow.ai_integration_phase": true,
+    "workflow.api_coverage_gate": true,
+    "workflow.auto_advance": false,
+    "workflow.auto_prune_state": false,
+    "workflow.code_review": true,
+    "workflow.code_review_command": null,
+    "workflow.code_review_depth": "standard",
+    "workflow.compact_content": false,
+    "workflow.context_guard_mode": "warn",
+    "workflow.discuss_mode": "discuss",
+    "workflow.human_verify_mode": "end-of-phase",
+    "workflow.node_repair": true,
+    "workflow.node_repair_budget": 2,
+    "workflow.nyquist_validation": true,
+    "workflow.pattern_mapper": true,
+    "workflow.plan_bounce": false,
+    "workflow.plan_bounce_passes": 2,
+    "workflow.plan_bounce_script": null,
+    "workflow.plan_check": true,
+    "workflow.post_planning_gaps": true,
+    "workflow.research": true,
+    "workflow.research_before_questions": false,
+    "workflow.security_asvs_level": 1,
+    "workflow.security_block_on": "high",
+    "workflow.security_enforcement": true,
+    "workflow.skip_discuss": false,
+    "workflow.text_mode": false,
+    "workflow.ui_phase": true,
+    "workflow.ui_safety_gate": true,
+    "workflow.verifier": true
+  },
+  "digest": "235e930d29d7d34c",
+  "dry_run_report": {
+    "diff": [
+      {
+        "from": null,
+        "key": "agent_skills.gsd-code-fixer",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail",
+          "global:reducing-entropy"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-code-reviewer",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail-review",
+          "global:ponytail:ponytail-audit",
+          "global:reducing-entropy"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-debug-session-manager",
+        "kind": "add",
+        "to": [
+          "global:superpowers:systematic-debugging"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-debugger",
+        "kind": "add",
+        "to": [
+          "global:superpowers:systematic-debugging"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-doc-writer",
+        "kind": "add",
+        "to": [
+          "global:mermaid-diagrams"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-eval-auditor",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail-review",
+          "global:ponytail:ponytail-audit"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-executor",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail",
+          "global:superpowers:test-driven-development",
+          "global:frontend-design:frontend-design",
+          "global:react-dev"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-nyquist-auditor",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail-review",
+          "global:ponytail:ponytail-audit"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-planner",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail",
+          "global:superpowers:test-driven-development"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-security-auditor",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail-review",
+          "global:ponytail:ponytail-audit"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-ui-auditor",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail-review",
+          "global:ponytail:ponytail-audit",
+          "global:frontend-design:frontend-design",
+          "global:react-dev"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-ui-researcher",
+        "kind": "add",
+        "to": [
+          "global:frontend-design:frontend-design",
+          "global:react-dev"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills.gsd-verifier",
+        "kind": "add",
+        "to": [
+          "global:ponytail:ponytail-debt"
+        ]
+      },
+      {
+        "from": null,
+        "key": "agent_skills_security.trusted_global_roots",
+        "kind": "add",
+        "to": [
+          "~/.agents/skills/mermaid-diagrams",
+          "~/.agents/skills/react-dev",
+          "~/.agents/skills/reducing-entropy"
+        ]
+      },
+      {
+        "from": null,
+        "key": "code_quality.fallow.enabled",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": null,
+        "key": "code_quality.fallow.profile",
+        "kind": "add",
+        "to": "standard"
+      },
+      {
+        "from": null,
+        "key": "dynamic_routing.enabled",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": null,
+        "key": "dynamic_routing.escalate_on_failure",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": null,
+        "key": "dynamic_routing.max_escalations",
+        "kind": "add",
+        "to": 1
+      },
+      {
+        "from": null,
+        "key": "effort.agent_overrides.gsd-code-fixer",
+        "kind": "add",
+        "to": "medium"
+      },
+      {
+        "from": null,
+        "key": "effort.agent_overrides.gsd-code-reviewer",
+        "kind": "add",
+        "to": "xhigh"
+      },
+      {
+        "from": null,
+        "key": "effort.agent_overrides.gsd-executor",
+        "kind": "add",
+        "to": "medium"
+      },
+      {
+        "from": null,
+        "key": "effort.routing_tier_defaults.heavy",
+        "kind": "add",
+        "to": "xhigh"
+      },
+      {
+        "from": null,
+        "key": "effort.routing_tier_defaults.light",
+        "kind": "add",
+        "to": "low"
+      },
+      {
+        "from": null,
+        "key": "effort.routing_tier_defaults.standard",
+        "kind": "add",
+        "to": "high"
+      },
+      {
+        "from": null,
+        "key": "granularity",
+        "kind": "add",
+        "to": "fine"
+      },
+      {
+        "from": null,
+        "key": "intel.enabled",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": null,
+        "key": "manager.flags.execute",
+        "kind": "add",
+        "to": "--cross-ai"
+      },
+      {
+        "from": null,
+        "key": "model_overrides.gsd-code-fixer",
+        "kind": "add",
+        "to": "haiku"
+      },
+      {
+        "from": null,
+        "key": "model_overrides.gsd-dom-verifier",
+        "kind": "add",
+        "to": "opus"
+      },
+      {
+        "from": null,
+        "key": "model_overrides.gsd-executor",
+        "kind": "add",
+        "to": "haiku"
+      },
+      {
+        "from": null,
+        "key": "model_overrides.gsd-ui-auditor",
+        "kind": "add",
+        "to": "opus"
+      },
+      {
+        "from": null,
+        "key": "model_overrides.gsd-ui-researcher",
+        "kind": "add",
+        "to": "opus"
+      },
+      {
+        "from": "balanced",
+        "key": "model_profile",
+        "kind": "change",
+        "to": "adaptive"
+      },
+      {
+        "from": null,
+        "key": "models.planning",
+        "kind": "add",
+        "to": "opus"
+      },
+      {
+        "from": null,
+        "key": "models.verification",
+        "kind": "add",
+        "to": "sonnet"
+      },
+      {
+        "from": "grep",
+        "key": "plan_review.source_grounding_authority",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": null,
+        "key": "refactor.trigger_enabled",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": "omit",
+        "key": "resolve_model_ids",
+        "kind": "remove",
+        "to": null
+      },
+      {
+        "from": null,
+        "key": "review.default_reviewers",
+        "kind": "add",
+        "to": [
+          "opencode",
+          "codex"
+        ]
+      },
+      {
+        "from": null,
+        "key": "review.effort.codex",
+        "kind": "add",
+        "to": "xhigh"
+      },
+      {
+        "from": null,
+        "key": "review.effort.opencode",
+        "kind": "add",
+        "to": "high"
+      },
+      {
+        "from": null,
+        "key": "review.models.codex",
+        "kind": "add",
+        "to": "gpt-5.6-sol"
+      },
+      {
+        "from": null,
+        "key": "review.models.opencode",
+        "kind": "add",
+        "to": "router-env/my-plan-review"
+      },
+      {
+        "from": "standard",
+        "key": "workflow.code_review_depth",
+        "kind": "change",
+        "to": "deep"
+      },
+      {
+        "from": null,
+        "key": "workflow.cross_ai_command",
+        "kind": "add",
+        "to": "node .planning/scripts/cross-ai.mjs"
+      },
+      {
+        "from": null,
+        "key": "workflow.cross_ai_execution",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": null,
+        "key": "workflow.cross_ai_timeout",
+        "kind": "add",
+        "to": 1800
+      },
+      {
+        "from": true,
+        "key": "workflow.nyquist_validation",
+        "kind": "keep",
+        "to": true
+      },
+      {
+        "from": true,
+        "key": "workflow.pattern_mapper",
+        "kind": "keep",
+        "to": true
+      },
+      {
+        "from": true,
+        "key": "workflow.plan_check",
+        "kind": "keep",
+        "to": true
+      },
+      {
+        "from": null,
+        "key": "workflow.plan_review_convergence",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": true,
+        "key": "workflow.research",
+        "kind": "keep",
+        "to": true
+      },
+      {
+        "from": 1,
+        "key": "workflow.security_asvs_level",
+        "kind": "change",
+        "to": 2
+      },
+      {
+        "from": "high",
+        "key": "workflow.security_block_on",
+        "kind": "change",
+        "to": "medium"
+      },
+      {
+        "from": null,
+        "key": "workflow.tdd_mode",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": true,
+        "key": "workflow.ui_phase",
+        "kind": "keep",
+        "to": true
+      },
+      {
+        "from": null,
+        "key": "workflow.ui_review",
+        "kind": "add",
+        "to": true
+      },
+      {
+        "from": true,
+        "key": "workflow.verifier",
+        "kind": "keep",
+        "to": true
+      }
+    ],
+    "dry_run": true
+  },
+  "harness": {
+    "claude_version": "2.1.302 (Claude Code)",
+    "cost_usd_total": 0.451904,
+    "effort": "medium",
+    "harness_failures": [],
+    "model": "sonnet"
+  },
+  "plan_entries": [
+    [
+      "agent_skills.gsd-code-fixer",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-code-reviewer",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-debug-session-manager",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-debugger",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-doc-writer",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-eval-auditor",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-executor",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-nyquist-auditor",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-planner",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-security-auditor",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-ui-auditor",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-ui-researcher",
+      "set",
+      null
+    ],
+    [
+      "agent_skills.gsd-verifier",
+      "set",
+      null
+    ],
+    [
+      "agent_skills_security.trusted_global_roots",
+      "set",
+      null
+    ],
+    [
+      "code_quality.fallow.enabled",
+      "set",
+      null
+    ],
+    [
+      "code_quality.fallow.profile",
+      "set",
+      null
+    ],
+    [
+      "dynamic_routing.enabled",
+      "set",
+      null
+    ],
+    [
+      "dynamic_routing.escalate_on_failure",
+      "set",
+      null
+    ],
+    [
+      "dynamic_routing.max_escalations",
+      "set",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-code-fixer",
+      "set",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-code-reviewer",
+      "set",
+      null
+    ],
+    [
+      "effort.agent_overrides.gsd-executor",
+      "set",
+      null
+    ],
+    [
+      "effort.routing_tier_defaults.heavy",
+      "set",
+      null
+    ],
+    [
+      "effort.routing_tier_defaults.light",
+      "set",
+      null
+    ],
+    [
+      "effort.routing_tier_defaults.standard",
+      "set",
+      null
+    ],
+    [
+      "granularity",
+      "set",
+      null
+    ],
+    [
+      "intel.enabled",
+      "set",
+      null
+    ],
+    [
+      "manager.flags.execute",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-code-fixer",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-dom-verifier",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-executor",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-ui-auditor",
+      "set",
+      null
+    ],
+    [
+      "model_overrides.gsd-ui-researcher",
+      "set",
+      null
+    ],
+    [
+      "model_profile",
+      "set",
+      null
+    ],
+    [
+      "models.planning",
+      "set",
+      null
+    ],
+    [
+      "models.verification",
+      "set",
+      null
+    ],
+    [
+      "plan_review.source_grounding_authority",
+      "unset",
+      null
+    ],
+    [
+      "refactor.trigger_enabled",
+      "set",
+      null
+    ],
+    [
+      "resolve_model_ids",
+      "unset",
+      null
+    ],
+    [
+      "review.default_reviewers",
+      "set",
+      null
+    ],
+    [
+      "review.effort.codex",
+      "set",
+      null
+    ],
+    [
+      "review.effort.opencode",
+      "set",
+      null
+    ],
+    [
+      "review.models.codex",
+      "set",
+      null
+    ],
+    [
+      "review.models.opencode",
+      "set",
+      null
+    ],
+    [
+      "workflow.code_review_depth",
+      "set",
+      null
+    ],
+    [
+      "workflow.cross_ai_command",
+      "set",
+      null
+    ],
+    [
+      "workflow.cross_ai_execution",
+      "set",
+      null
+    ],
+    [
+      "workflow.cross_ai_timeout",
+      "set",
+      null
+    ],
+    [
+      "workflow.nyquist_validation",
+      "set",
+      null
+    ],
+    [
+      "workflow.pattern_mapper",
+      "set",
+      null
+    ],
+    [
+      "workflow.plan_check",
+      "set",
+      null
+    ],
+    [
+      "workflow.plan_review_convergence",
+      "set",
+      null
+    ],
+    [
+      "workflow.research",
+      "set",
+      null
+    ],
+    [
+      "workflow.security_asvs_level",
+      "set",
+      null
+    ],
+    [
+      "workflow.security_block_on",
+      "set",
+      null
+    ],
+    [
+      "workflow.tdd_mode",
+      "set",
+      null
+    ],
+    [
+      "workflow.ui_phase",
+      "set",
+      null
+    ],
+    [
+      "workflow.ui_review",
+      "set",
+      null
+    ],
+    [
+      "workflow.verifier",
+      "set",
+      null
+    ]
+  ],
+  "quotes": [
+    "I've built the plan and stopped at one open choice. Nothing is written to the project yet.\n\nThe routing you asked for is already in the plan:\n- **Review:** `review.models.opencode` is `router-env/my-plan-review`, with effort high. A codex review lane (`gpt-5.6-sol`, xhigh) is also in the plan becaus",
+    "The trusted-roots list is approved and the dry-run is clean, with no warnings. Nothing is written yet. These are the rows the apply would write, and I'll apply once you say so.\n\n**Removes (2)**\n- `plan_review.source_grounding_authority`: `grep` \u2192 removed\n- `resolve_model_ids`: `omit` \u2192 removed\n\n**Ch",
+    "The apply succeeded with no warnings, and the config is written. It wrote 51 `config-set` rows (49 sets and 2 unsets), as dry-run previewed. The 6 unchanged rows were skipped. A backup is at `.planning/config.json.bak-20261017T211412Z`. The runner `.planning/scripts/cross-ai.mjs` is added and active"
+  ],
+  "runner": {
+    "active_config": {
+      "backoffS": [
+        30,
+        60
+      ],
+      "effort": {},
+      "extraArgs": {},
+      "heartbeatS": 30,
+      "models": {
+        "cursor": "gemini-3.8-flash-low",
+        "opencode": "router-env/my-coding",
+        "pi": "router-env/my-coding"
+      },
+      "outerTimeoutS": 1800,
+      "prefer": [
+        "pi",
+        "cursor",
+        "opencode"
+      ],
+      "retries": 2,
+      "routerBacked": {
+        "cursor": false,
+        "opencode": true,
+        "pi": true
+      },
+      "scrubEnv": [
+        "AI_AGENT",
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SSE_PORT",
+        "CODEX_SANDBOX",
+        "CODEX_THREAD_ID",
+        "CODEX_VERSION",
+        "CURSOR_AGENT",
+        "GROK_AGENT",
+        "OPENCODE",
+        "PI_CODING_AGENT"
+      ]
+    },
+    "effective": {
+      "models": {
+        "cursor": "gemini-3.8-flash-low",
+        "opencode": "router-env/my-coding",
+        "pi": "router-env/my-coding"
+      },
+      "prefer": [
+        "pi",
+        "cursor",
+        "opencode"
+      ]
+    },
+    "new_present": false
+  },
+  "scenario": "B"
+}
