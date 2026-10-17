@@ -71,6 +71,10 @@ def _execute_default_warn(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
+class ExecuteSelectionError(ValueError):
+    """A purpose = "execute" entry that can never execute: a config error callers exit 2 on."""
+
+
 def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
     """D-15 hardening screen: a candidate naming a CLI without a real execute builder (claude,
     grok -- Phase 16.1 removed both) is never silently routed to another CLI. An entry whose
@@ -90,7 +94,7 @@ def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
             message = (f"reviewer {c['key']!r} is a custom command entry; "
                        "custom entries run only as reviewers")
             if c.get("purpose") == "execute":
-                raise ValueError(message)
+                raise ExecuteSelectionError(message)
             emit_warn(f"ai-kit-spec: skipping {c['key']!r} for execution: {message}")
             continue
         if exempt_fn is not None and exempt_fn(c):
@@ -100,8 +104,8 @@ def screen_execute_clis(candidates: list, warn_fn=None, exempt_fn=None) -> list:
                 and purpose_matches(c.get("purpose"), "execute"):
             cli_err = commands.execute_cli_error(cli) or ""
             if c.get("purpose") == "execute":
-                raise ValueError(f"reviewer {c['key']!r} sets purpose = \"execute\": "
-                                 + cli_err)
+                raise ExecuteSelectionError(
+                    f"reviewer {c['key']!r} sets purpose = \"execute\": " + cli_err)
             emit_warn(f"ai-kit-spec: skipping {c['key']!r} for execution: " + cli_err)
             continue
         kept.append(c)

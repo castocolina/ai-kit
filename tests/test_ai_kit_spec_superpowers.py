@@ -475,6 +475,34 @@ class TestBuildDispatchInjection(unittest.TestCase):
         self.assertIn("codex, cursor, opencode, pi", stderr.getvalue())
         self.assertIn("ai-kit-spec-execute-superpowers:", stderr.getvalue())
 
+    def test_cli_custom_entry_with_purpose_execute_exits_2_not_a_traceback(self):
+        # B-CR-01: a D-21 custom entry declared an executor is a config error (exit 2).
+        candidates = [{
+            "key": "g", "runtime": None, "model": "grok-4", "vendor": "xai",
+            "command": "grok -p {prompt} -m {model}", "purpose": "execute",
+            "task_affinity": None, "context_limit": None,
+        }]
+        out, stderr = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_file = os.path.join(tmp, "task-1-brief.md")
+            with open(task_file, "w") as f:
+                f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
+            with contextlib.redirect_stderr(stderr):
+                rc = superpowers_cli.main(
+                    ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
+                     "--quota-path", os.path.join(tmp, "quota.json")],
+                    assemble_candidates_fn=lambda cwd, env: (candidates, ["g"]),
+                    cache_read_json_fn=lambda path: {},
+                    cache_write_json_fn=lambda path, data: None,
+                    refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
+                    route_all_fn=lambda entries, _ctx: {"g": "custom"},
+                    env_fn=lambda: {"HOME": tmp, "XDG_CACHE_HOME": tmp},
+                    stdout=out,
+                )
+        self.assertEqual(rc, 2)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("custom entries run only as reviewers", stderr.getvalue())
+
     def test_resolve_injection_prints_the_d15_skip_warning_once(self):
         # A-IN-06: the ladder pass and the build pass both screen; warn only once.
         candidates = [

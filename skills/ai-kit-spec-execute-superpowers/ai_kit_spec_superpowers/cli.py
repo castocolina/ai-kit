@@ -30,6 +30,7 @@ from ai_kit_spec.detection import (
     resolve_agents_tooling_path,
     run_codegraph_index,
 )
+from ai_kit_spec.execute_selection import ExecuteSelectionError
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
 from ai_kit_spec.routing import (
     RuntimesSeams,
@@ -146,7 +147,7 @@ def _compute_ladder_or_exit(
     try:
         return deps.compute_ladder_keys_fn(request, routes)
     except ValueError as exc:
-        if "cannot be an execution CLI" in str(exc):
+        if isinstance(exc, ExecuteSelectionError):
             print(f"ai-kit-spec-execute-superpowers: {exc}", file=sys.stderr)
             return 2
         raise
@@ -185,7 +186,7 @@ def _handle_build_value_error(
             "ladder_keys": ladder_keys,
         }))
         return 0
-    if "cannot be an execution CLI" in str(exc):
+    if isinstance(exc, ExecuteSelectionError):
         print(f"ai-kit-spec-execute-superpowers: {exc}", file=sys.stderr)
         return 2
     raise exc
