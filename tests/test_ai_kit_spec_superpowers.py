@@ -21,7 +21,7 @@ sys.path.insert(
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute"))
 
 import detect_framework as router_detect_framework
-from ai_kit_spec import detection, runner_dispatch
+from ai_kit_spec import detection, routing, runner_dispatch
 from ai_kit_spec_superpowers import cli as superpowers_cli
 from ai_kit_spec_superpowers import dispatch_injection, task_classification
 
@@ -1408,12 +1408,10 @@ def _fresh_snapshot(clis):
 
 
 def _routed_native(entry, host):
-    """A session default, or a claude alias while this process is on Claude Code."""
+    """A session default, or what the production host_can_select calls host-selectable."""
     runtime = entry.get("runtime")
-    model = entry.get("model", "")
     session_default = runtime is None and not entry.get("command")
-    alias = runtime == "claude" and model in {"opus", "sonnet", "haiku", "fable"}
-    return session_default or (alias and host == "claude")
+    return session_default or routing.host_can_select(runtime, entry.get("model", ""), host)
 
 
 def _route_all_recording(calls):

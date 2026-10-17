@@ -18,7 +18,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import reviewer_dispatch
+from ai_kit_spec import detection, reviewer_dispatch
 from ai_kit_spec import runner_dispatch as rd
 from ai_kit_spec.cli import main
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
@@ -35,10 +35,8 @@ from ai_kit_spec.runner_dispatch import (
     run_runner_tiers,
     runner_flags,
 )
+from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
-_TEMPLATE = os.path.join(
-    os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review", "references", "cross-ai.mjs"
-)
 _STATUS = (
     "AIKIT-XAI status={status} cli={cli} model={model} exit={exit} cli_rc=0 "
     "elapsed=1s out=4 tree=clean action=stop"
@@ -221,7 +219,9 @@ class TestBuildRunnerArgv(unittest.TestCase):
 
 
 def _template_regex(name: str) -> str:
-    with open(_TEMPLATE, encoding="utf-8") as handle:
+    template = resolve_cross_ai_template_path()
+    assert template is not None
+    with open(template, encoding="utf-8") as handle:
         source = handle.read()
     match = re.search(rf"const {name} = (/.*?/);", source)
     assert match is not None, name
@@ -685,6 +685,13 @@ def _runner_result(stdout="### Status: Approved\n", returncode=0, reason=None,
 class TestDispatchReviewerRunner(unittest.TestCase):
     """dispatch-reviewer runs a table runtime through the runner and a custom entry
     through the launcher (D-11, D-21)."""
+
+    def setUp(self):
+        # dispatch-reviewer's default codegraph health check would run `<cli> mcp list` for real.
+        skip = detection.CodegraphProbe(False, False, None, "skip")
+        patcher = mock.patch.object(detection, "probe_codegraph", return_value=skip)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _reviewers(self, tmp, entries, name="reviewers.json"):
         path = os.path.join(tmp, name)

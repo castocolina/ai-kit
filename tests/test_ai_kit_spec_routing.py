@@ -33,6 +33,19 @@ def _ok(argv, **_kwargs):
     return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
 
+def _scratch_env(root):
+    """HOME, XDG config and XDG cache under `root`; never the user's own directories."""
+    env = {name: os.path.join(root, sub) for name, sub in
+           (("HOME", "home"), ("XDG_CONFIG_HOME", "xdg"), ("XDG_CACHE_HOME", "cache"))}
+    os.makedirs(os.path.join(env["XDG_CONFIG_HOME"], "ai-kit"), exist_ok=True)
+    os.makedirs(env["XDG_CACHE_HOME"], exist_ok=True)
+    return env
+
+
+def _snapshot(clis):
+    return {"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": clis}
+
+
 def _read(path):
     with open(path, encoding="utf-8") as stream:
         return stream.read()
@@ -43,12 +56,7 @@ class TestResolveRoutes(unittest.TestCase):
         routing._REFRESHED.clear()
 
     def _env(self, root):
-        home = os.path.join(root, "home")
-        xdg = os.path.join(root, "xdg")
-        cache = os.path.join(root, "cache")
-        os.makedirs(os.path.join(xdg, "ai-kit"), exist_ok=True)
-        os.makedirs(cache, exist_ok=True)
-        return {"HOME": home, "XDG_CONFIG_HOME": xdg, "XDG_CACHE_HOME": cache, "OPENCODE": "1"}
+        return {**_scratch_env(root), "OPENCODE": "1"}
 
     def _write_config(self, xdg, reviewers, ladder):
         cfg_write_toml(
@@ -64,10 +72,8 @@ class TestResolveRoutes(unittest.TestCase):
         return path
 
     def _snapshot(self, models):
-        return {
-            "schema_version": RUNTIMES_SCHEMA_VERSION,
-            "clis": {"opencode": {"installed": True, "path": "/fake/opencode", "models": models}},
-        }
+        return _snapshot({"opencode": {"installed": True, "path": "/fake/opencode",
+                                       "models": models}})
 
     def _resolve(self, root, env, run_fn, popen_fn=None, which_fn=None):
         out, err = io.StringIO(), io.StringIO()
@@ -325,9 +331,7 @@ class TestTargetedRefresh(unittest.TestCase):
         routing._REFRESHED.clear()
 
     def _env(self, root):
-        cache = os.path.join(root, "cache")
-        os.makedirs(cache, exist_ok=True)
-        env = {"HOME": os.path.join(root, "home"), "XDG_CACHE_HOME": cache}
+        env = _scratch_env(root)
         # The opencode lister makes its private dir from os.environ, not the routed env.
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()
@@ -338,9 +342,6 @@ class TestTargetedRefresh(unittest.TestCase):
         seams = routing.RuntimesSeams(which_fn=which_fn, run_fn=run_fn, popen_fn=_ok,
                                        urlopen_fn=lambda *_a, **_k: None)
         return routing.RouteContext(host="claude", mode="review", env=env, seams=seams)
-
-    def _snapshot(self, clis):
-        return {"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": clis}
 
     def _age(self, env, seconds):
         path = routing.cache_runtimes_path(env)
@@ -358,7 +359,7 @@ class TestTargetedRefresh(unittest.TestCase):
 
             cache_write_json(
                 routing.cache_runtimes_path(env),
-                self._snapshot({"opencode": {"installed": True, "path": "/fake/opencode"}}))
+                _snapshot({"opencode": {"installed": True, "path": "/fake/opencode"}}))
             self._age(env, 120)
             entries = [{"key": "k", "runtime": "opencode", "model": "zen/x"}]
             ctx = self._context(env, lambda _name: "/fake/opencode", run_fn)
@@ -380,7 +381,7 @@ class TestTargetedRefresh(unittest.TestCase):
             image = {"image_input": ["zen/old"], "image_input_source": "probe",
                      "image_input_probe": {"zen/old": True}}
             path = routing.cache_runtimes_path(env)
-            cache_write_json(path, self._snapshot({
+            cache_write_json(path, _snapshot({
                 "codex": {"installed": True, "path": "/fake/codex", "models": ["gpt-old"],
                           "reasoning_modes": {"gpt-old": ["high"]}},
                 "opencode": {"installed": True, "path": "/fake/opencode",
@@ -409,7 +410,7 @@ class TestTargetedRefresh(unittest.TestCase):
 
             cache_write_json(
                 routing.cache_runtimes_path(env),
-                self._snapshot({"opencode": {"installed": True, "path": "/fake/opencode"}}))
+                _snapshot({"opencode": {"installed": True, "path": "/fake/opencode"}}))
             entries = [{"key": "k", "runtime": "opencode", "model": "zen/x"}]
             routes = routing.route_all(entries, self._context(env, lambda _n: "/fake/opencode",
                                                               run_fn))
@@ -431,7 +432,7 @@ class TestTargetedRefresh(unittest.TestCase):
 
             others = {"pi": {"installed": False}}
             path = routing.cache_runtimes_path(env)
-            cache_write_json(path, self._snapshot({"codex": {"installed": False}, **others}))
+            cache_write_json(path, _snapshot({"codex": {"installed": False}, **others}))
             before = cache_read_json(path)
             self._age(env, 120)
             entries = [{"key": "k", "runtime": "codex", "model": "gpt-x"}]
@@ -463,7 +464,7 @@ class TestTargetedRefresh(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
             path = routing.cache_runtimes_path(env)
-            cache_write_json(path, self._snapshot({
+            cache_write_json(path, _snapshot({
                 "codex": {"installed": True, "path": "/fake/codex"},
                 "opencode": {"installed": True, "path": "/fake/opencode"},
             }))
@@ -487,7 +488,7 @@ class TestTargetedRefresh(unittest.TestCase):
             cache_write_json(routing.cache_catalog_path(env), catalog)
             fields = claude_runtime_fields(catalog)
             path = routing.cache_runtimes_path(env)
-            cache_write_json(path, self._snapshot(
+            cache_write_json(path, _snapshot(
                 {"claude": {"installed": True, "path": "/fake/claude", **fields}}))
             self._age(env, 120)
             seen = {"run": [], "which": []}
@@ -511,7 +512,7 @@ class TestTargetedRefresh(unittest.TestCase):
             self.assertEqual(stored["clis"]["claude"]["models"], fields["models"])
 
             routing._REFRESHED.clear()
-            cache_write_json(path, self._snapshot({"claude": {"installed": False}}))
+            cache_write_json(path, _snapshot({"claude": {"installed": False}}))
             self._age(env, 120)
             entries = [{"key": "k", "runtime": "claude", "model": "claude-opus-5-5"}]
             routes = routing.route_all(entries, ctx)

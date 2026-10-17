@@ -33,6 +33,7 @@ from ai_kit_spec.reviewer_dispatch import (
     dispatch_reviewer,
 )
 from ai_kit_spec.runner_dispatch import RunnerSeams, RunnerSpec, run_runner
+from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
 
 def _real_node_executable() -> str | None:
@@ -50,9 +51,9 @@ def _real_node_executable() -> str | None:
         return None
     return proc.stdout if proc.returncode == 0 and os.path.isfile(proc.stdout) else None
 
-TEMPLATE = os.path.join(
-    REPO_ROOT, "skills", "ai-kit-spec-review", "references", "cross-ai.mjs"
-)
+_RESOLVED_TEMPLATE = resolve_cross_ai_template_path()
+assert _RESOLVED_TEMPLATE is not None, "the shipped runner template is missing"
+TEMPLATE = _RESOLVED_TEMPLATE
 
 
 def runner_env(tmp: str) -> dict[str, str]:
