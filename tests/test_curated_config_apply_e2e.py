@@ -1,6 +1,7 @@
 """E2E tier: real node apply through checkout-local gsd-core under a scratch HOME/GSD_HOME.
 
-Skips when node or `.claude/gsd-core/bin/gsd-tools.cjs` is missing or gsd-core is not 1.16.x.
+Skips when node or `.claude/gsd-core/bin/gsd-tools.cjs` is missing or gsd-core is not on a
+verified line (`GSD_CORE_PREFIXES`).
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 sys.path.insert(
@@ -51,6 +53,20 @@ from tests.test_curated_config_skills import add_plugin, add_skill
 
 _REPO_CONFIG = REPO_ROOT / ".planning" / "config.json"
 _REPO_RUNNER = REPO_ROOT / ".planning" / "scripts" / "cross-ai.mjs"
+
+# The gsd-core lines whose live behavior this repo's real-node tests verified. The checkout-local
+# install is gitignored and shared by every worktree, so its version is a fact of the moment, not
+# of a plan (19 SPEC R-7): 1.16.0 was verified when these tests were written, and 1.17.0 when the
+# shared install moved under them - the curated-config-relevant tables (`MODEL_PROFILES`,
+# `AGENT_TO_PHASE_TYPE`, `config-new-project`'s key copying) are byte-equivalent between the two
+# (re-verified by tests.test_ai_kit_gsd_curated_config_matrix). An unlisted line skips rather than
+# silently grading against a table nobody checked.
+GSD_CORE_PREFIXES = ("1.16.", "1.17.")
+
+
+def gsd_core_line_supported(version: str | None) -> bool:
+    """Whether `version` is on one of the verified gsd-core lines."""
+    return bool(version) and any(version.startswith(prefix) for prefix in GSD_CORE_PREFIXES)
 
 
 def _sha256(path) -> str:
@@ -144,8 +160,10 @@ def _gsd16_or_skip(test_case: unittest.TestCase) -> str:
     if node_bin is None or not tools.is_file():
         test_case.skipTest("no node or checkout-local gsd-tools.cjs")
     version = gsd_tools.gsd_core_version(str(tools))
-    if not version or not version.startswith("1.16."):
-        test_case.skipTest(f"checkout-local gsd-core is {version}; need 1.16.x")
+    if not gsd_core_line_supported(version):
+        test_case.skipTest(
+            f"checkout-local gsd-core is {version}; need one of {', '.join(GSD_CORE_PREFIXES)}"
+        )
     return node_bin
 
 
@@ -154,13 +172,27 @@ def _golden_bundle(
     *,
     with_planning: bool = True,
     host_name: str = "claude",
+    profile: str = "adaptive",
+    rigor: str = "standard",
+    defaults: dict | None = None,
+    pre_inventory: Callable[[str, dict], None] | None = None,
 ) -> dict:
+    """One scratch project, seeded home and cache, decided plan and the envs that apply
+    against it. `profile`/`rigor` pick the combination; `defaults` is written as
+    `<gsd_home>/.gsd/defaults.json` before anything else runs (the Phase 19 poison, D-08);
+    `pre_inventory(project, resolve_env)` runs after the project and home exist and before
+    the inventory, so a caller can create the config with the real gsd-tools (P2, D-09).
+    Existing callers keep their behavior through the defaults."""
     project = os.path.join(scratch, "project")
     home = os.path.join(scratch, "home")
     gsd_home = os.path.join(scratch, "gsd_home")
     xdg = os.path.join(scratch, "xdg")
     os.makedirs(project)
     _seed_home(home)
+    if defaults is not None:
+        os.makedirs(os.path.join(gsd_home, ".gsd"), exist_ok=True)
+        with open(os.path.join(gsd_home, ".gsd", "defaults.json"), "w", encoding="utf-8") as fh:
+            json.dump(defaults, fh)
     config_path = os.path.join(project, ".planning", "config.json")
     if with_planning:
         os.makedirs(os.path.join(project, ".planning"), exist_ok=True)
@@ -174,6 +206,8 @@ def _golden_bundle(
     env = _scratch_env(home, gsd_home, xdg)
     resolve_env = {**env, "RUNTIME_DIR": str(REPO_ROOT)}
     child_env = dict(env)
+    if pre_inventory is not None:
+        pre_inventory(project, resolve_env)
     fake = _tables_fake(config_path, home)
     inv_path = os.path.join(scratch, "inv.json")
     inv = scratch_inventory(project, resolve_env, fake, inv_path, host_name=host_name)
@@ -181,7 +215,7 @@ def _golden_bundle(
     with open(inv_path, "w", encoding="utf-8") as handle:
         handle.write(plan_io.canonical_json(inv))
     plan_path = os.path.join(scratch, "plan.json")
-    code, _plan, raw, err = run_recommend(inv, "--profile", "adaptive", "--rigor", "standard")
+    code, _plan, raw, err = run_recommend(inv, "--profile", profile, "--rigor", rigor)
     if code != 0 or raw is None:
         raise AssertionError(err)
     with open(plan_path, "wb") as handle:
@@ -194,6 +228,8 @@ def _golden_bundle(
         "config_path": config_path,
         "inv_path": inv_path,
         "plan_path": plan_path,
+        "gsd_home": gsd_home,
+        "home": home,
     }
 
 
@@ -225,8 +261,11 @@ class TestRealApply(_RealGsdTestCase):
         if node_bin is None or not tools.is_file():
             self.skipTest("no node or checkout-local gsd-tools.cjs")
         version = gsd_tools.gsd_core_version(str(tools))
-        if not version or not version.startswith("1.16."):
-            self.skipTest(f"checkout-local gsd-core is {version}; need 1.16.x")
+        if not gsd_core_line_supported(version):
+            self.skipTest(
+                f"checkout-local gsd-core is {version}; "
+                f"need one of {', '.join(GSD_CORE_PREFIXES)}"
+            )
 
         before_cfg = _sha256(_REPO_CONFIG)
         before_runner = _sha256(_REPO_RUNNER)
