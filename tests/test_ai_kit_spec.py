@@ -11316,10 +11316,13 @@ class TestDispatchExecuteArgv(unittest.TestCase):
         candidate = {"runtime": "opencode", "model": "m", "key": "opencode/m"}
         captured = {}
 
-        def fake_popen(argv, **kwargs):
-            captured["argv"] = argv
-            captured["kwargs"] = kwargs
-            raise OSError("spawn stopped after argv capture")
+        def fake_runner(spec, prompt, seams):
+            del prompt, seams
+            captured["spec"] = spec
+            argv = ["node", "runner", f"--model-{spec.runtime}", spec.model, "--mode", "exec"]
+            return runner_dispatch.RunnerResult(
+                None, "", None, "dispatch_unavailable", False, argv, ""
+            )
 
         with tempfile.TemporaryDirectory() as d:
             target = os.path.join(d, "dir with {x}")
@@ -11334,15 +11337,12 @@ class TestDispatchExecuteArgv(unittest.TestCase):
                 ),
                 seams=execute_dispatch.ExecuteSeams(
                     build_tooling_guidance_fn=lambda *a, **kw: "",
-                    runner_seams=runner_dispatch.RunnerSeams(popen_fn=fake_popen),
+                    runner_fn=fake_runner,
                 ),
             )
-        self.assertIsInstance(captured["argv"], list)
-        self.assertNotIn("shell", captured["kwargs"])
-        self.assertTrue(captured["kwargs"]["start_new_session"])
-        self.assertIn(target, captured["kwargs"]["cwd"])
-        self.assertIn("--child-pgid-file", captured["argv"])
-        self.assertNotIn("--child-pgid-file", result["command"])
+        self.assertEqual(captured["spec"].cwd, target)
+        self.assertEqual(captured["spec"].runtime, "opencode")
+        self.assertEqual(result["command"], "node runner --model-opencode m --mode exec")
         self.assertEqual(result["reason"], "dispatch_unavailable")
 
     def test_result_command_is_shlex_join_of_the_argv(self):

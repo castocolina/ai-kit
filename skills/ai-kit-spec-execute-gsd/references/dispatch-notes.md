@@ -52,8 +52,8 @@ overwritten and gets a `.new` file plus the printed notes. The guidance (reinfor
 SUMMARY.md format block, tooling guidance, and the soft-confinement sentence for every runtime
 except codex) lands in `.planning/scripts/cross-ai-guidance.md`, which the hook places before the
 prompt with the runner's own preamble off, so nothing is said twice. The hook stays unquoted: GSD
-expands the stored value by word splitting only, so a quote character would be a literal, not a
-quoting boundary.
+expands the stored value by word splitting and pathname expansion, so a quote character would be
+a literal, not a quoting boundary.
 
 A custom entry (a `command` and no `runtime`) is the one exception to "every subprocess runs
 through the runner": the fixed-argv custom launcher runs it on the same supervision core, and only

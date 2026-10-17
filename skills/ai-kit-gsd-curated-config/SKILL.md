@@ -31,7 +31,7 @@ only, never a request).
 
 | Exit | v1 subcommands | v2 subcommands |
 |---|---|---|
-| `0` | success | success (read the JSON for warnings and `needs_choice`) |
+| `0` | the call finished; for `apply-execution` read `cross_ai_command_written` and `degraded_reason` before calling it configured | success (read the JSON for warnings and `needs_choice`) |
 | `2` | install problem (sibling skill, `node` or `gsd-tools.cjs` missing) or, for `apply-execution`/`apply-review`, an unrecognized `--cli` before any write. Surface stderr verbatim; do not retry | a refusal you can fix: bad `--out`, inventory digest mismatch, open `needs_choice`, malformed inventory or plan, held apply marker, refused `plan-set` value — or the same install problems. Read the stderr line, fix the input, re-run (`inventory`/`recommend` first when it says so) |
 | `1` | a gsd-tools read/write failed | `apply` write failed and rolled back (or `restore_error`); a follow-up command failed |
 
@@ -185,8 +185,11 @@ Template 3 adds three flags the rendered hook can carry:
   mode); the guidance it receives is prose, not a boundary.
 
 **Runner upgrade.** `ensure-runner` renders or upgrades the project runner and, with
-`--guidance-file`, the guidance file. A user-edited runner is never overwritten: it gets a `.new`
-file plus the printed notes, and the result is not ready until that file is merged by hand. v1
+`--guidance-file`, the guidance file. It never overwrites a user-edited runner, and readiness
+comes from the JSON it prints (`ready`, `runner`, `notes`), not from whether a `.new` file
+exists. A user-edited runner already on the current template is kept as-is and reported ready,
+with no `.new` file. An edited runner on an older or foreign template gets a `.new` file plus the
+printed notes and is not ready until that file is merged by hand. v1
 `apply-execution` writes the runner command (`node .planning/scripts/cross-ai.mjs …`) only when
 that render is ready. After every external dispatch, print the `AIKIT-XAI status=…` line from
 stderr **verbatim**.
@@ -253,6 +256,11 @@ project v2 has never configured. Order and safeguards:
    `apply-review` flags are required.
 4. `detect-claude-md-path`: skip `apply-claude-md-path` when it prints `null`.
 5. `detect-frontend`, then `apply-workflow-defaults` with that boolean for both UI flags.
+6. `apply-execution` can exit 0 without configuring execution. Read its JSON:
+   `cross_ai_command_written` false with a `degraded_reason` (`runner_not_ready`,
+   `no_candidate`, `no_model`, `no_builder`) means the command was left absent or unchanged.
+   Report the reason and the printed notes; for `runner_not_ready`, fix the runner `ensure-runner`
+   reported and re-run before telling the user execution is configured.
 
 ```bash
 python3 "$ENTRYPOINT" ensure-project --project-dir <target>
@@ -278,7 +286,7 @@ python3 "$ENTRYPOINT" apply-workflow-defaults --project-dir <target> --ui-phase 
 | `plan-unset` | `key`, `--plan` (`--inventory` optional) | Decline / remove a plan entry |
 | `apply` | `--plan`, `--inventory`, `--project-dir` | Write config + runner (`--dry-run` previews) |
 | `followups` | `--plan`, `--inventory`, `--project-dir` | List, or `--approve` the listed commands |
-| `ensure-runner` | `--cwd` (`--guidance-file <path>` or `-` for stdin, optional) | Render or upgrade `.planning/scripts/cross-ai.mjs` (a user-edited script gets `.new`); prints JSON `{ready, runner, guidance, notes}`, exit 0 ready, 1 not ready, 2 on error |
+| `ensure-runner` | `--cwd` (`--guidance-file <path>` or `-` for stdin, optional) | Render or upgrade `.planning/scripts/cross-ai.mjs`; prints JSON `{ready, runner, guidance, notes}`, exit 0 ready, 1 not ready, 2 on error. Readiness is the `ready` field: an edited current-template runner is kept ready, an edited older or foreign one gets `.new` and is not ready |
 | v1 | `--project-dir`, except the two `detect-*-candidate` (no flags) | See the v1 path |
 
 ## NEVER

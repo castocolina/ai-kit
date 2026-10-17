@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-execute-gsd
-description: Resolves the best available (runtime, model) pair for a GSD (Get Sh*t Done) phase, prepares GSD's own .planning/config.json (a native-tier pin of runtime plus model_profile_overrides, or workflow.cross_ai_command naming the project's supervised runner), then invokes GSD's own /gsd-execute-phase skill directly to perform the actual execution -- never subprocess-dispatches GSD itself. Use when (1) ai-kit-spec-execute detects a GSD-managed plan (.planning/ directory present) and needs to run a phase with a resolved pair, (2) a GSD phase needs a native-tier model pin (runtime + model_profile_overrides) written before execution, or (3) a GSD plan is opted into cross-AI delegation (frontmatter `cross_ai: true`) and needs workflow.cross_ai_command wired to the project's supervised runner before /gsd-execute-phase runs.
+description: "Resolves the best available (runtime, model) pair for a GSD (Get Sh*t Done) phase, prepares GSD's own .planning/config.json (a native-tier pin of runtime plus model_profile_overrides, or workflow.cross_ai_command naming the project's supervised runner), then invokes GSD's own /gsd-execute-phase skill directly to perform the actual execution -- never subprocess-dispatches GSD itself. Use when (1) ai-kit-spec-execute detects a GSD-managed plan (.planning/ directory present) and needs to run a phase with a resolved pair, (2) a GSD phase needs a native-tier model pin (runtime + model_profile_overrides) written before execution, or (3) a GSD plan is opted into cross-AI delegation (frontmatter cross_ai true) and needs workflow.cross_ai_command wired to the project's supervised runner before /gsd-execute-phase runs."
 ---
 
 # ai-kit-spec-execute-gsd
@@ -98,10 +98,12 @@ RESULT_PROVENANCE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(
 RESULT_REASON="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("reason") or "")' <<< "$RESULT_JSON")"
 RESULT_MESSAGE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or "")' <<< "$RESULT_JSON")"
 RESULT_CROSS_AI_COMMAND="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("cross_ai_command") or "")' <<< "$RESULT_JSON")"
-printf 'CWD=%s\nPHASE_ID=%s\nPHASE_PROMPT_FILE=%s\nGSD_CONFIG_PATH=%s\nRUN_ID=%s\nRESULT_MODE=%s\nRESULT_KEY=%s\nRESULT_RUNTIME=%s\nRESULT_PROVENANCE=%s\nRESULT_REASON=%s\nRESULT_MESSAGE=%s\nRESULT_CROSS_AI_COMMAND=%s\n' \
+RESULT_MODEL="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("model") or "")' <<< "$RESULT_JSON")"
+printf 'CWD=%s\nPHASE_ID=%s\nPHASE_PROMPT_FILE=%s\nGSD_CONFIG_PATH=%s\nRUN_ID=%s\nRESULT_MODE=%s\nRESULT_KEY=%s\nRESULT_RUNTIME=%s\nRESULT_MODEL=%s\nRESULT_PROVENANCE=%s\nRESULT_REASON=%s\nRESULT_MESSAGE=%s\nRESULT_CROSS_AI_COMMAND=%s\n' \
   "$CWD" "$PHASE_ID" "$PHASE_PROMPT_FILE" "$GSD_CONFIG_PATH" "$RUN_ID" "$RESULT_MODE" \
-  "$RESULT_KEY" "$RESULT_RUNTIME" "$RESULT_PROVENANCE" "$RESULT_REASON" "$RESULT_MESSAGE" \
+  "$RESULT_KEY" "$RESULT_RUNTIME" "$RESULT_MODEL" "$RESULT_PROVENANCE" "$RESULT_REASON" "$RESULT_MESSAGE" \
   "$RESULT_CROSS_AI_COMMAND"
+printf 'RESULT_JSON=%s\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' <<< "$RESULT_JSON")"
 ```
 
 **Record every line of that trailing `printf`'s output as this wave's own literal values.**
@@ -122,8 +124,8 @@ result and do not ask again this wave. Never trust on the user's behalf.
 If `mode == "write_failed"` (exit 1): a `gsd-tools config-set` failed mid-write. Keys applied
 earlier in that attempt were reverted in reverse order; `reverted` lists them, and
 `revert_failed` lists any whose revert itself failed — those keys still hold the new value and
-need a hand fix. Print the full `$RESULT_JSON` to the user and STOP — do not proceed to
-Step 2/3.
+need a hand fix. Print the `RESULT_JSON=` line captured above to the user and STOP — do not
+proceed to Step 2/3.
 
 If `mode == "fallback_notice"` and `reason == "malformed_config"`, print the message and STOP — do
 not proceed to Step 2/3 at all.
@@ -190,7 +192,12 @@ A reviewer or executor is a (runtime, model) pair. Each call runs it natively wh
   earlier keys from that call were reverted (any in `revert_failed` still hold the new value);
   exit 2 means gsd-tools could not be resolved, as in Step 1. Show the output to the user and STOP.
   A model id the unquoted hook cannot carry comes back from Step 1 as `fallback_notice` with
-  reason `unsafe_hook_token` instead of a broken hook string.
+  reason `unsafe_hook_token` instead of a broken hook string. One accepted token is still unsafe:
+  GSD expands the hook unquoted, so a cursor model id carrying brackets (`model[effort=high]`) is
+  a glob class and changes if a matching filename exists. Before writing the hook, run
+  `compgen -G "$RESULT_MODEL"` from `$CWD` (`-G` takes the pattern itself; a `--` before it would
+  be read as the pattern and the check would test nothing). If it prints anything, do not write
+  the hook — run the mode-transition cleanup and continue as `fallback_notice`.
 
   **`workflow.cross_ai_command` is NOT the raw external CLI command — it names the project's own
   supervised runner**, and the guidance file is tracked next to it under `.planning/scripts/`.
@@ -200,7 +207,7 @@ A reviewer or executor is a (runtime, model) pair. Each call runs it natively wh
   calls it or when. The runner is rendered or upgraded here, so the hook works without a prior
   curated-config apply:
   ```bash
-  RESULT_MODEL="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("model") or "")' "$RESULT_JSON")"
+  # RESULT_MODEL is the value Step 1 printed; never re-parse RESULT_JSON here.
   # NO manual quoting around the stored command's tokens -- this is deliberate, required by how
   # GSD expands this value. Read only if you need to know why:
   # references/dispatch-notes.md#why-no-manual-quoting-around-workflowcross_ai_commands-values
@@ -210,35 +217,62 @@ A reviewer or executor is a (runtime, model) pair. Each call runs it natively wh
   GUIDANCE_RC=$?
   if [ "$GUIDANCE_RC" -ne 0 ] || [ -z "$GUIDANCE" ] || [ ! -f "$CURATED_PY" ]; then
     echo "ai-kit-spec-execute-gsd: dispatch guidance unavailable (exit $GUIDANCE_RC); nothing written"
-    python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
-      --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout
+    CLEAR="$(python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
+      --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout)"
+    CLEAR_RC=$?
+    if [ "$CLEAR_RC" -ne 0 ] || printf '%s' "$CLEAR" | grep -q 'revert_failed'; then
+      echo "$CLEAR"
+      echo "ai-kit-spec-execute-gsd: cleanup failed; an old hook may still be active"
+      exit 1
+    fi
+    RESULT_MODE="fallback_notice"
   else
-    printf '%s\n' "$GUIDANCE" | python3 "$CURATED_PY" ensure-runner --cwd "$CWD" --guidance-file - > "$CWD.ensure"
+    mkdir -p "$CWD/tmp"
+    ENSURE_FILE="$(mktemp "$CWD/tmp/ensure.XXXXXX")"
+    printf '%s\n' "$GUIDANCE" | python3 "$CURATED_PY" ensure-runner --cwd "$CWD" --guidance-file - > "$ENSURE_FILE"
     ENSURE_RC=${PIPESTATUS[1]}
-    ENSURE="$(cat "$CWD.ensure")"
+    ENSURE="$(cat "$ENSURE_FILE")"
+    rm -f "$ENSURE_FILE"
     if [ "$ENSURE_RC" -eq 0 ]; then
-      python3 "$GSD_SHIM" write-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
+      WRITE="$(python3 "$GSD_SHIM" write-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
         --set "cross_ai_command=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$RESULT_CROSS_AI_COMMAND")" \
         --set cross_ai_execution=true \
-        --set cross_ai_timeout=900
+        --set cross_ai_timeout=900)"
+      WRITE_RC=$?
+      if [ "$WRITE_RC" -ne 0 ]; then
+        echo "$WRITE"
+        echo "ai-kit-spec-execute-gsd: writing the hook failed (exit $WRITE_RC)"
+        exit 1
+      fi
     else
       echo "ai-kit-spec-execute-gsd: the project runner is not ready (exit $ENSURE_RC); nothing written"
       echo "$ENSURE"
-      python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
-        --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout
+      CLEAR="$(python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
+        --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout)"
+      CLEAR_RC=$?
+      if [ "$CLEAR_RC" -ne 0 ] || printf '%s' "$CLEAR" | grep -q 'revert_failed'; then
+        echo "$CLEAR"
+        echo "ai-kit-spec-execute-gsd: cleanup failed; an old hook may still be active"
+        exit 1
+      fi
+      RESULT_MODE="fallback_notice"
     fi
   fi
+  printf 'RESULT_MODE=%s\n' "$RESULT_MODE"
   ```
   A non-zero producer exit, empty guidance, a missing curated shim, or an `ensure-runner` exit of
   1 (not ready: a user-edited runner gets a `.new` file plus the printed notes) or 2 (error)
-  writes nothing: show the printed notes to the user, run the mode-transition cleanup above, and
-  continue as `fallback_notice`. Exit 0 writes the hook and the 900-second timeout.
+  writes nothing: show the printed notes to the user and continue as `fallback_notice` only after
+  the cleanup call above exits 0. If that cleanup exits non-zero, or its output names keys in
+  `revert_failed`, STOP and show it: an old hook may still be active. Exit 0 writes the hook and
+  the 900-second timeout. The `RESULT_MODE=` line this block prints replaces the Step 1 value for
+  every later step, so Step 3 follows the mode that was actually set up.
 
   **Hook setup.** This skill renders or upgrades the runner and the guidance file through
   curated-config `ensure-runner`; a user-edited runner is never overwritten and gets a `.new` file
   instead, with the printed notes. The guidance file goes before the prompt and the runner's own
   preamble is off, so nothing is said twice. The hook stays unquoted because GSD expands the stored
-  value by word splitting only, never as shell syntax — see `references/dispatch-notes.md`.
+  value by word splitting and pathname expansion, never as shell syntax — see `references/dispatch-notes.md`.
 
   **Exec confinement.** Codex runs under `--codex-sandbox workspace-write`: the runner uses
   `--sandbox workspace-write` instead of the bypass, so writes stay inside the project dir plus
@@ -250,8 +284,11 @@ A reviewer or executor is a (runtime, model) pair. Each call runs it natively wh
   note before the hook is written.
 
   **Node.** Subprocess dispatch needs Node 24 (GSD's declared floor); older versions untested.
-  Without Node, the runner fails closed as `dispatch_unavailable`
-  (`ai-kit-spec: subprocess dispatch needs Node`) and the session default still runs.
+  The hook starts with `node .planning/scripts/cross-ai.mjs`, so without Node it cannot launch and
+  never reaches the runner's `dispatch_unavailable` path. Step 1 already stops when `node` is not
+  on PATH. If Node disappears between Step 1 and the hook, do not claim a native fallback: run the
+  mode-transition cleanup below and, only when it exits 0, hand the phase to GSD with no hook; if
+  the cleanup fails, STOP and show its output.
 
   **Explicit scope boundary (Global Constraints): this workflow-level write alone does NOT make
   GSD delegate to cross-AI.** Real GSD also requires the TARGET PLAN's own frontmatter to carry
@@ -289,10 +326,26 @@ else
   CLI_ARGS=(--runtime "$RESULT_RUNTIME")
 fi
 GUIDANCE="$(python3 "$GSD_SHIM" prepare-tooling "${CLI_ARGS[@]}" --target-dir "$CWD")"
-MARKER="<!-- ai-kit-spec-execute-gsd:tooling-guidance -->"
-if ! grep -qF "$MARKER" "$PHASE_PROMPT_FILE"; then
-  printf '\n%s\n%s\n' "$MARKER" "$GUIDANCE" >> "$PHASE_PROMPT_FILE"
+GUIDANCE_RC=$?
+if [ "$GUIDANCE_RC" -ne 0 ] || [ -z "$GUIDANCE" ]; then
+  echo "ai-kit-spec-execute-gsd: prepare-tooling failed (exit $GUIDANCE_RC); phase file untouched"
+  exit 2
 fi
+START="<!-- ai-kit-spec-execute-gsd:tooling-guidance:start -->"
+END="<!-- ai-kit-spec-execute-gsd:tooling-guidance:end -->"
+python3 -c 'import pathlib,sys
+p,s,e,g=sys.argv[1:]
+t=pathlib.Path(p).read_text()
+b,a=(t.find(s),t.find(e))
+if b!=-1 and a!=-1:
+    t=t[:b]+t[a+len(e):]
+elif b!=-1:
+    sys.exit(2)
+pathlib.Path(p).write_text(t.rstrip("\n")+"\n\n"+s+"\n"+g+"\n"+e+"\n")' \
+  "$PHASE_PROMPT_FILE" "$START" "$END" "$GUIDANCE" || {
+  echo "ai-kit-spec-execute-gsd: guidance block has no end marker; phase file untouched"
+  exit 2
+}
 ```
 
 This `prepare-tooling` subcommand (Task 4) runs `detect_tool_availability()`,
