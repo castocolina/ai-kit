@@ -21,9 +21,10 @@ ranked** — an unconfirmed guess must never appear in a ranked list the user is
     **The CLIs to consider were already chosen in SKILL.md's Step 2.2 stub** — do not re-ask.
     Group each kept multi-provider CLI's raw model list BEFORE any of it is
     discovered/matched/ranked. For each CLI the user kept, if it's multi-provider
-    (`models` array present — e.g. `opencode`, `cursor`, and `codex` when `codex debug models` enumerated it), **never hand its raw
+    (`opencode` or `cursor`, the runtime table's `multi_provider` rows; a pi, codex or claude
+    list is single-provider), **never hand its raw
     model list to `fetch-model-catalog` as-is** — a
-    multi-provider CLI's raw list can be very long (confirmed live: cursor-agent's catalog is
+    multi-provider CLI's raw list can be very long (confirmed live: cursor's catalog is
    ~200 ids, a handful of base model families each multiplied out by effort/thinking/fast-tier
    variants, e.g. `claude-opus-5-thinking-high-fast`), and most of those tier variants will not
    exact-match models.dev/Artificial Analysis, which would otherwise turn item 4 below into

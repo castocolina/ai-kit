@@ -92,8 +92,8 @@ python3 "$TOOLS_PY" detect-tools
 ```
 
 Parse the printed JSON: for each CLI marked `"installed": true`, note its
-path, plus its `models` list when present (opencode, codex and claude carry
-one; a CLI whose enumeration failed degrades to no list).
+path, plus its `models` list when present (pi, opencode, cursor, codex and claude carry
+one, grok never does; a CLI whose enumeration failed degrades to no list).
 
 `detect-tools` prints `{"rg": bool, "sd": bool, "bat": bool, "eza": bool, "fd": bool,
 "codegraph": bool}` — informational only, this step does not add new wizard questions.
@@ -104,7 +104,7 @@ mention which of these are present on this machine — this is the data
 **If `--check-only` was passed**, report which CLIs are installed. Then
 read the target config file (`~/.config/ai-kit/review-spec.toml` if
 `--global` was passed, else `./.aikit/review-spec.toml` by default) and
-note each `[[reviewers]]` entry's `key`/`cli` if it exists. (This is a
+note each `[[reviewers]]` entry's `key`/`runtime` (or legacy `cli`) if it exists. (This is a
 raw on-disk read only, not `cfg_resolve`'s merged view.) If any entries exist, probe their **quota availability** — the core
 purpose of `--check-only` — using a throwaway path:
 ```bash
@@ -199,7 +199,7 @@ from start to finish. **NEVER set any range limits when reading this file.** It 
 8-item procedure (group → extra-candidate → fetch → unmatched-confirm → rank → present
 → codegraph-alternative → heuristic-confirm) plus the exact command templates. Skipping
 it reproduces live landmines this wizard already hit: guessing a codex id
-(`gpt-5.6-sol-high` instead of `gpt-5.6-sol`), dumping a ~200-id cursor-agent list
+(`gpt-5.6-sol-high` instead of `gpt-5.6-sol`), dumping a ~200-id cursor list
 ungrouped, ranking before unmatched confirmation, and silently dropping every
 single-provider-CLI candidate by rebuilding `discovered` from `$RUNTIMES_JSON` alone.
 
@@ -448,10 +448,10 @@ exact fallback sequence without having to open the file.
 stays inactive for cross-AI review until trusted. Run
 `python3 "$TOOLS_PY" trust-local --cwd <project root> --show`, where `<project root>` is the
 parent of `.aikit/` — never `.aikit/` itself, which looks for `.aikit/.aikit/review-spec.toml`
-and exits 1. `--show` writes nothing; it prints one JSON line per local reviewer that has a
-`command`: `{"key", "argv", "trusted", "path"}`, where `argv` is the exact argument list
+and exits 1. `--show` writes nothing; it prints one JSON line per local subprocess or custom
+reviewer (an entry with a `runtime` or a `command`): `{"key", "argv", "trusted", "path"}`, where `argv` is the exact argument list
 dispatch would run (already merged with the global config per `strategy`) with the prompt
-shown as the literal `<prompt>` placeholder, or `{"key", "error"}` for a template that would be
+shown as the literal `<prompt>` placeholder, or `{"key", "error"}` for an entry that would be
 refused. Show those lines, ask whether to trust the file, and run
 `python3 "$TOOLS_PY" trust-local --cwd <project root>` only after an explicit yes. Trust is tied
 to the file's exact content: any edit needs a new trust. `trust-local --cwd <project root>
