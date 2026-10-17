@@ -655,8 +655,7 @@ def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
                                      reviewers.get(key, {}).get("model", ""), host)]
     existing = cache_read_json(args.quota_path) or {}
     updated = refresh_quota_cache(
-        config, ladder, existing, QUOTA_TTL_SECONDS, run_fn=deps.run_fn,
-        seams=deps.probe_seams(),
+        config, ladder, existing, QUOTA_TTL_SECONDS, seams=deps.probe_seams(),
     )
     cache_write_json(args.quota_path, updated)
     print(json.dumps(updated))
@@ -895,7 +894,6 @@ def _cmd_dispatch_execute(args: argparse.Namespace, deps: CliDeps) -> int:
                 candidate,
                 prompt,
                 args.target_dir,
-                args.heartbeat_interval,
                 args.timeout,
                 format_block=format_block,
                 tool_availability=tool_availability,
@@ -963,7 +961,7 @@ def _cmd_check_reviewer(args: argparse.Namespace, deps: CliDeps) -> int:
     rid = None if args.runtime is None else runtime_id(args.runtime)
     resolved = ResolvedReviewer(key=args.key, model=args.model, vendor=args.vendor,
                                  runtime=rid, command=args.reviewer_command, extra=extra)
-    result = probe_reviewer_quota(resolved, run_fn=deps.run_fn, seams=deps.probe_seams())
+    result = probe_reviewer_quota(resolved, seams=deps.probe_seams())
     print(json.dumps(result))
     return 0
 _COMMANDS = {

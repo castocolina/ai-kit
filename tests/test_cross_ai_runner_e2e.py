@@ -500,7 +500,7 @@ class TestExecStatusesE2E(unittest.TestCase):
         )
         result = dispatch_execute(
             ExecuteDispatchSpec(
-                {"runtime": "opencode", "model": model}, "do it", target, 30, timeout,
+                {"runtime": "opencode", "model": model}, "do it", target, timeout,
             ),
             seams,
         )

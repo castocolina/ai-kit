@@ -118,7 +118,6 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
                 candidate={"runtime": "codex", "model": "m", "key": "codex/m"},
                 prompt="p",
                 target_dir=tmp,
-                heartbeat_interval=1,
                 timeout=timeout,
             ),
             seams=execute_dispatch.ExecuteSeams(

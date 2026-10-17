@@ -1,6 +1,5 @@
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -266,16 +265,13 @@ def _run_probe(resolved: "ResolvedReviewer", prompt: str, seams: ProbeSeams) -> 
     return _ProbeRun(result, "\n".join(lines))
 
 
-def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run,
-                         seams: ProbeSeams | None = None) -> dict:
+def probe_reviewer_quota(resolved: "ResolvedReviewer", seams: ProbeSeams | None = None) -> dict:
     """A native entry (no runtime, no command) is never probed: nothing to run, and the
     session's own dispatch is not a quota this module can observe.
 
     A table-runtime entry runs one 30 s review through the runner; a custom entry (a command,
     no runtime) runs through the launcher with one 30 s tier. Available exactly when that call
-    reports no reason. `detail` is the relayed stderr, truncated. `run_fn` stays accepted and
-    unused so existing callers keep working."""
-    del run_fn
+    reports no reason. `detail` is the relayed stderr, truncated."""
     if not resolved.runtime and not resolved.command:
         return {"available": True, "checked_at": time.time(), "reason": None, "detail": ""}
     probe_prompt = "Only say: Hello world!"
@@ -287,36 +283,21 @@ def probe_reviewer_quota(resolved: "ResolvedReviewer", run_fn=subprocess.run,
     return _probe_entry(run.result, run.detail)
 
 
-class _Refresh(NamedTuple):
-    """A cache refresh: the config and ladder to probe, the cache to update, how old an entry
-    may be, and the seams the probe spawns through."""
-
-    config: dict
-    ladder_keys: list
-    existing: dict
-    ttl_seconds: int
-    seams: ProbeSeams | None = None
-
-
 def refresh_quota_cache(config: dict, ladder_keys: list, existing: dict, ttl_seconds: int,
-                         seams: ProbeSeams | None = None, **_unused) -> dict:
+                         seams: ProbeSeams | None = None) -> dict:
     """Returns an updated quota dict: probes only ladder_keys entries that
     are missing or whose last probe is older than ttl_seconds; entries
     still fresh are left untouched (no re-probe, no wasted quota-checking
-    quota). `run_fn`, accepted through `_unused`, stays unused."""
-    return _refresh(_Refresh(config, ladder_keys, existing, ttl_seconds, seams))
-
-
-def _refresh(job: _Refresh) -> dict:
-    reviewers = job.config.get("reviewers", [])
-    updated = dict(job.existing)
+    quota)."""
+    reviewers = config.get("reviewers", [])
+    updated = dict(existing)
     now = time.time()
-    for key in job.ladder_keys:
+    for key in ladder_keys:
         current = updated.get(key)
-        if current is not None and now - current.get("checked_at", 0) < job.ttl_seconds:
+        if current is not None and now - current.get("checked_at", 0) < ttl_seconds:
             continue
         entry = _reviewer_by_key(reviewers, key)
         if entry is None:
             continue
-        updated[key] = probe_reviewer_quota(to_resolved(entry), seams=job.seams)
+        updated[key] = probe_reviewer_quota(to_resolved(entry), seams=seams)
     return updated

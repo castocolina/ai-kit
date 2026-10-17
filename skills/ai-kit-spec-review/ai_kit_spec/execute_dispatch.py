@@ -57,12 +57,9 @@ class ExecuteSeams(NamedTuple):
 
 
 class ExecuteDispatchSpec(NamedTuple):
-    """`heartbeat_interval` is accepted and unused: the runner prints its own heartbeat."""
-
     candidate: dict
     prompt: str
     target_dir: str
-    heartbeat_interval: int
     timeout: int
     format_block: str | None = None
     tool_availability: dict | None = None

@@ -346,7 +346,7 @@ def _cmd_print_dispatch_guidance(args: argparse.Namespace, deps: CliDeps) -> int
         print(f"print-dispatch-guidance: {rejection}", file=sys.stderr)
         return 2
     spec = ExecuteDispatchSpec(
-        {"runtime": args.runtime, "model": args.model}, "", _CONFINEMENT_PHRASE, 0, 0,
+        {"runtime": args.runtime, "model": args.model}, "", _CONFINEMENT_PHRASE, 0,
         format_block=GSD_SUMMARY_FORMAT_BLOCK,
     )
     seams = ExecuteSeams(build_tooling_guidance_fn=_tracked_tooling_guidance)

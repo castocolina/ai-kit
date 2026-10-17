@@ -3378,11 +3378,11 @@ class TestProbeReviewerQuota(unittest.TestCase):
             key="session-default", model="", vendor="",
             runtime=None, command=None, extra={},
         )
+        def never(*_a, **_k):
+            raise AssertionError("session default should never shell out")
+
         result = probe_reviewer_quota(
-            resolved,
-            run_fn=lambda *a, **k: (_ for _ in ()).throw(
-                AssertionError("session default should never shell out")
-            ),
+            resolved, seams=ProbeSeams(runner_fn=never, custom_fn=never),
         )
         self.assertTrue(result["available"])
         self.assertIsNone(result["reason"])
@@ -3879,7 +3879,6 @@ class TestMainCli(unittest.TestCase):
             captured["candidate"] = spec.candidate
             captured["prompt"] = spec.prompt
             captured["target_dir"] = spec.target_dir
-            captured["heartbeat_interval"] = spec.heartbeat_interval
             captured["timeout"] = spec.timeout
             captured["format_block"] = spec.format_block
             return {
@@ -3923,7 +3922,6 @@ class TestMainCli(unittest.TestCase):
         )
         self.assertEqual(captured["prompt"], "do the phase task")
         self.assertEqual(captured["target_dir"], "/scratch/run1")
-        self.assertEqual(captured["heartbeat_interval"], 30)  # default
         self.assertEqual(captured["timeout"], 600)
         self.assertIsNone(captured["format_block"])
 
@@ -4914,7 +4912,7 @@ class TestDispatchExecute(unittest.TestCase):
             result = execute_dispatch.dispatch_execute(
                 execute_dispatch.ExecuteDispatchSpec(
                     candidate={"runtime": "cursor-agent", "model": "gpt-6[effort=high]"},
-                    prompt="p", target_dir=target, heartbeat_interval=30, timeout=600,
+                    prompt="p", target_dir=target, timeout=600,
                 ),
                 seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
             )
@@ -4929,7 +4927,6 @@ class TestDispatchExecute(unittest.TestCase):
                     candidate=candidate,
                     prompt="do the task",
                     target_dir="/scratch/run1",
-                    heartbeat_interval=30,
                     timeout=600,
                 )
             )
@@ -4953,7 +4950,6 @@ class TestDispatchExecute(unittest.TestCase):
                     candidate=candidate,
                     prompt="do the task",
                     target_dir=target,
-                    heartbeat_interval=30,
                     timeout=600,
                 ),
                 seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
@@ -4988,7 +4984,6 @@ class TestDispatchExecute(unittest.TestCase):
                     candidate={"runtime": runtime, "model": "auto", "key": f"{runtime}/auto"},
                     prompt="do the task",
                     target_dir=target,
-                    heartbeat_interval=30,
                     timeout=600,
                 ),
                 seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
@@ -5022,7 +5017,6 @@ class TestDispatchExecute(unittest.TestCase):
                     candidate=candidate,
                     prompt="do the task",
                     target_dir=target,
-                    heartbeat_interval=30,
                     timeout=600,
                     tool_availability={"codegraph": True},
                     agents_tooling_path="/repo/AGENTS-TOOLING.md",
@@ -5052,7 +5046,6 @@ class TestDispatchExecute(unittest.TestCase):
                     candidate=candidate,
                     prompt="do the task",
                     target_dir=target,
-                    heartbeat_interval=30,
                     timeout=600,
                     format_block="FORMAT-BLOCK-MARKER",
                 ),
@@ -5081,7 +5074,6 @@ class TestDispatchExecute(unittest.TestCase):
                     candidate=candidate,
                     prompt="do the task",
                     target_dir=target,
-                    heartbeat_interval=30,
                     timeout=600,
                 ),
                 seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
@@ -5102,7 +5094,6 @@ class TestDispatchExecute(unittest.TestCase):
                     candidate={"runtime": "opencode", "model": "m"},
                     prompt="do the task",
                     target_dir="/no/such/dir",
-                    heartbeat_interval=30,
                     timeout=600,
                 ),
                 seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
@@ -5123,7 +5114,6 @@ class TestDispatchExecute(unittest.TestCase):
                     candidate={"runtime": "pi", "model": "m"},
                     prompt="do the task",
                     target_dir=target,
-                    heartbeat_interval=30,
                     timeout=600,
                 ),
                 seams=execute_dispatch.ExecuteSeams(
@@ -11384,7 +11374,6 @@ class TestDispatchExecuteArgv(unittest.TestCase):
                     candidate=candidate,
                     prompt="do the task",
                     target_dir=target,
-                    heartbeat_interval=30,
                     timeout=600,
                 ),
                 seams=execute_dispatch.ExecuteSeams(
@@ -11419,7 +11408,6 @@ class TestDispatchExecuteArgv(unittest.TestCase):
                     candidate=candidate,
                     prompt="do the task",
                     target_dir=target,
-                    heartbeat_interval=30,
                     timeout=600,
                 ),
                 seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
