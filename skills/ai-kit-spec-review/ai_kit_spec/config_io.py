@@ -107,7 +107,8 @@ def _normalize_legacy_cli(result: dict, key) -> list[str]:
         if "command" in result:
             return [f"{key}: cli={cli} has no runner formula; kept as a custom command entry"]
         result["runtime"] = rid
-        return [f"{key}: cli={cli} has no runner formula and no command; this entry is skipped"]
+        return [f"{key}: cli={cli} has no runner formula and no command; this entry is skipped "
+                f"(build-command --runtime {rid} generates a custom command entry)"]
     if "command" not in result:
         result["runtime"] = rid
         return [f"{key}: cli={cli} -> runtime={rid}"]
@@ -133,6 +134,8 @@ def _normalize_legacy_cli(result: dict, key) -> list[str]:
 def _normalize_legacy_native(result: dict, key) -> list[str]:
     value = result.pop("native_runtime")
     if value == "unknown" or value is None:
+        if isinstance(result.get("runtime"), str):
+            return [f"{key}: native_runtime={value} ignored; runtime={result['runtime']} kept"]
         model = result.pop("model", None)
         result.pop("runtime", None)
         return (
@@ -158,7 +161,7 @@ def normalize_legacy_entry(entry) -> tuple[dict, list[str]]:
         if field in result and value is not None and not isinstance(value, str):
             return result, [
                 f"{key}: '{field}' is not a string; left unchanged "
-                "(save rejects it, dispatch skips it)"
+                "(save rejects it, dispatch skips it as unknown_runtime)"
             ]
 
     if "command" in result and not isinstance(result["command"], str):
@@ -220,8 +223,11 @@ def infer_legacy_native(reviewers) -> tuple[list, list[str]]:
             continue
         mapped = dict(entry)
         model = mapped.get("model")
+        # A non-string legacy field was left as-is by normalize_legacy_entry (B-WR-03).
+        legacy = any(mapped.get(field) is not None for field in ("cli", "native_runtime"))
         if (
-            not mapped.get("runtime")
+            mapped.get("runtime") in (None, "")
+            and not legacy
             and "command" not in mapped
             and isinstance(model, str)
             and model
@@ -459,13 +465,17 @@ _VALID_PURPOSE = {"review", "execute", "both"}
 _LEGACY_WRITE_FIELDS = ("cli", "native_runtime")
 
 
+# A runner-less row (grok) runs only as a custom command entry (D-29), never as a pair.
+_RUNNER_RUNTIMES = sorted(rid for rid, row in RUNTIMES.items() if row.runner)
+
+
 def _validate_pair_fields(entry: dict, key) -> str | None:
-    """Save is strict: a runtime must be in the table and carry a model, a command only exists
+    """Save is strict: a runtime must be a runner row and carry a model, a command only exists
     on a custom entry, and a pinned model needs a runtime. Load stays lenient."""
     runtime = entry.get("runtime")
     if "runtime" in entry and runtime is not None:
-        if not isinstance(runtime, str) or runtime not in RUNTIMES:
-            return f"{key}: 'runtime' must be one of {sorted(RUNTIMES)}"
+        if not isinstance(runtime, str) or runtime not in _RUNNER_RUNTIMES:
+            return f"{key}: 'runtime' must be one of {_RUNNER_RUNTIMES}"
         model = entry.get("model")
         if "model" not in entry or not isinstance(model, str) or model == "":
             return f"{key}: an entry with a 'runtime' needs a non-empty 'model'"

@@ -303,6 +303,32 @@ class TestLegacyForms(unittest.TestCase):
         self.assertTrue(notes)
 
 
+    def test_a_non_string_legacy_field_is_never_promoted_to_the_session_default(self):
+        # B-WR-03: one note, the model kept, and the entry routes to a visible skip.
+        from ai_kit_spec.routing import Inventory, RouteInput, route
+        mapped, notes = normalize_legacy_reviewers([{"key": "k", "cli": 123, "model": "gpt-5"}])
+        inferred, inferred_notes = infer_legacy_native(mapped)
+        self.assertEqual(inferred[0]["model"], "gpt-5")
+        self.assertEqual(len(notes + inferred_notes), 1)
+        decision = route(RouteInput.of(inferred[0]), "codex", "review",
+                         Inventory(frozenset(), {}))
+        self.assertEqual(decision, "unknown_runtime")
+
+    def test_grok_without_a_command_points_at_the_generator_and_save_rejects_it(self):
+        # B-WR-04: a runner-less row is never saved as a pinned pair.
+        mapped, notes = normalize_legacy_entry({"key": "g", "cli": "grok", "model": "grok-4"})
+        self.assertIn("build-command --runtime grok", notes[0])
+        self.assertIn("'runtime' must be", validate_reviewer_fields(mapped) or "")
+
+    def test_native_runtime_unknown_keeps_an_explicit_runtime(self):
+        # B-WR-05: the new-form field wins over a stale legacy one.
+        mapped, notes = normalize_legacy_entry(
+            {"key": "k", "native_runtime": "unknown", "runtime": "codex", "model": "gpt"})
+        self.assertEqual((mapped["runtime"], mapped["model"]), ("codex", "gpt"))
+        self.assertNotIn("native_runtime", mapped)
+        self.assertIn("runtime=codex kept", notes[0])
+
+
 class TestInferLegacyNative(unittest.TestCase):
     def test_alias_default_and_explicit_entries(self):
         result, notes = infer_legacy_native(
