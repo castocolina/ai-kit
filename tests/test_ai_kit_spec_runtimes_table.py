@@ -476,6 +476,62 @@ class TestModelSuffixParity(unittest.TestCase):
         self.assertIn("cursor", model_suffix_mismatches(doctored))
 
 
+def _js_strings(array_source):
+    return tuple(re.findall(r"'([^']*)'", array_source))
+
+
+def template_bins_and_list_argv(text):
+    """Each template row's `bins` and its listing argv (`PI_RPC_ARGS` resolved; None for
+    `list: null`)."""
+    pi_rpc = _js_strings(text.split("const PI_RPC_ARGS = [", 1)[1].split("];", 1)[0])
+    block = text.split("const RUNTIMES = {", 1)[1]
+    end = re.search(r"^};", block, re.M)
+    parts = re.split(r"^  (\w+): \{", block[: end.start() if end else 0], flags=re.M)
+    rows = iter(parts[1:])
+    found = {}
+    for name, body in zip(rows, rows, strict=True):
+        bins = re.search(r"bins: \[([^\]]*)\]", body)
+        listing = re.search(r"list: (null|\{ argv: (PI_RPC_ARGS|\[[^\]]*\]))", body)
+        argv = None
+        if listing and listing.group(1) != "null":
+            argv = pi_rpc if listing.group(2) == "PI_RPC_ARGS" else _js_strings(listing.group(2))
+        found[name] = (_js_strings(bins.group(1)) if bins else None, argv)
+    return found
+
+
+def binary_and_listing_mismatches(text):
+    """Runner runtimes whose template bins or listing argv differ from the Python table."""
+    found = template_bins_and_list_argv(text)
+    names = set(found) | {name for name, spec in detection.RUNTIMES.items() if spec.runner}
+    bad = []
+    for name in sorted(names):
+        spec = detection.RUNTIMES.get(name)
+        expected = (spec.binaries, spec.list_argv) if spec is not None else None
+        if found.get(name) != expected:
+            bad.append(name)
+    return bad
+
+
+class TestBinaryAndListingParity(unittest.TestCase):
+    """PT-07: routing calls a model `subprocess` from a listing the runner must reproduce."""
+
+    def test_template_bins_and_listing_argv_match_the_runtime_table(self):
+        self.assertEqual(binary_and_listing_mismatches(_runner_template_text()), [])
+
+    def test_doctored_bins_and_listing_are_mismatches(self):
+        text = _runner_template_text()
+        for old, new, name in (
+            ("bins: ['cursor-agent', 'agent'],", "bins: ['cursor-agent'],", "cursor"),
+            ("list: { argv: ['debug', 'models'],", "list: { argv: ['models'],", "codex"),
+            ("  '--no-skills', '--no-context-files', '--no-mcp',\n];",
+             "  '--no-skills', '--no-context-files',\n];", "pi"),
+        ):
+            with self.subTest(name=name):
+                doctored = text.replace(old, new, 1)
+                self.assertNotEqual(doctored, text)
+                self.assertIn(name, binary_and_listing_mismatches(doctored))
+
+
 def template_status_keys(text):
     """STATUS_TABLE keys between `const STATUS_TABLE = {` and the closing `};`."""
     start = text.index("const STATUS_TABLE = {")

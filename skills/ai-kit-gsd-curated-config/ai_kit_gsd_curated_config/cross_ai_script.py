@@ -26,6 +26,8 @@ GUIDANCE_HEADER_RE = re.compile(
 _GUIDANCE_NOTICE = (
     b"<!-- Rendered by ai-kit; edits produce a .new file on the next render. -->"
 )
+# A floor, not the current version: template 3 is the first with the flags the GSD hook
+# emits (--codex-sandbox, --no-preamble, --prepend-file; D-18/D-27/D-30).
 _READY_TEMPLATE = 3
 _CONFIG_START = b"// <config>"
 _CONFIG_END = b"// </config>"
