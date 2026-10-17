@@ -440,7 +440,7 @@ model exactly as planned.
   4. After `apply`, `gsd-tools resolve-model <agent>` with `GSD_RUNTIME=claude` returns the
      planned model for all 35 agents, proven against the checkout-local gsd-core (1.16.x),
      version recorded in `19-SMOKE.md` (Amended 2026-10-17 (19-RESEARCH R-7)).
-**Plans**: 7/10 plans executed (sequential waves 1-10)
+**Plans**: 8/10 plans executed (sequential waves 1-10)
 - [x] 19-01-PLAN.md — eval helper: snapshot, digest, oracle + resolve-model matrix e2e (cross-AI)
 - [x] 19-02-PLAN.md — pressure fixtures B-E, headless `claude -p` runner, eval files (cross-AI)
 - [x] 19-03-PLAN.md — per-expectation grader with non-vacuity pairs, secret scan (cross-AI)
@@ -448,7 +448,7 @@ model exactly as planned.
 - [x] 19-05-PLAN.md — live smoke from the claude host -> 19-SMOKE.md (orchestrator)
 - [x] 19-06-PLAN.md — RED baselines (no skill; v1 at 7009d22^) -> 19-PRESSURE-TESTS.md (orchestrator)
 - [x] 19-07-PLAN.md — evidence-gated SKILL.md edits, GREEN B-E, REFACTOR cap 3 (orchestrator)
-- [ ] 19-08-PLAN.md — skill-judge round 1: pi judges + in-session (orchestrator)
+- [x] 19-08-PLAN.md — skill-judge round 1: pi judges + in-session (orchestrator)
 - [ ] 19-09-PLAN.md — judge fix loop cap 3, opus/high confirmation (orchestrator)
 - [ ] 19-10-PLAN.md — gates incl. e2e-docker, owner-review index, backlog entry (orchestrator)
 
