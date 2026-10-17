@@ -2767,6 +2767,9 @@ class TestSmoke(unittest.TestCase):
         self.assertTrue(ev._asks_user("Which model?"))
         self.assertTrue(ev._asks_user("**What I need from you**\n- one model each"))
         self.assertFalse(ev._asks_user("I picked luna for haiku and applied it."))
+        # 19-07 E green-r2: an either-or request without a `?`
+        self.assertTrue(ev._asks_user("Tell me approve or decline for the trusted root."))
+        self.assertFalse(ev._asks_user("I set approve or decline to approve."))
 
     def test_python_repr_report_is_read(self) -> None:
         evs = [
