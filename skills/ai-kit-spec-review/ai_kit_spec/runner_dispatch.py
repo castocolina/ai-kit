@@ -353,6 +353,25 @@ def _drop_temp_files(paths: list[str]) -> None:
             os.unlink(path)
 
 
+@contextlib.contextmanager
+def _sigint_deferred():
+    """Holds a Ctrl+C until the block ends, then raises it (main thread only, U-5).
+
+    A second interrupt during cleanup must not abort the kill and temp-file removal, and
+    one landing between Popen returning and the child being recorded must not orphan it."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    pending: list[bool] = []
+    previous = signal.signal(signal.SIGINT, lambda *_args: pending.append(True))
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    if pending:
+        raise KeyboardInterrupt
+
+
 def _cleanup_spawn(run: _ChildRun | None, request: SpawnRequest, seams: RunnerSeams,
                    temp_paths: list[str]) -> str:
     """Group, recorded groups, the relay, then stdout. Runs on every exit path."""
@@ -427,15 +446,18 @@ def _spawn_supervised(request: SpawnRequest, seams: RunnerSeams) -> RunnerResult
     paths = [stdin_path, stdout_path]
     run: _ChildRun | None = None
     try:
-        run = _start_child(work, stdin_handle, stdout_path)
+        with _sigint_deferred():
+            run = _start_child(work, stdin_handle, stdout_path)
         if run.proc is not None:
             deadline = seams.time_fn() + request.deadline_s
             run = run._replace(timed_out=_wait_for_exit(run.proc, seams, deadline))
         stdin_handle.close()
-        stdout = _cleanup_spawn(run, request, seams, paths)
+        with _sigint_deferred():
+            stdout = _cleanup_spawn(run, request, seams, paths)
     except BaseException:
         stdin_handle.close()
-        _cleanup_spawn(run, request, seams, paths)
+        with contextlib.suppress(KeyboardInterrupt), _sigint_deferred():
+            _cleanup_spawn(run, request, seams, paths)
         raise
     if run.error is not None:
         raise run.error

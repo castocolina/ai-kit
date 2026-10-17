@@ -349,6 +349,39 @@ class TestRunRunnerFake(unittest.TestCase):
         self.assertIn((4242, signal.SIGTERM), kills)
         self.assertIn((4242, signal.SIGKILL), kills)
 
+    def test_second_interrupt_during_cleanup_still_kills_the_group(self):
+        clock = _FakeClock()
+        calls: list[int] = []
+
+        def sleep(seconds):
+            calls.append(1)
+            if len(calls) == 1:
+                raise KeyboardInterrupt
+            if len(calls) == 2:  # inside _reap_group's grace wait: a real Ctrl+C
+                os.kill(os.getpid(), signal.SIGINT)
+            clock.sleep(seconds)
+
+        kills: list[tuple[int, int]] = []
+        seams = _seams(_ScriptedPopen([_FakeProc([], hang=True)]), [], kills, clock)
+        with self.assertRaises(KeyboardInterrupt):
+            run_runner(_spec(), "hi", seams._replace(sleep_fn=sleep))
+        self.assertIn((4242, signal.SIGKILL), kills)
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
+
+    def test_interrupt_right_after_popen_reaps_the_child(self):
+        inner = _ScriptedPopen([_FakeProc([], hang=True)])
+
+        def popen(argv, **kwargs):
+            proc = inner(argv, **kwargs)
+            os.kill(os.getpid(), signal.SIGINT)  # lands before the child is recorded
+            return proc
+
+        kills: list[tuple[int, int]] = []
+        seams = _seams(popen, [], kills)
+        with self.assertRaises(KeyboardInterrupt):
+            run_runner(_spec(), "hi", seams)
+        self.assertIn((4242, signal.SIGKILL), kills)
+
     def test_popen_oserror(self):
         def popen(_argv, **_kwargs):
             raise OSError("node missing at spawn")
