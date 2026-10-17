@@ -248,7 +248,9 @@ def _refresh_runtime(snapshot, rid, ctx: RouteContext) -> bool:
     if not binary:
         row = {"installed": False}
     else:
-        row = {"installed": True, "path": binary}
+        # Start from the cached row: reasoning_modes and the image_input fields survive.
+        row = {**(before if isinstance(before, dict) else {}), "installed": True,
+               "path": binary}
         if rid == "claude":
             row.update(claude_runtime_fields(cache_read_json(cache_catalog_path(ctx.env))))
         else:

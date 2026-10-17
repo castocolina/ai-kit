@@ -334,6 +334,38 @@ class TestTargetedRefresh(unittest.TestCase):
             routing.route_all(entries, ctx)
             self.assertEqual(len(calls), 1)
 
+    def test_refresh_keeps_the_cached_row_fields(self):
+        with tempfile.TemporaryDirectory() as root:
+            env = self._env(root)
+
+            def run_fn(argv, **_kwargs):
+                if os.path.basename(argv[0]) == "codex":
+                    stdout = '{"models": [{"slug": "gpt-new", "visibility": "list"}]}'
+                else:
+                    stdout = "zen/new\n"
+                return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+            image = {"image_input": ["zen/old"], "image_input_source": "probe",
+                     "image_input_probe": {"zen/old": True}}
+            path = routing.cache_runtimes_path(env)
+            cache_write_json(path, self._snapshot({
+                "codex": {"installed": True, "path": "/fake/codex", "models": ["gpt-old"],
+                          "reasoning_modes": {"gpt-old": ["high"]}},
+                "opencode": {"installed": True, "path": "/fake/opencode",
+                             "models": ["zen/old"], **image},
+            }))
+            self._age(env, 120)
+            entries = [{"key": "c", "runtime": "codex", "model": "gpt-new"},
+                       {"key": "o", "runtime": "opencode", "model": "zen/new"}]
+            ctx = self._context(env, lambda name: f"/fake/{name}", run_fn)
+            routes = routing.route_all(entries, ctx)
+            self.assertEqual(routes, {"c": "subprocess", "o": "subprocess"})
+            written = cache_read_json(path)
+            assert written is not None
+            self.assertEqual(written["clis"]["codex"]["reasoning_modes"], {"gpt-old": ["high"]})
+            for field, value in image.items():
+                self.assertEqual(written["clis"]["opencode"][field], value)
+
     def test_young_cache_is_not_refreshed(self):
         with tempfile.TemporaryDirectory() as root:
             env = self._env(root)
