@@ -449,11 +449,9 @@ class TestBuildDispatchInjection(unittest.TestCase):
             with open(task_file, "w") as f:
                 f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
             quota_path = os.path.join(tmp, "quota.json")
-            # Pin a non-Claude host: under Claude Code, claude/opus routes native and is exempt.
-            host_free = {k: v for k, v in os.environ.items()
-                         if k not in detection.HOST_SIGNAL_ENV_VARS}
-            with contextlib.redirect_stderr(stderr), \
-                    unittest.mock.patch.dict(os.environ, host_free, clear=True):
+            # The route is pinned (a non-Claude host's exec route for claude/opus), so no real
+            # host, runtimes cache or CLI listing is ever consulted.
+            with contextlib.redirect_stderr(stderr):
                 rc = superpowers_cli.main(
                     [
                         "resolve-injection",
@@ -468,6 +466,8 @@ class TestBuildDispatchInjection(unittest.TestCase):
                     cache_read_json_fn=lambda path: {},
                     cache_write_json_fn=lambda path, data: None,
                     refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
+                    route_all_fn=lambda entries, _ctx: {"claude-cli/opus-5": "review_only"},
+                    env_fn=lambda: {"HOME": tmp, "XDG_CACHE_HOME": tmp},
                     stdout=out,
                 )
         self.assertEqual(rc, 2)
