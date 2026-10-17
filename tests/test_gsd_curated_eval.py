@@ -1313,6 +1313,14 @@ class TestFixture(unittest.TestCase):
             ev._pin_entrypoint("no such section\n", "/run/entry.py")
 
     def test_pin_entrypoint_on_real_v1_text(self):
+        probe = subprocess.run(
+            ["git", "-C", str(ev.REPO_ROOT), "cat-file", "-e", f"{ev.V1_COMMIT}:{ev.V1_RELPATH}"],
+            capture_output=True,
+            check=False,
+        )
+        if probe.returncode != 0:
+            # the e2e-docker image copies the repo without .git (clean-room .dockerignore)
+            self.skipTest("v1 SKILL.md not in this checkout's git history")
         v1 = subprocess.run(
             [
                 "git",
@@ -1709,7 +1717,7 @@ class TestGrader(unittest.TestCase):
                 self.assertIsNotNone(fresh.build_execution_command("pi", ev.ROUTER_MODEL))
             finally:
                 sys.modules["ai_kit_gsd_curated_config.cross_ai_build"] = saved
-                pkg.cross_ai_build = real
+                pkg.cross_ai_build = real  # pyright: ignore[reportAttributeAccessIssue]
 
     def test_v1_hook_overrides_config_positive(self) -> None:
         """The product's own v1 builder: the router hook passes whatever CONFIG holds."""

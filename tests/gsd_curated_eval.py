@@ -1116,7 +1116,7 @@ def report_json(evs: list[dict], point: dict | None) -> dict | None:
     the text can hold several JSON objects plus shell lines (19-07): the `apply` report
     (a `dry_run` or `applied` key) wins, else the last object."""
     result = result_of(evs, point)
-    if result is None:
+    if result is None or point is None:
         return None
     text = result.get("text") or ""
     objects = _json_objects(text) or _python_reprs(text)
@@ -1385,7 +1385,7 @@ def _remove_rows_named(evs: list[dict], real: dict | None, plan: dict | None) ->
     return Verdict(True, f"{len(keys)} remove rows shown before apply")
 
 
-def _grouped_question(evs: list[dict], real: dict, approve: dict, rows: list[dict]) -> bool:
+def _grouped_question(evs: list[dict], real: dict, approve: dict | None, rows: list[dict]) -> bool:
     """The question between apply and approval asks (`_asks_user`) and names every required
     row by its id, its purpose, or one of its argv words (SKILL.md step 6 lists argv, cwd and
     purpose)."""
