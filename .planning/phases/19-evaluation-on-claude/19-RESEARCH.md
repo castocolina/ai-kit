@@ -489,14 +489,14 @@ Run with `claude` 2.1.301, `--model haiku --effort low`, flags `--setting-source
 - **Open Question 3 resolved.** With `<scratch>/.claude/gsd-core` symlinked to the worktree's gsd-core, a real `apply` of a Rigorous plan returns `followups.required[0].id == "effort_sync"` (argv `gsd-tools effort sync --apply --runtime claude --config-dir <scratch>/.claude --project-dir <scratch>`), plus `approve_with`. `apply --dry-run` output has no `followups` key, so E's grouped-approval expectation is graded after the real apply. The sync writes under `<scratch>/.claude`, not through the symlink; still hash the worktree's `.claude/gsd-core` before and after each batch.
 - **Cost.** One haiku turn costs about USD 0.001 (`total_cost_usd` in the `result` event); record it per run.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Does the matrix need to include the claude-host `runtime` case?** What we know: `apply` leaves a project `runtime: codex` (D-30, documented note); a real Claude Code session has no `GSD_RUNTIME`, so `resolve-model` then returns the codex model. What's unclear: whether APP-05 intends only the `GSD_RUNTIME=claude` behavior. Recommendation: keep the pass criterion as written, add an informational P2 row without `GSD_RUNTIME` so the gap is recorded, and route a decision (default `plan-set runtime claude` or a plan `unset` of a non-claude `runtime` on claude) to the user.
-2. **Which v1 SKILL.md is RED-b?** `7009d22^` (recommended) or `2c16b26` (D-12 as written). Either is fine if the commit is recorded.
+1. **[RESOLVED: jev 19-Q1, CONTEXT D-09 amendment - keep APP-05 as written; informational P2 row without `GSD_RUNTIME`; behavior decision to owner review]** **Does the matrix need to include the claude-host `runtime` case?** What we know: `apply` leaves a project `runtime: codex` (D-30, documented note); a real Claude Code session has no `GSD_RUNTIME`, so `resolve-model` then returns the codex model. What's unclear: whether APP-05 intends only the `GSD_RUNTIME=claude` behavior. Recommendation: keep the pass criterion as written, add an informational P2 row without `GSD_RUNTIME` so the gap is recorded, and route a decision (default `plan-set runtime claude` or a plan `unset` of a non-claude `runtime` on claude) to the user.
+2. **[RESOLVED: jev 19-Q2, CONTEXT D-12 - `7009d22^`]** **Which v1 SKILL.md is RED-b?** `7009d22^` (recommended) or `2c16b26` (D-12 as written). Either is fine if the commit is recorded.
 3. **[RESOLVED by spike]** **Where do follow-ups land in E?** The `effort_sync` row appears only with a project-local gsd-core and an `effort.*` change; the symlink approach should produce it, to be confirmed in the spike. If it does not, E's third expectation must be tested through the unit grader on a fixture transcript instead.
-4. **REFACTOR cap and sample size** for pressure runs are not specified; recommend 3 rounds and 1 sample per cell, escalate to the user on a persistent failure.
-5. **Model and effort for `claude -p`:** discretion; recommend a fixed `--model sonnet --effort medium` recorded from the init event.
-6. **Should `ensure-runner` and the v2 full-permission disclosure be a B expectation?** Not in D-01, but it is the user's stated concern for the v2 hook; recommend adding it as an extra, non-gating expectation.
+4. **[RESOLVED: jev 19-Q4, CONTEXT D-12 - cap 3, 1 sample per cell, re-sample only ambiguous cells]** **REFACTOR cap and sample size** for pressure runs are not specified; recommend 3 rounds and 1 sample per cell, escalate to the user on a persistent failure.
+5. **[RESOLVED: jev 19-Q5, CONTEXT D-12 - sonnet/medium all cells plus one opus/high confirmation of v2 GREEN]** **Model and effort for `claude -p`:** discretion; recommend a fixed `--model sonnet --effort medium` recorded from the init event.
+6. **[RESOLVED: jev 19-Q6, CONTEXT D-01 B - extra non-gating expectation]** **Should `ensure-runner` and the v2 full-permission disclosure be a B expectation?** Not in D-01, but it is the user's stated concern for the v2 hook; recommend adding it as an extra, non-gating expectation.
 
 ## Sources
 

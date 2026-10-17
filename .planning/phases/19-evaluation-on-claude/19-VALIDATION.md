@@ -38,16 +38,30 @@ created: "2026-10-17"
 
 ## Per-Task Verification Map
 
-Task IDs are filled by the planner; one row per requirement behavior until then.
-
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| TBD | TBD | 1 | APP-05 | — | N/A | e2e (real node) | `python3 -m unittest tests.test_ai_kit_gsd_curated_config_matrix` (5 combos × P1/P2 × 35 agents; Control 1 fails, Control 2 passes; oracle asserts equal agent keys) | ❌ W0 | ⬜ pending |
-| TBD | TBD | 1 | EVAL-03 | T-19-* | scratch-only apply; refuses real apply on the ai-kit root; protected set byte-identical | unit + e2e | `python3 -m unittest tests.test_gsd_curated_eval tests.test_curated_config_apply_e2e` | ❌ W0 (helper) / ✅ (apply e2e) | ⬜ pending |
-| TBD | TBD | 1 | EVAL-01 | T-19-* | headless runs confined to scratch dirs; no `~/.claude` config change | unit (grader, non-vacuity on a wrong transcript) | `python3 -m unittest tests.test_gsd_curated_eval` | ❌ W0 | ⬜ pending |
-| TBD | TBD | 2+ | EVAL-01 | — | N/A | unit (doc contract) | `python3 -m unittest tests.test_curated_config_apply -k TestSkillDocCommands` | ✅ | ⬜ pending |
-| TBD | TBD | 3+ | EVAL-02 | — | N/A | script | digest check of final SKILL.md (+ `references/`) against every non-superseded judge row | ❌ W0 | ⬜ pending |
-| TBD | TBD | last | R7/R8 | — | N/A | unit + gate | evidence field-presence check; `make test && make validate` | ❌ W0 / ✅ | ⬜ pending |
+| 19-01-T1 | 01 | 1 | APP-05, EVAL-03 | T-19-01..03 | snapshot prints labels/hashes only; oracle independent of the product | unit + e2e | `python3 -m unittest tests.test_gsd_curated_eval tests.test_curated_config_apply_e2e` | ❌ W0 | ⬜ pending |
+| 19-01-T2 | 01 | 1 | APP-05 | T-19-04 | Control 1 non-vacuous; runtime row informational | e2e (real node) | `python3 -m unittest tests.test_ai_kit_gsd_curated_config_matrix tests.test_gate_scope` | ❌ W0 | ⬜ pending |
+| 19-02-T1 | 02 | 2 | EVAL-01 | T-19-05..07 | exact `claude -p` argv; scratch home; harness failures exit 1; transcript dir deleted | unit (injected run_fn) | `python3 -m unittest tests.test_gsd_curated_eval -k TestRun -k TestFixture` | ❌ W0 | ⬜ pending |
+| 19-02-T2 | 02 | 2 | EVAL-01 | T-19-08 | fixtures self-check discrimination from real tools | unit + real node | `python3 -m unittest tests.test_gsd_curated_eval` | ❌ W0 | ⬜ pending |
+| 19-03-T1 | 03 | 3 | EVAL-01 | T-19-09, T-19-10 | grader fails on wrong inputs; secret-scan canary | unit | `python3 -m unittest tests.test_gsd_curated_eval -k TestGrader -k TestSecretScan` | ❌ W0 | ⬜ pending |
+| 19-03-T2 | 03 | 3 | EVAL-01 | T-19-09, T-19-11 | C/D/E wrong-input pairs; eval names and answer counts pinned | unit | `python3 -m unittest tests.test_gsd_curated_eval` | ❌ W0 | ⬜ pending |
+| 19-04-T1 | 04 | 4 | EVAL-03 | T-19-12, T-19-13 | repo-root refusal; fault injector on a copy | unit | `python3 -m unittest tests.test_gsd_curated_eval -k TestSmoke` | ❌ W0 | ⬜ pending |
+| 19-04-T2 | 04 | 4 | EVAL-03, APP-05 | T-19-14, T-19-15 | placeholder-only evidence; key paths not values | unit + e2e group | `python3 -m unittest tests.test_gsd_curated_eval && python3 tools/run_unittest_parallel.py --group e2e` | ❌ W0 | ⬜ pending |
+| 19-05-T1 | 05 | 5 | EVAL-03, APP-05 | T-19-16..18 | scratch-only apply; strict set unchanged; defect fix route | manual (claude host) + script | `smoke --evidence-out` then `snapshot --check` | ❌ W0 | ⬜ pending |
+| 19-05-T2 | 05 | 5 | EVAL-03 | T-19-17, T-19-19 | secret scan; leak check | script | `python3 tests/gsd_curated_eval.py secret-scan .planning/phases/19-evaluation-on-claude/pressure .planning/phases/19-evaluation-on-claude/skill-judge .planning/phases/19-evaluation-on-claude/19-SMOKE.md .planning/phases/19-evaluation-on-claude/19-PRESSURE-TESTS.md .planning/phases/19-evaluation-on-claude/19-SKILL-JUDGE.md` | ❌ W0 | ⬜ pending |
+| 19-06-T1 | 06 | 6 | EVAL-01 | T-19-20, T-19-21 | harness-clean run.json; scratch confinement | manual (`claude -p`) + script | run.json assertion (`harness_failures == []`) | ❌ W0 | ⬜ pending |
+| 19-06-T2 | 06 | 6 | EVAL-01 | T-19-22, T-19-23 | per-batch snapshot; secret scan | manual + script | `snapshot --check`; `secret-scan` | ❌ W0 | ⬜ pending |
+| 19-07-T1 | 07 | 7 | EVAL-01 | T-19-24..26 | evidence-gated edits committed before GREEN | unit (doc contract) | `python3 -m unittest tests.test_curated_config_apply -k TestSkillDocCommands` | ✅ | ⬜ pending |
+| 19-07-T2 | 07 | 7 | EVAL-01 | T-19-26, T-19-28 | one digest across live GREEN rows | script | `digest --check 19-PRESSURE-TESTS.md` | ❌ W0 | ⬜ pending |
+| 19-07-T3 | 07 | 7 | EVAL-01 | T-19-26, T-19-27 | REFACTOR cap 3; UNRESOLVED never PASS | script + manual | `digest --check`; `secret-scan`; `snapshot --check` | ❌ W0 | ⬜ pending |
+| 19-08-T1 | 08 | 8 | EVAL-02 | T-19-29, T-19-30 | no repo write during a judge run | manual (runner review mode) | closing-lines grep + `git status --porcelain` empty | n/a | ⬜ pending |
+| 19-08-T2 | 08 | 8 | EVAL-02 | T-19-30..32 | batch move; pass rule; allowed verdict forms | script + in-session judge | `digest --check`; verdict grep | ❌ W0 | ⬜ pending |
+| 19-09-T1 | 09 | 9 | EVAL-02, EVAL-01 | T-19-33, T-19-35 | fix committed before re-runs | unit (doc contract) + script | `TestSkillDocCommands`; `digest --check` | ✅ / ❌ W0 | ⬜ pending |
+| 19-09-T2 | 09 | 9 | EVAL-02 | T-19-34, T-19-36 | cap 3; UNRESOLVED never PASS | script | verdict grep; `digest --check` | ❌ W0 | ⬜ pending |
+| 19-09-T3 | 09 | 9 | EVAL-01 | T-19-37 | opus confirmation; re-sample rule | manual (`claude -p`) + script | `secret-scan`; `snapshot --check` | ❌ W0 | ⬜ pending |
+| 19-10-T1 | 10 | 10 | EVAL-01/02/03, APP-05 | T-19-38, T-19-39 | gates incl. e2e-docker; JUDGED_COMMIT on clean judged paths | gate | `make test && make validate && make e2e-docker` + `digest --check` | ✅ / ❌ W0 | ⬜ pending |
+| 19-10-T2 | 10 | 10 | R7/R8 | T-19-40, T-19-41 | owner-review index; backlog entry; leak check | script | index/backlog greps; `git status --porcelain` empty | n/a | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
