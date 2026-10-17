@@ -2622,6 +2622,10 @@ class TestSmoke(unittest.TestCase):
             ev._shadow_failures("red-b", bash(f"python3 '{inside}' apply"), fixture), []
         )
         loop = '[ -f "$d/ai-kit-gsd-curated-config.py" ] && printf x'
+        rel = "cd " + run_dir + "; E=v1-skill/x/ai-kit-gsd-curated-config.py; python3 $E apply"
+        self.assertEqual(ev._shadow_failures("red-b", bash(rel), fixture), [])
+        rel_out = "cd /elsewhere; python3 v1-skill/x/ai-kit-gsd-curated-config.py"
+        self.assertTrue(ev._shadow_failures("red-b", bash(rel_out), fixture))
         self.assertEqual(ev._shadow_failures("red-b", bash(loop), fixture), [])
         outside = os.path.join(self.tmp, "other", "ai-kit-gsd-curated-config.py")
         self.assertEqual(

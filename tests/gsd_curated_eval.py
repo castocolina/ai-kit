@@ -2785,7 +2785,7 @@ def _build_e(paths: _Paths, home: str) -> dict:
         raise SystemExit("E self-check: workflow.cross_ai_command is not an empty needs_choice")
     _write_candidates(paths, plan)
     _self_check_e_answer(paths, plan, paths.run / "inventory.json")
-    return info
+    return {**info, "inventory": "inventory.json"}  # the eval body's {INVENTORY} (19-07)
 
 
 def _narrow_to_host(runtimes: dict, host: str = "claude") -> dict:
@@ -3220,6 +3220,9 @@ def _shadow_failures(cell: str, evs: list[dict], fixture: dict) -> list[str]:
             path = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=", "", token).strip("\"';")
             if "$" in path:
                 continue  # unexpanded (the resolve loop `$d/...`); literal runs are checked
+            if not os.path.isabs(path):  # relative to the command's last absolute `cd`
+                cds = re.findall(r"\bcd\s+[\"']?(/[^\s;&|\"']+)", event["command"])
+                path = os.path.join(cds[-1] if cds else str(fixture.get("project", "")), path)
             resolved = os.path.normpath(path)
             if not resolved.startswith(os.path.normpath(str(allowed))):
                 return [f"entrypoint_shadowed: {resolved}"]
