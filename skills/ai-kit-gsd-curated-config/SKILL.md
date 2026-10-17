@@ -171,11 +171,12 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
 Apply sets `workflow.cross_ai_command` to `node .planning/scripts/cross-ai.mjs` and renders
 the runner from the bundled template (template 3). The hook is a runtime id plus a model, never a
 raw vendor CLI string; the runtime id is `cursor` (its binaries are `cursor-agent` and a bare
-`agent` only when that binary's real path is `cursor-agent`).
+`agent` only when that binary's real path has the basename `cursor-agent`).
 
-Template 3 adds three flags the rendered hook can carry:
+Template 3 adds three flags:
 
 - `--outer-timeout <s>` replaces the GSD config lookup and the CONFIG cap as the outer deadline.
+  The review lane passes it; the GSD hook does not, so the live timeout lookup below applies.
 - `--prepend-file <path>` puts that file, minus its leading `<!-- … -->` stamp lines, before
   the prompt. The guidance file
   (`.planning/scripts/cross-ai-guidance.md`) rides this flag, and `--no-preamble` keeps the
