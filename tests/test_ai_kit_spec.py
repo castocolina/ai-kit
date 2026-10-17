@@ -34,7 +34,6 @@ from ai_kit_spec import (
     commands,
     config_io,
     detection,
-    dispatch,
     dispatch_guidance,
     execute_dispatch,
     execute_selection,
@@ -11217,21 +11216,24 @@ class TestChildEnv(unittest.TestCase):
         )
 
     def test_scrubs_host_signals_and_passes_the_rest_through(self):
-        self.assertEqual(dispatch.child_env(env={"PATH": "p", "AI_AGENT": "x"}), {"PATH": "p"})
+        self.assertEqual(
+            runner_dispatch.child_env(env={"PATH": "p", "AI_AGENT": "x"}), {"PATH": "p"}
+        )
 
     def test_no_signals_set_environment_equals_the_parents(self):
         env = {k: v for k, v in os.environ.items() if k not in detection.HOST_SIGNAL_ENV_VARS}
-        self.assertEqual(dispatch.child_env(env=env), env)
+        self.assertEqual(runner_dispatch.child_env(env=env), env)
 
     def test_extra_is_applied_after_the_scrub(self):
         self.assertEqual(
-            dispatch.child_env(extra={"AI_AGENT": "y"}, env={"AI_AGENT": "x"}), {"AI_AGENT": "y"}
+            runner_dispatch.child_env(extra={"AI_AGENT": "y"}, env={"AI_AGENT": "x"}),
+            {"AI_AGENT": "y"},
         )
 
     def test_defaults_copy_os_environ(self):
         # C-WR-08: exercise the os.environ default, with a signal set so the scrub must act.
         with unittest.mock.patch.dict(os.environ, {"PATH": "p", "AI_AGENT": "1"}, clear=True):
-            self.assertEqual(dispatch.child_env(), {"PATH": "p"})
+            self.assertEqual(runner_dispatch.child_env(), {"PATH": "p"})
 
 
 class TestDispatchReviewerRealChild(unittest.TestCase):

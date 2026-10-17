@@ -24,7 +24,6 @@ from ai_kit_spec.detection import (
     resolve_agents_tooling_path,
     run_codegraph_index,
 )
-from ai_kit_spec.dispatch import write_resumable_state as _write_resumable_state_default
 from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, ExecuteSeams, build_execute_guidance
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
 from ai_kit_spec.tooling_guidance import (
@@ -68,7 +67,7 @@ class CliDeps(NamedTuple):
     run_codegraph_index_fn: Callable[[str], bool] = run_codegraph_index
     build_gsd_cross_ai_guidance_fn: Callable[[str], str] = build_gsd_cross_ai_guidance
     run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run
-    write_resumable_state_fn: Callable[..., None] = _write_resumable_state_default
+    write_resumable_state_fn: Callable[..., None] = cache_write_json
     stdout: TextIO = sys.stdout
 
 

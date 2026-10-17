@@ -30,7 +30,6 @@ from ai_kit_spec.detection import (
     resolve_agents_tooling_path,
     run_codegraph_index,
 )
-from ai_kit_spec.dispatch import write_resumable_state as _write_resumable_state_default
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
 from ai_kit_spec.routing import (
     RuntimesSeams,
@@ -80,7 +79,7 @@ class CliDeps(NamedTuple):
     resolve_agents_tooling_path_fn: Callable[[], str | None] = resolve_agents_tooling_path
     probe_codegraph_fn: Callable[..., Any] = probe_codegraph
     run_codegraph_index_fn: Callable[[str], bool] = run_codegraph_index
-    write_resumable_state_fn: Callable[..., None] = _write_resumable_state_default
+    write_resumable_state_fn: Callable[..., None] = cache_write_json
     route_all_fn: Callable[..., dict] = route_all
     which_fn: Callable[..., Any] = shutil.which
     run_fn: Callable[..., Any] = subprocess.run

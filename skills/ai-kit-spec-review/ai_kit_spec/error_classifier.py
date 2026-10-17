@@ -99,9 +99,10 @@ def classify_error(returncode: int | None, stderr: str | bytes, timed_out: bool 
     exit never produces a reason even with hostile stderr text, R8). Never inspects the
     model's answer (stdout). Byte input is decoded with errors="replace", so non-UTF-8
     stderr cannot raise. Only the last _STDERR_TAIL_CHARS of stderr are scanned, and
-    dispatch_unavailable comes from the exit status alone (126/127: the dispatcher maps a
-    spawn OSError to 127), never from transcript text. A render ValueError from the command
-    template maps to "configuration" at the call site (quota.py:probe_reviewer_quota)."""
+    dispatch_unavailable comes from the exit status alone (126/127), never from transcript
+    text. A spawn OSError never reaches here: runner_dispatch returns dispatch_unavailable
+    (or configuration for E2BIG) itself, and quota.probe_reviewer_quota maps a template
+    render ValueError to "configuration"."""
     if timed_out:
         return "timeout"
     if returncode == 0:

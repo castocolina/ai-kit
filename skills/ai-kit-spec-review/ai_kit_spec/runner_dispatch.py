@@ -21,7 +21,7 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS
-from ai_kit_spec.dispatch import child_env
+from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.error_classifier import classify_error, reason_for_status
 from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
@@ -125,6 +125,19 @@ class _ChildRun(NamedTuple):
     timed_out: bool
     relay: tuple[Any, _RelayState] | None
     error: BaseException | None = None
+
+
+def child_env(extra: dict | None = None, env: dict | None = None) -> dict:
+    """Builds the environment for a cross-AI child (D-14): copies `env` (or os.environ),
+    removes every HOST_SIGNAL_ENV_VARS entry so the child never mistakes itself for the host,
+    then applies `extra` -- an explicit per-runtime `env` addition survives the scrub because
+    it is applied last."""
+    base = dict(os.environ if env is None else env)
+    for name in HOST_SIGNAL_ENV_VARS:
+        base.pop(name, None)
+    if extra:
+        base.update(extra)
+    return base
 
 
 def stderr_print(line: str) -> None:
