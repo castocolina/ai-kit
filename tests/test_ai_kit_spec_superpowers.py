@@ -1720,6 +1720,36 @@ class TestCliDispatchTask(unittest.TestCase):
         result = json.loads(out.getvalue())
         self.assertEqual(result["returncode"], 0)
 
+    def test_a_pre_18_1_injection_with_a_cli_key_still_dispatches(self):
+        # B-IN-05: an injection written before the cli -> runtime rename is read, not a KeyError.
+        injection = {"mode": "external_cli", "key": "c", "cli": "cursor-agent",
+                     "model": "gpt-5", "effort": None, "service_tier": None}
+        seen = []
+
+        def fake_dispatch(request, guidance=None, seams=None):
+            seen.append(request.injection["runtime"])
+            return {"runtime": "cursor", "model": "gpt-5", "command": "x", "returncode": 0,
+                    "stdout": "DONE", "stderr": "", "timed_out": False}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("prompt.txt", "format.md"):
+                with open(os.path.join(tmp, name), "w") as f:
+                    f.write("x")
+            rc = superpowers_cli.main(
+                ["dispatch-task", "--injection-json", json.dumps(injection),
+                 "--prompt-file", os.path.join(tmp, "prompt.txt"), "--target-dir", tmp,
+                 "--heartbeat-interval", "60", "--timeout", "900",
+                 "--format-block-file", os.path.join(tmp, "format.md"),
+                 "--report-file", os.path.join(tmp, "report.md")],
+                dispatch_superpowers_task_fn=fake_dispatch,
+                detect_tool_availability_fn=lambda: {},
+                resolve_agents_tooling_path_fn=lambda: None,
+                probe_codegraph_fn=lambda cli: detection.CodegraphProbe(False, False, None, "skip"),
+                stdout=io.StringIO(),
+            )
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen, ["cursor"])
+
     def test_falls_back_to_labeled_stdout_only_when_the_cli_never_wrote_its_own_report(self):
         # Degraded case: the dispatched CLI did not follow the report-file-path instruction and
         # wrote nothing to disk -- something evidentiary must still survive, but clearly labeled

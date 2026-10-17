@@ -29,6 +29,7 @@ from ai_kit_spec.detection import (
     probe_codegraph,
     resolve_agents_tooling_path,
     run_codegraph_index,
+    runtime_id,
 )
 from ai_kit_spec.execute_selection import ExecuteSelectionError
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
@@ -304,6 +305,8 @@ def _load_dispatch_task_files(args: argparse.Namespace) -> tuple[dict, str, str]
             f"dispatch-task only handles mode='external_cli' injections, got "
             f"mode={injection.get('mode')!r}; a native injection dispatches via the "
             f"Agent tool directly, never through this CLI subprocess path")
+    if "runtime" not in injection and "cli" in injection:  # a pre-18.1 injection (B-IN-05)
+        injection["runtime"] = runtime_id(injection.pop("cli"))
     with open(args.prompt_file, encoding="utf-8") as f:
         prompt = f.read()
     with open(args.format_block_file, encoding="utf-8") as f:
