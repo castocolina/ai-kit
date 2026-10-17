@@ -387,28 +387,30 @@ def _popen_supervised(work: _SpawnWork, stdin_handle, stdout_path: str):
         )
 
 
-def _supervise_child(work: _SpawnWork, stdin_handle, stdout_path: str) -> _ChildRun:
-    """Spawns and waits. An OSError is carried back: nothing was spawned to clean up."""
+def _start_child(work: _SpawnWork, stdin_handle, stdout_path: str) -> _ChildRun:
+    """Spawns and starts the relay. An OSError is carried back: nothing was spawned."""
     try:
         proc = _popen_supervised(work, stdin_handle, stdout_path)
     except OSError as exc:
         return _ChildRun(None, False, None, exc)
-    relay = _start_stderr_relay(proc.stderr, work.seams)
-    deadline = work.seams.time_fn() + work.request.deadline_s
-    return _ChildRun(proc, _wait_for_exit(proc, work.seams, deadline), relay)
+    return _ChildRun(proc, False, _start_stderr_relay(proc.stderr, work.seams))
 
 
 def _spawn_supervised(request: SpawnRequest, seams: RunnerSeams) -> RunnerResult:
     """Spawns `request.argv` and supervises it. `reason` stays None; callers fill it.
 
     A Popen OSError propagates: nothing was spawned, so there is nothing to clean up.
-    Cleanup runs on every exit path, including an exception during the wait."""
+    Cleanup runs on every exit path, including an exception during the wait (a
+    KeyboardInterrupt in `sleep_fn`): the child is already recorded in `run` by then."""
     work = _SpawnWork(request, seams)
     stdin_handle, stdin_path, stdout_path = _open_spawn_files(work.request.prompt)
     paths = [stdin_path, stdout_path]
     run: _ChildRun | None = None
     try:
-        run = _supervise_child(work, stdin_handle, stdout_path)
+        run = _start_child(work, stdin_handle, stdout_path)
+        if run.proc is not None:
+            deadline = seams.time_fn() + request.deadline_s
+            run = run._replace(timed_out=_wait_for_exit(run.proc, seams, deadline))
         stdin_handle.close()
         stdout = _cleanup_spawn(run, request, seams, paths)
     except BaseException:

@@ -330,6 +330,23 @@ class TestRunRunnerFake(unittest.TestCase):
         self.assertIn((4242, signal.SIGTERM), kills)
         self.assertIn((4242, signal.SIGKILL), kills)
 
+    def test_interrupt_during_wait_reaps_the_group(self):
+        clock = _FakeClock()
+        interrupted: list[bool] = []
+
+        def sleep(seconds):
+            if not interrupted:
+                interrupted.append(True)
+                raise KeyboardInterrupt
+            clock.sleep(seconds)
+
+        kills: list[tuple[int, int]] = []
+        seams = _seams(_ScriptedPopen([_FakeProc([], hang=True)]), [], kills, clock)
+        with self.assertRaises(KeyboardInterrupt):
+            run_runner(_spec(), "hi", seams._replace(sleep_fn=sleep))
+        self.assertIn((4242, signal.SIGTERM), kills)
+        self.assertIn((4242, signal.SIGKILL), kills)
+
     def test_popen_oserror(self):
         def popen(_argv, **_kwargs):
             raise OSError("node missing at spawn")
