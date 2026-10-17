@@ -97,18 +97,30 @@
   "effort": {
     "default": "high",
     "agent_overrides": {
-      "gsd-planner": "high",
-      "gsd-plan-checker": "high",
-      "gsd-code-reviewer": "high",
-      "gsd-ui-auditor": "high"
+      "gsd-planner": "xhigh",
+      "gsd-code-reviewer": "high"
     },
     "routing_tier_defaults": {
-      "heavy": "high"
+      "heavy": "high",
+      "light": "low",
+      "standard": "medium"
     }
   },
   "model_overrides": {
     "gsd-planner": "fable",
-    "gsd-code-reviewer": "fable",
-    "gsd-executor": "haiku"
+    "gsd-code-reviewer": "opus",
+    "gsd-plan-checker": "sonnet"
+  },
+  "runtime": "claude",
+  "resolve_model_ids": false,
+  "dynamic_routing": {
+    "enabled": true,
+    "tier_models": {
+      "light": "haiku",
+      "standard": "sonnet",
+      "heavy": "opus"
+    },
+    "escalate_on_failure": true,
+    "max_escalations": 1
   }
 }
