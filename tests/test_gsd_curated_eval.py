@@ -2509,13 +2509,17 @@ class TestSmoke(unittest.TestCase):
 
     def test_resolve_choices_artifact_first_closes_command(self) -> None:
         plan_path = self._write(
-            "plan.json", {"artifacts": [{"choices": {"codex": ["m-1"]}}], "entries": []}
+            "plan.json",
+            {
+                "artifacts": [{"choices": {"codex": {"candidates": [{"model": "m-1"}]}}}],
+                "entries": [],
+            },
         )
         calls: list[tuple] = []
         loads = iter(
             [
                 {
-                    "artifacts": [{"choices": {"codex": ["m-1"]}}],
+                    "artifacts": [{"choices": {"codex": {"candidates": [{"model": "m-1"}]}}}],
                     "entries": [
                         {
                             "key": "workflow.cross_ai_command",
@@ -2573,6 +2577,33 @@ class TestSmoke(unittest.TestCase):
         self.assertEqual(forced, ["review.x"])
         self.assertIn(("model_profile", "quality", False), calls)
         self.assertIn(("review.x", "smoke-placeholder", True), calls)
+
+    def test_resolve_choices_encodes_product_candidate_shapes(self) -> None:
+        """Live smoke regression (19-05): the trusted-roots candidate is a dict whose `value`
+        is the whole list; `str()` of it was refused by `plan-set`."""
+        plan_path = self._write("plan.json", {"artifacts": [{"choices": {}}], "entries": []})
+        plan = {
+            "artifacts": [{"choices": {}}],
+            "entries": [
+                {
+                    "key": "agent_skills_security.trusted_global_roots",
+                    "status": "needs_choice",
+                    "candidates": [{"skills": ["s"], "value": ["~/.agents/skills"]}],
+                },
+                {"key": "workflow.flag", "status": "needs_choice", "candidates": [False]},
+            ],
+        }
+        calls: list[tuple] = []
+        ev.resolve_choices(
+            plan_path,
+            "inv",
+            plan_set_fn=lambda _p, _i, key, value, force: calls.append((key, value, force)),
+            load_fn=lambda _p: plan,
+        )
+        self.assertIn(
+            ("agent_skills_security.trusted_global_roots", '["~/.agents/skills"]', False), calls
+        )
+        self.assertIn(("workflow.flag", "false", False), calls)
 
     def test_tree_hash_detects_change(self) -> None:
         root = os.path.join(self.tmp, "planning")

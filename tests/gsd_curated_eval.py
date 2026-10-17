@@ -3475,6 +3475,22 @@ def _plan_set_cli(plan_path: str, inv_path: str, key: str, value: str, force: bo
         raise SystemExit(f"plan-set {key} failed (exit {code}): {err.getvalue().strip()[:200]}")
 
 
+def _choice_raw(candidate) -> str:
+    """A candidate in the `plan-set` value form SKILL.md documents: a runtime candidate's
+    `model`, the trusted-roots candidate's whole `value` list as JSON, JSON booleans and
+    lists, else the plain string."""
+    if isinstance(candidate, dict) and "model" in candidate:
+        return str(candidate["model"])
+    if isinstance(candidate, dict) and "value" in candidate:
+        value = candidate["value"]
+        return json.dumps(value if isinstance(value, list) else [value])
+    if isinstance(candidate, bool):
+        return "true" if candidate else "false"
+    if isinstance(candidate, (list, dict)):
+        return json.dumps(candidate)
+    return str(candidate)
+
+
 def resolve_choices(plan_path, inv_path, plan_set_fn=None, load_fn=None) -> list[str]:
     """Closes every `needs_choice` item of a plan through `plan-set` (D-14 step 3).
 
@@ -3490,9 +3506,14 @@ def resolve_choices(plan_path, inv_path, plan_set_fn=None, load_fn=None) -> list
     artifacts = plan.get("artifacts") or [{}]
     choices = (artifacts[0] or {}).get("choices") or {}
     for runner in sorted(choices):
-        if choices[runner]:
+        candidates = (choices[runner] or {}).get("candidates") or []
+        if candidates:
             plan_set_fn(
-                plan_path, inv_path, f"script:cross-ai.model.{runner}", choices[runner][0], False
+                plan_path,
+                inv_path,
+                f"script:cross-ai.model.{runner}",
+                _choice_raw(candidates[0]),
+                False,
             )
     plan = load_fn(plan_path)
     forced: list[str] = []
@@ -3501,7 +3522,7 @@ def resolve_choices(plan_path, inv_path, plan_set_fn=None, load_fn=None) -> list
             continue
         key, candidates = entry.get("key", ""), entry.get("candidates") or []
         if candidates:
-            plan_set_fn(plan_path, inv_path, key, str(candidates[0]), False)
+            plan_set_fn(plan_path, inv_path, key, _choice_raw(candidates[0]), False)
         elif key == "workflow.cross_ai_command":
             raise SystemExit("runner choice unresolved")
         else:
