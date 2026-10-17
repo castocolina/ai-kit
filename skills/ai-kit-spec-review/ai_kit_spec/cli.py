@@ -733,7 +733,9 @@ def _display_argv(entry: dict, prompt: str, which_fn) -> list[str]:
     if entry.get("runtime"):
         # No config here: the entry's own tiers, else the default policy's first tier.
         timeout = resolve_timeout_tiers(entry, DEFAULT_POLICY)[0]
-        spec = review_spec(entry["runtime"], entry.get("model", ""), entry.get("extra"), timeout)
+        # A resolve-reviewers row carries `extra`; a raw config entry keeps its knobs top-level.
+        extra = entry["extra"] if "extra" in entry else to_resolved(entry).extra
+        spec = review_spec(entry["runtime"], entry.get("model", ""), extra, timeout)
         node = which_fn("node") or "node"
         return build_runner_argv(spec, resolve_cross_ai_template_path() or "<runner>", node)
     resolved = to_resolved(entry)

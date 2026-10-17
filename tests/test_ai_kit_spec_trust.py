@@ -136,6 +136,13 @@ class TestTrustLifecycle(TrustEnvTestCase):
         # an unknown cli keeps its own command; this template names no {prompt}
         self.assertEqual(lines[1]["argv"], ["mycli", "--fast", "custom-model"])
 
+    def test_show_renders_a_pair_with_its_top_level_knobs(self):
+        # B-WR-06: the consent argv carries the same effort flag dispatch passes.
+        self.write_local(b'strategy = "local-only"\n[[reviewers]]\nkey = "c"\n'
+                         b'runtime = "codex"\nmodel = "gpt"\neffort = "high"\n')
+        argv = self.show_lines()[0]["argv"]
+        self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
+
     def test_show_renders_placeholder_hidden_flag_and_executable(self):
         # A-CR-01: a placeholder must never hide what runs -- the consent display shows the
         # rendered argv, with only the prompt kept symbolic.
