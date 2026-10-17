@@ -5,7 +5,9 @@ v2 `apply` configured: `apply-execution` overwrites `workflow.cross_ai_command` 
 single-runtime runner command, dropping the prefer order and models v2 chose.
 
 One curated question (`model_profile`) plus detected and preset steps. Use it only for a
-project v2 has never configured. Order and safeguards:
+project v2 has never configured. v1 has no plan review or dry run: each `apply-*` call writes
+at once. Before each write, show the user the command and the values it sets, and run it only
+after they answer, whatever they say about speed. Order and safeguards:
 
 1. `ensure-project` first, always: without it `config-set` silently creates a sparse
    one-key config.

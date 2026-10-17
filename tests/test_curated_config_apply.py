@@ -2424,6 +2424,10 @@ class TestSkillDocCommands(unittest.TestCase):
             "does not approve them",
             # 19-07 REFACTOR 2: D green-r1 remove_rows_shown/full_diff_shown (family.* lines).
             "never a `family.*` line",
+            # 19-09: judge r1 F1 (gpt-6.1-sol): the never-skip rule is scoped to v2.
+            "In the v2 flow, never skip the plan review",
+            # 19-09: judge r1 F1 (gpt-6.1-sol): v1 asks before each apply-* write.
+            "v1 has no plan review or dry run",
         )
         missing = [phrase for phrase in required if phrase not in text]
         self.assertEqual(missing, [])

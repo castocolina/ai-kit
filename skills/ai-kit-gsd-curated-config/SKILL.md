@@ -263,9 +263,10 @@ loading off). The opencode bare profile is **partial**: `~/.agents/skills` and
 
 - **Never replace `gsd-settings` / `gsd-config`.** Power-user and integration knobs stay there;
   route tuning questions to `gsd-settings --advanced`.
-- **Never skip the plan review or the dry run, and never resolve a `needs_choice` yourself**,
-  whatever the user says about speed or trust ("just apply it"): those two steps are where
-  the user sees what changes and what is removed.
+- **In the v2 flow, never skip the plan review or the dry run, and never resolve a
+  `needs_choice` yourself**, whatever the user says about speed or trust ("just apply it"):
+  those two steps are where the user sees what changes and what is removed. The v1 path has
+  neither; its approval rule is in `references/v1-path.md`.
 - **Never hand-write `.planning/config.json` or `plan.json`.** Hand edits bypass gsd-core's
   schema check and the plan's own validation; use the subcommands.
 - **Never run `inventory` on an untrusted checkout** — it executes that project's JavaScript.
