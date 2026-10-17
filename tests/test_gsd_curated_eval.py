@@ -2803,14 +2803,38 @@ class TestSmoke(unittest.TestCase):
         the real-apply refusal, which raised before any step and aborted the whole smoke."""
         ctx = ev.SmokeCtx("node", "tools", ev.REPO_ROOT, self.tmp, "claude", {})
         with (
-            mock.patch.object(ev, "_inventory"),
+            mock.patch.object(
+                ev, "_inventory", return_value={"host": "claude", "host_source": "detected"}
+            ),
             mock.patch.object(ev, "_recommend_to"),
             mock.patch.object(ev, "resolve_choices", return_value=[]),
             mock.patch.object(ev, "_dry_run_unchanged", return_value="dry run wrote nothing"),
         ):
             step = ev._smoke_ai_kit(ctx, self.tmp, {})
         self.assertEqual(step["ok"], True, step)
-        self.assertEqual(step["detail"], "dry run wrote nothing")
+        self.assertEqual(step["detail"], "dry run wrote nothing; host claude (detected)")
+
+    def test_inventory_without_host_flag_lets_the_product_detect(self) -> None:
+        """EVAL-03: the live smoke must not pass `--host`; a detected host other than the
+        expected one fails the step."""
+        seen: list[list[str]] = []
+
+        def fake_main(argv, **_kw):
+            seen.append(argv)
+            print(json.dumps({"host": "codex", "host_source": "detected"}))
+            return 0
+
+        ctx = ev.SmokeCtx("node", "tools", ev.REPO_ROOT, self.tmp, "claude", {}, False)
+        out = os.path.join(self.tmp, "inv.json")
+        with (
+            mock.patch.object(ev, "assert_no_probe"),
+            mock.patch.object(ev, "_cache_guard"),
+            mock.patch("ai_kit_gsd_curated_config.cli.main", side_effect=fake_main),
+            self.assertRaises(SystemExit) as caught,
+        ):
+            ev._inventory(ctx, self.tmp, out, {})
+        self.assertNotIn("--host", seen[0])
+        self.assertEqual(caught.exception.code, "inventory detected host codex, expected claude")
 
     def test_assert_failure_stops_before_inventory(self) -> None:
         ctx = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "claude", {})

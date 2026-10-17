@@ -3359,6 +3359,7 @@ class SmokeCtx(NamedTuple):
     home: str
     host: str
     env: dict
+    host_flag: bool = True  # False: inventory detects the host itself (EVAL-03 live detection)
 
 
 class ValidateCtx(NamedTuple):
@@ -3647,7 +3648,7 @@ def _inventory(ctx: SmokeCtx, project: str, out: str, cache_sha: dict) -> dict:
 
     assert_no_probe(ctx.env)
     argv = ["inventory", "--project-dir", project]
-    if ctx.host:
+    if ctx.host and ctx.host_flag:
         argv += ["--host", ctx.host]
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -3661,7 +3662,10 @@ def _inventory(ctx: SmokeCtx, project: str, out: str, cache_sha: dict) -> dict:
         raise SystemExit(f"inventory failed with exit {code}")
     _cache_guard(ctx, cache_sha)
     _write_text(out, buf.getvalue())
-    return json.loads(buf.getvalue())
+    inv = json.loads(buf.getvalue())
+    if not ctx.host_flag and inv.get("host") != ctx.host:
+        raise SystemExit(f"inventory detected host {inv.get('host')}, expected {ctx.host}")
+    return inv
 
 
 def _write_text(path: str, text: str) -> None:
@@ -3759,10 +3763,11 @@ def _smoke_ai_kit(ctx: SmokeCtx, work: str, cache_sha: dict) -> dict:
     plan_path = os.path.join(work, "plan.json")
 
     def run() -> str:
-        _inventory(ctx, str(ctx.repo_root), inv_path, cache_sha)
+        inv = _inventory(ctx, str(ctx.repo_root), inv_path, cache_sha)
         _recommend_to(inv_path, plan_path)
         resolve_choices(plan_path, inv_path)
-        return _dry_run_unchanged(ctx, str(ctx.repo_root), plan_path, inv_path)
+        dry = _dry_run_unchanged(ctx, str(ctx.repo_root), plan_path, inv_path)
+        return f"{dry}; host {inv.get('host')} ({inv.get('host_source')})"
 
     return _step("ai-kit inventory, recommend, dry run", run)
 
@@ -4016,15 +4021,23 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
     if node_bin is None or reason:
         print(reason or "no node executable")
         return 3
+    from ai_kit_gsd_curated_config import (
+        host as host_mod,  # pylint: disable=import-outside-toplevel
+    )
+
+    host, host_source = host_mod.detect_host(dict(os.environ), args.host)
+    if host is None:
+        print(f"host detection failed: {host_source}; re-run with --host claude")
+        return 2
     work = tempfile.mkdtemp(prefix="smoke-")
     home = str(_abs(args.home or pathlib.Path.home()))
     env = {
         **os.environ,
         "RUNTIME_DIR": str(REPO_ROOT),
-        "GSD_RUNTIME": args.host,
+        "GSD_RUNTIME": host,
         "XDG_CACHE_HOME": os.path.join(work, "xdg"),
     }
-    ctx = SmokeCtx(node_bin, GSD_TOOLS_PATH, REPO_ROOT, home, args.host, env)
+    ctx = SmokeCtx(node_bin, GSD_TOOLS_PATH, REPO_ROOT, home, host, env, args.host is not None)
     try:
         result = run_smoke(ctx, work)
         result.update(
@@ -4093,7 +4106,7 @@ def _build_parser() -> argparse.ArgumentParser:
     fix.set_defaults(func=_cmd_fixture)
 
     smoke = sub.add_parser("smoke", help="the D-14 live smoke (writes scratch projects only)")
-    smoke.add_argument("--host", default="claude", help="runtime the smoke runs on")
+    smoke.add_argument("--host", help="runtime the smoke runs on (default: detected)")
     smoke.add_argument("--home", help="home directory to protect (default: this process's)")
     smoke.add_argument("--evidence-out", required=True, help="write the evidence here")
     smoke.set_defaults(func=_cmd_smoke)
