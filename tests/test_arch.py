@@ -420,11 +420,12 @@ def check_broad_except_allowlist(relpath, src):
     ]
 
 
-# Built by concatenation so this file never contains a retired literal's text.
+# Built by concatenation so this file never contains a retired literal as a string constant.
+_RETIRED_CURSOR = "cursor" + "-agent"
 _RETIRED_FIELD = "native" + "_runtime"
 _RETIRED_MODE = "native" + "_claude"
 _RETIRED_LITERALS = {
-    "cursor-agent": frozenset({"skills/ai-kit-spec-review/ai_kit_spec/detection.py"}),
+    _RETIRED_CURSOR: frozenset({"skills/ai-kit-spec-review/ai_kit_spec/detection.py"}),
     _RETIRED_FIELD: frozenset({"skills/ai-kit-spec-review/ai_kit_spec/config_io.py"}),
     _RETIRED_MODE: frozenset(),
 }
@@ -566,7 +567,11 @@ class TestArchitecture(unittest.TestCase):
                     with open(path, encoding="utf-8") as handle:
                         tree = ast.parse(handle.read(), filename=path)
                     violations.extend(check_retired_literals(relpath, tree))
-                    if any(relpath in allowed for allowed in _RETIRED_LITERALS.values()):
+                    strings = {node.value for node in ast.walk(tree)
+                               if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+                    # An allowlist entry counts only while its file still holds the literal.
+                    if any(relpath in allowed and literal in strings
+                           for literal, allowed in _RETIRED_LITERALS.items()):
                         seen_allowlist.add(relpath)
         self.assertEqual([], violations)
         expected = set().union(*_RETIRED_LITERALS.values())
@@ -589,8 +594,6 @@ class TestArchitecture(unittest.TestCase):
                     if relpath == _SUPERVISOR_OWNER:
                         owner_count = supervisor_spawn_count(tree)
         self.assertEqual([], violations)
-        self.assertIsNotNone(owner_count)
-        assert owner_count is not None
         self.assertGreaterEqual(owner_count, 1)
 
     def test_rule12_main_guard_is_the_last_statement(self):
@@ -820,8 +823,8 @@ class TestArchNonVacuity(unittest.TestCase):
 
 
     def test_rule10_flags_retired_literal(self):
-        bad = ast.parse('x = "cursor-agent"')
-        binary = ast.parse('x = "cursor-agent -p"')
+        bad = ast.parse(f'x = "{_RETIRED_CURSOR}"')
+        binary = ast.parse(f'x = "{_RETIRED_CURSOR} -p"')
         allowlisted = "skills/ai-kit-spec-review/ai_kit_spec/detection.py"
         self.assertEqual(1, len(check_retired_literals("skills/other.py", bad)))
         self.assertEqual([], check_retired_literals(allowlisted, bad))
