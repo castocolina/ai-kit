@@ -31,6 +31,11 @@ No `fix(19-10)` product commit was needed. The re-run, at 18:47-18:51, passed ev
 - `make validate`: rc 0. ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest (core) and unittest (wizard, uv) all `Passed`.
 - `make e2e-docker`: rc 0 (podman). The container ran `42/42`, `4/4`, `8/8` and `1/1` modules passed, plus `45 passed, 0 failed`, and ended with `==> ai-kit clean-room E2E: PASS`.
 
+After the code review (fd80e5e, 44c978a, 0096e2d, 4420744), on HEAD 4420744:
+- `make test`: rc 0 (same module counts; e2e `45 passed, 0 failed`).
+- `make validate`: rc 0, after 4420744 fixed 7 pyright errors the review follow-up introduced.
+- `make e2e-docker`: rc 0, `==> ai-kit clean-room E2E: PASS`.
+
 ## Gate failures
 
 - none after the re-run. The first-run failures and their fix are above.

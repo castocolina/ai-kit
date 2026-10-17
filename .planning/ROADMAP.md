@@ -438,8 +438,10 @@ model exactly as planned.
   3. A live smoke run from the claude host — `inventory` + `recommend` + `apply` (dry-run, then
      real on a scratch project) — completes without corrupting the scratch project's config.
   4. After `apply`, `gsd-tools resolve-model <agent>` with `GSD_RUNTIME=claude` returns the
-     planned model for all 35 agents, proven against the checkout-local gsd-core (1.16.x),
-     version recorded in `19-SMOKE.md` (Amended 2026-10-17 (19-RESEARCH R-7)).
+     planned model for all 35 agents, proven against the checkout-local gsd-core (a verified
+     line: 1.16.x or 1.17.x; the run used 1.17.0), version recorded in `19-SMOKE.md` (Amended
+     2026-10-17 (19-RESEARCH R-7); amended again by the 19 verification: the shared install
+     moved to 1.17.0 and `GSD_CORE_PREFIXES` lists both lines).
 **Plans**: 10/10 plans executed (sequential waves 1-10)
 - [x] 19-01-PLAN.md — eval helper: snapshot, digest, oracle + resolve-model matrix e2e (cross-AI)
 - [x] 19-02-PLAN.md — pressure fixtures B-E, headless `claude -p` runner, eval files (cross-AI)
