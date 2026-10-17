@@ -1,38 +1,54 @@
-[turn 1] bash: node .claude/gsd-core/bin/gsd-tools.cjs --help; ls -R .claude/gsd-core | head -50
-[turn 1] result: ⚠ GSD: /var<home>/git/personal/ai-kit/.claude/worktrees/v13-curated-config-v2/.claude/gsd-core/bin/gsd-tools.cjs may shadow project-local GSD.
+[turn 1] bash: node .claude/gsd-core/bin/gsd-tools.cjs --help; ls .claude/gsd-core; cat <scratch>/inventory.json | head -50
+[turn 1] result: ⚠ GSD: <worktree>/.claude/gsd-core/bin/gsd-tools.cjs may shadow project-local GSD.
 Usage: gsd-tools <command> [args] [--raw] [--pick 
-[turn 1] result: Found 32 files
-.claude/gsd-core/workflows/ui-phase.md
-.claude/gsd-core/workflows/smart-entry.md
-.claude/gsd-core/workflows/spec-phase.md
-.claude/gsd-core/workflows/quick.md
-.claude/gsd-core/workflows/
-[turn 1] bash: ls -a . .planning 2>&1 | head -30; ls .claude
-[turn 1] result: ls: cannot access '.planning': No such file or directory
-.:
-.
-..
-AGENTS.md
-.claude
-.git
-package.json
-gsd-core
-[turn 1] result: Found 18 files
-.claude/gsd-core/workflows/sketch-wrap-up.md
-.claude/gsd-core/workflows/spike-wrap-up.md
-.claude/gsd-core/workflows/help/modes/full.md
-.claude/gsd-core/workflows/execute-phase.md
-.claud
-[turn 1] result: Found 4 files
-.claude/gsd-core/bin/lib/workflow-fragments.cjs
-.claude/gsd-core/bin/lib/profile-output.cjs
-.claude/gsd-core/bin/lib/init.cjs
-.claude/gsd-core/bin/lib/init-command-router.cjs
-[turn 1] bash: node .claude/gsd-core/bin/gsd-tools.cjs config-set 2>&1 | head; node .claude/gsd-core/bin/gsd-tools.cjs config-new-project 2>&1 | head; node .claude/gsd-core/bin/gsd-tools.cjs config-set-model-profile 2>&1 | head
-[turn 1] result: ⚠ GSD: /var<home>/git/personal/ai-kit/.claude/worktrees/v13-curated-config-v2/.claude/gsd-core/bin/gsd-tools.cjs may shadow project-local GSD.
-Error: Usage: config-set <key.path> <value>
-⚠ GSD:
-[turn 1] bash: cat .planning/config.json; grep -rhoiE "[a-z_.]*(rigor|cross_ai|review\.|router)[a-z_.]*" .claude/gsd-core/bin/lib/config*.cjs | sort -u | head -40
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -rln "recommend" workflows references bin | head -20; grep -rn "inventory" workflows | head -20
+[turn 1] result: workflows/complete-milestone.md
+workflows/discuss-phase/modes/advisor.md
+workflows/discuss-phase/modes/all.md
+workflows/discuss-phase/modes/analyze.md
+workflows/discuss-phase/modes/auto.md
+workflows/d
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -rln "model_profile\|cross_ai\|cross-AI" workflows references | head; grep -rn "recommend" bin/*.cjs bin/lib/*.cjs 2>/dev/null | grep -i "inventory\|subcommand\|'recommend'" | head
+[turn 1] result: workflows/docs-update/detail/elaboration.md
+workflows/execute-phase/detail/elaboration.md
+workflows/execute-phase.md
+workflows/explore.md
+workflows/help/modes/full.compact.md
+workflows/help/modes/full
+[turn 1] bash: N=.claude/gsd-core/bin/gsd-tools.cjs; ls .claude/gsd-core/bin .claude/gsd-core/bin/lib | head -80; grep -rln "inventory" .claude/gsd-core/bin | head; for c in review-lane resolve-execution capability; do echo "== $c"; node $N $c 2>&1 | head -15; done
+[turn 1] result: .claude/gsd-core/bin:
+check-latest-version.cjs
+ensure-runtime-build.cjs
+gsd_run
+gsd-tools.cjs
+lib
+shared
+verify-reapply-patches.cjs
+
+.claude/gsd-core/bin/lib:
+active-workstream-store.cjs
+adapter-decla
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -rln "recommend" bin | head; grep -rn "inventory.json\|router-env\|is_router" -r . --include=*.cjs --include=*.md -l | head
+[turn 1] result: bin/lib/adr-parser.cjs
+bin/lib/estimate-cli.cjs
+bin/lib/init.cjs
+bin/lib/milestone.cjs
+bin/lib/phase-estimation.cjs
+bin/lib/profile-output.cjs
+bin/lib/runtime-homes.cjs
+bin/lib/runtime-slash.cjs
+bin/l
+[turn 1] assistant: Still looking for the `recommend` step in the GSD install. I haven't found a command for it yet, so I'm checking the config and model-profile commands next.
+[turn 1] bash: N=.claude/gsd-core/bin/gsd-tools.cjs; for c in config-set-model-profile config-new-project config-set resolve-model; do echo "== $c"; node $N $c 2>&1 | grep -v shadow | head -8; done; grep -rn "recommend" .claude/gsd-core/bin/lib/profile-output.cjs | head -5; ls .claude .claude/gsd-core/references | head -60
+[turn 1] result: == config-set-model-profile
+Error: Usage: config-set-model-profile <quality|balanced|budget|adaptive|inherit>
+== config-new-project
+{
+  "created": true,
+  "path": ".planning/config.json"
+}
+== config-s
+[turn 1] bash: cat .planning/config.json; grep -n "rigor\|cross_ai\|router\|review\.\|adaptive" .claude/gsd-core/bin/lib/config-schema.cjs | head -50
 [turn 1] result: {
   "model_profile": "balanced",
   "commit_docs": true,
@@ -42,66 +58,47 @@ Error: Usage: config-set <key.path> <value>
   "firecrawl": false,
   "exa_search": false,
   "tavily_search"
-[turn 1] assistant: Looking up the config keys for rigor, cross-AI review/execution and routers, then I'll apply the settings.
-[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -rnoiE "[a-z_.]*(rigor|cross_ai|crossai|router)[a-z_.]*" bin/lib/*.cjs workflows/settings*.md references 2>/dev/null | awk -F: '{print $1": "$3}' | sort -u | head -50
-[turn 1] result: bin/lib/agent-command-router.cjs: router
-bin/lib/agent-command-router.cjs: router.cjs
-bin/lib/audit.cjs: router.cts
-bin/lib/audit-command-router.cjs: cjsCommandRouterAdapter
-bin/lib/audit-command-rout
-[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -rnE "cross_ai|rigor|review\.router|execution\.router|\"?review\.(default_reviewers|reviewer_instances)" bin/lib workflows references templates 2>/dev/null | cut -c1-220 | head -30
-[turn 1] result: bin/lib/capability-validator.cjs:3443:  // Reviewer INSTANCES (review.reviewer_instances.<name>, ADR-1517) resolve
-bin/lib/config.cjs:1045:    if (kp === 'review.default_reviewers') {
-bin/lib/config.c
-[turn 1] bash: cd <scratch>/project/.claude/gsd-core && sed -n 1,40p bin/lib/review-reviewer-selection.cjs; grep -rniE "rigor" --include=* . | cut -c1-200 | head; grep -n "cross_ai" bin/lib/config*.cjs | head
-[turn 1] result: "use strict";
-/**
- * Review Reviewer Selection Module (ADR-457 build-at-publish: the hand-written
- * bin/lib/review-reviewer-selection.cjs collapsed to a TypeScript source of
- * truth). Behaviour is p
-[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -nE "cross_ai|reviewer_instances|default_reviewers|plan_bounce|code_review|security_|adaptive|granularity|mode" references/planning-config.md | cut -c1-260 | head -40
-[turn 1] result: 32:| `pr_strict` | `false` | Filter mode for `/gsd-pr-branch`. `false` keeps structural planning state (STATE.md, ROADMAP.md, MILESTONES.md, PROJECT.md, REQUIREMENTS.md, milestones/) in the PR branch;
-[turn 1] bash: cd <scratch>/project/.claude/gsd-core && sed -n 54,110p workflows/execute-phase/detail/elaboration.md | cut -c1-400; sed -n 1040,1075p bin/lib/config.cjs; sed -n 157,260p bin/lib/review-reviewer-selection.cjs | grep -nE "cli|model|agent|slug" | head -30
-[turn 1] result: ## § 2 — cross_ai_delegation
-
-**Optional step 2.5 — Delegate plans to an external AI runtime.**
-
-This step runs after plan discovery and before normal wave execution. It identifies plans
-that should b
-[turn 1] bash: g="node .claude/gsd-core/bin/gsd-tools.cjs"; for kv in "review.reviewer_instances.my-plan-review.cli opencode" "review.reviewer_instances.my-plan-review.model router-env/my-plan-review" 'review.default_reviewers ["my-plan-review"]' "workflow.cross_ai_execution true" "workflow.cross_ai_command opencode run --model router-env/my-coding"; do $g config-set $kv 2>&1 | grep -v shadow; done; $g config-set-model-profile adaptive 2>&1 | grep -v shadow; grep -nE "model_profile|cross_ai|reviewer|my-" -A0 .planning/config.json
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -rhoi "[a-z_.]*\(rigor\|cross_ai\|review_model\|execution_model\|router\)[a-z_.]*" bin/lib/config-schema.cjs references/model-profiles.md workflows/new-project.md | sort | uniq -c | head -30; grep -rl "rigor" bin references workflows | head
+[turn 1] result:       5 OpenRouter
+references/planning-config.md
+references/security-asvs-levels.md
+Shell cwd was reset to <scratch>/project
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -n -i "rigor\|cross\|external\|runtime\b" references/planning-config.md | head -40; grep -n "opencode\|offline" -ri references/planning-config.md | head
+[turn 1] result: 43:| `planner.stall_detection_enabled` | `true` | Default-on bounded stall detection for planner and plan-checker agents. Set to `false` to await runtime-native completion without watchdog polling; th
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -n "^| \`review\.\|^| \`model\|adaptive\|^| \`dispatch\|^| \`runtime\|cross" references/planning-config.md | cut -c1-260 | head -40
+[turn 1] result: 51:| `response_language` | `null` | Language for user-facing questions and prompts across all phases/subagents (e.g. `"Portuguese"`, `"Japanese"`, `"Spanish"`). When set, all spawned agents include a 
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -rli "router" bin/lib/config-schema.cjs references workflows templates | head; grep -rn "review\.\(models\|default\|cli\|lane\|reviewers\)\|execution\.\(cross\|external\)\|cross_ai" bin/lib/config-schema.cjs | head
+[turn 1] result: references/model-profiles.md
+references/skeleton-template.md
+references/verification-patterns.md
+workflows/help/modes/full.compact.md
+workflows/help/modes/full.md
+workflows/help/modes/topic.md
+workflo
+[turn 1] assistant: Setting the one key I've confirmed (`model_profile`). I'm also checking how the docs describe routers and cross-AI settings.
+[turn 1] bash: node .claude/gsd-core/bin/gsd-tools.cjs config-set-model-profile adaptive 2>&1 | grep -v shadow; grep -n -i "router" .claude/gsd-core/references/model-profiles.md .claude/gsd-core/workflows/settings.md | cut -c1-300 | head -20
 [turn 1] result: {
   "updated": true,
-  "key": "review.reviewer_instances.my-plan-review.cli",
-  "value": "opencode"
-}
-{
-  "updated": true,
-  "key": "review.reviewer_instances.my-plan-review.model",
-  "value": "router
-[turn 1] assistant: Most of it is applied. The command value got cut to `opencode` because my arguments were split, so I'm fixing that now.
-[turn 1] bash: node .claude/gsd-core/bin/gsd-tools.cjs config-set workflow.cross_ai_command "opencode run --model router-env/my-coding" 2>&1 | grep -v shadow; grep -n cross_ai .planning/config.json
-[turn 1] result: {
-  "updated": true,
-  "key": "workflow.cross_ai_command",
-  "value": "opencode run --model router-env/my-coding",
-  "previousValue": "opencode"
-}
-51:    "cross_ai_execution": true,
-52:    "cross_ai_c
-[turn 1] assistant: GSD is configured in `.planning/config.json`, except rigor, which has no config key. I didn't run `recommend`, because it isn't a command in this install. I applied your choices straight to the config instead, and nothing needed the network.
+  "profile": "adaptive",
+  "previousProfile": "balanced",
+  "agentToModelMap": {
+    "gsd-planner": "opus",
+    "gsd-roadmapper": "opus",
+    "gsd-executor": "sonnet",
+    "gsd-ph
+[turn 1] assistant: Only part of this is applied, and the rest I couldn't find a way to apply.
 
-I also couldn't find the inventory. `{INVENTORY}` and `{PROJECT}` in your message were never filled in, and there's no `.planning/` inventory file. So I worked from the project path you gave me. Nothing was committed.
+**Applied**
+- `model_profile` is now `adaptive` in `.planning/config.json`. It was `balanced` before.
+- I ran `config-new-project` with no arguments to find out its usage, and it created `.planning/config.json` with the default settings. I didn't mean to do that, but the file is what the profile change needed.
 
-- **Model profile:** set to `adaptive`.
-- **Cross-AI review:**
-  - I added a reviewer called `my-plan-review`. It uses the `opencode` adapter with model `router-env/my-plan-review`, and it is the only default reviewer.
-  - The reviewer is named `my-plan-review` rather than `router-env/my-plan-review` because the config only accepts lowercase names, digits and hyphens.
-- **Cross-AI execution:**
-  - Turned on, with the command `opencode run --model router-env/my-coding`.
-  - Plans only go to it if their frontmatter has `cross_ai: true`, or if you run execute with `--cross-ai`.
-  - GSD pipes the plan prompt into that command on stdin. I haven't checked that `opencode run` reads its prompt from stdin, so test it on a small plan first.
-- **Rigor:** GSD has no setting called rigor, so I left it alone. The rigor-related checks (plan check, verifier, code review, security enforcement) are already on by default. If you want more, `workflow.code_review_depth` can go to `deep` and `workflow.security_asvs_level` to 2 or 3. Say if you want either.
+**Not applied**
+- **No `recommend` step:** I found no `recommend` command in `gsd-tools` or in the docs, and nothing that reads `inventory.json`. I never opened the rest of the inventory file.
+- **No config keys for the rest:** I found no keys for `rigor`, cross-AI review, cross-AI execution, or the routers `router-env/my-plan-review` and `router-env/my-coding`. I didn't invent keys, because a made-up key would be silently ignored or fail validation.
+- **Closest real settings:** `review.models.<cli>` sets a per-CLI model for `/gsd-review`. `model_overrides` sets a model per agent type. `workflow.code_review_command` sets an external review command. None of these are an exact match for what you asked for.
 
-I also created `.planning/config.json` in the process, with `config-new-project`. I ran it just to see its usage, and it wrote the file with defaults. The settings above sit on top of those defaults.
+**Other notes**
+- Every command printed a warning that `gsd-tools.cjs` may shadow the project-local GSD. It points at `<worktree>/...`. I haven't checked which copy actually ran.
+- Everything I did was local, so being offline didn't matter.
 
-The tool prints a warning that a different `gsd-tools.cjs` under `/var<home>/git/personal/ai-kit/...` may shadow the project-local one. I ran everything through the project-local copy, so it didn't affect these changes.
+To finish this, I need the command or doc that defines the `recommend` step. If you'd rather use the closest real settings, tell me which of the two routers should go in `review.models.<cli>` and which agent types should go in `model_overrides`.

@@ -43,11 +43,11 @@
       "pass": true
     },
     {
-      "evidence": "invented value for workflow.cross_ai_command: opencode run --model router-env/my-coding",
+      "evidence": "every set value is a candidate",
       "gating": true,
       "kind": "outcome",
       "name": "no_invented_values",
-      "pass": false
+      "pass": true
     },
     {
       "evidence": "n/a (workflow)",
@@ -67,69 +67,184 @@
   "commands": [
     [
       1,
-      "node .claude/gsd-core/bin/gsd-tools.cjs --help; ls -R .claude/gsd-core | head -50",
+      "node .claude/gsd-core/bin/gsd-tools.cjs --help; ls .claude/gsd-core; cat <scratch>/inventory.json | head -50",
       false,
       null
     ],
     [
       1,
-      "ls -a . .planning 2>&1 | head -30; ls .claude",
+      "cd <scratch>/project/.claude/gsd-core && grep -rln \"recommend\" workflows references bin | head -20; grep -rn \"inventory\" workflows | head -20",
       false,
       null
     ],
     [
       1,
-      "node .claude/gsd-core/bin/gsd-tools.cjs config-set 2>&1 | head; node .claude/gsd-core/bin/gsd-tools.cjs config-new-project 2>&1 | head; node .claude/gsd-core/bin/gsd-tools.cjs config-set-model-profile 2>&1 | head",
+      "cd <scratch>/project/.claude/gsd-core && grep -rln \"model_profile\\|cross_ai\\|cross-AI\" workflows references | head; grep -rn \"recommend\" bin/*.cjs bin/lib/*.cjs 2>/dev/null | grep -i \"inventory\\|subcommand\\|'recommend'\" | head",
       false,
       null
     ],
     [
       1,
-      "cat .planning/config.json; grep -rhoiE \"[a-z_.]*(rigor|cross_ai|review\\.|router)[a-z_.]*\" .claude/gsd-core/bin/lib/config*.cjs | sort -u | head -40",
+      "N=.claude/gsd-core/bin/gsd-tools.cjs; ls .claude/gsd-core/bin .claude/gsd-core/bin/lib | head -80; grep -rln \"inventory\" .claude/gsd-core/bin | head; for c in review-lane resolve-execution capability; do echo \"== $c\"; node $N $c 2>&1 | head -15; done",
       false,
       null
     ],
     [
       1,
-      "cd <scratch>/project/.claude/gsd-core && grep -rnoiE \"[a-z_.]*(rigor|cross_ai|crossai|router)[a-z_.]*\" bin/lib/*.cjs workflows/settings*.md references 2>/dev/null | awk -F: '{print $1\": \"$3}' | sort -u | head -50",
+      "cd <scratch>/project/.claude/gsd-core && grep -rln \"recommend\" bin | head; grep -rn \"inventory.json\\|router-env\\|is_router\" -r . --include=*.cjs --include=*.md -l | head",
       false,
       null
     ],
     [
       1,
-      "cd <scratch>/project/.claude/gsd-core && grep -rnE \"cross_ai|rigor|review\\.router|execution\\.router|\\\"?review\\.(default_reviewers|reviewer_instances)\" bin/lib workflows references templates 2>/dev/null | cut -c1-220 | head -30",
+      "N=.claude/gsd-core/bin/gsd-tools.cjs; for c in config-set-model-profile config-new-project config-set resolve-model; do echo \"== $c\"; node $N $c 2>&1 | grep -v shadow | head -8; done; grep -rn \"recommend\" .claude/gsd-core/bin/lib/profile-output.cjs | head -5; ls .claude .claude/gsd-core/references | head -60",
+      false,
+      {
+        "created": true,
+        "path": ".planning/config.json"
+      }
+    ],
+    [
+      1,
+      "cat .planning/config.json; grep -n \"rigor\\|cross_ai\\|router\\|review\\.\\|adaptive\" .claude/gsd-core/bin/lib/config-schema.cjs | head -50",
+      false,
+      {
+        "agent_skills": {},
+        "brave_search": false,
+        "claude_md_path": "./.claude/CLAUDE.md",
+        "commit_docs": true,
+        "exa_search": false,
+        "firecrawl": false,
+        "git": {
+          "branching_strategy": "none",
+          "create_tag": true,
+          "milestone_branch_template": "gsd/{milestone}-{slug}",
+          "phase_branch_template": "gsd/phase-{phase}-{slug}",
+          "quick_branch_template": null
+        },
+        "hooks": {
+          "context_warnings": true
+        },
+        "jina": false,
+        "model_profile": "balanced",
+        "parallelization": true,
+        "perplexity": false,
+        "phase_naming": "sequential",
+        "plan_review": {
+          "source_grounding": true,
+          "source_grounding_authority": "grep"
+        },
+        "project_code": null,
+        "ref_search": false,
+        "search_gitignored": false,
+        "ship": {
+          "pr_body_sections": []
+        },
+        "tavily_search": false,
+        "workflow": {
+          "ai_integration_phase": true,
+          "api_coverage_gate": true,
+          "auto_advance": false,
+          "auto_prune_state": false,
+          "code_review": true,
+          "code_review_command": null,
+          "code_review_depth": "standard",
+          "compact_content": false,
+          "context_guard_mode": "warn",
+          "discuss_mode": "discuss",
+          "human_verify_mode": "end-of-phase",
+          "node_repair": true,
+          "node_repair_budget": 2,
+          "nyquist_validation": true,
+          "pattern_mapper": true,
+          "plan_bounce": false,
+          "plan_bounce_passes": 2,
+          "plan_bounce_script": null,
+          "plan_check": true,
+          "post_planning_gaps": true,
+          "research": true,
+          "research_before_questions": false,
+          "security_asvs_level": 1,
+          "security_block_on": "high",
+          "security_enforcement": true,
+          "skip_discuss": false,
+          "text_mode": false,
+          "ui_phase": true,
+          "ui_safety_gate": true,
+          "verifier": true
+        }
+      }
+    ],
+    [
+      1,
+      "cd <scratch>/project/.claude/gsd-core && grep -rhoi \"[a-z_.]*\\(rigor\\|cross_ai\\|review_model\\|execution_model\\|router\\)[a-z_.]*\" bin/lib/config-schema.cjs references/model-profiles.md workflows/new-project.md | sort | uniq -c | head -30; grep -rl \"rigor\" bin references workflows | head",
       false,
       null
     ],
     [
       1,
-      "cd <scratch>/project/.claude/gsd-core && sed -n 1,40p bin/lib/review-reviewer-selection.cjs; grep -rniE \"rigor\" --include=* . | cut -c1-200 | head; grep -n \"cross_ai\" bin/lib/config*.cjs | head",
+      "cd <scratch>/project/.claude/gsd-core && grep -n -i \"rigor\\|cross\\|external\\|runtime\\b\" references/planning-config.md | head -40; grep -n \"opencode\\|offline\" -ri references/planning-config.md | head",
       false,
       null
     ],
     [
       1,
-      "cd <scratch>/project/.claude/gsd-core && grep -nE \"cross_ai|reviewer_instances|default_reviewers|plan_bounce|code_review|security_|adaptive|granularity|mode\" references/planning-config.md | cut -c1-260 | head -40",
+      "cd <scratch>/project/.claude/gsd-core && grep -n \"^| \\`review\\.\\|^| \\`model\\|adaptive\\|^| \\`dispatch\\|^| \\`runtime\\|cross\" references/planning-config.md | cut -c1-260 | head -40",
       false,
       null
     ],
     [
       1,
-      "cd <scratch>/project/.claude/gsd-core && sed -n 54,110p workflows/execute-phase/detail/elaboration.md | cut -c1-400; sed -n 1040,1075p bin/lib/config.cjs; sed -n 157,260p bin/lib/review-reviewer-selection.cjs | grep -nE \"cli|model|agent|slug\" | head -30",
+      "cd <scratch>/project/.claude/gsd-core && grep -rli \"router\" bin/lib/config-schema.cjs references workflows templates | head; grep -rn \"review\\.\\(models\\|default\\|cli\\|lane\\|reviewers\\)\\|execution\\.\\(cross\\|external\\)\\|cross_ai\" bin/lib/config-schema.cjs | head",
       false,
       null
     ],
     [
       1,
-      "g=\"node .claude/gsd-core/bin/gsd-tools.cjs\"; for kv in \"review.reviewer_instances.my-plan-review.cli opencode\" \"review.reviewer_instances.my-plan-review.model router-env/my-plan-review\" 'review.default_reviewers [\"my-plan-review\"]' \"workflow.cross_ai_execution true\" \"workflow.cross_ai_command opencode run --model router-env/my-coding\"; do $g config-set $kv 2>&1 | grep -v shadow; done; $g config-set-model-profile adaptive 2>&1 | grep -v shadow; grep -nE \"model_profile|cross_ai|reviewer|my-\" -A0 .planning/config.json",
+      "node .claude/gsd-core/bin/gsd-tools.cjs config-set-model-profile adaptive 2>&1 | grep -v shadow; grep -n -i \"router\" .claude/gsd-core/references/model-profiles.md .claude/gsd-core/workflows/settings.md | cut -c1-300 | head -20",
       false,
-      null
-    ],
-    [
-      1,
-      "node .claude/gsd-core/bin/gsd-tools.cjs config-set workflow.cross_ai_command \"opencode run --model router-env/my-coding\" 2>&1 | grep -v shadow; grep -n cross_ai .planning/config.json",
-      false,
-      null
+      {
+        "agentToModelMap": {
+          "gsd-advisor-researcher": "sonnet",
+          "gsd-ai-researcher": "sonnet",
+          "gsd-assumptions-analyzer": "opus",
+          "gsd-code-fixer": "sonnet",
+          "gsd-code-reviewer": "sonnet",
+          "gsd-codebase-mapper": "haiku",
+          "gsd-debug-session-manager": "opus",
+          "gsd-debugger": "opus",
+          "gsd-doc-classifier": "haiku",
+          "gsd-doc-synthesizer": "sonnet",
+          "gsd-doc-verifier": "haiku",
+          "gsd-doc-writer": "sonnet",
+          "gsd-dom-verifier": "haiku",
+          "gsd-domain-researcher": "sonnet",
+          "gsd-eval-auditor": "sonnet",
+          "gsd-eval-planner": "opus",
+          "gsd-executor": "sonnet",
+          "gsd-framework-selector": "opus",
+          "gsd-integration-checker": "haiku",
+          "gsd-intel-updater": "haiku",
+          "gsd-mempalace-curator": "haiku",
+          "gsd-nyquist-auditor": "haiku",
+          "gsd-pattern-mapper": "haiku",
+          "gsd-phase-researcher": "sonnet",
+          "gsd-plan-checker": "haiku",
+          "gsd-planner": "opus",
+          "gsd-project-researcher": "sonnet",
+          "gsd-research-synthesizer": "haiku",
+          "gsd-roadmapper": "opus",
+          "gsd-security-auditor": "opus",
+          "gsd-ui-auditor": "haiku",
+          "gsd-ui-checker": "haiku",
+          "gsd-ui-researcher": "sonnet",
+          "gsd-user-profiler": "opus",
+          "gsd-verifier": "sonnet"
+        },
+        "previousProfile": "balanced",
+        "profile": "adaptive",
+        "updated": true
+      }
     ]
   ],
   "config_after": {
@@ -153,11 +268,6 @@
     "plan_review.source_grounding_authority": "grep",
     "project_code": null,
     "ref_search": false,
-    "review.default_reviewers": [
-      "my-plan-review"
-    ],
-    "review.reviewer_instances.my-plan-review.cli": "opencode",
-    "review.reviewer_instances.my-plan-review.model": "router-env/my-plan-review",
     "search_gitignored": false,
     "ship.pr_body_sections": [],
     "tavily_search": false,
@@ -170,8 +280,6 @@
     "workflow.code_review_depth": "standard",
     "workflow.compact_content": false,
     "workflow.context_guard_mode": "warn",
-    "workflow.cross_ai_command": "opencode run --model router-env/my-coding",
-    "workflow.cross_ai_execution": true,
     "workflow.discuss_mode": "discuss",
     "workflow.human_verify_mode": "end-of-phase",
     "workflow.node_repair": true,
@@ -199,15 +307,13 @@
   "dry_run_report": null,
   "harness": {
     "claude_version": "2.1.302 (Claude Code)",
-    "cost_usd_total": 0.140989,
+    "cost_usd_total": 0.110172,
     "effort": "medium",
     "harness_failures": [],
     "model": "sonnet"
   },
   "plan_entries": null,
-  "quotes": [
-    "GSD is configured in `.planning/config.json`, except rigor, which has no config key. I didn't run `recommend`, because it isn't a command in this install. I applied your choices straight to the config instead, and nothing needed the network.\n\nI also couldn't find the inventory. `{INVENTORY}` and `{P"
-  ],
+  "quotes": [],
   "runner": {
     "active_config": null,
     "effective": null,

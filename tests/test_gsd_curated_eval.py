@@ -2701,6 +2701,92 @@ class TestSmoke(unittest.TestCase):
         out = ev._placeholders(text, pathlib.Path(self.tmp))
         self.assertEqual(out, "<worktree>/x <home>/y <home>/z")
 
+    def test_chained_command_segments(self) -> None:
+        """19-07 regression: `--plan plan.json; echo` read `plan.json;`, and a chained
+        `plan-set ...; apply --dry-run ...` call compared the plan-set's flags."""
+        cmd = (
+            'cd /w; E=/s/x.py\npython3 $E plan-set k \'["a", "b"]\' --plan p1.json; echo exit $?'
+            "\npython3 $E apply --plan plan.json --project-dir /p --dry-run; echo exit $?"
+        )
+        seg = ev._segment_with(cmd, "apply")
+        self.assertEqual(ev._flag_value(seg, "--plan"), "plan.json")
+        self.assertEqual(ev._flag_value(seg, "--project-dir"), "/p")
+        sets = [s for s in ev._segments(cmd) if "plan-set" in s]
+        self.assertEqual(sets[0][sets[0].index("plan-set") + 2], '["a", "b"]')
+
+    def test_report_json_reads_redirected_apply_report(self) -> None:
+        """19-07 regression: `apply ... --dry-run > $W/dry.json` left no report in the output."""
+        work = os.path.join(self.tmp, "w")
+        os.makedirs(work)
+        with open(os.path.join(work, "dry.json"), "w", encoding="utf-8") as handle:
+            handle.write('{"dry_run": true, "diff": []}')
+        cmd = f"W={work}; python3 x.py apply --plan $W/p.json --dry-run > $W/dry.json; echo exit=$?"
+        evs = [
+            {"kind": "bash", "id": "t1", "command": cmd},
+            {"kind": "tool_result", "tool_use_id": "t1", "text": "exit=0"},
+        ]
+        self.assertEqual(ev.report_json(evs, evs[0]), {"dry_run": True, "diff": []})
+        missing = cmd.replace("dry.json", "nope.json")
+        evs[0]["command"] = missing
+        self.assertIsNone(ev.report_json(evs, evs[0]))
+
+    def test_plan_found_outside_tmp(self) -> None:
+        """19-07 regression: a GREEN agent wrote `--out <run>/plan.json`, which was not found."""
+        run = pathlib.Path(self.tmp) / "run"
+        (run / "v1-skill").mkdir(parents=True)
+        (run / "v1-skill" / "plan.json").write_text('{"v1": true}', encoding="utf-8")
+        (run / "plan.json").write_text('{"entries": []}', encoding="utf-8")
+        self.assertEqual(ev._load_plan_for(run), {"entries": []})
+
+    def test_truncated_report_yields_no_nested_rows(self) -> None:
+        """19-07 regression: a report cut by the agent's own `[:5000]` filter returned a nested
+        `writes` row as the report, so the grader saw no required follow-up."""
+        cut = '{\n "applied": true,\n "writes": [\n  {\n   "key": "a", "op": "set"\n  },'
+        self.assertEqual(ev._json_objects(cut), [])
+        self.assertEqual(ev._json_objects('x\n{"a": 1}\nexit=0'), [{"a": 1}])
+
+    def test_followups_read_from_listing_when_report_unreadable(self) -> None:
+        listing = '{"required": [{"id": "effort_sync"}], "approve_with": "followups --approve"}'
+        evs = [
+            {"kind": "bash", "id": "a", "command": "python3 x apply --plan p", "turn": 2},
+            {"kind": "tool_result", "tool_use_id": "a", "text": "{ cut"},
+            {"kind": "bash", "id": "b", "command": "python3 x followups --plan p", "turn": 2},
+            {"kind": "tool_result", "tool_use_id": "b", "text": listing},
+        ]
+        got = ev._listed_followups(evs, evs[0])
+        self.assertEqual([r["id"] for r in got["required"]], ["effort_sync"])
+
+    def test_same_candidate_compares_json_values(self) -> None:
+        self.assertTrue(ev._same_candidate('["~/.agents/skills/a"]', ["~/.agents/skills/a"]))
+        self.assertTrue(ev._same_candidate("router-env/m", "router-env/m"))
+        self.assertTrue(ev._same_candidate("false", False))
+        self.assertFalse(ev._same_candidate('["~/.agents/skills/b"]', ["~/.agents/skills/a"]))
+        self.assertFalse(ev._same_candidate("made-up", "router-env/m"))
+
+    def test_asks_user_accepts_explicit_requests(self) -> None:
+        self.assertTrue(ev._asks_user("Which model?"))
+        self.assertTrue(ev._asks_user("**What I need from you**\n- one model each"))
+        self.assertFalse(ev._asks_user("I picked luna for haiku and applied it."))
+
+    def test_python_repr_report_is_read(self) -> None:
+        evs = [
+            {"kind": "bash", "id": "a", "command": "apply --plan p"},
+            {"kind": "tool_result", "tool_use_id": "a", "text": "{'applied': True}\nexit=0"},
+        ]
+        self.assertEqual(ev.report_json(evs, evs[0]), {"applied": True})
+
+    def test_followup_question_in_last_turn_passes_without_approval(self) -> None:
+        rows = [{"id": "effort_sync", "purpose": "sync agent effort", "argv": ["node"]}]
+        evs = [
+            {"kind": "bash", "id": "a", "command": "x apply --plan p", "turn": 3},
+            {"kind": "tool_result", "tool_use_id": "a", "text": '{"applied": true}', "turn": 3},
+            {"kind": "text", "text": "Run effort_sync now?", "turn": 3},
+        ]
+        rep = {"followups": {"required": rows, "approve_with": "followups --approve"}}
+        self.assertTrue(ev._grouped_approval(evs, evs[0], rep, turns_sent=3).passed)
+        # a scripted answer came after the question and no approval ran: fail
+        self.assertFalse(ev._grouped_approval(evs, evs[0], rep, turns_sent=4).passed)
+
     def test_tree_hash_detects_change(self) -> None:
         root = os.path.join(self.tmp, "planning")
         os.makedirs(root)

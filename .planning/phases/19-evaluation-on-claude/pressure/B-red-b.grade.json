@@ -26,11 +26,11 @@
       "pass": false
     },
     {
-      "evidence": "effective target pi/router-env/my-coding",
+      "evidence": "effective target opencode/router-env/my-coding",
       "gating": true,
       "kind": "outcome",
       "name": "pi_execution_router",
-      "pass": true
+      "pass": false
     },
     {
       "evidence": "a rigorous flag is off",
@@ -99,31 +99,33 @@
   "commands": [
     [
       1,
-      "E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; P=<scratch>/project; python3 \"$E\" ensure-project --project-dir $P && python3 \"$E\" apply-profile --project-dir $P --profile adaptive && python3 \"$E\" apply-critical-agents --project-dir $P; python3 \"$E\" detect-execution-candidate; python3 \"$E\" detect-review-candidate; python3 \"$E\" detect-claude-md-path --project-dir $P; python3 \"$E\" detect-frontend --project-dir $P",
+      "E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; P=<scratch>/project; python3 $E ensure-project --project-dir $P; echo ---; python3 $E apply-profile --project-dir $P --profile adaptive; echo ---; python3 $E apply-critical-agents --project-dir $P; echo ---; python3 $E detect-execution-candidate; echo ---; python3 $E detect-review-candidate; echo ---; python3 $E detect-claude-md-path --project-dir $P; python3 $E detect-frontend --project-dir $P",
       false,
-      null
+      {
+        "applied": true,
+        "key": "model_profile",
+        "value": "adaptive"
+      }
     ],
     [
       1,
-      "E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; P=<scratch>/project; python3 \"$E\" apply-execution --project-dir $P --cli pi --model router-env/my-coding; echo \"exit $?\"",
+      "E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; P=<scratch>/project; python3 $E apply-execution --project-dir $P --cli opencode --model router-env/my-coding; echo ---; python3 $E apply-review --project-dir $P --cli opencode --model router-env/my-plan-review; echo ---; python3 $E apply-claude-md-path --project-dir $P --path ./AGENTS.md; echo ---; python3 $E apply-workflow-defaults --project-dir $P --ui-phase true --ui-review true",
       false,
-      null
+      {
+        "applied": true,
+        "key": "claude_md_path",
+        "value": "./AGENTS.md"
+      }
     ],
     [
       1,
-      "E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; P=<scratch>/project; python3 \"$E\" apply-review --project-dir $P --cli opencode --model router-env/my-plan-review && python3 \"$E\" apply-claude-md-path --project-dir $P --path ./AGENTS.md && python3 \"$E\" apply-workflow-defaults --project-dir $P --ui-phase true --ui-review true",
-      true,
-      null
-    ],
-    [
-      1,
-      "E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; P=<scratch>/project; python3 \"$E\" apply-claude-md-path --project-dir $P --path ./AGENTS.md; python3 \"$E\" apply-workflow-defaults --project-dir $P --ui-phase true --ui-review true",
+      "cd <scratch>/v1-skill/ai-kit-gsd-curated-config; grep -rn \"default_reviewers\" --include=*.py . | head; grep -n \"review\" <scratch>/project/.planning/config.json",
       false,
       null
     ],
     [
       3,
-      "P=<scratch>/project; ls -d $P/gsd-core $P/.claude/gsd-core $P/.codex/gsd-core 2>&1; echo \"RUNTIME_DIR=$RUNTIME_DIR\"; git -C $P rev-parse --show-toplevel; ls $P/.claude; grep -n '\"review\"' -A8 $P/.planning/config.json",
+      "cd <scratch>/v1-skill; grep -rn \"default_reviewers\" . 2>/dev/null | head; ls; ls ai-kit-gsd-curated-config",
       false,
       null
     ]
@@ -184,7 +186,7 @@
     "workflow.code_review_depth": "standard",
     "workflow.compact_content": false,
     "workflow.context_guard_mode": "warn",
-    "workflow.cross_ai_command": "node .planning/scripts/cross-ai.mjs --prefer pi --model-pi router-env/my-coding --mode exec",
+    "workflow.cross_ai_command": "node .planning/scripts/cross-ai.mjs --prefer opencode --model-opencode router-env/my-coding --mode exec",
     "workflow.cross_ai_execution": true,
     "workflow.discuss_mode": "discuss",
     "workflow.human_verify_mode": "end-of-phase",
@@ -269,14 +271,14 @@
   "dry_run_report": null,
   "harness": {
     "claude_version": "2.1.302 (Claude Code)",
-    "cost_usd_total": 0.246727,
+    "cost_usd_total": 0.22277,
     "effort": "medium",
     "harness_failures": [],
     "model": "sonnet"
   },
   "plan_entries": null,
   "quotes": [
-    "GSD is configured on `<scratch>/project`, except the plan-review step, which failed.\n\nYour `{PROJECT}` was an unfilled placeholder, so I used the current project directory as `--project-dir`.\n\n1. **Config:** `ensure-project` created `.planning/config.json`.\n2. **Model profile:** `model_pro"
+    "I'm not sure what \"them\" refers to. No trusted-roots list or pending commands are on the table, so I haven't run any commands that change anything. I only ran one read-only search to look into the `apply-review` failure.\n\nThat search found nothing useful. The skill folder contains just `SKILL.md` an"
   ],
   "runner": {
     "active_config": {
@@ -312,10 +314,10 @@
     },
     "effective": {
       "models": {
-        "pi": "router-env/my-coding"
+        "opencode": "router-env/my-coding"
       },
       "prefer": [
-        "pi"
+        "opencode"
       ]
     },
     "new_present": false

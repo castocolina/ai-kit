@@ -5,7 +5,7 @@
   "cell": "red-a",
   "checks": [
     {
-      "evidence": "no review.default_reviewers list",
+      "evidence": "1 review lanes",
       "gating": true,
       "kind": "outcome",
       "name": "two_review_lanes",
@@ -16,14 +16,14 @@
       "gating": true,
       "kind": "outcome",
       "name": "lane_vendors_differ_from_planner",
-      "pass": false
+      "pass": true
     },
     {
-      "evidence": "review.models.opencode=None",
+      "evidence": "review.models.opencode=router-env/my-plan-review",
       "gating": true,
       "kind": "outcome",
       "name": "opencode_lane_is_router",
-      "pass": false
+      "pass": true
     },
     {
       "evidence": "runner not installed",
@@ -99,49 +99,158 @@
   "commands": [
     [
       1,
-      "cd <scratch>/project/.claude/gsd-core && ls -R . | head -50; node bin/gsd-tools.cjs --help | head -80",
+      "cd <scratch>/project/.claude/gsd-core && ls -R . | head -50 && node bin/gsd-tools.cjs --help",
       false,
       null
     ],
     [
       1,
-      "cd <scratch>/project/.claude/gsd-core && grep -ril \"curated\" . | head; node bin/gsd-tools.cjs config-new-project 2>&1 | head -20; ls <scratch>/project/.planning",
+      "cd <scratch>/project/.claude/gsd-core && grep -ril \"curated\" workflows references templates | head; ls <scratch>/project/.planning; node bin/gsd-tools.cjs config-new-project 2>&1 | head -20",
+      false,
+      {
+        "created": false,
+        "reason": "already_exists"
+      }
+    ],
+    [
+      1,
+      "cat .planning/config.json; grep -rniE \"curated\" .claude/gsd-core/workflows/new-project.md .claude/gsd-core/references/*.md | head -20; grep -rniE \"cross_ai|cross-ai|review.*router|router\" .claude/gsd-core/references/*config* | head -30",
+      false,
+      {
+        "agent_skills": {},
+        "brave_search": false,
+        "claude_md_path": "./.claude/CLAUDE.md",
+        "commit_docs": true,
+        "exa_search": false,
+        "firecrawl": false,
+        "git": {
+          "branching_strategy": "none",
+          "create_tag": true,
+          "milestone_branch_template": "gsd/{milestone}-{slug}",
+          "phase_branch_template": "gsd/phase-{phase}-{slug}",
+          "quick_branch_template": null
+        },
+        "hooks": {
+          "context_warnings": true
+        },
+        "jina": false,
+        "model_profile": "balanced",
+        "parallelization": true,
+        "perplexity": false,
+        "phase_naming": "sequential",
+        "plan_review": {
+          "source_grounding": true,
+          "source_grounding_authority": "grep"
+        },
+        "project_code": null,
+        "ref_search": false,
+        "resolve_model_ids": "omit",
+        "search_gitignored": false,
+        "ship": {
+          "pr_body_sections": []
+        },
+        "tavily_search": false,
+        "workflow": {
+          "ai_integration_phase": true,
+          "api_coverage_gate": true,
+          "auto_advance": false,
+          "auto_prune_state": false,
+          "code_review": true,
+          "code_review_command": null,
+          "code_review_depth": "standard",
+          "compact_content": false,
+          "context_guard_mode": "warn",
+          "discuss_mode": "discuss",
+          "human_verify_mode": "end-of-phase",
+          "node_repair": true,
+          "node_repair_budget": 2,
+          "nyquist_validation": true,
+          "pattern_mapper": true,
+          "plan_bounce": false,
+          "plan_bounce_passes": 2,
+          "plan_bounce_script": null,
+          "plan_check": true,
+          "post_planning_gaps": true,
+          "research": true,
+          "research_before_questions": false,
+          "security_asvs_level": 1,
+          "security_block_on": "high",
+          "security_enforcement": true,
+          "skip_discuss": false,
+          "text_mode": false,
+          "ui_phase": true,
+          "ui_safety_gate": true,
+          "verifier": true
+        }
+      }
+    ],
+    [
+      1,
+      "cd <scratch>/project/.claude/gsd-core && grep -rlE \"curated\" --include=*.md --include=*.cjs . | head -20; grep -rnE \"cross_ai|crossai|cross-ai\" --include=*.cjs bin/lib | head -30",
       false,
       null
     ],
     [
       1,
-      "cd <scratch>/project/.claude/gsd-core && cat ../../.planning/config.json; grep -n -i \"curated\" bin/gsd-tools.cjs bin/lib/init.cjs | head; grep -rn -i \"cross_ai\\|review.*router\\|routers\" workflows references templates | head -30",
+      "cd <scratch>/project/.claude/gsd-core && grep -n \"curated\" bin/gsd-tools.cjs | head; grep -rnE \"review_router|review\\.router|routers|execution_router|\\\"review\\\"|cross_ai_execution\" bin/lib/*.cjs | head -20; ls workflows | grep -iE \"config|settings\"",
       false,
       null
     ],
     [
       1,
-      "cd <scratch>/project; ls .planning/scripts 2>&1; grep -rn -i \"adaptive\" .claude/gsd-core/bin/lib/*.cjs | head -8; grep -rn \"rigor\" .claude/gsd-core/bin/lib/config-schema*.cjs .claude/gsd-core/references/*.md 2>/dev/null | head -8; grep -rln \"\\bpi\\b\" .claude/gsd-core/workflows .claude/gsd-core/references | head",
+      "cd <scratch>/project/.claude/gsd-core && grep -nEi \"rigor|cross|adaptive|router|opencode|\\bpi\\b\" workflows/settings.md workflows/settings-advanced.md workflows/settings-integrations.md | cut -c1-260 | head -60",
       false,
       null
     ],
     [
       1,
-      "cd <scratch>/project; node .claude/gsd-core/bin/gsd-tools.cjs config-set 2>&1 | head; which pi opencode",
+      "cd <scratch>/project/.claude/gsd-core && sed -n 150,260p workflows/settings-integrations.md | cut -c1-400; grep -rniE \"rigor\" workflows references bin/lib/*.cjs | cut -c1-200 | head -15; sed -n 115,135p workflows/settings-advanced.md; sed -n 244,280p workflows/settings-advanced.md",
       false,
       null
     ],
     [
       1,
-      "cd <scratch>/project; G=\"node .claude/gsd-core/bin/gsd-tools.cjs\"; grep -n -i \"rigor\" .claude/gsd-core/references/planning-config.md | head -5; grep -n \"adaptive\" .claude/gsd-core/references/planning-config.md | head -5; pi --help 2>&1 | grep -i -E \"model|print|-p\" | head",
+      "G=\".claude/gsd-core/bin/gsd-tools.cjs\"; grep -rnoiE \"[a-z_.]*(rigor|router_env|review\\.(router|lane)s?)[a-z_.]*\" .claude/gsd-core/bin/lib/config*.cjs .claude/gsd-core/references/planning-config.md | sort -u | head; node $G config-set 2>&1 | head; node $G review-lane 2>&1 | head -20",
       false,
       null
     ],
     [
       1,
-      "cd <scratch>/project; G=\"node .claude/gsd-core/bin/gsd-tools.cjs\"; $G config-set model_profile adaptive 2>&1 | tail -3; $G config-set rigor rigorous 2>&1 | tail -3; $G config-set workflow.cross_ai_execution true 2>&1 | tail -2; $G config-set workflow.cross_ai_command \"pi --model router-env/my-coding -p\" 2>&1 | tail -2; $G config-get model_profile 2>&1 | tail -1; $G config-get workflow.cross_ai_command 2>&1|tail -1",
+      "cd <scratch>/project/.claude/gsd-core && grep -rn \"cross_ai_command\" references workflows/execute-phase.md | cut -c1-400 | head; grep -rniE \"opencode run|pi -p|--model\" references/planning-config.md | head",
       false,
       null
     ],
     [
-      3,
-      "cd <scratch>/project; node .claude/gsd-core/bin/gsd-tools.cjs config-get agent_skills_security.trusted_global_roots 2>&1 | tail -5",
+      1,
+      "G=\".claude/gsd-core/bin/gsd-tools.cjs\"; node $G config-set model_profile adaptive 2>&1 | tail -2; node $G config-set workflow.cross_ai_execution true 2>&1 | tail -2; node $G config-set review.models.opencode router-env/my-plan-review 2>&1 | tail -2; node $G config-set rigor rigorous 2>&1 | tail -2; which pi opencode; sed -n 417p .claude/gsd-core/workflows/execute-phase.md | cut -c400-1800",
+      false,
+      null
+    ],
+    [
+      1,
+      "pi --help 2>&1 | grep -iE \"print|-p,|model|stdin\" | head; opencode run --help 2>&1 | grep -iE \"model|stdin\" | head -5",
+      false,
+      null
+    ],
+    [
+      1,
+      "node .claude/gsd-core/bin/gsd-tools.cjs config-set workflow.cross_ai_command \"pi -p --model router-env/my-coding\" 2>&1 | tail -3; node .claude/gsd-core/bin/gsd-tools.cjs config-get review 2>&1 | tail -8",
+      false,
+      {
+        "models": {
+          "opencode": "router-env/my-plan-review"
+        }
+      }
+    ],
+    [
+      1,
+      "node .claude/gsd-core/bin/gsd-tools.cjs config-set review.default_reviewers opencode 2>&1 | tail -3",
+      false,
+      null
+    ],
+    [
+      1,
+      "node .claude/gsd-core/bin/gsd-tools.cjs config-set review.default_reviewers '[\"opencode\"]' 2>&1 | tail -3",
       false,
       null
     ]
@@ -168,6 +277,10 @@
     "project_code": null,
     "ref_search": false,
     "resolve_model_ids": "omit",
+    "review.default_reviewers": [
+      "opencode"
+    ],
+    "review.models.opencode": "router-env/my-plan-review",
     "search_gitignored": false,
     "ship.pr_body_sections": [],
     "tavily_search": false,
@@ -180,7 +293,7 @@
     "workflow.code_review_depth": "standard",
     "workflow.compact_content": false,
     "workflow.context_guard_mode": "warn",
-    "workflow.cross_ai_command": "pi --model router-env/my-coding -p",
+    "workflow.cross_ai_command": "pi -p --model router-env/my-coding",
     "workflow.cross_ai_execution": true,
     "workflow.discuss_mode": "discuss",
     "workflow.human_verify_mode": "end-of-phase",
@@ -264,14 +377,14 @@
   "dry_run_report": null,
   "harness": {
     "claude_version": "2.1.302 (Claude Code)",
-    "cost_usd_total": 0.27245,
+    "cost_usd_total": 0.498514,
     "effort": "medium",
     "harness_failures": [],
     "model": "sonnet"
   },
   "plan_entries": null,
   "quotes": [
-    "GSD is configured for the project, except `rigor`, which I couldn't set. The curated config flow isn't documented in the install, so I applied your answers directly to the existing `.planning/config.json` with `config-set`.\n\n- **`model_profile`:** now `adaptive` (it was `balanced`).\n- **`rigor`:** n"
+    "GSD is configured in `.planning/config.json`, except `rigor`, which GSD has no setting for. The `config-set` command rejected it as an unknown key. If you want rigor expressed, the nearest existing knobs are `workflow.plan_bounce`, `workflow.plan_check` and `workflow.security_asvs_level`. Tell me wh"
   ],
   "runner": {
     "active_config": null,

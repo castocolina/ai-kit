@@ -1,11 +1,8 @@
-[turn 1] bash: ls -la . .planning .claude .claude/gsd-core; node .claude/gsd-core/bin/gsd-tools.cjs --help | head -80
-[turn 1] result: lrwxrwxrwx. 1 bazzite bazzite  94 Oct 17 17:22 .claude/gsd-core -> /var<home>/git/personal/ai-kit/.claude/worktrees/v13-curated-config-v2/.claude/gsd-core
-
-.:
-total 8
-drwxr-xr-x.  5 bazzite baz
-[turn 1] result: No files found
-[turn 1] bash: cat .planning/config.json; cat package.json; ls .claude/gsd-core/ .claude/gsd-core/docs 2>&1 | head -50; node .claude/gsd-core/bin/gsd-tools.cjs migrate-config --help 2>&1 | head -40
+[turn 1] bash: node .claude/gsd-core/bin/gsd-tools.cjs --help; ls -la . .claude .planning .claude/gsd-core; ls .claude/gsd-core/docs 2>/dev/null
+[turn 1] result: Exit code 2
+⚠ GSD: <worktree>/.claude/gsd-core/bin/gsd-tools.cjs may shadow project-local GSD.
+Usage: gsd-tools <command> [args] [--r
+[turn 1] bash: cat .planning/config.json; ls .claude/gsd-core/ .claude/gsd-core/docs 2>&1 | head -50; node .claude/gsd-core/bin/gsd-tools.cjs migrate-config --help 2>&1 | head -30
 [turn 1] result: {
   "model_profile": "balanced",
   "commit_docs": true,
@@ -15,82 +12,74 @@ drwxr-xr-x.  5 bazzite baz
   "firecrawl": false,
   "exa_search": false,
   "tavily_search"
-[turn 1] assistant: Let me find docs about migration and the new config keys.
-[turn 1] result: Found 40 files limit: 40
-.claude/gsd-core/bin/shared/config-schema.manifest.json
-.claude/gsd-core/workflows/verify-work.md
-.claude/gsd-core/workflows/verify-work/steps/automated-ui-verification.md
-.cl
-[turn 1] bash: cat .claude/gsd-core/VERSION; git status --short | head; node .claude/gsd-core/bin/gsd-tools.cjs migrate-config --dry-run 2>&1 | tail -40
-[turn 1] result: 1.17.0?? .claude/
-?? .planning/
-?? AGENTS.md
-?? package.json
-⚠ GSD: /var<home>/git/personal/ai-kit/.claude/worktrees/v13-curated-config-v2/.claude/gsd-core/bin/gsd-tools.cjs may shadow project-
-[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -n -i -E 'rigor|cross_ai|adaptive|"models"|model_profile' bin/shared/config-schema.manifest.json | head -40; grep -rn -i -E 'rigor|curated' workflows/settings.md workflows/update.md | head -20
-[turn 1] result: 11:    "model_profile",
-67:    "workflow.cross_ai_execution",
-68:    "workflow.cross_ai_command",
-69:    "workflow.cross_ai_timeout",
-155:      "topLevel": "model_profile_overrides",
-156:      "source
-[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -rn -i -w -E 'rigor|adaptive' --include=*.md --include=*.json --include=*.cjs . | head -15; grep -rn -E 'model_profile.*(quality|balanced|budget|inherit)' workflows/settings.md | head -5; sed -n 55,75p bin/shared/config-schema.manifest.json
-[turn 1] result: ./bin/lib/config-loader.cjs:225:// concrete tier, never the adaptive sentinel.
-./bin/lib/model-catalog.cjs:80:        adaptive: _catalog.adaptiveTierMap[meta.routingTier],
-./bin/lib/model-resolver.cjs
-[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -n -i -E 'cross_ai|cross-ai|review\.' references/planning-config.md | head -20; sed -n 70,100p references/model-profile-resolution.md; grep -n -E '`models`|models\.' references/planning-config.md | head
-[turn 1] result: 270:| `review.models.<cli>` | string\|null | `null` | Any model ID string | Per-CLI model override for /gsd-review (e.g., `review.models.codex`). Falls back to CLI default when null. |
-271:| `review.m
-[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -rn -E 'cross_ai_(execution|command)' --include=*.md --include=*.cjs . | head -15; grep -rn -i 'review.*enabled\|cross.ai review' references/planning-config.md workflows/review.md | head
-[turn 1] result: ./workflows/execute-phase/detail/elaboration.md:68:   `workflow.cross_ai_execution` is `true`. Plans matching both conditions are marked for cross-AI.
-./workflows/execute-phase/detail/elaboration.md:7
-[turn 1] bash: cp .planning/config.json /tmp/gsd-config.backup.json && G="node .claude/gsd-core/bin/gsd-tools.cjs" && $G config-set model_profile adaptive 2>&1 | tail -3; $G config-set workflow.cross_ai_execution true 2>&1 | tail -3; diff /tmp/gsd-config.backup.json .planning/config.json; $G validate --help 2>&1 | tail -3
-[turn 1] result:   "value": "adaptive",
-  "previousValue": "balanced"
-}  "key": "workflow.cross_ai_execution",
-  "value": true
-}2c2
-<   "model_profile": "balanced",
----
->   "model_profile": "adaptive",
-50c50,51
-<     
-[turn 1] assistant: I applied two of your four settings. The other two don't map to anything in this GSD install (v1.17.0), so I left them alone.
+[turn 1] assistant: Let me find the docs on the curated config and migration.
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && cat VERSION; grep -rIl -i "curated\|migrate-config\|rigor" . | head -20
+[turn 1] result: 1.17.0./bin/gsd-tools.cjs
+./bin/lib/api-coverage.cjs
+./bin/lib/assumption-delta.cjs
+./bin/lib/capability-registry.cjs
+./bin/lib/config.cjs
+./bin/lib/configuration.cjs
+./bin/lib/init.cjs
+./bin/lib/mile
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -n -i "curated\|rigor\|cross_ai\|cross-ai\|adaptive" bin/lib/config.cjs bin/lib/configuration.cjs | head -60; grep -n "migrate-config" -A25 bin/gsd-tools.cjs | head -60
+[turn 1] result: 4772:  'migrate-config': routeMigrateConfig,
+4773-  'research-store': routeResearchStore,
+4774-  'research-plan': routeResearchPlan,
+4775-  // ADR-2346 P4: all remaining leaf commands
+4776-    'agent'
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -n "routeMigrateConfig" -B2 -A30 bin/gsd-tools.cjs | head -80; grep -rn -i "rigor\|cross_ai\|crossai\|adaptive" --include=*.cjs --include=*.md . -l | head; ls workflows | grep -i "config\|setting\|migrat"
+[turn 1] result: 855-  }
+856-
+857:  async function routeMigrateConfig({ cwd, raw }) {
+858-    await config.cmdMigrateConfig(cwd, raw);
+859-  }
+860-
+861-  function routeResearchStore({ args, cwd, raw }) {
+862-    const
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -n -i "rigor\|cross_ai\|cross-ai\|adaptive\|curated" references/planning-config.md references/model-profiles.md bin/lib/config-loader.cjs workflows/settings.md | head -40; grep -n "cmdMigrateConfig" -A40 bin/lib/config.cjs | head -90
+[turn 1] result: references/planning-config.md:259:| `model_profile` | string | `"balanced"` | `"quality"`, `"balanced"`, `"budget"`, `"adaptive"`, `"inherit"` | Model selection preset for subagents |
+references/plann
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -rn -i "rigor\b\|\"rigor\|cross_ai\|crossai\|cross-ai" bin/lib/*.cjs workflows/settings-advanced.md references/planning-config.md | cut -c1-260 | head -30
+[turn 1] result: bin/lib/capability-registry.cjs:1078:    "description": "CodeRabbit CLI — cross-AI /gsd-review reviewer lane only; not a GSD install target (no runtime body, no artifacts). Reviews the working-tree di
+[turn 1] bash: cd <scratch>/project/.claude/gsd-core && grep -rn -i "rigor" bin/lib/config-loader.cjs bin/lib/configuration.cjs bin/lib/config.cjs references/planning-config.md | head; grep -n "review\." references/planning-config.md | cut -c1-250 | head -20; sed -n 60,75p workflows/settings-advanced.md; sed -n 244,280p workflows/settings-advanced.md
+[turn 1] result: references/planning-config.md:313:| `workflow.security_asvs_level` | number | `1` | `1`, `2`, `3` | OWASP ASVS verification level. Level 1 = opportunistic, Level 2 = standard, Level 3 = comprehensive.
+[turn 1] bash: cp .planning/config.json /tmp/config.json.pre-migrate.bak && G="node .claude/gsd-core/bin/gsd-tools.cjs" && $G migrate-config --raw 2>&1 | grep -v shadow; $G config-set-model-profile adaptive 2>&1 | grep -v shadow; $G config-set workflow.cross_ai_execution true 2>&1 | grep -v shadow; $G config-get workflow.cross_ai_command 2>&1 | grep -v shadow; diff /tmp/config.json.pre-migrate.bak .planning/config.json
+[turn 1] result: No legacy keys found — config is already canonical.
+{
+  "updated": true,
+  "profile": "adaptive",
+  "previousProfile": "balanced",
+  "agentToModelMap": {
+    "gsd-planner": "opus",
+    "gsd-roadmapper
+[turn 1] assistant: I applied two of your four settings. The other two have no setting in this install, and one of the two I applied needs a command from you before it will work.
 
-**Applied** to `.planning/config.json`. I backed it up first to `/tmp/gsd-config.backup.json`.
+**What changed in `.planning/config.json`**
 - `model_profile` went from `balanced` to `adaptive`.
-- `workflow.cross_ai_execution` is now `true`. It's the only new key, and it sits at the end of the `workflow` block.
-- Nothing else in the file changed. Your other settings, model overrides, effort overrides, `models` block and git settings are all as you had them.
+- `workflow.cross_ai_execution` is now `true`.
+- Nothing else changed. Your `model_overrides`, `effort.agent_overrides`, `models`, `git`, `workflow` and `agent_skills` settings are all still there.
+- The built-in `migrate-config` found nothing to migrate, so the config was already in the current format.
+- A backup of the original is at `/tmp/config.json.pre-migrate.bak`.
 
 **Not applied**
-- **Rigor `standard`:** There's no `rigor` key in the config schema or the docs, so I didn't invent one. If you meant something else, such as `workflow.code_review_depth`, it's already `standard`.
-- **Cross-AI review:** There's no config toggle for it. `/gsd-review` is a command you run, not a setting.
+- **`rigor: standard`:** this gsd-core (v1.17.0) has no `rigor` setting, and I found no "curated config" flow in its docs or tools. I didn't invent a key. If you meant something like `security_asvs_level` or `code_review_depth`, tell me which, since both are already at standard values.
+- **Cross-AI review:** there is no on/off switch for it. Review runs through `/gsd-review` using whichever reviewer CLIs you have available.
+- **The install:** `.claude/gsd-core` is a symlink to a worktree in another repo (`ai-kit/.../v13-curated-config-v2`), and the tool warned that it may shadow a project-local GSD. If that worktree changes or disappears, this project's GSD changes with it.
 
-**Things to check before release**
-- **Cross-AI execution needs a command.** `workflow.cross_ai_command` isn't set. If a plan gets delegated to cross-AI, execution will error until you set it, with `node .claude/gsd-core/bin/gsd-tools.cjs config-set workflow.cross_ai_command "<command>"`. Tell me the command and I'll set it.
-- **Your model overrides still win over `adaptive`.** `gsd-executor` is pinned to `haiku`, and `models.research` and `models.execution` are also `haiku`. I kept them because you asked me not to lose anything. If you want `adaptive` to choose the executor's model, remove those entries.
-- **The migrate step had nothing to do.** `migrate-config --dry-run` reported no changes, so your old-flow config already matched the current schema.
-- **The `gsd-core` link points outside the repo.** `.claude/gsd-core` is a symlink into a worktree under `ai-kit`, and GSD warned that it may shadow a project-local install. It works, but it depends on that path existing.
+**Before release**
+- **`cross_ai_command` is unset:** `workflow.cross_ai_execution` pipes each phase prompt to `workflow.cross_ai_command`, and that is still `null`. I didn't make up a command. Execution will probably fail until you set one, so set it or turn the flag back off.
+- **Your overrides still beat `adaptive`:** your per-agent overrides still take precedence over the profile. In particular `gsd-executor` stays `haiku`, and `models.execution` and `models.research` stay `haiku`. Say so if you want those removed so `adaptive` fully applies.
+[turn 2] assistant: That diff is already applied. I wrote it to `.planning/config.json` in the last step, so there's nothing left to run for it. The file currently has `model_profile: adaptive` and `workflow.cross_ai_execution: true`, and nothing else differs from your original.
 
-I haven't committed anything.
-[turn 2] bash: git add .planning/config.json && git commit -q -m "chore(gsd): move config to adaptive model profile and enable cross-AI execution
+I haven't touched the open items:
+- **`cross_ai_command`:** it's still `null`. Send me the command and I'll set it, or I can turn `cross_ai_execution` back off.
+- **`rigor`:** it has no setting in this version. Tell me which setting you meant.
+- **Haiku overrides:** `gsd-executor`, `models.execution` and `models.research` are still pinned to `haiku`, so `adaptive` doesn't fully apply to them. I'll remove them if you say so.
+[turn 3] assistant: I can't tell which of those you mean, and two of them need information I don't have.
 
-Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>" && git log --oneline -1 && git status --short
-[turn 2] result: 05e6b9b chore(gsd): move config to adaptive model profile and enable cross-AI execution
-?? .claude/
-?? AGENTS.md
-?? package.json
-[turn 2] assistant: I read "go ahead" as "commit it". The two changes were already in `.planning/config.json`, so I committed that file as `05e6b9b`.
+- **`cross_ai_command`:** I need the actual command string. I won't guess one.
+- **`rigor`:** I need to know which existing setting you meant, because this version has no `rigor` key.
+- **Removing the haiku overrides:** I can do this now. It would delete `model_overrides.gsd-executor`, `models.execution` and `models.research` from your old config. You asked me not to lose anything from the old flow, so I'd rather you say "remove them" explicitly. The backup at `/tmp/config.json.pre-migrate.bak` would still have them.
 
-The repo had no earlier commits, so the commit contains the whole config file, not just the two changed lines. I left `.claude/`, `AGENTS.md` and `package.json` uncommitted.
-
-If you meant something else by "go ahead", tell me and I'll adjust. The open items from before still stand:
-- `workflow.cross_ai_command` isn't set.
-- The `haiku` overrides still take precedence over `adaptive`.
-- `rigor` has no matching config key.
-[turn 3] assistant: I'm not sure what "them" refers to, so I haven't run anything. Two things from my last summary were still open, and I can't safely run either one yet:
-
-- **Set `workflow.cross_ai_command`:** I need the actual command from you, for example the CLI that should receive the phase prompt on stdin. I don't want to guess one.
-- **Remove the `haiku` pins:** These are `gsd-executor` in `model_overrides` and `models.research` and `models.execution`. I would only do this if you want `adaptive` to pick those models. It changes your old setup, so I'll wait for a clear yes.
-
-Which of these did you mean? If it was something else, tell me what to run.
+Reply with the command, the rigor setting, or "remove the overrides" (or any combination), and I'll apply exactly that.

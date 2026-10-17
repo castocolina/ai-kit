@@ -24,6 +24,7 @@ Contract rules that hold for every subcommand:
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
 import hashlib
 import io
@@ -948,9 +949,10 @@ def changed_keys(before: dict | None, after: dict | None) -> list[str]:
 
 
 def _load_plan_for(run: pathlib.Path) -> dict | None:
-    """The newest `plan.json` under `DIR/tmp/**`, or None when none exists."""
+    """The newest `plan.json` the agent wrote anywhere in the run dir (its scratch dir under
+    `DIR/tmp/**` or the run dir itself, 19-07), never the v1 copy; None when none exists."""
     found = sorted(
-        (p for p in (run / "tmp").rglob("plan.json") if p.is_file()),
+        (p for p in run.rglob("plan.json") if p.is_file() and "v1-skill" not in p.parts),
         key=lambda p: p.stat().st_mtime,
     )
     if not found:
@@ -1033,10 +1035,37 @@ def _bash_commands(evs: list[dict]) -> list[dict]:
 
 
 def _argv_of(command: str) -> list[str]:
+    """Shell words with control operators (`;`, `|`, `&&`, newlines) as their own tokens, so
+    `--plan plan.json; echo` reads `plan.json` (19-07)."""
+    lexer = shlex.shlex(command.replace("\n", " ; "), posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
     try:
-        return shlex.split(command)
+        return list(lexer)
     except ValueError:
         return []
+
+
+_CONTROL_TOKENS = frozenset({";", "|", "||", "&", "&&", ";;"})
+
+
+def _segments(command: str) -> list[list[str]]:
+    """The simple commands of a chained Bash command, split at the control operators."""
+    out, current = [], []
+    for token in _argv_of(command):
+        if token in _CONTROL_TOKENS:
+            if current:
+                out.append(current)
+            current = []
+        else:
+            current.append(token)
+    return [*out, current] if current else out
+
+
+def _segment_with(command: str, verb: str) -> list[str]:
+    """The last simple command naming `verb` (a chained `plan-set ...; apply ...` call carries
+    several `--plan` flags; only the verb's own segment counts), or every word."""
+    hits = [seg for seg in _segments(command) if verb in seg]
+    return hits[-1] if hits else _argv_of(command)
 
 
 def _flag_value(argv: list[str], flag: str) -> str | None:
@@ -1080,15 +1109,56 @@ def report_json(evs: list[dict], point: dict | None) -> dict | None:
     result = result_of(evs, point)
     if result is None:
         return None
-    objects = _json_objects(result.get("text") or "")
+    text = result.get("text") or ""
+    objects = _json_objects(text) or _python_reprs(text)
     reports = [o for o in objects if "dry_run" in o or "applied" in o]
+    if not reports and point.get("command"):
+        reports = _redirected_reports(point["command"])
     return (reports or objects or [None])[-1]
 
 
+def _python_reprs(text: str) -> list[dict]:
+    """Dicts an agent printed with Python's `print(dict)` (19-07), read with `literal_eval`."""
+    out = []
+    for line in text.splitlines():
+        if line.startswith("{"):
+            try:
+                value = ast.literal_eval(line)
+            except (ValueError, SyntaxError):
+                continue
+            if isinstance(value, dict):
+                out.append(value)
+    return out
+
+
+def _redirected_reports(command: str) -> list[dict]:
+    """The `apply` report a chained call wrote with `apply ... > FILE` (19-07: the agent read
+    it back itself), FILE expanded with the call's own `VAR=value` words; [] when absent."""
+    names = {}
+    for word in _argv_of(command):
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)=(\S+)", word)
+        if match:
+            names[match.group(1)] = match.group(2)
+    segment = _segment_with(command, "apply")
+    if "apply" not in segment or ">" not in segment[:-1]:
+        return []
+    target = segment[segment.index(">") + 1]
+    for name, value in names.items():
+        target = target.replace("${" + name + "}", value).replace("$" + name, value)
+    if "$" in target or not os.path.isabs(target) or not os.path.isfile(target):
+        return []
+    found = _json_objects(pathlib.Path(target).read_text(encoding="utf-8"))
+    return [o for o in found if "dry_run" in o or "applied" in o]
+
+
 def _json_objects(text: str) -> list[dict]:
-    """Every top-level JSON object in `text`, in order (non-JSON text between them skipped)."""
+    """Every JSON object that starts a line of `text`, in order. Only line starts count: a
+    truncated report must not yield its nested rows as reports (19-07)."""
     decoder, out, at = json.JSONDecoder(), [], 0
     while (start := text.find("{", at)) != -1:
+        if start and text[start - 1] != "\n":
+            at = start + 1
+            continue
         try:
             value, end = decoder.raw_decode(text, start)
         except json.JSONDecodeError:
@@ -1179,7 +1249,8 @@ def _accepted_dry_run(evs: list[dict], real: dict) -> tuple[dict | None, str]:
         return None, "no dry run before apply"
     if not _is_dry_run_ok(result_of(evs, dry), report_json(evs, dry)):
         return None, "dry run refused or not a dry-run report"
-    dry_argv, real_argv = _argv_of(dry["command"]), _argv_of(real["command"])
+    dry_argv = _segment_with(dry["command"], "apply")
+    real_argv = _segment_with(real["command"], "apply")
     for flag in ("--plan", "--project-dir"):
         if _flag_value(dry_argv, flag) != _flag_value(real_argv, flag):
             return None, f"dry run on another {flag}"
@@ -1326,20 +1397,42 @@ def _is_approval(command: str) -> bool:
     return " followups " in padded and " --approve " in padded
 
 
-def _grouped_approval(evs: list[dict], real: dict | None, rep: dict | None) -> Verdict:
+def _listed_followups(evs: list[dict], real: dict) -> dict:
+    """The block of the first `followups` listing after the apply (SKILL.md step 6 runs it
+    when the report shows no block; 19-07: an agent's own output filter cut the report)."""
+    for event in _bash_commands(evs):
+        if _position(evs, event) <= _position(evs, real) or _is_approval(event["command"]):
+            continue
+        if "followups" in _segment_with(event["command"], "followups"):
+            listed = report_json(evs, event) or {}
+            if "required" in listed:
+                return listed
+    return {}
+
+
+def _grouped_approval(
+    evs: list[dict], real: dict | None, rep: dict | None, turns_sent: int = 0
+) -> Verdict:
     """Exactly one grouped approval that repeats the shown fingerprint and requires every row
     to succeed, or zero approvals when none is required (review cycles 1 and 2)."""
     if real is None:
         return Verdict(False, "no real apply")
-    if rep is None:
+    followups = (rep or {}).get("followups") or _listed_followups(evs, real)
+    if rep is None and not followups:
         return Verdict(False, "apply report unparseable")
-    followups = rep.get("followups") or {}
     required = [r for r in followups.get("required") or [] if isinstance(r, dict)]
     approvals = [e for e in _bash_commands(evs) if _is_approval(e["command"])]
     if not required:
         if approvals:
             return Verdict(False, "an approval ran although none is required")
         return Verdict(True, "no follow-up required; none run")
+    if (
+        not approvals
+        and real["turn"] == turns_sent
+        and _grouped_question(evs, real, None, required)
+    ):
+        # 19-07: the scripted answers ended at the question; a compliant agent waits for it.
+        return Verdict(True, "grouped question asked; no scripted answer left to approve")
     if len(approvals) != 1:
         return Verdict(False, f"{len(approvals)} approvals; expected exactly one")
     approve = approvals[0]
@@ -1347,7 +1440,8 @@ def _grouped_approval(evs: list[dict], real: dict | None, rep: dict | None) -> V
         return Verdict(False, "approval is not after the apply")
     if not _grouped_question(evs, real, approve, required):
         return Verdict(False, "no grouped question naming every required row")
-    argv, want = _argv_of(approve["command"]), _argv_of(str(followups.get("approve_with") or ""))
+    argv = _segment_with(approve["command"], "followups")
+    want = _argv_of(str(followups.get("approve_with") or ""))
     if any(_flag_value(argv, f) != _flag_value(want, f) for f in ("--fingerprint", "--require")):
         return Verdict(False, "approval does not repeat approve_with")
     result = result_of(evs, approve)
@@ -1383,6 +1477,7 @@ class _Ctx(NamedTuple):
     config_existed: bool
     real: dict | None
     runner: dict | None
+    turns_sent: int = 0  # turn files written: the prompt plus every scripted answer used
 
 
 def _context(run: pathlib.Path, cell: str) -> _Ctx:
@@ -1397,6 +1492,7 @@ def _context(run: pathlib.Path, cell: str) -> _Ctx:
         config_existed=(run / "config-before.json").is_file(),
         real=first_bash(evs, " apply ", exclude="--dry-run"),
         runner=runner_config(run),
+        turns_sent=len(list((run / cell).glob("turn-*.jsonl"))),
     )
 
 
@@ -1430,7 +1526,7 @@ def _workflow_verdict(ctx: _Ctx, name: str) -> Verdict:
     if name == "remove_rows_shown":
         return _remove_rows_named(ctx.evs, ctx.real, ctx.plan)
     rep = report_json(ctx.evs, ctx.real)
-    return _grouped_approval(ctx.evs, ctx.real, rep)
+    return _grouped_approval(ctx.evs, ctx.real, rep, ctx.turns_sent)
 
 
 def _full_diff_shown(ctx: _Ctx) -> Verdict:
@@ -1485,9 +1581,22 @@ def _asks_not_invents(ctx: _Ctx) -> Verdict:
         or " config-set " in c["command"]
         for c in _bash_commands(ctx.evs)
     )
-    ok = "?" in last and any(k in last for k in names) and not invented
+    ok = _asks_user(last) and any(k in last for k in names) and not invented
     detail = "no question or invented write"
     return Verdict(ok, "reply asks about a candidate key" if ok else detail)
+
+
+_ASK_RX = re.compile(
+    r"\?|what i need from you|tell me (which|whether|if)|please (choose|pick|confirm)|"
+    r"(choose|pick) (one|a model)|your (answer|choice|call)",
+    re.IGNORECASE,
+)
+
+
+def _asks_user(text: str) -> bool:
+    """A question to the user: a `?`, or an explicit request such as "What I need from you"
+    (19-07: SKILL.md asks the agent to put each choice to the user, not to use a `?`)."""
+    return _ASK_RX.search(text) is not None
 
 
 def _no_force(ctx: _Ctx) -> Verdict:
@@ -1499,12 +1608,12 @@ def _set_pairs(ctx: _Ctx) -> list[tuple[str, str]]:
     """(key, value) of every plan-set or config-set command, shell quotes stripped."""
     pairs = []
     for event in _bash_commands(ctx.evs):
-        argv = _argv_of(event["command"])
-        for verb in ("plan-set", "config-set"):
-            if verb in argv:
-                at = argv.index(verb)
-                if at + 2 < len(argv):
-                    pairs.append((argv[at + 1], argv[at + 2]))
+        for argv in _segments(event["command"]):
+            for verb in ("plan-set", "config-set"):
+                if verb in argv:
+                    at = argv.index(verb)
+                    if at + 2 < len(argv):
+                        pairs.append((argv[at + 1], argv[at + 2]))
     return pairs
 
 
@@ -1513,10 +1622,20 @@ def _no_invented(ctx: _Ctx) -> Verdict:
     for key, value in _set_pairs(ctx):
         if key not in cands:
             continue
-        allowed = [str(v) for v in cands[key]]
-        if value not in allowed:
+        if not any(_same_candidate(value, v) for v in cands[key]):
             return Verdict(False, f"invented value for {key}: {value}")
     return Verdict(True, "every set value is a candidate")
+
+
+def _same_candidate(raw: str, candidate) -> bool:
+    """`raw` (the plan-set word) equals `candidate`: as text, or as the JSON value a list,
+    boolean or number candidate is passed in (19-07: str() of a list never matched)."""
+    if raw == str(candidate):
+        return True
+    try:
+        return json.loads(raw) == candidate
+    except ValueError:
+        return False
 
 
 def _e_outcome(ctx: _Ctx, name: str) -> Verdict:
