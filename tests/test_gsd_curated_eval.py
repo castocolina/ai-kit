@@ -1220,10 +1220,8 @@ class TestFixture(unittest.TestCase):
             self.assertEqual(len(fh.read().splitlines()), 3)
 
     def test_v1_detect_through_launcher_never_runs_path_binary(self):
-        from ai_kit_gsd_curated_config import (  # pylint: disable=import-outside-toplevel
-            model_detect,
-            preference_match,
-        )
+        model_detect = ev.product_module("model_detect")
+        preference_match = ev.product_module("preference_match")
 
         run = os.path.join(self._tmp, "run")
         os.makedirs(run)
@@ -1693,11 +1691,29 @@ class TestGrader(unittest.TestCase):
         cfg = dict(CONFIG_B, **{"review.models.opencode": "gpt-5"})
         self.assert_only_fails(_b_run(self.scratch, config=cfg), "opencode_lane_is_router")
 
+    def test_product_module_ignores_a_stale_package_attribute(self) -> None:
+        """19-09: the v1 suite's blocked re-import leaves a degraded module bound on the package."""
+        import ai_kit_gsd_curated_config as pkg  # pylint: disable=import-outside-toplevel
+
+        real = ev.product_module("cross_ai_build")
+        stale = SimpleNamespace(build_execution_command=lambda *a, **k: None)
+        with mock.patch.object(pkg, "cross_ai_build", stale):
+            saved = sys.modules.pop("ai_kit_gsd_curated_config.cross_ai_build")
+            try:
+                from ai_kit_gsd_curated_config import (  # pylint: disable=import-outside-toplevel
+                    cross_ai_build as via_attr,
+                )
+
+                self.assertIs(via_attr, stale)
+                fresh = ev.product_module("cross_ai_build")
+                self.assertIsNotNone(fresh.build_execution_command("pi", ev.ROUTER_MODEL))
+            finally:
+                sys.modules["ai_kit_gsd_curated_config.cross_ai_build"] = saved
+                pkg.cross_ai_build = real
+
     def test_v1_hook_overrides_config_positive(self) -> None:
         """The product's own v1 builder: the router hook passes whatever CONFIG holds."""
-        from ai_kit_gsd_curated_config import (
-            cross_ai_build,  # pylint: disable=import-outside-toplevel
-        )
+        cross_ai_build = ev.product_module("cross_ai_build")
 
         hook = cross_ai_build.build_execution_command("pi", ev.ROUTER_MODEL)
         self.assertTrue(
@@ -1711,9 +1727,7 @@ class TestGrader(unittest.TestCase):
         self.assertIs(self.row(self.grade_b(run), "pi_execution_router")["pass"], True)
 
     def test_v1_hook_model_override_negative(self) -> None:
-        from ai_kit_gsd_curated_config import (
-            cross_ai_build,  # pylint: disable=import-outside-toplevel
-        )
+        cross_ai_build = ev.product_module("cross_ai_build")
 
         hook = cross_ai_build.build_execution_command("pi", "other/model")
         cfg = dict(CONFIG_B, **{"workflow.cross_ai_command": hook})
@@ -1725,9 +1739,7 @@ class TestGrader(unittest.TestCase):
         self.assertIn("effective target pi/other/model", row["evidence"])
 
     def test_v1_hook_prefer_override_negative(self) -> None:
-        from ai_kit_gsd_curated_config import (
-            cross_ai_build,  # pylint: disable=import-outside-toplevel
-        )
+        cross_ai_build = ev.product_module("cross_ai_build")
 
         hook = cross_ai_build.build_execution_command("opencode", ev.ROUTER_MODEL)
         cfg = dict(CONFIG_B, **{"workflow.cross_ai_command": hook})

@@ -27,6 +27,7 @@ import argparse
 import ast
 import contextlib
 import hashlib
+import importlib
 import io
 import json
 import os
@@ -130,6 +131,14 @@ _HEX16 = re.compile(r"\b[0-9a-f]{16}\b")
 # tests.test_ai_kit_gsd_curated_config_matrix). Anything else is refused with a reason rather than
 # silently graded against a table nobody checked, because 19-05..19-10 evidence rows name the
 # version they used and are only comparable across one.
+
+
+def product_module(name: str):
+    """A product module read through `sys.modules`, never the package attribute: a test that
+    re-imports one with `ai_kit_spec` blocked pops `sys.modules` but leaves the degraded copy
+    bound on the package (tests/test_ai_kit_gsd_curated_config.py), so a later
+    `from ai_kit_gsd_curated_config import x` would get that copy."""
+    return importlib.import_module(f"ai_kit_gsd_curated_config.{name}")
 
 
 def _abs(root: pathlib.Path | str) -> pathlib.Path:
@@ -2597,10 +2606,8 @@ def _self_check_v1_detect(paths: _Paths, launcher: pathlib.Path) -> None:
     """Both v1 detect steps through the launcher under a scratch HOME equal the seeded-pool
     computation; the log holds both listings; every wrapped name resolves to a wrapper. Then
     the log is truncated so the live cell starts clean (review cycle 3)."""
-    from ai_kit_gsd_curated_config import (  # pylint: disable=import-outside-toplevel
-        model_detect,
-        preference_match,
-    )
+    model_detect = product_module("model_detect")
+    preference_match = product_module("preference_match")
     from ai_kit_spec import cache as spec_cache  # pylint: disable=import-outside-toplevel
 
     scratch_home = paths.run / "selfcheck-home"
