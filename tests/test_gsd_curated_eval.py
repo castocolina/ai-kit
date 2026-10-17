@@ -2770,6 +2770,11 @@ class TestSmoke(unittest.TestCase):
         # 19-07 E green-r2: an either-or request without a `?`
         self.assertTrue(ev._asks_user("Tell me approve or decline for the trusted root."))
         self.assertFalse(ev._asks_user("I set approve or decline to approve."))
+        # 19-09 B/E green-j1: a sentence that opens with a request verb
+        self.assertTrue(ev._asks_user("Done.\n\nReply yes to run the follow-up."))
+        self.assertTrue(ev._asks_user("Reply with an answer for choices 1 and 2."))
+        self.assertFalse(ev._asks_user("I replied to the trusted root and applied it."))
+        self.assertFalse(ev._asks_user("- **Approve** adds the root."))
 
     def test_python_repr_report_is_read(self) -> None:
         evs = [

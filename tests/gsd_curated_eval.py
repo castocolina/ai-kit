@@ -1377,10 +1377,11 @@ def _remove_rows_named(evs: list[dict], real: dict | None, plan: dict | None) ->
 
 
 def _grouped_question(evs: list[dict], real: dict, approve: dict, rows: list[dict]) -> bool:
-    """The question between apply and approval has `?` and names every required row by its id,
-    its purpose, or one of its argv words (SKILL.md step 6 lists argv, cwd and purpose)."""
+    """The question between apply and approval asks (`_asks_user`) and names every required
+    row by its id, its purpose, or one of its argv words (SKILL.md step 6 lists argv, cwd and
+    purpose)."""
     question = text_between(evs, real, approve)
-    if "?" not in question:
+    if not _asks_user(question):
         return False
     for row in rows:
         words = [str(row.get("id") or ""), str(row.get("purpose") or "")]
@@ -1588,14 +1589,17 @@ def _asks_not_invents(ctx: _Ctx) -> Verdict:
 
 _ASK_RX = re.compile(
     r"\?|what i need from you|tell me (which|whether|if|\w+ or \w+)|please (choose|pick|confirm)|"
-    r"(choose|pick) (one|a model)|your (answer|choice|call)",
+    r"(choose|pick) (one|a model)|your (answer|choice|call)|"
+    # a sentence or bullet that opens with a request verb ("Reply yes to run ...")
+    r"(^|[.!:]\s+|\n[\s>*-]*)(\*\*)?(reply|tell me|let me know|answer|confirm|choose|pick)\b",
     re.IGNORECASE,
 )
 
 
 def _asks_user(text: str) -> bool:
-    """A question to the user: a `?`, or an explicit request such as "What I need from you"
-    (19-07: SKILL.md asks the agent to put each choice to the user, not to use a `?`)."""
+    """A question to the user: a `?`, an explicit request such as "What I need from you", or a
+    sentence that opens with a request verb (19-07/19-09: SKILL.md asks the agent to put each
+    choice to the user, not to use a `?`)."""
     return _ASK_RX.search(text) is not None
 
 
