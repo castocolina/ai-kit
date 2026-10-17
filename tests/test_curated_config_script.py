@@ -451,6 +451,19 @@ class TestEnsureRunnerStates(unittest.TestCase):
                 self.assertEqual(handle.read(), data)
             self.assertFalse(os.path.exists(target + ".new"))
 
+    def test_unstamped_current_runner_note_says_unstamped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = self._runner(tmp)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(self.template)
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual((code, result["runner"]), (0, "keep-edited"))
+            self.assertEqual(
+                result["notes"], [f"existing {target} is unstamped (sha256=UNSTAMPED) and "
+                                  "current; kept"],
+            )
+
     def test_foreign_writes_new_and_is_not_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = self._runner(tmp)

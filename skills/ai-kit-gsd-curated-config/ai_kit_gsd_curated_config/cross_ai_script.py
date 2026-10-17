@@ -235,8 +235,8 @@ def _upgrade_config(template: bytes, existing: bytes, scrub_env) -> dict:
     return merged
 
 
-def _kept_note(path: str) -> str:
-    return f"existing {path} is user-edited and current; kept"
+def _kept_note(state: str, path: str) -> str:
+    return f"existing {path} is {_STATE_DETAIL[state]} and current; kept"
 
 
 def plan_runner_upgrade(project_dir: str, template: bytes, scrub_env) -> ScriptPlan:
@@ -262,7 +262,7 @@ def plan_runner_upgrade(project_dir: str, template: bytes, scrub_env) -> ScriptP
         return ScriptPlan(
             "new-as-.new", path, path + ".new", data, state, _note_new(state, path), existing
         )
-    return ScriptPlan("keep-edited", path, None, existing, state, _kept_note(path), existing)
+    return ScriptPlan("keep-edited", path, None, existing, state, _kept_note(state, path), existing)
 
 
 def _guidance_bytes(text: str) -> bytes:
