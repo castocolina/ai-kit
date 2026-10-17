@@ -624,6 +624,8 @@ REWRITTEN = [
 PAIR_RULE_SKILLS = REWRITTEN[:4]
 REFERENCES = [
     "skills/ai-kit-spec-review/references/cross-ai-dispatch.md",
+    "skills/ai-kit-spec-review/references/reviewer-prompts.md",
+    "skills/ai-kit-spec-review/references/apply-findings.md",
     "skills/ai-kit-spec-review/references/cli-profiles/claude.md",
     "skills/ai-kit-spec-review/references/cli-profiles/codex.md",
     "skills/ai-kit-spec-review/references/cli-profiles/cursor.md",

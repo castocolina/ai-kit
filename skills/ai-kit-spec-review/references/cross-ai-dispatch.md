@@ -9,17 +9,17 @@ Runs once per invocation, after Step 0.6.
    its `CATEGORIES`). Because it's inside `ai-kit-spec-review`'s own skill
    directory, it resolves the same way `SEEDS_DIR` (in SKILL.md's
    `## Constants` section) does (three
-   candidates: `CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`/
-   sibling-of-this-file) — this snippet is **self-contained** and does
+   candidates, this skill's own directory first so the module matches the loaded
+   `SKILL.md`, then `CLAUDE_PLUGIN_ROOT`/`~/.claude/skills`) — this snippet is **self-contained** and does
    not read any variable assigned elsewhere; it computes its own
    directory inline via `$(dirname ...)`. (`SEEDS_DIR`'s own block
    assigns `SKILL_DIR="$(dirname "<path to SKILL.md>")"` immediately
    before its own `for` loop, so its third candidate resolves the same
    way this snippet's does.):
    ```bash
-   for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" \
-            "$HOME/.claude/skills/ai-kit-spec-review" \
-            "$(dirname "<absolute path to SKILL.md>")"; do
+   for d in "$(dirname "<absolute path to SKILL.md>")" \
+            "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" \
+            "$HOME/.claude/skills/ai-kit-spec-review"; do
      [ -d "$d" ] && { REVIEW_SPEC_SKILL_DIR="$d"; break; }
    done
    TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/ai-kit-spec.py"
@@ -31,8 +31,8 @@ Runs once per invocation, after Step 0.6.
    SHARED_TOOLING_PATH="$REVIEW_SPEC_SKILL_DIR/references/tooling-guidance.md"
    printf '%s\n' "$TOOLS_PY" "$CHECKLIST_SKILL_MD" "$RUNTIMES_JSON" "$QUOTA_JSON" "$SHARED_TOOLING_PATH"
    ```
-   `CHECKLIST_SKILL_MD` is the path Step 1's external-CLI dispatch tells
-   the external reviewer to `Read` — `ai-kit-spec-review-checklist` (the
+   `CHECKLIST_SKILL_MD` is the path both of Step 1's reviewer prompts tell
+   the reviewer to `Read` — `ai-kit-spec-review-checklist` (the
    reviewer skill) is always installed as
    `ai-kit-spec-review`'s own sibling, since both live under the same `skills/`
    tree in every installed shape (plugin, `~/.claude/skills`, or a dev
@@ -54,10 +54,11 @@ Runs once per invocation, after Step 0.6.
    installed, never block the review over it. If `TOOLS_PY` exists but
    `CHECKLIST_SKILL_MD` does not (a broken/partial install —
    `ai-kit-spec-review-checklist` missing while `ai-kit-spec-review` itself is
-   present), still proceed with native dispatch (the session default and a
-   host-selectable pair need no checklist path), but skip any subprocess
-   reviewer (a table runtime or a custom `command`): an external CLI can't
-   be told to `Read` a file that doesn't exist, so treat that entry the way
+   present), native dispatch can proceed only on a host whose skill tool loads
+   `ai-kit-spec-review-checklist` by name (`references/reviewer-prompts.md`),
+   and every subprocess reviewer (a table runtime or a custom `command`) is
+   skipped: an external CLI can't be told to `Read` a file that doesn't exist,
+   so treat that entry the way
    a config error is treated — dropped from `REVIEWER_LIST`, never
    dispatched, and this iteration surfaces via whatever entries remain (or
    `NO_CONFIG_FALLBACK` if none do).
@@ -71,7 +72,8 @@ Runs once per invocation, after Step 0.6.
    ```
    Record `TOOL_AVAILABILITY_JSON` as this run's literal tool-availability
    JSON string, substituted into every later `--tool-availability-json`
-   reference.
+   reference and into the native prompt. When `TOOLS_PY` is missing, use `{}`
+   (no modern tool confirmed, so the checklist flags no legacy invocation).
 1. Build an IDENTIFIABLE temp-dir name before creating it — a bare `mktemp -d`
    (`/tmp/tmp.XXXXXXXXXX`) is indistinguishable from any other process's temp dir once
    several review runs (or fix rounds within one run, or concurrent runs across projects)
@@ -226,12 +228,13 @@ the top of the composed prompt.
 **Why the dispatch call must be backgrounded or given a near-cap explicit timeout.** The tiers
 are cumulative, not a ceiling: the default `[600, 1200, 1800]` is up to **60 minutes** of wall
 time in the worst case, and tier 1 alone (600s) already equals the harness's own 600000ms
-maximum. A short default `Bash` timeout kills the dispatch mid-tier and throws away work that was
-still running. Either run the command with `run_in_background` and poll for
-`$RUN_TMP_DIR/iter<N>-<key>.md` to exist and stop growing before moving on to Step 1.5, or (for a
-config whose tiers you know are short) pass an explicit `timeout` close to the harness cap. Treat
-a dispatch that never produces the report file exactly like a nonzero exit: the file is absent,
-so the fail-closed rules apply unchanged.
+maximum. A short default shell timeout kills the dispatch mid-tier and throws away work that was
+still running. Either run the whole command line in the background (the host's background-task
+facility) and wait for `$RUN_TMP_DIR/iter<N>-<key>.exit` to appear, or (for a config whose tiers
+you know are short) pass an explicit timeout close to the harness cap. Completion is the process
+exiting, which is what writes the `.exit` file; the report file's size proves nothing, since the
+redirect creates it immediately and a working CLI can leave it unchanged for minutes. A dispatch
+whose `.exit` file holds a nonzero code is handled like the nonzero exit below.
 
 **If `dispatch-reviewer` exits nonzero** (an empty `timeout_tiers`, or a custom entry whose
 `command` template is malformed or missing — config errors, not runtime failures), this
@@ -273,6 +276,12 @@ its stderr instead (quota, auth, configuration, and the remaining closed reasons
 | `no_change`, `empty_answer`, `crash`, `contract_violation`, `signal`, `git_error` | `real_error` |
 | `git_timeout` | `git_timeout` |
 
-No status line at all falls back to the exit code: 0 is success, 127 is `dispatch_unavailable`
-(which is also how a missing `node` is reported — subprocess dispatch needs Node), and every
-other code is `real_error`.
+No status line at all falls back to the exit code:
+
+| Exit code | Reason |
+|---|---|
+| `0` | success (no reason) |
+| `2` | `configuration` |
+| `124` | `timeout` |
+| `127` | `dispatch_unavailable` (also how a missing `node` is reported — subprocess dispatch needs Node) |
+| any other | `real_error` |

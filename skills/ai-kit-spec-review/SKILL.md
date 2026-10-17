@@ -9,7 +9,7 @@ You are the orchestrator running as the `ai-kit-spec-review` skill (invocable vi
 
 ## Inputs
 
-- **Document path(s):** taken from the user's invocation arguments. If absent, ask the user for absolute paths and stop.
+- **Document path(s):** taken from the user's invocation arguments. If absent (e.g. "review my specs"), ask the user for absolute paths and wait — you may list the candidate documents you can see to make the answer easy, but review nothing until the user names the paths.
 - **Codebase root:** the worktree that contains the document — resolved in Step 0.1, **not** assumed to be your CWD. With worktrees, the spec/plan and the code it grounds against live in a checkout that is often *not* where you were invoked.
 - **Flags (optional, parsed from the same invocation arguments):**
   `--cross-ai` (default) or `--no-cross-ai` — whether Step 0.7 attempts
@@ -142,9 +142,8 @@ GSD with only `PROJECT.md`/CONTEXT present, the reviewer demands tasks and exact
    archetype> to review yet. I can review <existing> as <archetype>, or wait until <next
    stage> is produced.` Do not invent a deeper review or ask for downstream detail.
 
-When the user passed explicit path(s), review exactly those at their archetypes — do not pull
-in downstream scope. When the user passed none ("review my specs"), review every existing doc
-at its archetype and list the gaps.
+Review exactly the path(s) the user named (Inputs) at their archetypes — do not pull in
+downstream scope — and list any prerequisite gaps.
 
 5. **Supply complementary grounding to the reviewer.** A document under review is usually
    derived from upstream context the reviewer should read but NOT review. When reviewing a
@@ -161,7 +160,7 @@ at its archetype and list the gaps.
 
 Runs once per invocation, after Step 0.6. Before walking the cross-AI ladder, ask yourself: is cross-AI support actually installed and requested here, or does this invocation degrade cleanly to the session default (`--no-cross-ai`, or `ai-kit-spec.py` simply not present)? Answering that first avoids resolving quota/runtime state nobody asked for.
 
-**MANDATORY — READ ENTIRE FILE**: Before running any command below, read [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md) completely — it has the exact VERBATIM bash snippets, resolution order, and fail-closed rules for resolving `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `RUNTIMES_JSON`, `QUOTA_JSON`, `SHARED_TOOLING_PATH`, `TOOL_AVAILABILITY_JSON`, `RUN_TMP_DIR`, and ultimately `REVIEWER_LIST`. Do not attempt to reconstruct these from memory. Skip loading it only when this run is already known to be `--no-cross-ai` with no config to consider (still confirm `TOOLS_PY`'s absence per the reference's point 0 if unsure).
+**MANDATORY — READ ENTIRE FILE, on every run**: Before running any command below, read [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md) completely — it has the exact VERBATIM bash snippets, resolution order, and fail-closed rules for resolving `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `RUNTIMES_JSON`, `QUOTA_JSON`, `SHARED_TOOLING_PATH`, `TOOL_AVAILABILITY_JSON`, `RUN_TMP_DIR`, and ultimately `REVIEWER_LIST`. Do not attempt to reconstruct these from memory. `--no-cross-ai` does not skip it: points 0–2 (paths, tooling facts, `RUN_TMP_DIR`, the session-default list) are what Step 1's native dispatch substitutes and writes into; the flag skips only points 3–6.
 
 Once resolved, `REVIEWER_LIST`, `RUN_TMP_DIR`, `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `SHARED_TOOLING_PATH`, and `TOOL_AVAILABILITY_JSON` are consumed by Step 1 below exactly as named.
 
@@ -178,22 +177,23 @@ after the file was deleted.
 
 - **Reviewer skill:** `ai-kit-spec-review-checklist`
 - **Fixer skill:** `ai-kit-spec-review-fixer`
-- **Subagent type for both:** `general-purpose`
-- **Fixer subagent model:** `sonnet` (Haiku misses subtle defects; Opus burns tokens for no extra fix-quality signal — the fixer stays Claude-only and sonnet-pinned; who edits the document under review is out of scope for this skill). The reviewer's model is no longer a Constant at all — it comes from `REVIEWER_LIST` (this skill's own `Step 0.7`, points 2/5/6), set per-entry.
+- **Dispatch for both:** fresh-context delegation (Step 1) — on Claude Code the `Agent` tool with `subagent_type: general-purpose`.
+- **Fixer model:** `sonnet` on Claude Code (Haiku misses subtle defects; Opus burns tokens for no extra fix-quality signal). Another host runs the fixer on its session default — say so in the Surface message rather than implying a sonnet fix. The reviewer's model is not a Constant at all — it comes from `REVIEWER_LIST` (Step 0.7, points 2/5/6), set per-entry.
 - **Iteration cap:** 3 (configurable per invocation if user requests)
 - **Loop state file (optional):** `$RUN_TMP_DIR/loop.log` — append iter# + status line each round, for debugging only.
 - **Framework profile seeds dir** (`SEEDS_DIR`) — resolve once to an **absolute** path. As a skill
-  you are not guaranteed a `CLAUDE_PLUGIN_ROOT`; take the **first existing** of, in order:
-  1. `${CLAUDE_PLUGIN_ROOT}/skills/ai-kit-spec-review-checklist/references/frameworks/` (when set)
-  2. `~/.claude/skills/ai-kit-spec-review-checklist/references/frameworks/` (symlinked install — what `tools/install.sh` creates)
-  3. the sibling of this skill: `<dir-of-this-SKILL.md>/../ai-kit-spec-review-checklist/references/frameworks/`
+  you are not guaranteed a `CLAUDE_PLUGIN_ROOT`; take the **first existing** of, in order (the
+  sibling first, so the profiles match the skill you loaded, not an older install elsewhere):
+  1. the sibling of this skill: `<dir-of-this-SKILL.md>/../ai-kit-spec-review-checklist/references/frameworks/`
+  2. `${CLAUDE_PLUGIN_ROOT}/skills/ai-kit-spec-review-checklist/references/frameworks/` (when set)
+  3. `~/.claude/skills/ai-kit-spec-review-checklist/references/frameworks/` (symlinked install — what `tools/install.sh` creates)
 
   ```bash
   # SKILL_DIR = the directory containing this SKILL.md (the ai-kit-spec-review skill)
   SKILL_DIR="$(dirname "<absolute path to THIS SKILL.md>")"
-  for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review-checklist/references/frameworks}" \
-           "$HOME/.claude/skills/ai-kit-spec-review-checklist/references/frameworks" \
-           "$SKILL_DIR/../ai-kit-spec-review-checklist/references/frameworks"; do
+  for d in "$SKILL_DIR/../ai-kit-spec-review-checklist/references/frameworks" \
+           "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review-checklist/references/frameworks}" \
+           "$HOME/.claude/skills/ai-kit-spec-review-checklist/references/frameworks"; do
     [ -d "$d" ] && { SEEDS_DIR="$d"; break; }
   done
   ```
@@ -237,13 +237,28 @@ A reviewer or executor is a (runtime, model) pair. Each call runs it natively wh
 `REVIEWER_LIST`: stderr prints `ai-kit-spec: skipping reviewer <key>: route <route>`. The routes
 that do dispatch are `native`, `subprocess`, `unverified` and `custom`.
 
+**Fresh-context delegation** (the native route here, and every fixer in Step 3). It needs a host
+tool that starts a new agent with an empty context, given only a prompt, and returns its final
+text. On Claude Code that is the `Agent` tool (`subagent_type: general-purpose`, `model` as
+below). On another host it is that host's own subagent/task tool, with no model field: it runs
+the session default. **If the host has no such tool, never review or fix inline in this
+conversation** — this context holds the author's intent, exactly the contamination the loop
+exists to prevent. Drop the native entry instead; if a subprocess entry remains in
+`REVIEWER_LIST`, run it alone (single mode) and say so in the Surface message; otherwise STOP:
+`This host cannot start a clean-context reviewer. Register a subprocess reviewer with
+ai-kit-spec-config, or run /ai-kit-spec-review on a host with subagents.` No ai-kit command
+detects this capability: it is your own knowledge of the host's tools, a portability gap stated
+here rather than papered over.
+
+**MANDATORY — READ ENTIRE FILE** before writing either reviewer prompt:
+[`references/reviewer-prompts.md`](references/reviewer-prompts.md) holds both VERBATIM templates.
+
 For each entry in `REVIEWER_LIST`:
 
-- **`route` is `native`** (this host runs the pair itself). On every host except Claude Code that
-  is only the session default, so omit `model` and let the host use its current session. Claude
-  Code is the one labelled case of per-call selection: its `Agent` tool takes one of the four
-  aliases and nothing else.
-  - `subagent_type`: `general-purpose`
+- **`route` is `native`** (this host runs the pair itself), through fresh-context delegation with
+  the native template. On every host except Claude Code that is only the session default, so
+  give no model and let the host use its current session. Claude Code is the one labelled case
+  of per-call selection: its `Agent` tool takes one of the four aliases and nothing else.
   - `model`: the entry's alias when the host is Claude Code, **omitted entirely when
     `model == ""`** (the `NO_CONFIG_FALLBACK`/session-default case — never substitute a
     hardcoded name; an empty `model` means "let the host use its session"). A non-empty
@@ -251,16 +266,11 @@ For each entry in `REVIEWER_LIST`:
     `sonnet`/`opus`/`haiku`/`fable` (not a full model id like `"opus-5"`);
     `ai-kit-spec-config` writes exactly that shape, so surface anything else as a config
     error rather than passing it through.
-  - `description`: `ai-kit-spec-review iter N reviewer (<key>)`
-  - `prompt`: the template below, invoking the `ai-kit-spec-review-checklist` skill
-  - After the host tool returns its report text, write it verbatim to
-    `$RUN_TMP_DIR/iter<N>-<key>.md` via the `Write` tool (mirroring the
-    subprocess branch below, which redirects `Bash` stdout to the same
-    path). Step 1.5's merge reads both reviewers' reports from files
-    unconditionally — a native reviewer's report must land on disk exactly
-    like a subprocess one's, or `merge-reports` has no file to
-    open for it and crashes the loop the first time `policy.mode =
-    "double"` actually runs.
+  - `description` (where the tool takes one): `ai-kit-spec-review iter N reviewer (<key>)`
+  - After the delegated agent returns its report text, write it verbatim to
+    `$RUN_TMP_DIR/iter<N>-<key>.md` with the host's file-write tool. Step 1.5's merge reads
+    every reviewer's report from a file, so a native report must land on disk exactly like a
+    subprocess one, or `merge-reports` has no file to open in `double` mode.
 
 - **`route` is `subprocess`, `unverified` or `custom`** (`dispatch-reviewer`):
   a `subprocess` or `unverified` entry names a table runtime and runs through the supervised
@@ -271,43 +281,8 @@ For each entry in `REVIEWER_LIST`:
   refresh: neither ai-kit nor the runner checks the model before the CLI runs. The runner has
   no `unverified` status — that word is only this route — and stderr prints
   `ai-kit-spec: dispatching reviewer <key> unverified: ...`.
-  1. Write the prompt text below to `$RUN_TMP_DIR/iter<N>-<key>-prompt.txt`
-     via the `Write` tool, with `{prompt}` filled in as:
-
-     ```
-     Read the file at <CHECKLIST_SKILL_MD (Step 0.7 point 0)>
-     and follow it exactly, substituting:
-     - ARCHETYPE = <ARCHETYPE>
-     - FRAMEWORK_PROFILE_PATH = <FRAMEWORK_PROFILE_PATH>
-     Read every file under review fresh from disk: <DOC_PATHS>
-     Complementary grounding documents (Read for context — DO NOT review,
-     score, or emit findings about these): <GROUNDING_DOCS>
-     These are the upstream context/research the document under review is
-     derived from. Use them to detect drift — where the document under
-     review contradicts or omits what its own intent/research established —
-     and fold that into findings about the REVIEWED document only. If
-     "none", there are none.
-     Codebase root(s) for grounding: <CODEBASE_ROOT>
-     The paths the document itself declares (worktree/target locations,
-     cross-repo references) are AUTHORITATIVE for this review — do not flag
-     them or "correct" them just because they differ from CLAUDE.md /
-     .claude/worktrees convention; only flag a path if it's internally
-     inconsistent or violates a hard constraint.
-     ARCHETYPE is the ceiling per document: judge an upstream doc (e.g.
-     intent) only at its own level — never demand downstream detail
-     (tasks, exact files, interfaces) it isn't meant to have.
-     Emit the report following that skill's Output template strictly, ending
-     with the ### Status: line. Do not edit any file under review.
-     ```
-
-     (External CLIs can't call our `Skill` tool, but they can read a file
-     path — this keeps `ai-kit-spec-review-checklist` the single source of truth
-     for the checklist instead of duplicating its content into every
-     CLI's prompt. The substitutions and rules above mirror the native
-     template's `<GROUNDING_DOCS>`, declared-paths-authoritative, and
-     ARCHETYPE-ceiling clauses verbatim — see the native reviewer prompt
-     template later in this same Step 1 — so an external reviewer works
-     from the exact same contract a native one does, not a thinner one.)
+  1. Write the subprocess prompt from `references/reviewer-prompts.md` to
+     `$RUN_TMP_DIR/iter<N>-<key>-prompt.txt`.
   2. Resolve this entry's timeout tiers via the `resolve-timeout-tiers` subcommand (the entry's
      own flat `timeout_tiers` key if `$RUN_TMP_DIR/reviewers.json`'s entry at this index has
      one, else the config's own `policy.timeout_tiers`):
@@ -327,77 +302,25 @@ For each entry in `REVIEWER_LIST`:
        --timeout-tiers "$TIMEOUT_TIERS" \
        --tool-availability-json "$TOOL_AVAILABILITY_JSON" \
        --stdout-only \
-       > "$RUN_TMP_DIR/iter<N>-<key>.md"
+       > "$RUN_TMP_DIR/iter<N>-<key>.md"; echo "$?" > "$RUN_TMP_DIR/iter<N>-<key>.exit"
      ```
      `--cwd` runs the reviewer, and the runner's read-only tree check, in the document's
      worktree rather than this session's cwd (for a labeled set, the root of `<DOC_PATHS>`'s
      first entry).
      **Two hard rules, no exceptions:** (1) do not render the command yourself and pass it back
      in — hand `dispatch-reviewer` the reviewer entry and let it render internally; and (2) run
-     this backgrounded or with an explicit near-cap `Bash` timeout, never the tool default (the
-     tiers are cumulative and can reach 60 minutes of wall time). A dispatch that exits nonzero,
-     or never produces the report file, leaves this reviewer's slot undispatched — delete
-     `$RUN_TMP_DIR/iter<N>-<key>.md` (the `>` redirect already created it) so Step 1.5's
-     fail-closed `### Status:` handling applies unchanged. **MANDATORY before deviating from either rule**: read
-     [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md)'s "Step 1 external-CLI
-     dispatch" section for the full rationale — it explains the injection/escaping hazard rule
-     (1) prevents and the tier-math behind rule (2).
-
-Reviewer prompt template — use VERBATIM, substitute only `<DOC_PATHS>`, `<ARCHETYPE>`, `<FRAMEWORK_PROFILE_PATH>`, `<CODEBASE_ROOT>`, `<GROUNDING_DOCS>`, `<SHARED_TOOLING_PATH>`, and `<TOOL_AVAILABILITY_JSON>` (both resolved in Step 0.7 point 0):
-
-```
-You are the reviewer.
-
-Step 1: Invoke the Skill tool with skill name "ai-kit-spec-review-checklist" and follow it exactly.
-
-Step 2: The orchestrator has pre-resolved:
-- ARCHETYPE = <ARCHETYPE>  (one or more of: intent, requirements, design, plan)
-- FRAMEWORK_PROFILE_PATH = <FRAMEWORK_PROFILE_PATH>  (a file path on disk, or "none")
-Trust these — the orchestrator has project context you don't; skip the skill's own
-detection/classification. If FRAMEWORK_PROFILE_PATH is a path, Read it: it encodes this
-framework's doc archetypes and review conventions (requirement syntax, delta sections,
-ambiguity/parallel markers, constitutional gates) — apply them. If "none", use the generic
-archetype checklists.
-
-Step 2b: The orchestrator has also pre-resolved this machine's tooling facts:
-- SHARED_TOOLING_PATH = <SHARED_TOOLING_PATH>
-- TOOL_AVAILABILITY = <TOOL_AVAILABILITY_JSON>
-Read SHARED_TOOLING_PATH for this repo's confirmed tool preferences and apply them during your
-own grounding work (prefer rg/fd/bat/sd/eza and codegraph_explore where confirmed available,
-over broad reads/legacy tools). TOOL_AVAILABILITY is the authoritative map of which of those
-tools are actually installed here — it is what the checklist's legacy-tool-usage rule is gated
-on, so never flag a legacy invocation whose modern replacement is not `true` in it.
-
-Step 3: Read every file under review fresh from disk:
-<DOC_PATHS>
-
-Step 3b: Complementary grounding documents (Read for context — DO NOT review, score, or emit
-findings about these): <GROUNDING_DOCS>
-These are the upstream context/research the document under review is derived from (e.g. a GSD
-phase's CONTEXT/RESEARCH, or a superpowers design doc behind a plan). Use them to detect drift —
-where the document under review contradicts or omits what its own intent/research established —
-and fold that into findings about the REVIEWED document only. If "none", there are none.
-
-Step 4: Codebase root(s) for grounding checks: <CODEBASE_ROOT>
-Ground claims against these root(s). The paths the document itself declares (worktree/target
-locations, cross-repo references) are AUTHORITATIVE for this review — do not flag them or
-"correct" them just because they differ from CLAUDE.md / .claude/worktrees convention; only
-flag a path if it's internally inconsistent or violates a hard constraint. For cross-repo
-input, ground each reference against the root it belongs to; don't chase references across
-repos.
-
-Step 5: Apply the checklist for each ARCHETYPE (Intent / Requirements / Design / Plan), plus
-the framework conventions from the profile, plus Cross-Document Consistency if multiple files.
-ARCHETYPE is the ceiling per document: judge an upstream doc (e.g. intent) only at its own
-level — never demand downstream detail (tasks, exact files, interfaces) it isn't meant to have.
-
-Step 6: Emit the report following the skill's output template strictly. Record `<framework> ·
-<archetype(s)>` on the `### Document Type` line. End with the `### Status:` line.
-
-Do not assume any context outside what you read. Do not edit any file under review.
-```
-
-**CRITICAL:** never include the document content, prior reports, the conversation, or the author's intent in the reviewer prompt. Paths only.
+     this backgrounded or with an explicit near-cap shell timeout, never the tool default (the
+     tiers are cumulative and can reach 60 minutes of wall time). **The dispatch is finished
+     only when `iter<N>-<key>.exit` exists** — never because the report file stopped growing
+     (the `>` redirect creates it at once, and it can sit unchanged while the CLI works). Read
+     the exit code from that file: nonzero leaves this reviewer's slot undispatched — delete
+     `$RUN_TMP_DIR/iter<N>-<key>.md` so Step 1.5's fail-closed `### Status:` handling applies
+     unchanged. Never move on to Step 1.5 while a dispatch is still running; if you must abandon
+     one, stop that process first. **MANDATORY before deviating from either rule**: read
+     [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md)'s
+     [Step 1 subprocess dispatch](references/cross-ai-dispatch.md#step-1-subprocess-dispatch--full-rationale-for-dispatch-reviewer)
+     section for the full rationale — it explains the injection/escaping hazard rule (1)
+     prevents and the tier-math behind rule (2).
 
 ### Step 1.5 — Merge reviewer reports, then bind `EFFECTIVE_REPORT_PATH` (runs every iteration — only the merge call itself is conditional)
 
@@ -534,25 +457,9 @@ but it may lag a profile that's since been edited.
 
 ## Cleanup
 
-**Only remove `$RUN_TMP_DIR` when this Surface outcome is `Approved`** (Step 5's
-"Approved on first review" / "Approved after N iteration(s)" rows) — `rm -rf
-"$RUN_TMP_DIR"` there, same as before. Every artifact this run produced (reviewer
-reports, the double-review merge, fixer reports, the loop log) lives under that one
-directory, so this one command is still everything needed.
-
-**Every other outcome (cap reached, escalation, insufficient info, failure) leaves
-`$RUN_TMP_DIR` on disk — do not delete it.** A real multi-round review commonly spans
-more than one orchestrator invocation (a cap-reached round handed back to the user,
-a fix applied out of band, then a fresh `/ai-kit-spec-review` call to re-check it) —
-deleting the evidence the moment any one round's loop merely *ends*, rather than when
-the document is actually approved, is what silently destroyed the per-iteration
-reports from an earlier real run of this exact skill (nothing left to inspect
-afterward, even though the review process as a whole was still open). The
-identifiable naming from Step 0.7 point 1 (`<repo>-<branch>-<feature>-iter-XXXXXX`,
-not a bare `mktemp -d`) is what makes leaving these directories around safe and
-useful instead of accumulating anonymous clutter — a later invocation, or the user
-directly, can identify and inspect exactly which run produced which directory. If a
-non-approved `$RUN_TMP_DIR` from an earlier invocation is found stale (the document
-was since approved through a different run, or the user explicitly abandons that
-review line), it is safe to remove by hand — this skill just never does it
-automatically on anything short of `Approved`.
+**Remove `$RUN_TMP_DIR` (`rm -rf "$RUN_TMP_DIR"`) only when the Surface outcome is `Approved`.**
+Every other outcome (cap reached, escalation, insufficient info, failure) keeps it: a review
+often spans several invocations (a cap handed back, an out-of-band fix, a fresh re-check), and
+deleting the reports when one round merely ends once destroyed the only evidence of a still-open
+review. The labelled directory name (Step 0.7 point 1) says which repo, branch and document each
+kept directory belongs to; remove a stale one by hand once that review is approved or abandoned.
