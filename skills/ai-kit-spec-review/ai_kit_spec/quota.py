@@ -15,7 +15,7 @@ from ai_kit_spec.runner_dispatch import (
     CustomSpec,
     RunnerResult,
     RunnerSeams,
-    RunnerSpec,
+    review_spec,
     run_custom_command,
     run_runner,
 )
@@ -213,16 +213,6 @@ class ProbeSeams(NamedTuple):
     print_fn: Callable[[str], None] | None = None
 
 
-def _probe_spec(resolved: "ResolvedReviewer", cwd: str) -> RunnerSpec:
-    extra = resolved.extra or {}
-    runtime = resolved.runtime or ""
-    return RunnerSpec(
-        runtime, resolved.model, "review", 30, cwd=cwd,
-        effort=extra.get("effort"), service_tier=extra.get("service_tier"),
-        cursor_mode=extra.get("cursor_mode"),
-    )
-
-
 def _probe_entry(result: RunnerResult, detail: str) -> dict:
     """Available exactly when the runner or launcher reports no reason (D-13)."""
     if result.reason is None:
@@ -258,7 +248,8 @@ def _collecting_seams(seams: ProbeSeams, lines: list[str], cwd: str) -> RunnerSe
 def _probe_call(resolved, prompt, seams, runner_seams, cwd):
     """The one spawn: the runner for a table runtime, the launcher for a custom command."""
     if resolved.runtime:
-        return seams.runner_fn(_probe_spec(resolved, cwd), prompt, runner_seams)
+        spec = review_spec(resolved.runtime, resolved.model, resolved.extra, 30, cwd=cwd)
+        return seams.runner_fn(spec, prompt, runner_seams)
     argv = render_reviewer_command(resolved, prompt)
     return seams.custom_fn(CustomSpec(resolved.key, argv, [30], cwd=cwd), prompt, runner_seams)
 

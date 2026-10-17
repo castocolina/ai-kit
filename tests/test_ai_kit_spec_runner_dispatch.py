@@ -783,6 +783,21 @@ class TestDispatchReviewerRunner(unittest.TestCase):
         self.assertIn("dispatch-reviewer: reviewer host routes native", err.getvalue())
         self.assertEqual(spawned, [])
 
+    def test_render_command_shows_the_entry_first_tier_and_knobs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reviewers, prompt = self._reviewers(tmp, [{
+                "key": "cx", "runtime": "codex", "model": "gpt",
+                "extra": {"timeout_tiers": [900, 1800], "effort": "high"},
+            }])
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                code = main(["render-command", "--reviewers-json", reviewers, "--index", "0",
+                             "--prompt-file", prompt], which_fn=lambda _name: None)
+        self.assertEqual(code, 0)
+        argv = json.loads(out.getvalue())
+        self.assertEqual(argv[argv.index("--timeout") + 1], "900")
+        self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
+
     def test_skip_route_and_model_less_entry_raise_and_spawn_nothing(self):
         def never(*_args):
             raise AssertionError("a refused entry must not reach a spawn")

@@ -15,7 +15,7 @@ from ai_kit_spec.runner_dispatch import (
     CustomSpec,
     RunnerResult,
     RunnerSeams,
-    RunnerSpec,
+    review_spec,
     run_custom_command,
     run_runner_tiers,
 )
@@ -59,16 +59,6 @@ def _reviewer_full_prompt(
     return runtime, full_prompt
 
 
-def _runner_spec(entry: dict, tiers: list[int], cwd: str | None) -> RunnerSpec:
-    """One review-mode runner spec from a table-runtime entry and its first timeout tier."""
-    extra = entry.get("extra") or {}
-    return RunnerSpec(
-        entry["runtime"], entry["model"], "review", tiers[0], cwd=cwd,
-        effort=extra.get("effort"), service_tier=extra.get("service_tier"),
-        cursor_mode=extra.get("cursor_mode"),
-    )
-
-
 def _result_dict(result: RunnerResult) -> dict:
     return {
         "stdout": result.stdout, "returncode": result.returncode, "timed_out": result.timed_out,
@@ -78,10 +68,9 @@ def _result_dict(result: RunnerResult) -> dict:
 
 def _dispatch_runtime(entry: dict, spec: ReviewerDispatchSpec, prompt: str,
                       seams: ReviewerSeams) -> dict:
-    result = seams.runner_tiers_fn(
-        _runner_spec(entry, spec.timeout_tiers, spec.cwd), spec.timeout_tiers, prompt,
-        seams.runner_seams,
-    )
+    runner_spec = review_spec(entry["runtime"], entry["model"], entry.get("extra"),
+                              spec.timeout_tiers[0], cwd=spec.cwd)
+    result = seams.runner_tiers_fn(runner_spec, spec.timeout_tiers, prompt, seams.runner_seams)
     return _result_dict(result)
 
 

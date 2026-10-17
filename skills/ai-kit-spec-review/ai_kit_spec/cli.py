@@ -29,6 +29,7 @@ from ai_kit_spec.commands import (
     render_reviewer_command,
 )
 from ai_kit_spec.config_io import (
+    DEFAULT_POLICY,
     ConfigError,
     cfg_combine,
     cfg_local_path,
@@ -84,6 +85,7 @@ from ai_kit_spec.routing import RouteContext, RuntimesSeams, host_can_select
 from ai_kit_spec.runner_dispatch import (
     RunnerSpec,
     build_runner_argv,
+    review_spec,
     run_custom_command,
     run_runner,
     run_runner_tiers,
@@ -741,12 +743,9 @@ def _display_argv(entry: dict, prompt: str, which_fn) -> list[str]:
     """The argv a review would run: the runner's for a table runtime (the prompt goes on
     stdin, never into argv), the custom argv otherwise."""
     if entry.get("runtime"):
-        extra = entry.get("extra") or {}
-        spec = RunnerSpec(
-            entry["runtime"], entry.get("model", ""), "review", 600,
-            effort=extra.get("effort"), service_tier=extra.get("service_tier"),
-            cursor_mode=extra.get("cursor_mode"),
-        )
+        # No config here: the entry's own tiers, else the default policy's first tier.
+        timeout = resolve_timeout_tiers(entry, DEFAULT_POLICY)[0]
+        spec = review_spec(entry["runtime"], entry.get("model", ""), entry.get("extra"), timeout)
         node = which_fn("node") or "node"
         return build_runner_argv(spec, resolve_cross_ai_template_path() or "<runner>", node)
     resolved = to_resolved(entry)

@@ -77,6 +77,17 @@ class RunnerSpec(NamedTuple):
     codex_sandbox: str | None = None  # the sandbox mode; None is workspace-write
 
 
+def review_spec(runtime: str, model: str, extra: dict | None, timeout_s: int,
+                cwd: str | None = None) -> RunnerSpec:
+    """One review-mode spec from an entry's per-candidate knobs (`extra`). The probe, the
+    review and the argv display all build theirs here, so they never disagree."""
+    knobs = extra or {}
+    return RunnerSpec(
+        runtime, model, "review", timeout_s, cwd=cwd, effort=knobs.get("effort"),
+        service_tier=knobs.get("service_tier"), cursor_mode=knobs.get("cursor_mode"),
+    )
+
+
 class RunnerResult(NamedTuple):
     returncode: int | None
     stdout: str
