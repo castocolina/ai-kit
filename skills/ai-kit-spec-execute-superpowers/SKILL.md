@@ -100,7 +100,7 @@ broken candidate forever or locks out a recovered one, wave after wave.
 The state is a three-set split: `$PRIOR_EXCLUDED_KEYS_JSON`/`$PRIOR_REASONS_JSON` (permanent,
 carried across resumes), `$WAVE_TRIED_JSON`/`$WAVE_REASONS_JSON` (this wave only), and the derived
 unions `$EXCLUDED_KEYS_JSON`/`$EXCLUDED_REASONS_JSON` passed to `resolve-injection`, plus
-`$FIX_ROUND` and `$LAST_DISPATCHED_KEY`. **MANDATORY: before writing or reading any of these, or the resumable-state file,
+`$FIX_ROUND`, `$LAST_DISPATCHED_KEY` and `$ESCALATION_ANCHOR_KEY`. **MANDATORY: before writing or reading any of these, or the resumable-state file,
 read `references/state-management.md` in full** — it defines each variable's initial and resume
 values and the exact resumable-state bash.
 
@@ -197,7 +197,8 @@ fix-loop rounds 1–3 resume that same agent. Its round 4/5 model bump is that s
 with no ladder. On any other host the native case is only the session default, so omit `model` and
 let the host use its current session. Either way, record `LAST_DISPATCHED_KEY="$INJECTION_KEY"`
 after the dispatch. A non-Claude native dispatch cannot raise its own model, so rounds 4–5 take
-the ladder escalation below, and stop with a model-change request when it finds nothing higher.
+the ladder escalation below; when it finds nothing higher, it stops and asks for a more capable
+routable pair above it in `policy.ladder`.
 
 **`mode == "external_cli"`:** a subprocess through the supervised runner. A CLI process exits when
 done, so there is no live agent to resume.
@@ -239,7 +240,8 @@ back to `write` for this task.
    overwrite its existing contents from earlier rounds." (`--report-mode` only controls
    `dispatch-task`'s own stdout fallback, never what the CLI does to the file.) On a fix round, also
    append the open findings verbatim. **At the start of every fix round, increment `$FIX_ROUND`
-   first** (not for a same-round quota retry), then apply the Rounds 4–5 rule below, then compose.
+   and set `ESCALATION_ANCHOR_KEY="$LAST_DISPATCHED_KEY"` first** (neither for a same-round quota
+   retry nor on resume), then apply the Rounds 4–5 rule below, then compose.
 2. **Write the status contract** (`DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED`, from
    implementer-prompt.md's "After Review Findings") to `$FORMAT_BLOCK_FILE`. It becomes the
    dispatch's format block.
@@ -260,8 +262,9 @@ printf 'DISPATCH_RESULT_JSON=%s\nREPORT_MODE=%s\nLAST_DISPATCHED_KEY=%s\n' \
 
    `--heartbeat-interval` is required but unused: the runner prints its own heartbeat.
 
-   The block itself switches `REPORT_MODE` to `append` and records `$LAST_DISPATCHED_KEY`, the
-   Rounds 4–5 escalation anchor (a native dispatch records its key the same way). If the CLI
+   The block itself switches `REPORT_MODE` to `append` and records `$LAST_DISPATCHED_KEY`, which
+   the next fix round copies into its escalation anchor (a native dispatch records its key the
+   same way). If the CLI
    wrote `$REPORT_FILE` itself, `dispatch-task` leaves it untouched; only when the file is
    unchanged does it write or append the captured stdout, behind a marker line. Either way,
    review and the fix loop read `$REPORT_FILE` like a native report.
@@ -319,7 +322,7 @@ live verification is Phase 22, and stderr prints that note before the run.
 
 **The one exception.** Every subprocess runs through the supervised runner, except a custom entry
 (a `command` and no `runtime`), which exec mode never runs (Step 2's exit 2, or a `review_only`
-skip); in review it runs through the fixed-argv custom launcher on the same supervision core.
+skip).
 
 **Node.** Subprocess dispatch needs Node 24 (GSD's declared floor); older versions untested.
 Without Node, the runner fails closed as `dispatch_unavailable`
@@ -328,8 +331,9 @@ Without Node, the runner fails closed as `dispatch_unavailable`
 **Rounds 4–5 capability escalation (`external_cli`, and `native` on every host but Claude
 Code).** When `$FIX_ROUND >= 4` after the increment, subagent-driven-development requires "a MORE
 CAPABLE model". Excluding the stuck key and re-walking the ladder does not guarantee that — the
-next survivor may be weaker. The floor is relative to `$LAST_DISPATCHED_KEY` (the dispatch that
-got stuck, persisted across resumes), never to the key Step 2 just picked. **MANDATORY: before
+next survivor may be weaker. The floor is relative to `$ESCALATION_ANCHOR_KEY` (the dispatch that
+got stuck, fixed for the whole round and persisted across resumes), never to the key Step 2 just
+picked or to a same-round retry. **MANDATORY: before
 computing `$ESCALATION_EXCLUDE_JSON` or passing `--escalation-excluded-keys-json`, read
 `references/escalation.md` in full.** It defines the ladder-position capability proxy, the exact
 computation and its edge cases, why the set never joins `$EXCLUDED_KEYS_JSON`, and how to branch

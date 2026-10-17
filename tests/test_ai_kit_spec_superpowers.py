@@ -1414,6 +1414,42 @@ class TestCliResolveInjection(unittest.TestCase):
         self.assertEqual(result["reasons"], {"codex/terra": "quota"})
         self.assertTrue(result["any_quota_recoverable"])
 
+    def test_quota_reason_below_the_floor_or_outside_the_walk_never_schedules_a_wake(self):
+        # A wave-tried quota key below the Rounds 4-5 floor, or a stale reason for a key that is
+        # neither excluded nor tried, cannot be picked by this call: it must not make the result
+        # look quota-recoverable.
+        candidates = [
+            {"key": "claude/opus-5", "model": "opus", "runtime": None, "vendor": "anthropic",
+             "task_affinity": None, "context_limit": None},
+            {"key": "codex/terra", "model": "gpt-5.6-terra", "runtime": "codex",
+             "vendor": "openai", "task_affinity": None, "context_limit": None},
+        ]
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_file = os.path.join(tmp, "task-1-brief.md")
+            with open(task_file, "w") as f:
+                f.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
+            rc = superpowers_cli.main(
+                ["resolve-injection", "--cwd", tmp, "--task-file", task_file,
+                 "--quota-path", os.path.join(tmp, "quota.json"),
+                 "--exclude-keys-json", json.dumps(["claude/opus-5", "codex/terra"]),
+                 "--excluded-reasons-json", json.dumps(
+                     {"claude/opus-5": "auth", "codex/terra": "quota", "gone/key": "quota"}),
+                 "--escalation-excluded-keys-json", json.dumps(["codex/terra"])],
+                assemble_candidates_fn=lambda cwd, env: (
+                    candidates, ["claude/opus-5", "codex/terra"]),
+                cache_read_json_fn=lambda path: {},
+                cache_write_json_fn=lambda path, data: None,
+                refresh_quota_cache_fn=lambda config, keys, existing, _ttl: {},
+                route_all_fn=_session_routes,
+                stdout=out,
+            )
+        self.assertEqual(rc, 0)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["mode"], "quota_exhausted")
+        self.assertFalse(result["any_quota_recoverable"])
+        self.assertTrue(result["all_auth_failures"])
+
 
 def _fresh_snapshot(clis):
     """A schema-current runtimes cache row. Claude rows carry the dated fallback ids."""

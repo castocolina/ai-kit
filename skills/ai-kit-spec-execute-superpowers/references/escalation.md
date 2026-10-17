@@ -24,12 +24,14 @@ no resolution logic), so the ladder order (`policy.ladder`, most-preferred first
 `resolve-injection` walks) is the capability proxy: only a candidate ranked **strictly above** the
 stuck one counts as a bump.
 
-## The stuck key is the last dispatch, never this round's fresh pick
+## The stuck key is the round-start anchor, never this round's fresh pick
 
-The floor is relative to `$LAST_DISPATCHED_KEY` — the key of the most recent `dispatch-task` for
-this task (set after every dispatch in Step 3, persisted as `last_dispatched_key` in resumable
-state, restored on resume; see `references/state-management.md`). Never use the `$INJECTION_KEY`
-Step 2 just resolved: after a quota wait or a resume, that fresh pick can already be the
+The floor is relative to `$ESCALATION_ANCHOR_KEY` — `$LAST_DISPATCHED_KEY` copied once when this
+fix round started (the dispatch whose report the round is fixing), persisted as
+`escalation_anchor_key` and restored on resume (`references/state-management.md`). A same-round
+retry changes `$LAST_DISPATCHED_KEY`, never the anchor: if the bumped candidate fails mid-dispatch
+on quota, the floor still sits at the stuck key, so that candidate stays eligible once its quota
+recovers. Never use the `$INJECTION_KEY` Step 2 just resolved: after a quota wait or a resume, that fresh pick can already be the
 more-capable candidate, and a floor computed from it would exclude the very bump it found. Example:
 ladder `A > B`, B is stuck, round 4 waits on quota-exhausted A; after the resume Step 2 picks A,
 and a floor relative to A would exclude both and stop falsely.
@@ -41,16 +43,21 @@ import json, sys
 ladder = json.loads(sys.argv[1]); stuck = sys.argv[2]
 idx = ladder.index(stuck) if stuck in ladder else len(ladder)
 print(json.dumps(sorted(set(ladder[idx:]) | {stuck})))
-' "$LADDER_KEYS_JSON" "$LAST_DISPATCHED_KEY")"
+' "$LADDER_KEYS_JSON" "$ESCALATION_ANCHOR_KEY")"
 printf 'LADDER_KEYS_JSON=%s\nESCALATION_EXCLUDE_JSON=%s\n' "$LADDER_KEYS_JSON" "$ESCALATION_EXCLUDE_JSON"
 ```
 
 `ladder_keys` is in every `resolve-injection` result (every mode, `quota_exhausted` included): the
 full ranked candidate list before any exclusion. `{stuck}` is unioned in explicitly, so the stuck
 key is excluded even when it is missing from `ladder_keys`; the not-found fallback is
-`len(ladder)` (exclude nothing else), never `0` (which would exclude the whole ladder). When the
-stuck key is missing from `ladder_keys` there is no order to bump along: the pick is only a
-different candidate, not a verified bump — tell the user so.
+`len(ladder)` (exclude nothing else), never `0` (which would exclude the whole ladder).
+
+**An empty or unknown anchor never dispatches.** When `$ESCALATION_ANCHOR_KEY` is empty (an old
+state file) or missing from `ladder_keys` (the config changed), there is no order to bump along,
+so no pick is a verified bump. Do not re-run `resolve-injection` for this round. STOP and ask the
+user to name a candidate from `ladder_keys` they judge more capable than the stuck implementer,
+or to stop. Only on an explicit pick, pass every other `ladder_keys` entry as the floor and
+dispatch it as a user-chosen bump.
 
 ## Re-running resolve-injection with the floor
 
@@ -68,7 +75,7 @@ implementer attempted this task [N] times; you own it now. Read the report file 
 tried." A mid-dispatch quota retry in this round keeps passing the same floor.
 
 The floor needs no separate persistence: it is recomputed every time from `$LADDER_KEYS_JSON` and
-`$LAST_DISPATCHED_KEY`, and the latter is persisted. Round 5's stuck key is round 4's bumped
+`$ESCALATION_ANCHOR_KEY`, and the latter is persisted. Round 5's stuck key is round 4's bumped
 candidate, ranked above round 4's stuck key, so round 5's floor is at least as strict.
 
 ## If the re-resolution reports quota_exhausted or no_candidate
@@ -78,14 +85,16 @@ Read `any_quota_recoverable` exactly as Step 2 does:
 - **`True`** — a more-capable candidate is only temporarily out of quota. Follow Step 2's
   recoverable branch: merge this result's `tried`/`reasons` into the wave sets, compute
   `$RESUME_EXCLUDED_KEYS_JSON` with `resume-exclusions`, write `$STATE_JSON` (with this round's
-  `$FIX_ROUND` and `$LAST_DISPATCHED_KEY`) via `write-resumable-state`, schedule the wake, then
+  `$FIX_ROUND`, `$LAST_DISPATCHED_KEY` and `$ESCALATION_ANCHOR_KEY`) via `write-resumable-state`,
+  schedule the wake, then
   stop the wave. Never dispatch a same-or-weaker candidate as a substitute.
-- **`False`, or `no_candidate`** — no more-capable candidate is available, and waiting will not
-  change that. Do not fall through to a same-or-weaker one and do not schedule a wake. STOP and
+- **`False`, or `no_candidate`** — no more-capable candidate is eligible for automatic quota
+  recovery (a `"capacity"` failure may still clear by itself; an hourly wake is not the remedy). Do not fall through to a same-or-weaker one and do not schedule a wake. STOP and
   tell the user that rounds 4–5 cannot honor the capability bump with the current ladder, reading
   `reasons`/`detail` for which candidates failed and why. When the pool was narrowed only by the
   floor (the stuck key is top-ranked), `reasons`/`detail` are empty by design: name the keys in
   `$ESCALATION_EXCLUDE_JSON` instead. For a native stuck dispatch on a non-Claude host, also say
-  how to unblock it: switch this session to a more capable model and resume, or put a more capable
-  routable pair above `$LAST_DISPATCHED_KEY` in `policy.ladder`. This stop is the adapter's own
+  how to unblock it: put a more capable routable pair above `$ESCALATION_ANCHOR_KEY` in
+  `policy.ladder`, then resume. Switching this session's model does not help: the session default
+  keeps its ladder key, which the floor still excludes. This stop is the adapter's own
   call, not one of subagent-driven-development's four stop-and-ask conditions.

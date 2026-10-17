@@ -42,8 +42,8 @@ same exhausted candidate forever.
 `subagent-driven-development`'s "Rulings, not stalls" section lists four stop-and-ask conditions:
 an irreversible or destructive operation, a security-sensitive action, a side effect outside the
 worktree, or a plan so broken every path forward is a guess. None of the typed failure reasons is
-literally one of those. The adapter stops anyway because every configured candidate is permanently
-unusable for this task: no ruling it could make (another candidate) changes that, and the fix
+literally one of those. The adapter stops anyway because no configured candidate is usable for this task
+in a way an hourly wake can fix (a `"capacity"` failure may still clear by itself): no ruling it could make (another candidate) changes that, and the fix
 (credentials, a config template, an investigation) is outside the session. That is the same shape
 as the fourth condition, so the stop is consistent with that skill's intent without claiming
 membership in its list. The same reasoning covers `no_candidate`.

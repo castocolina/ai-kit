@@ -98,6 +98,7 @@ class QuotaExhaustionEmitContext(NamedTuple):
     excluded_reasons: dict
     tried: list
     reasons: dict
+    escalation_exclude: frozenset[str] = frozenset()
 
 
 class ResolveTaskLoadResult(NamedTuple):
@@ -110,6 +111,7 @@ class ResolveTaskLoadResult(NamedTuple):
     candidates: list
     top_n_keys: list
     routes: dict
+    escalation_exclude: frozenset[str] = frozenset()
 
 
 class ResolveInjectionRunInputs(NamedTuple):
@@ -130,7 +132,11 @@ def _merged_quota_exhaustion_payload(deps: CliDeps, ctx: QuotaExhaustionEmitCont
     for key in ctx.exclude:
         merged_reasons.setdefault(key, "no_usable_dispatch")
     merged_tried = sorted(set(ctx.tried) | ctx.exclude)
-    summary = deps.reasons_summary_fn(merged_reasons)
+    # Recoverability counts only keys this call could still pick: a stale reason for a key outside
+    # the walk, or a key below the Rounds 4-5 floor, must never schedule a wake.
+    eligible = set(merged_tried) - ctx.escalation_exclude
+    summary = deps.reasons_summary_fn(
+        {k: r for k, r in merged_reasons.items() if k in eligible})
     return {
         "mode": "quota_exhausted",
         "task_type": ctx.task_type,
@@ -218,7 +224,7 @@ def _resolve_task_inputs(args: argparse.Namespace, deps: CliDeps) -> ResolveTask
     top_n_keys = [k for k in full_top_n_keys if k not in all_exclude]
     return ResolveTaskLoadResult(
         task_markdown, sizes, ladder_keys, deps.classify_task_fn(task_markdown),
-        exclude, excluded_reasons, candidates, top_n_keys, routes)
+        exclude, excluded_reasons, candidates, top_n_keys, routes, frozenset(escalation_exclude))
 
 
 def _emit_quota_exhausted(deps: CliDeps, ctx: QuotaExhaustionEmitContext) -> None:
@@ -230,7 +236,7 @@ def _quota_emit_from_loaded(
 ) -> QuotaExhaustionEmitContext:
     return QuotaExhaustionEmitContext(
         loaded.task_type, loaded.ladder_keys, loaded.exclude, loaded.excluded_reasons,
-        tried, reasons)
+        tried, reasons, loaded.escalation_exclude)
 
 
 def _run_resolve_injection_build(deps: CliDeps, inputs: ResolveInjectionRunInputs) -> int:

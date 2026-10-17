@@ -35,7 +35,10 @@ locked out after a resume. Track the inputs separately for the task's whole life
   every earlier wave's real reason.
 - `$FIX_ROUND` — the fix round the task is on.
 - `$LAST_DISPATCHED_KEY` — the key of the most recent `dispatch-task` for this task (empty before
-  the first). The Rounds 4–5 floor is computed from it, never from a fresh pick.
+  the first), same-round retries included.
+- `$ESCALATION_ANCHOR_KEY` — `$LAST_DISPATCHED_KEY` copied when a fix round starts, unchanged by
+  that round's retries and by a resume. The Rounds 4–5 floor is computed from it, never from a
+  fresh pick.
 
 Neither derived union is ever persisted; always recompute it from its inputs.
 
@@ -43,11 +46,13 @@ Neither derived union is ever persisted; always recompute it from its inputs.
 
 A new task: `FIX_ROUND=0`, `PRIOR_EXCLUDED_KEYS_JSON='[]'`, `PRIOR_REASONS_JSON='{}'`,
 `WAVE_TRIED_JSON='[]'`, `WAVE_REASONS_JSON='{}'`, `EXCLUDED_KEYS_JSON='[]'`,
-`LAST_DISPATCHED_KEY=''`.
+`LAST_DISPATCHED_KEY=''`, `ESCALATION_ANCHOR_KEY=''`.
 
 Resuming from `$RESUME_STATE_PATH`: `fix_round` into `$FIX_ROUND`, `excluded_keys` into
-`$PRIOR_EXCLUDED_KEYS_JSON`, `reasons` into `$PRIOR_REASONS_JSON`, `last_dispatched_key` (empty
-when absent) into `$LAST_DISPATCHED_KEY`; reset `WAVE_TRIED_JSON='[]'`, `WAVE_REASONS_JSON='{}'`;
+`$PRIOR_EXCLUDED_KEYS_JSON`, `reasons` (only entries whose key is in `excluded_keys`; an older
+state file may hold more) into `$PRIOR_REASONS_JSON`, `last_dispatched_key` and
+`escalation_anchor_key` (each empty when absent) into `$LAST_DISPATCHED_KEY` and
+`$ESCALATION_ANCHOR_KEY`; reset `WAVE_TRIED_JSON='[]'`, `WAVE_REASONS_JSON='{}'`;
 set `EXCLUDED_KEYS_JSON="$PRIOR_EXCLUDED_KEYS_JSON"`; then re-enter Step 2. A candidate that was
 only quota-exhausted when the state was written is eligible again: the next `resolve-injection`
 refreshes quota, so it gets a real chance to have recovered. A permanently excluded one is never
@@ -74,17 +79,18 @@ WAVE_REASONS_JSON="$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); a.u
 RESUME_EXCLUDED_KEYS_JSON="$(python3 "$SHIM" resume-exclusions --tried-json "$WAVE_TRIED_JSON" \
   --reasons-json "$WAVE_REASONS_JSON" --prior-excluded-keys-json "$PRIOR_EXCLUDED_KEYS_JSON")"
 # resume-exclusions returns keys only: persist prior reasons merged with this wave's, or a key
-# carried over from an earlier wave loses its reason from the second resume on.
-PERSIST_REASONS_JSON="$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); a.update(json.loads(sys.argv[2])); print(json.dumps(a))' \
-  "$PRIOR_REASONS_JSON" "$WAVE_REASONS_JSON")"
+# carried over from an earlier wave loses its reason from the second resume on. Keep only the
+# persisted keys' reasons: a dropped "quota" reason must not resurface as a prior one.
+PERSIST_REASONS_JSON="$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); a.update(json.loads(sys.argv[2])); k=set(json.loads(sys.argv[3])); print(json.dumps({x: r for x, r in a.items() if x in k}))' \
+  "$PRIOR_REASONS_JSON" "$WAVE_REASONS_JSON" "$RESUME_EXCLUDED_KEYS_JSON")"
 STATE_JSON="$(python3 -c '
 import json, sys
 print(json.dumps({"framework": "superpowers", "plan_path": sys.argv[1], "task_index": sys.argv[2],
                    "fix_round": int(sys.argv[3]), "excluded_keys": json.loads(sys.argv[4]),
                    "tried": json.loads(sys.argv[5]), "reasons": json.loads(sys.argv[6]),
-                   "last_dispatched_key": sys.argv[7]}))' \
+                   "last_dispatched_key": sys.argv[7], "escalation_anchor_key": sys.argv[8]}))' \
   "$PLAN_FILE" "$TASK_N" "$FIX_ROUND" "$RESUME_EXCLUDED_KEYS_JSON" "$WAVE_TRIED_JSON" \
-  "$PERSIST_REASONS_JSON" "$LAST_DISPATCHED_KEY")"
+  "$PERSIST_REASONS_JSON" "$LAST_DISPATCHED_KEY" "$ESCALATION_ANCHOR_KEY")"
 python3 "$SHIM" write-resumable-state --path "$RESUME_STATE_PATH" --state-json "$STATE_JSON"
 printf 'RESUME_STATE_PATH=%s\nWAVE_TRIED_JSON=%s\nWAVE_REASONS_JSON=%s\n' \
   "$RESUME_STATE_PATH" "$WAVE_TRIED_JSON" "$WAVE_REASONS_JSON"
