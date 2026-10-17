@@ -8,6 +8,7 @@ prefixed onto the prompt; a reviewer's own checklist skill owns the review contr
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
+from ai_kit_spec import routing
 from ai_kit_spec.commands import ResolvedReviewer, render_reviewer_command
 from ai_kit_spec.detection import check_codegraph_mcp_usable
 from ai_kit_spec.runner_dispatch import (
@@ -111,6 +112,10 @@ def dispatch_reviewer(
         raise ValueError(
             f"reviewer {key} routes native; the host runs it, not dispatch-reviewer"
         )
+    if entry.get("route") in routing.SKIP_ROUTES:
+        raise ValueError(f"reviewer {key} route {entry['route']}: not dispatchable")
     if runtime:
+        if not entry.get("model"):
+            raise ValueError(f"reviewer {key} names runtime {runtime} but no model")
         return _dispatch_runtime(entry, spec, full_prompt, active)
     return _dispatch_custom(entry, spec, full_prompt, active)

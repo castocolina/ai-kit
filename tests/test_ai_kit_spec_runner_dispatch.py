@@ -427,6 +427,10 @@ class TestRunRunnerTiers(unittest.TestCase):
         self.assertEqual(timeouts, ["600", "1200", "1800"])
         self.assertEqual(result.reason, "timeout")
 
+    def test_empty_tiers_raise(self):
+        with self.assertRaises(ValueError):
+            run_runner_tiers(_spec(), [], "hi", _seams(_ScriptedPopen([]), [], []))
+
     def test_git_timeout_stops(self):
         procs = [_FakeProc([_status_line(status="git_timeout", exit_code="1")], 1)]
         popen = _ScriptedPopen(procs)
@@ -761,6 +765,24 @@ class TestDispatchReviewerRunner(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("dispatch-reviewer: reviewer host routes native", err.getvalue())
         self.assertEqual(spawned, [])
+
+    def test_skip_route_and_model_less_entry_raise_and_spawn_nothing(self):
+        def never(*_args):
+            raise AssertionError("a refused entry must not reach a spawn")
+
+        seams = reviewer_dispatch.ReviewerSeams(
+            runner_tiers_fn=never, custom_fn=never,
+            build_tooling_guidance_fn=lambda *_a, **_kw: "",
+            resolve_shared_reference_fn=lambda: None, codegraph_health_fn=lambda _rt: False,
+        )
+        entries = (
+            {"key": "oc", "runtime": "opencode", "model": "x/y", "route": "bad_model"},
+            {"key": "oc", "runtime": "opencode", "route": "subprocess"},
+        )
+        for entry in entries:
+            with self.subTest(entry=entry), self.assertRaises(ValueError):
+                reviewer_dispatch.dispatch_reviewer(
+                    reviewer_dispatch.ReviewerDispatchSpec(entry, "p", [600], {}), seams)
 
     def test_cwd_flag_reaches_both_specs_and_never_changes_the_process_cwd(self):
         seen = {}

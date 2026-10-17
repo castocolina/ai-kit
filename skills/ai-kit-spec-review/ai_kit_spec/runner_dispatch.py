@@ -499,6 +499,8 @@ def run_runner(spec: RunnerSpec, prompt: str, seams: RunnerSeams | None = None) 
 def run_runner_tiers(spec: RunnerSpec, tiers: list[int], prompt: str,
                      seams: RunnerSeams | None = None) -> RunnerResult:
     """Re-invokes the next tier only on a `timeout` status or exit 124. One call per tier."""
+    if not tiers:
+        raise ValueError("timeout_tiers must name at least one tier -- got an empty list")
     active = seams or RunnerSeams()
     result = RunnerResult(None, "", None, None, False, [], "")
     for tier in tiers:
