@@ -6,6 +6,7 @@ exit path. The runner's own detached CLI groups are recorded through `--child-pg
 killed the same way, so a wedged runner leaves no full-permission CLI behind.
 """
 import contextlib
+import errno
 import os
 import re
 import shutil
@@ -526,6 +527,10 @@ def run_custom_command(spec: CustomSpec, prompt: str,
                 SpawnRequest(list(spec.argv), prompt, tier, spec.cwd), active
             )
         except OSError as exc:
+            if exc.errno == errno.E2BIG:  # a `{prompt}` template over the per-argument limit
+                active.print_fn(f"ai-kit-spec: {spec.key}: prompt too large for a single "
+                                "argument; use a template that reads stdin")
+                return RunnerResult(None, "", None, "configuration", False, list(spec.argv), "")
             return _unavailable(list(spec.argv), str(exc), active)
         if not result.timed_out:
             reason = classify_error(result.returncode, result.stderr_tail, False)

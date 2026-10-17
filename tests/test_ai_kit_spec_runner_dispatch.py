@@ -1,6 +1,7 @@
 """The one supervision core: argv, charset, trailer, tiers, cleanup, custom entries (R7)."""
 
 import contextlib
+import errno
 import io
 import json
 import os
@@ -621,6 +622,16 @@ class TestRunCustomCommand(_ChildTracker):
             "import sys; sys.stderr.write('401 unauthorized\\n'); sys.exit(1)",
         ], [5]), "hi")
         self.assertEqual(auth.reason, "auth")
+
+    def test_argument_too_large_is_configuration(self):
+        def popen(_argv, **_kwargs):
+            raise OSError(errno.E2BIG, "Argument list too long")
+
+        lines: list[str] = []
+        result = run_custom_command(
+            CustomSpec("k", ["mycli", "x" * 10], [30]), "p", _seams(popen, lines, []))
+        self.assertEqual(result.reason, "configuration")
+        self.assertTrue(any("prompt too large" in line for line in lines))
 
     def test_missing_executable(self):
         result = run_custom_command(
