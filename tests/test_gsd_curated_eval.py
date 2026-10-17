@@ -2775,6 +2775,9 @@ class TestSmoke(unittest.TestCase):
         self.assertTrue(ev._asks_user("Reply with an answer for choices 1 and 2."))
         self.assertFalse(ev._asks_user("I replied to the trusted root and applied it."))
         self.assertFalse(ev._asks_user("- **Approve** adds the root."))
+        # 19-09 E green-j2: "please" plus a verb
+        self.assertTrue(ev._asks_user("Please answer these two."))
+        self.assertFalse(ev._asks_user("The result pleases nobody, so I applied it."))
 
     def test_python_repr_report_is_read(self) -> None:
         evs = [

@@ -1588,7 +1588,7 @@ def _asks_not_invents(ctx: _Ctx) -> Verdict:
 
 
 _ASK_RX = re.compile(
-    r"\?|what i need from you|tell me (which|whether|if|\w+ or \w+)|please (choose|pick|confirm)|"
+    r"\?|what i need from you|tell me (which|whether|if|\w+ or \w+)|\bplease \w+|"
     r"(choose|pick) (one|a model)|your (answer|choice|call)|"
     # a sentence or bullet that opens with a request verb ("Reply yes to run ...")
     r"(^|[.!:]\s+|\n[\s>*-]*)(\*\*)?(reply|tell me|let me know|answer|confirm|choose|pick)\b",
