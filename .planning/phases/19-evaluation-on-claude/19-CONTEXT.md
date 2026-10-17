@@ -125,6 +125,12 @@ not.
   - It is built from the plan's set entries plus gsd-core's live `MODEL_PROFILES` and
     `AGENT_TO_PHASE_TYPE`, and asserts that the two tables have the same agent keys.
   - It is host-parameterized, so Phase 20 reuses it, and `recommend` emits no new field.
+  - Amended 2026-10-17 (19-REVIEWS cycle 2, checker cycle-2 W6): Phase 19 keeps the host plumbing
+    (`run_matrix(..., host=)`, `matrix --host`, `smoke --host`, `matrix_env(..., host)`) but the oracle
+    mapping is Claude-only: `promised()` returns tier aliases, so a non-claude host exits 2 with a
+    Phase 20 pointer instead of producing a wrong verdict. Mapping `model_profile_overrides.<host>.<tier>`
+    and `RUNTIME_PROFILE_MAP` into `promised()` is Phase 20 work. The SPEC's host-agnostic smoke script
+    stays host-agnostic in its steps; only its matrix step is Claude-only until then.
   - Module: `tests/test_ai_kit_gsd_curated_config_matrix.py`, added to `E2E_MODULES` in
     `tools/run_unittest_parallel.py` with `python3 tools/gen_test_groups.py` re-run (Amended 2026-10-17 (19-RESEARCH R-6));
     a hermetic helper test joins `unit` automatically; with `skipUnless` for real gsd-tools and node.
@@ -186,10 +192,12 @@ not.
   7. Re-snapshot, and exit 1 on any change.
 
   TypeSafe real_rejection 1.00.
-- **Finding, not fixed here:** the v1 integration tests run `ensure-project` without isolation
+- ~~**Finding, not fixed here:** the v1 integration tests run `ensure-project` without isolation
   (`tests/test_ai_kit_gsd_curated_config.py:182-219,1188-1274`), so they copy the developer's
-  real global defaults. 18 R15 keeps the v1 tests unmodified, so this is recorded for the
-  v1-future decision.
+  real global defaults.~~ **Withdrawn 2026-10-17 (19-REVIEWS cycle 2, verified by the
+  orchestrator):** the v1 `ensure-project` tests drive `cli.main` with a fake `run_fn`
+  (`make_fake_run`), a fake install root and `tempfile` project dirs; no real gsd-tools runs, so
+  no real global defaults are copied. Nothing goes to the evidence or the backlog.
 
 ### Claude's Discretion
 - Where the evidence files live: suggested `19-SKILL-JUDGE.md`, `19-PRESSURE-TESTS.md` and
