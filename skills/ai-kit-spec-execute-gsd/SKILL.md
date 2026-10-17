@@ -192,12 +192,9 @@ A reviewer or executor is a (runtime, model) pair. Each call runs it natively wh
   earlier keys from that call were reverted (any in `revert_failed` still hold the new value);
   exit 2 means gsd-tools could not be resolved, as in Step 1. Show the output to the user and STOP.
   A model id the unquoted hook cannot carry comes back from Step 1 as `fallback_notice` with
-  reason `unsafe_hook_token` instead of a broken hook string. One accepted token is still unsafe:
-  GSD expands the hook unquoted, so a cursor model id carrying brackets (`model[effort=high]`) is
-  a glob class and changes if a matching filename exists. Before writing the hook, run
-  `compgen -G "$RESULT_MODEL"` from `$CWD` (`-G` takes the pattern itself; a `--` before it would
-  be read as the pattern and the check would test nothing). If it prints anything, do not write
-  the hook — run the mode-transition cleanup and continue as `fallback_notice`.
+  reason `unsafe_hook_token` instead of a broken hook string. That includes a cursor model id
+  carrying brackets (`model[effort=high]`): GSD globs the unquoted hook, so cursor effort/fast
+  brackets are argv-only (ai-kit's own Python dispatch), never hook-capable.
 
   **`workflow.cross_ai_command` is NOT the raw external CLI command — it names the project's own
   supervised runner**, and the guidance file is tracked next to it under `.planning/scripts/`.

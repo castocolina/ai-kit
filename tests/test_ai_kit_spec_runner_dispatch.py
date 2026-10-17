@@ -165,17 +165,12 @@ class TestProjectRunnerCommand(unittest.TestCase):
                 spec = RunnerSpec("opencode", model, "exec", 0)
                 self.assertIsNone(rd.project_runner_command(spec))
 
-    def test_bracket_model_only_for_cursor(self):
-        model = "gpt-6[effort=high]"
-        cursor = rd.project_runner_command(
-            RunnerSpec("cursor", model, "exec", 0)
-        )
-        assert cursor is not None
-        self.assertIn(model, cursor)
-        opencode = rd.project_runner_command(
-            RunnerSpec("opencode", model, "exec", 0)
-        )
-        self.assertIsNone(opencode)
+    def test_bracket_model_is_never_a_hook_token(self):
+        # GSD globs the unquoted hook: `gpt-6[effort=high]` would match a file `gpt-6e`.
+        for runtime in ("cursor", "opencode"):
+            with self.subTest(runtime=runtime):
+                spec = RunnerSpec(runtime, "gpt-6[effort=high]", "exec", 0)
+                self.assertIsNone(rd.project_runner_command(spec))
 
 
 class TestBuildRunnerArgv(unittest.TestCase):

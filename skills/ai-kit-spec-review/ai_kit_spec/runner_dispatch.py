@@ -26,9 +26,9 @@ from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 # Project-local paths a GSD hook names, relative to the project root (D-26, D-30).
 PROJECT_RUNNER_PATH = ".planning/scripts/cross-ai.mjs"
 PROJECT_GUIDANCE_PATH = ".planning/scripts/cross-ai-guidance.md"
-# GSD word-splits the hook unquoted, so a token may hold none of the shell metacharacters.
+# GSD word-splits and globs the hook unquoted, so a token may hold no shell or glob
+# metacharacter: a cursor bracket model (`m[effort=high]`) is a glob class, so it is argv-only.
 HOOK_TOKEN_RE = re.compile(r"^[A-Za-z0-9._:/@+=,#-]+$")
-_HOOK_BRACKET_RE = re.compile(r"^[A-Za-z0-9._:/@+=,#-]+\[[A-Za-z0-9._=,-]+\]$")
 
 RUNNER_OUTER_MARGIN_S = 30
 _KILL_GRACE_S = 10  # slack after the runner's own outer timeout before the backstop fires
@@ -123,29 +123,19 @@ PI_EXEC_NOTE = (
 )
 
 
-def _hook_token_ok(token: str, *, bracket: bool) -> bool:
-    if HOOK_TOKEN_RE.fullmatch(token):
-        return True
-    return bracket and _HOOK_BRACKET_RE.fullmatch(token) is not None
-
-
 def project_runner_command(spec: RunnerSpec, *, guidance: bool = False) -> str | None:
     """The project-local hook string, or None when a token is unsafe or unsupported.
 
-    GSD expands the value unquoted, so the tokens are joined with single spaces and never
-    quoted; anything outside the allowlist (the cursor model may carry one bracket suffix)
-    returns None instead of a command."""
+    GSD expands the value unquoted (word splitting and globbing), so the tokens are joined
+    with single spaces and never quoted; any token outside the allowlist, a cursor bracket
+    model included, returns None instead of a command."""
     if spec.runtime not in SUPPORTED_EXECUTE_CLIS:
         return None
-    flags = runner_flags(spec)
-    model_at = flags.index(f"--model-{spec.runtime}") + 1
-    tokens = ["node", PROJECT_RUNNER_PATH, *flags]
+    tokens = ["node", PROJECT_RUNNER_PATH, *runner_flags(spec)]
     if guidance:
         tokens += ["--no-preamble", "--prepend-file", PROJECT_GUIDANCE_PATH]
-    for token in tokens:
-        bracket = token == flags[model_at] and spec.runtime == "cursor"
-        if not _hook_token_ok(token, bracket=bracket):
-            return None
+    if not all(HOOK_TOKEN_RE.fullmatch(token) for token in tokens):
+        return None
     return " ".join(tokens)
 
 
