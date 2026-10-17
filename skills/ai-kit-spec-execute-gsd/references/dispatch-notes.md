@@ -14,12 +14,11 @@ so only word splitting and globbing apply to it. A quote character embedded in t
 is NOT a quoting boundary at that point — it is just another literal character stuck onto
 whichever word it falls inside.
 
-The hook therefore carries only tokens from an allowlist (letters, digits and `._:/@+=,#-`, plus
-one bracket suffix on a cursor model id). A model id or any other token outside that allowlist
-never becomes a hook: the adapter returns `fallback_notice` with reason `unsafe_hook_token`
-instead of writing a broken string. One accepted limitation remains: GSD expands the value
-unquoted, so a cursor bracket id such as `model[effort=high]` is a glob class and changes if a
-file with a matching name exists in the project root.
+The hook therefore carries only tokens from an allowlist (letters, digits and `._:/@+=,#-`). A
+model id or any other token outside that allowlist never becomes a hook: the adapter returns
+`fallback_notice` with reason `unsafe_hook_token` instead of writing a broken string. That
+includes a cursor bracket id such as `model[effort=high]`: unquoted, it is a glob class, so
+cursor effort/fast brackets stay argv-only (ai-kit's own Python dispatch), never hook-capable.
 
 ## Codex confinement
 

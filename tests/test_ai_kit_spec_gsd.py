@@ -1567,6 +1567,103 @@ class TestStep2HookSnippet(unittest.TestCase):
         self.assertNotIn("cross_ai_command=", logged)
 
 
+    _NOOP_CLEAR = ('{"applied": [], "failed": null, "error": null, "reverted": [], '
+                   '"revert_failed": []}')
+
+    def test_a_noop_cleanup_falls_back_instead_of_stopping(self):
+        # revert_failed is always in the JSON; only a non-empty list is a failure.
+        producer = (
+            "import sys\n"
+            "if 'clear-workflow-keys' in sys.argv:\n"
+            "    sys.stdout.write(" + repr(self._NOOP_CLEAR) + ")\n"
+            "    sys.exit(0)\n"
+            "sys.exit(2)\n"
+        )
+        literal = producer.replace("{", "{{").replace("}", "}}")  # _run applies str.format
+        proc, _logged = self._run(literal, "import sys\nsys.exit(0)\n")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("RESULT_MODE=fallback_notice", proc.stdout)
+
+    def test_a_failed_revert_stops(self):
+        producer = (
+            "import sys\n"
+            "if 'clear-workflow-keys' in sys.argv:\n"
+            "    sys.stdout.write('{\"failed\": \"workflow.cross_ai_command\", "
+            "\"revert_failed\": [\"workflow.cross_ai_timeout\"]}')\n"
+            "    sys.exit(1)\n"
+            "sys.exit(2)\n"
+        )
+        literal = producer.replace("{", "{{").replace("}", "}}")  # _run applies str.format
+        proc, _logged = self._run(literal, "import sys\nsys.exit(0)\n")
+        self.assertEqual(proc.returncode, 1)
+        self.assertNotIn("RESULT_MODE=", proc.stdout)
+
+
+def _skill_bash_block(marker: str) -> str:
+    skill = os.path.join(
+        os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute-gsd", "SKILL.md"
+    )
+    with open(skill, encoding="utf-8") as handle:
+        text = handle.read()
+    for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
+        if marker in block and "print-dispatch-guidance" not in block:
+            return block
+    raise AssertionError(f"SKILL.md has no bash block containing {marker!r}")
+
+
+class TestCleanupAndGuidanceSnippets(unittest.TestCase):
+    """The mode-transition cleanup and Step 3 guidance blocks, run against a stub shim."""
+
+    def setUp(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        self.bash_bin: str = bash_bin
+
+    def _run(self, marker, shim_body, extra_env=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            shim = os.path.join(tmp, "shim.py")
+            with open(shim, "w", encoding="utf-8") as handle:
+                handle.write(shim_body)
+            env = {"PATH": os.environ.get("PATH", ""), "GSD_SHIM": shim, "CWD": tmp,
+                   "RUN_ID": "run-1", **(extra_env or {})}
+            proc = subprocess.run(
+                [self.bash_bin, "-c", _skill_bash_block(marker)], cwd=tmp, env=env,
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            return proc
+
+    def test_cleanup_success_and_failure(self):
+        ok = "import sys\nsys.stdout.write(" + repr(TestStep2HookSnippet._NOOP_CLEAR) + ")\n"
+        self.assertEqual(self._run("not running Step 3", ok).returncode, 0)
+        failed = ("import sys\nsys.stdout.write('{\"failed\": \"k\", \"revert_failed\": "
+                  "[\"k\"]}')\nsys.exit(1)\n")
+        proc = self._run("not running Step 3", failed)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("not running Step 3", proc.stdout)
+
+    def test_guidance_block_refuses_the_legacy_marker_and_replaces_its_own(self):
+        shim = "import sys\nsys.stdout.write('GUIDE')\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            phase = os.path.join(tmp, "PLAN.md")
+            legacy = "# plan\n\n<!-- ai-kit-spec-execute-gsd:tooling-guidance -->\nold\n"
+            with open(phase, "w", encoding="utf-8") as handle:
+                handle.write(legacy)
+            env = {"PHASE_PROMPT_FILE": phase, "RESULT_MODE": "fallback_notice"}
+            proc = self._run("tooling-guidance:start", shim, env)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("old single-marker", proc.stdout)
+            with open(phase, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), legacy)
+            with open(phase, "w", encoding="utf-8") as handle:
+                handle.write("# plan\n")
+            for _ in range(2):
+                self.assertEqual(self._run("tooling-guidance:start", shim, env).returncode, 0)
+            with open(phase, encoding="utf-8") as handle:
+                text = handle.read()
+            self.assertEqual(text.count("GUIDE"), 1)
+
+
 class TestMainCli(unittest.TestCase):
     def test_every_subcommand_has_a_handler(self):
         parser = cli._build_parser()

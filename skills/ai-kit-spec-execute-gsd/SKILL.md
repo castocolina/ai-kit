@@ -37,25 +37,26 @@ the user to resume or run `/gsd-execute-phase` by hand.
 ## Step 0: Resolve the shim path
 
 This skill is not guaranteed a `CLAUDE_PLUGIN_ROOT` — take the FIRST existing of, in order (same
-pattern `ai-kit-spec-review/SKILL.md` uses for its own `ai-kit-spec.py`), and resolve
-`ai-kit-spec-review`'s own shim in the SAME call:
+pattern `ai-kit-spec-review/SKILL.md` uses for its own `ai-kit-spec.py`: this skill's own
+directory and its siblings first, so the shims match the `SKILL.md` you loaded, not an older
+install elsewhere), and resolve `ai-kit-spec-review`'s own shim in the SAME call:
 
 ```bash
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-execute-gsd}" \
-         "$HOME/.claude/skills/ai-kit-spec-execute-gsd" \
-         "$(dirname "<absolute path to THIS SKILL.md>")"; do
+for d in "$(dirname "<absolute path to THIS SKILL.md>")" \
+         "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-execute-gsd}" \
+         "$HOME/.claude/skills/ai-kit-spec-execute-gsd"; do
   [ -d "$d" ] && { GSD_SKILL_DIR="$d"; break; }
 done
 GSD_SHIM="$GSD_SKILL_DIR/ai-kit-spec-gsd.py"
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" \
-         "$HOME/.claude/skills/ai-kit-spec-review" \
-         "$(dirname "$GSD_SKILL_DIR")/ai-kit-spec-review"; do
+for d in "$(dirname "$GSD_SKILL_DIR")/ai-kit-spec-review" \
+         "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" \
+         "$HOME/.claude/skills/ai-kit-spec-review"; do
   [ -d "$d" ] && { REVIEW_SPEC_SKILL_DIR="$d"; break; }
 done
 TOOLS_PY="$REVIEW_SPEC_SKILL_DIR/ai-kit-spec.py"
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-gsd-curated-config}" \
-         "$HOME/.claude/skills/ai-kit-gsd-curated-config" \
-         "$(dirname "$GSD_SKILL_DIR")/ai-kit-gsd-curated-config"; do
+for d in "$(dirname "$GSD_SKILL_DIR")/ai-kit-gsd-curated-config" \
+         "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-gsd-curated-config}" \
+         "$HOME/.claude/skills/ai-kit-gsd-curated-config"; do
   [ -d "$d" ] && { CURATED_SKILL_DIR="$d"; break; }
 done
 CURATED_PY="$CURATED_SKILL_DIR/ai-kit-gsd-curated-config.py"
@@ -215,18 +216,24 @@ that GSD's own runtime runs, decided without a host check (D-25).
   # references/dispatch-notes.md#why-no-manual-quoting-around-workflowcross_ai_commands-values
   # The producer runs first and its status is checked before anything is written: a failure or
   # empty guidance must never reach ensure-runner, and a not-ready runner writes nothing.
-  GUIDANCE="$(python3 "$GSD_SHIM" print-dispatch-guidance --runtime "$RESULT_RUNTIME" --model "$RESULT_MODEL")"
-  GUIDANCE_RC=$?
-  if [ "$GUIDANCE_RC" -ne 0 ] || [ -z "$GUIDANCE" ] || [ ! -f "$CURATED_PY" ]; then
-    echo "ai-kit-spec-execute-gsd: dispatch guidance unavailable (exit $GUIDANCE_RC); nothing written"
+  # clear-workflow-keys always prints revert_failed (an empty list on success): parse the JSON,
+  # never grep for the field name.
+  clear_hook() {
     CLEAR="$(python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
       --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout)"
     CLEAR_RC=$?
-    if [ "$CLEAR_RC" -ne 0 ] || printf '%s' "$CLEAR" | grep -q 'revert_failed'; then
+    if [ "$CLEAR_RC" -ne 0 ] || \
+      ! python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.exit(1 if d.get("failed") or d.get("revert_failed") else 0)' "$CLEAR" 2>/dev/null; then
       echo "$CLEAR"
       echo "ai-kit-spec-execute-gsd: cleanup failed; an old hook may still be active"
       exit 1
     fi
+  }
+  GUIDANCE="$(python3 "$GSD_SHIM" print-dispatch-guidance --runtime "$RESULT_RUNTIME" --model "$RESULT_MODEL")"
+  GUIDANCE_RC=$?
+  if [ "$GUIDANCE_RC" -ne 0 ] || [ -z "$GUIDANCE" ] || [ ! -f "$CURATED_PY" ]; then
+    echo "ai-kit-spec-execute-gsd: dispatch guidance unavailable (exit $GUIDANCE_RC); nothing written"
+    clear_hook
     RESULT_MODE="fallback_notice"
   else
     mkdir -p "$CWD/tmp"
@@ -236,6 +243,7 @@ that GSD's own runtime runs, decided without a host check (D-25).
     ENSURE="$(cat "$ENSURE_FILE")"
     rm -f "$ENSURE_FILE"
     if [ "$ENSURE_RC" -eq 0 ]; then
+      [ -n "$ENSURE" ] && echo "$ENSURE"  # a kept, user-edited runner reports notes on success too
       WRITE="$(python3 "$GSD_SHIM" write-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
         --set "cross_ai_command=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$RESULT_CROSS_AI_COMMAND")" \
         --set cross_ai_execution=true \
@@ -249,14 +257,7 @@ that GSD's own runtime runs, decided without a host check (D-25).
     else
       echo "ai-kit-spec-execute-gsd: the project runner is not ready (exit $ENSURE_RC); nothing written"
       echo "$ENSURE"
-      CLEAR="$(python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
-        --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout)"
-      CLEAR_RC=$?
-      if [ "$CLEAR_RC" -ne 0 ] || printf '%s' "$CLEAR" | grep -q 'revert_failed'; then
-        echo "$CLEAR"
-        echo "ai-kit-spec-execute-gsd: cleanup failed; an old hook may still be active"
-        exit 1
-      fi
+      clear_hook
       RESULT_MODE="fallback_notice"
     fi
   fi
@@ -266,9 +267,10 @@ that GSD's own runtime runs, decided without a host check (D-25).
   1 (not ready: a user-edited runner on an older or foreign template gets a `.new` file plus the
   printed notes) or 2 (error)
   writes nothing: show the printed notes to the user and continue as `fallback_notice` only after
-  the cleanup call above exits 0. If that cleanup exits non-zero, or its output names keys in
-  `revert_failed`, STOP and show it: an old hook may still be active. Exit 0 writes the hook and
-  the 900-second timeout. The `RESULT_MODE=` line this block prints replaces the Step 1 value for
+  the cleanup call above exits 0. If that cleanup exits non-zero, or its JSON reports a failed key
+  or a non-empty `revert_failed` (the field is always present, empty on success), STOP and show
+  it: an old hook may still be active. Exit 0 writes the hook and the 900-second timeout, and
+  relays any notes `ensure-runner` printed. The `RESULT_MODE=` line this block prints replaces the Step 1 value for
   every later step, so Step 3 follows the mode that was actually set up.
 
   **Hook setup.** This skill renders or upgrades the runner and the guidance file through
@@ -312,9 +314,22 @@ dispatch mode. Never touches a value the user set by hand (`clear-workflow-keys`
 the key is adapter-owned):
 
 ```bash
-python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
-  --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout
+CLEAR="$(python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
+  --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout)"
+CLEAR_RC=$?
+if [ "$CLEAR_RC" -ne 0 ] || \
+  ! python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.exit(1 if d.get("failed") or d.get("revert_failed") else 0)' "$CLEAR" 2>/dev/null; then
+  echo "$CLEAR"
+  echo "ai-kit-spec-execute-gsd: cleanup failed; an old hook may still be active -- not running Step 3"
+  exit 1
+fi
 ```
+
+**Only a successful cleanup reaches Step 3.** Exit 1 (or a JSON `failed`/non-empty
+`revert_failed`) means a clear failed and was rolled back, so an adapter-owned hook from a prior
+run can still be active: STOP, show the output to the user, and name the keys still holding a
+value (`failed`, `revert_failed`) — never hand the phase to GSD with that hook possibly live.
+Exit 2 means gsd-tools could not be resolved or the config is malformed, as in Step 1: STOP too.
 
 ## Step 3: Prepare confirmed-only tooling guidance, then invoke GSD's own `/gsd-execute-phase` skill
 
@@ -337,19 +352,27 @@ if [ "$GUIDANCE_RC" -ne 0 ] || [ -z "$GUIDANCE" ]; then
 fi
 START="<!-- ai-kit-spec-execute-gsd:tooling-guidance:start -->"
 END="<!-- ai-kit-spec-execute-gsd:tooling-guidance:end -->"
+LEGACY="<!-- ai-kit-spec-execute-gsd:tooling-guidance -->"  # an older release's single marker
 python3 -c 'import pathlib,sys
-p,s,e,g=sys.argv[1:]
+p,s,e,g,old=sys.argv[1:]
 t=pathlib.Path(p).read_text()
+if old in t:
+    sys.exit(3)
 b,a=(t.find(s),t.find(e))
 if b!=-1 and a!=-1:
     t=t[:b]+t[a+len(e):]
 elif b!=-1:
     sys.exit(2)
 pathlib.Path(p).write_text(t.rstrip("\n")+"\n\n"+s+"\n"+g+"\n"+e+"\n")' \
-  "$PHASE_PROMPT_FILE" "$START" "$END" "$GUIDANCE" || {
-  echo "ai-kit-spec-execute-gsd: guidance block has no end marker; phase file untouched"
-  exit 2
-}
+  "$PHASE_PROMPT_FILE" "$START" "$END" "$GUIDANCE" "$LEGACY"
+case $? in
+  0) ;;
+  3) echo "ai-kit-spec-execute-gsd: $PHASE_PROMPT_FILE still has the old single-marker guidance"
+     echo "block ($LEGACY plus the text after it); delete that block by hand, then re-run"
+     exit 2 ;;
+  *) echo "ai-kit-spec-execute-gsd: guidance block has no end marker; phase file untouched"
+     exit 2 ;;
+esac
 ```
 
 This `prepare-tooling` subcommand (Task 4) runs `detect_tool_availability()`,
