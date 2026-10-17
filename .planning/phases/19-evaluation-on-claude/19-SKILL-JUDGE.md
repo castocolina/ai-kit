@@ -1,7 +1,7 @@
 # Phase 19 — skill-judge gate (EVAL-02)
 
 JUDGED_PATH: skills/ai-kit-gsd-curated-config/SKILL.md
-JUDGED_COMMIT: pending
+JUDGED_COMMIT: 86ad793
 BASELINE: 105/120 (v1, Phase 07-04; reference, not a floor)
 SCORE: 109/120 (pi gpt-6.1-sol: 114/120; pi glm-5.3: unavailable)
 CRITICAL: 0
@@ -61,3 +61,11 @@ Fix rounds:
 (none in this gate; the 19-07 REFACTOR decision is in `19-PRESSURE-TESTS.md`)
 
 ## Verdict: PASS
+
+## Phase decisions for owner review
+
+- human_needed | 19-PRESSURE-TESTS.md | 19-07-D-full-key-r2 | laya `refactor_round_2` (0.9807); round 2 ran (19e3d3d) | the orchestrator agreed: SKILL.md step 4 already asked for the full key, and the D green-r1 agent grouped against it; GREEN r2 then passed every gating check
+- human_needed | 19-09-SUMMARY.md | eval-D-trusted-roots-answer | owner review: opus D refused the bare "yes" as an answer to the open trusted-roots `needs_choice` and never applied; the sonnet re-sample passed | `pressure/D-green-opus.md` turn 3; decide whether `evals/03-v1-written-config.md` should answer that choice explicitly
+- human_needed | 19-SKILL-JUDGE.md | glm-5.3-unavailable | `unavailable, capacity` in rounds 0, r1 and r2 (weekly limit until 2026-10-21) | the PASS rests on the in-session judge and pi gpt-6.1-sol (114/120, 0/0); the phase rule allows `unavailable`
+- human_needed | 19-09-SUMMARY.md | v1-suite-package-attribute | owner review: `_reimport_with_ai_kit_spec_blocked` in the v1 test module leaves a degraded module bound on the package | worked around on the harness side (c326bbd); the v1 test module was left untouched (Run rule 8)
+- advisory | 19-07-SUMMARY.md | B ensure_runner_disclosed | `fail (non-gating)` in RED-a, RED-b and every GREEN round | informational per jev 19-Q6; not routed
