@@ -316,10 +316,6 @@ class TestPlanScript(unittest.TestCase):
             self.assertEqual(int(match.group(1)), 4)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _v2_pristine(template: bytes, prefer: list) -> bytes:
     """A pristine script stamped template=2, body otherwise identical to a current render."""
     cfg = cross_ai_script.template_config(template)
@@ -606,3 +602,7 @@ class TestReadTarget(unittest.TestCase):
                 cross_ai_script._read_target(target)
             self.assertIn(f"cannot read {target}", str(ctx.exception))
             self.assertIsInstance(ctx.exception, ValueError)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -623,10 +623,6 @@ class TestUnroutableQuota(unittest.TestCase):
         self.assertEqual(result["bad"], {"available": False, "reason": "bad_model"})
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestOpencodePrivateDirUsesTheGivenEnv(unittest.TestCase):
     """The opencode lister's private cwd lives under the env routing was given, never under
     os.environ's cache: a test with a scratch env must not touch the real cache dir."""
@@ -655,3 +651,7 @@ class TestOpencodePrivateDirUsesTheGivenEnv(unittest.TestCase):
             self.assertTrue(cwds)
             self.assertEqual({os.path.dirname(cwd) for cwd in cwds}, {base})
             self.assertEqual(os.listdir(decoy), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

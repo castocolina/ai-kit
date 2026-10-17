@@ -475,6 +475,26 @@ def check_one_supervisor(relpath, tree):
     return hits
 
 
+def _is_main_guard(node):
+    test = node.test if isinstance(node, ast.If) else None
+    return (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Name) and test.left.id == "__name__"
+        and len(test.comparators) == 1
+        and isinstance(test.comparators[0], ast.Constant)
+        and test.comparators[0].value == "__main__"
+    )
+
+
+def check_main_guard_last(relpath, tree):
+    """Rule 12: a test module's `__main__` guard is its last statement, so running the file
+    as a script never calls `unittest.main()` before the classes below it exist."""
+    return [
+        f"{relpath}:{node.lineno}: __main__ guard is not the last statement"
+        for node in tree.body[:-1] if _is_main_guard(node)
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Live-tree tests — every rule must pass against the real render module.
 # --------------------------------------------------------------------------- #
@@ -572,6 +592,19 @@ class TestArchitecture(unittest.TestCase):
         self.assertIsNotNone(owner_count)
         assert owner_count is not None
         self.assertGreaterEqual(owner_count, 1)
+
+    def test_rule12_main_guard_is_the_last_statement(self):
+        tests_root = os.path.dirname(os.path.abspath(__file__))
+        violations, guarded = [], 0
+        for filename in sorted(os.listdir(tests_root)):
+            if not (filename.startswith("test_") and filename.endswith(".py")):
+                continue
+            with open(os.path.join(tests_root, filename), encoding="utf-8") as handle:
+                tree = ast.parse(handle.read(), filename=filename)
+            violations += check_main_guard_last(f"tests/{filename}", tree)
+            guarded += any(_is_main_guard(node) for node in tree.body)
+        self.assertEqual([], violations)
+        self.assertGreater(guarded, 0)
 
     def test_rule9_broad_except_only_in_listed_backstops(self):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -810,6 +843,15 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertEqual(0, supervisor_spawn_count(ast.parse("x = 1\n")))
         variable = ast.parse("subprocess.Popen([\"x\"], start_new_session=flag)\n")
         self.assertEqual([], check_one_supervisor("skills/other.py", variable))
+
+    def test_rule12_flags_an_early_main_guard(self):
+        early = ast.parse(
+            'if __name__ == "__main__":\n    main()\n\nclass TestLate:\n    pass\n'
+        )
+        last = ast.parse('class TestA:\n    pass\n\nif __name__ == "__main__":\n    main()\n')
+        self.assertEqual(1, len(check_main_guard_last("tests/test_x.py", early)))
+        self.assertEqual([], check_main_guard_last("tests/test_x.py", last))
+        self.assertEqual([], check_main_guard_last("tests/test_x.py", ast.parse("x = 1\n")))
 
     def test_rule9_flags_unlisted_broad_except(self):
         src = (
