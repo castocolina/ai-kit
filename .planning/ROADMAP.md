@@ -69,7 +69,7 @@ runtime hosting the session. Source spec:
 - [x] **Phase 17: Curated-Config Inventory & Recommendation Engine** - Read-only project/host inventory and a pure `recommend` function that produces an explainable `plan.json` (completed 2026-10-15)
 - [x] **Phase 18: Cross-AI, Skills & Apply Pipeline** - Plan adjustment, cross-AI review/execution wiring, skill-affinity mapping, and a safe backup/restore apply flow (completed 2026-10-16)
 - [x] **Phase 18.1: One runtime model** (INSERTED) - Model candidates become (runtime, model) pairs; `native_runtime` and the `native_claude`/cursor-agent naming go away (completed 2026-10-17)
-- [ ] **Phase 19: Evaluation on Claude** - Skill pressure-testing, `/skill-judge` gate, and a live smoke run + `resolve-model` proof from the claude host
+- [x] **Phase 19: Evaluation on Claude** - Skill pressure-testing, `/skill-judge` gate, and a live smoke run + `resolve-model` proof from the claude host (completed 2026-10-17)
 - [ ] **Phase 20: Live Validation on Codex + Opencode** - Live smoke runs from the codex and opencode hosts, resolving the two open verifications from the spec
 - [ ] **Phase 21: Cursor Live Validation** - Live smoke run from the cursor host (independent; may run any time after Phase 19)
 - [ ] **Phase 22: Pi Live Validation** - Live smoke run from the pi host (independent; may run any time after Phase 19)
@@ -442,7 +442,7 @@ model exactly as planned.
      line: 1.16.x or 1.17.x; the run used 1.17.0), version recorded in `19-SMOKE.md` (Amended
      2026-10-17 (19-RESEARCH R-7); amended again by the 19 verification: the shared install
      moved to 1.17.0 and `GSD_CORE_PREFIXES` lists both lines).
-**Plans**: 10/10 plans executed (sequential waves 1-10)
+**Plans**: 10/10 plans complete (sequential waves 1-10)
 - [x] 19-01-PLAN.md — eval helper: snapshot, digest, oracle + resolve-model matrix e2e (cross-AI)
 - [x] 19-02-PLAN.md — pressure fixtures B-E, headless `claude -p` runner, eval files (cross-AI)
 - [x] 19-03-PLAN.md — per-expectation grader with non-vacuity pairs, secret scan (cross-AI)

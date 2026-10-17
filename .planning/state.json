@@ -31,12 +31,12 @@
     {
       "number": "19",
       "name": "Evaluation on Claude",
-      "status": "in_progress"
+      "status": "complete"
     },
     {
       "number": "20",
       "name": "Live Validation on Codex + Opencode",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "number": "21",
@@ -75,9 +75,9 @@
     }
   ],
   "next": {
-    "command": "/gsd:progress --next",
-    "label": "Advance to the next step",
-    "reason": "Phase 19 of 14 · 7% · executing"
+    "command": "/gsd-progress --next",
+    "label": "Advance to the next step (plan phase 20)",
+    "reason": "Phase 7 of 14 — needs a plan"
   },
-  "updated_at": "2026-10-17T08:45:12.635Z"
+  "updated_at": "2026-10-17T22:54:05.681Z"
 }
