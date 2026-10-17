@@ -455,6 +455,10 @@ the two open verifications the spec left pending.
   2. A live smoke run from the opencode host completes successfully, and whether the opencode
      review lane is usable from an opencode host is confirmed and reflected in the recommendation
      logic and SKILL.md.
+  3. Native per-call model selection is verified live from the codex and opencode hosts: a
+     (runtime, model) pair whose runtime is the host either takes the requested model natively,
+     or `host_can_select` keeps the session-default-only label for that host (amended 2026-10-17
+     per 18.1-VERIFICATION deferred item).
 **Plans**: TBD
 
 ### Phase 21: Cursor Live Validation
@@ -479,6 +483,9 @@ within this phase.
      the pinned model in the Task call and one run is confirmed non-fast in the Cursor usage
      dashboard (AGT-01; source todo
      `.planning/todos/pending/2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md`).
+  5. Native per-call model selection is verified live from the cursor host, or `host_can_select`
+     keeps the session-default-only label for cursor (amended 2026-10-17 per 18.1-VERIFICATION
+     deferred item).
 **Plans**: TBD
 
 ### Phase 22: Pi Live Validation
@@ -499,6 +506,9 @@ downstream depends on it)
   2. SKILL.md's "not live-validated" label for pi is removed once the smoke run passes.
   3. `detect-runtimes`' pi parser (added in Phase 18 for SPEC-05) is re-verified against the live
      RPC `get_available_models` output (amended 2026-10-15 per 22 D-04).
+  4. Native per-call model selection on the pi host follows SC1's spike result: verified live, or
+     `host_can_select` keeps the session-default-only label for pi (amended 2026-10-17 per
+     18.1-VERIFICATION deferred item).
 **Plans**: TBD
 
 ### Phase 23: Host-split status line for Claude Code and Cursor CLI
