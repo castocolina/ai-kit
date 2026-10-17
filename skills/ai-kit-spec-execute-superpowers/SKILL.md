@@ -49,7 +49,8 @@ subagent mechanism, or STOP and tell the user to resume by hand.
 Take the FIRST existing candidate, in one `Bash` call:
 
 ```bash
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-execute-superpowers}" \
+for d in "$(dirname "<absolute path to THIS SKILL.md>")" \
+         "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-execute-superpowers}" \
          "$HOME/.claude/skills/ai-kit-spec-execute-superpowers" \
          "$(git rev-parse --show-toplevel 2>/dev/null)/skills/ai-kit-spec-execute-superpowers" \
          "$(pwd)/skills/ai-kit-spec-execute-superpowers"; do
@@ -57,14 +58,14 @@ for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-execute-s
 done
 if [ -z "$SKILL_DIR" ]; then
   printf 'ERROR: could not resolve skills/ai-kit-spec-execute-superpowers under any known '
-  printf 'installation shape (CLAUDE_PLUGIN_ROOT, ~/.claude/skills, git toplevel, or cwd) -- '
+  printf 'installation shape (this SKILL.md, CLAUDE_PLUGIN_ROOT, ~/.claude/skills, git toplevel, or cwd) -- '
   printf 'STOP and tell the user rather than guessing a path.\n'
   exit 1
 fi
 SHIM="$SKILL_DIR/ai-kit-spec-superpowers.py"
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" \
-         "$HOME/.claude/skills/ai-kit-spec-review" \
-         "$(dirname "$SKILL_DIR")/ai-kit-spec-review"; do
+for d in "$(dirname "$SKILL_DIR")/ai-kit-spec-review" \
+         "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review}" \
+         "$HOME/.claude/skills/ai-kit-spec-review"; do
   [ -d "$d" ] && { REVIEW_SKILL_DIR="$d"; break; }
 done
 if [ -z "$REVIEW_SKILL_DIR" ]; then
@@ -77,7 +78,9 @@ TOOLS_PY="$REVIEW_SKILL_DIR/ai-kit-spec.py"
 printf 'SHIM=%s\nTOOLS_PY=%s\n' "$SHIM" "$TOOLS_PY"
 ```
 
-**Record both printed lines as literal values.** Every later call uses `python3 "$SHIM"
+The loaded skill's own directory and its sibling are tried first, so the shims that run match
+the `SKILL.md` you are following, not an older install elsewhere. **Record both printed lines as
+literal values.** Every later call uses `python3 "$SHIM"
 <subcommand>`; `$TOOLS_PY` is `ai-kit-spec-review`'s shim, used for `cache-path --kind quota` and
 `trust-local`. Every `Bash` call starts a fresh shell, so every `$VAR` below means the literal value
 last captured for it via `printf`, re-substituted verbatim.
@@ -97,7 +100,7 @@ broken candidate forever or locks out a recovered one, wave after wave.
 The state is a three-set split: `$PRIOR_EXCLUDED_KEYS_JSON`/`$PRIOR_REASONS_JSON` (permanent,
 carried across resumes), `$WAVE_TRIED_JSON`/`$WAVE_REASONS_JSON` (this wave only), and the derived
 unions `$EXCLUDED_KEYS_JSON`/`$EXCLUDED_REASONS_JSON` passed to `resolve-injection`, plus
-`$FIX_ROUND`. **MANDATORY: before writing or reading any of these, or the resumable-state file,
+`$FIX_ROUND` and `$LAST_DISPATCHED_KEY`. **MANDATORY: before writing or reading any of these, or the resumable-state file,
 read `references/state-management.md` in full** — it defines each variable's initial and resume
 values and the exact resumable-state bash.
 
@@ -111,7 +114,8 @@ INJECTION_JSON="$(python3 "$SHIM" resolve-injection --cwd "$CWD" --task-file "$B
   --quota-path "$QUOTA_PATH" --exclude-keys-json "$EXCLUDED_KEYS_JSON" \
   --excluded-reasons-json "$EXCLUDED_REASONS_JSON")"
 INJECTION_MODE="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["mode"])' "$INJECTION_JSON")"
-printf 'INJECTION_JSON=%s\nINJECTION_MODE=%s\n' "$INJECTION_JSON" "$INJECTION_MODE"
+printf 'QUOTA_PATH=%s\nINJECTION_JSON=%s\nINJECTION_MODE=%s\n' \
+  "$QUOTA_PATH" "$INJECTION_JSON" "$INJECTION_MODE"
 ```
 
 `--excluded-reasons-json` always gets the merge of `$PRIOR_REASONS_JSON` and `$WAVE_REASONS_JSON`,
@@ -160,7 +164,9 @@ Record both when the block ran. `$INJECTION_KEY` is the ladder key (e.g. `codex/
   failure), or a route name (`"bad_model"`, `"review_only"`,
   `"not_installed"`, `"no_inventory"`, `"unknown_runtime"`, `"no_model"`). Only `"quota"` is
   worth waiting for. A skip route is recorded under that route name and never picked.
-  - **`any_quota_recoverable == False`** — every candidate failed for a reason waiting never fixes.
+  - **`any_quota_recoverable == False`** — no candidate is eligible for automatic quota recovery
+    (only `"quota"` is). Some reasons may still clear later by themselves (`"capacity"`), others
+    need a fix first (credentials, configuration); either way an hourly wake is not the remedy.
     Do **not** schedule `CronCreate`. STOP this wave and tell the user which key needs what fix,
     read off `reasons`: `"auth"` needs login or entitlement, `"billing_or_access"` credits or
     model access, `"configuration"` a fixed model id, prompt or flag (the runner refused it),
@@ -189,7 +195,9 @@ A reviewer or executor is a (runtime, model) pair. Each call runs it natively wh
 as the `Agent` tool's `model` parameter (omit it when empty) and record the returned agent identity;
 fix-loop rounds 1–3 resume that same agent. Its round 4/5 model bump is that skill's own judgment,
 with no ladder. On any other host the native case is only the session default, so omit `model` and
-let the host use its current session.
+let the host use its current session. Either way, record `LAST_DISPATCHED_KEY="$INJECTION_KEY"`
+after the dispatch. A non-Claude native dispatch cannot raise its own model, so rounds 4–5 take
+the ladder escalation below, and stop with a model-change request when it finds nothing higher.
 
 **`mode == "external_cli"`:** a subprocess through the supervised runner. A CLI process exits when
 done, so there is no live agent to resume.
@@ -244,14 +252,19 @@ DISPATCH_RESULT_JSON="$(python3 "$SHIM" dispatch-task --injection-json "$INJECTI
   --prompt-file "$PROMPT_FILE" --target-dir "$CWD" --heartbeat-interval 60 --timeout 900 \
   --format-block-file "$FORMAT_BLOCK_FILE" --report-file "$REPORT_FILE" \
   --report-mode "$REPORT_MODE")"
-printf 'DISPATCH_RESULT_JSON=%s\n' "$DISPATCH_RESULT_JSON"
+REPORT_MODE=append
+LAST_DISPATCHED_KEY="$INJECTION_KEY"
+printf 'DISPATCH_RESULT_JSON=%s\nREPORT_MODE=%s\nLAST_DISPATCHED_KEY=%s\n' \
+  "$DISPATCH_RESULT_JSON" "$REPORT_MODE" "$LAST_DISPATCHED_KEY"
 ```
 
-`--heartbeat-interval` is required but unused: the runner prints its own heartbeat.
+   `--heartbeat-interval` is required but unused: the runner prints its own heartbeat.
 
-   Then `REPORT_MODE=append`. If the CLI wrote `$REPORT_FILE` itself, `dispatch-task` leaves it
-   untouched; only when the file is unchanged does it write or append the captured stdout, behind a
-   marker line. Either way, review and the fix loop read `$REPORT_FILE` like a native report.
+   The block itself switches `REPORT_MODE` to `append` and records `$LAST_DISPATCHED_KEY`, the
+   Rounds 4–5 escalation anchor (a native dispatch records its key the same way). If the CLI
+   wrote `$REPORT_FILE` itself, `dispatch-task` leaves it untouched; only when the file is
+   unchanged does it write or append the captured stdout, behind a marker line. Either way,
+   review and the fix loop read `$REPORT_FILE` like a native report.
 
 4. **Classify the outcome:**
 
@@ -279,6 +292,8 @@ WAVE_REASONS_JSON="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d[s
   "$WAVE_REASONS_JSON" "$INJECTION_KEY")"
 EXCLUDED_KEYS_JSON="$(python3 -c 'import json,sys; print(json.dumps(sorted(set(json.loads(sys.argv[1])) | set(json.loads(sys.argv[2])))))' \
   "$PRIOR_EXCLUDED_KEYS_JSON" "$WAVE_TRIED_JSON")"
+printf 'WAVE_TRIED_JSON=%s\nWAVE_REASONS_JSON=%s\nEXCLUDED_KEYS_JSON=%s\n' \
+  "$WAVE_TRIED_JSON" "$WAVE_REASONS_JSON" "$EXCLUDED_KEYS_JSON"
 ```
 
   Then re-run Step 2's `resolve-injection` with the same shape: the new `--exclude-keys-json`, a
@@ -303,19 +318,19 @@ never runs here. pi exec uses the runner's pi formula, verified by its hermetic 
 live verification is Phase 22, and stderr prints that note before the run.
 
 **The one exception.** Every subprocess runs through the supervised runner, except a custom entry
-(a `command` and no `runtime`): exec mode never runs it. With `purpose = "execute"`,
-`resolve-injection` exits 2; otherwise it is skipped with a stderr warning (routed `review_only`)
-and never reaches `dispatch-task`. In review it runs through the fixed-argv custom launcher on the
-same supervision core.
+(a `command` and no `runtime`), which exec mode never runs (Step 2's exit 2, or a `review_only`
+skip); in review it runs through the fixed-argv custom launcher on the same supervision core.
 
 **Node.** Subprocess dispatch needs Node 24 (GSD's declared floor); older versions untested.
 Without Node, the runner fails closed as `dispatch_unavailable`
 (`ai-kit-spec: subprocess dispatch needs Node`) and the session default still runs.
 
-**Rounds 4–5 capability escalation (`external_cli` only).** When `$FIX_ROUND >= 4` after the
-increment, subagent-driven-development requires "a MORE CAPABLE model". Excluding the stuck key and
-re-walking the ladder does not guarantee that — the next survivor may be weaker. **MANDATORY:
-before computing `$ESCALATION_EXCLUDE_JSON` or passing `--escalation-excluded-keys-json`, read
+**Rounds 4–5 capability escalation (`external_cli`, and `native` on every host but Claude
+Code).** When `$FIX_ROUND >= 4` after the increment, subagent-driven-development requires "a MORE
+CAPABLE model". Excluding the stuck key and re-walking the ladder does not guarantee that — the
+next survivor may be weaker. The floor is relative to `$LAST_DISPATCHED_KEY` (the dispatch that
+got stuck, persisted across resumes), never to the key Step 2 just picked. **MANDATORY: before
+computing `$ESCALATION_EXCLUDE_JSON` or passing `--escalation-excluded-keys-json`, read
 `references/escalation.md` in full.** It defines the ladder-position capability proxy, the exact
 computation and its edge cases, why the set never joins `$EXCLUDED_KEYS_JSON`, and how to branch
 when the re-resolution reports `quota_exhausted` or `no_candidate` (an escalation-only exclusion
