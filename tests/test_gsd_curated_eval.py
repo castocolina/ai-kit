@@ -3138,6 +3138,24 @@ class TestReviewFixes(unittest.TestCase):
         changed = self._b_same_turn(redo_rows=[{"key": "k", "kind": "add"}])
         self.assertIs(self._row("B", changed, "dry_run_before_apply")["pass"], False)
 
+    def test_dry_run_plan_in_a_variable_matches_the_literal_path(self) -> None:
+        turns = _b_turns()
+        dry = turns[0][0]
+        turns[0][0] = {**dry, "command": "P=P; " + dry["command"].replace("--plan P", "--plan $P")}
+        run = _b_run(self.tmp, events_turns=turns)
+        self.assertIs(self._row("B", run, "dry_run_before_apply")["pass"], True)
+
+    def test_trimmed_result_cut_through_the_run_dir_is_labelled(self) -> None:
+        run = pathlib.Path(self.tmp) / "run"
+        text = "x" * (ev.TRIM_CHARS - 5) + str(run) + "/plan.json"
+        event = {"kind": "tool_result", "turn": 1, "text": text}
+        self.assertNotIn(str(run)[:5], ev.trimmed_transcript([event], run).split("result: ")[1])
+
+    def test_placeholders_label_the_login_name(self) -> None:
+        with mock.patch.object(ev.getpass, "getuser", return_value="someone"):
+            got = ev._placeholders("drwx------ 8 someone someone 4096 x", pathlib.Path(self.tmp))
+        self.assertEqual(got, "drwx------ 8 <user> <user> 4096 x")
+
     def test_rows_named_only_in_the_apply_turn_are_not_shown(self) -> None:
         turns = _b_turns()
         late = {**turns[0][2], "turn": 2}

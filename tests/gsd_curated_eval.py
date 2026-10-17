@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
+import getpass
 import hashlib
 import importlib
 import io
@@ -1187,22 +1188,27 @@ def _python_reprs(text: str) -> list[dict]:
     return out
 
 
+def _expand(word: str | None, command: str) -> str | None:
+    """`word` with `$NAME`/`${NAME}` replaced by the command's own `NAME=value` words."""
+    if word is None:
+        return None
+    for token in _argv_of(command):
+        match = _ASSIGNMENT_RX.fullmatch(token)
+        if match and match.group(2) and not match.group(2).isspace():
+            name, value = match.groups()
+            word = word.replace("${" + name + "}", value).replace("$" + name, value)
+    return word
+
+
 def _redirected_reports(command: str, run: str | None) -> list[dict]:
     """The `apply` report a chained call wrote with `apply ... > FILE` (19-07: the agent read
     it back itself), FILE expanded with the call's own `VAR=value` words; [] when absent or
     when FILE is outside the run dir `run` (review IN-06: grading reads only the run's own
     files)."""
-    names = {}
-    for word in _argv_of(command):
-        match = _ASSIGNMENT_RX.fullmatch(word)
-        if match and match.group(2) and not match.group(2).isspace():
-            names[match.group(1)] = match.group(2)
     segment = _segment_with(command, "apply")
     if "apply" not in segment or ">" not in segment[:-1]:
         return []
-    target = segment[segment.index(">") + 1]
-    for name, value in names.items():
-        target = target.replace("${" + name + "}", value).replace("$" + name, value)
+    target = _expand(segment[segment.index(">") + 1], command)
     if "$" in target or not os.path.isabs(target) or not os.path.isfile(target) or not run:
         return []
     if not pathlib.Path(target).resolve().is_relative_to(pathlib.Path(run).resolve()):
@@ -1319,8 +1325,9 @@ def _accepted_dry_run(evs: list[dict], real: dict) -> tuple[dict | None, str]:
         return None, "dry run refused or not a dry-run report"
     dry_argv = _verb_call(dry, "apply", dry=True) or []
     real_argv = _verb_call(real, "apply", dry=False) or []
-    for flag in ("--plan", "--project-dir"):
-        if _flag_value(dry_argv, flag) != _flag_value(real_argv, flag):
+    for flag in ("--plan", "--project-dir"):  # j3 E opus: `P=...; --plan $P`, then the literal
+        dry_value = _expand(_flag_value(dry_argv, flag), dry["command"])
+        if dry_value != _expand(_flag_value(real_argv, flag), real["command"]):
             return None, f"dry run on another {flag}"
     dry_at = _position(evs, dry)
     for event in _bash_commands(evs):
@@ -1883,7 +1890,8 @@ def _placeholders(text: str, run: pathlib.Path) -> str:
     home = pathlib.Path.home()
     for form in dict.fromkeys((str(home.resolve()), str(home))):
         out = out.replace(form, HOME_LABEL)
-    return out
+    # `ls -l` owner columns name the login (j3 E opus)
+    return re.sub(rf"\b{re.escape(getpass.getuser())}\b", "<user>", out)
 
 
 def trimmed_transcript(evs: list[dict], run: pathlib.Path) -> str:
@@ -1897,7 +1905,9 @@ def trimmed_transcript(evs: list[dict], run: pathlib.Path) -> str:
         elif event["kind"] == "bash":
             lines.append(f"[turn {turn}] bash: {event['command']}")
         elif event["kind"] == "tool_result":
-            lines.append(f"[turn {turn}] result: {(event['text'] or '')[:TRIM_CHARS]}")
+            # labels first: a cut through the run dir's path would hide it from `_placeholders`
+            text = _placeholders(event["text"] or "", run)[:TRIM_CHARS]
+            lines.append(f"[turn {turn}] result: {text}")
     return _placeholders("\n".join(lines) + "\n", run)
 
 
