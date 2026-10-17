@@ -206,9 +206,11 @@ after the file was deleted.
   seed. Create the dir on first write.
 - **Runner:** subprocess dispatch needs Node 24 (GSD's declared floor); older versions untested.
   Without Node, subprocess entries are skipped as `dispatch_unavailable`
-  (`ai-kit-spec: subprocess dispatch needs Node`) and the session default still runs.
+  (the stderr line starts `ai-kit-spec: subprocess dispatch needs Node`) and the session
+  default still runs.
 - **`claude` is review-only:** the runtime table flags it review-only, so it is a review target
-  and never an execution CLI. Routing skips an exec-mode `claude` candidate on any other host.
+  and never an execution CLI. Routing skips an exec-mode `claude` candidate unless it is a
+  Claude Code alias on a Claude Code host (that one runs natively).
 
 ## NEVER (hard landmines)
 
@@ -318,7 +320,7 @@ For each entry in `REVIEWER_LIST`:
      the entry (a table runtime through the runner, a custom entry through the launcher); never
      assemble that argv in the shell:
      ```bash
-     python3 "$TOOLS_PY" dispatch-reviewer \
+     python3 "$TOOLS_PY" dispatch-reviewer --cwd <CODEBASE_ROOT> \
        --reviewers-json "$RUN_TMP_DIR/reviewers.json" \
        --index <0 for the primary/single reviewer, 1 for the secondary> \
        --prompt-file "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt" \
@@ -327,6 +329,9 @@ For each entry in `REVIEWER_LIST`:
        --stdout-only \
        > "$RUN_TMP_DIR/iter<N>-<key>.md"
      ```
+     `--cwd` runs the reviewer, and the runner's read-only tree check, in the document's
+     worktree rather than this session's cwd (for a labeled set, the root of `<DOC_PATHS>`'s
+     first entry).
      **Two hard rules, no exceptions:** (1) do not render the command yourself and pass it back
      in — hand `dispatch-reviewer` the reviewer entry and let it render internally; and (2) run
      this backgrounded or with an explicit near-cap `Bash` timeout, never the tool default (the
