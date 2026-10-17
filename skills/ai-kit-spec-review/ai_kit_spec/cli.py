@@ -646,7 +646,7 @@ def _cmd_apply_heuristic_correction(args: argparse.Namespace, deps: CliDeps) -> 
     return 0
 
 def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
-    config = cfg_resolve(args.cwd, dict(os.environ))
+    config = cfg_resolve(args.cwd, deps.env_fn())
     routes = _route_reviewers(config, deps)
     ladder = routing.probe_keys(config.get("policy", {}).get("ladder", []), routes)
     existing = cache_read_json(args.quota_path) or {}

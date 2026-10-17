@@ -4373,6 +4373,27 @@ class TestMainCli(unittest.TestCase):
             self.assertTrue(written["codex-gpt"]["available"])
             fake_custom.assert_called()  # a command entry goes through the launcher
 
+    def test_probe_quota_reads_its_config_from_the_injected_env(self):
+        # B-IN-01: config and host come from one env (env_fn), never os.environ.
+        with tempfile.TemporaryDirectory() as cwd, tempfile.TemporaryDirectory() as home, \
+                tempfile.TemporaryDirectory() as other_home:
+            os.makedirs(os.path.join(home, ".config", "ai-kit"))
+            cfg_write_toml(
+                os.path.join(home, ".config", "ai-kit", "review-spec.toml"),
+                {"policy": {"ladder": ["cu"]},
+                 "reviewers": [{"key": "cu", "model": "m", "command": "mycli {model}"}]},
+            )
+            fake_custom = mock.Mock(return_value=_probe_result(None, "ok"))
+            with mock.patch.object(os, "environ", {"HOME": other_home}):
+                code = main(
+                    ["probe-quota", "--cwd", cwd,
+                     "--quota-path", os.path.join(cwd, "quota.json")],
+                    custom_fn=fake_custom, env_fn=lambda: {"HOME": home},
+                    which_fn=lambda _name: None, run_fn=lambda *_a, **_k: None,
+                )
+            self.assertEqual(code, 0)
+            fake_custom.assert_called_once()
+
     def test_merge_reports_reads_files_and_prints_markdown(self):
         import io
         from contextlib import redirect_stdout
