@@ -215,6 +215,10 @@ def _register_catalog_parsers(sub: argparse._SubParsersAction) -> None:
     p_quota = sub.add_parser("probe-quota")
     p_quota.add_argument("--cwd", required=True)
     p_quota.add_argument("--quota-path", required=True)
+    p_quota.add_argument(
+        "--no-save-runtimes", action="store_true",
+        help="route from the runtimes cache but never write it (pair with a throwaway "
+             "--quota-path for a run that persists nothing)")
 
     p_resolve = sub.add_parser("resolve-reviewers")
     p_resolve.add_argument("--cwd", required=True)
@@ -650,7 +654,7 @@ def _cmd_apply_heuristic_correction(args: argparse.Namespace, deps: CliDeps) -> 
 
 def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
     config = cfg_resolve(args.cwd, deps.env_fn())
-    routes = _route_reviewers(config, deps)
+    routes = _route_reviewers(config, deps, persist=not args.no_save_runtimes)
     ladder = routing.probe_keys(config.get("policy", {}).get("ladder", []), routes)
     existing = cache_read_json(args.quota_path) or {}
     updated = refresh_quota_cache(
@@ -660,12 +664,12 @@ def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
     print(json.dumps(updated))
     return 0
 
-def _route_reviewers(config: dict, deps: CliDeps) -> dict[str, str]:
+def _route_reviewers(config: dict, deps: CliDeps, persist=True) -> dict[str, str]:
     """Route every configured reviewer and say why each skipped or unchecked one lost."""
     env = deps.env_fn()
     seams = RuntimesSeams(deps.which_fn, deps.run_fn, deps.popen_fn, deps.urlopen_fn)
     routes = routing.route_all(
-        config.get("reviewers", []), routing.host_context("review", env, seams))
+        config.get("reviewers", []), routing.host_context("review", env, seams, persist))
     by_key = {entry.get("key"): entry for entry in config.get("reviewers", [])
               if isinstance(entry, dict)}
     for key, decision in routes.items():

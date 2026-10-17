@@ -211,11 +211,13 @@ class RouteContext(NamedTuple):
     mode: str
     env: dict
     seams: RuntimesSeams
+    # False: read the runtimes cache but never write it (a no-writes check run).
+    persist: bool = True
 
 
-def host_context(mode: str, env: dict, seams: RuntimesSeams) -> RouteContext:
+def host_context(mode: str, env: dict, seams: RuntimesSeams, persist=True) -> RouteContext:
     """The route context for this process: the host is detected from `env`."""
-    return RouteContext(detect_current_runtime(env), mode, env, seams)
+    return RouteContext(detect_current_runtime(env), mode, env, seams, persist)
 
 
 def skip_note(subject: str, decision: str) -> str:
@@ -245,15 +247,17 @@ def runtimes_cache_is_fresh(path, env) -> bool:
     )
 
 
-def load_runtimes_snapshot(env, seams, force=False) -> tuple[dict, bool]:
-    """The cached snapshot, or a fresh build. The bool says this call built it."""
+def load_runtimes_snapshot(env, seams, force=False, persist=True) -> tuple[dict, bool]:
+    """The cached snapshot, or a fresh build (written back only when `persist`). The bool
+    says this call built it."""
     path = cache_runtimes_path(env)
     if not force and runtimes_cache_is_fresh(path, env):
         return cache_read_json(path) or {}, False
     snapshot = build_runtimes_snapshot(
         which_fn=seams.which_fn, run_fn=seams.run_fn, catalog_fn=_catalog_reader(env),
         opencode=OpencodeSeams(seams.popen_fn, seams.urlopen_fn, env))
-    cache_write_json(path, snapshot)
+    if persist:
+        cache_write_json(path, snapshot)
     _REFRESHED.update(rid for rid in RUNTIMES if rid in snapshot.get("clis", {}))
     return snapshot, True
 
@@ -327,7 +331,7 @@ def _within_floor(path) -> bool:
 
 def route_all(entries: list[dict], ctx: RouteContext) -> dict[str, str]:
     """key -> route for every dict entry that carries a key, with one bounded refresh."""
-    snapshot, built = load_runtimes_snapshot(ctx.env, ctx.seams)
+    snapshot, built = load_runtimes_snapshot(ctx.env, ctx.seams, persist=ctx.persist)
     state = {"inventory": inventory_from_snapshot(snapshot)}
 
     def decide(entry):
@@ -343,7 +347,8 @@ def route_all(entries: list[dict], ctx: RouteContext) -> dict[str, str]:
     changed = [rid for rid in targets if _refresh_runtime(snapshot, rid, ctx)]
     if not changed:
         return routes
-    cache_write_json(cache_runtimes_path(ctx.env), snapshot)
+    if ctx.persist:
+        cache_write_json(cache_runtimes_path(ctx.env), snapshot)
     state["inventory"] = inventory_from_snapshot(snapshot)
     for entry in entries:
         if isinstance(entry, dict) and _entry_runtime(entry) in changed and "key" in entry:

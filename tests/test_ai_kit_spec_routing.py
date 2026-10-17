@@ -140,6 +140,41 @@ class TestResolveRoutes(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(probed, ["zen/listed"])
 
+    def _probe_no_save(self, root, env, run_fn, which_fn):
+        def runner(_spec, _prompt, _seams):
+            return RunnerResult(0, "", {"status": "ok"}, None, False, [], "")
+
+        with mock.patch.dict(os.environ, env, clear=True), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            return main(["probe-quota", "--cwd", root, "--no-save-runtimes",
+                         "--quota-path", os.path.join(root, "quota.json")],
+                        env_fn=lambda: dict(env), which_fn=which_fn, run_fn=run_fn,
+                        runner_fn=runner)
+
+    def test_no_save_runtimes_builds_and_refreshes_without_writing(self):
+        def run_fn(argv, **_kwargs):
+            if os.path.basename(argv[0]) == "opencode" and "models" in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout="zen/new\n", stderr="")
+            return _ok(argv)
+
+        def which_fn(name):
+            return f"/fake/{name}" if name == "opencode" else None
+
+        with tempfile.TemporaryDirectory() as root:
+            env = self._env(root)
+            self._write_config(env["XDG_CONFIG_HOME"], [
+                {"key": "op", "runtime": "opencode", "model": "zen/new", "vendor": "opencode"},
+            ], ["op"])
+            # Cold cache: the build happens in memory only.
+            self.assertEqual(self._probe_no_save(root, env, run_fn, which_fn), 0)
+            self.assertFalse(os.path.exists(routing.cache_runtimes_path(env)))
+            # Stale cache that misses the model: the targeted refresh never writes back.
+            path = self._write_runtimes(env, self._snapshot(["zen/old"]), 120)
+            before = (_read(path), os.stat(path).st_mtime)
+            routing._REFRESHED.clear()
+            self.assertEqual(self._probe_no_save(root, env, run_fn, which_fn), 0)
+            self.assertEqual((_read(path), os.stat(path).st_mtime), before)
+
     def test_bad_model_never_spawns(self):
         with tempfile.TemporaryDirectory() as root:
             env = self._env(root)

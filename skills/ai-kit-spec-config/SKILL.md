@@ -108,7 +108,7 @@ note each `[[reviewers]]` entry's `key`/`runtime` (or legacy `cli`) if it exists
 raw on-disk read only, not `cfg_resolve`'s merged view.) If any entries exist, probe their **quota availability** — the core
 purpose of `--check-only` — using a throwaway path:
 ```bash
-python3 "$TOOLS_PY" probe-quota --cwd "$(pwd)" --quota-path "$(mktemp)"
+python3 "$TOOLS_PY" probe-quota --cwd "$(pwd)" --no-save-runtimes --quota-path "$(mktemp)"
 ```
 `probe-quota` has no `--local`/`--global` flag — it always runs the full
 `cfg_resolve` merge, so output may include keys from both local and
@@ -130,10 +130,13 @@ user to run later — `--check-only` never runs the trusting `trust-local`
 form, because that writes a trust record.
 
 This makes live probe calls to each configured CLI (same mechanism as
-dispatch time), but "no writes" means nothing is persisted to real
-`quota.json`/`review-spec.toml` locations — the throwaway path is
-discarded. Then stop; do not save the runtimes snapshot, matching this
-skill's `--check-only` contract.
+dispatch time), but "no writes" means nothing is persisted to ai-kit's
+caches or config: the throwaway `--quota-path` keeps quota rows out of the
+real `quota.json`, and `--no-save-runtimes` keeps `probe-quota`'s routing
+step from writing the runtimes cache (a cold or stale cache is rebuilt in
+memory only, and a targeted refresh is never written back). Then stop; do
+not save the runtimes snapshot, matching this skill's `--check-only`
+contract.
 
 **Otherwise**, persist the snapshot before continuing to Step 2:
 ```bash
