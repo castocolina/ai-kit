@@ -798,6 +798,7 @@ class _FakeProc:
 
     def wait(self, timeout=None):
         self.waits += 1
+        self.last_timeout = timeout
         if self._wait_exc is not None and self.waits == 1:
             raise self._wait_exc
         return self.returncode
@@ -2438,6 +2439,343 @@ class TestScenarioFiles(unittest.TestCase):
             text = (ev.SKILL_DIR / "evals" / ev.EVAL_FILES[scenario]).read_text(encoding="utf-8")
             counts[scenario] = len(ev._answers_of(text))
         self.assertEqual(counts, {"B": 2, "C": 0, "D": 2, "E": 2})
+
+
+class TestSmoke(unittest.TestCase):
+    """The D-14 smoke's pure seams: the repo-root guard, the fault injector, choice
+    resolution, the byte-level validation and the evidence renderer. Every subprocess seam is
+    injected; no node, no CLI, no real home."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _write(self, name: str, value: object) -> str:
+        path = os.path.join(self.tmp, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(value, handle)
+        return path
+
+    def test_refuses_repo_root(self) -> None:
+        with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(io.StringIO()):
+            ev.refuse_repo_apply(str(ev.REPO_ROOT))
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_refuses_symlink_to_repo_root(self) -> None:
+        link = os.path.join(self.tmp, "link")
+        os.symlink(ev.REPO_ROOT, link)
+        with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(io.StringIO()):
+            ev.refuse_repo_apply(link)
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_guard_passes_scratch_dir(self) -> None:
+        ev.refuse_repo_apply(self.tmp)  # must not raise
+
+    def test_fault_injector_edits_existing_entry_in_place(self) -> None:
+        plan = {"entries": [{"key": "review.default_reviewers", "op": "set", "value": ["a"]}]}
+        src = self._write("plan.json", plan)
+        out = os.path.join(self.tmp, "fault.json")
+        ev.inject_fault(src, out)
+        with open(out, encoding="utf-8") as handle:
+            got = json.load(handle)
+        self.assertEqual(len(got["entries"]), 1)
+        self.assertEqual(got["entries"][0]["value"], "notarray")
+        self.assertEqual(got["entries"][0]["op"], "set")
+        with open(src, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), plan)  # original untouched
+
+    def test_fault_injector_rejects_missing_entry(self) -> None:
+        src = self._write("plan.json", {"entries": []})
+        with self.assertRaises(SystemExit) as caught:
+            ev.inject_fault(src, os.path.join(self.tmp, "fault.json"))
+        self.assertEqual(caught.exception.code, 1)
+
+    def test_perturb_picks_bool_key_before_fault(self) -> None:
+        plan = {
+            "entries": [
+                {"key": "review.default_reviewers", "op": "set", "value": ["a"]},
+                {"key": "intel.enabled", "op": "set", "value": True},
+                {"key": "dynamic_routing.enabled", "op": "set", "value": False},
+            ]
+        }
+        got = ev._perturbable(plan)
+        self.assertIsNotNone(got)
+        assert got is not None  # narrows the Optional for the type checker after the assert
+        self.assertEqual(got["key"], "dynamic_routing.enabled")
+
+    def test_perturb_refuses_when_no_bool_before_fault(self) -> None:
+        plan = {"entries": [{"key": "review.default_reviewers", "op": "set", "value": ["a"]}]}
+        self.assertIsNone(ev._perturbable(plan))
+
+    def test_resolve_choices_artifact_first_closes_command(self) -> None:
+        plan_path = self._write(
+            "plan.json", {"artifacts": [{"choices": {"codex": ["m-1"]}}], "entries": []}
+        )
+        calls: list[tuple] = []
+        loads = iter(
+            [
+                {
+                    "artifacts": [{"choices": {"codex": ["m-1"]}}],
+                    "entries": [
+                        {
+                            "key": "workflow.cross_ai_command",
+                            "status": "needs_choice",
+                            "candidates": [],
+                        }
+                    ],
+                },
+                {"artifacts": [{"choices": {}}], "entries": []},
+            ]
+        )
+
+        def fake_set(plan, inv, key, value, force):
+            calls.append((key, value, force))
+
+        forced = ev.resolve_choices(
+            plan_path, "inv", plan_set_fn=fake_set, load_fn=lambda _p: next(loads)
+        )
+        self.assertEqual(calls[0], ("script:cross-ai.model.codex", "m-1", False))
+        self.assertNotIn("workflow.cross_ai_command", [c[0] for c in calls])
+        self.assertTrue(all(not c[2] for c in calls))
+        self.assertEqual(forced, [])
+
+    def test_resolve_choices_command_still_open_exits(self) -> None:
+        plan_path = self._write("plan.json", {"artifacts": [{"choices": {}}], "entries": []})
+        still_open = {
+            "artifacts": [{"choices": {}}],
+            "entries": [
+                {"key": "workflow.cross_ai_command", "status": "needs_choice", "candidates": []}
+            ],
+        }
+        with self.assertRaises(SystemExit) as caught:
+            ev.resolve_choices(
+                plan_path, "inv", plan_set_fn=lambda *a: None, load_fn=lambda _p: still_open
+            )
+        self.assertEqual(caught.exception.code, "runner choice unresolved")
+
+    def test_resolve_choices_model_key_without_candidate_forced(self) -> None:
+        plan_path = self._write("plan.json", {"artifacts": [{"choices": {}}], "entries": []})
+        plan = {
+            "artifacts": [{"choices": {}}],
+            "entries": [
+                {"key": "model_profile", "status": "needs_choice", "candidates": ["quality"]},
+                {"key": "review.x", "status": "needs_choice", "candidates": []},
+            ],
+        }
+        calls: list[tuple] = []
+
+        forced = ev.resolve_choices(
+            plan_path,
+            "inv",
+            plan_set_fn=lambda _p, _i, key, value, force: calls.append((key, value, force)),
+            load_fn=lambda _p: plan,
+        )
+        self.assertEqual(forced, ["review.x"])
+        self.assertIn(("model_profile", "quality", False), calls)
+        self.assertIn(("review.x", "smoke-placeholder", True), calls)
+
+    def test_tree_hash_detects_change(self) -> None:
+        root = os.path.join(self.tmp, "planning")
+        os.makedirs(root)
+        with open(os.path.join(root, "a.txt"), "w", encoding="utf-8") as handle:
+            handle.write("one")
+        before = ev.tree_sha256(root)
+        self.assertEqual(before, ev.tree_sha256(root))
+        with open(os.path.join(root, "a.txt"), "w", encoding="utf-8") as handle:
+            handle.write("two")
+        self.assertNotEqual(before, ev.tree_sha256(root))
+
+    def test_skill_reference_form_accepted(self) -> None:
+        self.assertTrue(
+            ev._set_matches(
+                "agent_skills.gsd-executor",
+                ["ponytail", "react-dev"],
+                ["global:ponytail:ponytail", "global:react-dev"],
+            )
+        )
+        self.assertTrue(
+            ev._set_matches("agent_skills.gsd-executor", ["ponytail"], ["skills/ponytail"])
+        )
+
+    def test_skill_reference_wrong_forms_rejected(self) -> None:
+        planned = ["ponytail", "react-dev"]
+        for got in (
+            ["global:other", "global:react-dev"],
+            ["global:react-dev"],
+            ["ponytail", "react-dev"],
+        ):
+            self.assertFalse(ev._set_matches("agent_skills.gsd-executor", planned, got), got)
+
+    def test_set_matches_uses_value_equality_for_non_skill_keys(self) -> None:
+        self.assertTrue(ev._set_matches("intel.enabled", True, True))
+        self.assertFalse(ev._set_matches("intel.enabled", True, 1))
+
+    def test_validate_backup_expectation(self) -> None:
+        project = os.path.join(self.tmp, "p")
+        planning = os.path.join(project, ".planning")
+        os.makedirs(planning)
+        config = os.path.join(planning, "config.json")
+        with open(config, "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        # no backup yet: expecting one must fail
+        with self.assertRaises(SystemExit):
+            ev._backup_check(ev.ValidateCtx(True, [], "x"), config)
+        # absent config, zero backups: expecting none passes (ignoring the config file itself)
+        ev._backup_check(ev.ValidateCtx(False, [], None), config)
+        # expecting none while a backup exists must fail
+        with (
+            mock.patch.object(
+                ev.config_backup, "list_backups", return_value=[(config + ".bak-x", "x", 2)]
+            ),
+            self.assertRaises(SystemExit),
+        ):
+            ev._backup_check(ev.ValidateCtx(False, [], None), config)
+
+    def test_leftover_marker_fails(self) -> None:
+        planning = os.path.join(self.tmp, ".planning")
+        os.makedirs(planning)
+        open(os.path.join(planning, "config.json" + ev.config_backup.MARKER_SUFFIX), "w").close()
+        with self.assertRaises(SystemExit):
+            ev._leftover_check(self.tmp)
+
+    def test_evidence_has_placeholders_only(self) -> None:
+        result = {
+            "steps": [{"name": "s", "ok": True, "detail": f"at {self.tmp} and {ev.REPO_ROOT}"}],
+            "scratch_a": os.path.join(self.tmp, "a"),
+            "scratch_b": os.path.join(self.tmp, "b"),
+            "home": self.tmp,
+            "repo_root": str(ev.REPO_ROOT),
+            "strict_changed": [],
+            "host_managed_changed": [],
+            "matrix": None,
+        }
+        text = ev.render_smoke_evidence(result)
+        self.assertNotIn(self.tmp, text)
+        self.assertNotIn(str(ev.REPO_ROOT), text)
+        self.assertIn("<worktree>", text)
+        self.assertIn("## Protected set", text)
+        self.assertIn("host-managed changed: none", text)
+
+    def test_project_b_records_key_paths_not_values(self) -> None:
+        report = {
+            "reconciled": ["review.default_reviewers", "intel.enabled"],
+            "diff": [{"key": "intel.enabled", "kind": "set", "value": "SENTINEL-VALUE"}],
+        }
+        key_paths = {
+            "reconciled": sorted(report["reconciled"]),
+            "diff": [(row["key"], row["kind"]) for row in report["diff"]],
+        }
+        result = {
+            "steps": [],
+            "strict_changed": [],
+            "host_managed_changed": [],
+            "matrix": None,
+            "key_paths": key_paths,
+        }
+        text = ev.render_smoke_evidence(result)
+        self.assertIn("intel.enabled", text)
+        self.assertNotIn("SENTINEL-VALUE", text)
+
+    def test_run_smoke_continues_to_snapshot_after_failed_step(self) -> None:
+        repo, home = os.path.join(self.tmp, "repo"), os.path.join(self.tmp, "home")
+        os.makedirs(repo)
+        os.makedirs(home)
+        ctx = ev.SmokeCtx(
+            "node",
+            "tools",
+            pathlib.Path(repo),
+            home,
+            "claude",
+            {"XDG_CACHE_HOME": os.path.join(self.tmp, "xdg")},
+        )
+        with (
+            mock.patch.object(
+                ev,
+                "_smoke_ai_kit",
+                side_effect=lambda *a: {"name": "x", "ok": False, "detail": "boom"},
+            ),
+            mock.patch.object(ev, "_smoke_project_a", return_value=[]),
+            mock.patch.object(
+                ev, "_smoke_project_b", return_value={"name": "b", "ok": True, "detail": ""}
+            ),
+            mock.patch.object(
+                ev, "_run_matrix_step", return_value={"name": "m", "ok": True, "detail": ""}
+            ),
+            mock.patch.object(ev, "snapshot", return_value={"strict": {}, "host_managed": {}}),
+        ):
+            result = ev.run_smoke(
+                ctx, self.tmp, seed_fn=lambda _w, _c: {}, assert_fn=lambda _e: None
+            )
+        self.assertEqual(result["exit"], 1)
+        self.assertEqual(result["steps"][-1]["name"], "protected set unchanged")
+
+    def test_host_managed_change_is_reported_not_failed(self) -> None:
+        before = {"strict": {"a": "1"}, "host_managed": {"h": "1"}}
+        after = {"strict": {"a": "1"}, "host_managed": {"h": "2"}}
+        strict, host = ev.snapshot_diff(before, after)
+        self.assertEqual(strict, [])
+        self.assertEqual(host, ["h"])
+
+    def test_smoke_passes_host_to_matrix(self) -> None:
+        seen: dict = {}
+
+        def fake_matrix(node, tools, home, host="claude", ctx=None):
+            seen["host"] = host
+            return {
+                "checks": 0,
+                "agents": 0,
+                "controls": {},
+                "informational": {},
+                "gsd_core": {},
+                "rows": [],
+            }
+
+        ctx = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "codex", {})
+        with mock.patch.object(ev, "run_matrix", side_effect=fake_matrix):
+            ev._run_matrix_step(ctx)
+        self.assertEqual(seen["host"], "codex")
+
+    def test_smoke_env_uses_scratch_cache(self) -> None:
+        work = os.path.join(self.tmp, "work")
+        os.makedirs(work)
+        env = {"XDG_CACHE_HOME": os.path.join(work, "xdg")}
+        ctx = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "claude", env)
+        self.assertTrue(env["XDG_CACHE_HOME"].startswith(work))
+        order: list[str] = []
+        with (
+            mock.patch.object(ev, "snapshot", return_value={"strict": {}, "host_managed": {}}),
+            mock.patch.object(
+                ev,
+                "_smoke_ai_kit",
+                side_effect=lambda *a: (
+                    order.append("ai") or {"name": "a", "ok": True, "detail": ""}
+                ),
+            ),
+            mock.patch.object(ev, "_smoke_project_a", return_value=[]),
+            mock.patch.object(
+                ev, "_smoke_project_b", return_value={"name": "b", "ok": True, "detail": ""}
+            ),
+            mock.patch.object(
+                ev, "_run_matrix_step", return_value={"name": "m", "ok": True, "detail": ""}
+            ),
+        ):
+            ev.run_smoke(
+                ctx,
+                work,
+                seed_fn=lambda _w, _c: order.append("seed") or {},
+                assert_fn=lambda _e: order.append("assert"),
+            )
+        self.assertEqual(order[:3], ["seed", "assert", "ai"])
+
+    def test_assert_failure_stops_before_inventory(self) -> None:
+        ctx = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "claude", {})
+
+        def refuse(_env):
+            raise SystemExit("seeded cache stale: inventory would probe")
+
+        with mock.patch.object(ev, "_smoke_ai_kit") as ai, self.assertRaises(SystemExit):
+            ev.run_smoke(ctx, self.tmp, seed_fn=lambda _w, _c: {}, assert_fn=refuse)
+        ai.assert_not_called()
 
 
 if __name__ == "__main__":

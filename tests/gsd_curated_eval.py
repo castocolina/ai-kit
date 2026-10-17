@@ -58,6 +58,7 @@ from ai_kit_spec.vendor import infer_vendor_from_model
 
 from tests.test_curated_config_apply_e2e import (
     GSD_CORE_PREFIXES,
+    _config_set_keys,
     _golden_bundle,
     _real_apply,
     _sha256,
@@ -534,6 +535,19 @@ def matrix_env(bundle: dict, home: str, host: str = "claude") -> dict:
     return {**bundle["resolve_env"], "HOME": home, "GSD_RUNTIME": host}
 
 
+REPO_ROOT_REFUSAL = "refusing a real apply on the repo root"
+
+
+def refuse_repo_apply(project_dir: pathlib.Path | str) -> None:
+    """D-03: every real `apply` path calls this first; the repo root is never applied to.
+
+    Compares resolved paths, so a symlink that points at the repo is refused too.
+    """
+    if os.path.realpath(str(project_dir)) == os.path.realpath(str(REPO_ROOT)):
+        print(REPO_ROOT_REFUSAL, file=sys.stderr)
+        raise SystemExit(2)
+
+
 def _apply_bundle(
     bundle: dict, home: str, node_bin: str, apply_fn: Callable = _real_apply, host: str = "claude"
 ) -> dict:
@@ -545,6 +559,7 @@ def _apply_bundle(
     would hand the subprocesses the scratch `HOME` and defeat D-08. A non-zero apply exit is
     a matrix failure, reported with the stderr tail.
     """
+    refuse_repo_apply(bundle["project"])
     env = matrix_env(bundle, home, host)
     code, _parsed, _stdout, stderr = apply_fn(
         bundle["plan_path"], bundle["inv_path"], bundle["project"], env, env, node_bin
@@ -3332,6 +3347,677 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 1 if result["harness_failures"] or any(t["timed_out"] for t in result["turns"]) else 0
 
 
+# ═══ 10. smoke: scripted live procedure, D-13 / D-14 (host-agnostic) ═══════════════════
+
+
+class SmokeCtx(NamedTuple):
+    """The seams and fixed inputs of one smoke run (bundled to keep the limits)."""
+
+    node_bin: str
+    tools_path: str
+    repo_root: pathlib.Path
+    home: str
+    host: str
+    env: dict
+
+
+class ValidateCtx(NamedTuple):
+    """What `validate_applied` compares a finished apply against."""
+
+    expect_backup: bool
+    backups_before: list
+    config_before_sha: str | None
+
+
+_SKILL_KEY_PREFIX = "agent_skills."
+
+
+def tree_sha256(root: pathlib.Path | str) -> str:
+    """sha256 over sorted `relative-path NUL file-sha256` pairs of every regular file."""
+    base = _abs(root)
+    digest = hashlib.sha256()
+    for path in sorted(p for p in base.rglob("*") if p.is_file() and not p.is_symlink()):
+        rel = path.relative_to(base).as_posix()
+        digest.update(f"{rel}\0{_sha256_file(path)}\n".encode())
+    return digest.hexdigest()
+
+
+def inject_fault(plan_path: pathlib.Path | str, out_path: pathlib.Path | str) -> None:
+    """Writes a copy of the plan whose `review.default_reviewers` value is `notarray`.
+
+    Edits the one existing entry in place (duplicate keys are refused) and round-trips JSON;
+    the original plan file is never touched.
+    """
+    plan, error = plan_io.read_json_object(str(plan_path))
+    if plan is None:
+        raise SystemExit(f"fault plan unreadable: {error}")
+    targets = [e for e in plan.get("entries") or [] if e.get("key") == "review.default_reviewers"]
+    if len(targets) != 1:
+        print("fault target missing", file=sys.stderr)
+        raise SystemExit(1)
+    targets[0]["op"] = "set"
+    targets[0]["value"] = "notarray"
+    _write_json(_abs(out_path), plan)
+
+
+def _write_rank(key: str, op: str) -> tuple:
+    """The product's write order (`apply.write_order`), imported lazily."""
+    from ai_kit_gsd_curated_config import (
+        apply as apply_mod,  # pylint: disable=import-outside-toplevel
+    )
+
+    return apply_mod.write_order(key, op)
+
+
+def _perturbable(plan: dict) -> dict | None:
+    """First bool `set` entry that the product writes before `review.default_reviewers`."""
+    fault_rank = _write_rank("review.default_reviewers", "set")
+    found = [
+        e
+        for e in plan.get("entries") or []
+        if e.get("op") == "set"
+        and isinstance(e.get("value"), bool)
+        and _write_rank(e.get("key", ""), "set") < fault_rank
+    ]
+    found.sort(key=lambda e: _write_rank(e["key"], "set"))
+    return found[0] if found else None
+
+
+def perturb_before_fault(plan_path: str, project: str, node_bin: str, env: dict) -> str:
+    """Flips one bool key in scratch project (a) so the fault apply really queues a write.
+
+    Unchanged writes are omitted by the product, so without this the faulted apply would
+    write nothing and a restore that merely clears the marker would pass (review cycle 2).
+    """
+    plan = _load_plan_file(plan_path)
+    entry = _perturbable(plan)
+    if entry is None:
+        raise SystemExit("no perturbable key before fault")
+    tools = gsd_tools.GsdTools(node_bin, str(_abs(GSD_TOOLS_PATH)))
+    ok, _out = gsd_tools.config_set(
+        tools,
+        project,
+        entry["key"],
+        not entry["value"],
+        run_fn=_scratch_run(env),
+    )
+    if not ok:
+        raise SystemExit(f"perturbation config-set failed for {entry['key']}")
+    return entry["key"]
+
+
+def _scratch_run(env: dict):
+    def run(cmd, **kw):
+        call_env = kw.pop("env", None) or {}
+        return subprocess.run(cmd, env={**env, **call_env}, **kw)
+
+    return run
+
+
+def _load_plan_file(path: str) -> dict:
+    plan, error = plan_io.load_plan(path)
+    if plan is None:
+        raise SystemExit(f"plan unreadable: {error}")
+    return plan
+
+
+def _plan_set_cli(plan_path: str, inv_path: str, key: str, value: str, force: bool) -> None:
+    """One `plan-set` through the product's CLI; a non-zero exit is a step failure."""
+    from ai_kit_gsd_curated_config import cli  # pylint: disable=import-outside-toplevel
+
+    argv = ["plan-set", key, value, "--plan", plan_path, "--inventory", inv_path]
+    if force:
+        argv.append("--force")
+    buf, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+        code = cli.main(argv, which_fn=shutil.which, run_fn=subprocess.run)
+    if code != 0:
+        raise SystemExit(f"plan-set {key} failed (exit {code}): {err.getvalue().strip()[:200]}")
+
+
+def resolve_choices(plan_path, inv_path, plan_set_fn=None, load_fn=None) -> list[str]:
+    """Closes every `needs_choice` item of a plan through `plan-set` (D-14 step 3).
+
+    Order matters (review cycle 2): runner models first, then a plan reload so the product's
+    `_sync_artifact_command` closes the derived `workflow.cross_ai_command` entry itself, then
+    the remaining model keys. A placeholder is forced only on a model key with no candidate,
+    never into the execution hook (an unclosed hook is `runner choice unresolved`).
+    Returns the forced keys.
+    """
+    plan_set_fn = plan_set_fn or _plan_set_cli
+    load_fn = load_fn or _load_plan_file
+    plan = load_fn(plan_path)
+    artifacts = plan.get("artifacts") or [{}]
+    choices = (artifacts[0] or {}).get("choices") or {}
+    for runner in sorted(choices):
+        if choices[runner]:
+            plan_set_fn(
+                plan_path, inv_path, f"script:cross-ai.model.{runner}", choices[runner][0], False
+            )
+    plan = load_fn(plan_path)
+    forced: list[str] = []
+    for entry in plan.get("entries") or []:
+        if entry.get("status") != "needs_choice":
+            continue
+        key, candidates = entry.get("key", ""), entry.get("candidates") or []
+        if candidates:
+            plan_set_fn(plan_path, inv_path, key, str(candidates[0]), False)
+        elif key == "workflow.cross_ai_command":
+            raise SystemExit("runner choice unresolved")
+        else:
+            plan_set_fn(plan_path, inv_path, key, "smoke-placeholder", True)
+            forced.append(key)
+    return forced
+
+
+def _skill_ref_ok(planned_name: str, got: object) -> bool:
+    """The documented serialized form, checked independently of the product's converter."""
+    if not isinstance(got, str):
+        return False
+    name = re.escape(planned_name)
+    return re.fullmatch(rf"skills/{name}|global:(?:[^:]+:)?{name}", got) is not None
+
+
+def _set_matches(key: str, planned, got) -> bool:
+    if key.startswith(_SKILL_KEY_PREFIX) and isinstance(planned, list):
+        if not isinstance(got, list) or len(got) != len(planned):
+            return False
+        return all(_skill_ref_ok(name, ref) for name, ref in zip(planned, got, strict=True))
+    return plan_io.same_value(planned, got)
+
+
+def _backup_check(ctx: ValidateCtx, config_path: str) -> None:
+    now = config_backup.list_backups(config_path)
+    if ctx.expect_backup:
+        if len(now) != len(ctx.backups_before) + 1:
+            raise SystemExit("backup count did not grow by one")
+        if _sha256_file(now[0][0]) != ctx.config_before_sha:
+            raise SystemExit("newest backup is not the pre-apply bytes")
+    elif now or not os.path.isfile(config_path):
+        raise SystemExit("unexpected backup for a config that did not exist")
+
+
+def _leftover_check(project: str) -> None:
+    for _root, _dirs, files in os.walk(os.path.join(project, ".planning")):
+        for name in files:
+            if (
+                name.endswith(config_backup.MARKER_SUFFIX)
+                or name.endswith(config_backup.SNAPSHOT_SUFFIX)
+                or ".bak-tmp-" in name
+            ):
+                raise SystemExit(f"leftover apply file: {name}")
+
+
+def validate_applied(project: str, plan: dict, ctx: ValidateCtx, env: dict, node_bin: str) -> None:
+    """Byte-level facts after a real apply (SPEC R5): the config parses, each planned set key
+    reads back, `resolve-model` answers per live agent, the backup expectation holds, and no
+    marker, snapshot or temp file remains. Raises SystemExit naming the failed fact."""
+    tools_path = str(_abs(GSD_TOOLS_PATH))
+    tools = gsd_tools.GsdTools(node_bin, tools_path)
+    config_path = os.path.join(project, ".planning", "config.json")
+    try:
+        with open(config_path, encoding="utf-8") as handle:
+            json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"config does not parse: {exc}") from exc
+    run = _scratch_run(env)
+    for entry in plan.get("entries") or []:
+        if entry.get("op") != "set":
+            continue
+        got = gsd_tools.config_get(tools, project, entry["key"], run_fn=run)
+        if not _set_matches(entry["key"], entry["value"], got.value):
+            raise SystemExit(f"config-get {entry['key']} does not read back the planned value")
+    for agent in sorted(_agents_of(node_bin, tools_path)):
+        got = _resolve_model(_seams(node_bin, tools_path, "", "claude"), agent, project, env)
+        if not got.get("model") or not got.get("tier"):
+            raise SystemExit(f"resolve-model {agent} gave no model and tier")
+    _backup_check(ctx, config_path)
+    _leftover_check(project)
+
+
+def _agents_of(node_bin: str, tools_path: str) -> list[str]:
+    return list(live_tables(node_bin, os.path.dirname(os.path.dirname(tools_path)))["profiles"])
+
+
+def _step(name: str, fn) -> dict:
+    """Runs one step; a failure is recorded, never raised, so the snapshot always runs."""
+    try:
+        detail = fn()
+    except SystemExit as stop:
+        return {"name": name, "ok": False, "detail": str(stop.code or "")}
+    except Exception as exc:  # a step never aborts the run; the failure is recorded
+        return {"name": name, "ok": False, "detail": f"{type(exc).__name__}: {exc}"[:200]}
+    return {"name": name, "ok": True, "detail": detail or ""}
+
+
+def _scratch_project(work: str, label: str, with_planning: bool) -> str:
+    """A git repo with the gsd-core symlink; `.planning/config.json` copied when asked."""
+    project = os.path.join(work, label)
+    os.makedirs(project)
+    subprocess.run(["git", "init", "-q", project], check=True)
+    link = os.path.join(project, ".claude", "gsd-core")
+    os.makedirs(os.path.dirname(link), exist_ok=True)
+    os.symlink(os.path.join(REPO_ROOT, ".claude", "gsd-core"), link)
+    if with_planning:
+        os.makedirs(os.path.join(project, ".planning"))
+        shutil.copyfile(
+            REPO_ROOT / ".planning" / "config.json",
+            os.path.join(project, ".planning", "config.json"),
+        )
+    return project
+
+
+def _cache_guard(ctx: SmokeCtx, cache_sha: dict) -> None:
+    """Byte identity of the three seeded cache files after an inventory (review cycle 2)."""
+    if _cache_sha_of(ctx.env) != cache_sha:
+        raise SystemExit("seeded cache rebuilt")
+
+
+def _cache_sha_of(env: dict) -> dict:
+    """The three cache files under the smoke's scratch `XDG_CACHE_HOME`, by sha256."""
+    cache = pathlib.Path(env["XDG_CACHE_HOME"]) / "ai-kit" / "spec"
+    names = ("runtimes.json", "model-catalog.json", f"model-catalog.json{SIDECAR_SUFFIX}")
+    return {name: _sha256_file(cache / name) for name in names}
+
+
+def _inventory(ctx: SmokeCtx, project: str, out: str, cache_sha: dict) -> dict:
+    """The product's `inventory` through `cli.main` on the seeded scratch cache."""
+    from ai_kit_gsd_curated_config import cli  # pylint: disable=import-outside-toplevel
+
+    assert_no_probe(ctx.env)
+    argv = ["inventory", "--project-dir", project]
+    if ctx.host:
+        argv += ["--host", ctx.host]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = cli.main(
+            argv,
+            which_fn=lambda name, **_kw: ctx.node_bin if name == "node" else shutil.which(name),
+            env_fn=lambda: dict(ctx.env),
+            run_fn=subprocess.run,
+        )
+    if code != 0:
+        raise SystemExit(f"inventory failed with exit {code}")
+    _cache_guard(ctx, cache_sha)
+    _write_text(out, buf.getvalue())
+    return json.loads(buf.getvalue())
+
+
+def _write_text(path: str, text: str) -> None:
+    pathlib.Path(path).write_text(text, encoding="utf-8")
+
+
+def _recommend_to(inv_path: str, plan_path: str) -> dict:
+    """`recommend` with the smoke's fixed answers (D-14: the same answers in every project)."""
+    from tests.test_curated_config_recommend import (  # pylint: disable=import-outside-toplevel
+        run_recommend,
+    )
+
+    code, plan, _raw, err = run_recommend(
+        _load_json_file(inv_path),
+        "--profile",
+        "adaptive",
+        "--rigor",
+        "standard",
+        "--cross-ai-review",
+        "y",
+        "--cross-ai-exec",
+        "y",
+    )
+    if code != 0 or plan is None:
+        raise SystemExit(f"recommend failed: {err.strip()[:200]}")
+    _write_json(_abs(plan_path), plan)
+    return plan
+
+
+def _dry_run_unchanged(ctx: SmokeCtx, project: str, plan_path: str, inv_path: str) -> str:
+    """`apply --dry-run` writes nothing: the project's `.planning/` tree hash is identical."""
+    from ai_kit_gsd_curated_config import cli  # pylint: disable=import-outside-toplevel
+
+    before = tree_sha256(os.path.join(project, ".planning"))
+    with contextlib.redirect_stdout(io.StringIO()):
+        code = cli.main(
+            [
+                "apply",
+                "--dry-run",
+                "--plan",
+                plan_path,
+                "--inventory",
+                inv_path,
+                "--project-dir",
+                project,
+            ],
+            which_fn=lambda name, **_kw: ctx.node_bin if name == "node" else shutil.which(name),
+            env_fn=lambda: dict(ctx.env),
+            run_fn=subprocess.run,
+        )
+    if code != 0:
+        raise SystemExit(f"dry run exited {code}")
+    if tree_sha256(os.path.join(project, ".planning")) != before:
+        raise SystemExit("dry run changed .planning/")
+    return "dry run wrote nothing"
+
+
+def _real_apply_or_fail(plan_path: str, inv_path: str, project: str, env: dict, node_bin: str):
+    """One real apply on a scratch project. The product calls `which_fn("gsd_run", path=...)`
+    whenever PATH is set, so the smoke's `which_fn` must accept keywords (the e2e helper's
+    one-argument lambda would crash here)."""
+    refuse_repo_apply(project)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = cli_main_apply(
+            plan_path, inv_path, project, _SmokeEnv(node_bin, env), subprocess.run
+        )
+    if code != 0:
+        raise SystemExit(f"apply exited {code}: {_text(err.getvalue())[-200:]}")
+    return json.loads(out.getvalue()) if out.getvalue().strip() else {}
+
+
+class _SmokeEnv(NamedTuple):
+    """The two inputs `cli_main_apply` reads from a smoke context (the apply's own seams)."""
+
+    node_bin: str
+    env: dict
+
+
+def _backups_now(project: str) -> list:
+    return config_backup.list_backups(os.path.join(project, ".planning", "config.json"))
+
+
+def _sha_or_none(path: str) -> str | None:
+    return _sha256_file(path) if os.path.isfile(path) else None
+
+
+def _smoke_ai_kit(ctx: SmokeCtx, work: str, cache_sha: dict) -> dict:
+    """D-14 step 2: inventory, recommend and a dry run on this repo; never a real apply."""
+    refuse_repo_apply(ctx.repo_root)
+    inv_path = os.path.join(work, "inventory.json")
+    plan_path = os.path.join(work, "plan.json")
+
+    def run() -> str:
+        _inventory(ctx, str(ctx.repo_root), inv_path, cache_sha)
+        _recommend_to(inv_path, plan_path)
+        resolve_choices(plan_path, inv_path)
+        return _dry_run_unchanged(ctx, str(ctx.repo_root), plan_path, inv_path)
+
+    return _step("ai-kit inventory, recommend, dry run", run)
+
+
+def _smoke_project_a(ctx: SmokeCtx, work: str, cache_sha: dict) -> list[dict]:
+    """D-14 steps 3 and 4 on a scratch copy of this repo's `.planning/config.json`."""
+    project = _scratch_project(work, "project-a", with_planning=True)
+    inv_path = os.path.join(work, "inv-a.json")
+    plan_path = os.path.join(work, "plan-a.json")
+    state: dict = {}
+
+    def inventory_and_plan() -> str:
+        _inventory(ctx, project, inv_path, cache_sha)
+        _recommend_to(inv_path, plan_path)
+        state["forced"] = resolve_choices(plan_path, inv_path)
+        return f"forced placeholders: {state['forced'] or 'none'}"
+
+    def first_apply() -> str:
+        config = os.path.join(project, ".planning", "config.json")
+        state["before_sha"] = _sha_or_none(config)
+        state["backups"] = _backups_now(project)
+        plan = _load_plan_file(plan_path)
+        _dry_run_unchanged(ctx, project, plan_path, inv_path)
+        _real_apply_or_fail(plan_path, inv_path, project, ctx.env, ctx.node_bin)
+        validate_applied(
+            project,
+            plan,
+            ValidateCtx(True, state["backups"], state["before_sha"]),
+            ctx.env,
+            ctx.node_bin,
+        )
+        return "apply and validation passed"
+
+    def second_apply() -> str:
+        config = os.path.join(project, ".planning", "config.json")
+        sha = _sha256_file(config)
+        backups = len(_backups_now(project))
+        _real_apply_or_fail(plan_path, inv_path, project, ctx.env, ctx.node_bin)
+        if _sha256_file(config) != sha:
+            raise SystemExit("second apply changed the config bytes")
+        grown = len(_backups_now(project)) - backups
+        if grown != 1 or len(_backups_now(project)) > KEEP_LIMIT:
+            raise SystemExit(f"second apply backup growth {grown}, expected +1 within limit")
+        return "second apply: writes 0, bytes identical, backups +1"
+
+    def fault() -> str:
+        return _fault_apply(ctx, work, project, plan_path, inv_path)
+
+    return [
+        _step("project (a) inventory, recommend, choices", inventory_and_plan),
+        _step("project (a) dry run, apply, validation", first_apply),
+        _step("project (a) second apply", second_apply),
+        _step("project (a) forced failure restores", fault),
+    ]
+
+
+KEEP_LIMIT = config_backup.KEEP
+
+
+def _fault_apply(ctx: SmokeCtx, work: str, project: str, plan_path: str, inv_path: str) -> str:
+    """D-14 step 4: queue one real write ahead of the rejected key, then fail, then check."""
+    fault_plan = os.path.join(work, "plan-fault.json")
+    inject_fault(plan_path, fault_plan)
+    config = os.path.join(project, ".planning", "config.json")
+    perturbed = perturb_before_fault(plan_path, project, ctx.node_bin, ctx.env)
+    pre = _sha256_file(config)
+    logged: list[list[str]] = []
+    wrapper = _logging_run(ctx, logged)
+    code, parsed, _out, _err = _real_apply_fault(fault_plan, inv_path, project, ctx, wrapper)
+    keys = _config_set_keys(logged)
+    if code != 1 or (parsed or {}).get("failed_key") != "review.default_reviewers":
+        raise SystemExit("fault apply did not fail on review.default_reviewers")
+    if perturbed not in keys or keys.index(perturbed) > keys.index("review.default_reviewers"):
+        raise SystemExit(f"{perturbed} was not written before the failing key")
+    if (parsed or {}).get("restore_error") is not None:
+        raise SystemExit("restore reported an error")
+    if _sha256_file(config) != pre:
+        raise SystemExit("config bytes were not restored to the perturbed pre-apply state")
+    if os.path.exists(config + config_backup.MARKER_SUFFIX):
+        raise SystemExit("marker left after the forced failure")
+    return f"forced failure: exit 1, {perturbed} written then undone, restored"
+
+
+def _logging_run(ctx: SmokeCtx, logged: list) -> Callable:
+    base = _scratch_run(ctx.env)
+
+    def run(cmd, **kw):
+        logged.append([str(part) for part in cmd])
+        return base(cmd, **kw)
+
+    return run
+
+
+def _real_apply_fault(fault_plan, inv_path, project, ctx: SmokeCtx, run_fn):
+    refuse_repo_apply(project)
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = cli_main_apply(fault_plan, inv_path, project, ctx, run_fn)
+    parsed = json.loads(out.getvalue()) if out.getvalue().strip() else None
+    return code, parsed, out.getvalue(), err.getvalue()
+
+
+def cli_main_apply(plan_path, inv_path, project, ctx, run_fn) -> int:
+    """`apply` through `cli.main`. `ctx` carries `node_bin` and `env` (a `SmokeCtx` or a
+    `_SmokeEnv`); `which_fn` takes keywords because the product passes `path=`."""
+    from ai_kit_gsd_curated_config import cli  # pylint: disable=import-outside-toplevel
+
+    return cli.main(
+        ["apply", "--plan", plan_path, "--inventory", inv_path, "--project-dir", project],
+        which_fn=lambda name, **_kw: ctx.node_bin if name == "node" else shutil.which(name),
+        env_fn=lambda: dict(ctx.env),
+        run_fn=run_fn,
+    )
+
+
+def _smoke_project_b(ctx: SmokeCtx, work: str, cache_sha: dict) -> dict:
+    """D-14 step 5: empty project on the real global defaults; key paths only, never values."""
+    project = _scratch_project(work, "project-b", with_planning=False)
+    inv_path = os.path.join(work, "inv-b.json")
+    plan_path = os.path.join(work, "plan-b.json")
+    report: dict = {}
+
+    def run() -> str:
+        _inventory(ctx, project, inv_path, cache_sha)
+        _recommend_to(inv_path, plan_path)
+        resolve_choices(plan_path, inv_path)
+        _dry_run_unchanged(ctx, project, plan_path, inv_path)
+        report.update(_real_apply_or_fail(plan_path, inv_path, project, ctx.env, ctx.node_bin))
+        validate_applied(
+            project, _load_plan_file(plan_path), ValidateCtx(False, [], None), ctx.env, ctx.node_bin
+        )
+        keys = sorted(report.get("reconciled") or [])
+        diff = [(row.get("key"), row.get("kind")) for row in report.get("diff") or []]
+        report["key_paths"] = {"reconciled": keys, "diff": diff}
+        return f"reconciled {len(keys)} key paths, {len(diff)} diff rows"
+
+    result = _step("project (b) empty project, apply, validation", run)
+    result["key_paths"] = report.get("key_paths", {})
+    return result
+
+
+def _run_matrix_step(ctx: SmokeCtx) -> dict:
+    """D-14 step 6: the matrix on the selected host; a non-Claude refusal is the failure."""
+    holder: dict = {}
+
+    def run() -> str:
+        holder["matrix"] = run_matrix(ctx.node_bin, ctx.tools_path, ctx.home, host=ctx.host)
+        return f"matrix ran: {holder['matrix']['checks']} checks"
+
+    result = _step("matrix on the selected host", run)
+    result["matrix"] = holder.get("matrix")
+    return result
+
+
+def run_smoke(ctx: SmokeCtx, work: str, seed_fn=None, assert_fn=None) -> dict:
+    """D-14 steps 1-7. Every step records its own outcome; the snapshot always runs."""
+    seed_fn = seed_fn or _seed_for_smoke
+    assert_fn = assert_fn or (lambda env: assert_no_probe(env))
+    cache_sha = seed_fn(work, ctx)
+    assert_fn(ctx.env)
+    before = snapshot(ctx.repo_root, ctx.home)
+    steps = [_smoke_ai_kit(ctx, work, cache_sha)]
+    steps.extend(_smoke_project_a(ctx, work, cache_sha))
+    b_result = _smoke_project_b(ctx, work, cache_sha)
+    steps.append(b_result)
+    matrix = _run_matrix_step(ctx)
+    steps.append(matrix)
+    after = snapshot(ctx.repo_root, ctx.home)
+    strict, host_managed = snapshot_diff(before, after)
+    steps.append(
+        {
+            "name": "protected set unchanged",
+            "ok": not strict,
+            "detail": "unchanged" if not strict else f"changed {', '.join(strict)}",
+        }
+    )
+    return {
+        "steps": steps,
+        "strict_changed": strict,
+        "host_managed_changed": host_managed,
+        "matrix": matrix.get("matrix"),
+        "key_paths": b_result.get("key_paths", {}),
+        "exit": 0 if all(s["ok"] for s in steps) and not strict else 1,
+    }
+
+
+def _seed_for_smoke(work: str, ctx: SmokeCtx) -> dict:
+    """The seeded scratch cache under `<work>/xdg` (D-11 step 2; never the real cache)."""
+    paths = _layout(work)
+    if str(paths.xdg) != ctx.env.get("XDG_CACHE_HOME"):
+        raise SystemExit("smoke env does not point at the seeded scratch cache")
+    return _seed_caches(paths)
+
+
+def _smoke_placeholders(text: str, result: dict) -> str:
+    """Replaces every machine path in the evidence with its label (D-13, D-14 step 5)."""
+    for raw, label in (
+        (result.get("scratch_b"), "<scratch-b>"),
+        (result.get("scratch_a"), "<scratch-a>"),
+        (result.get("home"), HOME_LABEL),
+        (result.get("repo_root"), WORKTREE_LABEL),
+    ):
+        if raw:
+            text = text.replace(str(raw), label)
+    return text
+
+
+def render_smoke_evidence(result: dict) -> str:
+    """Markdown evidence: step outcomes, gsd-core, matrix, protected set, project (b) keys."""
+    lines = ["# Smoke evidence", "", "## Steps"]
+    for number, step in enumerate(result["steps"], start=1):
+        verdict = "pass" if step["ok"] else "fail"
+        lines.append(f"- step {number} {step['name']}: {verdict} — {step['detail']}")
+    matrix = result.get("matrix") or {}
+    lines += [
+        "",
+        "## gsd-core",
+        f"- version: {(matrix.get('gsd_core') or {}).get('version')}",
+        f"- path: {GSD_CORE_LABEL}",
+    ]
+    lines += ["", "## Matrix"]
+    if matrix:
+        lines.append(f"- checks: {matrix.get('checks')}; agents: {matrix.get('agents')}")
+        for name, control in sorted((matrix.get("controls") or {}).items()):
+            lines.append(f"- {name}: {control.get('verdict', 'recorded')}")
+        info = matrix.get("informational") or {}
+        lines.append(
+            f"- informational runtime row: model {info.get('model')}, tier {info.get('tier')}"
+        )
+    else:
+        lines.append("- not run")
+    lines += ["", "## Protected set"]
+    changed = list(result.get("strict_changed") or [])
+    lines.append("- unchanged" if not changed else "- changed: " + ", ".join(changed))
+    host = list(result.get("host_managed_changed") or [])
+    lines.append("- host-managed changed: " + (", ".join(host) if host else "none"))
+    keys = (result.get("key_paths") or {}).get("reconciled") or []
+    lines += ["", "## Project (b) key paths"]
+    lines += [f"- {key}" for key in keys] or ["- none"]
+    lines += [
+        "",
+        "## Caches",
+        "- seeded scratch cache; no runtime enumeration; byte-identical after every inventory",
+    ]
+    return _smoke_placeholders("\n".join(lines) + "\n", result)
+
+
+def _cmd_smoke(args: argparse.Namespace) -> int:
+    node_bin = shutil.which("node")
+    reason = gsd_run_reason(node_bin, GSD_TOOLS_PATH)
+    if node_bin is None or reason:
+        print(reason or "no node executable")
+        return 3
+    work = tempfile.mkdtemp(prefix="smoke-")
+    home = str(_abs(args.home or pathlib.Path.home()))
+    env = {
+        **os.environ,
+        "RUNTIME_DIR": str(REPO_ROOT),
+        "GSD_RUNTIME": args.host,
+        "XDG_CACHE_HOME": os.path.join(work, "xdg"),
+    }
+    ctx = SmokeCtx(node_bin, GSD_TOOLS_PATH, REPO_ROOT, home, args.host, env)
+    try:
+        result = run_smoke(ctx, work)
+        result.update(
+            {
+                "scratch_a": os.path.join(work, "project-a"),
+                "scratch_b": os.path.join(work, "project-b"),
+                "home": home,
+                "repo_root": str(REPO_ROOT),
+            }
+        )
+        _write_text(str(_abs(args.evidence_out)), render_smoke_evidence(result))
+        print(f"smoke evidence written to {label_path(args.evidence_out)}")
+        return result["exit"]
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gsd_curated_eval",
@@ -3381,6 +4067,12 @@ def _build_parser() -> argparse.ArgumentParser:
     fix.add_argument("scenario", choices=SCENARIOS)
     fix.add_argument("--run-dir", required=True, help="empty or absent scratch directory")
     fix.set_defaults(func=_cmd_fixture)
+
+    smoke = sub.add_parser("smoke", help="the D-14 live smoke (writes scratch projects only)")
+    smoke.add_argument("--host", default="claude", help="runtime the smoke runs on")
+    smoke.add_argument("--home", help="home directory to protect (default: this process's)")
+    smoke.add_argument("--evidence-out", required=True, help="write the evidence here")
+    smoke.set_defaults(func=_cmd_smoke)
 
     run = sub.add_parser("run", help="one cell of one scenario through claude -p")
     run.add_argument("scenario", choices=SCENARIOS)
