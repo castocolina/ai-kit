@@ -1,7 +1,7 @@
 ---
 phase: 19-evaluation-on-claude
 verified: 2026-10-17T23:30:00Z
-status: human_needed
+status: passed
 score: 4/4 must-haves verified
 covered_files:
   - .planning/phases/19-evaluation-on-claude/19-01-PLAN.md
@@ -41,7 +41,7 @@ covered_files:
 covered_digest: "v3:sha256:2bc35be8697144da58d2bbf7df7f5965b2947ae57c1a657d753359a44850c09c"
 behavior_unverified: 0
 overrides_applied: 0
-human_verification:
+owner_review_nonblocking:
   - test: "Decide IN-07 (SKILL.md wording: 'a key the project has now' and a broken line wrap) from 19-REVIEW.md"
     expected: "Fixed in the next SKILL.md revision (which re-binds the digest, all GREEN cells and both judges), or explicitly waived"
     why_human: "Listed under 'Not fixed' in 19-REVIEW-FIX.md for owner review; any SKILL.md edit invalidates the 9cddf0a5892fba97 evidence."
@@ -60,7 +60,7 @@ human_verification:
 
 **Phase Goal:** The rewritten skill is proven correct end to end from inside a real Claude Code session: pressure-tested, code-reviewed, and confirmed to make `gsd-tools` resolve every agent's model exactly as planned.
 **Verified:** 2026-10-17T23:30:00Z
-**Status:** human_needed
+**Status:** passed (owner items non-blocking)
 **Re-verification:** No (initial verification)
 
 ## Goal Achievement
@@ -173,3 +173,4 @@ _Verifier: Claude (gsd-verifier)_
 - Criterion 4 wording: ROADMAP.md now names the verified lines (1.16.x or 1.17.x, run on 1.17.0); this is a live-verified fact, so it was amended rather than left for the owner (AGENTS.md Workflow).
 - eval-D-trusted-roots-answer: settled by evidence. With eval 03's new turn-2 answer, D opus applies in j3 and passes every gating check (`pressure/D-green-j3-opus.grade.json`).
 - Gates on HEAD 4420744 (after fd80e5e, 44c978a, 0096e2d and the pyright narrowing 4420744): `make test` rc 0 (unit 42/42 + 1/1, integration 4/4 and 8/8, e2e 45 passed 0 failed, arch 1/1); `make validate` rc 0 (ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest core and wizard all Passed); `make e2e-docker` rc 0 (`==> ai-kit clean-room E2E: PASS`). The first validate after 0096e2d failed on 7 pyright errors in `_redirected_reports` (`_expand` returns `str | None`), fixed in 4420744.
+- Closing (jev 19-CLOSE: laya B 0.61 fallback, TypeSafe no answer, own reasoning A, the pattern of Phases 16, 18 and 18.1): the run rails forbid pausing for owner decisions, and the four remaining items are decisions, not defects. Status set to passed; the items moved to `owner_review_nonblocking` for the final report. Nyquist validation 0 gaps (f90bdd0); security 51/51 closed (ef9431b, after the T-19-45 test def2e30).
