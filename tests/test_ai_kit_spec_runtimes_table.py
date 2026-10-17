@@ -523,6 +523,8 @@ class TestStatusMapDrift(unittest.TestCase):
             ("empty_answer", None, "real_error"),
             (None, 0, None),
             (None, 127, "dispatch_unavailable"),
+            (None, 2, "configuration"),
+            (None, 124, "timeout"),
             (None, 3, "real_error"),
         )
         for status, code, want in cases:

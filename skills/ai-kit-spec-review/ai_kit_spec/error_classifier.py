@@ -52,6 +52,11 @@ STATUS_TO_REASON: dict[str, str | None] = {
     "git_error": "real_error",
     "git_timeout": "git_timeout",
 }
+# Exit code -> reason when no status line counts (D-12: exit 2 is configuration, 124 the
+# runner's timeout, 127 a missing binary).
+_EXIT_FALLBACK: dict[int | None, str | None] = {
+    0: None, 2: "configuration", 124: "timeout", 127: "dispatch_unavailable",
+}
 
 # auth/entitlement/setup signals — checked BEFORE quota so "not logged in ... quota" reads
 # auth, never the (retryable) quota. cursor-agent evidence, 16.1-RESEARCH.md: stderr
@@ -113,12 +118,8 @@ def classify_error(returncode: int | None, stderr: str | bytes, timed_out: bool 
 def reason_for_status(status: str | None, returncode: int | None) -> str | None:
     """Map a runner status (or a bare returncode) onto the closed reason vocabulary.
 
-    A known STATUS_TABLE key uses STATUS_TO_REASON. Otherwise returncode 0 is success,
-    127 is dispatch_unavailable, and every other code is real_error."""
+    A known STATUS_TABLE key uses STATUS_TO_REASON. Otherwise the exit code decides
+    (`_EXIT_FALLBACK`, D-12), and every other code is real_error."""
     if status in STATUS_TO_REASON:
         return STATUS_TO_REASON[status]
-    if returncode == 0:
-        return None
-    if returncode == 127:
-        return "dispatch_unavailable"
-    return "real_error"
+    return _EXIT_FALLBACK.get(returncode, "real_error")
