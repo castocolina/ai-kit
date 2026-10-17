@@ -91,7 +91,7 @@ each, `-fast` variants, some with `1M`/thinking context variants),
 standalone `grok` CLI), `composer-2.5*` (Cursor's own model),
 `gemini-3.7-flash-high` (Google), `glm-5.2-high`/`glm-5.2-max` (Zhipu),
 `kimi-k3-low`/`-high`/`-max`, `kimi-k2.7-code` (Moonshot). Vendor
-attribution for all of these is in `ai-kit-spec.py`'s
+attribution for all of these is in `ai_kit_spec/vendor.py`'s
 `_MODEL_VENDOR_PREFIXES` table (`infer-vendor` CLI subcommand) — do not
 re-infer it by reading model names.
 

@@ -10,8 +10,8 @@ and are appended separately once the controller runs them (see "Execution owners
 ## Scratch environment
 
 ```
-SMOKE_HOME=/tmp/claude-1000/tmp.TdGrt1ADcN
-SMOKE_CWD=/tmp/claude-1000/tmp.FxVDBF2gc8
+SMOKE_HOME=$TMPDIR/tmp.TdGrt1ADcN
+SMOKE_CWD=$TMPDIR/tmp.FxVDBF2gc8
 ```
 
 Both directories are still on disk as of this commit — **do not delete them**. The controller's
@@ -21,8 +21,8 @@ them; only the controller's own Step 4c deletes them, after Step 1b and Step 4b 
 `$SHIM` and `$TOOLS_PY` resolved to (git-checkout installation shape, confirmed executable):
 
 ```
-SHIM=/var/home/bazzite/git/personal/ai-kit/.claude/worktrees/ai-kit-spec-execute-superpowers/skills/ai-kit-spec-execute-superpowers/ai-kit-spec-superpowers.py
-TOOLS_PY=/var/home/bazzite/git/personal/ai-kit/.claude/worktrees/ai-kit-spec-execute-superpowers/skills/ai-kit-spec-review/ai-kit-spec.py
+SHIM=<checkout>/skills/ai-kit-spec-execute-superpowers/ai-kit-spec-superpowers.py
+TOOLS_PY=<checkout>/skills/ai-kit-spec-review/ai-kit-spec.py
 ```
 
 **Environment note:** this session runs inside a worktree-isolated Bash sandbox that statically
@@ -74,7 +74,7 @@ Real printed output (trimmed to the load-bearing lines; full codex transcript ob
 
 ```
 {"mode": "external_cli", "key": "codex/sol", "cli": "codex", "model": "gpt-5.6-sol", "effort": null, "service_tier": null, "ladder_keys": ["codex/sol", "claude/opus-5"]}
-{"cli": "codex", "model": "gpt-5.6-sol", "command": "codex exec --sandbox workspace-write --skip-git-repo-check -C /tmp/claude-1000/tmp.FxVDBF2gc8 -m gpt-5.6-sol", "returncode": 0, "stdout": "status: DONE\n", ...}
+{"cli": "codex", "model": "gpt-5.6-sol", "command": "codex exec --sandbox workspace-write --skip-git-repo-check -C $TMPDIR/tmp.FxVDBF2gc8 -m gpt-5.6-sol", "returncode": 0, "stdout": "status: DONE\n", ...}
 CLASSIFICATION=ok
 Step 2 dispatch PASS: smoke.txt created, report file non-empty, classification=ok
 ```
@@ -144,9 +144,9 @@ a short status line at the very end."
 Real reply text (verbatim, trailing status line included):
 
 ```
-Created `/tmp/claude-1000/tmp.FxVDBF2gc8/smoke_widget.py` with the single `smoke_widget()`
+Created `$TMPDIR/tmp.FxVDBF2gc8/smoke_widget.py` with the single `smoke_widget()`
 function, verified it imports and returns 'ok' via an asserted `python3 -c` run, and wrote the
-detailed evidence report to `/tmp/claude-1000/tmp.FxVDBF2gc8/task-1-native-report.md`.
+detailed evidence report to `$TMPDIR/tmp.FxVDBF2gc8/task-1-native-report.md`.
 
 DONE
 ```

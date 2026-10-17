@@ -40,7 +40,7 @@ Runs once per invocation, after Step 0.6.
    needs no separate three-candidate search. `cache-path`
    resolves `RUNTIMES_JSON`/`QUOTA_JSON` through the module's own
    `cache_runtimes_path`/`cache_quota_path` — the
-   `${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/ai-kit-spec-review/...` formula lives
+   `${XDG_CACHE_HOME:-$HOME/.cache}/ai-kit/spec/...` formula lives
    in exactly one place, not duplicated as a bash literal here.
    Resolve this whole block once, in one `Bash` call, and — exactly like
    `RUN_TMP_DIR` below — record `TOOLS_PY`/`CHECKLIST_SKILL_MD`/
