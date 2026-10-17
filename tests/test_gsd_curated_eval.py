@@ -3356,6 +3356,36 @@ class TestReviewFixes(unittest.TestCase):
         self.assertEqual(step["key_paths"], {"reconciled": ["intel.enabled"]})
         self.assertNotIn("SENTINEL-VALUE", json.dumps(step))
 
+    # T-19-45 (19-04 plan, never written until the 19 security audit)
+    def test_fault_step_requires_undone_write(self) -> None:
+        project = os.path.join(self.tmp, "p")
+        config = os.path.join(project, ".planning", "config.json")
+        os.makedirs(os.path.dirname(config))
+        pathlib.Path(config).write_text('{"intel": {"enabled": false}}', encoding="utf-8")
+        ctx = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "claude", {})
+
+        def run(keys: list[str], *, restore: bool = True) -> str:
+            def fake_apply(_plan, _inv, _project, _ctx, run_fn):
+                for key in keys:
+                    run_fn(["node", "t.cjs", "query", "config-set", key, "x"])
+                if not restore:
+                    pathlib.Path(config).write_text("{}", encoding="utf-8")
+                return 1, {"failed_key": "review.default_reviewers"}, "", ""
+
+            with (
+                mock.patch.object(ev, "inject_fault"),
+                mock.patch.object(ev, "perturb_before_fault", return_value="intel.enabled"),
+                mock.patch.object(ev, "_logging_run", side_effect=lambda _c, log: log.append),
+                mock.patch.object(ev, "_real_apply_fault", side_effect=fake_apply),
+            ):
+                return ev._fault_apply(ctx, self.tmp, project, "plan.json", "inv.json")
+
+        with self.assertRaises(SystemExit):
+            run(["review.default_reviewers"])
+        self.assertIn("written then undone", run(["intel.enabled", "review.default_reviewers"]))
+        with self.assertRaises(SystemExit):
+            run(["intel.enabled", "review.default_reviewers"], restore=False)
+
     # IN-09: `run --snapshot` fails the cell on a strict change
     def test_run_snapshot_gate(self) -> None:
         run = os.path.join(self.tmp, "run")
