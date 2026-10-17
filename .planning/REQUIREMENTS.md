@@ -77,12 +77,12 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 
 ### One Runtime Model
 
-- [ ] **RTM-01**: Model candidates are (runtime, model) pairs: native subagent when the runtime is the current host and the host can select the model, subprocess through `cross-ai.mjs` otherwise; `native_runtime` is removed, and old configs carrying it load with a visible note.
+- [x] **RTM-01**: Model candidates are (runtime, model) pairs: native subagent when the runtime is the current host and the host can select the model, subprocess through `cross-ai.mjs` otherwise; `native_runtime` is removed, and old configs carrying it load with a visible note.
   Amended 2026-10-16 (18.1 plans): a custom entry (a `command` and no `runtime`) is the one
   exception, and it runs through the fixed-argv launcher on the same supervision core rather than
   through the runner (D-21, D-28).
-- [ ] **RTM-02**: The `native_claude` naming and the cursor / cursor-agent split are removed (one `cursor` runtime id, binary `cursor-agent`)
-- [ ] **RTM-03**: Affected SKILL.md files and AGENTS.md's Architecture section use the one-model wording; each rewritten SKILL.md passes `/skill-judge`
+- [x] **RTM-02**: The `native_claude` naming and the cursor / cursor-agent split are removed (one `cursor` runtime id, binary `cursor-agent`)
+- [x] **RTM-03**: Affected SKILL.md files and AGENTS.md's Architecture section use the one-model wording; each rewritten SKILL.md passes `/skill-judge`
 
 ### Spec-and-Discuss Chain Skill
 
@@ -177,9 +177,9 @@ None deferred beyond v1.3 at definition time.
 | HARD-03 | Phase 16.1 | Complete |
 | HARD-04 | Phase 16.1 | Complete |
 | HARD-05 | Phase 16.1 | Complete |
-| RTM-01 | Phase 18.1 | Pending |
-| RTM-02 | Phase 18.1 | Pending |
-| RTM-03 | Phase 18.1 | Pending |
+| RTM-01 | Phase 18.1 | Complete |
+| RTM-02 | Phase 18.1 | Complete |
+| RTM-03 | Phase 18.1 | Complete |
 | SDC-01 | Phase 24 | Pending |
 | SDC-02 | Phase 24 | Pending |
 | SDC-03 | Phase 24 | Pending |

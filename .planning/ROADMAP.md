@@ -396,7 +396,7 @@ names. Source: `.planning/research/2026-10-13-audit/18-runtime-detection-and-sub
      runtime id, whose binary is `cursor-agent`.
   3. The affected SKILL.md files and AGENTS.md's Architecture section use the one-model wording,
      and every rewritten SKILL.md passes `/skill-judge` in code review.
-**Plans**: 21/22 plans executed
+**Plans**: 22/22 plans executed
 
 - [x] 18.1-01-PLAN.md — Introduce the one runtime-id table (D-01) in `ai_kit_spec/detection.py` and switch ai_kit_spec to the ids
 - [x] 18.1-02-PLAN.md — Move curated-config v2 to runtime ids, dropping its own cursor/cursor-agent translation
@@ -419,7 +419,7 @@ names. Source: `.planning/research/2026-10-13-audit/18-runtime-detection-and-sub
 - [x] 18.1-19-PLAN.md — Rewrite the review-side documentation for one runtime model: the review and config skills, their references and AGENTS.md
 - [x] 18.1-20-PLAN.md — Rewrite the execute-side, curated-config and opencode-providers documentation for one runtime model and amend the planning sources
 - [x] 18.1-21-PLAN.md — Run the skill-judge loop on the three review-side skills rewritten in 18.1-19/20
-- [ ] 18.1-22-PLAN.md — Close the phase: the skill-judge loop on the three execute-side skills and the phase verdict over all six
+- [x] 18.1-22-PLAN.md — Close the phase: the skill-judge loop on the three execute-side skills and the phase verdict over all six
 
 ### Phase 19: Evaluation on Claude
 
