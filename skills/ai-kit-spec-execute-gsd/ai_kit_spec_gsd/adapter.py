@@ -11,6 +11,7 @@ from typing import Any, NamedTuple
 
 from ai_kit_spec.commands import execute_cli_error
 from ai_kit_spec.config_io import cfg_resolve
+from ai_kit_spec.detection import RUNTIMES
 from ai_kit_spec.execute_selection import (
     ExecuteResolveOptions,
     candidates_to_ladder,
@@ -50,7 +51,7 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
         command = r.get("command")
         tier = r.get("tier")
         alias_native = (runtime is None and not command) or (
-            runtime == "claude" and r.get("model") in {"opus", "sonnet", "haiku", "opusplan"}
+            runtime == "claude" and r.get("model") in RUNTIMES["claude"].native_selectors
         )
         if tier is None and alias_native:
             tier = r.get("model")
@@ -99,9 +100,10 @@ def _runtime_identity(cli) -> str:
     return cli if cli is not None else "claude"
 
 
-# D-15 names claude and grok (their execute builders were deleted). Whether D-15 also covers
+# D-15 names the review-only and runner-less rows (claude, grok). Whether D-15 also covers
 # GSD's own native-tier route for them is not settled, so they stay screened (fail closed).
-_D15_NAMED_CLIS = frozenset({"claude", "grok"})
+_D15_NAMED_CLIS = frozenset(rid for rid, row in RUNTIMES.items()
+                            if row.review_only or not row.runner)
 
 
 def _native_tier_route(candidate: dict) -> bool:

@@ -440,6 +440,15 @@ class TestAssembleCandidates(unittest.TestCase):
         candidates, _ = adapter.assemble_candidates("/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
         self.assertEqual(candidates[0]["tier"], "opus")
 
+    def test_the_claude_alias_set_is_the_runtime_tables_selectors(self):
+        # B-WR-07/PT-11: fable is a table selector; opusplan is not, so it keeps its runtime.
+        def fake_cfg_resolve(cwd, env):
+            return {"policy": {"ladder": []},
+                    "reviewers": [{"key": m, "model": m, "runtime": "claude"}
+                                  for m in ("fable", "opusplan")]}
+        candidates, _ = adapter.assemble_candidates("/repo", {}, cfg_resolve_fn=fake_cfg_resolve)
+        self.assertEqual([c["runtime"] for c in candidates], [None, "claude"])
+
     def test_native_cli_none_entry_derives_tier_from_its_own_model_field(self):
         # This repo's own "opus-native"-shaped entries: model IS already a tier alias.
         def fake_cfg_resolve(cwd, env):
