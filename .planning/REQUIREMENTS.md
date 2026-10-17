@@ -58,7 +58,7 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 
 ### Evaluation and Live Validation
 
-- [ ] **EVAL-01**: SKILL.md rewritten for the four-question + review flow; passes writing-skills RED/GREEN pressure scenarios B (Claude Rigorous with cross-AI), C (opencode host with routers, no catalog), D (existing v1-written config), E ("just apply it" pressure); RED baselines = no skill, plus v1 SKILL.md on B/D (Phase 19 D-01/D-02; cursor/pi scenarios moved to Phases 21/22)
+- [ ] **EVAL-01**: SKILL.md rewritten for the four-question + review flow (already v2-primary since Phase 18 EVAL-06; Phase 19 closes the review-pass and never-skip gaps RED finds — Amended 2026-10-17 (19-RESEARCH R-1)); passes writing-skills RED/GREEN pressure scenarios B (Claude Rigorous with cross-AI), C (opencode host with routers, no catalog), D (existing v1-written config), E ("just apply it" pressure); RED baselines = no skill, plus v1 SKILL.md on B/D (Phase 19 D-01/D-02; cursor/pi scenarios moved to Phases 21/22)
 - [ ] **EVAL-02**: `/skill-judge` runs as part of code review; SKILL.md scores ≥96/120 with no Critical/Important findings
 - [ ] **EVAL-03**: Live smoke on the claude host — `inventory` + `recommend` + `apply` (dry-run, then real on a scratch project)
 - [ ] **EVAL-04**: Live smoke on the codex host, including confirmation of the codex session env signal

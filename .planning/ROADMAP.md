@@ -438,7 +438,8 @@ model exactly as planned.
   3. A live smoke run from the claude host — `inventory` + `recommend` + `apply` (dry-run, then
      real on a scratch project) — completes without corrupting the scratch project's config.
   4. After `apply`, `gsd-tools resolve-model <agent>` with `GSD_RUNTIME=claude` returns the
-     planned model for all 35 agents, proven against the real installed `gsd-tools`.
+     planned model for all 35 agents, proven against the checkout-local gsd-core (1.16.x),
+     version recorded in `19-SMOKE.md` (Amended 2026-10-17 (19-RESEARCH R-7)).
 **Plans**: TBD
 
 ### Phase 20: Live Validation on Codex + Opencode

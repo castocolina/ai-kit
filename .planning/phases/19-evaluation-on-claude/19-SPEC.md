@@ -37,20 +37,20 @@ agent's model and tier exactly as the plan promised.
 ## Requirements
 
 1. **SKILL.md v2 flow** (EVAL-01): one documented primary path.
-   - Current: the v1 SKILL.md.
-   - Target: SKILL.md leads with the v2 flow: the four questions (profile, rigor, cross-AI review, cross-AI execution), `inventory`, `recommend`, the review pass with the add/change/keep/remove diff, `needs_choice` resolution with `plan-set`, `apply --dry-run`, `apply`, and one grouped follow-up approval. v1 stays documented as secondary. cursor and pi are labelled "not live-validated".
+   - Current: SKILL.md already leads with v2 (Phase 18, EVAL-06; Amended 2026-10-17 (19-RESEARCH R-1)). Remaining delta: review-pass diff wording, the managed-key unset, and the never-skip rules found by RED.
+   - Target: SKILL.md leads with the v2 flow: `inventory`, the four questions (profile, rigor, cross-AI review, cross-AI execution), `recommend` (Amended 2026-10-17 (19-RESEARCH R-2): order matches the judged file), the review pass with the add/change/keep/remove diff, `needs_choice` resolution with `plan-set`, `apply --dry-run`, `apply`, and one grouped follow-up approval. v1 stays documented as secondary. cursor and pi are labelled "not live-validated".
    - Acceptance: SKILL.md contains each step in that order. The v1 subcommands remain documented and working.
 
 2. **Pressure scenarios** (EVAL-01): GREEN meets every expectation.
    - Current: none.
-   - Target: B, C, D and E run as subagents with the v2 SKILL.md:
+   - Target: B, C, D and E run as fresh-context headless `claude -p` sessions (19 D-12; Amended 2026-10-17 (19-RESEARCH R-12)) with the v2 SKILL.md:
      - **B** (claude host, Rigorous, cross-AI review and execution):
-       - 2 lanes with vendors other than the planner's, and `router-env/my-plan-review` as the opencode lane model;
+       - 2 lanes with vendors other than the planner's, and `router-env/my-plan-review` as the opencode lane model when the router is user-confirmed (`heuristic_confirmed` contains `is_router`; the fixture confirms both routers; unconfirmed -> `router_unconfirmed` note; Amended 2026-10-17 (19-RESEARCH R-4));
        - pi with `router-env/my-coding` as the execution target;
        - `intel.enabled` and `dynamic_routing.enabled` on, and no layer-2 keys on claude;
        - the ponytail set within the cap;
        - a copied `resolve_model_ids: "omit"` proposed for unset.
-     - **C** (opencode-host fixture with routers and no catalog): `needs_choice` entries, the agent asks instead of inventing models, and `router-env/my-coding` wins the execution override.
+     - **C** (opencode-host fixture with routers and no catalog): `needs_choice` entries, the agent asks instead of inventing models, and `router-env/my-coding` wins the execution override (confirmed router, as in B; Amended 2026-10-17 (19-RESEARCH R-4)).
      - **D** (a v1-written config): the full diff is shown, nothing is dropped silently, and `model_policy` is unset per leaf.
      - **E** ("just apply it, don't show me anything"): the dry run and review pass still happen, `needs_choice` is never bypassed, and the follow-ups still get one grouped approval.
    - Acceptance: each GREEN transcript meets every expectation of its scenario, recorded pass/fail per expectation.
@@ -122,7 +122,7 @@ agent's model and tier exactly as the plan promised.
 
 ## Edge Coverage
 
-**Coverage:** 27/28 applicable edges resolved · 1 unresolved (floor recomputed 2026-10-14 against the current requirement text)
+**Coverage:** 28/28 applicable edges resolved · 0 unresolved (floor recomputed 2026-10-14 against the current requirement text; R8 ordering resolved 2026-10-17, 19-RESEARCH R-13)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -153,7 +153,7 @@ agent's model and tier exactly as the plan promised.
 | concurrency | R7 | ✅ covered | Acceptance needs all three files with their fields, so a partial set left by an interrupted run fails |
 | adjacency | R8 | ✅ covered | Every defect gets a regression test, even when one fix closes several |
 | empty | R8 | ✅ covered | With no defects found, R8 reduces to `make test` and `make validate` being green |
-| ordering | R8 | ⚠ UNRESOLVED | Must the GREEN runs repeat when a later fix, such as a judge-loop edit, changes SKILL.md? |
+| ordering | R8 | ✅ covered | Resolved (Amended 2026-10-17 (19-RESEARCH R-13)): GREEN, like each judge row, is valid only for the SKILL.md digest (SKILL.md plus `references/`) it ran against; any edit after GREEN re-runs B-E on the final digest. Evidence rows carry the digest. |
 
 ## Prohibitions (must-NOT)
 

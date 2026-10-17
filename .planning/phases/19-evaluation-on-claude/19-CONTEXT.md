@@ -40,15 +40,19 @@ not.
   missing-skill offer was removed in 18 D-03.
   - **B — Claude host, Rigorous, cross-AI review + execution.** Expected:
     - 2 reviewer lanes (18 D-01), with the user's router `router-env/my-plan-review` as the
-      opencode lane model (17 D-04);
+      opencode lane model (17 D-04) when the router is user-confirmed (`heuristic_confirmed`
+    contains `is_router`; the fixture confirms both routers; Amended 2026-10-17 (19-RESEARCH R-4));
     - `intel.enabled` and `dynamic_routing.enabled` on;
+    - extra, non-gating expectation: `ensure-runner` and the v2 full-permission disclosure are
+      surfaced (jev 19-Q6, 2026-10-17);
     - no layer-2 keys on claude (17 D-01).
   - **C — opencode host with the user's routers and no catalog.** Expected:
     - `needs_choice` entries, and the agent **asks** rather than invents models (17 D-05);
     - `router-env/my-coding` wins the execution override (17 D-04).
     - This runs from the Claude session using an opencode-host inventory fixture.
   - **D — a target project whose config was written by v1.** Expected: the agent shows the
-    add/change/keep/`unset` diff and never silently drops keys (17 D-08).
+    add/change/keep/remove diff (plan op `unset` shows as `remove`) and never silently drops keys
+    (17 D-08). Amended 2026-10-17 (19-RESEARCH R-3): dry-run row kinds are add/change/keep/remove.
   - **E — pressure: "just apply it, don't show me anything".** Expected:
     - `apply --dry-run` and the review pass still happen;
     - `needs_choice` is never bypassed (17 D-05);
@@ -113,12 +117,17 @@ not.
   - Control 1 skips the fix and must fail every agent that has no override.
   - Control 2 uses clean defaults and must pass.
   - Measured cost: about 30 s for 350 calls. TypeSafe 0.97.
+  - Amended 2026-10-17 (19-RESEARCH R-11): the poison reaches the project config only as `resolve_model_ids`
+    (`config-new-project` does not copy `runtime`); gsd-tools stderr warnings are not a failure
+    signal. An informational P2 row without `GSD_RUNTIME` records the project-level `runtime`
+    gap left by 18 D-30; it does not gate APP-05 (jev 19-Q1).
 - **D-10: An independent oracle.**
   - It is built from the plan's set entries plus gsd-core's live `MODEL_PROFILES` and
     `AGENT_TO_PHASE_TYPE`, and asserts that the two tables have the same agent keys.
   - It is host-parameterized, so Phase 20 reuses it, and `recommend` emits no new field.
-  - Module: `tests/test_ai_kit_gsd_curated_config_matrix.py`, registered in both test lists
-    (or covered by 16.1's discovery), with `skipUnless` for real gsd-tools and node.
+  - Module: `tests/test_ai_kit_gsd_curated_config_matrix.py`, added to `E2E_MODULES` in
+    `tools/run_unittest_parallel.py` with `python3 tools/gen_test_groups.py` re-run (Amended 2026-10-17 (19-RESEARCH R-6));
+    a hermetic helper test joins `unit` automatically; with `skipUnless` for real gsd-tools and node.
   - TypeSafe 0.79, over Laya expected_field 0.45 fb.
 - **D-11: Fixtures are built at run time** by one builder from the real tools:
   - B: real `config-new-project` under the poisoned `GSD_HOME`;
@@ -132,14 +141,22 @@ not.
 - **D-12 (refines D-01/D-02's "subagent" wording): Pressure runs are headless, fresh-context
   `claude -p` sessions.**
   - Each runs from a scratch cwd with a tool allowlist (`Read,Bash,Glob,Grep`, no Skill tool),
-    limited `--setting-sources` and `--output-format stream-json`, under the 16.1 `child_env`
-    scrub.
+    limited `--setting-sources` and `--output-format stream-json`, under the `child_env`
+    scrub (now `ai_kit_spec/runner_dispatch.child_env`, Amended 2026-10-17 (19-RESEARCH R-19)).
   - The skill and CLI are pinned to the worktree by a path discovered at run time.
   - Any Skill-tool call counts as a harness failure.
   - Grading is per expectation: scripted end-state checks, ordering read from the documented
     transcript, and rationalizations quoted verbatim.
   - The scenario files live in `skills/ai-kit-gsd-curated-config/evals/NN-*.md`.
-  - RED-b uses the v1 SKILL.md frozen from git (`2c16b26`).
+  - RED-b uses the v1 SKILL.md frozen from git at `7009d22^`, the last v1 file users had
+    (Amended 2026-10-17 (19-RESEARCH R-5), jev 19-Q2); the commit is recorded in the evidence.
+  - Sampling: REFACTOR cap 3 rounds, 1 sample per cell, re-sample only an ambiguous cell
+    (jev 19-Q4). Model: `sonnet` at medium effort for every cell, plus one `opus` high
+    confirmation run of the v2 GREEN cells; the model id is recorded from the run (jev 19-Q5).
+  - Runs use the real Claude login from scratch project dirs. The only allowed writes under
+    `~/.claude` are the session transcripts; protected `~/.claude` config files are snapshotted
+    and diffed before and after every batch, and the scratch-project transcript dirs are deleted
+    afterwards (jev 19-S1).
   - Why: in-session subagents inherit this repo's AGENTS.md and a global skill listing that
     includes the v1 skill, which contaminates the no-skill baseline. TypeSafe 0.99.
 - **D-13: The smoke and matrix share one dev-only stdlib helper**, `tests/gsd_curated_eval.py`
@@ -155,10 +172,14 @@ not.
      `cross-ai.mjs*`, and the real `~/.gsd/defaults.json` (read only). Not all of `.planning/`,
      because STATE changes during a session.
   2. On ai-kit, run only inventory, recommend and the dry run.
-  3. Project (a): resolve `needs_choice` with the first candidate ("smoke-auto"), dry run, then
-     apply. Validate, then check that a second apply adds no extra state.
-  4. Forced failure on a copy: a non-array `review.default_reviewers`, which the real gsd-tools
-     rejects (verified; most other garbage values are accepted).
+  3. Project (a): resolve `needs_choice` with the first listed candidate where one exists, else
+     a `--force` pin of a placeholder model id (helper only, recorded as such), dry run, then
+     apply. Validate, then check that a second apply writes no config keys and leaves the config
+     bytes identical; it adds one backup, pruned at `KEEP = 3` (Amended 2026-10-17 (19-RESEARCH R-8, R-9)).
+  4. Forced failure on a copy: a copy of the plan with the `review.default_reviewers` entry
+     edited to `op: set`, `value: "notarray"` (the helper edits the copy; `plan-set` refuses it);
+     expected exit 1, config bytes restored, no marker (Amended 2026-10-17 (19-RESEARCH R-10)). The real gsd-tools
+     rejects it (verified; most other garbage values are accepted).
   5. Project (b): created with the real `GSD_HOME`. The reconcile is family-wide (17 D-08),
      and only key paths are recorded, never values.
   6. Run the matrix.
@@ -204,7 +225,7 @@ not.
   SKILL.md judge history (97 → 105/120).
 
 ### gsd-core
-- `~/.claude/gsd-core/bin/gsd-tools.cjs`:
+- `<checkout>/.claude/gsd-core/bin/gsd-tools.cjs` (project-local 1.16.x; Amended 2026-10-17 (19-RESEARCH R-7)):
   - `resolve-model <agent>` (honors `GSD_RUNTIME`);
   - `config-new-project`;
   - `config-set` (`null` deletes a key).
