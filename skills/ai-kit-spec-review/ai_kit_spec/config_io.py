@@ -256,7 +256,7 @@ def _emit_legacy_note(label, notes, warn_fn) -> None:
     warn_fn(
         f"ai-kit-spec: {label}: legacy reviewer fields loaded in memory "
         f"({'; '.join(notes)}); the file is unchanged -- re-save it with the "
-        "ai-kit-spec-config wizard or render-toml --out"
+        "ai-kit-spec-config wizard or render-toml --out <file> --replace"
     )
 
 

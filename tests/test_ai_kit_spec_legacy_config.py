@@ -117,6 +117,8 @@ class TestLegacyLoad(unittest.TestCase):
             self.assertIn(path, err.getvalue())
             self.assertIn("cx", err.getvalue())
             self.assertEqual(err.getvalue().count("legacy reviewer fields loaded"), 1)
+            # The migrated file exists, so a bare `render-toml --out` would be refused.
+            self.assertIn("--replace", err.getvalue())
             with open(path, "rb") as stream:
                 self.assertEqual(stream.read(), before)
 
