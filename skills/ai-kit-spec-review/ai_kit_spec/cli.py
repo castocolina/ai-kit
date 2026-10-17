@@ -271,8 +271,9 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
                               help="runtime id, e.g. opencode, cursor")
     p_build_cmd.add_argument("--effort", default=None)
     p_build_cmd.add_argument("--service-tier", default=None)
-    p_build_cmd.add_argument("--mode", default="plan",
-                              help="cursor only: 'plan' or 'ask' (both read-only)")
+    p_build_cmd.add_argument("--mode", default=None,
+                              help="cursor only: 'plan' or 'ask' (both read-only); "
+                                   "omitted, the runner uses ask")
 
     p_build_model = sub.add_parser("build-model-id")
     p_build_model.add_argument("--runtime", "--cli", dest="runtime", required=True,

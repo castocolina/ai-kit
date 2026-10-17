@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
@@ -260,6 +260,15 @@ class TestLegacyEntryPoints(unittest.TestCase):
         self.assertEqual(code_legacy, 0)
         self.assertEqual(code_current, 0)
         self.assertEqual(legacy.getvalue(), current.getvalue())
+
+    def test_build_command_cursor_default_previews_the_runner_default(self):
+        # SJ: with no --mode, the preview omits --cursor-mode, as dispatch does for an entry
+        # with no cursor_mode, so the runner's own `ask` default applies.
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = main(["build-command", "--runtime", "cursor"])
+        self.assertEqual(code, 0)
+        self.assertNotIn("--cursor-mode", json.loads(out.getvalue())["argv"])
 
     def test_group_models_reads_legacy_and_id_snapshot_keys(self):
         for key in ("cursor-agent", "cursor"):
