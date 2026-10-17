@@ -26,8 +26,9 @@ fields. `native` means this host runs the pair itself (today only Claude Code se
 call; every other host runs only its session default natively). `external_cli` means a subprocess
 through the supervised runner, including a route of `unverified`: the model list was unavailable,
 so neither side checks the model before the CLI runs. A custom entry (a `command` and no
-`runtime`) is the one exception to that runner path, and only in review: exec mode routes it
-`review_only`, so it is skipped here. In review the fixed-argv custom launcher runs it on the same
+`runtime`) is the one exception to that runner path, and only in review: exec mode never runs
+it (`purpose = "execute"` makes `resolve-injection` exit 2; otherwise it is skipped as
+`review_only`). In review the fixed-argv custom launcher runs it on the same
 supervision core.
 
 ## Why `$INJECTION_KEY`, never `$INJECTION_RUNTIME`, goes into exclusions

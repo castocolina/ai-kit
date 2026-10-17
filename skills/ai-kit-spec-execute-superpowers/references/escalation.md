@@ -17,7 +17,8 @@ bump is that skill's own dispatch judgment, made fresh each round exactly as
 `subagent-driven-development`'s own Model Selection section already specifies, with no ladder
 involved). `external_cli` means a subprocess through the supervised runner; `native` means this
 host runs the pair itself. A custom entry (a `command` and no `runtime`) is the one exception to
-that runner path: exec mode routes it `review_only`, so it never reaches this escalation.
+that runner path: exec mode never runs it (`purpose = "execute"` exits 2 at
+`resolve-injection`; otherwise it is skipped as `review_only`), so it never reaches this escalation.
 `subagent-driven-development`'s own Model Selection section requires rounds 4–5 to "dispatch a
 fresh implementer on a MORE CAPABLE model" — a genuine capability bump, not merely a different
 one.

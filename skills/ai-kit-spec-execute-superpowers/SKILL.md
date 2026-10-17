@@ -117,8 +117,9 @@ printf 'INJECTION_JSON=%s\nINJECTION_MODE=%s\n' "$INJECTION_JSON" "$INJECTION_MO
 `--excluded-reasons-json` always gets the merge of `$PRIOR_REASONS_JSON` and `$WAVE_REASONS_JSON`,
 never `$WAVE_REASONS_JSON` alone.
 
-**If `resolve-injection` exits 2** (empty `$INJECTION_JSON`): a malformed `review-spec.toml`, or a
-configured CLI that cannot be an execute CLI. STOP and relay its stderr verbatim.
+**If `resolve-injection` exits 2** (empty `$INJECTION_JSON`): a malformed `review-spec.toml`, or an
+entry with `purpose = "execute"` that can never execute (a custom `command` entry, grok, or a
+claude pair that does not run natively). STOP and relay its stderr verbatim.
 
 **If its stderr prints `ignoring untrusted project-local config`**, this resolution used the global
 config only. Ask **once per run**: relay the line verbatim, show
@@ -155,15 +156,19 @@ Record both when the block ran. `$INJECTION_KEY` is the ladder key (e.g. `codex/
   (`python3 -c 'import json,sys; print(json.loads(sys.argv[1])["any_quota_recoverable"])' "$INJECTION_JSON"`).
   It, not `all_auth_failures`, is the gate. `reasons` holds `"quota"`, `"auth"`,
   `"billing_or_access"`, `"capacity"`, `"git_timeout"`, `"timeout"`, `"configuration"`,
-  `"dispatch_unavailable"`, `"real_error"`, or a route name (`"bad_model"`, `"review_only"`,
+  `"dispatch_unavailable"`, `"real_error"`, `"no_usable_dispatch"` (a prior wave's permanent
+  failure), or a route name (`"bad_model"`, `"review_only"`,
   `"not_installed"`, `"no_inventory"`, `"unknown_runtime"`, `"no_model"`). Only `"quota"` is
   worth waiting for. A skip route is recorded under that route name and never picked.
   - **`any_quota_recoverable == False`** — every candidate failed for a reason waiting never fixes.
     Do **not** schedule `CronCreate`. STOP this wave and tell the user which key needs what fix,
-    read off `reasons`: `"auth"` needs login or entitlement, `"configuration"` a fixed `command`
-    template, `"timeout"`/`"dispatch_unavailable"` an investigation of the CLI, `"real_error"` its
-    own diagnosis. This stop is the adapter's own call, not one of subagent-driven-development's
-    four stop-and-ask conditions; see `references/design-notes.md`.
+    read off `reasons`: `"auth"` needs login or entitlement, `"billing_or_access"` credits or
+    model access, `"configuration"` a fixed model id, prompt or flag (the runner refused it),
+    `"capacity"` a later retry or another model, `"git_timeout"` a look at the repo (the runner's
+    work-tree check timed out, not the CLI), `"timeout"`/`"dispatch_unavailable"` an
+    investigation of the CLI, `"real_error"` its own diagnosis. This stop is the adapter's own
+    call, not one of subagent-driven-development's four stop-and-ask conditions; see
+    `references/design-notes.md`.
   - **`any_quota_recoverable == True`** — at least one candidate is quota-exhausted, which is
     time-bound. Write resumable state, schedule an hourly `CronCreate` wake, then STOP this wave
     without dispatching. **MANDATORY: read `references/state-management.md`'s "Resumable state"
@@ -242,6 +247,8 @@ DISPATCH_RESULT_JSON="$(python3 "$SHIM" dispatch-task --injection-json "$INJECTI
 printf 'DISPATCH_RESULT_JSON=%s\n' "$DISPATCH_RESULT_JSON"
 ```
 
+`--heartbeat-interval` is required but unused: the runner prints its own heartbeat.
+
    Then `REPORT_MODE=append`. If the CLI wrote `$REPORT_FILE` itself, `dispatch-task` leaves it
    untouched; only when the file is unchanged does it write or append the captured stdout, behind a
    marker line. Either way, review and the fix loop read `$REPORT_FILE` like a native report.
@@ -296,7 +303,8 @@ never runs here. pi exec uses the runner's pi formula, verified by its hermetic 
 live verification is Phase 22, and stderr prints that note before the run.
 
 **The one exception.** Every subprocess runs through the supervised runner, except a custom entry
-(a `command` and no `runtime`): exec mode routes it `review_only`, so it is skipped for execution
+(a `command` and no `runtime`): exec mode never runs it. With `purpose = "execute"`,
+`resolve-injection` exits 2; otherwise it is skipped with a stderr warning (routed `review_only`)
 and never reaches `dispatch-task`. In review it runs through the fixed-argv custom launcher on the
 same supervision core.
 
