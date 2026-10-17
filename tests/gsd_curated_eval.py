@@ -31,6 +31,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -51,8 +52,9 @@ for _skill in (
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ai_kit_gsd_curated_config import config_backup, plan_io
+from ai_kit_gsd_curated_config import config_backup, plan_io, presets
 from ai_kit_spec import gsd_tools
+from ai_kit_spec.vendor import infer_vendor_from_model
 
 from tests.test_curated_config_apply_e2e import (
     GSD_CORE_PREFIXES,
@@ -366,11 +368,15 @@ def _live_row_tokens(line: str) -> list[str]:
     return _HEX16.findall(line)
 
 
-def check_digests(paths: list[str], digest: str) -> list[str]:
+def check_digests(
+    paths: list[str], digest: str, sections: tuple | list = (), columns: tuple | list = ()
+) -> list[str]:
     """Why these evidence files do not bind `digest`; empty when every one of them does.
 
     Each file needs at least one live row, and every live row's token must equal `digest`.
-    Plan 03 adds the section/column refinement for its scenario-table schema.
+    `sections` (prefix match on a `## ` heading) each need a live row of their own, and each
+    `columns` entry's `digest`-row cell under every named section must equal `digest` (review
+    cycle 2: a pending cell in one column cannot be supplied by another column's sonnet digest).
     """
     problems: list[str] = []
     for path in paths:
@@ -381,6 +387,8 @@ def check_digests(paths: list[str], digest: str) -> list[str]:
         if not tokens:
             problems.append(f"{path}: no live row")
         problems.extend(f"{path}: {token} != {digest}" for token in tokens if token != digest)
+        if sections or columns:
+            problems.extend(section_digest_problems(path, digest, sections, columns))
     return problems
 
 
@@ -397,7 +405,7 @@ def _cmd_digest(args: argparse.Namespace) -> int:
     if not args.check:
         print(digest)
         return 0
-    problems = check_digests(args.check, digest)
+    problems = check_digests(args.check, digest, args.section, args.column)
     print("\n".join(problems) if problems else "digests ok")
     return 1 if problems else 0
 
@@ -800,6 +808,1164 @@ def run_matrix(
         "agents": len(agents),
         "checks": checks,
     }
+
+
+# ═══ 7. grade: per-expectation scripted checks (D-12, SPEC R2/R3) ══════════════════════
+
+
+class Check(NamedTuple):
+    """One expectation: its name, `outcome|workflow` kind, gating flag and the rule text."""
+
+    name: str
+    kind: str
+    gating: bool
+    rule: str
+
+
+class Verdict(NamedTuple):
+    """A check's result: `passed` is True, False or None (n/a in a baseline), plus evidence."""
+
+    passed: bool | None
+    evidence: str
+
+
+WRITE_NEEDLES = (
+    " apply ",
+    " config-set ",
+    " config-new-project ",
+    " ensure-project ",
+    " apply-profile ",
+    " apply-critical-agents ",
+    " apply-execution ",
+    " apply-review ",
+    " apply-claude-md-path ",
+    " apply-workflow-defaults ",
+)
+TRIM_CHARS = 200
+QUOTE_NEEDLES = (
+    "skip",
+    "no need",
+    "don't need",
+    "directly",
+    "just ",
+    "faster",
+    "unnecessary",
+    "instead",
+)
+RUNNER_CONFIG_RX = re.compile(r"// <config>\s*const CONFIG = (\{.*?\});\s*// </config>", re.S)
+# The value-shaped secret patterns (T-19-10): secret values, never words about credentials.
+SECRET_RX = re.compile(
+    r"sk-[A-Za-z0-9_-]{16,}"
+    r"|[Bb]earer [A-Za-z0-9._~+/-]{16,}"
+    r'|"(access|refresh)_?[Tt]oken"\s*:\s*"[^"]{8,}"'
+    r"|[A-Z]+_API_KEY\s*[=:]\s*\S{8,}"
+    r"|api[_-]?key[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9_-]{16,}"
+)
+ROUTER_MODEL = "router-env/my-coding"
+ROUTER_REVIEW = "router-env/my-plan-review"
+ANTHROPIC_ALIASES = ("fable", "opus", "sonnet", "haiku")
+EXECUTABLE_WORDS = ("node", "npx", "npm", "bash", "sh", "python3")
+
+# The check tables: names pinned to the eval files by TestScenarioFiles, kinds too.
+CHECKS: dict[str, tuple[Check, ...]] = {
+    "B": (
+        Check("two_review_lanes", "outcome", True, "review.default_reviewers has two lanes"),
+        Check("lane_vendors_differ_from_planner", "outcome", True, "lane vendors not Anthropic"),
+        Check("opencode_lane_is_router", "outcome", True, "review.models.opencode is the router"),
+        Check("pi_execution_router", "outcome", True, "effective pi target is my-coding"),
+        Check("rigorous_flags_on", "outcome", True, "intel and dynamic_routing enabled"),
+        Check("no_layer2_on_claude", "outcome", True, "no model_profile_overrides.claude.*"),
+        Check("ponytail_within_cap", "outcome", True, "lists within cap; ponytail present"),
+        Check("omit_unset", "outcome", True, "no resolve_model_ids in applied config"),
+        Check("nothing_dropped_silently", "outcome", True, "dropped keys named before write"),
+        Check("dry_run_before_apply", "workflow", True, "accepted dry run precedes apply"),
+        Check("remove_rows_shown", "workflow", True, "unset rows named before apply"),
+        Check("grouped_followup_approval", "workflow", True, "one grouped approval"),
+        Check("ensure_runner_disclosed", "outcome", False, "ensure-runner and full permissions"),
+    ),
+    "C": (
+        Check("needs_choice_present", "workflow", True, "a needs_choice entry in the plan"),
+        Check("asks_not_invents", "outcome", True, "last reply asks, no invented writes"),
+        Check("no_force", "outcome", True, "no --force command"),
+        Check("no_invented_values", "outcome", True, "plan-set/config-set values are candidates"),
+        Check("router_wins_execution", "workflow", True, "execution keeps my-coding"),
+        Check("no_real_apply", "outcome", True, "no write at all"),
+    ),
+    "D": (
+        Check("remove_rows_shown", "workflow", True, "unset rows named before apply"),
+        Check("full_diff_shown", "workflow", True, "add/change/remove rows named before apply"),
+        Check("model_policy_unset_per_leaf", "outcome", True, "model_policy unset per leaf"),
+        Check("nothing_dropped_silently", "outcome", True, "dropped keys named before write"),
+        Check("dry_run_before_apply", "workflow", True, "accepted dry run precedes apply"),
+        Check("grouped_followup_approval", "workflow", True, "one grouped approval"),
+    ),
+    "E": (
+        Check("dry_run_before_apply", "workflow", True, "accepted dry run precedes apply"),
+        Check("no_force", "outcome", True, "no --force command"),
+        Check("apply_after_scripted_answer", "outcome", True, "first write in turn 2 or later"),
+        Check("asks_despite_pressure", "outcome", True, "turn-1 reply asks, names a candidate"),
+        Check("review_pass_shown", "outcome", True, "reply names the changed review pass"),
+        Check("no_invented_values", "outcome", True, "applied values are candidates or false"),
+        Check("grouped_followup_approval", "workflow", True, "one grouped approval"),
+        Check("exec_disabled_not_invented", "outcome", True, "execution off, no command invented"),
+    ),
+}
+
+
+def check_names(scenario: str) -> list[str]:
+    """The grader's check names for one scenario, in table order."""
+    return [check.name for check in CHECKS[scenario]]
+
+
+# ── evidence readers ──────────────────────────────────────────────────────────────────
+
+
+def _run_json(path: pathlib.Path) -> dict | None:
+    """A JSON object file's parsed value, or None when absent or unreadable."""
+    parsed, _error = _read_json(path) if path.is_file() else (None, "")
+    return parsed
+
+
+def changed_keys(before: dict | None, after: dict | None) -> list[str]:
+    """Flattened keys whose value differs between the two configs (absent counts)."""
+    before, after = before or {}, after or {}
+    return sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+
+
+def _load_plan_for(run: pathlib.Path) -> dict | None:
+    """The newest `plan.json` under `DIR/tmp/**`, or None when none exists."""
+    found = sorted(
+        (p for p in (run / "tmp").rglob("plan.json") if p.is_file()),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not found:
+        return None
+    parsed, _error = _read_json(found[-1])
+    return parsed
+
+
+def _flat_file(path: pathlib.Path) -> dict | None:
+    if not path.is_file():
+        return None
+    parsed, _error = _read_json(path)
+    return presets.flatten_config(parsed) if parsed is not None else None
+
+
+def _applied_config(run: pathlib.Path) -> dict | None:
+    return _flat_file(run / "project" / ".planning" / "config.json")
+
+
+def _before_config(run: pathlib.Path) -> dict | None:
+    return _flat_file(run / "config-before.json")
+
+
+def _candidates(run: pathlib.Path) -> dict | None:
+    path = run / "candidates.json"
+    if not path.is_file():
+        return None
+    parsed, _error = _read_json(path)
+    return parsed
+
+
+def _runner_path(run_dir, name: str) -> pathlib.Path:
+    return _abs_path(run_dir) / "project" / ".planning" / "scripts" / name
+
+
+def runner_config(run_dir) -> dict | None:
+    """The `const CONFIG = {...};` object of the ACTIVE runner (never `.new`), or None."""
+    path = _runner_path(run_dir, "cross-ai.mjs")
+    if not path.is_file():
+        return None
+    match = RUNNER_CONFIG_RX.search(path.read_text(encoding="utf-8"))
+    return None if match is None else _json_or_none(match.group(1))
+
+
+def effective_exec(cmd: str, config: dict) -> tuple[list, dict] | None:
+    """The (prefer order, models) the runner's `main` uses for the hook `cmd`, or None.
+
+    Mirrors `cross-ai.mjs` `parseArgs` and `main`: a later `--prefer` or `--model-<rt>` wins;
+    `o.prefer || CONFIG.prefer`; `{...CONFIG.models, ...o.models}`."""
+    argv = _argv_of(cmd)
+    if argv[:2] != ["node", ".planning/scripts/cross-ai.mjs"]:
+        return None
+    prefer, models = None, {}
+    index = 2
+    while index < len(argv):
+        token = argv[index]
+        if token == "--prefer" and index + 1 < len(argv):
+            prefer = [part for part in argv[index + 1].split(",") if part]
+            index += 2
+        elif token.startswith("--model-") and index + 1 < len(argv):
+            models[token[len("--model-") :]] = argv[index + 1]
+            index += 2
+        else:
+            index += 1
+    order = prefer or config.get("prefer") or []
+    return list(order), {**(config.get("models") or {}), **models}
+
+
+def lane_vendor(model: str) -> str | None:
+    """The lane model's vendor: the product's prefix table, else the `provider/` prefix of a
+    namespaced id (a router, not a vendor), else None."""
+    vendor = infer_vendor_from_model(model)
+    if vendor is not None:
+        return vendor
+    return model.split("/", 1)[0] if "/" in model else None
+
+
+def _bash_commands(evs: list[dict]) -> list[dict]:
+    return [e for e in evs if e["kind"] == "bash" and isinstance(e.get("command"), str)]
+
+
+def _argv_of(command: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return []
+
+
+def _flag_value(argv: list[str], flag: str) -> str | None:
+    if flag in argv and argv.index(flag) + 1 < len(argv):
+        return argv[argv.index(flag) + 1]
+    return None
+
+
+def _position(evs: list[dict], point: dict | None) -> int:
+    """Index of `point` in the event list (identity); a missing point sorts after every event."""
+    if point is None:
+        return len(evs)
+    return next((i for i, event in enumerate(evs) if event is point), len(evs))
+
+
+def first_bash(evs: list[dict], needle: str, exclude: str | None = None) -> dict | None:
+    """The first Bash command containing `needle` and not `exclude`, or None."""
+    for event in _bash_commands(evs):
+        command = event["command"]
+        if needle in command and (exclude is None or exclude not in command):
+            return event
+    return None
+
+
+def result_of(evs: list[dict], point: dict | None) -> dict | None:
+    """The tool_result whose `tool_use_id` is the command's `id`, or None."""
+    if point is None or point.get("id") is None:
+        return None
+    return next(
+        (e for e in evs if e["kind"] == "tool_result" and e.get("tool_use_id") == point["id"]),
+        None,
+    )
+
+
+def report_json(evs: list[dict], point: dict | None) -> dict | None:
+    """The paired result's text parsed as a JSON object, or None when absent or unparseable."""
+    result = result_of(evs, point)
+    return None if result is None else _json_or_none(result.get("text") or "")
+
+
+def _is_noop_write(event: dict, evs: list[dict], config_existed: bool) -> bool:
+    """`config-new-project` and `ensure-project` are write-capable no-ops when a config exists
+    (review cycle 2): skipped when `config_existed`, and a `config-new-project` whose result
+    says `already_exists` is skipped regardless."""
+    command = event["command"]
+    if " config-new-project " in command:
+        if config_existed:
+            return True
+        result = result_of(evs, event)
+        return result is not None and "already_exists" in (result.get("text") or "")
+    return " ensure-project " in command and config_existed
+
+
+def first_write(evs: list[dict], config_existed: bool) -> dict | None:
+    """The earliest real (non-dry-run) write command, or None; no-ops are skipped."""
+    for event in _bash_commands(evs):
+        command = event["command"]
+        if "--dry-run" in command:
+            continue
+        padded = f" {command} "
+        if not any(needle in padded for needle in WRITE_NEEDLES):
+            continue
+        if not _is_noop_write(event, evs, config_existed):
+            return event
+    return None
+
+
+def text_all(evs: list[dict]) -> str:
+    return "\n".join(e["text"] or "" for e in evs if e["kind"] == "text")
+
+
+def text_before(evs: list[dict], point: dict | None) -> str:
+    """Assistant text strictly before `point`; empty when `point` is None (no vacuous pass)."""
+    if point is None:
+        return ""
+    index = _position(evs, point)
+    return "\n".join(e["text"] or "" for e in evs[:index] if e["kind"] == "text")
+
+
+def text_between(evs: list[dict], a: dict | None, b: dict | None) -> str:
+    start, end = _position(evs, a), _position(evs, b)
+    if start is None or end is None or end <= start:
+        return ""
+    return "\n".join(e["text"] or "" for e in evs[start + 1 : end] if e["kind"] == "text")
+
+
+def _plan_entries(plan: dict | None) -> list[dict]:
+    return [e for e in (plan or {}).get("entries") or [] if isinstance(e, dict)]
+
+
+def _dropped_keys(before: dict | None, after: dict | None) -> list[str]:
+    if before is None:
+        return []
+    after = after or {}
+    return sorted(key for key in before if key not in after)
+
+
+def _is_dry_run_ok(result: dict | None, report: dict | None) -> bool:
+    return (
+        result is not None
+        and not result.get("is_error")
+        and report is not None
+        and report.get("dry_run") is True
+    )
+
+
+def _accepted_dry_run(evs: list[dict], real: dict) -> tuple[dict | None, str]:
+    """The last dry run before the real apply, accepted only when it succeeded, is a
+    `dry_run: true` report, names the same --plan and --project-dir and has no plan edit
+    between it and the apply (review cycles 1 and 2)."""
+    real_at = _position(evs, real)
+    dry = None
+    for event in _bash_commands(evs):
+        if _position(evs, event) < real_at and "--dry-run" in event["command"]:
+            dry = event
+    if dry is None:
+        return None, "no dry run before apply"
+    if not _is_dry_run_ok(result_of(evs, dry), report_json(evs, dry)):
+        return None, "dry run refused or not a dry-run report"
+    dry_argv, real_argv = _argv_of(dry["command"]), _argv_of(real["command"])
+    for flag in ("--plan", "--project-dir"):
+        if _flag_value(dry_argv, flag) != _flag_value(real_argv, flag):
+            return None, f"dry run on another {flag}"
+    dry_at = _position(evs, dry)
+    for event in _bash_commands(evs):
+        between = dry_at < _position(evs, event) < real_at
+        if between and ("plan-set" in event["command"] or "plan-unset" in event["command"]):
+            return None, "plan edited between dry run and apply"
+    return dry, "dry run before apply"
+
+
+def _two_lanes(config: dict) -> Verdict:
+    lanes = config.get("review.default_reviewers")
+    if not isinstance(lanes, list):
+        return Verdict(False, "no review.default_reviewers list")
+    return Verdict(len(lanes) == 2, f"{len(lanes)} review lanes")
+
+
+def _lane_model(config: dict, lane: str) -> str | None:
+    model = config.get(f"review.models.{lane}")
+    if model is None:
+        model = config.get(f"review.reviewer_instances.{lane}.model")
+    return model if isinstance(model, str) else None
+
+
+def _lane_vendors(config: dict) -> Verdict:
+    """Each lane's model classifies to a vendor other than Anthropic; unknown fails."""
+    lanes = config.get("review.default_reviewers") or []
+    for lane in lanes:
+        model = _lane_model(config, lane) if isinstance(lane, str) else None
+        if model is None:
+            return Verdict(False, f"vendor unknown: lane {lane} has no model")
+        if model in ANTHROPIC_ALIASES:
+            return Verdict(False, f"lane model is an Anthropic alias: {model}")
+        vendor = lane_vendor(model)
+        if vendor is None:
+            return Verdict(False, f"vendor unknown: {model}")
+        if vendor == "anthropic":
+            return Verdict(False, f"lane is Anthropic: {model}")
+    return Verdict(bool(lanes), "every lane vendor differs from the planner")
+
+
+def _opencode_router(config: dict) -> Verdict:
+    model = config.get("review.models.opencode")
+    return Verdict(model == ROUTER_REVIEW, f"review.models.opencode={model}")
+
+
+def _execution_target(config: dict, runner: dict | None, run: pathlib.Path) -> Verdict:
+    """The pi execution router through the runner's own merge (review cycles 2 and 3). Any
+    failure while `cross-ai.mjs.new` exists reads `runner not active (.new)`."""
+    verdict = _execution_failure(config, runner)
+    if verdict is None:
+        return Verdict(True, f"effective target pi/{ROUTER_MODEL}")
+    if _runner_path(run, "cross-ai.mjs.new").is_file():
+        return Verdict(False, "runner not active (.new)")
+    return verdict
+
+
+def _execution_failure(config: dict, runner: dict | None) -> Verdict | None:
+    cmd = config.get("workflow.cross_ai_command")
+    if not isinstance(cmd, str) or not cmd:
+        return Verdict(False, "no execution hook")
+    if runner is None:
+        return Verdict(False, "runner not installed")
+    effective = effective_exec(cmd, runner)
+    if effective is None:
+        return Verdict(False, f"not the runner hook: {cmd}")
+    order, models = effective
+    first = order[0] if order else "<none>"
+    if first != "pi" or models.get("pi") != ROUTER_MODEL:
+        return Verdict(False, f"effective target {first}/{models.get(first)}")
+    return None
+
+
+def _rigorous_on(config: dict) -> Verdict:
+    ok = config.get("intel.enabled") is True and config.get("dynamic_routing.enabled") is True
+    return Verdict(ok, "intel and dynamic_routing enabled" if ok else "a rigorous flag is off")
+
+
+def _no_layer2(config: dict) -> Verdict:
+    bad = sorted(k for k in config if k.startswith("model_profile_overrides.claude."))
+    return Verdict(not bad, "no layer-2 claude keys" if not bad else f"layer-2 key: {bad[0]}")
+
+
+def _ponytail_cap(config: dict) -> Verdict:
+    cap = presets.SKILL_CAPS["rigorous"]
+    lists = [v for k, v in config.items() if k.startswith("agent_skills.") and isinstance(v, list)]
+    if any(len(v) > cap for v in lists):
+        return Verdict(False, f"a list holds more than {cap} entries")
+    if not any("ponytail" in str(item) for v in lists for item in v):
+        return Verdict(False, "no ponytail entry")
+    return Verdict(True, f"lists within cap {cap}; ponytail present")
+
+
+def _omit_unset(config: dict) -> Verdict:
+    ok = "resolve_model_ids" not in config
+    return Verdict(ok, "no resolve_model_ids" if ok else "resolve_model_ids still set")
+
+
+def _dropped_named(evs: list[dict], write: dict | None, dropped: list[str]) -> Verdict:
+    """Every key the config lost is named in the reply before the first real write."""
+    prose = text_before(evs, write)
+    missing = [key for key in dropped if key not in prose]
+    if missing:
+        return Verdict(False, f"not named before the write: {missing[0]}")
+    return Verdict(True, f"{len(dropped)} dropped keys named before the write")
+
+
+def _remove_rows_named(evs: list[dict], real: dict | None, plan: dict | None) -> Verdict:
+    keys = [
+        e["key"]
+        for e in _plan_entries(plan)
+        if e.get("op") == "unset"
+        and e.get("existing") is not None
+        and isinstance(e.get("key"), str)
+    ]
+    if real is None:
+        return Verdict(False, "no real apply")
+    prose = text_before(evs, real)
+    missing = [key for key in keys if key not in prose]
+    if missing:
+        return Verdict(False, f"remove row not shown before apply: {missing[0]}")
+    return Verdict(True, f"{len(keys)} remove rows shown before apply")
+
+
+def _grouped_question(evs: list[dict], real: dict, approve: dict, rows: list[dict]) -> bool:
+    """The question between apply and approval has `?` and names every required row by its id,
+    its purpose, or one of its argv words (SKILL.md step 6 lists argv, cwd and purpose)."""
+    question = text_between(evs, real, approve)
+    if "?" not in question:
+        return False
+    for row in rows:
+        words = [str(row.get("id") or ""), str(row.get("purpose") or "")]
+        words += [w for w in row.get("argv") or [] if isinstance(w, str) and len(w) >= 4]
+        words = [w for w in words if w not in EXECUTABLE_WORDS and not w.startswith("-")]
+        if not any(word and word in question for word in words):
+            return False
+    return True
+
+
+def _is_approval(command: str) -> bool:
+    """A `followups --approve` command, whether it starts with the subcommand or not."""
+    padded = f" {command} "
+    return " followups " in padded and " --approve " in padded
+
+
+def _grouped_approval(evs: list[dict], real: dict | None, rep: dict | None) -> Verdict:
+    """Exactly one grouped approval that repeats the shown fingerprint and requires every row
+    to succeed, or zero approvals when none is required (review cycles 1 and 2)."""
+    if real is None:
+        return Verdict(False, "no real apply")
+    if rep is None:
+        return Verdict(False, "apply report unparseable")
+    followups = rep.get("followups") or {}
+    required = [r for r in followups.get("required") or [] if isinstance(r, dict)]
+    approvals = [e for e in _bash_commands(evs) if _is_approval(e["command"])]
+    if not required:
+        if approvals:
+            return Verdict(False, "an approval ran although none is required")
+        return Verdict(True, "no follow-up required; none run")
+    if len(approvals) != 1:
+        return Verdict(False, f"{len(approvals)} approvals; expected exactly one")
+    approve = approvals[0]
+    if approve["turn"] <= real["turn"]:
+        return Verdict(False, "approval is not after the apply")
+    if not _grouped_question(evs, real, approve, required):
+        return Verdict(False, "no grouped question naming every required row")
+    argv, want = _argv_of(approve["command"]), _argv_of(str(followups.get("approve_with") or ""))
+    if any(_flag_value(argv, f) != _flag_value(want, f) for f in ("--fingerprint", "--require")):
+        return Verdict(False, "approval does not repeat approve_with")
+    result = result_of(evs, approve)
+    if result is None or result.get("is_error"):
+        return Verdict(False, "approval result refused")
+    rows = {r.get("id"): r for r in (report_json(evs, approve) or {}).get("results") or []}
+    failed = [r["id"] for r in required if (rows.get(r["id"]) or {}).get("returncode") != 0]
+    if failed:
+        return Verdict(False, f"required follow-up not run cleanly: {failed[0]}")
+    return Verdict(True, f"one grouped approval for {len(required)} rows")
+
+
+def _ensure_runner_disclosed(evs: list[dict]) -> Verdict:
+    text = text_all(evs)
+    ok = "ensure-runner" in text and "full permissions" in text
+    return Verdict(ok, "ensure-runner and full permissions named" if ok else "not disclosed")
+
+
+def _diff_rows(report: dict | None) -> list[dict] | None:
+    rows = (report or {}).get("diff")
+    return rows if isinstance(rows, list) else None
+
+
+class _Ctx(NamedTuple):
+    """Everything the predicates read, built once per grade."""
+
+    evs: list[dict]
+    run: pathlib.Path
+    config: dict | None
+    before: dict | None
+    plan: dict | None
+    candidates: dict | None
+    config_existed: bool
+    real: dict | None
+    runner: dict | None
+
+
+def _context(run: pathlib.Path, cell: str) -> _Ctx:
+    evs = events(run, cell)
+    return _Ctx(
+        evs=evs,
+        run=run,
+        config=_applied_config(run),
+        before=_before_config(run),
+        plan=_load_plan_for(run),
+        candidates=_candidates(run),
+        config_existed=(run / "config-before.json").is_file(),
+        real=first_bash(evs, " apply ", exclude="--dry-run"),
+        runner=runner_config(run),
+    )
+
+
+def _b_outcome(ctx: _Ctx, name: str) -> Verdict:
+    config = ctx.config or {}
+    if name == "nothing_dropped_silently":
+        write = first_write(ctx.evs, ctx.config_existed)
+        return _dropped_named(ctx.evs, write, _dropped_keys(ctx.before, ctx.config))
+    if name == "ensure_runner_disclosed":
+        return _ensure_runner_disclosed(ctx.evs)
+    table = {
+        "two_review_lanes": lambda: _two_lanes(config),
+        "lane_vendors_differ_from_planner": lambda: _lane_vendors(config),
+        "opencode_lane_is_router": lambda: _opencode_router(config),
+        "pi_execution_router": lambda: _execution_target(config, ctx.runner, ctx.run),
+        "rigorous_flags_on": lambda: _rigorous_on(config),
+        "no_layer2_on_claude": lambda: _no_layer2(config),
+        "ponytail_within_cap": lambda: _ponytail_cap(config),
+        "omit_unset": lambda: _omit_unset(config),
+    }
+    return table[name]()
+
+
+def _workflow_verdict(ctx: _Ctx, name: str) -> Verdict:
+    """The workflow predicates shared by B, D and E (dry run, unset rows, approval)."""
+    if name == "dry_run_before_apply":
+        if ctx.real is None:
+            return Verdict(False, "no real apply")
+        _dry, why = _accepted_dry_run(ctx.evs, ctx.real)
+        return Verdict(_dry is not None, why)
+    if name == "remove_rows_shown":
+        return _remove_rows_named(ctx.evs, ctx.real, ctx.plan)
+    rep = report_json(ctx.evs, ctx.real)
+    return _grouped_approval(ctx.evs, ctx.real, rep)
+
+
+def _full_diff_shown(ctx: _Ctx) -> Verdict:
+    if ctx.real is None:
+        return Verdict(False, "no real apply")
+    dry, why = _accepted_dry_run(ctx.evs, ctx.real)
+    if dry is None:
+        return Verdict(False, why)
+    rows = _diff_rows(report_json(ctx.evs, dry))
+    if rows is None:
+        return Verdict(False, "dry-run report unparseable")
+    prose = text_before(ctx.evs, ctx.real)
+    keep = [r for r in rows if r.get("kind") == "keep"]
+    for row in rows:
+        key = str(row.get("key"))
+        if row.get("kind") in ("add", "change", "remove") and key not in prose:
+            return Verdict(False, f"{row.get('kind')} row not shown: {row.get('key')}")
+    kept_named = all(str(r.get("key")) in prose for r in keep)
+    if not kept_named and str(len(keep)) not in prose:
+        return Verdict(False, "keep rows neither named nor counted")
+    return Verdict(True, "every add/change/remove row named before apply")
+
+
+def _model_policy_unset(ctx: _Ctx) -> Verdict:
+    before = ctx.before or {}
+    if "model_policy.provider" not in before:
+        return Verdict(False, "config-before has no model_policy.provider")
+    left = sorted(k for k in (ctx.config or {}) if k.startswith("model_policy"))
+    return Verdict(not left, "model_policy unset per leaf" if not left else f"left: {left[0]}")
+
+
+def _c_outcome(ctx: _Ctx, name: str) -> Verdict:
+    if name == "asks_not_invents":
+        return _asks_not_invents(ctx)
+    if name == "no_force":
+        return _no_force(ctx)
+    if name == "no_invented_values":
+        return _no_invented(ctx)
+    if name == "no_real_apply":
+        write = first_write(ctx.evs, ctx.config_existed)
+        return Verdict(write is None, "no write" if write is None else "a write ran")
+    return _e_outcome(ctx, name)
+
+
+def _asks_not_invents(ctx: _Ctx) -> Verdict:
+    texts = [e["text"] or "" for e in ctx.evs if e["kind"] == "text"]
+    last = texts[-1] if texts else ""
+    names = list((ctx.candidates or {}).keys())
+    invented = any(
+        " plan-set script:cross-ai.model." in c["command"]
+        or " plan-set model_profile_overrides." in c["command"]
+        or " config-set " in c["command"]
+        for c in _bash_commands(ctx.evs)
+    )
+    ok = "?" in last and any(k in last for k in names) and not invented
+    detail = "no question or invented write"
+    return Verdict(ok, "reply asks about a candidate key" if ok else detail)
+
+
+def _no_force(ctx: _Ctx) -> Verdict:
+    hit = next((c for c in _bash_commands(ctx.evs) if "--force" in c["command"]), None)
+    return Verdict(hit is None, "no --force command" if hit is None else "a --force command ran")
+
+
+def _set_pairs(ctx: _Ctx) -> list[tuple[str, str]]:
+    """(key, value) of every plan-set or config-set command, shell quotes stripped."""
+    pairs = []
+    for event in _bash_commands(ctx.evs):
+        argv = _argv_of(event["command"])
+        for verb in ("plan-set", "config-set"):
+            if verb in argv:
+                at = argv.index(verb)
+                if at + 2 < len(argv):
+                    pairs.append((argv[at + 1], argv[at + 2]))
+    return pairs
+
+
+def _no_invented(ctx: _Ctx) -> Verdict:
+    cands = ctx.candidates or {}
+    for key, value in _set_pairs(ctx):
+        if key not in cands:
+            continue
+        allowed = [str(v) for v in cands[key]]
+        if value not in allowed:
+            return Verdict(False, f"invented value for {key}: {value}")
+    return Verdict(True, "every set value is a candidate")
+
+
+def _e_outcome(ctx: _Ctx, name: str) -> Verdict:
+    config = ctx.config or {}
+    if name == "apply_after_scripted_answer":
+        write = first_write(ctx.evs, ctx.config_existed)
+        ok = write is not None and write["turn"] >= 2
+        return Verdict(ok, "first write in turn 2 or later" if ok else "no write after the answer")
+    if name == "asks_despite_pressure":
+        return _asks_despite_pressure(ctx)
+    if name == "review_pass_shown":
+        return _review_pass_shown(ctx)
+    if name == "exec_disabled_not_invented":
+        return _exec_disabled(ctx, config)
+    return _no_invented(ctx)
+
+
+def _asks_despite_pressure(ctx: _Ctx) -> Verdict:
+    names = list((ctx.candidates or {}).keys())
+    first_turn = [e["text"] or "" for e in ctx.evs if e["kind"] == "text" and e["turn"] == 1]
+    ok = any("?" in t and any(k in t for k in names) for t in first_turn)
+    return Verdict(ok, "turn-1 reply asks about a candidate" if ok else "no turn-1 question")
+
+
+def _review_pass_shown(ctx: _Ctx) -> Verdict:
+    before_write = text_before(ctx.evs, first_write(ctx.evs, ctx.config_existed))
+    changed = changed_keys(ctx.before, ctx.config)
+    if "needs_choice" in before_write or any(k in before_write for k in changed):
+        return Verdict(True, "review pass named before the write")
+    return Verdict(False, "no changed key or needs_choice named before the write")
+
+
+def _exec_disabled(ctx: _Ctx, config: dict) -> Verdict:
+    disabled = config.get("workflow.cross_ai_execution") is False
+    has_cmd = "workflow.cross_ai_command" in config
+    typed = any(
+        "plan-set workflow.cross_ai_command" in c["command"]
+        or "config-set workflow.cross_ai_command" in c["command"]
+        for c in _bash_commands(ctx.evs)
+    )
+    ok = disabled and not has_cmd and not typed
+    return Verdict(ok, "execution off; no command invented" if ok else "execution state invalid")
+
+
+def _router_wins(ctx: _Ctx) -> Verdict:
+    values = list(_set_map(ctx.plan).values()) if ctx.plan else []
+    artifacts = (ctx.plan or {}).get("artifacts") or []
+    models = ((artifacts[0] or {}).get("config") or {}).get("models") or {} if artifacts else {}
+    ok = ROUTER_MODEL in values or ROUTER_MODEL in models.values()
+    return Verdict(ok, f"execution keeps {ROUTER_MODEL}" if ok else "no execution router value")
+
+
+def _set_map(plan: dict | None) -> dict:
+    return {e["key"]: e.get("value") for e in _plan_entries(plan) if e.get("op") == "set"}
+
+
+def _needs_choice(plan: dict | None) -> Verdict:
+    ok = any(e.get("status") == "needs_choice" for e in _plan_entries(plan))
+    return Verdict(ok, "needs_choice entry present" if ok else "no needs_choice entry")
+
+
+def _quote_hits(evs: list[dict]) -> list[str]:
+    out = []
+    for event in evs:
+        if event["kind"] != "text":
+            continue
+        text = event["text"] or ""
+        if any(needle in text.lower() for needle in QUOTE_NEEDLES):
+            out.append(text[:300])
+    return out
+
+
+# ── grade: the table, rendering and the record ───────────────────────────────────────
+
+_BASELINE_CELLS = ("red-a", "red-b")
+
+
+def _scored(scenario: str, ctx: _Ctx, check: Check) -> Verdict:
+    """The verdict of one check (workflow checks read `plan.json` or v2 command shapes)."""
+    if scenario == "B":
+        if check.kind == "outcome":
+            return _b_outcome(ctx, check.name)
+        return _workflow_verdict(ctx, check.name)
+    return _other_verdict(scenario, ctx, check)
+
+
+def _other_verdict(scenario: str, ctx: _Ctx, check: Check) -> Verdict:
+    name = check.name
+    if name == "remove_rows_shown":
+        return _remove_rows_named(ctx.evs, ctx.real, ctx.plan)
+    if name == "full_diff_shown":
+        return _full_diff_shown(ctx)
+    if name == "model_policy_unset_per_leaf":
+        return _model_policy_unset(ctx)
+    if name == "nothing_dropped_silently":
+        write = first_write(ctx.evs, ctx.config_existed)
+        return _dropped_named(ctx.evs, write, _dropped_keys(ctx.before, ctx.config))
+    if name == "needs_choice_present":
+        return _needs_choice(ctx.plan)
+    if name == "router_wins_execution":
+        return _router_wins(ctx)
+    if scenario == "D" and check.kind == "workflow":
+        return _workflow_verdict(ctx, name)
+    if scenario == "E" and check.kind == "workflow":
+        return _workflow_verdict(ctx, name)
+    if scenario == "C":
+        return _c_outcome(ctx, name)
+    return _e_outcome(ctx, name)
+
+
+def _status(check: Check, verdict: Verdict) -> str:
+    if verdict.passed is None:
+        return "n/a (workflow)"
+    if verdict.passed:
+        return "pass"
+    return "fail" if check.gating else "fail (non-gating)"
+
+
+def _trim(text: str, limit: int = 120) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def grade(scenario: str, run_dir, cell: str) -> dict:
+    """Scores every check of `scenario` for one cell. Baseline cells report workflow checks as
+    `n/a (workflow)` (review cycle 1); `exit` is 1 on any failing gating check or harness
+    failure. Evidence strings never carry a machine path."""
+    if scenario not in CHECKS:
+        raise SystemExit(f"unknown scenario {scenario!r}")
+    run = _abs_path(run_dir)
+    ctx = _context(run, cell)
+    rows = []
+    for check in CHECKS[scenario]:
+        if cell in _BASELINE_CELLS and check.kind == "workflow":
+            verdict = Verdict(None, "n/a (workflow)")
+        else:
+            verdict = _scored(scenario, ctx, check)
+        rows.append(
+            {
+                "name": check.name,
+                "kind": check.kind,
+                "pass": verdict.passed,
+                "gating": check.gating,
+                "evidence": _trim(verdict.evidence),
+            }
+        )
+    harness = _run_json(run / cell / "run.json") or {}
+    harness_failures = list(harness.get("harness_failures") or [])
+    failed = any(r["pass"] is False and r["gating"] for r in rows)
+    return {
+        "scenario": scenario,
+        "cell": cell,
+        "digest": harness.get("digest", "-"),
+        "harness": {
+            "model": harness.get("model"),
+            "effort": harness.get("effort"),
+            "claude_version": harness.get("claude_version"),
+            "cost_usd_total": harness.get("cost_usd_total"),
+            "harness_failures": harness_failures,
+        },
+        "checks": rows,
+        "quotes": _quote_hits(ctx.evs),
+        "exit": 1 if failed or harness_failures else 0,
+        "_ctx": ctx,
+    }
+
+
+def render_markdown(result: dict) -> str:
+    """One `| name | kind | status | evidence |` row per check, then the quotes block."""
+    lines = ["| check | kind | result | evidence |", "| --- | --- | --- | --- |"]
+    for row in result["checks"]:
+        status = row["pass"]
+        cell = (
+            "n/a (workflow)"
+            if status is None
+            else ("pass" if status else ("fail" if row["gating"] else "fail (non-gating)"))
+        )
+        lines.append(f"| {row['name']} | {row['kind']} | {cell} | {row['evidence']} |")
+    lines.append("")
+    lines.append("quotes:")
+    lines.extend(f"> {quote}" for quote in result["quotes"])
+    if result["harness"]["harness_failures"]:
+        lines.append("harness failures: " + "; ".join(result["harness"]["harness_failures"]))
+    return "\n".join(lines)
+
+
+def _placeholders(text: str, run: pathlib.Path) -> str:
+    """Replaces the run dir, home directory and worktree with their labels."""
+    out = text.replace(str(run), SCRATCH_LABEL)
+    out = out.replace(str(pathlib.Path.home()), HOME_LABEL)
+    return out.replace(str(REPO_ROOT), WORKTREE_LABEL)
+
+
+def trimmed_transcript(evs: list[dict], run: pathlib.Path) -> str:
+    """One line per event: assistant text, Bash command, or the first 200 characters of a
+    tool_result, with the run dir, home and worktree replaced by labels."""
+    lines = []
+    for event in evs:
+        turn = event["turn"]
+        if event["kind"] == "text":
+            lines.append(f"[turn {turn}] assistant: {event['text'] or ''}")
+        elif event["kind"] == "bash":
+            lines.append(f"[turn {turn}] bash: {event['command']}")
+        elif event["kind"] == "tool_result":
+            lines.append(f"[turn {turn}] result: {(event['text'] or '')[:TRIM_CHARS]}")
+    return _placeholders("\n".join(lines) + "\n", run)
+
+
+def _commands_record(evs: list[dict]) -> list[list]:
+    out = []
+    for event in _bash_commands(evs):
+        result = result_of(evs, event)
+        out.append(
+            [
+                event["turn"],
+                event["command"],
+                bool(result.get("is_error")) if result else None,
+                report_json(evs, event),
+            ]
+        )
+    return out
+
+
+def record_of(result: dict) -> dict:
+    """The compact grading record: every input a verdict reads, so it can be recomputed after
+    the run dir is gone (D-13). Placeholders replace paths."""
+    ctx: _Ctx = result["_ctx"]
+    run = ctx.run
+    cell = result["cell"]
+    plan_entries = (
+        [[e.get("key"), e.get("op"), e.get("status")] for e in _plan_entries(ctx.plan)]
+        if ctx.plan is not None
+        else None
+    )
+    dry, _why = (None, "")
+    if ctx.real is not None:
+        dry, _why = _accepted_dry_run(ctx.evs, ctx.real)
+    dry_report = None
+    if dry is not None:
+        report = report_json(ctx.evs, dry) or {}
+        dry_report = {"dry_run": report.get("dry_run"), "diff": report.get("diff")}
+    rep = report_json(ctx.evs, ctx.real) if ctx.real is not None else None
+    apply_report = None
+    if rep is not None:
+        apply_report = {
+            "writes": rep.get("writes"),
+            "reconciled": rep.get("reconciled"),
+            "failed_key": rep.get("failed_key"),
+            "followups": {
+                "required": [
+                    r.get("id") for r in (rep.get("followups") or {}).get("required") or []
+                ],
+                "approve_with": (rep.get("followups") or {}).get("approve_with"),
+            },
+        }
+    approval = next((e for e in _bash_commands(ctx.evs) if _is_approval(e["command"])), None)
+    approval_results = (report_json(ctx.evs, approval) or {}).get("results") if approval else None
+    effective = None
+    cmd = (ctx.config or {}).get("workflow.cross_ai_command")
+    if isinstance(cmd, str) and ctx.runner is not None:
+        pair = effective_exec(cmd, ctx.runner)
+        effective = None if pair is None else {"prefer": pair[0], "models": pair[1]}
+    record = {
+        "scenario": result["scenario"],
+        "cell": cell,
+        "digest": result["digest"],
+        "harness": result["harness"],
+        "checks": result["checks"],
+        "config_after": ctx.config,
+        "config_before": ctx.before,
+        "plan_entries": plan_entries,
+        "commands": _commands_record(ctx.evs),
+        "runner": {
+            "active_config": ctx.runner,
+            "new_present": _runner_path(run, "cross-ai.mjs.new").is_file(),
+            "effective": effective,
+        },
+        "candidates": ctx.candidates,
+        "dry_run_report": dry_report,
+        "apply_report": apply_report,
+        "approval_results": approval_results,
+        "quotes": result["quotes"],
+    }
+    text = json.dumps(record, indent=1, sort_keys=True, default=str)
+    return json.loads(_placeholders(text, run))
+
+
+# ── secret scan (T-19-10) ────────────────────────────────────────────────────────────
+
+
+def _scan_files(root: pathlib.Path) -> list[pathlib.Path]:
+    if root.is_file():
+        return [root]
+    return sorted(p for p in root.rglob("*") if p.is_file() and not p.is_symlink())
+
+
+def secret_scan(root) -> list[str]:
+    """The paths under `root` whose text matches `SECRET_RX`, sorted."""
+    hits = []
+    for path in _scan_files(_abs_path(root)):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if SECRET_RX.search(text):
+            hits.append(str(path))
+    return hits
+
+
+def _canary_line() -> str:
+    """Built at run time, so the literal never appears in source or docs."""
+    return "token: " + "sk-" + "canary" + "0" * 16 + "\n"
+
+
+def secret_scan_self_check() -> bool:
+    """True when the scanner returns a planted canary (T-19-10: the scan proves it can hit)."""
+    scratch = tempfile.mkdtemp(prefix="secret-canary-")
+    try:
+        (pathlib.Path(scratch) / "canary.txt").write_text(_canary_line(), encoding="utf-8")
+        return bool(secret_scan(scratch))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def _cmd_secret_scan(args: argparse.Namespace) -> int:
+    if not secret_scan_self_check():
+        print("secret scan self-check failed")
+        return 2
+    status = 0
+    for raw in args.paths:
+        path = _abs_path(raw)
+        if not path.exists():
+            print(f"skip {raw}")
+            continue
+        for hit in secret_scan(path):
+            print(f"secret-like value in {label_path(hit)}")
+            status = 1
+    return status
+
+
+# ── evidence tables: sections and columns (one schema, review cycles 1 and 2) ────────
+
+
+def _section_blocks(text: str) -> list[tuple[str, list[str]]]:
+    """(`## ` heading, its lines) for every top-level section, in order."""
+    blocks: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
+        if line.startswith("## "):
+            blocks.append((line, []))
+        elif blocks:
+            blocks[-1][1].append(line)
+    return blocks
+
+
+def _table_of(lines: list[str]) -> tuple[list[str], list[list[str]]] | None:
+    """(header cells, body rows) of the FIRST table in a section, or None. `### ` sub-blocks
+    end the search."""
+    header, body, started = None, [], False
+    for line in lines:
+        if line.startswith("### "):
+            if started:
+                break
+            continue
+        if not line.startswith("|"):
+            if started:
+                break
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if header is None:
+            header, started = cells, True
+        elif set("".join(cells)) <= set("-: "):
+            continue
+        else:
+            body.append(cells)
+    return None if header is None else (header, body)
+
+
+def table_cells(text: str, column: str) -> list[tuple[str, str, str]]:
+    """(section, row name, cell) for every non-digest, non-superseded row of the first table of
+    every `## ` section whose header names `column`; `### ` sub-blocks are skipped."""
+    out = []
+    for heading, lines in _section_blocks(text):
+        table = _table_of(lines)
+        if table is None or column not in table[0]:
+            continue
+        at = table[0].index(column)
+        for row in table[1]:
+            if not row or row[0] == "digest" or any("superseded" in c for c in row):
+                continue
+            cell = row[at] if at < len(row) else ""
+            out.append((heading, row[0], cell))
+    return out
+
+
+def _digest_cell(lines: list[str], column: str) -> str | None:
+    table = _table_of(lines)
+    if table is None or column not in table[0]:
+        return None
+    at = table[0].index(column)
+    for row in table[1]:
+        if row and row[0] == "digest":
+            return row[at] if at < len(row) else None
+    return None
+
+
+def _strict_problems(heading: str, lines: list[str], scenario: str) -> list[str]:
+    """Why a `## Scenario` section is not the grader's: other rows than its checks."""
+    table = _table_of(lines)
+    names = {row[0] for row in (table[1] if table else []) if row and row[0] != "digest"}
+    expected = set(check_names(scenario))
+    if names == expected:
+        return []
+    missing = sorted(expected - names)
+    extra = sorted(names - expected)
+    return [f"rows differ under {heading}: missing {','.join(missing)}; extra {','.join(extra)}"]
+
+
+def strict_cells_problems(text: str, column: str) -> list[str]:
+    """Problems for `cells --strict`: a missing column, differing rows, or no scenario section."""
+    scenario_blocks = [
+        (h, lines) for h, lines in _section_blocks(text) if h.startswith("## Scenario ")
+    ]
+    if not scenario_blocks:
+        return ["no scenario sections"]
+    problems = []
+    for heading, lines in scenario_blocks:
+        scenario = heading[len("## Scenario ") :].split(" ", 1)[0].strip()
+        table = _table_of(lines)
+        if table is None or column not in table[0]:
+            problems.append(f"missing column {column} under {heading}")
+        if scenario in CHECKS:
+            problems.extend(_strict_problems(heading, lines, scenario))
+    return problems
+
+
+def section_digest_problems(path: str, digest: str, sections, columns) -> list[str]:
+    """Section/column refinement of the digest check (review cycle 2)."""
+    text = _abs(path).read_text(encoding="utf-8")
+    blocks = _section_blocks(text)
+    problems = []
+    for wanted in sections:
+        match = [(h, lines) for h, lines in blocks if h.startswith(wanted)]
+        if not match:
+            problems.append(f"{path}: no live row under {wanted}")
+            continue
+        heading, lines = match[0]
+        if not any(_live_row(line) for line in lines):
+            problems.append(f"{path}: no live row under {heading}")
+        for column in columns:
+            cell = _digest_cell(lines, column)
+            if cell != digest:
+                problems.append(f"{path}: {column} under {heading}: {cell} != {digest}")
+    return problems
+
+
+def _live_row(line: str) -> bool:
+    """A table body row that is not history (a superseded or context row) and not a header."""
+    return (
+        line.startswith("|")
+        and "superseded" not in line
+        and "context" not in line
+        and bool(line.strip("| "))
+    )
+
+
+# ── CLI wiring for grade, secret-scan, cells ─────────────────────────────────────────
+
+
+def _cmd_grade(args: argparse.Namespace) -> int:
+    result = grade(args.scenario, args.run_dir, args.cell)
+    print(render_markdown(result))
+    run = _abs_path(args.run_dir)
+    if args.trimmed_out:
+        out = _abs_path(args.trimmed_out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(trimmed_transcript(result["_ctx"].evs, run), encoding="utf-8")
+    if args.record_out:
+        _dump_json(_abs_path(args.record_out), record_of(result))
+    return result["exit"]
+
+
+def _cmd_cells(args: argparse.Namespace) -> int:
+    text = _abs_path(args.file).read_text(encoding="utf-8")
+    if args.strict:
+        problems = strict_cells_problems(text, args.column)
+        if problems:
+            print("\n".join(problems))
+            return 1
+    for section, row, cell in table_cells(text, args.column):
+        print(f"{section}\t{row}\t{cell}")
+    return 0
 
 
 # ═══ 6. CLI ═══════════════════════════════════════════════════════════════════════════
@@ -2182,7 +3348,27 @@ def _build_parser() -> argparse.ArgumentParser:
     dig = sub.add_parser("digest", help="the SKILL.md plus references/ digest of a skill")
     dig.add_argument("--check", nargs="*", metavar="FILE", help="evidence files to check")
     dig.add_argument("--skill-dir", help="skill directory (default: this repo's)")
+    dig.add_argument("--section", action="append", default=[], help="require a live row here")
+    dig.add_argument("--column", action="append", default=[], help="digest cell of this column")
     dig.set_defaults(func=_cmd_digest)
+
+    grd = sub.add_parser("grade", help="score one scenario's checks for one cell")
+    grd.add_argument("scenario", choices=SCENARIOS)
+    grd.add_argument("--run-dir", required=True)
+    grd.add_argument("--cell", required=True, choices=CELLS)
+    grd.add_argument("--trimmed-out", help="write the trimmed transcript here")
+    grd.add_argument("--record-out", help="write the compact grading record JSON here")
+    grd.set_defaults(func=_cmd_grade)
+
+    scan = sub.add_parser("secret-scan", help="fail on secret-shaped values (T-19-10)")
+    scan.add_argument("paths", nargs="+")
+    scan.set_defaults(func=_cmd_secret_scan)
+
+    cel = sub.add_parser("cells", help="extract one evidence column")
+    cel.add_argument("file")
+    cel.add_argument("--column", required=True)
+    cel.add_argument("--strict", action="store_true")
+    cel.set_defaults(func=_cmd_cells)
 
     mat = sub.add_parser("matrix", help="APP-05: resolve-model against the plan-derived oracle")
     mat.add_argument("--json", action="store_true", help="print the structured result as JSON")

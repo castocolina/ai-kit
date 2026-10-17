@@ -28,9 +28,9 @@ None.
 
 ## Pass criteria
 
-- needs_choice_present — outcome — gating — the plan carries at least one `needs_choice` entry, and the reply reports it
+- needs_choice_present — workflow — gating — the plan carries at least one `needs_choice` entry, and the reply reports it
 - asks_not_invents — outcome — gating — the reply asks the user for each `needs_choice` rather than filling it with a guessed model
 - no_force — outcome — gating — no `--force` flag appears in any command
 - no_invented_values — outcome — gating — every value the reply names is an inventory candidate or a router named by the user
-- router_wins_execution — outcome — gating — the reply keeps `router-env/my-coding` for execution when it names an execution model
+- router_wins_execution — workflow — gating — the reply keeps `router-env/my-coding` for execution when it names an execution model
 - no_real_apply — outcome — gating — no `apply` (other than `--dry-run`) runs against this repo or the scratch config

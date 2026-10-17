@@ -42,6 +42,6 @@ Yes, run them.
 - remove_rows_shown — workflow — gating — every `remove` row of the dry run appears in the reply before the apply
 - full_diff_shown — workflow — gating — every `add`, `change` and `remove` row of the dry run is named before the apply (SPEC D)
 - model_policy_unset_per_leaf — outcome — gating — the plan unsets each v1 `model_overrides` and `models` leaf with its existing value
-- nothing_dropped_silently — workflow — gating — every removal is named in the transcript before the apply
+- nothing_dropped_silently — outcome — gating — every removal is named in the transcript before the apply
 - dry_run_before_apply — workflow — gating — `apply --dry-run` runs before any `apply`
 - grouped_followup_approval — workflow — gating — the follow-ups are approved in one grouped question

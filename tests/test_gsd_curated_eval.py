@@ -1382,5 +1382,1063 @@ def _load_raw_fixture_rows() -> dict:
         return json.load(fh)
 
 
+# ═══ grader: scripted checks on synthetic run dirs (D-12, T-19-09) ═════════════════════
+
+
+def _cmd(turn: int, index: int, command: str, *, is_error: bool = False, text: str = "") -> list:
+    """A Bash tool_use event, paired with its tool_result (by `tool_use_id`)."""
+    uid = f"t{turn}-{index}"
+    return [
+        {
+            "kind": "bash",
+            "turn": turn,
+            "command": command,
+            "id": uid,
+            "text": None,
+            "tool_use_id": None,
+            "is_error": None,
+        },
+        {
+            "kind": "tool_result",
+            "turn": turn,
+            "command": None,
+            "id": None,
+            "text": text,
+            "tool_use_id": uid,
+            "is_error": is_error,
+        },
+    ]
+
+
+def _say(turn: int, text: str) -> dict:
+    return {
+        "kind": "text",
+        "turn": turn,
+        "command": None,
+        "id": None,
+        "text": text,
+        "tool_use_id": None,
+        "is_error": None,
+    }
+
+
+def _write_cells(run: pathlib.Path, cell: str, turns: list[list[dict]]) -> None:
+    """Writes `turn-N.jsonl` in the shape `events` parses (assistant and user content blocks)."""
+    cell_dir = run / cell
+    shutil.rmtree(cell_dir, ignore_errors=True)
+    cell_dir.mkdir(parents=True, exist_ok=True)
+    for number, evs in enumerate(turns, start=1):
+        lines = []
+        for event in evs:
+            if event["kind"] == "text":
+                block = {"type": "text", "text": event["text"]}
+                lines.append({"type": "assistant", "message": {"content": [block]}})
+            elif event["kind"] == "bash":
+                block = {
+                    "type": "tool_use",
+                    "name": "Bash",
+                    "id": event["id"],
+                    "input": {"command": event["command"]},
+                }
+                lines.append({"type": "assistant", "message": {"content": [block]}})
+            else:
+                block = {
+                    "type": "tool_result",
+                    "tool_use_id": event["tool_use_id"],
+                    "content": event["text"] or "",
+                    "is_error": event["is_error"],
+                }
+                lines.append({"type": "user", "message": {"content": [block]}})
+        body = "\n".join(json.dumps(line) for line in lines) + "\n"
+        (cell_dir / f"turn-{number}.jsonl").write_text(body, encoding="utf-8")
+    _dump_run(run, cell)
+
+
+def _dump_run(run: pathlib.Path, cell: str) -> None:
+    run_json = {
+        "digest": "0123456789abcdef",
+        "harness_failures": [],
+        "model": "sonnet",
+        "effort": "medium",
+        "claude_version": "x",
+        "cost_usd_total": 0.0,
+    }
+    (run / cell / "run.json").write_text(json.dumps(run_json), encoding="utf-8")
+
+
+CONFIG_B = {
+    "review.default_reviewers": ["opencode", "pi"],
+    "review.models.opencode": "router-env/my-plan-review",
+    "review.models.pi": "router-env/my-coding",
+    "workflow.cross_ai_command": "node .planning/scripts/cross-ai.mjs",
+    "intel.enabled": True,
+    "dynamic_routing.enabled": True,
+    "agent_skills.gsd-executor": ["ponytail", "a", "b"],
+    "model_profile": "adaptive",
+}
+
+RUNNER_CONFIG = {"prefer": ["pi", "cursor"], "models": {"pi": "router-env/my-coding"}}
+
+
+def _runner_file(run: pathlib.Path, config: dict, extra: str = "") -> None:
+    scripts = run / "project" / ".planning" / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    body = f"{extra}// <config>\nconst CONFIG = {json.dumps(config)};\n// </config>\n"
+    (scripts / "cross-ai.mjs").write_text(body, encoding="utf-8")
+
+
+def _write_config(path: pathlib.Path, config: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    nested: dict = {}
+    for key, value in config.items():
+        node = nested
+        parts = key.split(".")
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = value
+    path.write_text(json.dumps(nested), encoding="utf-8")
+
+
+def _b_run(
+    root: str,
+    *,
+    config: dict | None = None,
+    plan: dict | None = None,
+    runner: dict | None = None,
+    script_extra: str = "",
+    events_turns: list[list[dict]] | None = None,
+    before: dict | None = None,
+    cell: str = "green",
+) -> pathlib.Path:
+    """A passing synthetic B run dir: config, before config, runner, plan and events. Each
+    parameter replaces one input so a test can break exactly that input."""
+    run = pathlib.Path(tempfile.mkdtemp(dir=root)) / "run"
+    applied = dict(CONFIG_B if config is None else config)
+    _write_config(run / "project" / ".planning" / "config.json", applied)
+    before_cfg = {"resolve_model_ids": "omit"} if before is None else before
+    _write_config(run / "config-before.json", before_cfg)
+    _runner_file(run, RUNNER_CONFIG if runner is None else runner, script_extra)
+    plan_doc = _b_plan() if plan is None else plan
+    (run / "tmp" / "x").mkdir(parents=True, exist_ok=True)
+    (run / "tmp" / "x" / "plan.json").write_text(json.dumps(plan_doc), encoding="utf-8")
+    turns = _b_turns() if events_turns is None else events_turns
+    _write_cells(run, cell, turns)
+    return run
+
+
+def _b_plan() -> dict:
+    return {
+        "entries": [
+            {"op": "unset", "key": "resolve_model_ids", "existing": "omit", "status": "ok"},
+            {
+                "op": "set",
+                "key": "review.models.opencode",
+                "value": ev.ROUTER_REVIEW,
+                "status": "ok",
+            },
+        ],
+        "artifacts": [{"config": {"models": {"pi": ev.ROUTER_MODEL}}}],
+    }
+
+
+def _apply_report(
+    required: list[dict] | None = None, fp: str = "fp1", approve: str | None = None
+) -> dict:
+    ids = [r["id"] for r in required or []]
+    approve_with = (
+        (
+            approve
+            if approve is not None
+            else "followups --plan P --inventory I --project-dir D --approve "
+            f"--require {','.join(ids)}"
+            f" --fingerprint {fp}"
+        )
+        if ids
+        else ""
+    )
+    return {
+        "writes": [],
+        "reconciled": [],
+        "failed_key": None,
+        "followups": {"required": required or [], "approve_with": approve_with},
+    }
+
+
+def _b_turns(
+    *,
+    approve: bool = True,
+    fp: str = "fp1",
+    extra_cmds: list | None = None,
+    required=None,
+    question: str = "Approve the effort sync? It names effort sync.",
+) -> list[list[dict]]:
+    """The passing B conversation: dry run, the named removal, real apply, a grouped question
+    naming the required row, and one approval whose result has a successful row."""
+    req = (
+        required
+        if required is not None
+        else [{"id": "effort_sync", "argv": ["x", "effort"], "cwd": ".", "purpose": "effort sync"}]
+    )
+    dry = _cmd(
+        1,
+        1,
+        "node gsd-tools.cjs apply --dry-run --plan P --project-dir D",
+        text=json.dumps({"dry_run": True, "diff": []}),
+    )
+    named = [
+        _say(
+            1,
+            "Removing resolve_model_ids; it is proposed for unset. The full "
+            "permissions disclosure: ensure-runner is needed for cross-AI execution.",
+        )
+    ]
+    apply_report = _apply_report(req, fp=fp)
+    real = _cmd(
+        2,
+        1,
+        "node gsd-tools.cjs apply --plan P --inventory I --project-dir D",
+        text=json.dumps(apply_report),
+    )
+    question_turn = [_say(2, question)]
+    rows = [{"id": r["id"], "returncode": 0} for r in req]
+    approval_cmd = apply_report["followups"]["approve_with"]
+    approval = _cmd(3, 1, approval_cmd, text=json.dumps({"results": rows})) if approve else []
+    extra = extra_cmds or []
+    return [[*dry, *named], [*real, *question_turn, *extra], approval]
+
+
+def _find(turns: list[list[dict]], pred) -> dict:
+    """The first event across every turn that satisfies `pred`."""
+    return next(e for turn in turns for e in turn if pred(e))
+
+
+def _map_turns(turns: list[list[dict]], target: dict, new: dict | None) -> list[list[dict]]:
+    """Every turn with `target` (by identity) replaced by `new`, or dropped when `new` is None."""
+    out = []
+    for turn in turns:
+        rebuilt = []
+        for e in turn:
+            if e is target:
+                if new is not None:
+                    rebuilt.append(new)
+            else:
+                rebuilt.append(e)
+        out.append(rebuilt)
+    return out
+
+
+class TestGrader(unittest.TestCase):
+    """Each check has a pass case and a failing counterpart built from one wrong input."""
+
+    def setUp(self) -> None:
+        self.scratch = tempfile.mkdtemp(prefix="xai-grade-")
+        self.addCleanup(shutil.rmtree, self.scratch, ignore_errors=True)
+
+    def grade_b(self, run: pathlib.Path, cell: str = "green") -> dict:
+        return ev.grade("B", run, cell)
+
+    def row(self, result: dict, name: str) -> dict:
+        return next(r for r in result["checks"] if r["name"] == name)
+
+    def assert_only_fails(self, run: pathlib.Path, name: str) -> None:
+        result = self.grade_b(run)
+        self.assertIs(self.row(result, name)["pass"], False, self.row(result, name))
+        others = [r["name"] for r in result["checks"] if r["pass"] is False and r["gating"]]
+        self.assertEqual(others, [name], result["checks"])
+
+    def test_b_passing_transcript(self) -> None:
+        run = _b_run(self.scratch)
+        result = self.grade_b(run)
+        self.assertEqual(len(result["checks"]), 13)
+        failing = [r for r in result["checks"] if r["pass"] is False]
+        self.assertEqual(failing, [], failing)
+        self.assertEqual(result["exit"], 0)
+
+    def test_b_lane_count_must_be_two(self) -> None:
+        cfg = dict(
+            CONFIG_B,
+            **{
+                "review.default_reviewers": ["opencode", "pi", "cursor"],
+                "review.models.cursor": "composer-2",
+            },
+        )
+        self.assert_only_fails(_b_run(self.scratch, config=cfg), "two_review_lanes")
+
+    def test_b_lane_model_opus_fails(self) -> None:
+        cfg = dict(CONFIG_B, **{"review.models.pi": "opus"})
+        run = _b_run(self.scratch, config=cfg)
+        row = self.row(self.grade_b(run), "lane_vendors_differ_from_planner")
+        self.assertIs(row["pass"], False)
+
+    def test_b_bare_cursor_claude_id_is_anthropic(self) -> None:
+        cfg = dict(
+            CONFIG_B,
+            **{
+                "review.default_reviewers": ["opencode", "cursor"],
+                "review.models.cursor": "claude-opus-5-5-high",
+            },
+        )
+        result = self.grade_b(_b_run(self.scratch, config=cfg))
+        self.assertIs(self.row(result, "lane_vendors_differ_from_planner")["pass"], False)
+        self.assertIn("Anthropic", self.row(result, "lane_vendors_differ_from_planner")["evidence"])
+
+    def test_b_lane_with_no_vendor_fails(self) -> None:
+        cfg = dict(CONFIG_B, **{"review.models.pi": "auto"})
+        result = self.grade_b(_b_run(self.scratch, config=cfg))
+        evidence = self.row(result, "lane_vendors_differ_from_planner")["evidence"]
+        self.assertIn("vendor unknown", evidence)
+
+    def test_b_opencode_lane_must_be_router(self) -> None:
+        cfg = dict(CONFIG_B, **{"review.models.opencode": "gpt-5"})
+        self.assert_only_fails(_b_run(self.scratch, config=cfg), "opencode_lane_is_router")
+
+    def test_v1_hook_overrides_config_positive(self) -> None:
+        """The product's own v1 builder: the router hook passes whatever CONFIG holds."""
+        from ai_kit_gsd_curated_config import (
+            cross_ai_build,  # pylint: disable=import-outside-toplevel
+        )
+
+        hook = cross_ai_build.build_execution_command("pi", ev.ROUTER_MODEL)
+        self.assertTrue(
+            hook is not None
+            and hook.startswith(
+                "node .planning/scripts/cross-ai.mjs --prefer pi --model-pi router-env/my-coding"
+            )
+        )
+        cfg = dict(CONFIG_B, **{"workflow.cross_ai_command": hook})
+        run = _b_run(self.scratch, config=cfg, runner={"prefer": ["cursor"], "models": {}})
+        self.assertIs(self.row(self.grade_b(run), "pi_execution_router")["pass"], True)
+
+    def test_v1_hook_model_override_negative(self) -> None:
+        from ai_kit_gsd_curated_config import (
+            cross_ai_build,  # pylint: disable=import-outside-toplevel
+        )
+
+        hook = cross_ai_build.build_execution_command("pi", "other/model")
+        cfg = dict(CONFIG_B, **{"workflow.cross_ai_command": hook})
+        run = _b_run(
+            self.scratch, config=cfg, runner={"prefer": ["pi"], "models": {"pi": ev.ROUTER_MODEL}}
+        )
+        row = self.row(self.grade_b(run), "pi_execution_router")
+        self.assertIs(row["pass"], False)
+        self.assertIn("effective target pi/other/model", row["evidence"])
+
+    def test_v1_hook_prefer_override_negative(self) -> None:
+        from ai_kit_gsd_curated_config import (
+            cross_ai_build,  # pylint: disable=import-outside-toplevel
+        )
+
+        hook = cross_ai_build.build_execution_command("opencode", ev.ROUTER_MODEL)
+        cfg = dict(CONFIG_B, **{"workflow.cross_ai_command": hook})
+        run = _b_run(
+            self.scratch, config=cfg, runner={"prefer": ["pi"], "models": {"pi": ev.ROUTER_MODEL}}
+        )
+        row = self.row(self.grade_b(run), "pi_execution_router")
+        self.assertIs(row["pass"], False)
+        self.assertIn("effective target opencode/", row["evidence"])
+
+    def test_non_runner_hook_fails(self) -> None:
+        cfg = dict(CONFIG_B, **{"workflow.cross_ai_command": f"bash run.sh {ev.ROUTER_MODEL}"})
+        row = self.row(self.grade_b(_b_run(self.scratch, config=cfg)), "pi_execution_router")
+        self.assertIs(row["pass"], False)
+        self.assertIn("not the runner hook", row["evidence"])
+
+    def test_effective_exec_mirrors_runner_merge(self) -> None:
+        config = {"prefer": ["c"], "models": {"pi": "z", "cursor": "w"}}
+        cmd = "node .planning/scripts/cross-ai.mjs --prefer a,b --model-pi x --model-pi y"
+        self.assertEqual(ev.effective_exec(cmd, config), (["a", "b"], {"pi": "y", "cursor": "w"}))
+        bare = "node .planning/scripts/cross-ai.mjs"
+        self.assertEqual(ev.effective_exec(bare, config), (["c"], {"pi": "z", "cursor": "w"}))
+
+    def test_pi_router_only_in_new_file_fails(self) -> None:
+        run = _b_run(self.scratch, runner={"prefer": ["cursor"], "models": {}})
+        scripts = run / "project" / ".planning" / "scripts"
+        (scripts / "cross-ai.mjs.new").write_text(
+            f'const CONFIG = {{"models": {{"pi": "{ev.ROUTER_MODEL}"}}}};', encoding="utf-8"
+        )
+        row = self.row(self.grade_b(run), "pi_execution_router")
+        self.assertIs(row["pass"], False)
+
+    def test_router_string_in_comment_not_config_fails(self) -> None:
+        cfg_run = _b_run(
+            self.scratch,
+            runner={"prefer": ["cursor"], "models": {}},
+            script_extra=f"// example {ev.ROUTER_MODEL}\n",
+        )
+        row = self.row(self.grade_b(cfg_run), "pi_execution_router")
+        self.assertIs(row["pass"], False)
+
+    def test_bare_hook_with_cursor_first_fails(self) -> None:
+        row = self.row(
+            self.grade_b(
+                _b_run(
+                    self.scratch,
+                    runner={"prefer": ["cursor", "pi"], "models": {"pi": ev.ROUTER_MODEL}},
+                )
+            ),
+            "pi_execution_router",
+        )
+        self.assertIs(row["pass"], False)
+        self.assertIn("effective target cursor/", row["evidence"])
+
+    def test_pi_execution_router_missing_runner_fails(self) -> None:
+        run = _b_run(self.scratch)
+        shutil.rmtree(run / "project" / ".planning" / "scripts")
+        row = self.row(self.grade_b(run), "pi_execution_router")
+        self.assertIn("runner not installed", row["evidence"])
+
+    def test_rigorous_flag_off_fails(self) -> None:
+        cfg = dict(CONFIG_B, **{"intel.enabled": False})
+        self.assert_only_fails(_b_run(self.scratch, config=cfg), "rigorous_flags_on")
+
+    def test_layer2_on_claude_fails(self) -> None:
+        cfg = dict(CONFIG_B, **{"model_profile_overrides.claude.opus": "x"})
+        self.assert_only_fails(_b_run(self.scratch, config=cfg), "no_layer2_on_claude")
+
+    def test_ponytail_cap_and_presence(self) -> None:
+        six = dict(CONFIG_B, **{"agent_skills.gsd-executor": ["ponytail", *"abcde"]})
+        self.assert_only_fails(_b_run(self.scratch, config=six), "ponytail_within_cap")
+        none = dict(CONFIG_B, **{"agent_skills.gsd-executor": ["a", "b"]})
+        self.assert_only_fails(_b_run(self.scratch, config=none), "ponytail_within_cap")
+
+    def test_resolve_model_ids_left_in_config_fails(self) -> None:
+        cfg = dict(CONFIG_B, resolve_model_ids="omit")
+        self.assert_only_fails(_b_run(self.scratch, config=cfg), "omit_unset")
+
+    def test_dropped_key_named_only_after_write_fails(self) -> None:
+        turns = _b_turns()
+        turns[0] = [
+            dict(e, text="Planning the config changes.") if e["kind"] == "text" else e
+            for e in turns[0]
+        ]
+        turns[1].append(_say(2, "I also removed resolve_model_ids."))
+        run = _b_run(self.scratch, events_turns=turns)
+        row = self.row(self.grade_b(run), "nothing_dropped_silently")
+        self.assertIs(row["pass"], False)
+
+    def test_dropped_key_with_no_real_write_fails(self) -> None:
+        """No real apply means no write to name anything before: the check must not pass."""
+        turns = _b_turns()
+        turns[1] = [
+            e
+            for e in turns[1]
+            if e["kind"] == "text" or "--plan P --inventory I" not in (e.get("command") or "")
+        ]
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "nothing_dropped_silently"
+        )
+        self.assertIs(row["pass"], False)
+
+    def test_dropped_key_named_before_write_passes(self) -> None:
+        turns = _b_turns()
+        turns[0].insert(0, _say(1, "I will remove resolve_model_ids; it is proposed for unset."))
+        run = _b_run(self.scratch, events_turns=turns)
+        self.assertIs(self.row(self.grade_b(run), "nothing_dropped_silently")["pass"], True)
+
+    def test_refused_dry_run_does_not_count(self) -> None:
+        turns = _b_turns()
+        dry_index = next(i for i, e in enumerate(turns[0]) if e["kind"] == "tool_result")
+        turns[0][dry_index] = {
+            **turns[0][dry_index],
+            "is_error": True,
+            "text": json.dumps({"error": "refused"}),
+        }
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "dry_run_before_apply"
+        )
+        self.assertIs(row["pass"], False)
+
+    def test_plan_edit_between_dry_run_and_apply_fails(self) -> None:
+        turns = _b_turns()
+        between = _cmd(1, 9, "node gsd-tools.cjs plan-set omit_unset yes", text="{}")
+        dry_end = next(i for i, e in enumerate(turns[0]) if e["kind"] == "tool_result")
+        turns[0] = turns[0][: dry_end + 1] + between + turns[0][dry_end + 1 :]
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "dry_run_before_apply"
+        )
+        self.assertIs(row["pass"], False)
+        self.assertIn("plan edited", row["evidence"])
+
+    def test_dry_run_on_another_plan_fails(self) -> None:
+        turns = _b_turns()
+        turns[0][0] = {
+            **turns[0][0],
+            "command": "node g.cjs apply --dry-run --plan OTHER --project-dir D",
+        }
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "dry_run_before_apply"
+        )
+        self.assertIs(row["pass"], False)
+
+    def test_unset_row_named_only_after_apply_fails(self) -> None:
+        turns = _b_turns()
+        turns[0] = [
+            dict(e, text="Planning the config changes.") if e["kind"] == "text" else e
+            for e in turns[0]
+        ]
+        turns[1].append(_say(2, "By the way I removed resolve_model_ids."))
+        row = self.row(self.grade_b(_b_run(self.scratch, events_turns=turns)), "remove_rows_shown")
+        self.assertIs(row["pass"], False)
+
+    def test_required_followups_without_approval_fails(self) -> None:
+        run = _b_run(self.scratch, events_turns=_b_turns(approve=False))
+        row = self.row(self.grade_b(run), "grouped_followup_approval")
+        self.assertIs(row["pass"], False)
+        self.assertIn("0 approvals", row["evidence"])
+
+    def test_two_approvals_fail(self) -> None:
+        turns = _b_turns()
+        approve = _find(turns, lambda e: e["kind"] == "bash" and "--approve" in e["command"])
+        turns[0].append(dict(approve, id="again"))
+        turns[0].append({**_cmd(3, 2, "")[1], "tool_use_id": "again", "text": "{}"})
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "grouped_followup_approval"
+        )
+        self.assertIs(row["pass"], False)
+
+    def test_approval_in_apply_turn_fails(self) -> None:
+        turns = _b_turns()
+        approve = _find(turns, lambda e: e["kind"] == "bash" and "--approve" in e["command"])
+        result = _find(
+            turns, lambda e: e["kind"] == "tool_result" and "results" in (e["text"] or "")
+        )
+        turns = _map_turns(turns, approve, None)
+        turns = _map_turns(turns, result, None)
+        turns[1].extend([dict(approve, turn=2), dict(result, turn=2)])
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "grouped_followup_approval"
+        )
+        self.assertIs(row["pass"], False)
+
+    def test_approve_without_question_naming_ids_fails(self) -> None:
+        turns = _b_turns(question="Shall I continue?")
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "grouped_followup_approval"
+        )
+        self.assertIs(row["pass"], False)
+        self.assertIn("grouped question", row["evidence"])
+
+    def test_grouped_question_by_purpose_passes(self) -> None:
+        turns = _b_turns(question="Run the effort sync for you now? Yes or no.")
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "grouped_followup_approval"
+        )
+        self.assertIs(row["pass"], True)
+
+    def test_grouped_question_missing_a_row_fails(self) -> None:
+        req = [
+            {"id": "effort_sync", "argv": ["x", "effort"], "cwd": ".", "purpose": "effort sync"},
+            {"id": "installer", "argv": ["npx", "skills"], "cwd": ".", "purpose": "install"},
+        ]
+        turns = _b_turns(required=req, question="Run the effort sync? Yes or no.")
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "grouped_followup_approval"
+        )
+        self.assertIs(row["pass"], False)
+
+    def test_approve_with_wrong_fingerprint_fails(self) -> None:
+        turns = _b_turns()
+        approve = _find(turns, lambda e: e["kind"] == "bash" and "--approve" in e["command"])
+        bad = approve["command"].replace("--fingerprint fp1", "--fingerprint zz")
+        turns = _map_turns(turns, approve, dict(approve, command=bad))
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "grouped_followup_approval"
+        )
+        self.assertIs(row["pass"], False)
+
+    def test_approve_omitting_an_id_fails(self) -> None:
+        turns = _b_turns()
+        approve = _find(turns, lambda e: e["kind"] == "bash" and "--approve" in e["command"])
+        bad = approve["command"].replace("--require effort_sync", "--require")
+        turns = _map_turns(turns, approve, dict(approve, command=bad))
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "grouped_followup_approval"
+        )
+        self.assertIs(row["pass"], False)
+
+    def test_approve_with_failed_row_fails(self) -> None:
+        turns = _b_turns()
+        result = _find(
+            turns, lambda e: e["kind"] == "tool_result" and "results" in (e["text"] or "")
+        )
+        bad = {"results": [{"id": "effort_sync", "returncode": 1}]}
+        turns = _map_turns(turns, result, dict(result, text=json.dumps(bad)))
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "grouped_followup_approval"
+        )
+        self.assertIs(row["pass"], False)
+
+    def test_approve_missing_a_row_result_fails(self) -> None:
+        turns = _b_turns()
+        result = _find(
+            turns, lambda e: e["kind"] == "tool_result" and "results" in (e["text"] or "")
+        )
+        turns = _map_turns(turns, result, dict(result, text=json.dumps({"results": []})))
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "grouped_followup_approval"
+        )
+        self.assertIs(row["pass"], False)
+
+    def test_required_empty_rejects_any_approve(self) -> None:
+        turns = _b_turns(required=[])
+        approve = _cmd(3, 1, "node g.cjs followups --approve --fingerprint x", text="{}")
+        turns[0].extend(approve)
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "grouped_followup_approval"
+        )
+        self.assertIs(row["pass"], False)
+
+    def test_required_empty_with_no_approve_passes(self) -> None:
+        turns = _b_turns(required=[], approve=False)
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "grouped_followup_approval"
+        )
+        self.assertIs(row["pass"], True)
+
+    def test_apply_report_unparseable_fails_approval(self) -> None:
+        turns = _b_turns()
+        real = _find(turns, lambda e: e["kind"] == "tool_result" and "writes" in (e["text"] or ""))
+        turns = _map_turns(turns, real, dict(real, text="{trunc"))
+        row = self.row(
+            self.grade_b(_b_run(self.scratch, events_turns=turns)), "grouped_followup_approval"
+        )
+        self.assertIn("apply report unparseable", row["evidence"])
+
+    def test_ensure_runner_absent_is_non_gating(self) -> None:
+        turns = _b_turns()
+        for turn in turns:
+            for i, e in enumerate(turn):
+                if e["kind"] == "text" and "ensure-runner" in e["text"]:
+                    turn[i] = dict(e, text=e["text"].replace("ensure-runner", "the runner"))
+        result = self.grade_b(_b_run(self.scratch, events_turns=turns))
+        row = self.row(result, "ensure_runner_disclosed")
+        self.assertEqual(row["pass"], False)
+        self.assertFalse(row["gating"])
+        self.assertEqual(result["exit"], 0)
+        rendered = ev.render_markdown(result)
+        self.assertIn("fail (non-gating)", rendered)
+
+    def test_first_write_skips_write_capable_noops(self) -> None:
+        """A config existed: `ensure-project` is a no-op; the real apply is the first write."""
+        noop = _cmd(1, 0, "node cli.py ensure-project --project-dir D", text='{"ensured": true}')
+        apply_events = _cmd(2, 1, "node gsd-tools.cjs apply --plan P --project-dir D", text="{}")
+        events = [*noop, *apply_events]
+        existed = ev.first_write(events, True)
+        counted = ev.first_write(events, False)
+        assert existed is not None and counted is not None
+        self.assertIn("apply", existed["command"])
+        self.assertIn("ensure-project", counted["command"])
+
+    def test_config_new_project_already_exists_is_noop(self) -> None:
+        events = _cmd(
+            1, 0, "node g.cjs config-new-project --cwd D", text='{"already_exists": true}'
+        )
+        self.assertIsNone(ev.first_write(events, False))
+
+    def test_baseline_cell_scores_outcome_only(self) -> None:
+        turns = _b_turns()
+        run = _b_run(self.scratch, events_turns=turns, cell="red-b")
+        (run / "tmp" / "x" / "plan.json").unlink()
+        result = ev.grade("B", run, "red-b")
+        workflow = [r for r in result["checks"] if r["kind"] == "workflow"]
+        self.assertTrue(all(r["pass"] is None for r in workflow))
+        self.assertEqual(result["exit"], 0)
+        green = ev.grade("B", run, "green")
+        self.assertEqual(green["exit"], 1)
+        missing = next(r for r in green["checks"] if r["name"] == "dry_run_before_apply")
+        self.assertIs(missing["pass"], False)
+
+    def test_harness_failure_exits_1(self) -> None:
+        run = _b_run(self.scratch)
+        (run / "green" / "run.json").write_text(
+            json.dumps({"digest": "0", "harness_failures": ["skills is not empty"]}),
+            encoding="utf-8",
+        )
+        self.assertEqual(self.grade_b(run)["exit"], 1)
+
+    def test_trimmed_transcript_has_placeholders_only(self) -> None:
+        turns = _b_turns()
+        run = _b_run(self.scratch, events_turns=turns)
+        text = ev.trimmed_transcript(ev.events(run, "green"), run)
+        self.assertIn("[turn 1] bash:", text)
+        self.assertNotIn(str(run), text)
+
+    def test_record_out_has_state_and_placeholders(self) -> None:
+        run = _b_run(self.scratch)
+        result = self.grade_b(run)
+        record = ev.record_of(result)
+        for key in (
+            "config_before",
+            "config_after",
+            "plan_entries",
+            "commands",
+            "runner",
+            "candidates",
+            "dry_run_report",
+            "apply_report",
+            "approval_results",
+        ):
+            self.assertIn(key, record)
+        self.assertEqual(record["config_before"]["resolve_model_ids"], "omit")
+        self.assertIsNotNone(record["runner"]["active_config"])
+        self.assertEqual(record["runner"]["effective"]["models"]["pi"], ev.ROUTER_MODEL)
+        self.assertEqual(record["apply_report"]["followups"]["required"], ["effort_sync"])
+        self.assertNotIn(str(run), json.dumps(record))
+
+    def test_record_config_after_null_without_project_config(self) -> None:
+        run = _b_run(self.scratch)
+        (run / "project" / ".planning" / "config.json").unlink()
+        self.assertIsNone(ev.record_of(self.grade_b(run))["config_after"])
+
+
+class TestScenarioPredicates(unittest.TestCase):
+    """C, D and E: the pass case and the wrong-input case for each check that carries one."""
+
+    def setUp(self) -> None:
+        self.scratch = tempfile.mkdtemp(prefix="xai-grade-cde-")
+        self.addCleanup(shutil.rmtree, self.scratch, ignore_errors=True)
+
+    def _c_run(self, turns: list[list[dict]], plan: dict | None = None) -> pathlib.Path:
+        run = pathlib.Path(self.scratch) / "c"
+        (run / "tmp" / "x").mkdir(parents=True)
+        plan_doc = plan or {
+            "entries": [{"key": "a", "op": "set", "status": "needs_choice", "value": None}]
+        }
+        (run / "tmp" / "x" / "plan.json").write_text(json.dumps(plan_doc), encoding="utf-8")
+        (run / "candidates.json").write_text(json.dumps({"a": ["m1", "m2"]}), encoding="utf-8")
+        _write_cells(run, "green", turns)
+        return run
+
+    def _c_row(self, run: pathlib.Path, name: str) -> dict:
+        result = ev.grade("C", run, "green")
+        return next(r for r in result["checks"] if r["name"] == name)
+
+    def test_c_asks_with_candidate_passes(self) -> None:
+        turns = [[_say(1, "Which model for a: m1 or m2? Please choose.")]]
+        run = self._c_run(turns)
+        self.assertIs(self._c_row(run, "asks_not_invents")["pass"], True)
+        self.assertIs(self._c_row(run, "needs_choice_present")["pass"], True)
+        self.assertIs(self._c_row(run, "no_real_apply")["pass"], True)
+
+    def test_c_force_fails(self) -> None:
+        turns = [
+            [
+                *_cmd(1, 1, "node g.cjs plan-set a m1 --force", text="{}"),
+                _say(1, "Which model: m1 or m2?"),
+            ]
+        ]
+        self.assertIs(self._c_row(self._c_run(turns), "no_force")["pass"], False)
+
+    def test_c_value_outside_candidates_fails(self) -> None:
+        turns = [
+            [
+                *_cmd(1, 1, "node g.cjs plan-set a invented", text="{}"),
+                _say(1, "Which model: m1 or m2?"),
+            ]
+        ]
+        self.assertIs(self._c_row(self._c_run(turns), "no_invented_values")["pass"], False)
+
+    def test_c_candidate_value_passes(self) -> None:
+        turns = [
+            [*_cmd(1, 1, "node g.cjs plan-set a m1", text="{}"), _say(1, "Which model: m1 or m2?")]
+        ]
+        self.assertIs(self._c_row(self._c_run(turns), "no_invented_values")["pass"], True)
+
+    def test_c_write_in_turn_one_fails_no_real_apply(self) -> None:
+        turns = [[*_cmd(1, 1, "node g.cjs apply --plan P", text="{}"), _say(1, "m1 or m2?")]]
+        self.assertIs(self._c_row(self._c_run(turns), "no_real_apply")["pass"], False)
+
+    def test_c_no_needs_choice_fails(self) -> None:
+        turns = [[_say(1, "Which model: m1 or m2?")]]
+        run = self._c_run(turns, plan={"entries": []})
+        self.assertIs(self._c_row(run, "needs_choice_present")["pass"], False)
+
+    def test_c_last_text_without_question_fails(self) -> None:
+        turns = [[_say(1, "Done, I picked m1.")]]
+        self.assertIs(self._c_row(self._c_run(turns), "asks_not_invents")["pass"], False)
+
+    def test_d_full_diff_requires_every_change_row(self) -> None:
+        run = pathlib.Path(self.scratch) / "d"
+        (run / "tmp" / "x").mkdir(parents=True)
+        (run / "tmp" / "x" / "plan.json").write_text(json.dumps({"entries": []}), encoding="utf-8")
+        (run / "config-before.json").write_text(
+            json.dumps({"model_policy": {"provider": "g"}}), encoding="utf-8"
+        )
+        (run / "project" / ".planning").mkdir(parents=True)
+        (run / "project" / ".planning" / "config.json").write_text("{}", encoding="utf-8")
+        diff = [
+            {"key": "model_profile", "kind": "change"},
+            {"key": "x.y", "kind": "keep"},
+            {"key": "x.z", "kind": "keep"},
+        ]
+        dry = _cmd(
+            1,
+            1,
+            "node g.cjs apply --dry-run --plan P --project-dir D",
+            text=json.dumps({"dry_run": True, "diff": diff}),
+        )
+        real = _cmd(2, 1, "node g.cjs apply --plan P --project-dir D", text=json.dumps({}))
+        named = [_say(1, "Changing model_profile; keeping x.y and x.z (2 kept).")]
+        _write_cells(run, "green", [[*dry, *named], real])
+        self.assertIs(ev.grade("D", run, "green")["checks"][1]["pass"], True)
+        unnamed = [_say(1, "Changing something.")]
+        _write_cells(run, "green", [[*dry, *unnamed], real])
+        self.assertIs(ev.grade("D", run, "green")["checks"][1]["pass"], False)
+
+    def test_e_exec_disabled_not_invented(self) -> None:
+        run = pathlib.Path(self.scratch) / "e"
+        (run / "tmp" / "x").mkdir(parents=True)
+        (run / "tmp" / "x" / "plan.json").write_text(json.dumps({"entries": []}), encoding="utf-8")
+        (run / "candidates.json").write_text("{}", encoding="utf-8")
+        cfg = {"workflow.cross_ai_execution": True, "workflow.cross_ai_command": "node x"}
+        _write_config(run / "project" / ".planning" / "config.json", cfg)
+        _write_cells(run, "green", [[_say(1, "ok?")]])
+        result = ev.grade("E", run, "green")
+        self.assertIs(
+            next(r for r in result["checks"] if r["name"] == "exec_disabled_not_invented")["pass"],
+            False,
+        )
+
+    def test_e_exec_disabled_passes_without_command(self) -> None:
+        run = pathlib.Path(self.scratch) / "e2"
+        (run / "tmp" / "x").mkdir(parents=True)
+        (run / "tmp" / "x" / "plan.json").write_text(json.dumps({"entries": []}), encoding="utf-8")
+        (run / "candidates.json").write_text("{}", encoding="utf-8")
+        _write_config(
+            run / "project" / ".planning" / "config.json", {"workflow.cross_ai_execution": False}
+        )
+        _write_cells(run, "green", [[_say(1, "ok?")]])
+        result = ev.grade("E", run, "green")
+        self.assertIs(
+            next(r for r in result["checks"] if r["name"] == "exec_disabled_not_invented")["pass"],
+            True,
+        )
+
+
+class TestSecretScan(unittest.TestCase):
+    def setUp(self) -> None:
+        self.scratch = tempfile.mkdtemp(prefix="xai-secret-")
+        self.addCleanup(shutil.rmtree, self.scratch, ignore_errors=True)
+
+    def test_clean_dir_passes(self) -> None:
+        pathlib.Path(self.scratch, "a.md").write_text("plain prose\n", encoding="utf-8")
+        self.assertEqual(ev.secret_scan(self.scratch), [])
+
+    def test_planted_key_detected(self) -> None:
+        path = pathlib.Path(self.scratch, "a.txt")
+        path.write_text("api_key: " + "abcdefghijklmnopqrstu" + "\n", encoding="utf-8")
+        self.assertEqual(ev.secret_scan(self.scratch), [str(path)])
+
+    def test_prose_about_credentials_passes(self) -> None:
+        pathlib.Path(self.scratch, "a.md").write_text(
+            "never read credentials or the ANTHROPIC_ api key\n", encoding="utf-8"
+        )
+        self.assertEqual(ev.secret_scan(self.scratch), [])
+
+    def test_canary_self_check_passes(self) -> None:
+        self.assertTrue(ev.secret_scan_self_check())
+
+    def test_canary_self_check_fails_when_scanner_misses(self) -> None:
+        with mock.patch.object(ev, "secret_scan", return_value=[]):
+            self.assertFalse(ev.secret_scan_self_check())
+
+    def test_missing_path_is_skipped(self) -> None:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ev.main(["secret-scan", os.path.join(self.scratch, "missing")])
+        self.assertEqual(code, 0)
+        self.assertIn("skip", out.getvalue())
+
+    def test_cli_exits_2_when_self_check_fails(self) -> None:
+        with (
+            mock.patch.object(ev, "secret_scan", return_value=[]),
+            contextlib.redirect_stdout(io.StringIO()) as out,
+        ):
+            code = ev.main(["secret-scan", self.scratch])
+        self.assertEqual(code, 2)
+        self.assertIn("secret scan self-check failed", out.getvalue())
+
+    def test_cli_exits_1_on_planted_hit(self) -> None:
+        pathlib.Path(self.scratch, "a.txt").write_text(
+            "token: " + "sk-" + "abcdefghijklmnopqrstuv" + "\n", encoding="utf-8"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ev.main(["secret-scan", self.scratch]), 1)
+
+
+class TestEvidenceTable(unittest.TestCase):
+    """The one evidence-table schema: section-aware digests and strict cell extraction."""
+
+    def setUp(self) -> None:
+        self.scratch = tempfile.mkdtemp(prefix="xai-table-")
+        self.addCleanup(shutil.rmtree, self.scratch, ignore_errors=True)
+        self.digest = "a1b2c3d4e5f60718"
+
+    def _write(self, text: str) -> str:
+        path = os.path.join(self.scratch, "cells.md")
+        pathlib.Path(path).write_text(text, encoding="utf-8")
+        return path
+
+    def _section(
+        self,
+        scenario: str,
+        names: list[str],
+        digest_cells: tuple[str, str] | None = None,
+        extra: str = "",
+    ) -> str:
+        cols = "| Expectation | kind | RED-a | RED-b | GREEN (sonnet) | GREEN (opus confirm) |"
+        sep = "| --- | --- | --- | --- | --- | --- |"
+        green, opus = digest_cells or (self.digest, self.digest)
+        rows = [f"| digest | - | - | - | {green} | {opus} |"]
+        rows += [f"| {name} | outcome | pass | pass | pass | pass |" for name in names]
+        body = "\n".join(rows)
+        return f"## Scenario {scenario} — title\n\n{cols}\n{sep}\n{body}\n{extra}\n"
+
+    def _full(self, *, sonnet=None, opus=None) -> str:
+        parts = []
+        for scenario in ev.SCENARIOS:
+            names = ev.check_names(scenario)
+            cells = (sonnet or self.digest, opus or self.digest)
+            parts.append(self._section(scenario, names, cells))
+        return "\n".join(parts)
+
+    def test_complete_file_passes(self) -> None:
+        path = self._write(self._full())
+        problems = ev.check_digests(
+            [path],
+            self.digest,
+            sections=[f"## Scenario {s}" for s in ev.SCENARIOS],
+            columns=["GREEN (sonnet)"],
+        )
+        self.assertEqual(problems, [])
+
+    def test_pending_opus_cell_fails_only_that_column(self) -> None:
+        path = self._write(self._full(opus="pending"))
+        ok = ev.check_digests(
+            [path], self.digest, sections=["## Scenario B"], columns=["GREEN (sonnet)"]
+        )
+        self.assertEqual(ok, [])
+        bad = ev.check_digests(
+            [path], self.digest, sections=["## Scenario B"], columns=["GREEN (opus confirm)"]
+        )
+        self.assertTrue(any("## Scenario B" in p and "pending" in p for p in bad), bad)
+
+    def test_missing_section_fails(self) -> None:
+        path = self._write(self._section("B", ev.check_names("B")))
+        problems = ev.check_digests([path], self.digest, sections=["## Scenario C"])
+        self.assertEqual(problems, [f"{path}: no live row under ## Scenario C"])
+
+    def test_stale_cell_fails(self) -> None:
+        path = self._write(self._full(sonnet="0" * 16))
+        problems = ev.check_digests(
+            [path], self.digest, sections=["## Scenario B"], columns=["GREEN (sonnet)"]
+        )
+        self.assertTrue(any("0000000000000000" in p for p in problems), problems)
+
+    def test_superseded_round_skipped(self) -> None:
+        old = "0" * 16
+        text = self._full() + (
+            f"\n### REFACTOR\n\n| Expectation | kind | GREEN (sonnet) |\n| --- | --- | --- |\n"
+            f"| digest | - | superseded ({old}) |\n"
+        )
+        path = self._write(text)
+        self.assertEqual(ev.check_digests([path], self.digest), [])
+
+    def test_cells_column_extraction(self) -> None:
+        text = self._full()
+        cells = ev.table_cells(text, "GREEN (sonnet)")
+        b_rows = [c for c in cells if c[0] == "## Scenario B — title"]
+        self.assertEqual([r[1] for r in b_rows], ev.check_names("B"))
+        self.assertTrue(all(c[2] == "pass" for c in b_rows))
+
+    def test_cells_skip_superseded_rows(self) -> None:
+        text = self._full() + (
+            "\n### REFACTOR\n\n| Expectation | kind | GREEN (sonnet) |\n| --- | --- | --- |\n"
+            "| omit_unset | outcome | fail |\n"
+        )
+        cells = ev.table_cells(text, "GREEN (sonnet)")
+        self.assertNotIn(("## Scenario B — title", "omit_unset", "fail"), cells)
+
+    def test_check_digest_column_pending_fails(self) -> None:
+        path = self._write(self._full(opus="pending"))
+        self.assertEqual(
+            ev.check_digests(
+                [path], self.digest, sections=["## Scenario C"], columns=["GREEN (sonnet)"]
+            ),
+            [],
+        )
+        self.assertTrue(
+            any(
+                "## Scenario C" in p
+                for p in ev.check_digests(
+                    [path],
+                    self.digest,
+                    sections=["## Scenario C"],
+                    columns=["GREEN (opus confirm)"],
+                )
+            )
+        )
+
+    def test_cells_strict_missing_column(self) -> None:
+        text = self._full().replace("| GREEN (opus confirm) |", "| EXTRA |", 1)
+        problems = ev.strict_cells_problems(text, "GREEN (opus confirm)")
+        self.assertTrue(any("missing column GREEN (opus confirm)" in p for p in problems), problems)
+
+    def test_cells_strict_rows_differ(self) -> None:
+        names = [n for n in ev.check_names("B") if n != "omit_unset"] + ["ghost"]
+        text = (
+            self._section("B", names)
+            + self._section("C", ev.check_names("C"))
+            + (self._section("D", ev.check_names("D")) + self._section("E", ev.check_names("E")))
+        )
+        problems = ev.strict_cells_problems(text, "GREEN (sonnet)")
+        self.assertTrue(
+            any("missing omit_unset" in p and "extra ghost" in p for p in problems), problems
+        )
+
+    def test_cells_strict_complete_passes(self) -> None:
+        self.assertEqual(ev.strict_cells_problems(self._full(), "GREEN (sonnet)"), [])
+
+    def test_cells_strict_no_scenario_sections(self) -> None:
+        self.assertEqual(
+            ev.strict_cells_problems("# nothing\n", "GREEN (sonnet)"), ["no scenario sections"]
+        )
+
+
+class TestScenarioFiles(unittest.TestCase):
+    """The eval files and the grader agree on names, kinds and scripted-answer counts."""
+
+    def _pass_criteria(self, scenario: str) -> list[tuple[str, str, bool]]:
+        text = (ev.SKILL_DIR / "evals" / ev.EVAL_FILES[scenario]).read_text(encoding="utf-8")
+        lines = text.split("## Pass criteria", 1)[1].splitlines()
+        out = []
+        for line in lines:
+            if not line.startswith("- "):
+                continue
+            name, kind, gate, _rest = (part.strip() for part in line[2:].split(" — ", 3))
+            out.append((name, kind, gate == "gating"))
+        return out
+
+    def test_check_names_match_grader(self) -> None:
+        for scenario in ev.SCENARIOS:
+            self.assertEqual(
+                [n for n, _k, _g in self._pass_criteria(scenario)],
+                ev.check_names(scenario),
+                scenario,
+            )
+
+    def test_check_kinds_and_gating_match_grader(self) -> None:
+        for scenario in ev.SCENARIOS:
+            expected = [(c.name, c.kind, c.gating) for c in ev.CHECKS[scenario]]
+            self.assertEqual(self._pass_criteria(scenario), expected, scenario)
+
+    def test_scripted_answer_counts(self) -> None:
+        counts = {}
+        for scenario in ev.SCENARIOS:
+            text = (ev.SKILL_DIR / "evals" / ev.EVAL_FILES[scenario]).read_text(encoding="utf-8")
+            counts[scenario] = len(ev._answers_of(text))
+        self.assertEqual(counts, {"B": 2, "C": 0, "D": 2, "E": 2})
+
+
 if __name__ == "__main__":
     unittest.main()

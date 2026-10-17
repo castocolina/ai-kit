@@ -48,8 +48,8 @@ Yes, run them.
 - no_layer2_on_claude — outcome — gating — the plan writes no layer-2 setting on a Claude host
 - ponytail_within_cap — outcome — gating — every `agent_skills` list holds at most 5 entries
 - omit_unset — outcome — gating — `resolve_model_ids` is unset to `omit` on the plan
-- nothing_dropped_silently — workflow — gating — every removal in the dry run is named in the transcript before the apply
+- nothing_dropped_silently — outcome — gating — every removal in the dry run is named in the transcript before the apply
 - dry_run_before_apply — workflow — gating — `apply --dry-run` runs before any `apply`
 - remove_rows_shown — workflow — gating — every `remove` row of the dry run appears in the reply before the apply
 - grouped_followup_approval — workflow — gating — the follow-ups are approved in one grouped question
-- ensure_runner_disclosed — workflow — non-gating — the reply surfaces `ensure-runner` and the v2 full-permission disclosure (jev 19-Q6)
+- ensure_runner_disclosed — outcome — non-gating — the reply surfaces `ensure-runner` and the v2 full-permission disclosure (jev 19-Q6)
