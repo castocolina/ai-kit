@@ -1,20 +1,21 @@
 ---
 phase: 19
 reviewers: [opencode-plan-review]
-reviewed_at: 2026-10-17T10:00:00Z
+reviewed_at: 2026-10-17T14:54:00Z
 plans_reviewed: [19-01-PLAN.md, 19-02-PLAN.md, 19-03-PLAN.md, 19-04-PLAN.md, 19-05-PLAN.md, 19-06-PLAN.md, 19-07-PLAN.md, 19-08-PLAN.md, 19-09-PLAN.md, 19-10-PLAN.md]
 models:
   opencode-plan-review: "router-env/my-plan-review"
 model_sources:
   opencode-plan-review: "pinned"
-cycle: 2
-reviewed_revision: b10ff51
+cycle: 3
+reviewed_revision: 19991e8
 ---
 
-# Cross-AI Plan Review — Phase 19 (convergence cycle 2)
+# Cross-AI Plan Review — Phase 19 (convergence cycle 3)
 
-Cycle 1's review is in git history at `291d253`; the plans were revised in `b10ff51`. This
-cycle's reviewer verified the Review Dispositions Ledgers and raised only new or open findings.
+Cycle 1 is in git history at `291d253`, cycle 2 at `830c029`; the plans were revised in
+`19991e8`. This cycle's reviewer verified the Round 1 and Round 2 ledgers and raised only new or
+open findings: 3 HIGH and 4 MEDIUM.
 
 <!-- gsd:plan-revision-conflicts:begin -->
 ## Plan-Revision Conflicts
@@ -22,330 +23,256 @@ cycle's reviewer verified the Review Dispositions Ledgers and raised only new or
 
 ## OpenCode Review (opencode-plan-review)
 
+Reviewed revision `19991e8` against repository source and both previous reviews. This is a **GSD implementation-plan review**, not execution verification: “resolved” below means the revised implementation contract addresses the finding.
+
+For brevity, plan citations use `19-NN-PLAN.md`; all are under `.planning/phases/19-evaluation-on-claude/`.
+
 ## 19-01
 
-**Summary:** The default Claude matrix is soundly designed, and the cycle-1 corrections for environment merging and the informational runtime case are reflected in the revised contract. The remaining concern is the advertised non-Claude reuse.
+**Summary:** The Claude matrix has converged. Its independent oracle, controls and environment propagation now provide a credible APP-05 test contract.
+
+**Prior HIGH verification**
+- The shared digest-layout concern is addressed by the explicit digest-row schema, required columns and exact expectation-row validation in `19-03-PLAN.md:327–350`.
+- Full-plan delivery is now an explicit requirement rather than an assumption about stock GSD delegation. See `19-01-PLAN.md:135–144`. The common dispatch assessment appears after the ten plan sections.
 
 **Strengths**
-- Passing the **same environment through both apply seams** fixes the actual last-merge problem: `_real_run` merges per-call values over its child environment. See [19-01-PLAN.md:294–300](.planning/phases/19-evaluation-on-claude/19-01-PLAN.md#L294) and `tests/test_curated_config_apply_e2e.py:88–91,200–215`.
-- Explicitly seeding and reading back `runtime: codex` creates the condition the informational row examines. This correctly accounts for `config-new-project` excluding runtime from defaults. See [19-01-PLAN.md:307–313](.planning/phases/19-evaluation-on-claude/19-01-PLAN.md#L307) and `.claude/gsd-core/bin/lib/config.cjs:401–414`.
+- One environment is passed through both apply seams (`19-01-PLAN.md:307–313`), matching the actual last-merge behavior in `tests/test_curated_config_apply_e2e.py:88–91`.
+- The oracle uses plan entries rather than applied config, with negative controls (`19-01-PLAN.md:281–319`).
+- Non-Claude mapping is explicitly deferred and refused rather than producing false failures (`19-01-PLAN.md:261–268`; `19-CONTEXT.md:128–133`).
 
-**Concerns**
-- **MEDIUM · NEW — Host parameterization does not extend to the oracle or controls.**  
-  [19-01-PLAN.md:254–279,302–306](.planning/phases/19-evaluation-on-claude/19-01-PLAN.md#L254) exposes `--host`, but `promised()` returns tier aliases without applying `model_profile_overrides.<host>.<tier>`. The real resolver uses those mappings on non-Claude runtimes: `.claude/gsd-core/bin/lib/model-resolver.cjs:106–135,597–617`. Consequently, a correct Codex model ID can fail against expected `"opus"`, and the Claude omit control does not retain the same meaning.
+**Concerns:** No additional NEW or OPEN finding.
 
-**Suggestions**
-- Separate expected **tier** from expected **model**, including runtime-tier mappings and runtime-specific controls.
-- Alternatively, explicitly restrict this matrix to Claude and defer non-Claude support rather than presenting it as ready for Phase 20.
+**Suggestions:** Retain the specified environment-identity and control non-vacuity tests; no additional abstraction is needed.
 
-**Risk Assessment: MEDIUM.** The default Claude proof is credible; the advertised cross-host reuse can produce false defect reports.
+**Risk Assessment: LOW.** Remaining uncertainty is implementation correctness, not an unresolved matrix design decision.
 
 ## 19-02
 
-**Summary:** E now has a supported resolution, and the event contract preserves command/result pairing. B/D’s cache-preservation mechanism remains only partially corrected. Historical entrypoint selection and runner failure handling also need changes before paid pressure runs.
+**Summary:** The original fixture and entrypoint HIGHs are addressed. Two new contract inconsistencies remain in fixture isolation and process cleanup.
+
+**Prior HIGH verification**
+- **E’s impossible choice — resolved.** The scripted answer permits disabling execution, and the fixture must prove that this closes all choices (`19-02-PLAN.md:321–327`). This matches `plan_edit.py:172–173,299–307`.
+- **B/D inventory mismatch and catalog preservation — resolved for the original freshness mechanism.** The sidecar, serializer fixed point, Claude-row repair and real-inventory self-check are specified at `19-02-PLAN.md:265–305`. These match `ai_kit_spec/cli.py:485–495,530–541` and `routing.py:240–247`.
+- **Historical entrypoint shadowing — resolved.** Only the resolver block is pinned, the plugin-root override is removed, and wrong entrypoints become harness failures (`19-02-PLAN.md:331–341,356–358,388–390`).
+- **Command/result pairing and D’s coverage — resolved.** The event contract retains full paired results (`19-02-PLAN.md:394–405`), and D includes `full_diff_shown` (`:246–248`).
 
 **Strengths**
-- E’s answer authorizing execution to be disabled matches the product mechanism: setting `workflow.cross_ai_execution false` strips the dependent command and artifact. See [19-02-PLAN.md:226–230,297–303](.planning/phases/19-evaluation-on-claude/19-02-PLAN.md#L226) and `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/plan_edit.py:140–177,299–307`.
-- The revised transcript contract retains tool IDs, result IDs, error status and full result text, enabling meaningful grading rather than command-presence checks. See [19-02-PLAN.md:345–355](.planning/phases/19-evaluation-on-claude/19-02-PLAN.md#L345).
+- Failed turns now stop scripted continuation instead of becoming behavioral verdicts (`19-02-PLAN.md:374–392`).
+- Cache freshness is checked before ordinary inventory refresh, not merely after a possible prohibited write (`:289–300`).
 
 **Concerns**
-- **HIGH · PARTIALLY-RESOLVED — B/D’s catalog preservation check still rejects normal inventory behavior.**  
-  [19-02-PLAN.md:258–277,294–296](.planning/phases/19-evaluation-on-claude/19-02-PLAN.md#L258) seeds two files and requires byte identity afterward. However, catalog fetch freshness uses the separate `model-catalog.json.fetch-meta.json` sidecar, which `seed_cache` does not create. Fetch also rewrites the catalog on every invocation, including skipped fetches, with different formatting. See `tests/test_curated_config_inventory.py:64–72`, `skills/ai-kit-spec-review/ai_kit_spec/cli.py:485–501,530–541,606–626`, and `ai_kit_spec/cache.py:23–24`. Fixing the Claude runtime row therefore does not prevent external fetching or the expected catalog rewrite.
-
-- **HIGH · NEW — RED-b can select an installed entrypoint instead of the worktree script.**  
-  Materializing adjacent symlinks and testing their `--help` does not control the historical discovery loop ([19-02-PLAN.md:248–253,307–310](.planning/phases/19-evaluation-on-claude/19-02-PLAN.md#L248)). At `7009d22^`, `skills/ai-kit-gsd-curated-config/SKILL.md:40–45` searches plugin and installed locations **before** its own directory. The runner retains real `HOME`; `child_env` does not remove `CLAUDE_PLUGIN_ROOT` (`skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py:130–140`). A shadow installation can therefore make RED-b exercise another product revision.
-
-- **MEDIUM · NEW — Failed model turns can be reported as successful harness runs.**  
-  [19-02-PLAN.md:332–343](.planning/phases/19-evaluation-on-claude/19-02-PLAN.md#L332) records `result.is_error`, but only contamination and timeout determine failure. Process return codes and missing terminal results are not gated. A clean init followed by a provider error can proceed into grading as a skill failure. Existing supervision preserves and interprets return codes: `skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py:476–486,504–516`.
-
-- **MEDIUM · PARTIALLY-RESOLVED — Primary-group cleanup misses known detached descendants.**  
-  The new group ownership addresses ordinary descendants, but inventory refresh creates children with `start_new_session=True`: `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/catalog_adapter.py:199–214`. Those children are outside Claude’s group and can survive its timeout cleanup ([19-02-PLAN.md:325–331](.planning/phases/19-evaluation-on-claude/19-02-PLAN.md#L325)). Existing supervision separately reaps recorded groups: `ai_kit_spec/runner_dispatch.py:318–324,377–388`.
-
-- **LOW · NEW — E’s self-check calls the wrong module.**  
-  [19-02-PLAN.md:300–303](.planning/phases/19-evaluation-on-claude/19-02-PLAN.md#L300) names `plan_io.needs_choice_keys`; that function is defined in `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/apply.py:61–73`, not `plan_io.py`. Following the contract literally raises `AttributeError`.
+- **MEDIUM · NEW — The fixed-point fetch still consumes ambient review configuration.**  
+  `19-02-PLAN.md:269–271,284–286` inherits the real environment without fixing `XDG_CONFIG_HOME`. The fixture marks Grok installed without a `models` field (`tests/fixtures/curated_config_v2/runtimes.json:111–113`). That makes `_discovered_catalog_candidates()` call `cfg_resolve()` **before** fetch freshness is checked (`skills/ai-kit-spec-review/ai_kit_spec/cli.py:466–477,597–618`). The global TOML path then follows the ambient config directory (`config_io.py:268–291,435–444`). A malformed or different user review configuration can therefore change or abort supposedly controlled fixture construction despite fresh caches. This is separate from the explicitly permitted inventory backend-presence read.
+- **MEDIUM · NEW — Ancestor-safe reaping requires data absent from its interface.**  
+  `ps_fn` returns `pid,pgid,args` (`19-02-PLAN.md:349–351`), but `_reap_strays` must discover every ancestor through a **PPID column** (`:365–370`). That column does not exist. The prescribed tests cover self, immediate parent and own group, not a higher ancestor in another group (`:455–459`). Literal implementation cannot establish the claimed protection before group-wide SIGKILL.
 
 **Suggestions**
-- Seed catalog fetch metadata and establish the catalog’s normal serialized fixed point before preservation checks.
-- Pin RED-b’s entrypoint explicitly at the harness level, with a shadow-install negative test.
-- Require successful process exit, valid init/result events and `is_error == false`; stop scripted continuation on infrastructure failure.
-- Add detached-grandchild cleanup coverage and correct the helper reference.
+- Give fetch/inventory a scratch review-config location, or remove irrelevant installed-without-models rows from the controlled fixture. Test that ambient TOML cannot affect construction.
+- Include PPID in the process snapshot and test a higher ancestor in another process group.
 
-**Risk Assessment: HIGH.** Otherwise fixture and infrastructure behavior can be mistaken for instruction-quality failures.
+**Risk Assessment: MEDIUM.** Both issues can derail or endanger the harness independently of skill behavior.
 
 ## 19-03
 
-**Summary:** The original zero-approval and post-write-disclosure loopholes are substantially improved. Several remaining predicates still certify less than the stated requirements, and the evidence parser does not fail closed on missing material.
+**Summary:** Most grading HIGHs are closed. The execution-target predicate still misclassifies the actual v1 hook shape, leaving a central cycle-2 finding open.
+
+**Prior HIGH verification**
+- **Zero approvals/grouped question, post-write disclosure, failed/unrelated previews — resolved** by paired reports, pre-write text boundaries and matching preview targets (`19-03-PLAN.md:257–279`).
+- **Baseline workflow bias and no-op `ensure-project` handling — resolved** (`:205–228`). The distinction matches the existing direct-write v1 workflow in `references/v1-path.md:10–17`.
+- **Bare Cursor vendor classification — resolved** through the existing vendor inference (`19-03-PLAN.md:234–245`).
+- **Required follow-up execution results — resolved** by matching IDs/fingerprint and zero return codes (`:273–278`), consistent with `followups.py:396–420,448–481`.
+- **D’s full-diff coverage and incomplete evidence gates — resolved in the specified contract** (`19-03-PLAN.md:291–295,327–350`).
+- **Effective execution target — still OPEN**, below.
 
 **Strengths**
-- Pairing commands with results now supports the product’s structured apply reports. See [19-03-PLAN.md:206–219](.planning/phases/19-evaluation-on-claude/19-03-PLAN.md#L206) and `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cli.py:744–764`.
-- Required follow-ups now distinguish zero-required from nonempty-required cases. The source provides both required rows and fingerprint-bound approval arguments: `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/followups.py:332–357,380–387`.
+- Outcome checks no longer require v2 intermediate artifacts in baseline cells (`19-03-PLAN.md:205–215`).
+- Required evidence columns and exact row sets fail closed on missing material (`:334–350`).
 
 **Concerns**
-- **HIGH · PARTIALLY-RESOLVED — Baseline disclosure is still measured before a non-mutating command.**  
-  `first_write` includes `ensure-project` ([19-03-PLAN.md:213–217,236–238](.planning/phases/19-evaluation-on-claude/19-03-PLAN.md#L213)). B/D already have configs, and `config-new-project` returns immediately without writing when one exists: `.claude/gsd-core/bin/lib/config.cjs:458–465`. A baseline that runs the required no-op, then discloses removals before its first actual mutation, incorrectly fails. The kept v1 flow explicitly requires this initial command: `skills/ai-kit-gsd-curated-config/references/v1-path.md:10–12`.
-
-- **HIGH · NEW — B’s model checks do not establish the effective vendor or execution target.**  
-  The proposed vendor rule treats a bare Cursor model’s vendor as `"cursor"` ([19-03-PLAN.md:223–231](.planning/phases/19-evaluation-on-claude/19-03-PLAN.md#L223)). Thus `claude-opus-5-5-high` passes despite being Anthropic; the existing inference recognizes `claude-` correctly (`skills/ai-kit-spec-review/ai_kit_spec/vendor.py:20–27,38–48`). Separately, a router string anywhere in the runner—or only in `.new`—does not prove pi uses it. V1 can legitimately supply its model through hook arguments instead (`ai_kit_gsd_curated_config/cross_ai_build.py:87–92`), while `.new` is explicitly inactive (`SKILL.md:199–202`).
-
-- **HIGH · PARTIALLY-RESOLVED — “Successful approval” does not require successful required follow-ups.**  
-  [19-03-PLAN.md:247–253](.planning/phases/19-evaluation-on-claude/19-03-PLAN.md#L247) checks tool-level success and absence of `"refused"`, not matching approval arguments or result rows. A failed `followups …; true` shell command can pass. Actual output includes per-follow-up `returncode`, and failures return CLI exit 1: `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/followups.py:396–420,448–481`; `cli.py:739–741`.
-
-- **HIGH · NEW — D can pass without showing the promised full diff.**  
-  D checks removal-key mentions and final policy removal, but not disclosure of additions, changes or kept settings ([19-03-PLAN.md:243–244,265–268](.planning/phases/19-evaluation-on-claude/19-03-PLAN.md#L243)). An assistant can show only removal names and pass all five checks. That does not satisfy `19-SPEC.md:54–56`; the product exposes the four row kinds and before/after values in `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/apply.py:119–145`.
-
-- **HIGH · PARTIALLY-RESOLVED — Incomplete evidence can still pass the digest/cell gates.**  
-  The section check requires only one live digest-bearing row; `cells` silently omits absent columns or rows ([19-03-PLAN.md:288–303,395–403](.planning/phases/19-evaluation-on-claude/19-03-PLAN.md#L288)). A correct sonnet digest beside a pending/missing opus digest still supplies that row. Removing an expectation or requested GREEN column can yield no failing output at all. Consumers then accept the empty extraction, for example [19-09-PLAN.md:306](.planning/phases/19-evaluation-on-claude/19-09-PLAN.md#L306).
+- **HIGH · OPEN — The prefix test still misclassifies the actual v1 execution hook.**  
+  `19-03-PLAN.md:246–251` reads CONFIG whenever the hook starts with `node .planning/scripts/cross-ai.mjs`, assuming model-bearing v1 hooks use the other branch. They do not: `cross_ai_build.py:87–92` calls `project_runner_command()`, which produces that same prefix followed by `--prefer` and `--model-<runtime>` (`skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py:157–176`). The runner gives those CLI overrides precedence over CONFIG (`references/cross-ai.mjs:2766–2769`).  
+  Thus a correct v1 hook can fail with empty CONFIG, while a hook overriding pi to the wrong model can pass because CONFIG still contains the expected router. The proposed synthetic non-runner positive case does not exercise this shape (`19-03-PLAN.md:406–408`).
 
 **Suggestions**
-- Distinguish actual mutations from write-capable no-ops.
-- Grade the effective hook and active runner configuration, using sourced vendor classification.
-- Match approval targets, IDs and fingerprint; require expected result IDs with zero return codes.
-- Add full-diff disclosure coverage.
-- Validate exact scenario row sets, required columns and required digest cells; missing material must be an error.
+- Distinguish the **bare** v2 hook from flagged hooks, then evaluate effective preference/model after command-line overrides.
+- Use the actual v1 builder shape in both positive and negative tests.
 
-**Risk Assessment: HIGH.** Tests faithfully implementing these predicates could still manufacture false GREEN results.
+**Risk Assessment: HIGH.** The remaining predicate can manufacture both false RED and false GREEN execution-target results.
 
 ## 19-04
 
-**Summary:** The skill-reference serialization and first-run backup corrections match source. Choice resolution and the forced-failure experiment still need stronger semantics.
+**Summary:** The smoke procedure now addresses the previously identified choice-resolution, serialization and rollback defects.
+
+**Prior HIGH verification**
+- **Skill-reference readback — resolved.** The independent serialized-reference comparison replaces raw equality (`19-04-PLAN.md:248–260`), matching `skills.py:156–167`.
+- **Derived command overwritten by placeholder — resolved.** Artifact choices are resolved first, the plan is reloaded, and an unresolved hook is refused (`19-04-PLAN.md:237–247`). This matches `plan_edit.py:374–384`.
+- **Vacuous rollback experiment — resolved.** A preceding real write must appear in the recorder, and byte restoration must undo it (`19-04-PLAN.md:263–279`).
+- **Ordinary live-inventory safety — addressed** by the seeded-cache and pre-probe checks (`:211–220`).
 
 **Strengths**
-- The revised skill readback comparison recognizes the documented serialized forms instead of comparing bare names directly. See [19-04-PLAN.md:229–234,293–296](.planning/phases/19-evaluation-on-claude/19-04-PLAN.md#L229), `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/apply.py:92–115`, and `skills.py:156–167`.
-- Both scratch paths now receive validation, with no prior backup expected for an absent config. This matches `config_backup.py:110–120` and [19-04-PLAN.md:235–250](.planning/phases/19-evaluation-on-claude/19-04-PLAN.md#L235).
+- Both scratch paths receive explicit validation with different backup expectations (`19-04-PLAN.md:248–283`).
+- The fault experiment now tests restoration rather than merely marker cleanup (`:263–279`), consistent with the existing nth-key failure test in `tests/test_curated_config_apply_e2e.py:322–347`.
 
-**Concerns**
-- **HIGH · NEW — Generic choice resolution can replace a derived runner command with a placeholder.**  
-  [19-04-PLAN.md:223–226](.planning/phases/19-evaluation-on-claude/19-04-PLAN.md#L223) forces a placeholder into every empty-candidate entry. But an unresolved runner model also produces an empty-candidate `workflow.cross_ai_command` entry: `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/recommend.py:873–884`. Resolving the artifact afterward clears its status but does not restore the command value (`plan_edit.py:374–384`). Apply can consequently succeed with a forced, unusable `smoke-placeholder` hook.
+**Concerns:** No additional strong NEW or OPEN finding.
 
-- **HIGH · NEW — The forced failure does not require anything to be restored.**  
-  The experiment runs after the successful idempotent reapply and changes only the reviewer entry to an invalid value ([19-04-PLAN.md:240–247](.planning/phases/19-evaluation-on-claude/19-04-PLAN.md#L240)). Unchanged writes are omitted (`apply.py:809–817`), and gsd-core rejects the invalid reviewers before mutation (`.claude/gsd-core/bin/lib/config.cjs:1045–1050`). A broken restore routine that merely clears the marker could therefore pass this smoke. The existing nth-key test supplies a stronger pattern: `tests/test_curated_config_apply_e2e.py:322–347`.
+**Suggestions:** Preserve the actual-write requirement in the rollback test; do not weaken it to restored hashes alone.
 
-- **MEDIUM · NEW — Smoke drops the selected host when invoking the matrix.**  
-  [19-04-PLAN.md:252–253](.planning/phases/19-evaluation-on-claude/19-04-PLAN.md#L252) omits the host argument, whose upstream default is Claude ([19-01-PLAN.md:254–255](.planning/phases/19-evaluation-on-claude/19-01-PLAN.md#L254)). Thus `smoke --host codex` produces mixed-host evidence.
-
-**Suggestions**
-- Resolve artifact choices first, reload the plan, and let the derived command close automatically.
-- Force failure only after a successful, observably different write in the same transaction; assert that mutation was undone.
-- Pass the selected host through to `run_matrix`, with an injected propagation test.
-
-**Risk Assessment: HIGH.** The smoke can otherwise pass with the wrong execution hook or a rollback experiment that never exercised restoration.
+**Risk Assessment: LOW.** The design is now sufficiently specific for implementation and live verification.
 
 ## 19-05
 
-**Summary:** The retained snapshot and three-class failure triage resolve the cycle-1 concerns. A remaining safety claim overlooks a known side effect of live runtime enumeration.
+**Summary:** The smoke orchestration is coherent after revision. Snapshot lifetime, failure attribution and ordinary inventory safety are addressed.
+
+**Prior HIGH verification**
+- **Live inventory rewriting Cursor configuration — resolved for this smoke path.** Every smoke inventory uses controlled cache freshness, with strict Cursor-config detection as a backstop (`19-05-PLAN.md:137–147`; `19-04-PLAN.md:211–220`). This prevents the ordinary detection path that calls the mutating Cursor listing documented in `detection.py:304–311`.
+- Product-provenance and dispatch concerns have explicit obligations (`19-05-PLAN.md:106–118,64–80`).
 
 **Strengths**
-- Snapshot retention now matches post-plan verification: [19-05-PLAN.md:229–242](.planning/phases/19-evaluation-on-claude/19-05-PLAN.md#L229) retains its input until phase close.
-- Triage now distinguishes documented serialization from product failure, consistent with the conversion in `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/apply.py:104–115`. See [19-05-PLAN.md:174–179](.planning/phases/19-evaluation-on-claude/19-05-PLAN.md#L174).
+- The triage table distinguishes harness, environment and demonstrated product failures (`19-05-PLAN.md:180–185`).
+- The snapshot required by post-plan verification is retained until phase close (`:236–249`).
 
-**Concerns**
-- **HIGH · NEW — Live inventory can write real Cursor configuration outside the protected set.**  
-  The plan permits real-cache refresh but claims no other writes outside scratch ([19-05-PLAN.md:136–138](.planning/phases/19-evaluation-on-claude/19-05-PLAN.md#L136)). With a stale runtime cache, inventory invokes detection; `build_runtimes_snapshot` enumerates installed runtimes (`skills/ai-kit-spec-review/ai_kit_spec/detection.py:986–1010`). Cursor enumeration explicitly documents rewriting `~/.cursor/cli-config.json`’s `privacyCache` (`detection.py:304–311`). The snapshot contract does not cover that file ([19-01-PLAN.md:229–239](.planning/phases/19-evaluation-on-claude/19-01-PLAN.md#L229)). This is a known normal-path side effect, not hypothetical agent escape.
+**Concerns:** No additional NEW or OPEN finding specific to this plan.
 
-**Suggestions**
-- Preserve the required real GSD-defaults read while isolating mutating non-Claude enumeration.
-- Add a stale-cache safety case. Merely hashing Cursor config afterward would detect—but not prevent—the prohibited write.
+**Suggestions:** Keep `## Caches` and the written-then-undone fault detail in the recorded evidence, as acceptance already requires (`19-05-PLAN.md:214–216`).
 
-**Risk Assessment: HIGH.** The current smoke can alter real tool configuration while reporting its protected set unchanged.
+**Risk Assessment: LOW.** Successful live execution remains to be demonstrated; the procedure itself no longer contains the earlier safety contradiction.
 
 ## 19-06
 
-**Summary:** Separating baseline outcomes from v2 workflow checks is a substantial improvement. State preservation is better, but its procedure assumes a config exists in a scenario intended to stop before creating one, and the committed record still omits some verdict inputs.
+**Summary:** Baseline grading is materially fairer, and state retention is improved. However, the historical v1 baseline invokes a separate, uncached enumeration path that the new inventory protections do not isolate.
+
+**Prior HIGH verification**
+- **Baseline failure by construction — resolved.** Workflow checks become `n/a`, and the comparison uses outcome rows (`19-06-PLAN.md:223–246`; producer contract in `19-03-PLAN.md:205–215`).
+- **Entrypoint shadowing — addressed** by the pinned historical resolver and harness-failure handling (`19-02-PLAN.md:331–341`; `19-06-PLAN.md:158–165`).
+- Digest layout and product-revision replay obligations are explicit (`19-06-PLAN.md:228–239,305–307`).
 
 **Strengths**
-- The baseline table no longer automatically fails v1 for lacking `plan.json`, matching v1’s direct-write interface. See [19-06-PLAN.md:224–238](.planning/phases/19-evaluation-on-claude/19-06-PLAN.md#L224) and `skills/ai-kit-gsd-curated-config/references/v1-path.md:27–38`.
-- Copying state before deleting each run directory addresses much of the earlier evidence-loss problem ([19-06-PLAN.md:197–205](.planning/phases/19-evaluation-on-claude/19-06-PLAN.md#L197)).
+- Configuration absence is preserved as a fact instead of requiring C to create a config (`19-06-PLAN.md:207–216`).
+- Each cell retains its grading record and supporting state before cleanup (`:202–216`).
 
 **Concerns**
-- **MEDIUM · NEW — A correct C stop cannot satisfy the required config-copy assertion.**  
-  C’s fixture does not seed a project config ([19-02-PLAN.md:255–257,284–288](.planning/phases/19-evaluation-on-claude/19-02-PLAN.md#L255)); `scratch_inventory` only saves inventory (`tests/test_curated_config_apply.py:471–484`). C is expected to make no real write. Nevertheless, the cell procedure copies `config.json` unconditionally and acceptance requires one per graded cell ([19-06-PLAN.md:202–205,316](.planning/phases/19-evaluation-on-claude/19-06-PLAN.md#L202)).
-
-- **MEDIUM · PARTIALLY-RESOLVED — Some committed verdicts remain impossible to recompute after cleanup.**  
-  The compact record retains command error flags and plan-entry triples, but not effective runner configuration, candidate sets, parsed dry-run facts, required follow-up rows/fingerprint or approval result rows ([19-03-PLAN.md:278–286](.planning/phases/19-evaluation-on-claude/19-03-PLAN.md#L278)). Result heads are limited to 200 characters; actual follow-up reports contain materially later data (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/apply.py:881–893`). The state-copy list also omits the runner, and final cleanup deletes retained scratch state ([19-10-PLAN.md:300–302](.planning/phases/19-evaluation-on-claude/19-10-PLAN.md#L300)).
+- **HIGH · NEW — RED-b bypasses cache protection and can execute the mutating real Cursor listing.**  
+  This plan requires following historical v1 instructions (`19-06-PLAN.md:298–301`), whose steps require `detect-execution-candidate` and `detect-review-candidate` (`7009d22^:skills/ai-kit-gsd-curated-config/SKILL.md:95–109`). Those commands call `_detect_candidate_pool()` (`cli.py:186–213`), which invokes **bare `detect-runtimes`, without `--if-stale`** (`model_detect.py:51–63`). The spec CLI consequently builds a fresh runtime snapshot (`skills/ai-kit-spec-review/ai_kit_spec/cli.py:425–434`), including Cursor enumeration. That listing explicitly rewrites real Cursor configuration (`detection.py:304–311`).  
+  Fresh seeded caches do not intercept this path. The strict snapshot detects the prohibited change afterward but cannot make the required baseline safe beforehand. This is a normal historical-flow operation, not the already-registered hypothetical Bash escape.
 
 **Suggestions**
-- Preserve an explicit “config absent” fact for C instead of requiring a nonexistent file.
-- Extend the compact record only with the additional facts needed to recompute execution, preview, candidate and approval checks.
+- Isolate RED-b’s runtime listings through run-scoped fixture-backed CLI wrappers or equivalent per-runtime configuration isolation.
+- Add a test proving that following the required v1 detect steps cannot execute a listing against real Cursor configuration.
 
-**Risk Assessment: MEDIUM.** The comparison is materially fairer, but correct stopping behavior and later evidence auditability remain vulnerable.
+**Risk Assessment: HIGH.** The required baseline can violate the no-real-config-write constraint before it is graded.
 
 ## 19-07
 
-**Summary:** The ordered-step test and stable rule pins correctly address cycle 1. The final evidence gate accidentally turns a deliberately non-gating observation into a blocker.
+**Summary:** The evidence-gated editing policy has converged. Its earlier ordering, advisory-failure and incomplete-evidence concerns are addressed.
+
+**Prior HIGH verification**
+- Required digest columns and strict row extraction now gate the GREEN evidence (`19-07-PLAN.md:334–338,374–378`).
+- Product changes invalidate earlier behavioral runs (`:329–331`).
+- Oversized/invalid advisory packets have explicit bounded-input and unavailable handling (`:242–258`).
+- The accepted dispatch mitigation is explicit (`:90–106`).
 
 **Strengths**
-- The proposed six-label ordering assertion matches the current skill structure, which I independently checked. See [19-07-PLAN.md:214–218](.planning/phases/19-evaluation-on-claude/19-07-PLAN.md#L214) and `skills/ai-kit-gsd-curated-config/SKILL.md:69–148`.
-- One pin per behavioral rule avoids the earlier sentence-by-sentence coupling while retaining command parsing and no-habitual-force checks. See [19-07-PLAN.md:209–212](.planning/phases/19-evaluation-on-claude/19-07-PLAN.md#L209) and `tests/test_curated_config_apply.py:2320–2339`.
+- The six-label order assertion is specified independently of wording pins (`19-07-PLAN.md:217–221`); the current six labels match it in `SKILL.md:69–148`.
+- Advisory failures remain visible without triggering repair or blocking completion (`19-07-PLAN.md:45,257–258,378`).
+- Existing rules do not get restated merely because a no-skill baseline failed (`:166–175`).
 
-**Concerns**
-- **MEDIUM · NEW — A non-gating disclosure failure cannot complete the plan.**  
-  REFACTOR runs only for gating failures ([19-07-PLAN.md:344–350](.planning/phases/19-evaluation-on-claude/19-07-PLAN.md#L344)), but final verification rejects **every** bare `fail` and acceptance requires every cell to pass or become unresolved (`:364–368`). B’s `ensure_runner_disclosed` is expressly non-gating, including a test requiring its failure to preserve exit 0 ([19-03-PLAN.md:254–255,345–346](.planning/phases/19-evaluation-on-claude/19-03-PLAN.md#L254)). All required behavior can pass while this advisory row prevents completion, with no authorized repair/routing branch.
+**Concerns:** No additional NEW or OPEN finding specific to this plan. The OPEN grading issue in 19-03 must be corrected before its results license prose edits.
 
-**Suggestions**
-- Preserve gating metadata in the evidence reader and apply the final predicate only to gating rows.
-- Keep advisory failures visible without requiring skill edits or owner escalation.
+**Suggestions:** Retain the no-edit branch when existing instructions already state the behavior.
 
-**Risk Assessment: MEDIUM.** The editing discipline is strong, but final acceptance disagrees with the declared evaluation policy.
+**Risk Assessment: MEDIUM.** The editing process is disciplined, but it depends on the grader producing trustworthy evidence.
 
 ## 19-08
 
-**Summary:** The revised aggregate correctly prevents one passing judge from concealing another available judge’s findings. Invalid review execution still needs to be distinguished from genuine provider unavailability.
+**Summary:** Conflicting available judges can no longer be discarded by aggregation. Invalid-attempt handling remains incomplete because classification uses status without checking the accompanying tree result.
+
+**Prior HIGH verification**
+- **One pi PASS concealing another available judge’s findings — resolved** by the all-live-rows rule (`19-08-PLAN.md:31,216–225`).
+- **Contract failures treated as unavailability — partially resolved.** Explicit contract/git statuses are invalidated, but timeout/signal outcomes retain the loophole below.
+- Evidence completeness and pre-move scanning are addressed (`:202–225,283`).
 
 **Strengths**
-- Pi review mode really restricts tools to `read,grep,find,ls`: `skills/ai-kit-spec-review/references/cross-ai.mjs:284–294`.
-- The all-live-rows aggregation now matches the cited precedent and preserves conflicting scores. See [19-08-PLAN.md:204–210](.planning/phases/19-evaluation-on-claude/19-08-PLAN.md#L204) and `.planning/phases/18.1-one-runtime-model/18.1-22-PLAN.md:39`.
+- Reports are scanned recursively before their first tracked move (`19-08-PLAN.md:202–214`).
+- Scores remain digest-bound, and an available failing judge yields PENDING rather than PASS (`:216–225`).
 
 **Concerns**
-- **HIGH · NEW — Review-contract failures become waiver-compatible “unavailable” rows.**  
-  [19-08-PLAN.md:187–189](.planning/phases/19-evaluation-on-claude/19-08-PLAN.md#L187) converts any non-retryable failure into `judge unavailable`, which the aggregate permits. The runner distinguishes `contract_violation`, `git_error` and `git_timeout` as stop conditions (`skills/ai-kit-spec-review/references/cross-ai.mjs:128–147`); a dirty review suppresses the answer entirely (`:2900–2913`). Such a failure invalidates the attempt—it is not evidence that the judge provider was unavailable.
-
-- **MEDIUM · PARTIALLY-RESOLVED — The pre-move home-path check scans a directory non-recursively.**  
-  The prescribed command passes `tmp/judge/out` directly to `grep` ([19-08-PLAN.md:193–197](.planning/phases/19-evaluation-on-claude/19-08-PLAN.md#L193)). I verified the equivalent operation returns exit 2, “Is a directory,” and no filenames. The secret scanner detects credential shapes, not arbitrary home paths ([19-03-PLAN.md:305–311](.planning/phases/19-evaluation-on-claude/19-03-PLAN.md#L305)). Therefore “prints nothing” does not establish a clean pre-commit path scan; the later wildcard verification detects it only after the move/commit.
+- **HIGH · OPEN — Timeout/signal can still convert invalid review execution into waiver-compatible unavailability.**  
+  `19-08-PLAN.md:189–197` classifies timeout and signal as unavailable after retry without examining `tree`. The runner returns timeout **before** its dirty-review and failed-final-snapshot checks (`skills/ai-kit-spec-review/references/cross-ai.mjs:2897–2901,2915–2918`). Signal handling likewise preserves the observed tree field (`:2928`); its self-test explicitly expects `status=signal ... tree=dirty` (`:1823–1828`).  
+  A timed-out or signalled attempt with `tree=dirty` or `tree=unknown` can therefore become an allowed unavailable row beside another passing judge. Matching the skill digest does not prove the rest of the reviewed tree stayed unchanged.
 
 **Suggestions**
-- Invalidate and investigate contract/tree-verification failures; reserve unavailable rows for defined provider/environment failures.
-- Scan actual report files before moving them, distinguishing clean no-match from operational errors.
+- Require a dispatched attempt’s verified `tree=clean` before treating its failure as provider/environment unavailability.
+- Route dirty or unverifiable trees through invalid-attempt handling regardless of timeout/signal status.
 
-**Risk Assessment: HIGH.** An invalid review attempt can currently be excluded from the aggregate as ordinary unavailability.
+**Risk Assessment: HIGH.** Review-integrity failures can still be excluded from the aggregate as ordinary unavailability.
 
 ## 19-09
 
-**Summary:** Score-only failures, rejected findings and ordinary GREEN regressions now have defined paths. The newly added owner packet exceeds the advisory tool’s input contract, and the GREEN guard still accepts unproven harness outcomes.
+**Summary:** The fix loop now handles score-only findings, bounded advisory input and missing GREEN evidence. One new acceptance contradiction prevents its explicitly permitted product-fix branch from completing.
+
+**Prior HIGH verification**
+- **Judge fixes introducing GREEN regressions — resolved** by the combined stop rule and rerouting (`19-09-PLAN.md:214–224,325–331`).
+- **Owner packet exceeding `decide.py` limits — resolved** by a local full packet plus bounded, fence-free summary (`:233–255`), matching `decide.py:224–233`.
+- **Harness-failed GREEN accepted as success — resolved** through retry and explicit PASS rejection (`19-09-PLAN.md:281–284,325–330`).
+- Invalid judge handling inherits the remaining OPEN finding from 19-08 (`:164–165`); it is not a separate duplicate finding.
 
 **Strengths**
-- Fixes remain committed before pressure and judge reruns, with the existing command-document tests retained. See [19-09-PLAN.md:164–175,199–211](.planning/phases/19-evaluation-on-claude/19-09-PLAN.md#L164) and `tests/test_curated_config_apply.py:2320–2339`.
-- Source-backed rejection no longer changes a judge’s score; the row remains blocked until rerun or owner disposition ([19-09-PLAN.md:193–215](.planning/phases/19-evaluation-on-claude/19-09-PLAN.md#L193)).
+- Rejected findings retain their original score and require source-backed reasoning (`19-09-PLAN.md:199–211`).
+- Every prose fix precedes its GREEN and judge reruns (`:199–224`).
 
 **Concerns**
-- **HIGH · NEW — The full owner packet is invalid input to `decide.py`.**  
-  [19-09-PLAN.md:223–238](.planning/phases/19-evaluation-on-claude/19-09-PLAN.md#L223) requires complete historical/current sections and sends the packet’s full text as context. `skills/ai-kit-gsd-spec-discuss/scripts/decide.py:45,224–258` limits a field to 1,500 characters and rejects code fences. The current v2-flow section alone is over 7,100 characters and contains fences. A pure local validation returned `too_long_context`; a short fenced example returned `code_fence_context`. Rejected items contain no `choice` or `top` (`decide.py:371–383`).
-
-- **HIGH · PARTIALLY-RESOLVED — Harness-failed GREEN cells can pass the stop guard.**  
-  The inherited procedure permits terminal `harness-failed` cells ([19-06-PLAN.md:157–160](.planning/phases/19-evaluation-on-claude/19-06-PLAN.md#L157)). The zero-round shortcut and automated guards reject bare `fail`/`pending`, not `harness-failed` ([19-09-PLAN.md:264–266,306](.planning/phases/19-evaluation-on-claude/19-09-PLAN.md#L264)). Thus passing judges plus an ungraded E cell can carry PASS forward. The reader contract supplies only section, row and cell—not gating/provenance metadata ([19-03-PLAN.md:300–303](.planning/phases/19-evaluation-on-claude/19-03-PLAN.md#L300)).
+- **MEDIUM · NEW — Acceptance forbids the product-fix commits the plan explicitly permits.**  
+  Run rule 6 permits regression-tested product fixes (`19-09-PLAN.md:131–143`), and Task 3 requires replay after a `fix(19-09)` commit (`:348–350`). Yet acceptance requires **every commit made by this plan** to leave the entire curated-config product package unchanged (`:369`). A legitimate fix to `apply.py`, for example, cannot satisfy both instructions.
 
 **Suggestions**
-- Keep the complete packet locally for the owner; send the ladder a fence-free summary within its limit, and handle invalid/unavailable advisory outcomes explicitly.
-- Require every expected gating row to be `pass` or a specifically permitted, provenance-checked carried `fail/unresolved`. Treat harness failure as missing behavioral evidence, not success.
-- Apply the non-gating correction from 19-07 here as well.
+- Apply the unchanged-product assertion to judge/prose commits only. Exempt separately recorded product-fix commits with their regression tests and required evidence replay.
 
-**Risk Assessment: HIGH.** The loop can accept unproven behavior, while its post-cap route cannot reliably produce the answer shape it requires.
+**Risk Assessment: HIGH until 19-08 is corrected; otherwise MEDIUM.** The new local issue is an execution contradiction, not a reason to discard the bounded loop.
 
 ## 19-10
 
-**Summary:** Final gate recording and separate product provenance are improved. Close-out still mandates a false source claim, omits RED from the concrete late-fix rerun procedure, and overstates what its ignored-file comparison detects.
+**Summary:** Product provenance, RED replay and the withdrawn isolation allegation are now correctly handled. A remaining acceptance clause conflicts with the required late-fix evidence refresh.
+
+**Prior HIGH verification**
+- **Late product fixes leaving behavioral evidence stale — resolved in the replay contract** (`19-10-PLAN.md:179–202`).
+- **Concrete procedure omitting RED — resolved.** RED-b always reruns; product-running RED-a cells are selected from retained command records (`:187–198`). This reflects v1’s shared wrappers in `cli.py:85–108`.
+- **False v1 isolation allegation — resolved and formally withdrawn** (`19-10-PLAN.md:235–238`), consistent with temporary HOME and explicit subprocess environments in `tests/test_curated_config_e2e.py:51–78,117–140`.
+- Strict evidence columns and per-file ignored-file comparison are now specified (`19-10-PLAN.md:204–215,266–272`).
 
 **Strengths**
-- The aggregate gates and absent-container-engine error match actual repository targets. See [19-10-PLAN.md:222–225](.planning/phases/19-evaluation-on-claude/19-10-PLAN.md#L222) and `Makefile:74,128,133–138`.
-- Product provenance is correctly separate from the skill digest: executable apply behavior changes independently of documentation (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/apply.py:784–818`). The revised check recognizes this ([19-10-PLAN.md:188–204](.planning/phases/19-evaluation-on-claude/19-10-PLAN.md#L188)).
+- Product revision is checked separately from the skill digest (`19-10-PLAN.md:179–202`).
+- Unresolved decisions and failed gates remain owner-visible rather than silently passing (`:224–233`).
 
 **Concerns**
-- **HIGH · NEW — The required v1 isolation finding is false against current source.**  
-  [19-10-PLAN.md:233–244](.planning/phases/19-evaluation-on-claude/19-10-PLAN.md#L233) mandates evidence and a backlog goal asserting real-environment `ensure-project` tests at two ranges. The first contains mocked imports, fake subprocesses and temporary paths (`tests/test_ai_kit_gsd_curated_config.py:180–217`); the second contains candidate/instruction/frontend unit tests (`:1179–1274`). Actual real integration calls use temporary HOME and explicit child environments in `tests/test_curated_config_e2e.py:51–78,117–140`. Executing the task literally would commit an unsupported defect statement.
-
-- **HIGH · PARTIALLY-RESOLVED — The concrete late-fix procedure refreshes the product header without refreshing RED.**  
-  Run rule 6 requires all previous RED/GREEN/opus cells, but [19-10-PLAN.md:193–204](.planning/phases/19-evaluation-on-claude/19-10-PLAN.md#L193) reruns only matrix, smoke, GREEN and opus before updating the shared pressure-file header. RED-b uses shared product helpers too: `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cli.py:85–108` and `skills/ai-kit-spec-review/ai_kit_spec/gsd_tools.py:262–286`. A late shared-wrapper fix can change the baseline while its old result is presented under the new product revision.
-
-- **MEDIUM · PARTIALLY-RESOLVED — Directory-level ignored status hides new files within existing ignored directories.**  
-  [19-10-PLAN.md:206–213,308–315](.planning/phases/19-evaluation-on-claude/19-10-PLAN.md#L206) fixes the original false positives, but default ignored status reports `.claude/`, `.codegraph/` and `.venv/` as directory entries, matching `.gitignore:4,8–9`. I confirmed this read-only. Adding `.claude/leaked-run.json` need not change either baseline entry, so `comm` detects nothing.
+- **MEDIUM · NEW — Acceptance forbids committing the required late-fix pressure refresh.**  
+  The late-fix branch requires replacing pressure results, superseding rows, refreshing the v1 comparison and updating `product_commit` (`19-10-PLAN.md:184–199`). Those files are included in the plan’s final evidence commit (`:245,301–302`). Task 2 acceptance nevertheless requires that commit to leave **all of `19-PRESSURE-TESTS.md` unchanged** (`:314`). The authorized replay branch cannot satisfy that check.
 
 **Suggestions**
-- Formally reconcile the stale isolation claim before copying it into evidence or backlog.
-- Include previous RED cells in late-fix reruns, or record per-cell product revisions and withhold final-revision comparison claims.
-- Compare individual ignored-file names, at least within writable ignored directories.
+- Keep the no-change assertion for `ROADMAP.md`. Check specifically that the withdrawn isolation allegation was not added, rather than forbidding legitimate pressure-evidence updates.
 
-**Risk Assessment: HIGH.** Final evidence can otherwise misstate both an existing defect and which revision the baseline comparison describes.
+**Risk Assessment: MEDIUM.** The provenance design is sound, but the late-fix branch has contradictory completion criteria.
 
-## Disposition audit and overall assessment
+## Cross-plan disposition audit
 
-**Coverage: 10/10 plans reviewed against revision `b10ff51`. Document type: GSD implementation plans.**
-
-| Plan | Cycle-1 disposition verification |
+| Previously raised HIGH | Cycle-3 assessment |
 |---|---|
-| 19-01 | HOME merging and runtime diagnostic seeding are resolved. Full-plan delivery has an explicit read requirement. Digest schema is coordinated, but completeness remains partial through 19-03. |
-| 19-02 | E’s terminal state and command/result pairing are resolved. B/D cache preservation and descendant cleanup remain partial. |
-| 19-03 | Zero-approval and post-write cases are addressed. Baseline fairness, successful approval, evidence completeness and preserved verdict inputs remain partial as detailed above. |
-| 19-04 | Serialized skill readback and absent-config validation are resolved. |
-| 19-05 | Snapshot lifetime and failure triage are resolved. Product provenance/rerun obligations are present. |
-| 19-06 | Workflow-versus-outcome separation is incorporated. End-state preservation remains partial. |
-| 19-07 | Ordered-step testing and stable rule pins are resolved. Product provenance and rerun obligations are incorporated. |
-| 19-08 | Conflicting-judge aggregation is resolved. Pre-move secret scanning is incorporated; the path-scan command remains partial. |
-| 19-09 | Score-only repair, local v1 comparison packet and unchanged rejected scores are incorporated. GREEN-result acceptance remains partial. |
-| 19-10 | Original ignored-directory false positives and premature snapshot deletion are resolved. Late-fix invalidation remains partial because the concrete procedure omits RED. |
+| Stock dispatch ignores `executor:` | **Addressed by the accepted orchestration contract:** explicit orchestrator-only guards and a session dispatcher restricted to 19-01–04. Stock behavior remains as previously reported in `.claude/gsd-core/workflows/execute-phase/detail/elaboration.md:63–68`. I did not independently execute the session-owned dispatcher. |
+| Delegated prompts omit interfaces | **Addressed:** whole-plan delivery and explicit full-plan-read requirements replace reliance on stock extraction. Stock extraction is still objective/tasks only (`elaboration.md:84–87`). |
+| Digest checker and pressure layout disagree | **Addressed:** one table schema, required digest columns, exact scenario row sets and negative parser tests (`19-03-PLAN.md:327–350,462–478`). |
+| Late product changes invalidate earlier evidence | **Addressed in replay obligations:** separate product provenance plus RED/GREEN/opus/smoke replay (`19-10-PLAN.md:179–202`). The new acceptance contradictions in 19-09/10 must not obstruct that replay. |
 
-The explicit full-plan-read requirements and orchestrator-only guards are accepted mitigations; I am **not re-raising** the stock dispatcher findings. The session-owned dispatcher implementation itself was not available for independent inspection.
+## Overall assessment
 
-**Status: Changes requested. Overall risk: HIGH.**
+**Status: Changes requested. Coverage: 10/10 plans. Overall risk: HIGH.**
 
-The highest-priority corrections are:
-1. Make fixture construction reproducible and pin RED-b’s actual entrypoint.
-2. Make grading establish effective configuration, completed approvals and complete evidence.
-3. Prevent live enumeration from writing real tool configuration.
-4. Make rollback evidence non-vacuous and review-contract failures invalidate attempts.
-5. Correct close-out provenance and the stale isolation statement.
+The revisions close most prior findings. The remaining actionable set is **3 HIGHs and 4 MEDIUMs**:
 
-**Not checked:** live AI runs, real user configuration/credentials, full project gates, or execution of the not-yet-created helper. No repository files were changed.  
-**Residual risk:** unrestricted headless Bash remains detective-controlled, not a filesystem sandbox.
+1. **OPEN HIGH:** effective v1 hook grading still ignores command-line overrides.
+2. **NEW HIGH:** historical RED-b detection bypasses cache isolation and can rewrite real Cursor configuration.
+3. **OPEN HIGH:** dirty/unverifiable timeout or signal reviews can still become waiver-compatible unavailable rows.
+4. **NEW MEDIUMs:** ambient review-config dependency, missing PPID data, and the two contradictory late-fix acceptance assertions.
 
----
+These require narrow contract/test corrections, not another framework or dependency.
 
-## Consensus Summary
-
-Only one reviewer lane ran (`opencode-plan-review`), so the consensus gate does not engage and
-every HIGH below counts. Each finding was checked against the plan text and repo source; the
-orchestrator's verification notes follow.
-
-### Agreed Strengths
-Single reviewer, no cross-reviewer agreement. The reviewer confirmed the cycle-1 fixes for HOME
-merging (19-01), the informational runtime row (19-01), E's terminal state and command/result
-pairing (19-02), skill-reference readback and absent-config validation (19-04), snapshot lifetime
-(19-05), outcome-versus-workflow baselines (19-06), ordered-step pins (19-07), all-live-rows judge
-aggregation (19-08) and separate product provenance (19-10).
-
-### Agreed Concerns (single reviewer; all verified against source)
-HIGH, still unresolved after verification (14):
-- 19-02 B/D: the seeded cache has no `model-catalog.json.fetch-meta.json`, so `inventory`'s
-  `fetch-model-catalog --if-stale` (`catalog_adapter.py` `_fetch_argv`; `cli.py` `_fetch_catalog_external_sources`;
-  `cache.py` `cache_is_stale` returns True for a missing file) always fetches and rewrites the catalog,
-  so the byte-identity self-check cannot hold.
-- 19-02 RED-b: the 7009d22^ SKILL.md entrypoint loop checks `CLAUDE_PLUGIN_ROOT` and `$HOME/.claude/skills`
-  before its own directory, so an installed copy can shadow the worktree script; nothing pins the entrypoint.
-- 19-03 `first_write` counts `ensure-project`, a no-op when a config exists (`config.cjs` `cmdConfigNewProject`
-  returns `already_exists`), so B/D/E disclosure and `apply_after_scripted_answer` can fail a correct run.
-- 19-03 B: a bare Cursor model's vendor is taken as the lane name, so `claude-*` passes
-  `lane_vendors_differ_from_planner` (`vendor.py` infers `anthropic`); the router check accepts the string in
-  `.new` or anywhere in the runner without proving the active hook uses it.
-- 19-03 `grouped_followup_approval` accepts any non-error approval command without matching targets, ids,
-  fingerprint or per-follow-up return codes.
-- 19-03 D: the checks cover removal rows only, not the full diff (SPEC D: "the full diff is shown").
-- 19-03/19-09 evidence gates: `check_digests` needs one live row per section and `cells` silently omits
-  missing rows or columns, so incomplete evidence passes.
-- 19-04: the forced `smoke-placeholder` goes into the empty-candidate `workflow.cross_ai_command` entry and
-  later artifact resolution does not restore a derived command.
-- 19-04: the rollback experiment changes only an entry that gsd-core rejects before any write, so a broken
-  restore routine still passes.
-- 19-05: real-cache `inventory` can run `cursor-agent models`, which rewrites the real Cursor config
-  (`detection.py` `detect_cursor_agent_models` docstring); the plan claims no other writes and the snapshot
-  does not cover it.
-- 19-08: any non-retryable runner status (including `contract_violation`, `git_error`, `git_timeout`) becomes
-  a waiver-compatible `judge unavailable` row.
-- 19-09: the post-cap jev item embeds the full owner packet, which `decide.py` rejects (1500-character cap,
-  no code fences).
-- 19-10: the mandated v1 isolation finding is false against current source: the cited ranges are fake-run
-  and unit tests; real-integration tests already use scratch HOME and explicit env.
-- 19-10: the late-product-fix procedure refreshes `product_commit` in the pressure file without re-running
-  RED cells that use the shared helpers.
-
-Actionable MEDIUM/LOW (11): 19-01 host-parameterized oracle (tier versus model); 19-02 failed model turns
-not gated on return code and terminal result; 19-02 detached `start_new_session` descendants outlive group
-cleanup; 19-02 LOW `plan_io.needs_choice_keys` is defined in `apply.py`; 19-04 smoke drops `--host`; 19-06
-C has no config to copy; 19-06 committed record omits recompute inputs; 19-07 a non-gating `fail` blocks
-completion; 19-08 `grep -l` on a directory without `-r` prints nothing and does not scan; 19-09
-`harness-failed` GREEN cells pass the stop guard (downgraded from HIGH: 19-10 lines 229 and 319 already index
-every `harness-failed` cell as `human_needed`, so the gap is gating, not silent); 19-10 ignored-directory
-entries hide new files in `.claude/`, `.codegraph/`, `.venv/`.
-
-### Divergent Views
-None (single reviewer). Orchestrator adjustment: the reviewer's 19-09 `harness-failed` HIGH is counted as
-MEDIUM per the evidence above.
-
-**Status: Changes requested.**
+**Not checked:** live AI CLIs, real home configuration/credentials, full project gates, or execution of the proposed helper. No files were modified; the working tree remains clean.  
+**Residual risk:** headless Bash is still protected mainly by detective controls, not a filesystem sandbox.
