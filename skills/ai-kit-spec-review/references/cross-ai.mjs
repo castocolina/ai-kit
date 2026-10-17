@@ -2565,7 +2565,8 @@ async function blackBoxSelfTest() {
         },
       },
       {
-        // D-30: a file's content goes before the stdin prompt, and nothing else with --no-preamble.
+        // D-30: a file's content goes before the stdin prompt, and nothing else with --no-preamble;
+        // its leading HTML-comment lines (the guidance file's stamp) never reach the model.
         name: 'prepend-file',
         args: [
           '--prefer', 'pi', '--model-pi', 'fake/echoprompt', '--no-preamble',
@@ -2575,7 +2576,7 @@ async function blackBoxSelfTest() {
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/echoprompt exit=0 .* action=stop$/,
         setup: (c) => {
-          fs.writeFileSync(path.join(c.repo, 'guide.md'), 'PREPEND-MARKER-18-1');
+          fs.writeFileSync(path.join(c.repo, 'guide.md'), '<!-- a -->\n<!-- b -->\nPREPEND-MARKER-18-1');
           return null;
         },
         check: (_r, ctx) => {
@@ -2818,7 +2819,8 @@ async function main(argv) {
       log(`cross-ai: --prepend-file unreadable: ${o.prependFile}`);
       return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
-    body = `${prepended}\n\n${raw}`;
+    // The guidance file's stamp lines are bookkeeping for a human editor, not prompt text.
+    body = `${prepended.replace(/^(?:<!--[^\n]*-->\r?\n)+/, '')}\n\n${raw}`;
   }
   const prompt = body + (o.preamble ? (o.mode === 'exec' ? EXEC_PREAMBLE : REVIEW_PREAMBLE) : '');
   const { outer, inner: innerS, innerDefault } = dl;

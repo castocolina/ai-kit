@@ -176,7 +176,8 @@ raw vendor CLI string; the runtime id is `cursor` (its binaries are `cursor-agen
 Template 3 adds three flags the rendered hook can carry:
 
 - `--outer-timeout <s>` replaces the GSD config lookup and the CONFIG cap as the outer deadline.
-- `--prepend-file <path>` puts that file before the prompt. The guidance file
+- `--prepend-file <path>` puts that file, minus its leading `<!-- … -->` stamp lines, before
+  the prompt. The guidance file
   (`.planning/scripts/cross-ai-guidance.md`) rides this flag, and `--no-preamble` keeps the
   runner's own preamble off, so nothing is said twice.
 - `--codex-sandbox workspace-write` confines a codex exec target: writes stay inside the project
