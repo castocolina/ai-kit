@@ -47,8 +47,8 @@ appended block could in principle land outside what GSD actually extracts.
 A later Step 2 composed that guidance inside a `dispatch-execute` wrapper at the moment of the
 subprocess call. The hook now names the project's own supervised runner instead. Step 2 renders or
 upgrades that runner and the guidance file through curated-config `ensure-runner`; a user-edited
-runner is never
-overwritten and gets a `.new` file plus the printed notes. The guidance (reinforcement with GSD's
+runner is never overwritten (when an upgrade is pending it gets a `.new` file plus the printed
+notes). The guidance (reinforcement with GSD's
 SUMMARY.md format block, tooling guidance, and the soft-confinement sentence for every runtime
 except codex) lands in `.planning/scripts/cross-ai-guidance.md`, which the hook places before the
 prompt with the runner's own preamble off, so nothing is said twice. The hook stays unquoted: GSD
@@ -57,7 +57,8 @@ a literal, not a quoting boundary.
 
 A custom entry (a `command` and no `runtime`) is the one exception to "every subprocess runs
 through the runner": the fixed-argv custom launcher runs it on the same supervision core, and only
-as a reviewer. Exec mode routes it `review_only`, so it never becomes a GSD hook.
+as a reviewer, so it never becomes a GSD hook: with `purpose = "execute"` `resolve-dispatch`
+exits 2, otherwise exec mode skips it as `review_only`.
 
 The underlying guidance functions still live in `ai_kit_spec.dispatch_guidance`
 (framework-agnostic, shared with any future `ai-kit-spec-execute-<other-framework>` adapter) and

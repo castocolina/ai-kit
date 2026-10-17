@@ -15,8 +15,9 @@ description: "Resolves the best available (runtime, model) pair for a GSD (Get S
   frontmatter**, and never put the raw vendor CLI string there — the hook names the project's own
   supervised runner (Step 2), never a raw vendor CLI string. A custom entry (a `command` and no
   `runtime`) is the one exception to "every subprocess runs through the runner": it runs through
-  the fixed-argv custom launcher on the same supervision core, and only as a reviewer. Exec mode
-  routes it `review_only`, so it is never a GSD hook.
+  the fixed-argv custom launcher on the same supervision core, and only as a reviewer, so it is
+  never a GSD hook: with `purpose = "execute"` `resolve-dispatch` exits 2, otherwise exec mode
+  skips it as `review_only`.
 - **Never run `trust-local` without an explicit yes**, and never ask twice in one wave.
 - **Never parse an empty result** — exit 2 from any shim call means STOP and relay stderr.
 
@@ -110,8 +111,9 @@ printf 'RESULT_JSON=%s\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.s
 
 **If the call exits 2, STOP and relay its stderr verbatim** — nothing was written and there is no
 JSON to parse. The causes: `node` is not on PATH, no `gsd-tools.cjs` was found (project-local
-gsd-core first, then the host homes), gsd-tools could not resolve a config path for `$CWD`, or a
-malformed `review-spec.toml`.
+gsd-core first, then the host homes), gsd-tools could not resolve a config path for `$CWD`, a
+malformed `review-spec.toml`, or an entry with `purpose = "execute"` that can never execute (a
+custom `command` entry, grok, or claude with a model outside its alias set).
 
 **If `resolve-dispatch` stderr prints `ignoring untrusted project-local config`**, this decision
 was made from the global config only, and a `native_tier` result may already have written it.
@@ -163,6 +165,9 @@ default runs unmodified). Never schedule a wake for these.
 
 A reviewer or executor is a (runtime, model) pair. Each call runs it natively when its runtime is the current host and the host can select that model; otherwise it runs as a subprocess through the supervised runner. An entry with neither a runtime nor a model is the session default, which the host always runs natively. Today only Claude Code selects a model per call (its sonnet, opus, haiku and fable aliases); every other host runs only its session default natively.
 
+GSD's `native_tier` is the exception: a session default or a claude alias becomes a tier pin
+that GSD's own runtime runs, decided without a host check (D-25).
+
 **Mindset before writing anything here:**
 - Resolve dispatch mode fresh every run, never reuse a cached decision — quota state, installed
   CLIs, and per-plan `cross_ai: true` opt-in can all change between runs, and a stale cached mode
@@ -175,10 +180,10 @@ A reviewer or executor is a (runtime, model) pair. Each call runs it natively wh
   adapter-owned hook from a PRIOR run must never keep dispatching cross-AI just because THIS run
   didn't touch it.
 
-- `native_tier` (either `written` value): this host runs the pair itself, so the resolved mode is
-  NOT cross-AI — run the mode-transition cleanup below before proceeding to Step 3, in case a PRIOR
-  run of this project left an adapter-owned cross-AI hook active that this run's resolution
-  superseded.
+- `native_tier` (either `written` value): GSD's own runtime runs the pair as a tier pin (no host
+  check, D-25), so the resolved mode is NOT cross-AI — run the mode-transition cleanup below
+  before proceeding to Step 3, in case a PRIOR run of this project left an adapter-owned cross-AI
+  hook active that this run's resolution superseded.
   `written=False`/`provenance="existing_gsd_config"`: GSD's own config already carries a genuine
   (non-adapter-owned) value at `model_profile_overrides[runtime][tier]` — a real user pin, honored
   as-is, nothing further to write.
@@ -258,7 +263,8 @@ A reviewer or executor is a (runtime, model) pair. Each call runs it natively wh
   printf 'RESULT_MODE=%s\n' "$RESULT_MODE"
   ```
   A non-zero producer exit, empty guidance, a missing curated shim, or an `ensure-runner` exit of
-  1 (not ready: a user-edited runner gets a `.new` file plus the printed notes) or 2 (error)
+  1 (not ready: a user-edited runner on an older or foreign template gets a `.new` file plus the
+  printed notes) or 2 (error)
   writes nothing: show the printed notes to the user and continue as `fallback_notice` only after
   the cleanup call above exits 0. If that cleanup exits non-zero, or its output names keys in
   `revert_failed`, STOP and show it: an old hook may still be active. Exit 0 writes the hook and
@@ -266,8 +272,9 @@ A reviewer or executor is a (runtime, model) pair. Each call runs it natively wh
   every later step, so Step 3 follows the mode that was actually set up.
 
   **Hook setup.** This skill renders or upgrades the runner and the guidance file through
-  curated-config `ensure-runner`; a user-edited runner is never overwritten and gets a `.new` file
-  instead, with the printed notes. The guidance file goes before the prompt and the runner's own
+  curated-config `ensure-runner`; a user-edited runner is never overwritten: on the current
+  template it is kept and ready, and when an upgrade is pending it gets a `.new` file instead,
+  with the printed notes. The guidance file goes before the prompt and the runner's own
   preamble is off, so nothing is said twice. The hook stays unquoted because GSD expands the stored
   value by word splitting and pathname expansion, never as shell syntax — see `references/dispatch-notes.md`.
 
