@@ -2775,6 +2775,17 @@ class TestSmoke(unittest.TestCase):
         self.assertTrue(ev._asks_user("Reply with an answer for choices 1 and 2."))
         self.assertFalse(ev._asks_user("I replied to the trusted root and applied it."))
         self.assertFalse(ev._asks_user("- **Approve** adds the root."))
+        # 19-09 C green-opus: a listed choice with no question mark
+        cands = {"model_profile_overrides.opencode.opus": ["openai/a", "openai/b", "openai/c"]}
+        offered = (
+            "1. **`model_profile_overrides.opencode.opus`**: `openai/a`, `openai/b` or `openai/c`."
+        )
+        self.assertFalse(ev._asks_user(offered))
+        self.assertTrue(ev._offers_choice(offered, cands))
+        self.assertFalse(
+            ev._offers_choice("`model_profile_overrides.opencode.opus`: `openai/a`.", cands)
+        )
+        self.assertFalse(ev._offers_choice("`openai/a` or `openai/b`.", cands))
         # 19-09 E green-j2: "please" plus a verb
         self.assertTrue(ev._asks_user("Please answer these two."))
         self.assertFalse(ev._asks_user("The result pleases nobody, so I applied it."))
