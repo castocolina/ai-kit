@@ -39,6 +39,10 @@ def _local_spec(argv_cmd: str) -> bytes:
     ).encode()
 
 
+# probe-quota routes every reviewer first: no real binary lookup, listing or runtimes build.
+NO_RUNTIMES = {"which_fn": lambda _name: None, "run_fn": lambda *_a, **_k: None}
+
+
 def _probe_ok():
     return RunnerResult(0, "", {"status": "ok"}, None, False, ["node", "runner"], "")
 
@@ -82,7 +86,7 @@ class TestTrustLifecycle(TrustEnvTestCase):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["probe-quota", "--cwd", self.cwd, "--quota-path", quota_path],
-                            runner_fn=rec, custom_fn=rec)
+                            runner_fn=rec, custom_fn=rec, **NO_RUNTIMES)
         return code, calls, out.getvalue(), err.getvalue()
 
     def test_untrusted_local_probes_nothing_and_warns(self):
@@ -301,7 +305,7 @@ class TestTrustLifecycle(TrustEnvTestCase):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["probe-quota", "--cwd", self.cwd, "--quota-path", quota_path],
-                            runner_fn=rec, custom_fn=rec)
+                            runner_fn=rec, custom_fn=rec, **NO_RUNTIMES)
         self.assertEqual(code, 0)
         self.assertEqual(len(calls), 1)
 

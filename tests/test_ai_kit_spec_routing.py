@@ -26,6 +26,7 @@ from ai_kit_spec.detection import (
     RUNTIMES_SCHEMA_VERSION,
     claude_runtime_fields,
 )
+from ai_kit_spec.runner_dispatch import RunnerResult
 
 
 def _ok(argv, **_kwargs):
@@ -106,6 +107,32 @@ class TestResolveRoutes(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0][0], "/fake/opencode")
             self.assertIn("models", calls[0])
+
+    def test_probe_quota_probes_only_dispatchable_routes(self):
+        with tempfile.TemporaryDirectory() as root:
+            env = self._env(root)
+            self._write_config(env["XDG_CONFIG_HOME"], [
+                {"key": "op-good", "runtime": "opencode", "model": "zen/listed",
+                 "vendor": "opencode"},
+                {"key": "op-bad", "runtime": "opencode", "model": "zen/missing",
+                 "vendor": "opencode"},
+                {"key": "cx", "runtime": "codex", "model": "gpt-x", "vendor": "openai"},
+            ], ["op-good", "op-bad", "cx"])
+            self._write_runtimes(env, self._snapshot(["zen/listed"]), 30)
+            probed = []
+
+            def runner(spec, _prompt, _seams):
+                probed.append(spec.model)
+                return RunnerResult(0, "", {"status": "ok"}, None, False, [], "")
+
+            with mock.patch.dict(os.environ, env, clear=True), \
+                    redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                code = main(["probe-quota", "--cwd", root,
+                             "--quota-path", os.path.join(root, "quota.json")],
+                            env_fn=lambda: dict(env), which_fn=lambda _name: None,
+                            run_fn=_ok, runner_fn=runner)
+            self.assertEqual(code, 0)
+            self.assertEqual(probed, ["zen/listed"])
 
     def test_bad_model_never_spawns(self):
         with tempfile.TemporaryDirectory() as root:
@@ -300,7 +327,12 @@ class TestTargetedRefresh(unittest.TestCase):
     def _env(self, root):
         cache = os.path.join(root, "cache")
         os.makedirs(cache, exist_ok=True)
-        return {"HOME": os.path.join(root, "home"), "XDG_CACHE_HOME": cache}
+        env = {"HOME": os.path.join(root, "home"), "XDG_CACHE_HOME": cache}
+        # The opencode lister makes its private dir from os.environ, not the routed env.
+        patcher = mock.patch.dict(os.environ, env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return env
 
     def _context(self, env, which_fn, run_fn):
         seams = routing.RuntimesSeams(which_fn=which_fn, run_fn=run_fn, popen_fn=_ok,

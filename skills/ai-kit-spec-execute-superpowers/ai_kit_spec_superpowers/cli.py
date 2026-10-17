@@ -32,7 +32,13 @@ from ai_kit_spec.detection import (
 )
 from ai_kit_spec.dispatch import write_resumable_state as _write_resumable_state_default
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
-from ai_kit_spec.routing import RuntimesSeams, host_context, route_all, unroutable_quota
+from ai_kit_spec.routing import (
+    RuntimesSeams,
+    host_context,
+    probe_keys,
+    route_all,
+    unroutable_quota,
+)
 
 from ai_kit_spec_superpowers.dispatch_injection import (
     BuildInjectionOptions,
@@ -147,12 +153,6 @@ def _compute_ladder_or_exit(
         raise
 
 
-def _probe_keys(candidates: list, routes: dict) -> list:
-    """Only a subprocess or unverified candidate is quota-probed. A native route has nothing to
-    shell out to, and a skip route is permanent, so probing either would only write a stale row."""
-    return [c["key"] for c in candidates if routes.get(c["key"]) in ("subprocess", "unverified")]
-
-
 def _native_probe_rows(candidates: list, routes: dict) -> dict:
     """Native rows to drop from the in-memory quota. A runtime-less session default is native too,
     but it was never a subprocess, so a row a caller stored for it is real quota and stays."""
@@ -172,7 +172,7 @@ def _refresh_quota_for_candidates(
             {"key": c["key"], "model": c["model"], "vendor": c["vendor"], "runtime": c["runtime"],
              "command": c.get("command")} for c in candidates
         ]},
-        _probe_keys(candidates, routes), existing_quota, QUOTA_TTL_SECONDS)
+        probe_keys([c["key"] for c in candidates], routes), existing_quota, QUOTA_TTL_SECONDS)
     deps.cache_write_json_fn(quota_path, quota)
     return unroutable_quota(quota, _native_probe_rows(candidates, routes))
 

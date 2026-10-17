@@ -4332,8 +4332,9 @@ class TestMainCli(unittest.TestCase):
             with mock.patch.object(os, "environ", {"HOME": home, "CLAUDECODE": "1"}):
                 self.assertEqual(main(
                     ["probe-quota", "--cwd", cwd, "--quota-path", quota_path],
-                    env_fn=lambda: {"CLAUDECODE": "1"},
+                    env_fn=lambda: {"HOME": home, "CLAUDECODE": "1"},
                     runner_fn=fake_runner, custom_fn=fake_custom,
+                    which_fn=lambda _name: None, run_fn=lambda *_a, **_k: None,
                 ), 0)
             fake_runner.assert_not_called()
             fake_custom.assert_not_called()
@@ -4364,7 +4365,8 @@ class TestMainCli(unittest.TestCase):
             with mock.patch.object(os, "environ", env):
                 code = main(
                     ["probe-quota", "--cwd", cwd, "--quota-path", quota_path],
-                    custom_fn=fake_custom,
+                    custom_fn=fake_custom, env_fn=lambda: dict(env),
+                    which_fn=lambda _name: None, run_fn=lambda *_a, **_k: None,
                 )
             self.assertEqual(code, 0)
             written = cache_read_json(quota_path)

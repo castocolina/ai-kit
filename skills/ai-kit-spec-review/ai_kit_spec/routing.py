@@ -34,6 +34,9 @@ SKIP_ROUTES = frozenset({
     "bad_model", "no_inventory", "not_installed", "unknown_runtime", "no_model", "review_only",
 })
 
+# Routes worth a quota probe: something will actually be spawned for them.
+PROBE_ROUTES = frozenset({"subprocess", "unverified", "custom"})
+
 _REFRESHED: set[str] = set()
 
 
@@ -172,6 +175,12 @@ def route(entry: RouteInput, host: str, mode: str, inventory: Inventory) -> str:
     if mode == "exec" and RUNTIMES[runtime].review_only:
         return "review_only"
     return _route_inventory(entry, inventory)
+
+
+def probe_keys(keys, routes: Mapping[str, str]) -> list:
+    """The keys a quota probe may spawn for. A native route has nothing to shell out to, and a
+    skip route is permanent, so probing either would only spawn for nothing or write a stale row."""
+    return [key for key in keys if routes.get(key) in PROBE_ROUTES]
 
 
 def unroutable_quota(quota: dict, routes: Mapping[str, str]) -> dict:

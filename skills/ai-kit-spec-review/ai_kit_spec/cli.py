@@ -81,7 +81,7 @@ from ai_kit_spec.review_reports import (
     report_status,
 )
 from ai_kit_spec.reviewer_dispatch import ReviewerDispatchSpec, ReviewerSeams, dispatch_reviewer
-from ai_kit_spec.routing import RuntimesSeams, host_can_select
+from ai_kit_spec.routing import RuntimesSeams
 from ai_kit_spec.runner_dispatch import (
     RunnerSpec,
     build_runner_argv,
@@ -647,12 +647,8 @@ def _cmd_apply_heuristic_correction(args: argparse.Namespace, deps: CliDeps) -> 
 
 def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
     config = cfg_resolve(args.cwd, dict(os.environ))
-    ladder = config.get("policy", {}).get("ladder", [])
-    host = detect_current_runtime(deps.env_fn())
-    reviewers = {r.get("key"): r for r in config.get("reviewers", [])}
-    ladder = [key for key in ladder
-              if not host_can_select(reviewers.get(key, {}).get("runtime"),
-                                     reviewers.get(key, {}).get("model", ""), host)]
+    routes = _route_reviewers(config, deps)
+    ladder = routing.probe_keys(config.get("policy", {}).get("ladder", []), routes)
     existing = cache_read_json(args.quota_path) or {}
     updated = refresh_quota_cache(
         config, ladder, existing, QUOTA_TTL_SECONDS, seams=deps.probe_seams(),
