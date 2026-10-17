@@ -236,19 +236,23 @@ class _ProbeRun(NamedTuple):
     detail: str
 
 
-def _collecting_seams(seams: ProbeSeams, lines: list[str]) -> RunnerSeams:
-    """Stderr lines land in `lines`; a caller's print_fn, when set, sees them too."""
-    if seams.print_fn is None:
-        return RunnerSeams(env_fn=seams.env_fn, print_fn=lines.append)
+def _collecting_seams(seams: ProbeSeams, lines: list[str], cwd: str) -> RunnerSeams:
+    """Stderr lines land in `lines`; a caller's print_fn, when set, sees them too.
+
+    The child's git search stops at `cwd`: a TMPDIR inside a work tree must not turn the
+    probe into a whole-repo git check (D-34)."""
+    def env() -> dict:
+        return {**seams.env_fn(), "GIT_CEILING_DIRECTORIES": os.path.dirname(cwd)}
 
     emit = seams.print_fn
-    assert emit is not None
+    if emit is None:
+        return RunnerSeams(env_fn=env, print_fn=lines.append)
 
     def _both(line: str) -> None:
         lines.append(line)
         emit(line)
 
-    return RunnerSeams(env_fn=seams.env_fn, print_fn=_both)
+    return RunnerSeams(env_fn=env, print_fn=_both)
 
 
 def _probe_call(resolved, prompt, seams, runner_seams, cwd):
@@ -265,7 +269,7 @@ def _run_probe(resolved: "ResolvedReviewer", prompt: str, seams: ProbeSeams) -> 
     lines: list[str] = []
     cwd = tempfile.mkdtemp(prefix="aikit-probe-")
     try:
-        result = _probe_call(resolved, prompt, seams, _collecting_seams(seams, lines), cwd)
+        result = _probe_call(resolved, prompt, seams, _collecting_seams(seams, lines, cwd), cwd)
     finally:
         shutil.rmtree(cwd, ignore_errors=True)
     return _ProbeRun(result, "\n".join(lines))

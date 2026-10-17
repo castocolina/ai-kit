@@ -3361,6 +3361,18 @@ class TestProbeReviewerQuota(unittest.TestCase):
         self.assertFalse(os.path.exists(seen["cwd"]))
         self.assertFalse(os.path.isdir(os.path.join(seen["cwd"], ".git")))
 
+    def test_probe_git_search_stops_at_its_private_cwd(self):
+        seen = {}
+
+        def fake_runner(spec, prompt, seams):
+            del prompt
+            seen["cwd"] = spec.cwd
+            seen["ceiling"] = seams.env_fn().get("GIT_CEILING_DIRECTORIES")
+            return _probe_result(None, "ok")
+
+        probe_reviewer_quota(self._codex(), seams=ProbeSeams(runner_fn=fake_runner))
+        self.assertEqual(seen["ceiling"], os.path.dirname(seen["cwd"]))
+
     def test_session_default_is_available_without_a_probe(self):
         resolved = ResolvedReviewer(
             key="session-default", model="", vendor="",
