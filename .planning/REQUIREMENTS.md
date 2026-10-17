@@ -54,13 +54,13 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 - [x] **APP-02**: `apply --dry-run` validates every key against the host gsd-core's valid keys and prints a diff without writing
 - [x] **APP-03**: `apply` backs up to `config.json.bak-<ts>`, writes only through `gsd-tools` `config-new-project` / `config-set`, reconciles keys `config-new-project` copied from global defaults against the plan, and on any failure restores the backup and names the failing key, with an apply marker (18 D-40) and `--inventory` digest check (18 D-42) (amended 2026-10-15, 18-22)
 - [x] **APP-04**: Follow-ups (gsd-core's own installer pinned to the resolved version with local scope, `npx -y @opengsd/gsd-core@<version> --<host> --local`; `effort sync --apply`) run only after one grouped user approval; `/gsd-map-codebase` is only recommended *(amended 2026-10-14: the bare `gsd` binary is a different package)*
-- [ ] **APP-05**: After `apply`, `gsd-tools resolve-model <agent>` with `GSD_RUNTIME=<host>` returns the planned model for all 35 agents (integration test against the real gsd-tools)
+- [x] **APP-05**: After `apply`, `gsd-tools resolve-model <agent>` with `GSD_RUNTIME=<host>` returns the planned model for all 35 agents (integration test against the real gsd-tools)
 
 ### Evaluation and Live Validation
 
-- [ ] **EVAL-01**: SKILL.md rewritten for the four-question + review flow (already v2-primary since Phase 18 EVAL-06; Phase 19 closes the review-pass and never-skip gaps RED finds — Amended 2026-10-17 (19-RESEARCH R-1)); passes writing-skills RED/GREEN pressure scenarios B (Claude Rigorous with cross-AI), C (opencode host with routers, no catalog), D (existing v1-written config), E ("just apply it" pressure); RED baselines = no skill, plus v1 SKILL.md on B/D (Phase 19 D-01/D-02; cursor/pi scenarios moved to Phases 21/22)
-- [ ] **EVAL-02**: `/skill-judge` runs as part of code review; SKILL.md scores ≥96/120 with no Critical/Important findings
-- [ ] **EVAL-03**: Live smoke on the claude host — `inventory` + `recommend` + `apply` (dry-run, then real on a scratch project)
+- [x] **EVAL-01**: SKILL.md rewritten for the four-question + review flow (already v2-primary since Phase 18 EVAL-06; Phase 19 closes the review-pass and never-skip gaps RED finds — Amended 2026-10-17 (19-RESEARCH R-1)); passes writing-skills RED/GREEN pressure scenarios B (Claude Rigorous with cross-AI), C (opencode host with routers, no catalog), D (existing v1-written config), E ("just apply it" pressure); RED baselines = no skill, plus v1 SKILL.md on B/D (Phase 19 D-01/D-02; cursor/pi scenarios moved to Phases 21/22)
+- [x] **EVAL-02**: `/skill-judge` runs as part of code review; SKILL.md scores ≥96/120 with no Critical/Important findings
+- [x] **EVAL-03**: Live smoke on the claude host — `inventory` + `recommend` + `apply` (dry-run, then real on a scratch project)
 - [ ] **EVAL-04**: Live smoke on the codex host, including confirmation of the codex session env signal
 - [ ] **EVAL-05**: Live smoke on the opencode host, including whether the opencode review lane is usable from an opencode host
 - [x] **EVAL-06**: v2 subcommands coexist with the unchanged v1 CLI (no module removal — Phase 18 D-08); v2 registered in all gates; `make test` (v1 tests still passing) and `make validate` green; README row updated; SKILL.md labels cursor and pi "not live-validated" until EVAL-07/EVAL-08 pass
@@ -163,10 +163,10 @@ None deferred beyond v1.3 at definition time.
 | APP-03 | Phase 18 | Complete |
 | APP-04 | Phase 18 | Complete |
 | EVAL-06 | Phase 18 | Complete |
-| EVAL-01 | Phase 19 | Pending |
-| EVAL-02 | Phase 19 | Pending |
-| EVAL-03 | Phase 19 | Pending |
-| APP-05 | Phase 19 | Pending |
+| EVAL-01 | Phase 19 | Complete |
+| EVAL-02 | Phase 19 | Complete |
+| EVAL-03 | Phase 19 | Complete |
+| APP-05 | Phase 19 | Complete |
 | EVAL-04 | Phase 20 | Pending |
 | EVAL-05 | Phase 20 | Pending |
 | EVAL-07 | Phase 21 | Pending |

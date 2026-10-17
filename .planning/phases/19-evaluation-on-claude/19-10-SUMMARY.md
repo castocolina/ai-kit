@@ -9,6 +9,7 @@ key-files:
     - .planning/phases/19-evaluation-on-claude/19-SKILL-JUDGE.md (JUDGED_COMMIT, owner-review index)
     - tests/gsd_curated_eval.py, tests/test_gsd_curated_eval.py (d0edb4f gate fixes)
 orchestrator_verify: ""
+orchestrator_verify: "make test/validate/e2e-docker rc 0 (after d0edb4f); JUDGED_COMMIT 86ad793; digests ok; product_commit current; fields ok; scan 0; index 5; leak none; stray none; ROADMAP untouched"
 ---
 
 # Plan 19-10 Summary: phase gates and owner-review index
