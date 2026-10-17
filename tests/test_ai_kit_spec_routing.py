@@ -205,6 +205,37 @@ class TestResolveRoutes(unittest.TestCase):
             self.assertEqual(result[0]["key"], "session-default")
             self.assertEqual(result[0]["route"], "native")
 
+    def test_saved_session_default_round_trips_into_dispatch_reviewer(self):
+        """V2: a saved session default resolves native and dispatch-reviewer spawns nothing."""
+        from ai_kit_spec import detection
+        with tempfile.TemporaryDirectory() as root:
+            env = self._env(root)
+            self._write_config(env["XDG_CONFIG_HOME"], [{"key": "sd", "model": ""}], ["sd"])
+            code, stdout, stderr = self._resolve(root, env, _ok)
+            self.assertEqual(code, 0, stderr)
+            result = json.loads(stdout)
+            self.assertEqual([(r["key"], r["model"], r["route"]) for r in result],
+                             [("sd", "", "native")])
+            reviewers = os.path.join(root, "reviewers.json")
+            prompt = os.path.join(root, "prompt.txt")
+            with open(reviewers, "w", encoding="utf-8") as handle:
+                handle.write(stdout)
+            with open(prompt, "w", encoding="utf-8") as handle:
+                handle.write("review this")
+
+            def never(*_args):
+                raise AssertionError("a native session default must not spawn")
+
+            skip = detection.CodegraphProbe(False, False, None, "skip")
+            err = io.StringIO()
+            with mock.patch.object(detection, "probe_codegraph", return_value=skip), \
+                    redirect_stdout(io.StringIO()), redirect_stderr(err):
+                code = main(["dispatch-reviewer", "--reviewers-json", reviewers, "--index", "0",
+                             "--prompt-file", prompt, "--timeout-tiers", "600"],
+                            runner_tiers_fn=never, custom_fn=never)
+            self.assertEqual(code, 1)
+            self.assertIn("routes native", err.getvalue())
+
     def test_cache_missing_builds_once_without_targeted_refresh(self):
         with tempfile.TemporaryDirectory() as root:
             env = self._env(root)
