@@ -9,8 +9,8 @@ description: Curated GSD `.planning/config.json` setup for a target project. v2 
 
 This skill wraps `ai-kit-gsd-curated-config.py`. **Primary path:** the v2 pipeline
 (`inventory` → `recommend` → `plan-set`/`plan-unset` → `apply` → follow-up approval).
-**Secondary path:** the kept v1 flow (one `model_profile` question plus fixed presets) — see
-[v1 path](#v1-path-kept-secondary).
+**Secondary path:** the kept v1 flow (one `model_profile` question plus fixed presets) — read
+[`references/v1-path.md`](references/v1-path.md) only when running it.
 
 Config keys are written only through gsd-tools (`config-set` / `config-new-project`, via the
 shared `ai_kit_spec.gsd_tools` wrappers). Two writes are not config keys: the runner script
@@ -41,17 +41,19 @@ Resolve once per invocation, in one Bash call, and record the printed path. Shel
 do not survive between tool calls: write that absolute path wherever `"$ENTRYPOINT"` appears.
 
 ```bash
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-gsd-curated-config}" \
+for d in "$(dirname "<absolute path to THIS SKILL.md>")" \
+         "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-gsd-curated-config}" \
          "$HOME/.claude/skills/ai-kit-gsd-curated-config" \
          "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-gsd-curated-config" \
-         "$HOME/.agents/skills/ai-kit-gsd-curated-config" \
-         "$(dirname "<absolute path to THIS SKILL.md>")"; do
+         "$HOME/.agents/skills/ai-kit-gsd-curated-config"; do
   [ -f "$d/ai-kit-gsd-curated-config.py" ] && { printf '%s\n' "$d/ai-kit-gsd-curated-config.py"; break; }
 done
 ```
 
-If none exists, stop — the skill is not installed. The fifth candidate covers a checkout:
-substitute the directory containing this `SKILL.md`.
+Substitute the directory containing this `SKILL.md` into the first candidate: the script beside
+the instructions you are following always wins, so an older install elsewhere (one without
+`ensure-runner`, say) never runs under these instructions. The installed locations are only a
+fallback when that directory has no script. If none exists, stop — the skill is not installed.
 
 ## Run the v2 flow
 
@@ -160,61 +162,44 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
   If a marker remains, the next `apply` refuses (exit 2) and prints the recovery steps
   recorded in it (the dry run does not check the marker).
 - **Runner `git_timeout` or `git_error` status** (git could not read the work tree): claim
-  nothing about its state, and report the status line only. There is no fallback to another CLI
-  after a CLI has already run. **`tree=unknown`** on a run outside any git work tree means the
-  CLI ran without the check: report that, and do not read it as a clean or dirty tree.
+  nothing about its state, and report the status line only. After that status, or once a CLI
+  has run outside a git work tree, the runner tries no other CLI: nothing proves the first one
+  wrote nothing. (It moves to the next runner in the prefer order only after a fallback status
+  on a verified-clean tree, `no_change` for example.) **`tree=unknown`** on a run outside any git
+  work tree means the CLI ran without the check: report that, and do not read it as a clean or
+  dirty tree.
 - **Effort sync** is not offered when the inventory points at a workstream config (gsd-core
   sync reads only the root config).
 
 ## Cross-AI execution
 
-Apply sets `workflow.cross_ai_command` to `node .planning/scripts/cross-ai.mjs` and renders
-the runner from the bundled template (template 3). The hook is a runtime id plus a model, never a
-raw vendor CLI string; the runtime id is `cursor` (its binaries are `cursor-agent` and a bare
-`agent` only when that binary's real path has the basename `cursor-agent`).
+v2 `apply` sets `workflow.cross_ai_command` to the bare `node .planning/scripts/cross-ai.mjs` and
+renders the runner from the bundled template (template 3); the runner reads its prefer order and
+models from its own CONFIG. The hook names the runner, never a raw vendor CLI string.
 
-Template 3 adds three flags:
+**Permissions depend on which flow wrote the hook — say which one applies:**
 
-- `--outer-timeout <s>` replaces the GSD config lookup and the CONFIG cap as the outer deadline.
-  The review lane passes it; the GSD hook does not, so the live timeout lookup below applies.
-- `--prepend-file <path>` puts that file, minus its leading `<!-- … -->` stamp lines, before
-  the prompt. The guidance file
-  (`.planning/scripts/cross-ai-guidance.md`) rides this flag, and `--no-preamble` keeps the
-  runner's own preamble off, so nothing is said twice.
-- `--codex-sandbox workspace-write` confines a codex exec target: writes stay inside the project
-  dir plus `/tmp` and `$TMPDIR`, which workspace-write always allows. Whether `.git` is writable
-  under it is unverified. Every other exec target runs with full permissions (no sandbox, no ask
-  mode); the guidance it receives is prose, not a boundary.
+- **v2 `apply` (this flow):** the bare hook passes no `--codex-sandbox`, so **every exec target,
+  codex included, runs with full permissions** (codex with `--dangerously-bypass-approvals-and-sandbox`).
+  It also passes no `--prepend-file`/`--no-preamble`: the runner's own preamble is the only
+  guidance. Never describe a v2-configured codex target as sandboxed.
+- **v1 `apply-execution`** and **`ai-kit-spec-execute-gsd`'s hook** name one runtime and model
+  and add `--codex-sandbox workspace-write` for codex: writes stay inside the project dir plus
+  `/tmp` and `$TMPDIR` (`.git` writability unverified). Every other exec target still runs with
+  full permissions. Only `ai-kit-spec-execute-gsd`'s hook also adds `--no-preamble --prepend-file
+  .planning/scripts/cross-ai-guidance.md`, whose write-only-inside-the-project sentence is prose,
+  not a boundary.
 
-**Runner upgrade.** `ensure-runner` renders or upgrades the project runner and, with
-`--guidance-file`, the guidance file. It never overwrites a user-edited runner, and readiness
-comes from the JSON it prints (`ready`, `runner`, `notes`), not from whether a `.new` file
-exists. A user-edited runner already on the current template is kept as-is and reported ready,
-with no `.new` file. An edited runner on an older or foreign template gets a `.new` file plus the
-printed notes and is not ready until that file is merged by hand. v1
-`apply-execution` writes the runner command (`node .planning/scripts/cross-ai.mjs …`) only when
-that render is ready. After every external dispatch, print the `AIKIT-XAI status=…` line from
-stderr **verbatim**.
+After every external dispatch, print the `AIKIT-XAI status=…` line from stderr **verbatim**.
 
 **Bare profile by default** (pi `--no-skills --no-extensions`, opencode with Claude-skill
 loading off). The opencode bare profile is **partial**: `~/.agents/skills` and
 `~/.config/opencode/skills` still load — say so.
 
-**Live timeout:** the runner reads `workflow.cross_ai_timeout` from `.planning/config.json`,
-or from `.planning/workstreams/$GSD_WORKSTREAM/config.json` when `GSD_WORKSTREAM` is set, and
-uses the smaller of that value and the timeout baked in at apply.
-
-**Opt-in skills and MCP servers:** hand-edit the generated script's CONFIG `extraArgs` per
-target. The next apply then writes `cross-ai.mjs.new` instead of overwriting the live runner.
-
-**`.new` is not active:** the live runner keeps its old CONFIG and apply reports
-`script.active: false`. Merge `.new` by hand (keep customizations), check the **active**
-runner (the runner resolves its config from its cwd, so run it inside the target), then
-delete `.new`:
-
-```bash
-cd <target> && node .planning/scripts/cross-ai.mjs --print-argv
-```
+**`.new` is not active:** a user-edited runner is never overwritten; apply writes
+`cross-ai.mjs.new` and reports `script.active: false`. Never treat `.new` as live. **Read
+[`references/runner.md`](references/runner.md) when** a runner upgrade, a `.new` merge,
+`ensure-runner`, the template flags, the live timeout, or hand-edited CONFIG `extraArgs` comes up.
 
 ## Skills
 
@@ -245,42 +230,6 @@ cd <target> && node .planning/scripts/cross-ai.mjs --print-argv
 | effort sync | Skipped for workstream configs; `--config-dir <project>/<host dir>` value **unverified** |
 | local gsd root | `.opencode/gsd-core` install root **unverified** |
 
-## v1 path (kept, secondary)
-
-One curated question (`model_profile`) plus detected and preset steps. Use it only for a
-project v2 has never configured. Order and safeguards:
-
-1. `ensure-project` first, always: without it `config-set` silently creates a sparse
-   one-key config.
-2. `apply-profile`, then `apply-critical-agents`.
-3. Run each `detect-*-candidate`, show the result, and pass its `{cli, model}` through
-   unchanged: `apply-execution` flags are optional (omit both when nothing matched);
-   `apply-review` flags are required.
-4. `detect-claude-md-path`: skip `apply-claude-md-path` when it prints `null`.
-5. `detect-frontend`, then `apply-workflow-defaults` with that boolean for both UI flags.
-6. `apply-execution` can exit 0 without configuring execution. Read its JSON:
-   `cross_ai_command_written` false with a `degraded_reason` (`runner_not_ready`,
-   `no_candidate`, `no_model`, `unsafe_hook_token`, `no_builder`) means the command was left
-   absent or unchanged. Report the reason and the printed notes; for `runner_not_ready`, fix the
-   runner `ensure-runner` reported and re-run before telling the user execution is configured.
-   `unsafe_hook_token`: the model id holds a character GSD's unquoted hook would split or glob
-   (nothing was rendered; pick another id). `no_builder`: the `ai-kit-spec-review` sibling is
-   missing.
-
-```bash
-python3 "$ENTRYPOINT" ensure-project --project-dir <target>
-python3 "$ENTRYPOINT" apply-profile --project-dir <target> --profile <profile>
-python3 "$ENTRYPOINT" apply-critical-agents --project-dir <target>
-python3 "$ENTRYPOINT" detect-execution-candidate
-python3 "$ENTRYPOINT" apply-execution --project-dir <target> --cli <detected cli> --model <detected model>
-python3 "$ENTRYPOINT" detect-review-candidate
-python3 "$ENTRYPOINT" apply-review --project-dir <target> --cli <detected cli> --model <detected model>
-python3 "$ENTRYPOINT" detect-claude-md-path --project-dir <target>
-python3 "$ENTRYPOINT" apply-claude-md-path --project-dir <target> --path <detected path>
-python3 "$ENTRYPOINT" detect-frontend --project-dir <target>
-python3 "$ENTRYPOINT" apply-workflow-defaults --project-dir <target> --ui-phase <true|false> --ui-review <true|false>
-```
-
 ## Subcommand reference
 
 | Subcommand | Required flags | Role |
@@ -292,7 +241,7 @@ python3 "$ENTRYPOINT" apply-workflow-defaults --project-dir <target> --ui-phase 
 | `apply` | `--plan`, `--inventory`, `--project-dir` | Write config + runner (`--dry-run` previews) |
 | `followups` | `--plan`, `--inventory`, `--project-dir` | List, or `--approve` the listed commands |
 | `ensure-runner` | `--cwd` (`--guidance-file <path>` or `-` for stdin, optional) | Render or upgrade `.planning/scripts/cross-ai.mjs`; prints JSON `{ready, runner, guidance, notes}`, exit 0 ready, 1 not ready, 2 on error. Readiness is the `ready` field: an edited current-template runner is kept ready, an edited older or foreign one gets `.new` and is not ready |
-| v1 | `--project-dir`, except the two `detect-*-candidate` (no flags) | See the v1 path |
+| v1 | `--project-dir`, except the two `detect-*-candidate` (no flags) | See `references/v1-path.md` |
 
 ## NEVER
 
@@ -326,6 +275,11 @@ python3 "$ENTRYPOINT" apply-workflow-defaults --project-dir <target> --ui-phase 
 
 ## Reporting rule
 
-Report inventory, recommend and apply JSON inline, in conversation order — no separate report
-file. For cross-AI dispatches, include the verbatim `AIKIT-XAI` line. Flag every
-**unverified** note or `effect` instead of upgrading it to fact.
+Report each step as a short structured summary in conversation order — no separate report file,
+and no full inventory/recommend/apply JSON pasted by default (the candidate catalog alone can
+bury the decisions). The summary must still carry, verbatim: every warning, every open
+`needs_choice` with its candidates, every **unverified** note or `effect` flag (never upgraded to
+fact), every refusal or degraded reason, and the exact rows an approval is bound to (the
+follow-up argv/cwd list and its fingerprint). Show the full JSON when the user asks, and keep the
+files in `$WORK` so it stays available. For cross-AI dispatches, include the verbatim `AIKIT-XAI`
+line.

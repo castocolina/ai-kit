@@ -2266,8 +2266,16 @@ _SCRIPT_NAME = "ai-kit-gsd-curated-config.py"
 
 
 def _skill_md_text() -> str:
-    with open(_SKILL_MD, encoding="utf-8") as handle:
-        return handle.read()
+    """SKILL.md plus its references/*.md, where the v1 path and runner details live."""
+    paths = [_SKILL_MD]
+    refs = os.path.join(os.path.dirname(_SKILL_MD), "references")
+    if os.path.isdir(refs):
+        paths += sorted(os.path.join(refs, n) for n in os.listdir(refs) if n.endswith(".md"))
+    texts = []
+    for path in paths:
+        with open(path, encoding="utf-8") as handle:
+            texts.append(handle.read())
+    return "\n".join(texts)
 
 
 _ENTRYPOINT = '"$ENTRYPOINT"'
@@ -2336,11 +2344,14 @@ class TestSkillDocCommands(unittest.TestCase):
             self.assertNotIn(phrase, text)
 
     def test_v2_is_primary(self) -> None:
-        headings = re.findall(r"^## (.+)$", _skill_md_text(), re.MULTILINE)
-        flow_idx = next(i for i, title in enumerate(headings) if "flow" in title.lower())
-        v1_idx = next(i for i, title in enumerate(headings) if "v1" in title.lower())
-        self.assertLess(flow_idx, v1_idx)
-        self.assertIn("v2", headings[flow_idx].lower())
+        """The v2 flow is SKILL.md's own section; v1 lives only in a linked reference."""
+        with open(_SKILL_MD, encoding="utf-8") as handle:
+            skill = handle.read()
+        headings = re.findall(r"^## (.+)$", skill, re.MULTILINE)
+        flow = next(title for title in headings if "flow" in title.lower())
+        self.assertIn("v2", flow.lower())
+        self.assertFalse([title for title in headings if "v1" in title.lower()])
+        self.assertIn("references/v1-path.md", skill)
 
     def test_required_statements(self) -> None:
         text = _skill_md_text()

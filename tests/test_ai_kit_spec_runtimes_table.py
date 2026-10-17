@@ -635,6 +635,8 @@ REFERENCES = [
     "skills/ai-kit-spec-execute-superpowers/references/escalation.md",
     "skills/ai-kit-spec-execute-superpowers/references/design-notes.md",
     "skills/ai-kit-spec-execute-gsd/references/dispatch-notes.md",
+    "skills/ai-kit-gsd-curated-config/references/runner.md",
+    "skills/ai-kit-gsd-curated-config/references/v1-path.md",
 ]
 _EXEC_SKILLS = (
     "skills/ai-kit-spec-execute-superpowers/SKILL.md",
