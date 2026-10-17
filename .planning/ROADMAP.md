@@ -440,9 +440,9 @@ model exactly as planned.
   4. After `apply`, `gsd-tools resolve-model <agent>` with `GSD_RUNTIME=claude` returns the
      planned model for all 35 agents, proven against the checkout-local gsd-core (1.16.x),
      version recorded in `19-SMOKE.md` (Amended 2026-10-17 (19-RESEARCH R-7)).
-**Plans**: 1/10 plans executed (sequential waves 1-10)
+**Plans**: 2/10 plans executed (sequential waves 1-10)
 - [x] 19-01-PLAN.md — eval helper: snapshot, digest, oracle + resolve-model matrix e2e (cross-AI)
-- [ ] 19-02-PLAN.md — pressure fixtures B-E, headless `claude -p` runner, eval files (cross-AI)
+- [x] 19-02-PLAN.md — pressure fixtures B-E, headless `claude -p` runner, eval files (cross-AI)
 - [ ] 19-03-PLAN.md — per-expectation grader with non-vacuity pairs, secret scan (cross-AI)
 - [ ] 19-04-PLAN.md — `smoke` subcommand: repo-root refusal, fault injector, placeholder evidence (cross-AI)
 - [ ] 19-05-PLAN.md — live smoke from the claude host -> 19-SMOKE.md (orchestrator)
