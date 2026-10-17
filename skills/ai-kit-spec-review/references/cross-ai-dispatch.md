@@ -92,8 +92,9 @@ Runs once per invocation, after Step 0.6.
    # "ai-kit-model-discovery-config".
    FEATURE_SLUG="$(basename "<first DOC_PATHS entry>" .md | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}-//')"
    RUN_TMP_DIR="$(mktemp -d -t "${REPO_NAME}-${BRANCH_SLUG}-${FEATURE_SLUG}-iter-XXXXXX")"
+   printf '%s\n' "$RUN_TMP_DIR"
    ```
-   Record `RUN_TMP_DIR`'s printed absolute path in this skill's own working notes — **not** a
+   Record the absolute path this block prints in this skill's own working notes — **not** a
    shell environment variable. Every `Bash` tool call in this harness starts a fresh shell, so
    a variable set in one call is gone by the next one; from here on, substitute `RUN_TMP_DIR`'s
    literal absolute path into every command and every prose reference below, exactly the way
@@ -109,8 +110,8 @@ Runs once per invocation, after Step 0.6.
 2. **If `--no-cross-ai` was requested (or `TOOLS_PY` is missing, point 0
    above)**: set `REVIEWER_LIST` directly, in-context, to the single-entry
    array `[{"key": "session-default", "model": "", "vendor": "", "runtime": null,
-   "command": null, "extra": {}}]` — `ai-kit-spec.py`'s
-   `NO_CONFIG_FALLBACK` constant's exact shape. **Do not run
+   "command": null, "extra": {}, "route": "native"}]` — `ai-kit-spec.py`'s
+   `NO_CONFIG_FALLBACK` constant's shape plus the `native` route Step 1 branches on. **Do not run
    `resolve-reviewers`, `probe-quota`, or
    `detect-runtimes`, and do not write `$RUN_TMP_DIR/reviewers.json`** —
    points 3–5 below are entirely skipped, not just their side effects;

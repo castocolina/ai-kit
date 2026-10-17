@@ -244,7 +244,9 @@ below). On another host it is that host's own subagent/task tool, with no model 
 the session default. **If the host has no such tool, never review or fix inline in this
 conversation** — this context holds the author's intent, exactly the contamination the loop
 exists to prevent. Drop the native entry instead; if a subprocess entry remains in
-`REVIEWER_LIST`, run it alone (single mode) and say so in the Surface message; otherwise STOP:
+`REVIEWER_LIST`, run it alone (single mode) and say so in the Surface message, still passing
+its original `reviewers.json` position as `--index` (dropping an entry never renumbers the
+file); otherwise STOP:
 `This host cannot start a clean-context reviewer. Register a subprocess reviewer with
 ai-kit-spec-config, or run /ai-kit-spec-review on a host with subagents.` No ai-kit command
 detects this capability: it is your own knowledge of the host's tools, a portability gap stated
@@ -288,7 +290,7 @@ For each entry in `REVIEWER_LIST`:
      one, else the config's own `policy.timeout_tiers`):
      ```bash
      TIMEOUT_TIERS="$(python3 "$TOOLS_PY" resolve-timeout-tiers --cwd <CODEBASE_ROOT> \
-       --reviewers-json "$RUN_TMP_DIR/reviewers.json" --index <0 for primary, 1 for secondary>)"
+       --reviewers-json "$RUN_TMP_DIR/reviewers.json" --index <this entry's reviewers.json index>)"
      ```
   3. Dispatch via `dispatch-reviewer` — **one** call, no separate render step, instead of a
      hand-built `nohup`/redirect pipeline. One tested Python path composes the prompt and runs
@@ -297,7 +299,7 @@ For each entry in `REVIEWER_LIST`:
      ```bash
      python3 "$TOOLS_PY" dispatch-reviewer --cwd <CODEBASE_ROOT> \
        --reviewers-json "$RUN_TMP_DIR/reviewers.json" \
-       --index <0 for the primary/single reviewer, 1 for the secondary> \
+       --index <this entry's reviewers.json index: 0 primary, 1 secondary> \
        --prompt-file "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt" \
        --timeout-tiers "$TIMEOUT_TIERS" \
        --tool-availability-json "$TOOL_AVAILABILITY_JSON" \

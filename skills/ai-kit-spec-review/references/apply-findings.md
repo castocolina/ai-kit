@@ -117,7 +117,7 @@ deciding.
   placeholder if the `command` has one; otherwise append a trailing `(findings: <EFFECTIVE_REPORT_PATH>)`
   note. Invoke via the slash command if a slash-command tool exists, else via its backing skill
   through the host's skill tool (e.g. `gsd-plan-phase`). Then if the route has `validate` run **Step 3c**,
-  then re-review (Step 1).
+  then increment iter once and re-review (Step 1).
 - **Not installed this session** (no command and no backing skill) → fall back to **Step 3b-surface**.
 
 #### Step 3b-surface — Surface the native command
@@ -132,5 +132,5 @@ The native planner regenerated the doc; validate with the framework's own checke
 - `description`: `ai-kit-spec-review iter N validate (<name>)`
 - `prompt`: `Validate the regenerated document(s) at: <DOC_PATHS>. Codebase root: <CODEBASE_ROOT>. Report whether the plan is sound and ready, or list the blocking problems.`
 
-- Validator reports **sound** → proceed to re-review (Step 1).
+- Validator reports **sound** (or the host skipped it) → return to the calling route, which increments iter once and re-reviews (Step 1).
 - Validator reports **blocking problems** → **surface** to the user with the validator's reasons + the report path, and stop the loop (do not burn a review iteration on a plan its own checker rejects). Do **not** feed the validator's text into the reviewer prompt — the reviewer stays clean-context. (use the Step 5 "Validator blocked" row)
