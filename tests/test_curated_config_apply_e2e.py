@@ -58,8 +58,9 @@ _REPO_RUNNER = REPO_ROOT / ".planning" / "scripts" / "cross-ai.mjs"
 # install is gitignored and shared by every worktree, so its version is a fact of the moment, not
 # of a plan (19 SPEC R-7): 1.16.0 was verified when these tests were written, and 1.17.0 when the
 # shared install moved under them - the curated-config-relevant tables (`MODEL_PROFILES`,
-# `AGENT_TO_PHASE_TYPE`, `config-new-project`'s key copying) are byte-equivalent between the two
-# (re-verified by tests.test_ai_kit_gsd_curated_config_matrix). An unlisted line skips rather than
+# `AGENT_TO_PHASE_TYPE`, `config-new-project`'s key copying) were byte-equivalent between the two
+# when checked once on 2026-10-17; tests.test_ai_kit_gsd_curated_config_matrix re-checks only the
+# installed tables' key parity, and any 1.17.x passes this guard. An unlisted line skips rather than
 # silently grading against a table nobody checked.
 GSD_CORE_PREFIXES = ("1.16.", "1.17.")
 
@@ -256,17 +257,8 @@ def _real_apply(plan_path, inv_path, project, resolve_env, child_env, node_bin):
 
 class TestRealApply(_RealGsdTestCase):
     def test_apply_golden_plan(self) -> None:
-        node_bin = _real_node_executable()
+        node_bin = _gsd16_or_skip(self)
         tools = REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs"
-        if node_bin is None or not tools.is_file():
-            self.skipTest("no node or checkout-local gsd-tools.cjs")
-        version = gsd_tools.gsd_core_version(str(tools))
-        if not gsd_core_line_supported(version):
-            self.skipTest(
-                f"checkout-local gsd-core is {version}; "
-                f"need one of {', '.join(GSD_CORE_PREFIXES)}"
-            )
-
         before_cfg = _sha256(_REPO_CONFIG)
         before_runner = _sha256(_REPO_RUNNER)
 

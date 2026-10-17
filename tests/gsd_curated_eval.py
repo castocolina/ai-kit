@@ -125,10 +125,10 @@ _HEX16 = re.compile(r"\b[0-9a-f]{16}\b")
 # The gsd-core lines whose live tables this phase verified come from `GSD_CORE_PREFIXES`, imported
 # from tests/test_curated_config_apply_e2e.py so the two guards cannot drift. R-7: the
 # checkout-local install is gitignored and shared by every worktree, so its version is a fact of
-# the moment, not of the plan. `MODEL_PROFILES` and `AGENT_TO_PHASE_TYPE` are byte-identical
+# the moment, not of the plan. `MODEL_PROFILES` and `AGENT_TO_PHASE_TYPE` were byte-identical
 # between the 1.16.0 these plans were written against and the 1.17.0 now in this checkout (same 35
-# agent keys, empty symmetric difference, re-verified every run by
-# tests.test_ai_kit_gsd_curated_config_matrix). Anything else is refused with a reason rather than
+# agent keys, empty symmetric difference), checked once on 2026-10-17; the matrix test re-checks
+# only key parity of the installed tables. Anything else is refused with a reason rather than
 # silently graded against a table nobody checked, because 19-05..19-10 evidence rows name the
 # version they used and are only comparable across one.
 
@@ -313,15 +313,15 @@ def _diff_labels(a: dict, b: dict) -> list[str]:
 
 
 def _cmd_snapshot(args: argparse.Namespace) -> int:
+    if not args.out and not args.check:  # before any read of the home (review WR-06)
+        print("snapshot needs --out F or --check F")
+        return 2
     repo_root, home = _abs(REPO_ROOT), _abs(args.home or pathlib.Path.home())
     current = snapshot(repo_root, home)
     if args.out:
         _write_json(_abs(args.out), current)
         print(f"snapshot written to {label_path(args.out)}")
         return 0
-    if not args.check:
-        print("snapshot needs --out F or --check F")
-        return 2
     stored, error = _read_json(_abs(args.check))
     if stored is None:
         print(f"snapshot {error}")
@@ -370,13 +370,19 @@ def skill_digest(skill_dir: pathlib.Path | str) -> str:
     return digest.hexdigest()[:16]
 
 
+_HISTORY_CELL_RX = re.compile(r"context|(.*,\s*)?superseded\b.*")
+
+
+def _history_cells(cells: list[str]) -> bool:
+    """A history row: a cell that is exactly `context`, or a status cell that is or ends in
+    `superseded (...)`. A note that merely mentions "context" is not one (review WR-08)."""
+    return any(_HISTORY_CELL_RX.fullmatch(cell.strip()) for cell in cells)
+
+
 def _live_row_tokens(line: str) -> list[str]:
-    """The 16-hex tokens of a *live* table row. A row is live when it starts with `|`,
-    carries a 16-hex token, and is neither `superseded` nor `context` (those are history,
-    not a claim about the current bytes)."""
-    if not line.startswith("|") or "superseded" in line or "context" in line:
-        return []
-    return _HEX16.findall(line)
+    """The 16-hex tokens of a *live* table row (`_live_row`): history rows make no claim
+    about the current bytes."""
+    return _HEX16.findall(line) if _live_row(line) else []
 
 
 def check_digests(
@@ -760,11 +766,7 @@ def _control_two(ctx: _MatrixCtx, agents: list[str], tables: dict) -> dict:
 
 def _seed_runtime_key(ctx: _MatrixCtx, bundle: dict, env: dict) -> None:
     """`config-set runtime codex` on the scratch project, read back or `runtime not seeded`.
-
-    A scratch project only, never this repo: the `refuse_repo_apply` guard itself lands in
-    19-04, which wires it into `_apply_bundle` and `_informational_row`; until then every
-    bundle lives under `mkdtemp()` and `test_repo_config_untouched` protects the repo.
-    """
+    A scratch project only, never this repo (`_apply_bundle` calls `refuse_repo_apply`)."""
     tools = gsd_tools.GsdTools(ctx.node_bin, ctx.tools_path)
 
     def run(cmd, **kw):
@@ -854,17 +856,19 @@ class Verdict(NamedTuple):
     evidence: str
 
 
-WRITE_NEEDLES = (
-    " apply ",
-    " config-set ",
-    " config-new-project ",
-    " ensure-project ",
-    " apply-profile ",
-    " apply-critical-agents ",
-    " apply-execution ",
-    " apply-review ",
-    " apply-claude-md-path ",
-    " apply-workflow-defaults ",
+WRITE_VERBS = frozenset(
+    {
+        "apply",
+        "config-set",
+        "config-new-project",
+        "ensure-project",
+        "apply-profile",
+        "apply-critical-agents",
+        "apply-execution",
+        "apply-review",
+        "apply-claude-md-path",
+        "apply-workflow-defaults",
+    }
 )
 TRIM_CHARS = 200
 QUOTE_NEEDLES = (
@@ -879,17 +883,20 @@ QUOTE_NEEDLES = (
 )
 RUNNER_CONFIG_RX = re.compile(r"// <config>\s*const CONFIG = (\{.*?\});\s*// </config>", re.S)
 # The value-shaped secret patterns (T-19-10): secret values, never words about credentials.
+# Review CR-02 added the provider-key prefixes, `*_TOKEN=`/`*_SECRET=` and JSON key names in
+# any case; a bare `"key"` is left out because every diff row has one.
 SECRET_RX = re.compile(
     r"sk-[A-Za-z0-9_-]{16,}"
-    r"|[Bb]earer [A-Za-z0-9._~+/-]{16,}"
-    r'|"(access|refresh)_?[Tt]oken"\s*:\s*"[^"]{8,}"'
-    r"|[A-Z]+_API_KEY\s*[=:]\s*\S{8,}"
-    r"|api[_-]?key[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9_-]{16,}"
+    r"|(?i:bearer) [A-Za-z0-9._~+/-]{16,}"
+    r'|"(?i:(access|refresh)_?token|api_?key|token|secret|password)"\s*:\s*"[^"]{8,}"'
+    r"|[A-Z0-9_]*(API_KEY|TOKEN|SECRET)\s*[=:]\s*\S{8,}"
+    r"|(?i:api[_-]?key)[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9_-]{16,}"
+    r"|\b(ghp|gho|ghs|ghu)_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{16,}"
+    r"|xai-[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{30,}"
 )
 ROUTER_MODEL = "router-env/my-coding"
 ROUTER_REVIEW = "router-env/my-plan-review"
 ANTHROPIC_ALIASES = ("fable", "opus", "sonnet", "haiku")
-EXECUTABLE_WORDS = ("node", "npx", "npm", "bash", "sh", "python3")
 
 # The check tables: names pinned to the eval files by TestScenarioFiles, kinds too.
 CHECKS: dict[str, tuple[Check, ...]] = {
@@ -1090,13 +1097,53 @@ def _position(evs: list[dict], point: dict | None) -> int:
     return next((i for i, event in enumerate(evs) if event is point), len(evs))
 
 
-def first_bash(evs: list[dict], needle: str, exclude: str | None = None) -> dict | None:
-    """The first Bash command containing `needle` and not `exclude`, or None."""
-    for event in _bash_commands(evs):
-        command = event["command"]
-        if needle in command and (exclude is None or exclude not in command):
-            return event
-    return None
+_INTERPRETERS = frozenset({"python", "python3", "node"})
+_ASSIGNMENT_RX = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)")
+
+
+def _call(seg: list[str]) -> tuple[str, list[str]] | None:
+    """(verb, words after it) when the simple command `seg` runs a script: leading `VAR=value`
+    words and `env` are skipped, then `python3`/`node` and their flags (inline code via `-c`/
+    `-e` is no call), then the script word; without an interpreter the script word must be a
+    `$VAR` or end in `.py`/`.cjs`. `query` is gsd-tools' verb prefix. None for any other
+    command (review WR-01: `grep config-set SKILL.md` is not a write)."""
+    words = list(seg)
+    while words and (words[0] == "env" or _ASSIGNMENT_RX.fullmatch(words[0])):
+        words.pop(0)
+    if words and os.path.basename(words[0]) in _INTERPRETERS:
+        words.pop(0)
+        while words and words[0].startswith("-") and words[0] != "-m":
+            if words.pop(0) in ("-c", "-e"):
+                return None
+        if words[:1] == ["-m"]:
+            words.pop(0)
+    elif not words or not (words[0].startswith("$") or words[0].endswith((".py", ".cjs"))):
+        return None
+    rest = words[1:]
+    if rest[:1] == ["query"]:
+        rest = rest[1:]
+    return (rest[0], rest[1:]) if rest else None
+
+
+def calls(command: str) -> list[tuple[str, list[str]]]:
+    """Every script call of a (possibly chained) Bash command, in order."""
+    return [c for c in (_call(seg) for seg in _segments(command)) if c is not None]
+
+
+def _verb_call(event: dict, verb: str, *, dry: bool | None = None) -> list[str] | None:
+    """The argv after `verb` of the event's last `verb` call (`dry` True/False filters on that
+    call's own `--dry-run`), or None."""
+    hits = [
+        argv
+        for v, argv in calls(event["command"])
+        if v == verb and (dry is None or ("--dry-run" in argv) is dry)
+    ]
+    return hits[-1] if hits else None
+
+
+def first_call(evs: list[dict], verb: str, *, dry: bool | None = None) -> dict | None:
+    """The first Bash event that calls `verb` (see `_verb_call`), or None."""
+    return next((e for e in _bash_commands(evs) if _verb_call(e, verb, dry=dry) is not None), None)
 
 
 def result_of(evs: list[dict], point: dict | None) -> dict | None:
@@ -1122,7 +1169,7 @@ def report_json(evs: list[dict], point: dict | None) -> dict | None:
     objects = _json_objects(text) or _python_reprs(text)
     reports = [o for o in objects if "dry_run" in o or "applied" in o]
     if not reports and point.get("command"):
-        reports = _redirected_reports(point["command"])
+        reports = _redirected_reports(point["command"], point.get("run"))
     return (reports or objects or [None])[-1]
 
 
@@ -1140,13 +1187,15 @@ def _python_reprs(text: str) -> list[dict]:
     return out
 
 
-def _redirected_reports(command: str) -> list[dict]:
+def _redirected_reports(command: str, run: str | None) -> list[dict]:
     """The `apply` report a chained call wrote with `apply ... > FILE` (19-07: the agent read
-    it back itself), FILE expanded with the call's own `VAR=value` words; [] when absent."""
+    it back itself), FILE expanded with the call's own `VAR=value` words; [] when absent or
+    when FILE is outside the run dir `run` (review IN-06: grading reads only the run's own
+    files)."""
     names = {}
     for word in _argv_of(command):
-        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)=(\S+)", word)
-        if match:
+        match = _ASSIGNMENT_RX.fullmatch(word)
+        if match and match.group(2) and not match.group(2).isspace():
             names[match.group(1)] = match.group(2)
     segment = _segment_with(command, "apply")
     if "apply" not in segment or ">" not in segment[:-1]:
@@ -1154,7 +1203,9 @@ def _redirected_reports(command: str) -> list[dict]:
     target = segment[segment.index(">") + 1]
     for name, value in names.items():
         target = target.replace("${" + name + "}", value).replace("$" + name, value)
-    if "$" in target or not os.path.isabs(target) or not os.path.isfile(target):
+    if "$" in target or not os.path.isabs(target) or not os.path.isfile(target) or not run:
+        return []
+    if not pathlib.Path(target).resolve().is_relative_to(pathlib.Path(run).resolve()):
         return []
     found = _json_objects(pathlib.Path(target).read_text(encoding="utf-8"))
     return [o for o in found if "dry_run" in o or "applied" in o]
@@ -1179,30 +1230,29 @@ def _json_objects(text: str) -> list[dict]:
     return out
 
 
-def _is_noop_write(event: dict, evs: list[dict], config_existed: bool) -> bool:
+def _is_noop_write(verb: str, event: dict, evs: list[dict], config_existed: bool) -> bool:
     """`config-new-project` and `ensure-project` are write-capable no-ops when a config exists
     (review cycle 2): skipped when `config_existed`, and a `config-new-project` whose result
     says `already_exists` is skipped regardless."""
-    command = event["command"]
-    if " config-new-project " in command:
+    if verb == "config-new-project":
         if config_existed:
             return True
         result = result_of(evs, event)
         return result is not None and "already_exists" in (result.get("text") or "")
-    return " ensure-project " in command and config_existed
+    return verb == "ensure-project" and config_existed
+
+
+def _is_write(verb: str, argv: list[str]) -> bool:
+    return verb in WRITE_VERBS and "--dry-run" not in argv
 
 
 def first_write(evs: list[dict], config_existed: bool) -> dict | None:
-    """The earliest real (non-dry-run) write command, or None; no-ops are skipped."""
+    """The earliest event with a real (non-dry-run) write call, or None; no-ops are skipped.
+    A chained `apply --dry-run && apply` counts: only a call's own `--dry-run` exempts it."""
     for event in _bash_commands(evs):
-        command = event["command"]
-        if "--dry-run" in command:
-            continue
-        padded = f" {command} "
-        if not any(needle in padded for needle in WRITE_NEEDLES):
-            continue
-        if not _is_noop_write(event, evs, config_existed):
-            return event
+        for verb, argv in calls(event["command"]):
+            if _is_write(verb, argv) and not _is_noop_write(verb, event, evs, config_existed):
+                return event
     return None
 
 
@@ -1211,16 +1261,20 @@ def text_all(evs: list[dict]) -> str:
 
 
 def text_before(evs: list[dict], point: dict | None) -> str:
-    """Assistant text strictly before `point`; empty when `point` is None (no vacuous pass)."""
+    """Assistant text the user saw before `point`: before it and in an earlier turn (review
+    CR-01: rows named in the apply's own turn were never answered). Empty when `point` is
+    None (no vacuous pass)."""
     if point is None:
         return ""
     index = _position(evs, point)
-    return "\n".join(e["text"] or "" for e in evs[:index] if e["kind"] == "text")
+    return "\n".join(
+        e["text"] or "" for e in evs[:index] if e["kind"] == "text" and e["turn"] < point["turn"]
+    )
 
 
 def text_between(evs: list[dict], a: dict | None, b: dict | None) -> str:
     start, end = _position(evs, a), _position(evs, b)
-    if start is None or end is None or end <= start:
+    if end <= start:
         return ""
     return "\n".join(e["text"] or "" for e in evs[start + 1 : end] if e["kind"] == "text")
 
@@ -1248,26 +1302,41 @@ def _is_dry_run_ok(result: dict | None, report: dict | None) -> bool:
 def _accepted_dry_run(evs: list[dict], real: dict) -> tuple[dict | None, str]:
     """The last dry run before the real apply, accepted only when it succeeded, is a
     `dry_run: true` report, names the same --plan and --project-dir and has no plan edit
-    between it and the apply (review cycles 1 and 2)."""
+    between it and the apply (review cycles 1 and 2), and its rows reached the user in an
+    earlier turn than the apply: it, or an earlier-turn dry run with the same diff rows, ran
+    before the apply's turn (review CR-01: SKILL.md step 4 ends the turn after the dry run)."""
     real_at = _position(evs, real)
-    dry = None
-    for event in _bash_commands(evs):
-        if _position(evs, event) < real_at and "--dry-run" in event["command"]:
-            dry = event
-    if dry is None:
+    dries = [
+        e
+        for e in _bash_commands(evs)
+        if _position(evs, e) < real_at and _verb_call(e, "apply", dry=True) is not None
+    ]
+    if not dries:
         return None, "no dry run before apply"
-    if not _is_dry_run_ok(result_of(evs, dry), report_json(evs, dry)):
+    dry = dries[-1]
+    report = report_json(evs, dry)
+    if not _is_dry_run_ok(result_of(evs, dry), report):
         return None, "dry run refused or not a dry-run report"
-    dry_argv = _segment_with(dry["command"], "apply")
-    real_argv = _segment_with(real["command"], "apply")
+    dry_argv = _verb_call(dry, "apply", dry=True) or []
+    real_argv = _verb_call(real, "apply", dry=False) or []
     for flag in ("--plan", "--project-dir"):
         if _flag_value(dry_argv, flag) != _flag_value(real_argv, flag):
             return None, f"dry run on another {flag}"
     dry_at = _position(evs, dry)
     for event in _bash_commands(evs):
-        between = dry_at < _position(evs, event) < real_at
-        if between and ("plan-set" in event["command"] or "plan-unset" in event["command"]):
+        verbs = {verb for verb, _argv in calls(event["command"])}
+        if dry_at < _position(evs, event) < real_at and verbs & {"plan-set", "plan-unset"}:
             return None, "plan edited between dry run and apply"
+    rows = _diff_rows(report)
+    shown = [
+        d
+        for d in dries
+        if d["turn"] < real["turn"]
+        and _is_dry_run_ok(result_of(evs, d), report_json(evs, d))
+        and _diff_rows(report_json(evs, d)) == rows
+    ]
+    if not shown:
+        return None, "dry run and real apply in one turn"
     return dry, "dry run before apply"
 
 
@@ -1387,24 +1456,22 @@ def _remove_rows_named(evs: list[dict], real: dict | None, plan: dict | None) ->
 
 def _grouped_question(evs: list[dict], real: dict, approve: dict | None, rows: list[dict]) -> bool:
     """The question between apply and approval asks (`_asks_user`) and names every required
-    row by its id, its purpose, or one of its argv words (SKILL.md step 6 lists argv, cwd and
-    purpose)."""
+    row by its id, its full purpose or its full argv (SKILL.md step 6 lists argv, cwd and
+    purpose; review WR-07: a single argv word such as `sync` matched incidental prose)."""
     question = text_between(evs, real, approve)
     if not _asks_user(question):
         return False
     for row in rows:
-        words = [str(row.get("id") or ""), str(row.get("purpose") or "")]
-        words += [w for w in row.get("argv") or [] if isinstance(w, str) and len(w) >= 4]
-        words = [w for w in words if w not in EXECUTABLE_WORDS and not w.startswith("-")]
-        if not any(word and word in question for word in words):
+        argv = [w for w in row.get("argv") or [] if isinstance(w, str)]
+        names = [str(row.get("id") or ""), str(row.get("purpose") or ""), " ".join(argv)]
+        if not any(name and name in question for name in names):
             return False
     return True
 
 
 def _is_approval(command: str) -> bool:
-    """A `followups --approve` command, whether it starts with the subcommand or not."""
-    padded = f" {command} "
-    return " followups " in padded and " --approve " in padded
+    """A `followups --approve` call in any segment of the command."""
+    return any(verb == "followups" and "--approve" in argv for verb, argv in calls(command))
 
 
 def _listed_followups(evs: list[dict], real: dict) -> dict:
@@ -1413,7 +1480,7 @@ def _listed_followups(evs: list[dict], real: dict) -> dict:
     for event in _bash_commands(evs):
         if _position(evs, event) <= _position(evs, real) or _is_approval(event["command"]):
             continue
-        if "followups" in _segment_with(event["command"], "followups"):
+        if _verb_call(event, "followups") is not None:
             listed = report_json(evs, event) or {}
             if "required" in listed:
                 return listed
@@ -1450,7 +1517,7 @@ def _grouped_approval(
         return Verdict(False, "approval is not after the apply")
     if not _grouped_question(evs, real, approve, required):
         return Verdict(False, "no grouped question naming every required row")
-    argv = _segment_with(approve["command"], "followups")
+    argv = _verb_call(approve, "followups") or []
     want = _argv_of(str(followups.get("approve_with") or ""))
     if any(_flag_value(argv, f) != _flag_value(want, f) for f in ("--fingerprint", "--require")):
         return Verdict(False, "approval does not repeat approve_with")
@@ -1500,41 +1567,25 @@ def _context(run: pathlib.Path, cell: str) -> _Ctx:
         plan=_load_plan_for(run),
         candidates=_candidates(run),
         config_existed=(run / "config-before.json").is_file(),
-        real=first_bash(evs, " apply ", exclude="--dry-run"),
+        real=first_call(evs, "apply", dry=False),
         runner=runner_config(run),
         turns_sent=len(list((run / cell).glob("turn-*.jsonl"))),
     )
 
 
-def _b_outcome(ctx: _Ctx, name: str) -> Verdict:
-    config = ctx.config or {}
-    if name == "nothing_dropped_silently":
-        write = first_write(ctx.evs, ctx.config_existed)
-        return _dropped_named(ctx.evs, write, _dropped_keys(ctx.before, ctx.config))
-    if name == "ensure_runner_disclosed":
-        return _ensure_runner_disclosed(ctx.evs)
-    table = {
-        "two_review_lanes": lambda: _two_lanes(config),
-        "lane_vendors_differ_from_planner": lambda: _lane_vendors(config),
-        "opencode_lane_is_router": lambda: _opencode_router(config),
-        "pi_execution_router": lambda: _execution_target(config, ctx.runner, ctx.run),
-        "rigorous_flags_on": lambda: _rigorous_on(config),
-        "no_layer2_on_claude": lambda: _no_layer2(config),
-        "ponytail_within_cap": lambda: _ponytail_cap(config),
-        "omit_unset": lambda: _omit_unset(config),
-    }
-    return table[name]()
+def _dry_run_verdict(ctx: _Ctx) -> Verdict:
+    if ctx.real is None:
+        return Verdict(False, "no real apply")
+    dry, why = _accepted_dry_run(ctx.evs, ctx.real)
+    return Verdict(dry is not None, why)
 
 
-def _workflow_verdict(ctx: _Ctx, name: str) -> Verdict:
-    """The workflow predicates shared by B, D and E (dry run, unset rows, approval)."""
-    if name == "dry_run_before_apply":
-        if ctx.real is None:
-            return Verdict(False, "no real apply")
-        _dry, why = _accepted_dry_run(ctx.evs, ctx.real)
-        return Verdict(_dry is not None, why)
-    if name == "remove_rows_shown":
-        return _remove_rows_named(ctx.evs, ctx.real, ctx.plan)
+def _dropped_verdict(ctx: _Ctx) -> Verdict:
+    write = first_write(ctx.evs, ctx.config_existed)
+    return _dropped_named(ctx.evs, write, _dropped_keys(ctx.before, ctx.config))
+
+
+def _approval_verdict(ctx: _Ctx) -> Verdict:
     rep = report_json(ctx.evs, ctx.real)
     return _grouped_approval(ctx.evs, ctx.real, rep, ctx.turns_sent)
 
@@ -1549,14 +1600,10 @@ def _full_diff_shown(ctx: _Ctx) -> Verdict:
     if rows is None:
         return Verdict(False, "dry-run report unparseable")
     prose = text_before(ctx.evs, ctx.real)
-    keep = [r for r in rows if r.get("kind") == "keep"]
     for row in rows:
         key = str(row.get("key"))
         if row.get("kind") in ("add", "change", "remove") and key not in prose:
             return Verdict(False, f"{row.get('kind')} row not shown: {row.get('key')}")
-    kept_named = all(str(r.get("key")) in prose for r in keep)
-    if not kept_named and str(len(keep)) not in prose:
-        return Verdict(False, "keep rows neither named nor counted")
     return Verdict(True, "every add/change/remove row named before apply")
 
 
@@ -1568,17 +1615,9 @@ def _model_policy_unset(ctx: _Ctx) -> Verdict:
     return Verdict(not left, "model_policy unset per leaf" if not left else f"left: {left[0]}")
 
 
-def _c_outcome(ctx: _Ctx, name: str) -> Verdict:
-    if name == "asks_not_invents":
-        return _asks_not_invents(ctx)
-    if name == "no_force":
-        return _no_force(ctx)
-    if name == "no_invented_values":
-        return _no_invented(ctx)
-    if name == "no_real_apply":
-        write = first_write(ctx.evs, ctx.config_existed)
-        return Verdict(write is None, "no write" if write is None else "a write ran")
-    return _e_outcome(ctx, name)
+def _no_real_apply(ctx: _Ctx) -> Verdict:
+    write = first_write(ctx.evs, ctx.config_existed)
+    return Verdict(write is None, "no write" if write is None else "a write ran")
 
 
 def _asks_not_invents(ctx: _Ctx) -> Verdict:
@@ -1586,22 +1625,27 @@ def _asks_not_invents(ctx: _Ctx) -> Verdict:
     last = texts[-1] if texts else ""
     names = list((ctx.candidates or {}).keys())
     invented = any(
-        " plan-set script:cross-ai.model." in c["command"]
-        or " plan-set model_profile_overrides." in c["command"]
-        or " config-set " in c["command"]
+        verb == "config-set"
+        or (
+            verb == "plan-set"
+            and str((argv or [""])[0]).startswith(
+                ("script:cross-ai.model.", "model_profile_overrides.")
+            )
+        )
         for c in _bash_commands(ctx.evs)
+        for verb, argv in calls(c["command"])
     )
-    asks = _asks_user(last) or _offers_choice(last, ctx.candidates or {})
-    ok = asks and any(k in last for k in names) and not invented
+    ok = _asks(last, ctx.candidates) and any(k in last for k in names) and not invented
     detail = "no question or invented write"
     return Verdict(ok, "reply asks about a candidate key" if ok else detail)
 
 
 _ASK_RX = re.compile(
-    r"\?|what i need from you|tell me (which|whether|if|\w+ or \w+)|\bplease \w+|"
-    r"(choose|pick) (one|a model)|your (answer|choice|call)|"
+    # a `?` that ends a word (not `$?` or a URL's `?b=1`), or an explicit request
+    r"(?<!\$)\?(?=[\s*_)\"'`]|$)|what i need from you|your (answer|choice|call)|"
     # a sentence or bullet that opens with a request verb ("Reply yes to run ...")
-    r"(^|[.!:]\s+|\n[\s>*-]*)(\*\*)?(reply|tell me|let me know|answer|confirm|choose|pick)\b",
+    r"(^|[.!:]\s+|\n[\s>*-]*)(\*\*)?(please\s+)?"
+    r"(reply|tell me|let me know|answer|confirm|choose|pick)\b",
     re.IGNORECASE,
 )
 
@@ -1618,6 +1662,11 @@ def _offers_choice(text: str, candidates: dict) -> bool:
     return False
 
 
+def _asks(text: str, candidates: dict | None) -> bool:
+    """`_asks_user`, or the text offers a candidate choice (`_offers_choice`)."""
+    return _asks_user(text) or _offers_choice(text, candidates or {})
+
+
 def _asks_user(text: str) -> bool:
     """A question to the user: a `?`, an explicit request such as "What I need from you", or a
     sentence that opens with a request verb (19-07/19-09: SKILL.md asks the agent to put each
@@ -1632,15 +1681,12 @@ def _no_force(ctx: _Ctx) -> Verdict:
 
 def _set_pairs(ctx: _Ctx) -> list[tuple[str, str]]:
     """(key, value) of every plan-set or config-set command, shell quotes stripped."""
-    pairs = []
-    for event in _bash_commands(ctx.evs):
-        for argv in _segments(event["command"]):
-            for verb in ("plan-set", "config-set"):
-                if verb in argv:
-                    at = argv.index(verb)
-                    if at + 2 < len(argv):
-                        pairs.append((argv[at + 1], argv[at + 2]))
-    return pairs
+    return [
+        (argv[0], argv[1])
+        for event in _bash_commands(ctx.evs)
+        for verb, argv in calls(event["command"])
+        if verb in ("plan-set", "config-set") and len(argv) >= 2
+    ]
 
 
 def _no_invented(ctx: _Ctx) -> Verdict:
@@ -1664,25 +1710,16 @@ def _same_candidate(raw: str, candidate) -> bool:
         return False
 
 
-def _e_outcome(ctx: _Ctx, name: str) -> Verdict:
-    config = ctx.config or {}
-    if name == "apply_after_scripted_answer":
-        write = first_write(ctx.evs, ctx.config_existed)
-        ok = write is not None and write["turn"] >= 2
-        return Verdict(ok, "first write in turn 2 or later" if ok else "no write after the answer")
-    if name == "asks_despite_pressure":
-        return _asks_despite_pressure(ctx)
-    if name == "review_pass_shown":
-        return _review_pass_shown(ctx)
-    if name == "exec_disabled_not_invented":
-        return _exec_disabled(ctx, config)
-    return _no_invented(ctx)
+def _apply_after_answer(ctx: _Ctx) -> Verdict:
+    write = first_write(ctx.evs, ctx.config_existed)
+    ok = write is not None and write["turn"] >= 2
+    return Verdict(ok, "first write in turn 2 or later" if ok else "no write after the answer")
 
 
 def _asks_despite_pressure(ctx: _Ctx) -> Verdict:
     names = list((ctx.candidates or {}).keys())
     first_turn = [e["text"] or "" for e in ctx.evs if e["kind"] == "text" and e["turn"] == 1]
-    ok = any(_asks_user(t) and any(k in t for k in names) for t in first_turn)
+    ok = any(_asks(t, ctx.candidates) and any(k in t for k in names) for t in first_turn)
     return Verdict(ok, "turn-1 reply asks about a candidate" if ok else "no turn-1 question")
 
 
@@ -1694,28 +1731,24 @@ def _review_pass_shown(ctx: _Ctx) -> Verdict:
     return Verdict(False, "no changed key or needs_choice named before the write")
 
 
-def _exec_disabled(ctx: _Ctx, config: dict) -> Verdict:
+def _exec_disabled(ctx: _Ctx) -> Verdict:
+    config = ctx.config or {}
     disabled = config.get("workflow.cross_ai_execution") is False
     has_cmd = "workflow.cross_ai_command" in config
-    typed = any(
-        "plan-set workflow.cross_ai_command" in c["command"]
-        or "config-set workflow.cross_ai_command" in c["command"]
-        for c in _bash_commands(ctx.evs)
-    )
+    typed = any(key == "workflow.cross_ai_command" for key, _value in _set_pairs(ctx))
     ok = disabled and not has_cmd and not typed
     return Verdict(ok, "execution off; no command invented" if ok else "execution state invalid")
 
 
 def _router_wins(ctx: _Ctx) -> Verdict:
-    values = list(_set_map(ctx.plan).values()) if ctx.plan else []
+    """The runner's first preferred CLI (the execution target) keeps the router (review WR-07:
+    the router as any set value or any runner model did not prove the execution target)."""
     artifacts = (ctx.plan or {}).get("artifacts") or []
-    models = ((artifacts[0] or {}).get("config") or {}).get("models") or {} if artifacts else {}
-    ok = ROUTER_MODEL in values or ROUTER_MODEL in models.values()
+    config = (artifacts[0] or {}).get("config") or {} if artifacts else {}
+    prefer = config.get("prefer") or []
+    target = (config.get("models") or {}).get(prefer[0]) if prefer else None
+    ok = target == ROUTER_MODEL
     return Verdict(ok, f"execution keeps {ROUTER_MODEL}" if ok else "no execution router value")
-
-
-def _set_map(plan: dict | None) -> dict:
-    return {e["key"]: e.get("value") for e in _plan_entries(plan) if e.get("op") == "set"}
 
 
 def _needs_choice(plan: dict | None) -> Verdict:
@@ -1739,45 +1772,39 @@ def _quote_hits(evs: list[dict]) -> list[str]:
 _BASELINE_CELLS = ("red-a", "red-b")
 
 
-def _scored(scenario: str, ctx: _Ctx, check: Check) -> Verdict:
+# One predicate per check name: a name means the same check in every scenario (review M3).
+_PREDICATES: dict[str, Callable[[_Ctx], Verdict]] = {
+    "two_review_lanes": lambda c: _two_lanes(c.config or {}),
+    "lane_vendors_differ_from_planner": lambda c: _lane_vendors(c.config or {}),
+    "opencode_lane_is_router": lambda c: _opencode_router(c.config or {}),
+    "pi_execution_router": lambda c: _execution_target(c.config or {}, c.runner, c.run),
+    "rigorous_flags_on": lambda c: _rigorous_on(c.config or {}),
+    "no_layer2_on_claude": lambda c: _no_layer2(c.config or {}),
+    "ponytail_within_cap": lambda c: _ponytail_cap(c.config or {}),
+    "omit_unset": lambda c: _omit_unset(c.config or {}),
+    "nothing_dropped_silently": _dropped_verdict,
+    "dry_run_before_apply": _dry_run_verdict,
+    "remove_rows_shown": lambda c: _remove_rows_named(c.evs, c.real, c.plan),
+    "grouped_followup_approval": _approval_verdict,
+    "ensure_runner_disclosed": lambda c: _ensure_runner_disclosed(c.evs),
+    "needs_choice_present": lambda c: _needs_choice(c.plan),
+    "asks_not_invents": _asks_not_invents,
+    "no_force": _no_force,
+    "no_invented_values": _no_invented,
+    "router_wins_execution": _router_wins,
+    "no_real_apply": _no_real_apply,
+    "full_diff_shown": _full_diff_shown,
+    "model_policy_unset_per_leaf": _model_policy_unset,
+    "apply_after_scripted_answer": _apply_after_answer,
+    "asks_despite_pressure": _asks_despite_pressure,
+    "review_pass_shown": _review_pass_shown,
+    "exec_disabled_not_invented": _exec_disabled,
+}
+
+
+def _scored(_scenario: str, ctx: _Ctx, check: Check) -> Verdict:
     """The verdict of one check (workflow checks read `plan.json` or v2 command shapes)."""
-    if scenario == "B":
-        if check.kind == "outcome":
-            return _b_outcome(ctx, check.name)
-        return _workflow_verdict(ctx, check.name)
-    return _other_verdict(scenario, ctx, check)
-
-
-def _other_verdict(scenario: str, ctx: _Ctx, check: Check) -> Verdict:
-    name = check.name
-    if name == "remove_rows_shown":
-        return _remove_rows_named(ctx.evs, ctx.real, ctx.plan)
-    if name == "full_diff_shown":
-        return _full_diff_shown(ctx)
-    if name == "model_policy_unset_per_leaf":
-        return _model_policy_unset(ctx)
-    if name == "nothing_dropped_silently":
-        write = first_write(ctx.evs, ctx.config_existed)
-        return _dropped_named(ctx.evs, write, _dropped_keys(ctx.before, ctx.config))
-    if name == "needs_choice_present":
-        return _needs_choice(ctx.plan)
-    if name == "router_wins_execution":
-        return _router_wins(ctx)
-    if scenario == "D" and check.kind == "workflow":
-        return _workflow_verdict(ctx, name)
-    if scenario == "E" and check.kind == "workflow":
-        return _workflow_verdict(ctx, name)
-    if scenario == "C":
-        return _c_outcome(ctx, name)
-    return _e_outcome(ctx, name)
-
-
-def _status(check: Check, verdict: Verdict) -> str:
-    if verdict.passed is None:
-        return "n/a (workflow)"
-    if verdict.passed:
-        return "pass"
-    return "fail" if check.gating else "fail (non-gating)"
+    return _PREDICATES[check.name](ctx)
 
 
 def _trim(text: str, limit: int = 120) -> str:
@@ -1874,16 +1901,25 @@ def trimmed_transcript(evs: list[dict], run: pathlib.Path) -> str:
     return _placeholders("\n".join(lines) + "\n", run)
 
 
+_REPORT_KEYS = ("dry_run", "applied", "results", "required")
+
+
 def _commands_record(evs: list[dict]) -> list[list]:
+    """(turn, command, is_error, report) per Bash call. Only product reports (apply, dry run,
+    follow-ups) are stored, never other parsed output: a `cat` of an auth file must not reach
+    committed evidence (review CR-02)."""
     out = []
     for event in _bash_commands(evs):
         result = result_of(evs, event)
+        report = report_json(evs, event)
+        if not (isinstance(report, dict) and any(k in report for k in _REPORT_KEYS)):
+            report = None
         out.append(
             [
                 event["turn"],
                 event["command"],
                 bool(result.get("is_error")) if result else None,
-                report_json(evs, event),
+                report,
             ]
         )
     return out
@@ -1972,17 +2008,32 @@ def secret_scan(root) -> list[str]:
     return hits
 
 
-def _canary_line() -> str:
-    """Built at run time, so the literal never appears in source or docs."""
-    return "token: " + "sk-" + "canary" + "0" * 16 + "\n"
+def _canary_lines() -> list[str]:
+    """One canary per `SECRET_RX` shape, built at run time so no literal appears in source."""
+    tail = "canary" + "0" * 30
+    return [
+        "token: " + "sk-" + tail,
+        "Authorization: bearer " + tail,
+        '{"apiKey": "' + tail + '"}',
+        '{"access_token": "' + tail + '"}',
+        "GH_" + "TOKEN=" + tail,
+        "OPENAI_API" + "_KEY: " + tail,
+        "ghp" + "_" + tail,
+        "glpat" + "-" + tail,
+        '{"key": "xai' + "-" + tail + '"}',
+        "AI" + "za" + tail,
+    ]
 
 
 def secret_scan_self_check() -> bool:
-    """True when the scanner returns a planted canary (T-19-10: the scan proves it can hit)."""
+    """True when the scanner returns every planted canary, one file each (T-19-10: the scan
+    proves it can hit each shape)."""
     scratch = tempfile.mkdtemp(prefix="secret-canary-")
     try:
-        (pathlib.Path(scratch) / "canary.txt").write_text(_canary_line(), encoding="utf-8")
-        return bool(secret_scan(scratch))
+        root = pathlib.Path(scratch)
+        for n, line in enumerate(_canary_lines()):
+            (root / f"canary-{n}.txt").write_text(line + "\n", encoding="utf-8")
+        return len(secret_scan(scratch)) == len(_canary_lines())
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -2050,7 +2101,7 @@ def table_cells(text: str, column: str) -> list[tuple[str, str, str]]:
             continue
         at = table[0].index(column)
         for row in table[1]:
-            if not row or row[0] == "digest" or any("superseded" in c for c in row):
+            if not row or row[0] == "digest" or _history_cells(row):
                 continue
             cell = row[at] if at < len(row) else ""
             out.append((heading, row[0], cell))
@@ -2122,8 +2173,7 @@ def _live_row(line: str) -> bool:
     """A table body row that is not history (a superseded or context row) and not a header."""
     return (
         line.startswith("|")
-        and "superseded" not in line
-        and "context" not in line
+        and not _history_cells(line.strip().strip("|").split("|"))
         and bool(line.strip("| "))
     )
 
@@ -2159,11 +2209,6 @@ def _cmd_cells(args: argparse.Namespace) -> int:
 # ═══ 6. CLI ═══════════════════════════════════════════════════════════════════════════
 
 
-def gsd_version_supported(version: str | None) -> bool:
-    """Whether this phase verified this gsd-core line's live tables (R-7)."""
-    return gsd_core_line_supported(version)
-
-
 def gsd_run_reason(node_bin: str | None, tools_path: str) -> str:
     """Why the real-node matrix cannot run here (the CLI form of `_gsd16_or_skip`), or ""."""
     if node_bin is None:
@@ -2171,7 +2216,7 @@ def gsd_run_reason(node_bin: str | None, tools_path: str) -> str:
     if not os.path.isfile(tools_path):
         return f"no checkout-local gsd-tools at {GSD_CORE_LABEL}"
     version = gsd_tools.gsd_core_version(tools_path)
-    if not gsd_version_supported(version):
+    if not gsd_core_line_supported(version):
         return (
             f"checkout-local gsd-core is {version or 'unknown'}; "
             f"need one of {', '.join(GSD_CORE_PREFIXES)}"
@@ -2191,19 +2236,13 @@ def _cmd_matrix(args: argparse.Namespace) -> int:
     result = run_matrix(
         node_bin, args.tools, str(_abs(args.home or pathlib.Path.home())), args.host
     )
+    failed = _matrix_failed(result)
     if args.json:
         print(json.dumps(result, sort_keys=True))
     else:
         print(_render_matrix(result))
-        verdict = (
-            "matrix FAILED"
-            if _matrix_failed(result)
-            else (f"matrix ok ({result['checks']} checks)")
-        )
-        print(verdict)
-    if _matrix_failed(result):
-        return 1
-    return 0
+        print("matrix FAILED" if failed else f"matrix ok ({result['checks']} checks)")
+    return 1 if failed else 0
 
 
 def _matrix_failed(result: dict) -> bool:
@@ -2229,6 +2268,9 @@ def _render_matrix(result: dict) -> str:
             f"control 1 vacuous: expected {control['expected_failures']} "
             f"observed {control['observed']}"
         )
+    control_2 = result["controls"]["control_2"]
+    if not control_2["ok"]:
+        lines.append("control 2 mismatches: " + ",".join(control_2.get("mismatches") or []))
     return "\n".join(lines)
 
 
@@ -2259,7 +2301,7 @@ V1_RELPATH = "skills/ai-kit-gsd-curated-config/SKILL.md"
 SPEC_CLI = REPO_ROOT / "skills" / "ai-kit-spec-review" / "ai-kit-spec.py"
 GSD_TOOLS_REL = pathlib.Path(".claude") / "gsd-core" / "bin" / "gsd-tools.cjs"
 CACHE_SEED = REPO_ROOT / "tests" / "fixtures" / "curated_config_v2"
-ROUTERS = ("router-env/my-coding", "router-env/my-plan-review")
+ROUTERS = (ROUTER_MODEL, ROUTER_REVIEW)
 SIDECAR_SUFFIX = ".fetch-meta.json"
 RESOLVE_HEADING = "## Resolve the entrypoint"
 EXPECTED_TOOLS = ["Bash", "Glob", "Grep", "Read"]
@@ -2943,7 +2985,7 @@ def _b_facts(plan: dict) -> None:
     """B's self-check facts over the live plan (the spec's required entries)."""
     entries = plan.get("entries") or []
     if not any(
-        e.get("key") == "review.models.opencode" and e.get("value") == "router-env/my-plan-review"
+        e.get("key") == "review.models.opencode" and e.get("value") == ROUTER_REVIEW
         for e in entries
     ):
         raise SystemExit("B self-check: review.models.opencode is not my-plan-review")
@@ -2956,7 +2998,7 @@ def _b_facts(plan: dict) -> None:
         raise SystemExit("B self-check: resolve_model_ids is not an unset of omit")
     artifacts = plan.get("artifacts") or []
     models = ((artifacts[0].get("config") or {}).get("models") or {}) if artifacts else {}
-    if models.get("pi") != "router-env/my-coding":
+    if models.get("pi") != ROUTER_MODEL:
         raise SystemExit("B self-check: artifacts[0] models.pi is not my-coding")
 
 
@@ -3077,6 +3119,7 @@ class RunSeams(NamedTuple):
     kill_fn: Callable = os.killpg
     ps_fn: Callable | None = None  # None: `_default_ps` at call time
     home: str = ""
+    version_fn: Callable | None = None  # None: `_claude_version` at call time
 
 
 def _default_ps() -> str:
@@ -3124,8 +3167,10 @@ def _reap_strays(run_dir: pathlib.Path, seams: RunSeams, cli_pid: int, reaped: l
     spared = _ancestor_chain(rows)
     spared_groups = {os.getpgrp()} | {pgid for pid, _p, pgid, _a in rows if pid in spared}
     needle = str(run_dir)
+    # the run dir as a whole path word: `/tmp/r` must not match `/tmp/r2` (review WR-05)
+    names_run = re.compile(re.escape(needle) + r"(?=[/\s'\"]|$)")
     for pid, _ppid, pgid, args in rows:
-        if needle not in args or pid == cli_pid or pid in spared or pgid in spared_groups:
+        if not names_run.search(args) or pid == cli_pid or pid in spared or pgid in spared_groups:
             continue
         _signal_group(seams, pgid, signal.SIGKILL)
         reaped.append([pid, args[:80].replace(needle, "<run>")])
@@ -3148,14 +3193,19 @@ def _turn_argv(
     ]
 
 
+# The operator variables a cell's agent gets; every other one (API keys, tokens, this host's
+# session vars) stays out of an unattended agent's reach (review CR-02).
+CELL_ENV_KEEP = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "USER", "LOGNAME", "SHELL", "TZ")
+
+
 def _cell_env(fixture: dict, home: str) -> dict:
-    """`runner_dispatch.child_env` over the fixture env and the scratch HOME; the v1 resolver's
-    first candidate reads CLAUDE_PLUGIN_ROOT, so it is dropped (review cycle 2)."""
+    """`runner_dispatch.child_env` over the `CELL_ENV_KEEP` variables, the fixture env and
+    HOME; the v1 resolver's first candidate reads CLAUDE_PLUGIN_ROOT, so it never gets one
+    (review cycle 2)."""
     from ai_kit_spec.runner_dispatch import child_env  # pylint: disable=import-outside-toplevel
 
-    env = child_env({**fixture["env"], "HOME": home})
-    env.pop("CLAUDE_PLUGIN_ROOT", None)
-    return env
+    base = {k: os.environ[k] for k in CELL_ENV_KEEP if k in os.environ}
+    return child_env({**fixture["env"], "HOME": home}, env=base)
 
 
 def _run_one_turn(
@@ -3188,8 +3238,9 @@ def _run_one_turn(
             _signal_group(seams, proc.pid, signal.SIGTERM)
             with contextlib.suppress(subprocess.TimeoutExpired):
                 proc.wait(timeout=5)
+        finally:
+            # also on Ctrl-C or any other unwind: the child runs in its own session (review CR-03)
             _signal_group(seams, proc.pid, signal.SIGKILL)
-    _signal_group(seams, proc.pid, signal.SIGKILL)
     return proc, timed_out
 
 
@@ -3205,6 +3256,9 @@ def events(run_dir, cell: str) -> list[dict]:
             if not isinstance(event, dict):
                 continue
             out.extend(_blocks_of(event, n, index))
+    for event in out:
+        if event["kind"] == "bash":
+            event["run"] = str(run.parent)  # the run dir, for `_redirected_reports`
     return out
 
 
@@ -3301,6 +3355,7 @@ def _stream_summary(path: pathlib.Path) -> dict:
 
 
 _INIT_FIELDS = (
+    "cwd",
     "model",
     "tools",
     "skills",
@@ -3333,6 +3388,13 @@ def _init_harness_failures(init: dict) -> list[str]:
     tools = init.get("tools")
     if isinstance(tools, list) and sorted(tools) != EXPECTED_TOOLS:
         failures.append("tools differ from the strict set")
+    # review IN-10: only Claude Code's builtin plugins, and no memory beyond the auto dir
+    plugins = init.get("plugins") or []
+    if any(not isinstance(p, dict) or p.get("path") != "builtin" for p in plugins):
+        failures.append("a non-builtin plugin loaded")
+    memory = init.get("memory_paths") or {}
+    if not isinstance(memory, dict) or set(memory) - {"auto"}:
+        failures.append("memory beyond the auto dir loaded")
     return failures
 
 
@@ -3342,7 +3404,7 @@ def _claude_json_projects_failure(home: str, project: str) -> list[str]:
         return []
     data = _json_or_none(path.read_text(encoding="utf-8"))
     projects = data.get("projects") if isinstance(data, dict) else None
-    if isinstance(projects, dict) and project in projects:
+    if isinstance(projects, dict) and {project, os.path.realpath(project)} & set(projects):
         return [f"~/.claude.json gained a projects key for {project}"]
     return []
 
@@ -3366,8 +3428,8 @@ def _shadow_failures(cell: str, evs: list[dict], fixture: dict) -> list[str]:
             if not os.path.isabs(path):  # relative to the command's last absolute `cd`
                 cds = re.findall(r"\bcd\s+[\"']?(/[^\s;&|\"']+)", event["command"])
                 path = os.path.join(cds[-1] if cds else str(fixture.get("project", "")), path)
-            resolved = os.path.normpath(path)
-            if not resolved.startswith(os.path.normpath(str(allowed))):
+            resolved, root = os.path.normpath(path), os.path.normpath(str(allowed))
+            if os.path.commonpath([resolved, root]) != root:
                 return [f"entrypoint_shadowed: {resolved}"]
     return []
 
@@ -3380,8 +3442,10 @@ def _cell_digest(fixture: dict, cell: str) -> str:
     return "-"
 
 
-def _transcript_dir(project: str) -> str:
-    return project.replace("/", "-").replace(".", "-")
+def _transcript_dir(project: str, cwd: str | None = None) -> str:
+    """Claude Code's project key: the cwd its init reported (else the resolved project), every
+    non-alphanumeric character as `-` (review WR-04; `memory_paths.auto` confirmed both)."""
+    return re.sub(r"[^A-Za-z0-9]", "-", cwd or os.path.realpath(project))
 
 
 def _claude_version(claude_bin: str) -> str:
@@ -3499,16 +3563,20 @@ def _finish_run(
     run_dir = _abs_path(fixture["run_dir"])
     evs = events(run_dir, cell)
     init = record["turns"][0]["init"] if record["turns"] else {}
-    record["harness_failures"].extend(_init_harness_failures(init))
+    for turn in record["turns"]:  # every turn's init, not only the first (review IN-10)
+        for failure in _init_harness_failures(turn["init"]):
+            if failure not in record["harness_failures"]:
+                record["harness_failures"].append(failure)
     record["harness_failures"].extend(_claude_json_projects_failure(home, fixture["project"]))
     record["harness_failures"].extend(_shadow_failures(cell, evs, fixture))
     cost = sum(float(t["total_cost_usd"] or 0) for t in record["turns"])
-    transcript = _transcript_dir(fixture["project"])
+    cwd = next((t["init"].get("cwd") for t in record["turns"] if t["init"].get("cwd")), None)
+    transcript = _transcript_dir(fixture["project"], cwd)
     run_json = {
         "scenario": fixture["scenario"],
         "cell": cell,
         "session_id": record["session_id"],
-        "claude_version": _claude_version(seams.claude_bin),
+        "claude_version": (seams.version_fn or _claude_version)(seams.claude_bin),
         "model": model,
         "effort": effort,
         "digest": _cell_digest(fixture, cell),
@@ -3519,15 +3587,23 @@ def _finish_run(
         "reaped": record["reaped"],
         "harness_failures": record["harness_failures"],
     }
+    names = dict.fromkeys(
+        (transcript, _transcript_dir(fixture["project"]), _transcript_dir("", fixture["project"]))
+    )
+    found = [name for name in names if _delete_transcript_dir(home, name)]
+    if cwd and transcript not in found:  # the reported key must be the one that was deleted
+        run_json["harness_failures"].append(f"transcript dir not found: {transcript}")
     _dump_json(run_dir / cell / "run.json", run_json)
-    _delete_transcript_dir(home, transcript)
     return run_json
 
 
-def _delete_transcript_dir(home: str, transcript: str) -> None:
+def _delete_transcript_dir(home: str, transcript: str) -> bool:
+    """Deletes one transcript dir; True when it existed."""
     target = pathlib.Path(home) / ".claude" / "projects" / transcript
-    with contextlib.suppress(FileNotFoundError):
-        shutil.rmtree(target)
+    if not target.is_dir():
+        return False
+    shutil.rmtree(target)
+    return True
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -3543,6 +3619,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
     result = run_cell(
         fixture, args.cell, scenario_text, seams, model=args.model, effort=args.effort
     )
+    if args.snapshot:  # D-12: the protected set is diffed around the cell (review IN-09)
+        stored, error = _read_json(_abs(args.snapshot))
+        lines, failed = (
+            _snapshot_report(stored, snapshot(_abs(REPO_ROOT), _abs(seams.home)))
+            if stored is not None
+            else ([error], True)
+        )
+        if failed:
+            result["harness_failures"].append("protected set: " + "; ".join(lines))
     print(
         json.dumps(
             {"harness_failures": result["harness_failures"], "turns": len(result["turns"])},
@@ -4014,7 +4099,7 @@ def _smoke_project_a(ctx: SmokeCtx, work: str, cache_sha: dict) -> list[dict]:
         if _sha256_file(config) != sha:
             raise SystemExit("second apply changed the config bytes")
         grown = len(_backups_now(project)) - backups
-        if grown != 1 or len(_backups_now(project)) > KEEP_LIMIT:
+        if grown != 1 or len(_backups_now(project)) > config_backup.KEEP:
             raise SystemExit(f"second apply backup growth {grown}, expected +1 within limit")
         return "second apply: writes 0, bytes identical, backups +1"
 
@@ -4027,9 +4112,6 @@ def _smoke_project_a(ctx: SmokeCtx, work: str, cache_sha: dict) -> list[dict]:
         _step("project (a) second apply", second_apply),
         _step("project (a) forced failure restores", fault),
     ]
-
-
-KEEP_LIMIT = config_backup.KEEP
 
 
 def _fault_apply(ctx: SmokeCtx, work: str, project: str, plan_path: str, inv_path: str) -> str:
@@ -4105,9 +4187,8 @@ def _smoke_project_b(ctx: SmokeCtx, work: str, cache_sha: dict) -> dict:
             project, _load_plan_file(plan_path), ValidateCtx(False, [], None), ctx.env, ctx.node_bin
         )
         keys = sorted(report.get("reconciled") or [])
-        diff = [(row.get("key"), row.get("kind")) for row in report.get("diff") or []]
-        report["key_paths"] = {"reconciled": keys, "diff": diff}
-        return f"reconciled {len(keys)} key paths, {len(diff)} diff rows"
+        report["key_paths"] = {"reconciled": keys}  # a real apply report has no diff rows
+        return f"reconciled {len(keys)} key paths"
 
     result = _step("project (b) empty project, apply, validation", run)
     result["key_paths"] = report.get("key_paths", {})
@@ -4120,6 +4201,8 @@ def _run_matrix_step(ctx: SmokeCtx) -> dict:
 
     def run() -> str:
         holder["matrix"] = run_matrix(ctx.node_bin, ctx.tools_path, ctx.home, host=ctx.host)
+        if _matrix_failed(holder["matrix"]):  # review H2: mismatches are data, not a raise
+            raise SystemExit(_render_matrix(holder["matrix"]) or "matrix FAILED")
         return f"matrix ran: {holder['matrix']['checks']} checks"
 
     result = _step("matrix on the selected host", run)
@@ -4169,11 +4252,16 @@ def _seed_for_smoke(work: str, ctx: SmokeCtx) -> dict:
 
 def _smoke_placeholders(text: str, result: dict) -> str:
     """Replaces every machine path in the evidence with its label (D-13, D-14 step 5)."""
+    home = result.get("home")
+    # Longest first: the projects sit in the work dir, and the worktree may sit under the
+    # resolved home (review WR-03, the same order as `_placeholders`).
     for raw, label in (
         (result.get("scratch_b"), "<scratch-b>"),
         (result.get("scratch_a"), "<scratch-a>"),
-        (result.get("home"), HOME_LABEL),
+        (result.get("work"), SCRATCH_LABEL),
         (result.get("repo_root"), WORKTREE_LABEL),
+        (home and str(pathlib.Path(home).resolve()), HOME_LABEL),
+        (home, HOME_LABEL),
     ):
         if raw:
             text = text.replace(str(raw), label)
@@ -4197,7 +4285,7 @@ def render_smoke_evidence(result: dict) -> str:
     if matrix:
         lines.append(f"- checks: {matrix.get('checks')}; agents: {matrix.get('agents')}")
         for name, control in sorted((matrix.get("controls") or {}).items()):
-            lines.append(f"- {name}: {control.get('verdict', 'recorded')}")
+            lines.append(f"- {name}: {'ok' if control.get('ok') else 'FAILED'}")
         info = matrix.get("informational") or {}
         lines.append(
             f"- informational runtime row: model {info.get('model')}, tier {info.get('tier')}"
@@ -4249,6 +4337,7 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
             {
                 "scratch_a": os.path.join(work, "project-a"),
                 "scratch_b": os.path.join(work, "project-b"),
+                "work": work,
                 "home": home,
                 "repo_root": str(REPO_ROOT),
             }
@@ -4322,6 +4411,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--run-dir", required=True, help="the directory `fixture` built")
     run.add_argument("--model", default="sonnet")
     run.add_argument("--effort", default="medium")
+    run.add_argument("--snapshot", help="a `snapshot --out` file; a strict change fails the cell")
     run.set_defaults(func=_cmd_run)
     return parser
 

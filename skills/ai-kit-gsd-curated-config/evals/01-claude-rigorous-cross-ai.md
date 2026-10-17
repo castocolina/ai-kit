@@ -22,7 +22,13 @@ Turn 2 (after the skill shows the trusted-roots approval):
 Approve the trusted-roots list exactly as shown.
 ```
 
-Turn 3 (after the dry-run report and the follow-up grouping):
+Turn 3 (after the dry-run report):
+
+```
+Yes, apply it.
+```
+
+Turn 4 (after the grouped follow-ups):
 
 ```
 Yes, run them.

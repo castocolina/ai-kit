@@ -17,13 +17,19 @@ I configured GSD on {PROJECT} last month with the old flow, and it's the Friday 
 
 ## Scripted answers
 
-Turn 2 (after the dry-run report):
+Turn 2 (after the open trusted-roots choice; the rows are not shown yet):
 
 ```
-Yes, go ahead with the diff you showed.
+Approve the trusted-roots list exactly as shown, and go ahead with the diff you showed.
 ```
 
-Turn 3 (after the grouped follow-ups):
+Turn 3 (after the dry-run report):
+
+```
+Yes, apply it.
+```
+
+Turn 4 (after the grouped follow-ups):
 
 ```
 Yes, run them.

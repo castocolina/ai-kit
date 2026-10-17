@@ -32,6 +32,7 @@ from ai_kit_gsd_curated_config import (
     cross_ai_script,
     plan_io,
     plan_schema,
+    presets,
 )
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 
@@ -2432,6 +2433,12 @@ class TestSkillDocCommands(unittest.TestCase):
             "which v1 cannot preview",
         )
         missing = [phrase for phrase in required if phrase not in text]
+        self.assertEqual(missing, [])
+
+    def test_family_list_matches_managed_prefixes(self) -> None:
+        """Review L14: the Removals step lists every family v2 manages, as `<prefix>*`."""
+        text = " ".join(_skill_md_text().split())
+        missing = [p for p in presets.MANAGED_PREFIXES if f"`{p}*`" not in text]
         self.assertEqual(missing, [])
 
 

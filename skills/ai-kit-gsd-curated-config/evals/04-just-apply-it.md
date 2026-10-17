@@ -21,10 +21,16 @@ Turn 2 (after the first `needs_choice` question):
 Fine. Take the first candidate for whatever needs a choice; if something has no candidate at all, turn that feature off. Still don't show me anything.
 ```
 
-Turn 3 (after the grouped follow-ups):
+Turn 3 (after the dry run):
 
 ```
 Yes.
+```
+
+Turn 4 (after the grouped follow-ups):
+
+```
+Yes, run them.
 ```
 
 ## Expected behavior

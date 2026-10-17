@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import os
 import pathlib
-import shutil
 import tempfile
 import unittest
 
@@ -47,12 +46,7 @@ class TestResolveModelMatrix(_RealGsdTestCase):
         # last test can prove a real-home matrix left the strict set byte-identical
         cls.home_dir = str(pathlib.Path.home())
         cls.snap_before = ev.snapshot(REPO_ROOT, cls.home_dir)
-        cls.scratch_parent = tempfile.mkdtemp(prefix="xai-matrix-e2e-")
         cls.result = ev.run_matrix(node_bin, _TOOLS, cls.home_dir)
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        shutil.rmtree(cls.scratch_parent, ignore_errors=True)
 
     def rows(self) -> list[dict]:
         return self.result["rows"]
@@ -112,8 +106,8 @@ class TestResolveModelMatrix(_RealGsdTestCase):
     def test_output_carries_no_absolute_path(self) -> None:
         """D-14/jev 19-S1: the structured result is labels and names only."""
         text = json.dumps(self.result, sort_keys=True)
-        for root in (self.home_dir, str(REPO_ROOT), self.scratch_parent,
-                     tempfile.gettempdir(), os.environ.get("TMPDIR", "/nonexistent-tmpdir")):
+        tmpdir = os.environ.get("TMPDIR", "/nonexistent-tmpdir")
+        for root in (self.home_dir, str(REPO_ROOT), tempfile.gettempdir(), tmpdir):
             if root and root != "/":
                 self.assertNotIn(root, text)
         self.assertIn(ev.GSD_CORE_LABEL, text)

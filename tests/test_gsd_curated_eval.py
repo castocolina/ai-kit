@@ -656,9 +656,9 @@ class TestLabels(unittest.TestCase):
 class TestVersionGuard(unittest.TestCase):
     def test_supported_lines(self) -> None:
         for version in ("1.16.0", "1.17.0"):
-            self.assertTrue(ev.gsd_version_supported(version), version)
+            self.assertTrue(ev.gsd_core_line_supported(version), version)
         for version in (None, "", "1.15.0", "2.0.0", "1.16"):
-            self.assertFalse(ev.gsd_version_supported(version), version)
+            self.assertFalse(ev.gsd_core_line_supported(version), version)
 
     def test_run_reason_names_the_blocker(self) -> None:
         self.assertEqual(ev.gsd_run_reason(None, "/tools"), "no node executable")
@@ -1137,7 +1137,7 @@ class TestRun(unittest.TestCase):
 
     def test_runner_helper_parses_real_eval_b(self):
         text = (ev.SKILL_DIR / "evals" / ev.EVAL_FILES["B"]).read_text(encoding="utf-8")
-        self.assertEqual(len(ev._answers_of(text)), 2)
+        self.assertEqual(len(ev._answers_of(text)), 3)
 
 
 class TestFixture(unittest.TestCase):
@@ -1608,7 +1608,8 @@ def _b_turns(
     )
     question_turn = [_say(2, question)]
     rows = [{"id": r["id"], "returncode": 0} for r in req]
-    approval_cmd = apply_report["followups"]["approve_with"]
+    # SKILL.md: `approve_with` starts at the subcommand; the agent prefixes the entrypoint
+    approval_cmd = 'python3 "$E" ' + apply_report["followups"]["approve_with"]
     approval = _cmd(3, 1, approval_cmd, text=json.dumps({"results": rows})) if approve else []
     extra = extra_cmds or []
     return [[*dry, *named], [*real, *question_turn, *extra], approval]
@@ -2458,7 +2459,8 @@ class TestScenarioFiles(unittest.TestCase):
         for scenario in ev.SCENARIOS:
             text = (ev.SKILL_DIR / "evals" / ev.EVAL_FILES[scenario]).read_text(encoding="utf-8")
             counts[scenario] = len(ev._answers_of(text))
-        self.assertEqual(counts, {"B": 2, "C": 0, "D": 2, "E": 2})
+        # review WR-02: the fourth answer approves the follow-ups the apply turn asks about
+        self.assertEqual(counts, {"B": 3, "C": 0, "D": 3, "E": 3})
 
 
 class TestSmoke(unittest.TestCase):
@@ -2742,10 +2744,13 @@ class TestSmoke(unittest.TestCase):
             handle.write('{"dry_run": true, "diff": []}')
         cmd = f"W={work}; python3 x.py apply --plan $W/p.json --dry-run > $W/dry.json; echo exit=$?"
         evs = [
-            {"kind": "bash", "id": "t1", "command": cmd},
+            {"kind": "bash", "id": "t1", "command": cmd, "run": self.tmp},
             {"kind": "tool_result", "tool_use_id": "t1", "text": "exit=0"},
         ]
         self.assertEqual(ev.report_json(evs, evs[0]), {"dry_run": True, "diff": []})
+        evs[0]["run"] = os.path.join(self.tmp, "other-run")  # review IN-06: outside the run
+        self.assertIsNone(ev.report_json(evs, evs[0]))
+        evs[0]["run"] = self.tmp
         missing = cmd.replace("dry.json", "nope.json")
         evs[0]["command"] = missing
         self.assertIsNone(ev.report_json(evs, evs[0]))
@@ -3069,6 +3074,288 @@ class TestSmoke(unittest.TestCase):
         with mock.patch.object(ev, "_smoke_ai_kit") as ai, self.assertRaises(SystemExit):
             ev.run_smoke(ctx, self.tmp, seed_fn=lambda _w, _c: {}, assert_fn=refuse)
         ai.assert_not_called()
+
+
+class TestReviewFixes(unittest.TestCase):
+    """19-REVIEW.md and the ponytail code review: each fix with the input that broke it."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp(prefix="xai-review-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _row(self, scenario: str, run: pathlib.Path, name: str) -> dict:
+        return next(r for r in ev.grade(scenario, run, "green")["checks"] if r["name"] == name)
+
+    # WR-01 / H1: verbs per command segment
+    def test_calls_read_the_verb_of_each_segment(self) -> None:
+        self.assertEqual(ev.calls("grep -n config-set SKILL.md"), [])
+        self.assertEqual(ev.calls("rg -n ' apply ' SKILL.md; echo apply=$?"), [])
+        self.assertEqual(ev.calls('python3 -c "print(1)" apply'), [])
+        self.assertEqual(ev.calls("$G config-set k v")[0][0], "config-set")
+        self.assertEqual(ev.calls("node t.cjs query config-set k v")[0], ("config-set", ["k", "v"]))
+        chained = 'E=x.py; python3 "$E" apply --dry-run --plan P && python3 "$E" apply --plan P'
+        self.assertEqual([v for v, _a in ev.calls(chained)], ["apply", "apply"])
+
+    def test_grep_of_a_write_verb_is_not_a_write(self) -> None:
+        evs = _cmd(1, 1, "grep -n config-set skills/x/SKILL.md", text="12: config-set")
+        self.assertIsNone(ev.first_write(evs, True))
+        self.assertIsNone(ev.first_call(evs, "apply", dry=False))
+
+    def test_chained_dry_run_and_apply_is_a_write_and_a_real_apply(self) -> None:
+        cmd = "python3 x.py apply --dry-run --plan P && python3 x.py apply --plan P"
+        evs = _cmd(1, 1, cmd, text="{}")
+        self.assertIs(ev.first_write(evs, True), evs[0])
+        self.assertIs(ev.first_call(evs, "apply", dry=False), evs[0])
+
+    # CR-01: the dry run's rows reach the user in an earlier turn than the apply
+    def _b_same_turn(self, *, redo_rows=None) -> pathlib.Path:
+        turns = _b_turns()
+        dry = turns[0][0]
+        named = turns[0][2]
+        real, real_result = turns[1][0], turns[1][1]
+        if redo_rows is None:  # dry run, rows and apply all in turn 2
+            moved = [{**e, "turn": 2} for e in (dry, turns[0][1])]
+            turns = [
+                [{**named, "turn": 1, "text": "Planning."}],
+                [*moved, {**named, "turn": 2}, real, real_result, *turns[1][2:]],
+                turns[2],
+            ]
+        else:  # rows shown in turn 1, the dry run re-run in turn 2 before the apply
+            again = _cmd(
+                2, 0, dry["command"], text=json.dumps({"dry_run": True, "diff": redo_rows})
+            )
+            turns = [turns[0], [*again, *turns[1]], turns[2]]
+        return _b_run(self.tmp, events_turns=turns)
+
+    def test_dry_run_and_apply_in_one_turn_fails(self) -> None:
+        row = self._row("B", self._b_same_turn(), "dry_run_before_apply")
+        self.assertIs(row["pass"], False)
+        self.assertEqual(row["evidence"], "dry run and real apply in one turn")
+
+    def test_rerun_dry_run_with_the_shown_rows_passes(self) -> None:
+        run = self._b_same_turn(redo_rows=[])
+        self.assertIs(self._row("B", run, "dry_run_before_apply")["pass"], True)
+        changed = self._b_same_turn(redo_rows=[{"key": "k", "kind": "add"}])
+        self.assertIs(self._row("B", changed, "dry_run_before_apply")["pass"], False)
+
+    def test_rows_named_only_in_the_apply_turn_are_not_shown(self) -> None:
+        turns = _b_turns()
+        late = {**turns[0][2], "turn": 2}
+        turns = [[turns[0][0], turns[0][1]], [late, *turns[1]], turns[2]]
+        row = self._row("B", _b_run(self.tmp, events_turns=turns), "remove_rows_shown")
+        self.assertIs(row["pass"], False)
+
+    # CR-02: no arbitrary output in the record, no operator env, wider scan
+    def test_record_keeps_product_reports_only(self) -> None:
+        evs = [
+            *_cmd(1, 1, "cat auth.json", text='{"provider": {"apiKey": "x"}}'),
+            *_cmd(1, 2, "python3 x.py apply --plan P", text='{"applied": true}'),
+        ]
+        rows = ev._commands_record(evs)
+        self.assertIsNone(rows[0][3])
+        self.assertEqual(rows[1][3], {"applied": True})
+
+    def test_cell_env_is_an_allowlist(self) -> None:
+        with mock.patch.dict(os.environ, {"SOME_API_TOKEN": "t", "PATH": "/bin"}):
+            env = ev._cell_env({"env": {"TMPDIR": "/x"}}, "/h")
+        self.assertNotIn("SOME_API_TOKEN", env)
+        self.assertEqual((env["PATH"], env["HOME"], env["TMPDIR"]), ("/bin", "/h", "/x"))
+
+    def test_secret_scan_hits_every_canary_and_not_diff_rows(self) -> None:
+        for line in ev._canary_lines():
+            self.assertTrue(ev.SECRET_RX.search(line), line)
+        row = '{"key": "effort.agent_overrides.gsd-planner", "kind": "remove"}'
+        self.assertIsNone(ev.SECRET_RX.search(row))
+
+    # CR-03: an interrupt still kills the child's group
+    def test_interrupt_kills_the_group_and_propagates(self) -> None:
+        fixture = _fixture_for(self.tmp)
+        os.makedirs(os.path.join(fixture["run_dir"], "red-a"))
+        kills = _Kills()
+        spawner = _Spawner([_fake_stream()], wait_exc=KeyboardInterrupt())
+        seams = _seams(spawner, kills, self.tmp)
+        with self.assertRaises(KeyboardInterrupt):
+            ev._run_one_turn(
+                seams, fixture, pathlib.Path(fixture["run_dir"]), "red-a", 1, ["c"], {}
+            )
+        self.assertIn((4242, ev.signal.SIGKILL), kills.log)
+
+    # WR-03: worktree under the resolved home, and the work dir
+    def test_smoke_placeholders_order(self) -> None:
+        home = os.path.dirname(str(ev.REPO_ROOT))
+        work = os.path.join(self.tmp, "smoke-1")
+        text = f"{ev.REPO_ROOT}/x {home}/y {work}/plan-a.json {work}/project-a/z"
+        result = {
+            "home": home,
+            "repo_root": str(ev.REPO_ROOT),
+            "work": work,
+            "scratch_a": os.path.join(work, "project-a"),
+        }
+        self.assertEqual(
+            ev._smoke_placeholders(text, result),
+            "<worktree>/x <home>/y <scratch>/plan-a.json <scratch-a>/z",
+        )
+
+    # WR-04: Claude's project key from the reported cwd; a missing dir is a failure
+    def test_transcript_key_maps_every_non_alphanumeric(self) -> None:
+        self.assertEqual(ev._transcript_dir("/x", "/tmp/a_b.c d"), "-tmp-a-b-c-d")
+
+    def test_reported_cwd_without_transcript_dir_is_harness_failure(self) -> None:
+        fixture = _fixture_for(self.tmp)
+        os.makedirs(os.path.join(self.tmp, "home"))
+        stream = _fake_stream()
+        stream[0]["cwd"] = fixture["project"]
+        kills = _Kills()
+        rec = ev.run_cell(
+            fixture,
+            "red-a",
+            _scripted(self.tmp),
+            _seams(_Spawner([stream, _fake_stream(), _fake_stream()]), kills, self.tmp),
+            model="sonnet",
+            effort="medium",
+        )
+        self.assertTrue(
+            any(f.startswith("transcript dir not found") for f in rec["harness_failures"])
+        )
+        key = ev._transcript_dir("", fixture["project"])
+        os.makedirs(os.path.join(self.tmp, "home", ".claude", "projects", key))
+        rec = ev.run_cell(
+            fixture,
+            "red-a",
+            _scripted(self.tmp),
+            _seams(_Spawner([stream, _fake_stream(), _fake_stream()]), kills, self.tmp),
+            model="sonnet",
+            effort="medium",
+        )
+        self.assertEqual(rec["harness_failures"], [])
+
+    # WR-05: the run dir as a whole path word
+    def test_reaper_skips_a_sibling_path(self) -> None:
+        run = pathlib.Path(self.tmp) / "r"
+        ps = f"111 1 111 node {run}2/x.cjs\n222 1 222 node {run}/x.cjs"
+        kills, reaped = _Kills(), []
+        ev._reap_strays(run, _seams(None, kills, self.tmp, ps), 1, reaped)
+        self.assertEqual([r[0] for r in reaped], [222])
+
+    # WR-06: no mode, no read of the home
+    def test_snapshot_without_mode_reads_nothing(self) -> None:
+        with (
+            mock.patch.object(ev, "snapshot", side_effect=AssertionError("read")),
+            mock.patch("builtins.print"),
+        ):
+            self.assertEqual(ev.main(["snapshot", "--home", self.tmp]), 2)
+
+    # WR-07: loose evidence heuristics
+    def test_ask_detector_rejects_incidental_text(self) -> None:
+        for text in ("Please note: I applied it.", "See https://x/a?b=1", "ran `echo $?` ok"):
+            self.assertFalse(ev._asks_user(text), text)
+        for text in ("**Which one?**", "Please confirm the trusted root.", "Pick one."):
+            self.assertTrue(ev._asks_user(text), text)
+
+    def test_grouped_question_needs_id_purpose_or_full_argv(self) -> None:
+        row = {"id": "effort_sync", "argv": ["node", "t.cjs", "effort", "sync"], "purpose": "p q"}
+        real = {"kind": "bash", "turn": 1, "command": "x", "id": "a"}
+        say = lambda t: {"kind": "text", "turn": 1, "text": t}
+        self.assertFalse(
+            ev._grouped_question([real, say("Run the async sync?")], real, None, [row])
+        )
+        self.assertTrue(
+            ev._grouped_question([real, say("Run node t.cjs effort sync?")], real, None, [row])
+        )
+
+    def test_router_must_be_the_first_runner_model(self) -> None:
+        plan = {
+            "artifacts": [
+                {"config": {"prefer": ["cursor", "pi"], "models": {"pi": ev.ROUTER_MODEL}}}
+            ]
+        }
+        ctx = ev._Ctx([], pathlib.Path(self.tmp), None, None, plan, None, False, None, None)
+        self.assertIs(ev._router_wins(ctx).passed, False)
+        plan["artifacts"][0]["config"]["prefer"] = ["pi", "cursor"]
+        self.assertIs(ev._router_wins(ctx).passed, True)
+
+    # WR-08: history rows by their status cell only
+    def test_note_mentioning_context_is_still_a_live_row(self) -> None:
+        self.assertEqual(
+            ev._live_row_tokens("| green | 0123456789abcdef | fresh-context run |"),
+            ["0123456789abcdef"],
+        )
+        self.assertEqual(ev._live_row_tokens("| v1 | 0123456789abcdef | context | r |"), [])
+        self.assertEqual(ev._live_row_tokens("| x | 0123456789abcdef | pass, superseded (a) |"), [])
+
+    # H2: a failing matrix fails the smoke step
+    def test_matrix_step_fails_on_mismatch(self) -> None:
+        failing = {
+            "checks": 3,
+            "rows": [{"combo": "c", "path": "P1", "mismatches": [["a", "opus", "", ""]]}],
+            "controls": {
+                "control_1": {"ok": True},
+                "control_2": {"ok": False, "mismatches": ["b"]},
+            },
+        }
+        ctx = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "claude", {})
+        with mock.patch.object(ev, "run_matrix", return_value=failing):
+            step = ev._run_matrix_step(ctx)
+        self.assertIs(step["ok"], False)
+        self.assertIn("control 2 mismatches: b", step["detail"])
+        text = ev.render_smoke_evidence({"steps": [step], "matrix": failing})
+        self.assertIn("- control_2: FAILED", text)
+
+    # IN-08: a sibling of the allowed skill dir is a shadow
+    def test_sibling_skill_dir_is_shadowed(self) -> None:
+        sibling = f"{ev.SKILL_DIR}-copy/ai-kit-gsd-curated-config.py"
+        evs = [{"kind": "bash", "command": f"python3 {sibling} inventory"}]
+        self.assertTrue(ev._shadow_failures("green", evs, {"run_dir": self.tmp}))
+
+    # IN-10: plugins and memory beyond the builtin set
+    def test_non_builtin_plugin_or_user_memory_is_harness_failure(self) -> None:
+        init = {"plugins": [{"path": "builtin"}], "memory_paths": {"auto": "/m"}}
+        self.assertEqual(ev._init_harness_failures(init), [])
+        init = {"plugins": [{"path": "/p"}], "memory_paths": {"auto": "/m", "user": "/u"}}
+        self.assertEqual(len(ev._init_harness_failures(init)), 2)
+
+    # M3: one predicate per check name
+    def test_every_check_has_a_predicate(self) -> None:
+        names = {c.name for checks in ev.CHECKS.values() for c in checks}
+        self.assertEqual(names, set(ev._PREDICATES))
+
+    # IN-05 / M8: project (b) records key paths, never values
+    def test_project_b_step_records_key_paths_only(self) -> None:
+        ctx = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "claude", {})
+        report = {"reconciled": ["intel.enabled"], "diff": [{"value": "SENTINEL-VALUE"}]}
+        with (
+            mock.patch.object(ev, "_scratch_project", return_value=self.tmp),
+            mock.patch.object(ev, "_inventory"),
+            mock.patch.object(ev, "_recommend_to"),
+            mock.patch.object(ev, "resolve_choices"),
+            mock.patch.object(ev, "_dry_run_unchanged"),
+            mock.patch.object(ev, "_real_apply_or_fail", return_value=report),
+            mock.patch.object(ev, "_load_plan_file", return_value={}),
+            mock.patch.object(ev, "validate_applied"),
+        ):
+            step = ev._smoke_project_b(ctx, self.tmp, {})
+        self.assertIs(step["ok"], True, step)
+        self.assertEqual(step["key_paths"], {"reconciled": ["intel.enabled"]})
+        self.assertNotIn("SENTINEL-VALUE", json.dumps(step))
+
+    # IN-09: `run --snapshot` fails the cell on a strict change
+    def test_run_snapshot_gate(self) -> None:
+        run = os.path.join(self.tmp, "run")
+        os.makedirs(run)
+        with open(os.path.join(run, "fixture.json"), "w", encoding="utf-8") as fh:
+            json.dump({}, fh)
+        snap = os.path.join(self.tmp, "snap.json")
+        with open(snap, "w", encoding="utf-8") as fh:
+            json.dump({"strict": {"a": "1"}, "host_managed": {}}, fh)
+        with (
+            mock.patch.object(ev, "run_cell", return_value={"harness_failures": [], "turns": []}),
+            mock.patch.object(
+                ev, "snapshot", return_value={"strict": {"a": "2"}, "host_managed": {}}
+            ),
+            mock.patch("builtins.print"),
+        ):
+            code = ev.main(["run", "C", "--cell", "red-a", "--run-dir", run, "--snapshot", snap])
+        self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":
