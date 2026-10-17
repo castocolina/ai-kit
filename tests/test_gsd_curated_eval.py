@@ -2670,6 +2670,33 @@ class TestSmoke(unittest.TestCase):
         self.assertEqual(ev.report_json(evs(applied), point), {"applied": True, "writes": []})
         self.assertIsNone(ev.report_json(evs("refused: needs_choice\nexit=2"), point))
 
+    def test_scripted_turns_fill_eval_placeholders(self) -> None:
+        """19-07 regression: the eval body's `{PROJECT}`/`{INVENTORY}` reached the agent
+        literally; every eval file must now come out fully substituted."""
+        run_dir = os.path.join(self.tmp, "run")
+        fixture = {
+            "project": os.path.join(run_dir, "project"),
+            "run_dir": run_dir,
+            "skill_md": "SKILL.md",
+            "inventory": "inventory.json",
+        }
+        for scenario in ev.SCENARIOS:
+            text = (ev.SKILL_DIR / "evals" / ev.EVAL_FILES[scenario]).read_text(encoding="utf-8")
+            turns = ev._scripted_turns("green", text, fixture)
+            joined = "\n".join(turns)
+            self.assertNotRegex(joined, r"\{[A-Z][A-Z_]+\}", scenario)
+        text = (ev.SKILL_DIR / "evals" / ev.EVAL_FILES["E"]).read_text(encoding="utf-8")
+        self.assertIn(
+            os.path.join(run_dir, "inventory.json"), ev._scripted_turns("green", text, fixture)[0]
+        )
+        with self.assertRaises(SystemExit):
+            ev._scripted_turns("green", text, {**fixture, "inventory": ""})
+
+    def test_placeholders_label_worktree_before_home(self) -> None:
+        text = f"{ev.REPO_ROOT}/x {pathlib.Path.home()}/y {pathlib.Path.home().resolve()}/z"
+        out = ev._placeholders(text, pathlib.Path(self.tmp))
+        self.assertEqual(out, "<worktree>/x <home>/y <home>/z")
+
     def test_tree_hash_detects_change(self) -> None:
         root = os.path.join(self.tmp, "planning")
         os.makedirs(root)

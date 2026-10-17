@@ -1703,10 +1703,15 @@ def render_markdown(result: dict) -> str:
 
 
 def _placeholders(text: str, run: pathlib.Path) -> str:
-    """Replaces the run dir, home directory and worktree with their labels."""
-    out = text.replace(str(run), SCRATCH_LABEL)
-    out = out.replace(str(pathlib.Path.home()), HOME_LABEL)
-    return out.replace(str(REPO_ROOT), WORKTREE_LABEL)
+    """Replaces the run dir, worktree and home directory with their labels. The worktree goes
+    before home, and home is matched in its resolved form too: with a symlinked `/home` the
+    worktree path contains the resolved home, and replacing home first left `/var<home>/...`
+    (19-07)."""
+    out = text.replace(str(run), SCRATCH_LABEL).replace(str(REPO_ROOT), WORKTREE_LABEL)
+    home = pathlib.Path.home()
+    for form in dict.fromkeys((str(home.resolve()), str(home))):
+        out = out.replace(form, HOME_LABEL)
+    return out
 
 
 def trimmed_transcript(evs: list[dict], run: pathlib.Path) -> str:
@@ -3246,15 +3251,26 @@ def _claude_version(claude_bin: str) -> str:
 
 
 def _scripted_turns(cell: str, scenario_text: str, fixture: dict) -> list[str]:
-    """The prompt (preamble plus body) for turn 1, then the scripted answers in order."""
-    body = _prompt_of(scenario_text)
+    """The prompt (preamble plus body) for turn 1, then the scripted answers in order.
+
+    The eval body's `{PROJECT}`/`{INVENTORY}` are filled too (19-07: only the preamble was, so
+    every cell saw the literal placeholders); any placeholder left is a harness failure."""
     preamble = PREAMBLES[cell].format(
         PROJECT=fixture["project"],
         SKILL_MD=fixture["skill_md"],
         V1_SKILL_MD=fixture.get("v1_skill_md", ""),
         V1_ENTRYPOINT=fixture.get("v1_entrypoint", ""),
     )
-    return [f"{preamble}\n\n{body}", *_answers_of(scenario_text)]
+    values = {"{PROJECT}": str(fixture["project"])}
+    if fixture.get("inventory"):
+        values["{INVENTORY}"] = str(_abs_path(fixture["run_dir"]) / fixture["inventory"])
+    turns = [f"{preamble}\n\n{_prompt_of(scenario_text)}", *_answers_of(scenario_text)]
+    for key, value in values.items():
+        turns = [turn.replace(key, value) for turn in turns]
+    left = sorted({m for turn in turns for m in re.findall(r"\{[A-Z][A-Z_]+\}", turn)})
+    if left:
+        raise SystemExit(f"unsubstituted placeholder in the scripted turns: {left[0]}")
+    return turns
 
 
 def _prompt_of(text: str) -> str:
