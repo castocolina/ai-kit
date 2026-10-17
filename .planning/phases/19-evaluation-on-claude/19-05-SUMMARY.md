@@ -10,6 +10,7 @@ key-files:
   modified:
     - tests/gsd_curated_eval.py (harness fixes, 3 test(19-05) commits)
     - tests/test_gsd_curated_eval.py
+orchestrator_verify: "VERIFY 19-05: 2/2 passed"
 ---
 
 # Plan 19-05 Summary: live smoke from the claude host
