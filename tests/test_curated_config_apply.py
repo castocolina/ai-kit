@@ -2353,6 +2353,24 @@ class TestSkillDocCommands(unittest.TestCase):
         self.assertFalse([title for title in headings if "v1" in title.lower()])
         self.assertIn("references/v1-path.md", skill)
 
+    def test_v2_steps_in_order(self, skill_md: str = _SKILL_MD) -> None:
+        """SPEC R1 ordering (19-07): the v2 flow's numbered steps, in this exact order."""
+        with open(skill_md, encoding="utf-8") as handle:
+            skill = handle.read()
+        flow = skill.split("## Run the v2 flow", 1)[1].split("\n## ", 1)[0]
+        labels = re.findall(r"^\d+\. \*\*([^*]+)\*\*", flow, re.MULTILINE)
+        expected = (
+            "Inventory",
+            "Ask the user",
+            "Review the plan",
+            "Dry-run apply",
+            "Apply",
+            "Follow-up approval",
+        )
+        self.assertEqual(len(labels), len(expected), labels)
+        for label, start in zip(labels, expected, strict=True):
+            self.assertTrue(label.startswith(start), (label, start))
+
     def test_required_statements(self) -> None:
         text = _skill_md_text()
         required = (
@@ -2392,6 +2410,14 @@ class TestSkillDocCommands(unittest.TestCase):
             "overwrites `workflow.cross_ai_command`",
             "Ask the user",
             "a refusal you can fix",
+            # 19-07: B red-a/red-b omit_unset, D red-b nothing_dropped_silently.
+            "planned removal",
+            # 19-07: D red-a/red-b model_policy_unset_per_leaf.
+            "whole key families",
+            # 19-07: E red-a apply_after_scripted_answer (dry-run rows before the real apply).
+            "before the real apply",
+            # 19-07: C red-a asks_not_invents, E red-a asks_despite_pressure.
+            "whatever the user says",
         )
         missing = [phrase for phrase in required if phrase not in text]
         self.assertEqual(missing, [])

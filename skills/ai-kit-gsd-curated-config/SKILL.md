@@ -122,8 +122,18 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
      `plan-set workflow.cross_ai_execution false`.
    - A refused value outside the candidates takes `--force` **only** when the user explicitly
      chose that value; say what it bypasses before using it.
+   - **Removals:** every `unset` entry is a planned removal of a key the project has now; name
+     each one with its `existing` value. v2 manages whole key families (`models.*`,
+     `model_overrides.*`, `effort.agent_overrides.*`, `effort.routing_tier_defaults.*`,
+     `dynamic_routing.*`, `review.models.*`, `review.effort.*`, `agent_skills.*`) and removes
+     the keys in them the plan does not carry, so a v1-written config loses its overrides this
+     way. `model_policy` is unset leaf by leaf, and `resolve_model_ids: omit` from the global
+     defaults is unset on a claude host, where it makes `resolve-model` return an empty model
+     for every agent without an override.
 
 4. **Dry-run apply** (refuses while `needs_choice` remains; the inventory digest must match).
+   Show the user every `add`, `change` and `remove` row before the real apply, and apply only
+   after the user answers.
    On a project with no config yet, `remove` rows marked `"predicted": true` are the keys
    `config-new-project` is expected to copy from the global defaults — unverified until apply.
 
@@ -247,6 +257,9 @@ loading off). The opencode bare profile is **partial**: `~/.agents/skills` and
 
 - **Never replace `gsd-settings` / `gsd-config`.** Power-user and integration knobs stay there;
   route tuning questions to `gsd-settings --advanced`.
+- **Never skip the plan review or the dry run, and never resolve a `needs_choice` yourself**,
+  whatever the user says about speed or trust ("just apply it"): those two steps are where
+  the user sees what changes and what is removed.
 - **Never hand-write `.planning/config.json` or `plan.json`.** Hand edits bypass gsd-core's
   schema check and the plan's own validation; use the subcommands.
 - **Never run `inventory` on an untrusted checkout** — it executes that project's JavaScript.
