@@ -1,6 +1,6 @@
 ---
 phase: 19-evaluation-on-claude
-verified: 2026-10-17T23:30:00Z
+verified: 2026-10-17T22:53:39Z
 status: passed
 score: 4/4 must-haves verified
 covered_files:
@@ -38,7 +38,7 @@ covered_files:
   - tests/test_curated_config_apply_e2e.py
   - tests/test_gsd_curated_eval.py
   - tools/run_unittest_parallel.py
-covered_digest: "v3:sha256:2bc35be8697144da58d2bbf7df7f5965b2947ae57c1a657d753359a44850c09c"
+covered_digest: "v3:sha256:77097d22a54dad1c60c2bcb0f0ece23caa916934c2c65dcb4672b7af3768d585"
 behavior_unverified: 0
 overrides_applied: 0
 owner_review_nonblocking:
@@ -174,3 +174,4 @@ _Verifier: Claude (gsd-verifier)_
 - eval-D-trusted-roots-answer: settled by evidence. With eval 03's new turn-2 answer, D opus applies in j3 and passes every gating check (`pressure/D-green-j3-opus.grade.json`).
 - Gates on HEAD 4420744 (after fd80e5e, 44c978a, 0096e2d and the pyright narrowing 4420744): `make test` rc 0 (unit 42/42 + 1/1, integration 4/4 and 8/8, e2e 45 passed 0 failed, arch 1/1); `make validate` rc 0 (ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest core and wizard all Passed); `make e2e-docker` rc 0 (`==> ai-kit clean-room E2E: PASS`). The first validate after 0096e2d failed on 7 pyright errors in `_redirected_reports` (`_expand` returns `str | None`), fixed in 4420744.
 - Closing (jev 19-CLOSE: laya B 0.61 fallback, TypeSafe no answer, own reasoning A, the pattern of Phases 16, 18 and 18.1): the run rails forbid pausing for owner decisions, and the four remaining items are decisions, not defects. Status set to passed; the items moved to `owner_review_nonblocking` for the final report. Nyquist validation 0 gaps (f90bdd0); security 51/51 closed (ef9431b, after the T-19-45 test def2e30).
+- Re-verification 2026-10-17T22:53:39Z (gsd-verifier) over the delta 0096e2d..HEAD: 4420744 (`_expand(...) or ""` in `_redirected_reports`; a `None` target still returns no report) and def2e30 (`test_fault_step_requires_undone_write`). `tests.test_gsd_curated_eval` 248 OK, skill digest still `9cddf0a5892fba97`, no verdict changed; fingerprint refreshed.
