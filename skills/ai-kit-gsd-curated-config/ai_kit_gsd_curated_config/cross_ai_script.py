@@ -16,12 +16,12 @@ from . import cross_ai, gsd_catalog
 
 HEADER_RE = re.compile(
     rb"^// ai-kit-cross-ai generator=ai-kit-gsd-curated-config "
-    rb"template=(\d+) sha256=([0-9a-f]{64}|UNSTAMPED)$"
+    rb"template=(\d+) sha256=(?P<sha>[0-9a-f]{64}|UNSTAMPED)$"
 )
 GUIDANCE_PATH = ".planning/scripts/cross-ai-guidance.md"
 GUIDANCE_HEADER_RE = re.compile(
     rb"^<!-- ai-kit-cross-ai-guidance generator=ai-kit-gsd-curated-config "
-    rb"template=1 sha256=([0-9a-f]{64}|UNSTAMPED) -->$"
+    rb"template=1 sha256=(?P<sha>[0-9a-f]{64}|UNSTAMPED) -->$"
 )
 _GUIDANCE_NOTICE = (
     b"<!-- Rendered by ai-kit; edits produce a .new file on the next render. -->"
@@ -60,7 +60,7 @@ def script_state(data: bytes, header_re: re.Pattern[bytes] = HEADER_RE) -> str:
     match = header_re.match(header)
     if not match:
         return "foreign"
-    digest = match.group(1) if header_re is not HEADER_RE else match.group(2)
+    digest = match["sha"]
     if digest == b"UNSTAMPED":
         return "unstamped"
     expected = hashlib.sha256(body).hexdigest().encode("ascii")
@@ -187,22 +187,25 @@ def _note_new(state: str, path: str) -> str:
     )
 
 
-def plan_script(project_dir: str, artifact: dict, template: bytes, scrub_env) -> ScriptPlan:
-    rel = artifact["path"]
-    path = os.path.abspath(os.path.join(project_dir, rel))
-    rendered = render(template, runner_config(template, artifact, scrub_env))
+def _plan_rendered(path: str, rendered: bytes, header_re: re.Pattern[bytes]) -> ScriptPlan:
+    """Add, keep a pristine match, change a pristine file, or write `.new` beside any other."""
     existing = _read_target(path)
     if existing is None:
         return ScriptPlan("add", path, path, rendered, None, "", None)
-    state = script_state(existing)
+    state = script_state(existing, header_re)
+    if state == "pristine" and existing == rendered:
+        return ScriptPlan("keep-pristine", path, None, rendered, state, "", existing)
     if state == "pristine":
-        if existing == rendered:
-            return ScriptPlan("keep-pristine", path, None, rendered, state, "", existing)
         return ScriptPlan("change", path, path, rendered, state, "", existing)
-    new_path = path + ".new"
     return ScriptPlan(
-        "new-as-.new", path, new_path, rendered, state, _note_new(state, path), existing
+        "new-as-.new", path, path + ".new", rendered, state, _note_new(state, path), existing
     )
+
+
+def plan_script(project_dir: str, artifact: dict, template: bytes, scrub_env) -> ScriptPlan:
+    path = os.path.abspath(os.path.join(project_dir, artifact["path"]))
+    rendered = render(template, runner_config(template, artifact, scrub_env))
+    return _plan_rendered(path, rendered, HEADER_RE)
 
 
 def _scrub_env() -> list[str]:
@@ -272,27 +275,12 @@ def _guidance_bytes(text: str) -> bytes:
 
 def plan_guidance(project_dir: str, text: str) -> ScriptPlan:
     path = os.path.abspath(os.path.join(project_dir, GUIDANCE_PATH))
-    rendered = _guidance_bytes(text)
-    existing = _read_target(path)
-    if existing is None:
-        return ScriptPlan("add", path, path, rendered, None, "", None)
-    state = script_state(existing, GUIDANCE_HEADER_RE)
-    if state == "pristine" and existing == rendered:
-        return ScriptPlan("keep-pristine", path, None, rendered, state, "", existing)
-    if state == "pristine":
-        return ScriptPlan("change", path, path, rendered, state, "", existing)
-    return ScriptPlan(
-        "new-as-.new", path, path + ".new", rendered, state, _note_new(state, path), existing
-    )
+    return _plan_rendered(path, _guidance_bytes(text), GUIDANCE_HEADER_RE)
 
 
 class _EnsureStep(NamedTuple):
     kind: str | None
     notes: list[str]
-
-
-def _record(plan: ScriptPlan) -> _EnsureStep:
-    return _EnsureStep(plan.kind, [plan.note] if plan.note else [])
 
 
 def _read_error(path: str, exc: OSError) -> ScriptReadError:
@@ -315,7 +303,7 @@ def _runner_ready(path: str) -> bool:
 
 def _write_plan(plan: ScriptPlan) -> _EnsureStep:
     performed = write_script(plan)
-    return _record(performed)
+    return _EnsureStep(performed.kind, [performed.note] if performed.note else [])
 
 
 def _guidance_step(project_dir: str, text: str | None) -> _EnsureStep:
