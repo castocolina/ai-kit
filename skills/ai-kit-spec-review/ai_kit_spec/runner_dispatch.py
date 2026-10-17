@@ -359,7 +359,9 @@ def _sigint_deferred():
 
     A second interrupt during cleanup must not abort the kill and temp-file removal, and
     one landing between Popen returning and the child being recorded must not orphan it."""
-    if threading.current_thread() is not threading.main_thread():
+    # A caller that ignores SIGINT gets nothing to defer: never turn its ignore into a raise.
+    if (threading.current_thread() is not threading.main_thread()
+            or signal.getsignal(signal.SIGINT) is signal.SIG_IGN):
         yield
         return
     pending: list[bool] = []

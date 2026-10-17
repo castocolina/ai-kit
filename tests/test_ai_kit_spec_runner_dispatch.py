@@ -382,6 +382,21 @@ class TestRunRunnerFake(unittest.TestCase):
             run_runner(_spec(), "hi", seams)
         self.assertIn((4242, signal.SIGKILL), kills)
 
+    def test_ignored_sigint_stays_ignored_through_the_spawn(self):
+        inner = _ScriptedPopen([_FakeProc([])])
+
+        def popen(argv, **kwargs):
+            proc = inner(argv, **kwargs)
+            os.kill(os.getpid(), signal.SIGINT)  # the caller ignores SIGINT: no raise
+            return proc
+
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            run_runner(_spec(), "hi", _seams(popen, [], []))
+            self.assertIs(signal.getsignal(signal.SIGINT), signal.SIG_IGN)
+        finally:
+            signal.signal(signal.SIGINT, previous)
+
     def test_popen_oserror(self):
         def popen(_argv, **_kwargs):
             raise OSError("node missing at spawn")
