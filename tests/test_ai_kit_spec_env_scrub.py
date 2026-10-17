@@ -128,11 +128,10 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
         # 4. dispatch_execute: the runner seam's Popen is what the child would get
         captured_exec = {}
 
-        def fake_runner(spec, prompt, seams):
-            del prompt
-            captured_exec["env"] = seams.env_fn()
-            argv = ["node", "runner", "--model-codex", spec.model, "--mode", "exec"]
-            return RunnerResult(None, "", None, "dispatch_unavailable", False, argv, "")
+        def fake_popen(argv, **kwargs):
+            captured_exec["argv"] = argv
+            captured_exec["kwargs"] = kwargs
+            raise OSError("spawn stopped after env capture")
 
         result = execute_dispatch.dispatch_execute(
             execute_dispatch.ExecuteDispatchSpec(
@@ -146,12 +145,17 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
                 build_tooling_guidance_fn=lambda *_a, **_kw: "",
                 build_reinforcement_fn=lambda *_a, **_kw: "",
                 build_soft_confinement_fn=lambda *_a, **_kw: "",
-                runner_fn=fake_runner,
-                runner_seams=RunnerSeams(env_fn=dispatch.child_env),
+                # which_fn: the image without node must still reach the spawn.
+                runner_seams=RunnerSeams(popen_fn=fake_popen, which_fn=lambda _name: "node"),
             ),
         )
         assert result["reason"] == "dispatch_unavailable", result
-        results["dispatch_execute"] = set(captured_exec["env"])
+        assert isinstance(captured_exec["argv"], list), captured_exec["argv"]
+        assert "shell" not in captured_exec["kwargs"], captured_exec["kwargs"]
+        assert captured_exec["kwargs"]["start_new_session"] is True
+        assert "--child-pgid-file" in captured_exec["argv"]
+        assert "--child-pgid-file" not in result["command"]
+        results["dispatch_execute"] = set(captured_exec["kwargs"]["env"])
         # 5. dispatch_reviewer: the launcher seam's env_fn is what its child would get
         reviewer_env = {}
 
