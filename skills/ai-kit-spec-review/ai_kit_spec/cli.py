@@ -81,7 +81,7 @@ from ai_kit_spec.review_reports import (
     report_status,
 )
 from ai_kit_spec.reviewer_dispatch import ReviewerDispatchSpec, ReviewerSeams, dispatch_reviewer
-from ai_kit_spec.routing import RouteContext, RuntimesSeams, host_can_select
+from ai_kit_spec.routing import RuntimesSeams, host_can_select
 from ai_kit_spec.runner_dispatch import (
     RunnerSpec,
     build_runner_argv,
@@ -661,28 +661,21 @@ def _cmd_probe_quota(args: argparse.Namespace, deps: CliDeps) -> int:
     print(json.dumps(updated))
     return 0
 
-_UNVERIFIED_NOTE = (
-    "ai-kit-spec: dispatching reviewer {key} unverified: the {runtime} model list is "
-    "unavailable, so neither ai-kit nor the runner can check {model} before it runs"
-)
-
-
 def _route_reviewers(config: dict, deps: CliDeps) -> dict[str, str]:
     """Route every configured reviewer and say why each skipped or unchecked one lost."""
     env = deps.env_fn()
+    seams = RuntimesSeams(deps.which_fn, deps.run_fn, deps.popen_fn, deps.urlopen_fn)
     routes = routing.route_all(
-        config.get("reviewers", []),
-        RouteContext(detect_current_runtime(env), "review", env,
-                     RuntimesSeams(deps.which_fn, deps.run_fn, deps.popen_fn, deps.urlopen_fn)))
+        config.get("reviewers", []), routing.host_context("review", env, seams))
     by_key = {entry.get("key"): entry for entry in config.get("reviewers", [])
               if isinstance(entry, dict)}
     for key, decision in routes.items():
         if decision in routing.SKIP_ROUTES:
-            print(f"ai-kit-spec: skipping reviewer {key}: route {decision}", file=sys.stderr)
+            print(routing.skip_note(f"reviewer {key}", decision), file=sys.stderr)
         elif decision == "unverified":
             entry = by_key.get(key, {})
-            print(_UNVERIFIED_NOTE.format(key=key, runtime=entry.get("runtime"),
-                                           model=entry.get("model", "")), file=sys.stderr)
+            print(routing.unverified_note(f"reviewer {key}", entry.get("runtime"),
+                                          entry.get("model", "")), file=sys.stderr)
     return routes
 
 

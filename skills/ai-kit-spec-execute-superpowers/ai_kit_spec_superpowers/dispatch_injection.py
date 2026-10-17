@@ -21,7 +21,14 @@ from ai_kit_spec.execute_selection import (
     screen_execute_clis,
 )
 from ai_kit_spec.quota import entry_reason, resolve_ladder_pick
-from ai_kit_spec.routing import SKIP_ROUTES, Inventory, RouteInput, route
+from ai_kit_spec.routing import (
+    SKIP_ROUTES,
+    Inventory,
+    RouteInput,
+    route,
+    skip_note,
+    unverified_note,
+)
 
 from ai_kit_spec_superpowers.task_classification import (
     classify_task,
@@ -291,11 +298,8 @@ def _injection_for(candidate: dict, decision: str) -> dict:
     """The host-agnostic payload. `unverified` still dispatches: the model list was unavailable,
     so neither side could check the model before it runs."""
     if decision == "unverified":
-        print(
-            f"ai-kit-spec: dispatching {candidate['key']} unverified: the "
-            f"{candidate.get('runtime')} model list is unavailable, so neither ai-kit nor the "
-            f"runner can check {candidate.get('model', '')} before it runs",
-            file=sys.stderr)
+        print(unverified_note(candidate["key"], candidate.get("runtime"),
+                              candidate.get("model", "")), file=sys.stderr)
     if decision == "native":
         return {"mode": "native", "key": candidate["key"], "runtime": candidate.get("runtime"),
                 "model": candidate["model"]}
@@ -316,8 +320,7 @@ def _skip_route(candidate: dict, decision: str, tried: list, reasons: dict) -> N
     """A skip route is permanent: recorded under the route name, never picked, one stderr line."""
     tried.append(candidate["key"])
     reasons[candidate["key"]] = decision
-    print(f"ai-kit-spec: skipping {candidate['key']} for execution: route {decision}",
-          file=sys.stderr)
+    print(skip_note(f"{candidate['key']} for execution", decision), file=sys.stderr)
 
 
 def _walk_ladder_for_injection(

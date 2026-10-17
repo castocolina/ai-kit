@@ -20,6 +20,7 @@ from ai_kit_spec.detection import (
     cache_runtimes_path,
     claude_runtime_fields,
     claude_runtime_is_current,
+    detect_current_runtime,
     list_runtime_models,
     normalize_runtime_keys,
     resolve_runtime_binary,
@@ -200,6 +201,22 @@ class RouteContext(NamedTuple):
     mode: str
     env: dict
     seams: RuntimesSeams
+
+
+def host_context(mode: str, env: dict, seams: RuntimesSeams) -> RouteContext:
+    """The route context for this process: the host is detected from `env`."""
+    return RouteContext(detect_current_runtime(env), mode, env, seams)
+
+
+def skip_note(subject: str, decision: str) -> str:
+    """The visible line for a skip route (D-20, D-22)."""
+    return f"ai-kit-spec: skipping {subject}: route {decision}"
+
+
+def unverified_note(subject: str, runtime, model) -> str:
+    """The D-31 honesty line: an unverified route dispatches with nothing checked first."""
+    return (f"ai-kit-spec: dispatching {subject} unverified: the {runtime} model list is "
+            f"unavailable, so neither ai-kit nor the runner can check {model} before it runs")
 
 
 def _catalog_reader(env):

@@ -25,7 +25,6 @@ from ai_kit_spec.cache import cache_read_json, cache_write_json
 from ai_kit_spec.config_io import ConfigError
 from ai_kit_spec.detection import (
     LOOPBACK_URLOPEN,
-    detect_current_runtime,
     detect_tool_availability,
     probe_codegraph,
     resolve_agents_tooling_path,
@@ -33,7 +32,7 @@ from ai_kit_spec.detection import (
 )
 from ai_kit_spec.dispatch import write_resumable_state as _write_resumable_state_default
 from ai_kit_spec.quota import QUOTA_TTL_SECONDS, refresh_quota_cache
-from ai_kit_spec.routing import RouteContext, RuntimesSeams, route_all, unroutable_quota
+from ai_kit_spec.routing import RuntimesSeams, host_context, route_all, unroutable_quota
 
 from ai_kit_spec_superpowers.dispatch_injection import (
     BuildInjectionOptions,
@@ -198,8 +197,7 @@ def _routes_for(deps: CliDeps, candidates: list) -> dict:
     runtimes cache, refreshed once for a runtime whose listing missed."""
     env = deps.env_fn()
     seams = RuntimesSeams(deps.which_fn, deps.run_fn, deps.popen_fn, deps.urlopen_fn)
-    return deps.route_all_fn(
-        candidates, RouteContext(detect_current_runtime(env), "exec", env, seams))
+    return deps.route_all_fn(candidates, host_context("exec", env, seams))
 
 
 def _resolve_task_inputs(args: argparse.Namespace, deps: CliDeps) -> ResolveTaskLoadResult | int:
