@@ -269,11 +269,11 @@ def _listing_stdout(result) -> str | None:
     return stdout if isinstance(stdout, str) else None
 
 
-def detect_opencode_models(binary: str, run_fn=subprocess.run) -> list | None:
+def detect_opencode_models(binary: str, run_fn=subprocess.run, env=None) -> list | None:
     """Runs `<binary> models`; one model id per non-blank line. None on OSError,
     TimeoutExpired, or a non-zero exit. Exit 0 returns the lines, possibly []."""
     try:
-        result = _run_opencode(run_fn, [binary, *_list_argv("opencode")], timeout=15)
+        result = _run_opencode(run_fn, [binary, *_list_argv("opencode")], 15, env)
     except (OSError, subprocess.TimeoutExpired):
         return None
     stdout = _listing_stdout(result)
@@ -476,12 +476,12 @@ def parse_pi_models(stdout) -> list | None:
     return parsed_models
 
 
-def list_runtime_models(rid, binary, run_fn=subprocess.run) -> list[str] | None:
+def list_runtime_models(rid, binary, run_fn=subprocess.run, env=None) -> list[str] | None:
     """Model ids for one runtime. None means the listing failed (or this runtime has no
     lister: claude's ids come from the catalog, never a listing); [] means it succeeded
-    with nothing selectable."""
+    with nothing selectable. `env` locates opencode's private cwd (None: os.environ)."""
     if rid == "opencode":
-        return detect_opencode_models(binary, run_fn=run_fn)
+        return detect_opencode_models(binary, run_fn=run_fn, env=env)
     if rid == "cursor":
         return detect_cursor_agent_models(binary, run_fn=run_fn)
     if rid == "codex":
@@ -607,14 +607,14 @@ LOOPBACK_URLOPEN = _LOOPBACK_OPENER.open
 _OPENCODE_VERSION_RE = re.compile(r"(?:opencode\s+)?v?(\d+)\.\d+\.\d+\S*")
 
 
-def opencode_major_version(binary: str, run_fn=subprocess.run) -> int | None:
+def opencode_major_version(binary: str, run_fn=subprocess.run, env=None) -> int | None:
     """Returns the opencode major version parsed from `<binary> --version`
     (e.g. "opencode v2.0.29" -> 2), or None on any failure: an OSError or
     subprocess.TimeoutExpired, a non-zero `returncode` (via `getattr(..., 1)`), a
     non-str stdout, or stdout that does not fully match the version pattern. Like
     every detector here, it never raises."""
     try:
-        result = _run_opencode(run_fn, [binary, "--version"], timeout=10)
+        result = _run_opencode(run_fn, [binary, "--version"], 10, env)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if getattr(result, "returncode", 1) != 0:
@@ -695,12 +695,12 @@ def _probe_env() -> dict:
     return env
 
 
-def _private_dir() -> str:
+def _private_dir(env=None) -> str:
     """A fresh 0700 dir under ai-kit's user-owned cache, so no ancestor is a shared,
     world-writable temp root another user could plant opencode.json in (NF-2). tempfile
     is only the fallback, also when the cache base is relative (no HOME) and would land
-    in the caller's cwd."""
-    base = cache_base(dict(os.environ))
+    in the caller's cwd. `env` is the caller's env (None: os.environ)."""
+    base = cache_base(dict(os.environ if env is None else env))
     if os.path.isabs(base):
         try:
             os.makedirs(base, mode=0o700, exist_ok=True)
@@ -711,20 +711,20 @@ def _private_dir() -> str:
 
 
 @contextlib.contextmanager
-def _opencode_private_dir():
+def _opencode_private_dir(env=None):
     """The private cwd of one opencode subprocess, removed afterwards: opencode loads
     opencode.json from its cwd and every ancestor (NF-1)."""
-    path = _private_dir()
+    path = _private_dir(env)
     try:
         yield path
     finally:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _run_opencode(run_fn, argv: list, timeout: int):
+def _run_opencode(run_fn, argv: list, timeout: int, env=None):
     """`run_fn(argv, ...)` from a private cwd with `_probe_env()` -- the one path every
     non-server opencode subprocess takes (NF-1)."""
-    with _opencode_private_dir() as cwd:
+    with _opencode_private_dir(env) as cwd:
         return run_fn(argv, capture_output=True, text=True, check=False, timeout=timeout,
                       cwd=cwd, env=_probe_env())
 
@@ -784,7 +784,7 @@ def _stop_server(proc) -> None:
 def probe_opencode_api_image_input(binary: str,
                                    popen_fn: Callable[..., Any] = subprocess.Popen,
                                    urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN,
-                                   ) -> dict:
+                                   env=None) -> dict:
     """Starts a private `opencode serve --hostname 127.0.0.1 --port 0`, reads the
     printed loopback port and one-time password from its stdout, and calls
     `GET http://127.0.0.1:<port>/api/model` with HTTP basic auth `opencode:<password>`
@@ -802,7 +802,7 @@ def probe_opencode_api_image_input(binary: str,
     group (SIGTERM -> wait -> SIGKILL). opencode writes its own state (db, log) in its
     XDG data dir, never config. opencode 1.x must not reach this (see
     opencode_image_input_with_source)."""
-    with _opencode_private_dir() as probe_dir, _sigterm_unwinds():
+    with _opencode_private_dir(env) as probe_dir, _sigterm_unwinds():
         return _probe_from(binary, probe_dir, popen_fn, urlopen_fn)
 
 
@@ -838,7 +838,7 @@ def _probe_from(binary, probe_dir, popen_fn, urlopen_fn) -> dict:
 def opencode_image_input_with_source(binary: str, run_fn=subprocess.run,
                                      popen_fn: Callable[..., Any] = subprocess.Popen,
                                      urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN,
-                                     ) -> tuple:
+                                     env=None) -> tuple:
     """Version-gated image-capability detection for opencode. Returns
     `(map, source)` where source is OPENCODE_API_IMAGE_SOURCE ("opencode-api", the
     v2 `GET /api/model` probe) on opencode >= 2, or "opencode" (the
@@ -846,15 +846,15 @@ def opencode_image_input_with_source(binary: str, run_fn=subprocess.run,
     fully match the version pattern counts as unknown and takes the 1.x verbose
     path, unchanged. The probe is called by its module-level name so tests can patch
     it."""
-    major = opencode_major_version(binary, run_fn=run_fn)
+    major = opencode_major_version(binary, run_fn=run_fn, env=env)
     if major is not None and major >= OPENCODE_API_MIN_MAJOR:
         return probe_opencode_api_image_input(binary, popen_fn=popen_fn,
-                                              urlopen_fn=urlopen_fn), \
+                                              urlopen_fn=urlopen_fn, env=env), \
             OPENCODE_API_IMAGE_SOURCE
-    return detect_opencode_verbose_image_input(binary, run_fn=run_fn), "opencode"
+    return detect_opencode_verbose_image_input(binary, run_fn=run_fn, env=env), "opencode"
 
 
-def detect_opencode_verbose_image_input(binary: str, run_fn=subprocess.run) -> dict:
+def detect_opencode_verbose_image_input(binary: str, run_fn=subprocess.run, env=None) -> dict:
     """Runs `<binary> models --verbose` and parses the output via
     `parse_opencode_verbose_image_input`, returning a dict mapping model
     id/header to a bool. A non-zero exit is a FAILURE, not a success with
@@ -864,7 +864,7 @@ def detect_opencode_verbose_image_input(binary: str, run_fn=subprocess.run) -> d
     subprocess.TimeoutExpired, invalid JSON, unexpected shape) degrades to
     {} and never raises."""
     try:
-        result = _run_opencode(run_fn, [binary, "models", "--verbose"], timeout=15)
+        result = _run_opencode(run_fn, [binary, "models", "--verbose"], 15, env)
     except (OSError, subprocess.TimeoutExpired):
         return {}
     if getattr(result, "returncode", 1) != 0:
@@ -976,9 +976,19 @@ def _record_codex_listing(entry: dict, listed) -> None:
     }
 
 
-def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
-                            catalog_fn=None, popen_fn: Callable[..., Any] = subprocess.Popen,
-                            urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN) -> dict:
+class OpencodeSeams(NamedTuple):
+    """How the opencode 2.x image probe spawns, and the env whose cache holds every opencode
+    subprocess's private cwd (None: os.environ)."""
+    popen_fn: Callable[..., Any] = subprocess.Popen
+    urlopen_fn: Callable[..., Any] = LOOPBACK_URLOPEN
+    env: Mapping[str, str] | None = None
+
+
+_DEFAULT_OPENCODE_SEAMS = OpencodeSeams()
+
+
+def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalog_fn=None,
+                            opencode: OpencodeSeams = _DEFAULT_OPENCODE_SEAMS) -> dict:
     """{"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": {name: {"installed": bool,
     "path"?: str, "models"?: [str], "reasoning_modes"?: {model_id: [effort, ...]},
     "aliases"?: [str], "models_source"?: str, "models_as_of"?: str, "image_input"?: {id: bool},
@@ -992,8 +1002,8 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
     than imported so the function stays pure and tests stay hermetic; it is called ONLY when
     claude is installed (claude is never executed, 16 D-07). Pure function -- the caller
     (this module's CLI entrypoint) decides whether/where to persist this via
-    cache_write_json. `popen_fn`/`urlopen_fn` reach the opencode 2.x probe, so a caller
-    that fakes `run_fn` can fake the private server too."""
+    cache_write_json. `opencode` reaches the opencode 2.x probe, so a caller that fakes
+    `run_fn` can fake the private server too, and names the env for the private cwd."""
     installed = detect_installed_clis(which_fn=which_fn)
     snapshot = {"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": {}}
     for cli, binpath in installed.items():
@@ -1002,9 +1012,10 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run,
             continue
         entry = {"installed": True, "path": binpath}
         if cli == "opencode":
-            _record_listed_models(entry, detect_opencode_models(binpath, run_fn=run_fn))
+            _record_listed_models(
+                entry, detect_opencode_models(binpath, run_fn=run_fn, env=opencode.env))
             image_input_map, image_input_source = opencode_image_input_with_source(
-                binpath, run_fn=run_fn, popen_fn=popen_fn, urlopen_fn=urlopen_fn)
+                binpath, run_fn, opencode.popen_fn, opencode.urlopen_fn, opencode.env)
             if image_input_map:
                 entry["image_input"] = image_input_map
                 entry["image_input_source"] = image_input_source

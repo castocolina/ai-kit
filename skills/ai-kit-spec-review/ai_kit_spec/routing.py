@@ -16,6 +16,7 @@ from ai_kit_spec.detection import (
     CLAUDE_MODEL_ALIASES,
     RUNTIMES,
     RUNTIMES_TTL_SECONDS,
+    OpencodeSeams,
     build_runtimes_snapshot,
     cache_runtimes_path,
     claude_runtime_fields,
@@ -251,7 +252,7 @@ def load_runtimes_snapshot(env, seams, force=False) -> tuple[dict, bool]:
         return cache_read_json(path) or {}, False
     snapshot = build_runtimes_snapshot(
         which_fn=seams.which_fn, run_fn=seams.run_fn, catalog_fn=_catalog_reader(env),
-        popen_fn=seams.popen_fn, urlopen_fn=seams.urlopen_fn)
+        opencode=OpencodeSeams(seams.popen_fn, seams.urlopen_fn, env))
     cache_write_json(path, snapshot)
     _REFRESHED.update(rid for rid in RUNTIMES if rid in snapshot.get("clis", {}))
     return snapshot, True
@@ -280,7 +281,7 @@ def _refresh_runtime(snapshot, rid, ctx: RouteContext) -> bool:
         if rid == "claude":
             row.update(claude_runtime_fields(cache_read_json(cache_catalog_path(ctx.env))))
         else:
-            listed = list_runtime_models(rid, binary, run_fn=ctx.seams.run_fn)
+            listed = list_runtime_models(rid, binary, run_fn=ctx.seams.run_fn, env=ctx.env)
             recorded = before.get("models") if isinstance(before, dict) else None
             if isinstance(listed, list) and (listed or not isinstance(recorded, list)):
                 row["models"] = listed

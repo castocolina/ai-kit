@@ -625,3 +625,33 @@ class TestUnroutableQuota(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOpencodePrivateDirUsesTheGivenEnv(unittest.TestCase):
+    """The opencode lister's private cwd lives under the env routing was given, never under
+    os.environ's cache: a test with a scratch env must not touch the real cache dir."""
+
+    def setUp(self):
+        routing._REFRESHED.clear()
+        self.addCleanup(routing._REFRESHED.clear)
+
+    def test_build_and_refresh_put_the_private_cwd_under_the_given_env(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as decoy:
+            env = _scratch_env(root)
+            cwds = []
+
+            def fake_run(argv, **kwargs):
+                cwds.append(kwargs["cwd"])
+                return subprocess.CompletedProcess(argv, 1, stdout="", stderr="")
+
+            seams = routing.RuntimesSeams(
+                lambda name: "/fake/opencode" if name == "opencode" else None, fake_run,
+                mock.Mock(side_effect=OSError), mock.Mock(side_effect=OSError))
+            with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": decoy}):
+                routing.load_runtimes_snapshot(env, seams, force=True)
+                ctx = routing.RouteContext("unknown", "review", env, seams)
+                routing._refresh_runtime({"clis": {}}, "opencode", ctx)
+            base = os.path.join(env["XDG_CACHE_HOME"], "ai-kit", "spec")
+            self.assertTrue(cwds)
+            self.assertEqual({os.path.dirname(cwd) for cwd in cwds}, {base})
+            self.assertEqual(os.listdir(decoy), [])

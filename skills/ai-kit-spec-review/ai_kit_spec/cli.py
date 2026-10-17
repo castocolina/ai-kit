@@ -43,6 +43,7 @@ from ai_kit_spec.config_io import (
 from ai_kit_spec.detection import (
     LOOPBACK_URLOPEN,
     RUNTIMES,
+    OpencodeSeams,
     build_runtimes_snapshot,
     cache_runtimes_path,
     detect_current_runtime,
@@ -419,7 +420,8 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
         return 0
     snapshot = build_runtimes_snapshot(which_fn=deps.which_fn, run_fn=deps.run_fn,
                                         catalog_fn=_read_default_catalog,
-                                        popen_fn=deps.popen_fn, urlopen_fn=deps.urlopen_fn)
+                                        opencode=OpencodeSeams(deps.popen_fn, deps.urlopen_fn,
+                                                               deps.env_fn()))
     save_path = args.if_stale or args.save
     if save_path:
         cache_write_json(save_path, snapshot)

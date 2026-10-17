@@ -10650,7 +10650,8 @@ class TestOpencodeApiImageInput(unittest.TestCase):
         popen = self.FakePopen()
         snapshot = build_runtimes_snapshot(
             which_fn=lambda name: "/fake/bin/opencode" if name == "opencode" else None,
-            run_fn=self._fake_version_run(), popen_fn=popen, urlopen_fn=self._fake_urlopen())
+            run_fn=self._fake_version_run(),
+            opencode=detection.OpencodeSeams(popen, self._fake_urlopen()))
         self.assertIsNotNone(popen.argv)
         self.assertEqual(snapshot["clis"]["opencode"]["image_input"], self.EXPECTED_MAP)
 
