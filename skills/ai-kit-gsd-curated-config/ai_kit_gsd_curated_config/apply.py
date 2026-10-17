@@ -145,15 +145,8 @@ def diff_entries(plan: dict, live: dict, inv: dict) -> list[dict]:
     return sorted(rows, key=lambda row: row["key"])
 
 
-def _scrub_env() -> list[str]:
-    detection = gsd_catalog.load_ai_kit_spec_module("detection")
-    if detection is None:
-        return []
-    return sorted(detection.HOST_SIGNAL_ENV_VARS)
-
-
 def script_preview(inputs: Inputs, template: bytes) -> list[dict]:
-    scrub = _scrub_env()
+    scrub = cross_ai_script.default_scrub_env()
     rows: list[dict] = []
     for artifact in inputs.plan.get("artifacts") or []:
         if not isinstance(artifact, dict):
@@ -681,7 +674,7 @@ def _apply_script_step(ctx: ScriptStepCtx) -> bool:
     config_path = ctx.config_path
     progress = ctx.progress
     report = ctx.report
-    scrub = _scrub_env()
+    scrub = cross_ai_script.default_scrub_env()
     artifacts = inputs.plan.get("artifacts") or []
     if not artifacts:
         return True

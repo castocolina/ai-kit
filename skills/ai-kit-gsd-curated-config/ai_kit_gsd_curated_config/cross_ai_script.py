@@ -210,7 +210,7 @@ def plan_script(project_dir: str, artifact: dict, template: bytes, scrub_env) ->
     return _plan_rendered(path, rendered, HEADER_RE)
 
 
-def _scrub_env() -> list[str]:
+def default_scrub_env() -> list[str]:
     detection = gsd_catalog.load_ai_kit_spec_module("detection")
     if detection is None:
         return []
@@ -372,7 +372,7 @@ def ensure_runner(project_dir: str, guidance_text: str | None = None) -> dict:
         return _error_result(None, [], error or "template unavailable")
     try:
         _require_project_dir(project_dir)
-        runner_plan = plan_runner_upgrade(project_dir, template, _scrub_env())
+        runner_plan = plan_runner_upgrade(project_dir, template, default_scrub_env())
         return _ensure_runner_plans(project_dir, runner_plan, guidance_text)
     except (OSError, ScriptReadError, ValueError) as exc:
         return _error_result(None, [], str(exc) or type(exc).__name__)
