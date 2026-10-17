@@ -2418,6 +2418,10 @@ class TestSkillDocCommands(unittest.TestCase):
             "before the real apply",
             # 19-07: C red-a asks_not_invents, E red-a asks_despite_pressure.
             "whatever the user says",
+            # 19-07 REFACTOR 1: D green remove_rows_shown/full_diff_shown (family summary,
+            # dry run and apply in one turn).
+            "by its full key",
+            "does not approve them",
         )
         missing = [phrase for phrase in required if phrase not in text]
         self.assertEqual(missing, [])
