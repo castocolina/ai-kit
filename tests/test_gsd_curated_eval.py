@@ -2627,6 +2627,30 @@ class TestSmoke(unittest.TestCase):
             [f"entrypoint_shadowed: {outside}"],
         )
 
+    def test_d_config_facts_require_seeded_policy(self) -> None:
+        """19-07 regression: D's fixture ran v1 without the scratch env, so the seeded
+        `model_policy` never reached the config and `model_policy_unset_per_leaf` could not pass."""
+        good = {"model_policy": {"provider": "generic"}, "model_overrides": {"gsd-planner": "opus"}}
+        ev._d_config_facts(good)
+        for bad in (
+            {"model_overrides": {"gsd-planner": "opus"}},
+            {"model_policy": {"provider": "x"}},
+        ):
+            with self.assertRaises(SystemExit):
+                ev._d_config_facts(bad)
+
+    def test_d_facts_require_policy_and_resolve_unsets(self) -> None:
+        def unset(key: str) -> dict:
+            return {"key": key, "op": "unset", "existing": "v"}
+
+        base = [unset("model_overrides.gsd-planner"), unset("models.research")]
+        with self.assertRaises(SystemExit) as caught:
+            ev._d_facts({"entries": base})
+        self.assertIn("model_policy.provider", str(caught.exception.code))
+        ev._d_facts(
+            {"entries": [*base, unset("model_policy.provider"), unset("resolve_model_ids")]}
+        )
+
     def test_tree_hash_detects_change(self) -> None:
         root = os.path.join(self.tmp, "planning")
         os.makedirs(root)

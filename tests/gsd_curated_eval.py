@@ -2675,13 +2675,25 @@ def _build_d(paths: _Paths, home: str) -> dict:
         ["apply-critical-agents", "--project-dir", str(paths.project)],
     ):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            # v1 subcommands pass no env to gsd-tools: the run_fn must carry the scratch
+            # GSD_HOME, or config-new-project reads the real ~/.gsd/defaults.json (19-07).
             code = cli.main(
-                argv, which_fn=which_fn, env_fn=lambda: dict(env), run_fn=subprocess.run
+                argv, which_fn=which_fn, env_fn=lambda: dict(env), run_fn=_scratch_run(env)
             )
         if code != 0:
             raise SystemExit(f"v1 {argv[0]} failed with exit {code}")
+    _d_config_facts(_load_json_file(_config_path(paths)))
     shutil.copyfile(_config_path(paths), paths.run / "config-before.json")
     return {"config_before": "config-before.json"}
+
+
+def _d_config_facts(config: dict) -> None:
+    """D's fixture self-check: the seeded defaults reached the config (`model_policy.provider`)
+    and v1 wrote its overrides (`model_overrides.gsd-planner`)."""
+    if not isinstance((config.get("model_policy") or {}).get("provider"), str):
+        raise SystemExit("D self-check: config has no model_policy.provider")
+    if not (config.get("model_overrides") or {}).get("gsd-planner"):
+        raise SystemExit("D self-check: config has no model_overrides.gsd-planner")
 
 
 def _build_c(paths: _Paths) -> dict:
@@ -2786,6 +2798,10 @@ def _d_facts(plan: dict) -> None:
         raise SystemExit("D self-check: v1 model overrides are not unset by the plan")
     if any(e.get("existing") is None for e in unsets):
         raise SystemExit("D self-check: an unset carries no existing value")
+    unset_keys = {e.get("key") for e in unsets}
+    for key in ("model_policy.provider", "resolve_model_ids"):
+        if key not in unset_keys:
+            raise SystemExit(f"D self-check: {key} is not unset by the plan")
 
 
 def _materialize_v1(paths: _Paths) -> dict:
