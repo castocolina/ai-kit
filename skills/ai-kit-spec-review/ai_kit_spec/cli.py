@@ -27,6 +27,7 @@ from ai_kit_spec.commands import (
     build_reviewer_model_id,
     execute_cli_error,
     render_reviewer_command,
+    split_command_template,
 )
 from ai_kit_spec.config_io import (
     DEFAULT_POLICY,
@@ -435,6 +436,20 @@ def _cmd_detect_runtimes(args: argparse.Namespace, deps: CliDeps) -> int:
 
 
 
+def _custom_entry_runtime(reviewer: dict) -> str | None:
+    """The table runtime whose binary a custom entry's `{model}` command launches (a grok
+    entry stores a command and no runtime), else None."""
+    command = reviewer.get("command")
+    if reviewer.get("runtime") or not isinstance(command, str) or "{model}" not in command:
+        return None
+    try:
+        argv = split_command_template(str(reviewer.get("key", "")), command)
+    except ValueError:
+        return None
+    binary = os.path.basename(argv[0]) if argv else ""
+    return next((rid for rid, row in RUNTIMES.items() if binary in row.binaries), None)
+
+
 def _discovered_catalog_candidates(
     runtimes: dict, args: argparse.Namespace, deps: CliDeps
 ) -> list:
@@ -453,8 +468,9 @@ def _discovered_catalog_candidates(
         cwd = args.cwd or os.getcwd()
         resolved = cfg_resolve(cwd, deps.env_fn())
         for reviewer in resolved.get("reviewers", []):
-            if reviewer.get("runtime") in single_provider_clis and reviewer.get("model"):
-                discovered.append({"runtime": reviewer["runtime"], "model_id": reviewer["model"]})
+            runtime = reviewer.get("runtime") or _custom_entry_runtime(reviewer)
+            if runtime in single_provider_clis and reviewer.get("model"):
+                discovered.append({"runtime": runtime, "model_id": reviewer["model"]})
     for raw in args.extra_candidate:
         cli_name, _, model_id = raw.partition(":")
         if cli_name and model_id:

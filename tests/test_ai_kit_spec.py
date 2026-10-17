@@ -8480,6 +8480,43 @@ class TestFetchModelCatalogCli(unittest.TestCase):
                 {"runtime": "codex", "model_id": "vendor/already-registered"}, result["discovered"]
             )
 
+    def test_custom_grok_entry_model_is_discovered_through_its_command(self):
+        from contextlib import redirect_stdout
+
+        # A grok entry stores a custom command and no runtime; its model must still reach
+        # discovery, or a refresh run silently drops it from ranking.
+        with tempfile.TemporaryDirectory() as d:
+            catalog_path = os.path.join(d, "model-catalog.json")
+            self._write_current_schema_catalog(catalog_path)
+            self._write_fresh_fetch_meta(catalog_path)
+            runtimes_path = self._write_runtimes(d, {"grok": {"installed": True}})
+            local_cfg = os.path.join(d, ".aikit", "review-spec.toml")
+            os.makedirs(os.path.dirname(local_cfg))
+            raw = (
+                b'[[reviewers]]\nkey = "grok-flagship"\nmodel = "grok-x"\nvendor = "xai"\n'
+                b'command = "grok -p {prompt} -m {model} --output-format plain"\n'
+                b'[[reviewers]]\nkey = "script"\nmodel = "m"\nvendor = "v"\n'
+                b'command = "my-script {model} {prompt}"\n'
+            )
+            with open(local_cfg, "wb") as f:
+                f.write(raw)
+            trust.record_trust(
+                config_io.cfg_trust_store_dir({"HOME": d}), os.path.realpath(local_cfg), raw
+            )
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = main(
+                    ["fetch-model-catalog", "--runtimes-json", runtimes_path,
+                     "--catalog-path", catalog_path, "--cwd", d, "--if-stale"],
+                    env_fn=lambda: {"HOME": d},
+                    fetch_models_dev_fn=self._never_fetch_models_dev,
+                    fetch_artificial_analysis_fn=self._never_fetch_aa,
+                )
+            self.assertEqual(code, 0)
+            discovered = json.loads(buf.getvalue())["discovered"]
+            self.assertIn({"runtime": "grok", "model_id": "grok-x"}, discovered)
+            self.assertNotIn("m", [row["model_id"] for row in discovered])
+
     def test_confirm_catalog_entry_rejects_invalid_entry_with_nonzero_exit(self):
         with tempfile.TemporaryDirectory() as d:
             catalog_path = os.path.join(d, "model-catalog.json")
