@@ -13,6 +13,7 @@ key-files:
     - .planning/phases/19-evaluation-on-claude/19-PRESSURE-TESTS.md
     - .planning/phases/19-evaluation-on-claude/pressure/*-green*.md and .grade.json
 orchestrator_verify: ""
+orchestrator_verify: "TestSkillDocCommands OK; digests ok; cells strict 0 fail/pending (1 fail (non-gating)); snapshot plan07 host-managed only; secret-scan 0; leak none of this plan; tree clean"
 ---
 
 # Plan 19-07 Summary: SKILL.md edits from RED evidence, GREEN B-E, REFACTOR
