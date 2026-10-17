@@ -476,21 +476,33 @@ def parse_pi_models(stdout) -> list | None:
     return parsed_models
 
 
+def _listing_fields(rid, binary, run_fn, env=None) -> dict | None:
+    """The snapshot fields one runtime's listing yields: `models`, plus `reasoning_modes`
+    (codex, pi; only ids with a non-empty list) and `image_input` (pi). None means the
+    listing failed or the runtime has no lister (claude's ids come from the catalog)."""
+    if rid in ("opencode", "cursor"):
+        models = (detect_opencode_models(binary, run_fn=run_fn, env=env) if rid == "opencode"
+                  else detect_cursor_agent_models(binary, run_fn=run_fn))
+        return {"models": models} if isinstance(models, list) else None
+    if rid not in ("codex", "pi"):
+        return None
+    listed = (detect_codex_models if rid == "codex" else detect_pi_models)(binary, run_fn=run_fn)
+    if not isinstance(listed, list):
+        return None
+    fields = {"models": [item["id"] for item in listed],
+              "reasoning_modes": {item["id"]: item["reasoning_modes"]
+                                  for item in listed if item["reasoning_modes"]}}
+    if rid == "pi":
+        fields["image_input"] = {item["id"]: item["image_input"] for item in listed}
+    return fields
+
+
 def list_runtime_models(rid, binary, run_fn=subprocess.run, env=None) -> list[str] | None:
     """Model ids for one runtime. None means the listing failed (or this runtime has no
     lister: claude's ids come from the catalog, never a listing); [] means it succeeded
     with nothing selectable. `env` locates opencode's private cwd (None: os.environ)."""
-    if rid == "opencode":
-        return detect_opencode_models(binary, run_fn=run_fn, env=env)
-    if rid == "cursor":
-        return detect_cursor_agent_models(binary, run_fn=run_fn)
-    if rid == "codex":
-        listed = detect_codex_models(binary, run_fn=run_fn)
-        return [item["id"] for item in listed] if isinstance(listed, list) else None
-    if rid == "pi":
-        listed = detect_pi_models(binary, run_fn=run_fn)
-        return [item["id"] for item in listed] if isinstance(listed, list) else None
-    return None
+    fields = _listing_fields(rid, binary, run_fn, env)
+    return fields["models"] if fields is not None else None
 
 
 def detect_pi_models(binary: str, run_fn=subprocess.run) -> list | None:
@@ -960,22 +972,6 @@ def _snapshot_node(which_fn) -> dict:
     return record
 
 
-def _record_listed_models(entry: dict, models) -> None:
-    """Successful listings include []. None leaves `models` absent (the listing failed)."""
-    if isinstance(models, list):
-        entry["models"] = models
-
-
-def _record_codex_listing(entry: dict, listed) -> None:
-    """Record codex ids and reasoning modes when the listing succeeded, [] included."""
-    if not isinstance(listed, list):
-        return
-    entry["models"] = [item["id"] for item in listed]
-    entry["reasoning_modes"] = {
-        item["id"]: item["reasoning_modes"] for item in listed if item["reasoning_modes"]
-    }
-
-
 class OpencodeSeams(NamedTuple):
     """How the opencode 2.x image probe spawns, and the env whose cache holds every opencode
     subprocess's private cwd (None: os.environ)."""
@@ -1011,9 +1007,8 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalo
             snapshot["clis"][cli] = {"installed": False}
             continue
         entry = {"installed": True, "path": binpath}
+        entry.update(_listing_fields(cli, binpath, run_fn, opencode.env) or {})
         if cli == "opencode":
-            _record_listed_models(
-                entry, detect_opencode_models(binpath, run_fn=run_fn, env=opencode.env))
             image_input_map, image_input_source = opencode_image_input_with_source(
                 binpath, run_fn, opencode.popen_fn, opencode.urlopen_fn, opencode.env)
             if image_input_map:
@@ -1022,19 +1017,6 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalo
             elif image_input_source == OPENCODE_API_IMAGE_SOURCE:
                 # A failed 2.x probe is a recorded gap, never silently "no data" (D-24).
                 entry["image_input_probe"] = "failed"
-        elif cli == "cursor":
-            _record_listed_models(entry, detect_cursor_agent_models(binpath, run_fn=run_fn))
-        elif cli == "codex":
-            _record_codex_listing(entry, detect_codex_models(binpath, run_fn=run_fn))
-        elif cli == "pi":
-            pi_models = detect_pi_models(binpath, run_fn=run_fn)
-            if pi_models is not None:
-                entry["models"] = [m["id"] for m in pi_models]
-                entry["reasoning_modes"] = {
-                    m["id"]: m["reasoning_modes"]
-                    for m in pi_models if m["reasoning_modes"]
-                }
-                entry["image_input"] = {m["id"]: m["image_input"] for m in pi_models}
         elif cli == "claude":
             # 16 D-04: hybrid alias + catalog-id sourcing; never calls run_fn (claude is
             # never executed) and never calls catalog_fn unless claude is installed (the
