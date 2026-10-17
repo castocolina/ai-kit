@@ -18,6 +18,7 @@ from collections.abc import Callable
 from typing import NamedTuple
 
 from ai_kit_spec.commands import execute_cli_error
+from ai_kit_spec.detection import runtime_id
 from ai_kit_spec.dispatch_guidance import build_dispatch_reinforcement_guidance
 from ai_kit_spec.runner_dispatch import (
     PI_EXEC_NOTE,
@@ -133,6 +134,10 @@ def dispatch_execute(
 ) -> dict:
     """Composes the exec guidance and runs the candidate through the runner in exec mode."""
     active = seams or ExecuteSeams()
+    if isinstance(spec.candidate["runtime"], str):  # a legacy name runs as its runtime id
+        spec = spec._replace(
+            candidate={**spec.candidate, "runtime": runtime_id(spec.candidate["runtime"])}
+        )
     candidate = spec.candidate
     refusal = _refuse_candidate(candidate, spec.target_dir)
     if refusal:

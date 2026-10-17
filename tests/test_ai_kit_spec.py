@@ -4868,6 +4868,25 @@ class TestBuildSoftConfinementGuidance(unittest.TestCase):
 
 
 class TestDispatchExecute(unittest.TestCase):
+    def test_legacy_runtime_name_runs_as_its_runtime_id(self):
+        captured = {}
+
+        def fake_runner(spec, prompt, seams):
+            del prompt, seams
+            captured["spec"] = spec
+            return RunnerResult(0, "", None, None, False, [], "")
+
+        with tempfile.TemporaryDirectory() as target:
+            result = execute_dispatch.dispatch_execute(
+                execute_dispatch.ExecuteDispatchSpec(
+                    candidate={"runtime": "cursor-agent", "model": "gpt-6[effort=high]"},
+                    prompt="p", target_dir=target, heartbeat_interval=30, timeout=600,
+                ),
+                seams=execute_dispatch.ExecuteSeams(runner_fn=fake_runner),
+            )
+        self.assertEqual(captured["spec"].runtime, "cursor")
+        self.assertEqual(result["runtime"], "cursor")
+
     def test_native_candidate_raises_rather_than_dispatch(self):
         candidate = {"runtime": None, "model": "opus", "key": "opus-native"}
         with self.assertRaises(ValueError) as ctx:
