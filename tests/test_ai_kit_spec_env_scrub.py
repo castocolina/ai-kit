@@ -18,29 +18,17 @@ import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import dispatch, execute_dispatch, quota, reviewer_dispatch
+from ai_kit_spec import execute_dispatch, quota, reviewer_dispatch
+from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.runner_dispatch import (
     CustomSpec,
-    RunnerResult,
     RunnerSeams,
     RunnerSpec,
     run_custom_command,
     run_runner,
 )
 
-HOST_SIGNALS = [
-    "AI_AGENT",
-    "CLAUDECODE",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "CLAUDE_CODE_SSE_PORT",
-    "OPENCODE",
-    "CURSOR_AGENT",
-    "PI_CODING_AGENT",
-    "CODEX_THREAD_ID",
-    "CODEX_SANDBOX",
-    "GROK_AGENT",
-    "CODEX_VERSION",
-]
+HOST_SIGNALS = sorted(HOST_SIGNAL_ENV_VARS)
 
 
 def _write_env_dump_script(directory: str) -> str:
@@ -108,23 +96,15 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
         )
         assert result.returncode == 0, result
         results["run_custom_command"] = _read_child_env_names(out)
-        # 3. probe_reviewer_quota: the runner seam's env_fn is what the child would get
-        captured = {}
-
-        def fake_runner(spec, prompt, seams):
-            del spec, prompt
-            captured["env"] = seams.env_fn()
-            return RunnerResult(0, "", {"status": "ok"}, None, False, [], "")
-
+        # 3. probe_reviewer_quota: a custom entry runs through the launcher for real
+        out = os.path.join(tmp, "probe.json")
         resolved = quota.ResolvedReviewer(
-            key="k", model="m", vendor="v", runtime="codex", command=None, extra={},
+            key="k", model="m", vendor="v", runtime=None,
+            command=_command_template(script, out), extra={},
         )
-        probe = quota.probe_reviewer_quota(
-            resolved,
-            seams=quota.ProbeSeams(runner_fn=fake_runner, env_fn=lambda: dispatch.child_env()),
-        )
+        probe = quota.probe_reviewer_quota(resolved)
         assert probe["available"], probe
-        results["probe_reviewer_quota"] = set(captured["env"])
+        results["probe_reviewer_quota"] = _read_child_env_names(out)
         # 4. dispatch_execute: the runner seam's Popen is what the child would get
         captured_exec = {}
 
@@ -156,37 +136,32 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
         assert "--child-pgid-file" in captured_exec["argv"]
         assert "--child-pgid-file" not in result["command"]
         results["dispatch_execute"] = set(captured_exec["kwargs"]["env"])
-        # 5. dispatch_reviewer: the launcher seam's env_fn is what its child would get
-        reviewer_env = {}
-
-        def fake_custom(spec, prompt, seams):
-            del spec, prompt
-            reviewer_env.update(seams.env_fn())
-            return RunnerResult(0, "", None, None, False, [], "")
-
+        # 5. dispatch_reviewer: the same custom entry through the default launcher
+        out = os.path.join(tmp, "reviewer.json")
         result = reviewer_dispatch.dispatch_reviewer(
             reviewer_dispatch.ReviewerDispatchSpec(
                 reviewer_entry={
                     "key": "k", "model": "m", "vendor": "v",
-                    "command": "mycli --model {model}", "extra": {},
+                    "command": _command_template(script, out), "extra": {},
                 },
                 prompt="p", timeout_tiers=[timeout], tool_availability={},
             ),
             seams=reviewer_dispatch.ReviewerSeams(
-                custom_fn=fake_custom,
-                runner_seams=RunnerSeams(env_fn=dispatch.child_env),
                 build_tooling_guidance_fn=lambda *_a, **_kw: "",
                 resolve_shared_reference_fn=lambda: None,
                 codegraph_health_fn=lambda _cli: False,
             ),
         )
         assert result["returncode"] == 0, result
-        results["dispatch_reviewer"] = set(reviewer_env)
+        results["dispatch_reviewer"] = _read_child_env_names(out)
     return results
 
 
 class TestHostSignalScrubAllDispatchers(unittest.TestCase):
     """R9/HARD-04 tracer: real children through all five dispatchers never see a host signal."""
+
+    def test_signal_set_is_the_table_set(self):
+        self.assertEqual(len(HOST_SIGNALS), 11)
 
     def test_child_sees_none_of_the_eleven_host_signals(self):
         with tempfile.TemporaryDirectory() as tmp:
