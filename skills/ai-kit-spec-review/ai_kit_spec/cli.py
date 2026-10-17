@@ -236,7 +236,7 @@ def _register_report_parsers(sub: argparse._SubParsersAction) -> None:
     p_toml.add_argument(
         "--out", default=None,
         help=(
-            "write the rendered TOML to this path via cfg_write_toml (creating parent dirs) "
+            "also write the rendered TOML to this path (atomic, creating parent dirs) "
             "instead of only printing it"
         ),
     )
@@ -723,8 +723,8 @@ def _cmd_render_toml(args: argparse.Namespace, deps: CliDeps) -> int:
         config = json.load(f)
     rendered = cfg_render_toml(config)
     if args.out:
-        # Write the already-rendered bytes: cfg_write_toml renders again and would print
-        # the migration note a second time.
+        # Write the already-rendered bytes: rendering again would print the migration note
+        # a second time.
         cache_write_text(args.out, rendered)
     print(rendered)
     return 0

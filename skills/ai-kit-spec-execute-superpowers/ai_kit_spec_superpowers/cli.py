@@ -340,7 +340,7 @@ def _cmd_dispatch_task(args: argparse.Namespace, deps: CliDeps) -> int:
     report_before = _read_report_snapshot(args.report_file)
     guidance = _dispatch_guidance_for_cli(deps, args, injection, format_block)
     dispatch_request = DispatchTaskRequest(
-        injection, prompt, args.target_dir, args.heartbeat_interval, args.timeout)
+        injection, prompt, args.target_dir, args.timeout)
     result = deps.dispatch_superpowers_task_fn(dispatch_request, guidance=guidance)
     _maybe_write_report_fallback(args, result, report_before)
     deps.stdout.write(json.dumps(result))

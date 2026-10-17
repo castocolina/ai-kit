@@ -865,7 +865,7 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
 
         result = dispatch_injection.dispatch_superpowers_task(
             dispatch_injection.DispatchTaskRequest(
-                injection, "do the task", "/real/scratch/dir", 60, 900
+                injection, "do the task", "/real/scratch/dir", 900
             ),
             seams=dispatch_injection.SuperpowersDispatchSeams(
                 dispatch_execute_fn=fake_dispatch_execute,
@@ -881,7 +881,7 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
                      "key": "claude/opus-5"}
         with self.assertRaises(ValueError):
             dispatch_injection.dispatch_superpowers_task(
-                dispatch_injection.DispatchTaskRequest(injection, "prompt", "/dir", 60, 900)
+                dispatch_injection.DispatchTaskRequest(injection, "prompt", "/dir", 900)
             )
 
     def test_real_dispatch_execute_path_produces_a_real_workspace_write_command(self):
@@ -918,7 +918,7 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
         with tempfile.TemporaryDirectory() as target:
             result = dispatch_injection.dispatch_superpowers_task(
                 dispatch_injection.DispatchTaskRequest(
-                    injection, "do the task", target, 60, 900
+                    injection, "do the task", target, 900
                 ),
                 seams=dispatch_injection.SuperpowersDispatchSeams(
                     dispatch_execute_fn=dispatch_execute_with_fake_subprocess,

@@ -393,8 +393,8 @@ hand-tuned command; `render-toml` rejects anything else and prints why. Also
 entry — the consumer side already treats an absent field as "no preference,"
 exactly like today's `task_affinity`; that fallback exists for legacy
 compatibility, not as this wizard's normal path for a new entry). Write it to a
-temp JSON file, then let `--out` do the write directly (via
-`cfg_write_toml`, creating parent dirs as needed) rather than piping
+temp JSON file, then let `--out` do the write directly (atomic, creating
+parent dirs as needed) rather than piping
 stdout through a second write yourself:
 
 ```bash

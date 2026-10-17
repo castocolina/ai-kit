@@ -59,7 +59,6 @@ class DispatchTaskRequest(NamedTuple):
     injection: dict
     prompt: str
     target_dir: str
-    heartbeat_interval: int
     timeout: int
 
 
