@@ -32,6 +32,10 @@ PROJECT_GUIDANCE_PATH = ".planning/scripts/cross-ai-guidance.md"
 # metacharacter: a cursor bracket model (`m[effort=high]`) is a glob class, so it is argv-only.
 HOOK_TOKEN_RE = re.compile(r"^[A-Za-z0-9._:/@+=,#-]+$")
 
+# Runtimes the runner OS-confines in exec mode; every exec spec for one gets the sandbox
+# (D-27). Every other exec runtime runs with full permissions plus soft-confinement prose.
+OS_SANDBOXED_EXEC = frozenset({"codex"})
+
 RUNNER_OUTER_MARGIN_S = 30
 _KILL_GRACE_S = 10  # slack after the runner's own outer timeout before the backstop fires
 _TERM_GRACE_S = 4  # SIGTERM to SIGKILL; above the runner's 2.5 s signal budget
@@ -70,7 +74,7 @@ class RunnerSpec(NamedTuple):
     effort: str | None = None
     service_tier: str | None = None
     cursor_mode: str | None = None
-    codex_sandbox: str | None = None
+    codex_sandbox: str | None = None  # the sandbox mode; None is workspace-write
 
 
 class RunnerResult(NamedTuple):
@@ -152,8 +156,8 @@ def runner_flags(spec: RunnerSpec) -> list[str]:
             flags += ["--codex-effort", spec.effort]
         if spec.service_tier:
             flags += ["--codex-service-tier", spec.service_tier]
-        if spec.codex_sandbox and spec.mode == "exec":
-            flags += ["--codex-sandbox", spec.codex_sandbox]
+        if spec.runtime in OS_SANDBOXED_EXEC and spec.mode == "exec":
+            flags += ["--codex-sandbox", spec.codex_sandbox or "workspace-write"]
     elif spec.runtime == "cursor" and spec.mode == "review" and spec.cursor_mode:
         flags += ["--cursor-mode", spec.cursor_mode]
     return flags

@@ -21,6 +21,7 @@ from ai_kit_spec.commands import execute_cli_error
 from ai_kit_spec.detection import runtime_id
 from ai_kit_spec.dispatch_guidance import build_dispatch_reinforcement_guidance
 from ai_kit_spec.runner_dispatch import (
+    OS_SANDBOXED_EXEC,
     PI_EXEC_NOTE,
     RunnerSeams,
     RunnerSpec,
@@ -31,10 +32,6 @@ from ai_kit_spec.tooling_guidance import (
     build_tooling_guidance,
     resolve_shared_tooling_reference_path,
 )
-
-# Runtimes the runner confines when ai-kit passes `--codex-sandbox`. Every other exec runtime
-# runs with the runner's full permissions, so it gets the soft-confinement prose instead.
-OS_SANDBOXED_EXEC = frozenset({"codex"})
 
 
 def build_soft_confinement_guidance(target_dir: str) -> str:
@@ -102,13 +99,10 @@ def build_execute_guidance(spec: ExecuteDispatchSpec, seams: ExecuteSeams) -> st
 
 
 def _runner_spec(candidate: dict, spec: ExecuteDispatchSpec) -> RunnerSpec:
-    """One exec-mode runner spec. Only codex keeps its OS write confinement (D-27)."""
-    runtime = candidate["runtime"]
-    sandbox = "workspace-write" if runtime == "codex" else None
+    """One exec-mode runner spec; runner_flags adds codex's OS write confinement (D-27)."""
     return RunnerSpec(
-        runtime, candidate["model"], "exec", spec.timeout, cwd=spec.target_dir,
+        candidate["runtime"], candidate["model"], "exec", spec.timeout, cwd=spec.target_dir,
         effort=candidate.get("effort"), service_tier=candidate.get("service_tier"),
-        codex_sandbox=sandbox,
     )
 
 

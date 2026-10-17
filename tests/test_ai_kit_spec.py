@@ -4962,7 +4962,8 @@ class TestDispatchExecute(unittest.TestCase):
         self.assertEqual(captured["spec"].mode, "exec")
         self.assertEqual(captured["spec"].timeout_s, 600)
         self.assertEqual(captured["spec"].cwd, target)
-        self.assertEqual(captured["spec"].codex_sandbox, "workspace-write")
+        self.assertEqual(runner_dispatch.runner_flags(captured["spec"])[-2:],
+                         ["--codex-sandbox", "workspace-write"])
         self.assertIn("codex, model gpt-5.6-sol", captured["prompt"])
         self.assertIn("do not re-select", captured["prompt"])
         self.assertIn("incrementally", captured["prompt"])
@@ -5087,7 +5088,8 @@ class TestDispatchExecute(unittest.TestCase):
             )
         self.assertEqual(captured["spec"].effort, "high")
         self.assertEqual(captured["spec"].service_tier, "priority")
-        self.assertEqual(captured["spec"].codex_sandbox, "workspace-write")
+        self.assertEqual(runner_dispatch.runner_flags(captured["spec"])[-2:],
+                         ["--codex-sandbox", "workspace-write"])
 
     def test_missing_target_dir_is_refused_before_any_spawn(self):
         def fake_runner(spec, prompt, seams):
@@ -11425,7 +11427,8 @@ class TestDispatchExecuteArgv(unittest.TestCase):
         self.assertEqual(result["command"], shlex.join(
             ["node", "runner", "--model-codex", "gpt-5.6-sol", "--mode", "exec"]
         ))
-        self.assertEqual(captured["spec"].codex_sandbox, "workspace-write")
+        self.assertEqual(runner_dispatch.runner_flags(captured["spec"])[-2:],
+                         ["--codex-sandbox", "workspace-write"])
 
 
 

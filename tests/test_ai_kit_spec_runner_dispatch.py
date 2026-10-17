@@ -194,6 +194,12 @@ class TestBuildRunnerArgv(unittest.TestCase):
         self.assertIn("--codex-service-tier", flags)
         self.assertEqual(flags[flags.index("--codex-sandbox") + 1], "workspace-write")
 
+    def test_every_codex_exec_spec_is_sandboxed(self):
+        flags = runner_flags(_spec(runtime="codex", model="gpt", mode="exec"))
+        self.assertEqual(flags[-2:], ["--codex-sandbox", "workspace-write"])
+        self.assertNotIn("--codex-sandbox",
+                         runner_flags(_spec(runtime="opencode", model="m", mode="exec")))
+
     def test_codex_review_has_no_sandbox(self):
         spec = _spec(runtime="codex", model="gpt", mode="review",
                      codex_sandbox="workspace-write")

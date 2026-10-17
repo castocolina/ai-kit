@@ -32,11 +32,9 @@ def build_cross_ai_command(resolved_candidate: dict, target_dir: str = "",
         except ValueError:
             return None
         return template.format(model=resolved_candidate["model"])
-    sandbox = "workspace-write" if runtime == "codex" else None
     spec = RunnerSpec(
         runtime, resolved_candidate["model"], "exec", 0,
         effort=resolved_candidate.get("effort"),
         service_tier=resolved_candidate.get("service_tier"),
-        codex_sandbox=sandbox,
     )
     return project_runner_command(spec, guidance=True)

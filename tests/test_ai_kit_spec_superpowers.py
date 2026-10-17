@@ -21,7 +21,7 @@ sys.path.insert(
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute"))
 
 import detect_framework as router_detect_framework
-from ai_kit_spec import detection
+from ai_kit_spec import detection, runner_dispatch
 from ai_kit_spec_superpowers import cli as superpowers_cli
 from ai_kit_spec_superpowers import dispatch_injection, task_classification
 
@@ -879,7 +879,7 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
         def fake_runner(spec, prompt, seams):
             del prompt, seams
             captured["spec"] = spec
-            argv = ["node", "runner", "--codex-sandbox", spec.codex_sandbox or ""]
+            argv = ["node", "runner", *runner_dispatch.runner_flags(spec)[-2:]]
             return RunnerResult(0, "DONE", {"status": "ok"}, None, False, argv, "")
 
         def dispatch_execute_with_fake_subprocess(spec):
@@ -896,7 +896,6 @@ class TestDispatchSuperpowersTask(unittest.TestCase):
                     dispatch_execute_fn=dispatch_execute_with_fake_subprocess,
                 ),
             )
-        self.assertEqual(captured["spec"].codex_sandbox, "workspace-write")
         self.assertEqual(captured["spec"].cwd, target)
         self.assertEqual(result["command"], shlex.join(
             ["node", "runner", "--codex-sandbox", "workspace-write"]
