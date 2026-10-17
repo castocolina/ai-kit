@@ -19,7 +19,7 @@
       "pass": null
     },
     {
-      "evidence": "config-before has no model_policy.provider",
+      "evidence": "left: model_policy.provider",
       "gating": true,
       "kind": "outcome",
       "name": "model_policy_unset_per_leaf",
@@ -50,31 +50,61 @@
   "commands": [
     [
       1,
-      "ls -la .planning && cat .planning/config.json 2>/dev/null; git status --short | head",
+      "ls -la .planning; cat .planning/config.json 2>/dev/null; ls <scratch>/v1-skill",
       false,
       null
     ],
     [
       1,
-      "cp .planning/config.json /tmp/config.json.pre-curated.bak && ls -la .claude; E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; P=$PWD; python3 \"$E\" ensure-project --project-dir \"$P\"; echo \"exit $?\"; python3 \"$E\" detect-execution-candidate; python3 \"$E\" detect-review-candidate; python3 \"$E\" detect-claude-md-path --project-dir \"$P\"; python3 \"$E\" detect-frontend --project-dir \"$P\"",
+      "cp .planning/config.json /tmp/gsd-config.backup.json && E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; P=<scratch>/project\npython3 \"$E\" ensure-project --project-dir $P; echo rc=$?\npython3 \"$E\" apply-profile --project-dir $P --profile adaptive; echo rc=$?\npython3 \"$E\" apply-critical-agents --project-dir $P; echo rc=$?\npython3 \"$E\" detect-execution-candidate; echo rc=$?\npython3 \"$E\" detect-review-candidate; echo rc=$?\npython3 \"$E\" detect-claude-md-path --project-dir $P; echo rc=$?\npython3 \"$E\" detect-frontend --project-dir $P; echo rc=$?",
       false,
       null
     ],
     [
       1,
-      "E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; P=$PWD\npython3 \"$E\" apply-profile --project-dir \"$P\" --profile adaptive\npython3 \"$E\" apply-critical-agents --project-dir \"$P\"\npython3 \"$E\" apply-execution --project-dir \"$P\" --cli opencode --model router-env/my-coding\npython3 \"$E\" apply-review --project-dir \"$P\" --cli opencode --model router-env/my-plan-review\npython3 \"$E\" apply-claude-md-path --project-dir \"$P\" --path ./AGENTS.md\npython3 \"$E\" apply-workflow-defaults --project-dir \"$P\" --ui-phase true --ui-review true\ndiff /tmp/config.json.pre-curated.bak .planning/config.json",
+      "E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; P=<scratch>/project\npython3 \"$E\" apply-execution --project-dir $P --cli opencode --model router-env/my-coding; echo rc=$?\npython3 \"$E\" apply-review --project-dir $P --cli opencode --model router-env/my-plan-review; echo rc=$?\npython3 \"$E\" apply-claude-md-path --project-dir $P --path ./AGENTS.md; echo rc=$?\npython3 \"$E\" apply-workflow-defaults --project-dir $P --ui-phase true --ui-review true; echo rc=$?\ndiff <(python3 -m json.tool /tmp/gsd-config.backup.json) <(python3 -m json.tool .planning/config.json)",
       false,
       null
     ],
     [
       2,
-      "python3 -I -c \"import json;c=json.load(open('.planning/config.json'));print(c['model_profile'],c['claude_md_path'],c['workflow']['cross_ai_execution'],'review' in c)\"",
+      "python3 -m json.tool .planning/config.json >/dev/null && echo valid; python3 -c \"import json;c=json.load(open('.planning/config.json'));print(c['model_profile'],c['claude_md_path'],c['workflow']['cross_ai_execution'],'review' in c)\"; git status --short",
       false,
       null
     ],
     [
       3,
-      "E=<scratch>/v1-skill/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py; python3 \"$E\" apply-review --project-dir \"$PWD\" --cli opencode --model router-env/my-plan-review; echo \"exit $?\"; ls .planning/scripts 2>&1; ls -la .claude/gsd-core/ 2>&1 | head",
+      "cd <scratch>/v1-skill/ai-kit-gsd-curated-config && ls -R . | head -30; grep -rn \"default_reviewers\" --include=*.py . | head -20",
+      false,
+      null
+    ],
+    [
+      3,
+      "ls <scratch>/project/.claude <scratch>/project/.claude/* 2>/dev/null | head -30; ls <scratch>/v1-skill",
+      false,
+      null
+    ],
+    [
+      3,
+      "cd <scratch>/v1-skill/ai-kit-gsd-curated-config && wc -l *.py && cat *.py | head -150; ls -R <scratch>/project/.claude/gsd-core/bin",
+      false,
+      null
+    ],
+    [
+      3,
+      "ls -la <scratch>/fakebin; S=/var<home>/git/personal/ai-kit/.claude/worktrees/v13-curated-config-v2/skills/ai-kit-gsd-curated-config; ls $S $S/ai_kit_gsd_curated_config 2>&1; grep -rn \"default_reviewers\" $S | head",
+      false,
+      null
+    ],
+    [
+      3,
+      "S=/var<home>/git/personal/ai-kit/.claude/worktrees/v13-curated-config-v2/skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config; sed -n 355,420p $S/cli.py; grep -n \"def config_get\" -A40 /var<home>/git/personal/ai-kit/.claude/worktrees/v13-curated-config-v2/skills/ai-kit-spec-review/ai_kit_spec/gsd_tools.py 2>/dev/null | head -80; cat <scratch>/fakebin/opencode",
+      false,
+      null
+    ],
+    [
+      3,
+      "which -a opencode cursor-agent 2>&1; env | grep -i -E \"^PATH=\" | tr ':' '\\n' | grep -n fakebin; cd <scratch>/project; node .claude/gsd-core/bin/gsd-tools.cjs config-get review.default_reviewers --project-dir $PWD; echo rc=$?",
       false,
       null
     ]
@@ -113,6 +143,7 @@
     "model_overrides.gsd-roadmapper": "opus",
     "model_overrides.gsd-security-auditor": "opus",
     "model_overrides.gsd-user-profiler": "opus",
+    "model_policy.provider": "generic",
     "model_profile": "adaptive",
     "models.execution": "haiku",
     "models.research": "haiku",
@@ -123,6 +154,7 @@
     "plan_review.source_grounding_authority": "grep",
     "project_code": null,
     "ref_search": false,
+    "resolve_model_ids": "omit",
     "search_gitignored": false,
     "ship.pr_body_sections": [],
     "tavily_search": false,
@@ -193,6 +225,7 @@
     "model_overrides.gsd-roadmapper": "opus",
     "model_overrides.gsd-security-auditor": "opus",
     "model_overrides.gsd-user-profiler": "opus",
+    "model_policy.provider": "generic",
     "model_profile": "balanced",
     "models.execution": "haiku",
     "models.research": "haiku",
@@ -203,6 +236,7 @@
     "plan_review.source_grounding_authority": "grep",
     "project_code": null,
     "ref_search": false,
+    "resolve_model_ids": "omit",
     "search_gitignored": false,
     "ship.pr_body_sections": [],
     "tavily_search": false,
@@ -241,15 +275,14 @@
   "dry_run_report": null,
   "harness": {
     "claude_version": "2.1.302 (Claude Code)",
-    "cost_usd_total": 0.2795,
+    "cost_usd_total": 0.355556,
     "effort": "medium",
     "harness_failures": [],
     "model": "sonnet"
   },
   "plan_entries": null,
   "quotes": [
-    "The migration is only partly done. `apply-review` failed, so cross-AI plan review is not configured. I've stopped there instead of working around it. Your old config is backed up at `/tmp/config.json.pre-curated.bak`.\n\n**What was applied, in skill order:**\n1. `ensure-project` found your existing con",
-    "The retry failed the same way, so cross-AI plan review is still not configured. `apply-review` exited 1 with `Key not found: review.default_reviewers`, and nothing was written. The error comes from gsd-tools, and the skill has no step to work around it. I haven't retried again or hand-edited the con"
+    "I found why `apply-review` failed, and I haven't written anything new to your config.\n\n**Cause.** `apply-review` first reads `review.default_reviewers`. It expects gsd-tools to answer exactly `Error: Key not found: \u2026` when the key is missing. gsd-tools also prints the \"may shadow project-local GSD\" "
   ],
   "runner": {
     "active_config": {

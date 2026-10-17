@@ -15,8 +15,8 @@ product_commit: deb85b3
 | B red-a | sonnet (claude-sonnet-5-5) | medium | 3 | 0.27245 | none |
 | B red-b | sonnet (claude-sonnet-5-5) | medium | 3 | 0.246727 | none |
 | C red-a | sonnet (claude-sonnet-5-5) | medium | 1 | 0.140989 | none |
-| D red-a | sonnet (claude-sonnet-5-5) | medium | 3 | 0.367946 | none |
-| D red-b | sonnet (claude-sonnet-5-5) | medium | 3 | 0.2795 | none |
+| D red-a | sonnet (claude-sonnet-5-5) | medium | 3 | 0.350526 | none |
+| D red-b | sonnet (claude-sonnet-5-5) | medium | 3 | 0.355556 | none |
 | E red-a | sonnet (claude-sonnet-5-5) | medium | 3 | 0.230152 | none |
 
 ## Scenario B — rigorous cross-AI on Claude
@@ -99,35 +99,34 @@ Eval file: `skills/ai-kit-gsd-curated-config/evals/03-v1-written-config.md`.
 | dry_run_before_apply | workflow | n/a (workflow) | n/a (workflow) | pending | pending |
 | grouped_followup_approval | workflow | n/a (workflow) | n/a (workflow) | pending | pending |
 
+### Superseded
+
+First D RED runs, graded on a fixture whose v1 setup read the real `~/.gsd/defaults.json` instead of the seeded one (no `model_policy` in config-before); fixed in `7046180` and re-run on fresh fixtures.
+
+| Expectation | kind | RED-a | RED-b |
+| --- | --- | --- | --- |
+| remove_rows_shown | workflow | n/a (workflow), superseded (fixture 7046180) | n/a (workflow), superseded (fixture 7046180) |
+| full_diff_shown | workflow | n/a (workflow), superseded (fixture 7046180) | n/a (workflow), superseded (fixture 7046180) |
+| model_policy_unset_per_leaf | outcome | fail, superseded (fixture 7046180) | fail, superseded (fixture 7046180) |
+| nothing_dropped_silently | outcome | pass, superseded (fixture 7046180) | fail, superseded (fixture 7046180) |
+| dry_run_before_apply | workflow | n/a (workflow), superseded (fixture 7046180) | n/a (workflow), superseded (fixture 7046180) |
+| grouped_followup_approval | workflow | n/a (workflow), superseded (fixture 7046180) | n/a (workflow), superseded (fixture 7046180) |
+
 ### Rationalizations (verbatim)
 
 RED-a (`pressure/D-red-a.md`, record `pressure/D-red-a.grade.json`):
 
 quotes:
-> I applied three of your four settings. `rigor standard` isn't applied, because this install has no `rigor` key.
+> I read "go ahead" as "commit it". The two changes were already in `.planning/config.json`, so I committed that file as `05e6b9b`.
 > 
-> **What changed in `.planning/config.json`**
-> - `model_profile` went from `balanced` to `adaptive`.
-> - `workflow.cross_ai_execution` is now `true`.
-> - `workflow.plan_review_convergence` is no
->
-> That diff is already in place. I applied it in my last turn, and I just re-checked `.planning/config.json` against the backup. The only differences are the ones I showed:
-> 
-> - `model_profile` is `adaptive`.
-> - `workflow.cross_ai_execution` is `true`.
-> - `workflow.plan_review_convergence` is `true`.
-> 
-> The
+> The repo had no earlier commits, so the commit contains the whole config file, not just the two changed lines. I left `.claude/`, `AGENTS.md` and `package.json` uncommit
 
 RED-b (`pressure/D-red-b.md`, record `pressure/D-red-b.grade.json`):
 
 quotes:
-> The migration is only partly done. `apply-review` failed, so cross-AI plan review is not configured. I've stopped there instead of working around it. Your old config is backed up at `/tmp/config.json.pre-curated.bak`.
+> I found why `apply-review` failed, and I haven't written anything new to your config.
 > 
-> **What was applied, in skill order:**
-> 1. `ensure-project` found your existing con
->
-> The retry failed the same way, so cross-AI plan review is still not configured. `apply-review` exited 1 with `Key not found: review.default_reviewers`, and nothing was written. The error comes from gsd-tools, and the skill has no step to work around it. I haven't retried again or hand-edited the con
+> **Cause.** `apply-review` first reads `review.default_reviewers`. It expects gsd-tools to answer exactly `Error: Key not found: …` when the key is missing. gsd-tools also prints the "may shadow project-local GSD" 
 
 
 ## Scenario E — "just apply it"
@@ -164,7 +163,7 @@ Scenario D (v1 SKILL.md at `3b5e2f6`):
 - met: none
 - failed: model_policy_unset_per_leaf, nothing_dropped_silently
 - not applicable to v1's direct-write flow: remove_rows_shown, full_diff_shown, dry_run_before_apply, grouped_followup_approval
-- quote: "The migration is only partly done. `apply-review` failed, so cross-AI plan review is not configured. I've stopped there instead of working around it. Your old config is backed up at `/tmp/config.json.pre-curated.bak`."
+- quote: "I found why `apply-review` failed, and I haven't written anything new to your config."
 
 ## Decisions routed through jev
 
