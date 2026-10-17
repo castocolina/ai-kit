@@ -3729,8 +3729,11 @@ def _sha_or_none(path: str) -> str | None:
 
 
 def _smoke_ai_kit(ctx: SmokeCtx, work: str, cache_sha: dict) -> dict:
-    """D-14 step 2: inventory, recommend and a dry run on this repo; never a real apply."""
-    refuse_repo_apply(ctx.repo_root)
+    """D-14 step 2: inventory, recommend and a dry run on this repo; never a real apply.
+
+    No `refuse_repo_apply` here: this step targets the repo root by design, and the dry run
+    is guarded by its own unchanged-tree check (a guard on the root would always refuse).
+    """
     inv_path = os.path.join(work, "inventory.json")
     plan_path = os.path.join(work, "plan.json")
 

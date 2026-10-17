@@ -2767,6 +2767,20 @@ class TestSmoke(unittest.TestCase):
             )
         self.assertEqual(order[:3], ["seed", "assert", "ai"])
 
+    def test_ai_kit_step_runs_on_the_repo_root(self) -> None:
+        """Live smoke regression (19-05): the dry-run step on the real repo root must not hit
+        the real-apply refusal, which raised before any step and aborted the whole smoke."""
+        ctx = ev.SmokeCtx("node", "tools", ev.REPO_ROOT, self.tmp, "claude", {})
+        with (
+            mock.patch.object(ev, "_inventory"),
+            mock.patch.object(ev, "_recommend_to"),
+            mock.patch.object(ev, "resolve_choices", return_value=[]),
+            mock.patch.object(ev, "_dry_run_unchanged", return_value="dry run wrote nothing"),
+        ):
+            step = ev._smoke_ai_kit(ctx, self.tmp, {})
+        self.assertEqual(step["ok"], True, step)
+        self.assertEqual(step["detail"], "dry run wrote nothing")
+
     def test_assert_failure_stops_before_inventory(self) -> None:
         ctx = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "claude", {})
 
