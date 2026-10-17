@@ -1208,7 +1208,7 @@ def _redirected_reports(command: str, run: str | None) -> list[dict]:
     segment = _segment_with(command, "apply")
     if "apply" not in segment or ">" not in segment[:-1]:
         return []
-    target = _expand(segment[segment.index(">") + 1], command)
+    target = _expand(segment[segment.index(">") + 1], command) or ""
     if "$" in target or not os.path.isabs(target) or not os.path.isfile(target) or not run:
         return []
     if not pathlib.Path(target).resolve().is_relative_to(pathlib.Path(run).resolve()):
