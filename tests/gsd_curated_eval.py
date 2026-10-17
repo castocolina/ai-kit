@@ -3190,6 +3190,8 @@ def _shadow_failures(cell: str, evs: list[dict], fixture: dict) -> list[str]:
                 continue
             # `E=<path>` assignments and shell quotes wrap the path the agent actually runs.
             path = re.sub(r"^[A-Za-z_][A-Za-z0-9_]*=", "", token).strip("\"';")
+            if "$" in path:
+                continue  # unexpanded (the resolve loop `$d/...`); literal runs are checked
             resolved = os.path.normpath(path)
             if not resolved.startswith(os.path.normpath(str(allowed))):
                 return [f"entrypoint_shadowed: {resolved}"]
