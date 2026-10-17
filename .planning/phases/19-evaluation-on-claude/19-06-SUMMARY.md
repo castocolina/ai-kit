@@ -10,6 +10,7 @@ key-files:
     - .planning/phases/19-evaluation-on-claude/pressure/{B-red-a,B-red-b,C-red-a,D-red-a,D-red-b,E-red-a}.md and .grade.json
   modified:
     - tests/gsd_curated_eval.py, tests/test_gsd_curated_eval.py (one harness fix, e387450)
+orchestrator_verify: ""
 ---
 
 # Plan 19-06 Summary: RED baselines B-E
