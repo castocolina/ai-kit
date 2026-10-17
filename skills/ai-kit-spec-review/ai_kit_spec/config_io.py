@@ -20,8 +20,8 @@ DEFAULT_POLICY = {"mode": "single", "ladder": [], "timeout_tiers": [600, 1200, 1
 _KNOWN_REVIEWER_FIELDS = {"key", "model", "vendor", "runtime", "command"}
 
 _MODE_SLOT = "{mode}"
-# Copied from commands._build_codex_command, _build_claude_command and
-# _build_opencode_command; cursor's binary is sourced from the runtime table.
+# The pre-18.1 factory templates, frozen here so a stored legacy `command` can be recognised
+# and dropped (D-32); cursor's binary is sourced from the runtime table.
 _FACTORY_ARGV: dict[str, tuple[str, ...]] = {
     "codex": ("codex", "exec", "--sandbox", "read-only", "--skip-git-repo-check", "-m", "{model}"),
     "claude": ("claude", "-p", "--model", "{model}", "--output-format", "text"),

@@ -371,7 +371,7 @@ def _register_dispatch_parsers(sub: argparse._SubParsersAction) -> None:
     p_check.add_argument("--runtime", "--cli", dest="runtime", default=None,
                           help="runtime id, e.g. opencode, cursor; omit for a native candidate")
     p_check.add_argument("--command", dest="reviewer_command", default=None,
-                          help="required when --cli is set; the command template to test")
+                          help="custom entry only (never with --runtime): the command template")
     p_check.add_argument("--extra-json", default=None,
                           help="JSON object of extra {placeholder} fields the template needs")
 
