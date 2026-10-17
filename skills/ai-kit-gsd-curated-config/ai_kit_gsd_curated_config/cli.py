@@ -275,40 +275,46 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
               file=sys.stderr)
         return 1
 
+    degraded_reason, runner_result, command = _execution_hook(args)
     cross_ai_command_written = False
-    degraded_reason = None
-    runner_result = None
-    if not args.cli:
-        degraded_reason = "no_candidate"
-    elif not args.model:
-        # Without --model, build_execution_command would still succeed and interpolate the
-        # literal string "None" into the rendered command (str.format has no None guard) --
-        # a fabricated, broken command reported as success. Fail closed instead (D-05).
-        degraded_reason = "no_model"
-    else:
-        runner_result = cross_ai_script.ensure_runner(args.project_dir)
-        if not runner_result["ready"]:
-            degraded_reason = "runner_not_ready"
-        else:
-            command = cross_ai_build.build_execution_command(
-                args.cli, args.model, args.project_dir
-            )
-            if command is None:
-                degraded_reason = "no_builder"
-            else:
-                written = _write_execution_command(gsd, tools, args, command, run_fn)
-                if not written:
-                    return 1
-                cross_ai_command_written = True
+    if command is not None:
+        if not _write_execution_command(gsd, tools, args, command, run_fn):
+            return 1
+        cross_ai_command_written = True
 
     print(json.dumps({
         "cross_ai_execution_written": True,
         "cross_ai_command_written": cross_ai_command_written,
         "degraded_reason": degraded_reason,
         "runner": None if runner_result is None else runner_result["runner"],
-        "notes": _execution_notes(runner_result, args.cli),
+        "notes": _execution_notes(
+            runner_result, args.cli if cross_ai_command_written else None
+        ),
     }))
     return 0
+
+
+def _execution_hook(args):
+    """`(degraded_reason, runner_result, command)`: the hook to write, or why there is none."""
+    if not args.cli:
+        return "no_candidate", None, None
+    if not args.model:
+        # Without --model, build_execution_command would still succeed and interpolate the
+        # literal string "None" into the rendered command (str.format has no None guard) --
+        # a fabricated, broken command reported as success. Fail closed instead (D-05).
+        return "no_model", None, None
+    if cross_ai_build.unsafe_hook_token(args.cli, args.model):
+        # Checked before the runner render so a hook that can never be written renders nothing.
+        print(f"ai-kit-gsd-curated-config: --model {args.model!r} is not a safe hook token "
+              "(GSD splits and globs the hook unquoted)", file=sys.stderr)
+        return "unsafe_hook_token", None, None
+    runner_result = cross_ai_script.ensure_runner(args.project_dir)
+    if not runner_result["ready"]:
+        return "runner_not_ready", runner_result, None
+    command = cross_ai_build.build_execution_command(args.cli, args.model, args.project_dir)
+    if command is None:
+        return "no_builder", runner_result, None
+    return None, runner_result, command
 
 
 def _pi_exec_note(cli_name) -> str | None:

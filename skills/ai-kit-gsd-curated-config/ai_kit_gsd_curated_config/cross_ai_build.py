@@ -81,8 +81,21 @@ def build_execution_command(cli, model, project_dir=None, execute_command_fn=Non
             return execute_command_fn(cli, target_dir="").format(model=model)
         except (ValueError, AttributeError):
             return None
+    return _runner_hook(cli, model)
+
+
+def _runner_hook(cli, model) -> str | None:
     if project_runner_command is None or RunnerSpec is None or runtime_id is None:
         return None
     runtime = runtime_id(cli)
     sandbox = "workspace-write" if runtime == "codex" else None
     return project_runner_command(RunnerSpec(runtime, model, "exec", 0, codex_sandbox=sandbox))
+
+
+def unsafe_hook_token(cli, model) -> bool:
+    """True when the sibling is present but the hook cannot carry `model` (a shell or glob
+    character, which GSD's unquoted hook would split or expand); `no_builder` is the absent
+    sibling."""
+    if project_runner_command is None:
+        return False
+    return _runner_hook(cli, model) is None

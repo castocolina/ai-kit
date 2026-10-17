@@ -587,6 +587,45 @@ class TestEnsureRunnerErrors(unittest.TestCase):
                 )
 
 
+class TestApplyExecutionHookToken(unittest.TestCase):
+    """C-WR-02/C-IN-05: a model the unquoted hook cannot carry degrades by name before the
+    runner render, and a run that wrote no hook prints no pi exec note."""
+
+    def test_unsafe_model_degrades_before_any_render(self):
+        from ai_kit_spec.runner_dispatch import PI_EXEC_NOTE
+
+        from tests.test_ai_kit_gsd_curated_config import (
+            _make_fake_install,
+            _which_stub,
+            make_fake_run,
+        )
+
+        with tempfile.TemporaryDirectory() as install, tempfile.TemporaryDirectory() as project:
+            _make_fake_install(install)
+            run = make_fake_run([(0, "ok", "")])
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(
+                    ["apply-execution", "--project-dir", project, "--cli", "pi",
+                     "--model", "my model"],
+                    which_fn=_which_stub(), run_fn=run,
+                    env_fn=lambda: {"CLAUDE_CONFIG_DIR": install},
+                )
+            summary = json.loads(out.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(summary["degraded_reason"], "unsafe_hook_token")
+            self.assertFalse(summary["cross_ai_command_written"])
+            self.assertIsNone(summary["runner"])
+            self.assertIn("'my model'", err.getvalue())
+            self.assertFalse(os.path.exists(os.path.join(project, ".planning")))
+            self.assertEqual(
+                [call[3] for call in run.calls if "config-set" in call],
+                ["workflow.cross_ai_execution"],
+            )
+            self.assertEqual(summary["notes"], [])
+            self.assertNotIn(PI_EXEC_NOTE, err.getvalue())
+
+
 class TestReadTarget(unittest.TestCase):
     def test_missing_file_is_none(self):
         with tempfile.TemporaryDirectory() as tmp:
