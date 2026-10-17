@@ -120,6 +120,18 @@ class TestLegacyLoad(unittest.TestCase):
             with open(path, "rb") as stream:
                 self.assertEqual(stream.read(), before)
 
+    def test_local_only_never_reads_the_global_file(self):
+        # B-WR-01/B-IN-04: a malformed or legacy global file is not in effect under local-only.
+        with tempfile.TemporaryDirectory() as root:
+            env, xdg = self._env(root)
+            self._write(os.path.join(xdg, "ai-kit", "review-spec.toml"), "this = is = broken\n")
+            local = {"strategy": "local-only",
+                     "reviewers": [{"key": "c", "runtime": "codex", "model": "m"}]}
+            warnings = []
+            config = cfg_combine(local, env, warn_fn=warnings.append)
+            self.assertEqual([r["key"] for r in config["reviewers"]], ["c"])
+            self.assertEqual(warnings, [])
+
     def test_one_note_per_file(self):
         with tempfile.TemporaryDirectory() as root:
             env, xdg = self._env(root)

@@ -432,8 +432,10 @@ def cfg_combine(local: dict, env: dict, warn_fn=None, local_path=None) -> dict:
     --show`, so the consent display renders the same merged entries dispatch would run."""
     emit_warn = warn_fn if warn_fn is not None else _cfg_default_warn
     global_path = cfg_global_path(env)
+    # A local-only project never consults the global file, so it is never read (B-WR-01).
+    local_only = bool(local) and local.get("strategy") == "local-only"
     merged, policy, local_notes, global_notes, notes = _combine_layers(
-        local, cfg_load_toml(global_path))
+        local, {} if local_only else cfg_load_toml(global_path))
     if local:
         _emit_legacy_note(local_path or "project-local review-spec.toml", local_notes, emit_warn)
     _emit_legacy_note(global_path, global_notes, emit_warn)
