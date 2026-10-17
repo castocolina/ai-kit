@@ -1663,6 +1663,36 @@ class TestCleanupAndGuidanceSnippets(unittest.TestCase):
                 text = handle.read()
             self.assertEqual(text.count("GUIDE"), 1)
 
+    def test_guidance_block_rejects_malformed_markers_and_keeps_the_mode(self):
+        shim = "import sys\nsys.stdout.write('GUIDE')\n"
+        start = "<!-- ai-kit-spec-execute-gsd:tooling-guidance:start -->"
+        end = "<!-- ai-kit-spec-execute-gsd:tooling-guidance:end -->"
+        malformed = {
+            "reversed": f"# plan\n{end}\nbody\n{start}\n",
+            "orphan end": f"# plan\n{end}\n",
+            "orphan start": f"# plan\n{start}\n",
+            "duplicated": f"# plan\n{start}\na\n{end}\n{start}\nb\n{end}\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            phase = os.path.join(tmp, "PLAN.md")
+            env = {"PHASE_PROMPT_FILE": phase, "RESULT_MODE": "fallback_notice"}
+            for label, text in malformed.items():
+                with self.subTest(label):
+                    with open(phase, "w", encoding="utf-8") as handle:
+                        handle.write(text)
+                    proc = self._run("tooling-guidance:start", shim, env)
+                    self.assertEqual(proc.returncode, 2)
+                    self.assertIn("markers are malformed", proc.stdout)
+                    with open(phase, encoding="utf-8") as handle:
+                        self.assertEqual(handle.read(), text)
+            with open(phase, "w", encoding="utf-8") as handle:
+                handle.write(f"# plan\n{start}\nold\n{end}\ntail\n")
+            os.chmod(phase, 0o644)
+            self.assertEqual(self._run("tooling-guidance:start", shim, env).returncode, 0)
+            with open(phase, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), f"# plan\n\ntail\n\n{start}\nGUIDE\n{end}\n")
+            self.assertEqual(os.stat(phase).st_mode & 0o777, 0o644)
+
 
 class TestMainCli(unittest.TestCase):
     def test_every_subcommand_has_a_handler(self):

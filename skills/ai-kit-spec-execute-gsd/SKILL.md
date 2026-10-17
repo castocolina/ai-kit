@@ -75,8 +75,9 @@ denotes the literal value most recently captured for it via a `printf`, re-subst
 into every later command — never an actual persisting shell variable across a call boundary.
 
 `$CWD`, `$PHASE_ID`, and `$PHASE_PROMPT_FILE` (bound in Step 1) are **inputs this skill is invoked
-WITH, never values it invents or infers.** If this skill is ever invoked without `cwd` and
-`phase_id`, STOP and ask the user rather than guessing.
+WITH, never values it invents or infers.** If this skill is ever invoked without `cwd`,
+`phase_id` and the exact phase prompt file, STOP and ask the user rather than guessing (a phase
+can hold several plan files).
 
 ## Step 1: Resolve the dispatch decision via the CLI entrypoint
 
@@ -85,7 +86,7 @@ WITH, never values it invents or infers.** If this skill is ever invoked without
 ```bash
 CWD="<this skill's own entry-precondition project root -- supplied by the caller>"
 PHASE_ID="<this skill's own entry-precondition phase id -- supplied by the caller>"
-PHASE_PROMPT_FILE="<this phase's own prompt/context file path -- located via CWD/PHASE_ID>"
+PHASE_PROMPT_FILE="<the exact phase prompt/context file path -- supplied by the caller>"
 GSD_CONFIG_PATH="$(python3 "$GSD_SHIM" config-path --cwd "$CWD")" || exit 2  # honors workstreams
 RESULT_JSON="$(python3 "$GSD_SHIM" resolve-dispatch --cwd "$CWD" \
   --target-dir "$CWD" \
@@ -145,8 +146,9 @@ RESUME_STATE_PATH="$(dirname "$(python3 "$TOOLS_PY" cache-path --kind quota)")/g
 STATE_JSON="$(python3 -c '
 import json, sys
 print(json.dumps({"framework": "gsd", "project_path": sys.argv[1],
-                   "config_path": sys.argv[2], "phase_id": sys.argv[3]}))' \
-  "$CWD" "$GSD_CONFIG_PATH" "$PHASE_ID")"
+                   "config_path": sys.argv[2], "phase_id": sys.argv[3],
+                   "phase_prompt_file": sys.argv[4]}))' \
+  "$CWD" "$GSD_CONFIG_PATH" "$PHASE_ID" "$PHASE_PROMPT_FILE")"
 python3 "$GSD_SHIM" write-resumable-state --path "$RESUME_STATE_PATH" --state-json "$STATE_JSON"
 ```
 
@@ -156,7 +158,7 @@ session-scoped (design spec §10) — they vanish if the session exits, only fir
 is idle, and recurring jobs auto-expire after 7 days; tell the user this explicitly.
 
 Every other `fallback_notice` reason (`no_configured_candidate`, `all_candidates_context_rejected`,
-`no_usable_dispatch` — no candidate has a native GSD tier or a CLI with an execute builder, so
+`unsafe_hook_token` — see Step 2, `no_usable_dispatch` — no candidate has a native GSD tier or a CLI with an execute builder, so
 the execute-CLI screen skipped them all with a stderr warning each; `key` names the top one) is
 permanent, non-time-bound — print the message, run the mode-transition
 cleanup below, and proceed to Step 3 with no candidate resolved (GSD's own currently-active
@@ -305,7 +307,7 @@ that GSD's own runtime runs, decided without a host check (D-25).
   own currently-active native default will run for this plan instead") — never silently proceed as
   if the workflow write alone were sufficient.
 - `fallback_notice`: already handled in Step 1 (either a probe-time `quota_exhausted` STOP, or one
-  of the three permanent reasons that fall through to here). Run the mode-transition cleanup below.
+  of the permanent reasons Step 1 lists, which fall through to here). Run the mode-transition cleanup below.
 
 **Mode-transition cleanup** — run this whenever the resolved `mode` is `native_tier` or
 `fallback_notice` (i.e. NOT `cross_ai_hook`), BEFORE proceeding to Step 3, so a stale adapter-owned
@@ -353,24 +355,39 @@ fi
 START="<!-- ai-kit-spec-execute-gsd:tooling-guidance:start -->"
 END="<!-- ai-kit-spec-execute-gsd:tooling-guidance:end -->"
 LEGACY="<!-- ai-kit-spec-execute-gsd:tooling-guidance -->"  # an older release's single marker
-python3 -c 'import pathlib,sys
+python3 -c 'import os,pathlib,sys,tempfile
 p,s,e,g,old=sys.argv[1:]
-t=pathlib.Path(p).read_text()
+try:
+    t=pathlib.Path(p).read_text()
+except OSError as x:
+    sys.exit(f"cannot read {p}: {x}")
 if old in t:
     sys.exit(3)
-b,a=(t.find(s),t.find(e))
-if b!=-1 and a!=-1:
+b,a=t.find(s),t.find(e)
+if (t.count(s),t.count(e))==(1,1) and b<a:
     t=t[:b]+t[a+len(e):]
-elif b!=-1:
+elif s in t or e in t:  # orphan, reversed or duplicated markers
     sys.exit(2)
-pathlib.Path(p).write_text(t.rstrip("\n")+"\n\n"+s+"\n"+g+"\n"+e+"\n")' \
+fd,tmp=tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(p)))
+try:
+    with os.fdopen(fd,"w") as f:
+        f.write(t.rstrip("\n")+"\n\n"+s+"\n"+g+"\n"+e+"\n")
+    os.chmod(tmp,os.stat(p).st_mode&0o7777)
+    os.replace(tmp,p)
+except OSError as x:
+    pathlib.Path(tmp).unlink(missing_ok=True)
+    sys.exit(f"cannot write {p}: {x}")' \
   "$PHASE_PROMPT_FILE" "$START" "$END" "$GUIDANCE" "$LEGACY"
 case $? in
   0) ;;
   3) echo "ai-kit-spec-execute-gsd: $PHASE_PROMPT_FILE still has the old single-marker guidance"
      echo "block ($LEGACY plus the text after it); delete that block by hand, then re-run"
      exit 2 ;;
-  *) echo "ai-kit-spec-execute-gsd: guidance block has no end marker; phase file untouched"
+  2) echo "ai-kit-spec-execute-gsd: guidance markers are malformed (need none, or exactly one"
+     echo "start before one end); fix them by hand; phase file untouched"
+     exit 2 ;;
+  *) echo "ai-kit-spec-execute-gsd: could not read or write $PHASE_PROMPT_FILE (see the error"
+     echo "above); phase file unchanged"
      exit 2 ;;
 esac
 ```
