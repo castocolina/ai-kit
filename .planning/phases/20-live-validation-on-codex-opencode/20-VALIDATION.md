@@ -42,8 +42,25 @@ Filled by the planner and executor from the PLAN.md `<automated>` commands.
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
+| 20-01-T1 | 01 | 1 | EVAL-04 (R4) | T-20-01 | matrix applies only to scratch projects | unit + real node | `python3 -m unittest tests.test_gsd_curated_eval -k TestOracle -k TestMatrixEnv && python3 tests/gsd_curated_eval.py matrix --host codex` | exists (extend) | ⬜ |
+| 20-01-T2 | 01 | 1 | EVAL-05 (R7) | T-20-02 | labels-only matrix output | unit + e2e | `python3 -m unittest tests.test_gsd_curated_eval && python3 tests/gsd_curated_eval.py matrix --host opencode && python3 -m unittest tests.test_ai_kit_gsd_curated_config_matrix` | exists (extend) | ⬜ |
+| 20-02-T1 | 02 | 2 | EVAL-04 (R1, R2, R5) | T-20-03, T-20-05 | throwaway HOME install; scratch under system temp | unit + real node | `python3 -m unittest tests.test_gsd_curated_eval -k TestSmoke && python3 tests/gsd_curated_eval.py smoke --host codex --evidence-out tmp/p20/local-codex.md` | exists (extend) | ⬜ |
+| 20-02-T2 | 02 | 2 | EVAL-04/05 (D-10) | T-20-04, T-20-06 | allowlist guard never names credential files | unit | `python3 -m unittest tests.test_gsd_curated_eval -k TestSnapshot -k TestSmoke && python3 tests/gsd_curated_eval.py snapshot --check tmp/p20/snap.json` | exists (extend) | ⬜ |
+| 20-02-T3 | 02 | 2 | EVAL-05 (R1, R5) | T-20-04 | read-only loader observation | unit + real node | `python3 -m unittest tests.test_gsd_curated_eval && python3 tests/gsd_curated_eval.py smoke --host opencode --evidence-out tmp/p20/local-opencode.md && python3 tools/run_unittest_parallel.py --group unit && python3 tools/run_unittest_parallel.py --group e2e` | exists (extend) | ⬜ |
+| 20-03-T1 | 03 | 1 | EVAL-05 (R8) | T-20-07 | opencode never attaches to the shared service | self-test + e2e | `node skills/ai-kit-spec-review/references/cross-ai.mjs --self-test && python3 -m unittest tests.test_cross_ai_runner_e2e tests.test_curated_config_script` | exists | ⬜ |
+| 20-03-T2 | 03 | 1 | EVAL-05 (R6) | T-20-08 | host slug never a lane | unit | `python3 -m unittest tests.test_curated_config_recommend tests.test_curated_config_plan_edit -k never_a_review_lane` | exists (extend) | ⬜ |
+| 20-04-T1 | 04 | 3 | EVAL-04 (R2, R3, R4, R8) | T-20-09..12 | names-only env; snapshot before/after | live headless | `grep -q 'AIKIT-XAI status=ok cli=codex' 20-SMOKE-CODEX.md && python3 tests/gsd_curated_eval.py snapshot --check tmp/p20/plan04.before.json` | new evidence | ⬜ |
+| 20-04-T2 | 04 | 3 | EVAL-05 (R5, R7, R8) | T-20-09..12 | standalone server; no service touch | live headless | `grep -q 'AIKIT-XAI status=ok cli=opencode' 20-SMOKE-OPENCODE.md && grep -q -- '--standalone' 20-SMOKE-OPENCODE.md` | new evidence | ⬜ |
+| 20-04-T3 | 04 | 3 | EVAL-04/05 (R8; 18 #6, #11, #12) | T-20-11 | group kill, ps proof | live headless | `grep -q 'status=signal' 20-SMOKE-CODEX.md && grep -q 'runtime_enumeration' 20-SMOKE-OPENCODE.md` | new evidence | ⬜ |
+| 20-05-T1 | 05 | 4 | EVAL-04 (R3; SC3) | T-20-13 | labels never exceed the evidence | unit | `python3 -m unittest tests.test_ai_kit_spec_runtimes_table` | exists (update) | ⬜ |
+| 20-05-T2 | 05 | 4 | EVAL-05 (R5, R6; D-12) | T-20-13 | report-only gitignore note | unit | `python3 -m unittest tests.test_curated_config_followups tests.test_curated_config_cross_ai tests.test_curated_config_apply tests.test_curated_config_recommend` | exists (extend) | ⬜ |
+| 20-05-T3 | 05 | 4 | EVAL-05 (skill rule) | T-20-14 | judge reports scanned before the move | live judge | `python3 tests/gsd_curated_eval.py digest --check 20-SKILL-JUDGE.md && python3 tests/gsd_curated_eval.py secret-scan skill-judge` | new evidence | ⬜ |
+| 20-06-T1 | 06 | 5 | EVAL-04/05 (D-01) | T-20-15, T-20-16 | names-only scripts; scratch-only commands | doc + secret-scan | `python3 tests/gsd_curated_eval.py secret-scan .planning/phases/20-live-validation-on-codex-opencode` | new | ⬜ |
+| 20-06-T2 | 06 | 5 | EVAL-04/05 (R9) | T-20-SC | gates with counts | full | `make test && make validate && make e2e-test && make e2e-docker` | exists | ⬜ |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+
+Evidence paths in the Automated Command column are relative to `.planning/phases/20-live-validation-on-codex-opencode/` where a bare file name is given.
 
 ---
 
