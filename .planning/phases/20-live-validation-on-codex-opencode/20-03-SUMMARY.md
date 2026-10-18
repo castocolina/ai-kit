@@ -66,6 +66,7 @@ coverage:
 duration: 25min
 completed: 2026-10-18
 status: complete
+orchestrator_verify: "VERIFY 20-03: 3/3 passed"
 ---
 
 # Phase 20: Live Validation on Codex and opencode Summary
@@ -122,7 +123,7 @@ status: complete
 
 ## Issues Encountered
 - The initial execution dispatch ended at its 1770-second deadline before the required hermetic regression tests and summary were committed. This resumed segment completed those tests and documentation.
-- The first parallel unit-group run failed only in `tests.test_ai_kit_spec_runner_dispatch`'s two SIGINT timing tests; running that module alone passed all 59 tests. A retry of the parallel group reproduced those two failures. The changed `tests.test_gsd_curated_eval` module passed within both group runs. This unrelated timing-sensitive module remains a reported verification issue; it was not modified.
+- The parallel unit group failed in two SIGINT tests of `tests.test_ai_kit_spec_runner_dispatch` when launched from the executor's shell. Orchestrator root cause: a background launcher starts Python with SIGINT ignored, and the tests assumed the default handler (reproduced with `trap '' INT`). Fixed in c538f93 (setUp installs `default_int_handler`); module passes with SIGINT ignored and default.
 - No product defect found; no D-04 routing required.
 - No smokes were rerun in this resumed segment. Existing evidence files are `tmp/p20/local-codex.md` and `tmp/p20/local-opencode.md`.
 
@@ -132,7 +133,7 @@ None - no external service configuration required.
 
 ## Next Phase Readiness
 - Ready for the subsequent phase work to consume the labelled Codex/opencode artifacts and the printed scratch-work path for snapshot checks.
-- The unit group should be rerun when the unrelated SIGINT timing failures are stable; the affected module passes standalone.
+- Unit group 42/42 after the SIGINT test fix (c538f93).
 
 ---
 *Phase: 20-live-validation-on-codex-opencode*
