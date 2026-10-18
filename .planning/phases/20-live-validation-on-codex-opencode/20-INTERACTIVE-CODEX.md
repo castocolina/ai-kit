@@ -12,7 +12,7 @@ Only your own Codex TUI run counts; return the artifacts and observations listed
 
 ## Steps
 
-### 1. REQUIRED — Start Codex at the checkout root
+1. REQUIRED — **Start Codex at the checkout root**
 
 ```text
 Start the Codex TUI in this checkout root, then use its shell tool for the following commands exactly as written. Do not print environment variable values.
@@ -20,7 +20,7 @@ Start the Codex TUI in this checkout root, then use its shell tool for the follo
 
 expect: Codex is running in the branch checkout (or merged `main`) identified by `git rev-parse --show-toplevel`.
 
-### 2. REQUIRED — Fresh baseline and names-only environment list
+2. REQUIRED — **Fresh baseline and names-only environment list**
 
 ```text
 Run exactly: mkdir -p tmp/p20/interactive && python3 tests/gsd_curated_eval.py snapshot --out tmp/p20/interactive/codex-before.json && env | cut -d= -f1 | grep -E '^(CODEX|OPENCODE|AI_AGENT|AGENT|CLAUDE|PI_|CURSOR_|GROK_)' | sort > tmp/p20/interactive/codex-env-names.txt && printf 'Names only:\n' && cat tmp/p20/interactive/codex-env-names.txt. Never print an environment value.
@@ -28,7 +28,7 @@ Run exactly: mkdir -p tmp/p20/interactive && python3 tests/gsd_curated_eval.py s
 
 expect: `snapshot written`, then the recorded headless Codex names `CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS`, `CODEX_CI`, `CODEX_SANDBOX_NETWORK_DISABLED`, `CODEX_SESSION_ID`, `CODEX_THREAD_ID`, and `CODEX_VERSION` (plus any other matching names). The baseline follows TUI startup so a project-trust write is not mistaken for a regression. Report any difference; it triggers the D-04 follow-up. Names only.
 
-### 3. REQUIRED — Run smoke and retain its artifacts
+3. REQUIRED — **Run smoke and retain its artifacts**
 
 ```text
 Run exactly: python3 tests/gsd_curated_eval.py smoke --evidence-out tmp/p20/interactive/codex-smoke.md --artifacts-out tmp/p20/interactive/codex-artifacts > tmp/p20/interactive/codex-smoke.log 2>&1; echo "smoke exit=$?" >> tmp/p20/interactive/codex-smoke.log; then print the log and evidence file.
@@ -36,7 +36,7 @@ Run exactly: python3 tests/gsd_curated_eval.py smoke --evidence-out tmp/p20/inte
 
 expect: `smoke exit=0`, `host codex (detected)`, `scope: local`, `all equal`, `matrix ran: 420 checks`, and `protected set unchanged: pass`; artifacts exist at `codex-artifacts/<label>/{plan.json,config.json,resolve-model.json,baked.json}`. The log includes `scratch work dir: <path> (deleted)` for Step 4.
 
-### 4. REQUIRED — Check the baseline
+4. REQUIRED — **Check the baseline**
 
 ```sh
 python3 tests/gsd_curated_eval.py snapshot --check tmp/p20/interactive/codex-before.json --scratch-root <the work-dir path printed by step 3>
@@ -44,7 +44,7 @@ python3 tests/gsd_curated_eval.py snapshot --check tmp/p20/interactive/codex-bef
 
 expect: `snapshot ok`. Return any `changed` line verbatim as a guard failure; do not dismiss it.
 
-### 5. REQUIRED — Codex trust note
+5. REQUIRED — **Codex trust note**
 
 ```text
 If Codex asked to trust a scratch directory, report that fact. Do not print or modify any config contents.
@@ -52,7 +52,7 @@ If Codex asked to trust a scratch directory, report that fact. Do not print or m
 
 expect: trust prompt reported if it occurred; the harness ignores only this run's `projects."<scratch>"` trust tables in the Codex TOML by design (D-10).
 
-### 6. OPTIONAL — Native per-call model selection (ROADMAP SC3)
+6. OPTIONAL — **Native per-call model selection (ROADMAP SC3)**
 
 ```text
 Ask Codex to spawn a subagent that must run on model <id> and have it reply with the model it is running on. Return the reply text only.

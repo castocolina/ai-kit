@@ -12,7 +12,7 @@ Only your own Opencode TUI run counts; return the artifacts and observations lis
 
 ## Steps
 
-### 1. REQUIRED — Start Opencode at the checkout root
+1. REQUIRED — **Start Opencode at the checkout root**
 
 ```text
 Start the Opencode TUI in this checkout root, then use its shell tool for the following commands exactly as written. Do not print environment variable values.
@@ -20,7 +20,7 @@ Start the Opencode TUI in this checkout root, then use its shell tool for the fo
 
 expect: Opencode is running in the branch checkout (or merged `main`) identified by `git rev-parse --show-toplevel`.
 
-### 2. REQUIRED — Fresh baseline and names-only environment list
+2. REQUIRED — **Fresh baseline and names-only environment list**
 
 ```text
 Run exactly: mkdir -p tmp/p20/interactive && python3 tests/gsd_curated_eval.py snapshot --out tmp/p20/interactive/opencode-before.json && env | cut -d= -f1 | grep -E '^(CODEX|OPENCODE|AI_AGENT|AGENT|CLAUDE|PI_|CURSOR_|GROK_)' | sort > tmp/p20/interactive/opencode-env-names.txt && printf 'Names only:\n' && cat tmp/p20/interactive/opencode-env-names.txt. Never print an environment value.
@@ -28,7 +28,7 @@ Run exactly: mkdir -p tmp/p20/interactive && python3 tests/gsd_curated_eval.py s
 
 expect: `snapshot written`, then the recorded headless names including `AGENT`, `AI_AGENT`, `OPENCODE`, and `OPENCODE_SESSION_ID` (plus other matching names). The baseline follows TUI startup. Report any difference under D-04. Names only.
 
-### 3. REQUIRED — Run smoke and retain its artifacts
+3. REQUIRED — **Run smoke and retain its artifacts**
 
 ```text
 Run exactly: python3 tests/gsd_curated_eval.py smoke --evidence-out tmp/p20/interactive/opencode-smoke.md --artifacts-out tmp/p20/interactive/opencode-artifacts > tmp/p20/interactive/opencode-smoke.log 2>&1; echo "smoke exit=$?" >> tmp/p20/interactive/opencode-smoke.log; then print the log and evidence file.
@@ -36,7 +36,7 @@ Run exactly: python3 tests/gsd_curated_eval.py smoke --evidence-out tmp/p20/inte
 
 expect: `smoke exit=0`, `host opencode (detected)`, `scope: local`, `all equal`, `matrix ran: 420 checks`, and `protected set unchanged: pass`; artifacts exist at `opencode-artifacts/<label>/{plan.json,config.json,resolve-model.json,baked.json}`. The log includes `scratch work dir: <path> (deleted)`.
 
-### 4. REQUIRED — Check the baseline
+4. REQUIRED — **Check the baseline**
 
 ```sh
 python3 tests/gsd_curated_eval.py snapshot --check tmp/p20/interactive/opencode-before.json --scratch-root <the work-dir path printed by step 3>
@@ -44,7 +44,7 @@ python3 tests/gsd_curated_eval.py snapshot --check tmp/p20/interactive/opencode-
 
 expect: `snapshot ok`. Return any `changed` line verbatim as a guard failure; do not dismiss it.
 
-### 5. OPTIONAL — Native per-call model selection (ROADMAP SC3)
+5. OPTIONAL — **Native per-call model selection (ROADMAP SC3)**
 
 ```text
 Ask Opencode to spawn a subagent that must run on model <id> and have it reply with the model it is running on. Return the reply text only.
@@ -52,7 +52,7 @@ Ask Opencode to spawn a subagent that must run on model <id> and have it reply w
 
 Why optional: SC3 is an OR; the session-default branch is already pinned by `native_selectors == ()` and its unit test (20-06). This probe can only upgrade the label later.
 
-### 6. REQUIRED — Opencode review-lane mechanics (D-11; two trials per route)
+6. REQUIRED — **Opencode review-lane mechanics (D-11; two trials per route)**
 
 (a) From your shell at the checkout root, set a persistent output path, then run the keep-scratch smoke:
 
@@ -78,7 +78,7 @@ The project needs an Opencode-local install and a phase with at least one plan. 
 
 expect: four unblocked `ran`/`skipped (...)` outcomes with status lines; no blocked result remains.
 
-### 7. REQUIRED — R5 loader precedence from the kept scratch project
+7. REQUIRED — **R5 loader precedence from the kept scratch project**
 
 Use the kept `$DIR/project-a` from Step 6 and keep `$OUT` set. This is an actual loader observation for `gsd-planner`, not model self-report.
 
