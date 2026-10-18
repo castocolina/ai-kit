@@ -472,7 +472,7 @@ the two open verifications the spec left pending.
      (runtime, model) pair whose runtime is the host either takes the requested model natively,
      or `host_can_select` keeps the session-default-only label for that host (amended 2026-10-17
      per 18.1-VERIFICATION deferred item).
-**Plans**: 3/7 plans executed
+**Plans**: 4/7 plans executed
 
 Plans (cross-AI plans are delegated in plan order, one per wave, so the runner bootstrap comes first):
 **Wave 1**
@@ -485,7 +485,7 @@ Plans (cross-AI plans are delegated in plan order, one per wave, so the runner b
 - [x] 20-03-PLAN.md — Smoke per host: local gsd-core install under a throwaway HOME with XDG isolation, D-10 allowlist guard, planned == baked chain, `--artifacts-out`
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 20-04-PLAN.md — Headless codex iteration through the runner, env names, event types, scoped enumeration, signal probes, 20-SMOKE-CODEX.md
+- [x] 20-04-PLAN.md — Headless codex iteration through the runner, env names, event types, scoped enumeration, signal probes, 20-SMOKE-CODEX.md
 
 **Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 20-05-PLAN.md — Headless opencode iteration through the standalone runner, `#high` suffix probe, scoped enumeration, signal probes, 20-SMOKE-OPENCODE.md
