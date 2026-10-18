@@ -527,7 +527,7 @@ within this phase.
   5. Native per-call model selection is verified live from the cursor host, or `host_can_select`
      keeps the session-default-only label for cursor (amended 2026-10-17 per 18.1-VERIFICATION
      deferred item).
-**Plans:** 2/7 plans executed
+**Plans:** 3/7 plans executed
 
 Plans (cross-AI plans are delegated in plan order, one per wave; the two live AI-CLI uses are the
 21-04 cursor-agent dispatch and the 21-05 pi judge):
@@ -538,7 +538,7 @@ Plans (cross-AI plans are delegated in plan order, one per wave; the two live AI
 - [x] 21-07-PLAN.md — Runner `resolveBin` mirrors D-09 (scan-all guarded `agent`, empty PATH entry = cwd) with two self-test cases; template 5 bump, pins, goldens, tracked runner re-rendered through `ensure-runner` (CONFIG compared against the saved pre-upgrade bytes; the snapshot delta is exactly the authorized runner line) (SPEC-06)
 
 **Wave 3** *(blocked on Wave 1 completion)*
-- [ ] 21-02-PLAN.md — `cursor-agents/composer-worker.md` and `grok-worker.md` with the bundle-rule test module, registered in the test groups (AGT-01 files)
+- [x] 21-02-PLAN.md — `cursor-agents/composer-worker.md` and `grok-worker.md` with the bundle-rule test module, registered in the test groups (AGT-01 files)
 
 **Wave 4** *(blocked on Wave 1 completion)*
 - [ ] 21-03-PLAN.md — Harness cursor support (host root G1, resolve-model-only chain G3 over the complete baked map, generated paths G4, `matrix --host cursor` G5, `~/.cursor` hooks.json/agents/skills protected entries G6) and the hermetic local cursor smoke and matrix (EVAL-07 rehearsal, SPEC R2)
