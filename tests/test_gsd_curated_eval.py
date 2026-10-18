@@ -3803,6 +3803,25 @@ class TestSmoke(unittest.TestCase):
         ai.assert_not_called()
 
 
+class TestMatrixModuleCollection(unittest.TestCase):
+    """20-REVIEW WR-02 / ponytail M4: a collected mixin re-ran the full claude matrix."""
+
+    def test_matrix_module_collects_three_host_classes_only(self) -> None:
+        suite = unittest.TestLoader().loadTestsFromName(  # never the -k-filtered default
+            "tests.test_ai_kit_gsd_curated_config_matrix"
+        )
+        classes = sorted({type(test).__name__ for group in suite for test in group})
+        self.assertEqual(
+            classes,
+            [
+                "TestResolveModelMatrix",
+                "TestResolveModelMatrixCodex",
+                "TestResolveModelMatrixOpencode",
+            ],
+        )
+        self.assertEqual(suite.countTestCases(), 27)
+
+
 class TestReviewFixes(unittest.TestCase):
     """19-REVIEW.md and the ponytail code review: each fix with the input that broke it."""
 

@@ -16,7 +16,11 @@ _TOOLS = str(REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs")
 _ROW_COUNT = len(ev.COMBOS) * len(ev.PATHS)
 
 
-class _ResolveModelMatrixMixin(unittest.TestCase):
+class TestResolveModelMatrix(_RealGsdTestCase):
+    """Claude matrix regression baseline; the codex and opencode classes subclass it. No
+    separate mixin: unittest collects every TestCase subclass, whatever its name (20-REVIEW
+    WR-02)."""
+
     HOST = "claude"
 
     @classmethod
@@ -63,7 +67,8 @@ class _ResolveModelMatrixMixin(unittest.TestCase):
         self.assertEqual(control["observed"], control["expected_failures"])
 
     def test_control_two_clean_defaults_pass(self) -> None:
-        self.assertTrue(self.result["controls"]["control_2"]["ok"])
+        control = self.result["controls"]["control_2"]
+        self.assertTrue(control["ok"], f"control 2 mismatches: {control.get('mismatches')}")
 
     def test_informational_row_is_host_appropriate(self) -> None:
         info = self.result["informational"]
@@ -94,15 +99,11 @@ class _ResolveModelMatrixMixin(unittest.TestCase):
         self.assertEqual(strict, [])
 
 
-class TestResolveModelMatrix(_ResolveModelMatrixMixin, _RealGsdTestCase):
-    """Claude matrix regression baseline."""
-
-
-class TestResolveModelMatrixCodex(_ResolveModelMatrixMixin, _RealGsdTestCase):
+class TestResolveModelMatrixCodex(TestResolveModelMatrix):
     HOST = "codex"
 
 
-class TestResolveModelMatrixOpencode(_ResolveModelMatrixMixin, _RealGsdTestCase):
+class TestResolveModelMatrixOpencode(TestResolveModelMatrix):
     HOST = "opencode"
 
 
