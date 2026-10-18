@@ -53,6 +53,8 @@ Four-set check (`H="opencode"`): `signals clean`. `OPENCODE`, `AGENT` and `AI_AG
 
 ## Smoke evidence (written by the harness inside opencode)
 
+Regenerated 2026-10-18 after the code-review fixes (20-REVIEW-FIX.md), verbatim from `tmp/p20/headless/opencode-smoke.md`: one runner dispatch (`--prefer opencode`, `--standalone`, `--no-preamble`) ended `AIKIT-XAI status=no_change cli=opencode model=router-env/my-coding exit=1 cli_rc=0 elapsed=85s tree=clean action=fallback` with `smoke exit=0`; no `Managed service port` line; every spawn group dead afterwards. Env names in this dispatch match the earlier inside-opencode capture (`signals clean`).
+
 # Smoke evidence
 
 ## Steps
@@ -62,7 +64,7 @@ Four-set check (`H="opencode"`): `signals clean`. `OPENCODE`, `AGENT` and `AI_AG
 - step 4 project (a) dry run, apply, validation: pass — apply and validation passed
 - step 5 project (a) second apply: pass — second apply: writes 0, bytes identical, backups +1
 - step 6 project (a) forced failure restores: pass — forced failure: exit 1, intel.enabled written then undone, restored
-- step 7 project (a) post-apply install and planned == baked: pass — 35 agents; all equal; agents dir unchanged by a repeat install
+- step 7 project (a) post-apply install and planned == baked: pass — 35 agents; planned == baked == resolve-model; repeat install unchanged
 - step 8 project (b) empty project, apply, validation: pass — reconciled 1 key paths
 - step 9 matrix on the selected host: pass — matrix ran: 420 checks
 - step 10 protected set unchanged: pass — unchanged
@@ -78,21 +80,21 @@ Four-set check (`H="opencode"`): `signals clean`. `OPENCODE`, `AGENT` and `AI_AG
 - informational runtime row: not run (claude only)
 
 ## Local install
-- host: opencode
-- scope: local
-- root: <scratch-a>/.opencode/gsd-core
-- root: <scratch-b>/.opencode/gsd-core
-- version: 1.17.0
+- project-a: scope local, root <scratch-a>/.opencode/gsd-core, version 1.17.0 (from inventory)
+- project-b: scope local, root <scratch-b>/.opencode/gsd-core, version 1.17.0 (from inventory)
 - seed: absent
-- installer: <installer>
-- installer env: HOME and XDG_CONFIG_HOME/XDG_DATA_HOME/XDG_CACHE_HOME/XDG_STATE_HOME under <install-home>
+- installer: <installer> --<host> --local --no-legacy-cleanup
+- installer env: an allowlist (PATH, locale, TERM, USER, SHELL, TZ, TMPDIR) plus HOME and XDG_CONFIG_HOME/XDG_DATA_HOME/XDG_CACHE_HOME/XDG_STATE_HOME under <install-home>
 
 ## Planned vs baked
-- agents: 35
-- all equal
-- idempotent re-install: yes
+- project-a: 35 agents; planned == baked == resolve-model
+- project-a: 29 compact agent files carry no model: line; not compared
+- project-a: a repeat install left the agents dir unchanged
+- project-b: 35 agents; planned == baked == resolve-model
+- project-b: 29 compact agent files carry no model: line; not compared
 
 ## Generated paths
+- in every project (project-a, project-b):
 - .opencode/agents/gsd-advisor-researcher.compact.md
 - .opencode/agents/gsd-advisor-researcher.md
 - .opencode/agents/gsd-ai-researcher.compact.md
@@ -210,6 +212,7 @@ Four-set check (`H="opencode"`): `signals clean`. `OPENCODE`, `AGENT` and `AI_AG
 - .opencode/commands/gsd-quick.md
 - .opencode/commands/gsd-resume-work.md
 - .opencode/commands/gsd-review-backlog.md
+- .opencode/commands/gsd-review.md
 - .opencode/commands/gsd-secure-phase.md
 - .opencode/commands/gsd-settings.md
 - .opencode/commands/gsd-ship.md
@@ -270,6 +273,7 @@ Four-set check (`H="opencode"`): `signals clean`. `OPENCODE`, `AGENT` and `AI_AG
 - .opencode/skills/gsd-ns-context
 - .opencode/skills/gsd-ns-ideate
 - .opencode/skills/gsd-ns-manage
+- .opencode/skills/gsd-ns-project
 - .opencode/skills/gsd-ns-review
 - .opencode/skills/gsd-ns-workflow
 - .opencode/skills/gsd-onboard
@@ -300,8 +304,12 @@ Four-set check (`H="opencode"`): `signals clean`. `OPENCODE`, `AGENT` and `AI_AG
 - .opencode/skills/gsd-undo
 - .opencode/skills/gsd-update
 - .opencode/skills/gsd-validate-phase
+- .opencode/skills/gsd-verify-work
 - .opencode/skills/gsd-workspace
 - .opencode/skills/gsd-workstreams
+- only in project-a: none
+- only in project-b: none
+- gitignore decision: ignore these prefixes in the target project; curated-config reports, never edits .gitignore (D-12)
 
 ## Artifacts
 - project-a/plan.json
@@ -314,7 +322,8 @@ Four-set check (`H="opencode"`): `signals clean`. `OPENCODE`, `AGENT` and `AI_AG
 - project-b/baked.json
 
 ## Protected set
-- protected set unchanged: pass
+- unchanged
+- host-managed changed: none
 
 ## Project (b) key paths
 - plan_review.source_grounding_authority

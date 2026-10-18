@@ -1,8 +1,8 @@
-# Skill Evaluation Report: ai-kit-gsd-curated-config (Phase 20, round 3)
+# Skill Evaluation Report: ai-kit-gsd-curated-config (Phase 20, post-code-review round)
 
 Judge: in-session `skill-judge` (Claude Opus 5.5, live Claude Code session, Skill tool loaded).
 CURRENT only, at `skills/ai-kit-gsd-curated-config/SKILL.md` (314 lines) with
-`references/runner.md` and `references/v1-path.md`. Digest judged: `2663ee4bf6433cc1` (c7089ff).
+`references/runner.md` and `references/v1-path.md`. Digest judged: `ea3200ce9624de80` (after the code-review fixes; only runner.md changed since 2663ee4bf6433cc1).
 
 ## Summary
 - **Total Score**: 109/120 (91%)
@@ -16,7 +16,9 @@ CURRENT only, at `skills/ai-kit-gsd-curated-config/SKILL.md` (314 lines) with
   `cross_ai_script._READY_TEMPLATE`, the `liveOuterTimeoutS` ladder and its 300 s default).
   The host-lane guarantee is now scoped to v2, and v1-path.md says `detect-review-candidate` can
   name the host (checked against `preference_match.best_review_candidate` and
-  `cli._apply_review_writes`, which add the slug with no host check). No Critical or Important issue.
+  `cli._apply_review_writes`, which add the slug with no host check). The code-review fix narrowed runner.md's `--standalone`
+  sentence to what was observed (flag accepted by opencode v2.0.31, no port conflict; private-server
+  isolation is the flag's stated purpose). No Critical or Important issue.
 
 ## Dimension Scores
 

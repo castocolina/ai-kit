@@ -58,6 +58,8 @@ CLAUDE_PID
 
 ## Smoke evidence (written by the harness inside codex)
 
+Regenerated 2026-10-18 after the code-review fixes (20-REVIEW-FIX.md), verbatim from `tmp/p20/headless/codex-smoke.md`: one runner dispatch (`--prefer codex`, `--codex-sandbox workspace-write`, `--no-preamble`) ended `AIKIT-XAI status=no_change cli=codex model=gpt-5.6-luna exit=1 cli_rc=0 elapsed=88s tree=clean action=fallback` with `smoke exit=0`. Two earlier dispatches with the default TMPDIR ended `no_change` in 73 s and 43 s without a finished smoke (an empty smoke log, then none); a direct `codex exec` with the same argv and the third runner dispatch (TMPDIR under the repo's `tmp/`) completed. Cause not determined; recorded as a finding, not retried further. The section below replaces the earlier hand-copied list (WR-09).
+
 # Smoke evidence
 
 ## Steps
@@ -67,7 +69,7 @@ CLAUDE_PID
 - step 4 project (a) dry run, apply, validation: pass — apply and validation passed
 - step 5 project (a) second apply: pass — second apply: writes 0, bytes identical, backups +1
 - step 6 project (a) forced failure restores: pass — forced failure: exit 1, intel.enabled written then undone, restored
-- step 7 project (a) post-apply install and planned == baked: pass — 35 agents; all equal; agents dir unchanged by a repeat install
+- step 7 project (a) post-apply install and planned == baked: pass — 35 agents; planned == baked == resolve-model; repeat install unchanged
 - step 8 project (b) empty project, apply, validation: pass — reconciled 1 key paths
 - step 9 matrix on the selected host: pass — matrix ran: 420 checks
 - step 10 protected set unchanged: pass — unchanged
@@ -83,21 +85,19 @@ CLAUDE_PID
 - informational runtime row: not run (claude only)
 
 ## Local install
-- host: codex
-- scope: local
-- root: <scratch-a>/.codex/gsd-core
-- root: <scratch-b>/.codex/gsd-core
-- version: 1.17.0
+- project-a: scope local, root <scratch-a>/.codex/gsd-core, version 1.17.0 (from inventory)
+- project-b: scope local, root <scratch-b>/.codex/gsd-core, version 1.17.0 (from inventory)
 - seed: absent
-- installer: <installer>
-- installer env: HOME and XDG_CONFIG_HOME/XDG_DATA_HOME/XDG_CACHE_HOME/XDG_STATE_HOME under <install-home>
+- installer: <installer> --<host> --local --no-legacy-cleanup
+- installer env: an allowlist (PATH, locale, TERM, USER, SHELL, TZ, TMPDIR) plus HOME and XDG_CONFIG_HOME/XDG_DATA_HOME/XDG_CACHE_HOME/XDG_STATE_HOME under <install-home>
 
 ## Planned vs baked
-- agents: 35
-- all equal
-- idempotent re-install: yes
+- project-a: 35 agents; planned == baked == resolve-model
+- project-a: a repeat install left the agents dir unchanged
+- project-b: 35 agents; planned == baked == resolve-model
 
 ## Generated paths
+- in every project (project-a, project-b):
 - .codex/agents/gsd-advisor-researcher.compact.md
 - .codex/agents/gsd-advisor-researcher.md
 - .codex/agents/gsd-advisor-researcher.toml
@@ -109,6 +109,7 @@ CLAUDE_PID
 - .codex/agents/gsd-assumptions-analyzer.toml
 - .codex/agents/gsd-code-fixer.compact.md
 - .codex/agents/gsd-code-fixer.md
+- .codex/agents/gsd-code-fixer.toml
 - .codex/agents/gsd-code-reviewer.compact.md
 - .codex/agents/gsd-code-reviewer.md
 - .codex/agents/gsd-code-reviewer.toml
@@ -126,8 +127,12 @@ CLAUDE_PID
 - .codex/agents/gsd-doc-synthesizer.compact.md
 - .codex/agents/gsd-doc-synthesizer.md
 - .codex/agents/gsd-doc-synthesizer.toml
+- .codex/agents/gsd-doc-verifier.compact.md
+- .codex/agents/gsd-doc-verifier.md
+- .codex/agents/gsd-doc-verifier.toml
 - .codex/agents/gsd-doc-writer.compact.md
 - .codex/agents/gsd-doc-writer.md
+- .codex/agents/gsd-doc-writer.toml
 - .codex/agents/gsd-dom-verifier.compact.md
 - .codex/agents/gsd-dom-verifier.md
 - .codex/agents/gsd-dom-verifier.toml
@@ -136,6 +141,7 @@ CLAUDE_PID
 - .codex/agents/gsd-domain-researcher.toml
 - .codex/agents/gsd-eval-auditor.compact.md
 - .codex/agents/gsd-eval-auditor.md
+- .codex/agents/gsd-eval-auditor.toml
 - .codex/agents/gsd-eval-planner.compact.md
 - .codex/agents/gsd-eval-planner.md
 - .codex/agents/gsd-eval-planner.toml
@@ -149,6 +155,7 @@ CLAUDE_PID
 - .codex/agents/gsd-integration-checker.toml
 - .codex/agents/gsd-intel-updater.compact.md
 - .codex/agents/gsd-intel-updater.md
+- .codex/agents/gsd-intel-updater.toml
 - .codex/agents/gsd-mempalace-curator.compact.md
 - .codex/agents/gsd-mempalace-curator.md
 - .codex/agents/gsd-mempalace-curator.toml
@@ -169,9 +176,10 @@ CLAUDE_PID
 - .codex/agents/gsd-project-researcher.toml
 - .codex/agents/gsd-research-synthesizer.compact.md
 - .codex/agents/gsd-research-synthesizer.md
+- .codex/agents/gsd-research-synthesizer.toml
 - .codex/agents/gsd-roadmapper.compact.md
 - .codex/agents/gsd-roadmapper.md
-- .codex/agents/gsd-roadmapper.compact.md
+- .codex/agents/gsd-roadmapper.toml
 - .codex/agents/gsd-security-auditor.compact.md
 - .codex/agents/gsd-security-auditor.md
 - .codex/agents/gsd-security-auditor.toml
@@ -189,8 +197,83 @@ CLAUDE_PID
 - .codex/agents/gsd-user-profiler.toml
 - .codex/agents/gsd-verifier.md
 - .codex/agents/gsd-verifier.toml
-- .codex/agents/gsd-file-manifest.json
+- .codex/gsd-core/
+- .codex/gsd-file-manifest.json
 - .codex/gsd-install-state.json
+- .codex/skills/gsd-add-tests
+- .codex/skills/gsd-ai-integration-phase
+- .codex/skills/gsd-audit-fix
+- .codex/skills/gsd-audit-milestone
+- .codex/skills/gsd-audit-uat
+- .codex/skills/gsd-autonomous
+- .codex/skills/gsd-capture
+- .codex/skills/gsd-cleanup
+- .codex/skills/gsd-code-review
+- .codex/skills/gsd-complete-milestone
+- .codex/skills/gsd-config
+- .codex/skills/gsd-debug
+- .codex/skills/gsd-discuss-phase
+- .codex/skills/gsd-docs-update
+- .codex/skills/gsd-eval-review
+- .codex/skills/gsd-execute-phase
+- .codex/skills/gsd-explore
+- .codex/skills/gsd-extract-learnings
+- .codex/skills/gsd-fast
+- .codex/skills/gsd-forensics
+- .codex/skills/gsd-graphify
+- .codex/skills/gsd-health
+- .codex/skills/gsd-help
+- .codex/skills/gsd-import
+- .codex/skills/gsd-inbox
+- .codex/skills/gsd-ingest-docs
+- .codex/skills/gsd-manager
+- .codex/skills/gsd-map-codebase
+- .codex/skills/gsd-mempalace-capture
+- .codex/skills/gsd-mempalace-recall
+- .codex/skills/gsd-milestone-summary
+- .codex/skills/gsd-mvp-phase
+- .codex/skills/gsd-new-milestone
+- .codex/skills/gsd-new-project
+- .codex/skills/gsd-next
+- .codex/skills/gsd-ns-context
+- .codex/skills/gsd-ns-ideate
+- .codex/skills/gsd-ns-manage
+- .codex/skills/gsd-ns-project
+- .codex/skills/gsd-ns-review
+- .codex/skills/gsd-ns-workflow
+- .codex/skills/gsd-onboard
+- .codex/skills/gsd-pause-work
+- .codex/skills/gsd-phase
+- .codex/skills/gsd-plan-phase
+- .codex/skills/gsd-plan-review-convergence
+- .codex/skills/gsd-pr-branch
+- .codex/skills/gsd-profile-user
+- .codex/skills/gsd-progress
+- .codex/skills/gsd-quick
+- .codex/skills/gsd-quick-batch
+- .codex/skills/gsd-resume-work
+- .codex/skills/gsd-review
+- .codex/skills/gsd-review-backlog
+- .codex/skills/gsd-secure-phase
+- .codex/skills/gsd-settings
+- .codex/skills/gsd-ship
+- .codex/skills/gsd-sketch
+- .codex/skills/gsd-spec-phase
+- .codex/skills/gsd-spike
+- .codex/skills/gsd-stats
+- .codex/skills/gsd-surface
+- .codex/skills/gsd-thread
+- .codex/skills/gsd-ui-phase
+- .codex/skills/gsd-ui-review
+- .codex/skills/gsd-ultraplan-phase
+- .codex/skills/gsd-undo
+- .codex/skills/gsd-update
+- .codex/skills/gsd-validate-phase
+- .codex/skills/gsd-verify-work
+- .codex/skills/gsd-workspace
+- .codex/skills/gsd-workstreams
+- only in project-a: none
+- only in project-b: none
 - gitignore decision: ignore these prefixes in the target project; curated-config reports, never edits .gitignore (D-12)
 
 ## Artifacts
@@ -204,7 +287,8 @@ CLAUDE_PID
 - project-b/baked.json
 
 ## Protected set
-- protected set unchanged: pass
+- unchanged
+- host-managed changed: none
 
 ## Project (b) key paths
 - plan_review.source_grounding_authority

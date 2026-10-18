@@ -1,49 +1,46 @@
 # CURRENT skill evaluation
 
-Reviewed `skills/ai-kit-gsd-curated-config/SKILL.md` and both files in its `references/` directory against the supplied rubric. Command guidance was checked statically against the bundled CLI and runner; nothing was executed or modified.
-
-**Score: 116/120 — Grade A (96.7%)**  
-**Pattern:** Tool, organized around a gated Process workflow.  
+**Grade: A — 116/120 (96.7%)**  
+**Pattern:** Tool, supported by a phased Process workflow.  
 **Estimated knowledge ratio:** Expert 85% / Activation 10% / Redundant 5%.
 
-The package delivers substantial project-specific knowledge: migration removals, trusted-root decisions, fingerprint-bound approvals, rollback recovery, runner readiness, and flow-dependent permissions. Its remaining weaknesses are minor compression and wording issues.
+Read `skills/ai-kit-gsd-curated-config/SKILL.md` completely, together with both files in `references/`. This is a read-only, static evaluation; no commands from the skill were executed.
 
-## Dimension scores
+The package supplies substantial project-specific knowledge: managed-key reconciliation, trusted-root approval, runner readiness, permission differences between flows, rollback recovery, and fingerprint-bound follow-ups. Its remaining weaknesses are minor compression and reference-precision issues.
+
+## Every rubric dimension
 
 Paths below are relative to `skills/ai-kit-gsd-curated-config/`.
 
-| Dimension | Score | Evidence and assessment |
+| Dimension | Score | Evidence and justification |
 |---|---:|---|
-| **D1: Knowledge Delta** | **19/20** | `SKILL.md:114–132`, `174–188`, and `229–245` capture non-obvious behavior rather than basic tutorials. Small deduction for repeating approval and runner-state guidance across workflow, reference table, NEVER list, and mistakes table. |
-| **D2: Mindset + Appropriate Procedures** | **15/15** | `SKILL.md:60–67` frames trust, configuration provenance, and artifact placement before action. The workflow at `69–169` supplies domain-specific sequencing, user decisions, dry-run approval, and follow-ups—not generic file-editing steps. |
-| **D3: Anti-Pattern Quality** | **15/15** | `SKILL.md:269–288` gives specific prohibitions with consequences: hand edits bypass validation, untrusted inventory executes project JavaScript, and v1 execution overwrites v2 routing. Recovery guidance explicitly distinguishes failed rollback from committed cleanup warnings. |
-| **D4: Specification Compliance** | **15/15** | Frontmatter at `SKILL.md:1–4` is valid; the name matches the directory and naming requirements. The description states capabilities, explicit use scenarios, searchable filenames/commands, and the boundary with full GSD settings. |
-| **D5: Progressive Disclosure** | **14/15** | The 314-line main file routes explicitly to `references/v1-path.md` (47 lines) at `12–13`, and `references/runner.md` (58 lines) at `222–225`. Both references have conditional reading instructions. Some detailed runner-readiness content remains duplicated in the main subcommand table. |
-| **D6: Freedom Calibration** | **15/15** | `SKILL.md:97–169` appropriately constrains fragile configuration changes through validated commands, explicit choices, a separate approval turn, and unchanged fingerprint-bound follow-up commands. `--force` requires an expressly chosen user value (`123–124`, `280–283`). |
-| **D7: Pattern Recognition** | **10/10** | A coherent Tool/Process combination: entrypoint resolution, staged workflow, branch-specific references, failure handling, command reference, and anti-patterns. The structure fits configuration operations rather than imposing an unrelated creative or philosophy pattern. |
-| **D8: Practical Usability** | **13/15** | Strong coverage of stale inventory, unresolved choices, migration removals, inactive `.new` files, partial skill isolation, workstream limits, and degraded success. Small deductions for ambiguous ordinary `plan-unset` semantics and an inaccurate flag-count statement in the runner reference. |
+| **D1: Knowledge Delta** | **18/20** | `SKILL.md:97–131` supplies non-obvious choice semantics, runner pseudo-keys, trusted-root merging, and migration removals. `173–245` adds operational failure and sourcing distinctions. Little generic tutorial material; repeated guardrails and runner-readiness explanations cost some tokens. |
+| **D2: Mindset + Appropriate Procedures** | **15/15** | `SKILL.md:60–67` establishes the right preflight questions: checkout trust, migration history, and scratch-file placement. `69–169` then provides the domain-specific sequence, including separate approval boundaries rather than merely generic editing steps. |
+| **D3: Anti-Pattern Quality** | **15/15** | `SKILL.md:269–288` gives concrete prohibitions with consequences: hand edits bypass validation, habitual `--force` bypasses command safeguards, and v1 execution writes destroy v2 runner selection. These are actionable landmines, not generic warnings. |
+| **D4: Specification Compliance** | **15/15** | `SKILL.md:1–4` has valid frontmatter and a compliant name. The description identifies capabilities, explicit triggering requests, relevant filenames, and the distinction from full GSD settings configuration. |
+| **D5: Progressive Disclosure** | **14/15** | The 314-line entry document stays below the rubric’s ceiling. `SKILL.md:12–13` explicitly limits loading the v1 reference; `222–225` routes runner-specific scenarios to `references/runner.md`. Both references are short and focused. Some detailed runner-readiness content remains duplicated in the main command table. |
+| **D6: Freedom Calibration** | **15/15** | `SKILL.md:134–169` tightly constrains fragile writes and approval-bound follow-ups. `118–119` and `280–283` gate overrides on explicit user choices. Recommendation and model selection retain appropriate flexibility without granting autonomous approval of consequential changes. |
+| **D7: Pattern Recognition** | **10/10** | The Tool pattern is well applied: exact subcommands, typed values, decision branches, diagnostic states, and a mistake/recovery table. The phased workflow and conditional references support rather than compete with that structure. |
+| **D8: Practical Usability** | **14/15** | `SKILL.md:30–36`, `173–188`, and `290–303` cover refusal, rollback, committed-cleanup warnings, uncertain tree state, and common command mistakes. `references/v1-path.md:25–32` correctly distinguishes exit-zero degradation from configuration success. The runner flag introduction contains a small accuracy issue described below. |
+| **Total** | **116/120** | **Excellent; no blocking findings.** |
 
 ## Findings
 
-**Critical:** None.  
-**Important:** None.
+### Critical
+None found.
 
-### Minor 1 — Consolidate repeated operational detail
-**Lines:** `SKILL.md:222–225`, `266`, `288`; `references/runner.md:32–40`.
+### Important
+None found.
 
-Runner readiness and `.new` handling appear in several places, including a lengthy `ensure-runner` table cell that largely repeats the conditional reference. Similar approval instructions recur in the workflow, NEVER list, and mistakes table. Keep brief safety reminders, but make the reference authoritative for readiness variants and shorten the repeated descriptions. This would improve knowledge density without weakening safeguards.
+### Minor
 
-### Minor 2 — State ordinary `plan-unset` preservation semantics explicitly
-**Lines:** `SKILL.md:98–106`, `263`.
+1. **Duplicated operational detail weakens compression and layering.**  
+   **Lines:** `SKILL.md:266`, alongside `references/runner.md:33–41`; also `SKILL.md:134–144`, `273–276`, and `301–302`.  
+   The main subcommand table repeats the runner-readiness decision tree already housed in the conditional reference. The full-key approval requirement also receives several substantial restatements. Keep the authoritative approval checkpoint intact, but shorten later reminders and replace the readiness paragraph in the table with a reference link. This would improve **D1 and D5** without weakening safeguards.
 
-“Decline / remove a plan entry” does not explicitly distinguish declining a proposed change from deleting a configuration key. For ordinary keys, the implementation retains the existing value with `op: keep` (`ai_kit_gsd_curated_config/plan_edit.py:118–130`).
-
-Add: **“For ordinary keys, `plan-unset` cancels the proposed change and preserves the existing config value; it does not delete the config key.”** Keep the separately documented runner-model exception.
-
-### Minor 3 — Correct the runner flag inventory
-**Lines:** `references/runner.md:12–23`.
-
-“The template understands three flags” is misleading: the section also relies on `--no-preamble`, and the template supports additional flags. Rename this introduction to **“Relevant runner flags”**, or list the four discussed flags explicitly, including `--no-preamble`.
+2. **The runner flag introduction inaccurately implies an exhaustive list.**  
+   **Lines:** `references/runner.md:12–13`.  
+   “The template understands three flags” is too absolute: the same reference also discusses `--no-preamble` at line 23 and uses `--print-argv` at line 57. Rename this to “Relevant hook flags” or explicitly identify the list as selected rather than exhaustive. This is a **D8** precision issue, not an execution blocker.
 
 CURRENT 116/120
 CRITICAL 0
