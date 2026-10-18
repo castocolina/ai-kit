@@ -216,7 +216,7 @@ loading off). The opencode bare profile is **partial**: `~/.agents/skills` and
 The host CLI is never a review lane: `recommend` never proposes its slug, and `plan-set`
 refuses it in `review.default_reviewers` even with `--force`. A copied default naming the host
 is flagged for replacement. If you deliberately want that CLI with another provider, make the
-user-owned `review.reviewer_instances` edit; curated-config neither writes nor validates it. The host is never proposed as a review lane.
+user-owned `review.reviewer_instances` edit; curated-config neither writes nor validates it.
 
 **`.new` is not active:** a user-edited runner is never overwritten; apply writes
 `cross-ai.mjs.new` and reports `script.active: false`. Never treat `.new` as live. **Read
