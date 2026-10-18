@@ -16,7 +16,7 @@ _TOOLS = str(REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs")
 _ROW_COUNT = len(ev.COMBOS) * len(ev.PATHS)
 
 
-class _ResolveModelMatrixMixin:
+class _ResolveModelMatrixMixin(unittest.TestCase):
     HOST = "claude"
 
     @classmethod

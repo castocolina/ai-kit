@@ -904,7 +904,9 @@ class TestMatrixShape(unittest.TestCase):
         failed = SimpleNamespace(returncode=1, stdout='{"model":"opus","tier":"opus"}')
         got = ev._resolve_model(_ctx(run_fn=lambda *a, **kw: failed), "gsd-planner", "/p", {})
         self.assertEqual(got["model"], "")
-        self.assertIn("empty model", ev.compare("gsd-planner", got, "opus"))
+        mismatch = ev.compare("gsd-planner", got, "opus")
+        self.assertIsNotNone(mismatch)
+        self.assertIn("empty model", mismatch or "")
 
     def test_resolve_model_failure_reads_as_empty(self) -> None:
         broken = _ctx(run_fn=lambda cmd, **kw: (_ for _ in ()).throw(OSError("no node")))
