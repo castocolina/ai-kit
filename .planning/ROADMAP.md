@@ -611,7 +611,8 @@ independent)
   3. A PreToolUse advisor (advice only, never `permissionDecision`, never a rewrite) flags
      grep/cat/sed/find in Bash when rg/bat/sd/fd are installed, with the useful flags
      (`bat --plain --paging=never -l <lang> -r N:M`), and reports size, lines and estimated tokens
-     before a large Read with a ranged-read suggestion.
+     before a large Read with a ranged-read suggestion. *(amended 2026-10-18, 21.3 SPEC R4: Claude Code places PreToolUse `additionalContext` "alongside the tool result", so
+     the size report reaches the model with that read and informs the next one; stopping the read would need a permission decision, which stays forbidden)*
   4. A PostToolUse reminder ("you used grep; next time rg") fires only for installed tools; both
      advisors are live-verified in a real session, not only unit-tested.
 

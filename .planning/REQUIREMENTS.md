@@ -111,7 +111,7 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 
 - [ ] **ADV-01**: Each ai-kit hook is a separate install/uninstall knob in setup (wizard row and headless flag) (Phase 21.3)
 - [ ] **ADV-02**: The SessionStart tool briefing is user-visible and never mentions rtk (Phase 21.3)
-- [ ] **ADV-03**: A PreToolUse advisor flags cat/grep/sed/find when bat/rg/sd/fd are installed and reports size/lines/estimated tokens before large reads, advice only (Phase 21.3)
+- [ ] **ADV-03**: A PreToolUse advisor flags cat/grep/sed/find when bat/rg/sd/fd are installed and reports size/lines/estimated tokens before large reads, advice only (Phase 21.3) *(amended 2026-10-18, 21.3 SPEC R4: Claude Code places PreToolUse `additionalContext` "alongside the tool result", so the size report reaches the model with that read and informs the next one; stopping the read would need a permission decision, which stays forbidden)*
 - [ ] **ADV-04**: A PostToolUse reminder nudges toward the installed better tool after a non-recommended call; both advisors live-verified (Phase 21.3)
 
 ### Host-Split Status Line
