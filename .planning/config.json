@@ -107,7 +107,7 @@
     }
   },
   "model_overrides": {
-    "gsd-planner": "fable",
+    "gsd-planner": "opus",
     "gsd-code-reviewer": "opus",
     "gsd-plan-checker": "sonnet"
   },
