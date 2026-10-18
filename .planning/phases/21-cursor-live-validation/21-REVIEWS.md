@@ -1,8 +1,8 @@
 ---
 phase: 21
 reviewers: [opencode-plan-review]
-reviewed_at: 2026-10-18T13:42:40Z
-plans_reviewed: [21-01-PLAN.md, 21-02-PLAN.md, 21-03-PLAN.md, 21-04-PLAN.md, 21-05-PLAN.md, 21-06-PLAN.md]
+reviewed_at: 2026-10-18T18:16:13Z
+plans_reviewed: [21-01-PLAN.md, 21-02-PLAN.md, 21-03-PLAN.md, 21-04-PLAN.md, 21-05-PLAN.md, 21-06-PLAN.md, 21-07-PLAN.md]
 models:
   opencode-plan-review: "router-env/my-plan-review"
 model_sources:
@@ -15,170 +15,236 @@ model_sources:
 ## Plan-Revision Conflicts
 <!-- gsd:plan-revision-conflicts:end -->
 
-Cycle 1, against the plan set at 42fa790. Reviewer lane: `review.default_reviewers =
-["opencode-plan-review"]` (reviewer instance on the opencode adapter, model
-`router-env/my-plan-review`, no effort flag because `review.effort.opencode` is `inherit`). The
-lane ran once, exit 0, empty stderr, about 5 minutes. Plan coverage: 6/6 ids. No
-evidence-quality discount marker. No prompt trimming.
+Cycle 2, against the plan set at 71695d9 (replanned from cycle 1's review at 1354f43; seven
+plans). Reviewer lane: `review.default_reviewers = ["opencode-plan-review"]` (reviewer instance
+on the opencode adapter, model `router-env/my-plan-review`, no effort flag because
+`review.effort.opencode` is `inherit`). The lane ran once, exit 0, empty stderr, about 7
+minutes. Plan coverage: 7/7 ids. No evidence-quality discount marker. No prompt trimming.
 
 ## OpenCode Review (opencode-plan-review)
 
+**Framework:** GSD · implementation plans  
+**Review:** Convergence cycle 2, grounded in this worktree’s source and all seven current plans. Plan-file references below are relative to `.planning/phases/21-cursor-live-validation/`.
+
 ## 21-01
 
-**Summary:** The detection work is grounded in the existing resolver and parser, but its `real_path` guarantee and wrapper-proof behavior do not yet cover every path that consumes them.
+**Summary:** The main round-1 findings are addressed: `real_path` now covers refresh as well as initial construction, ASCII validation is explicit, and Plan 07 supplies the runner fix. One PATH edge still makes Python detection disagree with JavaScript dispatch.
 
 **Strengths**
-- Preserves the resolver’s positional arguments and tests PATH lookup without a shell; the current resolver is a first-hit lookup ([`detection.py:167–185`](skills/ai-kit-spec-review/ai_kit_spec/detection.py#L167-L185)).
-- Uses a captured listing while retaining the existing no-header model-line behavior.
+- The planned refresh change correctly targets the cached-row reconstruction in `skills/ai-kit-spec-review/ai_kit_spec/routing.py:269–299`.
+- Preserves positional resolver callers and existing parser behavior while adding captured-output, ANSI and nameless-model cases.
 
 **Concerns**
-- **HIGH:** Adding `real_path` only in `build_runtimes_snapshot` leaves refreshed rows inconsistent: `_refresh_runtime` copies an old row and replaces `path` without replacing `real_path` ([`detection.py:999–1006`](skills/ai-kit-spec-review/ai_kit_spec/detection.py#L999-L1006), [`routing.py:269–299`](skills/ai-kit-spec-review/ai_kit_spec/routing.py#L269-L299)).
-- **HIGH:** The runner’s `resolveBin` still rejects a grok `agent` at the first PATH hit without scanning later entries. Detection can therefore report Cursor installed while dispatch cannot launch it ([`references/cross-ai.mjs:404–429`](skills/ai-kit-spec-review/references/cross-ai.mjs#L404-L429)). Plan 01 explicitly leaves this unchanged.
-- **MEDIUM:** The proposed parser checks ASCII IDs in the capture, but its “non-space token” rule does not enforce that alphabet on other CLI output (21-01, Task 2).
+- **NEW · MEDIUM — Empty PATH segments have different semantics in detection and dispatch.** `21-01-PLAN.md:240–247` explicitly skips empty segments during the guarded scan. The runner preserves them as cwd through `dir || '.'` (`skills/ai-kit-spec-review/references/cross-ai.mjs:404–409`; retained by Plan 07). With `PATH=/grok/bin:` and a Cursor `agent` symlink in cwd, Python rejects the first Grok hit and skips cwd, while the runner finds Cursor.
 
 **Suggestions**
-- Update and test the refresh path when a binary changes, or limit the documented `real_path` guarantee to newly built snapshots.
-- Mirror guarded scan-all resolution in the runner and its rendered copy, or state the remaining dispatch limitation prominently.
-- Validate arbitrary parsed IDs against the intended alphabet.
+- Preserve cwd semantics in the Python scan using `directory or os.curdir`, and add matching Python/runner tests for the trailing-empty-segment case.
 
-**Risk Assessment: HIGH** — snapshot metadata can become stale, and the advertised wrapper-proof detection may not lead to a usable dispatch.
+**Risk Assessment: MEDIUM** — the common grok-first case is covered, but the claimed detection/dispatch agreement still has an executable exception.
 
 ## 21-02
 
-**Summary:** The two-file deliverable is well bounded. Explicit pins, bundle-style parsing and test registration are appropriate for files that will not be linked until Phase 21.1.
+**Summary:** Static file placement, explicit pins, bundle-style parsing and test-tier separation are well scoped. The live collision check, however, uses a discovery helper with a stronger version restriction than the plan recognizes.
 
 **Strengths**
-- Keeps Cursor pins out of Claude’s `agents/` and checks them against the captured listing.
-- Registers the new unit module with the generated test listings, consistent with [`run_unittest_parallel.py:76–97`](tools/run_unittest_parallel.py#L76-L97) and [`gen_test_groups.py:72–103`](tools/gen_test_groups.py#L72-L103).
+- Keeps Cursor model pins outside Claude’s `agents/` directory.
+- The round-1 `query_agent_catalog(...) is None` issue is fixed by failing rather than skipping after discovery.
+- The parity oracle’s limited scope is now stated accurately.
 
 **Concerns**
-- **MEDIUM:** The optional catalog test skips when `query_agent_catalog` returns `None`, including when an available catalog query fails. That permits the “no GSD collision” check to pass without a successful query ([`gsd_catalog.py:112–146`](skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/gsd_catalog.py#L112-L146); 21-02, Task 1).
-- **LOW:** The Node parity oracle compares selected fields on two valid files, not every parsed field or rejection case. Its stated scope should remain “these shipped files,” not full parser equivalence (21-02, Task 1).
+- **NEW · MEDIUM — The catalog cross-check skips the installed 1.17.0 catalog.** `21-02-PLAN.md:287–306` treats any string from `real_gsd_paths()` as unavailable Node/gsd-core. That helper also returns a string whenever gsd-core is not **1.16.0**, and when config-schema support is missing (`tests/test_curated_config_e2e.py:94–110`). This phase uses 1.17.0, so the proposed test skips before querying its available catalog. The new `assertIsNotNone` does not cover this earlier exit.
 
 **Suggestions**
-- Skip only when Node or gsd-core is unavailable; fail on a query error when both are present.
-- Compare the complete field map if full parity matters.
+- Discover only what this test needs: a working Node executable and the checkout-local model catalog. Do not reuse the golden-table 1.16.0 restriction.
+- Require the cross-check to execute—not skip—in this phase’s recorded gate.
 
-**Risk Assessment: MEDIUM** — the static pins are well tested, but one collision check can silently become a skip.
+**Risk Assessment: MEDIUM** — the files and static checks are sound, but the advertised live collision proof currently does not run here.
 
 ## 21-03
 
-**Summary:** Cursor-first gsd-core discovery and a resolve-model-only chain address concrete harness gaps. The rehearsal’s success evidence needs a stronger attempt boundary.
+**Summary:** The Cursor-first root and resolve-model-only chain address real harness gaps. Round-1 smoke exit propagation and specialist-override checks are addressed. One proposed baked-file assertion is broader than the helper actually enforces.
 
 **Strengths**
-- The proposed `.cursor` root fills the current host-specific omission ([`host.py:20–26,61–75`](skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/host.py#L20-L75)).
-- Reuses the matrix oracle and correctly avoids claiming Cursor’s model-free agent files have baked model pins ([`gsd_curated_eval.py:4315–4356`](tests/gsd_curated_eval.py#L4315-L4356)).
+- The one-entry host fix follows the existing insertion points in `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/host.py:61–75`.
+- Avoids claiming that model-free Cursor files contain baked pins; the current comparison and rendering points are correctly identified in `tests/gsd_curated_eval.py:4315–4356,4739–4758`.
+- The revised rehearsal command preserves the smoke’s exit status, and retry archiving keeps prior evidence.
 
 **Concerns**
-- **HIGH:** Task 2 runs the smoke followed by `echo "smoke exit=$?"`; the command then exits with `echo`’s status. Verification searches a potentially reused log for *any* `smoke exit=0`, so a failed rerun can inherit an earlier success ([`gsd_curated_eval.py:4826–4848`](tests/gsd_curated_eval.py#L4826-L4848); 21-03, Task 2).
-- **MEDIUM:** Artifact checks cover cursor tier slots and resolved models but not every specialist `model_overrides.*` entry, despite the plan-wide no-`-fast` claim (21-03, Task 2; [`gsd_curated_eval.py:792–830`](tests/gsd_curated_eval.py#L792-L830)).
+- **NEW · MEDIUM — “Every baked file is model-free” is not enforced by the proposed comparison.** `21-03-PLAN.md:317–337` builds `promised_map` from canonical catalog agents and says `_baked_mismatches` rejects any baked model. The helper iterates only `promised_map.items()` (`tests/gsd_curated_eval.py:4288–4298`), while `_baked_models` also returns compact files (`:4274–4285`). A compact or additional file carrying `model:` is ignored by that comparison; `_baked_lines` currently reports compact models as “not compared” (`:4751–4754`). A synthetic probe confirmed that a compact pin produces no mismatch. The later rehearsal artifact check catches this locally, but the reusable smoke assertion and “baked files verified model-free” wording remain incorrect.
 
 **Suggestions**
-- Use fresh per-attempt outputs, preserve the smoke’s actual exit code and require that attempt’s ten passing steps.
-- Check specialist overrides as well as tier slots.
+- Keep the canonical-agent existence check, then separately reject every non-`None` value in the complete Cursor baked map.
+- Include a negative test with a compact file carrying a model—not only another canonical agent.
 
-**Risk Assessment: HIGH** — stale evidence could mark a failed rehearsal green before the live dispatch.
+**Risk Assessment: MEDIUM** — rehearsal artifacts provide a backstop, but future headless/interactive smoke runs could overstate the model-free result.
 
 ## 21-04
 
-**Summary:** Runner-based launch, an explicit model and post-run protection checks are sound. Scratch-home teardown is the plan’s most consequential safety boundary.
+**Summary:** The plan substantially improves wrapper avoidance, isolation qualification and deletion guards. The remaining risks concern interrupted-run recovery and the actual lifetime of the credential-bearing scratch HOME.
 
 **Strengths**
-- Launches via the runner’s PATH resolution and argv rather than the user’s shell function ([`cross-ai.mjs:412–437`](.planning/scripts/cross-ai.mjs#L412-L437)).
-- Requires both a runner status and host-written smoke evidence, rather than accepting `no_change` alone.
+- The round-1 deletion guard, smoke exit propagation and qualified isolation statement are addressed.
+- The corrected cleanup explanation matches runner `finalize`, which terminates child groups on normal exits too (`skills/ai-kit-spec-review/references/cross-ai.mjs:553–571`).
+- The selected-attempt verdict is stronger than searching arbitrary evidence for success strings.
 
 **Concerns**
-- **HIGH:** Re-entry teardown trusts `tmp/p21/headless/scratch-home.txt` before validating it as this run’s scratch directory; normal teardown uses its contents in `rm -rf`. The inside-repo check is insufficient as a deletion guard (21-04, Task 1, scratch-home and teardown steps).
-- **HIGH:** `run-smoke.sh` ends with `echo "smoke exit=$?"`, so it can report shell success when the smoke fails. Reused log and evidence paths compound the attempt-mixing risk (21-04, Task 1; [`gsd_curated_eval.py:4634,4842–4848`](tests/gsd_curated_eval.py#L4634-L4848)).
-- **HIGH:** Setting `HOME`, `CURSOR_CONFIG_DIR` and `XDG_CONFIG_HOME` does not prove all inherited configuration/cache destinations are isolated. The runner scrubs host signals, not arbitrary path variables ([`cross-ai.mjs:84–96`](.planning/scripts/cross-ai.mjs#L84-L96)).
-- **MEDIUM:** The stated reason for group cleanup is inaccurate: `runChild` calls group termination during normal finalization too ([`cross-ai.mjs:560–579`](.planning/scripts/cross-ai.mjs#L560-L579)). Checks for escaped workers remain worthwhile.
+- **NEW · HIGH — Scratch-HOME cleanup has no executable lifetime, and its timing conflicts with retries.** `21-04-PLAN.md:279–286` creates the HOME through separate commands; `:363–398` promises teardown on every exit and “immediately after the runner returns.” No enclosing trap/supervisor is specified. Setup errors or executor interruption can bypass cleanup. Conversely, immediate teardown removes the HOME needed by the subsequent probe/retry described at `:355–362`, with no recreation step. The runner cleans its child groups, not this externally created directory (`skills/ai-kit-spec-review/references/cross-ai.mjs:553–579`).
+
+- **CARRIED-OVER · HIGH — Re-entry can still combine a new healthy runner result with old successful smoke outputs.** Archiving is specified only before attempt **N+1** (`21-04-PLAN.md:331–337`). Re-entry cleans the old HOME but restarts at attempt 1 without invalidating fixed smoke outputs; it also overwrites the original protection snapshot first (`:249–250,270–279`). A new healthy `no_change` invocation that never runs the wrapper can therefore reuse the old smoke log/evidence. The runner explicitly permits `no_change` without proving any requested command ran (`skills/ai-kit-spec-review/references/cross-ai.mjs:2907–2914,2940–2941`). This is distinct from the correctly rejected claim that `>` fails to truncate: **no truncation occurs if the wrapper is never invoked**.
+
+- **NEW · MEDIUM — Process-proof verification can pass without process records.** The final loop skips missing PGID files. Runner bookkeeping failures are deliberately nonfatal (`skills/ai-kit-spec-review/references/cross-ai.mjs:499–508`). Thus the loop can pass vacuously, and it does not machine-check the separate escaped-worker absence promised by `21-04-PLAN.md:374–380`.
 
 **Suggestions**
-- Validate the recorded directory’s canonical location, type and ownership **before every deletion**; fail closed on uncertainty.
-- Propagate the smoke exit status and isolate logs, evidence and PGID records per attempt.
-- Audit inherited path variables and check every attempted child’s processes, not only `cursor-run1.pgid`.
+- Define one supervising script with cleanup for ordinary failures and catchable signals, plus durable recovery for forced termination.
+- Choose an explicit HOME lifetime: recreate per dispatch, or retain until the final retry/probe finishes.
+- Archive/invalidate outputs before the first dispatch on **every entry**, retain unique attempt identities, and check the interrupted run’s original snapshot before replacing it.
+- Require spawn records for the selected attempt and a final scratch-HOME-matched worker absence check.
 
-**Risk Assessment: HIGH** — an unsafe teardown path or incomplete isolation threatens user data; misleading exit status threatens the live result.
+**Risk Assessment: HIGH** — stale evidence can authorize a false green result, and interruption/retry behavior can leave sensitive scratch state behind.
 
 ## 21-05
 
-**Summary:** The conditional label lift is appropriately tied to evidence, and pi’s warning remains. The evidence and judge gates are weaker than the claims they authorize.
+**Summary:** The round-1 attempt-binding, judge criteria and pending-orchestrator gate are addressed. The remaining blocker is a mismatch between what the plan calls R1 green and what the locked specification requires.
 
 **Strengths**
-- Keeps the label edit, README wording, test pin and evidence section together (21-05, Task 1).
-- Uses the existing skill digest mechanism ([`gsd_curated_eval.py:384–459`](tests/gsd_curated_eval.py#L384-L459)).
+- The PASS verifier now checks findings, score floors and each report’s digest.
+- Uses the existing byte-bound digest mechanism in `tests/gsd_curated_eval.py:384–402,452–459`.
+- Shipped wording honestly distinguishes headless validation from pending interactive confirmation.
 
 **Concerns**
-- **HIGH:** The LIFT condition finds success strings anywhere in the evidence and matrix log; it does not establish one current passing run with no failing rows. That is weaker than R3’s explicit failure rule ([`21-SPEC.md:143–144`](.planning/phases/21-cursor-live-validation/21-SPEC.md#L143-L144); 21-05, Task 1).
-- **HIGH:** The automated `PASS` check enforces score floors but not `CRITICAL 0`, `IMPORTANT 0`, or each report’s judged digest (21-05, Task 2).
-- **MEDIUM:** Plan 05 can finish with the in-session judge pending, while Plan 06 forbids that marker. The orchestrator replacement is not an explicit dependency gate between them (21-05, Task 2; 21-06, Task 2).
+- **NEW · HIGH — LIFT substitutes headless preparation for the required interactive R1 acceptance.** `21-05-PLAN.md:227–234` selects LIFT solely from headless evidence and the matrix. But `21-SPEC.md:45–48` requires the smoke from the **user’s interactive Cursor session**, and `:55–58` permits lifting only after R1 and R2 pass. Plan 06 itself says the headless run only prepared R1 (`21-06-PLAN.md:294–297`). Narrower documentation wording does not amend that prerequisite.
 
 **Suggestions**
-- Bind the lift to one identified attempt’s runner status, smoke exit, ten steps and matrix result.
-- Verify every judge criterion and digest from both reports before declaring `PASS`; require the orchestrator’s completed report before Plan 06.
+- Either defer LIFT until interactive steps 1–4 pass, or obtain and record a formal SPEC amendment separating headless label eligibility from interactive acceptance.
 
-**Risk Assessment: HIGH** — the shipped certainty label or review verdict could advance on incomplete evidence.
+**Risk Assessment: HIGH** — the plan can authorize the label transition before its stated prerequisite has occurred.
 
 ## 21-06
 
-**Summary:** An opt-in, single-label exemption is a practical way to handle Cursor’s own config rewrite, but its assurance must be stated narrowly and the optional probe must not kill unrelated processes.
+**Summary:** The exemption design and narrowed digest claims are much improved. Final closure still needs stronger acceptance and current-tree gates, and the optional probe retains an unsafe ownership inference.
 
 **Strengths**
-- Leaves the existing cursor config entry strict for unflagged runs ([`gsd_curated_eval.py:324–363`](tests/gsd_curated_eval.py#L324-L363)).
-- Calls for separate snapshot and smoke tests, including preservation of host-managed-only output (21-06, Task 1).
+- Round-1 digest overclaim is resolved: the selected-key hash is described as limited integrity evidence.
+- An unavailable pi judge now explicitly prevents completion.
+- The snapshot-pipeline rejection is justified: current `_cmd_snapshot` cannot print `snapshot ok` on a strict failure (`tests/gsd_curated_eval.py:347–363`), and the planned change preserves that invariant.
 
 **Concerns**
-- **HIGH:** Equal hashes of three selected config keys show only that those values match before and after. They cannot prove “ai-kit did not write your config” once all other bytes are exempted; the script claims more than its check establishes (21-06, Task 1, steps 2–4).
-- **HIGH:** The optional probe kills newly observed `pgrep -f 'index.js worker-server'` PIDs. A concurrent, unrelated Cursor worker can enter that set and be killed (21-06, Task 1, step 5).
-- **MEDIUM:** Plan 06 accepts a `BLOCKED: pi judge unavailable` state as a phase gate with a note, despite the required review loop and its own closure language (21-06, Task 2).
-- **MEDIUM:** Several snapshot gates pipe into `grep` without requiring the checker’s exit status; the checker deliberately returns nonzero for strict changes ([`gsd_curated_eval.py:347–363`](tests/gsd_curated_eval.py#L347-L363); 21-06, Task 2).
+- **NEW · HIGH — Required interactive acceptance does not block phase completion.** `21-06-PLAN.md:496–512` records interactive acceptance as pending but requires `phase status: human_needed` **only** when the judge gate fails. With judge PASS and automated gates green, the phase can close while the required R1 run remains outstanding (`21-SPEC.md:45–48`). Listing it under Human verification is not a completion gate.
+
+- **NEW · HIGH — Cursor agents, hooks and skills are absent from the claimed protection.** The plan adds the config exemption, but not the Cursor entries identified in research. `_strict_files` protects only `.cursor/cli-config.json`; `_strict_listings` and `snapshot` add no Cursor agents/hooks/skills coverage (`tests/gsd_curated_eval.py:189–226,292–321`). A synthetic mutation of Cursor agents and `hooks.json` produced no snapshot difference. Consequently, `snapshot ok` cannot substantiate the broader no-write assurance in `21-06-PLAN.md:301–315`.
+
+- **NEW · HIGH — The final judge gate accepts a stale PASS after later skill fixes.** `21-06-PLAN.md:447–458` accepts the stored verdict while permitting gate-driven fixes. Its final verifier does not recheck the current digest or report criteria. A later change to `SKILL.md` or `references/` invalidates the judged bytes (`tests/gsd_curated_eval.py:384–402`), but the old PASS string remains sufficient.
+
+- **CARRIED-OVER · HIGH — Manual probe cleanup still mistakes age for ownership.** Automatic killing is removed, but `21-06-PLAN.md:358–367` calls newly appearing, younger workers “the probe’s leftovers” and instructs the user to kill them. A concurrent session’s new worker satisfies the same criterion. The plan acknowledges that ambiguity; the actual ownership precedent used a scratch-HOME environment check (`21-SPIKE-D01.md:25–27`).
+
+- **NEW · MEDIUM — The optional model probe extracts arbitrary model fields, not the Task call.** The `grep` at `21-06-PLAN.md:358` discards event/tool context and can match a model elsewhere in the stream. Subsequent cleanup also obscures the CLI exit status. That is insufficient evidence for the per-call-selection conclusion at `:364–370`.
+
+- **NEW · MEDIUM — Digest and snapshot may protect different config files.** The digest honors `CURSOR_CONFIG_DIR` (`21-06-PLAN.md:118–120`), whereas the snapshot always protects `<home>/.cursor/cli-config.json` (`tests/gsd_curated_eval.py:210,298–301`). No default-directory precondition or consistent custom-path handling is specified.
 
 **Suggestions**
-- Describe the digest as limited key-integrity evidence; report other byte changes without attributing their writer.
-- Reap only a verified process group belonging to the probe, or omit automatic killing and surface leftovers.
-- Keep an unavailable judge explicitly blocking completion, and capture snapshot exit codes independently of output matching.
+- Keep the phase `human_needed` until required interactive acceptance passes, independently of judge status.
+- Add explicitly scoped Cursor protected entries with synthetic mutation tests; state whether directory checks cover names or contents.
+- Reuse Plan 05’s complete digest/report validation at final closure, rejudging changed bytes.
+- Label probe workers as **unidentified candidates** unless ownership is established; never recommend termination by age alone.
+- Parse the actual Task-call event and preserve command status.
+- Either support one consistently resolved config path or reject non-default `CURSOR_CONFIG_DIR` for this validation run.
 
-**Risk Assessment: HIGH** — the optional process cleanup can harm another session, and the config-integrity claim exceeds what is measured.
+**Risk Assessment: HIGH** — phase completion, protection claims and probe evidence can exceed what the executable checks establish.
 
-### Cross-plan assessment
+## 21-07
 
-All six plans were reviewed against this worktree’s source; no files were changed and no live AI CLI or tests were run. The most important revisions before execution are **attempt-specific success evidence** (21-03 through 21-05), **safe scratch-home teardown** (21-04) and **process ownership for the optional probe** (21-06). The user’s interactive Cursor run remains pending in these plans, so the phase must not be reported as interactively confirmed until its results arrive.
+**Summary:** Adding the runner mirror and tracked render resolves the central round-1 dispatch mismatch. Two verification instructions nevertheless reject a correct upgrade.
+
+**Strengths**
+- Correctly follows the newer-template rule in `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_script.py:242–265`.
+- Preserves CONFIG through the existing upgrade path and includes pins, goldens and the tracked render.
+- Covers the grok-first PATH case hermetically.
+
+**Concerns**
+- **NEW · HIGH — The final snapshot necessarily rejects the authorized runner rewrite.** The baseline is captured before Task 1 (`21-07-PLAN.md:238`), then Task 2 upgrades `.planning/scripts/cross-ai.mjs` and requires the original snapshot to remain unchanged (`:327–350,356`). That exact runner is strict (`tests/gsd_curated_eval.py:198`); changed bytes produce a failed snapshot (`:332–363`). A synthetic probe confirmed the expected failure.
+
+- **NEW · HIGH — CONFIG preservation compares against the wrong revision before commit.** `21-07-PLAN.md:333–336,355` selects the older of the last two runner commits. Before the planned commit, those are `4e53b3e` and `ef2daf6`, so it selects `ef2daf6`, not the actual pre-upgrade runner. That older CONFIG lacks keys preserved by `_upgrade_config` (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_script.py:227–235`). The comparison therefore fails before commit even when preservation is correct.
+
+**Suggestions**
+- Save the actual pre-upgrade runner bytes under `tmp/p21/` and compare CONFIG against those, independent of commit timing.
+- Verify that the protected-set delta is **exactly the authorized runner change**, require every other entry unchanged, and only then establish the next baseline.
+
+**Risk Assessment: HIGH** — otherwise-correct execution is blocked by deterministic verification failures.
+
+## Overall assessment
+
+**Coverage: 7/7 plans. Status: Issues Found — revise before execution.**
+
+The round-1 revisions resolve most original findings. The highest-priority remaining changes are:
+
+1. Fix Plan 07’s two deterministic upgrade gates.
+2. Make Plan 04’s cleanup/re-entry lifetime executable and invalidate stale evidence on every entry.
+3. Reconcile interactive acceptance with label lifting and phase completion.
+4. Complete Cursor protection and validate the final judge verdict against the final bytes.
+
+No repository files were changed. No live AI CLI or full test/build suite was run; verification used source tracing and small synthetic probes.
 
 ---
 
 ## Consensus Summary
 
 One reviewer ran, so there is no cross-reviewer consensus and the convergence consensus gate
-does not apply: every HIGH below counts. The reviewer raised 10 HIGH and 8 MEDIUM/LOW concerns.
+does not apply: every HIGH counts unless the orchestrator spot-check shows it inaccurate. The
+reviewer raised 9 HIGH (2 carried over from cycle 1, 7 new) and 6 MEDIUM concerns, and judged
+every other cycle-1 finding resolved by the Round 1 ledgers.
 
 Orchestrator spot-checks against source (verification only, no disposition):
 
-- Confirmed, 21-01 refresh drops `real_path`: `_refresh_runtime` rebuilds the row with only
-  `installed` and `path` (`skills/ai-kit-spec-review/ai_kit_spec/routing.py:278-284`), and no
-  Phase 21 plan mentions `_refresh_runtime`.
-- Confirmed, 21-04 group-cleanup rationale: `finalize` calls `killGroup(child, 'SIGTERM')` and
-  `killGroup(child, 'SIGKILL')` on every path, including `reason === 'exit'`
-  (`skills/ai-kit-spec-review/references/cross-ai.mjs:553-571`). 21-04's read_first note
-  ("the finalize kill only on timeout/signal") is wrong; the surviving worker-server must be
-  explained another way (for example a re-parented process outside the group).
-- Partly inaccurate, 21-03/21-04 `echo "smoke exit=$?"`: the smoke log is opened with `>`
-  (truncate), so a rerun cannot inherit an earlier `smoke exit=0` from the same log, and the
-  echoed value is the smoke's own exit status. The real gap is narrower: the shell command's
-  own exit is echo's, and evidence/artifact paths are not attempt-scoped.
-- Deliberate, 21-01 runner `resolveBin` first-hit: 21-01 and 21-04 record this as an
-  orchestrator decision (D-09). The replan must either change the runner and its rendered copy
-  or state the detection/dispatch mismatch as an explicit, visible limitation.
+- Confirmed, 21-07 snapshot gate: Task 1 captures `tmp/p21/plan07.before.json` before the
+  rewrite (`21-07-PLAN.md:238`), Task 2 re-renders `.planning/scripts/cross-ai.mjs` and its
+  verify requires `snapshot --check tmp/p21/plan07.before.json` to print `snapshot ok`; that
+  file is a strict entry (`tests/gsd_curated_eval.py:198`), so the gate fails on a correct run.
+- Confirmed, 21-07 CONFIG revision: the action's pre-commit check takes the older of
+  `git log -2 -- .planning/scripts/cross-ai.mjs`, which today is `ef2daf6`, not `4e53b3e` as
+  the plan states. `template_config` of `ef2daf6` lacks `effort`, `extraArgs`,
+  `outerTimeoutS` and `routerBacked` compared with `4e53b3e` (checked), so the pre-commit
+  comparison fails. The post-commit `<verify>` picks the right revision.
+- Confirmed, 21-05/21-06 interactive acceptance: `21-SPEC.md:45-48` makes R1 the user's
+  interactive session and `:55-58` lifts the label only after R1 and R2 pass. 21-05 selects
+  LIFT from headless evidence; 21-06 writes `phase status: human_needed` only when the judge
+  gate fails. Phase 20 lifted the codex label on headless evidence, but its SPEC had no
+  label requirement; Phase 21's does.
+- Confirmed, 21-06 Cursor protection: the snapshot's only Cursor entry is
+  `<home>/.cursor/cli-config.json` (`tests/gsd_curated_eval.py:207-210,292-321`).
+  `21-RESEARCH.md:364` (T-21-02) proposed listings for `agents/`, `skills/` and `hooks.json`;
+  no plan adds them, yet 21-04's `## Session` and 21-06's script say the `~/.cursor`
+  allowlist is proven unchanged.
+- Confirmed, 21-06 stale judge PASS: Task 2 checks only the stored verdict line and the
+  pending-marker precondition, not the current `digest`.
+- Confirmed, 21-06 probe ownership: step 5 tells the user that new workers younger than the
+  probe are its leftovers to kill; a concurrent session's new worker meets the same test.
+- Confirmed, 21-04 re-entry stale outputs: outputs are archived only before attempt N+1; a
+  re-entry restarts at attempt 1, re-captures `plan04.before.json` and leaves the old
+  `cursor-smoke.log`/`.md` in place. A `no_change` run that never invokes the wrapper would
+  then derive its verdict from the old files.
+- Mostly inaccurate, 21-04 scratch-HOME lifetime: the teardown list already runs after the
+  probe and the retries, a setup-guard failure runs the teardown, and interruption is covered
+  by the re-entry teardown and 21-06's late teardown. What remains is the wording "it runs
+  immediately after the runner returns", which contradicts that order. Counted as a MEDIUM.
+- Confirmed MEDIUMs: 21-02 `real_gsd_paths()` returns a reason string unless gsd-core is
+  1.16.0 (`tests/test_curated_config_e2e.py:94-110`) and this checkout has 1.17.0, so the new
+  catalog test skips here. 21-03 `_baked_mismatches` iterates only `promised_map`
+  (`tests/gsd_curated_eval.py:4288-4298`). 21-01 skips empty PATH segments while the runner
+  maps them to `.`. 21-04 vacuous pgid loop, 21-06 probe `grep` and the `CURSOR_CONFIG_DIR`
+  mismatch: plan text matches the reviewer's reading; not re-traced further.
 
 ### Agreed Strengths
-- Single reviewer; see its per-plan strengths. Notably the evidence-tied label lift, the
-  `cursor-agents/` separation from Claude's `agents/`, and launching cursor-agent only through
-  the runner.
+- Single reviewer. It judged most cycle-1 findings resolved: `real_path` on refresh, ASCII ids,
+  the runner scan-all mirror (21-07), the catalog `None` failure, smoke exit capture,
+  specialist-override checks, the path guard, the qualified isolation wording, the attempt-bound
+  verdict line, the judge `CRITICAL`/`IMPORTANT`/digest checks, the narrowed digest claim and
+  the BLOCKED-judge handling. It accepted the snapshot-pipe rejection.
 
 ### Agreed Concerns
-- Not applicable with one reviewer. Highest-priority single-reviewer concerns: attempt-specific
-  success evidence (21-03 to 21-05), scratch-home deletion guard before `rm -rf` (21-04),
-  process ownership for the optional probe's `kill` (21-06), and judge `PASS` checks that
-  skip `CRITICAL 0`/`IMPORTANT 0` and digests (21-05).
+- Not applicable with one reviewer. Highest priority: the two deterministic 21-07 gate
+  failures; stale smoke evidence on 21-04 re-entry; reconciling the headless LIFT and phase
+  completion with SPEC R1/R3 (21-05, 21-06); Cursor protection and the final judge digest
+  (21-06).
 
 ### Divergent Views
 - None (one reviewer).
