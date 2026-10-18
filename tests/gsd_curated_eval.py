@@ -4067,6 +4067,19 @@ def _install_local(ctx: SmokeCtx, project: str) -> str:
     if not ctx.install_home:
         raise SystemExit("install home is unavailable")
     install_home = ctx.install_home
+    # A version-manager shim (volta, mise, asdf) needs its own env vars, which the allowlist
+    # drops; resolve the real binary under the caller's env and run that instead.
+    probe = subprocess.run(
+        [ctx.node_bin, "-p", "process.execPath"],
+        env=ctx.env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    node = (probe.stdout or "").strip()
+    if probe.returncode or not node:
+        raise SystemExit(f"cannot resolve the node binary: {(probe.stderr or '')[-200:]}")
     env = {
         **{key: ctx.env[key] for key in INSTALL_ENV_KEEP if key in ctx.env},
         "HOME": install_home,
@@ -4077,7 +4090,7 @@ def _install_local(ctx: SmokeCtx, project: str) -> str:
     }
     proc = subprocess.run(
         [
-            ctx.node_bin,
+            node,
             os.path.join(installer, "bin", "install.js"),
             f"--{ctx.host}",
             "--local",

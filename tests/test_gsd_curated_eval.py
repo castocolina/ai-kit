@@ -2879,13 +2879,19 @@ class TestSmoke(unittest.TestCase):
             install_home=install_home,
         )
         proc = SimpleNamespace(returncode=0, stderr="")
-        with mock.patch.object(ev.subprocess, "run", return_value=proc) as run:
+        # a version-manager shim (volta, mise) needs its own env; the installer gets the real
+        # binary, resolved under the caller's env (review WR-04 follow-up, local smoke)
+        exec_path = SimpleNamespace(returncode=0, stdout="/real/node\n", stderr="")
+        with mock.patch.object(ev.subprocess, "run", side_effect=[exec_path, proc]) as run:
             ev._install_local(ctx, project)
+        probe_args, probe_kwargs = run.call_args_list[0]
+        self.assertEqual(probe_args[0], ["node-test", "-p", "process.execPath"])
+        self.assertEqual(probe_kwargs["env"], ctx.env)
         args, kwargs = run.call_args
         self.assertEqual(
             args[0],
             [
-                "node-test",
+                "/real/node",
                 str(installer / "bin" / "install.js"),
                 "--codex",
                 "--local",
