@@ -124,7 +124,7 @@ If present, the project/global shadow case is observed in Step 7(b); return both
 (d) Remove the kept smoke work directory when finished:
 
 ```sh
-rm -rf "$DIR"
+rm -rf "${DIR:?set DIR to the kept smoke work directory first}"
 ```
 
 expect: exactly one outcome: `precedence proved (run --agent)`, `precedence contradicted (<loader model> vs <baked>)`, or `precedence pending (<reason>)` for no loader field, multiple fields, or shared-service listing only.

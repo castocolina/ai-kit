@@ -2992,6 +2992,12 @@ class TestSmoke(unittest.TestCase):
             invoke(project, core["path"])
         accepted = os.path.join(project, ".codex", "gsd-core")
         self.assertEqual(invoke(project, accepted)["gsd_core"]["path"], accepted)
+        # A scratch dir under a symlinked parent: inventory reports the resolved path.
+        os.makedirs(os.path.join(self.tmp, "real"))
+        os.symlink(os.path.join(self.tmp, "real"), os.path.join(self.tmp, "link"))
+        linked = os.path.join(self.tmp, "link", "project")
+        resolved = os.path.join(os.path.realpath(self.tmp), "real", "project", ".codex", "gsd-core")
+        self.assertEqual(invoke(linked, resolved)["gsd_core"]["path"], resolved)
 
     def test_failed_local_install_stops_before_inventory(self) -> None:
         ctx = ev.SmokeCtx(
@@ -3124,6 +3130,24 @@ class TestSmoke(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(io.StringIO()):
             ev.refuse_repo_apply(str(ev.REPO_ROOT))
         self.assertEqual(caught.exception.code, 2)
+
+    def test_smoke_work_dir_refused_inside_the_repo(self) -> None:
+        (ev.REPO_ROOT / "tmp").mkdir(exist_ok=True)  # gitignored scratch root
+        inside = tempfile.mkdtemp(dir=str(ev.REPO_ROOT / "tmp"))
+        self.addCleanup(shutil.rmtree, inside, True)
+        with (
+            mock.patch.object(ev.tempfile, "tempdir", inside),
+            self.assertRaises(SystemExit) as caught,
+        ):
+            ev._smoke_work_dir()
+        self.assertIn(ev.SMOKE_WORK_IN_REPO, str(caught.exception.code))
+        self.assertEqual(os.listdir(inside), [])
+
+    def test_smoke_work_dir_outside_the_repo_is_kept(self) -> None:
+        with mock.patch.object(ev.tempfile, "tempdir", self.tmp):
+            work = ev._smoke_work_dir()
+        self.assertTrue(os.path.isdir(work))
+        self.assertEqual(os.path.dirname(work), self.tmp)
 
     def test_refuses_symlink_to_repo_root(self) -> None:
         link = os.path.join(self.tmp, "link")

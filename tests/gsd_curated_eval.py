@@ -613,6 +613,21 @@ def matrix_env(bundle: dict, home: str, host: str = "claude") -> dict:
 REPO_ROOT_REFUSAL = "refusing a real apply on the repo root"
 
 
+SMOKE_WORK_IN_REPO = "refusing a smoke work dir inside the repo"
+
+
+def _smoke_work_dir() -> str:
+    """T-20-05: the scratch projects must sit outside the repo. gsd-core's installer searches up
+    to 8 parent dirs for `.planning/config.json`, so a TMPDIR inside the checkout lets a scratch
+    project's first install read this repo's own config."""
+    work = tempfile.mkdtemp(prefix="smoke-")
+    real, repo = os.path.realpath(work), os.path.realpath(str(REPO_ROOT))
+    if real == repo or real.startswith(repo + os.sep):
+        os.rmdir(work)
+        raise SystemExit(f"{SMOKE_WORK_IN_REPO} (TMPDIR points into it); set TMPDIR elsewhere")
+    return work
+
+
 def refuse_repo_apply(project_dir: pathlib.Path | str) -> None:
     """D-03: every real `apply` path calls this first; the repo root is never applied to.
 
@@ -4135,10 +4150,12 @@ def _inventory(ctx: SmokeCtx, project: str, out: str, cache_sha: dict) -> dict:
     if not ctx.host_flag and inv.get("host") != ctx.host:
         raise SystemExit(f"inventory detected host {inv.get('host')}, expected {ctx.host}")
     if project != str(ctx.repo_root) and ctx.host != "claude":
-        expected = os.path.normpath(os.path.join(project, f".{ctx.host}", "gsd-core"))
+        # realpath both sides: inventory reports resolved paths, and the scratch dir may sit
+        # under a symlinked parent (e.g. /home -> /var/home with TMPDIR under $HOME).
+        expected = os.path.realpath(os.path.join(project, f".{ctx.host}", "gsd-core"))
         core = inv.get("gsd_core") or {}
         if (
-            os.path.normpath(core.get("path", "")) != expected
+            os.path.realpath(core.get("path", "")) != expected
             or core.get("scope") != "local"
             or core.get("version") != _pinned_version()
         ):
@@ -4769,7 +4786,7 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
     if host is None:
         print(f"host detection failed: {host_source}; re-run with --host claude")
         return 2
-    work = tempfile.mkdtemp(prefix="smoke-")
+    work = _smoke_work_dir()
     home = str(_abs(args.home or pathlib.Path.home()))
     install_home = os.path.join(work, "home")
     os.makedirs(install_home, exist_ok=True)
