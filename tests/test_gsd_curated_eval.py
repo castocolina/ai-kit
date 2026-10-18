@@ -429,6 +429,100 @@ class TestSnapshot(_ScratchPaths):
             baseline, ev._toml_semantic_sha(path, (os.path.join(self.scratch, "elsewhere"),))
         )
 
+    def test_codex_projects_scratch_root_is_only_exemption(self) -> None:
+        before = self.snap()
+        path = pathlib.Path(self.home) / ".codex" / "config.toml"
+        root = os.path.join(self.scratch, "owned")
+        self.write(
+            str(path), f'model = "gpt"\n[projects."{root}/project-a"]\ntrust_level = "trusted"\n'
+        )
+        self.assertEqual(
+            ev.snapshot_diff(before, ev.snapshot(self.repo, self.home, (root,)))[0], []
+        )
+        self.assertIn(
+            f"{ev.HOME_LABEL}/.codex/config.toml", ev.snapshot_diff(before, self.snap())[0]
+        )
+
+    def test_codex_projects_other_root_is_strict_with_scratch_root(self) -> None:
+        before = self.snap()
+        path = pathlib.Path(self.home) / ".codex" / "config.toml"
+        other = os.path.join(self.scratch, "other")
+        self.write(str(path), f'model = "gpt"\n[projects."{other}"]\ntrust_level = "trusted"\n')
+        for roots in ((os.path.join(self.scratch, "owned"),), ()):
+            self.assertIn(
+                f"{ev.HOME_LABEL}/.codex/config.toml",
+                ev.snapshot_diff(before, ev.snapshot(self.repo, self.home, roots))[0],
+            )
+
+    def test_codex_toml_no_projects_baseline_normalizes_empty_table(self) -> None:
+        path = pathlib.Path(self.home) / ".codex" / "config.toml"
+        baseline = ev._toml_semantic_sha(path)
+        root = os.path.join(self.scratch, "owned")
+        self.write(
+            str(path), f'model = "gpt"\n[projects."{root}/project-a"]\ntrust_level = "trusted"\n'
+        )
+        self.assertEqual(baseline, ev._toml_semantic_sha(path, (root,)))
+
+    def test_snapshot_root_flag_exempts_scratch_projects_only(self) -> None:
+        out = os.path.join(self.scratch, "snapshot.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            ev._cmd_snapshot(Namespace(out=out, check=None, home=pathlib.Path(self.home)))
+        root = os.path.join(self.scratch, "owned")
+        self.write(
+            os.path.join(self.home, ".codex", "config.toml"),
+            f'model = "gpt"\n[projects."{root}/project-a"]\ntrust_level = "trusted"\n',
+        )
+        args = Namespace(out=None, check=out, home=pathlib.Path(self.home), scratch_root=[root])
+        with contextlib.redirect_stdout(io.StringIO()) as sink:
+            self.assertEqual(ev._cmd_snapshot(args), 0)
+        self.assertEqual(sink.getvalue().strip(), "snapshot ok")
+        args.scratch_root = []
+        with contextlib.redirect_stdout(io.StringIO()) as sink:
+            self.assertEqual(ev._cmd_snapshot(args), 1)
+        self.assertIn("changed ", sink.getvalue())
+
+    def test_codex_agents_new_file_is_strict(self) -> None:
+        before = self.snap()
+        self.write(os.path.join(self.home, ".codex", "agents", "new.toml"), "model = 'new'\n")
+        self.assertIn(f"{ev.HOME_LABEL}/.codex/agents", ev.snapshot_diff(before, self.snap())[0])
+
+    def test_opencode_agents_new_file_is_strict(self) -> None:
+        before = self.snap()
+        self.write(os.path.join(self.home, ".config", "opencode", "agents", "new.md"), "new\n")
+        self.assertIn(
+            f"{ev.HOME_LABEL}/.config/opencode/agents", ev.snapshot_diff(before, self.snap())[0]
+        )
+
+    def test_opencode_command_existing_bytes_are_strict(self) -> None:
+        before = self.snap()
+        self.write(os.path.join(self.home, ".config", "opencode", "commands", "c.md"), "changed\n")
+        self.assertIn(
+            f"{ev.HOME_LABEL}/.config/opencode/commands", ev.snapshot_diff(before, self.snap())[0]
+        )
+
+    def test_opencode_skill_and_plugin_names_are_strict(self) -> None:
+        before = self.snap()
+        self.write(
+            os.path.join(self.home, ".config", "opencode", "skills", "new", "SKILL.md"), "new\n"
+        )
+        self.write(os.path.join(self.home, ".config", "opencode", "plugins", "new.js"), "new\n")
+        strict, _ = ev.snapshot_diff(before, self.snap())
+        self.assertIn(f"{ev.HOME_LABEL}/.config/opencode/skills", strict)
+        self.assertIn(f"{ev.HOME_LABEL}/.config/opencode/plugins", strict)
+
+    def test_opencode_unlisted_package_service_files_are_not_snapshotted(self) -> None:
+        before = self.snap()
+        for name in ("package.json", "bun.lock", "service.json"):
+            self.write(os.path.join(self.home, ".config", "opencode", name), "changed\n")
+        self.assertEqual(ev.snapshot_diff(before, self.snap()), ([], []))
+        labels = list(self.snap()["strict"]) + list(self.snap()["host_managed"])
+        self.assertFalse(
+            any(
+                any(name in label for name in ("package.json", "bun.lock", "service.json"))
+                for label in labels
+            )
+        )
+
     def test_opencode_tree_and_names_allowlist(self) -> None:
         before = self.snap()
         agents = os.path.join(self.home, ".config", "opencode", "agents")
@@ -2702,16 +2796,158 @@ class TestSmoke(unittest.TestCase):
         self.assertNotIn("RUNTIME_DIR", ev._project_env(codex))
         self.assertEqual(ev._project_env(claude)["RUNTIME_DIR"], "/repo")
 
-    def test_baked_readers_and_mismatch_cases(self) -> None:
+    def test_cached_installer_picks_pinned_version_in_both_cache_layouts(self) -> None:
+        home = pathlib.Path(self.tmp)
+        candidates = [
+            home / ".npm" / "_npx" / "hash" / "node_modules" / "@opengsd" / "gsd-core",
+            home
+            / ".cache"
+            / "pnpm"
+            / "dlx"
+            / "hash"
+            / "nested"
+            / "node_modules"
+            / "@opengsd"
+            / "gsd-core",
+        ]
+        for candidate, version in zip(candidates, ("old", "wanted"), strict=True):
+            candidate.mkdir(parents=True)
+            (candidate / "package.json").write_text(
+                json.dumps({"version": version}), encoding="utf-8"
+            )
+        with mock.patch.object(ev.os.path, "expanduser", return_value=str(home)):
+            self.assertEqual(ev._cached_installer("wanted"), str(candidates[1]))
+
+    def test_install_local_uses_isolated_xdg_paths_and_expected_argv(self) -> None:
+        installer = pathlib.Path(self.tmp) / "installer"
+        (installer / "bin").mkdir(parents=True)
+        (installer / "package.json").write_text(
+            json.dumps({"version": ev._pinned_version()}), encoding="utf-8"
+        )
+        install_home = os.path.join(self.tmp, "install-home")
+        project = os.path.join(self.tmp, "project")
+        ctx = ev.SmokeCtx(
+            "node-test",
+            "tools",
+            pathlib.Path(self.tmp),
+            self.tmp,
+            "codex",
+            {},
+            installer_dir=str(installer),
+            install_home=install_home,
+        )
+        proc = SimpleNamespace(returncode=0, stderr="")
+        with mock.patch.object(ev.subprocess, "run", return_value=proc) as run:
+            ev._install_local(ctx, project)
+        args, kwargs = run.call_args
+        self.assertEqual(
+            args[0],
+            [
+                "node-test",
+                str(installer / "bin" / "install.js"),
+                "--codex",
+                "--local",
+                "--no-legacy-cleanup",
+            ],
+        )
+        self.assertEqual(kwargs["cwd"], project)
+        for key, suffix in (
+            ("HOME", ""),
+            ("XDG_CONFIG_HOME", ".config"),
+            ("XDG_DATA_HOME", ".local/share"),
+            ("XDG_CACHE_HOME", ".cache"),
+            ("XDG_STATE_HOME", ".local/state"),
+        ):
+            self.assertEqual(
+                kwargs["env"][key], os.path.normpath(os.path.join(install_home, suffix))
+            )
+
+    def test_install_local_refuses_version_mismatch_before_running(self) -> None:
+        installer = pathlib.Path(self.tmp) / "installer"
+        installer.mkdir()
+        (installer / "package.json").write_text('{"version":"0.0.0"}', encoding="utf-8")
+        ctx = ev.SmokeCtx(
+            "node",
+            "tools",
+            pathlib.Path(self.tmp),
+            self.tmp,
+            "codex",
+            {},
+            installer_dir=str(installer),
+            install_home=os.path.join(self.tmp, "home"),
+        )
+        with (
+            mock.patch.object(ev.subprocess, "run") as run,
+            self.assertRaisesRegex(SystemExit, "version mismatch"),
+        ):
+            ev._install_local(ctx, self.tmp)
+        run.assert_not_called()
+
+    def test_inventory_exact_root_rejects_another_root_and_accepts_scratch_root(self) -> None:
+        core = {
+            "path": os.path.join(self.tmp, "other", ".codex", "gsd-core"),
+            "scope": "local",
+            "version": ev._pinned_version(),
+        }
+        payload = {"host": "codex", "gsd_core": core}
+        ctx = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "codex", {}, True)
+
+        def invoke(project, root):
+            payload["gsd_core"]["path"] = root
+            output = io.StringIO()
+            with (
+                mock.patch.object(ev, "assert_no_probe"),
+                mock.patch.object(ev, "_cache_guard"),
+                mock.patch(
+                    "ai_kit_gsd_curated_config.cli.main",
+                    side_effect=lambda *a, **k: print(json.dumps(payload)) or 0,
+                ),
+                contextlib.redirect_stdout(output),
+            ):
+                return ev._inventory(ctx, project, os.path.join(self.tmp, "inventory.json"), {})
+
+        project = os.path.join(self.tmp, "project")
+        with self.assertRaisesRegex(SystemExit, "gsd-core mismatch"):
+            invoke(project, core["path"])
+        accepted = os.path.join(project, ".codex", "gsd-core")
+        self.assertEqual(invoke(project, accepted)["gsd_core"]["path"], accepted)
+
+    def test_failed_local_install_stops_before_inventory(self) -> None:
+        ctx = ev.SmokeCtx(
+            "node",
+            "tools",
+            pathlib.Path(self.tmp),
+            self.tmp,
+            "codex",
+            {},
+            installer_dir="installer",
+            install_home=os.path.join(self.tmp, "home"),
+        )
+        with (
+            mock.patch.object(ev, "_install_local", side_effect=SystemExit("install failed")),
+            mock.patch.object(ev, "_inventory") as inventory,
+        ):
+            steps = ev._smoke_project_a(ctx, self.tmp, {})
+        self.assertFalse(steps[0]["ok"])
+        self.assertFalse(steps[1]["ok"])
+        self.assertIn("skipped: local install failed", steps[1]["detail"])
+        inventory.assert_not_called()
+
+    def test_baked_codex_models_and_mismatch_shapes(self) -> None:
         project = pathlib.Path(self.tmp) / "p" / ".codex" / "agents"
         project.mkdir(parents=True)
         (project / "gsd-one.toml").write_text('model = "pin"\n', encoding="utf-8")
         (project / "gsd-two.toml").write_text('description = "no model"\n', encoding="utf-8")
         (project / "gsd-two.compact.md").write_text("ignored", encoding="utf-8")
+        (project / "gsd-extra.compact.md").write_text("ignored", encoding="utf-8")
         baked = ev._baked_models(str(project.parents[1]), "codex")
         self.assertEqual(baked, {"gsd-one": "pin", "gsd-two": None})
         self.assertEqual(ev._baked_mismatches(baked, {"gsd-one": "pin", "gsd-two": None}), [])
-        self.assertTrue(ev._baked_mismatches(baked, {"gsd-one": "other", "missing": None}))
+        self.assertEqual(
+            ev._baked_mismatches(baked, {"gsd-one": "pin", "gsd-two": None, "gsd-extra": None}), []
+        )
+        self.assertTrue(ev._baked_mismatches(baked, {"gsd-one": "other"}))
+        self.assertTrue(ev._baked_mismatches(baked, {"gsd-missing": "promised"}))
 
     def test_refuses_repo_root(self) -> None:
         with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(io.StringIO()):
