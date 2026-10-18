@@ -89,7 +89,6 @@ class TestRuntimeTable(unittest.TestCase):
         self.assertEqual(set(labels), {"CODEX_THREAD_ID", "CODEX_VERSION"})
         prefix = "live-verified (Phase 20)"
         self.assertTrue(all(label.startswith(prefix) for label in labels.values()))
-        self.assertTrue(any(label.startswith(prefix) for label in labels.values()))
         doc = " ".join((detection.detect_current_runtime.__doc__ or "").split())
         for label in labels.values():
             self.assertIn(" ".join(label.split()), doc)

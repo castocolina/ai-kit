@@ -405,7 +405,7 @@ class TestSnapshot(_ScratchPaths):
 
     def test_cursor_config_change_is_strict(self) -> None:
         """`cursor-agent models` rewrites `~/.cursor/cli-config.json`, so it must fail a batch;
-        the codex config, which no probe is documented to rewrite, is a host-managed tripwire."""
+        the codex config is strict too (D-10's semantic allowlist guard)."""
         before = self.snap()
         self.write(os.path.join(self.home, ".cursor", "cli-config.json"), '{"model":"y"}\n')
         self.write(os.path.join(self.home, ".codex", "config.toml"), 'model = "other"\n')

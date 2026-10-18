@@ -1675,10 +1675,10 @@ class TestCrossAi(unittest.TestCase):
                 ]
                 unsets = [e for e in entries if e["op"] == "unset"]
                 sets = [e for e in entries if e["op"] == "set"]
-                self.assertTrue(
-                    unsets or (sets and all(host not in e["value"] for e in sets)),
-                    entries,
-                )
+                # every set must drop the host, unset or not (20-REVIEW IN-06)
+                self.assertTrue(unsets or sets, entries)
+                for e in sets:
+                    self.assertNotIn(host, e["value"], entries)
 
     def test_review_yes_no_lanes_turns_convergence_off(self):
         plan = build(make_inventory(), rigor="standard", cross_ai_review="y")
