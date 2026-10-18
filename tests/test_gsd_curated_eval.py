@@ -429,6 +429,29 @@ class TestSnapshot(_ScratchPaths):
             baseline, ev._toml_semantic_sha(path, (os.path.join(self.scratch, "elsewhere"),))
         )
 
+    def test_codex_toml_datetime_value_hashes(self) -> None:
+        """20-REVIEW WR-03: a TOML datetime made json.dumps raise TypeError."""
+        path = pathlib.Path(self.home) / ".codex" / "config.toml"
+        self.write(str(path), "[notice]\nseen_at = 2026-10-18T09:00:00Z\nday = 2026-10-18\n")
+        first = ev._toml_semantic_sha(path)
+        self.assertIsNotNone(first)
+        self.write(str(path), "[notice]\nseen_at = 2026-10-18T09:00:01Z\nday = 2026-10-18\n")
+        self.assertNotEqual(first, ev._toml_semantic_sha(path))
+
+    def test_codex_trust_row_under_resolved_root_is_exempt(self) -> None:
+        """20-REVIEW IN-08: a trust row written under the symlink-resolved scratch path."""
+        real = os.path.join(self.scratch, "real")
+        os.makedirs(real)
+        link = os.path.join(self.scratch, "link")
+        os.symlink(real, link)
+        path = pathlib.Path(self.home) / ".codex" / "config.toml"
+        self.write(str(path), 'model = "gpt"\n')
+        baseline = ev._toml_semantic_sha(path)
+        self.write(
+            str(path), f'model = "gpt"\n[projects."{real}/project-a"]\ntrust_level = "trusted"\n'
+        )
+        self.assertEqual(baseline, ev._toml_semantic_sha(path, (link,)))
+
     def test_codex_projects_scratch_root_is_only_exemption(self) -> None:
         before = self.snap()
         path = pathlib.Path(self.home) / ".codex" / "config.toml"
@@ -466,7 +489,9 @@ class TestSnapshot(_ScratchPaths):
     def test_snapshot_root_flag_exempts_scratch_projects_only(self) -> None:
         out = os.path.join(self.scratch, "snapshot.json")
         with contextlib.redirect_stdout(io.StringIO()):
-            ev._cmd_snapshot(Namespace(out=out, check=None, home=pathlib.Path(self.home)))
+            ev._cmd_snapshot(
+                Namespace(out=out, check=None, home=pathlib.Path(self.home), scratch_root=[])
+            )
         root = os.path.join(self.scratch, "owned")
         self.write(
             os.path.join(self.home, ".codex", "config.toml"),
@@ -579,22 +604,30 @@ class TestSnapshot(_ScratchPaths):
         """The CLI shape the batch rails use: `--out` then `--check` prints `snapshot ok`."""
         out = os.path.join(self.scratch, "snap.json")
         with contextlib.redirect_stdout(io.StringIO()) as sink:
-            code = ev._cmd_snapshot(Namespace(out=out, check=None, home=pathlib.Path(self.home)))
+            code = ev._cmd_snapshot(
+                Namespace(out=out, check=None, home=pathlib.Path(self.home), scratch_root=[])
+            )
             self.assertEqual(code, 0)
             self.assertNotIn(self.home, sink.getvalue())
             text = pathlib.Path(out).read_text(encoding="utf-8")
             self.assertNotIn(self.scratch, text)
-            code = ev._cmd_snapshot(Namespace(out=None, check=out, home=pathlib.Path(self.home)))
+            code = ev._cmd_snapshot(
+                Namespace(out=None, check=out, home=pathlib.Path(self.home), scratch_root=[])
+            )
         self.assertEqual(code, 0)
         self.assertIn("snapshot ok", sink.getvalue())
 
     def test_snapshot_check_reports_a_strict_change_and_exits_1(self) -> None:
         out = os.path.join(self.scratch, "snap.json")
         with contextlib.redirect_stdout(io.StringIO()):
-            ev._cmd_snapshot(Namespace(out=out, check=None, home=pathlib.Path(self.home)))
+            ev._cmd_snapshot(
+                Namespace(out=out, check=None, home=pathlib.Path(self.home), scratch_root=[])
+            )
         self.write(os.path.join(self.home, ".gsd", "defaults.json"), '{"z": 9}\n')
         with contextlib.redirect_stdout(io.StringIO()) as sink:
-            code = ev._cmd_snapshot(Namespace(out=None, check=out, home=pathlib.Path(self.home)))
+            code = ev._cmd_snapshot(
+                Namespace(out=None, check=out, home=pathlib.Path(self.home), scratch_root=[])
+            )
         self.assertEqual(code, 1)
         self.assertEqual(sink.getvalue().strip(), f"changed {ev.HOME_LABEL}/.gsd/defaults.json")
 

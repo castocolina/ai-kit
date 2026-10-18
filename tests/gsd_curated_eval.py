@@ -267,16 +267,19 @@ def _toml_semantic_sha(path: pathlib.Path, scratch_roots=()) -> str | None:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
         return _file_sha(path)
-    roots = [os.path.normpath(os.path.abspath(os.fspath(root))) for root in scratch_roots]
+    # realpath both sides: codex may record the symlink-resolved scratch path (review IN-08)
+    roots = [os.path.realpath(os.fspath(root)) for root in scratch_roots]
     projects = data.get("projects")
     if isinstance(projects, dict):
         for project in list(projects):
-            normalized = os.path.normpath(os.path.abspath(project))
-            if any(normalized == root or _under(normalized, root) for root in roots):
+            normalized = os.path.realpath(project)
+            if any(_under(normalized, root) for root in roots):
                 del projects[project]
         if not projects:
             del data["projects"]
-    return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+    # tomllib yields datetime/date/time objects, which json cannot encode (review WR-03)
+    encoded = json.dumps(data, sort_keys=True, default=lambda value: value.isoformat())
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 def _under(path: str, root: str) -> bool:
@@ -346,7 +349,7 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
         print("snapshot needs --out F or --check F")
         return 2
     repo_root, home = _abs(REPO_ROOT), _abs(args.home or pathlib.Path.home())
-    current = snapshot(repo_root, home, getattr(args, "scratch_root", None) or ())
+    current = snapshot(repo_root, home, args.scratch_root)
     if args.out:
         _write_json(_abs(args.out), current)
         print(f"snapshot written to {label_path(args.out)}")
