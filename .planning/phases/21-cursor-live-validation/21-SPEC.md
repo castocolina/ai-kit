@@ -70,7 +70,13 @@ linked by `tools/setup.py`.
    - Target: `cursor-agents/composer-worker.md` (`model: composer-2.5`) and `cursor-agents/grok-worker.md` (`model: grok-4.7-medium`, explicit, so it does not depend on local `modelParameters`). Each has a short body for executing an already-planned task. The names collide with no GSD agent.
    - Acceptance: a test parses both files' frontmatter (only fields the bundle parses), asserts the pinned ids are non-fast ids from captured `models` output, and asserts no name collides with the 35 GSD agents.
 
-6. **Setup category** (AGT-01).
+> **Amended 2026-10-18 (D-01 spike, `21-SPIKE-D01.md`):** cursor-agent 2026.10.14 loads subagents
+> only from `<workspace>/.cursor/agents` (plus `.claude/agents` and `.grok/agents` under the
+> workspace), never from `~/.cursor/agents`. R6 and R7 below moved to Phase 21.1 (AGT-02), where the
+> link target becomes a project's `.cursor/agents`. This phase keeps R1-R5 and R8. The Background
+> claim that Cursor reads `~/.claude/agents` holds for `<workspace>/.claude/agents` only.
+
+6. **Setup category** (AGT-01; moved to Phase 21.1).
    - Current: `tools/setup.py` links skills, agents and hooks.
    - Target:
      - A fourth category links `cursor-agents/*` into `~/.cursor/agents`, honoring `CURSOR_CONFIG_DIR`, and reuses the existing link and removal code.
@@ -78,7 +84,7 @@ linked by `tools/setup.py`.
      - A headless `--cursor-agents=all|name1,name2` mirrors `--skills`.
    - Acceptance: tests cover the wizard row (shown with Cursor, hidden without), headless all/subset/unknown-name, and `CURSOR_CONFIG_DIR`. The wizard is run under `uv run` before reporting done. Planning waits for the plan1 decision.
 
-7. **Live delegation proof** (AGT-01).
+7. **Live delegation proof** (AGT-01; moved to Phase 21.1).
    - Current: verified once by hand (2026-10-13).
    - Target: from a cursor parent session, a delegation to each linked agent shows the pinned model in the Task call. The user confirms one run as non-fast in the Cursor usage dashboard.
    - Acceptance: `21-SMOKE-CURSOR.md` quotes both Task calls' model fields and records the user's dashboard confirmation.

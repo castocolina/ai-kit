@@ -6,12 +6,12 @@ current_phase: 20
 current_phase_name: Live Validation on Codex + Opencode
 status: verifying
 stopped_at: Completed 20-07-PLAN.md
-last_updated: "2026-10-18T10:15:01.104Z"
+last_updated: "2026-10-18T11:48:46.473Z"
 last_activity: 2026-10-18
 last_activity_desc: Phase 20 execution started
-state_head: c04f6293504f411053b0811e7ce3b6d9c75544b4
+state_head: 9b7d71923735ca8065ff0290ffd270f27eea55e9
 progress:
-  total_phases: 14
+  total_phases: 15
   completed_phases: 1
   total_plans: 108
   completed_plans: 108
@@ -453,6 +453,7 @@ any order, or deferred, without blocking anything else in this milestone.
 - Phase 16.1 inserted after Phase 16: Hardening: gate scope, sibling-first imports, security/correctness fixes from the 2026-10-13 audit; closes Phase 16
 - Phase 18.1 inserted after Phase 18: One runtime model: (runtime, model) candidates, native_runtime removed
 - Phase 24 added after Phase 23: Spec-and-discuss chain skill (learned from the tools-installer run, 2026-10-14)
+- Phase 21.1 inserted after Phase 21: Cursor project-level subagent linking (AGT-02; D-01 spike: cursor CLI ignores ~/.cursor/agents)
 
 ## Deferred Verification
 

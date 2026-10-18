@@ -514,17 +514,37 @@ within this phase.
   2. SKILL.md's "not live-validated" label for cursor is removed once the smoke run passes.
   3. `cursor-agent` is detected and enumerated even when wrapped by a shell function/alias
      (SPEC-06, deferred from Phase 16).
-  4. ai-kit ships Cursor executor subagents `composer-worker` and `grok-worker`, each pinned to a
-     non-fast model, from a `cursor-agents/` folder linked into `~/.cursor/agents` by
-     `tools/setup.py` (wizard Choose-step rows when Cursor is detected, plus a headless
-     `--cursor-agents` flag, both tested); a live delegation shows
-     the pinned model in the Task call and one run is confirmed non-fast in the Cursor usage
-     dashboard (AGT-01; source todo
-     `.planning/todos/pending/2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md`).
+  4. ai-kit ships Cursor executor subagent files `composer-worker` and `grok-worker` in
+     `cursor-agents/`, each pinned to an explicit non-fast model and tested against the bundle's
+     frontmatter parser and captured `models` output (AGT-01 files). Amended 2026-10-18 per the
+     D-01 spike: cursor-agent 2026.10.14 loads subagents only from `<workspace>/.cursor/agents`
+     (and `.claude/agents`, `.grok/agents` under the workspace), never from `~/.cursor/agents`, so
+     linking and the live delegation proof move to Phase 21.1 (AGT-02). Source todo
+     `.planning/todos/pending/2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md`.
   5. Native per-call model selection is verified live from the cursor host, or `host_can_select`
      keeps the session-default-only label for cursor (amended 2026-10-17 per 18.1-VERIFICATION
      deferred item).
 **Plans**: TBD
+
+### Phase 21.1: Cursor project-level subagent linking (INSERTED)
+
+**Goal**: ai-kit's pinned Cursor subagents reach the cursor CLI: they are linked per file into a
+project's `.cursor/agents`, the only subagent root the CLI reads (Phase 21 D-01 spike,
+2026-10-18), and a live delegation shows each pinned model.
+**Requirements**: AGT-02
+**Depends on:** Phase 21 (the subagent files)
+**Success Criteria** (what must be TRUE):
+
+  1. A tested ai-kit path links `cursor-agents/*.md` per file (never a directory) into a chosen
+     project's `.cursor/agents`, mirrors `--skills` selection (`all|name1,name2`, unknown name
+     exits 1 naming it), never overwrites a non-ai-kit file there, and removes only its own links.
+  2. A headless delegation from a cursor parent in a scratch project shows each linked agent's
+     pinned model in the Task call; the user confirms one run as non-fast in the Cursor usage
+     dashboard.
+  3. SKILL/README docs say where the agents are linked and why `~/.cursor/agents` is not used.
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 21.1 to break down)
 
 ### Phase 22: Pi Live Validation
 

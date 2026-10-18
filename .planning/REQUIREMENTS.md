@@ -93,7 +93,8 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 
 ### Cursor Executor Agents
 
-- [ ] **AGT-01**: ai-kit ships Cursor executor subagents `composer-worker` (pinned to non-fast `composer-2.5`) and `grok-worker` (pinned to the explicit non-fast `grok-4.7-medium`; amended 2026-10-14, a bare `grok-4.7` resolves through local `modelParameters`), with short bodies for executing an already-planned task and names that do not collide with the 35 GSD agents. They live in their own `cursor-agents/` folder (never `agents/`, which links into `~/.claude/agents` where Claude would load an unrunnable model pin), added to `tools/setup.py` as a fourth category whose link target is `~/.cursor/agents` (honoring `CURSOR_CONFIG_DIR`). The wizard's Choose step lists the category only when Cursor is detected (same detection as the Cursor hook wiring), and a headless `--cursor-agents=all|name1,name2` flag mirrors `--skills`; tests cover the wizard row and the headless link. Ordered after the `worktree-context-tools-manager-plan1` land-or-shelve decision (same `setup.py`/`wizard_app.py` seams). A live delegation from a cursor parent shows the pinned model in the Task call, and one run is confirmed non-fast in the Cursor usage dashboard (pin an explicit effort-suffixed id if the bare id relies on local `modelParameters`)
+- [ ] **AGT-01**: ai-kit ships Cursor executor subagent files `composer-worker` (pinned to non-fast `composer-2.5`) and `grok-worker` (pinned to the explicit non-fast `grok-4.7-medium`; amended 2026-10-14, a bare `grok-4.7` resolves through local `modelParameters`), with short bodies for executing an already-planned task and names that do not collide with the 35 GSD agents. They live in their own `cursor-agents/` folder (never `agents/`, which links into `~/.claude/agents` where Claude would load an unrunnable model pin); a test parses their frontmatter with the bundle's parser rules and checks the pins against captured `models` output. Amended 2026-10-18 (Phase 21 D-01 spike): cursor-agent 2026.10.14 never reads `~/.cursor/agents`, so the `~/.cursor/agents` setup category, wizard row, headless flag and live delegation proof moved to AGT-02
+- [ ] **AGT-02**: ai-kit links the `cursor-agents/` files per file into a project's `.cursor/agents` (the only subagent root the cursor CLI reads), with `all|name1,name2` selection mirroring `--skills` (an unknown name exits 1 naming it), never overwriting a non-ai-kit file and removing only its own links; tested. A live delegation from a cursor parent shows each pinned model in the Task call, and one run is confirmed non-fast in the Cursor usage dashboard (Phase 21.1; split from AGT-01 on 2026-10-18)
 
 ### Host-Split Status Line
 
@@ -172,6 +173,7 @@ None deferred beyond v1.3 at definition time.
 | EVAL-07 | Phase 21 | Pending |
 | EVAL-08 | Phase 22 | Pending |
 | AGT-01 | Phase 21 | Pending |
+| AGT-02 | Phase 21.1 | Pending |
 | HARD-01 | Phase 16.1 | Complete |
 | HARD-02 | Phase 16.1 | Complete |
 | HARD-03 | Phase 16.1 | Complete |
@@ -201,12 +203,12 @@ None deferred beyond v1.3 at definition time.
 | GPS-04 | Phase 27 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 61 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 4, APP 5, EVAL 8, AGT 1, HARD 5, RTM 3, SDC 4, STL 5, QTA 5, GPS 4). SPEC-05 (pi
+- v1.3 requirements: 62 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 4, APP 5, EVAL 8, AGT 2, HARD 5, RTM 3, SDC 4, STL 5, QTA 5, GPS 4). SPEC-05 (pi
   enumeration) and SPEC-06 (cursor wrapper) were split out of SPEC-02 during the Phase 16
   discussion, 2026-09-23.
-- Mapped to phases: 61/61
+- Mapped to phases: 62/62
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-09-23*
-*Last updated: 2026-10-14 — Phases 25–27 (QTA, GPS) added from the quota/goal-prompt todo; Phase 23 (STL) defined; Phase 24 (SDC) added, SKL-04 added; earlier: 16.1 (HARD), 18.1 (RTM), XAI-02 amended (100% coverage)*
+*Last updated: 2026-10-18 — AGT-02 split from AGT-01 (Phase 21.1, D-01 spike); 2026-10-14 — Phases 25–27 (QTA, GPS) added from the quota/goal-prompt todo; Phase 23 (STL) defined; Phase 24 (SDC) added, SKL-04 added; earlier: 16.1 (HARD), 18.1 (RTM), XAI-02 amended (100% coverage)*
