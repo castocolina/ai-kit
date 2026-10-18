@@ -1,8 +1,8 @@
 ---
 phase: 20
-cycle: 2
+cycle: 3
 reviewers: [opencode-plan-review]
-reviewed_at: 2026-10-18T03:12:35Z
+reviewed_at: 2026-10-18T06:45:15Z
 plans_reviewed: [20-01-PLAN.md, 20-02-PLAN.md, 20-03-PLAN.md, 20-04-PLAN.md, 20-05-PLAN.md, 20-06-PLAN.md, 20-07-PLAN.md]
 models:
   opencode-plan-review: "router-env/my-plan-review"
@@ -16,251 +16,246 @@ model_sources:
 ## Plan-Revision Conflicts
 <!-- gsd:plan-revision-conflicts:end -->
 
-Convergence cycle 2, against the replan at 7a87de3 (commits 4181b02, c09fdc4, a81e5ce, 7a87de3).
-Cycle 1 (6 plans, commit 47d6b7c) is summarized in "Cycle 1 dispositions" at the end; its full
-text is at `git show 47d6b7c:.planning/phases/20-live-validation-on-codex-opencode/20-REVIEWS.md`.
+Convergence cycle 3 of 3 (the last), against the replan at 5b97cd5 (commits 9309e9f, 7945689,
+5b97cd5). Cycle 2 (commit 8d575e0) is dispositioned finding by finding in "Cycle 2 dispositions"
+below; its full text is at
+`git show 8d575e0:.planning/phases/20-live-validation-on-codex-opencode/20-REVIEWS.md`. Cycle 1 is
+at `git show 47d6b7c:<same path>`.
 
 Reviewer lane: `review.default_reviewers = ["opencode-plan-review"]` (reviewer instance on the
 opencode adapter, model `router-env/my-plan-review`, no effort flag: `review.effort.opencode` is
 `inherit` on purpose because gsd-core renders `--variant`, which opencode v2 removed). The lane ran
-once with `opencode run --standalone`, exit 0, empty stderr, about 8 minutes. Plan coverage: 7/7
+once with `opencode run --standalone`, exit 0, empty stderr, about 10 minutes. Plan coverage: 7/7
 ids. No evidence-quality discount marker.
 
 ## OpenCode Review (opencode-plan-review)
 
 ### Document type
-GSD · implementation plans · convergence cycle 2 · read-only, source-grounded review
+GSD · implementation plans · convergence cycle 3 of 3 · read-only, source-grounded review
 
-All seven current plans and `20-REVIEWS.md` were read from disk and checked against relevant source. Plan citations below use **`P/` = `.planning/phases/20-live-validation-on-codex-opencode/`**.
+Read all seven current plans, the cycle-2 review, phase context/spec/research, and the relevant implementation and tests. Citations below use **`P/` = `.planning/phases/20-live-validation-on-codex-opencode/`**. “Resolved” means resolved **in the implementation instructions**, not verified by executing the future implementation.
 
 ## 20-01
 
 ### Summary
-The runner migration is substantially improved: the version bump now distributes `--standalone` to existing installations, and the repository render is repaired before later plans dispatch. The remaining material issue is rollback ownership: detecting changed bytes does not establish that those bytes belong to this task.
+The template migration is well ordered and uses the existing upgrade mechanism correctly. Two cycle-2 corrections are complete. Rollback is improved by preserving starting bytes, but its ownership check still cannot distinguish this task’s render from a concurrent edit to that render.
 
 ### Strengths
-- **Uses the existing migration mechanism correctly.** `P/20-01-PLAN.md:195-225` updates the template, version constant, pins and golden artifacts together. This matches the older-version upgrade branch in `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_script.py:242-265`.
-- **Covers resume through the shared argv builders.** Opencode resume derives from exec/review builders, so adding the flag there covers resumed calls too (`skills/ai-kit-spec-review/references/cross-ai.mjs:276-281`).
-- **Adds tests at both existing lane-policy enforcement points**, rather than introducing another policy implementation (`P/20-01-PLAN.md:287-303`).
+- **The version bump actually distributes the change.** The coordinated template/version/pin updates at `P/20-01-PLAN.md:197-224` match `plan_runner_upgrade`’s older-version branches in `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_script.py:242-265`.
+- **Exec and review changes also cover resume.** Resume delegates to the same builders (`skills/ai-kit-spec-review/references/cross-ai.mjs:277-279`), so the plan does not need a separate resume implementation.
+- **Tests target existing enforcement points.** The planned tests at `P/20-01-PLAN.md:294-310` exercise the actual host-slug filters in `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai.py:217-229` and `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/plan_io.py:542-549`.
 
 ### Concerns
-- **MEDIUM — Rollback can still discard concurrent or pre-existing work.** `P/20-01-PLAN.md:227-248` records a checksum, then prescribes `git checkout` whenever the checksum changes. A concurrent edit also changes that checksum; checkout restores the index version, not the saved starting bytes. This undermines the generator’s explicit concurrent-change preservation (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_script.py:381-391`). Likewise, “`.new` did not exist initially” does not prove a subsequently appearing file is task-owned.
-- **MEDIUM — The acceptance grep rejects an intentionally retained compatibility comment.** `P/20-01-PLAN.md:267` requires no `template 3` text anywhere under the skill, while `:208-209` deliberately retains the readiness floor. Its existing explanation contains exactly that text (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_script.py:29-31`).
+- **MEDIUM — `template=4` is not proof of task ownership.** The rollback at `P/20-01-PLAN.md:249-253` restores the starting bytes whenever the current file differs and retains that header. A concurrent edit after the move would satisfy both conditions and be overwritten. Similarly, initial absence of `.new` does not establish ownership of whatever subsequently occupies that path. This remains weaker than the byte-comparison protection used by `write_script` (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_script.py:381-391`).
 
 ### Suggestions
-- Save initial bytes and restore them only when the current file matches a known task-produced output; preserve unexpected concurrent content.
-- Restrict current-version checks to current-version pins, excluding the valid template-3 readiness-floor explanation.
+- Record the exact generated bytes or their digest before moving them. Restore/delete only when the current target still matches that known output; otherwise preserve it and stop.
 
-### Cycle-1 disposition
-- **Version bump:** resolved by `P/20-01-PLAN.md:195-225`.
-- **Unsafe bootstrap:** explicitly accepted, not eliminated, at `:98-108,250-253,339`. This is a recorded residual risk, not a completed mitigation.
-- **Destructive cleanup:** partially resolved; pre-existing `.new` is protected, but concurrent ownership remains unresolved.
+### Cycle-2 disposition
 
-### Risk assessment
-**MEDIUM.** The migration design is sound, but its failure recovery can still destroy unrelated work.
+| Finding | Disposition | Current evidence |
+|---|---|---|
+| Nonexistent bootstrap entrypoint | **FULLY RESOLVED** | `P/20-01-PLAN.md:256-258` names `ai-kit-spec.py`; that entrypoint exists and delegates to the CLI (`skills/ai-kit-spec-review/ai-kit-spec.py:1-7`). |
+| Acceptance grep rejects the compatibility-floor comment | **FULLY RESOLVED** | `P/20-01-PLAN.md:274` explicitly excludes the retained comment at `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_script.py:29`. |
+| Rollback restores index bytes and does not establish ownership | **PARTIALLY RESOLVED** | Starting bytes are now saved at `P/20-01-PLAN.md:229-231`, and checkout is forbidden at `:254-255`. The header-only ownership condition at `:249-253` remains insufficient. |
+
+### Risk Assessment
+**MEDIUM.** The migration itself is sound; failure recovery can still discard concurrent work. The previously accepted bootstrap risk is not re-raised.
 
 ## 20-02
 
 ### Summary
-The four-case tier rule resolves the earlier Claude regression, and the non-Claude negative control preserves independent expectations. Two oracle boundaries remain incomplete: subprocess success is not validated, and a missing runtime-tier mapping is incorrectly equated with inheritance.
+The oracle now has explicit host mapping, independent negative controls, the correct four-case tier comparison, and unsuccessful-subprocess handling. Both counted cycle-2 findings are addressed with concrete regression cases.
 
 ### Strengths
-- **Correctly preserves Claude override behavior.** The explicit cases at `P/20-02-PLAN.md:187-196` match gsd-core’s alias/concrete-override behavior (`.claude/gsd-core/bin/lib/model-resolver.cjs:438-451`).
-- **Keeps the negative control independent.** The altered config is compared against the original plan’s promise (`P/20-02-PLAN.md:197-207`).
-- **Separates unavailable tables from loaded-but-empty maps** (`P/20-02-PLAN.md:162-178`).
+- **Preserves Claude’s override-tier semantics.** `P/20-02-PLAN.md:200-209` agrees with gsd-core’s distinction between aliases, recognized concrete IDs and unknown override tiers (`.claude/gsd-core/bin/lib/model-resolver.cjs:435-451`).
+- **The negative control remains independent.** The control config is altered, but evaluated against the original promise (`P/20-02-PLAN.md:210-220`), avoiding a self-confirming oracle.
+- **Failed execution and unavailable tables now fail closed.** The explicit return-code handling and regression cases at `P/20-02-PLAN.md:187-192,231-234` correct the current helpers’ acceptance of parsed stdout without checking process success (`tests/gsd_curated_eval.py:444-467,632-648`).
 
 ### Concerns
-- **HIGH — Failed resolver execution can still supply passing evidence.** The plan changes comparison semantics without fixing `_resolve_model`. That helper uses `check=False`, never checks `returncode`, and accepts parsed stdout (`tests/gsd_curated_eval.py:632-648`). A nonzero resolver exit carrying otherwise matching model/tier JSON therefore passes. `live_tables` has the same missing exit-status check (`:444-467`).
-- **MEDIUM — Missing runtime-tier data does not necessarily mean an empty model.** `P/20-02-PLAN.md:172-178,212-215` promises `""` whenever no applicable map entry exists. In gsd-core, failed runtime-tier resolution returns `""` only when the omission gate applies; otherwise resolution continues to a tier/profile fallback (`.claude/gsd-core/bin/lib/model-resolver.cjs:600-618,652-669`).
+- No remaining blocking concern identified in this plan. The empty-result case must retain its tier check: the proposed empty failure sentinel should not independently become successful inheritance evidence (`P/20-02-PLAN.md:187-209`).
 
 ### Suggestions
-- Require successful subprocess completion and valid result fields before treating output as resolution evidence; add nonzero-with-valid-JSON regression cases.
-- Include omission policy in the empty-promise rule, or explicitly refuse unsupported missing-map configurations. Test missing entries both with and without omit.
+- Keep the named failure-path tests, including the combination of a failed resolver and a legitimately empty model promise. This protects the interaction between the two cycle-2 fixes.
 
-### Cycle-1 disposition
-- **Claude override-tier regression:** resolved by `P/20-02-PLAN.md:187-223`.
-- **Unavailable/malformed runtime map becomes inheritance:** resolved for absent/non-dict top-level maps at `:162-178`; execution-failure and missing-entry semantics still need the corrections above.
+### Cycle-2 disposition
 
-### Risk assessment
-**HIGH.** An acceptance oracle must not report successful resolution from an unsuccessful subprocess.
+| Finding | Disposition | Current evidence |
+|---|---|---|
+| Failed resolver/table subprocess can supply passing evidence | **FULLY RESOLVED** | `P/20-02-PLAN.md:187-192` checks return codes before parsing; `:231-234` specifies nonzero-with-valid-JSON tests. |
+| Missing runtime-tier entry ignores the omit gate | **FULLY RESOLVED** | `P/20-02-PLAN.md:175-184,227-230` requires an explicit set/keep omit entry or refuses. This matches the relevant fallback distinction in `.claude/gsd-core/bin/lib/model-resolver.cjs:600-618,652-669`. |
+
+### Risk Assessment
+**LOW.** The design is executable and substantially better protected against false-positive validation.
 
 ## 20-03
 
 ### Summary
-The revised smoke design addresses the principal false-positive installation risk. Exact-root assertions, project-scoped environments and retained artifacts are strong improvements. The remaining guard issue is semantic normalization: removing a scratch trust entry can still change the serialized TOML representation, and outer snapshot checks do not share the smoke’s exemption.
+The smoke harness now tests the intended scratch installation, contains installer writes, preserves analysis artifacts, and gives inner and outer snapshot checks one explicit trust-table rule. The counted cycle-2 corrections are complete in the plan.
 
 ### Strengths
-- **Proves the selected installation, not merely a matching version.** `P/20-03-PLAN.md:212-241` removes `RUNTIME_DIR` and asserts the exact scratch root. This addresses the real precedence mechanism in `skills/ai-kit-spec-review/ai_kit_spec/gsd_tools.py:33-47` and `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/host.py:126-136`.
-- **Contains inherited XDG paths at the installer boundary** (`P/20-03-PLAN.md:219-233`). This matters because gsd-core’s data-directory fallback reads `XDG_DATA_HOME` (`.claude/gsd-core/bin/lib/opencode-version.cjs:409-435`).
-- **Exports the required analysis inputs before cleanup** (`P/20-03-PLAN.md:385-397`), fixing the prior artifact-loss design.
-- **Improves directory protection honestly:** agent/command tree hashes versus explicitly names-only skills/plugins (`:319-345`).
+- **Exact-root assertions prevent the original false positive.** `P/20-03-PLAN.md:221-250` removes `RUNTIME_DIR` and asserts the precise scratch path. That addresses the real precedence rule in `skills/ai-kit-spec-review/ai_kit_spec/gsd_tools.py:33-47`, not merely the reported version.
+- **Installer isolation follows the actual write boundary.** HOME/XDG isolation at `P/20-03-PLAN.md:228-242` contains the installer’s HOME-based defaults writer and addresses gsd-core’s XDG fallback (`.claude/gsd-core/bin/lib/opencode-version.cjs:409-435`).
+- **Artifact export occurs before cleanup.** `P/20-03-PLAN.md:407-428` preserves the required plan/config/resolution inputs before the current unconditional cleanup path (`tests/gsd_curated_eval.py:4355-4359`).
+- **Protection claims are appropriately qualified.** Tree hashes for agents/commands and names-only checks for skills/plugins at `P/20-03-PLAN.md:337-347` accurately distinguish `_tree_sha` from `_dir_names` (`tests/gsd_curated_eval.py:183-188,251-271`).
 
 ### Concerns
-- **MEDIUM — Removing the first scratch trust table can still alter the semantic hash.** `P/20-03-PLAN.md:310-318` drops scratch project keys but does not specify normalization of the now-empty `projects` container. Starting with `model = "x"` and then adding/removing the only scratch trust entry can leave `{"model":"x","projects":{}}`, which hashes differently from `{"model":"x"}`. A read-only Python check reproduced this representation difference. The proposed regression at `:337-339` should explicitly cover a baseline with no `projects` table.
-- **MEDIUM — The outer snapshot command rejects the scratch trust writes that the smoke permits.** The smoke passes `(work,)`, but snapshot CLI calls pass no exemptions (`P/20-03-PLAN.md:316-318`). Later procedures require the external baseline check to print `snapshot ok`, including the interactive check (`P/20-07-PLAN.md:218-223`). An allowed trust write can therefore pass the smoke and fail its required outer guard.
+- No additional blocking concern identified. Installer subprocess behavior remains a live verification, as the plan explicitly acknowledges in its threat register (`P/20-03-PLAN.md:473-474`).
 
 ### Suggestions
-- Normalize absent/empty `projects` consistently while preserving unrelated tables.
-- Define a run-owned scratch-root manifest or equivalent explicit exemption for outer checks. Do not broaden it to every temporary project.
+- Keep the no-existing-`projects` fixture and CLI-level exemption test as mandatory acceptance tests; these are the important non-vacuity checks for the revised guard.
 
-### Cycle-1 disposition
-- **Wrong scratch installation selected:** resolved by `P/20-03-PLAN.md:212-241`.
-- **Installer probes omitted from isolation/threat model:** addressed by `:95-101,219-233,449`; actual CLI behavior remains a live verification.
-- **Overbroad temp-prefix exception:** resolved by path-aware run-owned roots at `:310-318`.
-- **Names-only guard overclaims byte identity:** resolved by `:319-345`.
-- **Deleted return artifacts:** resolved in design by `:385-397`.
-- The earlier empty-promise/`None` concern remains **not counted as a separate blocker**: Task 3 explicitly requires omission for empty Opencode promises (`:369-374`).
+### Cycle-2 disposition
 
-### Risk assessment
-**MEDIUM.** The central smoke architecture is improved, but legitimate trust persistence can still produce contradictory guard outcomes.
+| Finding | Disposition | Current evidence |
+|---|---|---|
+| Time-budget rule omitted from delegated prompt | **FULLY RESOLVED** | The rule is inside `<objective>` at `P/20-03-PLAN.md:104-121`, which GSD extracts (`.claude/gsd-core/workflows/execute-phase/detail/elaboration.md:84-87`). |
+| Empty `projects` container changes semantic hash | **FULLY RESOLVED** | Normalization is explicit at `P/20-03-PLAN.md:327-329`; the missing-container regression is specified at `:357-359`. |
+| Outer snapshot lacks the smoke’s exemption | **FULLY RESOLVED** | Repeatable CLI exemptions and one failure rule are defined at `P/20-03-PLAN.md:330-336`; the work-root output is supplied at `:424-428`. |
+| Project-local resolver should inherit unsuccessful-execution handling | **FULLY RESOLVED** | `P/20-03-PLAN.md:268-273` routes that link through `_resolve_model`. |
+
+### Risk Assessment
+**MEDIUM.** The remaining risk is the external installer/CLI behavior being tested, rather than a known contradiction in the harness plan.
 
 ## 20-04
 
 ### Summary
-Evidence-only success now matches the runner’s `no_change` semantics, and controlled PATH enumeration addresses the unrelated Cursor write. The signal probe remains deterministically misdirected, however, and some promised timeout protection never reaches executable commands or the delegated prompt.
+The plan fixes the exited-first-child error and now puts deadlines inside the delegated instructions. However, workload observation is still not reliably associated with this run, and the inventory timeout wrapper does not supervise all the detached descendants created by the product.
 
 ### Strengths
-- **Correct success semantics:** `P/20-04-PLAN.md:220-227` accepts healthy `no_change` and independently requires smoke success.
-- **Enumeration is genuinely host-scoped.** The controlled PATH at `:318-323` matches PATH-based discovery (`skills/ai-kit-spec-review/ai_kit_spec/detection.py:183-188,1003-1010`).
-- **Uses child-PGID recording and a run-owned TMPDIR**, correcting the previous process-group and temp-prefix mistakes (`P/20-04-PLAN.md:366-381`).
+- **Evidence-only success matches the runner.** `P/20-04-PLAN.md:226-233` correctly accepts `no_change` while independently requiring smoke success, matching `skills/ai-kit-spec-review/references/cross-ai.mjs:2903-2913,2936-2937`.
+- **Live-child selection now uses the runner’s lifecycle records.** `P/20-04-PLAN.md:382-388` excludes exited children, consistent with the runner writing `exit` during finalization before resolving (`skills/ai-kit-spec-review/references/cross-ai.mjs:550-575`).
+- **The expanded dump covers the actual scrub set.** `P/20-04-PLAN.md:214-216` now includes the PI/Cursor/Grok prefixes found in the template’s scrub list (`skills/ai-kit-spec-review/references/cross-ai.mjs:77-88`).
 
 ### Concerns
-- **HIGH — Readiness watches the first Git child, not the Codex execution child.** `P/20-04-PLAN.md:369-370` selects the first `spawn` record forever. The runner executes `treeState` before host execution (`skills/ai-kit-spec-review/references/cross-ai.mjs:2853-2859`); that starts Git children (`:716-740`), and every child is recorded (`:580-588`). The selected PID normally belongs to an already-exited Git process. The following fixed 15-second wait also does not prove the requested `sleep` tool operation began.
-- **HIGH — Timeout containment remains incomplete.** The direct event command at `P/20-04-PLAN.md:308` and inventory commands at `:318-325` lack the promised timeout wrapper. The remaining-budget instruction at `:163-174` sits outside `<objective>`/`<tasks>`, while GSD constructs the delegated prompt from those sections (`.claude/gsd-core/workflows/execute-phase/detail/elaboration.md:84-87`). A parent deadline must not terminate unfinished detached probes.
-- **MEDIUM — “Signals clean” checks only a filtered subset.** The dump at `P/20-04-PLAN.md:209-210` excludes `PI_CODING_AGENT`, `CURSOR_AGENT` and `GROK_AGENT`, despite their presence in the scrub set (`skills/ai-kit-spec-review/references/cross-ai.mjs:77-88`). The assertion at `:247` cannot detect their leakage.
-- **MEDIUM — The out-of-scratch trust exception contradicts the guard.** `P/20-04-PLAN.md:176-179` says such a write is not a guard failure; `:238-240,280-281` still requires unchanged snapshot output. Plan 03 explicitly gives snapshot CLI calls no exemption.
+- **MEDIUM — `pgrep -f 'sleep 170'` does not prove this run started the tool call.** The global command-line match at `P/20-04-PLAN.md:389-391` can match an unrelated process or the enclosing shell command containing the literal. A read-only shell probe during this review reproduced the enclosing-shell match. It can therefore produce the stronger “sleep observed” evidence without observing a sleep descendant of the selected Codex child.
+- **MEDIUM — Inventory timeout containment misses detached refresh children.** The wrapper at `P/20-04-PLAN.md:329-338` bounds the inventory process, but refresh starts its subprocess with `start_new_session=True` (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/catalog_adapter.py:199-214`). GSD’s wrapper kills only its child’s process group (`.claude/gsd-core/bin/gsd-tools.cjs:5009-5013`). Killing inventory can consequently leave its refresh process running outside that group. The outer 120-second cap also overlaps the product’s own 120-second per-refresh timeout and 15-second cleanup grace (`catalog_adapter.py:19-21,218-229`).
 
 ### Suggestions
-- Identify a live target execution child, exclude Git/listing children, and observe the long-running tool operation before signalling.
-- Put executable deadlines, remaining-budget checks and cleanup/continuation rules inside dispatched task instructions.
-- Capture the complete names-only set for signal assertions.
-- Give unexpected trust writes one consistent blocked/accepted outcome.
+- Observe an exact `sleep` process associated with the selected CLI’s descendant tree, or retain the explicitly weaker “tool call not observed” result.
+- Supervise the inventory’s detached refresh processes explicitly, or use a bounded path that allows the product’s own cleanup to finish and verifies those descendants afterward.
 
-### Cycle-1 disposition
-- **Impossible `ok` requirement:** resolved at `P/20-04-PLAN.md:220-227`.
-- **Own generic marker rejected:** resolved at `:247-252`.
-- **Unrelated runtime enumeration:** resolved at `:318-323`.
-- **Signal cleanup proof:** partially resolved; readiness remains broken.
-- **Parent/child timeout mismatch:** partially resolved by smaller deadlines and splitting; unwrapped probes remain.
+### Cycle-2 disposition
 
-### Risk assessment
-**HIGH.** The planned signal evidence cannot reliably be gathered using the specified readiness command.
+| Finding | Disposition | Current evidence |
+|---|---|---|
+| Readiness selects the first, exited Git child | **PARTIALLY RESOLVED** | Live CLI selection is corrected at `P/20-04-PLAN.md:382-388`; tool-workload attribution remains weak at `:389-391`. |
+| Budget rule outside delegated sections; probes unwrapped | **PARTIALLY RESOLVED** | Visibility and direct wrappers are fixed at `P/20-04-PLAN.md:87-111,319,330-338`. Detached inventory-child containment remains incomplete as described above. |
+| Filtered dump cannot detect PI/Cursor/Grok leakage | **FULLY RESOLVED** | `P/20-04-PLAN.md:214-216,258-263`. |
+| Trust-table exception contradicts outer guard | **FULLY RESOLVED** | `P/20-04-PLAN.md:244-250` passes the run-owned root and treats other changes consistently as failures. |
+
+### Risk Assessment
+**MEDIUM.** The ordinary smoke procedure is credible; signal evidence and timeout cleanup still need narrowly targeted corrections.
 
 ## 20-05
 
 ### Summary
-The Opencode plan preserves appropriate uncertainty about effort application and loader precedence. It inherits the signal and supervision defects from 20-04. Its overall bounded work can also exceed the enclosing dispatch even without retries.
+The plan now fits its stated budget and accounts for the private capability-probe server. It preserves useful distinctions between suffix acceptance, effort application and interactive acceptance. Its remaining procedural risks are inherited from the corrected-but-incomplete 20-04 supervision procedure.
 
 ### Strengths
-- **The `#high` probe reaches execution rather than being inherently blocked by preflight.** The runner strips the suffix for listing membership, then executes the original model string (`skills/ai-kit-spec-review/references/cross-ai.mjs:2860-2881`).
-- **Acceptance is not overstated as effort application** (`P/20-05-PLAN.md:275-286`).
-- **Required lane trials and loader proof are routed to interactive work**, without claiming headless acceptance (`:229-239`).
+- **The suffix probe genuinely reaches the original model argument.** `P/20-05-PLAN.md:280-291` matches the runner’s suffix-stripped membership check followed by execution of the original model (`skills/ai-kit-spec-review/references/cross-ai.mjs:2860-2881`).
+- **Capability probing is now accounted for.** `P/20-05-PLAN.md:294-303` identifies the private server and checks its removal, matching `skills/ai-kit-spec-review/ai_kit_spec/detection.py:796-847,1011-1019`.
+- **Claims remain appropriately limited.** The plan explicitly separates suffix acceptance from application and headless baking from loader observation (`P/20-05-PLAN.md:240-246,283-291`).
 
 ### Concerns
-- **HIGH — Signal readiness inherits the first-spawn defect.** `P/20-05-PLAN.md:325-330` mirrors 20-04’s procedure; the first recorded child is normally Git, not Opencode.
-- **HIGH — The allowed work exceeds the parent budget, and enumeration is unwrapped.** The advertised bounds total 930 + 150 + three 300-second probes = **1,980 seconds**, before overhead (`P/20-05-PLAN.md:79-83`). The inventory command at `:288-289` has no wrapper. The stop-before-budget-exhaustion paragraph at `:153-164` is outside the sections GSD dispatches.
-- **MEDIUM — Signal and snapshot proof gaps also carry over.** The filtered dump/check (`P/20-05-PLAN.md:197-200,215-218`) misses several foreign signal names; the trust exception at `:166-169` contradicts the unchanged-snapshot gate at `:250-251`.
-- **LOW — Enumeration is more than a shared-service listing.** The product also starts an owned private server for image-capability probing (`skills/ai-kit-spec-review/ai_kit_spec/detection.py:1011-1019,796-847`). The evidence should account for that process rather than describe enumeration solely as `opencode models` (`P/20-05-PLAN.md:287-294`).
+- **MEDIUM — The signal workload observation inherits the global-match problem.** `P/20-05-PLAN.md:337-345` uses the same unscoped `pgrep` test as 20-04; it does not establish that the observed workload belongs to this Opencode run.
+- **MEDIUM — The inventory wrapper inherits detached-child cleanup exposure.** `P/20-05-PLAN.md:295-303` places the same 120-second outer cap around a product path whose refresh child and capability server run in separate sessions (`catalog_adapter.py:203-214`; `skills/ai-kit-spec-review/ai_kit_spec/detection.py:823-847`). The post-run process check is valuable detection, but the stated wrapper alone does not guarantee containment.
 
 ### Suggestions
-- Apply the corrected readiness and full names-only checks from 20-04.
-- Bound each command and explicitly hand unfinished probes back to the orchestrator before starting work that cannot fit.
-- Include the private capability-probe server in process accounting.
+- Apply the exact-process attribution and detached-refresh supervision correction from 20-04 once, then mirror that procedure here.
 
-### Cycle-1 disposition
-- **`no_change` semantics and own-marker allowance:** resolved at `P/20-05-PLAN.md:202-218,278-286`.
-- **Unrelated CLI enumeration:** resolved by controlled PATH at `:287-294`.
-- **Signal proof and timeout:** partially resolved, for the reasons above.
-- **Mandatory trials:** restored as REQUIRED at `:230-239`; their executable procedure is reviewed under 20-07.
+### Cycle-2 disposition
 
-### Risk assessment
-**HIGH.** Supervision and signal readiness remain blockers despite improved evidence semantics.
+| Finding | Disposition | Current evidence |
+|---|---|---|
+| Signal readiness inherits the first-spawn defect | **PARTIALLY RESOLVED** | `P/20-05-PLAN.md:340-345` selects the live execution child, but workload attribution remains unscoped. |
+| Bounds exceed 1,800 seconds; inventory unwrapped; stop rule invisible | **PARTIALLY RESOLVED** | Budget arithmetic and prompt visibility are corrected at `P/20-05-PLAN.md:79-101`; inventory is wrapped at `:295`. Detached-child supervision remains the residual issue. |
+| Signal-name and snapshot gaps | **FULLY RESOLVED** | Expanded dump at `P/20-05-PLAN.md:200-203`; explicit scratch-root check at `:214-221`. |
+| Private capability server omitted from evidence/process accounting | **FULLY RESOLVED** | `P/20-05-PLAN.md:294-303,321` names both processes and requires before/after accounting. |
+
+### Risk Assessment
+**MEDIUM.** Execution isolation and evidence semantics are improved; cleanup and workload attribution remain the principal risks.
 
 ## 20-06
 
 ### Summary
-The certainty updates are much better scoped, especially the distinction between cached-installer verification and the shipped registry launcher. Completion rules still conflict, and the replacement-signal branch does not synchronize additions across the derived scrub set and its mirrors.
+The cycle-2 judge-policy corrections are explicit and substantially complete. The main new implementation gap is fixture reach: changing `OPENCODE_EFFORT_EFFECT` changes generated plans, but this plan neither updates their golden fixtures nor includes the golden test in its task verification.
 
 ### Strengths
-- **Installer claims now match the exercised path** (`P/20-06-PLAN.md:320-325`), unlike the shipped `npx` follow-up and its disclosures (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/followups.py:181-188`).
-- **PASS/KEPT branches permit honest uncertainty** (`P/20-06-PLAN.md:312-316,371-378`).
-- **Headless absence no longer silently removes a TUI-unconfirmed signal** (`:224-238`).
+- **Judge thresholds now preserve the recorded baselines.** `P/20-06-PLAN.md:453-483` defines one decision table with per-judge floors, supported by the Phase 19 final scores at `.planning/phases/19-evaluation-on-claude/19-SKILL-JUDGE.md:23-25`.
+- **Replacement additions synchronize the table’s immediate mirrors.** `P/20-06-PLAN.md:243-255` updates the literal template and test expectations, matching the derived scrub-set construction in `skills/ai-kit-spec-review/ai_kit_spec/detection.py:191-205`.
+- **Installer wording claims only the exercised path.** `P/20-06-PLAN.md:337-342` expressly excludes the shipped registry launcher, whose download/home-write disclosures are separate (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/followups.py:181-188`).
 
 ### Concerns
-- **HIGH — Judge completion rules conflict and waive baseline non-regression.** `P/20-06-PLAN.md:436-438` permits an unavailable pi judge under the phase rule, but `:447-450` requires a passing pi row for PASS. Separately, `:443-444` calls baseline scores “reference, not a floor,” while `AGENTS.md:45-47` requires no regression versus baseline. A score of 96 can satisfy this plan while falling below the recorded 109/114 scores.
-- **MEDIUM — Replacement additions leave scrub mirrors inconsistent.** `P/20-06-PLAN.md:233-238` adds a replacement such as `CODEX_SESSION_ID` but says mirrors remain untouched because no name was dropped. `HOST_SIGNAL_ENV_VARS` derives from all host signals (`skills/ai-kit-spec-review/ai_kit_spec/detection.py:191-205`); additions therefore require synchronization too. The template remains literal (`skills/ai-kit-spec-review/references/cross-ai.mjs:77-89`).
-- **MEDIUM — Per-attempt limits do not bound the permitted judge loop.** Retries and two fix rounds can exceed the parent’s 1,800 seconds (`P/20-06-PLAN.md:407-442`). Three 630-second attempts alone exceed it.
+- **HIGH — The accepted-effort-label branch leaves golden plans stale.** `P/20-06-PLAN.md:353-361` changes `OPENCODE_EFFORT_EFFECT`. Recommendation copies that constant directly into generated entries (`skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/recommend.py:787-795`). Four goldens currently pin its old text: `claude-standard-adaptive.json:280`, `claude-rigorous-adaptive.json:364`, `cursor-rigorous-adaptive.json:221`, and `codex-rigorous-adaptive.json:292`, all under `tests/fixtures/curated_config_v2/golden/`. The golden comparison masks only `inventory_digest`, not `effect` (`tests/test_curated_config_golden.py:197-217,292-306`). None of those fixtures appears in this plan’s file list (`P/20-06-PLAN.md:7-22`), and Task 2’s verification omits the golden test (`:388`). On the expected accepted branch, the planned commit is therefore not fully test-consistent.
 
 ### Suggestions
-- Define one PASS/BLOCKED/FAILED/PENDING decision table and retain the repository’s baseline non-regression rule.
-- Synchronize every signal-set change, including additions; a missing new scrub entry is not a harmless superset.
-- Place remaining-budget checks and orchestrator continuation inside Task 3 before retries or fix rounds.
+- Include the four affected golden fixtures in Task 2’s label-only commit, review their precise changes, and run the golden module before committing—not first during 20-07’s aggregate gate.
 
-### Cycle-1 disposition
-- **Dropped-signal mirror drift:** resolved for the normal keep/drop design at `P/20-06-PLAN.md:249-263`; replacement additions introduce the new gap above.
-- **Installer overclaim:** resolved at `:320-325`.
-- **Conditional wording versus unconditional acceptance:** resolved by `:312-378`.
-- **Judge timeout:** partially resolved; individual attempts fit, cumulative paths need supervision.
-- **SC3 default-only branch:** conservatively pinned at `:270-274`; no unsupported native-selection capability is claimed.
+### Cycle-2 disposition
 
-### Risk assessment
-**HIGH.** The plan currently admits incompatible interpretations of whether the skill gate has passed.
+| Finding | Disposition | Current evidence |
+|---|---|---|
+| Conflicting judge completion rules and baseline regression allowed | **FULLY RESOLVED** | `P/20-06-PLAN.md:453-483` supplies the decision table; `:495` pins the two score floors. Unavailable remains visibly BLOCKED, not PASS. |
+| Replacement additions leave scrub mirrors inconsistent | **FULLY RESOLVED** | `P/20-06-PLAN.md:243-255,308` updates and checks the named mirrors. |
+| Cumulative judge attempts can exceed dispatch budget | **FULLY RESOLVED** | Start stamp at `P/20-06-PLAN.md:233-234`; remaining-time check before every attempt at `:473-477`; attempt evidence required at `:496`. |
+
+### Risk Assessment
+**MEDIUM.** Judge policy is now clear. The missing golden updates are a concrete, predictable test failure rather than an architectural problem.
 
 ## 20-07
 
 ### Summary
-The handoff now retains artifacts and restores required interactive work. However, the required loader commands fail at shell redirection, the review trials use the wrong phase syntax, and loader observation still depends on an unverified output contract. These prevent reliable closure of EVAL-05.
+The human handoff now has correct phase syntax, durable output paths, retained artifacts and explicit pending acceptance. The loader-proof correction is still incomplete: a matching agent/model in a shared-service listing does not establish that the service loaded the kept scratch project.
 
 ### Strengths
-- **Returns the required analysis artifacts** through `--artifacts-out` (`P/20-07-PLAN.md:210-217,271-275`).
-- **Makes lane trials and loader observation REQUIRED** (`:224-265`), matching D-11.
-- **Reads counts from the actual output format.** The module summaries used by the plan are produced at `tools/run_unittest_parallel.py:213-224`.
-- **Docker now has a persisted exit-status gate**, rather than merely a nonempty log (`P/20-07-PLAN.md:367-371`).
+- **Output paths survive cwd changes.** `P/20-07-PLAN.md:239-244,274-281` captures `$OUT` at the checkout root and uses it for loader output, fixing the scratch-relative redirection failure.
+- **Lane trials distinguish prerequisites from outcomes.** `P/20-07-PLAN.md:248-269` uses the installed `--phase` syntax and requires blocked trials to be repeated. The actual workflow extracts only that named argument (`.claude/gsd-core/workflows/review.md:156-181`).
+- **Aggregate gates now persist process outcomes.** `P/20-07-PLAN.md:400-417` records pipefail-protected exit codes in addition to counts, whose output format is confirmed by `tools/run_unittest_parallel.py:213-224`.
 
 ### Concerns
-- **HIGH — Loader redirection targets nonexistent scratch-relative directories.** `P/20-07-PLAN.md:247-255` runs inside `<dir>/project-a` but redirects to `tmp/p20/interactive/...`, created only in the checkout. The scratch builder does not create that path (`tests/gsd_curated_eval.py:3915-3929`). Redirection fails before either loader command runs.
-- **HIGH — Lane trials use the wrong phase argument and an underspecified fallback project.** The script uses `/gsd-review 20` (`P/20-07-PLAN.md:235-239`), but the installed command declares `--phase N` (`.claude/commands/gsd-review.md:4`), and its workflow extracts only `--phase` (`.claude/gsd-core/workflows/review.md:156-159`). The fallback “any GSD project” need not contain phase 20. A prerequisite failure must not count as a host-lane self-skip.
-- **HIGH — Loader evidence is assumed rather than defined, and closure is insufficiently conditional.** `P/20-07-PLAN.md:247-265` assumes JSON events expose resolved model fields merely because `--agent` exists. The fallback reads a shared service whose association with the kept scratch project is not established. Only `gsd-planner` is observed, whereas D-07 specifies the chain per agent (`P/20-CONTEXT.md:116-119`). Nevertheless, `P/20-07-PLAN.md:274-277` proceeds to EVAL check-off without requiring satisfactory precedence evidence.
-- **MEDIUM — The dry-run requires a raw artifact that is never exported.** `P/20-07-PLAN.md:293-298` expects a baked Markdown agent file in the headless artifact directory. Plan 03 exports only four JSON files (`P/20-03-PLAN.md:388-397`), and normal cleanup deletes the original agent file (`tests/gsd_curated_eval.py:4358-4359`).
-- **MEDIUM — Aggregate gate verification still accepts incomplete logs.** Unlike Docker, `make test`, `make validate` and the verbose unittest command do not persist their exit status. The final verifier checks selected passing lines (`P/20-07-PLAN.md:405-409`), which can survive a later failure or terminated aggregate run.
+- **HIGH — Shared-service output can still be misclassified as project precedence proof.** `P/20-07-PLAN.md:281-288` acknowledges that the service serves its booted configuration, but treats a listing containing `gsd-planner` and a matching model as sufficient. It rejects the association only when the agent is absent. An agent with the same name/model can exist in another project or global configuration. The plan’s own research states this service-association hazard (`P/20-RESEARCH.md:252-255`). The raw field grep at `P/20-07-PLAN.md:276-279` also does not establish which event supplies the field. Despite that, `:311-315` permits EVAL-05 closure from the resulting “precedence proved” outcome.
+- **MEDIUM — The fallback compares against artifacts from a different smoke run.** The kept project is created by the second smoke at `P/20-07-PLAN.md:243-245`, without `--artifacts-out`. The listing is then compared with `baked.json` from the earlier, deleted step-3 project (`:285-286`). The comparison should use the kept project’s own baked state, not assume two separately generated plans are identical.
 
 ### Suggestions
-- Capture a durable checkout output path before changing directories, then syntax-check the complete command in its intended cwd.
-- Use `--phase <actual-phase>` and prepare a complete reviewable scratch phase; distinguish self-skip from missing prerequisites.
-- Define a first-observation branch that establishes loader fields and project/session association. Leave R5/EVAL-05 pending when that proof is unavailable.
-- Use a synthetic frontmatter fixture for syntax checks, or explicitly export the required raw agent file.
-- Persist and verify exit codes for all aggregate gates, keeping count/log checks as additional evidence.
+- Require loader evidence associated with the kept project/session and a known metadata field. Agent-name/model equality alone must leave precedence pending.
+- Export artifacts from the kept smoke into a distinct directory, and compare the loader against those artifacts or the kept files directly.
 
-### Cycle-1 disposition
-- **Artifact loss:** resolved by export; the raw-Markdown dry-run mismatch is new.
-- **Mandatory evidence demoted to optional:** restored at `P/20-07-PLAN.md:224-265`, but invocation and loader-proof defects remain.
-- **Wrong test-count output assumptions:** resolved at `:346-361`.
-- **Docker accepts any nonempty log:** resolved at `:367-371`.
-- **D-07 singular command drift:** amendment supplied at `:299-306`; its replacement evidence contract still needs validation.
+### Cycle-2 disposition
 
-### Risk assessment
-**HIGH.** The human procedure can fail before collecting evidence or produce observations insufficient to close acceptance.
+| Finding | Disposition | Current evidence |
+|---|---|---|
+| Loader output redirected into nonexistent scratch-relative path | **FULLY RESOLVED** | `$OUT` captured at `P/20-07-PLAN.md:239-244` and used at `:274-281`; cwd-change dry run at `:331-334`. |
+| Wrong phase syntax; fallback project underspecified; prerequisites counted as outcomes | **FULLY RESOLVED** | `P/20-07-PLAN.md:248-269` uses `--phase`, prepares the phase, constrains fallback projects and separates blocked trials. |
+| Unverified loader fields, missing project association and unconditional closure | **PARTIALLY RESOLVED** | No-field pending and conditional closure are added at `P/20-07-PLAN.md:276-298,311-315`; scope amendment is explicit at `:341-348`. Project/service association remains unproved. |
+| Dry run requires a Markdown artifact that was never exported | **FULLY RESOLVED** | Synthetic frontmatter and JSON fixtures are prescribed at `P/20-07-PLAN.md:331-337`. |
+| Aggregate verification accepts partial logs | **FULLY RESOLVED** | Exit statuses are persisted at `P/20-07-PLAN.md:400-417` and required at `:461-465`. |
+| Cross-plan timeout rule omitted from delegated prompt | **FULLY RESOLVED** | The rule now resides inside `<objective>` at `P/20-07-PLAN.md:94-112`. |
+| Inner/outer snapshot exemption inconsistency | **FULLY RESOLVED** | Fresh baseline and explicit run-owned root at `P/20-07-PLAN.md:213-235`. |
+
+The advisory SC3 wording drift is also addressed by the planned dated clarification at `P/20-07-PLAN.md:348-352`; I am not re-raising the optional native-selection probe.
+
+### Risk Assessment
+**HIGH.** The scripts can now collect useful evidence, but the current fallback can still close EVAL-05 without proving that the tested project supplied the loaded agent.
 
 ## Overall assessment
 
-### Status: Issues Found — revise before execution
+### Status: Issues Found — targeted corrections needed before execution
 
 **Coverage: 7/7 plans reviewed.**
 
-The replan resolves most cycle-1 structural problems. The architecture can remain: extend the existing harness, use the external installer, retain independent expectations, and distinguish headless preparation from interactive acceptance.
+Most cycle-2 findings are resolved. The existing architecture should remain: extend the harness, use the external installer, preserve independent expectations, and keep interactive acceptance separate from headless preparation.
 
-Highest-priority corrections:
+Remaining priorities:
 
-1. Fix signal readiness so it targets the live execution child.
-2. Make deadlines and continuation rules executable within the delegated prompt.
-3. Reject unsuccessful subprocess output as oracle evidence.
-4. Repair interactive command paths and `/gsd-review --phase` syntax.
-5. Require actual loader/project-associated evidence before closing EVAL-05.
-6. Reconcile judge completion and baseline rules.
-7. Make snapshot exemptions consistent across inner and outer guards.
+1. **20-07:** require project-associated loader evidence before declaring precedence proved.
+2. **20-06:** update the four goldens affected by the effort-label change in the same logical commit.
+3. **20-01:** identify exact task-produced bytes before rollback or deletion.
+4. **20-04/20-05:** associate workload observations with the selected CLI and supervise detached inventory descendants.
+5. **20-07:** compare against the kept smoke’s own artifacts.
 
 Skipped: implementation, full test execution, live host/model calls and credential access; no repository files were modified.  
-Residual risk: actual CLI behavior remains unverified, and the current procedures can still produce false failures or incomplete acceptance evidence.
+Residual risk: CLI behavior still needs the planned live runs, and loader acceptance must not infer project identity from matching names/models alone.
 
 ---
 
@@ -269,243 +264,195 @@ Residual risk: actual CLI behavior remains unverified, and the current procedure
 One reviewer ran this cycle, so there is no cross-reviewer consensus and the consensus gate is
 skipped; a single reviewer's HIGH counts. The review cites `file:line` evidence throughout and
 carries no evidence-quality discount marker. The orchestrator re-checked every claim below against
-the current plan text and the source before counting it.
+the current plan text and the source before counting it, and decided each cycle-2 finding from the
+plan text (see "Cycle 2 dispositions"), not from the reviewer's table alone.
 
 ### Agreed Strengths
-- The replan resolves 10 of the 12 cycle-1 HIGHs outright (see "Cycle 1 dispositions"): the
-  four-case tier rule, the exact scratch-root assertion with `RUNTIME_DIR` dropped, XDG isolation
-  of the installer probes, the template-4 bump, `no_change` as a healthy evidence-only status, the
-  four-set env rule, controlled-PATH enumeration, `--artifacts-out`, and the required D-11/R5 steps.
-- PASS/KEPT branches per note (20-06) and the narrowed installer wording keep labels at the
-  certainty the evidence supports.
+- The replan closes 7 of the 9 cycle-2 HIGHs outright and 10 of the 12 cycle-2 actionable
+  MEDIUM/LOW items: the `returncode` seam and omit gate (20-02), the live-child readiness rule
+  (20-04/20-05), the time-budget rule moved into `<objective>` with start stamps (20-03..20-07,
+  matching `execute-phase/detail/elaboration.md:84-87`), the 1,600 s 20-05 budget, the per-judge
+  floor and single decision table (20-06), `$OUT`, `--phase 20` and the blocked-trial outcome
+  (20-07), the `--scratch-root` exemption shared by inner and outer guards (20-03), the full
+  `HOST_SIGNAL_ENV_VARS` dump pattern (all 11 names match, checked live), and recorded gate exit
+  codes.
+- Claims stay at the certainty the evidence supports: suffix accepted vs effort applied,
+  `precedence pending` as a legal outcome, BLOCKED never PASS.
 
 ### Agreed Concerns (verified, counted)
 HIGH, each re-verified against source:
-1. 20-02: `_resolve_model` runs `check=False` and never reads `returncode`
-   (`tests/gsd_curated_eval.py:632-648`); `live_tables` does the same (`:444-467`). A non-zero
-   resolve-model exit that still prints matching JSON passes the oracle. The plan changes the
-   comparison but not this seam.
-2. 20-04 Task 3: readiness reads the FIRST `spawn` line (`20-04-PLAN.md:369-370`). `runChild`
-   records every child (`cross-ai.mjs:588`), and the runner runs `treeState` (git) and the
-   `listModels` preflight before the CLI (`cross-ai.mjs:2853-2863`, git via `runChild` at
-   `:720-730`). The first pid is an exited git child, so `ps -o args=` never names codex and the
-   60 s readiness loop has no defined outcome.
-3. 20-04 (and the same `## Time budget (checker W2)` section in 20-03, 20-05, 20-07): GSD builds the
-   delegated prompt from `<objective>` and `<tasks>` only (`execute-phase/detail/elaboration.md`
-   step 1 "Extract `<objective>` and `<tasks>`"). The stop-and-hand-back rule sits outside both
-   (`20-04-PLAN.md:163-179`, `20-03:171`, `20-05:153`, `20-07:162`), so the executor never sees it.
-   20-04 Task 2's direct `codex exec` (`:308`) and both `inventory --refresh` runs (`:318-325`)
-   have no timeout wrapper although the objective promises `run-with-timeout 300` per probe.
-4. 20-05 Task 3 mirrors the 20-04 readiness rule (`20-05-PLAN.md:325-330`): same first-spawn defect.
-5. 20-05: the objective's own bounds are 930 + 150 + 300 + 2 x 300 = 1,980 s
-   (`20-05-PLAN.md:79-83`), over the 1,800 s `workflow.cross_ai_timeout` before any overhead; the
-   C-W12 inventory (`:288-289`) is unwrapped.
-6. 20-06 Task 3: `BASELINE ... (reference, not a floor)` (`20-06-PLAN.md:443-444`) with a pass rule
-   of `CURRENT >= 96` contradicts AGENTS.md's skill rule ("no regression vs. baseline"); a 97
-   against the Phase 19 109/114 passes. The phase rule (`:436-438`, pi `judge unavailable` is
-   acceptable) and the verdict rule (`:447-450`, unavailable is BLOCKED) also need one decision
-   table.
-7. 20-07 step 7 (`20-07-PLAN.md:245-255`): the commands run inside `<dir>/project-a` but redirect to
-   the checkout-relative `tmp/p20/interactive/...`, which does not exist there
-   (`_scratch_project`, `tests/gsd_curated_eval.py:3915-3929`); the shell fails the redirection
-   before the loader command runs.
-8. 20-07 step 6 (`:235-239`): `/gsd-review 20` omits `--phase`. The command declares
-   `argument-hint: "--phase N ..."` (`.claude/commands/gsd-review.md:4`) and the workflow extracts
-   only `--phase` (`.claude/gsd-core/workflows/review.md:157`). The fallback "any GSD project"
-   need not hold phase 20, and a prerequisite failure is not separated from a lane self-skip.
-9. 20-07 step 7: "the JSON events carry the provider and model ids" is an untested assumption
-   (no [VERIFIED] source in 20-RESEARCH.md; `parseOpencode` reads only `text`/`error` events,
-   `cross-ai.mjs:367-380`). Only `gsd-planner` is observed while D-07 records the chain per agent
-   (`20-CONTEXT.md:116-119`), and `## What happens next` checks EVAL-05 off without a branch for
-   "no loader field found".
+1. 20-04 Task 3 and 20-05 Task 3, cycle-2 HIGH 2 PARTIALLY RESOLVED (its second clause, proof that
+   the tool call began): `pgrep -f 'sleep 170'` (`20-04-PLAN.md:389`, `20-05-PLAN.md:344`) matches
+   the executor's own `bash -c` command line that contains the literal. Reproduced live:
+   `bash -c "pgrep -f 'sleep 170' && echo MATCHED_SELF"` prints its own pids and `MATCHED_SELF`.
+   So `sleep 170 observed` is recorded at once whether or not codex/opencode started the tool call,
+   and the readiness evidence overclaims. Fix: anchor the match (`pgrep -f '^sleep 170'`) or
+   require a `sleep` descendant of the live child pid `L`. The live-child half of the HIGH is
+   resolved (the `awk` spawn-without-exit rule; `runChild` writes `exit` in `finalize`,
+   `cross-ai.mjs:568,588`; five git children in `treeState`, `:720-756`).
+2. 20-04 Task 2 and 20-05 Task 2, cycle-2 HIGH 3 PARTIALLY RESOLVED (its clause "a parent deadline
+   must not terminate unfinished detached probes"): `run-with-timeout 120` around `inventory
+   --refresh` (`20-04-PLAN.md:330`, `20-05-PLAN.md:295`) kills only its child's process group
+   (`gsd-tools.cjs` `killTree`, `process.kill(-child.pid)`), while the product runs each refresh
+   call with `start_new_session=True` and its own 120 s timeout plus 15 s SIGTERM grace
+   (`catalog_adapter.py:19-21,199-229`). The outer cap can fire inside the product's own budget,
+   orphaning `detect-runtimes` (and, on opencode, the private `opencode serve` probe it owns,
+   `detection.py:823`) and losing the inventory JSON the proof needs. Fix: an outer bound above
+   the product's own (two refresh calls x (120 + 15) s plus margin) inside the budget sum, and a
+   ps check that names `detect-runtimes`/`fetch-model-catalog` afterwards.
+3. 20-07 step 7, cycle-2 HIGH 9 PARTIALLY RESOLVED (merged with the reviewer's new 20-07 HIGH):
+   the `debug agents` fallback talks to the shared service, which the plan's own research says
+   serves the config it booted with (`20-RESEARCH.md:252-254`), yet a listing that merely names
+   `gsd-planner` with a matching model yields `precedence proved (debug agents, ...)`
+   (`20-07-PLAN.md:282-288`) and closes EVAL-05 (`:311-315`). Another curated-config project or a
+   global agent bakes the same model for the same tier, so equality does not show the kept project
+   was loaded. The first form's `grep -oE ... | sort -u` (`:277-279`) can also print more than one
+   model (no rule for which event is the agent's). Fix: count only project-associated evidence
+   (the `--standalone` run in `$DIR/project-a`, with one rule when several model fields appear);
+   a shared-service listing alone leaves `precedence pending`.
+4. 20-06 Task 2 (new): on the expected `accepted` branch the label commit changes
+   `cross_ai.OPENCODE_EFFORT_EFFECT` (`20-06-PLAN.md:353-361`), which `recommend.py:793` copies into
+   every plan entry. Four goldens pin the old text (`claude-standard-adaptive.json`,
+   `claude-rigorous-adaptive.json`, `cursor-rigorous-adaptive.json`,
+   `codex-rigorous-adaptive.json` under `tests/fixtures/curated_config_v2/golden/`, checked live),
+   and `check_golden` masks only `inventory_digest` (`tests/test_curated_config_golden.py:197-217`).
+   The goldens are not in `files_modified` (`:7-22`) and Task 2's verify (`:388`) omits
+   `tests.test_curated_config_golden`, so the commit lands red and only 20-07's `make test` sees it.
 
 Actionable MEDIUM/LOW, verified:
-- 20-01 (MEDIUM, orchestrator-found): `python3 skills/ai-kit-spec-review/ai-kit-spec-review.py
-  detect-current-runtime` (`20-01-PLAN.md:251`) names a file that does not exist; the entrypoint is
-  `skills/ai-kit-spec-review/ai-kit-spec.py` (live: prints `{"host": "claude"}`). The required
-  `bootstrap dispatch host:` line depends on it.
-- 20-01 (MEDIUM, reviewer and orchestrator): the acceptance grep for `template 3`
-  (`20-01-PLAN.md:267`) matches the kept floor comment at `cross_ai_script.py:29`, a file not in
-  `files_modified`.
-- 20-01 (MEDIUM, partial cycle-1 carry-over): the failure path restores with `git checkout`
-  (`:246-247`), the index version, not the bytes recorded at task start; save a copy and restore it.
-- 20-02 (MEDIUM): the empty promise for a loaded map without the host/tier entry
-  (`20-02-PLAN.md:176-178`, test at `:214-215`) ignores the omit gate: without an applicable
-  `resolve_model_ids: "omit"` gsd-core falls through to the tier alias
-  (`model-resolver.cjs:584-585,600-618,654-669`).
-- 20-03 (MEDIUM): `_toml_semantic_sha` drops scratch keys but leaves an empty `projects` table, so a
-  baseline without `projects` hashes differently after a scratch-only trust write
-  (`20-03-PLAN.md:310-318`).
-- 20-03/20-04/20-05/20-07 (MEDIUM): the snapshot CLI passes no scratch exemption (`20-03:316-318`),
-  while 20-04/20-05's "Snapshot baseline note" calls an outside trust table "not a guard failure"
-  (`20-04:176-179`, `20-05:166-169`) and every verify still requires `snapshot ok`. Pick one rule.
-- 20-04/20-05 (MEDIUM): the env dump keeps only `^(CODEX|OPENCODE|AI_AGENT|AGENT|CLAUDE)`
-  (`20-04:209`, `20-05:197-200`), so the four-set check cannot see `PI_CODING_AGENT`,
-  `CURSOR_AGENT` or `GROK_AGENT`, the likeliest leak when pi is the executor.
-- 20-05 (LOW): `build_runtimes_snapshot` also starts a private `opencode serve` image probe for
-  opencode (`detection.py:1011-1019`, `:796-812`); the evidence and the ps diff should name it.
-- 20-06 (MEDIUM): the replacement branch (`20-06-PLAN.md:233-238`) adds a name to
-  `host_signals`, which grows `HOST_SIGNAL_ENV_VARS` (`detection.py:201-205`); the template
-  `scrubEnv` literal, `tests/test_ai_kit_spec.py:11561` and the 11-name pin
-  (`tests/test_ai_kit_spec_runtimes_table.py:83-85`) then fail, but the plan says the mirrors stay
-  untouched.
-- 20-06 (MEDIUM): three 630 s judge attempts, a quota retry and two fix rounds exceed the 1,800 s
-  dispatch (`:407-442`); no in-task budget check.
-- 20-07 (MEDIUM): the dry run greps `^model:` in "a baked agent file from the headless artifacts
-  dir" (`:293-298`), but 20-03 exports four JSON files only (`20-03:388-397`).
-- 20-07 (MEDIUM): `make test`, `make validate` and the verbose pre-commit run record no exit code
-  (`:346-361`); the verify (`:405`) greps lines, which a partial log can satisfy.
+- 20-01 (MEDIUM, cycle-2 carry-over, PARTIALLY RESOLVED): the restore runs when the sha differs and
+  line 2 says `template=4` (`20-01-PLAN.md:249-253`); that header does not distinguish this task's
+  moved `.new` from a later edit of it. Record `sha256sum` of the `.new` before the `mv` and restore
+  only when the current file still matches it.
+- 20-07 (MEDIUM, reviewer): the per-agent comparison uses
+  `tmp/p20/interactive/opencode-artifacts/project-a/baked.json` from the step-3 smoke
+  (`20-07-PLAN.md:285-286`), while the kept project comes from the separate step-6a smoke run
+  without `--artifacts-out` (`:243`). Compare with the kept project's own
+  `.opencode/agents/gsd-*.md` lines, or export that smoke's artifacts.
+- 20-07 (MEDIUM, orchestrator-found): step 6(c) starts plain `opencode` in `$DIR/project-a`
+  (`20-07-PLAN.md:252`). In v2.0.31 the TUI attaches to the background service unless started
+  with `--standalone` (`opencode --help`: "Run with a private server instead of the background
+  service", checked live), the same hazard step 7 records for `debug agents`. If the service does
+  not load the scratch project's `.opencode/commands`, `/gsd-review` fails and the `blocked` remedy
+  (copy a `.planning` file) cannot fix it. Start the trial TUI with `opencode --standalone`, or add
+  a distinct outcome for a command the service did not load.
 
 ### Not counted
-- 20-01 bootstrap dispatch on the template-1 runner (reviewer: "recorded residual risk"): the plan
-  disposes it explicitly as accepted (T-20-17, `20-01-PLAN.md:339`) with the host recorded; not
-  re-raised as a concern.
-- 20-03 empty opencode promise vs `None`: already handled (`20-03-PLAN.md:369-374`), as the
-  reviewer itself notes.
+- 20-04/20-05 actions use `$ROOT` from Task 1 in Tasks 2 and 3 (`20-04-PLAN.md:343,411`): the
+  binding objective rule says the `--scratch-root` arguments are written to a file and read back
+  (`:108-111`), and every verify recomputes them inline; no executor-visible contradiction.
+- 20-02 `grep -c 'returncode' ... is at least 2` is vacuous (the file already has 11): the named
+  `nonzero` tests in the next criterion gate the behavior.
+- 20-02 reviewer note on the empty-model sentinel: a failed resolve returns `tier: ""`, and case 4
+  (no override) still grades the tier (`20-02-PLAN.md` four-case truth), so a failed run never
+  passes an omit (`""`) promise.
+- 20-01 bootstrap dispatch on the template-1 runner: accepted explicitly (T-20-17); not re-raised.
 
 ### Divergent Views
-None between reviewers (single reviewer). The orchestrator would rate HIGH 1 MEDIUM on impact (the
-code is Phase 19's, and resolve-model printing a matching JSON then exiting non-zero is
-implausible) and HIGH 7 MEDIUM (the user sees the shell error at once); both are counted HIGH under
+None between reviewers (single reviewer). Disposition differences with the reviewer's tables:
+the reviewer marks cycle-2 HIGH 4 and HIGH 5 (20-05) PARTIALLY RESOLVED. The orchestrator reads
+both as FULLY RESOLVED: HIGH 4's text is the first-spawn defect only, and HIGH 5's is the 1,980 s
+sum, the unwrapped inventory and the invisible stop rule, all fixed. The residuals the reviewer
+cites there (`pgrep` attribution, detached inventory children) are the same defects as HIGH 1 and
+HIGH 2 above and are counted once, with 20-05 named as a second location. The orchestrator would
+rate HIGH 4 (goldens) MEDIUM on impact, since the 20-07 gate catches it; it is counted HIGH under
 the single-reviewer rule.
+
+## Cycle 2 dispositions
+
+Cycle-2 HIGHs (numbering from the cycle-2 Consensus Summary):
+1. 20-02 `_resolve_model`/`live_tables` ignore `returncode`: FULLY RESOLVED (`20-02-PLAN.md:187-192`
+   action, `:231-234` nonzero-with-valid-JSON tests, acceptance `nonzero.*ok$`; 20-03's third link
+   routed through `_resolve_model`).
+2. 20-04 readiness on the first spawn: PARTIALLY RESOLVED (live-child rule fixed; tool-call proof
+   is HIGH 1 above).
+3. Time-budget rule outside the dispatched sections; unwrapped probes: PARTIALLY RESOLVED (rule in
+   every `<objective>`, event run and inventories wrapped; detached refresh children are HIGH 2).
+4. 20-05 readiness mirrors 20-04: FULLY RESOLVED (`20-05-PLAN.md:340-345`); the shared `pgrep`
+   defect is HIGH 1.
+5. 20-05 bounds 1,980 s, inventory unwrapped: FULLY RESOLVED (930 + 150 + 120 + 400 = 1,600 s,
+   `20-05-PLAN.md:79-94`; inventory at `:295` wrapped).
+6. 20-06 judge rules and baseline floor: FULLY RESOLVED (decision table with precedence, per-judge
+   floors 109/114 matching `19-SKILL-JUDGE.md:23-25`, PASS-floor check in the verify).
+7. 20-07 redirection into the scratch cwd: FULLY RESOLVED (`$OUT` absolute, cwd-change dry run).
+8. 20-07 `/gsd-review 20` without `--phase`: FULLY RESOLVED (`--phase 20`, scratch phase copied,
+   `blocked (prerequisite: ...)` separated from lane outcomes).
+9. 20-07 loader evidence and closure: PARTIALLY RESOLVED (first-observation branch, `precedence
+   pending`, conditional EVAL-05 and the D-07 per-agent scope added; project association of the
+   shared-service listing is HIGH 3).
+
+Cycle-2 actionable MEDIUM/LOW (12): FULLY RESOLVED: 20-01 entrypoint (`ai-kit-spec.py
+detect-current-runtime` prints `{"host": "claude"}` live), 20-01 `template 3` grep (the
+`grep -v 'A floor, not the current version'` filter matches the comment's line 29), 20-02 omit
+gate (matches `model-resolver.cjs:584-618`), 20-03 empty `projects` normalization, the 20-03/04/05/07
+snapshot exemption (`--scratch-root`), the 20-04/20-05 dump pattern, the 20-05 private
+`opencode serve` accounting, the 20-06 replacement mirrors (`_SCRUB_NAMES`, `TestChildEnv`,
+`TestDispatchReviewerRealChild` exist), the 20-06 judge budget, the 20-07 synthetic dry-run fixture
+and the 20-07 exit codes. PARTIALLY RESOLVED: the 20-01 failure-path restore (listed above).
 
 ## Verification coverage
 
 Source-grounding authority: `grep` (`drift-guard authority --raw`). Severity map
-(`drift-guard severity --authority grep`): VERIFIED = none, MISSING = needs-acknowledgement,
-AMBIGUOUS = MEDIUM, UNCHECKABLE = INFO; no `hardBlock`. Symbols in each plan's "Artifacts this
-phase produces" list are excluded. Symbols already resolved in cycle 1 and unchanged are
-re-checked at their current lines.
+(`drift-guard severity --authority grep --status <S>`): VERIFIED = none, MISSING =
+needs-acknowledgement, AMBIGUOUS = MEDIUM, UNCHECKABLE = INFO; no `hardBlock`. Symbols in each
+plan's "Artifacts this phase produces" list (for example `_toml_semantic_sha`, `snapshot
+--scratch-root`, the `scratch work dir:` line, the per-host matrix classes) are excluded. Rows from
+cycle 2 whose plan text did not change are not repeated; this block covers what the replan added
+and what the reviewer newly claimed.
 
 20-01
-- "`RUNTIMES.opencode`: `exec`, `review`, `resume`" (20-01:187): VERIFIED `skills/ai-kit-spec-review/references/cross-ai.mjs:274-283`
-- "self-test `argv-exec-<rt>` and `argv-review-<rt>` ... `must` and `never` lists" (20-01:187): VERIFIED `cross-ai.mjs:1566,1574-1577,1585,1593`
-- "`listModels`: the `opencode models` preflight" (20-01:187): VERIFIED `cross-ai.mjs:672`
-- "`TEMPLATE_VERSION = 3`" (20-01:188): VERIFIED `cross_ai.py:46`; "`_READY_TEMPLATE = 3`, documented as a floor": VERIFIED `cross_ai_script.py:29-31`
-- "`_plan_rendered`, `plan_runner_upgrade`, `ensure_runner`, `write_script`" (20-01:188): VERIFIED `cross_ai_script.py:192,242,366,381`
-- "`test_template_version_constants_match_the_shipped_template`" (20-01:189): VERIFIED `tests/test_curated_config_script.py:53`
-- "every `template=3` literal ... (lines 108, 132, 233, 306, 325, 351) and ... (lines 899, 911)" (20-01:189): VERIFIED
-- "`_v2_pristine`" (20-01:212): VERIFIED `tests/test_curated_config_script.py:319`
-- "SKILL.md line 193 and references/runner.md line 1" (20-01:190), "`tooling_guidance.py` line 24" (20-01:215): VERIFIED
-- "seven goldens ... pin `"version": 3`" (20-01:217-219): VERIFIED (7 files)
-- "`UPDATE_GOLDEN=1 python3 -m unittest tests.test_curated_config_golden`" (20-01:220): VERIFIED `tests/test_curated_config_golden.py:7`
-- "`.planning/scripts/cross-ai.mjs` ... header `template=1`" (20-01:191): VERIFIED line 2; `--print-argv` prints one line per CLI (live)
-- "`python3 skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py ensure-runner --cwd .`" (20-01:231): VERIFIED `cli.py:768,891`
-- "`python3 skills/ai-kit-spec-review/ai-kit-spec-review.py detect-current-runtime`" (20-01:251): MISSING (file absent; `ai-kit-spec.py` is the entrypoint, `cli.py:146`) — needs-acknowledgement, counted as actionable MEDIUM
-- "`eligible_lanes`", "`_host_reviewer_problem`" (20-01:281): VERIFIED `cross_ai.py:202`, `plan_io.py:542`
-- "`make_inventory`, `entry_map`, `build`", "`_fixture_review_lanes`", "`_review_lane_accepted_keys`" (20-01:282): VERIFIED `tests/test_curated_config_recommend.py:256,327,331,1547,1565`
-- "`test_host_slug_never_a_review_lane`; `_write_pair(tmp, host=...)`, `_run_plan_set`" (20-01:283): VERIFIED `tests/test_curated_config_plan_edit.py:397,55,37`
-- "`workflows/review.md:126-149`, `SELF_CLI=auto`" (20-01:307): VERIFIED `.claude/gsd-core/workflows/review.md:126-150`
+- "`python3 skills/ai-kit-spec-review/ai-kit-spec.py detect-current-runtime` ... prints `{"host": "<name>"}`" (20-01:256-258): VERIFIED (file exists, live output `{"host": "claude"}`)
+- "`grep -v 'A floor, not the current version'`, the comment's own first line" (20-01:274): VERIFIED `cross_ai_script.py:29`
+- "line 2 `template=4` ... this task's own moved render" (20-01:249-253): AMBIGUOUS (a header, not a byte identity) — actionable MEDIUM
 
 20-02
-- "`_LIVE_TABLES_SCRIPT`, `live_tables`, `promised`, `_set_entries`, `compare`" (20-02:152): VERIFIED `tests/gsd_curated_eval.py:444,470,505`
-- "`_mismatches`", "`_unoverridden`, `_write_control_plan`, `_control_one`", "`run_matrix`", "`_cmd_matrix`" (20-02:152): VERIFIED `:655,705,714,727,808,2237`
-- "`resolveTierFromConfig`", "`CLAUDE_POLICY_ID_TO_ALIAS`" (20-02:153): VERIFIED `.claude/gsd-core/bin/lib/model-resolver.cjs:425,211`
-- "`_seed_runtime_key`, `_informational_row`", "`_render_matrix`", "`render_smoke_evidence`", "`MESSAGE_NON_CLAUDE`" (20-02:249-257): VERIFIED `:782,2267,4281,114`
-- "`refuse_repo_apply`", "`_row_for`", "`_TIERS`" (20-02:30,209,192): VERIFIED `:558,681,123`
-- "`E2E_MODULES`" (20-02:273): VERIFIED `tools/run_unittest_parallel.py`, Makefile:11 e2e list
-- Signature behavior "an unloaded map ... promises `""`" vs gsd-core omit gate (20-02:176-178): UNCHECKABLE under `grep` as a signature/behavior claim; traced by hand: AMBIGUOUS semantics, see actionable MEDIUM
+- "`_resolve_model` ... `result.returncode`", "`live_tables` raises ... on a non-zero `returncode`" (20-02:187-192): VERIFIED seams at `tests/gsd_curated_eval.py:448-467,632-648` (both `check=False`, no `returncode` read today)
+- "gsd-core returns `""` through its omit gate, model-resolver.cjs step 4 ... step 5 falls through" (20-02:180-184): VERIFIED `.claude/gsd-core/bin/lib/model-resolver.cjs:584-585,606-618`
+- "`_MatrixCtx` whose `tools_path`" (20-03:268-273): VERIFIED `tests/gsd_curated_eval.py:522-531`
 
 20-03
-- "`SmokeCtx`", "`_step`, `_scratch_project`", "`_inventory`", "`run_smoke`", "`_smoke_placeholders`, `render_smoke_evidence`, `_cmd_smoke`" (20-03:191): VERIFIED `tests/gsd_curated_eval.py:3653,3904,3915,3945,4223,4263,4281,4321`
-- "`_real_apply_or_fail`, `_dry_run_unchanged` and `validate_applied`" (20-03:191): VERIFIED `:4026,3998,3873`
-- "`project_root`: `RUNTIME_DIR` wins" (20-03:192): VERIFIED `skills/ai-kit-spec-review/ai_kit_spec/gsd_tools.py:33-47`; "`local_gsd_core_roots` order": VERIFIED `:85-93`
-- "`_HOST_FIRST_ROOT`, `resolve_gsd_core`" (20-03:192): VERIFIED `host.py:21-25,118-140`
-- "inventory.py lines 405-412 (`gsd_core: {path, scope, version}`)" (20-03:192): VERIFIED `inventory.py:407`
-- "`resolveOpencodeDataDir`" (20-03:193): VERIFIED `.claude/gsd-core/bin/lib/opencode-version.cjs:409`
-- "`_file_sha`, `_dir_names`, ... `_tree_sha`", "`CREDENTIALS_BASENAME`", "`_cmd_snapshot`" (20-03:305): VERIFIED `:177,183,251,98,316`
-- "`gsd_tools.gsd_core_version` of `GSD_TOOLS_PATH`" (20-03:207): VERIFIED `:94`
-- "`~/.npm/_npx/*/...` or `~/.cache/pnpm/dlx/*/*/...`" (20-03:90): VERIFIED in cycle 1 (names only); not re-listed
-- "`writeNonClaudeDefaults`, `cleanupLegacyGsdCc`", "`generateCodexAgentToml`" (20-03:95-96,252): VERIFIED in cycle 1 (cached 1.17.0 `bin/install.js`)
-- "`opencode debug paths`" (20-03:98): VERIFIED live (`opencode debug --help` lists `paths`, v2.0.31)
+- "`_cmd_smoke`'s `finally`: ... skip the `rmtree`" (20-03:424): VERIFIED `tests/gsd_curated_eval.py:4321,4359`
+- "`snapshot --check` CLI" (20-03:330-336): VERIFIED `_cmd_snapshot` `:316` (flag itself is an artifact)
 
 20-04
-- "`STATUS_TABLE` ... `no_change` exit 1 action fallback" (20-04:189): VERIFIED `cross-ai.mjs:128-130`
-- "lines 2895-2945 (the exec-mode rule ...)" (20-04:189): VERIFIED `:2906-2910,2936-2937`
-- "`parse_status_line`", "`_runner_reason`" (20-04:191): VERIFIED `runner_dispatch.py:200,504`
-- "`RUNTIMES["codex"]`: `host_signals`, `scrub_signals=("CODEX_SANDBOX",)`", "`_GENERIC_HOST_MARKERS = ("AI_AGENT",)`", "`HOST_SIGNAL_ENV_VARS`" (20-04:192): VERIFIED `detection.py:101-105,142,201`
-- "`detect_installed_clis`", "`detect_cursor_agent_models`", "`build_runtimes_snapshot`" (20-04:300): VERIFIED `detection.py:183,304,986`
-- "catalog_adapter.py lines 166-170 (`inventory --refresh` runs `detect-runtimes --save`)" (20-04:300): VERIFIED
-- "`KILL_GRACE_MS`, `SIGNAL_BUDGET_MS` 2500, `SIGNAL_GRACE_MS` 1000, `SIGNAL_DRAIN_MS` 500" (20-04:357): VERIFIED `cross-ai.mjs:151,155-157`
-- "`noteChildPgid`", "`makeTemp('cross-ai-')`", "`xai-idx-`", "`--child-pgid-file`" (20-04:357): VERIFIED `:498,837,725,36`
-- "readiness ... `awk '/^spawn/{print $2; exit}'`" names the CLI (20-04:369-370): AMBIGUOUS (multiple `spawn` candidates: git, listing, CLI; `runChild` records all at `:588`) — HIGH 2
-- "`codex debug models`" (20-04:206): VERIFIED in cycle 1 (live)
-- "`node .claude/gsd-core/bin/gsd-tools.cjs run-with-timeout 300 --`" (20-04:367): VERIFIED in cycle 1 (live usage)
+- "the runner records EVERY child ... five git children for `treeState` and the `codex debug models` listing, each of which gets its `exit <pid>` line in `finalize`" (20-04:382-386): VERIFIED `cross-ai.mjs:568,588` (`noteChildPgid`), `:720,728,732,740,755` (five `runChild(git, ...)`), `:299` (`debug models`)
+- "`pgrep -f 'sleep 170'` prints a pid (the model's tool call has started)" (20-04:389): MISSING as a valid proof (self-match reproduced live) — HIGH 1
+- "codex reads the prompt from stdin" (implied by the `pgrep` design): VERIFIED `codexExecArgv` ends with `-` (`cross-ai.mjs:359`), opencode via `input: prompt` (`:476-482`)
+- "`R=$(pgrep -P "$W")` (the wrapper's child)" (20-04:381): VERIFIED `run-with-timeout` spawns the command directly, detached (`gsd-tools.cjs` `runWithTimeout`)
+- "every probe runs under its own `run-with-timeout`, which signals the runner, which kills its groups" (20-04:103-104): AMBIGUOUS for `inventory --refresh` (its refresh child is `start_new_session=True`, `catalog_adapter.py:203-214`) — HIGH 2
 
 20-05
-- "opencode's bash tool sets `AGENT`, `OPENCODE`, `AI_AGENT ||= "opencode"`, `OPENCODE_SESSION_ID`" (20-05:182): VERIFIED `20-RESEARCH.md:292-296` (source byte scan, research-tagged)
-- "`opencode run --help` ... `--standalone`", "`--agent`" (20-05:19, 20-07:247): VERIFIED live (v2.0.31)
-- "`OPENCODE_EFFORT_EFFECT`" (20-05:269): VERIFIED `cross_ai.py:181`
-- "the runner strips the suffix for listing membership" (reviewer, 20-05:280): VERIFIED `cross-ai.mjs:2861`
-- "pi `openai/gpt-6.1-sol:xhigh`" availability (20-06:409): UNCHECKABLE (live model; no model call made)
+- "`detection.probe_opencode_api_image_input` ... `opencode serve --hostname 127.0.0.1 --port 0`" (20-05:28,299): VERIFIED `detection.py:796,823`
+- "930 + 150 + 120 + 400 = 1600 s" (20-05:83-85): VERIFIED arithmetic
 
 20-06
-- "`_LABEL_*`, `Runtime`, `RUNTIMES`", "the Phase 18 scrub comment", "`SCRUB_ENV lacks`" (20-06:216): VERIFIED `detection.py:44,51,57,64-74,197-200`
-- "tests/test_ai_kit_spec.py line 11561" (20-06:217): VERIFIED
-- "`_SCRUB_NAMES`, `test_ids_follow_host_precedence_and_known_clis`, `test_scrub_set_keeps_the_same_eleven_names`, `test_precedence_pairs`" (20-06:218): VERIFIED `tests/test_ai_kit_spec_runtimes_table.py:22,70,83,87`
-- "`host_can_select`" (20-06:220): VERIFIED `routing.py:44`
-- "`installer_argv`", "`_disclosures`", "`_config_dir_note`, `_opencode_root_note`, `_codex_installer_note`", "`build_followups`" (20-06:304): VERIFIED `followups.py:49,181,223,227,239,360`
-- KEPT-branch strings "inferred (unverified until Phase 20)", "`.opencode/gsd-core` install root **unverified**", "inferred from ... (unverified)" (20-06:371): VERIFIED `followups.py:229,240`, SKILL.md:247
-- "`shortcut:` comment above `"opencode": ".opencode"`" (20-06:333): VERIFIED `host.py:23`
-- "tests/test_curated_config_followups.py ... `config-dir` note ... line 262" (20-06:307): VERIFIED; "`TestSkillDocCommands` (lines 2321-2360)": VERIFIED `tests/test_curated_config_apply.py:2321`; "tests/test_curated_config_cross_ai.py lines 715-727": VERIFIED `:725`
-- "19-08-SUMMARY.md lines 28-34 (`elapsed=134s`)" (20-06:391): VERIFIED `:31`
-- "`$HOME/.agents/skills/skill-judge/SKILL.md`" (20-06:398): VERIFIED exists (existence only)
-- "`_cmd_digest`" (20-06:393): VERIFIED `tests/gsd_curated_eval.py:421`
+- "`_SCRUB_NAMES`", "`test_scrub_set_keeps_the_same_eleven_names`", "`TestChildEnv`", "`TestDispatchReviewerRealChild`" (20-06:243-255): VERIFIED `tests/test_ai_kit_spec_runtimes_table.py:22,83`, `tests/test_ai_kit_spec.py:11279,11322`
+- "Phase 19 final: 109 in-session, 114 pi" (20-06:456): VERIFIED `19-SKILL-JUDGE.md:23,25`
+- reviewer: "`OPENCODE_EFFORT_EFFECT` copied into plan entries; four goldens pin it; golden compare masks only the digest": VERIFIED `recommend.py:793`, four fixture files (live grep), `tests/test_curated_config_golden.py:197-217` — HIGH 4
 
 20-07
-- "Makefile lines 60-75 and 128-140", "`neither docker nor podman found on PATH`", "line 11 (the e2e group lists `tests.test_ai_kit_gsd_curated_config_matrix`)" (20-07:181): VERIFIED `Makefile:11,64,74,128,133,135`
-- "`=== <module>: ok in <s>s  Ran N tests`", "`N/N modules passed`" (20-07:182): VERIFIED `tools/run_unittest_parallel.py:207,213-224`
-- "19-05-SUMMARY.md `## Leak check`" (20-07:183): VERIFIED `:47`
-- "20-SPEC.md line 142 (R5 adjacency row) ... `✅ covered`" (20-07:150): VERIFIED
-- "`/gsd-review 20 --opencode`" (20-07:235): MISSING as invocation form (`--phase N` required, `.claude/commands/gsd-review.md:4`) — HIGH 8
-- "the JSON events carry the provider and model ids" (20-07:246-247): UNCHECKABLE (output contract; no model call made, no research source) — HIGH 9
-- "`opencode debug agents`" (20-07:252): VERIFIED live (`opencode debug --help` lists `agents`)
+- "`opencode run --standalone --agent gsd-planner --format json`" (20-07:274): VERIFIED flags live (`opencode run --help`, v2.0.31); whether its events carry model ids: UNCHECKABLE (no model call), handled by the plan's first-observation branch
+- "`opencode debug agents` ... talks read-only to your already-running shared service" (20-07:281-283): VERIFIED `20-RESEARCH.md:252-254`; project association of its output: UNCHECKABLE — HIGH 3
+- plain `opencode` TUI at step 6(c) (20-07:252): AMBIGUOUS (`opencode --help` lists a top-level `--standalone`; default attaches to the background service) — actionable MEDIUM
+- "`uv run pre-commit run unittest --all-files --hook-stage pre-push --verbose`" (20-07:415-416): VERIFIED `.pre-commit-config.yaml:57,63` (`id: unittest`, `stages: [pre-push]`)
+- "`=== <module>: ok ... Ran N tests`" (20-07 Task 2): VERIFIED `tools/run_unittest_parallel.py:213-224`
 
-Coverage: two MISSING rows (the 20-01 entrypoint path and the 20-07 `/gsd-review` form) are
-counted as findings; one AMBIGUOUS row is HIGH 2; three UNCHECKABLE rows need a live model or an
-output-contract spike. No `hardBlock` (authority `grep`).
+Coverage: one MISSING row (the `pgrep` readiness proof, HIGH 1); three AMBIGUOUS rows (20-01
+header ownership, the inventory wrapper, the step-6 TUI); two UNCHECKABLE rows need a live opencode
+run. No `hardBlock` (authority `grep`).
 
 ## Fact-drift pass (advisory)
 
 `drift-guard phase-status --phase 20`: `verdict: uncheckable`, `reason: phase_not_in_roadmap`
-(STATE.md `Ready to execute`; the guard does not parse the ROADMAP `### Phase 20:` heading). This
-axis is recorded as unchecked, not consistent. Judged by hand:
+(`stateStatus: Ready to execute`; the guard does not parse the ROADMAP `### Phase 20:` heading).
+This axis is recorded as unchecked, not consistent. Judged by hand:
 
-- SC1 (codex smoke, env signal "confirmed live") vs must_haves: 20-04 (headless), 20-06 labels
-  "TUI confirmation pending", 20-07 interactive script as human_verification. No contradiction.
-- SC2 (opencode smoke; lane usability "confirmed and reflected in the recommendation logic and
-  SKILL.md"): 20-01 tests, 20-06 SKILL.md paragraph, 20-07 step 6 REQUIRED. Cycle-1 drift closed.
-- SC3 ("verified live from the codex and opencode hosts ... or `host_can_select` keeps the
-  session-default-only label"): 20-06 pins the default branch with a unit test and keeps the live
-  probe optional because "the OR is already met" (`20-06-PLAN.md` must_haves). ROADMAP's "verified
-  live" qualifier applies to the whole criterion. Advisory drift (same as cycle 1): amend SC3's
-  wording or make the probe a required interactive step.
-- Requirements: ROADMAP EVAL-04, EVAL-05; plan `requirements` are 20-01 [EVAL-05], 20-02/03/06/07
-  [EVAL-04, EVAL-05], 20-04 [EVAL-04], 20-05 [EVAL-05]. No drift.
-- CONTEXT ↔ plans: D-05 ("drop whichever signal does not appear") vs 20-06 keeping an absent name
-  pending the TUI: 20-06 Task 1 adds a dated D-05 amendment; not drift. D-07 ("the chain recorded
-  per agent ... `opencode debug agent <name>`") vs 20-07 step 7 (one agent, `debug agents` or
-  `run --agent`): the 20-07 D-07 amendment covers the command, not the per-agent scope (see HIGH 9).
-  D-10's file list vs 20-03's allowlist: the plan adds `opencode.json` and `hooks.json`; additions
-  are not drift. D-11 "two trials each": 20-07 step 6 REQUIRED; consistent.
-
-## Cycle 1 dispositions
-
-Cycle-1 HIGHs (numbering from the cycle-1 Consensus Summary; plan numbers then were 20-01..20-06):
-1. Claude override-tier regression: FULLY RESOLVED (20-02 Task 1 four cases, claude matrix in verify).
-2. Scratch inventory resolved from ai-kit's root: FULLY RESOLVED (20-03 `_project_env`, exact-root assertion and grep).
-3. Installer opencode probes outside isolation: FULLY RESOLVED (20-03 XDG_* under the throwaway home, T-20-18, hermetic env pin).
-4. No template version bump: FULLY RESOLVED (20-01 template 4, `TEMPLATE_VERSION = 4`, goldens).
-5. Bootstrap on the old runner: closed by explicit acceptance (T-20-17, host recorded); not counted.
-6. `status=ok` impossible for a clean tree: FULLY RESOLVED (20-04/20-05 dispatch rule, verify regex).
-7. Opencode's own `AI_AGENT` rejected: FULLY RESOLVED (four-set rule).
-8. `inventory --refresh` enumerates every CLI: FULLY RESOLVED (controlled PATH, `installed_runtimes` proof).
-9. Signal probes on the wrong group/temp prefix: PARTIALLY RESOLVED (pgid file and TMPDIR fixed; readiness is now HIGH 2 and 4).
-10. Child timeouts above the 1,800 s parent: PARTIALLY RESOLVED (per-child bounds; the stop rule and the 20-05 total are HIGH 3 and 5).
-11. D-01 artifacts not kept: FULLY RESOLVED (20-03 `--artifacts-out`).
-12. D-11/R5 steps optional: FULLY RESOLVED as to required-ness (20-07 steps 6 and 7 REQUIRED); their mechanics are HIGH 8 and 9.
-
-Cycle-1 MEDIUMs: runtime map refusal, temp-prefix exemption, `_dir_names` overclaim, dropped-name
-mirrors, installer overclaim, conditional acceptance, `make test`/`validate.txt` counts and the
-docker gate are FULLY RESOLVED in the cited tasks. The runner failure-path restore is PARTIALLY
-RESOLVED (pre-existing `.new` protected; restore still uses `git checkout`, listed above).
+- SC1/SC2 vs must_haves: unchanged from cycle 2; no contradiction.
+- SC3: the cycle-2 advisory drift is addressed by a planned dated clarification of the SC3 text
+  (20-07 Task 1, `clarified <date>`), not yet applied; consistent once 20-07 runs.
+- Requirements: ROADMAP EVAL-04, EVAL-05; plan `requirements` unchanged (20-01 [EVAL-05],
+  20-02/03/06/07 [EVAL-04, EVAL-05], 20-04 [EVAL-04], 20-05 [EVAL-05]). No drift.
+- CONTEXT ↔ plans: the D-07 per-agent scope drift from cycle 2 is closed by the planned amendment
+  sentence (`one-agent sample`, acceptance-pinned). D-11 "two trials each": four trials required,
+  blocked trials repeated; consistent. D-05: unchanged (TUI-gated drop).
+- ROADMAP lists 7 plans; 7 PLAN.md files exist.
