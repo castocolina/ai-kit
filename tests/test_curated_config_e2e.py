@@ -44,6 +44,7 @@ from tests.test_curated_config_inventory import (
     real_gsd_run,
     seed_cache,
 )
+from tests.test_cursor_agents import _agent_files, parse_agent
 
 _REPO_ROOT = str(REPO_ROOT)
 
@@ -308,6 +309,28 @@ class TestReadOnlyRealGsd(_RealGsdTestCase):
         finally:
             _unlock_tree(saved)
         self.assertEqual(before, _tree_snapshot(project))
+
+class TestCursorAgentNamesAbsentFromCatalog(_RealGsdTestCase):
+    def test_names_absent_from_the_live_gsd_agent_catalog(self):
+        node_bin = _real_node_executable()
+        tools = REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs"
+        model_catalog = (
+            gsd_catalog.resolve_model_catalog_cjs_path(str(tools)) if tools.is_file() else None
+        )
+        if node_bin is None or not model_catalog:
+            missing = "node" if node_bin is None else "checkout-local lib/model-catalog.cjs"
+            self.skipTest(f"{missing} unavailable")
+
+        catalog = gsd_catalog.query_agent_catalog(node_bin, model_catalog)
+        self.assertIsNotNone(catalog, "catalog query failed with node and gsd-core present")
+        names = {
+            fields["name"]
+            for path in _agent_files()
+            if (fields := parse_agent(path.read_text(encoding="utf-8"))) is not None
+        }
+        self.assertGreaterEqual(len(catalog["tiers"]), 35)
+        self.assertTrue(names.isdisjoint(catalog["tiers"]))
+
 
 class TestRealGsdLanes(_RealGsdTestCase):
     def test_query_returns_lanes_roots_and_extra_keys(self):
