@@ -353,3 +353,14 @@ Run 3: `AIKIT-XAI status=no_change cli=opencode model=router-env/my-coding#high 
 - Pending EVAL item: EVAL-05; headless runs are not EVAL evidence (SPEC constraint).
 - Required steps: 1–4, 6, and 7.
 - Return: names-only environment list, smoke evidence and log, fresh-baseline snapshot check, and the full artifacts directory (`plan.json`, resulting `config.json`, `resolve-model.json`, `baked.json` for each label). For Opencode, also return four unblocked lane-trial outcomes (step 6), loader output and precedence outcome plus any opted-in shadow result (step 7).
+
+## Phase gates
+
+- `make test`: `exit=0`; 56 module results, 4,343 tests total. The matrix module reports `Ran 36 tests`; loader totals are `TestResolveModelMatrix=9`, `TestResolveModelMatrixCodex=9`, `TestResolveModelMatrixOpencode=9`, module total 36 (one matrix run, no second run).
+- `make validate`: `exit=0`; all hooks passed after the in-phase pyright correction (initial run exposed 23 typing errors in the matrix test mixin and one nullable mismatch assertion).
+- Verbose pre-push unittest hook: `exit=0`; 43 modules, 4,125 tests total.
+- `make e2e-docker`: `exit=0` (`ai-kit clean-room E2E: PASS`).
+- `snapshot --check tmp/p20/plan07.before.json`: `snapshot ok`. Older plan04 baseline: `snapshot ok` (information only).
+- `secret-scan`: clean. `$HOME` literal scan: clean.
+- Leak check: no process started by this plan remains.
+

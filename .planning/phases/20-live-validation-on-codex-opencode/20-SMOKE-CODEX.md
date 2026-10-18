@@ -238,3 +238,14 @@ CLAUDE_PID
 - Pending EVAL item: EVAL-04; headless runs are not EVAL evidence (SPEC constraint).
 - Required steps: 1–5.
 - Return: names-only environment list, smoke evidence and log, fresh-baseline snapshot check, and the full artifacts directory (`plan.json`, resulting `config.json`, `resolve-model.json`, `baked.json` for each label). Also return any Codex trust prompt note.
+
+## Phase gates
+
+- `make test`: `exit=0`; 56 module results, 4,343 tests total. The matrix module reports `Ran 36 tests`; loader totals are `TestResolveModelMatrix=9`, `TestResolveModelMatrixCodex=9`, `TestResolveModelMatrixOpencode=9`, module total 36 (one matrix run, no second run).
+- `make validate`: `exit=0`; all hooks passed after the in-phase pyright correction (initial run exposed 23 typing errors in the matrix test mixin and one nullable mismatch assertion).
+- Verbose pre-push unittest hook: `exit=0`; 43 modules, 4,125 tests total.
+- `make e2e-docker`: `exit=0` (`ai-kit clean-room E2E: PASS`).
+- `snapshot --check tmp/p20/plan07.before.json`: `snapshot ok`. Older plan04 baseline: `snapshot ok` (information only).
+- `secret-scan`: clean. `$HOME` literal scan: clean.
+- Leak check: no process started by this plan remains.
+
