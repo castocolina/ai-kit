@@ -56,3 +56,7 @@ The previous milestone's tool-substitution hook works but has no visible effect:
   grep; next time rg"); plain stdout is not added as context for this event.
 - UI visibility of `additionalContext` on tool events is not documented; verify live.
 - Output cap 10,000 characters per field; keys outside `hookSpecificOutput` are silently ignored.
+
+## Promoted
+
+Promoted to Phase 21.3 on 2026-10-18 (ROADMAP and REQUIREMENTS updated). Owner-approved order: 21.1 -> 21.2 -> 21.3, all before Phases 22 and 23.

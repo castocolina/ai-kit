@@ -62,3 +62,7 @@ scarce planner quota (the planner model ran close to exhaustion on 2026-10-18).
 - Open for the phase researcher: Laya batch isolation and limits; version pinning; Zen's role;
   consent model; the atomic-skill boundary (per question type vs one shared client, without
   duplicating `jev_review.py`); adding `score` and handling 400 `max_tokens_exceeded` and 529.
+
+## Promoted
+
+Promoted to Phase 21.1 on 2026-10-18 (ROADMAP and REQUIREMENTS updated). Owner-approved order: 21.1 -> 21.2 -> 21.3, all before Phases 22 and 23.

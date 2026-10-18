@@ -6,16 +6,16 @@ current_phase: 21
 current_phase_name: Cursor Live Validation
 status: executing
 stopped_at: Completed 20-07-PLAN.md
-last_updated: "2026-10-18T13:32:40.405Z"
+last_updated: "2026-10-18T17:26:09.982Z"
 last_activity: 2026-10-18
 last_activity_desc: Phase 20 execution started
-state_head: 709ee087faed57d3e1968b0c2b062cb396eb8574
+state_head: bf8e2745f3ea5848f78814db417ab18db693f047
 progress:
-  total_phases: 15
+  total_phases: 17
   completed_phases: 1
-  total_plans: 114
+  total_plans: 115
   completed_plans: 108
-  percent: 0
+  percent: 6
 ---
 
 # Project State
@@ -34,7 +34,7 @@ Plan: 7 of 7
 Status: Ready to execute
 Last activity: 2026-10-18 — Phase 20 execution started
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 6%
 
 ## Performance Metrics
 
@@ -455,6 +455,9 @@ any order, or deferred, without blocking anything else in this milestone.
 - Phase 24 added after Phase 23: Spec-and-discuss chain skill (learned from the tools-installer run, 2026-10-14)
 - Phase 21.1 inserted after Phase 21: Cursor project-level subagent linking (AGT-02; D-01 spike: cursor CLI ignores ~/.cursor/agents)
 - Phase 21.1 moved to backlog 999.7 (2026-10-18, owner decision: cursor is a secondary runtime; Phase 21 documents manual per-file linking)
+- Phase 21.1 inserted after Phase 21: Atomic reusable decision-system skills (DEC-01..03); from the 2026-10-18 todos, owner-prioritized ahead of 22/23
+- Phase 21.2 inserted after Phase 21: PreCompact pre-summary hook via the decision system (PCH-01..02); from the 2026-10-18 todos, owner-prioritized ahead of 22/23
+- Phase 21.3 inserted after Phase 21: Visible tool-advisory hooks as setup knobs (ADV-01..04); from the 2026-10-18 todos, owner-prioritized ahead of 22/23
 
 ## Deferred Verification
 

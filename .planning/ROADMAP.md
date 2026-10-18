@@ -72,6 +72,9 @@ runtime hosting the session. Source spec:
 - [x] **Phase 19: Evaluation on Claude** - Skill pressure-testing, `/skill-judge` gate, and a live smoke run + `resolve-model` proof from the claude host (completed 2026-10-17)
 - [ ] **Phase 20: Live Validation on Codex + Opencode** - Live smoke runs from the codex and opencode hosts, resolving the two open verifications from the spec
 - [ ] **Phase 21: Cursor Live Validation** - Live smoke run from the cursor host (independent; may run any time after Phase 19)
+- [ ] **Phase 21.1: Atomic reusable decision-system skills** - Jev decisions as injectable, cross-host skills (INSERTED 2026-10-18)
+- [ ] **Phase 21.2: PreCompact pre-summary hook** - Decision-system-classified transcript chunks feed a cheaper compaction (INSERTED 2026-10-18)
+- [ ] **Phase 21.3: Visible tool-advisory hooks** - SessionStart/PreToolUse/PostToolUse advisors as setup knobs (INSERTED 2026-10-18)
 - [ ] **Phase 22: Pi Live Validation** - Live smoke run from the pi host (independent; may run any time after Phase 19)
 - [ ] **Phase 23: Host-split status line for Claude Code and Cursor CLI** - Split `tools/status-line.py` per host and ship a Cursor CLI status line with the shared 5/10/15 proximity gauge (promoted from backlog 999.4; independent of Phases 17–22)
 - [ ] **Phase 24: Spec-and-discuss chain skill** - Installable skill that runs spec → discuss over a phase range with optional Laya/TypeSafe decisions, quality over simplicity unless MVP mode
@@ -548,6 +551,66 @@ Plans (cross-AI plans are delegated in plan order, one per wave; the two live AI
 
 **Wave 7** *(blocked on Wave 6)*
 - [ ] 21-06-PLAN.md — `21-INTERACTIVE-CURSOR.md` (user-keys digest as a key-integrity check, optional SC5 probe that lists leftovers) and the phase gates, skill-judge gate never soft (SPEC R8)
+
+### Phase 21.1: Atomic reusable decision-system skills (INSERTED)
+
+**Goal**: Jev-backed structured decisions become a small set of atomic, reusable skills that any
+flow (GSD gates, review and plan-checker triage, planning side decisions, hooks) can inject,
+installed for every host; advisory only, with an explicit "reason it yourself" fallback.
+**Requirements**: DEC-01, DEC-02, DEC-03
+**Depends on:** Phase 24 (the `decide.py` ladder and its detection semantics); independent of
+Phase 21
+**Success Criteria** (what must be TRUE):
+
+  1. The System One plan (`.planning/docs/system-one-decision-skill/PLAN.md` on main, with the
+     2026-10-11 todo's corrections and the Jev 1.14 addendum) is executed as ai-kit skills under
+     `skills/`, split at seams that let an escalation backend be added or a piece removed without
+     touching the others; backend complexity stays in that plan's client, never duplicated.
+  2. The `decide.py` ladder and every GSD decision point use the shared client; the TypeSafe rung
+     no longer breaks when `jev-latest` moves (versioned-id policy decided and tested).
+  3. The skills are discoverable on claude, opencode and pi (and secondary hosts where cheap),
+     probe availability, honor consent for remote backends, and log every advisory answer.
+  4. Research settles which Jev 1.14 features ship now (`score`, `box`, images incl. comparing
+     several, long context, multi-question batching) and what local Laya supports.
+
+### Phase 21.2: PreCompact pre-summary hook via the decision system (INSERTED)
+
+**Goal**: Compaction gets cheaper and faster: chunks of the active transcript are classified by
+the decision system (keep, summarize, discard) into a pre-made summary that the compaction or the
+post-compaction context uses.
+**Requirements**: PCH-01, PCH-02
+**Depends on:** Phase 21.1
+**Success Criteria** (what must be TRUE):
+
+  1. A spike settles the delivery route against live Claude Code: PreCompact can only block
+     (2026-10-18 fast research), so the candidates are a pre-made `{session-id}-{name}-compact.md`
+     in a temp dir injected by a `compact`-matcher SessionStart hook, and a manual
+     `/compact <instructions>` variant that points at it.
+  2. Chunking reads the transcript defensively (its JSONL format is internal and versioned), and
+     the injected summary fits the 10,000-character hook output cap.
+  3. Installable and removable as its own ai-kit setup knob; measured token or time saving
+     recorded against a baseline compaction.
+
+### Phase 21.3: Visible tool-advisory hooks as setup knobs (INSERTED)
+
+**Goal**: Agents get told, at the moment it matters, which installed tool to use instead of
+cat/grep/sed/find and how to read large files cheaply, and the user can see and toggle each hook.
+**Requirements**: ADV-01, ADV-02, ADV-03, ADV-04
+**Depends on:** Phase 21.1 (for the decision-system knob only; the advisors themselves are
+independent)
+**Success Criteria** (what must be TRUE):
+
+  1. ai-kit setup lists each hook as its own knob (wizard row and headless flag) to install or
+     uninstall: SessionStart tool briefing, PreToolUse advisor, PostToolUse reminder, plus the
+     decision-system and PreCompact hooks.
+  2. The SessionStart briefing is visible to the user (`systemMessage`) as well as the model, and
+     no hook mentions rtk.
+  3. A PreToolUse advisor (advice only, never `permissionDecision`, never a rewrite) flags
+     grep/cat/sed/find in Bash when rg/bat/sd/fd are installed, with the useful flags
+     (`bat --plain --paging=never -l <lang> -r N:M`), and reports size, lines and estimated tokens
+     before a large Read with a ranged-read suggestion.
+  4. A PostToolUse reminder ("you used grep; next time rg") fires only for installed tools; both
+     advisors are live-verified in a real session, not only unit-tested.
 
 ### Phase 22: Pi Live Validation
 

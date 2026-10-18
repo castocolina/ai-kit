@@ -43,3 +43,7 @@ transcript file whose active part can be split into chunks.
   so chunking must be defensive and version-tolerant; the file may lag the in-memory conversation.
 - `additionalContext`/`systemMessage` are capped at 10,000 characters each (larger output goes to a
   file with a 2,000-character preview), so the injected summary must fit that budget.
+
+## Promoted
+
+Promoted to Phase 21.2 on 2026-10-18 (ROADMAP and REQUIREMENTS updated). Owner-approved order: 21.1 -> 21.2 -> 21.3, all before Phases 22 and 23.

@@ -96,6 +96,24 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 - [ ] **AGT-01**: ai-kit ships Cursor executor subagent files `composer-worker` (pinned to non-fast `composer-2.5`) and `grok-worker` (pinned to the explicit non-fast `grok-4.7-medium`; amended 2026-10-14, a bare `grok-4.7` resolves through local `modelParameters`), with short bodies for executing an already-planned task and names that do not collide with the 35 GSD agents. They live in their own `cursor-agents/` folder (never `agents/`, which links into `~/.claude/agents` where Claude would load an unrunnable model pin); a test parses their frontmatter with the bundle's parser rules and checks the pins against captured `models` output. Amended 2026-10-18 (Phase 21 D-01 spike): cursor-agent 2026.10.14 never reads `~/.cursor/agents`, so the `~/.cursor/agents` setup category, wizard row, headless flag and live delegation proof moved to AGT-02
 - [ ] **AGT-02**: ai-kit links the `cursor-agents/` files per file into a project's `.cursor/agents` (the only subagent root the cursor CLI reads), with `all|name1,name2` selection mirroring `--skills` (an unknown name exits 1 naming it), never overwriting a non-ai-kit file and removing only its own links; tested. A live delegation from a cursor parent shows each pinned model in the Task call, and one run is confirmed non-fast in the Cursor usage dashboard (backlog 999.7; split from AGT-01 on 2026-10-18, moved out of the inserted Phase 21.1 the same day)
 
+### Decision System
+
+- [ ] **DEC-01**: The System One decision-skill plan is executed as atomic ai-kit skills (shared Jev client; backends, consent, probes and error taxonomy owned by that plan) with seams that allow adding or removing an escalation backend (Phase 21.1)
+- [ ] **DEC-02**: The `decide.py` ladder and GSD decision points use the shared client; a moving `jev-latest` alias never breaks the TypeSafe rung (Phase 21.1)
+- [ ] **DEC-03**: The decision skills are discoverable on claude, opencode and pi, advisory only, with every answer logged (Phase 21.1)
+
+### PreCompact Pre-Summary
+
+- [ ] **PCH-01**: A spike-verified route delivers a decision-system-built pre-summary (`{session-id}-{name}-compact.md` in a temp dir) to the compaction or the post-compaction context, within the hook output cap (Phase 21.2)
+- [ ] **PCH-02**: The PreCompact pre-summary hook is its own install/uninstall setup knob and its saving is measured against a baseline (Phase 21.2)
+
+### Tool Advisory Hooks
+
+- [ ] **ADV-01**: Each ai-kit hook is a separate install/uninstall knob in setup (wizard row and headless flag) (Phase 21.3)
+- [ ] **ADV-02**: The SessionStart tool briefing is user-visible and never mentions rtk (Phase 21.3)
+- [ ] **ADV-03**: A PreToolUse advisor flags cat/grep/sed/find when bat/rg/sd/fd are installed and reports size/lines/estimated tokens before large reads, advice only (Phase 21.3)
+- [ ] **ADV-04**: A PostToolUse reminder nudges toward the installed better tool after a non-recommended call; both advisors live-verified (Phase 21.3)
+
 ### Host-Split Status Line
 
 - [ ] **STL-01**: `tools/status-line.py` splits into host-neutral `common_*` modules, `claude_*` host modules and a thin `claude-status-line.py` entry; the Claude render is byte-identical; a hard rename with an idempotent, atomic migration of the Claude `statusLine.command` and `statusline.toml` ships in the same change; the split files stay ruff/pylint clean; the stale status-line pipeline doc is fixed or deleted
@@ -174,6 +192,15 @@ None deferred beyond v1.3 at definition time.
 | EVAL-08 | Phase 22 | Pending |
 | AGT-01 | Phase 21 | Pending |
 | AGT-02 | 999.7 (backlog) | Deferred (secondary runtime) |
+| DEC-01 | Phase 21.1 | Pending |
+| DEC-02 | Phase 21.1 | Pending |
+| DEC-03 | Phase 21.1 | Pending |
+| PCH-01 | Phase 21.2 | Pending |
+| PCH-02 | Phase 21.2 | Pending |
+| ADV-01 | Phase 21.3 | Pending |
+| ADV-02 | Phase 21.3 | Pending |
+| ADV-03 | Phase 21.3 | Pending |
+| ADV-04 | Phase 21.3 | Pending |
 | HARD-01 | Phase 16.1 | Complete |
 | HARD-02 | Phase 16.1 | Complete |
 | HARD-03 | Phase 16.1 | Complete |
@@ -203,12 +230,12 @@ None deferred beyond v1.3 at definition time.
 | GPS-04 | Phase 27 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 62 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 4, APP 5, EVAL 8, AGT 2, HARD 5, RTM 3, SDC 4, STL 5, QTA 5, GPS 4). SPEC-05 (pi
+- v1.3 requirements: 71 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 4, APP 5, EVAL 8, AGT 2, DEC 3, PCH 2, ADV 4, HARD 5, RTM 3, SDC 4, STL 5, QTA 5, GPS 4). SPEC-05 (pi
   enumeration) and SPEC-06 (cursor wrapper) were split out of SPEC-02 during the Phase 16
   discussion, 2026-09-23.
-- Mapped to phases: 62/62
+- Mapped to phases: 71/71 (EVAL-04 and AGT-02 deferred to backlog)
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-09-23*
-*Last updated: 2026-10-18 — AGT-02 split from AGT-01 (Phase 21.1, D-01 spike); 2026-10-14 — Phases 25–27 (QTA, GPS) added from the quota/goal-prompt todo; Phase 23 (STL) defined; Phase 24 (SDC) added, SKL-04 added; earlier: 16.1 (HARD), 18.1 (RTM), XAI-02 amended (100% coverage)*
+*Last updated: 2026-10-18 — Phases 21.1-21.3 (DEC, PCH, ADV) inserted from the 2026-10-18 todos; AGT-02 split from AGT-01 (Phase 21.1, D-01 spike); 2026-10-14 — Phases 25–27 (QTA, GPS) added from the quota/goal-prompt todo; Phase 23 (STL) defined; Phase 24 (SDC) added, SKL-04 added; earlier: 16.1 (HARD), 18.1 (RTM), XAI-02 amended (100% coverage)*
