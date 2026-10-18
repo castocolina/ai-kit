@@ -4353,7 +4353,9 @@ def _baked_chain(ctx: SmokeCtx, project: str, plan: dict, label: str, plan_path:
     matrix_ctx = _MatrixCtx(
         ctx.node_bin, tools_path, ctx.home, ctx.host, os.path.dirname(os.path.dirname(tools_path))
     )
-    env = {k: v for k, v in _project_env(ctx).items() if k != "GSD_RUNTIME"}
+    env = dict(_project_env(ctx))
+    if ctx.host != "cursor":
+        env.pop("GSD_RUNTIME", None)
     got = _resolve_all(matrix_ctx, agents, project, env)
     rows = _mismatches(agents, plan, tables, got, ctx.host)
     if rows:
