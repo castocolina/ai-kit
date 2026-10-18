@@ -139,7 +139,7 @@ env signal, and the opencode lane from an opencode host.
 | adjacency | R4 | ✅ covered | A specialist override and its tier are checked separately |
 | empty | R4 | ✅ covered | `model: ""` is a failure unless inheritance was planned |
 | ordering | R4 | ✅ covered | Agents are reported in sorted order |
-| adjacency | R5 | ✅ covered | A same-named global agent never shadows the project agent (evidence) |
+| adjacency | R5 | 🧪 backstop | A same-named global agent never shadows the project agent (evidence; amended 2026-10-18: required interactive step 7 proves local precedence from loader output; the same-named-global case runs only if the user opts in, because the phase never writes the user's global config) |
 | empty | R5 | ✅ covered | An agent without a planned model keeps no `model:` line |
 | ordering | R5 | ✅ covered | Project agents load before global ones |
 | concurrency | R5 | 🧪 backstop | One opencode session per scratch project |

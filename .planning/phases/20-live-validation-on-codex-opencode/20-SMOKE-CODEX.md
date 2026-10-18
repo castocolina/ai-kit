@@ -233,4 +233,8 @@ CLAUDE_PID
 - Interactive run: pending; see `20-INTERACTIVE-CODEX.md`. The user's TUI env names, smoke and artifacts are the EVAL-04 evidence.
 
 ## Interactive run
-pending: `20-INTERACTIVE-CODEX.md`; the TUI env names, smoke and its artifacts from the user's session are the EVAL-04 evidence.
+
+- Script: `20-INTERACTIVE-CODEX.md`
+- Pending EVAL item: EVAL-04; headless runs are not EVAL evidence (SPEC constraint).
+- Required steps: 1–5.
+- Return: names-only environment list, smoke evidence and log, fresh-baseline snapshot check, and the full artifacts directory (`plan.json`, resulting `config.json`, `resolve-model.json`, `baked.json` for each label). Also return any Codex trust prompt note.

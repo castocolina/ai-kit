@@ -122,6 +122,7 @@ Cursor and pi are out of scope (Phases 21/22).
     `.codex/agents/gsd-*.toml` with `tomllib`.
   - Baked values are compared only after the post-apply installer run (18 D-37). R1's
     idempotency edge holds only for unchanged config.
+  - Amended 2026-10-18: opencode v2.0.31 has no `debug agent <name>`; the fourth link is the interactive step 7 in `20-INTERACTIVE-OPENCODE.md` (`opencode run --standalone --agent` JSON model fields, or `debug agents` listing against the user's service, recorded as such). The three headless links are unchanged. Scope: the per-agent chain consists of those three headless links, which the smoke proves for every agent (20-03); the loader observation is a one-agent sample (`gsd-planner`) unless the `debug agents` listing names a model per agent, in which case every `gsd-*` entry is compared.
 - **D-08: `runtime` is a managed key on opencode and codex** (amends 17 R5 and adds 17 D-23).
   `recommend` emits `runtime: <host>` (`source: preset`). On codex the tier layer is labelled
   "resolve-model only": `generateCodexAgentToml` embeds `model =` only for an explicit

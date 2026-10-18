@@ -348,4 +348,8 @@ Run 3: `AIKIT-XAI status=no_change cli=opencode model=router-env/my-coding#high 
 - Interactive run: pending; see `20-INTERACTIVE-OPENCODE.md`. The user's TUI env names, smoke, loader precedence and artifacts are the EVAL-05 evidence.
 
 ## Interactive run
-pending: `20-INTERACTIVE-OPENCODE.md`; the TUI env names, smoke, loader observation and artifacts from the user's session are the EVAL-05 evidence.
+
+- Script: `20-INTERACTIVE-OPENCODE.md`
+- Pending EVAL item: EVAL-05; headless runs are not EVAL evidence (SPEC constraint).
+- Required steps: 1–4, 6, and 7.
+- Return: names-only environment list, smoke evidence and log, fresh-baseline snapshot check, and the full artifacts directory (`plan.json`, resulting `config.json`, `resolve-model.json`, `baked.json` for each label). For Opencode, also return four unblocked lane-trial outcomes (step 6), loader output and precedence outcome plus any opted-in shadow result (step 7).
