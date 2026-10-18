@@ -519,52 +519,35 @@ within this phase.
      frontmatter parser and captured `models` output (AGT-01 files). Amended 2026-10-18 per the
      D-01 spike: cursor-agent 2026.10.14 loads subagents only from `<workspace>/.cursor/agents`
      (and `.claude/agents`, `.grok/agents` under the workspace), never from `~/.cursor/agents`, so
-     linking and the live delegation proof move to Phase 21.1 (AGT-02). Source todo
+     linking and the live delegation proof move to backlog 999.7 (AGT-02; moved out of the inserted Phase 21.1 on 2026-10-18, cursor is a secondary runtime). Source todo
      `.planning/todos/pending/2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md`.
   5. Native per-call model selection is verified live from the cursor host, or `host_can_select`
      keeps the session-default-only label for cursor (amended 2026-10-17 per 18.1-VERIFICATION
      deferred item).
-**Plans:** 6 plans
+**Plans:** 7 plans
 
 Plans (cross-AI plans are delegated in plan order, one per wave; the two live AI-CLI uses are the
 21-04 cursor-agent dispatch and the 21-05 pi judge):
 **Wave 1**
-- [ ] 21-01-PLAN.md — Wrapper-proof cursor detection: scan-all guarded `agent` resolver, `real_path`, public `parse_cursor_models` with the captured 2026.10.14 fixture, SC5 pin (SPEC-06)
+- [ ] 21-01-PLAN.md — Wrapper-proof cursor detection: scan-all guarded `agent` resolver, `real_path` on both the build and the routing refresh path, public `parse_cursor_models` (ASCII id token) with the captured 2026.10.14 fixture, SC5 pin (SPEC-06)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 21-02-PLAN.md — `cursor-agents/composer-worker.md` and `grok-worker.md` with the bundle-rule test module, registered in the test groups (AGT-01 files)
+- [ ] 21-07-PLAN.md — Runner `resolveBin` mirrors D-09 (scan-all guarded `agent`) with a self-test case; template 5 bump, pins, goldens, tracked runner re-rendered through `ensure-runner` (SPEC-06)
 
 **Wave 3** *(blocked on Wave 1 completion)*
+- [ ] 21-02-PLAN.md — `cursor-agents/composer-worker.md` and `grok-worker.md` with the bundle-rule test module, registered in the test groups (AGT-01 files)
+
+**Wave 4** *(blocked on Wave 1 completion)*
 - [ ] 21-03-PLAN.md — Harness cursor support (host root G1, resolve-model-only chain G3, generated paths G4, `matrix --host cursor` G5) and the hermetic local cursor smoke and matrix (EVAL-07 rehearsal, SPEC R2)
 
-**Wave 4** *(blocked on Waves 1 and 3)*
-- [ ] 21-04-PLAN.md — Headless cursor smoke through the runner under a scratch home, process-reap proof, `21-SMOKE-CURSOR.md`, conditional cursor env-signal label (EVAL-07)
+**Wave 5** *(blocked on Waves 1, 4 and 2)*
+- [ ] 21-04-PLAN.md — Headless cursor smoke through the template-5 runner under a scratch home (path-guarded teardown, one-attempt verdict line), process-reap proof, `21-SMOKE-CURSOR.md`, conditional cursor env-signal label (EVAL-07)
 
-**Wave 5** *(blocked on Waves 2 and 4)*
-- [ ] 21-05-PLAN.md — Conditional label lift in SKILL.md/README with the test pin in the evidence commit, skill-judge loop (EVAL-07, SPEC R3)
+**Wave 6** *(blocked on Waves 3 and 5)*
+- [ ] 21-05-PLAN.md — Conditional label lift in SKILL.md/README with the test pin in the evidence commit, skill-judge loop with per-report digest and findings checks (EVAL-07, SPEC R3)
 
-**Wave 6** *(blocked on Wave 5)*
-- [ ] 21-06-PLAN.md — `21-INTERACTIVE-CURSOR.md` (user-keys digest, optional SC5 probe) and the phase gates (SPEC R8)
-
-### Phase 21.1: Cursor project-level subagent linking (INSERTED)
-
-**Goal**: ai-kit's pinned Cursor subagents reach the cursor CLI: they are linked per file into a
-project's `.cursor/agents`, the only subagent root the CLI reads (Phase 21 D-01 spike,
-2026-10-18), and a live delegation shows each pinned model.
-**Requirements**: AGT-02
-**Depends on:** Phase 21 (the subagent files)
-**Success Criteria** (what must be TRUE):
-
-  1. A tested ai-kit path links `cursor-agents/*.md` per file (never a directory) into a chosen
-     project's `.cursor/agents`, mirrors `--skills` selection (`all|name1,name2`, unknown name
-     exits 1 naming it), never overwrites a non-ai-kit file there, and removes only its own links.
-  2. A headless delegation from a cursor parent in a scratch project shows each linked agent's
-     pinned model in the Task call; the user confirms one run as non-fast in the Cursor usage
-     dashboard.
-  3. SKILL/README docs say where the agents are linked and why `~/.cursor/agents` is not used.
-
-Plans:
-- [ ] TBD (run /gsd-plan-phase 21.1 to break down)
+**Wave 7** *(blocked on Wave 6)*
+- [ ] 21-06-PLAN.md — `21-INTERACTIVE-CURSOR.md` (user-keys digest as a key-integrity check, optional SC5 probe that lists leftovers) and the phase gates, skill-judge gate never soft (SPEC R8)
 
 ### Phase 22: Pi Live Validation
 
@@ -812,6 +795,26 @@ session to confirm EVAL-04 (codex session env signal, smoke, snapshot) beyond th
 primary runtimes are claude, opencode and pi; codex and cursor are secondary (their models remain
 usable as reviewers and executors). The headless evidence and the pending label stay as they are.
 **Requirements:** EVAL-04
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.7: Cursor project-level subagent linking (BACKLOG)
+
+**Goal:** [Captured for future planning] ai-kit's pinned Cursor subagents (`cursor-agents/`,
+shipped by Phase 21) reach the cursor CLI: they are linked per file into a project's
+`.cursor/agents`, the only subagent root the CLI reads (Phase 21 D-01 spike, 2026-10-18), and a
+live delegation shows each pinned model. Success criteria when promoted: (1) a tested ai-kit path
+links `cursor-agents/*.md` per file (never a directory) into a chosen project's `.cursor/agents`,
+mirrors `--skills` selection (`all|name1,name2`, unknown name exits 1 naming it), never overwrites
+a non-ai-kit file and removes only its own links; (2) a headless delegation from a cursor parent
+shows each pinned model in the Task call, and the user confirms one run as non-fast in the Cursor
+usage dashboard; (3) docs say where the agents are linked and why `~/.cursor/agents` is not used.
+Inputs: `21-SPIKE-D01.md`, 21-CONTEXT D-02..D-05. Moved out of the inserted Phase 21.1 on
+2026-10-18 by owner decision (cursor is a secondary runtime; Phase 21 documents manual linking).
+**Requirements:** AGT-02
 **Plans:** 0 plans
 
 Plans:

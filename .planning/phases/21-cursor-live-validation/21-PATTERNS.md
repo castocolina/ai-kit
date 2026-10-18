@@ -4,7 +4,7 @@
 **Files analyzed:** 15 (new/modified)
 **Analogs found:** 15 / 15 (two are role-match only)
 
-Scope: R1-R5, R8, SC5. Linking, wizard, `--cursor-agents` (setup.py, wizard_app.py) belong to Phase 21.1 and are NOT mapped.
+Scope: R1-R5, R8, SC5. Linking, wizard, `--cursor-agents` (setup.py, wizard_app.py) belong to backlog 999.7 and are NOT mapped.
 All analog paths below were checked as git-tracked (`git ls-files`). `<D>` = `skills/ai-kit-spec-review/ai_kit_spec`, `<C>` = `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config`.
 
 ## File Classification

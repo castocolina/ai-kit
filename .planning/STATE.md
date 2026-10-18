@@ -454,6 +454,7 @@ any order, or deferred, without blocking anything else in this milestone.
 - Phase 18.1 inserted after Phase 18: One runtime model: (runtime, model) candidates, native_runtime removed
 - Phase 24 added after Phase 23: Spec-and-discuss chain skill (learned from the tools-installer run, 2026-10-14)
 - Phase 21.1 inserted after Phase 21: Cursor project-level subagent linking (AGT-02; D-01 spike: cursor CLI ignores ~/.cursor/agents)
+- Phase 21.1 moved to backlog 999.7 (2026-10-18, owner decision: cursor is a secondary runtime; Phase 21 documents manual per-file linking)
 
 ## Deferred Verification
 

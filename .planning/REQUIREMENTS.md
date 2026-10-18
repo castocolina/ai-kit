@@ -94,7 +94,7 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 ### Cursor Executor Agents
 
 - [ ] **AGT-01**: ai-kit ships Cursor executor subagent files `composer-worker` (pinned to non-fast `composer-2.5`) and `grok-worker` (pinned to the explicit non-fast `grok-4.7-medium`; amended 2026-10-14, a bare `grok-4.7` resolves through local `modelParameters`), with short bodies for executing an already-planned task and names that do not collide with the 35 GSD agents. They live in their own `cursor-agents/` folder (never `agents/`, which links into `~/.claude/agents` where Claude would load an unrunnable model pin); a test parses their frontmatter with the bundle's parser rules and checks the pins against captured `models` output. Amended 2026-10-18 (Phase 21 D-01 spike): cursor-agent 2026.10.14 never reads `~/.cursor/agents`, so the `~/.cursor/agents` setup category, wizard row, headless flag and live delegation proof moved to AGT-02
-- [ ] **AGT-02**: ai-kit links the `cursor-agents/` files per file into a project's `.cursor/agents` (the only subagent root the cursor CLI reads), with `all|name1,name2` selection mirroring `--skills` (an unknown name exits 1 naming it), never overwriting a non-ai-kit file and removing only its own links; tested. A live delegation from a cursor parent shows each pinned model in the Task call, and one run is confirmed non-fast in the Cursor usage dashboard (Phase 21.1; split from AGT-01 on 2026-10-18)
+- [ ] **AGT-02**: ai-kit links the `cursor-agents/` files per file into a project's `.cursor/agents` (the only subagent root the cursor CLI reads), with `all|name1,name2` selection mirroring `--skills` (an unknown name exits 1 naming it), never overwriting a non-ai-kit file and removing only its own links; tested. A live delegation from a cursor parent shows each pinned model in the Task call, and one run is confirmed non-fast in the Cursor usage dashboard (backlog 999.7; split from AGT-01 on 2026-10-18, moved out of the inserted Phase 21.1 the same day)
 
 ### Host-Split Status Line
 
@@ -173,7 +173,7 @@ None deferred beyond v1.3 at definition time.
 | EVAL-07 | Phase 21 | Pending |
 | EVAL-08 | Phase 22 | Pending |
 | AGT-01 | Phase 21 | Pending |
-| AGT-02 | Phase 21.1 | Pending |
+| AGT-02 | 999.7 (backlog) | Deferred (secondary runtime) |
 | HARD-01 | Phase 16.1 | Complete |
 | HARD-02 | Phase 16.1 | Complete |
 | HARD-03 | Phase 16.1 | Complete |

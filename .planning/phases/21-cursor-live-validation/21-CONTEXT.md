@@ -1,7 +1,7 @@
 # Phase 21: Cursor Live Validation - Context
 
 **Gathered:** 2026-10-14 (assumptions mode, `--analyze --all --batch`, jev screening, best over easy)
-**Status:** Ready for planning (D-01 spike done 2026-10-18; R6/R7 moved to Phase 21.1)
+**Status:** Ready for planning (D-01 spike done 2026-10-18; R6/R7 moved to backlog 999.7)
 
 <domain>
 ## Phase Boundary
@@ -36,10 +36,10 @@ behind the shell wrapper, and ai-kit ships two pinned non-fast Cursor subagents 
 
 - **D-01 outcome (2026-10-18, `21-SPIKE-D01.md`):** the CLI ignores user-level agents. A user-level
   symlinked `composer-worker.md` was rejected by the Task tool; the same file linked into the
-  workspace's `.cursor/agents` ran with `"model": "composer-2.5"`. Per D-01, R6/R7 move to Phase 21.1
+  workspace's `.cursor/agents` ran with `"model": "composer-2.5"`. Per D-01, R6/R7 move to backlog 999.7
   (AGT-02) and D-02 to D-05 below are carried there as input, not planned here. Ledger.
 
-### Setup category (R6; moved to Phase 21.1)
+### Setup category (R6; moved to backlog 999.7)
 - **D-02: `"cursor-agents"` is the fourth entry of `CATEGORIES`.**
   - One destination helper replaces the nine `claude_dir/cat/name` joins. `cursor_dir` is
     threaded as a trailing `cursor_dir=None` keyword, and `None` makes the category inert.
