@@ -1605,6 +1605,81 @@ class TestCrossAi(unittest.TestCase):
         self.assertEqual(em["review.default_reviewers"]["value"], ["codex"])
         self.assertEqual(em["review.models.codex"]["value"], "gpt-5.6-sol")
 
+    def test_host_slug_never_a_review_lane_on_codex_and_opencode(self):
+        """D-11/SPEC R6: the host CLI is never a proposed review lane, even installed."""
+        lanes = _fixture_review_lanes()
+        lane_runtimes = sorted(
+            {lane["runtime"] for lane in lanes if isinstance(lane.get("runtime"), str)}
+        )
+        self.assertIn("codex", lane_runtimes)
+        self.assertIn("opencode", lane_runtimes)
+        lane_candidates = [
+            cand(
+                "claude-opus-5-5" if rt == "claude" else f"fake-{rt}-reviewer",
+                runtime=rt,
+                is_host=False,
+                vendor="anthropic",
+                price=2,
+                score_axes=3,
+                purpose_scores={"review": 90.0, "planning": 1.0},
+            )
+            for rt in lane_runtimes
+        ]
+        for host in ("codex", "opencode"):
+            with self.subTest(host=host):
+                planner = cand(
+                    "gpt-5.6-sol" if host == "codex" else "openai/gpt-5.6-sol",
+                    runtime=host,
+                    vendor="openai",
+                    price=4,
+                    score_axes=3,
+                    purpose_scores={"planning": 90.0, "general": 5.0},
+                )
+                candidates = [planner, *lane_candidates]
+                inv = make_inventory(
+                    host=host,
+                    candidates=candidates,
+                    review_lanes=lanes,
+                    extra_accepted=_review_lane_accepted_keys(),
+                )
+                # The host CLI is installed alongside at least one other lane runtime.
+                inv["installed_runtimes"] = list(lane_runtimes)
+                eligible = cross_ai.eligible_lanes(inv)
+                self.assertTrue(eligible, host)
+                self.assertFalse(
+                    any(lane["slug"] == host for lane in eligible), eligible
+                )
+                plan = build(inv, rigor="rigorous", cross_ai_review="y")
+                entry = entry_map(plan)["review.default_reviewers"]
+                self.assertEqual(entry["op"], "set", host)
+                self.assertTrue(entry["value"], host)
+                self.assertNotIn(host, entry["value"], entry["value"])
+                # A copied review.default_reviewers containing the host slug is flagged
+                # for replacement (17 D-08): an unset, or a set that drops the host.
+                copied = make_inventory(
+                    host=host,
+                    candidates=candidates,
+                    review_lanes=lanes,
+                    extra_accepted=_review_lane_accepted_keys(),
+                    existing={
+                        "exists": True,
+                        "values": {"review": {"default_reviewers": [host]}},
+                    },
+                )
+                copied["installed_runtimes"] = list(lane_runtimes)
+                plan = build(copied, rigor="rigorous", cross_ai_review="y")
+                entries = [
+                    e
+                    for e in plan["entries"]
+                    if e["key"] == "review.default_reviewers"
+                ]
+                unsets = [e for e in entries if e["op"] == "unset"]
+                sets = [e for e in entries if e["op"] == "set"]
+                self.assertTrue(
+                    unsets or (sets and all(host not in e["value"] for e in sets)),
+                    entries,
+                )
+
     def test_review_yes_no_lanes_turns_convergence_off(self):
         plan = build(make_inventory(), rigor="standard", cross_ai_review="y")
         self.assertFalse(entry_map(plan)["workflow.plan_review_convergence"]["value"])

@@ -395,28 +395,40 @@ class TestPlanSetRefusals(unittest.TestCase):
             self.assertEqual(code, 0, err)
 
     def test_host_slug_never_a_review_lane(self):
-        """B WR-05: --force admits a non-lane slug but never the host's own."""
-        with tempfile.TemporaryDirectory() as tmp:
-            inv_path, plan_path, _inv, plan = _write_pair(tmp, host="claude")
-            raw = _read_bytes(plan_path)
-            for force in (False, True):
-                code, _, err = _run_plan_set(
-                    plan_path, inv_path, "review.default_reviewers", '["claude"]', force=force
+        """B WR-05/D-11: --force admits a non-lane slug but never the host's own."""
+        for host in ("claude", "codex", "opencode"):
+            with self.subTest(host=host), tempfile.TemporaryDirectory() as tmp:
+                inv_path, plan_path, _inv, plan = _write_pair(tmp, host=host)
+                raw = _read_bytes(plan_path)
+                for force in (False, True):
+                    code, _, err = _run_plan_set(
+                        plan_path,
+                        inv_path,
+                        "review.default_reviewers",
+                        f'["{host}"]',
+                        force=force,
+                    )
+                    self.assertEqual(code, 2)
+                    self.assertIn("host CLI", err)
+                self.assertEqual(_read_bytes(plan_path), raw)
+                edited = copy.deepcopy(plan)
+                edited["entries"] = [
+                    e
+                    for e in edited["entries"]
+                    if e["key"] != "review.default_reviewers"
+                ]
+                edited["entries"].append(
+                    {
+                        "key": "review.default_reviewers",
+                        "op": "set",
+                        "value": [host],
+                        "source": "user",
+                        "why": "hand edit",
+                    }
                 )
-                self.assertEqual(code, 2)
-                self.assertIn("host CLI", err)
-            self.assertEqual(_read_bytes(plan_path), raw)
-            edited = copy.deepcopy(plan)
-            edited["entries"] = [
-                e for e in edited["entries"] if e["key"] != "review.default_reviewers"
-            ]
-            edited["entries"].append(
-                {"key": "review.default_reviewers", "op": "set", "value": ["claude"],
-                 "source": "user", "why": "hand edit"}
-            )
-            problem = plan_io.validate_plan(edited)
-            assert problem is not None
-            self.assertIn("host CLI", problem)
+                problem = plan_io.validate_plan(edited)
+                assert problem is not None
+                self.assertIn("host CLI", problem)
 
     def test_trusted_root_absolute_new(self):
         with tempfile.TemporaryDirectory() as tmp:
