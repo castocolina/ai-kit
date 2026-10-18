@@ -254,9 +254,10 @@ def _unknown_version_note() -> str:
 
 def _codex_installer_note() -> str:
     return (
-        "codex installer follow-up: the cached installer's local layout and the --codex --local "
-        "flags were verified by the Phase 20 codex smoke (20-SMOKE-CODEX.md); the shipped npx "
-        "launcher and its registry fetch were not exercised"
+        "codex installer follow-up: the cached installer's "
+        "local layout and the --codex --local flags were verified "
+        "by the Phase 20 codex smoke (20-SMOKE-CODEX.md); "
+        "the shipped npx launcher and its registry fetch were not exercised"
     )
 
 
