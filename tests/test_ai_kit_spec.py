@@ -1542,6 +1542,7 @@ class TestParseCursorModels(unittest.TestCase):
     def test_captured_listing_has_expected_ids(self):
         ids = detection.parse_cursor_models(self._fixture(CURSOR_MODELS_FIXTURE_PATH))
         self.assertIsNotNone(ids)
+        assert ids is not None
         self.assertEqual(len(ids), 265)
         self.assertEqual(len(set(ids)), 265)
         self.assertTrue({"composer-2.5", "composer-2.5-fast", "grok-4.7-medium",

@@ -70,6 +70,7 @@ class TestCursorAgents(unittest.TestCase):
                 self.assertLessEqual(set(fields) - {"__body__"}, BUNDLE_FIELDS)
         invalid = parse_agent("---\nname: sample\ntools-extra: shell\n---\nbody")
         self.assertIsNotNone(invalid)
+        assert invalid is not None
         fields = set(invalid) - {"__body__"}
         self.assertFalse(fields <= BUNDLE_FIELDS)
 
@@ -88,7 +89,10 @@ class TestCursorAgents(unittest.TestCase):
                 self.assertFalse(name.startswith("gsd-"))
 
     def test_pins_are_non_fast_ids_from_the_captured_listing(self):
-        ids = set(detection.parse_cursor_models(Path(FIXTURE).read_text(encoding="utf-8")))
+        parsed_ids = detection.parse_cursor_models(Path(FIXTURE).read_text(encoding="utf-8"))
+        self.assertIsNotNone(parsed_ids)
+        assert parsed_ids is not None
+        ids = set(parsed_ids)
         pins = set()
         for path, fields in _parsed_agents():
             model = fields["model"]
@@ -112,6 +116,7 @@ const i=line.indexOf(':');if(i<0)continue;const key=line.slice(0,i).trim().toLow
 const value=line.slice(i+1).trim();if(key)fields[key]=value;}
 process.stdout.write(JSON.stringify({name:fields.name,description:fields.description,model:fields.model,body_empty:m[2].trim().length===0}));"""
         node = shutil.which("node")
+        assert node is not None
         for path, fields in _parsed_agents():
             result = subprocess.run(
                 [node, "-e", javascript, "--", str(path)],
@@ -132,6 +137,7 @@ process.stdout.write(JSON.stringify({name:fields.name,description:fields.descrip
     def test_leading_text_before_the_block_still_matches(self):
         parsed = parse_agent("preface\n---\nname: sample\n---\nbody\n")
         self.assertIsNotNone(parsed)
+        assert parsed is not None
         self.assertEqual(parsed["name"], "sample")
 
 

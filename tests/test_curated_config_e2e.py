@@ -323,6 +323,7 @@ class TestCursorAgentNamesAbsentFromCatalog(_RealGsdTestCase):
 
         catalog = gsd_catalog.query_agent_catalog(node_bin, model_catalog)
         self.assertIsNotNone(catalog, "catalog query failed with node and gsd-core present")
+        assert catalog is not None
         names = {
             fields["name"]
             for path in _agent_files()

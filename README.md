@@ -57,6 +57,8 @@ The repo is the source of truth. `tools/install.sh`:
 
 Adding or removing skills/commands/agents needs no change to the script — entries are discovered dynamically.
 
+`cursor-agents/` holds ai-kit's own Cursor executor subagents, `composer-worker` and `grok-worker`, each pinned to an explicit non-fast model id. They stay out of `agents/` because that directory links into `~/.claude/agents`, where Claude would load an unrunnable pin. The Cursor CLI reads subagents only from a project's `.cursor/agents`, so automated per-file linking is backlog 999.7. Until then, from a project root link one file by hand: `ln -s <ai-kit checkout>/cursor-agents/composer-worker.md .cursor/agents/` (never link the directory; owner decision 2026-10-18).
+
 ### The install wizard
 
 After the repo is fetched, `install.sh` launches `tools/setup.py` — a
