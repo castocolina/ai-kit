@@ -522,13 +522,7 @@ def _tier_for(agent: str, plan: dict, tables: dict) -> str:
 def _host_model(plan: dict, tables: dict, host: str, tier: str) -> str:
     """Resolve a host tier from the plan, then gsd-core's live runtime map."""
     key = f"model_profile_overrides.{host}.{tier}"
-    entries = {
-        entry["key"]: entry["value"]
-        for entry in plan.get("entries") or []
-        if isinstance(entry, dict)
-        and entry.get("op") in ("set", "keep")
-        and isinstance(entry.get("key"), str)
-    }
+    entries = _set_entries(plan)
     if key in entries:
         value = entries[key]
         if isinstance(value, dict):
@@ -727,11 +721,10 @@ def _mismatches(
     for agent in sorted(agents):
         expected = promised(agent, plan, tables, host)
         override = sets.get(f"model_overrides.{agent}")
-        tier = override if host == "claude" and override in _TIERS else None
         if f"model_overrides.{agent}" not in sets:
             tier = _tier_for(agent, plan, tables)
-        elif host != "claude":
-            tier = None
+        else:  # an override pins the tier only when it is a Claude tier alias
+            tier = override if host == "claude" and override in _TIERS else None
         row = got[agent]
         if compare(agent, row, expected, tier=tier):
             rows.append([agent, expected, str(row.get("model", "")), str(row.get("tier", ""))])
@@ -4015,10 +4008,11 @@ def _cache_sha_of(env: dict) -> dict:
     return {name: _sha256_file(cache / name) for name in names}
 
 
-def _project_env(ctx: SmokeCtx) -> dict:
-    """Use the project git root for non-Claude scratch projects, never this checkout."""
+def _project_env(ctx: SmokeCtx, project: str | None = None) -> dict:
+    """Use the project git root for non-Claude scratch projects, never this checkout; the
+    repo root itself keeps the full env."""
     env = dict(ctx.env)
-    if ctx.host != "claude":
+    if ctx.host != "claude" and project != str(ctx.repo_root):
         env.pop("RUNTIME_DIR", None)
     return env
 
@@ -4107,7 +4101,7 @@ def _inventory(ctx: SmokeCtx, project: str, out: str, cache_sha: dict) -> dict:
     """The product's `inventory` through `cli.main` on the seeded scratch cache."""
     from ai_kit_gsd_curated_config import cli  # pylint: disable=import-outside-toplevel
 
-    product_env = _project_env(ctx) if project != str(ctx.repo_root) else ctx.env
+    product_env = _project_env(ctx, project)
     assert_no_probe(product_env)
     argv = ["inventory", "--project-dir", project]
     if ctx.host and ctx.host_flag:
@@ -4188,7 +4182,7 @@ def _dry_run_unchanged(ctx: SmokeCtx, project: str, plan_path: str, inv_path: st
                 project,
             ],
             which_fn=lambda name, **_kw: ctx.node_bin if name == "node" else shutil.which(name),
-            env_fn=lambda: dict(_project_env(ctx) if project != str(ctx.repo_root) else ctx.env),
+            env_fn=lambda: _project_env(ctx, project),
             run_fn=subprocess.run,
         )
     if code != 0:
@@ -4253,47 +4247,82 @@ def _baked_models(project: str, host: str) -> dict[str, str | None]:
     result: dict[str, str | None] = {}
     for path in sorted(agents_dir.glob("gsd-*.toml" if host == "codex" else "gsd-*.md")):
         if host == "codex":
-            data = tomllib.loads(path.read_text(encoding="utf-8"))
-            result[path.stem] = data.get("model")
-        else:
-            text = path.read_text(encoding="utf-8")
-            chunks = text.split("---", 2)
-            model = (
-                next(
-                    (
-                        line.split(":", 1)[1].strip().strip("\\\"'")
-                        for line in chunks[1].splitlines()
-                        if line.startswith("model:")
-                    ),
-                    None,
-                )
-                if len(chunks) > 2
-                else None
-            )
-            result[path.stem] = model
+            result[path.stem] = tomllib.loads(path.read_text(encoding="utf-8")).get("model")
+            continue
+        chunks = path.read_text(encoding="utf-8").split("---", 2)
+        found = len(chunks) > 2 and re.search(r"(?m)^model:\s*['\"]?([^'\"\n]+)", chunks[1])
+        result[path.stem] = found.group(1).strip() if found else None
     return result
 
 
 def _baked_mismatches(
     baked: dict[str, str | None], promised_map: dict[str, str | None]
 ) -> list[list[str]]:
+    """A missing agent file is a mismatch whatever was promised (review WR-01). gsd-core
+    1.17.0's codex installer writes one TOML per source `gsd-*.md` with no skip list
+    (`bin/install.js` installCodexConfig, lines 7203 and 7258-7266), so no agent is
+    exempt."""
     return [
         [agent, "missing file" if agent not in baked else str(baked[agent]), str(expected)]
         for agent, expected in sorted(promised_map.items())
-        if baked.get(agent) != expected
+        if agent not in baked or baked[agent] != expected
     ]
 
 
 def _generated_paths(project: str, host: str) -> list[str]:
+    """GSD-generated prefixes; the host's own `.gitignore` is not one (D-12, review M2)."""
     base = pathlib.Path(project) / f".{host}"
     paths = []
-    for prefix in ("gsd-core", "plugins/gsd-core.js", ".gitignore"):
+    for prefix in ("gsd-core", "plugins/gsd-core.js"):
         if (base / prefix).exists():
             paths.append(f".{host}/{prefix}" + ("/" if (base / prefix).is_dir() else ""))
     for category in ("agents", "commands", "skills"):
         paths.extend(f".{host}/{category}/{path.name}" for path in (base / category).glob("gsd-*"))
     paths.extend(f".{host}/{path.name}" for path in base.glob("gsd-*.json"))
     return sorted(paths)
+
+
+def _baked_chain(ctx: SmokeCtx, project: str, plan: dict, label: str, plan_path: str) -> dict:
+    """D-07's three headless links for one scratch project after its post-apply install:
+    plan -> baked agent file -> project-local `resolve-model`. Raises with every mismatching
+    agent. `resolve-model` runs without `GSD_RUNTIME`, so the project's managed `runtime`
+    key (D-08) is what steers it (review IN-04)."""
+    tables = live_tables(ctx.node_bin, os.path.dirname(os.path.dirname(ctx.tools_path)))
+    agents = sorted(tables["profiles"])
+    if ctx.host == "codex":  # D-08: a codex TOML bakes `model` for explicit pins only
+        sets = _set_entries(plan)
+        promised_map = {agent: sets.get(f"model_overrides.{agent}") for agent in agents}
+    else:
+        promised_map = {agent: promised(agent, plan, tables, ctx.host) or None for agent in agents}
+    baked = _baked_models(project, ctx.host)
+    mismatches = _baked_mismatches(baked, promised_map)
+    if mismatches:
+        raise SystemExit(f"planned != baked: {mismatches}")
+    tools_path = os.path.join(project, f".{ctx.host}", "gsd-core", "bin", "gsd-tools.cjs")
+    matrix_ctx = _MatrixCtx(
+        ctx.node_bin, tools_path, ctx.home, ctx.host, os.path.dirname(os.path.dirname(tools_path))
+    )
+    env = {k: v for k, v in _project_env(ctx).items() if k != "GSD_RUNTIME"}
+    got = _resolve_all(matrix_ctx, agents, project, env)
+    rows = _mismatches(agents, plan, tables, got, ctx.host)
+    if rows:
+        raise SystemExit(f"resolve-model mismatches [agent, expected, model, tier]: {rows}")
+    # gsd-core bakes no model into `gsd-<x>.compact.md` (opencode, 1.17.0): reported, not
+    # compared, since no plan promise targets a compact variant (review WR-12, owner review).
+    compact = [name for name in baked if name.endswith(".compact")]
+    resolved = {
+        agent: {"model": row.get("model"), "tier": row.get("tier")} for agent, row in got.items()
+    }
+    return {
+        "baked_summary": {
+            "label": label,
+            "agents": len(agents),
+            "compact_without_model": sum(1 for name in compact if baked[name] is None),
+            "compact_with_model": sum(1 for name in compact if baked[name] is not None),
+        },
+        "generated_paths": {label: _generated_paths(project, ctx.host)},
+        "artifacts": _write_artifacts(ctx, label, plan_path, project, resolved, baked),
+    }
 
 
 def _write_artifacts(
@@ -4341,9 +4370,10 @@ def _smoke_project_a(ctx: SmokeCtx, work: str, cache_sha: dict) -> list[dict]:
     def inventory_and_plan() -> str:
         if install_step is not None and not install_step["ok"]:
             raise SystemExit("skipped: local install failed")
-        _inventory(ctx, project, inv_path, cache_sha)
+        inv = _inventory(ctx, project, inv_path, cache_sha)
+        if install_step is not None:
+            state["gsd_core"] = _observed_core(inv, "project-a")
         _recommend_to(inv_path, plan_path)
-        state["plan"] = _load_plan_file(plan_path)
         state["forced"] = resolve_choices(plan_path, inv_path)
         return f"forced placeholders: {state['forced'] or 'none'}"
 
@@ -4382,84 +4412,41 @@ def _smoke_project_a(ctx: SmokeCtx, work: str, cache_sha: dict) -> list[dict]:
             raise SystemExit("skipped: apply or plan failed")
         if ctx.host == "claude":
             return "not applicable on claude"
-        install_detail = _install_local(ctx, project)
         agents_dir = pathlib.Path(project) / f".{ctx.host}" / "agents"
+        _install_local(ctx, project)  # the post-apply install that bakes (18 D-37)
         before_hash = _tree_sha(agents_dir)
-        if _install_local(ctx, project) != install_detail or _tree_sha(agents_dir) != before_hash:
-            raise SystemExit("third install changed agent files")
-        plan = state.get("plan") or _load_plan_file(plan_path)
-        tables = live_tables(ctx.node_bin, os.path.dirname(os.path.dirname(ctx.tools_path)))
-        agents = sorted(tables["profiles"])
-        entries = {
-            entry.get("key"): entry.get("value")
-            for entry in plan.get("entries", [])
-            if entry.get("op") in ("set", "keep")
-        }
-        if ctx.host == "codex":
-            promised_map = {agent: entries.get(f"model_overrides.{agent}") for agent in agents}
-        else:
-            promised_map = {
-                agent: promised(agent, plan, tables, ctx.host) or None for agent in agents
-            }
-        baked = _baked_models(project, ctx.host)
-        mismatches = _baked_mismatches(baked, promised_map)
-        if mismatches:
-            raise SystemExit(f"planned != baked: {mismatches}")
-        tools_path = os.path.join(project, f".{ctx.host}", "gsd-core", "bin", "gsd-tools.cjs")
-        matrix_ctx = _MatrixCtx(
-            ctx.node_bin,
-            tools_path,
-            ctx.home,
-            ctx.host,
-            os.path.dirname(os.path.dirname(tools_path)),
-        )
-        resolved = {}
-        for agent in agents:
-            got = _resolve_model(matrix_ctx, agent, project, _project_env(ctx))
-            model = promised(agent, plan, tables, ctx.host)
-            tier = (
-                None
-                if f"model_overrides.{agent}" in _set_entries(plan)
-                else _tier_for(agent, plan, tables)
-            )
-            mismatch = compare(agent, got, model, tier=tier)
-            resolved[agent] = {"model": got.get("model"), "tier": got.get("tier")}
-            if mismatch:
-                raise SystemExit(f"resolve-model mismatches: {mismatch}")
-        state["baked"] = baked
-        state["resolved"] = resolved
-        state["plan"] = plan
-        state["idempotent"] = True
-        state["generated_paths"] = _generated_paths(project, ctx.host)
-        state["baked_summary"] = {
-            "agents": len(agents),
-            "mismatches": mismatches,
-            "chain": ["plan", "resolve-model (project-local)", "baked file"],
-        }
-        state["idempotent"] = True
-        state["artifacts"] = _write_artifacts(ctx, "project-a", plan_path, project, resolved, baked)
-        return f"{len(agents)} agents; all equal; agents dir unchanged by a repeat install"
+        _install_local(ctx, project)
+        if _tree_sha(agents_dir) != before_hash:
+            raise SystemExit("a repeat install changed agent files")
+        chain = _baked_chain(ctx, project, state["plan"], "project-a", plan_path)
+        chain["baked_summary"]["repeat_install_unchanged"] = True
+        state["chain"] = chain
+        agents = chain["baked_summary"]["agents"]
+        return f"{agents} agents; planned == baked == resolve-model; repeat install unchanged"
 
     def fault() -> str:
         return _fault_apply(ctx._replace(env=_project_env(ctx)), work, project, plan_path, inv_path)
 
-    steps = ([install_step] if install_step else []) + [
-        _step("project (a) inventory, recommend, choices", inventory_and_plan),
+    steps = [install_step] if install_step else []
+    inventory_step = _step("project (a) inventory, recommend, choices", inventory_and_plan)
+    if state.get("gsd_core"):
+        inventory_step["gsd_core"] = state["gsd_core"]
+    steps += [
+        inventory_step,
         _step("project (a) dry run, apply, validation", first_apply),
         _step("project (a) second apply", second_apply),
         _step("project (a) forced failure restores", fault),
     ]
     post = _step("project (a) post-apply install and planned == baked", baked_check)
-    post.update(
-        {
-            "baked_summary": state.get("baked_summary"),
-            "generated_paths": state.get("generated_paths", []),
-            "artifacts": state.get("artifacts", []),
-            "idempotent": state.get("idempotent", False),
-        }
-    )
+    post.update(state.get("chain") or {})
     steps.append(post)
     return steps
+
+
+def _observed_core(inv: dict, label: str) -> dict:
+    """The inventory's own gsd-core record (`_inventory` already checked it), for evidence."""
+    core = inv.get("gsd_core") or {}
+    return {"label": label, **{key: core.get(key) for key in ("path", "scope", "version")}}
 
 
 def _fault_apply(ctx: SmokeCtx, work: str, project: str, plan_path: str, inv_path: str) -> str:
@@ -4524,7 +4511,6 @@ def _smoke_project_b(ctx: SmokeCtx, work: str, cache_sha: dict) -> dict:
     inv_path = os.path.join(work, "inv-b.json")
     plan_path = os.path.join(work, "plan-b.json")
     report: dict = {}
-    state: dict = {}
 
     install_step = (
         _step("project (b) local gsd-core install", lambda: _install_local(ctx, project))
@@ -4534,72 +4520,22 @@ def _smoke_project_b(ctx: SmokeCtx, work: str, cache_sha: dict) -> dict:
 
     def run() -> str:
         if install_step is not None and not install_step["ok"]:
-            raise SystemExit("skipped: local install failed")
-        _inventory(ctx, project, inv_path, cache_sha)
+            raise SystemExit(f"skipped: local install failed: {install_step['detail']}")
+        inv = _inventory(ctx, project, inv_path, cache_sha)
+        if install_step is not None:
+            report["gsd_core"] = _observed_core(inv, "project-b")
         _recommend_to(inv_path, plan_path)
         resolve_choices(plan_path, inv_path)
         _dry_run_unchanged(ctx, project, plan_path, inv_path)
         project_env = _project_env(ctx)
-        report.update(_real_apply_or_fail(plan_path, inv_path, project, project_env, ctx.node_bin))
-        validate_applied(
-            project,
-            _load_plan_file(plan_path),
-            ValidateCtx(False, [], None),
-            project_env,
-            ctx.node_bin,
-        )
-        if ctx.host != "claude":
-            _install_local(ctx, project)
-            plan = _load_plan_file(plan_path)
-            tables = live_tables(ctx.node_bin, os.path.dirname(os.path.dirname(ctx.tools_path)))
-            agents = sorted(tables["profiles"])
-            entries = {
-                entry.get("key"): entry.get("value")
-                for entry in plan.get("entries", [])
-                if entry.get("op") in ("set", "keep")
-            }
-            promised_map = (
-                {agent: entries.get(f"model_overrides.{agent}") for agent in agents}
-                if ctx.host == "codex"
-                else {agent: promised(agent, plan, tables, ctx.host) or None for agent in agents}
-            )
-            baked = _baked_models(project, ctx.host)
-            mismatches = _baked_mismatches(baked, promised_map)
-            if mismatches:
-                raise SystemExit(f"planned != baked: {mismatches}")
-            tools_path = os.path.join(project, f".{ctx.host}", "gsd-core", "bin", "gsd-tools.cjs")
-            matrix_ctx = _MatrixCtx(
-                ctx.node_bin,
-                tools_path,
-                ctx.home,
-                ctx.host,
-                os.path.dirname(os.path.dirname(tools_path)),
-            )
-            resolved = {}
-            for agent in agents:
-                got = _resolve_model(matrix_ctx, agent, project, project_env)
-                tier = (
-                    None
-                    if f"model_overrides.{agent}" in _set_entries(plan)
-                    else _tier_for(agent, plan, tables)
-                )
-                if compare(agent, got, promised(agent, plan, tables, ctx.host), tier=tier):
-                    raise SystemExit(f"resolve-model mismatch: {agent}")
-                resolved[agent] = {"model": got.get("model"), "tier": got.get("tier")}
-            state.update(plan=plan, baked=baked, resolved=resolved)
-            state["artifacts"] = _write_artifacts(
-                ctx, "project-b", plan_path, project, resolved, baked
-            )
-            report["generated_paths"] = _generated_paths(project, ctx.host)
-            report["baked_summary"] = {
-                "agents": len(agents),
-                "mismatches": mismatches,
-                "chain": ["plan", "resolve-model (project-local)", "baked file"],
-            }
-            report["artifacts"] = state["artifacts"]
-            report["idempotent"] = True
-        keys = sorted(report.get("reconciled") or [])
+        applied = _real_apply_or_fail(plan_path, inv_path, project, project_env, ctx.node_bin)
+        plan = _load_plan_file(plan_path)
+        validate_applied(project, plan, ValidateCtx(False, [], None), project_env, ctx.node_bin)
+        keys = sorted(applied.get("reconciled") or [])
         report["key_paths"] = {"reconciled": keys}  # a real apply report has no diff rows
+        if ctx.host != "claude":
+            _install_local(ctx, project)  # the post-apply install that bakes (18 D-37)
+            report.update(_baked_chain(ctx, project, plan, "project-b", plan_path))
         return f"reconciled {len(keys)} key paths"
 
     result = _step("project (b) empty project, apply, validation", run)
@@ -4607,12 +4543,10 @@ def _smoke_project_b(ctx: SmokeCtx, work: str, cache_sha: dict) -> dict:
     result.update(
         {
             key: report[key]
-            for key in ("generated_paths", "baked_summary", "artifacts", "idempotent")
+            for key in ("generated_paths", "baked_summary", "artifacts", "gsd_core")
             if key in report
         }
     )
-    if install_step is not None:
-        result["local_install"] = install_step
     return result
 
 
@@ -4659,12 +4593,14 @@ def run_smoke(ctx: SmokeCtx, work: str, seed_fn=None, assert_fn=None) -> dict:
         "host_managed_changed": host_managed,
         "matrix": matrix.get("matrix"),
         "key_paths": b_result.get("key_paths", {}),
-        "generated_paths": [path for step in steps for path in (step.get("generated_paths") or [])],
-        "baked": next(
-            (step.get("baked_summary") for step in steps if step.get("baked_summary")), None
-        ),
+        "generated_paths": {
+            label: paths
+            for step in steps
+            for label, paths in (step.get("generated_paths") or {}).items()
+        },
+        "local_install": [step["gsd_core"] for step in steps if step.get("gsd_core")],
+        "baked": [step["baked_summary"] for step in steps if step.get("baked_summary")],
         "artifacts": [item for step in steps for item in (step.get("artifacts") or [])],
-        "idempotent": all(step.get("idempotent", True) for step in steps),
         "exit": 0 if all(s["ok"] for s in steps) and not strict else 1,
     }
 
@@ -4725,35 +4661,9 @@ def render_smoke_evidence(result: dict) -> str:
             )
     else:
         lines.append("- not run")
-    lines += ["", "## Local install"]
-    local = result.get("local_install") or {}
-    roots = result.get("install_roots") or []
-    lines += [f"- host: {result.get('host')}", f"- scope: {local.get('scope', 'not applicable')}"]
-    lines += [f"- root: {root}" for root in roots] or [
-        f"- root: {local.get('root', 'not applicable')}"
-    ]
-    lines += [
-        f"- version: {local.get('version', 'not applicable')}",
-        f"- seed: {result.get('seed', 'absent')}",
-        f"- installer: {result.get('installer_label', '<installer>')}",
-        "- installer env: HOME and XDG_CONFIG_HOME/XDG_DATA_HOME/XDG_CACHE_HOME/"
-        "XDG_STATE_HOME under <install-home>",
-    ]
-    lines += ["", "## Planned vs baked"]
-    baked = result.get("baked") or {}
-    lines += [
-        f"- agents: {baked.get('agents', 0)}",
-        "- all equal"
-        if not baked.get("mismatches")
-        else f"- mismatches: {baked.get('mismatches')}",
-        f"- idempotent re-install: {'yes' if result.get('idempotent') else 'no'}",
-    ]
-    lines += ["", "## Generated paths"]
-    lines += [f"- {path}" for path in result.get("generated_paths", [])] or ["- none"]
-    lines.append(
-        "- gitignore decision: ignore these prefixes in the target project; curated-config "
-        "reports, never edits .gitignore (D-12)"
-    )
+    lines += ["", "## Local install", *_local_install_lines(result)]
+    lines += ["", "## Planned vs baked", *_baked_lines(result)]
+    lines += ["", "## Generated paths", *_generated_path_lines(result.get("generated_paths") or {})]
     lines += ["", "## Artifacts"]
     lines += [f"- {item}" for item in result.get("artifacts", [])] or [
         "- none (run with --artifacts-out)"
@@ -4772,6 +4682,64 @@ def render_smoke_evidence(result: dict) -> str:
         "- seeded scratch cache; no runtime enumeration; byte-identical after every inventory",
     ]
     return _smoke_placeholders("\n".join(lines) + "\n", result)
+
+
+def _local_install_lines(result: dict) -> list[str]:
+    """Only what the inventory observed; constants are never rendered as evidence (H1)."""
+    if result.get("host") == "claude":
+        return ["- not applicable on claude (the scratch projects symlink this checkout)"]
+    records = result.get("local_install") or []
+    lines = [
+        f"- {r['label']}: scope {r['scope']}, root {r['path']}, version {r['version']} "
+        "(from inventory)"
+        for r in records
+    ] or ["- not observed (install or inventory step failed; see the steps above)"]
+    return [
+        *lines,
+        f"- seed: {result.get('seed', 'absent')}",
+        "- installer: <installer> --<host> --local --no-legacy-cleanup",
+        "- installer env: an allowlist (PATH, locale, TERM, USER, SHELL, TZ, TMPDIR) plus HOME "
+        "and XDG_CONFIG_HOME/XDG_DATA_HOME/XDG_CACHE_HOME/XDG_STATE_HOME under <install-home>",
+    ]
+
+
+def _baked_lines(result: dict) -> list[str]:
+    if result.get("host") == "claude":
+        return ["- not applicable on claude"]
+    lines: list[str] = []
+    for summary in result.get("baked") or []:
+        label = summary["label"]
+        lines.append(f"- {label}: {summary['agents']} agents; planned == baked == resolve-model")
+        if summary.get("compact_without_model"):
+            lines.append(
+                f"- {label}: {summary['compact_without_model']} compact agent files carry no "
+                "model: line; not compared"
+            )
+        if summary.get("compact_with_model"):
+            lines.append(
+                f"- {label}: {summary['compact_with_model']} compact agent files carry a "
+                "model: line; not compared"
+            )
+        if summary.get("repeat_install_unchanged"):
+            lines.append(f"- {label}: a repeat install left the agents dir unchanged")
+    return lines or ["- not run or failed (see the steps above)"]
+
+
+def _generated_path_lines(per_project: dict) -> list[str]:
+    """Paths common to every project once, then each project's extras (review WR-08)."""
+    if not per_project:
+        return ["- none"]
+    common = sorted(set.intersection(*(set(paths) for paths in per_project.values())))
+    lines = [f"- in every project ({', '.join(sorted(per_project))}):"]
+    lines += [f"- {path}" for path in common] or ["- none"]
+    for label, paths in sorted(per_project.items()):
+        extra = sorted(set(paths) - set(common))
+        lines.append(f"- only in {label}: {', '.join(extra) if extra else 'none'}")
+    return [
+        *lines,
+        "- gitignore decision: ignore these prefixes in the target project; curated-config "
+        "reports, never edits .gitignore (D-12)",
+    ]
 
 
 def _cmd_smoke(args: argparse.Namespace) -> int:
@@ -4794,7 +4762,7 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
     os.makedirs(install_home, exist_ok=True)
     defaults = pathlib.Path(home) / ".gsd" / "defaults.json"
     seed = "absent"
-    if defaults.is_file():
+    if host != "claude" and defaults.is_file():  # claude runs no local install
         destination = pathlib.Path(install_home) / ".gsd" / "defaults.json"
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(defaults, destination)
@@ -4836,17 +4804,6 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
                 "artifacts_dir": artifacts_dir,
                 "host": host,
                 "seed": seed,
-                "installer_label": "<installer>",
-                "install_roots": [f"<scratch-a>/.{host}/gsd-core", f"<scratch-b>/.{host}/gsd-core"],
-                "baked": result.get("baked") or {},
-                "generated_paths": result.get("generated_paths") or [],
-                "artifacts": result.get("artifacts") or [],
-                "idempotent": result.get("idempotent", False),
-                "local_install": {
-                    "scope": "local",
-                    "root": f"<scratch-a>/.{host}/gsd-core",
-                    "version": pinned,
-                },
             }
         )
         _write_text(str(_abs(args.evidence_out)), render_smoke_evidence(result))

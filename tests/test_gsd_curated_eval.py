@@ -2830,6 +2830,8 @@ class TestSmoke(unittest.TestCase):
         claude = codex._replace(host="claude")
         self.assertNotIn("RUNTIME_DIR", ev._project_env(codex))
         self.assertEqual(ev._project_env(claude)["RUNTIME_DIR"], "/repo")
+        # review L4: the repo root keeps the full env on every host
+        self.assertEqual(ev._project_env(codex, self.tmp)["RUNTIME_DIR"], "/repo")
 
     def test_cached_installer_picks_pinned_version_in_both_cache_layouts(self) -> None:
         home = pathlib.Path(self.tmp)
@@ -3013,11 +3015,101 @@ class TestSmoke(unittest.TestCase):
         baked = ev._baked_models(str(project.parents[1]), "codex")
         self.assertEqual(baked, {"gsd-one": "pin", "gsd-two": None})
         self.assertEqual(ev._baked_mismatches(baked, {"gsd-one": "pin", "gsd-two": None}), [])
+        # review WR-01/M3: a missing agent file is a mismatch even when nothing is promised
         self.assertEqual(
-            ev._baked_mismatches(baked, {"gsd-one": "pin", "gsd-two": None, "gsd-extra": None}), []
+            ev._baked_mismatches(baked, {"gsd-one": "pin", "gsd-two": None, "gsd-extra": None}),
+            [["gsd-extra", "missing file", "None"]],
         )
         self.assertTrue(ev._baked_mismatches(baked, {"gsd-one": "other"}))
         self.assertTrue(ev._baked_mismatches(baked, {"gsd-missing": "promised"}))
+
+    def test_baked_opencode_models_read_frontmatter_including_compact(self) -> None:
+        agents = pathlib.Path(self.tmp) / "p" / ".opencode" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "gsd-a.md").write_text(
+            '---\nname: gsd-a\nmodel: "prov/m"\n---\nmodel: body\n', encoding="utf-8"
+        )
+        (agents / "gsd-a.compact.md").write_text("---\nname: gsd-a\n---\n", encoding="utf-8")
+        (agents / "gsd-b.md").write_text("no frontmatter\n", encoding="utf-8")
+        self.assertEqual(
+            ev._baked_models(str(agents.parents[1]), "opencode"),
+            {"gsd-a": "prov/m", "gsd-a.compact": None, "gsd-b": None},
+        )
+
+    def test_generated_paths_omit_the_host_gitignore(self) -> None:
+        """review M2: opencode's own .gitignore is not a GSD prefix to ignore (D-12)."""
+        base = pathlib.Path(self.tmp) / ".opencode"
+        (base / "agents").mkdir(parents=True)
+        (base / ".gitignore").write_text("x\n", encoding="utf-8")
+        (base / "agents" / "gsd-x.md").write_text("", encoding="utf-8")
+        self.assertEqual(ev._generated_paths(self.tmp, "opencode"), [".opencode/agents/gsd-x.md"])
+
+    def _chain_fixture(self):
+        agents = pathlib.Path(self.tmp) / "p" / ".codex" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "gsd-a.toml").write_text('model = "pin"\n', encoding="utf-8")
+        (agents / "gsd-b.toml").write_text('description = "x"\n', encoding="utf-8")
+        plan = {
+            "profile": "balanced",
+            "entries": [{"op": "set", "key": "model_overrides.gsd-a", "value": "pin"}],
+        }
+        tables = {
+            "profiles": {"gsd-a": {"balanced": "sonnet"}, "gsd-b": {"balanced": "sonnet"}},
+            "phase": {},
+            "runtime_profiles": {"codex": {"sonnet": {"model": "gpt-terra"}}},
+        }
+        env = {"GSD_RUNTIME": "codex", "RUNTIME_DIR": "/r", "PATH": "/bin"}
+        ctx = ev.SmokeCtx(
+            "node", "/core/bin/gsd-tools.cjs", pathlib.Path(self.tmp), "h", "codex", env
+        )
+        return ctx, str(agents.parents[1]), plan, tables
+
+    def test_baked_chain_names_every_resolve_mismatch_without_gsd_runtime(self) -> None:
+        """review IN-04/IN-05/M1: one chain, every mismatching agent, no GSD_RUNTIME."""
+        ctx, project, plan, tables = self._chain_fixture()
+        seen: list[dict] = []
+
+        def wrong(_ctx, _agent, _project, env):
+            seen.append(env)
+            return {"model": "wrong", "tier": "sonnet"}
+
+        with (
+            mock.patch.object(ev, "live_tables", return_value=tables),
+            mock.patch.object(ev, "_resolve_model", side_effect=wrong),
+            self.assertRaises(SystemExit) as caught,
+        ):
+            ev._baked_chain(ctx, project, plan, "project-a", "plan.json")
+        message = str(caught.exception.code)
+        self.assertIn("gsd-a", message)
+        self.assertIn("gsd-b", message)
+        self.assertEqual(len(seen), 2)
+        self.assertTrue(all("GSD_RUNTIME" not in env for env in seen))
+
+    def test_baked_chain_summary_is_per_project(self) -> None:
+        ctx, project, plan, tables = self._chain_fixture()
+
+        def right(_ctx, agent, _project, _env):
+            return {"model": "pin" if agent == "gsd-a" else "gpt-terra", "tier": "sonnet"}
+
+        with (
+            mock.patch.object(ev, "live_tables", return_value=tables),
+            mock.patch.object(ev, "_resolve_model", side_effect=right),
+        ):
+            chain = ev._baked_chain(ctx, project, plan, "project-b", "plan.json")
+        self.assertEqual(
+            chain["baked_summary"],
+            {
+                "label": "project-b",
+                "agents": 2,
+                "compact_without_model": 0,
+                "compact_with_model": 0,
+            },
+        )
+        self.assertEqual(
+            chain["generated_paths"],
+            {"project-b": [".codex/agents/gsd-a.toml", ".codex/agents/gsd-b.toml"]},
+        )
+        self.assertEqual(chain["artifacts"], [])
 
     def test_refuses_repo_root(self) -> None:
         with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(io.StringIO()):
@@ -3457,6 +3549,57 @@ class TestSmoke(unittest.TestCase):
         self.assertIn("## Protected set", text)
         self.assertIn("host-managed changed: none", text)
 
+    def test_evidence_failed_post_step_never_renders_all_equal(self) -> None:
+        """review H1/WR-05: no planned == baked or local-install text without an observation."""
+        failed = {"name": "project (a) post-apply", "ok": False, "detail": "planned != baked"}
+        text = ev.render_smoke_evidence({"steps": [failed], "matrix": None, "host": "codex"})
+        self.assertNotIn("all equal", text)
+        self.assertNotIn("scope: local", text)
+        self.assertNotIn("idempotent re-install: yes", text)
+        self.assertIn("- not run or failed (see the steps above)", text)
+        self.assertIn("- not observed (install or inventory step failed", text)
+
+    def test_evidence_on_claude_marks_local_install_and_baked_not_applicable(self) -> None:
+        text = ev.render_smoke_evidence({"steps": [], "matrix": None, "host": "claude"})
+        local = text.split("## Local install")[1].split("## ")[0]
+        self.assertIn("not applicable on claude", local)
+        self.assertNotIn("installer env", local)
+        self.assertNotIn("scope", local)
+        baked = text.split("## Planned vs baked")[1].split("## ")[0]
+        self.assertIn("not applicable on claude", baked)
+
+    def test_evidence_renders_observed_records_and_paths_per_project(self) -> None:
+        """review WR-05, WR-08/M2, WR-12: observed values only, each path once."""
+        result = {
+            "steps": [],
+            "matrix": None,
+            "host": "opencode",
+            "seed": "copied",
+            "local_install": [
+                {"label": "project-a", "path": "/x/a", "scope": "local", "version": "1.17.0"}
+            ],
+            "baked": [
+                {
+                    "label": "project-a",
+                    "agents": 35,
+                    "compact_without_model": 29,
+                    "compact_with_model": 0,
+                    "repeat_install_unchanged": True,
+                }
+            ],
+            "generated_paths": {"project-a": ["p/one", "p/two"], "project-b": ["p/one"]},
+        }
+        text = ev.render_smoke_evidence(result)
+        self.assertIn("- project-a: scope local, root /x/a, version 1.17.0 (from inventory)", text)
+        self.assertIn("- project-a: 35 agents; planned == baked == resolve-model", text)
+        self.assertIn(
+            "- project-a: 29 compact agent files carry no model: line; not compared", text
+        )
+        self.assertIn("- project-a: a repeat install left the agents dir unchanged", text)
+        self.assertEqual(text.count("- p/one\n"), 1)
+        self.assertIn("- only in project-a: p/two", text)
+        self.assertIn("- only in project-b: none", text)
+
     def test_evidence_marks_non_claude_informational_row_not_run(self) -> None:
         text = ev.render_smoke_evidence({"steps": [], "matrix": {"informational": None}})
         self.assertIn("informational runtime row: not run (claude only)", text)
@@ -3513,6 +3656,39 @@ class TestSmoke(unittest.TestCase):
             )
         self.assertEqual(result["exit"], 1)
         self.assertEqual(result["steps"][-1]["name"], "protected set unchanged")
+
+    def test_run_smoke_keeps_paths_and_records_per_project(self) -> None:
+        """review WR-08/M2: per-project path lists, never one concatenated list."""
+        ctx = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "codex", {})
+        a_step = {
+            "name": "a",
+            "ok": True,
+            "detail": "",
+            "generated_paths": {"project-a": ["p/one"]},
+            "gsd_core": {"label": "project-a", "path": "x", "scope": "local", "version": "v"},
+        }
+        b_step = {
+            "name": "b",
+            "ok": True,
+            "detail": "",
+            "generated_paths": {"project-b": ["p/one"]},
+            "baked_summary": {"label": "project-b", "agents": 1},
+        }
+        with (
+            mock.patch.object(ev, "_smoke_ai_kit", return_value={"name": "x", "ok": True}),
+            mock.patch.object(ev, "_smoke_project_a", return_value=[a_step]),
+            mock.patch.object(ev, "_smoke_project_b", return_value=b_step),
+            mock.patch.object(ev, "_run_matrix_step", return_value={"name": "m", "ok": True}),
+            mock.patch.object(ev, "snapshot", return_value={"strict": {}, "host_managed": {}}),
+        ):
+            result = ev.run_smoke(
+                ctx, self.tmp, seed_fn=lambda _w, _c: {}, assert_fn=lambda _e: None
+            )
+        self.assertEqual(
+            result["generated_paths"], {"project-a": ["p/one"], "project-b": ["p/one"]}
+        )
+        self.assertEqual([r["label"] for r in result["local_install"]], ["project-a"])
+        self.assertEqual([s["label"] for s in result["baked"]], ["project-b"])
 
     def test_host_managed_change_is_reported_not_failed(self) -> None:
         before = {"strict": {"a": "1"}, "host_managed": {"h": "1"}}
