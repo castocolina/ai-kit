@@ -9,7 +9,7 @@ requires:
 provides:
   - Codex host-signal labels and dated requirements/context/spec amendments based on recorded names-only evidence
   - GSD-generated gitignore-prefix follow-up notes and evidence-bounded installer/effort labels
-  - Pi skill-judge evidence; in-session judge remains pending with an explicit blocked verdict
+  - Skill-judge gate PASS on digest 2663ee4bf6433cc1 (in-session 109 0/0, pi 116 0/0), completed by the orchestrator
  affects: [20-07, ai-kit-gsd-curated-config, ai-kit-spec-review]
 actuals:
   tokens: 0
@@ -54,13 +54,13 @@ coverage:
         status: pass
     human_judgment: false
   - id: D3
-    description: SKILL.md judge gate records a passing pi result, but awaits the in-session Skill-tool judge.
+    description: SKILL.md judge gate PASS (in-session 109/120 0/0, pi 116/120 0/0 on digest 2663ee4bf6433cc1).
     verification:
       - kind: other
         ref: .planning/phases/20-live-validation-on-codex-opencode/20-SKILL-JUDGE.md
         status: unknown
     human_judgment: true
-    rationale: The required in-session judge needs the Skill tool, unavailable to this executor; its pending marker is not a judge result and the plan cannot pass until the orchestrator replaces it with a real report.
+    rationale: The executor left the in-session row as the pending marker (no Skill tool); the orchestrator ran it, made two more SKILL.md fix commits (dd1ab1e, c7089ff) and re-ran both judges; see 20-SKILL-JUDGE.md.
 duration: 18min
 completed: 2026-10-18
 status: halted
@@ -68,14 +68,14 @@ status: halted
 
 # Phase 20 Plan 06 Summary
 
-**Codex headless detection and curated-config follow-up guidance now reflect the recorded evidence; the skill-judge gate is blocked pending the required in-session review.**
+**Codex headless detection and curated-config follow-up guidance now reflect the recorded evidence; the skill-judge gate passed after the orchestrator's in-session judge and fix round.**
 
 ## Performance
 
 - **Duration:** 18 min (plan timer; excludes any earlier work summarized before this dispatch)
 - **Started:** 2026-10-18T09:24:15Z
 - **Completed:** 2026-10-18T09:42:29Z
-- **Tasks:** Tasks 1 and 2 completed; Task 3 evidence recorded, but its in-session judge remains pending
+- **Tasks:** Tasks 1-3 completed (Task 3's in-session judge and final verdict by the orchestrator)
 - **Files modified:** 21 across task commits and judge evidence (including this summary is not included)
 
 ## Accomplishments
@@ -92,7 +92,7 @@ status: halted
 4. **Judge fix round: Remove repeated host-lane reminder** — `94f4806` (`fix(20-06): remove repeated host-lane reminder`)
 5. **Judge evidence** — `1b00336` (`docs(20-06): record skill judge evidence`)
 
-**Plan metadata:** pending; this summary commit records the plan stop.
+**Plan metadata:** completed by the orchestrator (see Orchestrator completion).
 
 ## Files Created/Modified
 
@@ -108,7 +108,7 @@ status: halted
 
 - Both observed headless Codex environment names remain detection signals; only interactive TUI evidence can settle later removal.
 - Opencode effort-suffix acceptance is not evidence that effort takes effect. The note retains that uncertainty.
-- The pi report passes its per-judge floor after one fix; no second fix round is required for that judge. The overall judge gate stays blocked until the in-session judge runs and the two-judge decision table is reapplied.
+- The executor's pi report passed its floor after one fix. The orchestrator's later rounds are recorded in 20-SKILL-JUDGE.md.
 
 ## Deviations from Plan
 
@@ -142,8 +142,20 @@ None.
 
 ## Next Phase Readiness
 
-Plan 20-06 remains blocked on the in-session skill-judge result. Run the judge in the orchestrator session against the current skill digest, replace `skill-judge/in-session.md`, update `20-SKILL-JUDGE.md` using the plan's decision table, and rerun Task 3 verification. Do not mark EVAL-04/EVAL-05 complete until the judge gate is resolved and the plan is re-summarized.
+Ready for 20-07 (interactive scripts and gates).
 
 ---
 *Phase: 20-live-validation-on-codex-opencode*
 *Completed: 2026-10-18*
+
+
+## Orchestrator completion
+
+- In-session `skill-judge` run by the orchestrator (Skill tool). While judging it found stale
+  runner.md text (template-3 flag line, no `--standalone`, readiness floor, timeout ladder) and
+  fixed it in dd1ab1e. pi then flagged one Important, verified in code: the host-lane guarantee is
+  v2-only (v1 `detect-review-candidate` has no host exclusion); fixed in c7089ff (docs only, v1
+  behavior unchanged).
+- Final: digest `2663ee4bf6433cc1`, in-session 109/120 0/0, pi gpt-6.1-sol xhigh 116/120 0/0,
+  verdict `PASS`. Cap accounting and the jev call (Laya fallback, own reasoning) are in
+  20-SKILL-JUDGE.md; owner-review item.
