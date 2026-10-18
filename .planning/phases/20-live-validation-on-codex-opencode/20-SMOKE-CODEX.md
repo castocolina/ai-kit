@@ -58,7 +58,7 @@ CLAUDE_PID
 
 ## Smoke evidence (written by the harness inside codex)
 
-Regenerated 2026-10-18 after the code-review fixes (20-REVIEW-FIX.md), verbatim from `tmp/p20/headless/codex-smoke.md`: one runner dispatch (`--prefer codex`, `--codex-sandbox workspace-write`, `--no-preamble`) ended `AIKIT-XAI status=no_change cli=codex model=gpt-5.6-luna exit=1 cli_rc=0 elapsed=88s tree=clean action=fallback` with `smoke exit=0`. Two earlier dispatches with the default TMPDIR ended `no_change` in 73 s and 43 s without a finished smoke (an empty smoke log, then none); a direct `codex exec` with the same argv and the third runner dispatch (TMPDIR under the repo's `tmp/`) completed. Cause not determined; recorded as a finding, not retried further. The section below replaces the earlier hand-copied list (WR-09).
+Regenerated 2026-10-18 after the code-review fixes (20-REVIEW-FIX.md) and the T-20-05 fix (89144b2), verbatim from `tmp/p20/headless/codex-smoke.md`: runner dispatch (`--prefer codex`, `--codex-sandbox workspace-write`, `--no-preamble`, TMPDIR outside the repo) ended `AIKIT-XAI status=no_change cli=codex model=gpt-5.6-luna exit=1 cli_rc=0 elapsed=100s tree=clean action=fallback` with `smoke exit=0`. Finding: four of six runner dispatches of the same prompt ended `no_change` (43-108 s) without codex running the smoke command (no or empty smoke log); one that did run it failed on the exact-root path bug fixed in 89144b2 (TMPDIR under a symlinked `$HOME`). An earlier passing dispatch had TMPDIR inside the repo, which T-20-05 forbids, so its output was replaced by this one. Their answers were not captured (the runner does not print a `no_change` answer); a direct `codex exec` and the dispatches that ran the command passed, so this reads as gpt-5.6-luna sometimes not running the command, cause not established; recorded, not retried further. This section replaces the earlier hand-copied list (WR-09).
 
 # Smoke evidence
 
@@ -85,8 +85,8 @@ Regenerated 2026-10-18 after the code-review fixes (20-REVIEW-FIX.md), verbatim 
 - informational runtime row: not run (claude only)
 
 ## Local install
-- project-a: scope local, root <scratch-a>/.codex/gsd-core, version 1.17.0 (from inventory)
-- project-b: scope local, root <scratch-b>/.codex/gsd-core, version 1.17.0 (from inventory)
+- project-a: scope local, root /var<scratch-a>/.codex/gsd-core, version 1.17.0 (from inventory)
+- project-b: scope local, root /var<scratch-b>/.codex/gsd-core, version 1.17.0 (from inventory)
 - seed: absent
 - installer: <installer> --<host> --local --no-legacy-cleanup
 - installer env: an allowlist (PATH, locale, TERM, USER, SHELL, TZ, TMPDIR) plus HOME and XDG_CONFIG_HOME/XDG_DATA_HOME/XDG_CACHE_HOME/XDG_STATE_HOME under <install-home>
