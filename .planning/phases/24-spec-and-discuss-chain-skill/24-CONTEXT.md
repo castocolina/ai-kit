@@ -56,6 +56,7 @@ locked in `24-SPEC.md` (R1–R13, amended 2026-10-14). This file locks the HOW.
   `JEV_MIN_CONFIDENCE`. Inherited `JEV_*` and `OPENCODE_API_KEY` are dropped first (the client
   falls back to them). Failures use a closed set of reason codes; raw client output is never
   copied (the prototype leaked its last 300 characters into `reason`).
+  - *Amended 2026-10-18 (21.1 D-09):* the backend URLs, model ids and key now come from the client's backend table; `decide.py` scrubs only the control variables (`JEV_BACKEND`, `JEV_ALLOW_REMOTE`, `JEV_MIN_CONFIDENCE`, `GSD_PATH_JEV*`) and lets the client resolve keys and URLs, each key going only to its own backend.
 - **D-07: CLI contract.** `decide.py ladder` reads `{"items":[...]}` on stdin;
   `ladder --second-opinion` sends the given items to TypeSafe only; `decide.py detect` reports
   state without values; `decide.py consent grant|revoke|show <backend>`. `--client PATH` /
@@ -72,12 +73,14 @@ locked in `24-SPEC.md` (R1–R13, amended 2026-10-14). This file locks the HOW.
   its own consent. **Own reasoning** (Laya client_var_loopback 0.72; TypeSafe second opinion
   dedicated_only 0.61 fb): `JEV_API_URL` is also the client's per-call target, so one variable
   would mean two things; the fallback keeps 18 D-36's existing setups working. Ledger.
+  - *Amended 2026-10-18 (21.1 D-08):* a non-loopback Laya URL is refused (`non_loopback_url`, System One plan Global Constraints); `consent grant laya` is dropped.
 - **D-09: TypeSafe key lookup, by name only:** `JEV_API_KEY`, then a key file named by
   `JEV_API_KEY_FILE`, then a `JEV_API_KEY=` line in `${XDG_CONFIG_HOME:-~/.config}/ai-kit/
   secrets.env`. `detect` prints only the source label (`env`, `key_file`, `secrets_env`). The
   value is read at call time and passed through the child env only. The secrets parser is a
   standalone ~10-line copy of `local_secrets.load_secret` (precedent `tools/setup.py:1432-1433`),
   not an import. Laya 0.38 (fb), TypeSafe env_file_secrets 0.99.
+  - *Amended 2026-10-18 (21.1 D-07):* the lookup moves into the client's TypeSafe adapter, order `TYPESAFE_API_KEY`, `JEV_API_KEY`, `JEV_API_KEY_FILE`, then `secrets.env`; `detect` prints the client probe's source labels.
 - **D-10: Consent is a per-user, per-backend record** in `${XDG_CONFIG_HOME:-~/.config}/ai-kit/
   jev-consent.json`, written atomically (mkstemp + `os.replace`), keyed by backend id and
   endpoint host, dated. `consent grant` runs only after the user answers the one range/consent
@@ -86,6 +89,7 @@ locked in `24-SPEC.md` (R1–R13, amended 2026-10-14). This file locks the HOW.
   `no_consent` and makes no call. **Confirmed by uz 2026-10-14** ("once per user"), after
   own reasoning (Laya session_only 0.65 fb, TypeSafe user_level_persistent 0.60 fb): SPEC R2/R6
   want consent recorded once; the jev skill's per-session rule is overridden for this skill.
+  - *Amended 2026-10-18 (21.1 D-06):* the same record (path, keys, host binding, announce, revoke) is now owned by the `jev-fast-decision` client skill, so every caller shares it; `decide.py consent` delegates to the client.
 - **D-11: The payload guard is a schema:** item keys limited to `id`, `type`, `instructions`,
   `context`, `criteria`; non-empty `instructions`/`context`; `choice` needs ≥ 2 criteria; fields
   capped at ~1500 characters (real max 649); code fences rejected; a small secret-pattern scan

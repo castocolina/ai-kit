@@ -887,3 +887,21 @@ Inputs: `21-SPIKE-D01.md`, 21-CONTEXT D-02..D-05. Moved out of the inserted Phas
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.8: Jev image and box questions (BACKLOG)
+
+**Goal:** [Captured for future planning] The `jev-fast-decision` client builds image questions
+(one image, and several compared) and `box` questions on every backend whose 21.1 capability
+matrix cell is `verified-live` or `documented`, so a flow can ask Jev to judge a UI state against
+a reference screenshot. Success criteria when promoted: (1) a spike against TypeSafe direct (key
+and consent present) records the request shape, size limits (PNG/JPEG, 280-1568 px, 16 MiB per
+file, 32 MiB per request) and the danger-zone header as live facts; (2) stub-tested request
+builders for images and `box`, gated by the matrix; (3) the Laya and Zen cells are re-checked.
+Deferred 2026-10-18 from Phase 21.1 (D-21): no in-scope caller sends images, and no TypeSafe key
+or consent was available to verify the shapes live.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
