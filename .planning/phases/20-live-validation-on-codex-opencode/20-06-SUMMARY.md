@@ -64,6 +64,7 @@ coverage:
 duration: 18min
 completed: 2026-10-18
 status: halted
+orchestrator_verify: "VERIFY 20-06: 3/3 passed"
 ---
 
 # Phase 20 Plan 06 Summary
@@ -159,3 +160,4 @@ Ready for 20-07 (interactive scripts and gates).
 - Final: digest `2663ee4bf6433cc1`, in-session 109/120 0/0, pi gpt-6.1-sol xhigh 116/120 0/0,
   verdict `PASS`. Cap accounting and the jev call (Laya fallback, own reasoning) are in
   20-SKILL-JUDGE.md; owner-review item.
+- Verify 2 had failed from the executor's dispatch on two source-text pins (installer note phrase split across literals; host.py comment capitalized), both notes correct; fixed in 2383343 (text unchanged). Orchestrator verify 3/3.
