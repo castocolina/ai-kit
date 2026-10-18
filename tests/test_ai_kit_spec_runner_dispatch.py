@@ -281,6 +281,12 @@ class TestParseStatusLine(unittest.TestCase):
 
 
 class TestRunRunnerFake(unittest.TestCase):
+    def setUp(self):
+        # A background launcher (`cmd &`) starts Python with SIGINT ignored; the interrupt
+        # tests need the interactive default handler, whatever the caller inherited.
+        previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+        self.addCleanup(signal.signal, signal.SIGINT, previous)
+
     def _run(self, stderr_lines, returncode=0, hang=False, spec=None, timeout_s=30):
         proc = _FakeProc(stderr_lines, returncode, hang)
         popen = _ScriptedPopen([proc])
