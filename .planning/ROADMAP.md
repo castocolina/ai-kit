@@ -535,22 +535,22 @@ Plans (cross-AI plans are delegated in plan order, one per wave; the two live AI
 - [ ] 21-01-PLAN.md — Wrapper-proof cursor detection: scan-all guarded `agent` resolver, `real_path` on both the build and the routing refresh path, public `parse_cursor_models` (ASCII id token) with the captured 2026.10.14 fixture, SC5 pin (SPEC-06)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 21-07-PLAN.md — Runner `resolveBin` mirrors D-09 (scan-all guarded `agent`) with a self-test case; template 5 bump, pins, goldens, tracked runner re-rendered through `ensure-runner` (SPEC-06)
+- [ ] 21-07-PLAN.md — Runner `resolveBin` mirrors D-09 (scan-all guarded `agent`, empty PATH entry = cwd) with two self-test cases; template 5 bump, pins, goldens, tracked runner re-rendered through `ensure-runner` (CONFIG compared against the saved pre-upgrade bytes; the snapshot delta is exactly the authorized runner line) (SPEC-06)
 
 **Wave 3** *(blocked on Wave 1 completion)*
 - [ ] 21-02-PLAN.md — `cursor-agents/composer-worker.md` and `grok-worker.md` with the bundle-rule test module, registered in the test groups (AGT-01 files)
 
 **Wave 4** *(blocked on Wave 1 completion)*
-- [ ] 21-03-PLAN.md — Harness cursor support (host root G1, resolve-model-only chain G3, generated paths G4, `matrix --host cursor` G5) and the hermetic local cursor smoke and matrix (EVAL-07 rehearsal, SPEC R2)
+- [ ] 21-03-PLAN.md — Harness cursor support (host root G1, resolve-model-only chain G3 over the complete baked map, generated paths G4, `matrix --host cursor` G5, `~/.cursor` hooks.json/agents/skills protected entries G6) and the hermetic local cursor smoke and matrix (EVAL-07 rehearsal, SPEC R2)
 
 **Wave 5** *(blocked on Waves 1, 4 and 2)*
-- [ ] 21-04-PLAN.md — Headless cursor smoke through the template-5 runner under a scratch home (path-guarded teardown, one-attempt verdict line), process-reap proof, `21-SMOKE-CURSOR.md`, conditional cursor env-signal label (EVAL-07)
+- [ ] 21-04-PLAN.md — Headless cursor smoke through the template-5 runner under a scratch home (path-guarded teardown, per-entry archive of prior outputs, one-attempt verdict line bound to a spawn record), process-reap proof with the escaped-worker environ scan, `21-SMOKE-CURSOR.md`, conditional cursor env-signal label (EVAL-07)
 
 **Wave 6** *(blocked on Waves 3 and 5)*
-- [ ] 21-05-PLAN.md — Conditional label lift in SKILL.md/README with the test pin in the evidence commit, skill-judge loop with per-report digest and findings checks (EVAL-07, SPEC R3)
+- [ ] 21-05-PLAN.md — Conditional qualified label lift (`validated headless ... pending`) in SKILL.md/README with the test pin and the dated SPEC R1/R3 + ROADMAP SC2 amendment in the evidence commit, skill-judge loop with per-report digest and findings checks (EVAL-07, SPEC R3)
 
 **Wave 7** *(blocked on Wave 6)*
-- [ ] 21-06-PLAN.md — `21-INTERACTIVE-CURSOR.md` (user-keys digest as a key-integrity check, optional SC5 probe that lists leftovers) and the phase gates, skill-judge gate never soft (SPEC R8)
+- [ ] 21-06-PLAN.md — `21-INTERACTIVE-CURSOR.md` (user-keys digest as a key-integrity check on the one default config path, optional SC5 probe that parses the Task call and labels leftovers by environ ownership) and the phase gates, skill-judge gate re-validated against the current digest, phase always ends `human_needed` pending the interactive run (SPEC R8)
 
 ### Phase 21.1: Atomic reusable decision-system skills (INSERTED)
 
