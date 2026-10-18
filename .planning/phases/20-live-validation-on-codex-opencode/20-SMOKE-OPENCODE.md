@@ -340,10 +340,10 @@ Run 3: `AIKIT-XAI status=no_change cli=opencode model=router-env/my-coding#high 
 ## Deferred-in items
 - C-W12: controlled PATH exposed only opencode plus node/python3/git/env/sh/bash; inventory `installed_runtimes` was `['opencode']` (enumeration scoped: opencode only). `runtime_enumeration` was `{'opencode': 'ok'}`. The inventory's listing process `opencode models` reads the user's managed service read-only; its image-capability probe starts a private `opencode serve --hostname 127.0.0.1 --port 0` in its own session and stops it in `finally`. The before/after `opencode serve` listings were identical, showing only the pre-existing `--service` process; the private probe was gone. failure not provoked: no safe deterministic trigger was available without touching the shared service.
 - CR-03/CR-04 run 1:
-  - readiness: live child 159620 (opencode run), sleep 170 observed
+- readiness: live child 159620 (opencode run), sleep 170 observed
   - Status: `AIKIT-XAI status=signal cli=opencode model=router-env/my-coding exit=143 cli_rc=130 elapsed=41s out=566 tree=clean action=stop`; elapsed was 41s from signal (runner elapsed; process readiness plus time-to-signal included). Spawn pids from `opencode-signal1.pgid`: 159537, 159538, 159539, 159540, 159541, 159542, 159620, 161597, 161598, 161599, 161600, 161601; all process groups were empty afterward. Run-owned TMPDIR `cross-ai-*`/`xai-*` check had no runner temp dirs; unrelated entries left by opencode were listed, then TMPDIR removed.
 - CR-03/CR-04 run 2:
-  - readiness: live child 162453 (opencode run), sleep 170 observed
+- readiness: live child 162453 (opencode run), sleep 170 observed
   - Status: `AIKIT-XAI status=signal cli=opencode model=router-env/my-coding exit=143 cli_rc=130 elapsed=41s out=11511 tree=clean action=stop`. The attempted SIGTERMs were intended 0.3s apart, but by the second `kill -TERM` the wrapper had already exited (`No such process`); immediate second-signal group-kill behavior is unverified. Spawn pids from `opencode-signal2.pgid` were checked; all groups were empty after completion. Run-owned TMPDIR `cross-ai-*`/`xai-*` check was performed and the directory removed.
 - Interactive run: pending; see `20-INTERACTIVE-OPENCODE.md`. The user's TUI env names, smoke, loader precedence and artifacts are the EVAL-05 evidence.
 
