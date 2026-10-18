@@ -159,6 +159,18 @@ python3 and the checkout-local gsd-core 1.17.0.
   The matrix ran 420 checks.
 - Both smokes report `seed: absent`: no `~/.gsd/defaults.json` exists in this HOME today.
 
+## Post-review (orchestrator)
+
+- **T-20-05 (security audit, medium).** The regenerated codex smoke had run with `TMPDIR` inside
+  the repo, so the installer's upward `.planning/config.json` search could reach ai-kit's own
+  config. Fixed in 89144b2: `_smoke_work_dir()` refuses a work dir whose realpath is inside
+  `REPO_ROOT` (`SMOKE_WORK_IN_REPO`), with tests for both cases. The same commit compares
+  realpaths on both sides of the `_inventory` exact-root check (a symlinked HOME parent failed
+  it) and guards the interactive script's delete with `${DIR:?...}`.
+- **Codex evidence re-run** (dca8e96) with `TMPDIR` outside the repo: smoke exit 0, 10/10.
+  Four of six runner dispatches of the same prompt ended `no_change` without codex running the
+  command (gpt-5.6-luna; cause not established). Recorded in `20-SMOKE-CODEX.md`, owner review.
+
 ---
 
 _Fixed: 2026-10-18_
