@@ -1,4 +1,4 @@
-# Runner details (template 3)
+# Runner details (template 4)
 
 Read when a runner upgrade, a `.new` merge, `ensure-runner`, the template flags, the live
 timeout, or hand-edited CONFIG `extraArgs` comes up. SKILL.md's "Cross-AI execution" section

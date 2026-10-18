@@ -21,7 +21,7 @@ def resolve_shared_tooling_reference_path() -> str | None:
 
 
 def resolve_cross_ai_template_path() -> str | None:
-    """Package-relative path to references/cross-ai.mjs (template v3), or None if missing."""
+    """Package-relative path to references/cross-ai.mjs (template v4), or None if missing."""
     package_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     candidate = os.path.join(package_dir, "references", "cross-ai.mjs")
     return candidate if os.path.isfile(candidate) else None

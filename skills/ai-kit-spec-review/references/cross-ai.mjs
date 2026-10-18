@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=3 sha256=UNSTAMPED
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=4 sha256=UNSTAMPED
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v3).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v4).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
@@ -270,12 +270,15 @@ const RUNTIMES = {
     env: {},
   },
   // opencode 2.0.29 run --help formulas; partial bare profile: opencode still loads
-  // ~/.agents/skills and ~/.config/opencode/skills (opencode docs)
+  // ~/.agents/skills and ~/.config/opencode/skills (opencode docs). --standalone targets
+  // opencode 2.x: a headless run executes on a private server, never inside the user's
+  // long-lived managed service; listModels (`opencode models`) has no such flag and still
+  // reads the shared service, read-only.
   opencode: {
     bins: ['opencode'],
     list: { argv: ['models'], parse: parseOpencodeListingIds },
-    exec: (m) => ['run', '--model', m, '--auto', '--format', 'json'],
-    review: (m) => ['run', '--model', m, '--agent', 'plan', '--format', 'json'],
+    exec: (m) => ['run', '--model', m, '--auto', '--format', 'json', '--standalone'],
+    review: (m) => ['run', '--model', m, '--agent', 'plan', '--format', 'json', '--standalone'],
     resume: (m, c, sid, mode) => [...RUNTIMES.opencode[mode](m, c), '--session', sid],
     parse: parseOpencode,
     modelSuffix: /#[^#/]+$/, // provider/model#variant; the listing has no variants
@@ -1572,7 +1575,7 @@ async function blackBoxSelfTest() {
               if (!line) return 'missing argv line';
               const argv = JSON.parse(line.split('\t')[2]);
               const must = {
-                pi: ['-p'], cursor: ['--trust', '--force', 'disabled'], opencode: ['--auto'],
+                pi: ['-p'], cursor: ['--trust', '--force', 'disabled'], opencode: ['--auto', '--standalone'],
                 codex: ['--dangerously-bypass-approvals-and-sandbox'],
               }[rt];
               for (const f of must) if (!argv.includes(f)) return `exec argv missing ${f}`;
@@ -1592,6 +1595,7 @@ async function blackBoxSelfTest() {
               const argv = JSON.parse(line.split('\t')[2]);
               const never = ['--force', '--auto', '--dangerously-bypass-approvals-and-sandbox'];
               for (const f of never) if (argv.includes(f)) return `review argv has ${f}`;
+              if (rt === 'opencode' && !argv.includes('--standalone')) return 'review argv missing --standalone';
               if (!argv.includes(model)) return 'model missing';
               return null;
             },

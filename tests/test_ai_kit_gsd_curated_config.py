@@ -896,7 +896,7 @@ class TestApplyExecutionCli(unittest.TestCase):
         )
         runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
         with open(runner, "rb") as handle:
-            self.assertIn(b"template=3", handle.read().split(b"\n", 2)[1])
+            self.assertIn(b"template=4", handle.read().split(b"\n", 2)[1])
         self.assertEqual(summary["runner"], "add")
         self.assertEqual(summary["notes"], [])
         for key in ("cross_ai_execution_written", "cross_ai_command_written", "degraded_reason"):
@@ -908,7 +908,7 @@ class TestApplyExecutionCli(unittest.TestCase):
         runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
         with open(runner, "rb") as handle:
             current = handle.read()
-        edited = current.replace(b"template=3", b"template=2", 1) + b"\n"
+        edited = current.replace(b"template=4", b"template=2", 1) + b"\n"
         with open(runner, "wb") as handle:
             handle.write(edited)
         code, run, summary = self._apply(project, "codex", "m", [(0, "ok", "")])
