@@ -42,21 +42,22 @@ _LABEL_PI = (
     "from a real pi session (16 D-03; live validation is Phase 22)."
 )
 _LABEL_OPENCODE = (
-    "live-verified (01.2) via a live spawned `opencode run` subprocess."
+    "live-verified (01.2 on opencode 1.x; Phase 20 on v2.0.31 via a headless opencode run "
+    "--standalone env dump, names only; 20-SMOKE-OPENCODE.md)."
 )
 _LABEL_CURSOR = (
     "source-inspected-only — confirmed via the installed cursor-agent bundle's own "
     "`index.js`, not a live subprocess."
 )
 _LABEL_CODEX_THREAD = (
-    "observed in real codex session shell snapshots under `~/.codex/sessions` (the "
-    "snapshot preamble exports `CODEX_THREAD_ID` from `__CODEX_SNAPSHOT_OVERRIDE_1`; "
-    "20 occurrences, 16 D-02) — not yet live-verified from a codex host (Phase 20, "
-    "EVAL-04)."
+    "live-verified (Phase 20) via a headless codex exec 0.162.1 session's env dump "
+    "(names only; 20-SMOKE-CODEX.md) — TUI confirmation pending "
+    "20-INTERACTIVE-CODEX.md step 2."
 )
 _LABEL_CODEX_VERSION = (
-    "source-inspected-only — confirmed via openai/codex's open-source `exec_env.rs`, "
-    "not a live subprocess."
+    "live-verified (Phase 20) via a headless codex exec 0.162.1 session's env dump "
+    "(names only; 20-SMOKE-CODEX.md) — TUI confirmation pending "
+    "20-INTERACTIVE-CODEX.md step 2."
 )
 _LABEL_CLAUDE = "live-verified (01.2) via the process's own env dump."
 
@@ -196,8 +197,7 @@ _RUNTIME_ENV_SIGNALS = tuple(
 # Every variable runtime detection reads (D-14), plus host identity markers not tied to a
 # specific runtime (AI_AGENT, CLAUDE_CODE_ENTRYPOINT, CLAUDE_CODE_SSE_PORT, CODEX_SANDBOX,
 # GROK_AGENT), so a cross-AI child spawned by dispatch never mistakes itself for the host.
-# Phase 18 note: cross-ai.mjs's own SCRUB_ENV lacks AI_AGENT and CODEX_VERSION -- this set is
-# the authoritative superset.
+# The runner template's literal `scrubEnv` array is kept equal to this authoritative set.
 HOST_SIGNAL_ENV_VARS = frozenset(
     {var for _rid, var in _RUNTIME_ENV_SIGNALS}
     | {var for row in RUNTIMES.values() for var in row.scrub_signals}
@@ -232,17 +232,17 @@ def detect_current_runtime(env: Mapping[str, object] | None = None) -> str:
       installed `@earendil-works/pi-coding-agent` package's
       `dist/config.js`, not live-verified from a real pi session (16 D-03;
       live validation is Phase 22).
-    - opencode (`OPENCODE`): live-verified (01.2) via a live spawned
-      `opencode run` subprocess.
+    - opencode (`OPENCODE`): live-verified (01.2 on opencode 1.x; Phase 20
+      on v2.0.31 via a headless opencode run --standalone env dump, names only;
+      20-SMOKE-OPENCODE.md).
     - cursor (`CURSOR_AGENT`): source-inspected-only — confirmed via the
       installed cursor-agent bundle's own `index.js`, not a live subprocess.
-    - codex (`CODEX_THREAD_ID`): observed in real codex session shell
-      snapshots under `~/.codex/sessions` (the snapshot preamble exports
-      `CODEX_THREAD_ID` from `__CODEX_SNAPSHOT_OVERRIDE_1`; 20 occurrences,
-      16 D-02) — not yet live-verified from a codex host (Phase 20,
-      EVAL-04).
-    - codex (`CODEX_VERSION`): source-inspected-only — confirmed via
-      openai/codex's open-source `exec_env.rs`, not a live subprocess.
+    - codex (`CODEX_THREAD_ID`): live-verified (Phase 20) via a headless
+      codex exec 0.162.1 session's env dump (names only; 20-SMOKE-CODEX.md) —
+      TUI confirmation pending 20-INTERACTIVE-CODEX.md step 2.
+    - codex (`CODEX_VERSION`): live-verified (Phase 20) via a headless
+      codex exec 0.162.1 session's env dump (names only; 20-SMOKE-CODEX.md) —
+      TUI confirmation pending 20-INTERACTIVE-CODEX.md step 2.
     - claude (`CLAUDECODE`): live-verified (01.2) via the process's own
       env dump.
     """

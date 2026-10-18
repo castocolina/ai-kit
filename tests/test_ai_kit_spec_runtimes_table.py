@@ -84,6 +84,25 @@ class TestRuntimeTable(unittest.TestCase):
         self.assertEqual(detection.HOST_SIGNAL_ENV_VARS, _SCRUB_NAMES)
         self.assertEqual(len(detection.HOST_SIGNAL_ENV_VARS), 11)
 
+    def test_codex_labels_are_live_verified(self):
+        labels = dict(detection.RUNTIMES["codex"].host_signals)
+        self.assertEqual(set(labels), {"CODEX_THREAD_ID", "CODEX_VERSION"})
+        prefix = "live-verified (Phase 20)"
+        self.assertTrue(all(label.startswith(prefix) for label in labels.values()))
+        self.assertTrue(any(label.startswith(prefix) for label in labels.values()))
+        doc = " ".join((detection.detect_current_runtime.__doc__ or "").split())
+        for label in labels.values():
+            self.assertIn(" ".join(label.split()), doc)
+
+    def test_non_claude_hosts_have_no_native_selectors(self):
+        from ai_kit_spec.routing import host_can_select
+
+        self.assertEqual(detection.RUNTIMES["codex"].native_selectors, ())
+        self.assertEqual(detection.RUNTIMES["opencode"].native_selectors, ())
+        # ROADMAP Phase 20 SC3's session-default-only OR branch satisfies the criterion;
+        # native selection remains an optional live probe (18.1-VERIFICATION deferred item 1).
+        self.assertFalse(host_can_select("codex", "gpt-5.6-sol", "codex"))
+
     def test_precedence_pairs(self):
         pairs = (
             ({"PI_CODING_AGENT": "1", "OPENCODE": "1"}, "pi"),

@@ -98,6 +98,9 @@ Cursor and pi are out of scope (Phases 21/22).
     workstream key). The interactive run prints all `CODEX_*` names, names only. If
     `CODEX_THREAD_ID` is also absent, codex env detection is empty and a replacement signal is
     chosen from that names list.
+  - **Outcome (2026-10-18):** Headless codex exec 0.162.1 listed `CODEX_THREAD_ID` and
+    `CODEX_VERSION`; detection keeps both with headless-evidence labels. TUI confirmation is
+    pending the interactive run; any drop is deferred to the post-TUI follow-up in 20-07.
 - **D-06:** The opencode lane from an opencode host:
   - determine whether `/gsd-review` self-skips the opencode lane on an opencode host, or whether
     it can be used intentionally (e.g. a different provider/model through the same CLI);

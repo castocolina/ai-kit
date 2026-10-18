@@ -1334,8 +1334,7 @@ class TestRuntimePrecedenceMatrix(unittest.TestCase):
         )
 
     def test_docstring_confidence_labels_for_pi_and_codex_thread_id(self):
-        # P1: pi and codex stay visibly flagged as not (yet) live-verified -- they must never
-        # borrow the live-verified (01.2) label the opencode/claude bullets carry.
+        # P1: pi stays source-inspected-only; codex is headless-verified pending TUI confirmation.
         # inspect.cleandoc normalizes across interpreter eras: CPython 3.14+ dedents
         # docstrings at compile time (_PyCompile_CleanDoc, "C implementation of
         # inspect.cleandoc()"), while <= 3.13 keeps the source indentation, so the raw
@@ -1351,7 +1350,8 @@ class TestRuntimePrecedenceMatrix(unittest.TestCase):
         self.assertIn("source-inspected-only", pi_bullet)
         self.assertIn("not live-verified", pi_bullet)
         self.assertNotIn("live-verified (01.2)", pi_bullet)
-        self.assertIn("not yet live-verified", thread_id_bullet)
+        self.assertIn("live-verified (Phase 20)", thread_id_bullet)
+        self.assertIn("TUI confirmation pending", thread_id_bullet)
         self.assertNotIn("live-verified (01.2)", thread_id_bullet)
 
     def test_docstring_names_only_signals_the_tuple_reads(self):

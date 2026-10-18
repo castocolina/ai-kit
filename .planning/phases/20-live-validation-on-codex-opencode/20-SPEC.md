@@ -21,7 +21,7 @@ env signal, and the opencode lane from an opencode host.
   absent), and `~/.config/opencode/agents` holds no GSD agents. D-03's description of the user's
   global opencode setup is out of date; its conclusion (models take effect only through a
   project-local install) still holds.
-- **Host CLIs:** codex-cli 0.153.4 and opencode 1.18.35 are installed.
+- **Host CLIs:** codex-cli 0.153.4 and opencode 1.18.35 are installed (amended 2026-10-18: this phase ran codex-cli 0.162.1 and opencode v2.0.31).
 - **Inherited contracts:**
   - Phase 18 R14: the follow-up installer is `npx -y @opengsd/gsd-core@<version> --<host> --local`.
   - Phase 18 R2: a lane is never the host, which matches D-06's default until it is settled.
