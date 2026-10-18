@@ -216,7 +216,8 @@ CLAUDE_PID
 - Eight files retained under `tmp/p20/headless/codex-artifacts/`: project-a/{plan.json,config.json,resolve-model.json,baked.json} and project-b/{plan.json,config.json,resolve-model.json,baked.json}; project-a resolve-model has 35 agent records.
 
 ## Deferred-in items
-- Task 2 deferred-in probes: pending.
+- Codex JSON event types: `['thread.started', 'turn.started', 'item.completed', 'turn.completed']`; `turn.completed` present; no `error` event. recovered stream error: not provoked (cannot be forced deterministically); the shortcut comment in the template stays. This one direct scrubbed `codex exec --json` run was intentionally outside the runner to capture the CLI's event stream itself.
+- C-W12: the unseeded inventory used a temporary PATH containing only codex, node, python3, git, env, sh and bash. Its `installed_runtimes` was exactly `['codex']` (enumeration scoped: codex only), and `runtime_enumeration` was `{'codex': 'ok'}`. A second inventory used a fresh scratch `CODEX_HOME`; its status also remained `ok`, so failure-versus-empty was not provoked. Recommend was run on that inventory; codex why text included `best execution score within ceiling (<= 4/1M, 75th pct of 8 families)` and tier notes included `rigor standard preset (spec §5)`. Other installed CLIs were unavailable on the controlled PATH.
 - CR-03/CR-04 signal probes: pending Task 3.
 - Interactive run: pending; see `20-INTERACTIVE-CODEX.md`. The user's TUI env names, smoke and artifacts are the EVAL-04 evidence.
 
