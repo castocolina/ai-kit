@@ -121,6 +121,19 @@ from ai_kit_spec.vendor import infer_vendor_from_model
 #   the repo should not carry.
 CODEX_FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "codex_debug_models.json")
 
+# Cursor model-listing provenance:
+# - Source command: `cursor-agent models`, cursor-agent 2026.10.14-941492e (read-only; no --model).
+# - Captured 2026-10-18 by the orchestrator from the maintainer's authenticated session.
+# - Kept verbatim: 269 lines, 265 unique ids, 79 ending in -fast, including eight zero-width
+#   characters in labels. Empty-account and authentication-failure fixtures are synthetic,
+#   taken from the bundle's formatter and stderr strings respectively.
+CURSOR_MODELS_FIXTURE_PATH = os.path.join(
+    os.path.dirname(__file__), "fixtures", "cursor_models.txt")
+CURSOR_MODELS_EMPTY_FIXTURE_PATH = os.path.join(
+    os.path.dirname(__file__), "fixtures", "cursor_models_empty.txt")
+CURSOR_MODELS_AUTH_FAILED_FIXTURE_PATH = os.path.join(
+    os.path.dirname(__file__), "fixtures", "cursor_models_auth_failed.txt")
+
 # Source: `opencode models --verbose`, opencode 1.18.32, 2026-09-24
 # Capture: 110 header+JSON blocks (8528 lines)
 # Kept verbatim: two real models (openai/gpt-5.6-sol, router-env/my-coding) with their
@@ -1520,6 +1533,47 @@ class TestDetectOpencodeModels(unittest.TestCase):
         self.assertIsNone(detect_opencode_models("/usr/bin/opencode", run_fn=fake_run))
 
 
+class TestParseCursorModels(unittest.TestCase):
+    @staticmethod
+    def _fixture(path):
+        with open(path, encoding="utf-8") as stream:
+            return stream.read()
+
+    def test_captured_listing_has_expected_ids(self):
+        ids = detection.parse_cursor_models(self._fixture(CURSOR_MODELS_FIXTURE_PATH))
+        self.assertIsNotNone(ids)
+        self.assertEqual(len(ids), 265)
+        self.assertEqual(len(set(ids)), 265)
+        self.assertTrue({"composer-2.5", "composer-2.5-fast", "grok-4.7-medium",
+                         "grok-4.7-medium-fast"} <= set(ids))
+        self.assertEqual(sum(model.endswith("-fast") for model in ids), 79)
+        self.assertTrue(all(re.fullmatch(r"[A-Za-z0-9._-]+", model) for model in ids))
+
+    def test_non_ascii_id_is_unrecognized_and_does_not_hide_valid_ids(self):
+        self.assertIsNone(detection.parse_cursor_models("Available models\n\nm\\u00f6del - X\n"))
+        self.assertEqual(detection.parse_cursor_models(
+            "Available models\n\nok-1 - A\nm\\u00f6del - X\n"), ["ok-1"])
+
+    def test_empty_account_fixture(self):
+        self.assertEqual(detection.parse_cursor_models(
+            self._fixture(CURSOR_MODELS_EMPTY_FIXTURE_PATH)), [])
+
+    def test_auth_failure_exit_is_none(self):
+        text = self._fixture(CURSOR_MODELS_AUTH_FAILED_FIXTURE_PATH)
+        run_fn = lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            ["cursor-agent", "models"], 1, stdout="", stderr=text)
+        self.assertIsNone(detection.detect_cursor_agent_models("cursor-agent", run_fn=run_fn))
+
+    def test_ansi_header_and_nameless_model(self):
+        self.assertEqual(detection.parse_cursor_models(
+            "\\x1b[2mAvailable models\\x1b[0m\n\nauto (current, default)\n"), ["auto"])
+
+    def test_tip_only_is_empty_and_unrecognized_text_is_none(self):
+        self.assertEqual(detection.parse_cursor_models(
+            "Available models\n\nTip: use --model <id>\n"), [])
+        self.assertIsNone(detection.parse_cursor_models("not a listing\n"))
+
+
 class TestDetectCursorAgentModels(unittest.TestCase):
     def test_parses_id_before_dash_separator(self):
         # confirmed live against a real authenticated install
@@ -2029,7 +2083,8 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
 
         snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=fake_run_fn)
         self.assertEqual(
-            snapshot["clis"]["codex"], {"installed": True, "path": "/fake/volta/bin/codex"}
+            snapshot["clis"]["codex"], {"installed": True, "path": "/fake/volta/bin/codex",
+                                           "real_path": "/fake/volta/bin/codex"}
         )
 
     def test_codex_nonzero_exit_omits_models_key(self):
@@ -2045,7 +2100,8 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
             run_fn=lambda *a, **k: unittest.mock.MagicMock(returncode=1, stdout=fixture_text),
         )
         self.assertEqual(
-            snapshot["clis"]["codex"], {"installed": True, "path": "/fake/volta/bin/codex"}
+            snapshot["clis"]["codex"], {"installed": True, "path": "/fake/volta/bin/codex",
+                                           "real_path": "/fake/volta/bin/codex"}
         )
 
     def test_failed_opencode_listing_omits_models_key(self):
@@ -2463,6 +2519,7 @@ class TestPiRpcModels(unittest.TestCase):
             {
                 "installed": True,
                 "path": pi_path,
+                "real_path": pi_path,
                 "models": [
                     "anthropic/claude-sonnet-5",
                     "openai/gpt-5.6-terra",
@@ -2550,7 +2607,7 @@ class TestPiRpcModels(unittest.TestCase):
 
         snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=bad_run)
         entry = snapshot["clis"]["pi"]
-        self.assertEqual(entry, {"installed": True, "path": pi_path})
+        self.assertEqual(entry, {"installed": True, "path": pi_path, "real_path": pi_path})
         self.assertNotIn("models", entry)
 
     def test_snapshot_empty_valid_listing(self):
@@ -2571,6 +2628,7 @@ class TestPiRpcModels(unittest.TestCase):
             {
                 "installed": True,
                 "path": pi_path,
+                "real_path": pi_path,
                 "models": [],
                 "reasoning_modes": {},
                 "image_input": {},
@@ -9244,6 +9302,7 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
                 {
                     "installed": True,
                     "path": "/fake/bin/claude",
+                    "real_path": "/fake/bin/claude",
                     "aliases": ["fable", "opus", "sonnet", "haiku"],
                     "models": sorted([*detection.CLAUDE_FALLBACK_MODEL_IDS, new]),
                     "models_source": "catalog",
@@ -9298,6 +9357,7 @@ class TestClaudeFallback(unittest.TestCase):
         return {
             "installed": True,
             "path": "/fake/bin/claude",
+            "real_path": "/fake/bin/claude",
             "aliases": list(detection.CLAUDE_MODEL_ALIASES),
             "models": list(detection.CLAUDE_FALLBACK_MODEL_IDS),
             "models_source": "dated-fallback",

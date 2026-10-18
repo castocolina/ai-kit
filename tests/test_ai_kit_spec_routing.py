@@ -78,7 +78,7 @@ class TestResolveRoutes(unittest.TestCase):
     def _resolve(self, root, env, run_fn, popen_fn=None, which_fn=None):
         out, err = io.StringIO(), io.StringIO()
         kwargs = {"run_fn": run_fn, "env_fn": lambda: dict(env),
-                  "which_fn": which_fn or (lambda _name: None)}
+                  "which_fn": which_fn or (lambda _name, **_kwargs: None)}
         if popen_fn is not None:
             kwargs["popen_fn"] = popen_fn
         with mock.patch.dict(os.environ, env, clear=True), \
@@ -135,7 +135,7 @@ class TestResolveRoutes(unittest.TestCase):
                     redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 code = main(["probe-quota", "--cwd", root,
                              "--quota-path", os.path.join(root, "quota.json")],
-                            env_fn=lambda: dict(env), which_fn=lambda _name: None,
+                            env_fn=lambda: dict(env), which_fn=lambda _name, **_kwargs: None,
                             run_fn=_ok, runner_fn=runner)
             self.assertEqual(code, 0)
             self.assertEqual(probed, ["zen/listed"])
@@ -157,7 +157,7 @@ class TestResolveRoutes(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0, stdout="zen/new\n", stderr="")
             return _ok(argv)
 
-        def which_fn(name):
+        def which_fn(name, **_kwargs):
             return f"/fake/{name}" if name == "opencode" else None
 
         with tempfile.TemporaryDirectory() as root:
@@ -251,7 +251,7 @@ class TestResolveRoutes(unittest.TestCase):
                     return subprocess.CompletedProcess(argv, 0, stdout="zen/listed\n", stderr="")
                 return _ok(argv)
 
-            def which_fn(name):
+            def which_fn(name, **_kwargs):
                 return f"/fake/{name}" if name == "opencode" else None
 
             code, stdout, _stderr = self._resolve(root, env, run_fn, which_fn=which_fn)
@@ -270,7 +270,7 @@ class TestResolveRoutes(unittest.TestCase):
                  "vendor": "opencode"},
             ], ["op-good"])
 
-            def which_fn(name):
+            def which_fn(name, **_kwargs):
                 return "/fake/opencode" if name == "opencode" else None
 
             def run_fn(argv, **_kwargs):
@@ -428,10 +428,58 @@ class TestTargetedRefresh(unittest.TestCase):
                 _snapshot({"opencode": {"installed": True, "path": "/fake/opencode"}}))
             self._age(env, 120)
             entries = [{"key": "k", "runtime": "opencode", "model": "zen/x"}]
-            ctx = self._context(env, lambda _name: "/fake/opencode", run_fn)
+            ctx = self._context(env, lambda _name, **_kwargs: "/fake/opencode", run_fn)
             routing.route_all(entries, ctx)
             routing.route_all(entries, ctx)
             self.assertEqual(len(calls), 1)
+
+    def test_refresh_records_real_path_of_the_re_resolved_binary(self):
+        with tempfile.TemporaryDirectory() as root:
+            env = self._env(root)
+            real_dir = os.path.join(root, "real")
+            bin_dir = os.path.join(root, "bin")
+            os.makedirs(real_dir)
+            os.makedirs(bin_dir)
+            real_binary = os.path.join(real_dir, "opencode-bin")
+            with open(real_binary, "w", encoding="utf-8") as stream:
+                stream.write("binary")
+            os.chmod(real_binary, 0o755)
+            opencode_hit = os.path.join(bin_dir, "opencode")
+            os.symlink(real_binary, opencode_hit)
+            path = routing.cache_runtimes_path(env)
+            cache_write_json(path, _snapshot({
+                "opencode": {"installed": True, "path": "/fake/old-opencode",
+                             "real_path": "/stale/opencode", "models": ["zen/old"]},
+                "codex": {"installed": True, "path": "/fake/codex",
+                          "real_path": "/stale/codex", "models": ["gpt-old"]},
+            }))
+            self._age(env, 120)
+            # Permit the bounded refresh immediately rather than its freshness floor.
+            routing._REFRESHED.clear()
+
+            def which_fn(name, **_kwargs):
+                if name == "opencode":
+                    return opencode_hit
+                return "/fake/codex" if name == "codex" else None
+
+            def run_fn(argv, **_kwargs):
+                if os.path.basename(argv[0]) == "codex":
+                    stdout = '{"models": [{"slug": "gpt-old", "visibility": "list"}]}'
+                else:
+                    stdout = "zen/old\n"
+                return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+            ctx = self._context(env, which_fn, run_fn)
+            snapshot = cache_read_json(path)
+            assert snapshot is not None
+            routing._refresh_runtime(snapshot, "opencode", ctx)
+            routing._refresh_runtime(snapshot, "codex", ctx)
+            cache_write_json(path, snapshot)
+            written = cache_read_json(path)
+            assert written is not None
+            self.assertEqual(written["clis"]["opencode"]["path"], opencode_hit)
+            self.assertEqual(written["clis"]["opencode"]["real_path"], real_binary)
+            self.assertEqual(written["clis"]["codex"]["real_path"], "/fake/codex")
 
     def test_refresh_keeps_the_cached_row_fields(self):
         with tempfile.TemporaryDirectory() as root:
@@ -456,7 +504,7 @@ class TestTargetedRefresh(unittest.TestCase):
             self._age(env, 120)
             entries = [{"key": "c", "runtime": "codex", "model": "gpt-new"},
                        {"key": "o", "runtime": "opencode", "model": "zen/new"}]
-            ctx = self._context(env, lambda name: f"/fake/{name}", run_fn)
+            ctx = self._context(env, lambda name, **_kwargs: f"/fake/{name}", run_fn)
             routes = routing.route_all(entries, ctx)
             self.assertEqual(routes, {"c": "subprocess", "o": "subprocess"})
             written = cache_read_json(path)
@@ -478,8 +526,8 @@ class TestTargetedRefresh(unittest.TestCase):
                 routing.cache_runtimes_path(env),
                 _snapshot({"opencode": {"installed": True, "path": "/fake/opencode"}}))
             entries = [{"key": "k", "runtime": "opencode", "model": "zen/x"}]
-            routes = routing.route_all(entries, self._context(env, lambda _n: "/fake/opencode",
-                                                              run_fn))
+            routes = routing.route_all(
+                entries, self._context(env, lambda _n, **_kwargs: "/fake/opencode", run_fn))
             self.assertEqual(routes["k"], "unverified")
             self.assertEqual(calls, [])
 
@@ -489,7 +537,7 @@ class TestTargetedRefresh(unittest.TestCase):
             calls = []
             found = {"now": False}
 
-            def which_fn(name):
+            def which_fn(name, **_kwargs):
                 return "/fake/codex" if name == "codex" and found["now"] else None
 
             def run_fn(argv, **_kwargs):
@@ -625,7 +673,7 @@ class TestUnverifiedNote(unittest.TestCase):
                     redirect_stdout(out), redirect_stderr(err):
                 code = main(["resolve-reviewers", "--cwd", root, "--cross-ai",
                              "--quota-path", os.path.join(root, "quota.json")],
-                            run_fn=run_fn, which_fn=lambda name: "/fake/codex",
+                            run_fn=run_fn, which_fn=lambda name, **_kwargs: "/fake/codex",
                             env_fn=lambda: dict(env))
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(out.getvalue())[0]["route"], "unverified")
@@ -674,7 +722,8 @@ class TestRouteNeverStored(unittest.TestCase):
                     redirect_stdout(out), redirect_stderr(io.StringIO()):
                 code = main(["resolve-reviewers", "--cwd", root, "--cross-ai",
                              "--quota-path", os.path.join(root, "quota.json")],
-                            run_fn=_ok, which_fn=lambda _name: None, env_fn=lambda: dict(env))
+                            run_fn=_ok, which_fn=lambda _name, **_kwargs: None,
+                            env_fn=lambda: dict(env))
             self.assertEqual(code, 0)
             self.assertIn("route", json.loads(out.getvalue())[0])
             with open(path, "rb") as stream:
@@ -707,7 +756,8 @@ class TestOpencodePrivateDirUsesTheGivenEnv(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 1, stdout="", stderr="")
 
             seams = routing.RuntimesSeams(
-                lambda name: "/fake/opencode" if name == "opencode" else None, fake_run,
+                lambda name, **_kwargs: "/fake/opencode" if name == "opencode" else None,
+                fake_run,
                 mock.Mock(side_effect=OSError), mock.Mock(side_effect=OSError))
             with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": decoy}):
                 routing.load_runtimes_snapshot(env, seams, force=True)

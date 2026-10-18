@@ -1,15 +1,18 @@
 """One runtime-id table: snapshot keys, legacy names, and host precedence (18.1 R1)."""
 
 import ast
+import functools
 import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
@@ -98,6 +101,9 @@ class TestRuntimeTable(unittest.TestCase):
 
         self.assertEqual(detection.RUNTIMES["codex"].native_selectors, ())
         self.assertEqual(detection.RUNTIMES["opencode"].native_selectors, ())
+        self.assertEqual(detection.RUNTIMES["cursor"].native_selectors, ())
+        # ROADMAP Phase 21 SC5 keeps cursor session-default-only.
+        self.assertFalse(host_can_select("cursor", "composer-2.5", "cursor"))
         # ROADMAP Phase 20 SC3's session-default-only OR branch satisfies the criterion;
         # native selection remains an optional live probe (18.1-VERIFICATION deferred item 1).
         self.assertFalse(host_can_select("codex", "gpt-5.6-sol", "codex"))
@@ -179,8 +185,12 @@ class TestNormalizeRuntimeKeys(unittest.TestCase):
 
 
 def _which_in(directory):
-    def which_fn(name):
-        path = os.path.join(directory, name)
+    def which_fn(name, path=None):
+        directory_to_search = path if path is not None else directory
+        found = shutil.which(name, path=directory_to_search)
+        if found:
+            return found
+        path = os.path.join(directory_to_search, name)
         return path if os.path.exists(path) else None
 
     return which_fn
@@ -193,6 +203,103 @@ def _touch(path):
 
 
 class TestGuardedAgentBinary(unittest.TestCase):
+    @staticmethod
+    def _executable(path):
+        _touch(path)
+        os.chmod(path, 0o755)
+
+    def test_grok_agent_first_then_cursor_agent_later_resolves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_a, bin_b = (os.path.join(tmp, name) for name in ("bin-a", "bin-b"))
+            os.makedirs(bin_a)
+            os.makedirs(bin_b)
+            grok = os.path.join(tmp, "grok", "grok-agent")
+            cursor = os.path.join(tmp, "versions", "cursor-agent")
+            self._executable(grok)
+            self._executable(cursor)
+            os.symlink(grok, os.path.join(bin_a, "agent"))
+            os.symlink(cursor, os.path.join(bin_b, "agent"))
+            path = os.pathsep.join((bin_a, bin_b))
+            found = detection.resolve_runtime_binary(
+                "cursor", which_fn=functools.partial(shutil.which, path=path), path_env=path)
+            self.assertEqual(found, os.path.join(bin_b, "agent"))
+
+    def test_only_cursor_agent_name_resolves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = os.path.join(tmp, "cursor-agent")
+            self._executable(binary)
+            self.assertEqual(detection.resolve_runtime_binary(
+                "cursor", which_fn=functools.partial(shutil.which, path=tmp)), binary)
+
+    def test_both_names_one_real_file_reported_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary_dir = os.path.join(tmp, "bin")
+            os.makedirs(binary_dir)
+            target = os.path.join(tmp, "versions", "cursor-agent")
+            self._executable(target)
+            for name in ("cursor-agent", "agent"):
+                os.symlink(target, os.path.join(binary_dir, name))
+            snapshot = detection.build_runtimes_snapshot(
+                which_fn=functools.partial(shutil.which, path=binary_dir),
+                run_fn=lambda *_a, **_k: _ModelsResult())
+            cursor = snapshot["clis"]["cursor"]
+            self.assertEqual(cursor["path"], os.path.join(binary_dir, "cursor-agent"))
+            self.assertEqual(cursor["real_path"], os.path.realpath(target))
+            self.assertNotIn("cursor-agent", snapshot["clis"])
+
+    def test_shell_function_is_invisible_to_the_lookup(self):
+        with tempfile.TemporaryDirectory() as empty_dir, \
+                mock.patch.dict(os.environ, {"BASH_FUNC_cursor-agent%%": "() { :; }"}):
+            self.assertIsNone(detection.resolve_runtime_binary(
+                "cursor", which_fn=functools.partial(shutil.which, path=empty_dir),
+                path_env=empty_dir))
+
+    def test_cursor_listing_never_spawns_a_shell(self):
+        calls = []
+
+        def recording_run(*args, **kwargs):
+            calls.append((args, kwargs))
+            return _ModelsResult()
+
+        self.assertEqual(detection.detect_cursor_agent_models(
+            "/fake/cursor-agent", run_fn=recording_run), ["auto"])
+        argv, kwargs = calls[0][0][0], calls[0][1]
+        self.assertIsInstance(argv, list)
+        self.assertEqual(argv, ["/fake/cursor-agent", "models"])
+        self.assertFalse(kwargs.get("shell"))
+        with open(detection.__file__, encoding="utf-8") as source:
+            self.assertNotIn("shell=True", source.read())
+
+    def test_trailing_empty_path_segment_is_the_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cwd_dir:
+            old_cwd = os.getcwd()
+            self.addCleanup(os.chdir, old_cwd)
+            bin_a = os.path.join(tmp, "bin-a")
+            os.makedirs(bin_a)
+            grok = os.path.join(tmp, "grok-agent")
+            cursor = os.path.join(tmp, "versions", "cursor-agent")
+            self._executable(grok)
+            self._executable(cursor)
+            os.symlink(grok, os.path.join(bin_a, "agent"))
+            os.symlink(cursor, os.path.join(cwd_dir, "agent"))
+            os.chdir(cwd_dir)
+            path = bin_a + os.pathsep
+            found = detection.resolve_runtime_binary(
+                "cursor", which_fn=functools.partial(shutil.which, path=path), path_env=path)
+            self.assertEqual(found, os.path.join(os.curdir, "agent"))
+
+    def test_empty_path_scans_the_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cwd_dir:
+            old_cwd = os.getcwd()
+            self.addCleanup(os.chdir, old_cwd)
+            cursor = os.path.join(tmp, "versions", "cursor-agent")
+            self._executable(cursor)
+            os.symlink(cursor, os.path.join(cwd_dir, "agent"))
+            os.chdir(cwd_dir)
+            self.assertEqual(detection.resolve_runtime_binary(
+                "cursor", which_fn=functools.partial(shutil.which, path=""), path_env=""),
+                os.path.join(os.curdir, "agent"))
+
     def test_agent_symlink_to_cursor_agent_resolves(self):
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = os.path.join(tmp, "bin")
@@ -201,7 +308,8 @@ class TestGuardedAgentBinary(unittest.TestCase):
             _touch(real)
             agent = os.path.join(bin_dir, "agent")
             os.symlink(real, agent)
-            found = detection.resolve_runtime_binary("cursor", which_fn=_which_in(bin_dir))
+            found = detection.resolve_runtime_binary(
+                "cursor", which_fn=_which_in(bin_dir), path_env=bin_dir)
             self.assertEqual(found, agent)
 
     def test_agent_symlink_to_grok_does_not_resolve(self):
@@ -211,7 +319,8 @@ class TestGuardedAgentBinary(unittest.TestCase):
             real = os.path.join(tmp, "grok", "grok-1.0.52-linux-x86_64")
             _touch(real)
             os.symlink(real, os.path.join(bin_dir, "agent"))
-            found = detection.resolve_runtime_binary("cursor", which_fn=_which_in(bin_dir))
+            found = detection.resolve_runtime_binary(
+                "cursor", which_fn=_which_in(bin_dir), path_env=bin_dir)
             self.assertIsNone(found)
 
     def test_cursor_agent_wins_when_both_are_present(self):
@@ -223,11 +332,12 @@ class TestGuardedAgentBinary(unittest.TestCase):
             real = os.path.join(tmp, "versions", "cursor-agent")
             _touch(real)
             os.symlink(real, os.path.join(bin_dir, "agent"))
-            found = detection.resolve_runtime_binary("cursor", which_fn=_which_in(bin_dir))
+            found = detection.resolve_runtime_binary(
+                "cursor", which_fn=_which_in(bin_dir), path_env=bin_dir)
             self.assertEqual(found, cursor_agent)
 
     def test_no_binaries_maps_every_id_to_none(self):
-        result = detection.detect_installed_clis(which_fn=lambda _name: None)
+        result = detection.detect_installed_clis(which_fn=lambda _name, **_kwargs: None)
         self.assertEqual(set(result), set(detection.RUNTIMES))
         self.assertEqual(set(result.values()), {None})
 

@@ -1,6 +1,7 @@
 import base64
 import contextlib
 import http.client
+import inspect
 import json
 import os
 import re
@@ -164,16 +165,37 @@ def normalize_runtime_keys(mapping) -> dict:
     return merged
 
 
-def resolve_runtime_binary(rid, which_fn=shutil.which, realpath_fn=os.path.realpath):
-    """First PATH hit for rid. A guarded name is kept only when its real basename matches."""
+def _guarded_hits(name, which_fn, path_env):
+    """Yield the injected resolver's first hit, followed by each PATH-directory hit."""
+    first = which_fn(name)
+    if first:
+        yield first
+    try:
+        parameters = inspect.signature(which_fn).parameters.values()
+        supports_path = any(parameter.name == "path" or
+                            parameter.kind == inspect.Parameter.VAR_KEYWORD
+                            for parameter in parameters)
+    except (TypeError, ValueError):
+        supports_path = False
+    if not supports_path:
+        return
+    effective_path = os.environ.get("PATH", "") if path_env is None else path_env
+    for directory in effective_path.split(os.pathsep):
+        hit = which_fn(name, path=directory or os.curdir)
+        if hit and hit != first:
+            yield hit
+
+
+def resolve_runtime_binary(rid, which_fn=shutil.which, realpath_fn=os.path.realpath,
+                          path_env=None):
+    """First PATH hit for rid; guarded names are scanned across PATH and basename-checked."""
     for name in RUNTIMES[rid].binaries:
-        found = which_fn(name)
-        if not found:
-            continue
         expected = _GUARDED_BINARIES.get(name)
-        if expected is not None and os.path.basename(realpath_fn(found)) != expected:
-            continue
-        return found
+        hits = _guarded_hits(name, which_fn, path_env) if expected else (which_fn(name),)
+        for found in hits:
+            if found and (expected is None or
+                          os.path.basename(realpath_fn(found)) == expected):
+                return found
     return None
 
 
@@ -278,30 +300,43 @@ def detect_opencode_models(binary: str, run_fn=subprocess.run, env=None) -> list
     return [line.strip() for line in stdout.splitlines() if line.strip()]
 
 
-def _parse_cursor_models(stdout: str) -> list | None:
-    """[] when only the header remains. None when no id parsed and a non-blank line
-    is neither the header nor `<id> - <name>` (format not recognized)."""
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_CURSOR_MODEL_LINE = re.compile(
+    r"([A-Za-z0-9._-]+)(?: - .*| \((?:current|default|current, default)\))?"
+)
+
+
+def parse_cursor_models(stdout: str) -> list[str] | None:
+    """Parse cursor-agent models output without raising.
+
+    Returns [] for a recognized empty listing and None for unrecognized output. Model ids
+    are ASCII tokens restricted to letters, digits, period, underscore, and hyphen.
+    """
     models: list[str] = []
     unrecognized = False
-    for raw in stdout.splitlines():
+    for raw in _ANSI_RE.sub("", stdout).splitlines():
         line = raw.strip()
-        if not line or line == "Available models":
+        if not line or line == "Available models" or line.startswith("Tip:"):
             continue
-        model_id = line.split(" - ", 1)[0].strip() if " - " in line else ""
-        if not model_id:
+        if line == "No models available for this account.":
+            continue
+        match = _CURSOR_MODEL_LINE.fullmatch(line)
+        if match:
+            models.append(match.group(1))
+        else:
             unrecognized = True
-            continue
-        models.append(model_id)
     if models:
         return models
     return None if unrecognized else []
 
 
-def detect_cursor_agent_models(binary: str, run_fn=subprocess.run) -> list | None:
-    """Runs `<binary> models` (`<id> - <name>` after an "Available models" header).
-    None on OSError, TimeoutExpired, a non-zero exit, or unrecognized output.
-    Exit 0 with only the header is []. `cursor-agent models` rewrites privacyCache
-    in ~/.cursor/cli-config.json, so a config fingerprint changes."""
+def detect_cursor_agent_models(binary: str, run_fn=subprocess.run) -> list[str] | None:
+    """Run `<binary> models` and parse its header, id/name or flagged lines and Tip footer.
+
+    Exit 1 (including authentication failure), launch errors, timeouts, and unrecognized
+    output return None. Exit 0 with an empty-account notice returns []. The CLI may rewrite
+    privacyCache in ~/.cursor/cli-config.json while listing.
+    """
     try:
         result = run_fn([binary, *_list_argv("cursor")], capture_output=True, text=True,
                          check=False, timeout=15)
@@ -310,7 +345,7 @@ def detect_cursor_agent_models(binary: str, run_fn=subprocess.run) -> list | Non
     stdout = _listing_stdout(result)
     if stdout is None:
         return None
-    return _parse_cursor_models(stdout)
+    return parse_cursor_models(stdout)
 
 
 def _codex_reasoning_modes(item: dict) -> list[str]:
@@ -982,7 +1017,8 @@ _DEFAULT_OPENCODE_SEAMS = OpencodeSeams()
 def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalog_fn=None,
                             opencode: OpencodeSeams = _DEFAULT_OPENCODE_SEAMS) -> dict:
     """{"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": {name: {"installed": bool,
-    "path"?: str, "models"?: [str], "reasoning_modes"?: {model_id: [effort, ...]},
+    "path"?: str, "real_path"?: str, "models"?: [str],
+    "reasoning_modes"?: {model_id: [effort, ...]},
     "aliases"?: [str], "models_source"?: str, "models_as_of"?: str, "image_input"?: {id: bool},
     "image_input_source"?: str, "image_input_probe"?: "failed"}}}.
     `models` is set only when a listing succeeded, an empty list included, so a missing
@@ -1002,7 +1038,8 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalo
         if not binpath:
             snapshot["clis"][cli] = {"installed": False}
             continue
-        entry = {"installed": True, "path": binpath}
+        # Informational only; consumers rely on schema v5 fields, so no bump is needed.
+        entry = {"installed": True, "path": binpath, "real_path": os.path.realpath(binpath)}
         entry.update(_listing_fields(cli, binpath, run_fn, opencode.env) or {})
         if cli == "opencode":
             image_input_map, image_input_source = opencode_image_input_with_source(
