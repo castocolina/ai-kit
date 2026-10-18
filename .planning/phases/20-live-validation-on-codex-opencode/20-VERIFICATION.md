@@ -31,7 +31,7 @@ covered_files:
   - "tests/test_curated_config_plan_edit.py"
   - "tests/test_curated_config_recommend.py"
   - "tests/test_gsd_curated_eval.py"
-covered_digest: "v3:sha256:8da239292e26cdf22c47936efa20de3ce0b758576a14794dfc1d18e8442544a4"
+covered_digest: "v3:sha256:8215dfdbbd751531161f055fb18284b2d87607ba6df3c1789dcb82f79124a470"
 behavior_unverified: 0
 overrides_applied: 0
 human_verification:
@@ -142,3 +142,4 @@ _Verifier: Claude (gsd-verifier)_
 - Both smoke files' "Phase gates" lines carry a superseded note (27 matrix tests, 4,348 total).
 - The `/var<scratch-*>` redaction gap was a harness bug: `_smoke_placeholders` now also replaces realpath forms (regression test `test_smoke_placeholders_cover_the_realpath_form`); the two evidence lines were corrected.
 - Skill-judge digest checked: `python3 tests/gsd_curated_eval.py digest` prints `ea3200ce9624de80`, equal to `20-SKILL-JUDGE.md`.
+- Re-verification of the delta (orchestrator): the only covered-file change after the verifier ran is b099454 (`_smoke_placeholders` realpath forms in `tests/gsd_curated_eval.py`, plus its test). `python3 -m unittest tests.test_gsd_curated_eval -k placeholders`: 9 tests OK; the pre-commit unittest hook passed on the commit. The `covered_digest` was refreshed for that delta only; no other verdict changed.
