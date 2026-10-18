@@ -127,6 +127,13 @@ Notes on specific fixes:
   - Still true: `grep -c 'shipped npx launcher and its registry fetch were not exercised'
     followups.py` is 1, `grep -c 'Phase 20' followups.py` is at least 1, and `_gitignore_prefix_note`
     is present.
+- **20-03, 20-04 and 20-05 `<automated>` verify strings** pinned the old constant-rendered
+  evidence (WR-05/H1). Superseded mapping, re-run by the orchestrator on the regenerated evidence,
+  all commands exit 0 with it:
+  - `^- scope: local` -> `^- project-a: scope local, root <scratch-a>/`
+  - `^- root: <scratch-a>/.<host>/gsd-core` -> `root <scratch-a>/.<host>/gsd-core, version`
+  - `- all equal` -> `agents; planned == baked == resolve-model`
+  - `- idempotent re-install: yes` -> `a repeat install left the agents dir unchanged`
 - `test_phase_20_evidence_notes_are_explicitly_verified` was renamed and rewritten as
   `test_phase_20_evidence_notes_claim_only_what_the_smoke_ran`.
 
