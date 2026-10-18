@@ -27,6 +27,7 @@ import argparse
 import ast
 import contextlib
 import getpass
+import glob
 import hashlib
 import importlib
 import io
@@ -41,6 +42,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import uuid
 from collections.abc import Callable
 from typing import NamedTuple
@@ -225,22 +227,12 @@ def _strict_listings(repo_root: pathlib.Path, home: pathlib.Path) -> dict[str, l
 
 
 def _host_managed_files(home: pathlib.Path) -> dict[str, pathlib.Path]:
-    """Host-managed entries: a change is reported and investigated, never a failure.
-
-    `~/.claude/plugins/*.json` are rewritten by Claude Code itself; the opencode and codex
-    config files are tripwires - no probe is documented to rewrite them.
-    """
+    """Claude plugin metadata that Claude itself may rewrite; credentials are excluded."""
     files: dict[str, pathlib.Path] = {}
     plugins = home / ".claude" / "plugins"
     for name in _dir_names(plugins) or []:
         if name.endswith(".json") and name != CREDENTIALS_BASENAME:
             files[f"{HOME_LABEL}/.claude/plugins/{name}"] = plugins / name
-    for path in (
-        home / ".config" / "opencode" / "opencode.jsonc",
-        home / ".config" / "opencode" / "opencode.json",
-        home / ".codex" / "config.toml",
-    ):
-        files[f"{HOME_LABEL}/{path.relative_to(home).as_posix()}"] = path
     return files
 
 
@@ -267,7 +259,34 @@ def _tree_sha(root: pathlib.Path) -> str | None:
     return digest.hexdigest()
 
 
-def snapshot(repo_root: pathlib.Path | str, home: pathlib.Path | str) -> dict:
+def _toml_semantic_sha(path: pathlib.Path, scratch_roots=()) -> str | None:
+    """Hash TOML semantically, excluding only explicitly owned scratch project trust rows."""
+    if not path.is_file():
+        return None
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return _file_sha(path)
+    roots = [os.path.normpath(os.path.abspath(os.fspath(root))) for root in scratch_roots]
+    projects = data.get("projects")
+    if isinstance(projects, dict):
+        for project in list(projects):
+            normalized = os.path.normpath(os.path.abspath(project))
+            if any(normalized == root or _under(normalized, root) for root in roots):
+                del projects[project]
+        if not projects:
+            del data["projects"]
+    return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+
+def _under(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath((path, root)) == root
+    except ValueError:
+        return False
+
+
+def snapshot(repo_root: pathlib.Path | str, home: pathlib.Path | str, scratch_roots=()) -> dict:
     """The protected set as `{"strict": {...}, "host_managed": {...}}`; reads bytes only.
 
     Strict values are a sha256 (None when absent) for files, a sorted name list for
@@ -278,6 +297,19 @@ def snapshot(repo_root: pathlib.Path | str, home: pathlib.Path | str) -> dict:
         label: _file_sha(path) for label, path in _strict_files(root, home_dir).items()
     }
     strict.update(_strict_listings(root, home_dir))
+    codex = home_dir / ".codex"
+    opencode = home_dir / ".config" / "opencode"
+    strict[f"{HOME_LABEL}/.codex/config.toml"] = _toml_semantic_sha(
+        codex / "config.toml", scratch_roots
+    )
+    strict[f"{HOME_LABEL}/.codex/hooks.json"] = _file_sha(codex / "hooks.json")
+    strict[f"{HOME_LABEL}/.codex/agents"] = _tree_sha(codex / "agents")
+    for name in ("opencode.jsonc", "opencode.json"):
+        strict[f"{HOME_LABEL}/.config/opencode/{name}"] = _file_sha(opencode / name)
+    for name in ("agents", "commands"):
+        strict[f"{HOME_LABEL}/.config/opencode/{name}"] = _tree_sha(opencode / name)
+    for name in ("skills", "plugins"):
+        strict[f"{HOME_LABEL}/.config/opencode/{name}"] = _dir_names(opencode / name)
     strict[GSD_CORE_LABEL] = _tree_sha(root / ".claude" / "gsd-core")
     host_managed = {label: _file_sha(path) for label, path in _host_managed_files(home_dir).items()}
     return {
@@ -314,7 +346,7 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
         print("snapshot needs --out F or --check F")
         return 2
     repo_root, home = _abs(REPO_ROOT), _abs(args.home or pathlib.Path.home())
-    current = snapshot(repo_root, home)
+    current = snapshot(repo_root, home, getattr(args, "scratch_root", None) or ())
     if args.out:
         _write_json(_abs(args.out), current)
         print(f"snapshot written to {label_path(args.out)}")
@@ -528,7 +560,7 @@ def _set_entries(plan: dict) -> dict:
         entry["key"]: entry["value"]
         for entry in plan.get("entries") or []
         if isinstance(entry, dict)
-        and entry.get("op") == "set"
+        and entry.get("op") in ("set", "keep")
         and isinstance(entry.get("key"), str)
     }
 
@@ -695,6 +727,8 @@ def _mismatches(
         tier = override if host == "claude" and override in _TIERS else None
         if f"model_overrides.{agent}" not in sets:
             tier = _tier_for(agent, plan, tables)
+        elif host != "claude":
+            tier = None
         row = got[agent]
         if compare(agent, row, expected, tier=tier):
             rows.append([agent, expected, str(row.get("model", "")), str(row.get("tier", ""))])
@@ -3692,6 +3726,9 @@ class SmokeCtx(NamedTuple):
     host: str
     env: dict
     host_flag: bool = True  # False: inventory detects the host itself (EVAL-03 live detection)
+    installer_dir: str | None = None
+    install_home: str | None = None
+    artifacts_dir: str | None = None
 
 
 class ValidateCtx(NamedTuple):
@@ -3944,14 +3981,15 @@ def _step(name: str, fn) -> dict:
     return {"name": name, "ok": True, "detail": detail or ""}
 
 
-def _scratch_project(work: str, label: str, with_planning: bool) -> str:
-    """A git repo with the gsd-core symlink; `.planning/config.json` copied when asked."""
+def _scratch_project(work: str, label: str, with_planning: bool, host: str = "claude") -> str:
+    """A git repo with the host-specific gsd-core layout; copy config when asked."""
     project = os.path.join(work, label)
     os.makedirs(project)
     subprocess.run(["git", "init", "-q", project], check=True)
-    link = os.path.join(project, ".claude", "gsd-core")
-    os.makedirs(os.path.dirname(link), exist_ok=True)
-    os.symlink(os.path.join(REPO_ROOT, ".claude", "gsd-core"), link)
+    if host == "claude":
+        link = os.path.join(project, ".claude", "gsd-core")
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        os.symlink(os.path.join(REPO_ROOT, ".claude", "gsd-core"), link)
     if with_planning:
         os.makedirs(os.path.join(project, ".planning"))
         shutil.copyfile(
@@ -3974,11 +4012,94 @@ def _cache_sha_of(env: dict) -> dict:
     return {name: _sha256_file(cache / name) for name in names}
 
 
+def _project_env(ctx: SmokeCtx) -> dict:
+    """Use the project git root for non-Claude scratch projects, never this checkout."""
+    env = dict(ctx.env)
+    if ctx.host != "claude":
+        env.pop("RUNTIME_DIR", None)
+    return env
+
+
+def _pinned_version() -> str:
+    return gsd_tools.gsd_core_version(str(_abs(GSD_TOOLS_PATH))) or ""
+
+
+def _cached_installer(version: str) -> str | None:
+    home = os.path.expanduser("~")
+    candidates = sorted(
+        glob.glob(os.path.join(home, ".npm", "_npx", "*", "node_modules", "@opengsd", "gsd-core"))
+        + glob.glob(
+            os.path.join(
+                home, ".cache", "pnpm", "dlx", "*", "*", "node_modules", "@opengsd", "gsd-core"
+            )
+        )
+    )
+    for candidate in candidates:
+        try:
+            package = json.loads(
+                pathlib.Path(candidate, "package.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            continue
+        if package.get("version") == version:
+            return candidate
+    return None
+
+
+def _install_local(ctx: SmokeCtx, project: str) -> str:
+    version = _pinned_version()
+    installer = ctx.installer_dir or _cached_installer(version)
+    if installer is None:
+        raise SystemExit(
+            f"no cached @opengsd/gsd-core@{version}; pass --installer-dir (never npx in the smoke)"
+        )
+    try:
+        package = json.loads(pathlib.Path(installer, "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit("installer package.json unavailable") from exc
+    if package.get("version") != version:
+        raise SystemExit(
+            f"installer version mismatch: expected {version}, got {package.get('version')}"
+        )
+    if not ctx.install_home:
+        raise SystemExit("install home is unavailable")
+    install_home = ctx.install_home
+    env = {
+        **_project_env(ctx),
+        "HOME": install_home,
+        "XDG_CONFIG_HOME": os.path.join(install_home, ".config"),
+        "XDG_DATA_HOME": os.path.join(install_home, ".local", "share"),
+        "XDG_CACHE_HOME": os.path.join(install_home, ".cache"),
+        "XDG_STATE_HOME": os.path.join(install_home, ".local", "state"),
+    }
+    proc = subprocess.run(
+        [
+            ctx.node_bin,
+            os.path.join(installer, "bin", "install.js"),
+            f"--{ctx.host}",
+            "--local",
+            "--no-legacy-cleanup",
+        ],
+        cwd=project,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    if proc.returncode:
+        raise SystemExit(
+            f"local install failed (exit {proc.returncode}): {(proc.stderr or '')[-500:]}"
+        )
+    return f"installed {version} into .{ctx.host}/gsd-core"
+
+
 def _inventory(ctx: SmokeCtx, project: str, out: str, cache_sha: dict) -> dict:
     """The product's `inventory` through `cli.main` on the seeded scratch cache."""
     from ai_kit_gsd_curated_config import cli  # pylint: disable=import-outside-toplevel
 
-    assert_no_probe(ctx.env)
+    product_env = _project_env(ctx) if project != str(ctx.repo_root) else ctx.env
+    assert_no_probe(product_env)
     argv = ["inventory", "--project-dir", project]
     if ctx.host and ctx.host_flag:
         argv += ["--host", ctx.host]
@@ -3987,7 +4108,7 @@ def _inventory(ctx: SmokeCtx, project: str, out: str, cache_sha: dict) -> dict:
         code = cli.main(
             argv,
             which_fn=lambda name, **_kw: ctx.node_bin if name == "node" else shutil.which(name),
-            env_fn=lambda: dict(ctx.env),
+            env_fn=lambda: dict(product_env),
             run_fn=subprocess.run,
         )
     if code != 0:
@@ -3997,6 +4118,19 @@ def _inventory(ctx: SmokeCtx, project: str, out: str, cache_sha: dict) -> dict:
     inv = json.loads(buf.getvalue())
     if not ctx.host_flag and inv.get("host") != ctx.host:
         raise SystemExit(f"inventory detected host {inv.get('host')}, expected {ctx.host}")
+    if project != str(ctx.repo_root) and ctx.host != "claude":
+        expected = os.path.normpath(os.path.join(project, f".{ctx.host}", "gsd-core"))
+        core = inv.get("gsd_core") or {}
+        if (
+            os.path.normpath(core.get("path", "")) != expected
+            or core.get("scope") != "local"
+            or core.get("version") != _pinned_version()
+        ):
+            raise SystemExit(
+                "gsd-core mismatch: "
+                f"path={core.get('path')} scope={core.get('scope')} "
+                f"version={core.get('version')}"
+            )
     return inv
 
 
@@ -4045,7 +4179,7 @@ def _dry_run_unchanged(ctx: SmokeCtx, project: str, plan_path: str, inv_path: st
                 project,
             ],
             which_fn=lambda name, **_kw: ctx.node_bin if name == "node" else shutil.which(name),
-            env_fn=lambda: dict(ctx.env),
+            env_fn=lambda: dict(_project_env(ctx) if project != str(ctx.repo_root) else ctx.env),
             run_fn=subprocess.run,
         )
     if code != 0:
@@ -4104,16 +4238,103 @@ def _smoke_ai_kit(ctx: SmokeCtx, work: str, cache_sha: dict) -> dict:
     return _step("ai-kit inventory, recommend, dry run", run)
 
 
+def _baked_models(project: str, host: str) -> dict[str, str | None]:
+    """Read model fields from installer-generated agent artifacts only."""
+    agents_dir = pathlib.Path(project) / f".{host}" / "agents"
+    result: dict[str, str | None] = {}
+    for path in sorted(agents_dir.glob("gsd-*.toml" if host == "codex" else "gsd-*.md")):
+        if host == "codex":
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+            result[path.stem] = data.get("model")
+        else:
+            text = path.read_text(encoding="utf-8")
+            chunks = text.split("---", 2)
+            model = (
+                next(
+                    (
+                        line.split(":", 1)[1].strip().strip("\\\"'")
+                        for line in chunks[1].splitlines()
+                        if line.startswith("model:")
+                    ),
+                    None,
+                )
+                if len(chunks) > 2
+                else None
+            )
+            result[path.stem] = model
+    return result
+
+
+def _baked_mismatches(
+    baked: dict[str, str | None], promised_map: dict[str, str | None]
+) -> list[list[str]]:
+    return [
+        [agent, "missing file" if agent not in baked else str(baked[agent]), str(expected)]
+        for agent, expected in sorted(promised_map.items())
+        if baked.get(agent) != expected
+    ]
+
+
+def _generated_paths(project: str, host: str) -> list[str]:
+    base = pathlib.Path(project) / f".{host}"
+    paths = []
+    for prefix in ("gsd-core", "plugins/gsd-core.js", ".gitignore"):
+        if (base / prefix).exists():
+            paths.append(f".{host}/{prefix}" + ("/" if (base / prefix).is_dir() else ""))
+    for category in ("agents", "commands", "skills"):
+        paths.extend(f".{host}/{category}/{path.name}" for path in (base / category).glob("gsd-*"))
+    paths.extend(f".{host}/{path.name}" for path in base.glob("gsd-*.json"))
+    return sorted(paths)
+
+
+def _write_artifacts(
+    ctx: SmokeCtx, label: str, plan_path: str, project: str, resolved: dict, baked: dict
+) -> list[str]:
+    if not ctx.artifacts_dir:
+        return []
+    target = pathlib.Path(ctx.artifacts_dir) / label
+    target.mkdir(parents=True, exist_ok=True)
+    payloads = {
+        "plan.json": pathlib.Path(plan_path).read_text(encoding="utf-8"),
+        "config.json": pathlib.Path(project, ".planning", "config.json").read_text(
+            encoding="utf-8"
+        ),
+        "resolve-model.json": json.dumps(resolved, sort_keys=True, indent=2) + "\\n",
+        "baked.json": json.dumps(baked, sort_keys=True, indent=2) + "\\n",
+    }
+    labels = {
+        "work": str(pathlib.Path(project).parent),
+        "home": str(pathlib.Path(ctx.home)),
+        "repo_root": str(REPO_ROOT),
+        "scratch_a": str(pathlib.Path(project).parent / "project-a"),
+        "scratch_b": str(pathlib.Path(project).parent / "project-b"),
+        "install_home": ctx.install_home,
+        "installer_dir": ctx.installer_dir,
+        "artifacts_dir": ctx.artifacts_dir,
+    }
+    for name, text in payloads.items():
+        (target / name).write_text(_smoke_placeholders(text, labels), encoding="utf-8")
+    return [f"{label}/{name}" for name in payloads]
+
+
 def _smoke_project_a(ctx: SmokeCtx, work: str, cache_sha: dict) -> list[dict]:
     """D-14 steps 3 and 4 on a scratch copy of this repo's `.planning/config.json`."""
-    project = _scratch_project(work, "project-a", with_planning=True)
+    project = _scratch_project(work, "project-a", with_planning=True, host=ctx.host)
     inv_path = os.path.join(work, "inv-a.json")
     plan_path = os.path.join(work, "plan-a.json")
     state: dict = {}
+    install_step = (
+        _step("project (a) local gsd-core install", lambda: _install_local(ctx, project))
+        if ctx.host != "claude"
+        else None
+    )
 
     def inventory_and_plan() -> str:
+        if install_step is not None and not install_step["ok"]:
+            raise SystemExit("skipped: local install failed")
         _inventory(ctx, project, inv_path, cache_sha)
         _recommend_to(inv_path, plan_path)
+        state["plan"] = _load_plan_file(plan_path)
         state["forced"] = resolve_choices(plan_path, inv_path)
         return f"forced placeholders: {state['forced'] or 'none'}"
 
@@ -4123,21 +4344,23 @@ def _smoke_project_a(ctx: SmokeCtx, work: str, cache_sha: dict) -> list[dict]:
         state["backups"] = _backups_now(project)
         plan = _load_plan_file(plan_path)
         _dry_run_unchanged(ctx, project, plan_path, inv_path)
-        _real_apply_or_fail(plan_path, inv_path, project, ctx.env, ctx.node_bin)
+        project_env = _project_env(ctx)
+        _real_apply_or_fail(plan_path, inv_path, project, project_env, ctx.node_bin)
         validate_applied(
             project,
             plan,
             ValidateCtx(True, state["backups"], state["before_sha"]),
-            ctx.env,
+            project_env,
             ctx.node_bin,
         )
+        state["plan"] = plan
         return "apply and validation passed"
 
     def second_apply() -> str:
         config = os.path.join(project, ".planning", "config.json")
         sha = _sha256_file(config)
         backups = len(_backups_now(project))
-        _real_apply_or_fail(plan_path, inv_path, project, ctx.env, ctx.node_bin)
+        _real_apply_or_fail(plan_path, inv_path, project, _project_env(ctx), ctx.node_bin)
         if _sha256_file(config) != sha:
             raise SystemExit("second apply changed the config bytes")
         grown = len(_backups_now(project)) - backups
@@ -4145,15 +4368,89 @@ def _smoke_project_a(ctx: SmokeCtx, work: str, cache_sha: dict) -> list[dict]:
             raise SystemExit(f"second apply backup growth {grown}, expected +1 within limit")
         return "second apply: writes 0, bytes identical, backups +1"
 
-    def fault() -> str:
-        return _fault_apply(ctx, work, project, plan_path, inv_path)
+    def baked_check() -> str:
+        if "plan" not in state:
+            raise SystemExit("skipped: apply or plan failed")
+        if ctx.host == "claude":
+            return "not applicable on claude"
+        install_detail = _install_local(ctx, project)
+        agents_dir = pathlib.Path(project) / f".{ctx.host}" / "agents"
+        before_hash = _tree_sha(agents_dir)
+        if _install_local(ctx, project) != install_detail or _tree_sha(agents_dir) != before_hash:
+            raise SystemExit("third install changed agent files")
+        plan = state.get("plan") or _load_plan_file(plan_path)
+        tables = live_tables(ctx.node_bin, os.path.dirname(os.path.dirname(ctx.tools_path)))
+        agents = sorted(tables["profiles"])
+        entries = {
+            entry.get("key"): entry.get("value")
+            for entry in plan.get("entries", [])
+            if entry.get("op") in ("set", "keep")
+        }
+        if ctx.host == "codex":
+            promised_map = {agent: entries.get(f"model_overrides.{agent}") for agent in agents}
+        else:
+            promised_map = {
+                agent: promised(agent, plan, tables, ctx.host) or None for agent in agents
+            }
+        baked = _baked_models(project, ctx.host)
+        mismatches = _baked_mismatches(baked, promised_map)
+        if mismatches:
+            raise SystemExit(f"planned != baked: {mismatches}")
+        tools_path = os.path.join(project, f".{ctx.host}", "gsd-core", "bin", "gsd-tools.cjs")
+        matrix_ctx = _MatrixCtx(
+            ctx.node_bin,
+            tools_path,
+            ctx.home,
+            ctx.host,
+            os.path.dirname(os.path.dirname(tools_path)),
+        )
+        resolved = {}
+        for agent in agents:
+            got = _resolve_model(matrix_ctx, agent, project, _project_env(ctx))
+            model = promised(agent, plan, tables, ctx.host)
+            tier = (
+                None
+                if f"model_overrides.{agent}" in _set_entries(plan)
+                else _tier_for(agent, plan, tables)
+            )
+            mismatch = compare(agent, got, model, tier=tier)
+            resolved[agent] = {"model": got.get("model"), "tier": got.get("tier")}
+            if mismatch:
+                raise SystemExit(f"resolve-model mismatches: {mismatch}")
+        state["baked"] = baked
+        state["resolved"] = resolved
+        state["plan"] = plan
+        state["idempotent"] = True
+        state["generated_paths"] = _generated_paths(project, ctx.host)
+        state["baked_summary"] = {
+            "agents": len(agents),
+            "mismatches": mismatches,
+            "chain": ["plan", "resolve-model (project-local)", "baked file"],
+        }
+        state["idempotent"] = True
+        state["artifacts"] = _write_artifacts(ctx, "project-a", plan_path, project, resolved, baked)
+        return f"{len(agents)} agents; all equal; agents dir unchanged by a repeat install"
 
-    return [
+    def fault() -> str:
+        return _fault_apply(ctx._replace(env=_project_env(ctx)), work, project, plan_path, inv_path)
+
+    steps = ([install_step] if install_step else []) + [
         _step("project (a) inventory, recommend, choices", inventory_and_plan),
         _step("project (a) dry run, apply, validation", first_apply),
         _step("project (a) second apply", second_apply),
         _step("project (a) forced failure restores", fault),
     ]
+    post = _step("project (a) post-apply install and planned == baked", baked_check)
+    post.update(
+        {
+            "baked_summary": state.get("baked_summary"),
+            "generated_paths": state.get("generated_paths", []),
+            "artifacts": state.get("artifacts", []),
+            "idempotent": state.get("idempotent", False),
+        }
+    )
+    steps.append(post)
+    return steps
 
 
 def _fault_apply(ctx: SmokeCtx, work: str, project: str, plan_path: str, inv_path: str) -> str:
@@ -4214,26 +4511,99 @@ def cli_main_apply(plan_path, inv_path, project, ctx, run_fn) -> int:
 
 def _smoke_project_b(ctx: SmokeCtx, work: str, cache_sha: dict) -> dict:
     """D-14 step 5: empty project on the real global defaults; key paths only, never values."""
-    project = _scratch_project(work, "project-b", with_planning=False)
+    project = _scratch_project(work, "project-b", with_planning=False, host=ctx.host)
     inv_path = os.path.join(work, "inv-b.json")
     plan_path = os.path.join(work, "plan-b.json")
     report: dict = {}
+    state: dict = {}
+
+    install_step = (
+        _step("project (b) local gsd-core install", lambda: _install_local(ctx, project))
+        if ctx.host != "claude"
+        else None
+    )
 
     def run() -> str:
+        if install_step is not None and not install_step["ok"]:
+            raise SystemExit("skipped: local install failed")
         _inventory(ctx, project, inv_path, cache_sha)
         _recommend_to(inv_path, plan_path)
         resolve_choices(plan_path, inv_path)
         _dry_run_unchanged(ctx, project, plan_path, inv_path)
-        report.update(_real_apply_or_fail(plan_path, inv_path, project, ctx.env, ctx.node_bin))
+        project_env = _project_env(ctx)
+        report.update(_real_apply_or_fail(plan_path, inv_path, project, project_env, ctx.node_bin))
         validate_applied(
-            project, _load_plan_file(plan_path), ValidateCtx(False, [], None), ctx.env, ctx.node_bin
+            project,
+            _load_plan_file(plan_path),
+            ValidateCtx(False, [], None),
+            project_env,
+            ctx.node_bin,
         )
+        if ctx.host != "claude":
+            _install_local(ctx, project)
+            plan = _load_plan_file(plan_path)
+            tables = live_tables(ctx.node_bin, os.path.dirname(os.path.dirname(ctx.tools_path)))
+            agents = sorted(tables["profiles"])
+            entries = {
+                entry.get("key"): entry.get("value")
+                for entry in plan.get("entries", [])
+                if entry.get("op") in ("set", "keep")
+            }
+            promised_map = (
+                {agent: entries.get(f"model_overrides.{agent}") for agent in agents}
+                if ctx.host == "codex"
+                else {agent: promised(agent, plan, tables, ctx.host) or None for agent in agents}
+            )
+            baked = _baked_models(project, ctx.host)
+            mismatches = _baked_mismatches(baked, promised_map)
+            if mismatches:
+                raise SystemExit(f"planned != baked: {mismatches}")
+            tools_path = os.path.join(project, f".{ctx.host}", "gsd-core", "bin", "gsd-tools.cjs")
+            matrix_ctx = _MatrixCtx(
+                ctx.node_bin,
+                tools_path,
+                ctx.home,
+                ctx.host,
+                os.path.dirname(os.path.dirname(tools_path)),
+            )
+            resolved = {}
+            for agent in agents:
+                got = _resolve_model(matrix_ctx, agent, project, project_env)
+                tier = (
+                    None
+                    if f"model_overrides.{agent}" in _set_entries(plan)
+                    else _tier_for(agent, plan, tables)
+                )
+                if compare(agent, got, promised(agent, plan, tables, ctx.host), tier=tier):
+                    raise SystemExit(f"resolve-model mismatch: {agent}")
+                resolved[agent] = {"model": got.get("model"), "tier": got.get("tier")}
+            state.update(plan=plan, baked=baked, resolved=resolved)
+            state["artifacts"] = _write_artifacts(
+                ctx, "project-b", plan_path, project, resolved, baked
+            )
+            report["generated_paths"] = _generated_paths(project, ctx.host)
+            report["baked_summary"] = {
+                "agents": len(agents),
+                "mismatches": mismatches,
+                "chain": ["plan", "resolve-model (project-local)", "baked file"],
+            }
+            report["artifacts"] = state["artifacts"]
+            report["idempotent"] = True
         keys = sorted(report.get("reconciled") or [])
         report["key_paths"] = {"reconciled": keys}  # a real apply report has no diff rows
         return f"reconciled {len(keys)} key paths"
 
     result = _step("project (b) empty project, apply, validation", run)
     result["key_paths"] = report.get("key_paths", {})
+    result.update(
+        {
+            key: report[key]
+            for key in ("generated_paths", "baked_summary", "artifacts", "idempotent")
+            if key in report
+        }
+    )
+    if install_step is not None:
+        result["local_install"] = install_step
     return result
 
 
@@ -4258,14 +4628,14 @@ def run_smoke(ctx: SmokeCtx, work: str, seed_fn=None, assert_fn=None) -> dict:
     assert_fn = assert_fn or (lambda env: assert_no_probe(env))
     cache_sha = seed_fn(work, ctx)
     assert_fn(ctx.env)
-    before = snapshot(ctx.repo_root, ctx.home)
+    before = snapshot(ctx.repo_root, ctx.home, (work,))
     steps = [_smoke_ai_kit(ctx, work, cache_sha)]
     steps.extend(_smoke_project_a(ctx, work, cache_sha))
     b_result = _smoke_project_b(ctx, work, cache_sha)
     steps.append(b_result)
     matrix = _run_matrix_step(ctx)
     steps.append(matrix)
-    after = snapshot(ctx.repo_root, ctx.home)
+    after = snapshot(ctx.repo_root, ctx.home, (work,))
     strict, host_managed = snapshot_diff(before, after)
     steps.append(
         {
@@ -4280,6 +4650,12 @@ def run_smoke(ctx: SmokeCtx, work: str, seed_fn=None, assert_fn=None) -> dict:
         "host_managed_changed": host_managed,
         "matrix": matrix.get("matrix"),
         "key_paths": b_result.get("key_paths", {}),
+        "generated_paths": [path for step in steps for path in (step.get("generated_paths") or [])],
+        "baked": next(
+            (step.get("baked_summary") for step in steps if step.get("baked_summary")), None
+        ),
+        "artifacts": [item for step in steps for item in (step.get("artifacts") or [])],
+        "idempotent": all(step.get("idempotent", True) for step in steps),
         "exit": 0 if all(s["ok"] for s in steps) and not strict else 1,
     }
 
@@ -4298,6 +4674,9 @@ def _smoke_placeholders(text: str, result: dict) -> str:
     # Longest first: the projects sit in the work dir, and the worktree may sit under the
     # resolved home (review WR-03, the same order as `_placeholders`).
     for raw, label in (
+        (result.get("artifacts_dir"), "<artifacts-dir>"),
+        (result.get("installer_dir"), "<installer>"),
+        (result.get("install_home"), "<install-home>"),
         (result.get("scratch_b"), "<scratch-b>"),
         (result.get("scratch_a"), "<scratch-a>"),
         (result.get("work"), SCRATCH_LABEL),
@@ -4337,6 +4716,39 @@ def render_smoke_evidence(result: dict) -> str:
             )
     else:
         lines.append("- not run")
+    lines += ["", "## Local install"]
+    local = result.get("local_install") or {}
+    roots = result.get("install_roots") or []
+    lines += [f"- host: {result.get('host')}", f"- scope: {local.get('scope', 'not applicable')}"]
+    lines += [f"- root: {root}" for root in roots] or [
+        f"- root: {local.get('root', 'not applicable')}"
+    ]
+    lines += [
+        f"- version: {local.get('version', 'not applicable')}",
+        f"- seed: {result.get('seed', 'absent')}",
+        f"- installer: {result.get('installer_label', '<installer>')}",
+        "- installer env: HOME and XDG_CONFIG_HOME/XDG_DATA_HOME/XDG_CACHE_HOME/"
+        "XDG_STATE_HOME under <install-home>",
+    ]
+    lines += ["", "## Planned vs baked"]
+    baked = result.get("baked") or {}
+    lines += [
+        f"- agents: {baked.get('agents', 0)}",
+        "- all equal"
+        if not baked.get("mismatches")
+        else f"- mismatches: {baked.get('mismatches')}",
+        f"- idempotent re-install: {'yes' if result.get('idempotent') else 'no'}",
+    ]
+    lines += ["", "## Generated paths"]
+    lines += [f"- {path}" for path in result.get("generated_paths", [])] or ["- none"]
+    lines.append(
+        "- gitignore decision: ignore these prefixes in the target project; curated-config "
+        "reports, never edits .gitignore (D-12)"
+    )
+    lines += ["", "## Artifacts"]
+    lines += [f"- {item}" for item in result.get("artifacts", [])] or [
+        "- none (run with --artifacts-out)"
+    ]
     lines += ["", "## Protected set"]
     changed = list(result.get("strict_changed") or [])
     lines.append("- unchanged" if not changed else "- changed: " + ", ".join(changed))
@@ -4369,13 +4781,36 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
         return 2
     work = tempfile.mkdtemp(prefix="smoke-")
     home = str(_abs(args.home or pathlib.Path.home()))
+    install_home = os.path.join(work, "home")
+    os.makedirs(install_home, exist_ok=True)
+    defaults = pathlib.Path(home) / ".gsd" / "defaults.json"
+    seed = "absent"
+    if defaults.is_file():
+        destination = pathlib.Path(install_home) / ".gsd" / "defaults.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(defaults, destination)
+        seed = "copied"
+    pinned = _pinned_version()
+    installer = args.installer_dir or (_cached_installer(pinned) if args.host != "claude" else None)
+    artifacts_dir = str(_abs(args.artifacts_out)) if args.artifacts_out else None
     env = {
         **os.environ,
         "RUNTIME_DIR": str(REPO_ROOT),
         "GSD_RUNTIME": host,
         "XDG_CACHE_HOME": os.path.join(work, "xdg"),
     }
-    ctx = SmokeCtx(node_bin, GSD_TOOLS_PATH, REPO_ROOT, home, host, env, args.host is not None)
+    ctx = SmokeCtx(
+        node_bin,
+        GSD_TOOLS_PATH,
+        REPO_ROOT,
+        home,
+        host,
+        env,
+        args.host is not None,
+        installer,
+        install_home,
+        artifacts_dir,
+    )
     try:
         result = run_smoke(ctx, work)
         result.update(
@@ -4385,13 +4820,31 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
                 "work": work,
                 "home": home,
                 "repo_root": str(REPO_ROOT),
+                "installer_dir": installer,
+                "install_home": install_home,
+                "artifacts_dir": artifacts_dir,
+                "host": host,
+                "seed": seed,
+                "installer_label": "<installer>",
+                "install_roots": [f"<scratch-a>/.{host}/gsd-core", f"<scratch-b>/.{host}/gsd-core"],
+                "baked": result.get("baked") or {},
+                "generated_paths": result.get("generated_paths") or [],
+                "artifacts": result.get("artifacts") or [],
+                "idempotent": result.get("idempotent", False),
+                "local_install": {
+                    "scope": "local",
+                    "root": f"<scratch-a>/.{host}/gsd-core",
+                    "version": pinned,
+                },
             }
         )
         _write_text(str(_abs(args.evidence_out)), render_smoke_evidence(result))
         print(f"smoke evidence written to {label_path(args.evidence_out)}")
         return result["exit"]
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        print(f"scratch work dir: {work} ({'kept' if args.keep_scratch else 'deleted'})")
+        if not args.keep_scratch:
+            shutil.rmtree(work, ignore_errors=True)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -4405,6 +4858,9 @@ def _build_parser() -> argparse.ArgumentParser:
     snap.add_argument("--out", help="write the snapshot JSON to this file")
     snap.add_argument("--check", help="compare the protected set against this snapshot file")
     snap.add_argument("--home", help="home directory to protect (default: this process's)")
+    snap.add_argument(
+        "--scratch-root", action="append", default=[], help="exclude this root's Codex trust rows"
+    )
     snap.set_defaults(func=_cmd_snapshot)
 
     dig = sub.add_parser("digest", help="the SKILL.md plus references/ digest of a skill")
@@ -4453,6 +4909,9 @@ def _build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--host", help="runtime the smoke runs on (default: detected)")
     smoke.add_argument("--home", help="home directory to protect (default: this process's)")
     smoke.add_argument("--evidence-out", required=True, help="write the evidence here")
+    smoke.add_argument("--installer-dir", help="cached gsd-core package directory; never fetched")
+    smoke.add_argument("--keep-scratch", action="store_true", help="keep scratch work directory")
+    smoke.add_argument("--artifacts-out", help="copy labelled per-project artifacts here")
     smoke.set_defaults(func=_cmd_smoke)
 
     run = sub.add_parser("run", help="one cell of one scenario through claude -p")

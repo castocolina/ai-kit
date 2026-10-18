@@ -398,8 +398,36 @@ class TestSnapshot(_ScratchPaths):
         self.write(os.path.join(self.home, ".cursor", "cli-config.json"), '{"model":"y"}\n')
         self.write(os.path.join(self.home, ".codex", "config.toml"), 'model = "other"\n')
         strict, host = ev.snapshot_diff(before, self.snap())
-        self.assertEqual(strict, [f"{ev.HOME_LABEL}/.cursor/cli-config.json"])
-        self.assertEqual(host, [f"{ev.HOME_LABEL}/.codex/config.toml"])
+        self.assertEqual(
+            strict,
+            [f"{ev.HOME_LABEL}/.codex/config.toml", f"{ev.HOME_LABEL}/.cursor/cli-config.json"],
+        )
+        self.assertEqual(host, [])
+
+    def test_codex_toml_scratch_trust_is_only_exemption(self) -> None:
+        root = os.path.join(self.scratch, "owned")
+        path = pathlib.Path(self.home) / ".codex" / "config.toml"
+        self.write(str(path), 'model = "gpt"\n')
+        baseline = ev._toml_semantic_sha(path)
+        self.write(
+            str(path), f'model = "gpt"\n[projects."{root}/project"]\ntrust_level = "trusted"\n'
+        )
+        self.assertEqual(baseline, ev._toml_semantic_sha(path, (root,)))
+        self.assertNotEqual(
+            baseline, ev._toml_semantic_sha(path, (os.path.join(self.scratch, "elsewhere"),))
+        )
+
+    def test_codex_toml_non_scratch_change_is_strict(self) -> None:
+        before = self.snap()
+        self.write(os.path.join(self.home, ".codex", "config.toml"), 'model = "other"\n')
+        strict, _ = ev.snapshot_diff(before, self.snap())
+        self.assertIn(f"{ev.HOME_LABEL}/.codex/config.toml", strict)
+
+    def test_snapshot_opencode_config_is_strict(self) -> None:
+        before = self.snap()
+        self.write(os.path.join(self.home, ".config", "opencode", "opencode.jsonc"), "// changed\n")
+        strict, _ = ev.snapshot_diff(before, self.snap())
+        self.assertIn(f"{ev.HOME_LABEL}/.config/opencode/opencode.jsonc", strict)
 
     def test_credentials_file_is_never_snapshot(self) -> None:
         """The Claude credentials file is read by nothing here, not even to hash it."""
@@ -2631,6 +2659,30 @@ class TestSmoke(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(value, handle)
         return path
+
+    def test_scratch_project_only_claude_has_symlink(self) -> None:
+        project = ev._scratch_project(self.tmp, "codex-project", False, host="codex")
+        self.assertFalse(os.path.lexists(os.path.join(project, ".claude", "gsd-core")))
+        claude = ev._scratch_project(self.tmp, "claude-project", False, host="claude")
+        self.assertTrue(os.path.islink(os.path.join(claude, ".claude", "gsd-core")))
+
+    def test_project_env_drops_runtime_dir_only_for_non_claude(self) -> None:
+        base = {"RUNTIME_DIR": "/repo", "GSD_RUNTIME": "codex"}
+        codex = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "codex", base)
+        claude = codex._replace(host="claude")
+        self.assertNotIn("RUNTIME_DIR", ev._project_env(codex))
+        self.assertEqual(ev._project_env(claude)["RUNTIME_DIR"], "/repo")
+
+    def test_baked_readers_and_mismatch_cases(self) -> None:
+        project = pathlib.Path(self.tmp) / "p" / ".codex" / "agents"
+        project.mkdir(parents=True)
+        (project / "gsd-one.toml").write_text('model = "pin"\n', encoding="utf-8")
+        (project / "gsd-two.toml").write_text('description = "no model"\n', encoding="utf-8")
+        (project / "gsd-two.compact.md").write_text("ignored", encoding="utf-8")
+        baked = ev._baked_models(str(project.parents[1]), "codex")
+        self.assertEqual(baked, {"gsd-one": "pin", "gsd-two": None})
+        self.assertEqual(ev._baked_mismatches(baked, {"gsd-one": "pin", "gsd-two": None}), [])
+        self.assertTrue(ev._baked_mismatches(baked, {"gsd-one": "other", "missing": None}))
 
     def test_refuses_repo_root(self) -> None:
         with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(io.StringIO()):
