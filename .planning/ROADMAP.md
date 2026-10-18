@@ -475,12 +475,24 @@ the two open verifications the spec left pending.
 **Plans**: 6 plans
 
 Plans:
+**Wave 1**
 - [ ] 20-01-PLAN.md — Host-aware resolve-model oracle and matrix on codex and opencode (controls, L4 closed)
-- [ ] 20-02-PLAN.md — Smoke per host: local gsd-core install under a throwaway HOME, D-10 allowlist guard, planned == baked chain
 - [ ] 20-03-PLAN.md — Runner `--standalone` for opencode and the host-never-a-lane regression tests
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 20-02-PLAN.md — Smoke per host: local gsd-core install under a throwaway HOME, D-10 allowlist guard, planned == baked chain
+
+**Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 20-04-PLAN.md — Headless iterations through the runner on both hosts, env names, deferred-in probes, 20-SMOKE-*.md
+
+**Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 20-05-PLAN.md — Codex detection table from the live names, notes and SKILL.md updates, amendments, skill-judge loop
+
+**Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 20-06-PLAN.md — Interactive-run scripts per host and the phase gates
+
+**Cross-cutting constraints:**
+- A fix's regression test lands in the same commit
 
 ### Phase 21: Cursor Live Validation
 
