@@ -5,11 +5,11 @@ milestone_name: GSD Curated Config v2
 current_phase: 21
 current_phase_name: Cursor Live Validation
 status: executing
-stopped_at: Completed 20-07-PLAN.md
-last_updated: "2026-10-18T17:26:09.982Z"
+stopped_at: Phases 21.1-21.3 spec + context gathered (assumptions mode)
+last_updated: "2026-10-18T18:04:14.241Z"
 last_activity: 2026-10-18
 last_activity_desc: Phase 20 execution started
-state_head: bf8e2745f3ea5848f78814db417ab18db693f047
+state_head: 60651a3e6a4660c43307ae9ebe079475baa45b42
 progress:
   total_phases: 17
   completed_phases: 1
@@ -484,6 +484,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-18T10:15:00.387Z
-Stopped at: Completed 20-07-PLAN.md
-Resume file: None
+Last session: 2026-10-18T18:04:13.316Z
+Stopped at: Phases 21.1-21.3 spec + context gathered (assumptions mode)
+Resume file: .planning/phases/21.3-visible-tool-advisory-hooks-as-setup-knobs/21.3-CONTEXT.md
