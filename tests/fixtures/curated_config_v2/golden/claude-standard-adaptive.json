@@ -277,7 +277,7 @@
       "why": "cross-AI review lanes (opencode) from gsd-core registry (D-24)"
     },
     {
-      "effect": "unverified: opencode 2.x run has no --variant flag (Phase 20 risk)",
+      "effect": "accepted by opencode 2.x as the #<level> suffix of the model id (not rejected, Phase 20, 20-SMOKE-OPENCODE.md effort suffix probe); whether the effort is applied is unverified",
       "existing": null,
       "key": "review.effort.opencode",
       "op": "set",

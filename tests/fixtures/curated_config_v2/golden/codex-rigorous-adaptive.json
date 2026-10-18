@@ -289,7 +289,7 @@
       "why": "review lane claude: inferred vendor anthropic differs from excluded ['openai'] (SPEC R2); best review score within ceiling (no ceiling); effort variant bare of inferred family claude-opus-5-5 for target high (bare)"
     },
     {
-      "effect": "unverified: opencode 2.x run has no --variant flag (Phase 20 risk)",
+      "effect": "accepted by opencode 2.x as the #<level> suffix of the model id (not rejected, Phase 20, 20-SMOKE-OPENCODE.md effort suffix probe); whether the effort is applied is unverified",
       "existing": null,
       "key": "review.effort.opencode",
       "op": "set",

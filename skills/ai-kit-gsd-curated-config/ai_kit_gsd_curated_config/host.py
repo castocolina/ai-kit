@@ -20,8 +20,8 @@ HOSTS = ("claude", "codex", "opencode", "cursor", "pi")
 # Project-local gsd-core roots tried before GSD's shared launcher order (pi, opencode).
 _HOST_FIRST_ROOT = {
     "pi": ".pi",
-    # shortcut: opencode's local root is inferred from gsd-core's capability registry,
-    # unverified until Phase 20 runs the installer
+    # Verified by the Phase 20 opencode smoke (20-SMOKE-OPENCODE.md): the installer's local
+    # root is <project>/.opencode/gsd-core.
     "opencode": ".opencode",
 }
 

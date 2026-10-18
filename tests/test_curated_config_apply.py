@@ -2383,7 +2383,7 @@ class TestSkillDocCommands(unittest.TestCase):
             "GSD_PATH_JEV=1",
             "AIKIT-XAI",
             "full permissions",
-            "2026-10-15",
+            "2026-10-18",
             ".opencode/gsd-core",
             "enabledPlugins",
             "unverified",

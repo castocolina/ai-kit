@@ -179,7 +179,8 @@ def manager_flags_value(existing) -> str:
 REVIEW_COUNT = {"mvp": 1, "standard": 1, "rigorous": 2}
 REVIEW_EFFORT_TARGET = "high"
 OPENCODE_EFFORT_EFFECT = (
-    "unverified: opencode 2.x run has no --variant flag (Phase 20 risk)"
+    "accepted by opencode 2.x as the #<level> suffix of the model id (not rejected, Phase 20, "
+    "20-SMOKE-OPENCODE.md effort suffix probe); whether the effort is applied is unverified"
 )
 CLAUDE_ALIAS_EFFECT = (
     "alias mapping inferred: Claude Code runs the alias's current model"
