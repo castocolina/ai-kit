@@ -527,7 +527,7 @@ within this phase.
   5. Native per-call model selection is verified live from the cursor host, or `host_can_select`
      keeps the session-default-only label for cursor (amended 2026-10-17 per 18.1-VERIFICATION
      deferred item).
-**Plans:** 3/7 plans executed
+**Plans:** 4/7 plans executed
 
 Plans (cross-AI plans are delegated in plan order, one per wave; the two live AI-CLI uses are the
 21-04 cursor-agent dispatch and the 21-05 pi judge):
@@ -541,7 +541,7 @@ Plans (cross-AI plans are delegated in plan order, one per wave; the two live AI
 - [x] 21-02-PLAN.md — `cursor-agents/composer-worker.md` and `grok-worker.md` with the bundle-rule test module, registered in the test groups (AGT-01 files)
 
 **Wave 4** *(blocked on Wave 1 completion)*
-- [ ] 21-03-PLAN.md — Harness cursor support (host root G1, resolve-model-only chain G3 over the complete baked map, generated paths G4, `matrix --host cursor` G5, `~/.cursor` hooks.json/agents/skills protected entries G6) and the hermetic local cursor smoke and matrix (EVAL-07 rehearsal, SPEC R2)
+- [x] 21-03-PLAN.md — Harness cursor support (host root G1, resolve-model-only chain G3 over the complete baked map, generated paths G4, `matrix --host cursor` G5, `~/.cursor` hooks.json/agents/skills protected entries G6) and the hermetic local cursor smoke and matrix (EVAL-07 rehearsal, SPEC R2)
 
 **Wave 5** *(blocked on Waves 1, 4 and 2)*
 - [ ] 21-04-PLAN.md — Headless cursor smoke through the template-5 runner under a scratch home (path-guarded teardown, per-entry archive of prior outputs, one-attempt verdict line bound to a spawn record), process-reap proof with the escaped-worker environ scan, `21-SMOKE-CURSOR.md`, conditional cursor env-signal label (EVAL-07)
