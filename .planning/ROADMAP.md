@@ -524,7 +524,27 @@ within this phase.
   5. Native per-call model selection is verified live from the cursor host, or `host_can_select`
      keeps the session-default-only label for cursor (amended 2026-10-17 per 18.1-VERIFICATION
      deferred item).
-**Plans**: TBD
+**Plans:** 6 plans
+
+Plans (cross-AI plans are delegated in plan order, one per wave; the two live AI-CLI uses are the
+21-04 cursor-agent dispatch and the 21-05 pi judge):
+**Wave 1**
+- [ ] 21-01-PLAN.md — Wrapper-proof cursor detection: scan-all guarded `agent` resolver, `real_path`, public `parse_cursor_models` with the captured 2026.10.14 fixture, SC5 pin (SPEC-06)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 21-02-PLAN.md — `cursor-agents/composer-worker.md` and `grok-worker.md` with the bundle-rule test module, registered in the test groups (AGT-01 files)
+
+**Wave 3** *(blocked on Wave 1 completion)*
+- [ ] 21-03-PLAN.md — Harness cursor support (host root G1, resolve-model-only chain G3, generated paths G4, `matrix --host cursor` G5) and the hermetic local cursor smoke and matrix (EVAL-07 rehearsal, SPEC R2)
+
+**Wave 4** *(blocked on Waves 1 and 3)*
+- [ ] 21-04-PLAN.md — Headless cursor smoke through the runner under a scratch home, process-reap proof, `21-SMOKE-CURSOR.md`, conditional cursor env-signal label (EVAL-07)
+
+**Wave 5** *(blocked on Waves 2 and 4)*
+- [ ] 21-05-PLAN.md — Conditional label lift in SKILL.md/README with the test pin in the evidence commit, skill-judge loop (EVAL-07, SPEC R3)
+
+**Wave 6** *(blocked on Wave 5)*
+- [ ] 21-06-PLAN.md — `21-INTERACTIVE-CURSOR.md` (user-keys digest, optional SC5 probe) and the phase gates (SPEC R8)
 
 ### Phase 21.1: Cursor project-level subagent linking (INSERTED)
 

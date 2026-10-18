@@ -36,12 +36,12 @@
     {
       "number": "20",
       "name": "Live Validation on Codex + Opencode",
-      "status": "in_progress"
+      "status": "pending"
     },
     {
       "number": "21",
       "name": "Cursor Live Validation",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "number": "22",
@@ -76,8 +76,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (verify)",
-    "reason": "Phase 7 of 15 · 7% · ready to verify"
+    "label": "Advance to the next step",
+    "reason": "Phase 8 of 15 · 0% · executing"
   },
-  "updated_at": "2026-10-18T11:47:50.165Z"
+  "updated_at": "2026-10-18T13:32:40.414Z"
 }
