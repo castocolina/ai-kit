@@ -213,8 +213,9 @@ After every external dispatch, print the `AIKIT-XAI status=…` line from stderr
 loading off). The opencode bare profile is **partial**: `~/.agents/skills` and
 `~/.config/opencode/skills` still load — say so.
 
-The host CLI is never a review lane: `recommend` never proposes its slug, and `plan-set`
-refuses it in `review.default_reviewers` even with `--force`. A copied default naming the host
+In the v2 flow the host CLI is never a review lane: `recommend` never proposes its slug, and
+`plan-set` refuses it in `review.default_reviewers` even with `--force`. v1 `apply-review` has
+no such check (see `references/v1-path.md`). A copied default naming the host
 is flagged for replacement. If you deliberately want that CLI with another provider, make the
 user-owned `review.reviewer_instances` edit; curated-config neither writes nor validates it.
 
@@ -250,7 +251,7 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
 | cursor / pi hosts | **not live-validated** |
 | opencode providers | Providers defined only in a project's `opencode.json` are not candidates |
 | effort sync | Skipped for workstream configs; `--config-dir <project>/<host dir>` value **unverified** |
-| host as review lane | Never proposed; a deliberate host-CLI lane with another provider is a manual `review.reviewer_instances` edit you own (20 D-11) |
+| host as review lane | v2 never proposes it; v1 `detect-review-candidate` can pick it. A deliberate host-CLI lane with another provider is a manual `review.reviewer_instances` edit you own (20 D-11) |
 
 ## Subcommand reference
 

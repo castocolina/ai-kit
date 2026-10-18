@@ -17,7 +17,9 @@ gets the v2 dry run instead. Order and safeguards:
 2. `apply-profile`, then `apply-critical-agents`.
 3. Run each `detect-*-candidate`, show the result, and pass its `{cli, model}` through
    unchanged: `apply-execution` flags are optional (omit both when nothing matched);
-   `apply-review` flags are required.
+   `apply-review` flags are required. `detect-review-candidate` does not exclude the host CLI
+   (opencode is tried first, and `claude`/`opus` is its native last resort): when the result
+   names the host, say the review is not cross-AI before `apply-review`.
 4. `detect-claude-md-path`: skip `apply-claude-md-path` when it prints `null`.
 5. `detect-frontend`, then `apply-workflow-defaults` with that boolean for both UI flags.
 6. `apply-execution` can exit 0 without configuring execution. Read its JSON:
