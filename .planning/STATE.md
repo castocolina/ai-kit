@@ -459,7 +459,7 @@ any order, or deferred, without blocking anything else in this milestone.
 
 | Phase | State | Resume |
 |-------|-------|--------|
-| 20 | human_needed (8/9 automated truths, 0 gaps; 2026-10-18) | uz runs `20-INTERACTIVE-CODEX.md` and `20-INTERACTIVE-OPENCODE.md`, then `/gsd-verify-work 20`; EVAL-04/05 stay Pending until then |
+| 20 | human_needed (8/9 automated truths, 0 gaps; 2026-10-18) | uz runs `20-INTERACTIVE-OPENCODE.md`, then `/gsd-verify-work 20`; EVAL-05 stays Pending until then. The codex TUI run (EVAL-04) is deferred to backlog 999.6 (codex is a secondary runtime) |
 
 Phase 16: 4/4 success criteria verified 2026-10-14; the one human item (real codex/pi host signal) is scheduled for Phases 20 and 22.
 

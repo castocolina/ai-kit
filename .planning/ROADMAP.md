@@ -802,3 +802,18 @@ Phase 18.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.6: Codex interactive TUI confirmation (secondary runtime) (BACKLOG)
+
+**Goal:** [Captured for future planning] Run `20-INTERACTIVE-CODEX.md` from a real codex TUI
+session to confirm EVAL-04 (codex session env signal, smoke, snapshot) beyond the headless
+`codex exec` evidence in `20-SMOKE-CODEX.md`, then promote or rename the "live-verified (Phase 20)
+… TUI confirmation pending" labels in `detection.py`. Deferred 2026-10-18 by owner decision: the
+primary runtimes are claude, opencode and pi; codex and cursor are secondary (their models remain
+usable as reviewers and executors). The headless evidence and the pending label stay as they are.
+**Requirements:** EVAL-04
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
