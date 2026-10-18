@@ -23,12 +23,15 @@ Every headless dispatch uses this repo's runner from the repository root, with `
 ## Environment findings
 - First dispatch smoke finished successfully but the host runner did not terminate within the observation window and emitted no final status line; the outer session later terminated the executor. The continuation run completed in 89 seconds and emitted the healthy `no_change` status line. The first attempt's detached groups were checked and none remained.
 - No `Managed service port ... already in use` appeared. Both smoke runs used the `--standalone` argv.
-- Env names included inherited `PI_CODING_AGENT`, which is a detection/scrub signal but is not opencode's own signal, scrub list, or generic marker. The four-set validation therefore failed (`bad=['PI_CODING_AGENT']`); this is recorded, not represented as clean.
+- Env names (orchestrator correction): the first recorded dump was rewritten by the executor's own pi shell after run 2 (file mtime after the run), so it showed pi's `PI_CODING_AGENT` and lacked `OPENCODE`. A dedicated runner dispatch (`--prefer opencode`, `--standalone`, status `no_change`, elapsed 15s, every spawn group dead) captured the names inside opencode's shell tool: four-set check `signals clean`. A fake-CLI probe also showed the runner's `scrubEnv` drops `PI_CODING_AGENT` and `CLAUDECODE` from the child env.
 - No xai/grok billing/quota blocker or external_directory denial observed.
 - C-W12 failure was not provoked; no safe deterministic trigger was available without touching the shared service.
 - Signal run 2: the second `kill -TERM` found the wrapper already exited; its single signal line does not verify second-signal immediate group-kill behavior.
 
 ## Env names (names only)
+Captured inside opencode's shell tool by a runner dispatch (orchestrator, after the executor's dump proved to be its own shell):
+
+AGENT
 AI_AGENT
 CLAUDE_CODE_BRIDGE_SESSION_ID
 CLAUDE_CODE_CHILD_SESSION
@@ -40,16 +43,13 @@ CLAUDE_CODE_SESSION_ID
 CLAUDE_EFFORT
 CLAUDE_JOB_DIR
 CLAUDE_PID
-PI_CODING_AGENT
-PI_MODEL
-PI_OFFLINE
-PI_PROVIDER
-PI_REASONING_LEVEL
-PI_SESSION_FILE
-PI_SESSION_ID
-PI_SKIP_VERSION_CHECK
+OPENCODE
+OPENCODE_DISABLE_AUTOUPDATE
+OPENCODE_DISABLE_CLAUDE_CODE_SKILLS
+OPENCODE_SESSION_ID
+OPENCODE_TERMINAL
 
-`OPENCODE` was absent from this invoking shell's name dump; `AI_AGENT` was present. The host's smoke inventory independently reported `host opencode (detected)`. The four-set check failed because `PI_CODING_AGENT` is an inherited detection/scrub signal, not one of opencode's own host signals, scrub signals or generic markers; therefore `signals clean` was not established. `inherited, not a detection signal: CLAUDE_CODE_BRIDGE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_EXECPATH, CLAUDE_CODE_MESSAGING_SOCKET, CLAUDE_CODE_MESSAGING_TOKEN, CLAUDE_CODE_SESSION_ATTENDED, CLAUDE_CODE_SESSION_ID, CLAUDE_EFFORT, CLAUDE_JOB_DIR, CLAUDE_PID; PI_MODEL, PI_OFFLINE, PI_PROVIDER, PI_REASONING_LEVEL, PI_SESSION_FILE, PI_SESSION_ID, PI_SKIP_VERSION_CHECK`.
+Four-set check (`H="opencode"`): `signals clean`. `OPENCODE`, `AGENT` and `AI_AGENT` are opencode's own markers; `CLAUDE_CODE_*`/`CLAUDE_EFFORT`/`CLAUDE_JOB_DIR`/`CLAUDE_PID` and `OPENCODE_*` beyond `OPENCODE` are inherited, not detection signals.
 
 ## Smoke evidence (written by the harness inside opencode)
 

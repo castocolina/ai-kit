@@ -48,7 +48,7 @@ coverage:
         ref: "20-SMOKE-OPENCODE.md sections Effort suffix probe and Deferred-in items"
         status: pass
     human_judgment: true
-    rationale: "The inherited PI_CODING_AGENT signal check failed, C-W12 failure was not provoked, and the double-signal timing was not established."
+    rationale: "C-W12 failure was not provoked, and the double-signal timing was not established."
 duration: 14min
 completed: 2026-10-18
 status: complete
@@ -101,7 +101,7 @@ status: complete
 - **Verification:** Continuation status and smoke log; snapshot guard.
 - **Commit:** `589dba3`.
 
-**2. Env four-set validation found inherited `PI_CODING_AGENT`**
+**2. Env four-set validation (superseded by the orchestrator correction)**
 - **Found during:** Task 1.
 - **Issue:** The names-only dump included `PI_CODING_AGENT`, a detection/scrub signal not in opencode's own signal/scrub/generic allow set.
 - **Handling:** Recorded the failed check verbatim; did not claim `signals clean`.
@@ -121,7 +121,7 @@ status: complete
 
 ## Issues Encountered
 - The first executor command was terminated by the outer session while the runner still waited after the smoke. The continuation rerun completed; the first run had no final status line and is retained as an incomplete attempt.
-- The opencode env dump's four-set test failed on inherited `PI_CODING_AGENT`; this is not a clean env result.
+- The executor's env dump came from its own pi shell (written after run 2), not from opencode; the orchestrator re-captured it inside opencode: `signals clean`.
 - The shared-service `opencode models` preflight is read-only but is not standalone; no managed-service process was touched.
 - EVAL-05 is not claimed: the interactive run and required two review-lane trials remain pending in `20-INTERACTIVE-OPENCODE.md`.
 
@@ -135,12 +135,12 @@ status: complete
 
 ## Environment findings
 - Smoke continuation passed; first smoke runner stayed live after host smoke exit 0, with no final status. No managed-service port conflict.
-- `PI_CODING_AGENT` was inherited and caused four-set validation to fail.
+- Env names inside opencode: `signals clean` (orchestrator re-capture; the executor's first dump was its own pi shell).
 - C-W12 `runtime_enumeration.opencode` was `ok`; failure not provoked.
 - Signal run 2's second SIGTERM was not delivered to a live wrapper. No billing/quota or external-directory denial observed.
 
 ## Verification
-- Task 1 required automated evidence gates passed except the plan-required four-set check, which truthfully failed due to inherited `PI_CODING_AGENT`; this failure is recorded in the evidence and summary.
+- Task 1 automated evidence gates passed; the four-set check is `signals clean` on the names captured inside opencode (orchestrator correction below).
 - Task 2 automated section, accepted/rejected verdict, controlled runtime enumeration, secret scan and snapshot checks passed.
 - Task 3 final checks passed: at least two signal status lines and readiness lines, pgid references, no pending placeholder, secret scan clean, no home path, and snapshot `snapshot ok`.
 - Secret scan on smoke evidence: pass.
@@ -153,3 +153,9 @@ status: complete
 ---
 *Phase: 20-live-validation-on-codex-opencode*
 *Completed: 2026-10-18*
+
+## Orchestrator correction
+
+- `tmp/p20/headless/opencode-env-names.txt` was rewritten by the executor's pi shell at 06:15:19, after run 2 ended at 06:14:58, so it listed pi's names and lacked `OPENCODE`. A dedicated runner dispatch captured the names inside opencode (`opencode-env-names.inside.txt`, status `no_change`, 15 s, spawn groups dead): four-set check `signals clean`. A fake-CLI probe confirmed the runner's `scrubEnv` removes `PI_CODING_AGENT` and `CLAUDECODE`.
+- The readiness records were moved to column 0 (b8c58da) so the plan's verify grep counts them; orchestrator verify 3/3.
+- Run 1's no-exit after the smoke did not reproduce: run 2 ended by itself at 89 s. Recorded as an unexplained one-off.
