@@ -688,6 +688,32 @@ class TestMatrixShape(unittest.TestCase):
         self.assertEqual([e["key"] for e in written["entries"]], ["models.planning"])
         self.assertEqual(written["profile"], "adaptive")
 
+    def test_write_control_plan_removes_only_non_claude_model_overrides(self) -> None:
+        scratch = tempfile.mkdtemp(prefix="xai-control-")
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        bundle = {"plan_path": os.path.join(scratch, "plan.json")}
+        plan = _plan(
+            [
+                _set("model_overrides.gsd-planner", "x"),
+                _set("model_profile_overrides.codex.opus", "native", "keep"),
+                _set("models.planning", "sonnet"),
+            ]
+        )
+        ev._write_control_plan(bundle, plan, "codex")
+        written = json.loads(pathlib.Path(bundle["plan_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(
+            [e["key"] for e in written["entries"]],
+            ["model_profile_overrides.codex.opus", "models.planning"],
+        )
+
+    def test_write_control_plan_requires_non_claude_override(self) -> None:
+        scratch = tempfile.mkdtemp(prefix="xai-control-")
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        with self.assertRaisesRegex(ev._refusal, "no model_overrides entry to remove"):
+            ev._write_control_plan(
+                {"plan_path": os.path.join(scratch, "plan.json")}, _plan(), "opencode"
+            )
+
     def test_write_control_plan_requires_the_entry(self) -> None:
         """Non-vacuity: a plan without the unset cannot drive Control 1."""
         scratch = tempfile.mkdtemp(prefix="xai-control-")
