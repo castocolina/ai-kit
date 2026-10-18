@@ -527,12 +527,12 @@ within this phase.
   5. Native per-call model selection is verified live from the cursor host, or `host_can_select`
      keeps the session-default-only label for cursor (amended 2026-10-17 per 18.1-VERIFICATION
      deferred item).
-**Plans:** 7 plans
+**Plans:** 1/7 plans executed
 
 Plans (cross-AI plans are delegated in plan order, one per wave; the two live AI-CLI uses are the
 21-04 cursor-agent dispatch and the 21-05 pi judge):
 **Wave 1**
-- [ ] 21-01-PLAN.md — Wrapper-proof cursor detection: scan-all guarded `agent` resolver, `real_path` on both the build and the routing refresh path, public `parse_cursor_models` (ASCII id token) with the captured 2026.10.14 fixture, SC5 pin (SPEC-06)
+- [x] 21-01-PLAN.md — Wrapper-proof cursor detection: scan-all guarded `agent` resolver, `real_path` on both the build and the routing refresh path, public `parse_cursor_models` (ASCII id token) with the captured 2026.10.14 fixture, SC5 pin (SPEC-06)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 21-07-PLAN.md — Runner `resolveBin` mirrors D-09 (scan-all guarded `agent`, empty PATH entry = cwd) with two self-test cases; template 5 bump, pins, goldens, tracked runner re-rendered through `ensure-runner` (CONFIG compared against the saved pre-upgrade bytes; the snapshot delta is exactly the authorized runner line) (SPEC-06)
