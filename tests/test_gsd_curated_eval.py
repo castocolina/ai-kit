@@ -339,6 +339,18 @@ class _ScratchPaths(unittest.TestCase):
         self.write(os.path.join(self.home, ".claude", "skills", "a", "SKILL.md"), "s\n")
         self.write(os.path.join(self.home, ".cursor", "cli-config.json"), '{"model":"x"}\n')
         self.write(os.path.join(self.home, ".config", "opencode", "opencode.jsonc"), "// oc\n")
+        self.write(os.path.join(self.home, ".config", "opencode", "agents", "a.md"), "agent\n")
+        self.write(os.path.join(self.home, ".config", "opencode", "commands", "c.md"), "command\n")
+        self.write(
+            os.path.join(self.home, ".config", "opencode", "skills", "s", "SKILL.md"), "skill\n"
+        )
+        self.write(os.path.join(self.home, ".config", "opencode", "plugins", "p.js"), "plugin\n")
+        self.write(os.path.join(self.home, ".config", "opencode", "package.json"), "{}\n")
+        self.write(os.path.join(self.home, ".config", "opencode", "bun.lock"), "lock\n")
+        self.write(os.path.join(self.home, ".config", "opencode", "service.json"), "private\n")
+        self.write(os.path.join(self.home, ".local", "share", "opencode", "auth.json"), "private\n")
+        self.write(os.path.join(self.home, ".codex", "hooks.json"), "{}\n")
+        self.write(os.path.join(self.home, ".codex", "agents", "x.toml"), "model = 'x'\n")
         self.write(os.path.join(self.home, ".codex", "config.toml"), 'model = "gpt"\n')
 
     @staticmethod
@@ -415,6 +427,23 @@ class TestSnapshot(_ScratchPaths):
         self.assertEqual(baseline, ev._toml_semantic_sha(path, (root,)))
         self.assertNotEqual(
             baseline, ev._toml_semantic_sha(path, (os.path.join(self.scratch, "elsewhere"),))
+        )
+
+    def test_opencode_tree_and_names_allowlist(self) -> None:
+        before = self.snap()
+        agents = os.path.join(self.home, ".config", "opencode", "agents")
+        commands = os.path.join(self.home, ".config", "opencode", "commands")
+        self.write(os.path.join(agents, "a.md"), "changed\n")
+        self.write(os.path.join(commands, "c.md"), "changed\n")
+        strict, _ = ev.snapshot_diff(before, self.snap())
+        self.assertIn(f"{ev.HOME_LABEL}/.config/opencode/agents", strict)
+        self.assertIn(f"{ev.HOME_LABEL}/.config/opencode/commands", strict)
+        before = self.snap()
+        self.write(
+            os.path.join(self.home, ".config", "opencode", "skills", "s", "SKILL.md"), "edited\n"
+        )
+        self.assertNotIn(
+            f"{ev.HOME_LABEL}/.config/opencode/skills", ev.snapshot_diff(before, self.snap())[0]
         )
 
     def test_codex_toml_non_scratch_change_is_strict(self) -> None:
