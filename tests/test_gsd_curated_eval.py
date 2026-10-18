@@ -1023,10 +1023,13 @@ class TestCli(unittest.TestCase):
         }
         with (
             mock.patch.object(ev.shutil, "which", return_value="node"),
+            mock.patch.object(ev, "gsd_run_reason", return_value=""),
             mock.patch.object(ev, "run_matrix", return_value=result) as run,
             contextlib.redirect_stdout(io.StringIO()),
         ):
-            self.assertEqual(ev.main(["matrix", "--host", "opencode"]), 0)
+            # 20-REVIEW WR-10: a missing checkout-local gsd-core must not matter here
+            missing = os.path.join(tempfile.gettempdir(), "no-such-gsd-tools.cjs")
+            self.assertEqual(ev.main(["matrix", "--host", "opencode", "--tools", missing]), 0)
         self.assertEqual(run.call_args.args[3], "opencode")
 
     def test_render_matrix_is_mismatches_plus_control_verdict(self) -> None:
