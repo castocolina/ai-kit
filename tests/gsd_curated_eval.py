@@ -111,10 +111,6 @@ PATHS = ("P1", "P2")
 # `model_policy` resolves before the omit gate and would hide the bug, so it is absent.
 POISON_DEFAULTS = {"resolve_model_ids": "omit", "runtime": "codex"}
 
-MESSAGE_NON_CLAUDE = (
-    "matrix oracle supports claude only (Phase 20 adds "
-    "model_profile_overrides.<host>.<tier> plan entries and RUNTIME_PROFILE_MAP to promised)"
-)
 WHY_INFORMATIONAL = (
     "a project-level runtime key steers resolve-model when GSD_RUNTIME is unset; the plan "
     "writes no runtime entry on claude (18 D-30) and config-new-project does not copy it, so "
@@ -436,7 +432,7 @@ def _cmd_digest(args: argparse.Namespace) -> int:
 _LIVE_TABLES_SCRIPT = (
     "try { const m = require(process.argv[1]); "
     "process.stdout.write(JSON.stringify({profiles: m.MODEL_PROFILES, "
-    "phase: m.AGENT_TO_PHASE_TYPE})); } "
+    "phase: m.AGENT_TO_PHASE_TYPE, runtime_profiles: m.RUNTIME_PROFILE_MAP})); } "
     "catch (e) { process.stdout.write('null'); }"
 )
 
@@ -444,7 +440,7 @@ _LIVE_TABLES_SCRIPT = (
 def live_tables(node_bin: str, gsd_core_root: str, run_fn: Callable = subprocess.run) -> dict:
     """gsd-core's live `MODEL_PROFILES` and `AGENT_TO_PHASE_TYPE`, asserted to cover the
     same agent key set before any comparison (D-10) - exits 1 naming the difference."""
-    module = os.path.join(str(_abs(gsd_core_root)), "bin", "lib", "model-profiles.cjs")
+    module = os.path.join(str(_abs(gsd_core_root)), "bin", "lib", "model-catalog.cjs")
     try:
         result = run_fn(
             [node_bin, "-e", _LIVE_TABLES_SCRIPT, module],
@@ -455,6 +451,9 @@ def live_tables(node_bin: str, gsd_core_root: str, run_fn: Callable = subprocess
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise _refusal(1, f"live agent tables unavailable: {type(exc).__name__}") from exc
+    returncode = getattr(result, "returncode", 1)
+    if returncode != 0:
+        raise _refusal(1, f"live agent tables unavailable: exit {returncode}")
     parsed = _json_object(_text(getattr(result, "stdout", ""))) or {}
     profiles, phase = parsed.get("profiles"), parsed.get("phase")
     if not isinstance(profiles, dict) or not profiles:
@@ -464,24 +463,17 @@ def live_tables(node_bin: str, gsd_core_root: str, run_fn: Callable = subprocess
     difference = sorted(set(profiles) ^ set(phase))
     if difference:
         raise _refusal(1, f"agent key sets differ: {', '.join(difference)}")
-    return {"profiles": profiles, "phase": phase}
+    runtime_profiles = parsed.get("runtime_profiles")
+    return {
+        "profiles": profiles,
+        "phase": phase,
+        "runtime_profiles": runtime_profiles if isinstance(runtime_profiles, dict) else None,
+    }
 
 
-def promised(agent: str, plan: dict, tables: dict, *, inheritance_promised: bool = False) -> str:
-    """The model the plan promises `agent`, from the plan's set entries plus the live tables
-    (D-10) - never from the applied config (D-04, Pitfall 1).
-
-    Branch order is the resolver's, as separate oracle branches: a `model_overrides.<agent>`
-    entry wins, then the rigor's phase shift `models.<agent's phase type>`, then the agent's
-    own `MODEL_PROFILES[agent][profile]` tier default. `inheritance_promised=True` (nothing
-    in this phase sets it) makes the promise "no model id at all".
-    """
-    if inheritance_promised:
-        return ""
+def _tier_for(agent: str, plan: dict, tables: dict) -> str:
+    """Resolve the planned profile tier, honoring a phase shift before the default."""
     sets = _set_entries(plan)
-    override = f"model_overrides.{agent}"
-    if override in sets:
-        return str(sets[override])
     phase = (tables.get("phase") or {}).get(agent)
     shift = f"models.{phase}" if phase else None
     if shift and shift in sets:
@@ -490,6 +482,45 @@ def promised(agent: str, plan: dict, tables: dict, *, inheritance_promised: bool
     if not isinstance(entry, dict) or profile not in entry:
         raise _refusal(1, f"no live MODEL_PROFILES entry for {agent}/{profile}")
     return str(entry[profile])
+
+
+def _host_model(plan: dict, tables: dict, host: str, tier: str) -> str:
+    """Resolve a host tier from the plan, then gsd-core's live runtime map."""
+    key = f"model_profile_overrides.{host}.{tier}"
+    entries = {
+        entry["key"]: entry["value"]
+        for entry in plan.get("entries") or []
+        if isinstance(entry, dict)
+        and entry.get("op") in ("set", "keep")
+        and isinstance(entry.get("key"), str)
+    }
+    if key in entries:
+        value = entries[key]
+        if isinstance(value, dict):
+            return str(value.get("model", ""))
+        return str(value)
+    runtime_profiles = tables.get("runtime_profiles")
+    if runtime_profiles is None:
+        raise _refusal(1, "runtime_profiles unavailable from model-catalog.cjs")
+    host_map = runtime_profiles.get(host)
+    entry = host_map.get(tier) if isinstance(host_map, dict) else None
+    if isinstance(entry, dict) and entry.get("model"):
+        return str(entry["model"])
+    if isinstance(entry, str):
+        return entry
+    if "resolve_model_ids" in entries and entries["resolve_model_ids"] == "omit":
+        return ""
+    raise _refusal(1, f"no host model for {host}/{tier} and resolve_model_ids is not omit")
+
+
+def promised(agent: str, plan: dict, tables: dict, host: str = "claude") -> str:
+    """Return the plan-derived model promise, never consulting the applied config."""
+    sets = _set_entries(plan)
+    override = f"model_overrides.{agent}"
+    if override in sets:
+        return str(sets[override])
+    tier = _tier_for(agent, plan, tables)
+    return tier if host == "claude" else _host_model(plan, tables, host, tier)
 
 
 def _set_entries(plan: dict) -> dict:
@@ -502,16 +533,14 @@ def _set_entries(plan: dict) -> dict:
     }
 
 
-def compare(agent: str, got: dict, expected: str, *, inheritance_promised: bool = False):
-    """None when a `resolve-model` result matches the promise, else the reason: `empty model
-    for <agent>` (an empty model is a failure unless the plan promised inheritance), `model`
-    (wrong id), or `tier` (wrong tier for a tier alias)."""
+def compare(agent: str, got: dict, expected: str, *, tier: str | None = None):
+    """Return the mismatch reason, or None when the model and requested tier match."""
     model = got.get("model")
-    if model == "" and not inheritance_promised:
+    if model == "" and expected:
         return f"empty model for {agent}"
     if model != expected:
         return "model"
-    if expected in _TIERS and got.get("tier") != expected:
+    if tier is not None and got.get("tier") != tier:
         return "tier"
     return None
 
@@ -644,6 +673,8 @@ def _resolve_model(ctx: _MatrixCtx, agent: str, project: str, env: dict) -> dict
         )
     except (OSError, subprocess.SubprocessError):
         return {"model": "", "tier": "", "profile": "", "effort": ""}
+    if getattr(result, "returncode", 1) != 0:
+        return {"model": "", "tier": "", "profile": "", "effort": ""}
     parsed = _json_object(_text(getattr(result, "stdout", ""))) or {}
     return {key: parsed.get(key, "") for key in ("model", "tier", "profile", "effort")}
 
@@ -653,21 +684,20 @@ def _resolve_all(ctx: _MatrixCtx, agents: list[str], project: str, env: dict) ->
 
 
 def _mismatches(
-    agents: list[str],
-    plan: dict,
-    tables: dict,
-    got: dict,
-    *,
-    inheritance_promised: bool = False,
+    agents: list[str], plan: dict, tables: dict, got: dict, host: str = "claude"
 ) -> list[list[str]]:
-    """`[agent, expected, got model, got tier]` for every agent that does not match, in
-    sorted agent order, so two runs of the matrix produce the same report."""
+    """`[agent, expected, got model, got tier]` mismatches in deterministic order."""
+    sets = _set_entries(plan)
     rows: list[list[str]] = []
     for agent in sorted(agents):
-        expected = promised(agent, plan, tables, inheritance_promised=inheritance_promised)
+        expected = promised(agent, plan, tables, host)
+        override = sets.get(f"model_overrides.{agent}")
+        tier = override if host == "claude" and override in _TIERS else None
+        if f"model_overrides.{agent}" not in sets:
+            tier = _tier_for(agent, plan, tables)
         row = got[agent]
-        if compare(agent, row, expected, inheritance_promised=inheritance_promised):
-            rows.append([agent, expected, str(row["model"]), str(row["tier"])])
+        if compare(agent, row, expected, tier=tier):
+            rows.append([agent, expected, str(row.get("model", "")), str(row.get("tier", ""))])
     return rows
 
 
@@ -689,7 +719,7 @@ def _row_for(
         env = _apply_bundle(bundle, ctx.home, ctx.node_bin, ctx.apply_fn, ctx.host)
         plan = _load_plan(bundle)
         got = _resolve_all(ctx, agents, bundle["project"], env)
-        mismatches = _mismatches(agents, plan, tables, got)
+        mismatches = _mismatches(agents, plan, tables, got, ctx.host)
     finally:
         shutil.rmtree(bundle["scratch"], ignore_errors=True)
     return {
@@ -702,23 +732,35 @@ def _row_for(
     }
 
 
+def _overridden(agents: list[str], plan: dict) -> list[str]:
+    """Agents whose promises are explicit model overrides."""
+    overrides = _set_entries(plan)
+    return [agent for agent in sorted(agents) if f"model_overrides.{agent}" in overrides]
+
+
 def _unoverridden(agents: list[str], plan: dict) -> list[str]:
-    """Agents whose promise is *not* a `model_overrides.<agent>` entry - exactly the set
-    Control 1 requires to fail."""
-    overrides = {
-        entry.get("key") for entry in plan.get("entries") or [] if entry.get("op") == "set"
-    }
-    return [agent for agent in sorted(agents) if f"model_overrides.{agent}" not in overrides]
+    """Agents without an explicit model override."""
+    overridden = set(_overridden(agents, plan))
+    return [agent for agent in sorted(agents) if agent not in overridden]
 
 
-def _write_control_plan(bundle: dict, plan: dict) -> None:
-    """JSON edit of the plan copy (never string splicing): drop the entry whose key is
-    `resolve_model_ids`, so the omit poison survives into the applied config. Written as
-    `plan-control1.json` in the same directory, so the plan/inventory pairing holds."""
+def _write_control_plan(bundle: dict, plan: dict, host: str = "claude") -> None:
+    """Write a discriminating plan copy: remove omit for Claude, overrides elsewhere."""
     entries = plan.get("entries") or []
-    kept = [entry for entry in entries if entry.get("key") != "resolve_model_ids"]
+    if host == "claude":
+        kept = [entry for entry in entries if entry.get("key") != "resolve_model_ids"]
+        reason = "control 1: no resolve_model_ids entry to remove"
+    else:
+        kept = [
+            entry
+            for entry in entries
+            if not (
+                isinstance(entry, dict) and str(entry.get("key", "")).startswith("model_overrides.")
+            )
+        ]
+        reason = "control 1: no model_overrides entry to remove"
     if len(kept) == len(entries):
-        raise _refusal(1, "control 1: no resolve_model_ids entry to remove")
+        raise _refusal(1, reason)
     path = os.path.join(os.path.dirname(bundle["plan_path"]), "plan-control1.json")
     _write_json(_abs(path), {**plan, "entries": kept})
     bundle["plan_path"] = path
@@ -732,11 +774,13 @@ def _control_one(ctx: _MatrixCtx, agents: list[str], tables: dict) -> dict:
     bundle = _bundle_for(ctx, ("standard", "adaptive"), "P2", POISON_DEFAULTS)
     try:
         plan = _load_plan(bundle)
-        expected = _unoverridden(agents, plan)
-        _write_control_plan(bundle, plan)
+        expected = (
+            _unoverridden(agents, plan) if ctx.host == "claude" else _overridden(agents, plan)
+        )
+        _write_control_plan(bundle, plan, ctx.host)
         env = _apply_bundle(bundle, ctx.home, ctx.node_bin, ctx.apply_fn, ctx.host)
         got = _resolve_all(ctx, agents, bundle["project"], env)
-        mismatches = _mismatches(agents, _load_plan(bundle), tables, got)
+        mismatches = _mismatches(agents, plan, tables, got, ctx.host)
     finally:
         shutil.rmtree(bundle["scratch"], ignore_errors=True)
     failed = {row[0] for row in mismatches}
@@ -755,7 +799,7 @@ def _control_two(ctx: _MatrixCtx, agents: list[str], tables: dict) -> dict:
         env = _apply_bundle(bundle, ctx.home, ctx.node_bin, ctx.apply_fn, ctx.host)
         plan = _load_plan(bundle)
         got = _resolve_all(ctx, agents, bundle["project"], env)
-        mismatches = _mismatches(agents, plan, tables, got)
+        mismatches = _mismatches(agents, plan, tables, got, ctx.host)
     finally:
         shutil.rmtree(bundle["scratch"], ignore_errors=True)
     return {
@@ -808,17 +852,8 @@ def _informational_row(ctx: _MatrixCtx) -> dict:
 def run_matrix(
     node_bin: str, tools_path: str, home: str, host: str = "claude", ctx: _MatrixCtx | None = None
 ) -> dict:
-    """5 combinations x 2 start paths over every live agent, plus Control 1, Control 2 and
-    the informational runtime row (D-04, D-09).
-
-    `host` is plumbed through the bundle, the apply env and the resolve env (D-10), but the
-    oracle *mapping* itself is Claude-only: `promised()` returns tier aliases while the real
-    resolver maps them per runtime (`model-resolver.cjs` `resolveTierEntry`), so a correct
-    non-Claude model id would be reported as a defect. Phase 20 extends `promised()`; until
-    then a non-Claude host exits 2 rather than emitting a wrong verdict (review cycle 2).
-    """
-    if host != "claude":
-        raise _refusal(2, MESSAGE_NON_CLAUDE)
+    """5 combinations x 2 start paths over every live agent, plus both controls and an
+    informational runtime row."""
     ctx = ctx or _seams(node_bin, tools_path, home, host)
     tables = ctx.tables_fn(node_bin, ctx.core_root)
     agents = sorted(tables["profiles"])
@@ -831,7 +866,7 @@ def run_matrix(
     return {
         "rows": rows,
         "controls": controls,
-        "informational": _informational_row(ctx),
+        "informational": _informational_row(ctx) if host == "claude" else None,
         "gsd_core": {"version": gsd_tools.gsd_core_version(tools_path), "path": GSD_CORE_LABEL},
         "agents": len(agents),
         "checks": checks,
@@ -2235,9 +2270,6 @@ def gsd_run_reason(node_bin: str | None, tools_path: str) -> str:
 
 
 def _cmd_matrix(args: argparse.Namespace) -> int:
-    if args.host != "claude":
-        print(MESSAGE_NON_CLAUDE, file=sys.stderr)
-        return 2
     node_bin = shutil.which("node")
     reason = gsd_run_reason(node_bin, args.tools)
     if node_bin is None or reason:
@@ -4296,10 +4328,13 @@ def render_smoke_evidence(result: dict) -> str:
         lines.append(f"- checks: {matrix.get('checks')}; agents: {matrix.get('agents')}")
         for name, control in sorted((matrix.get("controls") or {}).items()):
             lines.append(f"- {name}: {'ok' if control.get('ok') else 'FAILED'}")
-        info = matrix.get("informational") or {}
-        lines.append(
-            f"- informational runtime row: model {info.get('model')}, tier {info.get('tier')}"
-        )
+        info = matrix.get("informational")
+        if info is None:
+            lines.append("- informational runtime row: not run (claude only)")
+        else:
+            lines.append(
+                f"- informational runtime row: model {info.get('model')}, tier {info.get('tier')}"
+            )
     else:
         lines.append("- not run")
     lines += ["", "## Protected set"]
@@ -4399,7 +4434,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     mat = sub.add_parser("matrix", help="APP-05: resolve-model against the plan-derived oracle")
     mat.add_argument("--json", action="store_true", help="print the structured result as JSON")
-    mat.add_argument("--host", default="claude", help="runtime host (claude only for now)")
+    mat.add_argument(
+        "--host",
+        choices=("claude", "codex", "opencode"),
+        default="claude",
+        help="runtime host: claude, codex or opencode",
+    )
     mat.add_argument("--tools", default=GSD_TOOLS_PATH, help="path to gsd-tools.cjs")
     mat.add_argument("--home", help="real HOME for the gsd-tools subprocesses (D-08)")
     mat.set_defaults(func=_cmd_matrix)

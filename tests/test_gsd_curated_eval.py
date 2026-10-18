@@ -34,6 +34,7 @@ def _tables() -> dict:
             "gsd-executor": {"adaptive": "sonnet", "budget": "haiku", "quality": "opus"},
         },
         "phase": {"gsd-planner": "planning", "gsd-executor": "execution"},
+        "runtime_profiles": None,
     }
 
 
@@ -114,19 +115,110 @@ class TestOracle(unittest.TestCase):
         # the same call with a real model passes: the failure is the emptiness, not the shape
         self.assertIsNone(ev.compare("gsd-planner", {"model": "opus", "tier": "opus"}, "opus"))
 
-    def test_inheritance_promised_accepts_empty(self) -> None:
+    def test_omit_derived_empty_promise_requires_loaded_map(self) -> None:
         got = {"model": "", "tier": "", "profile": "", "effort": ""}
-        self.assertIsNone(ev.compare("gsd-planner", got, "", inheritance_promised=True))
-        promised = ev.promised("gsd-planner", _plan(), _tables(), inheritance_promised=True)
-        self.assertEqual(promised, "")
+        tables = {**_tables(), "runtime_profiles": {}}
+        for op in ("set", "keep"):
+            plan = _plan([_set("resolve_model_ids", "omit", op)])
+            self.assertEqual(ev.promised("gsd-planner", plan, tables, "codex"), "")
+            self.assertIsNone(ev.compare("gsd-planner", got, ""))
+        with self.assertRaisesRegex(ev._refusal, "resolve_model_ids is not omit"):
+            ev.promised("gsd-planner", _plan(), tables, "codex")
 
-    def test_tier_mismatch_detected(self) -> None:
-        wrong = {"model": "opus", "tier": "sonnet", "profile": "", "effort": ""}
-        self.assertEqual(ev.compare("gsd-planner", wrong, "opus"), "tier")
-        self.assertIsNone(ev.compare("gsd-planner", {"model": "opus", "tier": "opus"}, "opus"))
-        # a concrete model id is not a tier alias, so its tier field is not graded
-        concrete = {"model": "gpt-5.6", "tier": "haiku", "profile": "", "effort": ""}
-        self.assertIsNone(ev.compare("gsd-planner", concrete, "gpt-5.6"))
+    def test_host_model_uses_set_keep_and_runtime_profiles_shapes(self) -> None:
+        self.assertEqual(
+            ev.promised(
+                "gsd-planner",
+                _plan([_set("model_profile_overrides.codex.opus", "native", "keep")]),
+                _tables(),
+                "codex",
+            ),
+            "native",
+        )
+        self.assertEqual(
+            ev.promised(
+                "gsd-planner",
+                _plan([_set("model_profile_overrides.opencode.opus", "anthropic/override")]),
+                _tables(),
+                "opencode",
+            ),
+            "anthropic/override",
+        )
+        dict_map = {
+            **_tables(),
+            "runtime_profiles": {"codex": {"opus": {"model": "codex/default"}}},
+        }
+        string_map = {**_tables(), "runtime_profiles": {"codex": {"opus": "codex/bare"}}}
+        self.assertEqual(ev.promised("gsd-planner", _plan(), dict_map, "codex"), "codex/default")
+        self.assertEqual(ev.promised("gsd-planner", _plan(), string_map, "codex"), "codex/bare")
+
+    def test_missing_runtime_profiles_refuses_non_claude(self) -> None:
+        with self.assertRaisesRegex(ev._refusal, "runtime_profiles unavailable"):
+            ev.promised("gsd-planner", _plan(), _tables(), "codex")
+        self.assertEqual(ev.promised("gsd-planner", _plan(), _tables()), "opus")
+
+    def test_tier_comparison_for_four_override_cases(self) -> None:
+        tables = _tables()
+        self.assertIsNone(
+            ev.compare("gsd-planner", {"model": "haiku", "tier": "haiku"}, "haiku", tier="haiku")
+        )
+        self.assertEqual(
+            ev.compare("gsd-planner", {"model": "haiku", "tier": "sonnet"}, "haiku", tier="haiku"),
+            "tier",
+        )
+        concrete = _plan([_set("model_overrides.gsd-planner", "provider/model")])
+        self.assertEqual(
+            ev._mismatches(
+                ["gsd-planner"],
+                concrete,
+                tables,
+                {"gsd-planner": {"model": "provider/model", "tier": "garbage"}},
+            ),
+            [],
+        )
+        codex_override = _plan([_set("model_overrides.gsd-planner", "codex/model")])
+        self.assertEqual(
+            ev._mismatches(
+                ["gsd-planner"],
+                codex_override,
+                tables,
+                {"gsd-planner": {"model": "codex/model", "tier": "unknown"}},
+                "codex",
+            ),
+            [],
+        )
+        codex_tables = {**tables, "runtime_profiles": {"codex": {"opus": "codex/default"}}}
+        self.assertEqual(
+            ev._mismatches(
+                ["gsd-planner"],
+                _plan(),
+                codex_tables,
+                {"gsd-planner": {"model": "codex/default", "tier": "wrong"}},
+                "codex",
+            )[0][0],
+            "gsd-planner",
+        )
+
+    def test_claude_tier_alias_override_compares_against_alias(self) -> None:
+        plan = _plan([_set("model_overrides.gsd-planner", "haiku")])
+        self.assertEqual(
+            ev._mismatches(
+                ["gsd-planner"],
+                plan,
+                _tables(),
+                {"gsd-planner": {"model": "haiku", "tier": "sonnet"}},
+            )[0][0],
+            "gsd-planner",
+        )
+        self.assertEqual(
+            ev._mismatches(
+                ["gsd-planner"],
+                plan,
+                _tables(),
+                {"gsd-planner": {"model": "haiku", "tier": "haiku"}},
+            ),
+            [],
+        )
 
     def test_wrong_model_detected(self) -> None:
         got = {"model": "sonnet", "tier": "sonnet", "profile": "", "effort": ""}
@@ -154,8 +246,9 @@ class TestOracle(unittest.TestCase):
     def test_key_parity_match_returns_tables(self) -> None:
         """Non-vacuity: the same injection with matching key sets returns the tables."""
         tables = _tables()
+        expected = {**tables, "runtime_profiles": None}
         self.assertEqual(
-            ev.live_tables("node", "/core", run_fn=lambda cmd, **kw: _completed(tables)), tables
+            ev.live_tables("node", "/core", run_fn=lambda cmd, **kw: _completed(tables)), expected
         )
 
     def test_live_tables_unreadable_exits(self) -> None:
@@ -164,6 +257,25 @@ class TestOracle(unittest.TestCase):
                 with self.assertRaises(ev._refusal) as caught:
                     ev.live_tables("node", "/core", run_fn=_run_returning(payload))
                 self.assertIn("unreadable", caught.exception.reason)
+
+    def test_live_tables_nonzero_valid_json_refuses(self) -> None:
+        result = SimpleNamespace(
+            returncode=1, stdout=json.dumps({**_tables(), "runtime_profiles": {}})
+        )
+        with self.assertRaisesRegex(ev._refusal, "exit 1"):
+            ev.live_tables("node", "/core", run_fn=lambda *a, **kw: result)
+
+    def test_live_tables_catalog_path_and_missing_runtime_map(self) -> None:
+        seen = []
+        payload = {**_tables()}
+
+        def run_fn(cmd, **kw):
+            seen.extend(cmd)
+            return _completed(payload)
+
+        loaded = ev.live_tables("node", "/core", run_fn=run_fn)
+        self.assertTrue(seen[-1].endswith("bin/lib/model-catalog.cjs"))
+        self.assertIsNone(loaded["runtime_profiles"])
 
     def test_live_tables_spawn_failure_exits(self) -> None:
         def run_fn(cmd, **kw):
@@ -443,20 +555,22 @@ class TestMatrixEnv(unittest.TestCase):
         self.assertEqual(seen[0][3]["HOME"], "/real/home")
         self.assertEqual(seen[0][5], "node")
 
-    def test_matrix_refuses_non_claude_host(self) -> None:
+    def test_codex_host_reaches_the_bundle_builder(self) -> None:
         built: list = []
 
         def bundle_fn(*args, **kwargs):
-            built.append(args)
+            built.append(kwargs)
             raise _StopRun
 
-        ctx = _ctx(bundle_fn=bundle_fn)
-        with self.assertRaises(ev._refusal) as caught:
-            ev.run_matrix("node", "/tools/gsd-tools.cjs", "/home", "codex", ctx)
-        self.assertEqual(caught.exception.exit_code, 2)
-        self.assertEqual(built, [], "the refusal must precede any bundle build")
-        self.assertIn("matrix oracle supports claude only", caught.exception.reason)
-        self.assertIn("Phase 20", caught.exception.reason)
+        with self.assertRaises(_StopRun):
+            ev.run_matrix(
+                "node",
+                "/tools/gsd-tools.cjs",
+                "/home",
+                "codex",
+                _ctx(bundle_fn=bundle_fn, host="codex"),
+            )
+        self.assertEqual(built[0]["host_name"], "codex")
 
 
 class TestMatrixShape(unittest.TestCase):
@@ -609,6 +723,12 @@ class TestMatrixShape(unittest.TestCase):
             ],
         )
 
+    def test_nonzero_resolve_model_with_matching_json_fails_closed(self) -> None:
+        failed = SimpleNamespace(returncode=1, stdout='{"model":"opus","tier":"opus"}')
+        got = ev._resolve_model(_ctx(run_fn=lambda *a, **kw: failed), "gsd-planner", "/p", {})
+        self.assertEqual(got["model"], "")
+        self.assertIn("empty model", ev.compare("gsd-planner", got, "opus"))
+
     def test_resolve_model_failure_reads_as_empty(self) -> None:
         broken = _ctx(run_fn=lambda cmd, **kw: (_ for _ in ()).throw(OSError("no node")))
         self.assertEqual(ev._resolve_model(broken, "gsd-planner", "/p", {})["model"], "")
@@ -683,11 +803,19 @@ class TestCli(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(ev.main(["snapshot"]), 2)
 
-    def test_matrix_cli_host_refusal_is_exit_2(self) -> None:
-        with contextlib.redirect_stderr(io.StringIO()) as sink:
-            code = ev.main(["matrix", "--host", "codex"])
-        self.assertEqual(code, 2)
-        self.assertIn("matrix oracle supports claude only", sink.getvalue())
+    def test_matrix_cli_opencode_reaches_run_matrix(self) -> None:
+        result = {
+            "rows": [],
+            "controls": {"control_1": {"ok": True}, "control_2": {"ok": True}},
+            "checks": 0,
+        }
+        with (
+            mock.patch.object(ev.shutil, "which", return_value="node"),
+            mock.patch.object(ev, "run_matrix", return_value=result) as run,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(ev.main(["matrix", "--host", "opencode"]), 0)
+        self.assertEqual(run.call_args.args[3], "opencode")
 
     def test_render_matrix_is_mismatches_plus_control_verdict(self) -> None:
         result = {
@@ -2915,6 +3043,10 @@ class TestSmoke(unittest.TestCase):
         self.assertIn("<worktree>", text)
         self.assertIn("## Protected set", text)
         self.assertIn("host-managed changed: none", text)
+
+    def test_evidence_marks_non_claude_informational_row_not_run(self) -> None:
+        text = ev.render_smoke_evidence({"steps": [], "matrix": {"informational": None}})
+        self.assertIn("informational runtime row: not run (claude only)", text)
 
     def test_project_b_records_key_paths_not_values(self) -> None:
         report = {
