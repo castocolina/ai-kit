@@ -472,24 +472,29 @@ the two open verifications the spec left pending.
      (runtime, model) pair whose runtime is the host either takes the requested model natively,
      or `host_can_select` keeps the session-default-only label for that host (amended 2026-10-17
      per 18.1-VERIFICATION deferred item).
-**Plans**: 6 plans
+**Plans**: 7 plans
 
-Plans:
+Plans (cross-AI plans are delegated in plan order, one per wave, so the runner bootstrap comes first):
 **Wave 1**
-- [ ] 20-01-PLAN.md — Host-aware resolve-model oracle and matrix on codex and opencode (controls, L4 closed)
-- [ ] 20-03-PLAN.md — Runner `--standalone` for opencode and the host-never-a-lane regression tests
+- [ ] 20-01-PLAN.md — Runner template 4 (`--standalone` for opencode), this repo's runner re-rendered, host-never-a-lane regression tests
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 20-02-PLAN.md — Smoke per host: local gsd-core install under a throwaway HOME, D-10 allowlist guard, planned == baked chain
+- [ ] 20-02-PLAN.md — Host-aware resolve-model oracle and matrix on codex, opencode and claude (four-case tier rule, controls)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 20-04-PLAN.md — Headless iterations through the runner on both hosts, env names, deferred-in probes, 20-SMOKE-*.md
+- [ ] 20-03-PLAN.md — Smoke per host: local gsd-core install under a throwaway HOME with XDG isolation, D-10 allowlist guard, planned == baked chain, `--artifacts-out`
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 20-05-PLAN.md — Codex detection table from the live names, notes and SKILL.md updates, amendments, skill-judge loop
+- [ ] 20-04-PLAN.md — Headless codex iteration through the runner, env names, event types, scoped enumeration, signal probes, 20-SMOKE-CODEX.md
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 20-06-PLAN.md — Interactive-run scripts per host and the phase gates
+- [ ] 20-05-PLAN.md — Headless opencode iteration through the standalone runner, `#high` suffix probe, scoped enumeration, signal probes, 20-SMOKE-OPENCODE.md
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 20-06-PLAN.md — Codex detection table from the live names, notes and SKILL.md updates, amendments, skill-judge loop
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 20-07-PLAN.md — Interactive-run scripts per host (required D-11 and R5 steps), D-07 and R5 amendments, phase gates
 
 **Cross-cutting constraints:**
 - A fix's regression test lands in the same commit
