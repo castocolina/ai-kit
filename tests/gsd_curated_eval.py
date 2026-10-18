@@ -4299,8 +4299,8 @@ def _write_artifacts(
         "config.json": pathlib.Path(project, ".planning", "config.json").read_text(
             encoding="utf-8"
         ),
-        "resolve-model.json": json.dumps(resolved, sort_keys=True, indent=2) + "\\n",
-        "baked.json": json.dumps(baked, sort_keys=True, indent=2) + "\\n",
+        "resolve-model.json": json.dumps(resolved, sort_keys=True, indent=2) + "\n",
+        "baked.json": json.dumps(baked, sort_keys=True, indent=2) + "\n",
     }
     labels = {
         "work": str(pathlib.Path(project).parent),
