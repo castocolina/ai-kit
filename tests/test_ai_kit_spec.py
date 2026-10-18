@@ -5798,6 +5798,16 @@ class TestDispatchReviewer(unittest.TestCase):
 
 
 class TestTimeoutTiers(unittest.TestCase):
+    def setUp(self):
+        # The CLI tests merge the global layer; without a temp HOME/XDG_CONFIG_HOME they read
+        # the real ~/.config/ai-kit/review-spec.toml (pre-existing, 20-REVIEW WR-11).
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        isolated = {"HOME": home, "XDG_CONFIG_HOME": os.path.join(home, ".config")}
+        patcher = mock.patch.dict(os.environ, isolated)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_default_policy_includes_the_10_20_30_minute_default(self):
         self.assertEqual(config_io.DEFAULT_POLICY["timeout_tiers"], [600, 1200, 1800])
 
@@ -5878,10 +5888,7 @@ class TestTimeoutTiers(unittest.TestCase):
                     ],
                     f,
                 )
-            # Isolate the global layer too: without this the real ~/.config/ai-kit
-            # review-spec.toml was merged in (pre-existing, 20-REVIEW WR-11).
-            isolated = {"HOME": d, "XDG_CONFIG_HOME": os.path.join(d, ".config")}
-            with mock.patch.dict(os.environ, isolated), redirect_stdout(io.StringIO()) as out:
+            with redirect_stdout(io.StringIO()) as out:
                 code = main(
                     [
                         "resolve-timeout-tiers",
