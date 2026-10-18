@@ -9,8 +9,11 @@ only when that binary's real path has the basename `cursor-agent`).
 
 ## Template flags
 
-Template 3 understands three flags. Whether a run gets them depends on who builds the argv (see
-SKILL.md): v2's bare hook passes none of them.
+The template understands three flags (since template 3). Whether a run gets them depends on who
+builds the argv (see SKILL.md): v2's bare hook passes none of them. Template 4 also runs every
+opencode target as `opencode run --standalone`, on a private server, never inside the user's
+shared opencode service; the `opencode models` check before each run is read-only and still
+reaches that shared service.
 
 - `--outer-timeout <s>` replaces the GSD config lookup and the CONFIG cap as the outer deadline.
   The review lane passes it; the GSD hook does not, so the live timeout lookup below applies.
@@ -30,13 +33,15 @@ SKILL.md): v2's bare hook passes none of them.
 file. It never overwrites a user-edited runner, and readiness
 comes from the JSON it prints (`ready`, `runner`, `notes`), not from whether a `.new` file
 exists. A user-edited runner already on the current template is kept as-is and reported ready,
-with no `.new` file. An edited runner on an older or foreign template gets a `.new` file plus the
-printed notes and is not ready until that file is merged by hand. v1
+with no `.new` file. An edited runner on an older template gets a `.new` file plus the printed
+notes; it stays ready from template 3 on (the readiness floor: the first template with the hook's
+flags), while an edited template-1/2 or foreign runner is not ready until `.new` is merged by hand. v1
 `apply-execution` writes the runner command (`node .planning/scripts/cross-ai.mjs …`) only when
 that render is ready.
 
-**Live timeout:** the runner reads `workflow.cross_ai_timeout` from `.planning/config.json`,
-or from `.planning/workstreams/$GSD_WORKSTREAM/config.json` when `GSD_WORKSTREAM` is set, and
+**Live timeout:** the runner reads `workflow.cross_ai_timeout` the way gsd-core's
+`config-get` does: `.planning/[$GSD_PROJECT/][workstreams/$GSD_WORKSTREAM/]config.json`, then the
+root `.planning/config.json` only when a workstream lacks the key; no valid value means 300 s. It
 uses the smaller of that value and the timeout baked in at apply.
 
 **Opt-in skills and MCP servers:** hand-edit the generated script's CONFIG `extraArgs` per
