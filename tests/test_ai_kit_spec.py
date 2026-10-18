@@ -5878,7 +5878,10 @@ class TestTimeoutTiers(unittest.TestCase):
                     ],
                     f,
                 )
-            with redirect_stdout(io.StringIO()) as out:
+            # Isolate the global layer too: without this the real ~/.config/ai-kit
+            # review-spec.toml was merged in (pre-existing, 20-REVIEW WR-11).
+            isolated = {"HOME": d, "XDG_CONFIG_HOME": os.path.join(d, ".config")}
+            with mock.patch.dict(os.environ, isolated), redirect_stdout(io.StringIO()) as out:
                 code = main(
                     [
                         "resolve-timeout-tiers",
