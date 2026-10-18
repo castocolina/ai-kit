@@ -365,7 +365,7 @@ Run 3: `AIKIT-XAI status=no_change cli=opencode model=router-env/my-coding#high 
 
 ## Phase gates
 
-- `make test`: `exit=0`; 56 module results, 4,343 tests total. The matrix module reports `Ran 36 tests`; loader totals are `TestResolveModelMatrix=9`, `TestResolveModelMatrixCodex=9`, `TestResolveModelMatrixOpencode=9`, module total 36 (one matrix run, no second run).
+- `make test`: `exit=0`; 56 module results, 4,343 tests total. The matrix module reports `Ran 36 tests`; loader totals are `TestResolveModelMatrix=9`, `TestResolveModelMatrixCodex=9`, `TestResolveModelMatrixOpencode=9`, module total 36 (one matrix run, no second run). Superseded after the code review: the loader yields 27 tests (`TestMatrixModuleCollection`), and `make test` on the final HEAD ran 4,348 tests (`20-REVIEW-FIX.md`, `20-VERIFICATION.md`).
 - `make validate`: `exit=0`; all hooks passed after the in-phase pyright correction (initial run exposed 23 typing errors in the matrix test mixin and one nullable mismatch assertion).
 - Verbose pre-push unittest hook: `exit=0`; 43 modules, 4,125 tests total.
 - `make e2e-docker`: `exit=0` (`ai-kit clean-room E2E: PASS`).

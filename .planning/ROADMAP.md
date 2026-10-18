@@ -471,7 +471,7 @@ the two open verifications the spec left pending.
   3. Native per-call model selection is verified live from the codex and opencode hosts: a
      (runtime, model) pair whose runtime is the host either takes the requested model natively,
      or `host_can_select` keeps the session-default-only label for that host (amended 2026-10-17
-     per 18.1-VERIFICATION deferred item; clarified 2026-10-18: the second branch is satisfied by the pinned `native_selectors == ()` default and its unit test, 20-06; the live probe stays optional, 20-07 step 8).
+     per 18.1-VERIFICATION deferred item; clarified 2026-10-18: the second branch is satisfied by the pinned `native_selectors == ()` default and its unit test, 20-06; the live probe stays optional: `20-INTERACTIVE-CODEX.md` step 6, `20-INTERACTIVE-OPENCODE.md` step 5).
 **Plans**: 7/7 plans executed
 
 Plans (cross-AI plans are delegated in plan order, one per wave, so the runner bootstrap comes first):
