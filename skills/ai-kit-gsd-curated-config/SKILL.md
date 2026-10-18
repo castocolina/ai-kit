@@ -160,8 +160,9 @@ python3 "$ENTRYPOINT" apply --plan "$WORK/plan.json" --inventory "$WORK/inventor
    `approve_with` string **unchanged**: it carries `--require` for the listed ids and a
    `--fingerprint` of the rows the user saw. If approval is refused because the follow-ups
    changed, list them again and re-ask. If `required` is empty, ask nothing and skip
-   approval. Always relay `recommended` items as suggestions. If the report has no
-   `followups` block (warning "follow-ups could not be listed"), run the listing command below.
+   approval. Always relay `recommended` items as suggestions. The installer follow-up notes list
+   GSD-generated paths to gitignore by prefix; this skill reports them and never edits `.gitignore`.
+   If the report has no `followups` block (warning "follow-ups could not be listed"), run the listing command below.
 
 ```bash
 python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inventory.json" --project-dir <target>
@@ -212,6 +213,11 @@ After every external dispatch, print the `AIKIT-XAI status=…` line from stderr
 loading off). The opencode bare profile is **partial**: `~/.agents/skills` and
 `~/.config/opencode/skills` still load — say so.
 
+The host CLI is never a review lane: `recommend` never proposes its slug, and `plan-set`
+refuses it in `review.default_reviewers` even with `--force`. A copied default naming the host
+is flagged for replacement. If you deliberately want that CLI with another provider, make the
+user-owned `review.reviewer_instances` edit; curated-config neither writes nor validates it. The host is never proposed as a review lane.
+
 **`.new` is not active:** a user-edited runner is never overwritten; apply writes
 `cross-ai.mjs.new` and reports `script.active: false`. Never treat `.new` as live. **Read
 [`references/runner.md`](references/runner.md) when** a runner upgrade, a `.new` merge,
@@ -237,14 +243,14 @@ loading off). The opencode bare profile is **partial**: `~/.agents/skills` and
 - **Plugin skills** need install plus layered `enabledPlugins` (user, project, local).
   Per-key layering is **unverified**: entries that rely on it carry an `effect` flag.
 
-## Limits (as of 2026-10-15)
+## Limits (as of 2026-10-18)
 
 | Topic | Limit |
 |---|---|
 | cursor / pi hosts | **not live-validated** |
 | opencode providers | Providers defined only in a project's `opencode.json` are not candidates |
 | effort sync | Skipped for workstream configs; `--config-dir <project>/<host dir>` value **unverified** |
-| local gsd root | `.opencode/gsd-core` install root **unverified** |
+| host as review lane | Never proposed; a deliberate host-CLI lane with another provider is a manual `review.reviewer_instances` edit you own (20 D-11) |
 
 ## Subcommand reference
 

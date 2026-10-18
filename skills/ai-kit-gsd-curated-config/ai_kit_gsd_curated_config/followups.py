@@ -13,7 +13,7 @@ import subprocess
 import sys
 from typing import Any, NamedTuple
 
-from . import gsd_catalog, host, presets
+from . import gsd_catalog, host
 
 HOST_DIRS = {"claude": ".claude", "codex": ".codex", "opencode": ".opencode"}
 EFFORT_SYNC_HOSTS = ("claude", "codex", "opencode")
@@ -226,7 +226,23 @@ def _config_dir_note() -> str:
 
 def _opencode_root_note(project_dir: str) -> str:
     root = os.path.join(project_dir, ".opencode", "gsd-core")
-    return f"the local install root {root} is inferred (unverified until Phase 20)"
+    return (
+        f"the local install root {root} was verified by the Phase 20 opencode smoke "
+        "(20-SMOKE-OPENCODE.md)"
+    )
+
+
+def _gitignore_prefix_note(host_name: str) -> str | None:
+    host_dir = HOST_DIRS.get(host_name)
+    if host_name not in ("opencode", "codex") or host_dir is None:
+        return None
+    return (
+        f"GSD-generated paths to gitignore by prefix in this project: {host_dir}/gsd-core/, "
+        f"{host_dir}/agents/gsd-*, {host_dir}/commands/gsd-*, {host_dir}/skills/gsd-*, "
+        f"{host_dir}/plugins/gsd-core.js, {host_dir}/gsd-*.json ({host_dir} = {host_dir}); "
+        f"never ignore the whole directory (opencode writes its own {host_dir}/.gitignore "
+        "there); curated-config reports this and never edits .gitignore"
+    )
 
 
 def _unknown_version_note() -> str:
@@ -237,7 +253,11 @@ def _unknown_version_note() -> str:
 
 
 def _codex_installer_note() -> str:
-    return f"codex installer follow-up is inferred from {presets.CODEX_EFFECT} (unverified)"
+    return (
+        "codex installer follow-up: the cached installer's local layout and the --codex --local "
+        "flags were verified by the Phase 20 codex smoke (20-SMOKE-CODEX.md); the shipped npx "
+        "launcher and its registry fetch were not exercised"
+    )
 
 
 def _maybe_installer(
@@ -372,6 +392,9 @@ def build_followups(
     has_installer = installer is not None
     if host_name == "opencode" and has_installer:
         notes.append(_opencode_root_note(ctx.project_dir))
+    gitignore_note = _gitignore_prefix_note(host_name)
+    if has_installer and gitignore_note is not None:
+        notes.append(gitignore_note)
     effort: FollowUp | None = None
     if "effort_sync" in candidates and not _effort_blocked(
         host_name, ctx, inv, has_installer, notes

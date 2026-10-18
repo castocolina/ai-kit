@@ -157,6 +157,7 @@ class TestFollowupsTracer(unittest.TestCase):
                 ],
             )
             self.assertEqual(req[0]["cwd"], project)
+            self.assertTrue(any("gitignore by prefix" in n for n in report["followups"]["notes"]))
             npx_calls = [c for c in rec.argv_log if c and c[0] == "npx"]
             self.assertEqual(npx_calls, [])
 
@@ -502,6 +503,23 @@ class TestDisclosures(unittest.TestCase):
             FollowupsRun(),
         )
         self.assertEqual(block["required"][0]["id"], "installer")
+
+    def test_gitignore_prefix_note_is_only_for_non_claude_hosts(self):
+        for host_name, expected_dir in (("opencode", ".opencode"), ("codex", ".codex")):
+            note = followups._gitignore_prefix_note(host_name)
+            self.assertIsNotNone(note)
+            self.assertIn(f"{expected_dir}/agents/gsd-*", note or "")
+            self.assertIn(f"{expected_dir}/commands/gsd-*", note or "")
+            self.assertIn("never edits .gitignore", note or "")
+        self.assertIsNone(followups._gitignore_prefix_note("claude"))
+
+    def test_phase_20_evidence_notes_are_explicitly_verified(self):
+        root = followups._opencode_root_note("/project")
+        self.assertIn("verified by the Phase 20 opencode smoke", root)
+        self.assertNotIn("inferred (unverified until Phase 20)", root)
+        installer = followups._codex_installer_note()
+        self.assertIn("local layout and the --codex --local flags were verified", installer)
+        self.assertIn("shipped npx launcher and its registry fetch were not exercised", installer)
 
     def test_codex_installer_only_on_model_overrides(self) -> None:
         inv = make_inventory(host="codex")
