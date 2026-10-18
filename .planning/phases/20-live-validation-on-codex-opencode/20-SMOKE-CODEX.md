@@ -218,7 +218,18 @@ CLAUDE_PID
 ## Deferred-in items
 - Codex JSON event types: `['thread.started', 'turn.started', 'item.completed', 'turn.completed']`; `turn.completed` present; no `error` event. recovered stream error: not provoked (cannot be forced deterministically); the shortcut comment in the template stays. This one direct scrubbed `codex exec --json` run was intentionally outside the runner to capture the CLI's event stream itself.
 - C-W12: the unseeded inventory used a temporary PATH containing only codex, node, python3, git, env, sh and bash. Its `installed_runtimes` was exactly `['codex']` (enumeration scoped: codex only), and `runtime_enumeration` was `{'codex': 'ok'}`. A second inventory used a fresh scratch `CODEX_HOME`; its status also remained `ok`, so failure-versus-empty was not provoked. Recommend was run on that inventory; codex why text included `best execution score within ceiling (<= 4/1M, 75th pct of 8 families)` and tier notes included `rigor standard preset (spec §5)`. Other installed CLIs were unavailable on the controlled PATH.
-- CR-03/CR-04 signal probes: pending Task 3.
+- CR-03/CR-04 run 1:
+- readiness: live child 105521 (codex exec), sleep 170 observed
+  - status: `AIKIT-XAI status=signal cli=codex model=gpt-5.6-luna exit=143 cli_rc=- elapsed=4s out=409 tree=clean action=stop`
+  - first SIGTERM-to-status elapsed: about 4 s (runner-reported); supervisor exit 143
+  - `codex-signal1.pgid` spawn pids: 105470, 105471, 105472, 105473, 105474, 105475, 105521, 106031, 106032, 106034, 106035, 106036; every process group was empty afterward
+  - run-owned TMPDIR `cross-ai-*`/`xai-*` check: empty; TMPDIR removed
+- CR-03/CR-04 run 2:
+- readiness: live child 106788 (codex exec), sleep 170 observed
+  - status: `AIKIT-XAI status=signal cli=codex model=gpt-5.6-luna exit=143 cli_rc=- elapsed=4s out=439 tree=clean action=stop`
+  - SIGTERMs were 0.302 s apart; the status was recorded about 0.30 s after the second signal, but the wrapper had already exited before that second kill could be delivered; immediate second-signal group-kill behavior remains unverified
+  - `codex-signal2.pgid` spawn pids: 106729, 106730, 106738, 106739, 106740, 106742, 106788, 107218, 107219, 107221, 107222, 107223; every process group was empty afterward
+  - run-owned TMPDIR `cross-ai-*`/`xai-*` check: empty; TMPDIR removed
 - Interactive run: pending; see `20-INTERACTIVE-CODEX.md`. The user's TUI env names, smoke and artifacts are the EVAL-04 evidence.
 
 ## Interactive run
