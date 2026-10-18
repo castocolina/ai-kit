@@ -191,7 +191,7 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
 ## Cross-AI execution
 
 v2 `apply` sets `workflow.cross_ai_command` to the bare `node .planning/scripts/cross-ai.mjs` and
-renders the runner from the bundled template (template 4); the runner reads its prefer order and
+renders the runner from the bundled template (template 5); the runner reads its prefer order and
 models from its own CONFIG. The hook names the runner, never a raw vendor CLI string.
 
 **Permissions depend on which flow wrote the hook — say which one applies:**

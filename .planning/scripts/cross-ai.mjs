@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=4 sha256=1b9fca44a07b641fef9114ec559c091dd73c7abeb2432fc9c6d7bb6b155b9dfa
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=5 sha256=6666258f553dc872d4f6967ae6529853c3aab988894da4b7427671ac8d9420c8
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v4).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v5).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
@@ -410,28 +410,38 @@ function tryNextCli(status, tree) {
 }
 
 function which(bin, envPath = process.env.PATH || '') {
-  if (bin.includes('/')) return isExec(bin) ? bin : null;
+  if (bin.includes('/')) return isExec(bin) ? path.resolve(bin) : null;
   for (const dir of envPath.split(path.delimiter)) {
     // An empty segment is the cwd, as POSIX shells resolve it (U-5, informational).
-    const p = path.join(dir || '.', bin);
+    const p = path.resolve(dir || '.', bin);
     if (isExec(p)) return p;
   }
   return null;
+}
+function* pathHits(bin, envPath = process.env.PATH || '') {
+  for (const dir of envPath.split(path.delimiter)) {
+    // An empty segment is the cwd, as POSIX shells resolve it (U-5, informational).
+    const p = path.resolve(dir || '.', bin);
+    if (isExec(p)) yield p;
+  }
 }
 function isExec(p) { try { fs.accessSync(p, fs.constants.X_OK); return fs.statSync(p).isFile(); } catch { return false; } }
 
 // A bare `agent` is cursor only when it really is cursor-agent (D-02). Anything else
 // (another CLI that ships the same name) is not acceptable; a realpath error is the same.
+// D-09: every PATH entry is scanned for the guarded name; another CLI's agent earlier on PATH no longer hides cursor's.
 function resolveBin(rt, envPath) {
   for (const b of rt.bins) {
-    const found = which(b, envPath);
-    if (!found) continue;
-    if (b === 'agent') {
+    if (b !== 'agent') {
+      const found = which(b, envPath);
+      if (found) return found;
+      continue;
+    }
+    for (const found of pathHits(b, envPath)) {
       let base = '';
       try { base = path.basename(fs.realpathSync(found)); } catch { base = ''; }
-      if (base !== 'cursor-agent') continue;
+      if (base === 'cursor-agent') return found;
     }
-    return found;
   }
   return null;
 }
@@ -1217,7 +1227,7 @@ if (sub[0] === 'models') {
   console.log('Available models');
   console.log('');
   if (process.env.FAKE_CURSOR_LIST !== 'empty') {
-    for (const id of ['fake-ok-cursor', 'fake-err-cursor']) console.log(id + ' - label');
+    for (const id of ['fake-ok-cursor', 'fake-err-cursor', 'composer-2.5']) console.log(id + ' - label');
   }
   process.exit(0);
 }
@@ -2573,6 +2583,90 @@ async function blackBoxSelfTest() {
           const agent = path.join(ctx.tmp, 'bin-agent-agent-cursor-realpath', 'agent');
           const line = (_r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
           if (!line || !line.includes(`\t${agent}\t`)) return `line=${line}`;
+          return null;
+        },
+      },
+      {
+        name: 'agent-grok-first-then-cursor',
+        args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        setup: (c) => {
+          const dir1 = path.join(c.tmp, 'bin-agent-grok-first');
+          const dir2 = path.join(c.tmp, 'bin-agent-cursor-later');
+          fs.mkdirSync(dir1);
+          fs.mkdirSync(dir2);
+          const shared = path.join(c.tmp, 'bin');
+          const other = path.join(dir1, 'other-agent-1.0.52-linux-x86_64');
+          fs.writeFileSync(other, '#!/bin/sh\nexit 0\n');
+          fs.chmodSync(other, 0o755);
+          fs.symlinkSync(path.join(shared, 'node'), path.join(dir1, 'node'));
+          fs.symlinkSync(path.join(shared, 'git'), path.join(dir1, 'git'));
+          fs.symlinkSync(other, path.join(dir1, 'agent'));
+          fs.symlinkSync(path.join(shared, 'cursor-agent'), path.join(dir2, 'agent'));
+          c.env.PATH = dir1 + path.delimiter + dir2;
+          return null;
+        },
+        check: (r, ctx) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
+          const expected = path.join(ctx.tmp, 'bin-agent-cursor-later', 'agent');
+          if (!line || !line.includes(`\t${expected}\t`)) return `line=${line}`;
+          return null;
+        },
+      },
+      {
+        name: 'agent-grok-first-then-cursor-cwd',
+        args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        setup: (c) => {
+          const dir1 = path.join(c.tmp, 'bin-agent-grok-first-cwd');
+          fs.mkdirSync(dir1);
+          const shared = path.join(c.tmp, 'bin');
+          const other = path.join(dir1, 'other-agent-1.0.52-linux-x86_64');
+          fs.writeFileSync(other, '#!/bin/sh\nexit 0\n');
+          fs.chmodSync(other, 0o755);
+          fs.symlinkSync(path.join(shared, 'node'), path.join(dir1, 'node'));
+          fs.symlinkSync(path.join(shared, 'git'), path.join(dir1, 'git'));
+          fs.symlinkSync(other, path.join(dir1, 'agent'));
+          fs.symlinkSync(path.join(shared, 'cursor-agent'), path.join(c.repo, 'agent'));
+          spawnSync('git', ['add', 'agent'], { cwd: c.repo, env: c.env });
+          spawnSync('git', ['commit', '-q', '-m', 'agent'], { cwd: c.repo, env: c.env });
+          c.env.PATH = dir1 + path.delimiter;
+          return null;
+        },
+        check: (r, ctx) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
+          const cwdAgent = path.join(ctx.repo, 'agent');
+          if (!line || !(line.includes(`\t${cwdAgent}\t`) || line.includes('\t./agent\t')) || line.includes('\tagent\t')) return `line=${line}`;
+          return null;
+        },
+      },
+      {
+        name: 'agent-grok-first-then-cursor-cwd-spawn',
+        args: ['--mode', 'exec', '--prefer', 'cursor', '--model-cursor', 'composer-2.5'],
+        stdin: 'exercise guarded cwd dispatch',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=cursor model=composer-2.5 exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        setup: (c) => {
+          const dir1 = path.join(c.tmp, 'bin-agent-grok-first-cwd-spawn');
+          fs.mkdirSync(dir1);
+          const shared = path.join(c.tmp, 'bin');
+          const other = path.join(dir1, 'other-agent-1.0.52-linux-x86_64');
+          fs.writeFileSync(other, `#!/bin/sh\nprintf 'grok ran' > '${path.join(c.tmp, 'grok-ran')}'\nexit 1\n`);
+          fs.chmodSync(other, 0o755);
+          fs.symlinkSync(path.join(shared, 'node'), path.join(dir1, 'node'));
+          fs.symlinkSync(path.join(shared, 'git'), path.join(dir1, 'git'));
+          fs.symlinkSync(other, path.join(dir1, 'agent'));
+          fs.symlinkSync(path.join(shared, 'cursor-agent'), path.join(c.repo, 'agent'));
+          spawnSync('git', ['add', 'agent'], { cwd: c.repo, env: c.env });
+          spawnSync('git', ['commit', '-q', '-m', 'agent'], { cwd: c.repo, env: c.env });
+          c.env.PATH = dir1 + path.delimiter;
+          return null;
+        },
+        check: (_r, ctx) => {
+          if (!ctx.calls.some((line) => line.startsWith('cursor-agent '))) return `calls=${ctx.calls.join('|')}`;
+          if (fs.existsSync(path.join(ctx.tmp, 'grok-ran'))) return 'grok agent ran';
           return null;
         },
       },

@@ -11604,7 +11604,7 @@ class TestCrossAiTemplateText(unittest.TestCase):
         m = re.match(hdr, lines[1])
         self.assertIsNotNone(m)
         assert m is not None
-        self.assertEqual(m.group(1), "4")
+        self.assertEqual(m.group(1), "5")
         start = text.index("// <config>\n") + len("// <config>\n")
         end = text.index("\n// </config>", start)
         block = text[start:end]
@@ -11636,6 +11636,10 @@ class TestCrossAiTemplateText(unittest.TestCase):
         start = text.index('"scrubEnv"')
         end = text.index("\n// </config>", start)
         region = text[:start] + text[end:]
+        # The hermetic runner self-test now deliberately models another CLI's `agent` as Grok.
+        case_start = region.index("    const cases = [")
+        case_end = region.index("    const only =", case_start)
+        region = region[:case_start] + region[case_end:]
         region_no_grok_agent = region.replace('"GROK_AGENT"', "")
         self.assertIsNone(re.search("grok", region_no_grok_agent, re.I))
         cfg_start = text.index("const CONFIG = ") + len("const CONFIG = ")
