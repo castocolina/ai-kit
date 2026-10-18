@@ -3813,7 +3813,8 @@ class TestMatrixModuleCollection(unittest.TestCase):
         suite = unittest.TestLoader().loadTestsFromName(  # never the -k-filtered default
             "tests.test_ai_kit_gsd_curated_config_matrix"
         )
-        classes = sorted({type(test).__name__ for group in suite for test in group})
+        groups = [group for group in suite if isinstance(group, unittest.TestSuite)]
+        classes = sorted({type(test).__name__ for group in groups for test in group})
         self.assertEqual(
             classes,
             [
