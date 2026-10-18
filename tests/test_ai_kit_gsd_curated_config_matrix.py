@@ -1,4 +1,4 @@
-"""Real-node resolve-model matrices for Claude, Codex and OpenCode hosts."""
+"""Real-node resolve-model matrices for Claude, Codex, OpenCode and Cursor hosts."""
 
 from __future__ import annotations
 
@@ -105,6 +105,10 @@ class TestResolveModelMatrixCodex(TestResolveModelMatrix):
 
 class TestResolveModelMatrixOpencode(TestResolveModelMatrix):
     HOST = "opencode"
+
+
+class TestResolveModelMatrixCursor(TestResolveModelMatrix):
+    HOST = "cursor"
 
 
 if __name__ == "__main__":

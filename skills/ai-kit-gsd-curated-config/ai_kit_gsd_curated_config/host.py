@@ -1,9 +1,10 @@
 """Host detection and gsd-core resolution for the read-only inventory (D-11 scope labelling).
 
 Resolution delegates to the shared `ai_kit_spec.gsd_tools` candidate list — never a second
-hand-copied launcher order. On pi and opencode hosts the project-local gsd-core under
-`<root>/.pi/gsd-core` or `<root>/.opencode/gsd-core` is tried before GSD's shared order
-(17 D-11 amended, 18-02); every other candidate comes from `gsd_tools_candidates`.
+hand-copied launcher order. On pi, opencode and cursor hosts the project-local gsd-core under
+`<root>/.pi/gsd-core`, `<root>/.opencode/gsd-core` or `<root>/.cursor/gsd-core` is tried before
+GSD's shared order (17 D-11 amended, 18-02); every other candidate comes from
+`gsd_tools_candidates`.
 """
 from __future__ import annotations
 
@@ -17,12 +18,14 @@ from . import gsd_catalog
 
 HOSTS = ("claude", "codex", "opencode", "cursor", "pi")
 
-# Project-local gsd-core roots tried before GSD's shared launcher order (pi, opencode).
+# Project-local gsd-core roots tried before GSD's shared launcher order (pi, opencode, cursor).
 _HOST_FIRST_ROOT = {
     "pi": ".pi",
     # Local root <project>/.opencode/gsd-core observed in the ai-kit Phase 20 smoke (gsd-core
     # 1.17.0 installer, --opencode --local --no-legacy-cleanup, throwaway HOME).
     "opencode": ".opencode",
+    # Local root <project>/.cursor/gsd-core observed in the Phase 21 research installer run.
+    "cursor": ".cursor",
 }
 
 _UNKNOWN_HOST_MSG = (

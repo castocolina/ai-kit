@@ -208,6 +208,8 @@ def _strict_files(repo_root: pathlib.Path, home: pathlib.Path) -> dict[str, path
         # documents a listing probe rewriting (`cursor-agent models`), so it is strict: a
         # batch that let such a probe run against the real home must fail (review cycle 2).
         f"{HOME_LABEL}/.cursor/cli-config.json": home / ".cursor" / "cli-config.json",
+        # Cursor's merged hooks file is possibly user-owned (T-21-19).
+        f"{HOME_LABEL}/.cursor/hooks.json": home / ".cursor" / "hooks.json",
     }
     for name in _dir_names(planning, config_backup.BACKUP_PREFIX) or []:
         files[f"{WORKTREE_LABEL}/.planning/{name}"] = planning / name
@@ -222,6 +224,8 @@ def _strict_listings(repo_root: pathlib.Path, home: pathlib.Path) -> dict[str, l
         f"{HOME_LABEL}/.claude/skills": _dir_names(home / ".claude" / "skills"),
         f"{HOME_LABEL}/.claude/agents": _dir_names(home / ".claude" / "agents"),
         f"{HOME_LABEL}/.claude/commands": _dir_names(home / ".claude" / "commands"),
+        f"{HOME_LABEL}/.cursor/agents": _dir_names(home / ".cursor" / "agents"),
+        f"{HOME_LABEL}/.cursor/skills": _dir_names(home / ".cursor" / "skills"),
         f"{WORKTREE_LABEL}/.planning": _dir_names(repo_root / ".planning", "config.json"),
     }
 
@@ -301,11 +305,13 @@ def snapshot(repo_root: pathlib.Path | str, home: pathlib.Path | str, scratch_ro
     }
     strict.update(_strict_listings(root, home_dir))
     codex = home_dir / ".codex"
+    cursor = home_dir / ".cursor"
     opencode = home_dir / ".config" / "opencode"
     strict[f"{HOME_LABEL}/.codex/config.toml"] = _toml_semantic_sha(
         codex / "config.toml", scratch_roots
     )
     strict[f"{HOME_LABEL}/.codex/hooks.json"] = _file_sha(codex / "hooks.json")
+    strict[f"{HOME_LABEL}/.cursor/hooks.json"] = _file_sha(cursor / "hooks.json")
     strict[f"{HOME_LABEL}/.codex/agents"] = _tree_sha(codex / "agents")
     for name in ("opencode.jsonc", "opencode.json"):
         strict[f"{HOME_LABEL}/.config/opencode/{name}"] = _file_sha(opencode / name)
@@ -4300,15 +4306,23 @@ def _baked_mismatches(
 
 
 def _generated_paths(project: str, host: str) -> list[str]:
-    """GSD-generated prefixes; the host's own `.gitignore` is not one (D-12, review M2)."""
+    """GSD-generated paths; cursor's merged, possibly user-owned `hooks.json` is only reported."""
     base = pathlib.Path(project) / f".{host}"
     paths = []
-    for prefix in ("gsd-core", "plugins/gsd-core.js"):
+    prefixes = ("gsd-core", "plugins/gsd-core.js") + (
+        ("hooks", "hooks.json", "scripts") if host == "cursor" else ()
+    )
+    for prefix in prefixes:
         if (base / prefix).exists():
             paths.append(f".{host}/{prefix}" + ("/" if (base / prefix).is_dir() else ""))
     for category in ("agents", "commands", "skills"):
         paths.extend(f".{host}/{category}/{path.name}" for path in (base / category).glob("gsd-*"))
     paths.extend(f".{host}/{path.name}" for path in base.glob("gsd-*.json"))
+    if host == "cursor":
+        paths.extend(
+            f".{host}/{path.name}" + ("/" if path.is_dir() else "")
+            for path in base.glob(".gsd-*")
+        )
     return sorted(paths)
 
 
@@ -4322,12 +4336,19 @@ def _baked_chain(ctx: SmokeCtx, project: str, plan: dict, label: str, plan_path:
     if ctx.host == "codex":  # D-08: a codex TOML bakes `model` for explicit pins only
         sets = _set_entries(plan)
         promised_map = {agent: sets.get(f"model_overrides.{agent}") for agent in agents}
+    elif ctx.host == "cursor":
+        # The 1.17.0 cursor installer retains only name and description in baked agents.
+        promised_map = {agent: None for agent in agents}
     else:
         promised_map = {agent: promised(agent, plan, tables, ctx.host) or None for agent in agents}
     baked = _baked_models(project, ctx.host)
     mismatches = _baked_mismatches(baked, promised_map)
     if mismatches:
         raise SystemExit(f"planned != baked: {mismatches}")
+    if ctx.host == "cursor":
+        pinned = sorted(name for name, model in baked.items() if model is not None)
+        if pinned:
+            raise SystemExit(f"cursor installer baked a model line: {pinned}")
     tools_path = os.path.join(project, f".{ctx.host}", "gsd-core", "bin", "gsd-tools.cjs")
     matrix_ctx = _MatrixCtx(
         ctx.node_bin, tools_path, ctx.home, ctx.host, os.path.dirname(os.path.dirname(tools_path))
@@ -4346,6 +4367,7 @@ def _baked_chain(ctx: SmokeCtx, project: str, plan: dict, label: str, plan_path:
     return {
         "baked_summary": {
             "label": label,
+            **({"resolve_model_only": True} if ctx.host == "cursor" else {}),
             "agents": len(agents),
             "compact_without_model": sum(1 for name in compact if baked[name] is None),
             "compact_with_model": sum(1 for name in compact if baked[name] is not None),
@@ -4452,6 +4474,11 @@ def _smoke_project_a(ctx: SmokeCtx, work: str, cache_sha: dict) -> list[dict]:
         chain["baked_summary"]["repeat_install_unchanged"] = True
         state["chain"] = chain
         agents = chain["baked_summary"]["agents"]
+        if ctx.host == "cursor":
+            return (
+                f"{agents} agents; plan == resolve-model (resolve-model only); "
+                "repeat install unchanged"
+            )
         return f"{agents} agents; planned == baked == resolve-model; repeat install unchanged"
 
     def fault() -> str:
@@ -4467,7 +4494,12 @@ def _smoke_project_a(ctx: SmokeCtx, work: str, cache_sha: dict) -> list[dict]:
         _step("project (a) second apply", second_apply),
         _step("project (a) forced failure restores", fault),
     ]
-    post = _step("project (a) post-apply install and planned == baked", baked_check)
+    post_name = (
+        "project (a) post-apply install and resolve-model check"
+        if ctx.host == "cursor"
+        else "project (a) post-apply install and planned == baked"
+    )
+    post = _step(post_name, baked_check)
     post.update(state.get("chain") or {})
     steps.append(post)
     return steps
@@ -4742,7 +4774,16 @@ def _baked_lines(result: dict) -> list[str]:
     lines: list[str] = []
     for summary in result.get("baked") or []:
         label = summary["label"]
-        lines.append(f"- {label}: {summary['agents']} agents; planned == baked == resolve-model")
+        if summary.get("resolve_model_only"):
+            lines.append(
+                f"- {label}: {summary['agents']} agents; plan == resolve-model "
+                "(resolve-model only: the cursor installer bakes no model line, "
+                "baked files verified model-free)"
+            )
+        else:
+            lines.append(
+                f"- {label}: {summary['agents']} agents; planned == baked == resolve-model"
+            )
         if summary.get("compact_without_model"):
             lines.append(
                 f"- {label}: {summary['compact_without_model']} compact agent files carry no "
@@ -4893,9 +4934,9 @@ def _build_parser() -> argparse.ArgumentParser:
     mat.add_argument("--json", action="store_true", help="print the structured result as JSON")
     mat.add_argument(
         "--host",
-        choices=("claude", "codex", "opencode"),
+        choices=("claude", "codex", "opencode", "cursor"),
         default="claude",
-        help="runtime host: claude, codex or opencode",
+        help="runtime host: claude, codex, opencode or cursor",
     )
     mat.add_argument("--tools", default=GSD_TOOLS_PATH, help="path to gsd-tools.cjs")
     mat.add_argument("--home", help="real HOME for the gsd-tools subprocesses (D-08)")

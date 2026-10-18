@@ -238,6 +238,49 @@ class TestInventoryTracer(unittest.TestCase):
             )
         self.assertEqual(out_buf.getvalue(), plan_io.canonical_json(parsed))
 
+    def test_cursor_host_resolves_project_local_cursor_root(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        install = os.path.join(project, ".cursor", "gsd-core")
+        make_gsd_install(install)
+
+        code, parsed, _err = run_inventory(
+            project, _inventory_env(home), FakeRun(), "--host", "cursor"
+        )
+
+        self.assertEqual(code, 0)
+        assert parsed is not None
+        self.assertEqual(parsed["gsd_core"]["path"], install)
+        self.assertEqual(parsed["gsd_core"]["scope"], "local")
+        self.assertEqual(parsed["gsd_core"]["version"], "1.16.0")
+
+    def test_cursor_host_prefers_cursor_root_over_claude_root(self):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        claude_install = os.path.join(project, ".claude", "gsd-core")
+        cursor_install = os.path.join(project, ".cursor", "gsd-core")
+        make_gsd_install(claude_install)
+        make_gsd_install(cursor_install, version="1.17.0")
+        env = _inventory_env(home)
+
+        code, cursor, _err = run_inventory(
+            project, env, FakeRun(), "--host", "cursor"
+        )
+        self.assertEqual(code, 0)
+        assert cursor is not None
+        self.assertEqual(cursor["gsd_core"]["path"], cursor_install)
+
+        code, opencode, _err = run_inventory(
+            project, env, FakeRun(), "--host", "opencode"
+        )
+        self.assertEqual(code, 0)
+        assert opencode is not None
+        self.assertEqual(opencode["gsd_core"]["path"], claude_install)
+
     def test_local_gsd_core_roots_matches_gsd_core_roots_prefix(self):
         root = os.path.join(os.sep, "proj")
         env = {"HOME": os.path.join(os.sep, "h")}

@@ -2385,6 +2385,7 @@ class TestSkillDocCommands(unittest.TestCase):
             "full permissions",
             "2026-10-18",
             ".opencode/gsd-core",
+            ".cursor/gsd-core",
             "enabledPlugins",
             "unverified",
             "declined",

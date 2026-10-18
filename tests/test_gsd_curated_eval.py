@@ -403,6 +403,33 @@ class TestSnapshot(_ScratchPaths):
         strict, _host = ev.snapshot_diff(before, self.snap())
         self.assertIn(f"{ev.HOME_LABEL}/.gsd/defaults.json", strict)
 
+    def test_cursor_agents_skills_hooks_are_protected(self) -> None:
+        """Cursor directory protection compares sorted names, never existing file contents."""
+        before = self.snap()
+        self.write(os.path.join(self.home, ".cursor", "agents", "new.md"), "agent\n")
+        self.write(os.path.join(self.home, ".cursor", "skills", "new", "SKILL.md"), "skill\n")
+        strict, host = ev.snapshot_diff(before, self.snap())
+        self.assertEqual(
+            strict,
+            [
+                f"{ev.HOME_LABEL}/.cursor/agents",
+                f"{ev.HOME_LABEL}/.cursor/skills",
+            ],
+        )
+        self.assertEqual(host, [])
+
+        before = self.snap()
+        self.write(os.path.join(self.home, ".cursor", "agents", "new.md"), "changed\n")
+        strict, host = ev.snapshot_diff(before, self.snap())
+        self.assertEqual(strict, [])
+        self.assertEqual(host, [])
+
+        before = self.snap()
+        self.write(os.path.join(self.home, ".cursor", "hooks.json"), '{"hooks": []}\n')
+        strict, host = ev.snapshot_diff(before, self.snap())
+        self.assertEqual(strict, [f"{ev.HOME_LABEL}/.cursor/hooks.json"])
+        self.assertEqual(host, [])
+
     def test_cursor_config_change_is_strict(self) -> None:
         """`cursor-agent models` rewrites `~/.cursor/cli-config.json`, so it must fail a batch;
         the codex config is strict too (D-10's semantic allowlist guard)."""
@@ -412,7 +439,10 @@ class TestSnapshot(_ScratchPaths):
         strict, host = ev.snapshot_diff(before, self.snap())
         self.assertEqual(
             strict,
-            [f"{ev.HOME_LABEL}/.codex/config.toml", f"{ev.HOME_LABEL}/.cursor/cli-config.json"],
+            [
+                f"{ev.HOME_LABEL}/.codex/config.toml",
+                f"{ev.HOME_LABEL}/.cursor/cli-config.json",
+            ],
         )
         self.assertEqual(host, [])
 
@@ -3057,6 +3087,7 @@ class TestSmoke(unittest.TestCase):
         (base / "agents").mkdir(parents=True)
         (base / ".gitignore").write_text("x\n", encoding="utf-8")
         (base / "agents" / "gsd-x.md").write_text("", encoding="utf-8")
+        (base / "hooks.json").write_text("{}\n", encoding="utf-8")
         self.assertEqual(ev._generated_paths(self.tmp, "opencode"), [".opencode/agents/gsd-x.md"])
 
     def _chain_fixture(self):
@@ -3099,6 +3130,104 @@ class TestSmoke(unittest.TestCase):
         self.assertIn("gsd-b", message)
         self.assertEqual(len(seen), 2)
         self.assertTrue(all("GSD_RUNTIME" not in env for env in seen))
+
+    def test_baked_chain_cursor_promises_no_baked_model_and_keeps_resolve_compare(self) -> None:
+        ctx, project, _plan, _tables = self._chain_fixture()
+        cursor_tools = os.path.join(project, ".cursor", "gsd-core", "bin", "gsd-tools.cjs")
+        ctx = ctx._replace(host="cursor", tools_path=cursor_tools)
+        agents_dir = pathlib.Path(project) / ".cursor" / "agents"
+        agents_dir.mkdir(parents=True)
+        for agent in ("gsd-a", "gsd-b"):
+            (agents_dir / f"{agent}.md").write_text(
+                f"---\nname: {agent}\n---\nbody\n", encoding="utf-8"
+            )
+        plan = {
+            "profile": "balanced",
+            "entries": [
+                {
+                    "op": "set",
+                    "key": "model_profile_overrides.cursor.sonnet",
+                    "value": "cursor/model",
+                }
+            ],
+        }
+        tables = {
+            "profiles": {agent: {"balanced": "sonnet"} for agent in ("gsd-a", "gsd-b")},
+            "phase": {},
+            "runtime_profiles": {"cursor": {"sonnet": {"model": "cursor/model"}}},
+        }
+        with (
+            mock.patch.object(ev, "live_tables", return_value=tables),
+            mock.patch.object(
+                ev,
+                "_resolve_model",
+                return_value={"model": "cursor/model", "tier": "sonnet"},
+            ),
+        ):
+            chain = ev._baked_chain(ctx, project, plan, "project-a", "plan.json")
+        self.assertTrue(chain["baked_summary"]["resolve_model_only"])
+        self.assertEqual(chain["baked_summary"]["agents"], 2)
+
+        (agents_dir / "gsd-a.md").write_text(
+            "---\nname: gsd-a\nmodel: x\n---\nbody\n", encoding="utf-8"
+        )
+        with (
+            mock.patch.object(ev, "live_tables", return_value=tables),
+            self.assertRaisesRegex(SystemExit, "planned != baked.*gsd-a"),
+        ):
+            ev._baked_chain(ctx, project, plan, "project-a", "plan.json")
+
+        (agents_dir / "gsd-a.md").write_text(
+            "---\nname: gsd-a\n---\nbody\n", encoding="utf-8"
+        )
+        (agents_dir / "gsd-a.compact.md").write_text(
+            "---\nname: gsd-a\nmodel: y\n---\nbody\n", encoding="utf-8"
+        )
+        with (
+            mock.patch.object(ev, "live_tables", return_value=tables),
+            self.assertRaisesRegex(
+                SystemExit, "cursor installer baked a model line.*gsd-a.compact"
+            ),
+        ):
+            ev._baked_chain(ctx, project, plan, "project-a", "plan.json")
+
+        (agents_dir / "gsd-a.compact.md").unlink()
+        (agents_dir / "gsd-b.md").unlink()
+        with (
+            mock.patch.object(ev, "live_tables", return_value=tables),
+            self.assertRaisesRegex(SystemExit, "planned != baked.*gsd-b"),
+        ):
+            ev._baked_chain(ctx, project, plan, "project-a", "plan.json")
+
+    def test_baked_lines_cursor_says_resolve_model_only(self) -> None:
+        lines = ev._baked_lines({
+            "host": "cursor",
+            "baked": [{"label": "project-a", "agents": 35, "resolve_model_only": True}],
+        })
+        rendered = "\n".join(lines)
+        self.assertIn("resolve-model only", rendered)
+        self.assertNotIn("planned == baked", rendered)
+
+    def test_generated_paths_cursor_reports_hooks_scripts_and_gsd_dotfiles(self) -> None:
+        base = pathlib.Path(self.tmp) / ".cursor"
+        for name in ("hooks", "scripts", "agents"):
+            (base / name).mkdir(parents=True, exist_ok=True)
+        (base / "hooks.json").write_text("{}\n", encoding="utf-8")
+        (base / ".gsd-profile").write_text("x\n", encoding="utf-8")
+        (base / ".gsd-staging").mkdir()
+        (base / "agents" / "gsd-x.md").write_text("", encoding="utf-8")
+        (base / "agents" / "x.md").write_text("", encoding="utf-8")
+        self.assertEqual(
+            ev._generated_paths(self.tmp, "cursor"),
+            [
+                ".cursor/.gsd-profile",
+                ".cursor/.gsd-staging/",
+                ".cursor/agents/gsd-x.md",
+                ".cursor/hooks.json",
+                ".cursor/hooks/",
+                ".cursor/scripts/",
+            ],
+        )
 
     def test_baked_chain_summary_is_per_project(self) -> None:
         ctx, project, plan, tables = self._chain_fixture()
@@ -3833,7 +3962,7 @@ class TestSmoke(unittest.TestCase):
 class TestMatrixModuleCollection(unittest.TestCase):
     """20-REVIEW WR-02 / ponytail M4: a collected mixin re-ran the full claude matrix."""
 
-    def test_matrix_module_collects_three_host_classes_only(self) -> None:
+    def test_matrix_module_collects_four_host_classes_only(self) -> None:
         suite = unittest.TestLoader().loadTestsFromName(  # never the -k-filtered default
             "tests.test_ai_kit_gsd_curated_config_matrix"
         )
@@ -3844,10 +3973,11 @@ class TestMatrixModuleCollection(unittest.TestCase):
             [
                 "TestResolveModelMatrix",
                 "TestResolveModelMatrixCodex",
+                "TestResolveModelMatrixCursor",
                 "TestResolveModelMatrixOpencode",
             ],
         )
-        self.assertEqual(suite.countTestCases(), 27)
+        self.assertEqual(suite.countTestCases(), 36)
 
 
 class TestReviewFixes(unittest.TestCase):
