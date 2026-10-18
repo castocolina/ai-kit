@@ -585,7 +585,10 @@ post-compaction context uses.
   1. A spike settles the delivery route against live Claude Code: PreCompact can only block
      (2026-10-18 fast research), so the candidates are a pre-made `{session-id}-{name}-compact.md`
      in a temp dir injected by a `compact`-matcher SessionStart hook, and a manual
-     `/compact <instructions>` variant that points at it.
+     `/compact <instructions>` variant that points at it. *(amended 2026-10-18, 21.2 SPEC R6/R7:
+     pi's `session_before_compact` extension event can return the summary itself, and opencode's
+     `experimental.session.compacting` plugin hook can add compaction context; the core is
+     host-neutral and the spike covers Claude Code, pi and opencode)*
   2. Chunking reads the transcript defensively (its JSONL format is internal and versioned), and
      the injected summary fits the 10,000-character hook output cap.
   3. Installable and removable as its own ai-kit setup knob; measured token or time saving
