@@ -3988,6 +3988,21 @@ class TestReviewFixes(unittest.TestCase):
             "<worktree>/x <home>/y <scratch>/plan-a.json <scratch-a>/z",
         )
 
+    # Phase 20 verification: a symlinked parent must not leave its realpath prefix behind
+    def test_smoke_placeholders_cover_the_realpath_form(self) -> None:
+        real = os.path.join(self.tmp, "real")
+        os.makedirs(os.path.join(real, "smoke-1", "project-a"))
+        link = os.path.join(self.tmp, "link")
+        os.symlink(real, link)
+        work = os.path.join(link, "smoke-1")
+        scratch_a = os.path.join(work, "project-a")
+        text = f"{os.path.realpath(scratch_a)}/.codex {scratch_a}/x {os.path.realpath(work)}/p"
+        result = {"work": work, "scratch_a": scratch_a}
+        self.assertEqual(
+            ev._smoke_placeholders(text, result),
+            "<scratch-a>/.codex <scratch-a>/x <scratch>/p",
+        )
+
     # WR-04: Claude's project key from the reported cwd; a missing dir is a failure
     def test_transcript_key_maps_every_non_alphanumeric(self) -> None:
         self.assertEqual(ev._transcript_dir("/x", "/tmp/a_b.c d"), "-tmp-a-b-c-d")

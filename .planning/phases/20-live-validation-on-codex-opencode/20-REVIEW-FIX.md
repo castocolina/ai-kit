@@ -171,6 +171,12 @@ python3 and the checkout-local gsd-core 1.17.0.
   Four of six runner dispatches of the same prompt ended `no_change` without codex running the
   command (gpt-5.6-luna; cause not established). Recorded in `20-SMOKE-CODEX.md`, owner review.
 
+- **Realpath placeholders (verification info item).** `_smoke_placeholders` replaced each
+  path but not its realpath, so a symlinked parent (`/home -> /var/home`) left `/var<scratch-a>`
+  in the codex evidence. It now replaces both forms, longest first
+  (`test_smoke_placeholders_cover_the_realpath_form`). The two affected lines in
+  `20-SMOKE-CODEX.md` were corrected by hand to the label the fixed harness produces.
+
 ---
 
 _Fixed: 2026-10-18_

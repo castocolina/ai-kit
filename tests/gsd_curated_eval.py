@@ -4645,22 +4645,25 @@ def _seed_for_smoke(work: str, ctx: SmokeCtx) -> dict:
 
 def _smoke_placeholders(text: str, result: dict) -> str:
     """Replaces every machine path in the evidence with its label (D-13, D-14 step 5)."""
-    home = result.get("home")
+    pairs = []
+    for key, label in (
+        ("artifacts_dir", "<artifacts-dir>"),
+        ("installer_dir", "<installer>"),
+        ("install_home", "<install-home>"),
+        ("scratch_b", "<scratch-b>"),
+        ("scratch_a", "<scratch-a>"),
+        ("work", SCRATCH_LABEL),
+        ("repo_root", WORKTREE_LABEL),
+        ("home", HOME_LABEL),
+    ):
+        if raw := result.get(key):
+            # The realpath form too: a symlinked parent (/home -> /var/home) otherwise
+            # leaves a "/var" prefix outside the label.
+            pairs += [(str(raw), label), (os.path.realpath(raw), label)]
     # Longest first: the projects sit in the work dir, and the worktree may sit under the
     # resolved home (review WR-03, the same order as `_placeholders`).
-    for raw, label in (
-        (result.get("artifacts_dir"), "<artifacts-dir>"),
-        (result.get("installer_dir"), "<installer>"),
-        (result.get("install_home"), "<install-home>"),
-        (result.get("scratch_b"), "<scratch-b>"),
-        (result.get("scratch_a"), "<scratch-a>"),
-        (result.get("work"), SCRATCH_LABEL),
-        (result.get("repo_root"), WORKTREE_LABEL),
-        (home and str(pathlib.Path(home).resolve()), HOME_LABEL),
-        (home, HOME_LABEL),
-    ):
-        if raw:
-            text = text.replace(str(raw), label)
+    for raw, label in sorted(pairs, key=lambda pair: -len(pair[0])):
+        text = text.replace(raw, label)
     return text
 
 
