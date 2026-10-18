@@ -2850,8 +2850,9 @@ class TestSmoke(unittest.TestCase):
             (candidate / "package.json").write_text(
                 json.dumps({"version": version}), encoding="utf-8"
             )
-        with mock.patch.object(ev.os.path, "expanduser", return_value=str(home)):
-            self.assertEqual(ev._cached_installer("wanted"), str(candidates[1]))
+        # review IN-09: the cache is searched under the passed home, never `~`
+        with mock.patch.object(ev.os.path, "expanduser", side_effect=AssertionError("~ read")):
+            self.assertEqual(ev._cached_installer("wanted", str(home)), str(candidates[1]))
 
     def test_install_local_uses_isolated_xdg_paths_and_expected_argv(self) -> None:
         installer = pathlib.Path(self.tmp) / "installer"
@@ -2867,7 +2868,11 @@ class TestSmoke(unittest.TestCase):
             pathlib.Path(self.tmp),
             self.tmp,
             "codex",
-            {},
+            {
+                "PATH": "/usr/bin",
+                "RUNTIME_DIR": "/repo",
+                **{name: "/real" for name in self.LOCATION_OVERRIDES},
+            },
             installer_dir=str(installer),
             install_home=install_home,
         )
@@ -2896,6 +2901,36 @@ class TestSmoke(unittest.TestCase):
             self.assertEqual(
                 kwargs["env"][key], os.path.normpath(os.path.join(install_home, suffix))
             )
+        # review WR-04: no env-first location override reaches the installer
+        self.assertEqual(kwargs["env"]["PATH"], "/usr/bin")
+        for name in (*self.LOCATION_OVERRIDES, "RUNTIME_DIR"):
+            self.assertNotIn(name, kwargs["env"])
+
+    LOCATION_OVERRIDES = (
+        "GSD_HOME",
+        "GSD_AGENTS_DIR",
+        "CODEX_HOME",
+        "OPENCODE_CONFIG_DIR",
+        "OPENCODE_CONFIG",
+        "CLAUDE_CONFIG_DIR",
+        "XDG_CONFIG_DIRS",
+        "XDG_DATA_DIRS",
+        "GSD_RUNTIME",
+    )
+
+    def test_install_local_without_installer_dir_refuses(self) -> None:
+        """review L3: no silent second cache lookup inside the install step."""
+        ctx = ev.SmokeCtx(
+            "node", "tools", pathlib.Path(self.tmp), self.tmp, "codex", {}, install_home=self.tmp
+        )
+        with (
+            mock.patch.object(ev, "_cached_installer") as cached,
+            mock.patch.object(ev.subprocess, "run") as run,
+            self.assertRaisesRegex(SystemExit, "no cached"),
+        ):
+            ev._install_local(ctx, self.tmp)
+        cached.assert_not_called()
+        run.assert_not_called()
 
     def test_install_local_refuses_version_mismatch_before_running(self) -> None:
         installer = pathlib.Path(self.tmp) / "installer"

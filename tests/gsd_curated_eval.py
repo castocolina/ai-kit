@@ -4027,8 +4027,7 @@ def _pinned_version() -> str:
     return gsd_tools.gsd_core_version(str(_abs(GSD_TOOLS_PATH))) or ""
 
 
-def _cached_installer(version: str) -> str | None:
-    home = os.path.expanduser("~")
+def _cached_installer(version: str, home: str) -> str | None:
     candidates = sorted(
         glob.glob(os.path.join(home, ".npm", "_npx", "*", "node_modules", "@opengsd", "gsd-core"))
         + glob.glob(
@@ -4049,9 +4048,16 @@ def _cached_installer(version: str) -> str | None:
     return None
 
 
+# The installer env is built from this allowlist, never from os.environ: gsd-core reads
+# GSD_HOME, GSD_AGENTS_DIR, CODEX_HOME, OPENCODE_CONFIG_DIR/OPENCODE_CONFIG and
+# CLAUDE_CONFIG_DIR before HOME (runtime-homes.cjs, capability-registry.cjs), and any of
+# them would send its writes past the throwaway HOME (D-09, review WR-04).
+INSTALL_ENV_KEEP = (*CELL_ENV_KEEP, "TMPDIR")
+
+
 def _install_local(ctx: SmokeCtx, project: str) -> str:
     version = _pinned_version()
-    installer = ctx.installer_dir or _cached_installer(version)
+    installer = ctx.installer_dir  # `_cmd_smoke` already ran the cache lookup (review L3)
     if installer is None:
         raise SystemExit(
             f"no cached @opengsd/gsd-core@{version}; pass --installer-dir (never npx in the smoke)"
@@ -4068,7 +4074,7 @@ def _install_local(ctx: SmokeCtx, project: str) -> str:
         raise SystemExit("install home is unavailable")
     install_home = ctx.install_home
     env = {
-        **_project_env(ctx),
+        **{key: ctx.env[key] for key in INSTALL_ENV_KEEP if key in ctx.env},
         "HOME": install_home,
         "XDG_CONFIG_HOME": os.path.join(install_home, ".config"),
         "XDG_DATA_HOME": os.path.join(install_home, ".local", "share"),
@@ -4794,7 +4800,9 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
         shutil.copyfile(defaults, destination)
         seed = "copied"
     pinned = _pinned_version()
-    installer = args.installer_dir or (_cached_installer(pinned) if args.host != "claude" else None)
+    installer = args.installer_dir or (
+        _cached_installer(pinned, home) if host != "claude" else None
+    )
     artifacts_dir = str(_abs(args.artifacts_out)) if args.artifacts_out else None
     env = {
         **os.environ,
