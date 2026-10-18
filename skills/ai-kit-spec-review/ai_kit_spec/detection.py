@@ -49,12 +49,8 @@ _LABEL_CURSOR = (
     "source-inspected-only — confirmed via the installed cursor-agent bundle's own "
     "`index.js`, not a live subprocess."
 )
-_LABEL_CODEX_THREAD = (
-    "live-verified (Phase 20) via a headless codex exec 0.162.1 session's env dump "
-    "(names only; 20-SMOKE-CODEX.md) — TUI confirmation pending "
-    "20-INTERACTIVE-CODEX.md step 2."
-)
-_LABEL_CODEX_VERSION = (
+# One label for both codex signals (D-05 keeps both names; the evidence is the same run).
+_LABEL_CODEX = (
     "live-verified (Phase 20) via a headless codex exec 0.162.1 session's env dump "
     "(names only; 20-SMOKE-CODEX.md) — TUI confirmation pending "
     "20-INTERACTIVE-CODEX.md step 2."
@@ -101,7 +97,7 @@ RUNTIMES: dict[str, Runtime] = {
     ),
     "codex": Runtime(
         ("codex",),
-        (("CODEX_THREAD_ID", _LABEL_CODEX_THREAD), ("CODEX_VERSION", _LABEL_CODEX_VERSION)),
+        (("CODEX_THREAD_ID", _LABEL_CODEX), ("CODEX_VERSION", _LABEL_CODEX)),
         scrub_signals=("CODEX_SANDBOX",),
         list_argv=("debug", "models"),
         mcp_list=True,
