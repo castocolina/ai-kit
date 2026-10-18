@@ -513,13 +513,31 @@ class TestDisclosures(unittest.TestCase):
             self.assertIn("never edits .gitignore", note or "")
         self.assertIsNone(followups._gitignore_prefix_note("claude"))
 
-    def test_phase_20_evidence_notes_are_explicitly_verified(self):
+    def test_gitignore_prefix_note_reason_is_host_specific(self):
+        """20-REVIEW WR-06 / ponytail H2: no tautology, no opencode claim on codex."""
+        codex = followups._gitignore_prefix_note("codex") or ""
+        opencode = followups._gitignore_prefix_note("opencode") or ""
+        for note in (codex, opencode):
+            self.assertNotIn(" = .", note)
+        self.assertNotIn("opencode", codex)
+        self.assertIn(".codex/config.toml", codex)
+        self.assertIn("not observed", opencode)
+        self.assertNotIn("opencode writes its own", opencode)
+
+    def test_phase_20_evidence_notes_claim_only_what_the_smoke_ran(self):
+        """20-REVIEW WR-07 / IN-03: scoped to gsd-core 1.17.0 and the smoke's own argv."""
         root = followups._opencode_root_note("/project")
-        self.assertIn("verified by the Phase 20 opencode smoke", root)
-        self.assertNotIn("inferred (unverified until Phase 20)", root)
         installer = followups._codex_installer_note()
-        self.assertIn("local layout and the --codex --local flags were verified", installer)
-        self.assertIn("shipped npx launcher and its registry fetch were not exercised", installer)
+        for note, host_name in ((root, "opencode"), (installer, "codex")):
+            self.assertIn("gsd-core 1.17.0", note)
+            self.assertIn(f"--{host_name} --local --no-legacy-cleanup", note)
+            self.assertIn("throwaway HOME", note)
+            self.assertIn("shipped npx launcher and its registry fetch were not exercised", note)
+            self.assertNotIn("was verified", note)
+            self.assertNotIn("were verified", note)
+            self.assertNotIn("20-SMOKE", note)
+        self.assertNotIn("opencode", installer)
+        self.assertIn(os.path.join("/project", ".opencode", "gsd-core"), root)
 
     def test_codex_installer_only_on_model_overrides(self) -> None:
         inv = make_inventory(host="codex")

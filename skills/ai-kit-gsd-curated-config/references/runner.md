@@ -11,9 +11,10 @@ only when that binary's real path has the basename `cursor-agent`).
 
 The template understands three flags (since template 3). Whether a run gets them depends on who
 builds the argv (see SKILL.md): v2's bare hook passes none of them. Template 4 also runs every
-opencode target as `opencode run --standalone`, on a private server, never inside the user's
-shared opencode service; the `opencode models` check before each run is read-only and still
-reaches that shared service.
+opencode target as `opencode run --standalone` (accepted by opencode v2.0.31; running on a
+private server rather than the user's shared opencode service is the flag's stated purpose, not
+observed beyond the absence of a port conflict); the `opencode models` check before each run is
+read-only and still reaches that shared service.
 
 - `--outer-timeout <s>` replaces the GSD config lookup and the CONFIG cap as the outer deadline.
   The review lane passes it; the GSD hook does not, so the live timeout lookup below applies.

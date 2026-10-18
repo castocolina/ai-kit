@@ -224,24 +224,40 @@ def _config_dir_note() -> str:
     return "effort sync --config-dir value is inferred from the host layout (unverified)"
 
 
-def _opencode_root_note(project_dir: str) -> str:
-    root = os.path.join(project_dir, ".opencode", "gsd-core")
+def _smoke_scope(host_name: str) -> str:
+    """What the ai-kit Phase 20 smoke actually ran, and what it did not."""
     return (
-        f"the local install root {root} was verified by the Phase 20 opencode smoke "
-        "(20-SMOKE-OPENCODE.md)"
+        f"observed in the ai-kit Phase 20 smoke, which ran gsd-core 1.17.0's cached installer "
+        f"as --{host_name} --local --no-legacy-cleanup under a throwaway HOME; this follow-up's "
+        "argv (no --no-legacy-cleanup, the real HOME, the inventory's version), the shipped "
+        "npx launcher and its registry fetch were not exercised"
     )
 
 
+def _opencode_root_note(project_dir: str) -> str:
+    root = os.path.join(project_dir, ".opencode", "gsd-core")
+    return f"the local install root {root} follows the layout {_smoke_scope('opencode')}"
+
+
+_GITIGNORE_KEEP_DIR = {
+    # bin/install.js installCodexConfig merges GSD's block into this file (gsd-core 1.17.0)
+    "codex": "gsd-core 1.17.0's installer merges its block into .codex/config.toml "
+    "(source-inspected), which may hold your own codex settings",
+    "opencode": "opencode keeps its own files in .opencode/ (D-12; an opencode-written "
+    ".opencode/.gitignore was not observed in the Phase 20 smoke)",
+}
+
+
 def _gitignore_prefix_note(host_name: str) -> str | None:
-    host_dir = HOST_DIRS.get(host_name)
-    if host_name not in ("opencode", "codex") or host_dir is None:
+    if host_name not in _GITIGNORE_KEEP_DIR:
         return None
+    host_dir = HOST_DIRS[host_name]
     return (
         f"GSD-generated paths to gitignore by prefix in this project: {host_dir}/gsd-core/, "
         f"{host_dir}/agents/gsd-*, {host_dir}/commands/gsd-*, {host_dir}/skills/gsd-*, "
-        f"{host_dir}/plugins/gsd-core.js, {host_dir}/gsd-*.json ({host_dir} = {host_dir}); "
-        f"never ignore the whole directory (opencode writes its own {host_dir}/.gitignore "
-        "there); curated-config reports this and never edits .gitignore"
+        f"{host_dir}/plugins/gsd-core.js, {host_dir}/gsd-*.json; never ignore the whole "
+        f"{host_dir} directory: {_GITIGNORE_KEEP_DIR[host_name]}; curated-config reports "
+        "this and never edits .gitignore"
     )
 
 
@@ -253,12 +269,8 @@ def _unknown_version_note() -> str:
 
 
 def _codex_installer_note() -> str:
-    return (
-        "codex installer follow-up: the cached installer's "
-        "local layout and the --codex --local flags were verified "
-        "by the Phase 20 codex smoke (20-SMOKE-CODEX.md); "
-        "the shipped npx launcher and its registry fetch were not exercised"
-    )
+    layout = "codex installer follow-up: the <project>/.codex/gsd-core layout was"
+    return f"{layout} {_smoke_scope('codex')}"
 
 
 def _maybe_installer(
