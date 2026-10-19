@@ -11,7 +11,8 @@ the runner scans every PATH entry and accepts the first whose real path has base
 
 ## Template flags
 
-The template understands three flags (since template 3). Whether a run gets them depends on who
+Three hook-control flags matter here (since template 3; the runner has others, such as `--no-preamble`
+and `--print-argv`, used below). Whether a run gets them depends on who
 builds the argv (see SKILL.md): v2's bare hook passes none of them. Template 4 also runs every
 opencode target as `opencode run --standalone` (accepted by opencode v2.0.31; running on a
 private server rather than the user's shared opencode service is the flag's stated purpose, not

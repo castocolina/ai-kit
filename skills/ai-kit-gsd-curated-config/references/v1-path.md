@@ -32,16 +32,16 @@ gets the v2 dry run instead. Order and safeguards:
    missing.
 
 ```bash
-python3 "$ENTRYPOINT" ensure-project --project-dir <target>
-python3 "$ENTRYPOINT" apply-profile --project-dir <target> --profile <profile>
-python3 "$ENTRYPOINT" apply-critical-agents --project-dir <target>
+python3 "$ENTRYPOINT" ensure-project --project-dir "<target>"
+python3 "$ENTRYPOINT" apply-profile --project-dir "<target>" --profile <profile>
+python3 "$ENTRYPOINT" apply-critical-agents --project-dir "<target>"
 python3 "$ENTRYPOINT" detect-execution-candidate
-python3 "$ENTRYPOINT" apply-execution --project-dir <target> --cli <detected cli> --model <detected model>
+python3 "$ENTRYPOINT" apply-execution --project-dir "<target>" --cli <detected cli> --model <detected model>
 python3 "$ENTRYPOINT" detect-review-candidate
-python3 "$ENTRYPOINT" apply-review --project-dir <target> --cli <detected cli> --model <detected model>
-python3 "$ENTRYPOINT" detect-claude-md-path --project-dir <target>
-python3 "$ENTRYPOINT" apply-claude-md-path --project-dir <target> --path <detected path>
-python3 "$ENTRYPOINT" detect-frontend --project-dir <target>
-python3 "$ENTRYPOINT" apply-workflow-defaults --project-dir <target> --ui-phase <true|false> --ui-review <true|false>
+python3 "$ENTRYPOINT" apply-review --project-dir "<target>" --cli <detected cli> --model <detected model>
+python3 "$ENTRYPOINT" detect-claude-md-path --project-dir "<target>"
+python3 "$ENTRYPOINT" apply-claude-md-path --project-dir "<target>" --path "<detected path>"
+python3 "$ENTRYPOINT" detect-frontend --project-dir "<target>"
+python3 "$ENTRYPOINT" apply-workflow-defaults --project-dir "<target>" --ui-phase <true|false> --ui-review <true|false>
 ```
 

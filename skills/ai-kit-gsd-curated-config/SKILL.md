@@ -77,7 +77,7 @@ project's `.planning/` and onto an input or config file. `plan-set`/`plan-unset`
 
 ```bash
 WORK="$(mktemp -d)" && printf '%s\n' "$WORK"
-python3 "$ENTRYPOINT" inventory --project-dir <target> > "$WORK/inventory.json"
+python3 "$ENTRYPOINT" inventory --project-dir "<target>" > "$WORK/inventory.json"
 ```
 
 2. **Ask the user, in one message, four questions — nothing else:**
@@ -146,14 +146,14 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
    `config-new-project` is expected to copy from the global defaults — unverified until apply.
 
 ```bash
-python3 "$ENTRYPOINT" apply --plan "$WORK/plan.json" --inventory "$WORK/inventory.json" --project-dir <target> --dry-run
+python3 "$ENTRYPOINT" apply --plan "$WORK/plan.json" --inventory "$WORK/inventory.json" --project-dir "<target>" --dry-run
 ```
 
 5. **Apply** (config backup, marker `config.json.ai-kit-apply-marker`, runner snapshot
    `.ai-kit-apply-backup`):
 
 ```bash
-python3 "$ENTRYPOINT" apply --plan "$WORK/plan.json" --inventory "$WORK/inventory.json" --project-dir <target>
+python3 "$ENTRYPOINT" apply --plan "$WORK/plan.json" --inventory "$WORK/inventory.json" --project-dir "<target>"
 ```
 
 6. **Follow-up approval.** After exit 0, read the report's `followups` block. Ask **one
@@ -167,8 +167,8 @@ python3 "$ENTRYPOINT" apply --plan "$WORK/plan.json" --inventory "$WORK/inventor
    If the report has no `followups` block (warning "follow-ups could not be listed"), run the listing command below.
 
 ```bash
-python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inventory.json" --project-dir <target>
-python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inventory.json" --project-dir <target> --approve --require <ids from approve_with> --fingerprint <fingerprint from approve_with>
+python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inventory.json" --project-dir "<target>"
+python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inventory.json" --project-dir "<target>" --approve --require <ids from approve_with> --fingerprint <fingerprint from approve_with>
 ```
 
 **Failure states to report as such:**
@@ -301,8 +301,7 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
 | Stale inventory digest | The plan was built from another inventory | Re-run `inventory` and `recommend` |
 | `plan-set agent_skills.<agent> ponytail` | A bare word is not a JSON list | `'["ponytail"]'`, keeping the agent's other skills |
 | Restoring the backup after a committed apply with cleanup warnings | Config and runner already match the plan; the restore undoes it | Delete only the named leftovers |
-| Dry run and real apply in one turn | The user approves rows they never saw, and a family summary hides which overrides go | Show every row by full key, end the turn, apply on the answer |
-| `effort.agent_overrides.*` (was `high`) on a list of agents | The user cannot match a line to a dry-run row, so one dropped key goes unnoticed | One line per full dotted key and its value |
+| Dry run and real apply in one turn, or rows summarized by family (`effort.agent_overrides.*`) | The user approves rows they never saw; a dropped key goes unnoticed | Step 4: one line per full dotted key and value, end the turn, apply on the answer |
 | Running `approve_with` without the entrypoint, or edited | It starts at the subcommand; the fingerprint binds it to the listed rows | `python3 "$ENTRYPOINT"` + the exact string |
 
 ## Reporting rule
