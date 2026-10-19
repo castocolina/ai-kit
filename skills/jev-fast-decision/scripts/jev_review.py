@@ -72,6 +72,15 @@ _READ_CHUNK = 65536
 
 CHOICE, NOUL, SCORE = "choice", "noul", "score"
 VALID_TYPES = {CHOICE, NOUL, SCORE}
+# The capability features an item can ask for (D-21): its type, plus one per media shape.
+BOX, IMAGE, IMAGES_COMPARED, LONG_CONTEXT, BATCH = ("box", "image", "images_compared",
+                                                    "long_context", "batch")
+CELL_FEATURES = (CHOICE, NOUL, SCORE, BOX, IMAGE, IMAGES_COMPARED, LONG_CONTEXT, BATCH)
+CELL_STATUSES = ("verified-live", "documented", "unsupported", "unverified")
+# The cell statuses that let a row run an item at all (D-24): a live check or provider docs.
+SUPPORTED_CELL_STATUSES = frozenset({"verified-live", "documented"})
+# Image and box request builders are backlog 999.8 (D-21): no row may dispatch them yet.
+BUILT_FEATURES = frozenset({CHOICE, NOUL, SCORE})
 
 # Fixed rubric for the {id, criterion, evidence} shorthand (unchanged from the original,
 # live-verified evidence-screening job).
@@ -187,9 +196,12 @@ class _RecordingHTTPSHandler(urllib.request.HTTPSHandler):
         self._sockets = sockets
 
     def https_open(self, req):
+        # `_context` is HTTPSHandler's own attribute (absent from the type stubs): the
+        # default TLS context has to reach `do_open` unchanged or verification drifts.
+        context = getattr(self, "_context", None)
         return self.do_open(_recording_connection(http.client.HTTPSConnection,
                                                   self._sockets), req,
-                            context=self._context)
+                            **({"context": context} if context is not None else {}))
 
 
 @contextlib.contextmanager
@@ -425,7 +437,12 @@ def _check_score_answer(answer, levels):
             or not _legend_ok(legend, expected) or not _probabilities_ok(probabilities,
                                                                          expected)):
         raise ValueError("invalid_response")
-    return {"type": SCORE, "score": score, "legend": legend,
+    # `level` is the winning index — the key of the highest probability, lowest key on a tie,
+    # the same value `top_of` reads — and the answer keeps it next to the raw legend (D-25).
+    # `_probabilities_ok` above already proved this mapping holds every expected key.
+    probs = dict(probabilities or {})
+    level = min(expected, key=lambda key: (-float(probs.get(key, 0.0)), int(key)))
+    return {"type": SCORE, "score": score, "legend": legend, "level": level,
             "probabilities": probabilities, "confidence": confidence}
 
 
@@ -798,6 +815,17 @@ TABLE: tuple[Row, ...] = (
         "key": _laya_key,
         "probe": _laya_probe,
         "classify": _laya_classify,
+        # (status, source, date) per capability cell — the matrix the docs will show (D-24).
+        "cells": {CHOICE: ("verified-live", "llm-env check-server", "2026-10-12"),
+                  NOUL: ("verified-live", "llm-env check-server", "2026-10-12"),
+                  SCORE: ("verified-live", "llm-env check-server", "2026-10-12"),
+                  BOX: ("unsupported", "laya 0.4.2 server source: no box type", "2026-10-18"),
+                  IMAGE: ("unsupported", "laya 0.4.2 server source: no assets", "2026-10-18"),
+                  IMAGES_COMPARED: ("unsupported", "laya 0.4.2 server source: no assets",
+                                    "2026-10-18"),
+                  LONG_CONTEXT: ("unsupported", "50,000-char state cap, 512/1024 tokens",
+                                 "2026-10-18"),
+                  BATCH: ("unsupported", "per-question contamination measured", "2026-10-10")},
     },
     {
         "name": "typesafe",
@@ -813,6 +841,14 @@ TABLE: tuple[Row, ...] = (
         "key": _typesafe_key,
         "probe": _typesafe_probe,
         "classify": _typesafe_classify,
+        "cells": {CHOICE: ("verified-live", "todo notes 2026-10-13/14", "2026-10-14"),
+                  NOUL: ("verified-live", "todo notes 2026-10-13/14", "2026-10-14"),
+                  BATCH: ("verified-live", "todo notes 2026-10-13/14", "2026-10-14"),
+                  SCORE: ("documented", "docs.typesafe.ai primitives", "2026-10-18"),
+                  BOX: ("documented", "docs.typesafe.ai models: 1.14 only", "2026-10-18"),
+                  IMAGE: ("documented", "docs.typesafe.ai images", "2026-10-18"),
+                  IMAGES_COMPARED: ("documented", "docs.typesafe.ai images", "2026-10-18"),
+                  LONG_CONTEXT: ("documented", "docs.typesafe.ai models", "2026-10-18")},
     },
     {
         "name": "opencode",
@@ -828,6 +864,19 @@ TABLE: tuple[Row, ...] = (
         "key": _opencode_key,
         "probe": _opencode_probe,
         "classify": _opencode_classify,
+        "cells": {CHOICE: ("verified-live", "jev-1.13-free 14/14", "2026-10-11"),
+                  NOUL: ("verified-live", "jev-1.13-free 14/14", "2026-10-11"),
+                  BATCH: ("verified-live", "jev-1.13-free 14/14", "2026-10-11"),
+                  SCORE: ("unverified", "opencode.ai/docs/zen lists text ids only",
+                          "2026-10-18"),
+                  BOX: ("unverified", "opencode.ai/docs/zen lists text ids only",
+                        "2026-10-18"),
+                  IMAGE: ("unverified", "opencode.ai/docs/zen lists text ids only",
+                          "2026-10-18"),
+                  IMAGES_COMPARED: ("unverified", "opencode.ai/docs/zen lists text ids only",
+                                    "2026-10-18"),
+                  LONG_CONTEXT: ("unverified", "opencode.ai/docs/zen lists text ids only",
+                                 "2026-10-18")},
     },
 )
 
@@ -846,6 +895,44 @@ def rows_in_order():
     """The auto ladder: local rows in table order, then remote rows in table order."""
     return ([row for row in TABLE if not row["remote"]]
             + [row for row in TABLE if row["remote"]])
+
+
+def _item_features(item):
+    """The capability shapes one item asks for, read before validation (D-21).
+
+    The item's type — a missing or unrecognised one counts as `choice`, which validation will
+    name — plus `image` for one `images` entry or an `assets` key, plus `images_compared`
+    for two or more images. A non-dict item has no shape at all: validation owns that call.
+    Recognition happens here, before `request_body`, so an image or `box` question is
+    `unsupported_feature`, never `invalid_input`.
+    """
+    if not isinstance(item, dict):
+        return frozenset()
+    qtype = item.get("type", CHOICE)
+    if qtype == BOX:
+        features = {BOX}
+    elif isinstance(qtype, str) and qtype in VALID_TYPES:
+        features = {qtype}
+    else:
+        features = {CHOICE}
+    images = item.get("images")
+    if isinstance(images, list) and images:
+        features.add(IMAGE)
+        if len(images) >= 2:
+            features.add(IMAGES_COMPARED)
+    if "assets" in item:
+        features.add(IMAGE)
+    return frozenset(features)
+
+
+def _row_supports(row, item):
+    """True when this row can run this item: every feature built, and every cell of the row
+    live or documented (D-24, D-25). A non-dict item is supportable: validation names it."""
+    features = _item_features(item)
+    if not features <= BUILT_FEATURES:
+        return False
+    return all(row["cells"].get(feature, ("",))[0] in SUPPORTED_CELL_STATUSES
+               for feature in features)
 
 
 def _backend_choice():
@@ -1058,10 +1145,11 @@ def _selection(skip_local=False, deadline=None):
     choice = _backend_choice()
     if choice == "auto":
         rows = rows_in_order()
-    elif row_named(choice) is None:
-        return [], {choice: "unknown_backend"}, []
     else:
-        rows = [row_named(choice)]
+        named = row_named(choice)
+        if named is None:
+            return [], {choice: "unknown_backend"}, []
+        rows = [named]
     if skip_local:
         rows = [row for row in rows if row["remote"]]
     return _probe_reasons(rows, deadline)
@@ -1653,12 +1741,17 @@ def _ladder(rows, run, timeout):
 
     Sequential by construction: escalation to a remote rung starts only after every local
     answer is in (SPEC R3 concurrency edge). An explicit `JEV_BACKEND` reaches here with one
-    rung, so it never escalates (SPEC R3)."""
+    rung, so it never escalates (SPEC R3). Each item's rung list is the rows that support its
+    features (D-25): a row runs only the items it can run, and an item no remaining row can
+    run ends with the item error, not a phantom network failure."""
     pending = list(run.items)
     for row in rows:
         if not pending:
             break
-        got, errors = _rung(row, pending, timeout, run)
+        supported = [item for item in pending if _row_supports(row, item)]
+        if not supported:
+            continue  # this row can run nothing that is still pending
+        got, errors = _rung(row, supported, timeout, run)
         _fold_rung(row, got, errors, run)
         pending = [item for item in pending
                    if item["id"] not in run.answers and item["id"] not in run.failed]
@@ -1666,6 +1759,8 @@ def _ladder(rows, run, timeout):
         identifier = item["id"]
         if identifier in run.tentative:
             run.answers[identifier] = run.tentative[identifier]
+        elif not any(_row_supports(row, item) for row in rows):
+            run.failed[identifier] = "unsupported_feature"
         else:
             run.failed[identifier] = run.last_error.get(identifier, "no_backend_available")
     return _result(run)
@@ -1681,27 +1776,73 @@ def _refused_result(refused, run):
 class _Checked(NamedTuple):
     """The pre-ladder call state: the validated payload and timeouts, or the result to return.
 
-    `deadline_seconds` is the total wall-clock bound for the whole run, or None when unset."""
+    `deadline_seconds` is the total wall-clock bound for the whole run, or None when unset;
+    `unsupported` holds the ids auto mode dropped for a missing feature (D-21): they get the
+    item error without ever reaching validation or a request."""
 
     stopped: dict[str, Any] | None
     payload: dict[str, Any]
     timeout: float
     deadline_seconds: float | None = None
+    unsupported: tuple = ()
+
+
+def _feature_refusal(payload, row):
+    """The pre-validation feature pass (D-21, D-25): (refused result or None, dropped ids).
+
+    Explicit mode refuses the whole run on the first item the named row cannot run — zero
+    requests, not even a probe. Auto mode refuses the run only when no item has any built
+    feature at all; otherwise it drops those items for the run to continue, and the ids come
+    back through the result as item errors.
+    """
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        return None, ()
+    if row is not None:
+        for item in items:
+            if isinstance(item, dict) and not _row_supports(row, item):
+                stopped = {"status": "unavailable", "reason": "unsupported_feature"}
+                if isinstance(item.get("id"), str) and item["id"]:
+                    stopped["item"] = item["id"]
+                return stopped, ()
+        return None, ()
+    unsupported = [item for item in items
+                   if isinstance(item, dict) and _item_features(item) - BUILT_FEATURES]
+    if not unsupported:
+        return None, ()
+    if len(unsupported) == len(items):
+        stopped = {"status": "unavailable", "reason": "unsupported_feature"}
+        named = [item["id"] for item in unsupported
+                 if isinstance(item.get("id"), str) and item["id"]]
+        if named:
+            stopped["item"] = named[0]
+        return stopped, ()
+    return None, tuple(item["id"] for item in unsupported
+                       if isinstance(item.get("id"), str) and item["id"])
 
 
 def _preflight() -> _Checked:
-    """Everything a screen does before selection, in order: stdin, timeout, validation, then
-    the threshold override parse (which needs the head for its provenance, so it runs after
-    validation rather than next to it)."""
+    """Everything a screen does before selection, in order: stdin, timeout, deadline, the
+    feature refusals (before validation, so an image or `box` shape is `unsupported_feature`
+    and never `invalid_input`, D-21), validation, then the threshold override parse (which
+    needs the head for its provenance, so it runs after validation rather than next to it)."""
     payload = _stdin_payload()
     if payload is None:
         return _Checked({"status": "unavailable", "reason": "invalid_input"}, {}, 0.0)
     timeout, timeout_reason = _call_timeout()
-    if timeout_reason:
-        return _Checked({"status": "unavailable", "reason": timeout_reason}, {}, 0.0)
     deadline, deadline_reason = _deadline_setting()
-    if deadline_reason:
-        return _Checked({"status": "unavailable", "reason": deadline_reason}, {}, 0.0)
+    if timeout_reason or deadline_reason:  # both env bounds report the same reason (D-12)
+        return _Checked({"status": "unavailable",
+                         "reason": timeout_reason or deadline_reason}, {}, 0.0)
+    choice = _backend_choice()
+    row = row_named(choice) if choice != "auto" else None
+    stopped, dropped = _feature_refusal(payload, row)
+    if stopped is not None:
+        return _Checked(stopped, {}, 0.0)
+    if dropped:
+        payload = {**payload, "items": [item for item in payload["items"]
+                                        if not (isinstance(item, dict)
+                                                and item.get("id") in dropped)]}
     try:
         request_body(payload, _VALIDATION_MODEL)
     except ValueError as error:
@@ -1712,7 +1853,7 @@ def _preflight() -> _Checked:
     except ValueError:
         return _Checked({"status": "unavailable", "reason": "invalid_min_confidence",
                          "reviewed_head": provenance_head}, {}, 0.0)
-    return _Checked(None, payload, timeout, deadline)
+    return _Checked(None, payload, timeout, deadline, dropped)
 
 
 def _no_rung_result(choice, run):
@@ -1738,6 +1879,8 @@ def screen(skip_local=False):
     deadline = _Deadline(checked.deadline_seconds) if checked.deadline_seconds else None
     run = _Run(payload["reviewed_head"], payload["items"], {},
                {"reviewed_head": payload["reviewed_head"]}, deadline)
+    for identifier in checked.unsupported:  # auto-dropped features: item errors, no requests
+        run.failed[identifier] = "unsupported_feature"
     rows, run.unavailable, backends = _selection(skip_local, deadline)
     run.provenance["backends"] = backends
     if not rows:

@@ -1872,5 +1872,156 @@ class TestDeadline(_ClientCase):
                 self.assertEqual(stub.requests, [])
 
 
+class TestMatrix(_ClientCase):
+    """D-21, D-24, D-25, SPEC R10: capability cells per row, the per-item feature filter
+    that refuses unbuilt shapes before any socket, and `score` end to end."""
+
+    def image_item(self, identifier, count=1):
+        item = {"id": identifier, "type": "noul", "instructions": "Is it a cat?",
+                "context": "a photo"}
+        item["images"] = [f"scratch/p{n}.png" for n in range(count)]
+        return item
+
+    def box_item(self, identifier):
+        return {"id": identifier, "type": "box", "instructions": "Where is the button?",
+                "context": "a screenshot"}
+
+    def levels_item(self, identifier, count):
+        item = score_item(identifier)
+        item["criteria"] = [f"L{index}" for index in range(count)]
+        return item
+
+    def wire_typesafe(self, typesafe):
+        os.environ["JEV_ALLOW_REMOTE"] = "1"
+        os.environ["TYPESAFE_API_KEY"] = "typesafe-key"
+        self.point_remote("typesafe", typesafe)
+
+    def test_matrix_explicit_documented_accepted(self):
+        # A score cell may be only `documented` for typesafe, but documented is enough (D-24).
+        self.enable("typesafe")
+        with JevStub(model="typesafe-1") as typesafe:
+            self.wire_typesafe(typesafe)
+            result = self.run_screen(payload(score_item("s")))
+        self.assertEqual(len(typesafe.posts), 1)
+        self.assertEqual(result["answers"]["s"]["backend"], "typesafe")
+
+    def test_matrix_explicit_unverified_rejected(self):
+        # The mirror case: `unverified` is never enough — an equal-shaped item is refused.
+        self.enable("opencode")
+        os.environ["JEV_ALLOW_REMOTE"] = "1"
+        os.environ["OPENCODE_ZEN_API_KEY"] = "zen-key"
+        with JevStub(model="opencode-1") as zen:
+            self.point_remote("opencode", zen)
+            result = self.run_screen(payload(score_item("s")))
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["reason"], "unsupported_feature")
+        self.assertEqual(result["item"], "s")
+        self.assertEqual(zen.requests, [])
+
+    def test_matrix_image_item(self):
+        # D-21: no builder exists for image or box — the refusal is the same on every row.
+        laya, typesafe = JevStub(), JevStub(model="typesafe-1")
+        with laya, typesafe:
+            for backend in ("laya", "typesafe"):
+                for case, item in (("image", self.image_item("img")),
+                                   ("box", self.box_item("bx"))):
+                    with self.subTest(backend=backend, item=case):
+                        self.enable(backend)
+                        if backend == "laya":
+                            self.point_at(laya)
+                            stub = laya
+                        else:
+                            self.wire_typesafe(typesafe)
+                            stub = typesafe
+                        result = self.run_screen(payload(item))
+                        self.assertEqual(result["reason"], "unsupported_feature")
+                        self.assertEqual(result["item"], item["id"])
+                        self.assertEqual(stub.requests, [])
+
+    def test_matrix_auto_skips_rung(self):
+        # D-25: the score item's rung list drops opencode (cell `unverified`), so the
+        # typesafe error is where the item ends — never a detour through that rung.
+        typesafe = JevStub(model="typesafe-1", script=[{"status": 503, "body": b"busy"}] * 3)
+        zen = JevStub(model="opencode-1")
+        with typesafe, zen:
+            self.point_remote("typesafe", typesafe)
+            self.point_remote("opencode", zen)
+            self.enable_remote(None)  # auto; Laya stays on the closed default port
+            result = self.run_screen(payload(score_item("s")))
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["errors"], {"s": "http_503"})
+        self.assertEqual(zen.posts, [])
+
+    def test_matrix_order(self):
+        # The feature check runs before validation and before any request: a mixed run of
+        # one image item and one choice item makes zero requests, not even a probe.
+        self.enable("laya")
+        with JevStub() as stub:
+            self.point_at(stub)
+            result = self.run_screen(payload(self.image_item("img"), choice_item("c")))
+        self.assertEqual(result["reason"], "unsupported_feature")
+        self.assertEqual(result["item"], "img")
+        self.assertEqual(stub.requests, [])
+
+    def test_matrix_score_levels(self):
+        # The 2..10 level bound stays in `_build_score`, before any request (D-15).
+        self.enable("laya")
+        for count, accepted in ((1, False), (11, False), (2, True), (10, True)):
+            with self.subTest(levels=count):
+                with JevStub() as stub:
+                    self.point_at(stub)
+                    result = self.run_screen(payload(self.levels_item("s", count)))
+                if accepted:
+                    self.assertEqual(len(stub.posts), 1)
+                    self.assertEqual(result["status"], "ok")
+                else:
+                    self.assertEqual(result["status"], "unavailable")
+                    self.assertEqual(result["reason"], "invalid_input")
+                    self.assertEqual(result["item"], "s")
+                    self.assertEqual(stub.requests, [])
+
+    def test_matrix_score_answer(self):
+        # A score answer keeps the raw legend and probabilities and gains the pick (D-25).
+        self.enable("laya")
+        with JevStub(top=0.9) as stub:
+            self.point_at(stub)
+            result = self.run_screen(payload(score_item("s")))
+        answer = result["answers"]["s"]
+        self.assertEqual(answer["legend"], {"0": "low", "1": "mid", "2": "high"})
+        self.assertEqual(answer["level"], "2")
+        self.assertEqual(answer["top"], 0.9)
+        self.assertEqual(len(answer["probabilities"]), 3)
+
+    def test_matrix_batch_backstop(self):
+        # The batch shape the docs promise: one consented remote request over one state
+        # holds every question; the local row still asks one question per request.
+        laya = JevStub(top=0.5)  # low on Laya: the items escalate to the remote batch
+        typesafe = JevStub(model="typesafe-1")
+        zen = JevStub(model="opencode-1")
+        with laya, typesafe, zen:
+            self.point_at(laya)
+            self.point_remote("typesafe", typesafe)
+            self.point_remote("opencode", zen)
+            self.enable_remote(None)
+            result = self.run_screen(payload(noul_item("a"), noul_item("b"), noul_item("c")))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual([sorted(body["questions"]) for body in laya.bodies],
+                         [["a"], ["b"], ["c"]])
+        self.assertEqual(len(typesafe.posts), 1)
+        self.assertEqual(sorted(typesafe.bodies[0]["questions"]), ["a", "b", "c"])
+        self.assertEqual(zen.posts, [])
+
+    def test_matrix_cells_complete(self):
+        # The matrix data the docs will show lives in the rows: every feature has a cell of
+        # (status, source, date), and no cell is an unlabelled guess.
+        for row in JR.rows_in_order():
+            with self.subTest(row=row["name"]):
+                self.assertEqual(set(row["cells"]), set(JR.CELL_FEATURES))
+                for status, source, date in row["cells"].values():
+                    self.assertIn(status, JR.CELL_STATUSES)
+                    self.assertTrue(source.strip())
+                    self.assertRegex(date, r"^\d{4}-\d{2}-\d{2}$")
+
+
 if __name__ == "__main__":
     unittest.main()
