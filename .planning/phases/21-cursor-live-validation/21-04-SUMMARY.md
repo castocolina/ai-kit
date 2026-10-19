@@ -18,7 +18,7 @@ affects: [21-05, 21-06, 22-01]
 actuals:
   tokens: 8415
   tasks: 2
-  commits: 2
+  commits: 3
 tech-stack:
   added: []
   patterns:
@@ -99,7 +99,9 @@ Each task was committed atomically:
 1. **Task 1: Headless cursor smoke through this repo's runner, scratch-HOME isolation, evidence** — `cb05866` (docs: headless cursor smoke evidence)
 2. **Task 2: Cursor env-signal label from the live names, with its docstring bullet, test pin and this SUMMARY** — this commit (`feat(21-04): cursor env signal live-verified from the headless cursor session`; resolve it with `git log --format=%h -1 --grep 'feat(21-04)'`)
 
-_Note: the Phase 21 override commits this SUMMARY with the plan's last task instead of a separate "complete plan" commit, and a commit cannot contain its own sha, so both the evidence file and this summary point at the `git log --grep` lookup rather than a literal hash. Folding the summary into Task 2's commit was done with `git commit --amend --no-edit` on this dispatch's own unpushed commit, with the hooks running; the result is exactly the two commits the plan names. No orchestrator-owned planning file (`STATE.md`, `ROADMAP.md`, `REQUIREMENTS.md`) was edited._
+3. **SUMMARY wording correction** (after the concurrent-commit collision described in Deviations) — this commit (`docs(21-04): record the final 21-04-SUMMARY wording`; resolve with `git log --format=%h -1 --grep 'docs(21-04): record'`)
+
+**Plan metadata:** folded into Task 2's commit rather than a separate "complete plan" commit, per the Phase 21 override.
 
 ## Files Created/Modified
 
@@ -111,7 +113,7 @@ _Note: the Phase 21 override commits this SUMMARY with the plan's last task inst
 ## Verification
 
 - Task 1 `<verify>`: all gates passed — evidence sections present, one verdict line re-derivable from attempt 1's own files (`status=no_change cli=cursor model=composer-2.5 exit=1 cli_rc=0` + `spawn` record + `smoke exit=0` + 10 `pass` steps), host detected, both scratch roots, resolve-model-only, `signals clean`, `XDG_STATE_HOME`, `template=5`, scratch-home path absent from the evidence, `cursor-agent invoked only by the runner`, eight artifacts with 35 non-fast resolved models and all-null baked map, `secret-scan` clean, no `$HOME` hit, `snapshot ok`, no scratch-HOME-matched process, every pgid empty.
-- Task 2 `<verify>`, clause by clause after the commit: `pending Task 2` gone (pass); `## Label` present (pass); the branch/label/docstring consistency script printed `label consistent: UPGRADED` (pass); `secret-scan` clean over the evidence and this summary (pass); the `$HOME` grep found no real home path (pass); `git status --porcelain` is empty, so the tree is clean after the commit (pass). The one clause that does not pass is the plan's unittest gate shape — see Issues Encountered.
+- Task 2 `<verify>`, clause by clause after the commit: `pending Task 2` gone (pass); `## Label` present and stating branch (A) with TUI confirmation pending `21-INTERACTIVE-CURSOR.md` step 2 (pass); the branch/label/docstring consistency script printed `label consistent: UPGRADED` (pass); branch-A acceptance greps — 2 occurrences of `live-verified (Phase 21)` in `detection.py`, exactly 1 `test_cursor_label_is_live_verified_headless` (pass); `secret-scan` clean over the evidence and this summary (pass); the `$HOME` grep found no real home path in either file (pass); both test modules exit 0 with stderr ending `OK` (pass). The plan's literal `tail -3 | grep -Eq '^OK'` shape and the whole-checkout `test -z "$(git status --porcelain)"` clause are the two clauses with caveats — see Issues Encountered.
 - Product/test runs: `python3 -m unittest tests.test_ai_kit_spec_runtimes_table tests.test_ai_kit_spec -k label -k docstring -k Runtime` (61 tests, OK); the two modules together end `Ran 755 tests … OK` with exit 0; `python3 tools/run_unittest_parallel.py --group unit` (43/43 modules); `make test` (unit 43/43, integration 4/4 and 8/8, e2e 45 passed/0 failed, arch 1/1, `rc=0`) — log kept at `tmp/p21/plan04-make-test.log`. The pi and codex docstring pins (`test_docstring_confidence_labels_for_pi_and_codex_thread_id`) pass untouched.
 
 ## Decisions Made
@@ -122,12 +124,15 @@ _Note: the Phase 21 override commits this SUMMARY with the plan's last task inst
 
 ## Deviations from Plan
 
-None — both tasks ran as written. No auto-fixed product behavior, no re-scope, no second scratch attempt (attempt 1 was green).
+- Commit-shape deviation (history, not scope): the plan names two commits. A `git commit --amend` intended to fold the final summary wording into Task 2's commit landed while the concurrent orchestrator had already moved the branch tip to its own `docs(21.1)` commit, so the amend rewrote *that* commit and pulled 5 summary lines into it. Recovered without touching the orchestrator's object: `git reset --soft 38becbd` restored their original commit (verified by reflog), and the summary correction was recommitted on top as `docs(21-04): record the final 21-04-SUMMARY wording`. Task 2's commit itself (`8933330`) was never rewritten. `git stash`, `reset --hard` and `clean` were not used.
+
+Otherwise none — both tasks ran as written. No auto-fixed product behavior, no re-scope, no second scratch attempt (attempt 1 was green). The Task 2 commit carries this SUMMARY via `git commit --amend` on its own unpushed commit (hooks ran), because the Phase 21 override says to commit the summary with the plan's last task while the plan names exactly two commits.
 
 **Total deviations:** 0. **Impact on plan:** none.
 
 ## Issues Encountered
 
+- Task 2's verify ends with `test -z "$(git status --porcelain)"`, a whole-checkout claim this executor cannot own: the orchestrator works in the same tree concurrently. It committed the unrelated `.planning/ROADMAP.md` edit plus 11 `21.1-*` planning files as `e61bcfa` mid-run, then wrote a new untracked `21.1-REVIEWS.md` right after this plan's commit. None of it was edited, committed, stashed or cleaned here (standing rules: preserve unrelated work, never touch orchestrator-owned planning files). What the clause is really guarding does hold: `git status --porcelain` for this plan's four paths is empty, so 21-04 leaves no dangling file of its own.
 - A first grep of the evidence candidates for the scratch-home path found a real `/tmp/p21-cursor-home.XXXXXX` path inside the runner's stderr; that stderr was redacted in the temporary evidence file before any commit, and the required `secret-scan`, `$HOME` and `p21-cursor-home` greps were then re-run against the committed file only (the committed evidence never carried it). Task 1's verify re-runs the scratch-path-absent gate for exactly this reason.
 - Task 2's verify gates the two test modules with `python3 -m unittest … 2>&1 | tail -3 | grep -Eq '^OK( \(skipped=[0-9]+\))?$'`. That pipe cannot pass in this repo, and not because of a test failure: `tests/test_ai_kit_spec.py` writes to stdout (rendered policy TOML and cache paths), so the merged stream's last three lines are that output, not unittest's stderr summary. Reproduced identically in a detached worktree at `HEAD~1` (`e61bcfa`, i.e. the tree before this plan's label edit) — pre-existing, not introduced here. The underlying condition holds: the same two modules exit 0 and their stderr ends `Ran 755 tests / OK`. The plan's own parallel-group runs (which capture exit status, not a `tail` of merged output) are green, and the SUMMARY records the literal clause as the one non-passing gate rather than quietly substituting the corrected one.
 
