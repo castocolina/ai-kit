@@ -68,7 +68,9 @@ project's `.planning/` and onto an input or config file. `plan-set`/`plan-unset`
 
 1. **Inventory** (never touches project config; prints JSON to stdout — capture it). It
    refreshes ai-kit's runtime/catalog caches and may contact the catalog services and the
-   jev endpoint (TCP reachability only); say so before running it offline or on a no-write request. Create the scratch dir once and
+   jev endpoint (TCP reachability only). On an offline or no-write request, do not run it: say it
+   writes those caches and may reach the network, and ask whether to relax the limit; without it
+   there is no fresh inventory to recommend from. Create the scratch dir once and
    record its printed path; like the entrypoint, write it literally wherever `$WORK` appears.
    Add `--host <host>` only when the host cannot be detected (exit 2 says so); `--refresh`
    forces a full catalog fetch.
