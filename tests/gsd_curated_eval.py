@@ -4363,6 +4363,10 @@ def _baked_chain(ctx: SmokeCtx, project: str, plan: dict, label: str, plan_path:
     key (D-08) is what steers it (review IN-04)."""
     tables = live_tables(ctx.node_bin, os.path.dirname(os.path.dirname(ctx.tools_path)))
     agents = sorted(tables["profiles"])
+    # annotated once so the three branches below share one type (pyright: `dict` is invariant
+    # in its value type, so the cursor branch's `dict[str, None]` alone is not
+    # `dict[str, str | None]`)
+    promised_map: dict[str, str | None]
     if ctx.host == "codex":  # D-08: a codex TOML bakes `model` for explicit pins only
         sets = _set_entries(plan)
         promised_map = {agent: sets.get(f"model_overrides.{agent}") for agent in agents}
