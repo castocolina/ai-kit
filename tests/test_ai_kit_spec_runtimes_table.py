@@ -320,7 +320,7 @@ class TestGuardedAgentBinary(unittest.TestCase):
             path = bin_a + os.pathsep
             found = detection.resolve_runtime_binary(
                 "cursor", which_fn=functools.partial(shutil.which, path=path), path_env=path)
-            self.assertEqual(found, os.path.join(os.curdir, "agent"))
+            self.assertEqual(found, os.path.join(os.getcwd(), "agent"))
 
     def test_empty_path_scans_the_cwd(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cwd_dir:
@@ -332,7 +332,7 @@ class TestGuardedAgentBinary(unittest.TestCase):
             os.chdir(cwd_dir)
             self.assertEqual(detection.resolve_runtime_binary(
                 "cursor", which_fn=functools.partial(shutil.which, path=""), path_env=""),
-                os.path.join(os.curdir, "agent"))
+                os.path.join(os.getcwd(), "agent"))
 
     def test_agent_symlink_to_cursor_agent_resolves(self):
         with tempfile.TemporaryDirectory() as tmp:

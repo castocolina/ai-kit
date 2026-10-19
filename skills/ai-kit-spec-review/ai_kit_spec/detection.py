@@ -176,14 +176,15 @@ def _guarded_hits(name, which_fn, path_env):
 
 def resolve_runtime_binary(rid, which_fn=shutil.which, realpath_fn=os.path.realpath,
                           path_env=None):
-    """First PATH hit for rid; guarded names are scanned across PATH and basename-checked."""
+    """First PATH hit for rid as an absolute path (it is cached across cwds, like the
+    runner's path.resolve); guarded names are scanned across PATH and basename-checked."""
     for name in RUNTIMES[rid].binaries:
         expected = _GUARDED_BINARIES.get(name)
         hits = _guarded_hits(name, which_fn, path_env) if expected else (which_fn(name),)
         for found in hits:
             if found and (expected is None or
                           os.path.basename(realpath_fn(found)) == expected):
-                return found
+                return os.path.abspath(found)
     return None
 
 
