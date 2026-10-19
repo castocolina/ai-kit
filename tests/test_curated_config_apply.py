@@ -2436,6 +2436,22 @@ class TestSkillDocCommands(unittest.TestCase):
         missing = [phrase for phrase in required if phrase not in text]
         self.assertEqual(missing, [])
 
+    def test_cursor_label_lifted_with_evidence_pointer(self) -> None:
+        """21-05 LIFT branch: the combined cursor/pi row is gone, the pi row keeps the
+        label, the cursor row cites the headless evidence and names the pending
+        interactive confirmation (SPEC R3 as amended; never a bare lift)."""
+        text = _skill_md_text()
+        self.assertNotIn("cursor / pi hosts", text)
+        self.assertIn("| pi hosts | **not live-validated** |", text)
+        self.assertIn("21-SMOKE-CURSOR.md", text)
+        self.assertIn("21-INTERACTIVE-CURSOR.md", text)
+        row = text.split("| cursor host |", 1)[1].split("\n", 1)[0]
+        self.assertIn("pending", row)
+        readme_path = os.path.join(os.path.dirname(__file__), "..", "README.md")
+        with open(readme_path, encoding="utf-8") as handle:
+            readme = handle.read()
+        self.assertIn("cursor validated headless", readme)
+
     def test_family_list_matches_managed_prefixes(self) -> None:
         """Review L14: the Removals step lists every family v2 manages, as `<prefix>*`."""
         text = " ".join(_skill_md_text().split())

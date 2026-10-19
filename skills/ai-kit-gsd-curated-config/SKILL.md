@@ -248,7 +248,8 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
 
 | Topic | Limit |
 |---|---|
-| cursor / pi hosts | **not live-validated** |
+| pi hosts | **not live-validated** |
+| cursor host | validated headless from a cursor-agent 2026.10.14-941492e session (`21-SMOKE-CURSOR.md`: local install, apply, resolve-model-only chain, 420-check matrix); the user's interactive confirmation (`21-INTERACTIVE-CURSOR.md`) is **pending** |
 | opencode providers | Providers defined only in a project's `opencode.json` are not candidates |
 | effort sync | Skipped for workstream configs; `--config-dir <project>/<host dir>` value **unverified** |
 | host as review lane | v2 never proposes it; v1 `detect-review-candidate` can pick it. A deliberate host-CLI lane with another provider is a manual `review.reviewer_instances` edit you own (20 D-11) |

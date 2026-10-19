@@ -300,3 +300,12 @@ live-verified from the headless cursor session` (this commit; sha: `git log --fo
 
 ## Interactive run
 pending: `21-INTERACTIVE-CURSOR.md`; the user's TUI env names, smoke and artifacts are the SPEC R1 acceptance evidence.
+
+## Label lift
+- branch: LIFT (R1 headless green and R2 green, read from one identified attempt).
+- R1 headless evidence, quoted verbatim from `## Headless runs` above:
+  `headless verdict: green (attempt 1: status=no_change cli_rc=0, spawn recorded, smoke exit=0, steps 10/10 pass)`
+- R2 evidence, quoted verbatim: `matrix ran: 420 checks` (step 9 of the smoke body) and `matrix ok (420 checks)` (21-03's `tmp/p21/matrix-cursor.txt`, last line).
+- What changed, landing in this commit: `skills/ai-kit-gsd-curated-config/SKILL.md` (the combined `cursor / pi hosts` row split into a `pi hosts` row keeping `**not live-validated**` and a `cursor host` row with the qualified `validated headless ... **pending**` wording), `README.md` (skill row), and `tests/test_curated_config_apply.py` (`test_cursor_label_lifted_with_evidence_pointer`).
+- The rule the lift is made under, quoted from the `21-SPEC.md` R3 amendment of this commit:
+  > **Amended 2026-10-18 (review cycle 2, 21-05; Phase 20 codex precedent):** R1's acceptance remains the user's interactive cursor session (`21-INTERACTIVE-CURSOR.md`), a mandatory human-verification item. R3's "removed" is a two-step lift: passing headless evidence (R1 run headless through this repo's runner — the single `headless verdict: green` line of `21-SMOKE-CURSOR.md` — plus R2) replaces the bare `not live-validated` label with the qualified wording `validated headless ... interactive confirmation pending`, never a bare lift; the `pending` note is removed only in the commit that records the user's interactive run. Until that run is recorded the phase ends `human_needed`.

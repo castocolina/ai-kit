@@ -57,6 +57,8 @@ linked by `tools/setup.py`.
    - Target: the label is removed only after R1 and R2 pass.
    - Acceptance: the SKILL.md diff lands in the same commit as the evidence. `/skill-judge` shows no regression.
 
+> **Amended 2026-10-18 (review cycle 2, 21-05; Phase 20 codex precedent):** R1's acceptance remains the user's interactive cursor session (`21-INTERACTIVE-CURSOR.md`), a mandatory human-verification item. R3's "removed" is a two-step lift: passing headless evidence (R1 run headless through this repo's runner — the single `headless verdict: green` line of `21-SMOKE-CURSOR.md` — plus R2) replaces the bare `not live-validated` label with the qualified wording `validated headless ... interactive confirmation pending`, never a bare lift; the `pending` note is removed only in the commit that records the user's interactive run. Until that run is recorded the phase ends `human_needed`.
+
 4. **Wrapper-proof detection** (SPEC-06).
    - Current: `KNOWN_CLIS` names `cursor-agent` only.
    - Target:

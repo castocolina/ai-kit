@@ -514,7 +514,7 @@ within this phase.
 
   1. A live smoke run from the cursor host (`inventory` + `recommend` + `apply`, dry-run then
      real) completes successfully on a scratch project.
-  2. SKILL.md's "not live-validated" label for cursor is removed once the smoke run passes.
+  2. SKILL.md's "not live-validated" label for cursor is replaced by the qualified wording `validated headless (interactive confirmation pending)` once the headless smoke run passes (amended 2026-10-18, review cycle 2, Phase 20 codex precedent; SPEC R1/R3 amended in the same commit); the `pending` note is removed only with the user's interactive run, which stays a human-verification item.
   3. `cursor-agent` is detected and enumerated even when wrapped by a shell function/alias
      (SPEC-06, deferred from Phase 16).
   4. ai-kit ships Cursor executor subagent files `composer-worker` and `grok-worker` in
