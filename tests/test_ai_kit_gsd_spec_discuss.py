@@ -223,7 +223,11 @@ class TestFindClient(_TmpHome):
         rooted = self.tmp / ".claude" / "skills" / decide.CLIENT_REL
         rooted.parent.mkdir(parents=True)
         rooted.write_text("")
-        self.assertEqual(decide.find_client(self.env, None)[0], str(rooted))
+        # 21.1-01 put the client in this repo, so the repo's own skills/ root wins (D-02);
+        # the home-rooted path stays in `tried` because it is still a real lookup candidate.
+        sibling = str(SCRIPTS.parent.parent / decide.CLIENT_REL)
+        self.assertEqual(decide.find_client(self.env, None)[0], sibling)
+        self.assertIn(str(rooted), decide.find_client(self.env, None)[1])
 
 
 # ─── decide.py: subprocess layer ──────────────────────────────────────────────
