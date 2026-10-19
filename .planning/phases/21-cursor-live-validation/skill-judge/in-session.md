@@ -1,36 +1,33 @@
-# Skill Evaluation Report: ai-kit-gsd-curated-config (Phase 21, cursor label lift)
+# Skill Evaluation Report: ai-kit-gsd-curated-config (Phase 21, after fix rounds 1-2)
 
-Judge: in-session `skill-judge` (Claude Opus 5.5, the orchestrator's live Claude Code session).
-CURRENT only, at `skills/ai-kit-gsd-curated-config/SKILL.md` (315 lines) with `references/runner.md`
-and `references/v1-path.md`. Digest judged: `b924ac84e1d6d3c9` (SKILL.md + references/).
-Delta since the Phase 20 final (digest `ea3200ce9624de80`, 109/120): the resolution-order sentence
-names cursor, the runner is template 5, runner.md documents the scan-all guarded `agent`, and the
-limits table splits pi from a qualified cursor row.
+Judge: in-session `skill-judge` (Claude Opus 5.5, the orchestrator's live session). CURRENT only,
+`skills/ai-kit-gsd-curated-config/SKILL.md` with `references/`. Digest judged: `85da5a6682d937c5`.
+Delta since the round-1 in-session report (`b924ac84e1d6d3c9`, 109/120): inventory now stops and
+asks on an offline or no-write request (pi Important 1, round 1); `--project-dir "<target>"` and
+`--path "<detected path>"` are quoted in every command (SKILL.md and v1-path.md); the two adjacent
+dry-run/full-key mistake rows are merged and point at step 4; runner.md no longer presents three
+flags as the whole interface.
 
 ## Summary
-- **Total Score**: 109/120 (91%)
+- **Total Score**: 110/120 (92%)
 - **Grade**: A
-- **Pattern**: Process, with Tool-pattern exit-code and subcommand tables
-- **Verdict**: every changed claim holds against the code and evidence:
-  `_HOST_FIRST_ROOT["cursor"] = ".cursor"` (`ai_kit_gsd_curated_config/host.py:22-28`);
-  `TEMPLATE_VERSION = 5` (`cross_ai.py:46`); `pathHits` scan with the D-09 comment
-  (`ai-kit-spec-review/references/cross-ai.mjs:413-432`); the cursor row's facts (local install,
-  apply, resolve-model-only chain, 420-check matrix) match `21-SMOKE-CURSOR.md` steps 4-9 and its
-  per-project lines. The lift is qualified ("validated headless … interactive confirmation
-  **pending**"), never bare, so certainty is not overstated. No Critical or Important issue.
+- **Verdict**: the round-1 claims still hold (host roots, template 5, scan-all `agent`, the qualified
+  cursor row). The new stop-and-ask branch is a real safety gain (an explicit refusal path where
+  there was only disclosure); the quoting fixes a copy-paste hazard; the merged row removes a
+  repeat. No Critical or Important issue.
 
 ## Dimension Scores
 
 | Dimension | Score | Max | Notes |
 |-----------|-------|-----|-------|
-| D1: Knowledge Delta | 18 | 20 | Unchanged; the cursor row adds expert, sourced limits |
+| D1: Knowledge Delta | 18 | 20 | Unchanged |
 | D2: Mindset + Procedures | 13 | 15 | Unchanged |
 | D3: Anti-Pattern Quality | 14 | 15 | Unchanged |
 | D4: Specification Compliance | 14 | 15 | No migration trigger in the description (carried) |
-| D5: Progressive Disclosure | 13 | 15 | runner.md still has no "do not load" note (carried) |
-| D6: Freedom Calibration | 14 | 15 | Unchanged |
+| D5: Progressive Disclosure | 13 | 15 | runner.md has no "do not load" note (carried) |
+| D6: Freedom Calibration | 15 | 15 | Offline/no-write now a hard stop with a question, matching its fragility |
 | D7: Pattern Recognition | 9 | 10 | Unchanged |
-| D8: Practical Usability | 14 | 15 | The cursor row's "resolve-model-only chain" is terse (Minor 1) |
+| D8: Practical Usability | 14 | 15 | "resolve-model-only chain" still terse on the cursor row |
 
 ## Critical Issues
 
@@ -42,16 +39,12 @@ None.
 
 ## Minor Findings
 
-1. **Cursor row jargon (D8), SKILL.md line 252.** "resolve-model-only chain" is not explained in the
-   skill; one clause would do: the cursor installer bakes no `model:` line, so per-agent models
-   take effect only through gsd-core's `resolve-model`.
-2. **Repo-only citations (D5), line 252.** The row cites `21-SMOKE-CURSOR.md` and
-   `21-INTERACTIVE-CURSOR.md`, which ship only in this repo's planning tree; consistent with the
-   existing "20 D-11" style, but opaque to a reader of the installed skill.
-3. **Line wrap (cosmetic), lines 24-25.** The resolution-order sentence's second line runs past the
-   file's wrap width.
+1. **Cursor row jargon (D8).** "resolve-model-only chain" stays unexplained (carried from round 1).
+2. **Profile choice (D2/D8).** No guidance on balanced versus adaptive (pi Minor 2, round 2); it
+   needs verified gsd-core behavior, so it was not invented here.
+3. **Repo-only citations (D5).** The cursor row cites planning files that do not ship with the skill.
 
-CURRENT 109/120
+CURRENT 110/120
 CRITICAL 0
 IMPORTANT 0
-DIGEST b924ac84e1d6d3c9
+DIGEST 85da5a6682d937c5
