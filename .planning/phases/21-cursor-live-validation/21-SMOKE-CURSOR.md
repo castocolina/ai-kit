@@ -467,7 +467,7 @@ item, so the phase ends `human_needed` until it is recorded.
   empty process group, and no `cursor-probe*.pgid` file exists because no probe was dispatched.
   `gc-late`/`node -e while` strays: none, so the standing cleanup rule had nothing to remove.
 - Scratch home: `scratch home removed: yes` — the path recorded in
-  `tmp/p21/headless/scratch-home.txt` (`/tmp/p21-cursor-home.SysiYq`) no longer exists, and no
+  `tmp/p21/headless/scratch-home.txt` (`<scratch-home>`) no longer exists, and no
   `/tmp/p21-cursor-home.*` directory exists at all. 21-04's own teardown ran before this plan, so
   this plan never ran the D-19 late-teardown clause (recorded below). The `auth.json` symlink
   pointing at the user's real login was removed with the scratch home; it was never read, listed or
