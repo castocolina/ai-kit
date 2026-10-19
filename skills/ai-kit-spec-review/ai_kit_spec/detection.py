@@ -1,7 +1,6 @@
 import base64
 import contextlib
 import http.client
-import inspect
 import json
 import os
 import re
@@ -167,23 +166,11 @@ def normalize_runtime_keys(mapping) -> dict:
 
 
 def _guarded_hits(name, which_fn, path_env):
-    """Yield the injected resolver's first hit, followed by each PATH-directory hit."""
-    first = which_fn(name)
-    if first:
-        yield first
-    try:
-        parameters = inspect.signature(which_fn).parameters.values()
-        supports_path = any(parameter.name == "path" or
-                            parameter.kind == inspect.Parameter.VAR_KEYWORD
-                            for parameter in parameters)
-    except (TypeError, ValueError):
-        supports_path = False
-    if not supports_path:
-        return
+    """Yield each PATH-directory hit for name. which_fn must accept `path=` (shutil.which)."""
     effective_path = os.environ.get("PATH", "") if path_env is None else path_env
     for directory in effective_path.split(os.pathsep):
         hit = which_fn(name, path=directory or os.curdir)
-        if hit and hit != first:
+        if hit:
             yield hit
 
 
@@ -200,10 +187,12 @@ def resolve_runtime_binary(rid, which_fn=shutil.which, realpath_fn=os.path.realp
     return None
 
 
-def detect_installed_clis(which_fn=shutil.which, realpath_fn=os.path.realpath) -> dict:
+def detect_installed_clis(which_fn=shutil.which, realpath_fn=os.path.realpath,
+                          path_env=None) -> dict:
     """{runtime id: absolute path or None} for each RUNTIMES row."""
     return {
-        rid: resolve_runtime_binary(rid, which_fn=which_fn, realpath_fn=realpath_fn)
+        rid: resolve_runtime_binary(rid, which_fn=which_fn, realpath_fn=realpath_fn,
+                                    path_env=path_env)
         for rid in RUNTIMES
     }
 
@@ -1025,7 +1014,8 @@ _DEFAULT_OPENCODE_SEAMS = OpencodeSeams()
 
 
 def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalog_fn=None,
-                            opencode: OpencodeSeams = _DEFAULT_OPENCODE_SEAMS) -> dict:
+                            opencode: OpencodeSeams = _DEFAULT_OPENCODE_SEAMS,
+                            path_env=None) -> dict:
     """{"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": {name: {"installed": bool,
     "path"?: str, "real_path"?: str, "models"?: [str],
     "reasoning_modes"?: {model_id: [effort, ...]},
@@ -1041,8 +1031,9 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalo
     claude is installed (claude is never executed, 16 D-07). Pure function -- the caller
     (this module's CLI entrypoint) decides whether/where to persist this via
     cache_write_json. `opencode` reaches the opencode 2.x probe, so a caller that fakes
-    `run_fn` can fake the private server too, and names the env for the private cwd."""
-    installed = detect_installed_clis(which_fn=which_fn)
+    `run_fn` can fake the private server too, and names the env for the private cwd. `path_env`
+    replaces os.environ["PATH"] for the guarded-name PATH scan."""
+    installed = detect_installed_clis(which_fn=which_fn, path_env=path_env)
     snapshot = {"schema_version": RUNTIMES_SCHEMA_VERSION, "clis": {}}
     for cli, binpath in installed.items():
         if not binpath:

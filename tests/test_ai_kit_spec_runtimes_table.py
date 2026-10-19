@@ -240,6 +240,24 @@ class TestGuardedAgentBinary(unittest.TestCase):
                 "cursor", which_fn=functools.partial(shutil.which, path=path), path_env=path)
             self.assertEqual(found, os.path.join(bin_b, "agent"))
 
+    def test_path_env_reaches_the_snapshot_scan(self):
+        # WR-05: the scan uses path_env alone; the process PATH is never consulted.
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as empty, \
+                mock.patch.dict(os.environ, {"PATH": empty}):
+            bin_a = os.path.join(tmp, "bin-a")
+            bin_b = os.path.join(tmp, "bin-b")
+            os.makedirs(bin_a)
+            os.makedirs(bin_b)
+            self._executable(os.path.join(tmp, "other", "other-agent"))
+            self._executable(os.path.join(tmp, "versions", "cursor-agent"))
+            os.symlink(os.path.join(tmp, "other", "other-agent"), os.path.join(bin_a, "agent"))
+            os.symlink(os.path.join(tmp, "versions", "cursor-agent"),
+                       os.path.join(bin_b, "agent"))
+            snapshot = detection.build_runtimes_snapshot(
+                which_fn=shutil.which, run_fn=lambda *_a, **_k: _ModelsResult(),
+                path_env=os.pathsep.join((bin_a, bin_b)))
+            self.assertEqual(snapshot["clis"]["cursor"]["path"], os.path.join(bin_b, "agent"))
+
     def test_only_cursor_agent_name_resolves(self):
         with tempfile.TemporaryDirectory() as tmp:
             binary = os.path.join(tmp, "cursor-agent")

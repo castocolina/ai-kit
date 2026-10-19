@@ -1145,7 +1145,7 @@ class TestCacheStaleness(unittest.TestCase):
 
 class TestDetectInstalledClis(unittest.TestCase):
     def test_reports_installed_and_missing(self):
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return f"/usr/bin/{name}" if name in ("claude", "codex") else None
 
         result = detect_installed_clis(which_fn=fake_which)
@@ -1154,7 +1154,7 @@ class TestDetectInstalledClis(unittest.TestCase):
         self.assertIsNone(result["cursor"])
 
     def test_covers_all_known_clis(self):
-        result = detect_installed_clis(which_fn=lambda n: None)
+        result = detect_installed_clis(which_fn=lambda n, **_k: None)
         self.assertEqual(set(result.keys()), set(KNOWN_CLIS))
 
 
@@ -1681,7 +1681,7 @@ class TestGroupModelsByFamily(unittest.TestCase):
 
 class TestDetectToolAvailability(unittest.TestCase):
     def test_reports_installed_and_missing_tools(self):
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return f"/usr/bin/{name}" if name in ("rg", "fd") else None
 
         result = detection.detect_tool_availability(which_fn=fake_which)
@@ -2021,7 +2021,8 @@ class TestRunCodegraphIndex(unittest.TestCase):
 
 class TestBuildRuntimesSnapshot(unittest.TestCase):
     def test_marks_missing_clis_not_installed(self):
-        snapshot = build_runtimes_snapshot(which_fn=lambda n: None, run_fn=lambda *a, **k: None)
+        snapshot = build_runtimes_snapshot(
+            which_fn=lambda *_a, **_k: None, run_fn=lambda *a, **k: None)
         self.assertFalse(snapshot["clis"]["grok"]["installed"])
 
     def test_lists_opencode_models_when_installed(self):
@@ -2029,7 +2030,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
             stdout = "opencode-go/kimi-k3\n"
             returncode = 0
 
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return "/usr/bin/opencode" if name == "opencode" else None
 
         snapshot = build_runtimes_snapshot(
@@ -2043,7 +2044,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
             stdout = "Available models\n\nauto - Auto (current, default)\n"
             returncode = 0
 
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return "/usr/bin/cursor-agent" if name == "cursor-agent" else None
 
         snapshot = build_runtimes_snapshot(
@@ -2053,7 +2054,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         self.assertEqual(snapshot["clis"]["cursor"]["models"], ["auto"])
 
     def test_non_multi_provider_clis_have_no_models_key(self):
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return "/usr/bin/codex" if name == "codex" else None
 
         snapshot = build_runtimes_snapshot(which_fn=fake_which, run_fn=lambda *a, **k: None)
@@ -2067,7 +2068,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
     def test_codex_models_and_reasoning_modes_from_fixture(self):
         fixture_text = self._fixture_text()
 
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return "/fake/volta/bin/codex" if name == "codex" else None
 
         snapshot = build_runtimes_snapshot(
@@ -2086,7 +2087,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         self.assertEqual(codex["reasoning_modes"]["gpt-5.5"], ["low", "medium", "high", "xhigh"])
 
     def test_codex_enumeration_failure_omits_models_key(self):
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return "/fake/volta/bin/codex" if name == "codex" else None
 
         def fake_run_fn(*a, **k):
@@ -2103,7 +2104,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         # models -- the entry degrades to bare installed/path (16 D-05's degrade path).
         fixture_text = self._fixture_text()
 
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return "/fake/volta/bin/codex" if name == "codex" else None
 
         snapshot = build_runtimes_snapshot(
@@ -2116,7 +2117,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         )
 
     def test_failed_opencode_listing_omits_models_key(self):
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return "/usr/bin/opencode" if name == "opencode" else None
 
         def fake_run(*_a, **_k):
@@ -2128,7 +2129,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         self.assertNotIn("models", entry)
 
     def test_failed_cursor_listing_omits_models_key(self):
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return "/usr/bin/cursor-agent" if name == "cursor-agent" else None
 
         def fake_run(*_a, **_k):
@@ -2140,7 +2141,7 @@ class TestBuildRuntimesSnapshot(unittest.TestCase):
         self.assertNotIn("models", entry)
 
     def test_empty_codex_listing_records_empty_models(self):
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return "/usr/bin/codex" if name == "codex" else None
 
         snapshot = build_runtimes_snapshot(
@@ -2168,7 +2169,7 @@ class TestCodexEnumerationEndToEnd(unittest.TestCase):
             recorded.append((argv, kwargs))
             return unittest.mock.MagicMock(returncode=0, stdout=fixture_text)
 
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return "/fake/volta/bin/codex" if name == "codex" else None
 
         runtimes_path = os.path.join(d, "runtimes.json")
@@ -2516,7 +2517,7 @@ class TestPiRpcModels(unittest.TestCase):
         pi_path = "/tmp/pi-token-for-test"
         recorded = {}
 
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return pi_path if name == "pi" else None
 
         def fake_run(argv, **kwargs):
@@ -2610,7 +2611,7 @@ class TestPiRpcModels(unittest.TestCase):
     def test_snapshot_omits_models_on_failed_pi_listing(self):
         pi_path = "/tmp/pi-fail-test"
 
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return pi_path if name == "pi" else None
 
         def bad_run(argv, **kwargs):
@@ -2627,7 +2628,7 @@ class TestPiRpcModels(unittest.TestCase):
         )
         pi_path = "/tmp/pi-empty-test"
 
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return pi_path if name == "pi" else None
 
         def fake_run(argv, **kwargs):
@@ -2647,7 +2648,8 @@ class TestPiRpcModels(unittest.TestCase):
         )
 
     def test_snapshot_pi_not_installed(self):
-        snapshot = build_runtimes_snapshot(which_fn=lambda n: None, run_fn=lambda *a, **k: None)
+        snapshot = build_runtimes_snapshot(
+            which_fn=lambda *_a, **_k: None, run_fn=lambda *a, **k: None)
         self.assertEqual(snapshot["clis"]["pi"], {"installed": False})
 
 
@@ -2697,7 +2699,8 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
     (and re-stamp) even when its mtime is fresh; cache.py stays schema-agnostic."""
 
     def test_snapshot_carries_current_schema_version(self):
-        snapshot = build_runtimes_snapshot(which_fn=lambda n: None, run_fn=lambda *a, **k: None)
+        snapshot = build_runtimes_snapshot(
+            which_fn=lambda *_a, **_k: None, run_fn=lambda *a, **k: None)
         self.assertEqual(snapshot["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
         self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 5)
 
@@ -2713,12 +2716,13 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             with redirect_stdout(buf):
                 code = main(
                     ["detect-runtimes", "--if-stale", path],
-                    which_fn=lambda n: recorded.append(n) or None,
+                    which_fn=lambda n, **_k: recorded.append(n) or None,
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
             self.assertEqual(
-                recorded,
+                # The guarded `agent` is looked up once per PATH entry.
+                list(dict.fromkeys(recorded)),
                 [b for row in detection.RUNTIMES.values() for b in row.binaries] + ["node"],
             )  # detection ran
             self.assertIn("clis", json.loads(buf.getvalue()))
@@ -2740,12 +2744,13 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             with redirect_stdout(buf):
                 code = main(
                     ["detect-runtimes", "--if-stale", path],
-                    which_fn=lambda n: recorded.append(n) or None,
+                    which_fn=lambda n, **_k: recorded.append(n) or None,
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
             self.assertEqual(
-                recorded,
+                # The guarded `agent` is looked up once per PATH entry.
+                list(dict.fromkeys(recorded)),
                 [b for row in detection.RUNTIMES.values() for b in row.binaries] + ["node"],
             )
             cached = cache_read_json(path)
@@ -2767,12 +2772,13 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             with redirect_stdout(buf):
                 code = main(
                     ["detect-runtimes", "--if-stale", path],
-                    which_fn=lambda n: recorded.append(n) or None,
+                    which_fn=lambda n, **_k: recorded.append(n) or None,
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
             self.assertEqual(
-                recorded,
+                # The guarded `agent` is looked up once per PATH entry.
+                list(dict.fromkeys(recorded)),
                 [b for row in detection.RUNTIMES.values() for b in row.binaries] + ["node"],
             )
             cached = cache_read_json(path)
@@ -2793,7 +2799,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             with redirect_stdout(buf):
                 code = main(
                     ["detect-runtimes", "--if-stale", path],
-                    which_fn=lambda n: recorded.append(n) or None,
+                    which_fn=lambda n, **_k: recorded.append(n) or None,
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
@@ -2816,12 +2822,13 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             with redirect_stdout(buf):
                 code = main(
                     ["detect-runtimes", "--if-stale", path],
-                    which_fn=lambda n: recorded.append(n) or None,
+                    which_fn=lambda n, **_k: recorded.append(n) or None,
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
             self.assertEqual(
-                recorded,
+                # The guarded `agent` is looked up once per PATH entry.
+                list(dict.fromkeys(recorded)),
                 [b for row in detection.RUNTIMES.values() for b in row.binaries] + ["node"],
             )
 
@@ -2839,12 +2846,13 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
                 with redirect_stdout(buf):
                     code = main(
                         ["detect-runtimes", "--if-stale", path],
-                        which_fn=lambda n, _r=recorded: _r.append(n) or None,
+                        which_fn=lambda n, _r=recorded, **_k: _r.append(n) or None,
                         run_fn=lambda *a, **k: None,
                     )
                 self.assertEqual(code, 0)
                 self.assertEqual(
-                    recorded,
+                    # The guarded `agent` is looked up once per PATH entry.
+                    list(dict.fromkeys(recorded)),
                     [b for row in detection.RUNTIMES.values() for b in row.binaries] + ["node"],
                 )
 
@@ -3880,7 +3888,7 @@ class TestMainCli(unittest.TestCase):
     def test_main_accepts_deps_and_overrides(self):
         marker = {}
 
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             marker["last"] = name
             return None
 
@@ -3898,7 +3906,7 @@ class TestMainCli(unittest.TestCase):
         buf = io.StringIO()
         with redirect_stdout(buf):
             code = main(
-                ["detect-runtimes"], which_fn=lambda n: None, run_fn=lambda *a, **k: None
+                ["detect-runtimes"], which_fn=lambda n, **_k: None, run_fn=lambda *a, **k: None
             )
         self.assertEqual(code, 0)
         parsed = json.loads(buf.getvalue())
@@ -3929,7 +3937,7 @@ class TestMainCli(unittest.TestCase):
             save_path = os.path.join(d, "runtimes.json")
             code = main(
                 ["detect-runtimes", "--save", save_path],
-                which_fn=lambda n: None,
+                which_fn=lambda n, **_k: None,
                 run_fn=lambda *a, **k: None,
             )
             self.assertEqual(code, 0)
@@ -4306,7 +4314,7 @@ class TestMainCli(unittest.TestCase):
             with redirect_stdout(buf):
                 code = main(
                     ["detect-runtimes", "--if-stale", path],
-                    which_fn=lambda n: probe_calls.append(n) or None,
+                    which_fn=lambda n, **_k: probe_calls.append(n) or None,
                     run_fn=lambda *a, **k: None,
                 )
             self.assertEqual(code, 0)
@@ -4318,7 +4326,7 @@ class TestMainCli(unittest.TestCase):
             path = os.path.join(d, "runtimes.json")  # never written -> stale
             code = main(
                 ["detect-runtimes", "--if-stale", path],
-                which_fn=lambda n: None,
+                which_fn=lambda n, **_k: None,
                 run_fn=lambda *a, **k: None,
             )
             self.assertEqual(code, 0)
@@ -4374,7 +4382,7 @@ class TestMainCli(unittest.TestCase):
                         "anthropic",
                         "--cross-ai",
                     ],
-                    which_fn=lambda _name: None,
+                    which_fn=lambda _name, **_k: None,
                     run_fn=lambda *_a, **_k: None,
                     env_fn=lambda: dict(env),
                 )
@@ -4402,7 +4410,7 @@ class TestMainCli(unittest.TestCase):
                     ["probe-quota", "--cwd", cwd, "--quota-path", quota_path],
                     env_fn=lambda: {"HOME": home, "CLAUDECODE": "1"},
                     runner_fn=fake_runner, custom_fn=fake_custom,
-                    which_fn=lambda _name: None, run_fn=lambda *_a, **_k: None,
+                    which_fn=lambda _name, **_k: None, run_fn=lambda *_a, **_k: None,
                 ), 0)
             fake_runner.assert_not_called()
             fake_custom.assert_not_called()
@@ -4434,7 +4442,7 @@ class TestMainCli(unittest.TestCase):
                 code = main(
                     ["probe-quota", "--cwd", cwd, "--quota-path", quota_path],
                     custom_fn=fake_custom, env_fn=lambda: dict(env),
-                    which_fn=lambda _name: None, run_fn=lambda *_a, **_k: None,
+                    which_fn=lambda _name, **_k: None, run_fn=lambda *_a, **_k: None,
                 )
             self.assertEqual(code, 0)
             written = cache_read_json(quota_path)
@@ -4458,7 +4466,7 @@ class TestMainCli(unittest.TestCase):
                     ["probe-quota", "--cwd", cwd,
                      "--quota-path", os.path.join(cwd, "quota.json")],
                     custom_fn=fake_custom, env_fn=lambda: {"HOME": home},
-                    which_fn=lambda _name: None, run_fn=lambda *_a, **_k: None,
+                    which_fn=lambda _name, **_k: None, run_fn=lambda *_a, **_k: None,
                 )
             self.assertEqual(code, 0)
             fake_custom.assert_called_once()
@@ -9201,7 +9209,7 @@ class TestClaudeEnumerationEndToEnd(unittest.TestCase):
     }
 
     @staticmethod
-    def _claude_which(name):
+    def _claude_which(name, **_kwargs):
         return "/fake/bin/claude" if name == "claude" else None
 
     def test_real_refresh_order_makes_a_non_fallback_id_scoreable_without_ttl_wait(self):
@@ -9356,7 +9364,7 @@ class TestClaudeFallback(unittest.TestCase):
     read (only for an installed claude)."""
 
     @staticmethod
-    def _claude_which(name):
+    def _claude_which(name, **_kwargs):
         return "/fake/bin/claude" if name == "claude" else None
 
     def _snapshot(self, **overrides):
@@ -9419,7 +9427,8 @@ class TestClaudeFallback(unittest.TestCase):
             return None
 
         snapshot = detection.build_runtimes_snapshot(
-            which_fn=lambda n: None, run_fn=lambda *a, **k: None, catalog_fn=recording_catalog_fn
+            which_fn=lambda *_a, **_k: None, run_fn=lambda *a, **k: None,
+            catalog_fn=recording_catalog_fn,
         )
         self.assertEqual(snapshot["clis"]["claude"], {"installed": False})
         self.assertEqual(reads, [])  # the catalog is only ever read for an installed claude
@@ -9476,7 +9485,7 @@ class TestClaudeFallback(unittest.TestCase):
                         "--catalog-path",
                         catalog_path,
                     ],
-                    which_fn=lambda name: None,
+                    which_fn=lambda name, **_k: None,
                     fetch_models_dev_fn=lambda: ({"openai": {"models": {}}}, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,
@@ -9570,7 +9579,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                     fetch_models_dev_fn=lambda: (models_dev_data, True),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
-                    which_fn=lambda name: None,
+                    which_fn=lambda name, **_k: None,
                 )
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
@@ -9642,7 +9651,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                     fetch_models_dev_fn=never_fetch_models_dev,
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
-                    which_fn=lambda name: None,
+                    which_fn=lambda name, **_k: None,
                 )
             self.assertEqual(code, 0)
             self.assertEqual(fetch_called, [])  # Should not have been called
@@ -9696,7 +9705,7 @@ class TestImageInputEndToEnd(unittest.TestCase):
                     fetch_models_dev_fn=lambda: (models_dev_data, True),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
-                    which_fn=lambda name: None,
+                    which_fn=lambda name, **_k: None,
                 )
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
@@ -10012,7 +10021,7 @@ openai/gpt-5.6-sol
                     fetch_models_dev_fn=lambda: ({}, True),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
-                    which_fn=lambda name: None,
+                    which_fn=lambda name, **_k: None,
                 )
             self.assertEqual(code, 0)
             result = json.loads(buf.getvalue())
@@ -10072,7 +10081,7 @@ openai/gpt-5.6-sol
                     ),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
-                    which_fn=lambda name: None,
+                    which_fn=lambda name, **_k: None,
                 )
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
@@ -10109,7 +10118,7 @@ openai/gpt-5.6-sol
                     fetch_models_dev_fn=lambda: self.fail("should skip fetch"),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
-                    which_fn=lambda name: None,
+                    which_fn=lambda name, **_k: None,
                 )
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
@@ -10159,7 +10168,7 @@ openai/gpt-5.6-sol
                     ),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
-                    which_fn=lambda name: None,
+                    which_fn=lambda name, **_k: None,
                 )
             self.assertEqual(code, 0)
             # Run 2: skip, runtime now says False
@@ -10192,7 +10201,7 @@ openai/gpt-5.6-sol
                     fetch_models_dev_fn=lambda: self.fail("should skip"),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
-                    which_fn=lambda name: None,
+                    which_fn=lambda name, **_k: None,
                 )
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
@@ -10234,7 +10243,7 @@ openai/gpt-5.6-sol
                     ),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
-                    which_fn=lambda name: None,
+                    which_fn=lambda name, **_k: None,
                 )
             # Run 2: skip, no image_input in runtime snapshot
             cache_write_json(c + ".fetch-meta.json", {"last_fetched": time.time()})
@@ -10260,7 +10269,7 @@ openai/gpt-5.6-sol
                     fetch_models_dev_fn=lambda: self.fail("should skip"),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
-                    which_fn=lambda name: None,
+                    which_fn=lambda name, **_k: None,
                 )
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
@@ -10322,7 +10331,7 @@ openai/gpt-5.6-sol
                     fetch_models_dev_fn=lambda: self.fail("should skip"),
                     load_secret_fn=lambda env, key: None,
                     env_fn=lambda: {"HOME": d},
-                    which_fn=lambda name: None,
+                    which_fn=lambda name, **_k: None,
                 )
             self.assertEqual(code, 0)
             catalog = cache_read_json(c)
@@ -10791,7 +10800,7 @@ class TestOpencodeApiImageInput(unittest.TestCase):
         """C-IN-01: a 2.x snapshot built with fakes never reaches the real Popen/urlopen."""
         popen = self.FakePopen()
         snapshot = build_runtimes_snapshot(
-            which_fn=lambda name: "/fake/bin/opencode" if name == "opencode" else None,
+            which_fn=lambda name, **_k: "/fake/bin/opencode" if name == "opencode" else None,
             run_fn=self._fake_version_run(),
             opencode=detection.OpencodeSeams(popen, self._fake_urlopen()))
         self.assertIsNotNone(popen.argv)
@@ -10800,7 +10809,7 @@ class TestOpencodeApiImageInput(unittest.TestCase):
     def test_cli_detect_runtimes_threads_probe_seams(self):
         popen = self.FakePopen()
         deps = cli.CliDeps(
-            which_fn=lambda name: "/fake/bin/opencode" if name == "opencode" else None,
+            which_fn=lambda name, **_k: "/fake/bin/opencode" if name == "opencode" else None,
             run_fn=self._fake_version_run(), popen_fn=popen, urlopen_fn=self._fake_urlopen())
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -10808,7 +10817,7 @@ class TestOpencodeApiImageInput(unittest.TestCase):
         self.assertIsNotNone(popen.argv)
 
     def test_snapshot_records_image_input_source(self):
-        def fake_which(name):
+        def fake_which(name, **_kwargs):
             return "/fake/bin/opencode" if name == "opencode" else None
 
         # 2.x: the probe itself is patched here (popen_fn/urlopen_fn fakes: see above).
@@ -10902,7 +10911,7 @@ class TestClaudeRuntimeFreshness(unittest.TestCase):
     fallback) never loops."""
 
     @staticmethod
-    def _claude_which(name):
+    def _claude_which(name, **_kwargs):
         return "/fake/bin/claude" if name == "claude" else None
 
     def test_fallback_snapshot_without_catalog_ids_is_not_redetected(self):
@@ -11193,7 +11202,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
                         "--catalog-path",
                         catalog_path,
                     ],
-                    which_fn=lambda name: "/fake/bin/claude" if name == "claude" else None,
+                    which_fn=lambda name, **_k: "/fake/bin/claude" if name == "claude" else None,
                     fetch_models_dev_fn=lambda: (md, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,
@@ -11286,7 +11295,7 @@ class TestClaudeCatalogMaterialization(unittest.TestCase):
                         "--catalog-path",
                         catalog_path,
                     ],
-                    which_fn=lambda name: "/fake/bin/claude" if name == "claude" else None,
+                    which_fn=lambda name, **_k: "/fake/bin/claude" if name == "claude" else None,
                     fetch_models_dev_fn=lambda: (md, True),
                     fetch_artificial_analysis_fn=lambda _api_key: ([], True),
                     load_secret_fn=lambda _env_, key: None,
@@ -11548,7 +11557,7 @@ class TestDispatchExecuteArgv(unittest.TestCase):
                     build_tooling_guidance_fn=lambda *a, **kw: "",
                     # which_fn: the image without node must still reach the spawn.
                     runner_seams=runner_dispatch.RunnerSeams(
-                        popen_fn=fake_popen, which_fn=lambda _name: "node"
+                        popen_fn=fake_popen, which_fn=lambda _name, **_k: "node"
                     ),
                 ),
             )

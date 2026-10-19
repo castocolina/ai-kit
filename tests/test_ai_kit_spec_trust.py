@@ -40,7 +40,7 @@ def _local_spec(argv_cmd: str) -> bytes:
 
 
 # probe-quota routes every reviewer first: no real binary lookup, listing or runtimes build.
-NO_RUNTIMES = {"which_fn": lambda _name: None, "run_fn": lambda *_a, **_k: None}
+NO_RUNTIMES = {"which_fn": lambda _name, **_kwargs: None, "run_fn": lambda *_a, **_k: None}
 
 
 def _probe_ok():
@@ -323,7 +323,7 @@ class TestTrustLifecycle(TrustEnvTestCase):
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["resolve-reviewers", "--cwd", self.cwd,
                              "--quota-path", quota_path],
-                            which_fn=lambda _name: None, run_fn=lambda *_a, **_k: None)
+                            which_fn=lambda _name, **_kwargs: None, run_fn=lambda *_a, **_k: None)
         self.assertEqual(code, 0)
         self.assertNotIn('"local"', out.getvalue())
 
@@ -420,7 +420,7 @@ class TestLoudConfigErrors(TrustEnvTestCase):
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["resolve-reviewers", "--cwd", self.cwd,
                              "--quota-path", quota_path],
-                            which_fn=lambda _name: None, run_fn=lambda *_a, **_k: None)
+                            which_fn=lambda _name, **_kwargs: None, run_fn=lambda *_a, **_k: None)
         self.assertEqual(code, 2)
         self.assertIn(config_io.cfg_local_path(self.cwd), err.getvalue())
 
@@ -431,7 +431,7 @@ class TestLoudConfigErrors(TrustEnvTestCase):
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(["resolve-reviewers", "--cwd", self.cwd,
                              "--quota-path", quota_path],
-                            which_fn=lambda _name: None, run_fn=lambda *_a, **_k: None)
+                            which_fn=lambda _name, **_kwargs: None, run_fn=lambda *_a, **_k: None)
         self.assertEqual(code, 2)
         self.assertIn(os.path.join(self.xdg, "ai-kit", "review-spec.toml"), err.getvalue())
 

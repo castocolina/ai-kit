@@ -118,7 +118,7 @@ class FetchCatalogOutput(NamedTuple):
 
 
 class CliDeps(NamedTuple):
-    which_fn: Callable[[str], str | None] = shutil.which
+    which_fn: Callable[..., str | None] = shutil.which
     run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run
     dispatch_execute_fn: Callable[..., dict] = dispatch_execute
     dispatch_reviewer_fn: Callable[..., dict] = dispatch_reviewer

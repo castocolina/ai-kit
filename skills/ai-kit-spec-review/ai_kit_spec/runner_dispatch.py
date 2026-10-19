@@ -207,7 +207,7 @@ def parse_status_line(line: str) -> dict | None:
 
 
 class RunnerSeams(NamedTuple):
-    which_fn: Callable[[str], str | None] = shutil.which
+    which_fn: Callable[..., str | None] = shutil.which
     popen_fn: Callable[..., Any] = subprocess.Popen
     time_fn: Callable[[], float] = time.monotonic
     sleep_fn: Callable[[float], None] = time.sleep
