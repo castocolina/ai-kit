@@ -320,3 +320,155 @@ item, so the phase ends `human_needed` until it is recorded.
 - What changed, landing in this commit: `skills/ai-kit-gsd-curated-config/SKILL.md` (the combined `cursor / pi hosts` row split into a `pi hosts` row keeping `**not live-validated**` and a `cursor host` row with the qualified `validated headless ... **pending**` wording), `README.md` (skill row), and `tests/test_curated_config_apply.py` (`test_cursor_label_lifted_with_evidence_pointer`).
 - The rule the lift is made under, quoted from the `21-SPEC.md` R3 amendment of this commit:
   > **Amended 2026-10-18 (review cycle 2, 21-05; Phase 20 codex precedent):** R1's acceptance remains the user's interactive cursor session (`21-INTERACTIVE-CURSOR.md`), a mandatory human-verification item. R3's "removed" is a two-step lift: passing headless evidence (R1 run headless through this repo's runner — the single `headless verdict: green` line of `21-SMOKE-CURSOR.md` — plus R2) replaces the bare `not live-validated` label with the qualified wording `validated headless ... interactive confirmation pending`, never a bare lift; the `pending` note is removed only in the commit that records the user's interactive run. Until that run is recorded the phase ends `human_needed`.
+
+## Phase gates (plan 21-06)
+
+- `make test`: `exit=0`, re-run on the final tree (`tmp/p21/gates/test.final.txt`; `tmp/p21/gates/test.txt`
+  is the same run taken before the pyright fix landed, and both are kept because the gate has to be
+  green *after* the fix, not before it). Identical numbers: 57 module `ok` lines, 4,396 tests in total,
+  no `FAILED` line: unit `43/43 modules passed`, unit-uv `1/1`, integration `4/4`, e2e `8/8` plus
+  `bash tests/test_install.sh` → `45 passed, 0 failed`, arch `1/1`. The matrix module reports
+  `=== tests.test_ai_kit_gsd_curated_config_matrix: ok in 223.0s  Ran 36 tests` — and it is the
+  only such line in the log — equal to the loader's module total
+  (`tmp/p21/gates/matrix-loader.txt`: `module 36`; per class
+  `TestResolveModelMatrix=9`, `TestResolveModelMatrixCodex=9`, `TestResolveModelMatrixOpencode=9`,
+  `TestResolveModelMatrixCursor=9`) — checked again against `test.final.txt`, where the matrix module
+  is again the single `Ran 36 tests` line. The phase's 9 per-class matrix runs therefore run once, not
+  twice. This line is a fresh re-run, not a reference to the earlier plans: plan04's own `make test`
+  is recorded in `21-04-SUMMARY.md` as `rc=0` (`unit 43/43, integration 4/4 and 8/8, e2e 45
+  passed/0 failed, arch 1/1`), and its log `tmp/p21/plan04-make-test.log` — at the path 21-04's
+  summary names, having rotated out of `tmp/p21/headless/` in 21-05's scratch reorganisation — shows
+  those tiers plus 4,390 tests and exactly one
+  `=== tests.test_ai_kit_gsd_curated_config_matrix: ok ... Ran 36 tests` line. So the loader-count
+  equality holds for that run too, and the 6-test difference against this run is this plan's six new
+  `--host-rewrite` cases.
+- `make validate`: `exit=0` (`tmp/p21/gates/validate.txt`) — every hook `Passed`, no `Failed`
+  line: ruff, pylint, pyright, vulture, shellcheck, py-compile, `unittest (core)`,
+  `unittest (wizard — uv)`. Re-run after this section's and the SUMMARY's text was written (the
+  final tree, docs uncommitted at that moment):
+  `tmp/p21/gates/validate.final.txt`, `exit=0` again with all eight hooks `Passed` on a single
+  attempt. The first green run took seven attempts, for two different reasons, recorded here
+  because neither is dodged:
+  1. attempts 1-5 stopped at `pylint ... Failed — files were modified by this hook` while pylint
+     itself reported `10.00/10` with zero messages. The only file that changed during those runs
+     was another session's: a `md5sum` manifest taken around one hook run shows
+     `.planning/phases/21.1-*/21.1-07-PLAN.md` as the sole difference (the two manifests and the
+     hook's own output are kept: `tmp/p21/gates/manifest-before-pylint.txt`,
+     `tmp/p21/gates/manifest-after-pylint.txt`, `tmp/p21/gates/pylint-hook-output.txt`) — the orchestrator's Phase
+     21.1 replan was rewriting its own plan files in this same worktree while pre-commit hashed
+     the tree. Nothing in this phase changed during those runs, and the attempt that finally
+     passed ran after those writes settled.
+  2. attempt 6 cleared pylint and then failed pyright on a real defect:
+     `tests/gsd_curated_eval.py` `_baked_chain` — the cursor branch
+     (`promised_map = {agent: None for agent in agents}`) inferred `dict[str, None]`, which pyright
+     rejects as `dict[str, str | None]` because `dict` is invariant in its value type. Verified
+     pre-existing: the same error reproduces at `HEAD~1` before this plan touched the file (21-03
+     introduced the branch; no `make validate` run is recorded between 21-03 and this plan). Fixed in-phase as
+     commit `a3fab6d` by annotating `promised_map: dict[str, str | None]` once above the branch —
+     one dev-harness module, no product module, so no decimal phase (R8); the check that catches it
+     is pyright itself, in the gate log above and in every future `make validate`.
+- `python3 -m unittest tests.test_gate_scope`: `Ran 34 tests ... OK` — this plan added no test
+  module (the new cases live in `tests/test_gsd_curated_eval.py`, already registered), so no group
+  registration changed and the rule that enforces it still passes.
+- `make e2e-docker`: `exit=0` (`tmp/p21/gates/docker.txt`) — run because `SKILL.md` changed in this
+  phase (the container builds from the current tree, so it validated 21-05's wording too); engine
+  `podman`; the container's own matrix smoke reported `matrix ran: 420 checks`; `protected set
+  unchanged`; `e2e ok`; final line `==> ai-kit clean-room E2E: PASS`.
+- skill-judge: **gate not passed — `UNRESOLVED (owner review)`**. The verifier accepts only
+  `PASS`/`GREEN`/`APPROVED`/`MERGED`, so its recorded result is `exit=1`, and Phase 21 cannot be
+  marked complete: the in-session row `CURRENT 110/120` meets its floor (109, Phase 20's in-session
+  final), with 0 Critical and 0 Important. The independent row — `pi` / `openai/gpt-6.1-sol:xhigh`,
+  12 turns, 22 files — reports `CURRENT 114/120` with 0 Critical and 0 Important, which is **below
+  the 116 floor this lane inherits from Phase 20's final** (`20-SKILL-JUDGE.md`: in-session 109/120,
+  pi 116/120, "the floors for this phase" per 21-05-PLAN.md). Staleness is not the issue: both
+  reports' `DIGEST` line is `85da5a6682d937c5`, equal to the current
+  `python3 tests/gsd_curated_eval.py digest` (`tmp/p21/gates/digest-now.txt`), so both judges
+  scored exactly the skill 21-05 amended.
+  This plan's own rule is unforgiving about that state — "`UNRESOLVED` fails the gate outright (a
+  defect to fix in SKILL.md by the 21-05 fix loop, then the judge re-run), as does a pending marker"
+  — so the remedy it prescribes is: edit `skills/ai-kit-gsd-curated-config/SKILL.md` against
+  `skill-judge/ai-kit-gsd-curated-config-pi-gpt-6.1-sol-xhigh.md` §Findings (its four Minor items:
+  the lines 303-305 repetitions of 179-182 / 136-144 / 159-164, the runner-readiness duplication
+  across layers, the repeated initial questions, and the unquoted target path in the runner
+  verification step) and its §Top 3 improvements, then re-key
+  `python3 tests/gsd_curated_eval.py digest` and re-run **both** judges on the new digest —
+  in-session per the `skill-judge` skill, and independently
+  `node .planning/scripts/cross-ai.mjs --prefer pi --model-pi openai/gpt-6.1-sol:xhigh --mode review --effort xhigh --timeout-s 1800 --files skills/ai-kit-gsd-curated-config/SKILL.md`
+  — replacing `UNRESOLVED (owner review)` in `21-SKILL-JUDGE.md` with the new round before Phase 21
+  can be marked complete.
+  That fix loop was **not** run here, for reasons that are evidence rather than excuse: this plan's
+  own task-2 action forbids running an AI CLI (`cursor-agent`, `pi`, `codex`, `opencode`, `claude`)
+  because the interactive Cursor run belongs to uz, so the pi re-judge could not be dispatched; and
+  editing `SKILL.md` first would change the judged bytes, making both current reports `STALE`
+  (`skill-judge: STALE (digest 85da5a6682d937c5 != <new>) — gate not passed`), which is strictly
+  weaker evidence than the state now recorded — the reports are today byte-exact with the tree they
+  judge. Under the same D-04/R8 rule the plan cites, work needing both judges re-run is a decimal
+  phase "recorded in the SUMMARY and inserted through the orchestrator", not an executor improvisation.
+  The open question for uz is whether pi's 114 is a strict-score regression (the rubric's `CURRENT`
+  is the strict reading, and the floor is the project's rule rather than the judge's own
+  recommendation — pi graded this report "A — production-ready", "Remaining issues are minor") or a
+  variance to accept: pi has scored 114/120 on this same skill before, in Phase 19
+  (`19-SKILL-JUDGE.md`: `SCORE: 109/120 (pi gpt-6.1-sol: 114/120; pi glm-5.3: unavailable)`), and
+  115/120 as Phase 20's executor dispatch (with 1 Important, fixed to 116 in the final), so 114 sits
+  inside this judge's historical spread — which is exactly why `21-SKILL-JUDGE.md` routes it as
+  `owner decides whether that is judge variance (accept as PASS) or a regression to fix`. Either way
+  the recorded gate state stays **not passed** and Phase 21 stays `human_needed`.
+- `21-SKILL-JUDGE.md` precondition (`no pending (orchestrator) marker`): satisfied in substance —
+  the orchestrator replaced 21-05's hand-off marker with a real in-session report
+  (`skill-judge/in-session.md`: `CURRENT 110/120`, `CRITICAL 0`, `IMPORTANT 0`,
+  `DIGEST 85da5a6682d937c5`), so Task 2's gate work could start on a complete hand-off. The literal
+  grep still matches one line, `21-SKILL-JUDGE.md:39`, which is narrative prose *quoting the rule*
+  ("21-06 Task 2's precondition refuses any `pending (orchestrator)` marker in this file") rather
+  than a marker: no score row is pending, and the in-session row is the orchestrator's to own.
+  `21-SKILL-JUDGE.md` is the judges' artifact, so it was not edited to make a grep go quiet — the
+  distinction is recorded here instead.
+- Consequence for this plan's `<verify><automated>` block, stated plainly. The block was extracted
+  verbatim into `tmp/p21/gates/verify-task2.sh` and traced (`tmp/p21/gates/verify-trace.txt`): it
+  aborts at `! grep -rq 'pending (orchestrator)' …` — see the precondition line above — and behind
+  that, its skill-judge clause accepts only `PASS` + a `STALE` line with a digest mismatch, or
+  `BLOCKED: pi judge unavailable` + the `gate not passed` line; the verdict here is neither, so the
+  command cannot exit 0 in this state. The three ways to force it were all rejected on purpose: write
+  `## Verdict: BLOCKED: pi judge unavailable` (false — the pi judge ran, three rounds), write
+  `skill-judge: PASS` (false — 114 < 116), or edit `SKILL.md` to re-key the digest without being able
+  to re-judge (would void the two byte-exact reports). Removing exactly those two judge clauses
+  (`tmp/p21/gates/verify-task2-rest.sh`, trace `verify-trace-rest.txt`) lets the chain run all the way
+  to its final clause and stop only there: `test -z "$(git status --porcelain)"`. Re-run after this
+  plan's `docs(21-06)` commit, that clause is the only remaining failure, and what it lists is other
+  sessions' work — the two untracked `.planning/phases/21.2-*/21.2-RESEARCH.md` and
+  `21.3-*/21.3-RESEARCH.md` (the `21.1-*` files that raced the validate attempts were committed by
+  that session as `41193a4` and `6b65a9d` while this plan ran). Nothing this plan owns is uncommitted:
+  `c4dba7f`, `a3fab6d` and the docs commit are the full set. With that clause removed too
+  (`tmp/p21/gates/verify-task2-rest-notree.sh`) the chain exits `0`, so every other clause — test
+  counts, loader equality, `validate`, `gate_scope`, docker, `snapshot ok`, secret scan, the `$HOME`
+  grep, the pgid/leak/scratch-home proofs, `## Phase gates`, and the SUMMARY's
+  `phase status: human_needed` + `21-INTERACTIVE-CURSOR.md` mentions — is verified green here rather
+  than hidden behind a short-circuit.
+- `python3 tests/gsd_curated_eval.py snapshot --check tmp/p21/plan06.before.json` → `snapshot ok`
+  (`tmp/p21/gates/snapshot-plan06.txt`); the line is printed only when no strict entry failed, so it
+  is the exit-0 proof itself. No `--host-rewrite` exemption was needed or used for it: the flag only
+  applies when a host rewrite lands on `~/.cursor/cli-config.json` mid-run, and this plan's
+  protected set never changed. Older baselines, information only: `--check tmp/p21/plan04.before.json`
+  → `snapshot ok` and `--check tmp/p21/plan05.before.json` → `snapshot ok` — so nothing wrote to
+  `~/.cursor/cli-config.json` (or any other protected path) during 21-04, 21-05 or 21-06.
+- Secret scan / leak: `python3 tests/gsd_curated_eval.py secret-scan
+  .planning/phases/21-cursor-live-validation` → `exit=0` (no finding; the command's own output
+  names only paths), and `grep -rF -l -- "$HOME" .planning/phases/21-cursor-live-validation` →
+  `exit=1`, no path printed: this plan's artifacts carry no machine-specific home path, no digest
+  value and no credential content.
+- Leak check: `bash tmp/p21/gates/leak-check.sh tmp/p21/gates/ps-final.txt` — the pattern list
+  (`cursor-agent`, `worker-server`, `cross-ai`, `gsd_curated_eval`, each in the `[c]`-bracket form so
+  the checking shell's own argv cannot match it) lives in a file rather than in the command line,
+  because a first attempt run inline reported a second "new" line that was the checker itself
+  (`etimes=0`). Run clean, it returns one line, and that line is also present in 21-04's
+  pre-dispatch capture `tmp/p21/headless/ps-before.txt` — a two-day-old shell whose own command
+  string merely mentions those binaries. Nothing this phase dispatched remains: the run wrapper, its
+  `cross-ai.mjs` child, every `node -e while` idle probe and every `worker-server` 21-04's dispatch
+  left are gone. All twelve `spawn <pid>` entries in `tmp/p21/headless/cursor-run1.pgid` report an
+  empty process group, and no `cursor-probe*.pgid` file exists because no probe was dispatched.
+  `gc-late`/`node -e while` strays: none, so the standing cleanup rule had nothing to remove.
+- Scratch home: `scratch home removed: yes` — the path recorded in
+  `tmp/p21/headless/scratch-home.txt` (`/tmp/p21-cursor-home.SysiYq`) no longer exists, and no
+  `/tmp/p21-cursor-home.*` directory exists at all. 21-04's own teardown ran before this plan, so
+  this plan never ran the D-19 late-teardown clause (recorded below). The `auth.json` symlink
+  pointing at the user's real login was removed with the scratch home; it was never read, listed or
+  hashed — only `test -L`/`test ! -e`.
