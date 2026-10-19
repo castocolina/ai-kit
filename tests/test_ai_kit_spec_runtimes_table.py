@@ -96,6 +96,22 @@ class TestRuntimeTable(unittest.TestCase):
         for label in labels.values():
             self.assertIn(" ".join(label.split()), doc)
 
+    def test_cursor_label_is_live_verified_headless(self):
+        """Phase 21 upgraded the cursor signal from the headless env dump only.
+
+        The label must stop at what that evidence supports: names-only, with the
+        TUI listing still pending, so it can never read as fully confirmed.
+        """
+        labels = dict(detection.RUNTIMES["cursor"].host_signals)
+        self.assertEqual(set(labels), {"CURSOR_AGENT"})
+        label = labels["CURSOR_AGENT"]
+        self.assertTrue(label.startswith("live-verified (Phase 21)"), label)
+        self.assertIn("21-SMOKE-CURSOR.md", label)
+        self.assertIn("TUI confirmation pending", label)
+        self.assertNotIn("source-inspected-only", label)
+        doc = " ".join((detection.detect_current_runtime.__doc__ or "").split())
+        self.assertIn(" ".join(label.split()), doc)
+
     def test_non_claude_hosts_have_no_native_selectors(self):
         from ai_kit_spec.routing import host_can_select
 

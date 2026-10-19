@@ -47,8 +47,9 @@ _LABEL_OPENCODE = (
     "--standalone env dump, names only; 20-SMOKE-OPENCODE.md)."
 )
 _LABEL_CURSOR = (
-    "source-inspected-only — confirmed via the installed cursor-agent bundle's own "
-    "`index.js`, not a live subprocess."
+    "live-verified (Phase 21) via a headless cursor-agent 2026.10.14-941492e session's env dump "
+    "(names only; 21-SMOKE-CURSOR.md) — TUI confirmation pending "
+    "21-INTERACTIVE-CURSOR.md step 2."
 )
 # One label for both codex signals (D-05 keeps both names; the evidence is the same run).
 _LABEL_CODEX = (
@@ -253,8 +254,10 @@ def detect_current_runtime(env: Mapping[str, object] | None = None) -> str:
     - opencode (`OPENCODE`): live-verified (01.2 on opencode 1.x; Phase 20
       on v2.0.31 via a headless opencode run --standalone env dump, names only;
       20-SMOKE-OPENCODE.md).
-    - cursor (`CURSOR_AGENT`): source-inspected-only — confirmed via the
-      installed cursor-agent bundle's own `index.js`, not a live subprocess.
+    - cursor (`CURSOR_AGENT`): live-verified (Phase 21) via a headless
+      cursor-agent 2026.10.14-941492e session's env dump (names only;
+      21-SMOKE-CURSOR.md) — TUI confirmation pending
+      21-INTERACTIVE-CURSOR.md step 2.
     - codex (`CODEX_THREAD_ID`): live-verified (Phase 20) via a headless
       codex exec 0.162.1 session's env dump (names only; 20-SMOKE-CODEX.md) —
       TUI confirmation pending 20-INTERACTIVE-CODEX.md step 2.

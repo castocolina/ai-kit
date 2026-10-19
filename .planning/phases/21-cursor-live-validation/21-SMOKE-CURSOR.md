@@ -292,7 +292,11 @@ exit "$rc"
 ```
 
 ## Label
-pending Task 2
+branch (A) — `_LABEL_CURSOR` upgraded to live-verified (Phase 21) (headless; TUI confirmation pending
+`21-INTERACTIVE-CURSOR.md` step 2), because `CURSOR_AGENT` was in the names-only list and
+`signals.txt` reads `signals clean`. The docstring bullet carries the same wording and
+`test_cursor_label_is_live_verified_headless` pins it. Commit: `feat(21-04): cursor env signal
+live-verified from the headless cursor session` (this commit; sha: `git log --format=%h -1 --grep 'feat(21-04)'`).
 
 ## Interactive run
 pending: `21-INTERACTIVE-CURSOR.md`; the user's TUI env names, smoke and artifacts are the SPEC R1 acceptance evidence.
