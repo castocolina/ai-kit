@@ -1551,9 +1551,9 @@ class TestParseCursorModels(unittest.TestCase):
         self.assertTrue(all(re.fullmatch(r"[A-Za-z0-9._-]+", model) for model in ids))
 
     def test_non_ascii_id_is_unrecognized_and_does_not_hide_valid_ids(self):
-        self.assertIsNone(detection.parse_cursor_models("Available models\n\nm\\u00f6del - X\n"))
+        self.assertIsNone(detection.parse_cursor_models("Available models\n\nm\u00f6del - X\n"))
         self.assertEqual(detection.parse_cursor_models(
-            "Available models\n\nok-1 - A\nm\\u00f6del - X\n"), ["ok-1"])
+            "Available models\n\nok-1 - A\nm\u00f6del - X\n"), ["ok-1"])
 
     def test_empty_account_fixture(self):
         self.assertEqual(detection.parse_cursor_models(
@@ -1567,7 +1567,17 @@ class TestParseCursorModels(unittest.TestCase):
 
     def test_ansi_header_and_nameless_model(self):
         self.assertEqual(detection.parse_cursor_models(
-            "\\x1b[2mAvailable models\\x1b[0m\n\nauto (current, default)\n"), ["auto"])
+            "\x1b[2mAvailable models\x1b[0m\n\nauto (current, default)\n"), ["auto"])
+        # Each case below fails if the ANSI strip is removed.
+        self.assertEqual(detection.parse_cursor_models("\x1b[2mAvailable models\x1b[0m\n"), [])
+        self.assertEqual(detection.parse_cursor_models(
+            "Available models\n\n\x1b[1mcomposer-2.5\x1b[0m - C\n"), ["composer-2.5"])
+
+    def test_bare_token_without_header_is_unrecognized(self):
+        for text in ("Loading...\n", "Error\n", "Unauthorized\n", "auto (current, default)\n"):
+            with self.subTest(text=text):
+                self.assertIsNone(detection.parse_cursor_models(text))
+        self.assertEqual(detection.parse_cursor_models("composer-2.5 - C\n"), ["composer-2.5"])
 
     def test_tip_only_is_empty_and_unrecognized_text_is_none(self):
         self.assertEqual(detection.parse_cursor_models(

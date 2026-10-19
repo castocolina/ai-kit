@@ -313,18 +313,25 @@ def parse_cursor_models(stdout: str) -> list[str] | None:
     """Parse cursor-agent models output without raising.
 
     Returns [] for a recognized empty listing and None for unrecognized output. Model ids
-    are ASCII tokens restricted to letters, digits, period, underscore, and hyphen.
+    are ASCII tokens restricted to letters, digits, period, underscore, and hyphen. A
+    nameless line (`auto (current, default)`) counts only after the `Available models`
+    header, so a stray `Loading...` or `Error` is not read as a model id. The runner
+    template's `parseCursorListingIds` applies the same rule.
     """
     models: list[str] = []
     unrecognized = False
+    seen_header = False
     for raw in _ANSI_RE.sub("", stdout).splitlines():
         line = raw.strip()
-        if not line or line == "Available models" or line.startswith("Tip:"):
+        if line == "Available models":
+            seen_header = True
+            continue
+        if not line or line.startswith("Tip:"):
             continue
         if line == "No models available for this account.":
             continue
         match = _CURSOR_MODEL_LINE.fullmatch(line)
-        if match:
+        if match and (seen_header or " - " in line):
             models.append(match.group(1))
         else:
             unrecognized = True
