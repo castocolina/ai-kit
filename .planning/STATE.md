@@ -470,6 +470,7 @@ any order, or deferred, without blocking anything else in this milestone.
 
 | Phase | State | Resume |
 |-------|-------|--------|
+| 21 | human_needed (5/5 roadmap criteria, 0 gaps; 2026-10-19) | uz runs `21-INTERACTIVE-CURSOR.md` steps 1-4; owner decides the skill-judge UNRESOLVED (pi 114 vs 116 baseline) after the pending re-judge on digest f0c43a5da52a587d; then `/gsd-verify-work 21` |
 | 20 | human_needed (8/9 automated truths, 0 gaps; 2026-10-18) | uz runs `20-INTERACTIVE-OPENCODE.md`, then `/gsd-verify-work 20`; EVAL-05 stays Pending until then. The codex TUI run (EVAL-04) is deferred to backlog 999.6 (codex is a secondary runtime) |
 
 Phase 16: 4/4 success criteria verified 2026-10-14; the one human item (real codex/pi host signal) is scheduled for Phases 20 and 22.
