@@ -16,6 +16,7 @@ JevStub`), the precedent of tests/test_curated_config_followups.py. Method tags
 import ast
 import datetime
 import hashlib
+import http.client
 import http.server
 import importlib.util
 import io
@@ -25,6 +26,7 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -119,7 +121,10 @@ class JevStub:
     ``{"status": ..., "headers": ..., "body": ...}`` entries (a ``None`` entry answers
     normally, an ``{"answer": True, "truncated": bool}`` entry answers that request's
     questions with the given ``usage.truncated`` value), which is how the error-taxonomy and
-    the truncated-escalation cases are driven.
+    the truncated-escalation cases are driven. An entry with ``drip`` (seconds per byte) and
+    ``drip_part`` (`body` by default, `headers`, `chunked`) trickles a raw response one byte
+    per interval for the total-deadline cases; the trickle stops when the client gives up or
+    the stub is closed.
     """
 
     def __init__(self, model="laya-rl-agent", top=0.9, tops=None, truncated=False,
@@ -133,6 +138,7 @@ class JevStub:
         self.health = health
         self.script = list(script or [])
         self.places = places  # how the provider rounds: Laya 4 decimals, TypeSafe 2
+        self.stopped = False  # set when __exit__ begins: an in-flight drip must stop at once
         self.requests = []
         self.server: http.server.ThreadingHTTPServer | None = None
         self.thread: threading.Thread | None = None
@@ -153,6 +159,9 @@ class JevStub:
                 if stub.delay:
                     time.sleep(stub.delay)
                 entry = stub.take_script()
+                if entry is not None and entry.get("drip") is not None:
+                    stub.drip_reply(self, entry)
+                    return
                 if entry is None:
                     entry = {"status": 200, "body": stub.answer_json(raw)}
                 elif entry.get("answer"):
@@ -184,6 +193,7 @@ class JevStub:
 
     def __exit__(self, *_exc):
         assert self.server is not None and self.thread is not None  # set by __enter__
+        self.stopped = True
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
@@ -212,6 +222,47 @@ class JevStub:
 
     def take_script(self):
         return self.script.pop(0) if self.script else None
+
+    def drip(self, handler, data, interval):
+        """Write `data` one byte per `interval` seconds, stopping on close or a dead socket."""
+        for index in range(len(data)):
+            if self.stopped:
+                return
+            try:
+                handler.wfile.write(data[index:index + 1])
+                handler.wfile.flush()
+            except OSError:  # the run's watchdog shut the socket down: nothing to report
+                return
+            if interval:
+                time.sleep(interval)
+
+    def drip_reply(self, handler, entry):
+        """Send one scripted response raw, trickling the part named by `drip_part`.
+
+        `headers` dribbles the status line and the whole header block; `body` sends the
+        headers at once and dribbles the body; `chunked` sends chunked headers at once and
+        dribbles a chunk-size line padded with leading zeros. This is how a server that keeps
+        every individual read under the socket timeout is tested against the total deadline.
+        """
+        status = entry.get("status", 200)
+        body = entry.get("body", b"")
+        if isinstance(body, str):
+            body = body.encode()
+        head = f"HTTP/1.1 {status} {http.client.responses.get(status, 'OK')}\r\n".encode()
+        for key, value in (entry.get("headers") or {}).items():
+            head += f"{key}: {value}\r\n".encode()
+        head += b"\r\n"
+        part = entry.get("drip_part", "body")
+        if part == "headers":
+            self.drip(handler, head, entry["drip"])
+            if not self.stopped:
+                self.drip(handler, body, 0)
+        elif part == "chunked":
+            self.drip(handler, head, 0)
+            self.drip(handler, b"0" * 300 + b"1\r\n", entry["drip"])
+        else:
+            self.drip(handler, head, 0)
+            self.drip(handler, body, entry["drip"])
 
     def answer_json(self, raw, truncated=None):
         questions = (_maybe_json(raw) or {}).get("questions") or {}
@@ -337,7 +388,7 @@ class _ClientCase(unittest.TestCase):
         row = dict(JR.row_named("laya"))
         row.update({"name": name, "models": ("q-1", "q-2"), "model_env": "JEV_Q_MODEL",
                     "url": lambda: (stub.url, None), "key": lambda: ("k", "env"),
-                    "probe": lambda _row, _timeout: None})
+                    "probe": lambda _row, _timeout, _deadline: None})
         row.update(changes)
         return row
 
@@ -714,9 +765,9 @@ class TestTaxonomy(_ClientCase):
         real_send = JR._send
         calls = []
 
-        def flaky(row, body, timeout):
+        def flaky(row, body, timeout, deadline=None):
             calls.append(body)
-            response, encoded = real_send(row, body, timeout)
+            response, encoded = real_send(row, body, timeout, deadline)
             if len(calls) == 2:
                 raise OSError("down")
             return response, encoded
@@ -1538,6 +1589,287 @@ class TestConsent(_ClientCase):
         self.assertEqual(set(raw["typesafe"]), {"host", "granted"})
         self.assertEqual(raw["typesafe"]["host"], "127.0.0.1")
         self.assertEqual(mode, 0o600)  # mkstemp's mode carried over by os.replace
+
+
+class TestAnswerLog(_ClientCase):
+    """D-19, SPEC R7: one line per dispatched item in `$XDG_STATE_HOME/ai-kit` — and nothing
+    the caller did not send as its own question: no context, no state, no criteria text, no
+    key value, no image data."""
+
+    LOG_FIELDS = {"ts", "caller", "id", "type", "instructions", "backend", "model",
+                  "choice", "top", "needs_fallback", "request_sha256"}
+
+    def log_lines(self):
+        path = JR.answer_log_path()
+        if not os.path.exists(path):
+            return []
+        with open(path, encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
+
+    def reset_state(self, tag):
+        """A fresh state root per subtest: each case counts lines in its own file."""
+        os.environ["XDG_STATE_HOME"] = str(self.tmp / f"state-{tag}")
+
+    def test_answer_log_three_items(self):
+        self.enable("laya")
+        with JevStub(top=0.9) as stub:
+            self.point_at(stub)
+            result = self.run_screen(payload(noul_item("a"), choice_item("b"),
+                                             score_item("c")))
+        self.assertEqual(result["status"], "ok")
+        lines = self.log_lines()
+        self.assertEqual([line["id"] for line in lines], ["a", "b", "c"])
+        self.assertEqual(set(lines[0]), self.LOG_FIELDS)
+        self.assertEqual(lines[0]["caller"], "direct")
+        self.assertEqual(lines[0]["choice"], "yes")  # a noul item's pick is yes or no
+        self.assertEqual(lines[0]["backend"], "laya")
+        self.assertEqual(lines[1]["choice"], "bug")
+        self.assertEqual(set(lines[2]), self.LOG_FIELDS - {"choice"} | {"score"})
+        os.environ["JEV_CALLER"] = "ai-kit-gsd-spec-discuss"
+        with JevStub(top=0.9) as stub:
+            self.point_at(stub)
+            self.run_screen(payload(noul_item("a")))
+        self.assertEqual(self.log_lines()[-1]["caller"], "ai-kit-gsd-spec-discuss")
+
+    def test_answer_log_unwritable(self):
+        # SPEC R7: a log failure never changes the answer or the exit code.
+        self.enable("laya")
+        with JevStub() as stub:
+            self.point_at(stub)
+            baseline = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(baseline["status"], "ok")
+        for tag, point in (("file", self.tmp / "plain-file"), ("ro", self.tmp / "ro-state")):
+            with self.subTest(state=tag):
+                if tag == "file":
+                    point.write_text("a regular file where a directory belongs")
+                else:
+                    point.mkdir(mode=0o500)
+                    self.addCleanup(point.chmod, 0o700)  # so cleanup can remove the tree
+                os.environ["XDG_STATE_HOME"] = str(point)
+                with JevStub() as stub:
+                    self.point_at(stub)
+                    result = self.run_screen(payload(noul_item("a")))
+                self.assertEqual(result, baseline)
+                self.assertFalse((point / "ai-kit").exists())
+
+    def test_answer_log_no_secrets(self):
+        # D-19: a fixed field list, never a filtered dump — but prove the sentinels stay out.
+        os.environ["TYPESAFE_API_KEY"] = "TYPESAFE-KEY-SENTINEL"
+        self.enable("laya")
+        item = choice_item("b", context="CONTEXT-SENTINEL")
+        item["criteria"] = {"bug": "CRITERIA-SENTINEL", "style": "s", "other": "o"}
+        with JevStub() as stub:
+            self.point_at(stub)
+            self.run_screen(payload(item))
+        blob = Path(JR.answer_log_path()).read_bytes()
+        self.assertNotIn(b"SENTINEL", blob)
+
+    def test_answer_log_edges(self):
+        self.enable("laya")
+        with self.subTest(case="long instructions"):
+            self.reset_state("long")
+            item = noul_item("a")
+            item["instructions"] = "i" * 1500
+            with JevStub() as stub:
+                self.point_at(stub)
+                self.run_screen(payload(item))
+            self.assertEqual(len(self.log_lines()[0]["instructions"]), 1500)
+        with self.subTest(case="errored item"):
+            self.reset_state("errored")
+            with JevStub(script=[{"status": 422, "body": b"nope"}]) as stub:
+                self.point_at(stub)
+                self.run_screen(payload(noul_item("a")))
+            lines = self.log_lines()
+            self.assertEqual(len(lines), 1)
+            self.assertIn("error", lines[0])
+            for field in ("choice", "score", "model", "top"):
+                self.assertNotIn(field, lines[0])
+        with self.subTest(case="runs that dispatch nothing"):
+            def disabled_run():
+                os.environ.pop("GSD_PATH_JEV", None)  # the kill switch: screen returns early
+                return self.run_screen(THREE_ITEMS)
+
+            def invalid_run():
+                self.enable("laya")
+                return self.run_screen(None, stdin_text="not json")
+
+            for case, run in (("disabled", disabled_run), ("invalid", invalid_run),
+                              ("consent", self.screen_without_consent)):
+                with self.subTest(run=case):
+                    self.reset_state(case)
+                    result = run()
+                    self.assertEqual(self.log_lines(), [])
+                    self.assertFalse(os.path.exists(JR.answer_log_path()))
+                    self.assertNotEqual(result["status"], "ok")
+        with self.subTest(case="newline stays one line"):
+            self.reset_state("newline")
+            self.enable("laya")
+            item = noul_item("a")
+            item["instructions"] = "two\nlines"
+            with JevStub() as stub:
+                self.point_at(stub)
+                self.run_screen(payload(item))
+            with open(JR.answer_log_path(), encoding="utf-8") as handle:
+                self.assertEqual(len([line for line in handle if line.strip()]), 1)
+            self.assertEqual(self.log_lines()[0]["instructions"], "two\nlines")
+        with self.subTest(case="top keeps its decimals"):
+            self.reset_state("top")
+            self.enable("laya")
+            with JevStub(top=0.8333) as stub:
+                self.point_at(stub)
+                self.run_screen(payload(noul_item("a")))
+            self.assertEqual(self.log_lines()[0]["top"], 0.8333)
+
+    def screen_without_consent(self):
+        """Auto mode with a keyed-but-unconsented remote and no Laya: consent_required."""
+        os.environ["TYPESAFE_API_KEY"] = "typesafe-key"
+        os.environ.pop("JEV_BACKEND", None)
+        self.enable(None)
+        return self.run_screen(payload(noul_item("a")))  # JEV_LAYA_URL: the closed default
+
+    def test_answer_log_mode_and_symlink(self):
+        self.enable("laya")
+        with JevStub() as stub:
+            self.point_at(stub)
+            self.run_screen(payload(noul_item("a")))
+        self.assertEqual(os.stat(JR.answer_log_path()).st_mode & 0o777, 0o600)
+        target = self.tmp / "elsewhere.jsonl"
+        target.write_text("keep out\n", encoding="utf-8")
+        os.unlink(JR.answer_log_path())
+        os.symlink(target, JR.answer_log_path())
+        with JevStub() as stub:
+            self.point_at(stub)
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(result["status"], "ok")  # O_NOFOLLOW refused the symlink, quietly
+        self.assertEqual(target.read_text(encoding="utf-8"), "keep out\n")
+
+    # Run by `-c`: no import, no cache, load the module by path and append 200 lines.
+    WORKER = ("import importlib.util, json, sys\n"
+              "spec = importlib.util.spec_from_file_location('jr', sys.argv[1])\n"
+              "module = importlib.util.module_from_spec(spec)\n"
+              "spec.loader.exec_module(module)\n"
+              "lines = [json.dumps({'worker': sys.argv[2], 'i': i}) + '\\n'\n"
+              "         for i in range(200)]\n"
+              "module.append_answer_log(lines)\n")
+
+    def test_answer_log_two_processes_backstop(self):
+        # T-21.1-05's premise, measured rather than trusted: concurrent O_APPEND writers.
+        workers = [subprocess.Popen([sys.executable, "-B", "-c", self.WORKER, str(SCRIPT), tag],
+                                    env=dict(os.environ), stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+                   for tag in ("w1", "w2")]
+        for worker in workers:
+            self.assertEqual(worker.wait(timeout=120), 0)
+        lines = self.log_lines()
+        self.assertEqual(len(lines), 400)
+        self.assertEqual(sorted({line["worker"] for line in lines}), ["w1", "w2"])
+
+    def test_answer_log_short_write(self):
+        # A short write stops this run's logging: no second write that could tear another
+        # process's line, and no exception the caller would have to forgive (T-21.1-05).
+        calls = []
+
+        def half(_fd, data):
+            calls.append(len(data))
+            return len(data) // 2
+
+        with mock.patch.object(os, "write", half):
+            JR.append_answer_log(["first line\n", "second line\n"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(Path(JR.answer_log_path()).read_text(encoding="utf-8"), "")
+
+
+class TestDeadline(_ClientCase):
+    """D-12, SPEC R7: GSD_PATH_JEV_DEADLINE_SECONDS bounds the whole run — probes, requests,
+    waits and body reads alike — and a server that trickles bytes at any layer cannot push
+    the run past its own instant. Partial answers come back; the deadline never escalates."""
+
+    def wire_typesafe(self, laya, typesafe):
+        """Auto mode, Laya on `laya`, a granted typesafe record over `typesafe`'s origin."""
+        self.point_at(laya)
+        self.point_remote("typesafe", typesafe)
+        os.environ["TYPESAFE_API_KEY"] = "typesafe-key"
+        JR.consent_command("grant", "typesafe")
+        self.enable(None)
+        os.environ["GSD_PATH_JEV_DEADLINE_SECONDS"] = "0.5"
+
+    def test_deadline_partial(self):
+        self.enable("laya")
+        os.environ["GSD_PATH_JEV_DEADLINE_SECONDS"] = "0.5"
+        with JevStub(delay=0.3) as stub:
+            self.point_at(stub)
+            started = time.monotonic()
+            result = self.run_screen(payload(noul_item("a1"), noul_item("a2"), noul_item("a3")))
+            elapsed = time.monotonic() - started
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(list(result["answers"]), ["a1"])  # the one request that finished
+        self.assertEqual(result["errors"], {"a2": "deadline", "a3": "deadline"})
+        self.assertNotIn("network_error", result["errors"].values())
+        self.assertEqual(len(stub.posts), 2)  # the third item never got a request
+        self.assertLess(elapsed, 1.5)
+
+    def test_deadline_never_escalates(self):
+        laya, typesafe = JevStub(delay=0.3), JevStub(model="typesafe-1")
+        with laya, typesafe:
+            self.wire_typesafe(laya, typesafe)
+            started = time.monotonic()
+            result = self.run_screen(payload(noul_item("a1"), noul_item("a2"), noul_item("a3")))
+            elapsed = time.monotonic() - started
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(list(result["answers"]), ["a1"])
+        self.assertEqual(result["errors"], {"a2": "deadline", "a3": "deadline"})
+        self.assertEqual(typesafe.posts, [])  # a deadline is final: it never climbs a rung
+        self.assertLess(elapsed, 1.5)
+
+    def run_drip(self, drip):
+        """The trickle setup shared by the three deadline-at-any-layer cases: item one is
+        answered normally, item two gets `drip`, and the run must stop at the deadline."""
+        laya = JevStub(script=[None, drip])
+        typesafe = JevStub(model="typesafe-1")
+        with laya, typesafe:
+            self.wire_typesafe(laya, typesafe)
+            os.environ["GSD_PATH_JEV_DEADLINE_SECONDS"] = "0.8"
+            started = time.monotonic()
+            result = self.run_screen(payload(noul_item("a1"), noul_item("a2")))
+            elapsed = time.monotonic() - started
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["answers"]["a1"]["backend"], "laya")
+        self.assertEqual(result["errors"], {"a2": "deadline"})
+        self.assertEqual(typesafe.posts, [])
+        self.assertLess(elapsed, 2.0)
+
+    def test_deadline_slow_drip(self):
+        # A body of 4000 bytes dribbled at one byte per 0.05 s: every individual read stays
+        # under the socket timeout — only the deadline (and its watchdog) can stop this.
+        self.run_drip({"drip": 0.05, "drip_part": "body", "status": 200,
+                       "headers": {"Content-Type": "application/json",
+                                   "Content-Length": "4000"},
+                       "body": b"p" * 4000})
+
+    def test_deadline_trickling_headers(self):
+        # urllib reads the status line and headers inside its own readline calls, below the
+        # read1 loop: a >=100-byte header block at one byte per 0.05 s must still stop here.
+        self.run_drip({"drip": 0.05, "drip_part": "headers", "status": 200,
+                       "headers": {"Content-Type": "application/json",
+                                   "Content-Length": "4000", "X-Pad": "p" * 90},
+                       "body": b"p" * 4000})
+
+    def test_deadline_chunk_framing(self):
+        # Chunk framing is the third layer: the chunk-size line padded with leading zeros
+        # trickles forever inside http.client's own read.
+        self.run_drip({"drip": 0.05, "drip_part": "chunked", "status": 200,
+                       "headers": {"Transfer-Encoding": "chunked"}})
+
+    def test_deadline_invalid(self):
+        for value in ("abc", "0", "-1", "nan", "inf"):
+            with self.subTest(value=value):
+                self.enable("laya")
+                os.environ["GSD_PATH_JEV_DEADLINE_SECONDS"] = value
+                with JevStub() as stub:
+                    self.point_at(stub)
+                    result = self.run_screen(THREE_ITEMS)
+                self.assertEqual(result, {"status": "unavailable", "reason": "invalid_timeout"})
+                self.assertEqual(stub.requests, [])
 
 
 if __name__ == "__main__":
