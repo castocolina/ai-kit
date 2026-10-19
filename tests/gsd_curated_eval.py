@@ -186,6 +186,9 @@ def _dir_names(path: pathlib.Path, prefix: str = "") -> list[str] | None:
     return sorted(name for name in os.listdir(path) if name.startswith(prefix))
 
 
+CURSOR_CLI_CONFIG_LABEL = f"{HOME_LABEL}/.cursor/cli-config.json"
+
+
 def _strict_files(repo_root: pathlib.Path, home: pathlib.Path) -> dict[str, pathlib.Path]:
     """Strict hash-only entries: a change to any of them fails the batch."""
     planning = repo_root / ".planning"
@@ -207,7 +210,7 @@ def _strict_files(repo_root: pathlib.Path, home: pathlib.Path) -> dict[str, path
         # `<home>/.cursor/cli-config.json` is the one non-Claude CLI config detection.py
         # documents a listing probe rewriting (`cursor-agent models`), so it is strict: a
         # batch that let such a probe run against the real home must fail (review cycle 2).
-        f"{HOME_LABEL}/.cursor/cli-config.json": home / ".cursor" / "cli-config.json",
+        CURSOR_CLI_CONFIG_LABEL: home / ".cursor" / "cli-config.json",
         # Cursor's merged hooks file is possibly user-owned (T-21-19).
         f"{HOME_LABEL}/.cursor/hooks.json": home / ".cursor" / "hooks.json",
     }
@@ -224,8 +227,6 @@ def _strict_listings(repo_root: pathlib.Path, home: pathlib.Path) -> dict[str, l
         f"{HOME_LABEL}/.claude/skills": _dir_names(home / ".claude" / "skills"),
         f"{HOME_LABEL}/.claude/agents": _dir_names(home / ".claude" / "agents"),
         f"{HOME_LABEL}/.claude/commands": _dir_names(home / ".claude" / "commands"),
-        f"{HOME_LABEL}/.cursor/agents": _dir_names(home / ".cursor" / "agents"),
-        f"{HOME_LABEL}/.cursor/skills": _dir_names(home / ".cursor" / "skills"),
         f"{WORKTREE_LABEL}/.planning": _dir_names(repo_root / ".planning", "config.json"),
     }
 
@@ -305,14 +306,16 @@ def snapshot(repo_root: pathlib.Path | str, home: pathlib.Path | str, scratch_ro
     }
     strict.update(_strict_listings(root, home_dir))
     codex = home_dir / ".codex"
-    cursor = home_dir / ".cursor"
     opencode = home_dir / ".config" / "opencode"
     strict[f"{HOME_LABEL}/.codex/config.toml"] = _toml_semantic_sha(
         codex / "config.toml", scratch_roots
     )
     strict[f"{HOME_LABEL}/.codex/hooks.json"] = _file_sha(codex / "hooks.json")
-    strict[f"{HOME_LABEL}/.cursor/hooks.json"] = _file_sha(cursor / "hooks.json")
     strict[f"{HOME_LABEL}/.codex/agents"] = _tree_sha(codex / "agents")
+    # ai-kit's installer links agents and skills here, so an overwrite or a retargeted link
+    # must fail the batch, not only a new name (WR-04).
+    for name in ("agents", "skills"):
+        strict[f"{HOME_LABEL}/.cursor/{name}"] = _tree_sha(home_dir / ".cursor" / name)
     for name in ("opencode.jsonc", "opencode.json"):
         strict[f"{HOME_LABEL}/.config/opencode/{name}"] = _file_sha(opencode / name)
     for name in ("agents", "commands"):
@@ -333,9 +336,6 @@ def snapshot_diff(a: dict, b: dict) -> tuple[list[str], list[str]]:
         _diff_labels(a.get("strict") or {}, b.get("strict") or {}),
         _diff_labels(a.get("host_managed") or {}, b.get("host_managed") or {}),
     )
-
-
-CURSOR_CLI_CONFIG_LABEL = f"{HOME_LABEL}/.cursor/cli-config.json"
 
 
 def _split_host_rewrite(
@@ -4946,15 +4946,6 @@ def _build_parser() -> argparse.ArgumentParser:
     snap.add_argument(
         "--scratch-root", action="append", default=[], help="exclude this root's Codex trust rows"
     )
-    snap.add_argument(
-        "--host-rewrite",
-        action="append",
-        default=[],
-        metavar="LABEL",
-        choices=(CURSOR_CLI_CONFIG_LABEL,),
-        help="report a byte change of cursor's own cli-config.json without failing (the host "
-        "rewrites it during a session); every other entry stays strict",
-    )
     snap.set_defaults(func=_cmd_snapshot)
 
     dig = sub.add_parser("digest", help="the SKILL.md plus references/ digest of a skill")
@@ -5006,16 +4997,17 @@ def _build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--installer-dir", help="cached gsd-core package directory; never fetched")
     smoke.add_argument("--keep-scratch", action="store_true", help="keep scratch work directory")
     smoke.add_argument("--artifacts-out", help="copy labelled per-project artifacts here")
-    smoke.add_argument(
-        "--host-rewrite",
-        action="append",
-        default=[],
-        metavar="LABEL",
-        choices=(CURSOR_CLI_CONFIG_LABEL,),
-        help="report a byte change of cursor's own cli-config.json without failing (the host "
-        "rewrites it during a session); every other entry stays strict",
-    )
     smoke.set_defaults(func=_cmd_smoke)
+    for with_rewrite in (snap, smoke):
+        with_rewrite.add_argument(
+            "--host-rewrite",
+            action="append",
+            default=[],
+            metavar="LABEL",
+            choices=(CURSOR_CLI_CONFIG_LABEL,),
+            help="report a byte change of cursor's own cli-config.json without failing (the "
+            "host rewrites it during a session); every other entry stays strict",
+        )
 
     run = sub.add_parser("run", help="one cell of one scenario through claude -p")
     run.add_argument("scenario", choices=SCENARIOS)

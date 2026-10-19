@@ -17,7 +17,7 @@ return the artifacts and observations listed below.
   throwaway HOME and checks your `~/.cursor`, `~/.codex`, `~/.config/opencode`, `~/.claude` and
   `~/.gsd` allowlist before and after. The `~/.cursor` protected entries are
   `cli-config.json` (a strict byte entry), `hooks.json` (a strict byte entry) and the
-  `agents`/`skills` name listings (names only, never contents).
+  `agents`/`skills` tree hashes (file contents and link targets; never printed).
 - Cursor rewrites `~/.cursor/cli-config.json` during a session (`selectedModel`,
   `modelSelectionHistory`, `privacyCache`, `authInfo`), so that one strict entry is checked
   differently here: steps 3 and 4 pass `--host-rewrite '<home>/.cursor/cli-config.json'`,

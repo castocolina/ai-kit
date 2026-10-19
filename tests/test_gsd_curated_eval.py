@@ -404,7 +404,7 @@ class TestSnapshot(_ScratchPaths):
         self.assertIn(f"{ev.HOME_LABEL}/.gsd/defaults.json", strict)
 
     def test_cursor_agents_skills_hooks_are_protected(self) -> None:
-        """Cursor directory protection compares sorted names, never existing file contents."""
+        """Cursor agents/skills are tree-hashed: a new file and a content edit both fail."""
         before = self.snap()
         self.write(os.path.join(self.home, ".cursor", "agents", "new.md"), "agent\n")
         self.write(os.path.join(self.home, ".cursor", "skills", "new", "SKILL.md"), "skill\n")
@@ -421,7 +421,16 @@ class TestSnapshot(_ScratchPaths):
         before = self.snap()
         self.write(os.path.join(self.home, ".cursor", "agents", "new.md"), "changed\n")
         strict, host = ev.snapshot_diff(before, self.snap())
-        self.assertEqual(strict, [])
+        self.assertEqual(strict, [f"{ev.HOME_LABEL}/.cursor/agents"])
+        self.assertEqual(host, [])
+
+        link = os.path.join(self.home, ".cursor", "skills", "linked")
+        os.symlink(os.path.join(self.home, "a"), link)
+        before = self.snap()
+        os.remove(link)
+        os.symlink(os.path.join(self.home, "b"), link)
+        strict, host = ev.snapshot_diff(before, self.snap())
+        self.assertEqual(strict, [f"{ev.HOME_LABEL}/.cursor/skills"])
         self.assertEqual(host, [])
 
         before = self.snap()
