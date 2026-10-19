@@ -131,8 +131,8 @@ class JevStub:
         self.script = list(script or [])
         self.places = places  # how the provider rounds: Laya 4 decimals, TypeSafe 2
         self.requests = []
-        self.server = None
-        self.thread = None
+        self.server: http.server.ThreadingHTTPServer | None = None
+        self.thread: threading.Thread | None = None
 
     def __enter__(self):
         stub = self
@@ -176,7 +176,8 @@ class JevStub:
         self.thread.start()
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *_exc):
+        assert self.server is not None and self.thread is not None  # set by __enter__
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
@@ -184,6 +185,7 @@ class JevStub:
 
     @property
     def port(self):
+        assert self.server is not None  # set by __enter__
         return self.server.server_port
 
     @property
@@ -253,13 +255,13 @@ class _ClientCase(unittest.TestCase):
     def point_at(self, stub):
         os.environ["JEV_LAYA_URL"] = stub.url
 
-    def enable(self, backend="laya"):
+    def enable(self, backend: str | None = "laya"):
         os.environ["GSD_PATH_JEV"] = "1"
         os.environ["GSD_PATH_JEV_TIMEOUT_SECONDS"] = "5"
         if backend is not None:
             os.environ["JEV_BACKEND"] = backend
 
-    def enable_remote(self, backend=None):
+    def enable_remote(self, backend: str | None = None):
         """Consent and keys for both remote rows: the in-process stub is the only remote there is.
 
         `backend=None` keeps the choice on auto, which is how a remote rung gets reached by
@@ -1083,35 +1085,45 @@ class TestSeam(_ClientCase):
                         offenders.append((name, node.lineno, text[:60]))
         return offenders
 
-    def test_ast_no_backend_literal_outside_adapters(self):
+    def test_seam_ast_rule_accepts_the_real_client(self):
         # D-06. Docstrings are prose and are excluded: this is about a *branch* keyed on a name.
         tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
         code_only = [hit for hit in self.backend_literals(tree)
                      if not hit[2].startswith(("One stdlib", "None when", "The 2026"))]
         self.assertEqual(code_only, [])
 
-    def test_ast_check_is_not_vacuous(self):
-        source = SCRIPT.read_text(encoding="utf-8").replace(
-            "def rows_in_order():", 'def rows_in_order():\n    named = "laya"\n    return [named]')
-        hits = self.backend_literals(ast.parse(source))
-        self.assertTrue(hits, "a backend-named branch outside an adapter must be caught")
+    def test_seam_ast_rule_flags_a_name_branch(self):
+        # non-vacuity: the synthetic branch the plan names must be caught, or the rule is decoration
+        hits = self.backend_literals(ast.parse(
+            "def select(n):\n    return n == \"laya\"\n"))
+        self.assertEqual([hit[0] for hit in hits], ["laya"])
 
-    def test_stub_fourth_row_round_trips_through_the_generic_blocks(self):
-        # D-06: adding a backend means adding a row, not editing selection, dispatch or probe.
+    def test_seam_probe_lists_a_stub_fourth_row(self):
+        # D-06: adding a backend means adding a row, and `--probe` sees it with no other edit.
         with JevStub(model="laya-4") as stub:
             stub_row = self.stub_row("stub", stub)
             with mock.patch.object(JR, "TABLE", (*JR.TABLE, stub_row)):
-                self.enable("stub")
+                _code, report = self.run_probe()
+        self.assertIn("stub", [entry["name"] for entry in report["backends"]])
+        self.assertEqual(self.backend_entry(report, "stub")["usable"], True)
+        self.assert_no_posts(stub)  # a probe asks no question of any row
+
+    def test_seam_auto_order_selects_the_stub_row(self):
+        # Laya is unreachable here (the case default is a closed port), so the new row is the
+        # one auto selection picks, and the request lands on its own stub.
+        with JevStub(model="laya-4") as stub:
+            stub_row = self.stub_row("stub", stub)
+            with mock.patch.object(JR, "TABLE", (*JR.TABLE, stub_row)):
+                self.enable(None)
                 result = self.run_screen(payload(noul_item("a")))
                 _code, report = self.run_probe()
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["backend"], "stub")
         self.assertEqual(report["candidates"], ["stub"])
-        self.assertIn("stub", [entry["name"] for entry in report["backends"]])
         self.assertEqual(len(stub.posts), 1)  # one question to the stub row, not to Laya
 
-    def test_selection_reason_when_a_row_is_missing(self):
-        # D-06 again, from the other side: the generic blocks survive a table without a row.
+    def test_seam_missing_row_is_an_unknown_backend(self):
+        # D-06 again, from the other side: removing a row degrades, it does not crash.
         rows = tuple(row for row in JR.TABLE if row["name"] != "opencode")
         with mock.patch.object(JR, "TABLE", rows):
             self.enable("opencode")
@@ -1120,6 +1132,24 @@ class TestSeam(_ClientCase):
         self.assertEqual(result["reason"], "backend_unavailable:opencode:unknown_backend")
         self.assertEqual([entry["name"] for entry in report["backends"]],
                          ["laya", "typesafe"])
+
+    def test_seam_table_without_the_row_stays_green(self):
+        # the SPEC R2 acceptance: deleting the row leaves probe and screen green, no other edit
+        rows = tuple(row for row in JR.TABLE if row["name"] != "opencode")
+        with (JevStub() as laya, mock.patch.object(JR, "TABLE", rows)):
+            self.point_at(laya)
+            self.enable(None)
+            result = self.run_screen(payload(noul_item("a")))
+            code, report = self.run_probe()
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["backend"], "laya")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual([entry["name"] for entry in report["backends"]], ["laya", "typesafe"])
+
+    def test_seam_stub_row_does_not_leak_after_the_patch(self):
+        # a patched TABLE is per-test: a later test must see exactly the shipped three rows
+        self.assertEqual([row["name"] for row in JR.TABLE], list(self.NAMES))
 
 
 if __name__ == "__main__":
