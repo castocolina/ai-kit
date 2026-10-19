@@ -3,9 +3,9 @@
 JUDGED_PATH: `skills/ai-kit-gsd-curated-config/SKILL.md`
 JUDGED_COMMIT: 3a36abdbbf5c (21-05 Task 1, the LIFT commit: cursor row split, README row, test pin)
 BASELINE: 109/120 in-session / 116/120 pi (Phase 20 final; the floor per judge)
-SCORE: in-session pending (orchestrator) / pi unavailable (quota)
-CRITICAL: in-session pending / pi n/a
-IMPORTANT: in-session pending / pi n/a
+SCORE: in-session 109/120 / pi unavailable (quota)
+CRITICAL: in-session 0 / pi n/a
+IMPORTANT: in-session 0 / pi n/a
 FIX_ITERATIONS_USED: 0 of 2 (no judge produced a scorable report)
 
 The digest covers `SKILL.md` and `references/`. Digest judged: `b924ac84e1d6d3c9`.
@@ -14,7 +14,8 @@ The digest covers `SKILL.md` and `references/`. Digest judged: `b924ac84e1d6d3c9
 |---|---|---:|---|---|---|
 | Phase 20 final in-session | ea3200ce9624de80 | 109/120 | 0/0 | context | `.planning/phases/20-live-validation-on-codex-opencode/20-SKILL-JUDGE.md` |
 | Phase 20 final pi gpt-6.1-sol xhigh | ea3200ce9624de80 | 116/120 | 0/0 | context | `.planning/phases/20-live-validation-on-codex-opencode/20-SKILL-JUDGE.md` |
-| in-session (executor dispatch) | b924ac84e1d6d3c9 | pending | pending | pending (orchestrator) | `skill-judge/in-session.md` |
+| in-session | b924ac84e1d6d3c9 | 109/120 | 0/0 | pass | `skill-judge/in-session.md` |
+| in-session (executor dispatch) | b924ac84e1d6d3c9 | pending | pending | superseded (orchestrator report written) | — |
 | pi gpt-6.1-sol xhigh (executor attempt 1) | b924ac84e1d6d3c9 | unavailable | n/a | unavailable (quota), retried | `skill-judge/ai-kit-gsd-curated-config-pi-gpt-6.1-sol-xhigh.md` |
 | pi gpt-6.1-sol xhigh (executor attempt 2) | b924ac84e1d6d3c9 | unavailable | n/a | unavailable (quota), second failure | `skill-judge/ai-kit-gsd-curated-config-pi-gpt-6.1-sol-xhigh.md` |
 
@@ -47,4 +48,4 @@ The digest covers `SKILL.md` and `references/`. Digest judged: `b924ac84e1d6d3c9
 | Executor pi attempt 1 | quota, retried after 60 s | `AIKIT-XAI status=quota cli=pi model=openai/gpt-6.1-sol:xhigh exit=75 cli_rc=1 elapsed=6s out=0 tree=clean action=retry-later` |
 | Executor pi attempt 2 | quota, second failure -> judge unavailable | `AIKIT-XAI status=quota cli=pi model=openai/gpt-6.1-sol:xhigh exit=75 cli_rc=1 elapsed=4s out=0 tree=clean action=retry-later` |
 
-## Verdict: BLOCKED: in-session judge pending (orchestrator)
+## Verdict: BLOCKED: pi judge pending (quota)
