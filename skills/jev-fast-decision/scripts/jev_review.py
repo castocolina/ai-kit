@@ -7,6 +7,11 @@ plus four small adapters (`url`, `key`, `probe`, `classify`). Selection, dispatc
 and the remote listing iterate `TABLE` and never name a backend — the `_<name>_*` adapter
 functions are the only place a backend name appears.
 
+The escalation ladder lives here once (SPEC R3, D-11): auto mode runs the local rows first,
+then one batch per consented remote row, and returns a per-item rung trail so the caller can
+map rungs to its own columns. The persisted remote-consent record lives here too (D-06):
+`consent grant|revoke|show <backend>` owns `${XDG_CONFIG_HOME:-~/.config}/ai-kit/jev-consent.json`.
+
 Every answer is advisory: a low-confidence, truncated or over-long-state answer carries
 `needs_fallback` so the caller reasons it out itself. Nothing here gates anything, and no
 output ever prints a key value — key sources are reported by label only.
@@ -14,6 +19,8 @@ output ever prints a key value — key sources are reported by label only.
 
 from __future__ import annotations
 
+import argparse
+import datetime
 import hashlib
 import http.client
 import ipaddress
@@ -23,6 +30,7 @@ import math
 import os
 import re
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -730,12 +738,13 @@ def _request_model(row, index=0):
 
 
 def _gate_open(name):
-    """The session consent gate (D-17): `JEV_ALLOW_REMOTE=1` opens every remote, a
-    comma-separated list opens only the names it lists, and anything else opens nothing.
+    """The session consent value (D-07): `JEV_ALLOW_REMOTE=1` names every remote, a
+    comma-separated list names only the rows it lists (whitespace trimmed), an unknown name
+    grants nothing, and anything else opens nothing.
 
-    A remote call answers with uz's money, so the consent has to be in the environment, not
-    inferred from the row being configured: with no gate, every question this tool asks would
-    quietly spend quota on the local network's account.
+    A remote call answers with uz's money, so the consent has to be in the environment or in
+    the user's own record, never inferred from the row being configured: with no gate, every
+    question this tool asks would quietly spend quota on the local network's account.
     """
     raw = os.environ.get("JEV_ALLOW_REMOTE", "").strip()
     if raw == "1":
@@ -743,15 +752,123 @@ def _gate_open(name):
     return name in [part.strip() for part in raw.split(",") if part.strip()]
 
 
+# ─── consent record (D-06: moved unchanged in format from decide.py 24 D-10) ───
+
+def _config_dir():
+    """ai-kit's per-user config dir: ${XDG_CONFIG_HOME:-~/.config}/ai-kit."""
+    base = os.environ.get("XDG_CONFIG_HOME", "").strip() or os.path.join(
+        os.environ.get("HOME", "~"), ".config")
+    return os.path.join(os.path.expanduser(base), "ai-kit")
+
+
+def consent_path():
+    """The per-user consent record file."""
+    return os.path.join(_config_dir(), "jev-consent.json")
+
+
+def read_consent():
+    """The consent record, or {} when absent, empty or unreadable (SPEC R6 empty edge)."""
+    try:
+        with open(consent_path(), encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_consent(data):
+    """Atomic write (mkstemp + os.replace): a half-written record is never read, and the
+    0600 temp mode carries over to the file (T-21.1-06)."""
+    path = consent_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".jev-consent-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def _row_host(row):
+    """The host a consent record binds this row to right now: its url adapter's hostname."""
+    endpoint, reason = row["url"]()
+    if reason or not endpoint:
+        return None
+    return urllib.parse.urlsplit(endpoint).hostname
+
+
+def record_consent(row):
+    """The grant date for this row's current host, or None. Keyed by backend and host: an
+    endpoint moved to another host needs a new grant (SPEC R6 adjacency edge)."""
+    entry = read_consent().get(row["name"])
+    if not isinstance(entry, dict):
+        return None
+    host = _row_host(row)
+    if host is None or entry.get("host") != host:
+        return None
+    granted = entry.get("granted")
+    return granted if isinstance(granted, str) else None
+
+
+def allowed_remotes():
+    """The gate (D-07): the session value's names union the rows whose own record's host
+    equals their current host. A record for one remote never enables another (T-21.1-13)."""
+    return [row["name"] for row in TABLE
+            if row["remote"] and (_gate_open(row["name"]) or record_consent(row))]
+
+
 def _remote_allowed(row):
-    """Whether this row may touch the network at all: a local row always may."""
-    return not row["remote"] or _gate_open(row["name"])
+    """Whether this row may touch the network at all: a local row always may. `_send` checks
+    this before any socket opens (SPEC R6 ordering edge, T-21.1-02)."""
+    return not row["remote"] or row["name"] in allowed_remotes()
 
 
 def _keyed_remotes():
     """Remote rows that have a key and no consent yet: the rows a consent decision is about."""
     return [row["name"] for row in TABLE
-            if row["remote"] and not _gate_open(row["name"]) and row["key"]()[0]]
+            if row["remote"] and not _remote_allowed(row) and row["key"]()[0]]
+
+
+def _consent_used():
+    """`[{backend, granted}]` for remote rows the gate lets through through a record, so the
+    caller can announce that uz's saved consent — not its own flag — opened the rung."""
+    used = []
+    for row in TABLE:
+        if row["remote"]:
+            granted = record_consent(row)
+            if granted:
+                used.append({"backend": row["name"], "granted": granted})
+    return used
+
+
+def consent_command(action, backend):
+    """`consent grant|revoke|show <backend>` (D-06): the record's own output keys, and on a
+    grant the minimal announcement — TypeSafe's retention terms are unverified (RESEARCH 11)."""
+    row = row_named(backend)
+    if row is None:
+        return {"ok": False, "reason": "unknown_backend"}
+    if not row["remote"]:
+        return {"ok": False, "reason": "not_remote"}  # laya stays local: no record to give
+    host = _row_host(row)
+    if host is None:
+        return {"ok": False, "reason": "no_endpoint_configured"}
+    data = read_consent()
+    if action == "grant":
+        data[backend] = {"host": host, "granted": datetime.date.today().isoformat()}
+        write_consent(data)
+    elif action == "revoke" and backend in data:
+        del data[backend]
+        write_consent(data)
+    result = {"ok": True, "backend": backend, "host": host,
+              "consent": record_consent(row), "file": consent_path()}
+    if action == "grant":
+        result["note"] = (f"questions go to {host}; retention terms unverified; revoke with: "
+                          f"jev_review.py consent revoke {backend}")
+    return result
 
 
 def _parse_jev_min_confidence():
@@ -784,25 +901,36 @@ def _row_probe(row, timeout):
 
 
 def _probe_reasons(rows):
-    """([usable row] in the given order, {name: reason} for the unusable ones)."""
-    usable, reasons = [], {}
+    """([usable row] in the given order, {name: reason} for the unusable ones, probe entries).
+
+    The entries are the same shape `--probe` prints, so a screen run teaches the caller the
+    table from one call (D-10, D-11)."""
+    usable, reasons, entries = [], {}, []
     for row in rows:
         reason = _row_probe(row, _PROBE_TIMEOUT)
+        entries.append(_backend_entry(row, reason))
         if reason is None:
             usable.append(row)
         else:
             reasons[row["name"]] = reason
-    return usable, reasons
+    return usable, reasons, entries
 
 
-def _selection():
-    """(rung rows in ladder order, {name: reason}) for the current env."""
+def _selection(skip_local=False):
+    """(rung rows in ladder order, {name: reason}, probe entries for the rows looked at).
+
+    `--skip-local` drops every non-remote row before any probing, so a second opinion makes
+    zero Laya requests — not even a health check (D-11)."""
     choice = _backend_choice()
     if choice == "auto":
-        return _probe_reasons(rows_in_order())
-    if row_named(choice) is None:
-        return [], {choice: "unknown_backend"}
-    return _probe_reasons([row_named(choice)])
+        rows = rows_in_order()
+    elif row_named(choice) is None:
+        return [], {choice: "unknown_backend"}, []
+    else:
+        rows = [row_named(choice)]
+    if skip_local:
+        rows = [row for row in rows if row["remote"]]
+    return _probe_reasons(rows)
 
 
 def _unusable_reason(choice, unavailable):
@@ -826,11 +954,14 @@ def _consent_result(choice, unavailable, attempts, provenance):
 
 
 def _backend_entry(row, reason):
-    """One --probe row: identity, host, usability and the key source label, never a value."""
+    """One --probe row: identity, host, usability, the key source label (never a value) and,
+    for a remote row, the consent date its record carries (D-10)."""
     endpoint, _url_reason = row["url"]()
     entry = {"name": row["name"], "remote": row["remote"], "batch": row["batch"],
              "host": urllib.parse.urlsplit(endpoint).hostname if endpoint else None,
              "usable": reason is None, "key_source": row["key"]()[1]}
+    if row["remote"]:
+        entry["consent"] = record_consent(row)
     if reason:
         entry["reason"] = reason
     return entry
@@ -892,12 +1023,12 @@ class DispatchError(Exception):
 
 
 class _Run:
-    """Mutable per-call state: the items still pending, the bodies that went on the wire,
-    the attempt log, the answer totals, and the provenance the result is built from.
+    """Mutable per-call state: the items and their per-rung trail, the bodies that went on
+    the wire, the attempt log, the answer totals, and the provenance the result is built from.
 
-    Nine attributes because this is the call's whole state in one place — the ladder, the
-    probe-free `_post` accounting and the result builder all read it; pylint's default cap of
-    seven is a class-design heuristic that does not apply to a state bag.
+    A state bag on purpose — the ladder, the probe-free `_post` accounting and the result
+    builder all read it; pylint's default cap is a class-design heuristic that does not
+    apply here.
     """
 
     # pylint: disable=too-many-instance-attributes
@@ -912,6 +1043,11 @@ class _Run:
         self.usage = {"input_tokens": 0, "output_tokens": 0}
         self.backend = None
         self.model = None
+        self.answers: dict[str, dict] = {}    # final answer per id
+        self.tentative: dict[str, dict] = {}  # low local answers, not final yet
+        self.failed: dict[str, str] = {}      # final item errors by id
+        self.last_error: dict[str, str] = {}  # last escalate-class reason per still-pending id
+        self.trail: dict[str, list] = {}      # id -> ordered rung entries
 
 
 def _encode(body) -> bytes:
@@ -1017,18 +1153,20 @@ def _next_model(row, body, index):
 def _post(row, body, timeout, run):
     """Send one group body, applying this row's retry and next-model rules.
 
-    Returns `(response, state_chars, action, reason)`. A `next_model` row action re-sends this
-    same group with the row's next model id; an exhausted `retry` becomes an escalate-class
-    error, so auto selection moves that item to the next usable row exactly as it moves a 500
-    (SPEC R1, the 2026-10-11 todo) while an explicit backend keeps it as the item error.
+    Returns `(response, state_chars, action, reason, sent_body)`; `sent_body` is the encoded
+    body the row last saw, so every rung entry can name the bytes its outcome came from. A
+    `next_model` row action re-sends this same group with the row's next model id; an
+    exhausted `retry` becomes an escalate-class error, so auto selection moves that item to
+    the next usable row exactly as it moves a 500 (SPEC R1, the 2026-10-11 todo) while an
+    explicit backend keeps it as the item error.
     """
     encoded, state_chars = _encode(body), _state_chars(body)
     index, retries_left = 0, int(row["retry_limit"])
     while True:
         run.sent.append(encoded)
         try:
-            response, _sent = _send(row, body, timeout)
-            return response, state_chars, "ok", None
+            response, sent_body = _send(row, body, timeout)
+            return response, state_chars, "ok", None, sent_body
         except PermissionError as refused:
             raise DispatchError(run.sent, refused) from refused
         except (OSError, ValueError, http.client.HTTPException) as failure:
@@ -1044,8 +1182,8 @@ def _post(row, body, timeout, run):
                 _sleep(_retry_after(failure))
                 continue
             if action == "retry":
-                return None, state_chars, "escalate", reason
-            return None, state_chars, action, reason
+                return None, state_chars, "escalate", reason, encoded
+            return None, state_chars, action, reason, encoded
 
 
 def _groups(row, items):
@@ -1056,7 +1194,8 @@ def _groups(row, items):
 
 
 def _finalize(row, checked, run):
-    """Set `needs_fallback` per answer and fold this group into the run totals.
+    """Set `needs_fallback` per answer, tag it with this rung, and fold the group into the
+    run totals.
 
     `needs_fallback` is the forced flag (truncation, state size) OR `top < threshold`: the
     threshold never clears a forced flag (RESEARCH Pitfall 2, review cycle 2).
@@ -1065,7 +1204,9 @@ def _finalize(row, checked, run):
     answers = {}
     for identifier, answer in checked["answers"].items():
         forced = bool(answer.pop(_FORCED_FLAG, False))
-        answer["needs_fallback"] = forced or top_of(answer) < threshold
+        answer["backend"] = row["name"]
+        answer["top"] = top_of(answer)
+        answer["needs_fallback"] = forced or answer["top"] < threshold
         answers[identifier] = answer
     if run.backend is None:
         run.backend, run.model = row["name"], checked["model"]
@@ -1075,18 +1216,18 @@ def _finalize(row, checked, run):
 
 
 def _group_answer(row, group, timeout, run):
-    """(answers, (action, reason) or None) for one request group through one row."""
+    """(answers, (action, reason) or None, sent_body) for one request group through one row."""
     body, specs = request_body({"reviewed_head": run.head, "items": group}, _request_model(row))
-    response, state_chars, action, reason = _post(row, body, timeout, run)
+    response, state_chars, action, reason, sent_body = _post(row, body, timeout, run)
     if action != "ok":
-        return {}, (action, reason)
+        return {}, (action, reason), sent_body
     try:
         checked = checked_response([(response, state_chars)], specs, row)
     except ValueError as failure:
         if str(failure).startswith("invalid_input"):
             raise
-        return {}, ("escalate", "invalid_response")
-    return _finalize(row, checked, run), None
+        return {}, ("escalate", "invalid_response"), sent_body
+    return _finalize(row, checked, run), None, sent_body
 
 
 def _attempt(row, reason):
@@ -1097,17 +1238,31 @@ def _attempt(row, reason):
     return entry
 
 
+def _body_sha256(body):
+    """The hash of one request body: which bytes an answer or an error came from."""
+    return hashlib.sha256(body).hexdigest()
+
+
 def _rung(row, items, timeout, run):
-    """One row's pass over the pending items: answers, and {id: (action, reason)} failures."""
+    """One row's pass over these items: answers, and {id: (action, reason)} failures.
+
+    Every outcome — answer or error — also appends one entry to that item's rung trail
+    (D-10, D-11): the rung keeps its `request_sha256` so the trail names the exact bytes."""
     answers, errors = {}, {}
     for group in _groups(row, items):
-        got, failed = _group_answer(row, group, timeout, run)
+        got, failed, sent_body = _group_answer(row, group, timeout, run)
+        sha = _body_sha256(sent_body)
+        for identifier, answer in got.items():
+            answer["request_sha256"] = sha
+            run.trail.setdefault(identifier, []).append(answer)
         answers.update(got)
         if failed is None:
             continue
         run.attempts.append(_attempt(row, failed[1]))
         for item in group:
             errors[item["id"]] = failed
+            run.trail.setdefault(item["id"], []).append(
+                {"backend": row["name"], "error": failed[1], "request_sha256": sha})
     return answers, errors
 
 
@@ -1145,47 +1300,78 @@ def _request_sha256(bodies):
     return hashlib.sha256(b"".join(bodies)).hexdigest()
 
 
-def _result(answers, failed, run):
-    """The screen outcome: ok with answers, else unavailable with the first item reason."""
+def _result(run):
+    """The screen outcome: ok with answers, else unavailable with the first item reason.
+
+    Every result that dispatched anything carries the per-item rung trail, and an item that
+    ended low or errored while a keyed remote sat unconsented makes the result say so
+    (`remote_available`), so the caller can ask about exactly those rows (SPEC R3, R6)."""
     outcome = {"attempts": run.attempts, "unavailable": run.unavailable, "usage": run.usage,
                **run.provenance}
+    if run.trail:
+        outcome["trail"] = run.trail
     if run.sent:
         outcome["request_sha256"] = _request_sha256(run.sent)
-    if failed:
-        outcome["errors"] = failed
-    if not answers:
+    if run.failed:
+        outcome["errors"] = run.failed
+    low = any(answer["needs_fallback"] for answer in run.answers.values())
+    if low or run.failed:
+        remotes = _keyed_remotes()
+        if remotes:
+            outcome["remote_available"] = remotes
+    used = _consent_used()
+    if used:
+        outcome["consent_used"] = used
+    if not run.answers:
         return {"status": "unavailable",
-                "reason": next(iter(failed.values()), "no_backend_available"), **outcome}
+                "reason": next(iter(run.failed.values()), "no_backend_available"), **outcome}
     outcome["backend"] = run.backend
     outcome["model"] = run.model
-    outcome["answers"] = answers
+    outcome["answers"] = run.answers
     return {"status": "ok", **outcome}
 
 
-def _fold_errors(errors, failed, last_reason):
-    """Fold one rung's failures in: an escalate-class item stays pending, the rest are final."""
+def _fold_rung(row, answers, errors, run):
+    """Decide what one rung's outcomes leave pending (D-11).
+
+    A confident answer (its `needs_fallback` false: over threshold and not force-flagged) is
+    final. A low or forced-fallback answer is final on a remote row — the consented second
+    opinion is the last rung money can buy — and stays pending on a local row, where the next
+    rung may know better. An `escalate` error (including an exhausted Laya 503) keeps the
+    item pending; a `caller_error` is final where it landed."""
+    for identifier, answer in answers.items():
+        if not answer["needs_fallback"] or row["remote"]:
+            run.answers[identifier] = answer
+        else:
+            run.tentative[identifier] = answer
     for identifier, (action, reason) in errors.items():
-        last_reason[identifier] = reason
+        run.last_error[identifier] = reason
         if action != "escalate":
-            failed[identifier] = reason
+            run.failed[identifier] = reason
 
 
 def _ladder(rows, run, timeout):
-    """Walk the rungs: an escalate-class item falls to the next usable row, a caller error
-    stays with the row that got it (an explicit backend has one rung, so it keeps the error)."""
-    answers, failed, last_reason = {}, {}, {}
+    """Walk the rungs in order (SPEC R3): local rows first, one request per item on a
+    non-batch row, then one consented remote batch keeping the stdin ids and order.
+
+    Sequential by construction: escalation to a remote rung starts only after every local
+    answer is in (SPEC R3 concurrency edge). An explicit `JEV_BACKEND` reaches here with one
+    rung, so it never escalates (SPEC R3)."""
     pending = list(run.items)
     for row in rows:
         if not pending:
             break
         got, errors = _rung(row, pending, timeout, run)
-        answers.update(got)
-        _fold_errors(errors, failed, last_reason)
+        _fold_rung(row, got, errors, run)
         pending = [item for item in pending
-                   if item["id"] not in answers and item["id"] not in failed]
-    for item in pending:  # every rung escalated it: report the last reason we saw
-        failed[item["id"]] = last_reason.get(item["id"], "no_backend_available")
-    return _result(answers, failed, run)
+                   if item["id"] not in run.answers and item["id"] not in run.failed]
+    for item in pending:  # no rung left: the last thing we saw is the answer we owe
+        identifier = item["id"]
+        if identifier in run.tentative:
+            run.answers[identifier] = run.tentative[identifier]
+        else:
+            run.failed[identifier] = run.last_error.get(identifier, "no_backend_available")
+    return _result(run)
 
 
 def _refused_result(refused, run):
@@ -1235,16 +1421,18 @@ def _no_rung_result(choice, run):
             "unavailable": run.unavailable, "attempts": run.attempts, **run.provenance}
 
 
-def screen():
+def screen(skip_local=False):
     """Kill switch, stdin, validation, selection, ladder: the advisory result (never a gate)."""
     if os.environ.get(_KILL_SWITCH) != "1":
         return {"status": "disabled"}
     checked = _preflight()
     if checked.stopped is not None:
         return checked.stopped
-    run = _Run(checked.payload["reviewed_head"], checked.payload["items"],
-               {}, {"reviewed_head": checked.payload["reviewed_head"]})
-    rows, run.unavailable = _selection()
+    payload = checked.payload
+    run = _Run(payload["reviewed_head"], payload["items"],
+               {}, {"reviewed_head": payload["reviewed_head"]})
+    rows, run.unavailable, backends = _selection(skip_local)
+    run.provenance["backends"] = backends
     if not rows:
         return _no_rung_result(_backend_choice(), run)
     try:
@@ -1253,13 +1441,32 @@ def screen():
         return _refused_result(refused, run)
 
 
+def build_parser():
+    """The CLI: `--probe`, `--skip-local` for the screen, or `consent grant|revoke|show`."""
+    parser = argparse.ArgumentParser(
+        prog="jev_review.py", description=(__doc__ or "").split("\n", 1)[0])
+    parser.add_argument("--probe", action="store_true",
+                        help="print the backend table report and exit")
+    parser.add_argument("--skip-local", action="store_true",
+                        help="skip every non-remote row: a second opinion, no local run")
+    sub = parser.add_subparsers(dest="command")
+    consent = sub.add_parser("consent", help="manage the per-user remote-consent record")
+    consent.add_argument("action", choices=("grant", "revoke", "show"))
+    consent.add_argument("backend", help="a remote row name from the backend table")
+    return parser
+
+
 def main(argv=None):
-    """`--probe` prints the table report; anything else screens stdin. Always exit 0."""
-    args = list(sys.argv[1:] if argv is None else argv)
-    if args == ["--probe"]:
-        print(json.dumps(probe_report(), sort_keys=True, allow_nan=False))
-        return 0
-    print(json.dumps({"advisory": True, **screen()}, sort_keys=True, allow_nan=False))
+    """`--probe` prints the table report, `consent` edits the record, anything else screens
+    stdin. Always exit 0."""
+    args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
+    if args.command == "consent":
+        out = consent_command(args.action, args.backend)
+    elif args.probe:
+        out = probe_report()
+    else:
+        out = {"advisory": True, **screen(skip_local=args.skip_local)}
+    print(json.dumps(out, sort_keys=True, allow_nan=False))
     return 0
 
 
