@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=5 sha256=6666258f553dc872d4f6967ae6529853c3aab988894da4b7427671ac8d9420c8
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=6 sha256=83ed84ef96743445320fd06c78548c9d4fbf636b50ee0839bc5c3f45ad0479ec
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v5).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v6).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
@@ -411,12 +411,7 @@ function tryNextCli(status, tree) {
 
 function which(bin, envPath = process.env.PATH || '') {
   if (bin.includes('/')) return isExec(bin) ? path.resolve(bin) : null;
-  for (const dir of envPath.split(path.delimiter)) {
-    // An empty segment is the cwd, as POSIX shells resolve it (U-5, informational).
-    const p = path.resolve(dir || '.', bin);
-    if (isExec(p)) return p;
-  }
-  return null;
+  return pathHits(bin, envPath).next().value ?? null;
 }
 function* pathHits(bin, envPath = process.env.PATH || '') {
   for (const dir of envPath.split(path.delimiter)) {
@@ -662,15 +657,26 @@ function parseOpencodeListingIds(stdout) {
   return stdout.split('\n').map((l) => l.trim()).filter(Boolean);
 }
 
+// Mirrors detection.parse_cursor_models (D-10), which a parity test runs on the same fixtures:
+// ANSI stripped, Python splitlines()/strip() rules, ASCII ids, and a nameless
+// `id (current, default)` line counts only after the header. null = unrecognized output.
 function parseCursorListingIds(stdout) {
   if (typeof stdout !== 'string') return null;
+  const line = /^([A-Za-z0-9._-]+)(?: - .*| \((?:current|default|current, default)\))?$/;
+  const space = '[\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]+';
+  const strip = new RegExp(`^${space}|${space}$`, 'g');
   const ids = [];
-  for (const line of stdout.split('\n')) {
-    const ln = line.trim();
-    if (!ln.includes(' - ')) continue;
-    ids.push(ln.split(' - ', 1)[0].trim());
+  let header = false;
+  let unrecognized = false;
+  for (const raw of stdout.replace(/\x1B\[[0-9;?]*[A-Za-z]/g, '').split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/)) {
+    const ln = raw.replace(strip, '');
+    if (ln === 'Available models') { header = true; continue; }
+    if (!ln || ln.startsWith('Tip:') || ln === 'No models available for this account.') continue;
+    const m = line.exec(ln);
+    if (m && (header || ln.includes(' - '))) ids.push(m[1]);
+    else unrecognized = true;
   }
-  return ids;
+  return ids.length || !unrecognized ? ids : null;
 }
 
 function parseCodexListingIds(stdout) {
@@ -1226,7 +1232,10 @@ if (sub[0] === 'models') {
   log('cursor-agent models');
   console.log('Available models');
   console.log('');
-  if (process.env.FAKE_CURSOR_LIST !== 'empty') {
+  if (process.env.FAKE_CURSOR_LIST === 'nameless') {
+    console.log('\x1b[1mauto\x1b[0m (current, default)');
+    console.log('composer-2.5 - Composer 2.5');
+  } else if (process.env.FAKE_CURSOR_LIST !== 'empty') {
     for (const id of ['fake-ok-cursor', 'fake-err-cursor', 'composer-2.5']) console.log(id + ' - label');
   }
   process.exit(0);
@@ -1544,6 +1553,23 @@ async function blackBoxSelfTest() {
       const dst = path.join(binNoCodex, name);
       if (!fs.existsSync(dst)) fs.symlinkSync(src, dst);
     }
+
+    // D-09 self-tests: another CLI's `agent` first on PATH; `script` is what it runs.
+    const otherAgentFirst = (c, name, script = '#!/bin/sh\nexit 0\n') => {
+      const dir = path.join(c.tmp, name);
+      fs.mkdirSync(dir);
+      const other = path.join(dir, 'other-agent-1.0.52-linux-x86_64');
+      fs.writeFileSync(other, script);
+      fs.chmodSync(other, 0o755);
+      for (const b of ['node', 'git']) fs.symlinkSync(path.join(c.tmp, 'bin', b), path.join(dir, b));
+      fs.symlinkSync(other, path.join(dir, 'agent'));
+      return dir;
+    };
+    const cwdCursorAgent = (c) => {
+      fs.symlinkSync(path.join(c.tmp, 'bin', 'cursor-agent'), path.join(c.repo, 'agent'));
+      spawnSync('git', ['add', 'agent'], { cwd: c.repo, env: c.env });
+      spawnSync('git', ['commit', '-q', '-m', 'agent'], { cwd: c.repo, env: c.env });
+    };
 
     const cases = [
       {
@@ -2587,24 +2613,15 @@ async function blackBoxSelfTest() {
         },
       },
       {
-        name: 'agent-grok-first-then-cursor',
+        name: 'agent-other-first-then-cursor',
         args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
         setup: (c) => {
-          const dir1 = path.join(c.tmp, 'bin-agent-grok-first');
           const dir2 = path.join(c.tmp, 'bin-agent-cursor-later');
-          fs.mkdirSync(dir1);
           fs.mkdirSync(dir2);
-          const shared = path.join(c.tmp, 'bin');
-          const other = path.join(dir1, 'other-agent-1.0.52-linux-x86_64');
-          fs.writeFileSync(other, '#!/bin/sh\nexit 0\n');
-          fs.chmodSync(other, 0o755);
-          fs.symlinkSync(path.join(shared, 'node'), path.join(dir1, 'node'));
-          fs.symlinkSync(path.join(shared, 'git'), path.join(dir1, 'git'));
-          fs.symlinkSync(other, path.join(dir1, 'agent'));
-          fs.symlinkSync(path.join(shared, 'cursor-agent'), path.join(dir2, 'agent'));
-          c.env.PATH = dir1 + path.delimiter + dir2;
+          fs.symlinkSync(path.join(c.tmp, 'bin', 'cursor-agent'), path.join(dir2, 'agent'));
+          c.env.PATH = otherAgentFirst(c, 'bin-agent-other-first') + path.delimiter + dir2;
           return null;
         },
         check: (r, ctx) => {
@@ -2615,59 +2632,51 @@ async function blackBoxSelfTest() {
         },
       },
       {
-        name: 'agent-grok-first-then-cursor-cwd',
+        name: 'agent-other-first-then-cursor-cwd',
         args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
         setup: (c) => {
-          const dir1 = path.join(c.tmp, 'bin-agent-grok-first-cwd');
-          fs.mkdirSync(dir1);
-          const shared = path.join(c.tmp, 'bin');
-          const other = path.join(dir1, 'other-agent-1.0.52-linux-x86_64');
-          fs.writeFileSync(other, '#!/bin/sh\nexit 0\n');
-          fs.chmodSync(other, 0o755);
-          fs.symlinkSync(path.join(shared, 'node'), path.join(dir1, 'node'));
-          fs.symlinkSync(path.join(shared, 'git'), path.join(dir1, 'git'));
-          fs.symlinkSync(other, path.join(dir1, 'agent'));
-          fs.symlinkSync(path.join(shared, 'cursor-agent'), path.join(c.repo, 'agent'));
-          spawnSync('git', ['add', 'agent'], { cwd: c.repo, env: c.env });
-          spawnSync('git', ['commit', '-q', '-m', 'agent'], { cwd: c.repo, env: c.env });
-          c.env.PATH = dir1 + path.delimiter;
+          cwdCursorAgent(c);
+          c.env.PATH = otherAgentFirst(c, 'bin-agent-other-first-cwd') + path.delimiter;
           return null;
         },
         check: (r, ctx) => {
           const line = (r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
-          const cwdAgent = path.join(ctx.repo, 'agent');
-          if (!line || !(line.includes(`\t${cwdAgent}\t`) || line.includes('\t./agent\t')) || line.includes('\tagent\t')) return `line=${line}`;
+          if (!line || !line.includes(`\t${path.join(ctx.repo, 'agent')}\t`)) return `line=${line}`;
           return null;
         },
       },
       {
-        name: 'agent-grok-first-then-cursor-cwd-spawn',
+        name: 'agent-other-first-then-cursor-cwd-spawn',
         args: ['--mode', 'exec', '--prefer', 'cursor', '--model-cursor', 'composer-2.5'],
         stdin: 'exercise guarded cwd dispatch',
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=cursor model=composer-2.5 exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
         setup: (c) => {
-          const dir1 = path.join(c.tmp, 'bin-agent-grok-first-cwd-spawn');
-          fs.mkdirSync(dir1);
-          const shared = path.join(c.tmp, 'bin');
-          const other = path.join(dir1, 'other-agent-1.0.52-linux-x86_64');
-          fs.writeFileSync(other, `#!/bin/sh\nprintf 'grok ran' > '${path.join(c.tmp, 'grok-ran')}'\nexit 1\n`);
-          fs.chmodSync(other, 0o755);
-          fs.symlinkSync(path.join(shared, 'node'), path.join(dir1, 'node'));
-          fs.symlinkSync(path.join(shared, 'git'), path.join(dir1, 'git'));
-          fs.symlinkSync(other, path.join(dir1, 'agent'));
-          fs.symlinkSync(path.join(shared, 'cursor-agent'), path.join(c.repo, 'agent'));
-          spawnSync('git', ['add', 'agent'], { cwd: c.repo, env: c.env });
-          spawnSync('git', ['commit', '-q', '-m', 'agent'], { cwd: c.repo, env: c.env });
-          c.env.PATH = dir1 + path.delimiter;
+          cwdCursorAgent(c);
+          const marker = path.join(c.tmp, 'other-ran');
+          const dir = otherAgentFirst(c, 'bin-agent-other-first-cwd-spawn', `#!/bin/sh\nprintf 'other ran' > '${marker}'\nexit 1\n`);
+          c.env.PATH = dir + path.delimiter;
           return null;
         },
         check: (_r, ctx) => {
           if (!ctx.calls.some((line) => line.startsWith('cursor-agent '))) return `calls=${ctx.calls.join('|')}`;
-          if (fs.existsSync(path.join(ctx.tmp, 'grok-ran'))) return 'grok agent ran';
+          if (fs.existsSync(path.join(ctx.tmp, 'other-ran'))) return 'the other agent ran';
           return null;
+        },
+      },
+      {
+        // CR-01: a nameless, ANSI-wrapped `auto (current, default)` line is a listed model.
+        name: 'cursor-nameless-listing-preflight',
+        env: { FAKE_CURSOR_LIST: 'nameless' },
+        args: ['--prefer', 'cursor', '--model-cursor', 'auto'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=cursor model=auto exit=0 .* action=stop$/,
+        check: (r) => {
+          const err = r.stderr || '';
+          if (err.includes('bad_model')) return 'auto rejected as bad_model';
+          return err.includes('not preflighted') ? 'listing not used' : null;
         },
       },
       {

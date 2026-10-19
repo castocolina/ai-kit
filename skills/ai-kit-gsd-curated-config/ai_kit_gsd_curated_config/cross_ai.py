@@ -43,7 +43,7 @@ def model_id_problem(label: str, value) -> str | None:
     return f"{label}: model id {value!r} must match {MODEL_ID_RE.pattern}"
 SCRIPT_PATH = ".planning/scripts/cross-ai.mjs"
 TEMPLATE_NAME = "cross-ai.mjs"
-TEMPLATE_VERSION = 5
+TEMPLATE_VERSION = 6
 MIN_TIMEOUT_S = 1800
 DEFAULT_PREFER = ("pi", "cursor", "opencode")
 RUNNER_IDS = ("pi", "cursor", "opencode", "codex")

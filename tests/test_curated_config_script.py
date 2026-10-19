@@ -105,7 +105,7 @@ class TestRender(unittest.TestCase):
         digest = hashlib.sha256(body_crlf).hexdigest()
         header = (
             b"// ai-kit-cross-ai generator=ai-kit-gsd-curated-config "
-            b"template=5 sha256=" + digest.encode()
+            b"template=6 sha256=" + digest.encode()
         )
         crlf_file = shebang + b"\n" + header + b"\n" + body_crlf
         self.assertEqual(cross_ai_script.script_state(crlf_file), "pristine")
@@ -129,7 +129,7 @@ class TestScriptState(unittest.TestCase):
         parts = cross_ai_script.split_header(rendered)
         assert parts is not None
         shebang, _header, body = parts
-        fake = b"// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=5 sha256="
+        fake = b"// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=6 sha256="
         fake += b"0" * 64
         tampered = shebang + b"\n" + fake + b"\n" + body
         self.assertEqual(cross_ai_script.script_state(tampered), "edited")
@@ -230,7 +230,7 @@ class TestPlanScript(unittest.TestCase):
             unstamped = (
                 b"#!/usr/bin/env node\n"
                 b"// ai-kit-cross-ai generator=ai-kit-gsd-curated-config "
-                b"template=5 sha256=UNSTAMPED\n"
+                b"template=6 sha256=UNSTAMPED\n"
                 b"// body\n"
             )
             with open(target, "wb") as f:
@@ -303,8 +303,8 @@ class TestPlanScript(unittest.TestCase):
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "wb") as f:
                 f.write(data)
-            template_v6 = re.sub(rb"template=5", b"template=6", self.template, count=1)
-            plan = cross_ai_script.plan_script(tmp, art, template_v6, HOST_SIGNAL_ENV_VARS)
+            template_v7 = re.sub(rb"template=6", b"template=7", self.template, count=1)
+            plan = cross_ai_script.plan_script(tmp, art, template_v7, HOST_SIGNAL_ENV_VARS)
             self.assertEqual(plan.kind, "change")
             cross_ai_script.write_script(plan)
             with open(target, "rb") as f:
@@ -313,7 +313,7 @@ class TestPlanScript(unittest.TestCase):
             assert parts is not None
             match = cross_ai_script.HEADER_RE.match(parts[1])
             assert match is not None
-            self.assertEqual(int(match.group(1)), 6)
+            self.assertEqual(int(match.group(1)), 7)
 
 
 def _v2_pristine(template: bytes, prefer: list) -> bytes:
@@ -322,7 +322,7 @@ def _v2_pristine(template: bytes, prefer: list) -> bytes:
     cfg["prefer"] = prefer
     cfg["scrubEnv"] = sorted(HOST_SIGNAL_ENV_VARS)
     rendered = cross_ai_script.render(template, cfg)
-    return re.sub(rb"template=5", b"template=2", rendered, count=1)
+    return re.sub(rb"template=6", b"template=2", rendered, count=1)
 
 
 class TestEnsureRunner(unittest.TestCase):
@@ -348,7 +348,7 @@ class TestEnsureRunner(unittest.TestCase):
             self.assertEqual(result["guidance"], "add")
             with open(target, "rb") as handle:
                 upgraded = handle.read()
-            self.assertIn(b"template=5", upgraded.split(b"\n", 2)[1])
+            self.assertIn(b"template=6", upgraded.split(b"\n", 2)[1])
             self.assertEqual(
                 cross_ai_script.template_config(upgraded)["prefer"], ["codex"]
             )

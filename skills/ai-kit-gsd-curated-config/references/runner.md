@@ -1,4 +1,4 @@
-# Runner details (template 5)
+# Runner details (template 6)
 
 Read when a runner upgrade, a `.new` merge, `ensure-runner`, the template flags, the live
 timeout, or hand-edited CONFIG `extraArgs` comes up. SKILL.md's "Cross-AI execution" section
@@ -7,7 +7,9 @@ keeps the permission facts; this file never weakens them.
 The hook's runtime id for Cursor is `cursor` (its binaries are `cursor-agent` and a bare `agent`
 only when that binary's real path has the basename `cursor-agent`). For the guarded bare `agent`,
 the runner scans every PATH entry and accepts the first whose real path has basename
-`cursor-agent`, so another CLI's `agent` earlier on PATH does not hide Cursor.
+`cursor-agent`, so another CLI's `agent` earlier on PATH does not hide Cursor. An empty PATH
+entry is the cwd, so with one a checkout can supply its own `agent -> .../cursor-agent`; avoid
+empty PATH entries when running the runner in an untrusted checkout.
 
 ## Template flags
 

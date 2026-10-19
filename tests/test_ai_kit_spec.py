@@ -1585,6 +1585,49 @@ class TestParseCursorModels(unittest.TestCase):
         self.assertIsNone(detection.parse_cursor_models("not a listing\n"))
 
 
+class TestCursorParserParity(unittest.TestCase):
+    """CR-01: the runner's parseCursorListingIds accepts exactly what parse_cursor_models does."""
+
+    CASES = (
+        "Available models\n\nauto (current, default)\ncomposer-2.5 - Composer 2.5\n",
+        "\x1b[1mcomposer-2.5\x1b[0m - Composer\n",
+        "\x1b[2mAvailable models\x1b[0m\n",
+        "Available models\r\n\r\nauto (default)\r\nx - Y\r\n",
+        "Available models\n\nok-1 - A\nm\u00f6del - X\n",
+        "Available models\n\nm\u00f6del - X\n",
+        "Available models\n\nTip: use --model <id>\n",
+        "Loading...\n", "Error\n", "auto (current, default)\n", "not a listing\n", "",
+        "Available models\n\n  spaced - S  \nbad id - B\nauto (current)\n",
+    )
+
+    def test_both_parsers_agree_on_every_fixture(self):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("node not on PATH")
+        text = _read_bytes(tooling_guidance.resolve_cross_ai_template_path() or "").decode()
+        start = text.index("function parseCursorListingIds(")
+        source = text[start:text.index("\n}\n", start) + 3]
+        fixtures = [os.path.join(os.path.dirname(CURSOR_MODELS_FIXTURE_PATH), name)
+                    for name in sorted(os.listdir(os.path.dirname(CURSOR_MODELS_FIXTURE_PATH)))
+                    if name.startswith("cursor_models") and name.endswith(".txt")]
+        self.assertGreaterEqual(len(fixtures), 3)
+        inputs = [*self.CASES]
+        for path in fixtures:
+            with open(path, encoding="utf-8") as stream:
+                inputs.append(stream.read())
+        script = source + (
+            "const s = require('fs').readFileSync(0, 'utf8');"
+            "process.stdout.write(JSON.stringify(JSON.parse(s).map(parseCursorListingIds)));")
+        proc = subprocess.run([node, "-e", script], input=json.dumps(inputs), text=True,
+                              capture_output=True, timeout=30, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        js = json.loads(proc.stdout)
+        for given, got in zip(inputs, js, strict=True):
+            with self.subTest(text=given[:60]):
+                self.assertEqual(got, detection.parse_cursor_models(given))
+        self.assertEqual(js[0], ["auto", "composer-2.5"])
+
+
 class TestDetectCursorAgentModels(unittest.TestCase):
     def test_parses_id_before_dash_separator(self):
         # confirmed live against a real authenticated install
@@ -11624,7 +11667,7 @@ class TestCrossAiTemplateText(unittest.TestCase):
         m = re.match(hdr, lines[1])
         self.assertIsNotNone(m)
         assert m is not None
-        self.assertEqual(m.group(1), "5")
+        self.assertEqual(m.group(1), "6")
         start = text.index("// <config>\n") + len("// <config>\n")
         end = text.index("\n// </config>", start)
         block = text[start:end]
@@ -11656,10 +11699,6 @@ class TestCrossAiTemplateText(unittest.TestCase):
         start = text.index('"scrubEnv"')
         end = text.index("\n// </config>", start)
         region = text[:start] + text[end:]
-        # The hermetic runner self-test now deliberately models another CLI's `agent` as Grok.
-        case_start = region.index("    const cases = [")
-        case_end = region.index("    const only =", case_start)
-        region = region[:case_start] + region[case_end:]
         region_no_grok_agent = region.replace('"GROK_AGENT"', "")
         self.assertIsNone(re.search("grok", region_no_grok_agent, re.I))
         cfg_start = text.index("const CONFIG = ") + len("const CONFIG = ")
