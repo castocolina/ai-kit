@@ -60,8 +60,11 @@ class TestCursorAgents(unittest.TestCase):
         ])
 
     def test_files_parse_with_the_bundle_rules(self):
-        for path, fields in _parsed_agents():
+        for path in _agent_files():
             with self.subTest(path=path.name):
+                fields = parse_agent(path.read_text(encoding="utf-8"))
+                self.assertIsNotNone(fields)
+                assert fields is not None
                 self.assertTrue(fields["__body__"].strip())
 
     def test_only_bundle_fields_are_used(self):
