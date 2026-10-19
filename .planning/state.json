@@ -41,12 +41,12 @@
     {
       "number": "21",
       "name": "Cursor Live Validation",
-      "status": "in_progress"
+      "status": "pending"
     },
     {
       "number": "21.1",
       "name": "Atomic reusable decision-system skills",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "number": "21.2",
@@ -92,7 +92,7 @@
   "next": {
     "command": "/gsd-progress --next",
     "label": "Advance to the next step",
-    "reason": "Phase 8 of 17 · 6% · executing"
+    "reason": "Phase 9 of 17 · 0% · executing"
   },
-  "updated_at": "2026-10-19T02:36:16.848Z"
+  "updated_at": "2026-10-19T04:12:54.032Z"
 }
