@@ -188,6 +188,15 @@ def resolve_runtime_binary(rid, which_fn=shutil.which, realpath_fn=os.path.realp
     return None
 
 
+def cached_binary_usable(path, realpath_fn=os.path.realpath) -> bool:
+    """A cached binary path may stand in for a failed lookup only when it is absolute and,
+    for a guarded name, its realpath still has the expected basename (D-02/D-09)."""
+    if not isinstance(path, str) or not os.path.isabs(path):
+        return False
+    expected = _GUARDED_BINARIES.get(os.path.basename(path))
+    return expected is None or os.path.basename(realpath_fn(path)) == expected
+
+
 def detect_installed_clis(which_fn=shutil.which, realpath_fn=os.path.realpath,
                           path_env=None) -> dict:
     """{runtime id: absolute path or None} for each RUNTIMES row."""

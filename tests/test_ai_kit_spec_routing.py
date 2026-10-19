@@ -433,6 +433,31 @@ class TestTargetedRefresh(unittest.TestCase):
             routing.route_all(entries, ctx)
             self.assertEqual(len(calls), 1)
 
+    def test_failed_lookup_drops_a_cached_agent_that_fails_the_guard(self):
+        # WR-02: the cached-path fallback re-checks the guard; another CLI's agent never lists.
+        with tempfile.TemporaryDirectory() as root:
+            env = self._env(root)
+            other = os.path.join(root, "other", "other-agent")
+            os.makedirs(os.path.dirname(other))
+            with open(other, "w", encoding="utf-8") as stream:
+                stream.write("binary")
+            agent = os.path.join(root, "bin", "agent")
+            os.makedirs(os.path.dirname(agent))
+            os.symlink(other, agent)
+            calls = []
+
+            def run_fn(argv, **_kwargs):
+                calls.append(list(argv))
+                return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+            for cached in (agent, "./agent"):
+                with self.subTest(cached=cached):
+                    snapshot = _snapshot({"cursor": {"installed": True, "path": cached}})
+                    ctx = self._context(env, lambda *_a, **_k: None, run_fn)
+                    routing._refresh_runtime(snapshot, "cursor", ctx)
+                    self.assertEqual(snapshot["clis"]["cursor"], {"installed": False})
+            self.assertEqual(calls, [])
+
     def test_refresh_records_real_path_of_the_re_resolved_binary(self):
         with tempfile.TemporaryDirectory() as root:
             env = self._env(root)

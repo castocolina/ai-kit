@@ -19,6 +19,7 @@ from ai_kit_spec.detection import (
     OpencodeSeams,
     build_runtimes_snapshot,
     cache_runtimes_path,
+    cached_binary_usable,
     claude_runtime_fields,
     claude_runtime_is_current,
     detect_current_runtime,
@@ -275,7 +276,9 @@ def _refresh_runtime(snapshot, rid, ctx: RouteContext) -> bool:
     if not binary and isinstance(before, dict) and before.get("installed"):
         # A failed re-resolution must not wipe a runtime the snapshot already records as
         # installed: the lookup can miss for reasons that say nothing about the install.
-        binary = before.get("path")
+        # A stale relative path or a guarded name that no longer passes the guard is dropped.
+        cached = before.get("path")
+        binary = cached if cached_binary_usable(cached) else None
     if not binary:
         row = {"installed": False}
     else:
