@@ -573,7 +573,7 @@ class TestTaxonomy(_ClientCase):
         self.assertEqual(result["reason"], "http_503")
         self.assertEqual(result["errors"], {"a": "http_503"})
 
-    def test_taxonomy_auto_fallback_after_laya_503(self):
+    def test_taxonomy_503_exhausted_auto_falls_back(self):
         """The full 21.1-01 wire shape: Laya exhausts its 503s in auto, typesafe answers, Zen
         is never touched. The laya stub is the `laya` row; the typesafe stub is the `typesafe`
         row pointed at its own port by `JEV_TYPESAFE_URL`."""
