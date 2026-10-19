@@ -299,7 +299,18 @@ branch (A) — `_LABEL_CURSOR` upgraded to live-verified (Phase 21) (headless; T
 live-verified from the headless cursor session` (this commit; sha: `git log --format=%h -1 --grep 'feat(21-04)'`).
 
 ## Interactive run
-pending: `21-INTERACTIVE-CURSOR.md`; the user's TUI env names, smoke and artifacts are the SPEC R1 acceptance evidence.
+
+The user's numbered script is [21-INTERACTIVE-CURSOR.md](21-INTERACTIVE-CURSOR.md). Steps 1-4
+are the SPEC R1 acceptance: start cursor as `command cursor-agent --model <id>` at the checkout
+root, take the fresh baseline with the names-only env list and the user-keys digest, run the
+smoke with `TMPDIR=/tmp` and `--host-rewrite '<home>/.cursor/cli-config.json'` (cursor rewrites
+its own config during a session, so that one strict entry is reported rather than failed, while
+the three user-owned keys are compared by digest), and check the baseline with `--scratch-root`
+plus the same exemption. Step 5 is ROADMAP SC5's optional per-call model probe: it reads the
+Task call's `model` from the stream-json and lists any leftover `worker-server` process labelled
+by an `/proc/<pid>/environ` ownership match, killing nothing. This plan writes the script and
+never runs it; under SPEC R1/R3 as amended by 21-05 the run is a mandatory human-verification
+item, so the phase ends `human_needed` until it is recorded.
 
 ## Label lift
 - branch: LIFT (R1 headless green and R2 green, read from one identified attempt).

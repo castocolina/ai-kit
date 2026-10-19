@@ -661,6 +661,101 @@ class TestSnapshot(_ScratchPaths):
         self.assertEqual(code, 1)
         self.assertEqual(sink.getvalue().strip(), f"changed {ev.HOME_LABEL}/.gsd/defaults.json")
 
+    def _snap_out_and_rewrite(self) -> tuple[str, str]:
+        """A baseline file plus a host rewrite of cursor's own cli-config.json."""
+        out = os.path.join(self.scratch, "snap.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            ev._cmd_snapshot(
+                Namespace(out=out, check=None, home=pathlib.Path(self.home), scratch_root=[])
+            )
+        label = ev.CURSOR_CLI_CONFIG_LABEL
+        self.write(os.path.join(self.home, ".cursor", "cli-config.json"), '{"model":"y"}\n')
+        return out, label
+
+    def test_snapshot_check_host_rewrite_label_is_reported_not_failed(self) -> None:
+        out, label = self._snap_out_and_rewrite()
+        with contextlib.redirect_stdout(io.StringIO()) as sink:
+            code = ev._cmd_snapshot(
+                Namespace(
+                    out=None,
+                    check=out,
+                    home=pathlib.Path(self.home),
+                    scratch_root=[],
+                    host_rewrite=[label],
+                )
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            sink.getvalue().splitlines(), [f"changed (host-rewrite) {label}", "snapshot ok"]
+        )
+
+    def test_snapshot_check_host_rewrite_keeps_other_entries_strict(self) -> None:
+        out, label = self._snap_out_and_rewrite()
+        self.write(os.path.join(self.home, ".gsd", "defaults.json"), '{"z": 9}\n')
+        with contextlib.redirect_stdout(io.StringIO()) as sink:
+            code = ev._cmd_snapshot(
+                Namespace(
+                    out=None,
+                    check=out,
+                    home=pathlib.Path(self.home),
+                    scratch_root=[],
+                    host_rewrite=[label],
+                )
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            sink.getvalue().splitlines(),
+            [f"changed {ev.HOME_LABEL}/.gsd/defaults.json", f"changed (host-rewrite) {label}"],
+        )
+        self.assertNotIn("snapshot ok", sink.getvalue())
+
+    def test_snapshot_check_host_rewrite_host_managed_only_change_omits_snapshot_ok(self) -> None:
+        """The flag never earns a `snapshot ok`: a host-managed-only change keeps today's
+        output (the line, exit 0, no `snapshot ok`), with and without the flag."""
+        out = os.path.join(self.scratch, "snap.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            ev._cmd_snapshot(
+                Namespace(out=out, check=None, home=pathlib.Path(self.home), scratch_root=[])
+            )
+        self.write(os.path.join(self.home, ".claude", "plugins", "marketplaces.json"), "[1]\n")
+        label = ev.CURSOR_CLI_CONFIG_LABEL
+        for host_rewrite in ([], [label]):
+            with contextlib.redirect_stdout(io.StringIO()) as sink:
+                code = ev._cmd_snapshot(
+                    Namespace(
+                        out=None,
+                        check=out,
+                        home=pathlib.Path(self.home),
+                        scratch_root=[],
+                        host_rewrite=host_rewrite,
+                    )
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                sink.getvalue().splitlines(),
+                [f"changed (host-managed) {ev.HOME_LABEL}/.claude/plugins/marketplaces.json"],
+            )
+
+    def test_host_rewrite_flag_rejects_other_labels(self) -> None:
+        """`choices` restricts the exemption to cursor's cli-config label on both subparsers."""
+        parser = ev._build_parser()
+        bad = f"{ev.HOME_LABEL}/.gsd/defaults.json"
+        for argv in (
+            ["snapshot", "--check", "x", "--host-rewrite", bad],
+            ["smoke", "--evidence-out", "x", "--host-rewrite", bad],
+        ):
+            with (
+                self.assertRaises(SystemExit) as raised,
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                parser.parse_args(argv)
+            self.assertEqual(raised.exception.code, 2)
+        cursor_label = ev.CURSOR_CLI_CONFIG_LABEL
+        snap = parser.parse_args(["snapshot", "--check", "x", "--host-rewrite", cursor_label])
+        smoke = parser.parse_args(["smoke", "--evidence-out", "x", "--host-rewrite", cursor_label])
+        self.assertEqual(snap.host_rewrite, [cursor_label])
+        self.assertEqual(smoke.host_rewrite, [cursor_label])
+
 
 class TestDigest(unittest.TestCase):
     def setUp(self) -> None:
@@ -3851,6 +3946,73 @@ class TestSmoke(unittest.TestCase):
         )
         self.assertEqual([r["label"] for r in result["local_install"]], ["project-a"])
         self.assertEqual([s["label"] for s in result["baked"]], ["project-b"])
+
+    def _run_smoke_with_changed_labels(self, before: dict, after: dict, host_rewrite: tuple):
+        """One run_smoke call with the two snapshots injected, every step faked green."""
+        ctx = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "codex", {})
+        with (
+            mock.patch.object(
+                ev, "_smoke_ai_kit", return_value={"name": "x", "ok": True, "detail": ""}
+            ),
+            mock.patch.object(ev, "_smoke_project_a", return_value=[]),
+            mock.patch.object(
+                ev, "_smoke_project_b", return_value={"name": "b", "ok": True, "detail": ""}
+            ),
+            mock.patch.object(
+                ev, "_run_matrix_step", return_value={"name": "m", "ok": True, "detail": ""}
+            ),
+            mock.patch.object(ev, "snapshot", side_effect=[before, after]),
+        ):
+            return ev.run_smoke(
+                ctx,
+                self.tmp,
+                seed_fn=lambda _w, _c: {},
+                assert_fn=lambda _e: None,
+                host_rewrite=host_rewrite,
+            )
+
+    def test_run_smoke_host_rewrite_filters_only_that_label(self) -> None:
+        """Only the exempted label is filtered: the step, strict_changed,
+        host_rewrite_changed, exit and the rendered evidence all agree."""
+        label = ev.CURSOR_CLI_CONFIG_LABEL
+        gsd = f"{ev.HOME_LABEL}/.gsd/defaults.json"
+        before = {"strict": {label: "a", gsd: "1"}, "host_managed": {}}
+        after = {"strict": {label: "b", gsd: "1"}, "host_managed": {}}
+
+        result = self._run_smoke_with_changed_labels(before, after, ())
+        last = result["steps"][-1]
+        self.assertFalse(last["ok"])
+        self.assertIn(label, last["detail"])
+        self.assertEqual(result["strict_changed"], [label])
+        self.assertEqual(result["host_rewrite_changed"], [])
+        self.assertEqual(result["exit"], 1)
+
+        result = self._run_smoke_with_changed_labels(before, after, (label,))
+        last = result["steps"][-1]
+        self.assertTrue(last["ok"])
+        self.assertIn(f"changed (host-rewrite) {label}", last["detail"])
+        self.assertEqual(result["strict_changed"], [])
+        self.assertEqual(result["host_rewrite_changed"], [label])
+        self.assertEqual(result["exit"], 0)
+        merged = {
+            **result,
+            "scratch_a": os.path.join(self.tmp, "a"),
+            "scratch_b": os.path.join(self.tmp, "b"),
+            "home": self.tmp,
+            "repo_root": str(ev.REPO_ROOT),
+        }
+        text = ev.render_smoke_evidence(merged)
+        self.assertIn(f"changed (host-rewrite): {label}", text)
+        self.assertNotIn("\n- unchanged\n", text)
+
+        both_after = {"strict": {label: "b", gsd: "2"}, "host_managed": {}}
+        result = self._run_smoke_with_changed_labels(before, both_after, (label,))
+        last = result["steps"][-1]
+        self.assertFalse(last["ok"])
+        self.assertIn(f"changed {gsd}", last["detail"])
+        self.assertEqual(result["strict_changed"], [gsd])
+        self.assertEqual(result["host_rewrite_changed"], [label])
+        self.assertEqual(result["exit"], 1)
 
     def test_host_managed_change_is_reported_not_failed(self) -> None:
         before = {"strict": {"a": "1"}, "host_managed": {"h": "1"}}

@@ -335,12 +335,36 @@ def snapshot_diff(a: dict, b: dict) -> tuple[list[str], list[str]]:
     )
 
 
-def _snapshot_report(stored: dict, current: dict) -> tuple[list[str], bool]:
+CURSOR_CLI_CONFIG_LABEL = f"{HOME_LABEL}/.cursor/cli-config.json"
+
+
+def _split_host_rewrite(
+    strict: list[str], host_rewrite: tuple | list = ()
+) -> tuple[list[str], list[str]]:
+    """(strict labels not exempted, strict labels exempted as host-rewrite); order kept.
+
+    A per-run exemption in the `--scratch-root` style (21-06): the interactive cursor run
+    passes `--host-rewrite` for cursor's own `cli-config.json`, which the host rewrites
+    during a session; the strict entry itself stays strict for every run without the flag.
+    """
+    exempt = tuple(host_rewrite or ())
+    return [label for label in strict if label not in exempt], [
+        label for label in strict if label in exempt
+    ]
+
+
+def _snapshot_report(
+    stored: dict, current: dict, host_rewrite: tuple | list = ()
+) -> tuple[list[str], bool]:
     """(printed lines, failed): one `changed <label>` line per strict difference, one
-    `changed (host-managed) <label>` per host-managed difference. Never a value."""
+    `changed (host-rewrite) <label>` per exempted strict difference, one
+    `changed (host-managed) <label>` per host-managed difference. Never a value. `failed`
+    is true iff a strict label outside `host_rewrite` differs."""
     strict, host = snapshot_diff(stored, current)
+    strict, rewritten = _split_host_rewrite(strict, host_rewrite)
     return (
         [f"changed {label}" for label in strict]
+        + [f"changed (host-rewrite) {label}" for label in rewritten]
         + [f"changed (host-managed) {label}" for label in host],
         bool(strict),
     )
@@ -364,8 +388,14 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     if stored is None:
         print(f"snapshot {error}")
         return 1
-    lines, failed = _snapshot_report(stored, current)
-    print("\n".join(lines) if lines else "snapshot ok")
+    lines, failed = _snapshot_report(stored, current, getattr(args, "host_rewrite", []))
+    if lines:
+        print("\n".join(lines))
+    # `snapshot ok` only when nothing but host-rewrite lines were printed (none included),
+    # so a host-managed-only change keeps today's output and every `grep -qx 'snapshot ok'`
+    # gate keeps its pass criterion (21-06).
+    if not lines or all(line.startswith("changed (host-rewrite) ") for line in lines):
+        print("snapshot ok")
     return 1 if failed else 0
 
 
@@ -4629,7 +4659,9 @@ def _run_matrix_step(ctx: SmokeCtx) -> dict:
     return result
 
 
-def run_smoke(ctx: SmokeCtx, work: str, seed_fn=None, assert_fn=None) -> dict:
+def run_smoke(
+    ctx: SmokeCtx, work: str, seed_fn=None, assert_fn=None, host_rewrite: tuple = ()
+) -> dict:
     """D-14 steps 1-7. Every step records its own outcome; the snapshot always runs."""
     seed_fn = seed_fn or _seed_for_smoke
     assert_fn = assert_fn or (lambda env: assert_no_probe(env))
@@ -4644,16 +4676,15 @@ def run_smoke(ctx: SmokeCtx, work: str, seed_fn=None, assert_fn=None) -> dict:
     steps.append(matrix)
     after = snapshot(ctx.repo_root, ctx.home, (work,))
     strict, host_managed = snapshot_diff(before, after)
-    steps.append(
-        {
-            "name": "protected set unchanged",
-            "ok": not strict,
-            "detail": "unchanged" if not strict else f"changed {', '.join(strict)}",
-        }
-    )
+    strict, rewritten = _split_host_rewrite(strict, host_rewrite)
+    detail = "unchanged" if not strict else f"changed {', '.join(strict)}"
+    if rewritten:
+        detail += f"; changed (host-rewrite) {', '.join(rewritten)}"
+    steps.append({"name": "protected set unchanged", "ok": not strict, "detail": detail})
     return {
         "steps": steps,
         "strict_changed": strict,
+        "host_rewrite_changed": rewritten,
         "host_managed_changed": host_managed,
         "matrix": matrix.get("matrix"),
         "key_paths": b_result.get("key_paths", {}),
@@ -4737,7 +4768,13 @@ def render_smoke_evidence(result: dict) -> str:
     ]
     lines += ["", "## Protected set"]
     changed = list(result.get("strict_changed") or [])
-    lines.append("- unchanged" if not changed else "- changed: " + ", ".join(changed))
+    rewritten = list(result.get("host_rewrite_changed") or [])
+    if not changed and not rewritten:
+        lines.append("- unchanged")
+    if changed:
+        lines.append("- changed: " + ", ".join(changed))
+    if rewritten:
+        lines.append("- changed (host-rewrite): " + ", ".join(rewritten))
     host = list(result.get("host_managed_changed") or [])
     lines.append("- host-managed changed: " + (", ".join(host) if host else "none"))
     keys = (result.get("key_paths") or {}).get("reconciled") or []
@@ -4867,7 +4904,7 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
         artifacts_dir,
     )
     try:
-        result = run_smoke(ctx, work)
+        result = run_smoke(ctx, work, host_rewrite=tuple(args.host_rewrite))
         result.update(
             {
                 "scratch_a": os.path.join(work, "project-a"),
@@ -4904,6 +4941,15 @@ def _build_parser() -> argparse.ArgumentParser:
     snap.add_argument("--home", help="home directory to protect (default: this process's)")
     snap.add_argument(
         "--scratch-root", action="append", default=[], help="exclude this root's Codex trust rows"
+    )
+    snap.add_argument(
+        "--host-rewrite",
+        action="append",
+        default=[],
+        metavar="LABEL",
+        choices=(CURSOR_CLI_CONFIG_LABEL,),
+        help="report a byte change of cursor's own cli-config.json without failing (the host "
+        "rewrites it during a session); every other entry stays strict",
     )
     snap.set_defaults(func=_cmd_snapshot)
 
@@ -4956,6 +5002,15 @@ def _build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--installer-dir", help="cached gsd-core package directory; never fetched")
     smoke.add_argument("--keep-scratch", action="store_true", help="keep scratch work directory")
     smoke.add_argument("--artifacts-out", help="copy labelled per-project artifacts here")
+    smoke.add_argument(
+        "--host-rewrite",
+        action="append",
+        default=[],
+        metavar="LABEL",
+        choices=(CURSOR_CLI_CONFIG_LABEL,),
+        help="report a byte change of cursor's own cli-config.json without failing (the host "
+        "rewrites it during a session); every other entry stays strict",
+    )
     smoke.set_defaults(func=_cmd_smoke)
 
     run = sub.add_parser("run", help="one cell of one scenario through claude -p")
