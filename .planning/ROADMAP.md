@@ -527,7 +527,7 @@ within this phase.
   5. Native per-call model selection is verified live from the cursor host, or `host_can_select`
      keeps the session-default-only label for cursor (amended 2026-10-17 per 18.1-VERIFICATION
      deferred item).
-**Plans:** 6/7 plans executed
+**Plans:** 7/7 plans executed
 
 Plans (cross-AI plans are delegated in plan order, one per wave; the two live AI-CLI uses are the
 21-04 cursor-agent dispatch and the 21-05 pi judge):
@@ -550,7 +550,7 @@ Plans (cross-AI plans are delegated in plan order, one per wave; the two live AI
 - [x] 21-05-PLAN.md — Conditional qualified label lift (`validated headless ... pending`) in SKILL.md/README with the test pin and the dated SPEC R1/R3 + ROADMAP SC2 amendment in the evidence commit, skill-judge loop with per-report digest and findings checks (EVAL-07, SPEC R3)
 
 **Wave 7** *(blocked on Wave 6)*
-- [ ] 21-06-PLAN.md — `21-INTERACTIVE-CURSOR.md` (user-keys digest as a key-integrity check on the one default config path, optional SC5 probe that parses the Task call and labels leftovers by environ ownership) and the phase gates, skill-judge gate re-validated against the current digest, phase always ends `human_needed` pending the interactive run (SPEC R8)
+- [x] 21-06-PLAN.md — `21-INTERACTIVE-CURSOR.md` (user-keys digest as a key-integrity check on the one default config path, optional SC5 probe that parses the Task call and labels leftovers by environ ownership) and the phase gates, skill-judge gate re-validated against the current digest, phase always ends `human_needed` pending the interactive run (SPEC R8)
 
 ### Phase 21.1: Atomic reusable decision-system skills (INSERTED)
 

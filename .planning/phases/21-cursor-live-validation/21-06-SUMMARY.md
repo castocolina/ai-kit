@@ -52,6 +52,7 @@ interfaces:
     - "tests/gsd_curated_eval.py:_baked_chain (promised_map type annotation — pyright gate fix)"
     - "tests/test_gsd_curated_eval.py (six new cases: four snapshot, two smoke)"
     - ".planning/phases/21-cursor-live-validation/21-SMOKE-CURSOR.md (## Interactive run filled, ## Phase gates appended)"
+orchestrator_verify: "VERIFY 21-06: 1/2 passed"
 ---
 
 # Phase 21 Plan 06 Summary: Cursor interactive gate and phase gates
