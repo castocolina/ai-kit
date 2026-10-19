@@ -18,6 +18,7 @@ import hashlib
 import http.client
 import ipaddress
 import json
+import logging
 import math
 import os
 import re
@@ -31,8 +32,13 @@ from typing import Any, NamedTuple
 # decide.py reads this line as text and refuses a client without it (no consent gate): T-21.1-22.
 CLIENT_PROTOCOL = 2
 
+# SPEC R5's check is an `assertLogs` on this logger: the consent ask has to be visible to the
+# host as well as in the JSON, and it is the only thing this client ever logs.
+_LOG = logging.getLogger("jev_review")
+
 LAYA_DEFAULT_URL = "http://127.0.0.1:8010"
 SYSTEMONE_PATH = "/v1/systemone"
+ZEN_KEY_FILE = "~/.pi/agent/keys.json"  # opencode's own file, pre-existing and read-only here
 USER_AGENT = "jev-fast-decision/2.0"
 _VALIDATION_MODEL = "x"  # request_body needs a model string to validate with; nothing is sent
 # A real answer is a few KiB; anything bigger is refused, never parsed (T-21.1-11).
@@ -40,6 +46,11 @@ _MAX_RESPONSE_BYTES = 1 << 20
 _PROBE_TIMEOUT = 0.7  # SPEC R9: --probe with nothing reachable must stay under 3 s
 _RETRY_AFTER_CAP = 2.0
 _LAYA_CALLER_CODES = (400, 413, 422)  # a caller bug fails remotely too, so it never escalates
+_UNAUTHORIZED_CODES = (401, 403)
+_TYPESAFE_CALLER_CODES = (400, 404, 413, 422)  # a 402 here is billing, so it is not a caller bug
+_QUOTA_CODES = (402, 429)  # Zen's budget signals: ask the row's next model id, not the user
+_OPENCODE_CALLER_CODES = (400,)  # the 2026-10-11 note: a 400 from Zen is a bad model id
+_WORLD_READABLE = 0o077  # the state-file key is unusable when group or other can read it
 _FORCED_FLAG = "forced_fallback"  # internal: popped in _finalize, never in the output
 _KILL_SWITCH = "GSD_PATH_JEV"
 _READ_CHUNK = 65536
@@ -420,8 +431,27 @@ def _laya_url():
 
 def _laya_key():
     """(value, label) — only the label is ever printed; Laya needs no auth today."""
-    value = os.environ.get("LAYA_API_KEY", "").strip()
-    return (value, "env") if value else (None, None)
+    return _env_key("LAYA_API_KEY")
+
+
+def _bearer_probe(endpoint, key, timeout):
+    """The shared remote reachability check: a bearer GET that asks no question.
+
+    Lives in the generic block, not in an adapter: the *URL* is the backend-specific part and
+    stays with the adapter that calls this.
+    """
+    request = urllib.request.Request(endpoint, headers={"Authorization": f"Bearer {key}",
+                                                       "User-Agent": USER_AGENT})
+    try:
+        opener = urllib.request.build_opener(NoRedirect())
+        with opener.open(request, timeout=min(_PROBE_TIMEOUT, timeout)) as stream:
+            return None if stream.status == 200 else "unreachable"
+    except urllib.error.HTTPError as answered:
+        reason = "unauthorized" if answered.code in _UNAUTHORIZED_CODES else "unreachable"
+        answered.close()
+        return reason
+    except (OSError, ValueError, http.client.HTTPException):
+        return "unreachable"
 
 
 def _laya_probe(row, timeout):
@@ -454,6 +484,161 @@ def _laya_classify(error):
     return "escalate", f"http_{error.code}"
 
 
+def _origin(endpoint, path):
+    """`path` on this endpoint's own origin: the probe never asks a question of the model."""
+    parts = urllib.parse.urlsplit(endpoint)
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
+def _read_key(path):
+    """(value, None) or (None, reason) from a 0600 key file: the first non-empty line.
+
+    The 0600 rule is not decoration — a `chmod 666` file must be refused (SPEC R5, T-21.1-07):
+    a credential any other user of this machine can read is not a secret any more, and sending
+    it would spend uz's quota on someone else's terms. `stat` before `open`, and no exception
+    escapes: a probe must report a reason, not crash.
+    """
+    try:
+        mode = os.stat(path).st_mode
+    except OSError:
+        return None, "missing_file"
+    if mode & _WORLD_READABLE:
+        return None, "world_readable"
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return None, "missing_file"
+    for line in lines:
+        if line.strip():
+            return line.strip(), None
+    return None, "empty_file"
+
+
+def _env_key(name):
+    """A key from the environment: (value, "env") or (None, None). Only the label is printed."""
+    value = os.environ.get(name, "").strip()
+    return (value, "env") if value else (None, None)
+
+
+def _typesafe_url():
+    """TypeSafe's own API root: no loopback rule (it is remote by design), no fallback URL.
+
+    The question POST goes to this URL verbatim. Which path the real API answers on is not
+    verified from here (SPEC O2) — 21.1-05's live probe is what confirms it.
+    """
+    default = "https://api.typesafe.dev"  # the row's own endpoint, kept inside its adapter (D-06)
+    return os.environ.get("JEV_TYPESAFE_URL", default).strip(), None
+
+
+def _typesafe_key():
+    """`TYPESAFE_API_KEY` wins over `XDG_STATE_HOME/typesafe/api_key` (D-09)."""
+    value, label = _env_key("TYPESAFE_API_KEY")
+    if value:
+        return value, label
+    state = os.environ.get("XDG_STATE_HOME", "").strip() or os.path.expanduser("~/.local/state")
+    key, reason = _read_key(os.path.join(state, "typesafe", "api_key"))
+    return (key, "file") if key else (None, reason)
+
+
+def _typesafe_probe(row, timeout):
+    """`GET /api/v1/user/subscription` with the bearer key: 200, else `unauthorized`/`unreachable`.
+
+    No question bytes: this is the only way to know a plan is actually active before spending
+    an inference (D-10).
+    """
+    endpoint, reason = row["url"]()
+    if reason:
+        return reason
+    key, key_reason = row["key"]()
+    if not key:
+        return key_reason or "missing_key"
+    return _bearer_probe(_origin(endpoint, "/api/v1/user/subscription"), key, timeout)
+
+
+def _typesafe_classify(error):
+    """(action, reason) for one TypeSafe failure (D-10).
+
+    401/403 → escalate + `unauthorized`; 503 → retry honoring Retry-After; 402 → try the row's
+    next model id; every other 4xx → `caller_error`.
+    """
+    if not isinstance(error, urllib.error.HTTPError):
+        return "escalate", "network_error"
+    _error_body(error)
+    if error.code in _UNAUTHORIZED_CODES:
+        return "escalate", "unauthorized"
+    if error.code == 503:
+        return "retry", "http_503"
+    if error.code == 402:
+        return "next_model", "http_402"
+    if error.code in _TYPESAFE_CALLER_CODES:
+        return "caller_error", f"caller_error:http_{error.code}"
+    return "escalate", f"http_{error.code}"
+
+
+def _opencode_url():
+    """Zen's OpenAI-compatible root: `JEV_OPENCODE_URL` replaces the whole base (D-11).
+
+    Same caveat as TypeSafe: the POST target is this URL verbatim and the real path is 21.1-05's
+    to confirm (SPEC O2) — nothing in this plan dials it.
+    """
+    default = "https://opencode.ai/zen/v1"  # the row's own endpoint, kept inside its adapter
+    return os.environ.get("JEV_OPENCODE_URL", default).strip(), None
+
+
+def _opencode_key():
+    """`OPENCODE_ZEN_API_KEY` wins over the first line of `~/.pi/agent/keys.json`'s
+    `opencode-zen.key` (D-11)."""
+    value, label = _env_key("OPENCODE_ZEN_API_KEY")
+    if value:
+        return value, label
+    try:
+        with open(os.path.expanduser(ZEN_KEY_FILE), encoding="utf-8") as handle:
+            parsed = json.load(handle)
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        return None, "missing_file"
+    entry = parsed.get("opencode-zen") if isinstance(parsed, dict) else None
+    key = entry.get("key") if isinstance(entry, dict) else None
+    if isinstance(key, str) and key.strip():
+        return key.strip(), "file"
+    return None, "empty_file"
+
+
+def _opencode_probe(row, timeout):
+    """`GET /models` with the bearer key; a 401/403 reports `unauthorized` (D-11).
+
+    Which exact path answers on the real endpoint is unverified from here (SPEC O2); the
+    bearer probe is what says "this credential works" before any question leaves the machine.
+    """
+    endpoint, reason = row["url"]()
+    if reason:
+        return reason
+    key, key_reason = row["key"]()
+    if not key:
+        return key_reason or "missing_key"
+    return _bearer_probe(_origin(endpoint, "/models"), key, timeout)
+
+
+def _opencode_classify(error):
+    """(action, reason) for one Zen failure (D-11).
+
+    401/403 → escalate + `unauthorized`; 402/429 → the row's next model id; 5xx → retry with
+    bounded backoff, escalating when the retries run out; every other 4xx → `caller_error`.
+    """
+    if not isinstance(error, urllib.error.HTTPError):
+        return "escalate", "network_error"
+    _error_body(error)
+    if error.code in _UNAUTHORIZED_CODES:
+        return "escalate", "unauthorized"
+    if error.code in _QUOTA_CODES:
+        return "next_model", f"http_{error.code}"
+    if 500 <= error.code < 600:
+        return "retry", f"http_{error.code}"
+    if error.code in _OPENCODE_CALLER_CODES:
+        return "caller_error", f"caller_error:http_{error.code}"
+    return "escalate", f"http_{error.code}"
+
+
 Row = dict[str, Any]
 
 # One row per backend: its data in front, its adapters behind. 21.1-06's --calibrate reads a
@@ -475,6 +660,36 @@ TABLE: tuple[Row, ...] = (
         "key": _laya_key,
         "probe": _laya_probe,
         "classify": _laya_classify,
+    },
+    {
+        "name": "typesafe",
+        "remote": True,
+        "batch": True,  # no per-question channel contamination observed
+        "min_confidence": 0.8,
+        "models": ("jev-latest",),  # a real id from the provider, never a "latest" alias
+        "model_env": "JEV_TYPESAFE_MODEL",
+        "response_model": re.compile(r"typesafe-[a-z0-9_.-]+"),
+        "retry_limit": 2,  # 503 + Retry-After, then escalate
+        "state_chars_limit": 8000,
+        "url": _typesafe_url,
+        "key": _typesafe_key,
+        "probe": _typesafe_probe,
+        "classify": _typesafe_classify,
+    },
+    {
+        "name": "opencode",
+        "remote": True,
+        "batch": False,  # Zen answers one question per call: two ids, free tier first (D-11)
+        "min_confidence": 0.75,
+        "models": ("jev-1.13-free", "jev-1.13"),
+        "model_env": "JEV_OPENCODE_MODEL",
+        "response_model": re.compile(r"opencode-[a-z0-9_.-]+"),
+        "retry_limit": 2,  # a 5xx gets bounded backoff, then the item escalates
+        "state_chars_limit": 8000,
+        "url": _opencode_url,
+        "key": _opencode_key,
+        "probe": _opencode_probe,
+        "classify": _opencode_classify,
     },
 )
 
@@ -514,14 +729,29 @@ def _request_model(row, index=0):
     return row["models"][-1]
 
 
-def _gate_open():
-    """The session consent gate; Task 2 widens this to the per-backend name list."""
-    return os.environ.get("JEV_ALLOW_REMOTE", "").strip() == "1"
+def _gate_open(name):
+    """The session consent gate (D-17): `JEV_ALLOW_REMOTE=1` opens every remote, a
+    comma-separated list opens only the names it lists, and anything else opens nothing.
+
+    A remote call answers with uz's money, so the consent has to be in the environment, not
+    inferred from the row being configured: with no gate, every question this tool asks would
+    quietly spend quota on the local network's account.
+    """
+    raw = os.environ.get("JEV_ALLOW_REMOTE", "").strip()
+    if raw == "1":
+        return True
+    return name in [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _remote_allowed(row):
+    """Whether this row may touch the network at all: a local row always may."""
+    return not row["remote"] or _gate_open(row["name"])
 
 
 def _keyed_remotes():
-    """Remote rows that have a key: the rows a consent decision is about."""
-    return [row["name"] for row in TABLE if row["remote"] and row["key"]()[0]]
+    """Remote rows that have a key and no consent yet: the rows a consent decision is about."""
+    return [row["name"] for row in TABLE
+            if row["remote"] and not _gate_open(row["name"]) and row["key"]()[0]]
 
 
 def _parse_jev_min_confidence():
@@ -545,11 +775,19 @@ def _threshold_for(row):
 
 # ─── probe ────────────────────────────────────────────────────────────────────
 
+def _row_probe(row, timeout):
+    """Probe one row, gate first: a remote row this session has not allowed is never dialed,
+    not even for a reachability check that would send no question."""
+    if not _remote_allowed(row):
+        return "consent_required"
+    return row["probe"](row, timeout)
+
+
 def _probe_reasons(rows):
     """([usable row] in the given order, {name: reason} for the unusable ones)."""
     usable, reasons = [], {}
     for row in rows:
-        reason = row["probe"](row, _PROBE_TIMEOUT)
+        reason = _row_probe(row, _PROBE_TIMEOUT)
         if reason is None:
             usable.append(row)
         else:
@@ -575,12 +813,14 @@ def _unusable_reason(choice, unavailable):
 
 
 def _consent_result(choice, unavailable, attempts, provenance):
-    """The consent outcome: auto, the gate closed and a keyed remote exists → ask, send zero."""
-    if choice != "auto" or _gate_open():
+    """The consent outcome: auto, a keyed remote and no consent for it → ask, send zero."""
+    if choice != "auto":
         return None
     remotes = _keyed_remotes()
     if not remotes:
         return None
+    _LOG.info("remote backend(s) %s are configured but this session has not allowed them; "
+              "answered locally only", ", ".join(remotes))
     return {"status": "consent_required_for_remote", "remote_available": remotes,
             "attempts": attempts, "unavailable": unavailable, **provenance}
 
@@ -605,7 +845,7 @@ def _probe_all():
     rows, reasons, entries = {}, {}, {}
     for row in TABLE:
         name = row["name"]
-        reason = row["probe"](row, _PROBE_TIMEOUT)
+        reason = _row_probe(row, _PROBE_TIMEOUT)
         rows[name], reasons[name], entries[name] = row, reason, _backend_entry(row, reason)
     return rows, reasons, entries
 
@@ -733,10 +973,13 @@ def _retry_after(error):
 def _send(row, body, timeout):
     """POST one request body to this row's endpoint: (parsed response, encoded body).
 
-    Raises before any socket when the kill switch is off or this row's URL is refused.
+    Raises before any socket when the kill switch is off, when this row's URL is refused, or
+    when a remote row has no consent yet (D-17).
     """
     if os.environ.get(_KILL_SWITCH) != "1":
         raise PermissionError("disabled")
+    if not _remote_allowed(row):
+        raise PermissionError("consent_required")
     url, reason = row["url"]()
     if reason:
         raise PermissionError(reason)

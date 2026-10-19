@@ -13,6 +13,7 @@ JevStub`), the precedent of tests/test_curated_config_followups.py. Method tags
 (`test_probe_*`, `test_screen_*`, `test_tolerance_*`, `test_taxonomy_*`) make `-k` select them.
 """
 
+import ast
 import hashlib
 import http.server
 import importlib.util
@@ -20,6 +21,7 @@ import io
 import json
 import math
 import os
+import re
 import shutil
 import socket
 import sys
@@ -45,6 +47,7 @@ def load():
 
 JR = load()
 HEAD = "0" * 40
+ROW_NAMES = ["laya", "typesafe", "opencode"]  # the table's order, Task 2 onward
 REMOTE_HOST = "203.0.113.9"  # TEST-NET-3 documentation range: no test ever connects to it
 
 THREE_ITEMS = {"reviewed_head": HEAD,
@@ -92,10 +95,14 @@ def _maybe_json(raw):
     return value if isinstance(value, dict) else None
 
 
-def _distribution(top, slots, winner=0, uniform=False):
-    """Probabilities over `slots` summing to ~1, with `winner` on top."""
+def _distribution(top, slots, winner=0, uniform=False, places=4):
+    """Probabilities over `slots` summing to ~1, with `winner` on top.
+
+    `uniform` with `places=4` is Laya's rounding (a 3-way answer sums to 0.9999); with
+    `places=2` it is TypeSafe's (a 3-way answer sums to 0.99).
+    """
     if uniform:
-        flat = round(1.0 / len(slots), 4)  # Laya rounds to 4 decimals: three ways sums 0.9999
+        flat = round(1.0 / len(slots), places)
         return {slot: flat for slot in slots}
     rest = (1.0 - top) / (len(slots) - 1) if len(slots) > 1 else 0.0
     return {slot: (top if i == winner else rest) for i, slot in enumerate(slots)}
@@ -113,7 +120,7 @@ class JevStub:
     """
 
     def __init__(self, model="laya-rl-agent", top=0.9, tops=None, truncated=False,
-                 uniform=False, delay=0.0, health=200, script=None):
+                 uniform=False, delay=0.0, health=200, script=None, places=4):
         self.model = model
         self.top = top
         self.tops = dict(tops or {})
@@ -122,6 +129,7 @@ class JevStub:
         self.delay = delay
         self.health = health
         self.script = list(script or [])
+        self.places = places  # how the provider rounds: Laya 4 decimals, TypeSafe 2
         self.requests = []
         self.server = None
         self.thread = None
@@ -131,9 +139,10 @@ class JevStub:
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
-                status = stub.health if self.path == "/health" else 404
+                # Any path answers with `health`: the local row probes GET /health, the remote
+                # rows probe their own paths, and each test asserts on the recorded path.
                 stub.record("GET", self.path, {}, b"")
-                self.reply(status, b'{"status":"ok"}')
+                self.reply(stub.health, b'{"status":"ok"}')
 
             def do_POST(self):
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
@@ -209,7 +218,7 @@ class JevStub:
         top = self.tops.get(qid, self.top)
         if qtype == "choice":
             options = list(spec.get("criteria") or {"x": "x"})
-            probs = _distribution(top, options, uniform=self.uniform)
+            probs = _distribution(top, options, uniform=self.uniform, places=self.places)
             return {"type": "choice", "choice": options[0], "confidence": probs[options[0]],
                     "probabilities": probs}
         if qtype == "score":
@@ -218,7 +227,8 @@ class JevStub:
             winner = min(2, len(levels) - 1)
             return {"type": "score", "score": float(winner), "confidence": top,
                     "legend": dict(zip(slots, levels, strict=True)),
-                    "probabilities": _distribution(top, slots, winner, self.uniform)}
+                    "probabilities": _distribution(top, slots, winner, self.uniform,
+                                                   self.places)}
         return {"type": "noul", "noul": top}
 
 
@@ -249,6 +259,17 @@ class _ClientCase(unittest.TestCase):
         if backend is not None:
             os.environ["JEV_BACKEND"] = backend
 
+    def enable_remote(self, backend=None):
+        """Consent and keys for both remote rows: the in-process stub is the only remote there is.
+
+        `backend=None` keeps the choice on auto, which is how a remote rung gets reached by
+        escalation instead of by name.
+        """
+        self.enable(backend)
+        os.environ["JEV_ALLOW_REMOTE"] = "1"
+        os.environ["TYPESAFE_API_KEY"] = "typesafe-key"
+        os.environ["OPENCODE_ZEN_API_KEY"] = "zen-key"
+
     def run_screen(self, payload_value, stdin_text=None):
         text = stdin_text if stdin_text is not None else json.dumps(payload_value)
         with mock.patch.object(sys, "stdin", io.StringIO(text)):
@@ -256,24 +277,52 @@ class _ClientCase(unittest.TestCase):
 
     def run_main(self, payload_value):
         """main([]) on a payload: (exit code, the parsed stdout JSON)."""
-        out = io.StringIO()
+        code, text, _err = self.run_main_text(payload_value)
+        return code, json.loads(text)
+
+    def run_main_text(self, payload_value):
+        """main([]) on a payload, returning the raw stdout too: (exit code, stdout, stderr)."""
+        out, err = io.StringIO(), io.StringIO()
         with (mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload_value))),
-              mock.patch.object(sys, "stdout", out)):
+              mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", err)):
             code = JR.main([])
-        return code, json.loads(out.getvalue())
+        return code, out.getvalue(), err.getvalue()
 
     def run_probe(self):
         """main(["--probe"]): (exit code, the parsed stdout JSON)."""
+        code, text = self.run_probe_text()
+        return code, json.loads(text)
+
+    def run_probe_text(self):
+        """main(["--probe"]) with the raw stdout too, so a test can grep for a key value."""
         out = io.StringIO()
         with mock.patch.object(sys, "stdout", out):
             code = JR.main(["--probe"])
-        return code, json.loads(out.getvalue())
+        return code, out.getvalue()
 
     def backend_entry(self, report, name):
         return next(entry for entry in report["backends"] if entry["name"] == name)
 
     def assert_no_posts(self, stub):
         self.assertEqual(stub.posts, [], "a probe must never send question content")
+
+    def point_remote(self, name, stub):
+        """Point one remote row's own URL env at `stub`'s origin: no test dials a real host.
+
+        The row's `url` adapter reads `JEV_TYPESAFE_URL` / `JEV_OPENCODE_URL`, so the override
+        happens in the environment exactly where it would for a real user.
+        """
+        env = {"typesafe": "JEV_TYPESAFE_URL", "opencode": "JEV_OPENCODE_URL"}[name]
+        os.environ[env] = f"http://127.0.0.1:{stub.port}"
+
+    def stub_row(self, name, stub, **changes):
+        """A fourth backend invented for the test: url/key/probe/classify over `stub`."""
+        row = dict(JR.row_named("laya"))
+        row.update({"name": name, "models": ("q-1", "q-2"), "model_env": "JEV_Q_MODEL",
+                    "url": lambda: (stub.url, None), "key": lambda: ("k", "env"),
+                    "probe": lambda _row, _timeout: None})
+        row.update(changes)
+        return row
 
 
 class TestProbe(_ClientCase):
@@ -285,7 +334,7 @@ class TestProbe(_ClientCase):
         self.assertEqual(report["status"], "ok")
         self.assertEqual(report["selected"], "laya")
         self.assertEqual(report["candidates"], ["laya"])
-        self.assertEqual([entry["name"] for entry in report["backends"]], ["laya"])
+        self.assertEqual([entry["name"] for entry in report["backends"]], ROW_NAMES)
         self.assertEqual(self.backend_entry(report, "laya"),
                          {"name": "laya", "remote": False, "batch": False,
                           "host": "127.0.0.1", "usable": True, "key_source": None})
@@ -325,7 +374,7 @@ class TestProbe(_ClientCase):
         self.assertEqual(report["reason"], "no_backend_available")
         self.assertEqual(report["selected"], None)
         self.assertEqual(self.backend_entry(report, "laya")["reason"], "unreachable")
-        self.assertEqual([entry["name"] for entry in report["backends"]], ["laya"])
+        self.assertEqual([entry["name"] for entry in report["backends"]], ROW_NAMES)
         self.assertLess(elapsed, 3.0)
         self.assert_no_posts(stub)
 
@@ -373,7 +422,7 @@ class TestProbe(_ClientCase):
         self.assertEqual(report["reason"], "backend_unavailable:zen:unknown_backend")
         self.assertEqual(report["candidates"], [])
         self.assertEqual(report["unavailable"], {"zen": "unknown_backend"})
-        self.assertEqual([entry["name"] for entry in report["backends"]], ["laya"])
+        self.assertEqual([entry["name"] for entry in report["backends"]], ROW_NAMES)
         self.assert_no_posts(stub)
 
     def test_probe_works_with_the_kill_switch_off(self):
@@ -451,7 +500,10 @@ class TestScreen(_ClientCase):
         result = self.run_screen(THREE_ITEMS)
         self.assertEqual(result["status"], "unavailable")
         self.assertEqual(result["reason"], "no_backend_available")
-        self.assertEqual(result["unavailable"], {"laya": "unreachable"})
+        # Task 2: the two remote rows are gated, so they are reported and never dialled.
+        self.assertEqual(result["unavailable"], {"laya": "unreachable",
+                                                 "typesafe": "consent_required",
+                                                 "opencode": "consent_required"})
 
     def test_screen_min_confidence_override_marks_fallback(self):
         with JevStub(top=0.8) as stub:
@@ -465,6 +517,7 @@ class TestScreen(_ClientCase):
 
 class TestTolerance(_ClientCase):
     def test_tolerance_four_decimals(self):
+        self.assertEqual(JR._PROB_SUM_TOLERANCE, 2e-2)  # D-15 pinned as a literal
         answer = {"type": "choice", "choice": "x", "confidence": 0.3333,
                   "probabilities": {"x": 0.3333, "y": 0.3333, "z": 0.3333}}
         checked = JR._check_choice_answer(answer, {"x": "", "y": "", "z": ""})
@@ -519,6 +572,29 @@ class TestTaxonomy(_ClientCase):
         self.assertEqual(result["status"], "unavailable")
         self.assertEqual(result["reason"], "http_503")
         self.assertEqual(result["errors"], {"a": "http_503"})
+
+    def test_taxonomy_auto_fallback_after_laya_503(self):
+        """The full 21.1-01 wire shape: Laya exhausts its 503s in auto, typesafe answers, Zen
+        is never touched. The laya stub is the `laya` row; the typesafe stub is the `typesafe`
+        row pointed at its own port by `JEV_TYPESAFE_URL`."""
+        with (JevStub(script=[{"status": 503, "headers": {"Retry-After": "0"},
+                                "body": b"busy"}] * 3) as laya,
+              JevStub(model="typesafe-1") as typesafe,
+              JevStub(model="opencode-1") as zen):
+            self.point_at(laya)
+            self.point_remote("typesafe", typesafe)
+            self.point_remote("opencode", zen)
+            self.enable_remote(None)
+            with mock.patch.object(JR, "_sleep", side_effect=lambda _seconds: None):
+                result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["backend"], "typesafe")
+        self.assertEqual(result["model"], "typesafe-1")
+        self.assertEqual(len(laya.posts), 3)  # the original plus the two retries it allows
+        self.assertEqual(len(typesafe.posts), 1)
+        self.assertEqual(zen.posts, [])  # the item is answered: nothing reaches the next rung
+        # One attempt-log entry per rung that failed, not per retry inside that rung.
+        self.assertEqual([entry["reason"] for entry in result["attempts"]], ["http_503"])
 
     def test_taxonomy_500_escalates_without_retry(self):
         result, stub = self.scripted([{"status": 500, "body": b"inference failed"}])
@@ -653,6 +729,397 @@ class TestProbabilityRules(unittest.TestCase):
                        {"type": "noul", "noul": "0.9"}, {"type": "noul", "noul": 1.5}):
             with self.assertRaises(ValueError, msg=str(answer)):
                 JR._check_noul_answer(answer, None)
+
+
+class TestRemoteRows(_ClientCase):
+    """The two remote rows (D-09, D-11, D-26): batch shape, model policy, error taxonomy."""
+
+    def remote_screen(self, name, stub, items=None):
+        """A remote row's screen run: the stub is that backend's endpoint, consent given."""
+        self.point_remote(name, stub)
+        self.enable_remote(name)
+        return self.run_screen(items or payload(noul_item("a")))
+
+    def test_typesafe_batch_two_items_one_request(self):
+        items = payload(noul_item("a"), noul_item("b"))
+        with JevStub(model="typesafe-1") as stub:
+            self.point_remote("typesafe", stub)
+            self.enable_remote("typesafe")
+            result = self.run_screen(items)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["backend"], "typesafe")
+        self.assertEqual(len(stub.posts), 1)  # batch: True — two items, one request
+        self.assertEqual(sorted(stub.bodies[0]["questions"]), ["a", "b"])
+        self.assertEqual([item["id"] for item in stub.bodies[0]["state"]["items"]], ["a", "b"])
+        self.assertEqual(set(result["answers"]), {"a", "b"})
+
+    def test_tolerance_typesafe_two_decimals_are_accepted(self):
+        # TypeSafe rounds to 2 decimals: a 3-way answer sums to 0.99, inside the tolerance.
+        items = payload(choice_item("c1"))
+        with JevStub(model="typesafe-1", uniform=True, places=2, top=0.33) as stub:
+            self.point_remote("typesafe", stub)
+            self.enable_remote("typesafe")
+            os.environ["JEV_MIN_CONFIDENCE"] = "0.3"  # below the row's own 0.8
+            result = self.run_screen(items)
+        self.assertEqual(result["status"], "ok")
+        self.assertNotIn("errors", result)
+        answer = result["answers"]["c1"]
+        self.assertAlmostEqual(math.fsum(answer["probabilities"].values()), 0.99, places=4)
+        self.assertFalse(answer["needs_fallback"])  # 0.33 >= the overridden 0.3 threshold
+
+    def test_typesafe_one_decimal_sum_is_rejected(self):
+        # The tolerance is bounded: a 3-way answer summing to 0.90 is not a probability space.
+        items = payload(choice_item("c1"))
+        with JevStub(model="typesafe-1", uniform=True, places=1, top=0.3) as stub:
+            self.point_remote("typesafe", stub)
+            self.enable_remote("typesafe")
+            result = self.run_screen(items)
+        self.assertEqual(result["errors"], {"c1": "invalid_response"})
+
+    def test_model_policy_typesafe_single_id_402_escalates(self):
+        with JevStub(script=[{"status": 402, "body": b"billing"}], model="typesafe-1") as stub:
+            self.point_remote("typesafe", stub)
+            self.enable_remote("typesafe")
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(len(stub.posts), 1)  # one model id: nothing else to try
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["errors"], {"a": "http_402"})
+
+    def test_model_policy_typesafe_pinned_sends_only_that_id(self):
+        with JevStub(model="typesafe-1") as stub:
+            self.point_remote("typesafe", stub)
+            self.enable_remote("typesafe")
+            os.environ["JEV_TYPESAFE_MODEL"] = "jev-2027-01"
+            _result = self.run_screen(payload(noul_item("a"), noul_item("b")))
+        self.assertEqual({body["model"] for body in stub.bodies}, {"jev-2027-01"})
+
+    def test_model_policy_opencode_free_id_first_then_paid(self):
+        script = [{"status": 429, "body": b"quota"}]
+        with JevStub(script=script, model="opencode-1") as stub:
+            self.point_remote("opencode", stub)
+            self.enable_remote("opencode")
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual([body["model"] for body in stub.bodies],
+                         ["jev-1.13-free", "jev-1.13"])  # the same group body, next id
+        self.assertEqual(result["answers"]["a"]["model"], "opencode-1")
+
+    def test_model_policy_opencode_402_switches_model(self):
+        script = [{"status": 402, "body": b"billing"}]
+        with JevStub(script=script, model="opencode-1") as stub:
+            self.point_remote("opencode", stub)
+            self.enable_remote("opencode")
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual([body["model"] for body in stub.bodies],
+                         ["jev-1.13-free", "jev-1.13"])
+
+    def test_opencode_both_models_exhausted_keeps_the_last_reason(self):
+        script = [{"status": 429, "body": b"quota"}] * 2
+        with JevStub(script=script, model="opencode-1") as stub:
+            self.point_remote("opencode", stub)
+            self.enable_remote("opencode")
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(len(stub.posts), 2)  # both model ids, both refused
+        self.assertEqual([body["model"] for body in stub.bodies],
+                         ["jev-1.13-free", "jev-1.13"])
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["errors"]["a"], "http_429")
+
+    def test_model_policy_opencode_pinned_sends_only_that_id(self):
+        script = [{"status": 429, "body": b"quota"}] * 2
+        with JevStub(script=script, model="opencode-1") as stub:
+            self.point_remote("opencode", stub)
+            self.enable_remote("opencode")
+            os.environ["JEV_OPENCODE_MODEL"] = "jev-custom"
+            result = self.run_screen(payload(noul_item("a"), noul_item("b")))
+        self.assertEqual([body["model"] for body in stub.bodies], ["jev-custom", "jev-custom"])
+        self.assertEqual({item["id"] for body in stub.bodies
+                          for item in body["state"]["items"]}, {"a", "b"})
+        self.assertEqual(result["errors"], {"a": "http_429", "b": "http_429"})
+
+    def test_opencode_5xx_retries_then_escalates(self):
+        script = [{"status": 500, "body": b"bad gateway"}] * 3
+        with (JevStub(script=script, model="opencode-1") as stub,
+              mock.patch.object(JR, "_sleep", side_effect=lambda _seconds: None)):
+            self.point_remote("opencode", stub)
+            self.enable_remote("opencode")
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(len(stub.posts), 3)  # the original plus retry_limit retries
+        self.assertEqual(result["errors"], {"a": "http_500"})
+
+    def test_opencode_401_is_unauthorized_and_not_retried(self):
+        with JevStub(script=[{"status": 401, "body": b"nope"}], model="opencode-1") as stub:
+            self.point_remote("opencode", stub)
+            self.enable_remote("opencode")
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(len(stub.posts), 1)
+        self.assertEqual(result["errors"], {"a": "unauthorized"})
+
+    def test_opencode_400_is_a_caller_error(self):
+        # The 2026-10-11 note: a 400 from Zen means a model id that does not exist.
+        with JevStub(script=[{"status": 400, "body": b"unknown model"}],
+                     model="opencode-1") as stub:
+            self.point_remote("opencode", stub)
+            self.enable_remote("opencode")
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(result["errors"], {"a": "caller_error:http_400"})
+
+    def test_wrong_response_model_pattern_is_invalid_response(self):
+        # The typesafe row only accepts `typesafe-*`: a Zen id in that seat is a bad response.
+        with JevStub(model="opencode-1") as stub:
+            self.point_remote("typesafe", stub)
+            self.enable_remote("typesafe")
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(result["errors"], {"a": "invalid_response"})
+
+    def test_remote_row_needs_the_gate_before_a_socket(self):
+        row = JR.row_named("typesafe")
+        body, _specs = JR.request_body(payload(noul_item("a")), "jev-latest")
+        self.enable(None)  # the kill switch is on, consent for the remote is not
+        with (mock.patch.object(JR, "_read_key", return_value=("ssn-key", None)),
+              self.assertRaises(PermissionError) as refused):
+            JR._send(row, body, 1.0)
+        self.assertEqual(str(refused.exception), "consent_required")
+
+
+class TestGate(_ClientCase):
+    """The session consent gate (D-17, SPEC R5): a remote call answers with uz's money."""
+
+    def test_gate_open_by_number(self):
+        os.environ["JEV_ALLOW_REMOTE"] = "1"
+        self.assertTrue(JR._gate_open("typesafe"))
+        self.assertTrue(JR._gate_open("opencode"))
+
+    def test_gate_open_by_name_list(self):
+        os.environ["JEV_ALLOW_REMOTE"] = "typesafe, opencode"
+        self.assertTrue(JR._gate_open("typesafe"))
+        self.assertTrue(JR._gate_open("opencode"))
+        self.assertFalse(JR._gate_open("other"))
+
+    def test_gate_closed_by_anything_else(self):
+        for value in ("", "0", "yes", "laya"):
+            os.environ["JEV_ALLOW_REMOTE"] = value
+            self.assertFalse(JR._gate_open("typesafe"), value)
+        os.environ.pop("JEV_ALLOW_REMOTE", None)
+        self.assertFalse(JR._gate_open("typesafe"))
+
+    def test_screen_remote_requires_consent_and_sends_zero(self):
+        with JevStub(model="typesafe-1") as stub:
+            self.point_remote("typesafe", stub)
+            os.environ["TYPESAFE_API_KEY"] = "ssn-key"
+            os.environ.pop("JEV_ALLOW_REMOTE", None)  # auto, no consent
+            self.enable(None)
+            result = self.run_screen(payload(noul_item("a")))
+            self.assertIn("consent_required_for_remote", result["status"])
+            self.assertEqual(result["remote_available"], ["typesafe"])
+            self.assertEqual(stub.requests, [])
+
+    def test_probe_reports_consent_required_without_dialling(self):
+        with JevStub(model="typesafe-1") as stub:
+            self.point_remote("typesafe", stub)
+            os.environ["TYPESAFE_API_KEY"] = "ssn-key"
+            os.environ["LAYA_API_KEY"] = ""
+            _code, report = self.run_probe()
+        self.assertEqual(self.backend_entry(report, "typesafe")["usable"], False)
+        self.assertEqual(self.backend_entry(report, "typesafe")["reason"], "consent_required")
+        self.assertEqual(self.backend_entry(report, "typesafe")["key_source"], "env")
+        self.assertEqual(self.backend_entry(report, "typesafe")["remote"], True)
+        self.assertEqual(stub.requests, [])
+
+    def test_gate_by_name_dials_only_the_named_remote(self):
+        with JevStub(model="typesafe-1") as typesafe, JevStub(model="opencode-1") as zen:
+            os.environ["JEV_ALLOW_REMOTE"] = "typesafe"
+            os.environ["TYPESAFE_API_KEY"] = "ssn-key"
+            os.environ["OPENCODE_ZEN_API_KEY"] = "zen-key"
+            self.point_remote("typesafe", typesafe)
+            self.point_remote("opencode", zen)
+            self.enable(None)
+            _code, report = self.run_probe()
+            self.assertEqual(report["candidates"], ["typesafe"])  # named, reachable
+            self.assertEqual(self.backend_entry(report, "opencode")["reason"],
+                             "consent_required")
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(result["backend"], "typesafe")
+        self.assertEqual(zen.requests, [])  # the other remote was never dialled
+
+    def test_consent_seam_is_logged_when_the_gate_is_closed(self):
+        with JevStub(model="typesafe-1") as stub:
+            self.point_remote("typesafe", stub)
+            os.environ["TYPESAFE_API_KEY"] = "ssn-key"
+            self.enable(None)
+            with self.assertLogs("jev_review", level="INFO") as captured:
+                result = self.run_screen(payload(noul_item("a")))
+        self.assertIn("consent_required_for_remote", result["status"])
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn("typesafe", captured.output[0])
+
+    def test_consent_seam_is_silent_when_the_gate_is_open(self):
+        with JevStub(model="typesafe-1") as stub:
+            self.point_remote("typesafe", stub)
+            self.enable_remote("typesafe")
+            with self.assertNoLogs("jev_review", level="INFO"):
+                result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(result["status"], "ok")
+
+    def test_consent_seam_is_silent_when_no_remote_has_a_key(self):
+        self.enable(None)  # auto, gate closed, and no remote row has a key
+        with self.assertNoLogs("jev_review", level="INFO"):
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(result["reason"], "no_backend_available")
+
+
+class TestKeys(_ClientCase):
+    """Key resolution and the non-disclosure rules (D-09, D-11, SPEC R5)."""
+
+    SENTINEL = "NEVER-PRINT-ME"
+
+    def typesafe_file(self, text="ssn-from-file\n", mode=0o600):
+        path = Path(os.environ["XDG_STATE_HOME"]) / "typesafe" / "api_key"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        os.chmod(path, mode)
+        return path
+
+    def test_keys_typesafe_env_vs_file(self):
+        self.typesafe_file()
+        os.environ["TYPESAFE_API_KEY"] = self.SENTINEL
+        self.assertEqual(JR._typesafe_key(), (self.SENTINEL, "env"))
+
+    def test_typesafe_file_key_when_no_env(self):
+        os.environ.pop("TYPESAFE_API_KEY", None)
+        self.typesafe_file()
+        self.assertEqual(JR._typesafe_key(), ("ssn-from-file", "file"))
+
+    def test_typesafe_0644_file_is_refused_as_world_readable(self):
+        os.environ.pop("TYPESAFE_API_KEY", None)
+        self.typesafe_file(mode=0o644)
+        self.assertEqual(JR._typesafe_key(), (None, "world_readable"))
+
+    def test_keys_typesafe_0600_file_is_accepted(self):
+        os.environ.pop("TYPESAFE_API_KEY", None)
+        path = self.typesafe_file(mode=0o600)
+        value, label = JR._read_key(str(path))
+        self.assertEqual((value, label), ("ssn-from-file", None))
+
+    def test_typesafe_empty_and_missing_file_reasons(self):
+        os.environ.pop("TYPESAFE_API_KEY", None)
+        path = self.typesafe_file(text="\n   \n")
+        self.assertEqual(JR._typesafe_key(), (None, "empty_file"))
+        path.unlink()
+        self.assertEqual(JR._typesafe_key(), (None, "missing_file"))
+
+    def test_zen_key_reads_the_opencode_zen_entry(self):
+        os.environ.pop("OPENCODE_ZEN_API_KEY", None)
+        keys = Path(os.environ["HOME"]) / ".pi" / "agent"
+        keys.mkdir(parents=True)
+        (keys / "keys.json").write_text(json.dumps({"opencode-zen": {"key": self.SENTINEL}}),
+                                        encoding="utf-8")
+        self.assertEqual(JR._opencode_key(), (self.SENTINEL, "file"))
+
+    def test_zen_missing_file_is_a_reason_not_an_exception(self):
+        os.environ.pop("OPENCODE_ZEN_API_KEY", None)
+        os.environ["HOME"] = str(self.tmp / "nope")
+        self.assertEqual(JR._opencode_key(), (None, "missing_file"))
+
+    def test_zen_unparseable_file_is_a_reason_not_an_exception(self):
+        os.environ.pop("OPENCODE_ZEN_API_KEY", None)
+        keys = Path(os.environ["HOME"]) / ".pi" / "agent"
+        keys.mkdir(parents=True)
+        (keys / "keys.json").write_text("{not json", encoding="utf-8")
+        self.assertEqual(JR._opencode_key(), (None, "missing_file"))
+
+    def test_probe_labels_key_sources_and_never_prints_a_value(self):
+        self.typesafe_file()
+        os.environ.pop("TYPESAFE_API_KEY", None)
+        os.environ["LAYA_API_KEY"] = self.SENTINEL
+        os.environ["JEV_ALLOW_REMOTE"] = "1"
+        code, text = self.run_probe_text()
+        self.assertEqual(code, 0)
+        self.assertNotIn(self.SENTINEL, text)
+        report = json.loads(text)
+        self.assertEqual(self.backend_entry(report, "laya")["key_source"], "env")
+        self.assertEqual(self.backend_entry(report, "typesafe")["key_source"], "file")
+        self.assertEqual(self.backend_entry(report, "opencode")["key_source"], "missing_file")
+
+    def test_screen_never_prints_a_key_value(self):
+        os.environ["LAYA_API_KEY"] = self.SENTINEL
+        with JevStub() as stub:
+            self.point_at(stub)
+            self.enable("laya")
+            code, out, err = self.run_main_text(THREE_ITEMS)
+        self.assertEqual(code, 0)
+        self.assertNotIn(self.SENTINEL, out + err)
+        self.assertNotIn(self.SENTINEL, json.dumps(stub.bodies))  # not even on the wire here
+
+
+class TestSeam(_ClientCase):
+    """D-06: a backend is a row plus adapters, and nothing else in the client knows its name."""
+
+    NAMES = ("laya", "typesafe", "opencode")
+
+    def backend_literals(self, tree):
+        """Every backend-name string literal outside an adapter and outside the table literal."""
+        offenders = []
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and any(
+                    node.name.startswith(f"_{name}_") for name in self.NAMES):
+                continue  # an adapter: naming its own backend is the whole point
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                names = []
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        names.append(target.id)
+                    elif isinstance(target, (ast.Tuple, ast.List)):
+                        names.extend(elt.id for elt in target.elts
+                                     if isinstance(elt, ast.Name))
+                if "TABLE" in names:
+                    continue  # the registry itself: naming a row there is the point
+            for text in (n.value for n in ast.walk(node)
+                         if isinstance(n, ast.Constant) and isinstance(n.value, str)):
+                for name in self.NAMES:
+                    if re.search(rf"(?:^|[^a-z]){name}(?:[^a-z]|$)", text):
+                        offenders.append((name, node.lineno, text[:60]))
+        return offenders
+
+    def test_ast_no_backend_literal_outside_adapters(self):
+        # D-06. Docstrings are prose and are excluded: this is about a *branch* keyed on a name.
+        tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+        code_only = [hit for hit in self.backend_literals(tree)
+                     if not hit[2].startswith(("One stdlib", "None when", "The 2026"))]
+        self.assertEqual(code_only, [])
+
+    def test_ast_check_is_not_vacuous(self):
+        source = SCRIPT.read_text(encoding="utf-8").replace(
+            "def rows_in_order():", 'def rows_in_order():\n    named = "laya"\n    return [named]')
+        hits = self.backend_literals(ast.parse(source))
+        self.assertTrue(hits, "a backend-named branch outside an adapter must be caught")
+
+    def test_stub_fourth_row_round_trips_through_the_generic_blocks(self):
+        # D-06: adding a backend means adding a row, not editing selection, dispatch or probe.
+        with JevStub(model="laya-4") as stub:
+            stub_row = self.stub_row("stub", stub)
+            with mock.patch.object(JR, "TABLE", (*JR.TABLE, stub_row)):
+                self.enable("stub")
+                result = self.run_screen(payload(noul_item("a")))
+                _code, report = self.run_probe()
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["backend"], "stub")
+        self.assertEqual(report["candidates"], ["stub"])
+        self.assertIn("stub", [entry["name"] for entry in report["backends"]])
+        self.assertEqual(len(stub.posts), 1)  # one question to the stub row, not to Laya
+
+    def test_selection_reason_when_a_row_is_missing(self):
+        # D-06 again, from the other side: the generic blocks survive a table without a row.
+        rows = tuple(row for row in JR.TABLE if row["name"] != "opencode")
+        with mock.patch.object(JR, "TABLE", rows):
+            self.enable("opencode")
+            result = self.run_screen(payload(noul_item("a")))
+            _code, report = self.run_probe()
+        self.assertEqual(result["reason"], "backend_unavailable:opencode:unknown_backend")
+        self.assertEqual([entry["name"] for entry in report["backends"]],
+                         ["laya", "typesafe"])
 
 
 if __name__ == "__main__":
