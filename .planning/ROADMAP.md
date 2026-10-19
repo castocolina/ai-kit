@@ -572,6 +572,30 @@ Phase 21
      probe availability, honor consent for remote backends, and log every advisory answer.
   4. Research settles which Jev 1.14 features ship now (`score`, `box`, images incl. comparing
      several, long context, multi-question batching) and what local Laya supports.
+**Plans:** 7 plans
+
+Plans (cross-AI plans run one per wave; the only live uses are local Laya in 21.1-06/07 and the
+pi judge in 21.1-07; the orchestrator runs the in-session pressure arms and judge between waves):
+**Wave 1**
+- [ ] 21.1-01-PLAN.md — Sources from main (D-04); client backend table with row adapters, `--probe`, kill switch, Laya one item per request and its error taxonomy, `2e-2` tolerance, Zen budget stop, model-id policy, seam tests; RED pressure scaffold (DEC-01, DEC-02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 21.1-02-PLAN.md — One escalation ladder with per-item rung trail and `--skip-local`, the consent record in the client, the answer log, the total deadline, capability cells and `unsupported_feature`, `score` end to end (DEC-01, DEC-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 21.1-03-PLAN.md — `decide.py` as a thin caller (one client call, columns from the table, detect and consent delegated, `score` items), tests on the real repo client, spec-discuss docs (DEC-02)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 21.1-04-PLAN.md — pi link root derived from the claude selection on every link/unlink/prune path, `--replace-existing` backup under XDG state, R8 e2e module, PTY env isolation (DEC-03)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 21.1-05-PLAN.md — Wizard housekeeping kind `replace` (default No) and a PTY run through it (DEC-03)
+
+**Wave 6** *(blocked on Wave 5 and the orchestrator's RED arms)*
+- [ ] 21.1-06-PLAN.md — GREEN SKILL.md, reference.md with the dated capability matrix, backends/*.md, README row; evals and the live-calibrated Laya threshold; GREEN/REFACTOR staging (DEC-01, DEC-03)
+
+**Wave 7** *(blocked on Wave 6 and the orchestrator's GREEN/REFACTOR arms)*
+- [ ] 21.1-07-PLAN.md — Nine live Laya checks, skill-judge on both skills (in-session + pi), phase gates (DEC-03, DEC-01)
 
 ### Phase 21.2: PreCompact pre-summary hook via the decision system (INSERTED)
 
