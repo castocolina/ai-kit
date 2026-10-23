@@ -2360,6 +2360,21 @@ class TestCmdUninstall(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def test_selective_hook_uninstall_preserves_claude_and_pi_skills(self):
+        pi = os.path.join(self.tmp, ".pi", "agent", "skills")
+        os.makedirs(pi)
+        os.makedirs(os.path.join(self.install, "skills", "beta"))
+        os.symlink(os.path.join(self.install, "skills", "alpha"),
+                   os.path.join(pi, "alpha"))
+        os.symlink(os.path.join(self.install, "skills", "beta"),
+                   os.path.join(self.claude, "skills", "beta"))
+        self.env["PI_CODING_AGENT_DIR"] = os.path.dirname(os.path.dirname(pi))
+        rc = setup.cmd_uninstall(self.env, dry=False, hooks=[])
+        self.assertEqual(rc, 0)
+        self.assertTrue(os.path.islink(os.path.join(self.claude, "skills", "alpha")))
+        self.assertTrue(os.path.islink(os.path.join(self.claude, "skills", "beta")))
+        self.assertTrue(os.path.islink(os.path.join(pi, "alpha")))
+
     def test_removes_ai_kit_links_keeps_foreign_and_install(self):
         rc = setup.cmd_uninstall(self.env, dry=False)
         self.assertEqual(rc, 0)
@@ -3380,6 +3395,27 @@ class TestExternalSegmentToggle(unittest.TestCase):
         self.addCleanup(shutil.rmtree, xdg, ignore_errors=True)
         return setup.resolve_paths(
             {"HOME": home, "AI_KIT_DIR": self._REPO, "XDG_CONFIG_HOME": xdg})
+
+    def test_wizard_commit_hook_failure_remains_failed_after_statusline_persist(self):
+        paths = self._paths_for_wizard_commit()
+        foreign = os.path.join(paths.pi_dir, "extensions", "ai-kit-precompact.ts")
+        os.makedirs(os.path.dirname(foreign), exist_ok=True)
+        with open(foreign, "w", encoding="utf-8") as handle:
+            handle.write("foreign")
+        state = {
+            "adopt": True,
+            "segments": dict(setup.current_segments(paths.sample)),
+            "layout": setup.current_layout(paths.sample),
+            "dirty": True,
+        }
+        entries = {cat: [] for cat in setup.CATEGORIES}
+        commit = setup._make_wizard_commit(paths, entries, dry=False,
+                                           counts=setup.new_counts())
+        with mock.patch.object(setup, "apply_hook_selection", return_value=False), \
+                mock.patch.dict(os.environ,
+                                {"CC_AI_KIT_EXTERNAL_DIR": paths.segments_dir}):
+            outcome = commit(setup.Selection([]), state)
+        self.assertIs(outcome["ok"], False)
 
     def test_wizard_commit_declined_example_installed_but_explicitly_off(self):
         """CR-01 regression: a bundled example the user explicitly turned OFF

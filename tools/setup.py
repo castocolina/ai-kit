@@ -1532,7 +1532,7 @@ HOOK_REGISTRY = (
         id="precompact", host="claude", event="PreCompact", matcher="manual|auto",
         script="tools/hooks/claude_precompact.py",
         default=PRECOMPACT_VERDICTS["claude"] == "positive",
-        experimental=False, verdict=PRECOMPACT_VERDICTS["claude"], timeout=15),
+        experimental=False, verdict=PRECOMPACT_VERDICTS["claude"], timeout=10),
     HookRow(
         id="precompact", host="claude", event="SessionStart", matcher="compact",
         script="tools/hooks/claude_precompact.py",
@@ -2869,7 +2869,11 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
                           names=sel_sets["skills"], mirror=True)
             wire_hook_claude(paths.settings, paths.claude_hook, dry)
             wire_hook_cursor(paths.cursor_hooks, paths.cursor_hook, dry)
-            apply_hook_selection(paths, all_sets.get("hooks", set()), dry, counts)
+            hooks_ok = apply_hook_selection(
+                paths, all_sets.get("hooks", set()), dry, counts)
+            if hooks_ok is False:
+                ok = False
+            ok = bool(hooks_ok) and ok
             if adopt:
                 # A discovered bundled example segment (e.g. system_memory) must
                 # actually exist under paths.segments_dir before persist_statusline's
@@ -2948,11 +2952,13 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
                     e["id"] for e in examples
                     if e["id"] not in known_ext_ids and e["id"] not in desired_ids
                 }
-                ok = persist_statusline(
+                statusline_ok = persist_statusline(
                     paths, state, adopt, dry, tty=None,
                     assume_overwrite=True,
                     known_ext_ids=known_ext_ids | newly_installed_desired_off,
                 )
+                if statusline_ok is False:
+                    ok = False
         return {"ok": ok, "adopt": adopt, "log": buf.getvalue()}
     return commit
 
@@ -3607,17 +3613,17 @@ def cmd_uninstall(env, dry, hooks=None):
     a settings file could not be read or rewritten, so ai-kit may still be wired."""
     paths = resolve_paths(env)
     counts = new_counts()
-    installed = installed_links(paths.claude_dir, paths.install_dir)
-    for cat in CATEGORIES:
-        for name in sorted(installed[cat]):
-            unlink_one(os.path.join(paths.claude_dir, cat, name), dry, counts)
-    # The pi root holds skills only (D-14/D-17); foreign links and real dirs
-    # are never touched (installed_links only reports ai-kit symlinks).
-    if os.path.isdir(paths.pi_dir):
-        pi_installed = installed_links(paths.pi_dir, paths.install_dir)
-        for name in sorted(pi_installed["skills"]):
-            unlink_one(os.path.join(paths.pi_dir, "skills", name), dry, counts)
     if hooks is None:
+        installed = installed_links(paths.claude_dir, paths.install_dir)
+        for cat in CATEGORIES:
+            for name in sorted(installed[cat]):
+                unlink_one(os.path.join(paths.claude_dir, cat, name), dry, counts)
+        # The pi root holds skills only (D-14/D-17); foreign links and real dirs
+        # are never touched (installed_links only reports ai-kit symlinks).
+        if os.path.isdir(paths.pi_dir):
+            pi_installed = installed_links(paths.pi_dir, paths.install_dir)
+            for name in sorted(pi_installed["skills"]):
+                unlink_one(os.path.join(paths.pi_dir, "skills", name), dry, counts)
         selected_rows = HOOK_REGISTRY
         hook_ok = unwire_hook_rows(paths, selected_rows, dry, counts)
         print(f"removed {counts['unlinked']} ai-kit symlink(s). "

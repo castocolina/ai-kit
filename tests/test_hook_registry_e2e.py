@@ -65,7 +65,7 @@ class HookRegistryE2E(unittest.TestCase):
         self.assertEqual(pre[0]["matcher"], "manual|auto")
         self.assertEqual(len(pre[0]["hooks"]), 1)
         self.assertEqual(pre[0]["hooks"][0]["command"], expected_command)
-        self.assertEqual(pre[0]["hooks"][0]["timeout"], 15)
+        self.assertEqual(pre[0]["hooks"][0]["timeout"], 10)
         start = data["hooks"]["SessionStart"]
         self.assertEqual(len(start), 1)
         self.assertEqual(start[0]["matcher"], "compact")
