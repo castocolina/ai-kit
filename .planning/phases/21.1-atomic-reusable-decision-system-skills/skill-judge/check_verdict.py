@@ -13,13 +13,14 @@ PHASE = Path(".planning/phases/21.1-atomic-reusable-decision-system-skills")
 REPORTS = {
     "jev-fast-decision": {
         "in-session": PHASE / "skill-judge/in-session-jev-fast-decision.md",
-        "pi": PHASE / "skill-judge/jev-fast-decision-pi-gpt-6.1-sol-xhigh.md",
+        # owner 2026-10-23: the cross-AI judge lane is opencode router-env/my-plan-review
+        "cross-ai": PHASE / "skill-judge/jev-fast-decision-opencode-my-plan-review.md",
         "threshold": 96,
         "activation": True,
     },
     "ai-kit-gsd-spec-discuss": {
         "in-session": PHASE / "skill-judge/in-session-ai-kit-gsd-spec-discuss.md",
-        "pi": PHASE / "skill-judge/ai-kit-gsd-spec-discuss-pi-gpt-6.1-sol-xhigh.md",
+        "cross-ai": PHASE / "skill-judge/ai-kit-gsd-spec-discuss-opencode-my-plan-review.md",
         "threshold": 106,
         "activation": False,
     },
@@ -235,7 +236,7 @@ def main() -> int:
         return 0 if self_test() else 1
     results = []
     for skill in REPORTS:
-        for lane in ("in-session", "pi"):
+        for lane in ("in-session", "cross-ai"):
             state, reason = row_result(skill, lane)
             print(f"ROW {skill} {lane} {state}" + (f": {reason}" if state == "fail" else ""))
             results.append(state)
@@ -246,7 +247,7 @@ def main() -> int:
     written, human = written_verdict()
     print(f"WRITTEN {written}")
     missing = any(not REPORTS[skill][lane].is_file()
-                  for skill in REPORTS for lane in ("in-session", "pi"))
+                  for skill in REPORTS for lane in ("in-session", "cross-ai"))
     pending = any(state == "pending" for state in results)
     failed = missing
     if written == "PASS" and computed != "PASS":

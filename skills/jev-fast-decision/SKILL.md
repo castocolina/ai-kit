@@ -22,7 +22,7 @@ From this skill's directory, run `python3 -B scripts/jev_review.py --probe` befo
 ## Call it
 
 ```bash
-GSD_PATH_JEV=1 JEV_BACKEND=laya JEV_LAYA_URL=http://127.0.0.1:<port> GSD_PATH_JEV_TIMEOUT_SECONDS=20 \
+GSD_PATH_JEV=1 GSD_PATH_JEV_TIMEOUT_SECONDS=20 \
 python3 -B scripts/jev_review.py <<'JSON'
 {"reviewed_head": "<git rev-parse HEAD>", "items": [
  {"id": "F1", "criterion": "This finding is a real bug.", "evidence": "your grep output"},

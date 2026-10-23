@@ -346,3 +346,39 @@ ACTIVATION ok
 CITE_PROBE skills/jev-fast-decision/SKILL.md:12
 CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
 VERDICT pass
+
+## Run 5 (final tree after the code-review fixes 1b7798b..3a3ffa8; fresh opus subagent)
+
+DIGEST 9ad03a73e9daeb6e
+TREE 03be1443594e25d0a2d1f5f8d2180ed960ce7e1b
+
+Activation picks made from frontmatter only, before any body: lines 1-4 pick
+jev-fast-decision, lines 5-12 pick none. Pass rule holds. `needs_fallback` recipe present at
+SKILL.md:38. Every claim in SKILL.md, reference.md and backends/*.md checked against
+`scripts/jev_review.py`; the run-4 Important items are no longer reported.
+
+Open for the owner (not fixed: the gate passes on score and the fix cap is spent):
+- Important I1: the SKILL.md:25 example pins `JEV_BACKEND=laya`, so a copied call never reaches
+  a consented remote or the auto-mode consent ask; use the probe's selected row instead.
+- Minors: 4xx caller-error wording in both backend notes; Laya 401/403 token in reference.md;
+  laya.md lines 32 and 37-38; the five TypeSafe key sources not named in the SKILL.md table;
+  Required-reading links without a trigger; repeated Red Flags / Common Mistakes text; the
+  reference trigger's placement; `remote_available` on `ok` and `--skip-local` undocumented;
+  the `_opencode_url` docstring vs the probe's "documented" label.
+
+D1 18/20
+D2 13/15
+D3 13/15
+D4 14/15
+D5 13/15
+D6 13/15
+D7 8/10
+D8 13/15
+CURRENT 105/120
+CRITICAL 0
+IMPORTANT 1
+FLOORS ok
+ACTIVATION ok
+CITE_PROBE skills/jev-fast-decision/SKILL.md:12
+CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
+VERDICT pass
