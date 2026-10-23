@@ -94,7 +94,10 @@ def _print_empty():
 def main():
     """Branch on the event: PreCompact prepares, compact SessionStart injects."""
     payload = _read_payload()
-    event = payload.get("hook_event_name") if payload else None
+    if payload is None:
+        _print_empty()
+        return 0
+    event = payload.get("hook_event_name")
     if event == "PreCompact":
         precompact_core.run_claude(payload, dict(os.environ))
         _print_empty()

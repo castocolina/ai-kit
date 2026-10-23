@@ -176,7 +176,7 @@ def classify_all(chunks, client, backend, ctx):
     No call starts once the remaining budget is under 0.01 s: the two-decimal
     timeout would round to 0.00 and the client would reject it after a wasted
     spawn. Returns one label or None per chunk, in chunk order."""
-    labels = [None] * len(chunks)
+    labels: list[str | None] = [None] * len(chunks)
     for index in range(len(chunks) - 1, -1, -1):
         remaining = ctx["deadline"] - _monotonic()
         if remaining < 0.01:
