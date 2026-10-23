@@ -1188,6 +1188,19 @@ class TestHostCoverageDocs(unittest.TestCase):
             text = handle.read()
         self.assertIn("opencode", text.lower())
 
+    def test_no_hook_file_mentions_the_rewrite_tool(self):
+        hooks_dir = os.path.join(_REPO, "tools", "hooks")
+        for root, dirs, files in os.walk(hooks_dir):
+            dirs[:] = [name for name in dirs if name != "__pycache__"]
+            for filename in files:
+                path = os.path.join(root, filename)
+                with open(path, encoding="utf-8", errors="replace") as handle:
+                    for line_number, line in enumerate(handle, start=1):
+                        self.assertNotRegex(
+                            line.lower(), r"rtk",
+                            f"{path}:{line_number} mentions forbidden tool",
+                        )
+
     def test_detect_docstring_names_opencode(self):
         with open(_DETECT_PATH, encoding="utf-8") as handle:
             text = handle.read()

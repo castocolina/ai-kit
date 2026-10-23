@@ -885,7 +885,10 @@ class TestCrossRuntimeRow(_ScratchRuntimes):
         row = _row_by_id(catalog, "rtk-cursor-integration")
         self.assertEqual(row["current_display"], "registered")
         self.assertEqual(row["confidence"], "HIGH")
-        self.assertEqual(row["source"], "tools/hooks/README.md")
+        self.assertEqual(
+            row["source"],
+            ".planning/milestones/v1.0-phases/03-tool-substitution-awareness-hook/03-CONTEXT.md",
+        )
         self.assertIn("point-in-time", row["why"].lower())
         self.assertIn("re-probe", row["why"])
 

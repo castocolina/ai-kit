@@ -1,15 +1,12 @@
-# Session-start tool-substitution hooks
+# Session-start tool briefing and advisory hooks
 
 ## What these hooks do
 
-At session start and after compaction, the wrapper scripts inject a compact
-briefing that names which curated `rtk` tool substitutions are genuinely
-available on this machine right now. `detect.py` composes that briefing through
-`detect_substitutions()` and `compose_message()`. Detection is ai-kit's own
-curated pair list crossed with live binary presence and a parse of
-`rtk init --show`. That last signal is reverse-engineered from a third-party
-CLI's human-readable output, not a documented machine contract, so a parse miss
-reports "not active" rather than guessing.
+At session start and after compaction, the wrapper scripts report which of
+aikit's curated modern-tool pairs are available on PATH. The model receives
+concise guidance for using those tools; Claude Code also shows the user a
+plain-text briefing. Detection uses ai-kit's pair list and live binary
+presence only.
 
 ## Host coverage
 
@@ -52,22 +49,12 @@ earlier-compacted history. The pi summary also ends with `<read-files>` /
 edited plus written, read = read minus modified, sorted), because pi does not
 carry file lists from an extension summary into later compactions; over the
 cap the lists are trimmed path by path, ending with a `(+N more)` line. On
-opencode the pre-summary is one extra `output.context` string and the compaction
-prompt stays opencode's own.
+opencode the pre-summary is one extra `output.context` string and the
+compaction prompt stays opencode's own.
 
 ## Non-goals
 
-- No `PreToolUse` mechanism. These hooks never intercept, rewrite, or block a
-  command. They only add context at session start, through a channel entirely
-  separate from any command's stdout, so they cannot alter a command's expected
-  output shape (D-01). Real-time per-command enforcement was raised and
-  explicitly deferred (`.planning/phases/03-tool-substitution-awareness-hook/03-CONTEXT.md`,
-  Deferred Ideas).
-- No modification of `rtk`'s own hook registration. ai-kit's entry is an
-  additional, independent array entry. `rtk hook claude` and `rtk hook cursor`
-  live under each host's `preToolUse`-family event and are never read, edited,
-  or removed by ai-kit (D-02).
-
-Phase 4's config doctor folds this non-goals note in as its cross-runtime
-`rtk`-integration check, so this section is a downstream contract, not just
-prose.
+No ai-kit hook approves, denies, blocks or rewrites a tool call or its output.
+The advisors only add context. Other tools' hook entries are separate array
+entries; ai-kit never reads, edits or removes them. This preserves the Phase 03
+D-02 boundary documented in `.planning/milestones/v1.0-phases/03-tool-substitution-awareness-hook/03-CONTEXT.md`.

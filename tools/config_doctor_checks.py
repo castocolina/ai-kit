@@ -1004,8 +1004,7 @@ CONFIG_DOCTOR_ROWS = [
         ),
         source=_CURSOR_CONFIG_SOURCE,
     ),
-    # source is a repo-relative citation (in-repo cross-reference), not an
-    # external URL — tools/hooks/README.md's own closing line.
+    # Source is a repo-relative citation to Phase 03 D-02, not an external URL.
     CheckRow(
         id="rtk-cursor-integration",
         runtime="cross",
@@ -1016,13 +1015,12 @@ CONFIG_DOCTOR_ROWS = [
         confidence="HIGH",
         why=(
             "Point-in-time — MUST be re-probed at build/verify time, never "
-            "cached or assumed stable across sessions, not fixed by this "
-            "research session. Fold-in of Phase 3's Non-Goals note per "
-            "tools/hooks/README.md's own closing line: \"Phase 4's config "
-            "doctor folds this non-goals note in as its cross-runtime "
-            'rtk-integration check." Apply: None in this wave.'
+            "cached or assumed stable across sessions. Per Phase 03 D-02, "
+            "ai-kit's hook entries are separate and never edit another tool's "
+            "own registration; this row only reports Cursor integration. "
+            "Apply: None in this wave."
         ),
-        source="tools/hooks/README.md",
+        source=".planning/milestones/v1.0-phases/03-tool-substitution-awareness-hook/03-CONTEXT.md",
         reads_section_file=False,
     ),
 ]
