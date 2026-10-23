@@ -46,7 +46,7 @@ I read `baseline-SKILL.md` with the Read tool and ran no commands. I haven't ope
    - **Overall:** every answer is advisory. I verify each item myself before I record a verdict or let it satisfy a criterion or gate.
 
 6. **If Laya also fails**, I'd tell you, then do one of two things:
-   - Ask for your explicit go-ahead before sending summarized text to TypeSafe's direct API. That would need the URL from `reference.md` and `JEV_API_KEY="$TYPESAFE_API_KEY"`, set inline so the key is never printed.
+   - Ask for your explicit go-ahead before sending summarized text to TypeSafe's direct API. That would need the URL from `reference.md` and `JEV_API_KEY=<the TypeSafe key variable>`, set inline so the key is never printed.
    - Finish the screening with my own reasoning.
 
 Not checked: the item contents, the real Laya port and endpoint path, and whether the script accepts the TypeSafe direct URL. If I do use TypeSafe's direct API, the risk is that it leaves the machine, so that needs your consent first.
