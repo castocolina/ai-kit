@@ -76,7 +76,7 @@ Keep results in durable artifacts as advisory evidence, never in a verdict field
 | `LAYA_API_KEY` | optional bearer for Laya |
 | `JEV_LAYA_MODEL` | pins Laya's request model (default `jev-1`) |
 | `JEV_TYPESAFE_URL` | TypeSafe question URL (default `https://api.typesafe.ai/v1/systemone`; `https` only, else `insecure_url`) |
-| `TYPESAFE_API_KEY` | TypeSafe key; then `JEV_API_KEY`, the file `JEV_API_KEY_FILE` names, a `TYPESAFE_API_KEY=`/`JEV_API_KEY=` line in `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, then `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` (every file 0600 enforced) |
+| `TYPESAFE_API_KEY` | TypeSafe key; then `JEV_API_KEY`, the file `JEV_API_KEY_FILE` names, a `TYPESAFE_API_KEY` or `JEV_API_KEY` assignment line in `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, then `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` (every file 0600 enforced) |
 | `JEV_TYPESAFE_MODEL` | pins the request id (default `jev-latest`) |
 | `JEV_OPENCODE_URL` | Zen POST target (default `https://opencode.ai/inference/systemone/v1/systemone`; `https` only, else `insecure_url`) |
 | `OPENCODE_ZEN_API_KEY` | Zen key; falls back to `${PI_CODING_AGENT_DIR:-~/.pi/agent}/keys.json`'s `opencode-zen.key` (0600 enforced) |
