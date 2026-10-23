@@ -1524,10 +1524,21 @@ PRECOMPACT_VERDICTS = {
     "opencode": "unmeasured",
 }
 
-# D-11: flat rows, one per id x host x event; 21.3 adds rows here with their
-# own default. `default` is derived from the verdict for precompact rows; it
-# stays a field because 21.3's rows have defaults without a verdict.
+# D-11: flat rows, one per id x host x event; `default` is derived from the
+# verdict for precompact rows and explicit for advisory rows.
+HOOK_SUMMARIES = {
+    "precompact": "PreCompact pre-summary (local Laya).",
+    "tool-advisor": (
+        "PreToolUse advisor: suggests rg, bat, fd or sd for grep, cat, find or sed "
+        "and reports large reads; advice only."
+    ),
+}
+
 HOOK_REGISTRY = (
+    HookRow(
+        id="tool-advisor", host="claude", event="PreToolUse", matcher="Bash|Read",
+        script="tools/hooks/claude_tool_advisor.py", default=True,
+        experimental=False, verdict=None, timeout=3),
     HookRow(
         id="precompact", host="claude", event="PreCompact", matcher="manual|auto",
         script="tools/hooks/claude_precompact.py",
@@ -2169,12 +2180,13 @@ def hook_description(hook_id):
     """Compact, registry-driven one-line description capped at 200 chars."""
     rows = [row for row in HOOK_REGISTRY if row.id == hook_id]
     detail = "; ".join(
-        f"{host}: {row.verdict} ({'on' if row.default else 'off'})"
-        + (", experimental" if row.experimental else "")
+        (f"{host} ({'on' if row.default else 'off'})" if row.verdict is None
+         else f"{host}: {row.verdict} ({'on' if row.default else 'off'})"
+              + (", experimental" if row.experimental else ""))
         for host in dict.fromkeys(row.host for row in rows)
         for row in [next(item for item in rows if item.host == host)]
     )
-    return _cap_desc(f"PreCompact pre-summary (local Laya). {detail}")
+    return _cap_desc(f"{HOOK_SUMMARIES[hook_id]} {detail}")
 
 
 def unwire_hook_cursor(cursor_hooks, dry):

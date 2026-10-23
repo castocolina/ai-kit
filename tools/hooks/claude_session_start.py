@@ -85,17 +85,16 @@ def _drain_stdin():
     read_stdin()
 
 
-def emit(message):
-    """Write the SessionStart envelope, or `{}` when there is nothing to say."""
+def emit(message, system_message=None, event="SessionStart"):
+    """Single output gate for Claude hooks; writes only context fields or `{}`."""
+    payload = {}
     if message:
-        payload = {
-            "hookSpecificOutput": {
-                "hookEventName": "SessionStart",
-                "additionalContext": message,
-            }
+        payload["hookSpecificOutput"] = {
+            "hookEventName": event,
+            "additionalContext": message,
         }
-    else:
-        payload = {}
+    if system_message:
+        payload["systemMessage"] = system_message
     sys.stdout.write(json.dumps(payload))
     sys.stdout.flush()
 

@@ -51,6 +51,47 @@ class HookRegistryE2E(unittest.TestCase):
                   encoding="utf-8") as handle:
             return json.load(handle)
 
+    def test_tracer_with_hooks_tool_advisor(self):
+        link = os.path.join(self.root, "ai kit")
+        os.symlink(REPO, link)
+        os.makedirs(self.claude)
+        env = dict(self.env, AI_KIT_DIR=link)
+        proc = self.run_setup("install", "--headless",
+                              "--with-hooks=tool-advisor", env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        data = self.read_settings()
+        self.assertEqual(set(data["hooks"]), {"PreToolUse"})
+        entries = data["hooks"]["PreToolUse"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["matcher"], "Bash|Read")
+        command = "python3 -S " + shlex.quote(os.path.join(
+            link, "tools", "hooks", "claude_tool_advisor.py"))
+        self.assertEqual(entries[0]["hooks"], [{"type": "command", "command": command,
+                                                  "timeout": 3}])
+        for absent in (self.cursor, self.pi, self.opencode):
+            self.assertFalse(os.path.exists(absent))
+        bin_dir = os.path.join(self.root, "bin")
+        os.makedirs(bin_dir)
+        with open(os.path.join(bin_dir, "rg"), "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\\nexit 0\\n")
+        os.chmod(os.path.join(bin_dir, "rg"), 0o700)
+        os.symlink(sys.executable, os.path.join(bin_dir, "python3"))
+        hook_env = dict(env, PATH=bin_dir)
+        payload = {"hook_event_name": "PreToolUse", "session_id": "advice-unique-1",
+                   "tool_name": "Bash", "tool_input": {"command": "grep -rn TODO ."},
+                   "tool_use_id": "toolu_t1"}
+        shell = shutil.which("sh")
+        assert shell is not None
+        proc = subprocess.run([shell, "-c", command], input=json.dumps(payload),
+                              capture_output=True, text=True, env=hook_env, timeout=10)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stderr, "")
+        result = json.loads(proc.stdout)
+        self.assertEqual(set(result), {"hookSpecificOutput"})
+        output = result["hookSpecificOutput"]
+        self.assertEqual(output["hookEventName"], "PreToolUse")
+        self.assertIn("rg -n", output["additionalContext"])
+
     def test_tracer_with_hooks_precompact_wires_two_claude_entries(self):
         os.makedirs(self.claude)
         expected_command = "python3 -S " + shlex.quote(os.path.join(

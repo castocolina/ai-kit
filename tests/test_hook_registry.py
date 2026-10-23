@@ -67,7 +67,7 @@ class TestRegistryShape(unittest.TestCase):
                                 or row.verdict.startswith("gap:"))
                 self.assertEqual(row.default, row.verdict == "positive")
                 self.assertEqual(row.experimental, row.host == "opencode")
-        self.assertEqual(setup.HOOK_IDS, ("precompact",))
+        self.assertEqual(setup.HOOK_IDS, ("tool-advisor", "precompact"))
 
 
 class TestParseHookSelector(unittest.TestCase):
@@ -227,6 +227,16 @@ class TestClaudeRowsGuard(unittest.TestCase):
 
 
 class TestHookPathsAndDescription(unittest.TestCase):
+    def test_hook_description_every_id_fits(self):
+        for hook_id in setup.HOOK_IDS:
+            with self.subTest(hook_id=hook_id):
+                description = setup.hook_description(hook_id)
+                hosts = {row.host for row in setup.HOOK_REGISTRY if row.id == hook_id}
+                self.assertLessEqual(len(description), 200)
+                self.assertNotIn("…", description)
+                for host in hosts:
+                    self.assertIn(host, description)
+
     def test_opencode_dir_precedence(self):
         home = "/tmp/home"
         xdg = "/tmp/xdg"
@@ -248,16 +258,18 @@ class TestHookPathsAndDescription(unittest.TestCase):
         desc = setup.hook_description("precompact")
         self.assertLessEqual(len(desc), 200)
         for host in ("claude", "pi", "opencode"):
-            row = next(r for r in setup.HOOK_REGISTRY if r.host == host)
+            row = next(r for r in setup.HOOK_REGISTRY
+                       if r.id == "precompact" and r.host == host)
             self.assertIn(f"{host}: {row.verdict} ({'on' if row.default else 'off'})", desc)
         self.assertIn("experimental", desc)
         out = io.StringIO()
         with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as ctx:
             setup.main(["--help"])
         self.assertEqual(ctx.exception.code, 0)
-        self.assertIn("PreCompact pre-summary (local Laya).", out.getvalue())
-        for host in ("claude", "pi", "opencode"):
-            self.assertIn(f"{host}: unmeasured (off)", out.getvalue())
+        self.assertIn("PreToolUse advisor:", out.getvalue())
+        self.assertIn("claude: unmeasured (off)", out.getvalue())
+        self.assertIn("pi:", out.getvalue())
+        self.assertIn("unmeasured (off)", out.getvalue())
 
     def test_hook_description_gap_verdicts(self):
         rows = []
@@ -315,14 +327,17 @@ class TestHookSelectionItems(unittest.TestCase):
 
     def test_hook_selection_items_precheck(self):
         items, initial = setup._hook_selection_items(self.paths)
-        self.assertEqual(items, [("hooks", "precompact", False)])
+        self.assertEqual(items, [("hooks", "tool-advisor", False),
+                                 ("hooks", "precompact", False)])
         self.assertFalse(initial[("hooks", "precompact")])
         os.makedirs(self.claude)
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertTrue(setup.wire_claude_rows(
                 self.paths.settings, PRECOMPACT_CLAUDE_ROWS, _REPO, False))
         items, initial = setup._hook_selection_items(self.paths)
-        self.assertEqual(items, [("hooks", "precompact", True)])
+        self.assertEqual(items, [("hooks", "tool-advisor", True),
+                                 ("hooks", "precompact", True)])
+        self.assertFalse(initial[("hooks", "tool-advisor")])
         self.assertTrue(initial[("hooks", "precompact")])
 
     def test_hook_selection_prechecks_default_present_host(self):
@@ -331,7 +346,7 @@ class TestHookSelectionItems(unittest.TestCase):
                      for row in setup.HOOK_REGISTRY)
         with mock.patch.object(setup, "HOOK_REGISTRY", rows):
             items, initial = setup._hook_selection_items(self.paths)
-        self.assertTrue(items[0][2])
+        self.assertTrue(items[1][2])
         self.assertFalse(initial[("hooks", "precompact")])
 
     def test_apply_hook_selection_wires_and_unwires(self):
