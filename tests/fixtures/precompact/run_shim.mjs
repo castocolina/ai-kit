@@ -1,6 +1,8 @@
 // One node harness for both precompact shims (SPEC R6, R7; D-18).
 //
 // Usage: node run_shim.mjs <host> <shim path> <fixture path> [mode]
+//   host pi-tool  — loads an advisor/reminder shim, captures its tool_result
+//                   handler and prints the composed result (or null).
 //   host pi       — loads the shim, fakes the pi extension API, calls the
 //                   registered `session_before_compact` handler with the
 //                   fixture's preparation (fileOps arrays rebuilt as Sets),
@@ -25,7 +27,21 @@ if (mode === "exports") {
   process.exit(0);
 }
 
-if (host === "pi") {
+if (host === "pi-tool") {
+  const handlers = {};
+  const pi = { on(name, fn) { handlers[name] = fn; } };
+  mod.default(pi);
+  if (mode === "events") {
+    console.log(JSON.stringify(Object.keys(handlers).sort()));
+  } else {
+    const ctx = { sessionManager: {
+      getSessionId: () => fixture.ctx.sessionId,
+      getCwd: () => fixture.ctx.cwd,
+    } };
+    const result = await handlers.tool_result(fixture.event, ctx);
+    console.log(JSON.stringify(result ?? null));
+  }
+} else if (host === "pi") {
   const handlers = {};
   const pi = { on(name, fn) { handlers[name] = fn; } };
   mod.default(pi);

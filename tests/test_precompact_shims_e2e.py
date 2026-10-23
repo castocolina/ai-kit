@@ -8,6 +8,7 @@ and every XDG base at a fresh temp dir, so no test touches a real runtime dir.
 The whole class skips only when node is absent or cannot strip types.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -24,6 +25,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 HARNESS = REPO / "tests" / "fixtures" / "precompact" / "run_shim.mjs"
 PI_SHIM = REPO / "tools" / "hooks" / "pi" / "ai-kit-precompact.ts"
+PI_ADVISOR_SHIM = REPO / "tools" / "hooks" / "pi" / "ai-kit-tool-advisor.ts"
+PI_REMINDER_SHIM = REPO / "tools" / "hooks" / "pi" / "ai-kit-tool-reminder.ts"
+PI_TOOL_FIXTURE = REPO / "tests" / "fixtures" / "advisor" / "pi_tool_result_bash.json"
 OC_SHIM = REPO / "tools" / "hooks" / "opencode" / "ai-kit-precompact.ts"
 PI_FIXTURE = REPO / "tests" / "fixtures" / "precompact" / "pi_preparation.json"
 OC_FIXTURE = REPO / "tests" / "fixtures" / "precompact" / "opencode_messages.json"
@@ -246,10 +250,15 @@ class TestShimsE2E(ShimHarnessMixin, unittest.TestCase):
 
     def test_shims_self_contained(self):
         expected_exports = {"pi": ["default"], "opencode": ["AiKitPrecompact"]}
+        expected_pi_files = {"ai-kit-precompact.ts", "ai-kit-tool-advisor.ts",
+                             "ai-kit-tool-reminder.ts"}
         for host, shim, _fixture in self.HOSTS:
             with self.subTest(host=host):
                 files = [path.name for path in shim.parent.iterdir()]
-                self.assertEqual(files, [shim.name])
+                if host == "pi":
+                    self.assertEqual(set(files), expected_pi_files)
+                else:
+                    self.assertEqual(files, [shim.name])
                 for line in shim.read_text(encoding="utf-8").splitlines():
                     if re.match(r"\s*import\b", line) and " from " in line:
                         self.assertIn('"node:', line, line)
@@ -258,6 +267,16 @@ class TestShimsE2E(ShimHarnessMixin, unittest.TestCase):
                                                mode="exports")
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 self.assertEqual(json.loads(proc.stdout), expected_exports[host])
+        for shim in (PI_ADVISOR_SHIM, PI_REMINDER_SHIM):
+            with self.subTest(shim=shim.name):
+                for line in shim.read_text(encoding="utf-8").splitlines():
+                    if re.match(r"\s*import\b", line) and " from " in line:
+                        self.assertIn('"node:', line, line)
+                base = self._make_base()
+                proc, _env = self._run_harness("pi-tool", shim, PI_TOOL_FIXTURE, base,
+                                               mode="exports")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(json.loads(proc.stdout), ["default"])
 
     def test_shims_symlinked_finds_core(self):
         base = self._make_base()
@@ -272,6 +291,22 @@ class TestShimsE2E(ShimHarnessMixin, unittest.TestCase):
                     self.assertTrue(result["compaction"]["summary"])
                 else:
                     self.assertEqual(len(result["output"]["context"]), 2)
+        tool_bin = Path(base) / "tool-bin"
+        tool_bin.mkdir()
+        rg = tool_bin / "rg"
+        rg.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+        rg.chmod(0o700)
+        for name, shim in (("advisor", PI_ADVISOR_SHIM), ("reminder", PI_REMINDER_SHIM)):
+            with self.subTest(shim=name):
+                link = os.path.join(base, f"linked-pi-tool-{shim.name}")
+                os.symlink(shim, link)
+                fixture = json.loads(PI_TOOL_FIXTURE.read_text(encoding="utf-8"))
+                fixture["event"]["toolCallId"] = f"linked-{name}"
+                fixture["ctx"]["sessionId"] = f"linked-{name}"
+                proc, _env = self._run_harness("pi-tool", Path(link), fixture, base,
+                                               extra={"PATH": str(tool_bin)})
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertIsNotNone(json.loads(proc.stdout))
 
     def test_pi_abort_returns_nothing(self):
         base = self._make_base()
@@ -308,6 +343,237 @@ class TestShimsE2E(ShimHarnessMixin, unittest.TestCase):
 def fixture_for(host):
     """The recorded fixture path of one host."""
     return PI_FIXTURE if host == "pi" else OC_FIXTURE
+
+
+class TestToolAdvisorPiEntry(unittest.TestCase):
+    """Python-only contract tests for advisor_core's pi entry."""
+
+    def test_pi_entry_contract(self):
+        fixture = json.loads(PI_TOOL_FIXTURE.read_text(encoding="utf-8"))
+        data = {**fixture["event"], **fixture["ctx"], "kind": "advisor"}
+        bin_dir = tempfile.mkdtemp(prefix="pi-core-path-")
+        self.addCleanup(shutil.rmtree, bin_dir, ignore_errors=True)
+        rg = Path(bin_dir) / "rg"
+        rg.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        rg.chmod(0o700)
+        cases: list[tuple[str, str, list[str], Path | None]] = [
+            ("event", json.dumps(data), ["pi"], None),
+            ("invalid JSON", "{", ["pi"], None),
+            ("array", "[]", ["pi"], None),
+            ("other argv", "{}", ["other"], None),
+        ]
+        with tempfile.TemporaryDirectory(prefix="pi-core-contract-") as base:
+            hooks = Path(base) / "tools" / "hooks"
+            shutil.copytree(REPO / "tools/hooks", hooks,
+                            ignore=shutil.ignore_patterns("__pycache__", "pi", "opencode"))
+            (hooks / "detect.py").write_text('raise RuntimeError("x")\\n', encoding="utf-8")
+            cases.append(("raising sibling", json.dumps(data), ["pi"], hooks / "advisor_core.py"))
+            for name, payload, argv, script in cases:
+                with self.subTest(case=name):
+                    target = script or REPO / "tools/hooks/advisor_core.py"
+                    cmd = [sys.executable, "-S", str(target), *argv]
+                    runtime_dir = Path(bin_dir) / "runtime"
+                    runtime_dir.mkdir(mode=0o700, exist_ok=True)
+                    env = {**os.environ, "PATH": bin_dir, "HOME": bin_dir,
+                           "XDG_RUNTIME_DIR": str(runtime_dir), "XDG_CACHE_HOME": bin_dir,
+                           "XDG_CONFIG_HOME": bin_dir, "XDG_STATE_HOME": bin_dir}
+                    if script:
+                        env["PYTHONPATH"] = str(hooks)
+                    proc = subprocess.run(cmd, input=payload, text=True, capture_output=True,
+                                          env=env, check=False, timeout=10)
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    self.assertEqual(proc.stderr, "")
+                    result = json.loads(proc.stdout)
+                    self.assertEqual(set(result), {"text"} if name == "event" else set())
+
+
+@unittest.skipUnless(_node_ready(), "node with type stripping is not available")
+class TestToolAdvisorShims(ShimHarnessMixin, unittest.TestCase):
+    """pi tool_result adapters preserve results and fail open."""
+
+    SHIMS = (("advisor", PI_ADVISOR_SHIM), ("reminder", PI_REMINDER_SHIM))
+
+    def _fixture(self, **changes):
+        data = json.loads(PI_TOOL_FIXTURE.read_text(encoding="utf-8"))
+        data["event"].update(changes)
+        return data
+
+    def _run_tool(self, shim, fixture, base, mode=None, extra=None, timeout=60):
+        return self._run_harness("pi-tool", shim, fixture, base, mode=mode, extra=extra,
+                                 timeout=timeout)
+
+    def _rg_path(self, base, include=True):
+        bindir = Path(base) / "bin"
+        bindir.mkdir(exist_ok=True)
+        if include:
+            tool = bindir / "rg"
+            tool.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+            tool.chmod(0o700)
+        return str(bindir)
+
+    def test_pi_advisor_tracer_appends_block(self):
+        base = self._make_base()
+        env = {"PATH": self._rg_path(base)}
+        proc, _ = self._run_tool(PI_ADVISOR_SHIM, PI_TOOL_FIXTURE, base, extra=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = json.loads(proc.stdout)
+        original = json.loads(PI_TOOL_FIXTURE.read_text(encoding="utf-8"))["event"]["content"]
+        self.assertEqual(set(result), {"content"})
+        self.assertEqual([json.dumps(item, sort_keys=True) for item in result["content"][:-1]],
+                         [json.dumps(item, sort_keys=True) for item in original])
+        self.assertEqual(result["content"][-1]["type"], "text")
+        self.assertTrue(result["content"][-1]["text"].startswith("ai-kit advice: "))
+        self.assertIn("rg -n", result["content"][-1]["text"])
+
+    def test_pi_shims_register_only_tool_result(self):
+        for name, shim in self.SHIMS:
+            with self.subTest(shim=name):
+                base = self._make_base()
+                proc, _ = self._run_tool(shim, PI_TOOL_FIXTURE, base, mode="events")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(json.loads(proc.stdout), ["tool_result"])
+
+    def test_pi_reminder_counts(self):
+        base = self._make_base()
+        bindir = self._rg_path(base)
+        for label, text, truncation, expected in (
+                ("lines", "x\n" * 500, None, "printed 500 lines"),
+                ("truncated", "short", {"truncated": True, "totalLines": 5000,
+                                          "totalBytes": 300000}, "printed 5000 lines")):
+            with self.subTest(case=label):
+                event = self._fixture()
+                event["event"]["toolCallId"] = f"reminder-{label}"
+                event["ctx"]["sessionId"] = f"pi-reminder-{label}"
+                event["event"]["content"] = [{"type": "text", "text": text}]
+                if truncation:
+                    event["event"]["details"] = {"truncation": truncation}
+                    event["event"]["text"] = text
+                proc, _ = self._run_tool(PI_REMINDER_SHIM, event, base,
+                                         extra={"PATH": bindir})
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertIn(expected, json.loads(proc.stdout)["content"][-1]["text"])
+
+    def test_pi_shims_hanging_interpreter_killed(self):
+        for name, shim in self.SHIMS:
+            with self.subTest(shim=name):
+                base = self._make_base()
+                pidfile = Path(base) / "sleeper.pid"
+                script = self._write_interpreter_script(
+                    base, "sleeping-python",
+                    "import os, time\n"
+                    f"open({str(pidfile)!r}, 'w', encoding='utf-8').write(str(os.getpid()))\n"
+                    "time.sleep(30)")
+                started = time.monotonic()
+                try:
+                    proc, _ = self._run_tool(shim, PI_TOOL_FIXTURE, base,
+                                             extra={"PATH": self._rg_path(base),
+                                                    "AI_KIT_PYTHON": script}, timeout=8)
+                    elapsed = time.monotonic() - started
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    self.assertEqual(proc.stdout.strip(), "null")
+                    self.assertGreaterEqual(elapsed, 1.8)
+                    self.assertLess(elapsed, 4)
+                    pid = int(pidfile.read_text(encoding="utf-8"))
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(pid, 0)
+                finally:
+                    if pidfile.exists():
+                        with contextlib.suppress(OSError, ValueError):
+                            os.kill(int(pidfile.read_text(encoding="utf-8")), signal.SIGKILL)
+
+    def test_pi_shims_silent_cases(self):
+        for name, shim in self.SHIMS:
+            cases = [("no rg", {}, {"PATH": self._rg_path(tempfile.mkdtemp(), False)}),
+                     ("other tool", {"toolName": "edit"}, {"PATH": os.environ.get("PATH", "")}),
+                     ("missing python", {}, {"PATH": os.environ.get("PATH", ""),
+                                               "AI_KIT_PYTHON": "/missing/python"})]
+            for label, changes, extra in cases:
+                with self.subTest(shim=name, case=label):
+                    base = self._make_base()
+                    proc, _ = self._run_tool(shim, self._fixture(**changes), base, extra=extra)
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    self.assertEqual(proc.stdout.strip(), "null")
+
+    def test_pi_shims_empty_content(self):
+        for name, shim in self.SHIMS:
+            with self.subTest(shim=name):
+                base = self._make_base()
+                event = self._fixture()
+                event["event"]["toolCallId"] = f"empty-{name}"
+                event["ctx"]["sessionId"] = f"pi-empty-{name}"
+                event["event"]["content"] = []
+                if name == "reminder":
+                    event["event"]["text"] = "x\n" * 500
+                    event["event"]["details"] = {"truncation": {"truncated": True,
+                                               "totalLines": 500, "totalBytes": 1000}}
+                proc, _ = self._run_tool(shim, event, base,
+                                         extra={"PATH": self._rg_path(base)})
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                result = json.loads(proc.stdout)
+                self.assertEqual(len(result["content"]), 1)
+                self.assertEqual(result["content"][0]["type"], "text")
+
+    def test_pi_advisor_large_read(self):
+        with tempfile.TemporaryDirectory(prefix="pi-read-") as directory:
+            path = Path(directory) / "large.py"
+            path.write_text("line\n" * 3000, encoding="utf-8")
+            for raw_path in (str(path), path.name):
+                with self.subTest(path=raw_path):
+                    base = self._make_base()
+                    event = self._fixture(toolName="read", input={"path": raw_path})
+                    event["ctx"]["cwd"] = directory
+                    proc, _ = self._run_tool(PI_ADVISOR_SHIM, event, base,
+                                             extra={"PATH": self._rg_path(base)})
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    result = json.loads(proc.stdout)
+                    self.assertIn("3000 lines", result["content"][-1]["text"])
+            base = self._make_base()
+            limited = self._fixture(toolName="read", input={"path": str(path), "limit": 20})
+            proc, _ = self._run_tool(PI_ADVISOR_SHIM, limited, base,
+                                     extra={"PATH": self._rg_path(base)})
+            self.assertEqual(proc.stdout.strip(), "null")
+
+    def test_pi_advisor_and_reminder_dedupe(self):
+        for order in ((PI_ADVISOR_SHIM, PI_REMINDER_SHIM),
+                      (PI_REMINDER_SHIM, PI_ADVISOR_SHIM)):
+            for label, output, truncation in (
+                    ("short", "x\n" * 20, None),
+                    ("large", "x\n" * 500, None),
+                    ("truncated", "short", {"truncated": True,
+                                                "totalLines": 5000,
+                                                "totalBytes": 300000})):
+                with self.subTest(order=[shim.name for shim in order], case=label):
+                    base = self._make_base()
+                    event = self._fixture()
+                    event["event"]["toolCallId"] = f"dedupe-{label}"
+                    event["ctx"]["sessionId"] = "dedupe-session"
+                    event["event"]["content"] = [{"type": "text", "text": output}]
+                    if truncation:
+                        event["event"]["details"] = {"truncation": truncation}
+                        event["event"]["text"] = output
+                    current = event
+                    for shim in order:
+                        proc, _ = self._run_tool(shim, current, base,
+                                                 extra={"PATH": self._rg_path(base)})
+                        result = json.loads(proc.stdout)
+                        if result is not None:
+                            current = {"event": {**event["event"],
+                                                  "content": result["content"]},
+                                       "ctx": event["ctx"]}
+                    blocks = current["event"]["content"]
+                    advice = [block["text"] for block in blocks if isinstance(block, dict)
+                              and block.get("type") == "text"
+                              and block.get("text", "").startswith("ai-kit ")]
+                    self.assertEqual(len(advice), 1)
+                    self.assertIn("rg", advice[0])
+
+    def test_pi_shims_keep_structured_content(self):
+        base = self._make_base()
+        event = self._fixture()
+        event["event"]["structuredContent"] = {"k": 1}
+        proc, _ = self._run_tool(PI_ADVISOR_SHIM, event, base,
+                                 extra={"PATH": self._rg_path(base)})
+        self.assertEqual(json.loads(proc.stdout)["structuredContent"], {"k": 1})
 
 
 class TestPiTracer(ShimHarnessMixin, unittest.TestCase):

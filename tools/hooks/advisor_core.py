@@ -10,6 +10,7 @@ import os
 import re
 import shlex
 import stat
+import sys
 
 MAX_STDIN_BYTES = 8 * 1024 * 1024
 MAX_COMMAND_CHARS = 16384
@@ -421,6 +422,64 @@ def advise(event, env):
     return with_state(env, event.get("session_id"), update)
 
 
+def event_from_pi(data):
+    """Map a pi tool_result payload to the host-neutral advisor event."""
+    if not isinstance(data, dict):
+        return None
+    tool_input = data.get("input")
+    if not isinstance(tool_input, dict):
+        return None
+    tool_name = data.get("toolName")
+    tool = tool_name.lower() if isinstance(tool_name, str) else None
+    cwd = data.get("cwd")
+    path = tool_input.get("path") if tool_input else None
+    if (isinstance(path, str) and not os.path.isabs(path)
+            and isinstance(cwd, str) and os.path.isabs(cwd)):
+        path = os.path.join(cwd, path)
+    content = data.get("content")
+    texts = [block.get("text", "") for block in content
+             if isinstance(block, dict) and block.get("type") == "text"
+             and isinstance(block.get("text"), str)] if isinstance(content, list) else []
+    text = data.get("text") if isinstance(data.get("text"), str) else "\n".join(texts)
+    event = {"kind": data.get("kind", "advisor"), "tool": tool,
+             "command": tool_input.get("command") if tool_input else None,
+             "path": path, "offset": tool_input.get("offset") if tool_input else None,
+             "limit": tool_input.get("limit") if tool_input else None,
+             "call_id": data.get("toolCallId"), "session_id": data.get("sessionId"),
+             "single_block": True}
+    if event["kind"] == "reminder":
+        details = data.get("details")
+        truncation = details.get("truncation") if isinstance(details, dict) else None
+        if (isinstance(truncation, dict) and truncation.get("truncated") is True
+                and isinstance(truncation.get("totalLines"), int)
+                and isinstance(truncation.get("totalBytes"), int)):
+            event["output_lines"] = truncation["totalLines"]
+            event["output_chars"] = truncation["totalBytes"]
+        else:
+            event["output_lines"], event["output_chars"] = output_size([text])
+    return event
+
+
+def main(argv):
+    """The pi adapter entry: bounded JSON in, one fail-open JSON object out."""
+    from claude_session_start import read_stdin  # pylint: disable=import-outside-toplevel
+    result = {}
+    if argv == ["pi"]:
+        raw = read_stdin(MAX_STDIN_BYTES)
+        if len(raw) <= MAX_STDIN_BYTES:
+            try:
+                data = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                data = None
+            if isinstance(data, dict):
+                advice = advise(event_from_pi(data), os.environ)
+                if isinstance(advice, str) and advice:
+                    result = {"text": advice}
+    sys.stdout.write(json.dumps(result))
+    sys.stdout.flush()
+    return 0
+
+
 def run_claude(raw, kind, env):
     """Parse a bounded Claude JSON payload and return advice, failing silently."""
     if len(raw) > MAX_STDIN_BYTES:
@@ -432,3 +491,10 @@ def run_claude(raw, kind, env):
     if not isinstance(payload, dict):
         return None
     return advise(event_from_claude(payload, kind), env)
+
+
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    from claude_session_start import _fail_open  # pylint: disable=import-outside-toplevel
+    sys.excepthook = _fail_open
+    raise SystemExit(main(sys.argv[1:]))
