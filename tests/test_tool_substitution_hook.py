@@ -1167,6 +1167,7 @@ class TestCompose(unittest.TestCase):
                 named = [modern for _, modern in detect.CURATED_SUBSTITUTIONS
                          if modern in user_line.split(":", 1)[-1]]
                 self.assertEqual(set(named), set(moderns))
+                self.assertIn("ai-kit: prefer these modern tools:", user_line)
                 self.assertLessEqual(len(context), 2000)
                 self.assertEqual(context.count("\n- "), len(moderns))
 
@@ -1177,9 +1178,26 @@ class TestCompose(unittest.TestCase):
     def test_compose_has_guidance_flags(self):
         user_line, context = detect.compose_message(_detection("rg", "bat", "fd", "sd"))
         self.assertIn("rg", user_line)
+        self.assertIn("Usage: ", user_line)
+        self.assertIn("Prefer these installed modern tools over their legacy counterparts "
+                      "(faster, quieter output):", context)
         for flag in ("bat --plain --paging=never", "-r N:M", "-l <lang>",
                      "rg -n", "rg -l", "--glob", "fd --type f --glob", "sd -p"):
             self.assertIn(flag, context)
+
+    def test_guidance_is_documented_verbatim(self):
+        with open(os.path.join(_REPO, "tools", "hooks", "README.md"), encoding="utf-8") as handle:
+            readme = handle.read()
+        for guidance in detect.TOOL_GUIDANCE.values():
+            self.assertIn(guidance, readme)
+
+    def test_usage_suffix_dropped_if_line_would_exceed_limit(self):
+        detection = _detection("rg", "bat", "fd", "sd", "eza")
+        with mock.patch.object(detect.os.path, "dirname", return_value="/" + "x" * 210):
+            user_line, _context = detect.compose_message(detection)
+        self.assertLessEqual(len(user_line), 200)
+        self.assertNotIn(" Usage: ", user_line)
+        self.assertTrue(user_line.endswith("."))
 
     def test_empty_path_wrapper_emits_empty_object(self):
         tmp = tempfile.mkdtemp()
