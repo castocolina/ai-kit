@@ -5,14 +5,17 @@ import io
 import json
 import os
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _HOOKS = os.path.join(_ROOT, "tools", "hooks")
+_STUB = os.path.join(_ROOT, "tests", "fixtures", "precompact", "stub_client.py")
 sys.path.insert(0, _HOOKS)
 
 
@@ -91,16 +94,47 @@ class AdvisorCoreTests(unittest.TestCase):
         self.assertNotIn("f.py", " ".join(lines.values()))
 
     def test_bash_advice_uninstalled_tools_silent(self):
-        for installed, expected in (({"rg"}, ["grep"]), (set(), []), ({"fd"}, [])):
+        detect = _load("detect_uninstalled_test", "detect.py")
+        _load("reminder_uninstalled_test", "claude_tool_reminder.py")
+        subsets = ((set(), set()), ({"fd"}, {"fd"}), ({"bat", "sd"}, {"bat", "sd"}))
+        command = "grep x f | cat f; sed -n '1,2p' f; sed -i 's/a/b/' f; find ."
+        for installed, _expected in subsets:
             with self.subTest(installed=installed):
                 self.assertEqual([item[0] for item in core.bash_advice(
-                    "cat f | grep x", installed)], expected)
-                find_advice = core.bash_advice("find .", installed)
-                self.assertEqual([item[0] for item in find_advice],
-                                 ["find"] if "fd" in installed else [])
-                joined = " ".join(line for _identity, line in find_advice)
-                for unavailable in {"rg", "bat", "sd"} - installed:
-                    self.assertNotRegex(joined, rf"\\b{unavailable}\\b")
+                    "cat f | grep x", installed)],
+                    [name for name in ("cat", "grep") if
+                     (name == "cat" and "bat" in installed) or
+                     (name == "grep" and "rg" in installed)])
+                bin_path = self._bin_with(installed)
+                path_env = {"PATH": bin_path}
+                for _identity, line in core.bash_advice(command, installed):
+                    for modern in {"rg", "bat", "fd", "sd", "eza"} - installed:
+                        self.assertNotRegex(line, rf"\\b{modern}\\b")
+                found = detect.detect_substitutions(bin_path)
+                briefing = detect.compose_message(found)
+                for text in briefing:
+                    for modern in {"rg", "bat", "fd", "sd", "eza"} - installed:
+                        self.assertNotRegex(text, rf"\\b{modern}\\b")
+                event = {"hook_event_name": "PostToolUse", "session_id": uuid.uuid4().hex,
+                         "tool_name": "Bash", "tool_input": {"command": command},
+                         "tool_response": {"stdout": "\\n".join(["x"] * 500)}}
+                message = core.run_claude(json.dumps(event).encode("utf-8"), "reminder", path_env)
+                if installed:
+                    self.assertIsNotNone(message)
+                    for modern in {"rg", "bat", "fd", "sd", "eza"} - installed:
+                        self.assertNotRegex(message, rf"\\b{modern}\\b")
+                else:
+                    self.assertIsNone(message)
+
+    def _bin_with(self, installed):
+        path = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, path, ignore_errors=True)
+        for tool in installed:
+            executable = os.path.join(path, tool)
+            with open(executable, "w", encoding="utf-8") as handle:
+                handle.write("#!/bin/sh\\nexit 0\\n")
+            os.chmod(executable, 0o700)
+        return path
 
     def test_emit_allows_only_context_keys(self):
         for message in (None, "", "m"):
@@ -206,6 +240,63 @@ class AdvisorCoreTests(unittest.TestCase):
         with open(binary, "wb") as handle:
             handle.write(bytes(range(256)) * 200)
         self.assertIsNotNone(self._read_event(binary))
+
+    def test_advisor_hook_budgets(self):
+        scripts = (
+            ("claude_session_start.py", {"hook_event_name": "SessionStart", "source": "startup"}),
+            ("claude_tool_advisor.py", {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                         "tool_input": {"command": "grep x f"}}),
+            ("claude_tool_reminder.py", {"hook_event_name": "PostToolUse", "tool_name": "Bash",
+                                          "tool_input": {"command": "grep x f"},
+                                          "tool_response": {"stdout": "\\n".join(["x"] * 300)}}),
+        )
+        root, env = self._sandbox()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        bin_dir = os.path.join(root, "bin")
+        os.mkdir(bin_dir)
+        for tool in TOOLS:
+            path = os.path.join(bin_dir, tool)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("#!/bin/sh\\nexit 0\\n")
+            os.chmod(path, 0o700)
+        env["PATH"] = bin_dir
+        for script, payload in scripts:
+            elapsed = []
+            with self.subTest(script=script):
+                for _ in range(20):
+                    event = dict(payload, session_id=uuid.uuid4().hex)
+                    started = time.monotonic()
+                    proc = subprocess.run([sys.executable, "-S", os.path.join(_HOOKS, script)],
+                                          input=json.dumps(event), text=True, capture_output=True,
+                                          env=env, timeout=3, check=False)
+                    elapsed.append(time.monotonic() - started)
+                    self.assertEqual((proc.returncode, proc.stderr), (0, ""))
+                median, maximum = statistics.median(elapsed), max(elapsed)
+                self.assertLess(median, 0.3, f"median={median:.3f}s max={maximum:.3f}s")
+                self.assertLess(maximum, 1.0, f"median={median:.3f}s max={maximum:.3f}s")
+
+    def test_forced_exception_gives_empty(self):
+        for entry, core_name, script_name in (
+                ("claude_tool_advisor.py", "advisor_core.py", "claude_tool_advisor.py"),
+                ("claude_tool_reminder.py", "advisor_core.py", "claude_tool_reminder.py"),
+                ("claude_decision_probe.py", "precompact_core.py", "claude_decision_probe.py")):
+            with self.subTest(entry=entry):
+                root, env = self._sandbox()
+                self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+                install = os.path.join(root, "install", "tools", "hooks")
+                os.makedirs(install)
+                for source in os.listdir(_HOOKS):
+                    if source.endswith(".py"):
+                        shutil.copy(os.path.join(_HOOKS, source), install)
+                with open(os.path.join(install, core_name), "w", encoding="utf-8") as handle:
+                    handle.write('raise RuntimeError("x")\\n')
+                env["AI_KIT_PRECOMPACT_CLIENT"] = _STUB
+                payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                           "tool_input": {"command": "grep x f"}, "session_id": uuid.uuid4().hex}
+                proc = subprocess.run([sys.executable, "-S", os.path.join(install, script_name)],
+                                      input=json.dumps(payload), text=True, capture_output=True,
+                                      env=env, timeout=5, check=False)
+                self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "{}", ""))
 
     def test_advisor_script_outputs_only_context(self):
         root, env = self._sandbox()
