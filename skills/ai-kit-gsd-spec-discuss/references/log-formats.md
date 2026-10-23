@@ -23,7 +23,7 @@ only, advisory. Rule: <quality rule branch>.
 | Round | Perspective | Question summary | <backend> (advisory) | <backend> (advisory) | Decision locked |
 |-------|-------------|------------------|-----------------|---------------------|-----------------|
 | 1 | Simplifier | The skill's name? | ai-kit-gsd-phase-prep 0.46 (fb) | ai-kit-gsd-spec-discuss 0.89 | `ai-kit-gsd-spec-discuss` (R1) |
-| 1 | Boundary Keeper | Delete the Claude subprocess inventory? | delete_all 0.75 | keep_for_review 0.74 (second opinion) | **Laya overridden:** Phase 18 R2 fills `review.models.claude` from it (R8) |
+| 1 | Boundary Keeper | Delete the Claude subprocess inventory? | delete_all 0.75 | keep_for_review 0.74 (fb, second opinion) | **Own reasoning:** no remote answer is high; Phase 18 R2 fills `review.models.claude` from it (R8) |
 ```
 
 Drop a backend column only when that backend was never available for the whole run, and say so

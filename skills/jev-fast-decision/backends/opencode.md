@@ -6,11 +6,13 @@ below — the free promotion does not waive consent.
 
 ## Endpoints and ids
 
-- Default base: `https://opencode.ai/zen/v1` (override `JEV_OPENCODE_URL`). Two System One
-  paths exist: the live-verified `/zen/v1/systemone` (this row's default, confirmed 2026-10-11)
-  and the docs' `/inference/systemone/v1/systemone` (opencode.ai/docs/zen, cited 2026-10-18).
-  If the default path ever 404s, point `JEV_OPENCODE_URL` at the other one; the client never
-  follows redirects.
+- `JEV_OPENCODE_URL` is the complete POST target, defaulting to
+  `https://opencode.ai/zen/v1`; the client does not append a path or follow redirects. A live
+  check observed `/zen/v1/systemone` on 2026-10-11, while the docs' path is
+  `/inference/systemone/v1/systemone` (opencode.ai/docs/zen, cited 2026-10-18). Neither observation
+  establishes that the current default POST target works. Treat the endpoint contract as
+  unresolved until the actual client POST path is verified; do not claim either path is the
+  client's verified default.
 - Ordered model ids: `jev-1.13-free`, then `jev-1.13` (pin both with `JEV_OPENCODE_MODEL`).
   Responses fullmatch `opencode-*`; the result's `model` is the id that answered. Choice
   probabilities may arrive as integers 0/1.
@@ -18,10 +20,11 @@ below — the free promotion does not waive consent.
 
 ## Free-to-paid and the budget-429 rule
 
-- Fall through from `jev-1.13-free` to `jev-1.13` only on: 429 with any body (including
-  `FreeUsageLimitError`), 5xx, network error, or a 400 whose body says `Model is unavailable`
-  (the free promotion ended). Never on other 400s or 401/403. No second try of the free id in
-  the same call; no cooldown file.
+- Current client behavior (verified in `scripts/jev_review.py`): 402/429 advances from
+  `jev-1.13-free` to `jev-1.13`; 5xx retries the same model with bounded backoff, then escalates;
+  network errors escalate; other 4xx errors are caller errors. The client currently discards the
+  error body, so it does not special-case a 400 `Model is unavailable` response. Do not rely on
+  a free-to-paid transition for 5xx, network errors or 400 until code and tests implement it.
 - A paid 429 is `Account budget exceeded`: the ladder stops there — it never asks the user for
   budget. A free failure is an `attempts` entry such as
   `{"backend": "opencode", "model": "jev-1.13-free", "reason": "http_429"}`.

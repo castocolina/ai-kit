@@ -34,7 +34,7 @@ client already sends one request per item on this row and puts only that item in
   multilingual 1024 tokens) truncates silently unless the server reports `usage.truncated`;
   `LAYA_JEV_STRICT=1` hides those fields, which is why the client keeps its own size guard.
   Laya refuses a state over 50,000 characters with `413`.
-- Threshold: the row's `min_confidence` is calibrated from the live 32-case eval in this repo
+- Threshold: the row's `min_confidence` is a conservative retained default; the live 32-case eval in this repo
   (see the eval object below); `JEV_MIN_CONFIDENCE` overrides it for one call.
 
 ## Errors

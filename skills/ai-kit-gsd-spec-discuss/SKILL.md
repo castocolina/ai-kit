@@ -53,7 +53,7 @@ decided provisionally and shown at the end.
    in the same question, naming each backend and its host, "summaries only, never code or
    secrets", and the revoke command (`python3 "$S/decide.py" consent revoke <backend>`). On yes: `python3 "$S/decide.py" consent grant <backend>`
    (`consent grant typesafe` still works; the client keeps the record, same once-per-user
-   rule). Consent on file asks nothing. Announce from the output's `consent_used`:
+   rule). Consent on file asks nothing. After a ladder call, announce any `consent_used` entry:
    "using <backend> (consent recorded <date>)".
 6. **Read the quality rule:** `gsd_run query phase.mvp-mode <N>` per phase (`active` true →
    MVP branch), falling back to `gsd_run query config-get workflow.mvp_mode --default false
@@ -84,8 +84,10 @@ file; do not delegate to another skill — skill-to-skill calls are unreliable o
 
 Read and execute `<workflows>/discuss-phase-assumptions.md` with argument `N` — **never** pass
 `--assumptions` (routes to `list-phase-assumptions.md`, which writes no files) and **never**
-pass `--auto` (it chains into plan-phase and auto-accepts Unclear items). Encode the user's
-`--analyze --all --batch` intent yourself: every analyzer area in one pass; 2–3 alternatives
+pass `--auto` (it chains into plan-phase and auto-accepts Unclear items). Skip the workflow's
+`auto_advance` step regardless of config; automatic mode can dispatch plan-phase there without
+changing the user's settings. Encode the user's `--analyze --all --batch` intent yourself: every
+analyzer area in one pass; 2–3 alternatives
 per Likely/Unclear item with best and easy marked; all the phase's questions in one ladder run (the client still sends Laya one item per call).
 
 Pre-answer the workflow's prompts by rule:
