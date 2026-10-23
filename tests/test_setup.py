@@ -1527,6 +1527,151 @@ class TestSyncPiLinks(unittest.TestCase):
         self.assertEqual(c["unlinked"], 0)
 
 
+class TestBackupEntry(unittest.TestCase):
+    """_backup_entry: the exclusive, numbered claim dir (D-15/T-21.1-23)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_backup_claim_numbered(self):
+        backups = os.path.join(self.tmp, "backups")
+        stamp = "20260101T000000Z"
+        pre = os.path.join(backups, f"alpha.bak-{stamp}")
+        os.makedirs(pre)
+        with open(os.path.join(pre, "marker"), "w") as f:
+            f.write("keep")
+        src = os.path.join(self.tmp, "alpha")
+        os.makedirs(src)
+        with mock.patch.object(setup, "_backup_stamp", return_value=stamp):
+            dest = setup._backup_entry(src, backups, "alpha")
+        self.assertEqual(dest, os.path.join(backups, f"alpha.bak-{stamp}-1", "alpha"))
+        self.assertTrue(os.path.isdir(dest))
+        self.assertTrue(os.path.exists(os.path.join(pre, "marker")))
+
+    def test_backup_move_failure_keeps_partial_claim(self):
+        backups = os.path.join(self.tmp, "backups")
+        os.makedirs(backups)
+        src = os.path.join(self.tmp, "alpha")
+        os.makedirs(src)
+        with open(os.path.join(src, "marker"), "w") as f:
+            f.write("x")
+
+        def partial_move(src_, dst):
+            os.makedirs(dst)
+            with open(os.path.join(dst, "partial"), "w") as f:
+                f.write("partial")
+            raise OSError("cross-device link")
+
+        err = io.StringIO()
+        with mock.patch.object(setup.shutil, "move", partial_move), \
+                contextlib.redirect_stderr(err), \
+                self.assertRaises(OSError):
+            setup._backup_entry(src, backups, "alpha")
+        claim = sorted(p for p in os.listdir(backups) if p.startswith("alpha.bak-"))[0]
+        claim = os.path.join(backups, claim)
+        self.assertTrue(os.path.exists(os.path.join(claim, "alpha", "partial")),
+                        "a non-empty claim must be kept (the only full copy)")
+        self.assertTrue(os.path.exists(os.path.join(src, "marker")))
+        out = err.getvalue()
+        self.assertEqual(out.count("warn:"), 1)
+        self.assertIn(src, out)
+        self.assertIn(claim, out)
+
+    def test_backup_move_failure_empty_claim_removed(self):
+        backups = os.path.join(self.tmp, "backups")
+        os.makedirs(backups)
+        src = os.path.join(self.tmp, "alpha")
+        os.makedirs(src)
+
+        def failing_move(src_, dst):
+            raise OSError("boom")
+
+        err = io.StringIO()
+        with mock.patch.object(setup.shutil, "move", failing_move), \
+                contextlib.redirect_stderr(err), \
+                self.assertRaises(OSError):
+            setup._backup_entry(src, backups, "alpha")
+        self.assertEqual(os.listdir(backups), [],
+                         "an empty claim is removed after a failed move")
+        self.assertIn("nothing was moved", err.getvalue())
+
+
+class TestPredecessorDanglingOnly(unittest.TestCase):
+    """A predecessor is a DANGLING ai-kit-shaped link; a live one is foreign
+    content for the replace path (T-21.1-24)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install = os.path.join(self.tmp, "ai-kit")
+        self.claude = os.path.join(self.tmp, "claude")
+        os.makedirs(os.path.join(self.install, "skills", "alpha"))
+        os.makedirs(os.path.join(self.claude, "skills"))
+        self.entries = {"skills": [("alpha", os.path.join(self.install, "skills", "alpha"))],
+                        "commands": [], "agents": []}
+        self.link = os.path.join(self.claude, "skills", "alpha")
+
+    def test_predecessor_requires_dangling(self):
+        live_target = os.path.join(self.tmp, "elsewhere", "skills", "alpha")
+        os.makedirs(live_target)
+        os.symlink(live_target, self.link)
+        self.assertEqual(
+            setup.predecessor_candidates(self.claude, self.install, self.entries), [])
+        shutil.rmtree(live_target)
+        cands = setup.predecessor_candidates(self.claude, self.install, self.entries)
+        self.assertEqual([n for _c, n, _o, _t in cands], ["alpha"])
+
+
+class TestPredecessorBackup(unittest.TestCase):
+    """apply_predecessor_links(backup_dir=...): every answer keeps the old
+    link in the backups dir (SPEC R8)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install = os.path.join(self.tmp, "ai-kit")
+        self.claude = os.path.join(self.tmp, "claude")
+        self.old = os.path.join(self.tmp, "uz-kit")
+        self.backups = os.path.join(self.tmp, "backups")
+        os.makedirs(os.path.join(self.install, "skills"))
+        os.makedirs(os.path.join(self.claude, "skills"))
+        self.link = os.path.join(self.claude, "skills", "alpha")
+        self.old_target = os.path.join(self.old, "skills", "alpha")
+        os.symlink(self.old_target, self.link)
+        self.cands = [("skills", "alpha", self.old_target,
+                       os.path.join(self.install, "skills", "alpha"))]
+
+    def _backup_copy(self):
+        import glob
+        return glob.glob(os.path.join(self.backups, "alpha.bak-*", "alpha"))
+
+    def test_predecessor_backup(self):
+        # removal answer: nothing at the link path, old link in the backup
+        c = setup.new_counts()
+        setup.apply_predecessor_links(self.claude, self.cands, False, False, c,
+                                      backup_dir=self.backups)
+        self.assertFalse(os.path.lexists(self.link))
+        backed = self._backup_copy()
+        self.assertEqual(len(backed), 1)
+        self.assertEqual(os.readlink(backed[0]), self.old_target)
+
+        # repoint answer: new link at the path AND the old link in the backup
+        os.symlink(self.old_target, self.link)
+        c = setup.new_counts()
+        setup.apply_predecessor_links(self.claude, self.cands, True, False, c,
+                                      backup_dir=self.backups)
+        self.assertEqual(os.readlink(self.link),
+                         os.path.join(self.install, "skills", "alpha"))
+        self.assertEqual(len(self._backup_copy()), 2)
+
+    def test_without_backup_dir_removal_stays(self):
+        c = setup.new_counts()
+        setup.apply_predecessor_links(self.claude, self.cands, False, False, c)
+        self.assertFalse(os.path.lexists(self.link))
+        self.assertFalse(os.path.exists(self.backups))
+
+
 class TestSelectionModel(unittest.TestCase):
     """The shared in-memory pick model behind the install skill-picker and the
     status-line segment toggle: ordered (category, name) items + per-item
@@ -3818,20 +3963,61 @@ class TestWizardHousekeeping(unittest.TestCase):
         os.makedirs(skill_dir)
         with open(os.path.join(skill_dir, "SKILL.md"), "w") as f:
             f.write("---\nname: alpha\n---\n")
+        # the pi-root skill (D-14): a repo entry in PI_SKILLS
+        jev_dir = os.path.join(self.install, "skills", "jev-fast-decision")
+        os.makedirs(jev_dir)
+        with open(os.path.join(jev_dir, "SKILL.md"), "w") as f:
+            f.write("---\nname: jev-fast-decision\n---\n")
         open(os.path.join(self.install, "tools", "status-line.py"), "w").close()
         with open(os.path.join(self.install, "tools", "statusline.toml.sample"), "w") as f:
             f.write("# recipe\n")
         for cat in setup.CATEGORIES:
             os.makedirs(os.path.join(self.claude, cat), exist_ok=True)
+        self.pi = os.path.join(self.tmp, "pi-agent")
+        os.makedirs(os.path.join(self.pi, "skills"))
         # predecessor link: 'alpha' installed from the OLD (renamed) repo
         os.symlink(os.path.join(self.old, "skills", "alpha"),
                   os.path.join(self.claude, "skills", "alpha"))
         self.env = {"HOME": self.tmp, "AI_KIT_DIR": self.install,
                     "CLAUDE_CONFIG_DIR": self.claude,
+                    "PI_CODING_AGENT_DIR": self.pi,
                     "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config")}
 
     def _paths(self):
         return setup.resolve_paths(self.env)
+
+    def _launch(self, dry):
+        """launch_wizard with run_wizard captured (never actually runs the TUI).
+        Returns (ctx, counts)."""
+        paths = self._paths()
+        entries = setup.enumerate_entries(paths.install_dir)
+        installed = setup.installed_links(paths.claude_dir, paths.install_dir)
+        wa = _import_wizard_app()
+        captured = {}
+
+        def _fake_run(ctx):
+            captured["ctx"] = ctx
+            return None
+
+        class _FakeTty:
+            def isatty(self):
+                return True
+
+        with mock.patch.object(wa, "run_wizard", _fake_run), \
+                mock.patch.object(setup, "stdin_on_tty",
+                                  return_value=contextlib.nullcontext()):
+            setup.launch_wizard(paths, entries, installed, _FakeTty(), dry,
+                                setup.new_counts())
+        return captured["ctx"], setup.new_counts()
+
+    def _make_selection(self, skills_on, skills_off):
+        return setup.Selection(
+            [("skills", n, True) for n in skills_on]
+            + [("skills", n, False) for n in skills_off]
+            + [("commands", "x", False), ("agents", "x", False)])
+
+    def _pi_link(self):
+        return os.path.join(self.pi, "skills", "jev-fast-decision")
 
     def test_housekeeping_lists_predecessor_candidate(self):
         paths = self._paths()
@@ -3885,6 +4071,153 @@ class TestWizardHousekeeping(unittest.TestCase):
         self.assertEqual(os.readlink(link), os.path.join(self.install, "skills", "alpha"))
         # repointed link now counts as installed -> alpha defaults ON
         self.assertTrue(outcome["initial_enabled"][("skills", "alpha")])
+
+    def test_pi_deselect(self):
+        # the commit's mirror (D-14/D-17): deselecting jev-fast-decision on
+        # Choose removes BOTH its links through one selection.
+        claude_jev = os.path.join(self.claude, "skills", "jev-fast-decision")
+        os.symlink(os.path.join(self.install, "skills", "jev-fast-decision"),
+                   claude_jev)
+        os.symlink(os.path.join(self.install, "skills", "jev-fast-decision"),
+                   self._pi_link())
+        ctx, _counts = self._launch(dry=False)
+        sel = self._make_selection(["alpha"], ["jev-fast-decision"])
+        ctx.commit(sel, {"adopt": False})
+        self.assertFalse(os.path.lexists(claude_jev))
+        self.assertFalse(os.path.lexists(self._pi_link()))
+        self.assertTrue(os.path.islink(
+            os.path.join(self.claude, "skills", "alpha")))
+
+    def test_pi_stale_prune(self):
+        ghost = os.path.join(self.install, "skills", "ghost")
+        claude_ghost = os.path.join(self.claude, "skills", "ghost")
+        pi_ghost = os.path.join(self.pi, "skills", "ghost")
+        os.symlink(ghost, claude_ghost)
+        os.symlink(ghost, pi_ghost)
+        ctx, _counts = self._launch(dry=False)
+        self.assertIn("skills/ghost", ctx.housekeeping["stale"])
+        self.assertIn("skills/ghost (pi)", ctx.housekeeping["stale"])
+        ctx.apply_housekeeping(True, True)
+        self.assertFalse(os.path.lexists(claude_ghost))
+        self.assertFalse(os.path.lexists(pi_ghost))
+
+    def test_pi_stale_declined_kept_through_commit(self):
+        # a pi-only stale link survives a declined prune AND the wizard commit
+        # that follows: the mirror leaves it (T-21.1-30).
+        ghost = os.path.join(self.install, "skills", "ghost")
+        pi_ghost = os.path.join(self.pi, "skills", "ghost")
+        os.symlink(ghost, pi_ghost)
+        ctx, _counts = self._launch(dry=False)
+        outcome = ctx.apply_housekeeping(False, False)   # decline the prune
+        self.assertTrue(os.path.islink(pi_ghost))
+        ctx.commit(outcome["selection"], {"adopt": False})
+        self.assertEqual(os.readlink(pi_ghost), ghost)
+
+    def test_pi_predecessor(self):
+        # a dangling pi link shaped like an earlier install: listed, repointed
+        # with its claude twin on yes, removed with it on no — either answer
+        # leaves the old link in the backups dir (SPEC R8).
+        old_target = os.path.join(self.old, "skills", "jev-fast-decision")
+        claude_jev = os.path.join(self.claude, "skills", "jev-fast-decision")
+        os.symlink(old_target, claude_jev)
+        os.symlink(old_target, self._pi_link())
+        ctx, _counts = self._launch(dry=False)
+        self.assertEqual(ctx.housekeeping["predecessors"],
+                         ["skills/alpha", "skills/jev-fast-decision",
+                          "skills/jev-fast-decision (pi)"])
+        new_target = os.path.join(self.install, "skills", "jev-fast-decision")
+
+        ctx.apply_housekeeping(False, True)   # repoint yes
+        self.assertEqual(os.readlink(claude_jev), new_target)
+        self.assertEqual(os.readlink(self._pi_link()), new_target)
+        import glob
+        pi_baks = glob.glob(os.path.join(
+            self.tmp, ".local", "state", "ai-kit", "backups", "pi",
+            "jev-fast-decision.bak-*", "jev-fast-decision"))
+        self.assertEqual(len(pi_baks), 1)
+        self.assertEqual(os.readlink(pi_baks[0]), old_target)
+
+        # re-create the predecessors; the No answer backs them up too
+        os.remove(claude_jev)
+        os.remove(self._pi_link())
+        os.symlink(old_target, claude_jev)
+        os.symlink(old_target, self._pi_link())
+        ctx, _counts = self._launch(dry=False)
+        ctx.apply_housekeeping(False, False)   # remove
+        self.assertFalse(os.path.lexists(claude_jev))
+        self.assertFalse(os.path.lexists(self._pi_link()))
+        pi_baks = glob.glob(os.path.join(
+            self.tmp, ".local", "state", "ai-kit", "backups", "pi",
+            "jev-fast-decision.bak-*", "jev-fast-decision"))
+        self.assertEqual(len(pi_baks), 2)
+        self.assertTrue(any(os.readlink(b) == old_target for b in pi_baks))
+
+    def test_pi_predecessor_only_survives_commit(self):
+        # not a first run, dangling pi predecessor, no claude link for jev:
+        # the repoint pre-checks the skill, so the commit links the claude
+        # path and keeps the repointed pi link (T-21.1-30).
+        old_target = os.path.join(self.old, "skills", "jev-fast-decision")
+        os.symlink(old_target, self._pi_link())
+        ctx, _counts = self._launch(dry=False)
+        outcome = ctx.apply_housekeeping(False, True)
+        self.assertIn("jev-fast-decision",
+                      outcome["selection"].category_sets(setup.CATEGORIES)["skills"])
+        ctx.commit(outcome["selection"], {"adopt": False})
+        self.assertEqual(os.readlink(self._pi_link()),
+                         os.path.join(self.install, "skills", "jev-fast-decision"))
+        self.assertEqual(
+            os.readlink(os.path.join(self.claude, "skills", "jev-fast-decision")),
+            os.path.join(self.install, "skills", "jev-fast-decision"))
+
+    def test_pi_repoint_kept_when_claude_blocked(self):
+        # the conflict contract: the accepted pi link survives a claude path
+        # link_one leaves alone, byte-identical, with the warning in the log.
+        for blocked in ("real dir", "foreign link"):
+            old_target = os.path.join(self.old, "skills", "jev-fast-decision")
+            claude_jev = os.path.join(self.claude, "skills", "jev-fast-decision")
+            if blocked == "real dir":
+                os.makedirs(claude_jev)
+                marker = os.path.join(claude_jev, "marker")
+                with open(marker, "w") as f:
+                    f.write("keep")
+            else:
+                elsewhere = os.path.join(self.tmp, "elsewhere")
+                os.makedirs(elsewhere)
+                os.symlink(elsewhere, claude_jev)
+            os.symlink(old_target, self._pi_link())
+            ctx, _counts = self._launch(dry=False)
+            outcome = ctx.apply_housekeeping(False, True)
+            result = ctx.commit(outcome["selection"], {"adopt": False})
+            self.assertEqual(os.readlink(self._pi_link()),
+                             os.path.join(self.install, "skills",
+                                          "jev-fast-decision"))
+            if blocked == "real dir":
+                self.assertTrue(os.path.isfile(marker))
+            else:
+                self.assertEqual(os.readlink(claude_jev),
+                                 os.path.join(self.tmp, "elsewhere"))
+            self.assertIn("leaving it alone", result["log"])
+            self.assertIn(claude_jev, result["log"])
+            # reset for the second case
+            if blocked == "real dir":
+                shutil.rmtree(claude_jev)
+            else:
+                os.remove(claude_jev)
+            os.remove(self._pi_link())
+
+    def test_pi_housekeeping_quiet(self):
+        # apply_housekeeping runs on a Textual worker thread: nothing may
+        # reach the real stdout/stderr; diagnostics land in the log (D-17).
+        old_target = os.path.join(self.old, "skills", "jev-fast-decision")
+        os.symlink(old_target, self._pi_link())
+        ctx, _counts = self._launch(dry=False)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            outcome = ctx.apply_housekeeping(False, True)
+        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(err.getvalue(), "")
+        self.assertIn("moved ", outcome["log"])
+        self.assertIn(self._pi_link(), outcome["log"])
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")

@@ -35,6 +35,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 from collections import namedtuple
 from typing import cast
@@ -47,8 +48,8 @@ PI_SKILLS = frozenset({"jev-fast-decision"})
 
 Paths = namedtuple(
     "Paths",
-    "install_dir claude_dir pi_dir settings config_dir config_toml sample "
-    "status_line statusline_doctor segments_dir claude_hook cursor_dir "
+    "install_dir claude_dir pi_dir backups_dir settings config_dir config_toml "
+    "sample status_line statusline_doctor segments_dir claude_hook cursor_dir "
     "cursor_hooks cursor_hook",
 )
 
@@ -63,6 +64,8 @@ def resolve_paths(env):
     )
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
     pi_dir = env.get("PI_CODING_AGENT_DIR") or os.path.join(home, ".pi", "agent")
+    state_base = env.get("XDG_STATE_HOME") or os.path.join(home, ".local", "state")
+    backups_dir = os.path.join(state_base, "ai-kit", "backups")
     cursor_dir = env.get("CURSOR_CONFIG_DIR") or os.path.join(home, ".cursor")
     config_base = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
     config_dir = os.path.join(config_base, "ai-kit")
@@ -70,6 +73,7 @@ def resolve_paths(env):
         install_dir=install_dir,
         claude_dir=claude_dir,
         pi_dir=pi_dir,
+        backups_dir=backups_dir,
         settings=os.path.join(claude_dir, "settings.json"),
         config_dir=config_dir,
         config_toml=os.path.join(config_dir, "statusline.toml"),
@@ -1070,6 +1074,49 @@ def unlink_one(link_path, dry, counts):
         os.remove(link_path)
 
 
+def _backup_stamp():
+    """UTC stamp for a backup claim dir name (a function so tests can fix it)."""
+    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+
+
+def _backup_entry(path, root_dir, name):
+    """Move `path` (a dir, file or symlink) into an exclusively claimed
+    <root_dir>/<name>.bak-<stamp> dir (D-15). The claim is made with os.mkdir
+    (exclusive — the idea of config_backup.py's _claim_copy, done with a
+    directory because the entry may be any of the three shapes), numbering
+    -1, -2, ... on a collision. Returns the moved entry's path inside the
+    claim. On a move failure the claim is removed ONLY when it is empty (across
+    filesystems shutil.move copies with copytree then deletes the source, so a
+    failure can leave a populated claim AND a partial source — deleting the
+    claim could destroy the only full copy); a non-empty claim is kept, one
+    `warn:` line names source and destination, and the error re-raises."""
+    os.makedirs(root_dir, mode=0o700, exist_ok=True)
+    stamp = _backup_stamp()
+    claim = os.path.join(root_dir, f"{name}.bak-{stamp}")
+    n = 0
+    while True:
+        try:
+            os.mkdir(claim, 0o700)
+            break
+        except FileExistsError:
+            n += 1
+            claim = os.path.join(root_dir, f"{name}.bak-{stamp}-{n}")
+    try:
+        dest = os.path.join(claim, name)
+        shutil.move(path, dest)
+    except OSError as exc:
+        if not os.listdir(claim):
+            os.rmdir(claim)
+            detail = "nothing was moved"
+        else:
+            detail = (f"the partial copy stays at {claim}; "
+                      "check both before retrying")
+        print(f"warn: moving {path} to {claim} failed ({exc}); {detail}",
+              file=sys.stderr)
+        raise
+    return dest
+
+
 def stale_link_candidates(claude_dir, install_dir, present):
     """B - A: ai-kit symlinks under ~/.claude whose repo entry no longer exists
     (deleted upstream). `present` maps cat -> set(names) still in the repo.
@@ -1130,8 +1177,12 @@ def predecessor_candidates(claude_dir, install_dir, entries):
     symlink at <claude>/<cat>/<name> that is foreign to the CURRENT install_dir
     yet carries the ai-kit <root>/<cat>/<name> shape (target basename == name,
     its parent dir name == cat) AND whose <name> is a current repo entry, so it
-    can be re-pointed. Unrelated foreign symlinks (different shape, or no current
-    entry) are excluded — we never touch a link that isn't recognizably ours."""
+    can be re-pointed. The link must ALSO be dangling (its target does not
+    resolve): a live target is someone's content and belongs to the replace
+    path (headless --replace-existing / the wizard's replace gate), never to
+    this gate. Unrelated foreign symlinks (different shape, live, or no current
+    entry) are excluded — we never touch a link that isn't recognizably ours
+    and gone."""
     out = []
     for cat in CATEGORIES:
         by_name = dict(entries.get(cat, []))
@@ -1145,6 +1196,8 @@ def predecessor_candidates(claude_dir, install_dir, entries):
             old = os.readlink(link)
             if _is_inside(old, install_dir):
                 continue                       # already a current ai-kit link
+            if os.path.exists(link):
+                continue                       # live target: foreign content, replace path's job
             if os.path.basename(old) != name:
                 continue                       # not the ai-kit <cat>/<name> shape
             if os.path.basename(os.path.dirname(old)) != cat:
@@ -1155,15 +1208,23 @@ def predecessor_candidates(claude_dir, install_dir, entries):
     return out
 
 
-def apply_predecessor_links(claude_dir, cands, repoint, dry, counts):
+def apply_predecessor_links(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        claude_dir, cands, repoint, dry, counts, backup_dir=None):
     """Apply the repoint/delete decision for each predecessor-link candidate
     (mutating). `cands` is predecessor_candidates()'s output:
-    (cat, name, old, new_target)."""
+    (cat, name, old, new_target). With `backup_dir` given and not dry, each old
+    link is first moved into <backup_dir>/<name>.bak-<stamp>/ (SPEC R8: the
+    gate removes nothing without a backup); without it the old removal stays
+    (only the legacy raw-terminal adopt_predecessor_links relies on that)."""
     for cat, name, _old, new_target in cands:
         link = os.path.join(claude_dir, cat, name)
         if not dry:
             if os.path.lexists(link):
-                os.remove(link)
+                if backup_dir is not None:
+                    dest = _backup_entry(link, backup_dir, name)
+                    print(f"moved {link} -> {dest}")
+                else:
+                    os.remove(link)
             if repoint:
                 os.symlink(new_target, link)
         counts["relinked" if repoint else "pruned"] += 1
@@ -1377,6 +1438,13 @@ def _install_root(entries):
         if entries[cat]:
             return os.path.dirname(os.path.dirname(entries[cat][0][1]))
     return ""
+
+
+def _pi_entries(entries):
+    """The entries the pi root can hold (D-14): skills whose names are in
+    PI_SKILLS; the pi root carries no agents or commands."""
+    return {"skills": [(n, p) for n, p in entries["skills"] if n in PI_SKILLS],
+            "commands": [], "agents": []}
 
 
 def sync_pi_links(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -2374,7 +2442,8 @@ def _engine_ns(paths, sample_json):
 
 
 def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
-    paths, entries, installed, sample_json, wizard_app_mod, stale=None, predecessor_cands=None,
+    paths, entries, installed, sample_json, wizard_app_mod,
+    stale=None, predecessor_cands=None, pi_predecessor_cands=(), pi_stale=(),
 ):
     """Construct WizardContext for launch_wizard (extracted for testability).
 
@@ -2434,8 +2503,10 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
     }
 
     housekeeping = {
-        "stale": stale,
-        "predecessors": [f"{cat}/{name}" for cat, name, _old, _new in predecessor_cands],
+        "stale": stale + [f"{item} (pi)" for item in pi_stale],
+        "predecessors": [f"{cat}/{name}" for cat, name, _old, _new in predecessor_cands]
+                        + [f"{cat}/{name} (pi)"
+                           for cat, name, _old, _new in pi_predecessor_cands],
     }
 
     return wizard_app_mod.WizardContext(
@@ -2583,33 +2654,60 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
 
 def _make_apply_housekeeping(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     paths, entries, stale, predecessor_cands, dry, counts,
+    pi_predecessor_cands=(), pi_stale=(),
 ):
     """Build the apply_housekeeping(prune, repoint) callable the wizard runs
     IN-UI right after its housekeeping gate is answered (before Choose becomes
-    usable). Applies the stale-prune and/or predecessor-repoint decision, then
-    rebuilds installed_links + the default component selection from scratch —
-    a repointed predecessor link becomes a current ai-kit link, which can
-    change which components default to pre-checked on Choose (mirrors the
-    ordering the old CLI-side prune_stale/adopt_predecessor_links ->
-    installed_links sequence relied on)."""
+    usable). Applies the stale-prune and/or predecessor-repoint decision on
+    BOTH roots (claude and pi, D-17), then rebuilds installed_links + the
+    default component selection from scratch — a repointed predecessor link
+    becomes a current ai-kit link, which can change which components default
+    to pre-checked on Choose (mirrors the ordering the old CLI-side
+    prune_stale/adopt_predecessor_links -> installed_links sequence relied
+    on). Each predecessor answer moves the old link into the per-root backups
+    dir first (SPEC R8). A pi link this callable creates (a pi-only repoint)
+    pre-checks that skill in the returned selection, so the commit links its
+    claude path and the mirror keeps the pi link.
+
+    Like `commit`, this runs on a Textual worker thread, so it must NOT print
+    to the real stdout/stderr: everything the inner helpers emit is captured
+    into the returned dict's `log` string."""
     def apply_housekeeping(prune, repoint):
-        if stale and prune:
-            apply_stale_prune(paths.claude_dir, stale, dry, counts)
-        if predecessor_cands:
-            apply_predecessor_links(paths.claude_dir, predecessor_cands, repoint, dry, counts)
-        installed = installed_links(paths.claude_dir, paths.install_dir)
-        default = _default_selection(entries, installed)
-        sel = Selection(
-            (cat, name, name in default[cat])
-            for cat in CATEGORIES
-            for name, _ in entries[cat]
-        )
-        initial_enabled = {
-            (cat, name): (name in installed[cat])
-            for cat in CATEGORIES
-            for name, _ in entries[cat]
-        }
-        return {"selection": sel, "initial_enabled": initial_enabled}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            if stale and prune:
+                apply_stale_prune(paths.claude_dir, stale, dry, counts)
+            if pi_stale and prune:
+                apply_stale_prune(paths.pi_dir, pi_stale, dry, counts)
+            if predecessor_cands:
+                apply_predecessor_links(
+                    paths.claude_dir, predecessor_cands, repoint, dry, counts,
+                    backup_dir=os.path.join(paths.backups_dir, "claude"))
+            if pi_predecessor_cands:
+                apply_predecessor_links(
+                    paths.pi_dir, pi_predecessor_cands, repoint, dry, counts,
+                    backup_dir=os.path.join(paths.backups_dir, "pi"))
+            installed = installed_links(paths.claude_dir, paths.install_dir)
+            default = _default_selection(entries, installed)
+            default = {cat: set(names) for cat, names in default.items()}
+            if repoint:
+                # A pi link created here must survive the commit's mirror:
+                # pre-check the skill so the commit links its claude path and
+                # never unlinks the accepted pi link (D-14).
+                for _cat, name, _old, _new in pi_predecessor_cands:
+                    default["skills"].add(name)
+            sel = Selection(
+                (cat, name, name in default[cat])
+                for cat in CATEGORIES
+                for name, _ in entries[cat]
+            )
+            initial_enabled = {
+                (cat, name): (name in installed[cat])
+                for cat in CATEGORIES
+                for name, _ in entries[cat]
+            }
+        return {"selection": sel, "initial_enabled": initial_enabled,
+                "log": buf.getvalue()}
     return apply_housekeeping
 
 
@@ -2655,8 +2753,21 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
     present = {cat: {n for n, _ in entries[cat]} for cat in CATEGORIES}
     stale = stale_link_candidates(paths.claude_dir, paths.install_dir, present)
     predecessor_cands = predecessor_candidates(paths.claude_dir, paths.install_dir, entries)
+    # The pi root's own stale links and predecessors (D-17). Only computed when
+    # the pi agent dir exists — a missing one is a note at commit time, never
+    # created.
+    if os.path.isdir(paths.pi_dir):
+        pi_stale = [item for item in
+                    stale_link_candidates(paths.pi_dir, paths.install_dir, present)
+                    if item.startswith("skills/")]
+        pi_predecessor_cands = predecessor_candidates(
+            paths.pi_dir, paths.install_dir, _pi_entries(entries))
+    else:
+        pi_stale, pi_predecessor_cands = [], ()
     ctx = _build_wizard_context(paths, entries, installed, sample_json, wizard_app,
-                                stale, predecessor_cands)
+                                stale, predecessor_cands,
+                                pi_predecessor_cands=pi_predecessor_cands,
+                                pi_stale=pi_stale)
     # The real install (component symlinks + doctor-validated status-line write +
     # settings.json wiring) now runs INSIDE the wizard on Review-confirm, so the
     # Done screen reflects the actual result. Inject the commit + housekeeping
@@ -2664,7 +2775,8 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
     ctx = ctx._replace(
         commit=_make_wizard_commit(paths, entries, dry, counts, examples_flag=examples_flag),
         apply_housekeeping=_make_apply_housekeeping(
-            paths, entries, stale, predecessor_cands, dry, counts),
+            paths, entries, stale, predecessor_cands, dry, counts,
+            pi_predecessor_cands=pi_predecessor_cands, pi_stale=pi_stale),
     )
     try:
         # curl | bash inherits the script pipe as fd 0; Textual reads keys from
@@ -2991,6 +3103,12 @@ def cmd_uninstall(env, dry):
     for cat in CATEGORIES:
         for name in sorted(installed[cat]):
             unlink_one(os.path.join(paths.claude_dir, cat, name), dry, counts)
+    # The pi root holds skills only (D-14/D-17); foreign links and real dirs
+    # are never touched (installed_links only reports ai-kit symlinks).
+    if os.path.isdir(paths.pi_dir):
+        pi_installed = installed_links(paths.pi_dir, paths.install_dir)
+        for name in sorted(pi_installed["skills"]):
+            unlink_one(os.path.join(paths.pi_dir, "skills", name), dry, counts)
     unwired = [
         unwire_statusline(paths.settings, paths.install_dir, dry),
         unwire_hook_claude(paths.settings, dry),

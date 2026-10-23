@@ -538,11 +538,13 @@ class WizardApp(App):
                     f"{listing}\n\n"
                     f"[#0d1117 on {WARN}] y = prune them · N / Enter = keep them [/]")
         else:
-            gate = (f"[b {WARN}]⚠  {len(items)} link(s) point at a PREVIOUS ai-kit install[/]\n"
+            gate = (f"[b {WARN}]⚠  {len(items)} dangling link(s) shaped like an "
+                    "earlier ai-kit install[/]\n"
                     f"{listing}\n\n"
-                    f"[{DIM}]No deletes them — this cannot be undone.[/]\n"
+                    f"[{DIM}]Their targets are gone. Either answer first moves each "
+                    "old link to ai-kit's backups dir.[/]\n"
                     f"[#0d1117 on {WARN}] Y / Enter = re-point to this install · "
-                    "n = delete them [/]")
+                    "n = remove them (kept in backups) [/]")
         picksbox.update(gate)
 
     def _choose_category_groups(

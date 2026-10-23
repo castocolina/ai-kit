@@ -82,6 +82,26 @@ class JevInstallE2E(unittest.TestCase):
                          "the pi agent dir must never be created")
         self.assertTrue(os.path.islink(self.link(self.claude, JEV)))
 
+    def test_uninstall_removes_both_links(self):
+        r = self.run_setup("install", "--headless", "--skills", JEV)
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        # foreign content in both roots must survive
+        foreign = os.path.join(self.home, "elsewhere")
+        os.makedirs(foreign)
+        foreign_link = self.link(self.pi, "foreign")
+        os.symlink(foreign, foreign_link)
+        mine = self.link(self.claude, "mine")
+        os.makedirs(mine)
+        with open(os.path.join(mine, "marker"), "w", encoding="utf-8") as f:
+            f.write("keep")
+        r = self.run_setup("uninstall")
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertFalse(os.path.lexists(self.link(self.claude, JEV)))
+        self.assertFalse(os.path.lexists(self.link(self.pi, JEV)))
+        self.assertEqual(os.readlink(foreign_link), foreign)
+        self.assertTrue(os.path.isdir(mine))
+        self.assertTrue(os.path.exists(os.path.join(mine, "marker")))
+
     def test_headless_without_skills_keeps_pi_links(self):
         # The shape the commit mirror removes when the skill is unselected:
         # an ai-kit pi link with no claude counterpart. Bare and hooks-only
