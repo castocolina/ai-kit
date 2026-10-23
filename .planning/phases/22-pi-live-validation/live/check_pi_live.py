@@ -62,7 +62,8 @@ def check(kit_path: str | Path, root: Path) -> list[str]:
         problems.append("pi row lost the verdict")
     if any(row_results.get(row_id, "").startswith("fail (") for row_id in OPTIONAL):
         problems.append("L3 refuted the steer: a decimal phase is required (SPEC R7), not a close-out edit")
-    elif any(row_results.get(row_id) == "pass" for row_id in OPTIONAL):
+    elif any(row_results.get(row_id) == "pass" for row_id in ("L3a", "L3c")):
+        # L3b runs without the override, so a pass there is a baseline, not steering evidence.
         if "session-steer (live L3" not in pi_row:
             problems.append("close-out pending: update the verdict to session-steer (live L3 ...)")
     elif "session-steer (static + mock evidence)" not in pi_row:

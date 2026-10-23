@@ -252,7 +252,11 @@ def _host_managed_files(home: pathlib.Path) -> dict[str, pathlib.Path]:
 
 def _tree_sha(root: pathlib.Path) -> str | None:
     """One sha256 over sorted `relative path NUL file sha256 NUL` pairs, or None when the
-    directory is absent. Symlinks hash their target path instead of being followed."""
+    directory is absent. Symlinks hash their target path instead of being followed, and a
+    symlinked root hashes its own target string without being traversed (22 review WR-01:
+    `~/.pi/agent/extensions` may be a link into a tree that holds credentials)."""
+    if root.is_symlink():
+        return hashlib.sha256(b"link\0" + os.readlink(root).encode() + b"\0").hexdigest()
     if not root.is_dir():
         return None
     entries: list[tuple[str, bytes]] = []
@@ -1012,6 +1016,8 @@ def run_matrix(
     if host == "pi":
         version = gsd_tools.gsd_core_version(tools_path) or "unknown"
         package = installer_dir or ctx.installer_dir or _cached_installer(version, home)
+        if installer_dir or ctx.installer_dir:
+            _require_installer_version(package or "", version)
         if package is None or not os.path.isfile(os.path.join(package, "pi", "gsd.cjs")):
             raise _refusal(
                 3, f"pi hook probe needs a cached @opengsd/gsd-core {version} package "
@@ -4195,13 +4201,8 @@ def _cached_installer(version: str, home: str) -> str | None:
 INSTALL_ENV_KEEP = (*CELL_ENV_KEEP, "TMPDIR")
 
 
-def _install_local(ctx: SmokeCtx, project: str) -> str:
-    version = _pinned_version()
-    installer = ctx.installer_dir  # `_cmd_smoke` already ran the cache lookup (review L3)
-    if installer is None:
-        raise SystemExit(
-            f"no cached @opengsd/gsd-core@{version}; pass --installer-dir (never npx in the smoke)"
-        )
+def _require_installer_version(installer: str, version: str) -> None:
+    """An explicit installer dir must be the tools version, the same check the install uses."""
     try:
         package = json.loads(pathlib.Path(installer, "package.json").read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -4210,6 +4211,16 @@ def _install_local(ctx: SmokeCtx, project: str) -> str:
         raise SystemExit(
             f"installer version mismatch: expected {version}, got {package.get('version')}"
         )
+
+
+def _install_local(ctx: SmokeCtx, project: str) -> str:
+    version = _pinned_version()
+    installer = ctx.installer_dir  # `_cmd_smoke` already ran the cache lookup (review L3)
+    if installer is None:
+        raise SystemExit(
+            f"no cached @opengsd/gsd-core@{version}; pass --installer-dir (never npx in the smoke)"
+        )
+    _require_installer_version(installer, version)
     if not ctx.install_home:
         raise SystemExit("install home is unavailable")
     install_home = ctx.install_home
@@ -4451,9 +4462,9 @@ def _generated_paths(project: str, host: str) -> list[str]:
     return sorted(paths)
 
 
-def _pi_chain(ctx: SmokeCtx, project: str, plan: dict, label: str, plan_path: str) -> dict:
-    root = os.path.dirname(os.path.dirname(ctx.tools_path))
-    agents = sorted(live_tables(ctx.node_bin, root)["profiles"])
+def _pi_chain(
+    ctx: SmokeCtx, project: str, plan: dict, label: str, plan_path: str, agents: list,
+) -> dict:
     baked = _baked_models(project, "pi")
     if baked:
         raise SystemExit(f"pi installer baked agent files: {sorted(baked)}")
@@ -4482,7 +4493,7 @@ def _baked_chain(ctx: SmokeCtx, project: str, plan: dict, label: str, plan_path:
     tables = live_tables(ctx.node_bin, os.path.dirname(os.path.dirname(ctx.tools_path)))
     agents = sorted(tables["profiles"])
     if ctx.host == "pi":
-        return _pi_chain(ctx, project, plan, label, plan_path)
+        return _pi_chain(ctx, project, plan, label, plan_path, agents)
     # annotated once so the three branches below share one type (pyright: `dict` is invariant
     # in its value type, so the cursor branch's `dict[str, None]` alone is not
     # `dict[str, str | None]`)

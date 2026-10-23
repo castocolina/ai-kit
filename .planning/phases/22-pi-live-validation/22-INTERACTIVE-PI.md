@@ -232,7 +232,7 @@ every L3 row must be resolved as `pass`, `inconclusive (...)`, `fail (...)` or
    - Commit the trimmed fixture with its now-running test.
    - Lift the SKILL.md pi row to `validated from the user's interactive pi <version> session (22-INTERACTIVE-PI.md)`, retaining the verdict sentence; update the README row and test pins in that same commit.
    - Upgrade `_LABEL_PI` and the `detect_current_runtime` docstring to `live-verified (Phase 22) ...`, with the runtimes-table label test.
-   - Change the verdict to `session-steer (live L3 on <provider>)` only when an L3 row passed.
+   - Change the verdict to `session-steer (live L3 on <provider>)` only when an override-enabled L3 arm passed (L3a or L3c). L3b runs without the override, so a pass there is a baseline, not steering evidence.
    - Re-run skill-judge on the new digest; check off EVAL-08 in `.planning/REQUIREMENTS.md` and the ROADMAP Phase 22 criteria.
 4. An L3 `fail` refutes D-02: open a decimal phase, never a close-out edit (SPEC R7).
 5. Run `make test && make validate`.

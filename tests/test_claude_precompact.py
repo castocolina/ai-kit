@@ -150,7 +150,7 @@ class TestTracerPrecompactThenInject(HookCaseMixin, unittest.TestCase):
         self.assertEqual(lines[0], core.HEADER_FIRST_LINE)
         self.assertEqual(lines[1], "session_id: sess-1")
         self.assertIn("skipped: malformed 0, unknown_type 2, boundary_unrecognized 0, "
-                      "dropped_before_classify 0", lines)
+                      "dropped_before_classify 0, head_truncated 0", lines)
 
         # Only the active part after boundary 2, with the deterministic pre-pass.
         for needle in ("USER-REQUEST-TEXT", "ASSISTANT-PLAN-TEXT", "IMAGE-TURN-TEXT",
@@ -341,11 +341,19 @@ class TestTranscriptMatrix(HookCaseMixin, unittest.TestCase):
         os.mkfifo(path)
         self.assertEqual(self._precompact(env, path), [])
 
-    def test_over_cap_transcript_fails_open_without_file(self):
+    def test_over_cap_transcript_reads_tail_and_records_truncation(self):
         env = self.make_env()
         base = os.path.dirname(env["HOME"])
-        path = self._write_lines(base, "large.jsonl", [b" " * (core.MAX_TRANSCRIPT_BYTES + 1)])
-        self.assertEqual(self._precompact(env, path), [])
+        path = os.path.join(base, "large.jsonl")
+        with open(path, "wb") as handle:
+            handle.write(b"x" * (core.MAX_TRANSCRIPT_BYTES + 100) + b"\n")
+            handle.write(self._user_line("TAIL-KEY-FACT"))
+        names = self._precompact(env, path)
+        self.assertEqual(names, ["sess-m-proj-compact.md"])
+        with open(os.path.join(self.compact_dir(env), names[0]), encoding="utf-8") as handle:
+            document = handle.read()
+        self.assertIn("TAIL-KEY-FACT", document)
+        self.assertIn("head_truncated 1", document)
 
     def test_transcript_file_order_kept(self):
         env = self.make_env()

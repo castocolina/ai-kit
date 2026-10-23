@@ -6,6 +6,7 @@ injection points; opencode has no documented equivalent today, an accepted
 and documented gap.
 """
 
+import os
 import shutil
 
 CURATED_SUBSTITUTIONS = (
@@ -59,11 +60,21 @@ def compose_message(detection):
         ]
         if not present:
             return "", ""
-        user_line = "ai-kit: modern tools on PATH: " + ", ".join(
-            f"{pair['modern']} ({pair['legacy']})" for pair in present
+        user_line = "ai-kit: prefer these modern tools: " + ", ".join(
+            f"{pair['modern']} over {pair['legacy']}" for pair in present
         ) + "."
+        readme = os.path.join(os.path.dirname(os.path.realpath(__file__)), "README.md")
+        home = os.path.expanduser("~")
+        if home != os.path.abspath(os.sep) and (readme == home or readme.startswith(home + os.sep)):
+            readme = "~" + readme[len(home):]
+        usage_suffix = f" Usage: {readme}"
+        if (len(user_line + usage_suffix) <= 200
+                and all(character.isascii() and character.isprintable()
+                        for character in usage_suffix)):
+            user_line += usage_suffix
         context_lines = [
-            "These installed modern tools are faster and quieter than their legacy counterparts:"
+            "Prefer these installed modern tools over their legacy counterparts "
+            "(faster, quieter output):"
         ]
         context_lines.extend(
             f"- {pair['modern']} (instead of {pair['legacy']}): "

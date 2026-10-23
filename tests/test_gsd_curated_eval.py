@@ -396,6 +396,32 @@ class TestSnapshot(_ScratchPaths):
         strict, _host = ev.snapshot_diff(before, self.snap())
         self.assertEqual(strict, [f"{ev.HOME_LABEL}/.gsd"])
 
+    def test_symlinked_root_hashes_the_link_and_never_opens_its_target(self) -> None:
+        """22 review WR-01: a linked ~/.pi/agent tree must not be walked into credentials."""
+        secret = pathlib.Path(self.home) / "credentials" / "auth.json"
+        secret.parent.mkdir()
+        secret.write_text('{"key": "secret"}\n', encoding="utf-8")
+        os.chmod(secret, 0)
+        link = pathlib.Path(self.home) / ".pi" / "agent" / "extensions"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(secret.parent, link)
+        opened: list[str] = []
+        real_open = open
+
+        def guarded(path, *args, **kwargs):
+            if os.path.realpath(path) == os.path.realpath(secret):
+                opened.append(str(path))
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch("builtins.open", guarded):
+            first = ev._tree_sha(link)
+            os.remove(link)
+            os.symlink(secret.parent / "other", link)
+            second = ev._tree_sha(link)
+        self.assertIsNotNone(first)
+        self.assertNotEqual(first, second)
+        self.assertEqual(opened, [])
+
     def test_absence_is_a_change(self) -> None:
         """Deleting a protected file is a strict change: a `null` value is still a value."""
         before = self.snap()
@@ -3154,6 +3180,22 @@ class TestSmoke(unittest.TestCase):
             ev._install_local(ctx, self.tmp)
         cached.assert_not_called()
         run.assert_not_called()
+
+    def test_explicit_installer_dir_refuses_version_mismatch(self) -> None:
+        """22 review WR-04: --installer-dir and ctx.installer_dir share the install check."""
+        installer = pathlib.Path(self.tmp) / "installer"
+        (installer / "pi").mkdir(parents=True)
+        (installer / "pi" / "gsd.cjs").write_text("", encoding="utf-8")
+        (installer / "package.json").write_text('{"version":"0.0.0"}', encoding="utf-8")
+        ctx = ev._MatrixCtx(
+            "node", "tools", self.tmp, "pi", "/core", installer_dir=str(installer)
+        )
+        with mock.patch.object(ev, "pi_hook_probe") as probe:
+            with self.assertRaisesRegex(SystemExit, "version mismatch"):
+                ev.run_matrix("node", "tools", self.tmp, host="pi", ctx=ctx)
+            with self.assertRaisesRegex(SystemExit, "version mismatch"):
+                ev.run_matrix("node", "tools", self.tmp, host="pi", installer_dir=str(installer))
+        probe.assert_not_called()
 
     def test_install_local_refuses_version_mismatch_before_running(self) -> None:
         installer = pathlib.Path(self.tmp) / "installer"
