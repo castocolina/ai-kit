@@ -49,8 +49,8 @@ PI_SKILLS = frozenset({"jev-fast-decision"})
 Paths = namedtuple(
     "Paths",
     "install_dir claude_dir pi_dir backups_dir settings config_dir config_toml "
-    "sample status_line statusline_doctor segments_dir claude_hook cursor_dir "
-    "cursor_hooks cursor_hook opencode_dir",
+    "sample status_line statusline_doctor segments_dir cursor_dir "
+    "cursor_hooks opencode_dir",
 )
 
 
@@ -83,12 +83,8 @@ def resolve_paths(env):
         status_line=os.path.join(install_dir, "tools", "status-line.py"),
         statusline_doctor=os.path.join(install_dir, "tools", "statusline-doctor.py"),
         segments_dir=os.path.join(config_dir, "segments"),
-        claude_hook=os.path.join(
-            install_dir, "tools", "hooks", "claude_session_start.py"),
         cursor_dir=cursor_dir,
         cursor_hooks=os.path.join(cursor_dir, "hooks.json"),
-        cursor_hook=os.path.join(
-            install_dir, "tools", "hooks", "cursor_session_start.py"),
         opencode_dir=opencode_dir,
     )
 
@@ -1527,18 +1523,47 @@ PRECOMPACT_VERDICTS = {
 # D-11: flat rows, one per id x host x event; `default` is derived from the
 # verdict for precompact rows and explicit for advisory rows.
 HOOK_SUMMARIES = {
-    "precompact": "PreCompact pre-summary (local Laya).",
+    "session-briefing": (
+        "SessionStart briefing names installed modern tools for the user and model."
+    ),
     "tool-advisor": (
         "PreToolUse advisor: suggests rg, bat, fd or sd for grep, cat, find or sed "
         "and reports large reads; advice only."
     ),
+    "tool-reminder": "After grep/cat/sed/find, names output size and a better installed tool.",
+    "decision-probe": "Reports whether jev-fast-decision backends are usable; off by default.",
+    "precompact": "PreCompact pre-summary (local Laya).",
 }
 
 HOOK_REGISTRY = (
     HookRow(
+        id="session-briefing", host="claude", event=CLAUDE_HOOK_EVENT,
+        matcher=CLAUDE_HOOK_MATCHER, script="tools/hooks/claude_session_start.py",
+        default=True, experimental=False, verdict=None, timeout=None),
+    HookRow(
+        id="session-briefing", host="cursor", event=CURSOR_HOOK_EVENT,
+        matcher=None, script="tools/hooks/cursor_session_start.py",
+        default=True, experimental=False, verdict=None, timeout=None),
+    HookRow(
         id="tool-advisor", host="claude", event="PreToolUse", matcher="Bash|Read",
         script="tools/hooks/claude_tool_advisor.py", default=True,
         experimental=False, verdict=None, timeout=3),
+    HookRow(
+        id="tool-advisor", host="pi", event="tool_result", matcher=None,
+        script="tools/hooks/pi/ai-kit-tool-advisor.ts", default=True,
+        experimental=False, verdict=None, timeout=None),
+    HookRow(
+        id="tool-reminder", host="claude", event="PostToolUse", matcher="Bash",
+        script="tools/hooks/claude_tool_reminder.py", default=True,
+        experimental=False, verdict=None, timeout=3),
+    HookRow(
+        id="tool-reminder", host="pi", event="tool_result", matcher=None,
+        script="tools/hooks/pi/ai-kit-tool-reminder.ts", default=True,
+        experimental=False, verdict=None, timeout=None),
+    HookRow(
+        id="decision-probe", host="claude", event="SessionStart", matcher="startup",
+        script="tools/hooks/claude_decision_probe.py", default=False,
+        experimental=False, verdict=None, timeout=5),
     HookRow(
         id="precompact", host="claude", event="PreCompact", matcher="manual|auto",
         script="tools/hooks/claude_precompact.py",
@@ -1749,38 +1774,6 @@ def _refresh_or_append_claude_hook(entries, command,
     return False
 
 
-def wire_hook_claude(settings, hook_script, dry):
-    """Append-if-absent Claude Code SessionStart entry for the briefing wrapper.
-
-    Never materializes ~/.claude/settings.json when the parent directory does
-    not exist. Never overwrites a config it cannot fully interpret. Writes
-    through `_atomic_write_json`; an OSError leaves the target byte-identical
-    and returns False rather than aborting a wizard commit.
-    """
-    if not os.path.isdir(os.path.dirname(settings) or "."):
-        print("skipped Claude Code SessionStart hook — no claude dir")
-        return False
-    ok, data, _ = _load_hook_config(
-        settings, CLAUDE_HOOK_EVENT, nested=True)
-    if not ok:
-        return False
-    assert data is not None  # ok True <=> data is a dict, see _load_hook_config
-    hooks = data.setdefault("hooks", {})
-    entries = hooks.setdefault(CLAUDE_HOOK_EVENT, [])
-    command = "python3 -S " + shlex.quote(hook_script)
-    _refresh_or_append_claude_hook(entries, command)
-    if dry:
-        print(f"would wire SessionStart hook -> {command}")
-        return True
-    try:
-        _atomic_write_json(settings, data)
-    except OSError as exc:
-        print(f"warn: failed to write {settings}: {exc}", file=sys.stderr)
-        return False
-    print(f"wired SessionStart hook -> {command}")
-    return True
-
-
 def _load_hook_config_multi(path, event_keys):
     """`_load_hook_config` over every event key at once: the grouped writer's
     guard. Validates each key's container shape BEFORE anything changes, so a
@@ -1805,8 +1798,8 @@ def wire_claude_rows(settings, rows, install_dir, dry):
     """Write every Claude row of one hook id in ONE grouped atomic write
     (D-11): a PreCompact entry is never written without its compact
     SessionStart injector. One `_load_hook_config_multi` read-validate, per-row
-    refresh-or-append, then one `_atomic_write_json`. Returns a bool like
-    `wire_hook_claude` (False: no claude dir, refused file, failed write)."""
+    refresh-or-append, then one `_atomic_write_json`. Returns False on an absent
+    Claude directory, refused file, or failed write."""
     if not os.path.isdir(os.path.dirname(settings) or "."):
         print("skipped Claude Code hook rows — no claude dir")
         return False
@@ -1942,7 +1935,7 @@ def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
 
     Reads via `_read_json_checked` (absent/ok/unreadable) and writes via
     `_atomic_write_json` — the same malformed-aware, atomic primitives
-    `wire_hook_claude`/`wire_hook_cursor` already use. A settings.json that
+    the registry hook writers already use. A settings.json that
     exists but cannot be parsed as a JSON object is refused outright (never
     silently treated as "empty, safe to overwrite"), and a write failure
     leaves the file byte-identical rather than raising past the caller.
@@ -2124,21 +2117,17 @@ def unwire_claude_rows(settings, rows, dry):
     return _commit_unwire(settings, data, dry, "would remove ai-kit hook rows")
 
 
-def unwire_hook_claude(settings, dry):
-    """Remove ai-kit's own SessionStart briefing hook object only."""
-    row = type("BriefingRow", (), {"event": CLAUDE_HOOK_EVENT,
-                                   "script": CLAUDE_HOOK_MARKER})()
-    return unwire_claude_rows(settings, [row], dry)
-
-
 def unwire_hook_rows(paths, rows, dry, counts):
-    """Unwire selected Claude rows and only links owned by this install."""
+    """Unwire selected registry rows and only links owned by this install."""
     ok = True
     claude_rows = [row for row in rows if row.host == "claude"]
     if claude_rows and not unwire_claude_rows(paths.settings, claude_rows, dry):
         ok = False
+    cursor_rows = [row for row in rows if row.host == "cursor"]
+    if cursor_rows and not unwire_hook_cursor(paths.cursor_hooks, dry):
+        ok = False
     for row in rows:
-        if row.host == "claude":
+        if row.host in ("claude", "cursor"):
             continue
         link_path = hook_link_path(paths, row)
         if link_path is not None and os.path.islink(link_path) and _is_inside(
@@ -2167,6 +2156,17 @@ def hook_installed_hosts(paths, hook_id):
                        for entry in hooks.get(row.event, [])):
                     installed.add("claude")
     for row in rows:
+        if row.host == "cursor":
+            if os.path.isfile(paths.cursor_hooks):
+                state, data = _read_json_checked(paths.cursor_hooks)
+                hooks = data.get("hooks") if state == JSON_STATE_OK else None
+                entries = hooks.get(row.event, []) if isinstance(hooks, dict) else []
+                marker = os.path.join(*row.script.split("/"))
+                if isinstance(entries, list) and any(
+                        isinstance(entry, dict) and marker in entry.get("command", "")
+                        for entry in entries):
+                    installed.add("cursor")
+            continue
         if row.host == "claude":
             continue
         link_path = hook_link_path(paths, row)
@@ -2879,13 +2879,9 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
             # mirror branch.
             sync_pi_links(paths, entries, dry, counts,
                           names=sel_sets["skills"], mirror=True)
-            wire_hook_claude(paths.settings, paths.claude_hook, dry)
-            wire_hook_cursor(paths.cursor_hooks, paths.cursor_hook, dry)
             hooks_ok = apply_hook_selection(
                 paths, all_sets.get("hooks", set()), dry, counts)
-            if hooks_ok is False:
-                ok = False
-            ok = bool(hooks_ok) and ok
+            statusline_ok = True
             if adopt:
                 # A discovered bundled example segment (e.g. system_memory) must
                 # actually exist under paths.segments_dir before persist_statusline's
@@ -2971,6 +2967,7 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
                 )
                 if statusline_ok is False:
                     ok = False
+            ok = bool(hooks_ok) and bool(statusline_ok) and ok
         return {"ok": ok, "adopt": adopt, "log": buf.getvalue()}
     return commit
 
@@ -3375,10 +3372,8 @@ def _headless_wire_statusline(paths, dry):
     actually there. wire_statusline has no host-presence guard of its own and
     _atomic_write_json would os.makedirs the parent, so calling it blind would
     CREATE ~/.claude/settings.json on a machine with no Claude Code installed.
-    wire_hook_claude already refuses to do that ('Never materializes
-    ~/.claude/settings.json when the parent directory does not exist' --
-    docstring at tools/setup.py:1506-1507, guard + skip + `return False` at
-    tools/setup.py:1511-1513); this gives --with-statusline the same guarantee
+    registry hook writers already refuse to do that; this gives
+    --with-statusline the same guarantee
     without touching wire_statusline's interactive contract.
 
     An absent host dir is a benign skip -> True (exit 0), exactly like the hook
@@ -3391,34 +3386,31 @@ def _headless_wire_statusline(paths, dry):
                            assume_overwrite=False)
 
 
-def _headless_wire_hooks(paths, dry):
-    """Wire the SessionStart hook for both hosts. Both wirers already no-op
-    cleanly when their config dir is absent, so neither call is gated -- the
-    isdir() checks only CLASSIFY the outcome: a host that isn't installed on
-    this machine is an expected skip (True), a host that is installed and still
-    failed is a real failure (False)."""
-    claude_present = os.path.isdir(paths.claude_dir)
-    cursor_present = os.path.isdir(paths.cursor_dir)
-    claude_ok = wire_hook_claude(paths.settings, paths.claude_hook, dry)
-    cursor_ok = wire_hook_cursor(paths.cursor_hooks, paths.cursor_hook, dry)
-    return not ((claude_present and not claude_ok)
-                or (cursor_present and not cursor_ok))
-
-
 def hook_host_present(paths, host):
     """Whether the host's config directory already exists (never create it)."""
-    host_dirs = {"claude": paths.claude_dir, "pi": paths.pi_dir,
-                 "opencode": paths.opencode_dir}
+    host_dirs = {"claude": paths.claude_dir, "cursor": paths.cursor_dir,
+                 "pi": paths.pi_dir, "opencode": paths.opencode_dir}
     return os.path.isdir(host_dirs[host])
 
 
 def hook_link_path(paths, row):
     """The link location for a symlink row; Claude rows are config-backed."""
+    if row.host == "cursor":
+        return None
     if row.host == "pi":
         return os.path.join(paths.pi_dir, "extensions", os.path.basename(row.script))
     if row.host == "opencode":
         return os.path.join(paths.opencode_dir, "plugins", os.path.basename(row.script))
     return None
+
+
+def _wire_cursor_rows(paths, rows, dry):
+    """Wire Cursor briefing rows through the existing Cursor writer."""
+    if not rows:
+        return True
+    present = hook_host_present(paths, "cursor")
+    script_path = os.path.join(paths.install_dir, *rows[0].script.split("/"))
+    return not present or wire_hook_cursor(paths.cursor_hooks, script_path, dry)
 
 
 def wire_hook_rows(paths, rows, dry, counts):
@@ -3432,8 +3424,10 @@ def wire_hook_rows(paths, rows, dry, counts):
         result = wire_claude_rows(paths.settings, claude_rows, paths.install_dir, dry)
         if present and not result:
             ok = False
+    if not _wire_cursor_rows(paths, [row for row in rows if row.host == "cursor"], dry):
+        ok = False
     for row in rows:
-        if row.host == "claude":
+        if row.host in ("claude", "cursor"):
             continue
         if not hook_host_present(paths, row.host):
             print(f"skipped {row.id} for {row.host} — no {row.host} dir")
@@ -3455,6 +3449,13 @@ def wire_hook_rows(paths, rows, dry, counts):
 def _headless_wire_hook_ids(paths, selection, dry, counts):
     """Wire selected registry rows; absent hosts are expected skips."""
     return wire_hook_rows(paths, hook_rows(selection), dry, counts)
+
+
+def _headless_wire_default_hooks(paths, dry, counts):
+    """Wire every default row once in registry order."""
+    selection = list(dict.fromkeys(
+        (row.id, row.host) for row in HOOK_REGISTRY if row.default))
+    return _headless_wire_hook_ids(paths, selection, dry, counts)
 
 
 def _headless_install_examples(paths, examples_flag, dry):
@@ -3544,7 +3545,7 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     additively (apply_additive_skills, never unlinks). --with-statusline/
     --with-hooks independently opt into wiring those, reusing the existing
     tty-safe primitives (wire_statusline is now itself headless-safe -- see
-    Task 1 -- and wire_hook_claude/wire_hook_cursor already were); both wiring
+    Task 1 -- and registry hook writers already were); both wiring
     flags treat an absent host config dir as a benign skip and create nothing
     (_headless_wire_statusline supplies that guard for the status line).
     --examples
@@ -3594,7 +3595,7 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     if with_statusline and not _headless_wire_statusline(paths, dry):
         ok = False
     if with_hooks is True:
-        if not _headless_wire_hooks(paths, dry):
+        if not _headless_wire_default_hooks(paths, dry, counts):
             ok = False
     elif with_hooks and not _headless_wire_hook_ids(paths, with_hooks, dry, counts):
         ok = False
@@ -3640,12 +3641,7 @@ def cmd_uninstall(env, dry, hooks=None):
         hook_ok = unwire_hook_rows(paths, selected_rows, dry, counts)
         print(f"removed {counts['unlinked']} ai-kit symlink(s). "
               f"install dir left in place: {paths.install_dir}")
-        unwired = [
-            unwire_statusline(paths.settings, paths.install_dir, dry),
-            unwire_hook_claude(paths.settings, dry),
-            unwire_hook_cursor(paths.cursor_hooks, dry),
-            hook_ok,
-        ]
+        unwired = [unwire_statusline(paths.settings, paths.install_dir, dry), hook_ok]
     else:
         hook_ok = unwire_hook_rows(paths, hook_rows(hooks), dry, counts)
         print(f"removed hook entries for: {', '.join(dict.fromkeys(i for i, _h in hooks))}")
@@ -3855,9 +3851,8 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
                          help="(--headless only) wire the ai-kit status line.")
     parser.add_argument("--with-hooks", nargs="?", const=True, default=False,
                         metavar="<id[:host],...>",
-                        help="(--headless only) bare: wire the SessionStart "
-                             "briefing hooks (Claude Code + Cursor); =<id"
-                             "[:host],...>: registry hooks: "
+                        help="(--headless only) bare wires rows marked on below; "
+                             "=<id[:host],...> wires exactly those rows additively: "
                              + "; ".join(hook_description(i) for i in HOOK_IDS))
     parser.add_argument("--hooks", default=None, metavar="<id[:host],...>",
                         help="(uninstall only) remove only these hooks")

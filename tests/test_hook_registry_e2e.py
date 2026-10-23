@@ -193,13 +193,92 @@ class HookRegistryE2E(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("warn:", proc.stderr)
 
-    def test_bare_with_hooks_keeps_briefing_meaning(self):
+    def test_bare_with_hooks_wires_registry_defaults(self):
         os.makedirs(self.claude)
+        os.makedirs(self.cursor)
+        os.makedirs(self.pi)
         proc = self.run_setup("install", "--headless", "--with-hooks")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         data = self.read_settings()
-        self.assertEqual(set(data["hooks"]), {"SessionStart"})
+        self.assertTrue({"SessionStart", "PreToolUse", "PostToolUse"} <= set(data["hooks"]))
         self.assertEqual(data["hooks"]["SessionStart"][0]["matcher"], "startup|compact")
+        self.assertFalse(any(entry.get("matcher") == "startup" for entry in
+                             data["hooks"]["SessionStart"]))
+        self.assertTrue(os.path.islink(os.path.join(
+            self.pi, "extensions", "ai-kit-tool-advisor.ts")))
+        self.assertTrue(os.path.islink(os.path.join(
+            self.pi, "extensions", "ai-kit-tool-reminder.ts")))
+        self.assertEqual(set(data["hooks"]["PreToolUse"][0]), {"matcher", "hooks"})
+
+    def test_briefing_and_precompact_compact_entries_independent(self):
+        os.makedirs(self.claude)
+        self.assertEqual(self.run_setup("install", "--headless",
+                                        "--with-hooks=session-briefing,precompact").returncode, 0)
+        self.assertEqual(self.run_setup("uninstall", "--hooks=session-briefing").returncode, 0)
+        data = self.read_settings()
+        self.assertEqual([entry["matcher"] for entry in data["hooks"]["SessionStart"]],
+                         ["compact"])
+        self.assertEqual(self.run_setup("install", "--headless",
+                                        "--with-hooks=session-briefing").returncode, 0)
+        self.assertEqual(self.run_setup("uninstall", "--hooks=precompact").returncode, 0)
+        data = self.read_settings()
+        self.assertEqual([entry["matcher"] for entry in data["hooks"]["SessionStart"]],
+                         ["startup|compact"])
+
+    def test_with_hooks_is_additive(self):
+        os.makedirs(self.claude)
+        self.assertEqual(self.run_setup("install", "--headless", "--with-hooks").returncode, 0)
+        before = self.read_settings()
+        proc = self.run_setup("install", "--headless", "--with-hooks=decision-probe")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        after = self.read_settings()
+        self.assertEqual(after["hooks"]["PreToolUse"], before["hooks"]["PreToolUse"])
+        self.assertEqual(after["hooks"]["PostToolUse"], before["hooks"]["PostToolUse"])
+        self.assertIn("startup", [e.get("matcher") for e in after["hooks"]["SessionStart"]])
+
+    def test_each_id_alone_wires_only_its_entries(self):
+        for hook_id in ("session-briefing", "tool-advisor", "tool-reminder",
+                        "decision-probe", "precompact"):
+            with self.subTest(hook_id=hook_id):
+                self.setUp()
+                for directory in (self.claude, self.cursor, self.pi, self.opencode):
+                    os.makedirs(directory)
+                settings_path = os.path.join(self.claude, "settings.json")
+                foreign = {event: {"matcher": "foreign", "hooks": [{"type": "command",
+                           "command": "echo foreign"}]} for event in
+                           ("SessionStart", "PreToolUse", "PostToolUse", "PreCompact")}
+                with open(settings_path, "w", encoding="utf-8") as handle:
+                    json.dump({"theme": "dark",
+                               "hooks": {k: [v] for k, v in foreign.items()}}, handle)
+                os.makedirs(os.path.join(self.cursor, "hooks"), exist_ok=True)
+                with open(os.path.join(self.cursor, "hooks.json"), "w", encoding="utf-8") as handle:
+                    json.dump({"version": 1, "hooks": {"sessionStart": [
+                        {"type": "command", "command": "echo foreign cursor"}]}}, handle)
+                for folder in (os.path.join(self.pi, "extensions"),
+                               os.path.join(self.opencode, "plugins")):
+                    os.makedirs(folder)
+                    with open(os.path.join(folder, "foreign.ts"), "w", encoding="utf-8") as handle:
+                        handle.write("foreign")
+                proc = self.run_setup("install", "--headless", f"--with-hooks={hook_id}")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                installed = self.read_settings()
+                from tools import setup as setup_module
+                marker_scripts = [row.script.replace("/", os.sep) for row in
+                                  setup_module.HOOK_REGISTRY if row.id == hook_id]
+                for event, entries in installed["hooks"].items():
+                    ours = [entry for entry in entries if any(
+                        marker in hook.get("command", "")
+                        for hook in entry.get("hooks") or []
+                        for marker in marker_scripts)]
+                    self.assertEqual(len(ours), len([row for row in
+                                     setup_module.HOOK_REGISTRY if row.id == hook_id
+                                     and row.host == "claude" and row.event == event]))
+                    if event in foreign:
+                        self.assertEqual(entries[0], foreign[event])
+                proc = self.run_setup("uninstall", f"--hooks={hook_id}")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(self.read_settings()["theme"], "dark")
+
 
     def test_uninstall_hooks_removes_exactly_precompact(self):
         os.makedirs(self.claude)

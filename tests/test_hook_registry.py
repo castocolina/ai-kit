@@ -67,7 +67,41 @@ class TestRegistryShape(unittest.TestCase):
                                 or row.verdict.startswith("gap:"))
                 self.assertEqual(row.default, row.verdict == "positive")
                 self.assertEqual(row.experimental, row.host == "opencode")
-        self.assertEqual(setup.HOOK_IDS, ("tool-advisor", "precompact"))
+        self.assertEqual(setup.HOOK_IDS, (
+            "session-briefing", "tool-advisor", "tool-reminder",
+            "decision-probe", "precompact"))
+        expected = {
+            "session-briefing": {"claude", "cursor"},
+            "tool-advisor": {"claude", "pi"},
+            "tool-reminder": {"claude", "pi"},
+            "decision-probe": {"claude"},
+        }
+        for hook_id, hosts in expected.items():
+            rows = [row for row in setup.HOOK_REGISTRY if row.id == hook_id]
+            self.assertEqual({row.host for row in rows}, hosts)
+            self.assertTrue(all(os.path.isfile(os.path.join(
+                _REPO, *row.script.split("/"))) for row in rows))
+            self.assertTrue(all(row.verdict is None and not row.experimental
+                                for row in rows))
+            self.assertEqual(all(row.default for row in rows), hook_id != "decision-probe")
+        claude = {row.id: row for row in setup.HOOK_REGISTRY
+                  if row.host == "claude" and row.verdict is None}
+        self.assertEqual((claude["session-briefing"].event,
+                          claude["session-briefing"].matcher,
+                          claude["session-briefing"].timeout),
+                         ("SessionStart", "startup|compact", None))
+        self.assertEqual((claude["tool-advisor"].event,
+                          claude["tool-advisor"].matcher,
+                          claude["tool-advisor"].timeout),
+                         ("PreToolUse", "Bash|Read", 3))
+        self.assertEqual((claude["tool-reminder"].event,
+                          claude["tool-reminder"].matcher,
+                          claude["tool-reminder"].timeout),
+                         ("PostToolUse", "Bash", 3))
+        self.assertEqual((claude["decision-probe"].event,
+                          claude["decision-probe"].matcher,
+                          claude["decision-probe"].timeout),
+                         ("SessionStart", "startup", 5))
 
 
 class TestParseHookSelector(unittest.TestCase):
@@ -145,18 +179,19 @@ class TestRefreshKeepsNestedUserHook(unittest.TestCase):
     def test_briefing_refresh_keeps_nested_user_hook(self):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        row = next(row for row in setup.HOOK_REGISTRY
+                   if row.id == "session-briefing" and row.host == "claude")
+        marker = os.path.join(*row.script.split("/"))
         user = {"type": "command", "command": "echo mine"}
-        ours_old = {
-            "type": "command",
-            "command": "python3 -S /old/" + setup.CLAUDE_HOOK_MARKER,
-        }
+        ours_old = {"type": "command", "command": "python3 -S /old/" + marker}
         settings = _wire_settings(tmp, {"hooks": {"SessionStart": [
-            {"matcher": setup.CLAUDE_HOOK_MATCHER,
-             "hooks": [user, ours_old], "note": "x"},
+            {"matcher": row.matcher, "hooks": [user, ours_old], "note": "x"},
         ]}})
-        wrapper = os.path.join(tmp, "kit", "claude_session_start.py")
+        install = os.path.join(tmp, "kit")
+        wrapper = os.path.join(install, *row.script.split("/"))
+        os.makedirs(os.path.dirname(wrapper), exist_ok=True)
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertTrue(setup.wire_hook_claude(settings, wrapper, dry=False))
+            self.assertTrue(setup.wire_claude_rows(settings, [row], install, False))
         entry = _read(settings)["hooks"]["SessionStart"][0]
         self.assertEqual(entry["note"], "x")
         self.assertEqual(entry["matcher"], setup.CLAUDE_HOOK_MATCHER)
@@ -165,6 +200,43 @@ class TestRefreshKeepsNestedUserHook(unittest.TestCase):
         self.assertEqual(entry["hooks"][1]["command"],
                          "python3 -S " + shlex.quote(wrapper))
         self.assertNotIn("timeout", entry["hooks"][1])
+
+
+class TestNestedUserHooksAcrossIds(unittest.TestCase):
+    def test_nested_user_hook_survives_every_id(self):
+        for hook_id in setup.HOOK_IDS:
+            row = next((row for row in setup.HOOK_REGISTRY
+                        if row.id == hook_id and row.host == "claude"), None)
+            if row is None:
+                continue
+            with self.subTest(hook_id=hook_id):
+                tmp = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+                settings = _wire_settings(tmp, {})
+                install = os.path.join(tmp, "kit")
+                os.makedirs(os.path.dirname(os.path.join(install, *row.script.split("/"))),
+                            exist_ok=True)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertTrue(setup.wire_claude_rows(settings, [row], install, False))
+                data = _read(settings)
+                event_entries = data["hooks"][row.event]
+                marker = os.path.join(*row.script.split("/"))
+                entry = next(entry for entry in event_entries if any(
+                    marker in hook.get("command", "") for hook in entry.get("hooks", [])))
+                user = {"type": "command", "command": "echo mine"}
+                entry["hooks"].append(user)
+                setup._atomic_write_json(settings, data)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertTrue(setup.wire_claude_rows(settings, [row], install, False))
+                entry = _read(settings)["hooks"][row.event][0]
+                self.assertIn(user, entry["hooks"])
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertTrue(setup.unwire_claude_rows(settings, [row], False))
+                data = _read(settings)
+                leftovers = [entry for entry in data["hooks"][row.event]
+                             if user in entry.get("hooks", [])]
+                self.assertTrue(leftovers)
+                self.assertEqual(leftovers[0]["matcher"], row.matcher)
 
 
 class TestOneAtomicReplacePerFile(unittest.TestCase):
@@ -267,7 +339,8 @@ class TestHookPathsAndDescription(unittest.TestCase):
             setup.main(["--help"])
         self.assertEqual(ctx.exception.code, 0)
         self.assertIn("PreToolUse advisor:", out.getvalue())
-        self.assertIn("claude: unmeasured (off)", out.getvalue())
+        self.assertIn("PreCompact pre-summary", out.getvalue())
+        self.assertIn("claude: unmeasured (off)", setup.hook_description("precompact"))
         self.assertIn("pi:", out.getvalue())
         self.assertIn("unmeasured (off)", out.getvalue())
 
@@ -294,9 +367,11 @@ class TestUninstallKeepsNestedUserHook(unittest.TestCase):
                 tmp = tempfile.mkdtemp()
                 self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
                 if briefing:
-                    event, marker, unwire = (
-                        "SessionStart", setup.CLAUDE_HOOK_MARKER,
-                        lambda path: setup.unwire_hook_claude(path, False))
+                    row = next(row for row in setup.HOOK_REGISTRY
+                               if row.id == "session-briefing" and row.host == "claude")
+                    event, marker = row.event, os.path.join(*row.script.split("/"))
+                    unwire = lambda path, row=row: setup.unwire_claude_rows(
+                        path, [row], False)
                 else:
                     row = PRECOMPACT_CLAUDE_ROWS[0]
                     event, marker = row.event, os.path.join(*row.script.split("/"))
@@ -314,6 +389,34 @@ class TestUninstallKeepsNestedUserHook(unittest.TestCase):
                                             "note": "x"}])
 
 
+class TestExistingBriefing(unittest.TestCase):
+    def test_existing_briefing_install_reads_as_on(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        claude = os.path.join(tmp, "claude")
+        os.makedirs(claude)
+        install = os.path.join(tmp, "install")
+        row = next(row for row in setup.HOOK_REGISTRY
+                   if row.id == "session-briefing" and row.host == "claude")
+        script = os.path.join(install, *row.script.split("/"))
+        entry = {"matcher": "startup|compact", "hooks": [{"type": "command",
+                 "command": "python3 -S " + script}]}
+        settings = os.path.join(claude, "settings.json")
+        setup._atomic_write_json(settings, {"hooks": {"SessionStart": [entry]}})
+        paths = setup.resolve_paths({"HOME": tmp, "AI_KIT_DIR": install,
+                                     "CLAUDE_CONFIG_DIR": claude})
+        self.assertIn("claude", setup.hook_installed_hosts(paths, "session-briefing"))
+        items, initial = setup._hook_selection_items(paths)
+        self.assertIn(("hooks", "session-briefing", True), items)
+        self.assertTrue(initial[("hooks", "session-briefing")])
+        with open(settings, "rb") as handle:
+            before = handle.read()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(setup.wire_hook_rows(paths, [row], False, setup.new_counts()))
+        with open(settings, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+
+
 class TestHookSelectionItems(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -327,16 +430,17 @@ class TestHookSelectionItems(unittest.TestCase):
 
     def test_hook_selection_items_precheck(self):
         items, initial = setup._hook_selection_items(self.paths)
-        self.assertEqual(items, [("hooks", "tool-advisor", False),
-                                 ("hooks", "precompact", False)])
+        self.assertEqual(items, [("hooks", hook_id, on) for hook_id, on in (
+            ("session-briefing", False), ("tool-advisor", False),
+            ("tool-reminder", False), ("decision-probe", False),
+            ("precompact", False))])
         self.assertFalse(initial[("hooks", "precompact")])
         os.makedirs(self.claude)
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertTrue(setup.wire_claude_rows(
                 self.paths.settings, PRECOMPACT_CLAUDE_ROWS, _REPO, False))
         items, initial = setup._hook_selection_items(self.paths)
-        self.assertEqual(items, [("hooks", "tool-advisor", True),
-                                 ("hooks", "precompact", True)])
+        self.assertEqual([item[1] for item in items], list(setup.HOOK_IDS))
         self.assertFalse(initial[("hooks", "tool-advisor")])
         self.assertTrue(initial[("hooks", "precompact")])
 
@@ -460,13 +564,16 @@ class TestWizardHookRouting(unittest.TestCase):
 
 
 class TestHookCommandQuoting(unittest.TestCase):
-    def test_wire_hook_claude_quotes_script_path(self):
+    def test_briefing_registry_row_quotes_script_path(self):
         tmp = tempfile.mkdtemp(prefix="ai kit ")
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         settings = _wire_settings(tmp, {})
-        wrapper = os.path.join(tmp, "claude_session_start.py")
+        wrapper = os.path.join(tmp, "tools", "hooks", "claude_session_start.py")
+        os.makedirs(os.path.dirname(wrapper), exist_ok=True)
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertTrue(setup.wire_hook_claude(settings, wrapper, dry=False))
+            row = next(r for r in setup.HOOK_REGISTRY
+                       if r.id == "session-briefing" and r.host == "claude")
+            self.assertTrue(setup.wire_claude_rows(settings, [row], tmp, False))
         command = _read(settings)["hooks"]["SessionStart"][0]["hooks"][0]["command"]
         self.assertEqual(command, "python3 -S " + shlex.quote(wrapper))
         self.assertEqual(shlex.split(command), ["python3", "-S", wrapper])

@@ -94,6 +94,17 @@ def _read_bytes(path):
         return handle.read()
 
 
+def _wire_briefing(settings, hook, dry):
+    rows = setup.hook_rows([("session-briefing", "claude")])
+    install = os.path.dirname(os.path.dirname(os.path.dirname(hook)))
+    return setup.wire_claude_rows(settings, rows, install, dry)
+
+
+def _unwire_briefing(settings, dry):
+    return setup.unwire_claude_rows(
+        settings, setup.hook_rows([("session-briefing", "claude")]), dry)
+
+
 class TestClaudeWrapper(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -164,7 +175,7 @@ class TestClaudeWrapper(unittest.TestCase):
         }
         with open(self.settings, "w", encoding="utf-8") as handle:
             json.dump(foreign, handle)
-        self.assertTrue(setup.wire_hook_claude(self.settings, self.wrapper, dry=False))
+        self.assertTrue(_wire_briefing(self.settings, self.wrapper, dry=False))
         with open(self.settings, encoding="utf-8") as handle:
             stored = json.load(handle)
         self.assertEqual(stored["theme"], "dark")
@@ -255,7 +266,7 @@ class TestWiring(unittest.TestCase):
     def _capture_wire(self):
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
-            result = setup.wire_hook_claude(self.settings, self.hook, dry=False)
+            result = _wire_briefing(self.settings, self.hook, dry=False)
         return result, buf.getvalue()
 
     def test_unparseable_settings_is_refused_not_clobbered(self):
@@ -329,7 +340,7 @@ class TestWiring(unittest.TestCase):
 
         buf = io.StringIO()
         with mock.patch.object(os, "replace", side_effect=_boom), contextlib.redirect_stderr(buf):
-            result = setup.wire_hook_claude(self.settings, self.hook, dry=False)
+            result = _wire_briefing(self.settings, self.hook, dry=False)
         self.assertFalse(result)
         self.assertTrue(buf.getvalue())
         self.assertEqual(_read_bytes(self.settings), before)
@@ -339,16 +350,41 @@ class TestWiring(unittest.TestCase):
         missing_dir = os.path.join(self.tmp, "no-such-dir")
         settings = os.path.join(missing_dir, "settings.json")
         before = sorted(os.listdir(self.tmp))
-        result = setup.wire_hook_claude(settings, self.hook, dry=False)
+        result = _wire_briefing(settings, self.hook, dry=False)
         self.assertFalse(result)
         self.assertFalse(os.path.exists(missing_dir))
         self.assertEqual(sorted(os.listdir(self.tmp)), before)
 
     def test_created_settings_file_is_mode_0600(self):
         self.assertFalse(os.path.isfile(self.settings))
-        self.assertTrue(setup.wire_hook_claude(self.settings, self.hook, dry=False))
+        self.assertTrue(_wire_briefing(self.settings, self.hook, dry=False))
         mode = stat.S_IMODE(os.stat(self.settings).st_mode)
         self.assertEqual(mode, 0o600)
+
+    def test_wizard_commit_reports_hook_failure(self):
+        home = tempfile.mkdtemp()
+        install = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, install, ignore_errors=True)
+        paths = setup.resolve_paths({"HOME": home, "AI_KIT_DIR": install})
+        os.makedirs(paths.claude_dir)
+        with open(paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"hooks": {"PreToolUse": "bad"}}, handle)
+        commit = setup._make_wizard_commit(
+            paths, {cat: [] for cat in setup.CATEGORIES}, False, setup.new_counts())
+        selected = setup.Selection([("hooks", "tool-advisor", True)])
+        with mock.patch.object(setup, "persist_statusline", return_value=True) as persist:
+            result = commit(selected, {"adopt": True})
+        self.assertFalse(result["ok"])
+        persist.assert_called_once()
+        self.assertIn("PreToolUse", result["log"])
+        os.unlink(paths.settings)
+        with open(paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"hooks": {}}, handle)
+        with mock.patch.object(setup, "persist_statusline", return_value=False):
+            result = commit(selected, {"adopt": True})
+        self.assertFalse(result["ok"])
+        self.assertTrue(os.path.isfile(paths.settings))
 
     def test_wizard_commit_wires_the_hook(self):
         home = tempfile.mkdtemp()
@@ -356,15 +392,12 @@ class TestWiring(unittest.TestCase):
         self.addCleanup(shutil.rmtree, home, ignore_errors=True)
         self.addCleanup(shutil.rmtree, install, ignore_errors=True)
         paths = setup.resolve_paths({"HOME": home, "AI_KIT_DIR": install})
-        self.assertEqual(
-            paths.claude_hook,
-            os.path.join(install, "tools", "hooks", "claude_session_start.py"),
-        )
         os.makedirs(paths.claude_dir, exist_ok=True)
         entries = {cat: [] for cat in setup.CATEGORIES}
         commit = setup._make_wizard_commit(
             paths, entries, dry=False, counts=setup.new_counts())
-        result = commit(setup.Selection([]), {"adopt": False})
+        result = commit(setup.Selection([("hooks", "session-briefing", True)]),
+                        {"adopt": False})
         self.assertIn("ok", result)
         self.assertIn("adopt", result)
         self.assertIn("log", result)
@@ -601,10 +634,6 @@ class TestCursorWiring(unittest.TestCase):
         })
         self.assertEqual(paths.cursor_dir, "/cfg/cursor")
         self.assertEqual(paths.cursor_hooks, "/cfg/cursor/hooks.json")
-        self.assertEqual(
-            paths.cursor_hook,
-            "/opt/kit/tools/hooks/cursor_session_start.py",
-        )
         defaulted = setup.resolve_paths({"HOME": "/home/u", "AI_KIT_DIR": "/opt/kit"})
         self.assertEqual(defaulted.cursor_dir, "/home/u/.cursor")
         self.assertEqual(defaulted.cursor_hooks, "/home/u/.cursor/hooks.json")
@@ -624,7 +653,8 @@ class TestCursorWiring(unittest.TestCase):
         entries = {cat: [] for cat in setup.CATEGORIES}
         commit = setup._make_wizard_commit(
             paths, entries, dry=False, counts=setup.new_counts())
-        result = commit(setup.Selection([]), {"adopt": False})
+        result = commit(setup.Selection([("hooks", "session-briefing", True)]),
+                        {"adopt": False})
         self.assertEqual(set(result), {"ok", "adopt", "log"})
         with open(paths.cursor_hooks, encoding="utf-8") as handle:
             stored = json.load(handle)
@@ -820,7 +850,7 @@ class TestUnwire(unittest.TestCase):
 
     def test_foreign_entries_survive_value_identical(self):
         self._seed_both_wired()
-        self._capture(lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        self._capture(lambda: _unwire_briefing(self.settings, dry=False))
         self._capture(lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
         with open(self.settings, encoding="utf-8") as handle:
             claude = json.load(handle)
@@ -840,7 +870,7 @@ class TestUnwire(unittest.TestCase):
         self._write_json(self.hooks_json, _cursor_hooks_doc(
             entries=[{"type": "command", "command": self._cursor_cmd()}],
         ))
-        self._capture(lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        self._capture(lambda: _unwire_briefing(self.settings, dry=False))
         self._capture(lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
         with open(self.settings, encoding="utf-8") as handle:
             claude = json.load(handle)
@@ -860,7 +890,7 @@ class TestUnwire(unittest.TestCase):
         self._write_json(self.hooks_json, _cursor_hooks_doc())
         claude_before = _read_bytes(self.settings)
         cursor_before = _read_bytes(self.hooks_json)
-        self._capture(lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        self._capture(lambda: _unwire_briefing(self.settings, dry=False))
         self._capture(lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
         self.assertEqual(_read_bytes(self.settings), claude_before)
         self.assertEqual(_read_bytes(self.hooks_json), cursor_before)
@@ -871,7 +901,7 @@ class TestUnwire(unittest.TestCase):
         claude_before = _read_bytes(self.settings)
         cursor_before = _read_bytes(self.hooks_json)
         _, claude_err = self._capture(
-            lambda: setup.unwire_hook_claude(self.settings, dry=False))
+            lambda: _unwire_briefing(self.settings, dry=False))
         _, cursor_err = self._capture(
             lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
         self.assertIn(self.settings, claude_err)
@@ -895,7 +925,7 @@ class TestUnwire(unittest.TestCase):
             contextlib.redirect_stdout(buf),
             contextlib.redirect_stderr(buf),
         ):
-            setup.unwire_hook_claude(self.settings, dry=False)
+            _unwire_briefing(self.settings, dry=False)
             setup.unwire_hook_cursor(self.hooks_json, dry=False)
         self.assertTrue(buf.getvalue())
         self.assertEqual(_read_bytes(self.settings), claude_before)
@@ -918,7 +948,7 @@ class TestUnwire(unittest.TestCase):
         claude_before = _read_bytes(self.settings)
         cursor_before = _read_bytes(self.hooks_json)
         _, claude_err = self._capture(
-            lambda: setup.unwire_hook_claude(self.settings, dry=False))
+            lambda: _unwire_briefing(self.settings, dry=False))
         _, cursor_err = self._capture(
             lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
         self.assertIn(self.settings, claude_err)
@@ -942,7 +972,7 @@ class TestUnwire(unittest.TestCase):
         })
         before = _read_bytes(self.settings)
         _, err = self._capture(
-            lambda: setup.unwire_hook_claude(self.settings, dry=False))
+            lambda: _unwire_briefing(self.settings, dry=False))
         self.assertIn(self.settings, err)
         self.assertEqual(_read_bytes(self.settings), before)
         _, cmd_err = self._capture(
@@ -954,7 +984,7 @@ class TestUnwire(unittest.TestCase):
         shutil.rmtree(self.claude)
         shutil.rmtree(self.cursor)
         before = sorted(os.listdir(self.tmp))
-        self._capture(lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        self._capture(lambda: _unwire_briefing(self.settings, dry=False))
         self._capture(lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
         self._capture(lambda: setup.cmd_uninstall(self.env, dry=False))
         self.assertFalse(os.path.exists(self.claude))
@@ -972,7 +1002,7 @@ class TestUnwire(unittest.TestCase):
 
     def test_other_top_level_keys_survive(self):
         self._seed_both_wired()
-        self._capture(lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        self._capture(lambda: _unwire_briefing(self.settings, dry=False))
         self._capture(lambda: setup.unwire_hook_cursor(self.hooks_json, dry=False))
         with open(self.settings, encoding="utf-8") as handle:
             claude = json.load(handle)
@@ -987,7 +1017,7 @@ class TestUnwire(unittest.TestCase):
         claude_before = _read_bytes(self.settings)
         cursor_before = _read_bytes(self.hooks_json)
         _, claude_out = self._capture(
-            lambda: setup.unwire_hook_claude(self.settings, dry=True))
+            lambda: _unwire_briefing(self.settings, dry=True))
         _, cursor_out = self._capture(
             lambda: setup.unwire_hook_cursor(self.hooks_json, dry=True))
         self.assertTrue(claude_out)
@@ -1005,7 +1035,7 @@ class TestUnwire(unittest.TestCase):
                 ],
             },
         })
-        self._capture(lambda: setup.unwire_hook_claude(self.settings, dry=False))
+        self._capture(lambda: _unwire_briefing(self.settings, dry=False))
         with open(self.settings, encoding="utf-8") as handle:
             claude = json.load(handle)
         self.assertEqual(claude["hooks"]["SessionStart"], [no_hooks])

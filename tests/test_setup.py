@@ -2584,9 +2584,15 @@ class TestHeadlessInstall(unittest.TestCase):
         os.makedirs(skill_dir)
         open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8").close()
         os.makedirs(os.path.join(self.install_dir, "tools", "hooks"), exist_ok=True)
-        for hook in ("claude_session_start.py", "cursor_session_start.py"):
+        for hook in ("claude_session_start.py", "cursor_session_start.py",
+                     "claude_tool_advisor.py", "claude_tool_reminder.py",
+                     "claude_decision_probe.py"):
             open(os.path.join(self.install_dir, "tools", "hooks", hook),
                  "w", encoding="utf-8").close()
+        pi_hooks = os.path.join(self.install_dir, "tools", "hooks", "pi")
+        os.makedirs(pi_hooks, exist_ok=True)
+        for hook in ("ai-kit-tool-advisor.ts", "ai-kit-tool-reminder.ts"):
+            open(os.path.join(pi_hooks, hook), "w", encoding="utf-8").close()
         open(os.path.join(self.install_dir, "tools", "status-line.py"),
              "w", encoding="utf-8").close()
         self.env = {"HOME": self.tmp, "AI_KIT_DIR": self.install_dir,
@@ -2734,17 +2740,26 @@ class TestHeadlessInstall(unittest.TestCase):
         rc = setup.cmd_install_headless(self.env, False, None, True, False)
         self.assertEqual(rc, 1)
 
-    def test_headless_with_hooks_wires_claude_and_cursor_hooks(self):
+    def test_headless_bare_with_hooks_wires_the_defaults(self):
         os.makedirs(self.claude_dir, exist_ok=True)
         os.makedirs(self.cursor_dir, exist_ok=True)
         rc = setup.cmd_install_headless(self.env, False, None, False, True)
         self.assertEqual(rc, 0)
         with open(os.path.join(self.claude_dir, "settings.json"), encoding="utf-8") as f:
             data = json.load(f)
-        self.assertIn("SessionStart", data.get("hooks", {}))
+        events = data["hooks"]
+        self.assertEqual(set(events), {"SessionStart", "PreToolUse", "PostToolUse"})
+        self.assertFalse(any(entry.get("matcher") == "startup" for entry in
+                             events["SessionStart"]))
         with open(os.path.join(self.cursor_dir, "hooks.json"), encoding="utf-8") as f:
             cdata = json.load(f)
-        self.assertIn("sessionStart", cdata.get("hooks", {}))
+        self.assertEqual(len(cdata["hooks"]["sessionStart"]), 1)
+        pi = setup.resolve_paths(self.env).pi_dir
+        os.makedirs(pi)
+        rc = setup.cmd_install_headless(self.env, False, None, False, True)
+        self.assertEqual(rc, 0)
+        for link in ("ai-kit-tool-advisor.ts", "ai-kit-tool-reminder.ts"):
+            self.assertTrue(os.path.islink(os.path.join(pi, "extensions", link)))
 
     def test_headless_with_hooks_missing_host_dirs_is_still_exit_zero(self):
         # Neither self.claude_dir nor self.cursor_dir is created — both hosts
