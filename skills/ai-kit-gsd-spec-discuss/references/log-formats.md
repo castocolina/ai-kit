@@ -17,7 +17,7 @@ ledger. All artifacts in English.
 ## Interview Log
 
 `--auto`, one round. The open items went through the decision ladder (the local backend
-first; `needs_fallback` items batched to the consented remotes in table order). Summaries
+first; `needs_fallback` items go to the first consented remote, a later remote only on an error). Summaries
 only, advisory. Rule: <quality rule branch>.
 
 | Round | Perspective | Question summary | <backend> (advisory) | <backend> (advisory) | Decision locked |
@@ -81,8 +81,8 @@ what it did not>.
 
 ## jev screening
 
-One local call per item; `needs_fallback` items batched to the consented remotes in table
-order. Summaries only.
+One local call per item; `needs_fallback` items go to the first consented remote, a later
+remote only on an error. Summaries only.
 
 | Item | <backend> | <backend> | Outcome |
 |---|---|---|---|

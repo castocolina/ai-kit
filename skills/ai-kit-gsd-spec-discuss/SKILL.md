@@ -134,8 +134,8 @@ runs the local backend one item per call; `fallback` follows each row's own thre
 
 - Describe options **neutrally**. Labelling one "best" or "easy" just echoes your framing back.
 - A high local answer contradicting verified evidence or a locked decision gets
-  `--second-opinion` before you override it (the client skips the local rung; remotes answer
-  in table order). The remote rung sided with the evidence every time here (17 K01/K08, 18.1
+  `--second-opinion` before you override it (the client skips the local rung; the first consented
+  remote answers, a later one only on an error). The remote rung sided with the evidence every time here (17 K01/K08, 18.1
   T2, 23 B10/B12, 24 C13).
 - Laya is not deterministic: the same item scored 0.74 then 0.67 (fb) on two runs. Never treat
   a single Laya number as stable.

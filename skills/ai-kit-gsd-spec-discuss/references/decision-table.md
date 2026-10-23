@@ -23,8 +23,10 @@ rung was low or errored, or under `--second-opinion`.
      `**Laya overridden**` plus the backend that answered and the evidence.
    - The remote answer agrees with the local one → re-check the evidence (a stale doc? a
      misread?). Still contradicted → own reasoning, ledgered.
-   - No high remote answer (each low, errored or not consented) → own reasoning, ledgered.
-4. **The local rung is low or errored and `decided_by` is a remote backend** (TypeSafe or
+   - No high remote answer (the remote that answered is low, every remote errored, or none is
+     consented) → own reasoning, ledgered. A low remote answer is final: the next remote is
+     called only for items the earlier one errored on.
+4. **The local rung is low, errored or not called (Laya down) and `decided_by` is a remote backend** (TypeSafe or
    OpenCode Zen) → take that answer, unless it contradicts the evidence; then re-check the
    evidence and, still contradicted, own reasoning, ledgered.
 5. **`decided_by` is `own_reasoning`** (every column that answered is low, every called
