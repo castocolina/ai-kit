@@ -3454,9 +3454,8 @@ def _headless_wire_hook_ids(paths, selection, dry, counts):
 
 def _headless_wire_default_hooks(paths, dry, counts):
     """Wire every default row once in registry order."""
-    selection = list(dict.fromkeys(
-        (row.id, row.host) for row in HOOK_REGISTRY if row.default))
-    return _headless_wire_hook_ids(paths, selection, dry, counts)
+    rows = [row for row in HOOK_REGISTRY if row.default]
+    return wire_hook_rows(paths, rows, dry, counts)
 
 
 def _headless_install_examples(paths, examples_flag, dry):
@@ -3647,8 +3646,6 @@ def cmd_uninstall(env, dry, hooks=None):
         hook_ok = unwire_hook_rows(paths, hook_rows(hooks), dry, counts)
         print(f"removed hook entries for: {', '.join(dict.fromkeys(i for i, _h in hooks))}")
         unwired = [hook_ok]
-        print(f"removed {counts['unlinked']} ai-kit symlink(s). "
-              f"install dir left in place: {paths.install_dir}")
     print(f"removed {counts['unlinked']} ai-kit symlink(s). "
           f"install dir left in place: {paths.install_dir}")
     if not all(unwired):

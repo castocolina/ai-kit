@@ -97,9 +97,9 @@ A clean `Ctrl-C`, `q`, or `esc` abort leaves the original config intact.
 
 The picks screen includes a **HOOKS** group with one row per hook knob:
 `session-briefing`, `tool-advisor`, `tool-reminder`, `decision-probe` and
-`precompact`. Checked rows are installed; unchecked rows follow the row's
-recorded default (the decision probe and unmeasured precompact hook default
-off). The precompact row wires Claude's `PreCompact` producer and compact
+`precompact`. Defaults set the initial checkboxes. Checked rows are installed;
+unchecked rows remove that ai-kit hook from every host where it is installed.
+The precompact row wires Claude's `PreCompact` producer and compact
 `SessionStart` injector, plus symlinks the pi extension and experimental
 opencode plugin when those host directories exist. The review counts hook rows
 separately from components.
