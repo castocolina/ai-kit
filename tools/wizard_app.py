@@ -455,8 +455,8 @@ class WizardApp(App):
         if self.commit.committing:
             sub_w.update(f"[{DIM}]writing your selection…[/]")
         elif done_failed:
-            sub_w.update(f"[{WARN}]components installed · status line "
-                         "could not be configured[/]")
+            sub_w.update(f"[{WARN}]components installed · some settings "
+                         "could not be written[/]")
         elif self.model.state.get("adopt", False):
             nseg = sum(len(line) for line in self.board.lines)
             nlines = sum(1 for line in self.board.lines if line)
@@ -688,7 +688,7 @@ class WizardApp(App):
                 + (", ".join(by_cat[c]) if by_cat[c] else f"[{DIM}](none)[/]")
                 for c in cats]
         self.query_one("#rev-components", Static).update("\n".join(rows))
-        ncomp = sum(1 for _c, _n, on in items if on)
+        ncomp = sum(1 for category, _n, on in items if on and category != "hooks")
         nseg = sum(len(line) for line in self.board.lines)
         adopt = self.model.state.get("adopt", False)
         # Status-line preview panel: only shown when adopting — declining skips
@@ -725,10 +725,10 @@ class WizardApp(App):
         if outcome is not None and not outcome.get("ok", True):
             art.update(f"[{WARN}]⚠  install incomplete[/]")
             reason = escape((outcome.get("log") or "").strip()) \
-                or "the status-line config was rejected by the doctor."
+                or "a settings write was refused or failed."
             nxt_w.update(
-                f"[{WARN}]Components were installed, but the status line could "
-                f"not be configured:[/]\n[{DIM}]{reason}[/]\n\n"
+                f"[{WARN}]Components were installed, but some settings could "
+                f"not be written:[/]\n[{DIM}]{reason}[/]\n\n"
                 f"[{DIM}]Re-run  uv run tools/setup.py  to try again.[/]")
             return
         art.update(f"[{GREEN}]┌─┐ ┬[/]\n[{GREEN}]├─┤ │[/]\n[{GREEN}]┴ ┴ ┴[/] ─kit")

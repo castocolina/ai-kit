@@ -411,6 +411,21 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("segments", sub)
             self.assertIn("left unchanged", sub)
 
+    async def test_review_counts_components_without_hooks(self):
+        ctx = make_ctx()
+        ctx.selection.items.append(("hooks", "tool-advisor", True))
+        ctx.state["_initial_enabled"][("hooks", "tool-advisor")] = False
+        ctx.component_meta["tool-advisor"] = "Advisor description"
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.press("y")
+            await pilot.press("enter")
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+            self.assertIn("3[/] components", str(_query_static(app, "#rev-what").content))
+            self.assertIn("3 components", str(_query_static(app, "#cta").content))
+
     async def test_accept_shows_status_line_on_review(self):
         app = wa.WizardApp(make_ctx(sl_state="unset"))
         async with app.run_test() as pilot:
@@ -481,8 +496,16 @@ class TestInUICommit(unittest.IsolatedAsyncioTestCase):
                            "log": "unknown [git] key: worktree"}, accept=True)
         self.assertIs(snap["result"].state["_commit_ok"], False)
         self.assertIn("incomplete", snap["title"])
-        self.assertIn("could not be configured", snap["next"])
+        self.assertIn("some settings could not be written", snap["next"])
         self.assertIn("worktree", snap["next"])         # the doctor reason, escaped
+
+    async def test_hook_only_failure_done_wording(self):
+        snap = await self._confirm(
+            lambda s, st: {"ok": False, "adopt": False,
+                           "log": "refused hooks.PreToolUse"}, accept=True)
+        self.assertIn("some settings could not be written", snap["next"])
+        self.assertIn("PreToolUse", snap["next"])
+        self.assertNotIn("status line could not", snap["next"] + snap["sub"])
 
     async def test_decline_still_commits_in_ui(self):
         seen = {}

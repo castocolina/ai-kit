@@ -3768,6 +3768,25 @@ class TestLaunchWizardCrash(unittest.TestCase):
         self.assertEqual(cm.exception.code, 2)
         self.assertIn("error", err.getvalue().lower())
 
+    def test_hook_only_failure_terminal_warning(self):
+        fake_mod = self._make_fake_wizard_module()
+        result = mock.MagicMock()
+        result.state = {"_commit_ok": False, "_commit_log": "refused hooks.PreToolUse"}
+        fake_mod.run_wizard = lambda _ctx: result
+        sys.modules["wizard_app"] = fake_mod
+        paths = self._make_paths()
+        entries = {cat: [] for cat in setup.CATEGORIES}
+        installed = {cat: set() for cat in setup.CATEGORIES}
+        fake_tty = mock.MagicMock()
+        fake_tty.isatty.return_value = True
+        with mock.patch.object(setup.sys, "stderr", new_callable=io.StringIO) as err:
+            returned = setup.launch_wizard(paths, entries, installed, fake_tty, False,
+                                           setup.new_counts())
+        self.assertIs(returned, result)
+        self.assertIn("refused hooks.PreToolUse", err.getvalue())
+        self.assertIn("some settings could not be written", err.getvalue())
+        self.assertNotIn("status-line", err.getvalue())
+
     def test_clean_abort_does_not_exit(self):
         """If run_wizard returns None (user aborted), launch_wizard must return
         normally — no SystemExit, no error message."""

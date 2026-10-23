@@ -3161,14 +3161,14 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
     # apply_selection + persist_statusline already ran in-UI via the commit
     # callback (their counts mutations are reflected in `counts`). Surface the
     # captured diagnostics now that the alternate screen is gone, and warn on a
-    # status-line write that the doctor rejected.
+    # settings write (status line or hook) that was refused or failed.
     log = (result.state.get("_commit_log") or "").strip()
     if log:
         print(log, file=sys.stderr)
     if result.state.get("_commit_ok") is False:
         print(
-            "warning: the doctor rejected the status-line config — it was left "
-            "unchanged (component selections were still applied).",
+            "warning: some settings could not be written — see the log above "
+            "(component selections were still applied).",
             file=sys.stderr,
         )
     return result   # propagate wizard result to cmd_install (I-1)

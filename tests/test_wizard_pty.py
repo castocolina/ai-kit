@@ -70,7 +70,7 @@ def _tmp_config_dir():
 # real ~/.cursor/hooks.json (the commit always calls wire_hook_cursor) and
 # could touch the real ~/.pi, ~/.config and state dirs.
 _HOST_ROOT_KEYS = ("CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "CURSOR_CONFIG_DIR",
-                   "PI_CODING_AGENT_DIR", "XDG_STATE_HOME")
+                   "PI_CODING_AGENT_DIR", "XDG_STATE_HOME", "OPENCODE_CONFIG_DIR")
 
 
 def _scratch_roots(config_dir):
@@ -84,6 +84,7 @@ def _scratch_roots(config_dir):
         "CURSOR_CONFIG_DIR": os.path.join(base, "cursor-absent"),
         "PI_CODING_AGENT_DIR": os.path.join(base, "pi-agent-absent"),
         "XDG_STATE_HOME": os.path.join(base, "state"),
+        "OPENCODE_CONFIG_DIR": os.path.join(base, "opencode-absent"),
     }
 
 
@@ -711,6 +712,13 @@ class TestPhase2E2E(unittest.TestCase):
                       msg="Choose: expected picksbox border title 'select components'")
         self.assertIn("HOOKS", all_output,
                       msg="Choose: expected the five-row hooks category")
+        hook_ids = ("session-briefing", "tool-advisor", "tool-reminder",
+                    "decision-probe", "precompact")
+        positions = [all_output.find(hook_id) for hook_id in hook_ids]
+        self.assertTrue(all(position >= 0 for position in positions),
+                        msg=f"Choose: missing hook row in {hook_ids!r}: {positions!r}")
+        self.assertEqual(positions, sorted(positions),
+                         msg=f"Choose: hook rows are out of registry order: {positions!r}")
         # Arrange board border titles
         self.assertIn("Line 1", all_output,
                       msg="Arrange: expected lane border title 'Line 1'")
