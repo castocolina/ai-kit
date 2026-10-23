@@ -25,6 +25,7 @@ import json
 import os
 import select
 import sys
+import time
 
 
 def _fail_open(*_exc_info):
@@ -40,29 +41,48 @@ def _fail_open(*_exc_info):
     os._exit(0)
 
 
-def _drain_stdin():
-    """Discard stdin in bounded chunks so a partial payload cannot wedge us."""
+_STDIN_CHUNK_BYTES = 65536
+_STDIN_IDLE_SECONDS = 0.5
+_STDIN_TOTAL_SECONDS = 5.0
+
+
+def read_stdin(limit=1024 * 1024):
+    """Read stdin in bounded chunks; the bytes read (possibly more than `limit`).
+
+    The loop ends on EOF, a 0.5 s idle select, more than `limit` bytes read, or
+    5 s total by `time.monotonic` — whichever comes first. There is no fixed
+    round count, so the `limit` a caller passes is the real ceiling; a result
+    longer than `limit` tells the caller the payload was over it."""
     try:
         fd = sys.stdin.fileno()
     except (OSError, ValueError, AttributeError, TypeError):
-        return
+        return b""
+    chunks = []
     total = 0
-    for _ in range(16):
-        if total >= 1024 * 1024:
-            return
+    started = time.monotonic()
+    while True:
+        if total > limit or time.monotonic() - started > _STDIN_TOTAL_SECONDS:
+            break
         try:
-            readable, _, _ = select.select([sys.stdin], [], [], 0.5)
+            readable, _, _ = select.select([sys.stdin], [], [], _STDIN_IDLE_SECONDS)
         except (OSError, ValueError, AttributeError, TypeError):
-            return
+            break
         if not readable:
-            return
+            break
         try:
-            chunk = os.read(fd, 65536)
+            chunk = os.read(fd, _STDIN_CHUNK_BYTES)
         except (OSError, ValueError, AttributeError, TypeError):
-            return
+            break
         if not chunk:
-            return
+            break
+        chunks.append(chunk)
         total += len(chunk)
+    return b"".join(chunks)
+
+
+def _drain_stdin():
+    """Discard stdin so a partial payload cannot wedge us."""
+    read_stdin()
 
 
 def emit(message):
