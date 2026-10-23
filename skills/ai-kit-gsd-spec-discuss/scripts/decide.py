@@ -42,7 +42,8 @@ MAX_FIELD_CHARS = 1500
 _SECRET_RE = re.compile(r"-----BEGIN|\b(?:sk|pk|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{12,}|"
                         r"[A-Za-z0-9+/]{48,}")
 # Fixed output allowlists (24 D-13): a leaky client's extra fields never reach stdout.
-_BACKEND_KEYS = ("name", "remote", "batch", "host", "usable", "reason", "key_source", "consent")
+_BACKEND_KEYS = ("name", "remote", "batch", "host", "usable", "reason", "key_source", "consent",
+                 "key_check")
 _CONSENT_KEYS = ("ok", "backend", "host", "consent", "file", "note", "reason")
 _SCALAR_TYPES = (str, bool, int)
 

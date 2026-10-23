@@ -22,12 +22,13 @@ long as it does not lower what reaches the product's user.">
 Live-verify claims: installed versions, real config keys, real CLI output — in a scratch dir
 under <tmp path>, never in the user's real config dirs. Never print a secret or key value.
 
-<CODEGRAPH BLOCK — include only when `command -v codegraph` succeeds>
-CodeGraph is available. Before exploring code, run `codegraph sync <repo or worktree path>`
-(or `codegraph init <path>` when `.codegraph/` is missing), then use `codegraph explore
-"<symbols or question>"` or the `codegraph_explore` MCP tool before grep/read loops. In a git
-worktree the index may belong to the main checkout (another branch): index the worktree first,
-or treat results as hints and re-read the worktree files.
+<CODEGRAPH BLOCK — include only when `command -v codegraph` succeeds AND the repo already has a
+`.codegraph/` index>
+CodeGraph is indexed here. Before exploring code, run `codegraph sync <repo or worktree path>`,
+then use `codegraph explore "<symbols or question>"` or the `codegraph_explore` MCP tool before
+grep/read loops. Never run `codegraph init`: creating an index is the user's decision; with no
+index, explore with ordinary reads. In a git worktree the index may belong to the main checkout
+(another branch): treat results as hints and re-read the worktree files.
 </CODEGRAPH BLOCK>
 
 <COUPLING BLOCK — include only when this analyzer runs in the background beside other work>

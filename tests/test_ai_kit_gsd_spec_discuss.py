@@ -33,7 +33,7 @@ import phase_range
 SENTINEL = "SENTINEL-KEY-0123456789abcdef"
 HEAD = "0" * 40
 _PUBLIC_BACKEND_KEYS = {"name", "remote", "batch", "host", "usable", "reason", "key_source",
-                        "consent", "status"}
+                        "consent", "status", "key_check"}
 _PUBLIC_CONSENT_KEYS = {"ok", "backend", "host", "consent", "file", "note", "reason"}
 
 # Fake jev client carrying the protocol line decide.py requires: logs its calls, answers every
@@ -510,6 +510,8 @@ class TestLadderCli(_TmpHome):
         for entry in report["backends"].values():
             self.assertLessEqual(set(entry), _PUBLIC_BACKEND_KEYS)
         self.assertTrue(report["backends"]["laya"]["usable"])
+        # the client's probe-certainty label survives the allowlist (reachable != proven key)
+        self.assertEqual(report["backends"]["typesafe"].get("key_check"), "documented")
         self.assertIsInstance(report["status"], str)
         scripts = _isolated_decide(self.tmp)
         out = subprocess.run([sys.executable, str(scripts / "decide.py"), "detect"],

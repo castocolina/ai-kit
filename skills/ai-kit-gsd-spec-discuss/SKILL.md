@@ -136,8 +136,10 @@ last confident rung, else `own_reasoning`); each column's `top` is its winning p
 runs the local backend one item per call; `fallback` follows each row's own threshold, and
 is also forced when one request's state exceeds the row's size cap (Laya 2,000 characters,
 TypeSafe and OpenCode Zen 8,000; TypeSafe sends every pending item in one request). Keep each
-item's text short; `fallback: true` with a `top` above the threshold is that size flag:
-shorten the item and re-ask instead of logging it as low confidence.
+item's text short, and split remote-bound items into several ladder calls whose combined state
+stays under 8,000 characters. `fallback: true` with a `top` at or above the threshold was forced
+(size cap or a server truncation report): shorten or split and re-ask instead of logging it as
+low confidence. A detect row with `key_check: unverified` is reachable, not a proven key.
 
 - Describe options **neutrally**. Labelling one "best" or "easy" just echoes your framing back.
 - A high local answer contradicting verified evidence or a locked decision gets
