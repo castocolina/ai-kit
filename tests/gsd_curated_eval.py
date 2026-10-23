@@ -69,6 +69,7 @@ from tests.test_curated_config_apply_e2e import (
     _sha256,
     gsd_core_line_supported,
 )
+from tests.test_curated_config_golden import SEEDED_PI_PROVIDER
 
 
 class _refusal(SystemExit):
@@ -191,6 +192,8 @@ def _dir_names(path: pathlib.Path, prefix: str = "") -> list[str] | None:
 
 
 CURSOR_CLI_CONFIG_LABEL = f"{HOME_LABEL}/.cursor/cli-config.json"
+PI_SETTINGS_LABEL = f"{HOME_LABEL}/.pi/agent/settings.json"
+PI_TRUST_LABEL = f"{HOME_LABEL}/.pi/agent/trust.json"
 
 
 def _strict_files(repo_root: pathlib.Path, home: pathlib.Path) -> dict[str, pathlib.Path]:
@@ -217,6 +220,8 @@ def _strict_files(repo_root: pathlib.Path, home: pathlib.Path) -> dict[str, path
         CURSOR_CLI_CONFIG_LABEL: home / ".cursor" / "cli-config.json",
         # Cursor's merged hooks file is possibly user-owned (T-21-19).
         f"{HOME_LABEL}/.cursor/hooks.json": home / ".cursor" / "hooks.json",
+        PI_SETTINGS_LABEL: home / ".pi" / "agent" / "settings.json",
+        PI_TRUST_LABEL: home / ".pi" / "agent" / "trust.json",
     }
     for name in _dir_names(planning, config_backup.BACKUP_PREFIX) or []:
         files[f"{WORKTREE_LABEL}/.planning/{name}"] = planning / name
@@ -315,6 +320,11 @@ def snapshot(repo_root: pathlib.Path | str, home: pathlib.Path | str, scratch_ro
         codex / "config.toml", scratch_roots
     )
     strict[f"{HOME_LABEL}/.codex/hooks.json"] = _file_sha(codex / "hooks.json")
+    # Pi may rewrite these during a session; credential, model-store and session files are
+    # never listed because pi rewrites them, and auth.json/models.json may hold keys.
+    pi_agent = home_dir / ".pi" / "agent"
+    for name in ("agents", "extensions", "skills", "gsd-core"):
+        strict[f"{HOME_LABEL}/.pi/agent/{name}"] = _tree_sha(pi_agent / name)
     strict[f"{HOME_LABEL}/.codex/agents"] = _tree_sha(codex / "agents")
     # ai-kit's installer links agents and skills here, so an overwrite or a retargeted link
     # must fail the batch, not only a new name (WR-04).
@@ -4426,19 +4436,42 @@ def _generated_paths(project: str, host: str) -> list[str]:
     paths = []
     prefixes = ("gsd-core", "plugins/gsd-core.js") + (
         ("hooks", "hooks.json", "scripts") if host == "cursor" else ()
-    )
+    ) + (("extensions/gsd.js", "gsd-hooks", "scripts") if host == "pi" else ())
     for prefix in prefixes:
         if (base / prefix).exists():
             paths.append(f".{host}/{prefix}" + ("/" if (base / prefix).is_dir() else ""))
     for category in ("agents", "commands", "skills"):
         paths.extend(f".{host}/{category}/{path.name}" for path in (base / category).glob("gsd-*"))
     paths.extend(f".{host}/{path.name}" for path in base.glob("gsd-*.json"))
-    if host == "cursor":
+    if host in ("cursor", "pi"):
         paths.extend(
             f".{host}/{path.name}" + ("/" if path.is_dir() else "")
             for path in base.glob(".gsd-*")
         )
     return sorted(paths)
+
+
+def _pi_chain(ctx: SmokeCtx, project: str, plan: dict, label: str, plan_path: str) -> dict:
+    root = os.path.dirname(os.path.dirname(ctx.tools_path))
+    agents = sorted(live_tables(ctx.node_bin, root)["profiles"])
+    baked = _baked_models(project, "pi")
+    if baked:
+        raise SystemExit(f"pi installer baked agent files: {sorted(baked)}")
+    planned = _set_entries(plan).get("model_profile_overrides.pi.sonnet")
+    wire = pi_hook_probe(
+        ctx.node_bin, os.path.join(project, ".pi", "extensions", "gsd.js"), project,
+        _project_env(ctx),
+    )
+    if wire != planned:
+        raise SystemExit(f"planned != hook: planned={planned} wire={wire}")
+    return {
+        "baked_summary": {
+            "label": label, "hook_only": True, "agents": len(agents), "agent_files": 0,
+            "hook": {"planned": planned, "wire": wire},
+        },
+        "generated_paths": {label: _generated_paths(project, "pi")},
+        "artifacts": _write_artifacts(ctx, label, plan_path, project, {}, baked),
+    }
 
 
 def _baked_chain(ctx: SmokeCtx, project: str, plan: dict, label: str, plan_path: str) -> dict:
@@ -4448,6 +4481,8 @@ def _baked_chain(ctx: SmokeCtx, project: str, plan: dict, label: str, plan_path:
     key (D-08) is what steers it (review IN-04)."""
     tables = live_tables(ctx.node_bin, os.path.dirname(os.path.dirname(ctx.tools_path)))
     agents = sorted(tables["profiles"])
+    if ctx.host == "pi":
+        return _pi_chain(ctx, project, plan, label, plan_path)
     # annotated once so the three branches below share one type (pyright: `dict` is invariant
     # in its value type, so the cursor branch's `dict[str, None]` alone is not
     # `dict[str, str | None]`)
@@ -4595,6 +4630,8 @@ def _smoke_project_a(ctx: SmokeCtx, work: str, cache_sha: dict) -> list[dict]:
         chain["baked_summary"]["repeat_install_unchanged"] = True
         state["chain"] = chain
         agents = chain["baked_summary"]["agents"]
+        if ctx.host == "pi":
+            return f"{agents} agents; no agent files; hook == plan; repeat install unchanged"
         if ctx.host == "cursor":
             return (
                 f"{agents} agents; plan == resolve-model (resolve-model only); "
@@ -4743,7 +4780,9 @@ def _run_matrix_step(ctx: SmokeCtx) -> dict:
         )
         if _matrix_failed(holder["matrix"]):  # review H2: mismatches are data, not a raise
             raise SystemExit(_render_matrix(holder["matrix"]) or "matrix FAILED")
-        return f"matrix ran: {holder['matrix']['checks']} checks"
+        probes = len(holder["matrix"].get("probes") or [])
+        suffix = f", {probes} hook probes" if probes else ""
+        return f"matrix ran: {holder['matrix']['checks']} checks{suffix}"
 
     result = _step("matrix on the selected host", run)
     result["matrix"] = holder.get("matrix")
@@ -4839,6 +4878,10 @@ def render_smoke_evidence(result: dict) -> str:
     lines += ["", "## Matrix"]
     if matrix:
         lines.append(f"- checks: {matrix.get('checks')}; agents: {matrix.get('agents')}")
+        probes = matrix.get("probes") or []
+        if probes:
+            ok = sum(bool(probe.get("ok")) for probe in probes)
+            lines.append(f"- hook probes: {ok}/{len(probes)} ok")
         for name, control in sorted((matrix.get("controls") or {}).items()):
             lines.append(f"- {name}: {'ok' if control.get('ok') else 'FAILED'}")
         info = matrix.get("informational")
@@ -4904,7 +4947,13 @@ def _baked_lines(result: dict) -> list[str]:
     lines: list[str] = []
     for summary in result.get("baked") or []:
         label = summary["label"]
-        if summary.get("resolve_model_only"):
+        if summary.get("hook_only"):
+            hook = summary["hook"]
+            lines.append(
+                f"- {label}: no GSD agent files (pi installs none); hook steers "
+                f"{hook.get('wire') or 'none'} == plan"
+            )
+        elif summary.get("resolve_model_only"):
             lines.append(
                 f"- {label}: {summary['agents']} agents; plan == resolve-model "
                 "(resolve-model only: the cursor installer bakes no model line, "
@@ -4982,6 +5031,9 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
         "GSD_RUNTIME": host,
         "XDG_CACHE_HOME": os.path.join(work, "xdg"),
     }
+    if host == "pi":
+        # Inventory reads the seeded cache; the owner's S5 step checks the real session provider.
+        env["PI_PROVIDER"] = SEEDED_PI_PROVIDER
     ctx = SmokeCtx(
         node_bin,
         GSD_TOOLS_PATH,
@@ -5092,9 +5144,10 @@ def _build_parser() -> argparse.ArgumentParser:
             action="append",
             default=[],
             metavar="LABEL",
-            choices=(CURSOR_CLI_CONFIG_LABEL,),
-            help="report a byte change of cursor's own cli-config.json without failing (the "
-            "host rewrites it during a session); every other entry stays strict",
+            choices=(CURSOR_CLI_CONFIG_LABEL, PI_SETTINGS_LABEL, PI_TRUST_LABEL),
+            help="report host rewrites of cursor cli-config.json or pi settings/trust.json "
+            "without failing; only the owner's interactive run passes these labels, and every "
+            "other entry stays strict",
         )
 
     run = sub.add_parser("run", help="one cell of one scenario through claude -p")

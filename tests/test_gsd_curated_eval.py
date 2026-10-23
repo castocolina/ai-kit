@@ -617,10 +617,37 @@ class TestSnapshot(_ScratchPaths):
         self.assertIn(f"{ev.HOME_LABEL}/.config/opencode/opencode.jsonc", strict)
 
     def test_credentials_file_is_never_snapshot(self) -> None:
-        """The Claude credentials file is read by nothing here, not even to hash it."""
+        """Credentials, models and sessions are excluded from snapshotting."""
         snap = self.snap()
         keys = " ".join(list(snap["strict"]) + list(snap["host_managed"]))
-        self.assertNotIn("credentials.json", keys)
+        excluded = ("credentials.json", "auth.json", "models.json", "models-store.json", "sessions")
+        for name in excluded:
+            self.assertNotIn(name, keys)
+
+    def test_pi_noncredential_trees_are_strict_and_sensitive_files_are_ignored(self) -> None:
+        protected = ("agents", "extensions", "skills", "gsd-core")
+        before = self.snap()
+        for name in protected:
+            self.write(os.path.join(self.home, ".pi", "agent", name, "file"), "v1")
+        after = self.snap()
+        strict, _ = ev.snapshot_diff(before, after)
+        self.assertEqual(strict, sorted(f"{ev.HOME_LABEL}/.pi/agent/{name}" for name in protected))
+
+        baseline = self.snap()
+        for name in ("auth.json", "models.json", "models-store.json"):
+            self.write(os.path.join(self.home, ".pi", "agent", name), "secret-change")
+        self.write(os.path.join(self.home, ".pi", "agent", "sessions", "session.jsonl"), "change")
+        self.assertEqual(ev.snapshot_diff(baseline, self.snap()), ([], []))
+        keys = " ".join(self.snap()["strict"])
+        for name in ("auth.json", "models.json", "models-store.json", "sessions"):
+            self.assertNotIn(name, keys)
+
+    def test_pi_settings_and_trust_are_strict(self) -> None:
+        before = self.snap()
+        for name in ("settings.json", "trust.json"):
+            self.write(os.path.join(self.home, ".pi", "agent", name), "changed")
+        strict, _ = ev.snapshot_diff(before, self.snap())
+        self.assertEqual(strict, [ev.PI_SETTINGS_LABEL, ev.PI_TRUST_LABEL])
 
     def test_no_absolute_paths_or_values_in_output(self) -> None:
         text = json.dumps(self.snap(), sort_keys=True)
@@ -759,11 +786,11 @@ class TestSnapshot(_ScratchPaths):
             ):
                 parser.parse_args(argv)
             self.assertEqual(raised.exception.code, 2)
-        cursor_label = ev.CURSOR_CLI_CONFIG_LABEL
-        snap = parser.parse_args(["snapshot", "--check", "x", "--host-rewrite", cursor_label])
-        smoke = parser.parse_args(["smoke", "--evidence-out", "x", "--host-rewrite", cursor_label])
-        self.assertEqual(snap.host_rewrite, [cursor_label])
-        self.assertEqual(smoke.host_rewrite, [cursor_label])
+        for label in (ev.CURSOR_CLI_CONFIG_LABEL, ev.PI_SETTINGS_LABEL, ev.PI_TRUST_LABEL):
+            snap = parser.parse_args(["snapshot", "--check", "x", "--host-rewrite", label])
+            smoke = parser.parse_args(["smoke", "--evidence-out", "x", "--host-rewrite", label])
+            self.assertEqual(snap.host_rewrite, [label])
+            self.assertEqual(smoke.host_rewrite, [label])
 
 
 class TestDigest(unittest.TestCase):
@@ -3354,6 +3381,40 @@ class TestSmoke(unittest.TestCase):
         ):
             ev._baked_chain(ctx, project, plan, "project-a", "plan.json")
 
+    def test_pi_baked_chain_checks_only_project_hook_and_agent_absence(self) -> None:
+        ctx, project, _plan, tables = self._chain_fixture()
+        ctx = ctx._replace(host="pi")
+        extension = pathlib.Path(project) / ".pi" / "extensions"
+        extension.mkdir(parents=True)
+        (extension / "gsd.js").touch()
+        plan = {
+            "entries": [
+                {"op": "set", "key": "model_profile_overrides.pi.sonnet", "value": "model"}
+            ]
+        }
+        with (mock.patch.object(ev, "live_tables", return_value=tables),
+              mock.patch.object(ev, "pi_hook_probe", return_value="model")):
+            chain = ev._baked_chain(ctx, project, plan, "project-a", "plan.json")
+        self.assertEqual(chain["baked_summary"]["hook"], {"planned": "model", "wire": "model"})
+        self.assertEqual(chain["baked_summary"]["agent_files"], 0)
+        self.assertTrue(chain["baked_summary"]["hook_only"])
+        with (mock.patch.object(ev, "live_tables", return_value=tables),
+              mock.patch.object(ev, "pi_hook_probe", return_value="other"),
+              self.assertRaisesRegex(SystemExit, "planned != hook")):
+            ev._baked_chain(ctx, project, plan, "project-a", "plan.json")
+        agent_dir = pathlib.Path(project) / ".pi" / "agents"
+        agent_dir.mkdir()
+        (agent_dir / "gsd-a.md").write_text("agent", encoding="utf-8")
+        with (mock.patch.object(ev, "live_tables", return_value=tables),
+              self.assertRaisesRegex(SystemExit, "pi installer baked agent files")):
+            ev._baked_chain(ctx, project, plan, "project-a", "plan.json")
+
+    def test_baked_lines_pi_reports_hook_only(self) -> None:
+        lines = ev._baked_lines({"host": "pi", "baked": [{"label": "project-a", "agents": 35,
+            "hook_only": True, "hook": {"planned": "model", "wire": "model"}}]})
+        self.assertIn("no GSD agent files", lines[0])
+        self.assertIn("hook steers model == plan", lines[0])
+
     def test_baked_lines_cursor_says_resolve_model_only(self) -> None:
         lines = ev._baked_lines({
             "host": "cursor",
@@ -3362,6 +3423,22 @@ class TestSmoke(unittest.TestCase):
         rendered = "\n".join(lines)
         self.assertIn("resolve-model only", rendered)
         self.assertNotIn("planned == baked", rendered)
+
+    def test_generated_paths_pi_reports_extension_core_hooks_scripts_and_dotfiles(self) -> None:
+        base = pathlib.Path(self.tmp) / ".pi"
+        for name in ("gsd-core", "gsd-hooks", "scripts", ".gsd-staging"):
+            (base / name).mkdir(parents=True, exist_ok=True)
+        (base / "extensions").mkdir()
+        (base / "extensions" / "gsd.js").write_text("", encoding="utf-8")
+        for name in ("gsd-file-manifest.json", "gsd-install-state.json"):
+            (base / name).write_text("{}", encoding="utf-8")
+        (base / ".gsd-profile").write_text("pi", encoding="utf-8")
+        self.assertEqual(
+            ev._generated_paths(self.tmp, "pi"),
+            [".pi/.gsd-profile", ".pi/.gsd-staging/", ".pi/extensions/gsd.js",
+             ".pi/gsd-core/", ".pi/gsd-file-manifest.json", ".pi/gsd-hooks/",
+             ".pi/gsd-install-state.json", ".pi/scripts/"],
+        )
 
     def test_generated_paths_cursor_reports_hooks_scripts_and_gsd_dotfiles(self) -> None:
         base = pathlib.Path(self.tmp) / ".cursor"
@@ -4081,6 +4158,15 @@ class TestSmoke(unittest.TestCase):
         self.assertEqual(strict, [])
         self.assertEqual(host, ["h"])
 
+    def test_matrix_step_reports_pi_hook_probe_count(self) -> None:
+        ctx = ev.SmokeCtx("node", "tools", pathlib.Path(self.tmp), self.tmp, "pi", {})
+        matrix = {"checks": 12, "probes": [{"ok": True}] * 5,
+                  "controls": {"control_1": {"ok": True}, "control_2": {"ok": True}},
+                  "rows": []}
+        with mock.patch.object(ev, "run_matrix", return_value=matrix):
+            result = ev._run_matrix_step(ctx)
+        self.assertIn("matrix ran: 12 checks, 5 hook probes", result["detail"])
+
     def test_smoke_passes_host_to_matrix(self) -> None:
         seen: dict = {}
 
@@ -4099,6 +4185,30 @@ class TestSmoke(unittest.TestCase):
         with mock.patch.object(ev, "run_matrix", side_effect=fake_matrix):
             ev._run_matrix_step(ctx)
         self.assertEqual(seen["host"], "codex")
+
+    def test_cmd_smoke_seeds_pi_provider_but_preserves_codex_provider(self) -> None:
+        args = Namespace(home=self.tmp, host="pi", installer_dir="cached", artifacts_out=None,
+                         evidence_out=os.path.join(self.tmp, "evidence.md"), keep_scratch=True,
+                         host_rewrite=[])
+        seen: list[tuple[str, str | None]] = []
+
+        def fake_smoke(ctx, *_args, **_kwargs):
+            seen.append((ctx.host, ctx.env.get("PI_PROVIDER")))
+            return {"steps": [], "exit": 0}
+
+        with (mock.patch.dict(os.environ, {"PI_PROVIDER": "different"}),
+              mock.patch.object(ev.shutil, "which", return_value="node"),
+              mock.patch.object(ev, "gsd_run_reason", return_value=None),
+              mock.patch.object(ev, "_smoke_work_dir", return_value=os.path.join(self.tmp, "work")),
+              mock.patch.object(ev, "run_smoke", side_effect=fake_smoke),
+              mock.patch.object(ev, "_write_text")):
+            self.assertEqual(ev._cmd_smoke(args), 0)
+            args.host = "codex"
+            with mock.patch(
+                "ai_kit_gsd_curated_config.host.detect_host", return_value=("codex", "flag")
+            ):
+                self.assertEqual(ev._cmd_smoke(args), 0)
+        self.assertEqual(seen, [("pi", ev.SEEDED_PI_PROVIDER), ("codex", "different")])
 
     def test_smoke_env_uses_scratch_cache(self) -> None:
         work = os.path.join(self.tmp, "work")
