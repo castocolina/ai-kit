@@ -31,9 +31,23 @@ STUB_CLIENT = REPO / "tests" / "fixtures" / "precompact" / "stub_client.py"
 HEADER_FIRST_LINE = "<!-- ai-kit precompact v1 -->"
 
 
+def _node_bin():
+    """The real node binary, resolved under the caller's own env: a version-manager shim on
+    PATH (Volta, asdf) needs the real HOME, which the scratch env replaces."""
+    node = shutil.which("node")
+    if node is None:
+        return None
+    real = subprocess.run([node, "-e", "process.stdout.write(process.execPath)"],
+                          capture_output=True, text=True, check=False, timeout=30)
+    return real.stdout.strip() if real.returncode == 0 and real.stdout.strip() else node
+
+
+NODE = _node_bin()
+
+
 def _node_ready():
     """Whether node is on PATH and its type stripping handles our syntax."""
-    node = shutil.which("node")
+    node = NODE
     if node is None:
         return False
     probe = subprocess.run(
@@ -78,7 +92,7 @@ class ShimHarnessMixin(unittest.TestCase):
         else:
             fixture_path = str(fixture)
         env = self._harness_env(base, extra)
-        cmd = ["node", str(HARNESS), host, str(shim), fixture_path]
+        cmd = [NODE or "node", str(HARNESS), host, str(shim), fixture_path]
         if mode:
             cmd.append(mode)
         proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO),
@@ -167,7 +181,7 @@ class TestShimsE2E(ShimHarnessMixin, unittest.TestCase):
                     "os.execv(sys.executable,\n"
                     "    [sys.executable, '-c', 'import time; time.sleep(30)'])\n")
                 env = self._harness_env(base, {"AI_KIT_PYTHON": script})
-                cmd = ["node", str(HARNESS), host, str(shim), str(fixture)]
+                cmd = [NODE or "node", str(HARNESS), host, str(shim), str(fixture)]
                 started = time.monotonic()
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         text=True, cwd=str(REPO), env=env)
