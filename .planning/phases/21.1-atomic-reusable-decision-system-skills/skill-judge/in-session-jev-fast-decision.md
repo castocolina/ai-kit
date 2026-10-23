@@ -301,3 +301,48 @@ CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
 VERDICT pass
 
 Open after the 2-round fix cap (owner review / 21.1 code review): Important — SKILL.md 'Required reading' lists 4 external links with no load condition; Minors as listed.
+
+## Run 4 (final-tree check after 5af9c01 and a907c41; fresh opus subagent)
+
+An earlier final-tree check on the c4849be tree scored 106/120, 0 Critical, 0 Important, pass;
+its one actionable Minor (the Zen default POST target had no `/systemone` path) was fixed in
+5af9c01 and its full text was not kept.
+
+DIGEST 9ad03a73e9daeb6e
+TREE a0f85261f43470d5053507d0d6d00898a5aa7aa0
+
+Activation picks first, from the frontmatter only (the body was opened in a tool call before
+the picks were written; no pick depends on it): lines 1-4 pick jev-fast-decision, lines 5-12
+pick none. Pass rule holds. `needs_fallback` recipe present at SKILL.md:38.
+
+Findings verified by the orchestrator against `scripts/jev_review.py` and fixed in 3701297:
+- Important 1: `backends/typesafe.md` said a 402 escalates; with one model id `_post` returns
+  `next_model` and `_fold_rung` makes it final (`http_402`).
+- Important 2: `backends/opencode.md` / `reference.md` said a `JEV_OPENCODE_MODEL` pin covers
+  both ids; a pin sends one id and turns off free-to-paid.
+- Important 3: the opencode row refuses `score` (cell `unverified`); with `JEV_BACKEND=opencode`
+  one score item stops the request with `unsupported_feature`. Undocumented.
+- Important 4: the attempts entry always named the first model id (code bug, fixed with tests)
+  and the note implied a recovered free 429 leaves an entry.
+Minors (13) left for the owner: 4xx wording in both backend notes, Laya 401/403 token in
+reference.md, the example's `JEV_BACKEND=laya`, the TypeSafe key-file source in the table,
+`reviewed_head` format, laya.md threshold sentence, the choice trigger, `remote_available` on
+`ok`, `consent_required_for_remote` scope, opencode batch cell, a `jev-latest` comment, the
+Required-reading links.
+
+D1 17/20
+D2 12/15
+D3 13/15
+D4 14/15
+D5 13/15
+D6 13/15
+D7 8/10
+D8 12/15
+CURRENT 102/120
+CRITICAL 0
+IMPORTANT 4
+FLOORS ok
+ACTIVATION ok
+CITE_PROBE skills/jev-fast-decision/SKILL.md:12
+CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
+VERDICT pass

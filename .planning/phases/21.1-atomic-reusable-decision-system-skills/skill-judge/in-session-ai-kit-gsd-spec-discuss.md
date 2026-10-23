@@ -267,3 +267,40 @@ FLOORS ok
 VERDICT pass
 
 Open after the 2-round fix cap (owner review / 21.1 code review): Important — references/decision-table.md row 4 does not cover a null (never-called) Laya column, so with Laya down no row matches; Minors as listed.
+
+## Run 4 (final-tree check after 5af9c01 and a907c41; fresh opus subagent)
+
+An earlier final-tree check (digest 48b97a10614ffc30) scored 110/120, 0 Critical, 1 Important,
+pass; the Important (the references said remotes were batched in turn, but a low remote answer
+is final) was fixed in a907c41 with the run-3 row-4 item.
+
+DIGEST a9c177e20f6d444f
+TREE cb974e6cc8b1e27c11e5832629836f3c2bb09064
+
+The run-3 open Important (decision-table row 4 and a not-called Laya column) and the run-4
+Important (a low remote answer is final) are no longer reported. `needs_fallback` recipe present
+at SKILL.md:142-143.
+
+Findings verified by the orchestrator and fixed in 3701297:
+- Important 1: the client forces `needs_fallback` when one request's state exceeds the row's
+  `state_chars_limit` (Laya 2,000, TypeSafe and Zen 8,000); the skill read every `(fb)` as low
+  confidence. §3 and `log-formats.md` now name the size flag.
+- Minor 2: `consent_used` lists every remote with consent on file; announce only a called one.
+Minors left for the owner: row-5 `client_status` wording, the 18.1 T2 example, escalate-class
+errors also reaching the remote, which workflow commit/state steps the chain replaces, the
+resolver path, the setup.py working directory, decide.py's docstring, `remote_available` dropped
+with no trail.
+
+D1 17/20
+D2 13/15
+D3 14/15
+D4 14/15
+D5 14/15
+D6 13/15
+D7 9/10
+D8 12/15
+CURRENT 106/120
+CRITICAL 0
+IMPORTANT 1
+FLOORS ok
+VERDICT pass
