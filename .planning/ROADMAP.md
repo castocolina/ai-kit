@@ -707,7 +707,7 @@ downstream depends on it)
 - [x] 22-03-PLAN.md
 - [x] 22-04-PLAN.md
 - [x] 22-05-PLAN.md
-- [ ] 22-06-PLAN.md
+- [x] 22-06-PLAN.md
 - [ ] 22-07-PLAN.md
 
 ### Phase 23: Host-split status line for Claude Code and Cursor CLI

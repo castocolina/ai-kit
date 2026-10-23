@@ -53,6 +53,7 @@ coverage:
 duration: 2min
 completed: 2026-10-23
 status: complete
+orchestrator_verify: "VERIFY 22-06: 2/2 passed"
 ---
 
 # Phase 22 Plan 06: Pi owner runbook and close-out checker
