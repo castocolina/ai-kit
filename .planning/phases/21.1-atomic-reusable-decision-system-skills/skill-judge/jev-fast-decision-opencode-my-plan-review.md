@@ -168,3 +168,52 @@ CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
 > From this skill's directory, run `python3 -B scripts/jev_review.py --probe` before the first call of a session; read `backends/<selected>.md` before the first call with that backend.
 
 VERDICT pass
+
+DIGEST 8d3911535ab993ef
+TREE c003aa42896ab240f1dcff2a3ece6e4070b9ba99
+
+Using skill-judge to evaluate `jev-fast-decision` against the supplied rubric. This was a read-only review; I did not run the client or recheck its live backend measurements.
+
+D1 17/20 — 85%: Backend-specific trade-offs and failure modes provide substantial knowledge beyond generic advice.  
+D2 13/15 — 86.7%: The probe, consent, and result-reading sequence pairs a useful decision mindset with concrete procedures.  
+D3 13/15 — 86.7%: The NEVER list names specific consent, disclosure, and overreliance mistakes.  
+D4 15/15 — 100%: Valid frontmatter; the description states what the skill does, when to use it, and when not to.  
+D5 12/15 — 80%: Backend notes have a clear loading trigger, but four external pages are marked required without a conditional trigger.  
+D6 12/15 — 80%: Exact safeguards constrain fragile network operations while leaving final judgment to the agent.  
+D7 8/10 — 80%: A concise navigation-and-tool pattern, with some unnecessary unconditional reading.  
+D8 11/15 — 73.3%: **Improve the decision path and fallback guidance** for low-reliability results: the body does not surface the measured Laya accuracy or say when to skip a typed judgment and reason directly.
+
+Findings:
+- **Important** — `skills/jev-fast-decision/SKILL.md:8`: “Advisory” is clear, but the local backend’s measured 55.6% overall and 50% non-fallback accuracy appears only in `skills/jev-fast-decision/backends/laya.md:54-64`. Put a short reliability warning at the decision point so a reader does not mistake speed for useful accuracy.
+- **Important** — `skills/jev-fast-decision/SKILL.md:41`: Value-free text is required specifically for diff hunks, while `skills/jev-fast-decision/reference.md:59` says question instructions enter a durable log. Extend that safeguard to sensitive text in any question, not just a diff.
+- **Minor** — `skills/jev-fast-decision/SKILL.md:55-62`: Make the four external readings conditional on the relevant operation.
+
+Activation, using only the surveyed `skills/*/SKILL.md` frontmatter:
+
+1. **jev-fast-decision** — yes/no triage of supplied evidence.
+2. **jev-fast-decision** — choice among named titles.
+3. **jev-fast-decision** — rubric severity score.
+4. **jev-fast-decision** — yes/no screening of supplied hits.
+5. **none** — asks for a code edit, which the description excludes.
+6. **none** — asks for call-chain investigation, not a supplied-evidence judgment.
+7. **none** — asks to run a command and fix failures.
+8. **none** — asks to plan and implement code changes.
+9. **none** — in-app integration is excluded; `typesafe-ai` is not present in the surveyed `skills/*` frontmatter.
+10. **none** — product-feature brainstorming is not this advisory client; `typesafe-ai` is absent from the survey.
+11. **none** — an application-code integration is excluded; `typesafe-ai` is absent from the survey.
+12. **none** — an end-user application feature is excluded; `typesafe-ai` is absent from the survey.
+
+The activation pass rule holds: all four expected `jev-fast-decision` prompts select it, and none of the other eight do. The missing `typesafe-ai` directory limits the survey; I did not substitute unsurveyed metadata.
+
+`needs_fallback` recipe: present at `skills/jev-fast-decision/SKILL.md:38`.
+
+CURRENT 101/120  
+CRITICAL 0  
+IMPORTANT 2  
+FLOORS fail  
+ACTIVATION ok  
+CITE_PROBE skills/jev-fast-decision/SKILL.md:12  
+> From this skill's directory, run `python3 -B scripts/jev_review.py --probe` before the first call of a session; read `backends/<selected>.md` before the first call with that backend.  
+CITE_BACKEND skills/jev-fast-decision/SKILL.md:12  
+> From this skill's directory, run `python3 -B scripts/jev_review.py --probe` before the first call of a session; read `backends/<selected>.md` before the first call with that backend.  
+VERDICT fail

@@ -455,3 +455,38 @@ ACTIVATION ok
 CITE_PROBE skills/jev-fast-decision/SKILL.md:12
 CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
 VERDICT pass
+
+## Run 8 (final tree beb51f7; one clean-context native Opus subagent; LAST round)
+
+DIGEST 8d3911535ab993ef
+TREE c003aa42896ab240f1dcff2a3ece6e4070b9ba99
+
+Activation picks from frontmatter only: lines 1-4 pick jev-fast-decision, 5-8 none, 9-12
+typesafe-ai. Pass rule holds. `needs_fallback` recipe present at SKILL.md:38; the example
+payload passes `request_body` validation. No Important finding: the run-7 consent-scope item is
+resolved.
+
+Minors left for the owner: Laya 401/403 and other 4xx tokens; TypeSafe and Zen caller-error
+code lists; the remote 8,000-character state cap is undocumented in this skill; the
+`reviewed_head` placeholder and running from the skill directory; key sources in the table;
+the choice qualifier; Required-reading links; `retry explicitly`; laya.md:37-38 fragment;
+"deprecated" vs ignored env vars; 0600 vs no group/other bits; `--skip-local`,
+`remote_available` and the full `consent grant` line undocumented; `consent_used` lists
+uncalled remotes; score `level` is a string key.
+
+D1 18/20
+D2 13/15
+D3 13/15
+D4 14/15
+D5 13/15
+D6 14/15
+D7 9/10
+D8 13/15
+CURRENT 107/120
+CRITICAL 0
+IMPORTANT 0
+FLOORS ok
+ACTIVATION ok
+CITE_PROBE skills/jev-fast-decision/SKILL.md:12
+CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
+VERDICT pass

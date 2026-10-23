@@ -151,3 +151,66 @@ CRITICAL 0
 IMPORTANT 1
 FLOORS fail
 VERDICT fail
+
+DIGEST fd6afc654e0c4f76
+TREE f0f23f4b8c1f617c34bf6950671c01b0a3a937b0
+
+# Skill evaluation: ai-kit-gsd-spec-discuss
+
+Evaluated committed tree `beb51f75f352fb09b3f812b6765b75d520c41f2f` using `tmp/judge/rubric.md`. Working tree is clean; no `pending-orchestrator` marker was found in the judged skill.
+
+**Pattern:** Process, with Tool-style decision routing.  
+**Estimated knowledge ratio:** Expert 85% / Activation 10% / Redundant 5%.  
+The 500-word body cap was not applied.
+
+## Dimension scores
+
+D1 18/20 — 90%. Strong domain knowledge: misleading GSD flags, context preservation, backend-specific escalation and engine-derived coverage. Some historical examples repeat lessons already established in the workflow and references (`SKILL.md:144–150`, `references/worked-examples.md:6–29`). Trim repeated anecdotes while retaining the operational rules.
+
+D2 15/15 — 100%. Transfers both judgment and procedures: evidence outranks model confidence, blocking means dependencies within this run, and scope deferral requires feasibility checking (`SKILL.md:12–16`; `references/decision-table.md:46–65`).
+
+D3 15/15 — 100%. Specific prohibitions explain consequential failure modes: accidental plan-phase dispatch, silent loss of locked decisions, cross-item contamination and fabricated coverage (`SKILL.md:188–205`).
+
+D4 15/15 — 100%. Valid frontmatter and matching name. The description identifies capabilities, explicit triggering requests, backend terminology and exclusions (`SKILL.md:1–4`).
+
+D5 14/15 — 93.3%. The 224-line entry point has mandatory, workflow-embedded reference triggers and explicit skip guidance (`SKILL.md:64`, `106–111`, `214–224`). Reduce duplication between the ladder narrative and decision-table reference for full marks.
+
+D6 14/15 — 93.3%. Appropriately strict around consent, remote payloads, locked decisions and coverage; appropriately flexible around provisional reasoning and host limitations (`SKILL.md:51–59`, `151–164`, `207–212`). Clarify completion behavior when GSD deliberately skips commits.
+
+D7 9/10 — 90%. Clear setup → spec → discuss → decision → persistence process, supported by conditional references. Repeated reference navigation and historical detail slightly dilute an otherwise well-chosen pattern (`SKILL.md:18–224`).
+
+D8 12/15 — 80%. Actionable request shapes, malformed-item recovery, second opinions, size guards and no-client behavior agree with the inspected scripts (`SKILL.md:123–152`; `scripts/decide.py:128–202`, `381–447`). Commit-success handling and inconsistent log-column rules prevent a higher score.
+
+**No dimension is below its floor.**
+
+## Findings
+
+### Important
+
+1. **Committed-output promises omit GSD’s supported commit-skipping behavior.**  
+   **Source:** `skills/ai-kit-gsd-spec-discuss/SKILL.md:83`, `110–114`.  
+   The skill says the workflow commits the SPEC and prescribes subsequent phase/state commits without requiring inspection of their outcomes. The installed `spec-phase.md:520` explicitly says `commit_docs: false` produces `skipped`, leaving the SPEC uncommitted. An unattended run can therefore produce the artifacts without delivering the promised committed tree.  
+   **Improvement:** Check each commit result; explicitly report skipped or failed commits instead of treating the phase as committed.
+
+### Minor
+
+1. **Backend-column inclusion rules disagree.**  
+   **Sources:** `skills/ai-kit-gsd-spec-discuss/references/decision-table.md:74–75`; `skills/ai-kit-gsd-spec-discuss/references/log-formats.md:29–30`.  
+   The ledger includes backends that answered; the log retains backends that were available, even if never called. These can intentionally differ, but that distinction is not explained. State the artifact-specific rule explicitly.
+
+2. **The discussion-log template asserts CodeGraph use unconditionally.**  
+   **Source:** `skills/ai-kit-gsd-spec-discuss/references/log-formats.md:71`.  
+   The analyzer brief correctly makes CodeGraph conditional (`references/analyzer-brief.md:25–32`), but the log’s Mode line always includes it. Make that token conditional to avoid unsupported provenance claims.
+
+## Special check: `needs_fallback`
+
+**Confirmed.** `skills/ai-kit-gsd-spec-discuss/SKILL.md:151–152` explicitly maps answering columns carrying `fallback: true`—identified as the client’s `needs_fallback`—to **own reasoning against the SPEC, earlier CONTEXT files and live facts**, followed by logging and appropriate ledgering. The recipe is present; no missing-recipe Critical finding applies.
+
+Read-only review covered every file in the judged skill, the shared client and backend notes, relevant tests, and the directly named installed GSD workflows/resolver/engine. No files were changed.
+Tests and live backend calls were not run; runtime success and external-service behavior remain unverified.
+
+CURRENT 112/120
+CRITICAL 0
+IMPORTANT 1
+FLOORS ok
+VERDICT pass
