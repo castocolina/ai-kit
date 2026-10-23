@@ -37,8 +37,7 @@ Write `instructions`/`criteria` in English; criteria name concrete signals.
 
 - `ok` → per-item `answers` (`needs_fallback`, `top`). `needs_fallback: true` → **you decide that item with your own reasoning**; else advisory input. `trail` shows the rungs; announce `consent_used`.
 - `consent_required_for_remote` (or `reason: backend_unavailable:<name>:consent_required_for_remote`) → ask the user; on yes grant or export, retry.
-- `unsupported_feature` or `disabled` → reason it yourself.
-- other `unavailable` → read `reason`; fix or reason yourself, never retry blindly.
+- any other status → the status table in `reference.md`.
 - Screening a diff hunk: summarize into value-free question text (name the pattern, not the value); never the raw hunk.
 
 ## NEVER
