@@ -103,7 +103,7 @@ class SelectionLike(Protocol):
 
 StatusLineFn = Callable[[], dict[str, str | None]]
 CommitFn = Callable[[SelectionLike, dict], dict]
-ApplyHousekeepingFn = Callable[[bool, bool], dict]
+ApplyHousekeepingFn = Callable[..., dict]
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +256,7 @@ class WizardApp(App):
         if gate_done:
             state["adopt"] = True
         hk_data = dict(ctx.housekeeping) if ctx.housekeeping else {}
-        hk_pending = [k for k in ("stale", "predecessors") if hk_data.get(k)]
+        hk_pending = [k for k in ("stale", "predecessors", "replace") if hk_data.get(k)]
         home_line = {k: min(max(int(m.get("line", 0)), 0), 2)
                      for k, m in ctx.segment_meta.items()}
         for ext in ctx.external_segments:
@@ -537,6 +537,14 @@ class WizardApp(App):
             gate = (f"[b {WARN}]⚠  {len(items)} link(s) point at entries removed upstream[/]\n"
                     f"{listing}\n\n"
                     f"[#0d1117 on {WARN}] y = prune them · N / Enter = keep them [/]")
+        elif kind == "replace":
+            gate = (f"[b {WARN}]⚠  {len(items)} skill path(s) hold a real directory "
+                    "or a foreign link[/]\n"
+                    f"{listing}\n\n"
+                    f"[{DIM}]y moves each to ai-kit's backups dir under the XDG "
+                    "state dir — never deleted — and links the repo copy.[/]\n"
+                    f"[#0d1117 on {WARN}] y = back up and link the repo copy · "
+                    "N / Enter = leave them [/]")
         else:
             gate = (f"[b {WARN}]⚠  {len(items)} dangling link(s) shaped like an "
                     "earlier ai-kit install[/]\n"
@@ -805,7 +813,7 @@ class WizardApp(App):
             return True             # ignore keys until the apply worker finishes
         ch, k = event.character, event.key
         kind = self.hk.pending[self.hk.stage]
-        default = kind != "stale"          # stale defaults to decline; predecessors to repoint
+        default = kind == "predecessors"   # stale and replace default to decline
         if ch == "y":
             answer = True
         elif ch == "n":
@@ -829,12 +837,14 @@ class WizardApp(App):
         _run_commit already guards ctx.commit() failures below."""
         prune = self.hk.answers.get("stale", False)
         repoint = self.hk.answers.get("predecessors", True)
+        kwargs: dict = ({"replace": self.hk.answers.get("replace", False)}
+                        if "replace" in self.hk.pending else {})
         try:
             if self.ctx.apply_housekeeping is None:
                 outcome = {"selection": self.model.sel,
                           "initial_enabled": self.model.state.get("_initial_enabled", {})}
             else:
-                outcome = self.ctx.apply_housekeeping(prune, repoint)
+                outcome = self.ctx.apply_housekeeping(prune, repoint, **kwargs)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             outcome = {}
             self.hk.error = f"housekeeping failed: {exc}"

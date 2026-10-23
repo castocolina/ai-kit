@@ -4346,6 +4346,167 @@ class TestWizardHousekeeping(unittest.TestCase):
         self.assertIn("moved ", outcome["log"])
         self.assertIn(self._pi_link(), outcome["log"])
 
+    def _real_dir_at(self, path):
+        """Replace whatever stands at `path` with a real dir holding a marker."""
+        if os.path.lexists(path):
+            os.remove(path)
+        os.makedirs(path)
+        with open(os.path.join(path, "marker"), "w") as f:
+            f.write("user content")
+
+    def _repo_entry(self, name):
+        """Create repo skill `name` in the fake install dir (pre-enumeration)."""
+        d = os.path.join(self.install, "skills", name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "SKILL.md"), "w") as f:
+            f.write(f"---\nname: {name}\n---\n")
+
+    def _backups(self, root, name):
+        import glob
+        return glob.glob(os.path.join(self.tmp, ".local", "state", "ai-kit",
+                                      "backups", root, f"{name}.bak-*", name))
+
+    def test_housekeeping_lists_replace_candidates(self):
+        alpha = os.path.join(self.claude, "skills", "alpha")
+        os.remove(alpha)   # drop setUp's dangling predecessor link
+        self._real_dir_at(alpha)
+        ctx, _counts = self._launch(dry=False)
+        self.assertEqual(ctx.housekeeping["replace"], ["skills/alpha (claude)"])
+        # a current ai-kit link is never a replace candidate
+        shutil.rmtree(alpha)
+        os.symlink(os.path.join(self.install, "skills", "alpha"), alpha)
+        ctx, _counts = self._launch(dry=False)
+        self.assertEqual(ctx.housekeeping["replace"], [])
+
+    def test_apply_housekeeping_replace(self):
+        alpha = os.path.join(self.claude, "skills", "alpha")
+        os.remove(alpha)
+        self._real_dir_at(alpha)
+        ctx, _counts = self._launch(dry=False)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            outcome = ctx.apply_housekeeping(False, True, replace=True)
+        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(err.getvalue(), "")   # worker thread: never the real stderr
+        link = alpha
+        self.assertEqual(os.readlink(link),
+                         os.path.join(self.install, "skills", "alpha"))
+        baks = self._backups("claude", "alpha")
+        self.assertEqual(len(baks), 1)
+        self.assertTrue(os.path.isfile(os.path.join(baks[0], "marker")))
+        self.assertIn("moved ", outcome["log"])
+        self.assertIn(alpha, outcome["log"])
+        # without replace=True the same situation is left alone
+        os.remove(link)
+        self._real_dir_at(alpha)
+        ctx, _counts = self._launch(dry=False)
+        ctx.apply_housekeeping(False, True)
+        self.assertTrue(os.path.isfile(os.path.join(alpha, "marker")))
+
+    def test_housekeeping_gates_disjoint(self):
+        self._repo_entry("beta")
+        self._repo_entry("gamma")
+        elsewhere = os.path.join(self.tmp, "elsewhere", "skills", "beta")
+        os.makedirs(elsewhere)
+        beta = os.path.join(self.claude, "skills", "beta")
+        os.symlink(elsewhere, beta)          # live ai-kit-shaped foreign link
+        gamma = os.path.join(self.claude, "skills", "gamma")
+        self._real_dir_at(gamma)
+        ctx, _counts = self._launch(dry=False)
+        self.assertEqual(ctx.housekeeping["predecessors"], ["skills/alpha"])
+        self.assertEqual(ctx.housekeeping["replace"],
+                         ["skills/beta (claude)", "skills/gamma (claude)"])
+        ctx.apply_housekeeping(False, True)  # repoint yes, replace No (default)
+        self.assertEqual(os.readlink(beta), elsewhere)   # byte-identical, untouched
+        self.assertTrue(os.path.isfile(os.path.join(gamma, "marker")))
+
+    def test_launch_wizard_prints_housekeeping_log(self):
+        alpha = os.path.join(self.claude, "skills", "alpha")
+        os.remove(alpha)
+        self._real_dir_at(alpha)
+        paths = self._paths()
+        entries = setup.enumerate_entries(paths.install_dir)
+        installed = setup.installed_links(paths.claude_dir, paths.install_dir)
+        wa = _import_wizard_app()
+
+        def _fake_run(ctx):
+            ctx.apply_housekeeping(False, True, replace=True)
+            return None   # abort AFTER the accepted replace
+
+        class _FakeTty:
+            def isatty(self):
+                return True
+
+        with mock.patch.object(wa, "run_wizard", _fake_run), \
+                mock.patch.object(setup, "stdin_on_tty",
+                                  return_value=contextlib.nullcontext()), \
+                mock.patch.object(setup.sys, "stderr", new_callable=io.StringIO) as err:
+            setup.launch_wizard(paths, entries, installed, _FakeTty(), False,
+                                setup.new_counts())
+        text = err.getvalue()
+        self.assertIn("moved ", text)
+        self.assertIn(alpha, text)
+        self.assertIn(".bak-", text)
+
+    def test_housekeeping_log_survives_failure(self):
+        self._repo_entry("beta")
+        alpha = os.path.join(self.claude, "skills", "alpha")
+        beta = os.path.join(self.claude, "skills", "beta")
+        os.remove(alpha)
+        self._real_dir_at(alpha)
+        self._real_dir_at(beta)
+        paths = self._paths()
+        entries = setup.enumerate_entries(paths.install_dir)
+        real_move = shutil.move
+        calls = {"n": 0}
+
+        def flaky_move(src, dst, *a, **k):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError("second move exploded")
+            return real_move(src, dst, *a, **k)
+
+        sink: list[str] = []
+        callable_hk = setup._make_apply_housekeeping(
+            paths, entries, [], [], False, setup.new_counts(),
+            replace_cands=[
+                ("claude", alpha, os.path.join(self.install, "skills", "alpha"), "alpha"),
+                ("claude", beta, os.path.join(self.install, "skills", "beta"), "beta")],
+            log_sink=sink)
+        with mock.patch.object(setup.shutil, "move", side_effect=flaky_move), \
+                self.assertRaises(OSError):
+            callable_hk(False, True, replace=True)
+        self.assertEqual(len(sink), 1)
+        self.assertIn("moved ", sink[0])
+        self.assertEqual(sink[0].count("moved "), 1)
+        self.assertIn(alpha, sink[0])       # the first move reached the sink
+        baks = self._backups("claude", "alpha")
+        self.assertEqual(len(baks), 1)      # its backup exists at that dest
+
+    def test_pi_replace_survives_commit(self):
+        # not a first run (an ai-kit link for another skill exists), a real dir
+        # at the pi skill path and no claude link for jev: the accepted replace
+        # pre-checks the skill, so the commit links its claude path and keeps
+        # the new pi link instead of the mirror removing it right after.
+        alpha = os.path.join(self.claude, "skills", "alpha")
+        os.remove(alpha)
+        os.symlink(os.path.join(self.install, "skills", "alpha"), alpha)
+        pi_jev = self._pi_link()
+        self._real_dir_at(pi_jev)
+        ctx, _counts = self._launch(dry=False)
+        outcome = ctx.apply_housekeeping(False, True, replace=True)
+        self.assertIn("jev-fast-decision",
+                      outcome["selection"].category_sets(setup.CATEGORIES)["skills"])
+        ctx.commit(outcome["selection"], {"adopt": False})
+        new_target = os.path.join(self.install, "skills", "jev-fast-decision")
+        self.assertEqual(os.readlink(pi_jev), new_target)
+        self.assertEqual(
+            os.readlink(os.path.join(self.claude, "skills", "jev-fast-decision")),
+            new_target)
+        baks = self._backups("pi", "jev-fast-decision")
+        self.assertEqual(len(baks), 1)
+        self.assertTrue(os.path.isfile(os.path.join(baks[0], "marker")))
+
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestCmdInstallSkipNoStatusline(unittest.TestCase):

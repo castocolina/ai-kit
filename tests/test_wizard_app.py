@@ -592,6 +592,79 @@ class TestHousekeepingGate(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen["prune"], False)
         self.assertEqual(seen["repoint"], True)
 
+    async def test_replace_yes(self):
+        seen = {}
+        def apply_hk(prune, repoint, replace=False):
+            seen["replace"] = replace
+            return {"selection": None, "initial_enabled": {}}
+        ctx = self._ctx(replace=["skills/alpha (claude)"])._replace(
+            apply_housekeeping=apply_hk)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            gate = str(_query_static(app, "#picksbox").content)
+            await pilot.press("y")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertTrue(app.hk.done)
+        self.assertIn("hold a real directory or a foreign link", gate)
+        self.assertTrue(seen["replace"])
+
+    async def test_replace_enter_defaults_no(self):
+        seen = {}
+        def apply_hk(prune, repoint, replace=False):
+            seen["replace"] = replace
+            return {"selection": None, "initial_enabled": {}}
+        ctx = self._ctx(replace=["skills/alpha (claude)"])._replace(
+            apply_housekeeping=apply_hk)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")        # default: leave them alone
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertTrue(app.hk.done)
+        self.assertFalse(seen["replace"])
+
+    async def test_replace_n_declines(self):
+        seen = {}
+        def apply_hk(prune, repoint, replace=False):
+            seen["replace"] = replace
+            return {"selection": None, "initial_enabled": {}}
+        ctx = self._ctx(replace=["skills/alpha (claude)"])._replace(
+            apply_housekeeping=apply_hk)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("n")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertTrue(app.hk.done)
+        self.assertFalse(seen["replace"])
+
+    async def test_stale_predecessors_replace_sequenced(self):
+        seen = {}
+        def apply_hk(prune, repoint, replace=False):
+            seen["prune"], seen["repoint"], seen["replace"] = prune, repoint, replace
+            return {"selection": None, "initial_enabled": {}}
+        ctx = self._ctx(stale=["skills/gone"], predecessors=["skills/alpha"],
+                        replace=["skills/beta (claude)"])._replace(
+            apply_housekeeping=apply_hk)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("n")               # stale: decline prune
+            self.assertFalse(app.hk.done)
+            await pilot.press("enter")           # predecessors: default repoint
+            self.assertFalse(app.hk.done)        # replace still pending
+            gate = str(_query_static(app, "#picksbox").content)
+            self.assertIn("hold a real directory or a foreign link", gate)
+            await pilot.press("y")               # replace: back up and link
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertTrue(app.hk.done)
+        self.assertEqual(seen, {"prune": False, "repoint": True, "replace": True})
+
     async def test_apply_housekeeping_none_falls_back_to_legacy(self):
         # apply_housekeeping=None (unit fixtures without it) -> pressing an
         # answer still resolves the gate using the existing selection/state.

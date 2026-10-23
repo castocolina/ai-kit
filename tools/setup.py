@@ -2444,6 +2444,7 @@ def _engine_ns(paths, sample_json):
 def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
     paths, entries, installed, sample_json, wizard_app_mod,
     stale=None, predecessor_cands=None, pi_predecessor_cands=(), pi_stale=(),
+    replace_cands=(),
 ):
     """Construct WizardContext for launch_wizard (extracted for testability).
 
@@ -2507,6 +2508,9 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
         "predecessors": [f"{cat}/{name}" for cat, name, _old, _new in predecessor_cands]
                         + [f"{cat}/{name} (pi)"
                            for cat, name, _old, _new in pi_predecessor_cands],
+        # Real content at a named skills link path (D-16) — default-No gate.
+        "replace": [f"skills/{name} ({label})"
+                    for label, _path, _target, name in replace_cands],
     }
 
     return wizard_app_mod.WizardContext(
@@ -2654,7 +2658,7 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
 
 def _make_apply_housekeeping(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     paths, entries, stale, predecessor_cands, dry, counts,
-    pi_predecessor_cands=(), pi_stale=(),
+    pi_predecessor_cands=(), pi_stale=(), replace_cands=(), log_sink=None,
 ):
     """Build the apply_housekeeping(prune, repoint) callable the wizard runs
     IN-UI right after its housekeeping gate is answered (before Choose becomes
@@ -2671,41 +2675,67 @@ def _make_apply_housekeeping(  # pylint: disable=too-many-arguments,too-many-pos
 
     Like `commit`, this runs on a Textual worker thread, so it must NOT print
     to the real stdout/stderr: everything the inner helpers emit is captured
-    into the returned dict's `log` string."""
-    def apply_housekeeping(prune, repoint):
+    into the returned dict's `log` string.
+
+    ``replace_cands`` is launch_wizard's pre-computed replace_candidates list
+    (the real content standing at a skills link path, minus the paths the
+    predecessor gates own). With ``replace`` true, backup_and_link (D-15/D-16)
+    moves each into the per-root backups dir and links the repo copy; every
+    pi-labelled candidate it linked joins the pre-checked set, so the commit
+    keeps an accepted pi-only replace instead of the mirror unlinking it.
+    ``log_sink``, when a list, receives the captured log in a ``finally`` —
+    even when a later move raises — so launch_wizard can print where each
+    backup went after the wizard has exited."""
+    def apply_housekeeping(prune, repoint, replace=False):
         buf = io.StringIO()
-        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            if stale and prune:
-                apply_stale_prune(paths.claude_dir, stale, dry, counts)
-            if pi_stale and prune:
-                apply_stale_prune(paths.pi_dir, pi_stale, dry, counts)
-            if predecessor_cands:
-                apply_predecessor_links(
-                    paths.claude_dir, predecessor_cands, repoint, dry, counts,
-                    backup_dir=os.path.join(paths.backups_dir, "claude"))
-            if pi_predecessor_cands:
-                apply_predecessor_links(
-                    paths.pi_dir, pi_predecessor_cands, repoint, dry, counts,
-                    backup_dir=os.path.join(paths.backups_dir, "pi"))
-            installed = installed_links(paths.claude_dir, paths.install_dir)
-            default = _default_selection(entries, installed)
-            default = {cat: set(names) for cat, names in default.items()}
-            if repoint:
+        try:
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                if stale and prune:
+                    apply_stale_prune(paths.claude_dir, stale, dry, counts)
+                if pi_stale and prune:
+                    apply_stale_prune(paths.pi_dir, pi_stale, dry, counts)
+                if predecessor_cands:
+                    apply_predecessor_links(
+                        paths.claude_dir, predecessor_cands, repoint, dry, counts,
+                        backup_dir=os.path.join(paths.backups_dir, "claude"))
+                if pi_predecessor_cands:
+                    apply_predecessor_links(
+                        paths.pi_dir, pi_predecessor_cands, repoint, dry, counts,
+                        backup_dir=os.path.join(paths.backups_dir, "pi"))
+                if replace and replace_cands:
+                    # The replace gate's explicit yes: move each into the
+                    # per-root backups dir (D-15) and link the repo copy
+                    # (D-16). Its `moved` lines reach the returned log.
+                    backup_and_link(replace_cands, paths, dry, counts)
+                installed = installed_links(paths.claude_dir, paths.install_dir)
+                default = _default_selection(entries, installed)
+                default = {cat: set(names) for cat, names in default.items()}
                 # A pi link created here must survive the commit's mirror:
                 # pre-check the skill so the commit links its claude path and
-                # never unlinks the accepted pi link (D-14).
-                for _cat, name, _old, _new in pi_predecessor_cands:
+                # never unlinks the accepted pi link (D-14; replace: D-16).
+                precheck = ({name for _c, name, _o, _n in pi_predecessor_cands}
+                            if repoint else set())
+                if replace:
+                    precheck |= {name for label, _p, _t, name in replace_cands
+                                 if label == "pi"}
+                for name in precheck:
                     default["skills"].add(name)
-            sel = Selection(
-                (cat, name, name in default[cat])
-                for cat in CATEGORIES
-                for name, _ in entries[cat]
-            )
-            initial_enabled = {
-                (cat, name): (name in installed[cat])
-                for cat in CATEGORIES
-                for name, _ in entries[cat]
-            }
+                sel = Selection(
+                    (cat, name, name in default[cat])
+                    for cat in CATEGORIES
+                    for name, _ in entries[cat]
+                )
+                initial_enabled = {
+                    (cat, name): (name in installed[cat])
+                    for cat in CATEGORIES
+                    for name, _ in entries[cat]
+                }
+        finally:
+            # Even when a later move raises, the log captured so far (with the
+            # backup destinations of the moves that succeeded) reaches the
+            # sink — launch_wizard prints it after the wizard has exited.
+            if isinstance(log_sink, list):
+                log_sink.append(buf.getvalue())
         return {"selection": sel, "initial_enabled": initial_enabled,
                 "log": buf.getvalue()}
     return apply_housekeeping
@@ -2764,19 +2794,32 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
             paths.pi_dir, paths.install_dir, _pi_entries(entries))
     else:
         pi_stale, pi_predecessor_cands = [], ()
+    # The replace gate's candidates (D-16): every real/foreign entry at a
+    # named skills link path, minus the paths the predecessor gates already
+    # own — the three gates' candidate sets stay disjoint, so no answer at an
+    # earlier gate can touch a path this gate listed.
+    pred_paths = ({os.path.join(paths.claude_dir, cat, name)
+                   for cat, name, _o, _n in predecessor_cands}
+                  | {os.path.join(paths.pi_dir, cat, name)
+                     for cat, name, _o, _n in pi_predecessor_cands})
+    replace_cands = [cand for cand in replace_candidates(
+        paths, entries, [name for name, _ in entries["skills"]])
+        if cand[1] not in pred_paths]
     ctx = _build_wizard_context(paths, entries, installed, sample_json, wizard_app,
                                 stale, predecessor_cands,
                                 pi_predecessor_cands=pi_predecessor_cands,
-                                pi_stale=pi_stale)
+                                pi_stale=pi_stale, replace_cands=replace_cands)
     # The real install (component symlinks + doctor-validated status-line write +
     # settings.json wiring) now runs INSIDE the wizard on Review-confirm, so the
     # Done screen reflects the actual result. Inject the commit + housekeeping
     # callables here, where paths/entries/dry/counts are in scope.
+    hk_log: list[str] = []
     ctx = ctx._replace(
         commit=_make_wizard_commit(paths, entries, dry, counts, examples_flag=examples_flag),
         apply_housekeeping=_make_apply_housekeeping(
             paths, entries, stale, predecessor_cands, dry, counts,
-            pi_predecessor_cands=pi_predecessor_cands, pi_stale=pi_stale),
+            pi_predecessor_cands=pi_predecessor_cands, pi_stale=pi_stale,
+            replace_cands=replace_cands, log_sink=hk_log),
     )
     try:
         # curl | bash inherits the script pipe as fd 0; Textual reads keys from
@@ -2787,6 +2830,13 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
         reason = exc.args[0] if exc.args else exc
         print(f"error: wizard failed — {reason}", file=sys.stderr)
         sys.exit(2)
+    finally:
+        # The housekeeping log (every `moved <path> -> <dest>` backup line)
+        # reaches the user on confirm, abort and crash alike — but only once
+        # the alternate screen is gone, never while the wizard is up.
+        hk_text = "\n".join(hk_log).strip()
+        if hk_text:
+            print(hk_text, file=sys.stderr)
     if result is None:
         return None
     # apply_selection + persist_statusline already ran in-UI via the commit
