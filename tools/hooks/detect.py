@@ -64,7 +64,7 @@ def compose_message(detection):
             f"{pair['modern']} over {pair['legacy']}" for pair in present
         ) + "."
         readme = os.path.join(os.path.dirname(os.path.realpath(__file__)), "README.md")
-        home = os.path.expanduser("~")
+        home = os.path.realpath(os.path.expanduser("~"))  # readme is a realpath too
         if home != os.path.abspath(os.sep) and (readme == home or readme.startswith(home + os.sep)):
             readme = "~" + readme[len(home):]
         usage_suffix = f" Usage: {readme}"
