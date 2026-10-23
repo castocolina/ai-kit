@@ -47,7 +47,7 @@ COMMANDS = [
     ("echo a # note | grep y\ncat f", ["cat"]), ("echo a#b ; grep x f", ["grep"]),
     ("'grep' x f", ["grep"]), ("echo '# x' && cat f", ["cat"]),
     ("sudo -u root grep x f", []), (r"echo \| grep x", []),
-    ("grep x \\\ncat f", ["grep"]), ('echo x" | grep "y', []),
+    ("grep x \\ncat f", ["grep"]), ('echo x" | grep "y', []),
     ("echo '\\'; grep x f", ["grep"]),
 ]
 
@@ -61,7 +61,7 @@ class AdvisorCoreTests(unittest.TestCase):
             ("sed -i 's/a/b/' f", ["sed-edit"]), ("sed 's/a/b/g' f", ["sed-edit"]),
             ("sed '/^#/d' f", []), ("ls && grep -l x f", ["grep"]),
             ("make || grep err log", ["grep"]), ("echo a; cat f", ["cat"]),
-            ("echo a\\ngrep b f", ["grep"]), ("man grep", []),
+            ("echo a\ngrep b f", ["grep"]), ("man grep", []),
             ("./bin/grep x f", ["grep"]), ("sudo grep x f", ["grep"]),
             ("FOO=1 grep x f", ["grep"]),
             ("if grep -q x f; then cat f; fi", ["grep", "cat"]),
@@ -129,6 +129,84 @@ class AdvisorCoreTests(unittest.TestCase):
         os.makedirs(env["HOME"])
         return root, env
 
+    def _read_event(self, path, offset=None, limit=None):
+        event = {"tool": "read", "path": path, "offset": offset, "limit": limit}
+        return core.advise(event, {"PATH": ""})
+
+    def test_read_report_thresholds(self):
+        root = tempfile.mkdtemp(prefix="read-threshold-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        exact_lines = (b"x" * 19 + b"\n") * 2000
+        below_lines = b"x\n" * 1999 + b"x" * (39000 - 3998)
+        cases = (("three-thousand", b"x\n" * 3000, True),
+                 ("below", below_lines, False),
+                 ("two-thousand", exact_lines, False),
+                 ("over-lines", b"x\n" * 2001, True),
+                 ("over-bytes", b"x" * 40001, True), ("empty", b"", False))
+        for name, content, expected in cases:
+            with self.subTest(name=name):
+                path = os.path.join(root, name)
+                with open(path, "wb") as handle:
+                    handle.write(content)
+                report = self._read_event(path)
+                self.assertEqual(report is not None, expected)
+                if name == "three-thousand":
+                    self.assertIn("3000 lines", report)
+
+    def test_read_report_ranged_silent(self):
+        root = tempfile.mkdtemp(prefix="read-ranged-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        path = os.path.join(root, "large.txt")
+        with open(path, "wb") as handle:
+            handle.write(b"x\n" * 3000)
+        for offset, limit in ((1, None), (None, 20), (1, 20)):
+            with self.subTest(offset=offset, limit=limit):
+                self.assertIsNone(self._read_event(path, offset, limit))
+
+    def test_read_report_bad_paths_give_nothing(self):
+        root = tempfile.mkdtemp(prefix="read-bad-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        directory = os.path.join(root, "directory")
+        os.mkdir(directory)
+        fifo = os.path.join(root, "pipe")
+        os.mkfifo(fifo)
+        started = __import__("time").monotonic()
+        for path in (os.path.join(root, "missing"), directory, fifo, "relative.txt", None):
+            with self.subTest(path=path):
+                self.assertIsNone(self._read_event(path))
+        self.assertLess(__import__("time").monotonic() - started, 1.0)
+
+    def test_read_report_sparse_file_bounded(self):
+        root = tempfile.mkdtemp(prefix="read-sparse-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        path = os.path.join(root, "sparse.bin")
+        with open(path, "wb"):
+            os.truncate(path, 100 * 1024 * 1024)
+        started = __import__("time").monotonic()
+        report = self._read_event(path)
+        self.assertLess(__import__("time").monotonic() - started, 1.0)
+        self.assertIn("≥", report)
+
+    def test_read_report_text_shape(self):
+        root = tempfile.mkdtemp(prefix="read-shape-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        path = os.path.join(root, "private-name.txt")
+        content = b"secret content " + b"z" * 41000
+        with open(path, "wb") as handle:
+            handle.write(content)
+        report = self._read_event(path)
+        self.assertIn(str(len(content)), report)
+        self.assertIn("≈", report)
+        self.assertIn(str((len(content) + 3) // 4), report)
+        self.assertIn("next", report)
+        self.assertIn("offset", report)
+        self.assertNotIn("private-name", report)
+        self.assertNotIn("secret content", report)
+        binary = os.path.join(root, "binary")
+        with open(binary, "wb") as handle:
+            handle.write(bytes(range(256)) * 200)
+        self.assertIsNotNone(self._read_event(binary))
+
     def test_advisor_script_outputs_only_context(self):
         root, env = self._sandbox()
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
@@ -143,7 +221,7 @@ class AdvisorCoreTests(unittest.TestCase):
         for tool in TOOLS:
             toolpath = os.path.join(bin_dir, tool)
             with open(toolpath, "w", encoding="utf-8") as handle:
-                handle.write("#!/bin/sh\\nexit 0\\n")
+                handle.write("#!/bin/sh\nexit 0\n")
             os.chmod(toolpath, 0o700)
         os.symlink(sys.executable, os.path.join(bin_dir, "python3"))
         env["PATH"] = bin_dir

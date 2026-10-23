@@ -115,6 +115,17 @@ def _command_words(tokens):
         index += 1
 
 
+def simple_commands(command):
+    """Return command-word-first token lists for each lexed simple command."""
+    if not isinstance(command, str) or not command.strip():
+        return []
+    tokens = _command_tokens(command)
+    commands = []
+    for name, args in _command_words(tokens):
+        commands.append([name, *args])
+    return commands
+
+
 def installed_tools(env):
     """Return detected modern substitution names installed on this invocation's PATH."""
     detect = importlib.import_module("detect")
@@ -182,11 +193,8 @@ def bash_advice(command, installed):
     return advice
 
 
-def read_report(path, offset, limit, installed):
-    """Count a regular file with bounded, nonblocking reads and advise on large reads."""
-    if (offset is not None or limit is not None or not isinstance(path, str)
-            or not os.path.isabs(path)):
-        return None
+def _read_counts(path):
+    """Read a regular path in bounded chunks, returning (bytes, newlines, last, capped)."""
     try:
         if not stat.S_ISREG(os.stat(path).st_mode):
             return None
@@ -196,7 +204,6 @@ def read_report(path, offset, limit, installed):
     size = 0
     newlines = 0
     last_byte = b""
-    capped = False
     try:
         while size < READ_CAP_BYTES:
             chunk = os.read(fd, min(READ_CHUNK_BYTES, READ_CAP_BYTES - size))
@@ -205,11 +212,22 @@ def read_report(path, offset, limit, installed):
             size += len(chunk)
             newlines += chunk.count(b"\n")
             last_byte = chunk[-1:]
-        capped = size >= READ_CAP_BYTES
+        return size, newlines, last_byte, size >= READ_CAP_BYTES
     except OSError:
         return None
     finally:
         os.close(fd)
+
+
+def read_report(path, offset, limit, installed):
+    """Count a regular file with bounded, nonblocking reads and advise on large reads."""
+    if (offset is not None or limit is not None or not isinstance(path, str)
+            or not os.path.isabs(path)):
+        return None
+    counted = _read_counts(path)
+    if counted is None:
+        return None
+    size, newlines, last_byte, capped = counted
     lines = newlines + int(bool(size) and last_byte != b"\n")
     tokens = math.ceil(size / 4)
     if not capped and tokens <= READ_TOKEN_LIMIT and lines <= READ_LINE_LIMIT:
