@@ -121,7 +121,7 @@ Every cell is `verified-live`, `documented`, `unsupported` or `unverified`, with
 
 - **Claude Code and opencode** read `~/.claude/skills` — both reach this skill through ai-kit setup's primary link.
 - **pi** reads `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` — ai-kit setup links it there too.
-- **codex** is a documented gap: its only user dir is `~/.agents/skills`, which opencode, pi and Cursor also read, so a link there would duplicate the name (learn.chatgpt.com/docs/build-skills, cited 2026-10-18). Nothing is linked.
+- **codex** is a documented gap: its only user dir is `~/.agents/skills`, which opencode, pi and Cursor also read, so a link there would duplicate the name (learn.chatgpt.com/docs/build-skills, cited 2026-10-18; not live-verified). Nothing is linked.
 - **cursor** is reached through its compatibility read of `~/.claude/skills` (cursor.com/docs/context/skills, cited 2026-10-18; not live-verified). Nothing extra is linked.
 
 ## Red Flags (full text)
