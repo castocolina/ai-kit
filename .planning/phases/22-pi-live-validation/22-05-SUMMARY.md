@@ -61,7 +61,7 @@ metrics:
   duration: 75min
   completed: 2026-10-23
   status: complete
-orchestrator_verify: "VERIFY 22-05: 0/2 passed"
+orchestrator_verify: "VERIFY 22-05: 2/2 passed (cmd 1 after its full-output grep fix; cmd 2 after the scratch smoke dir was removed, as Task 2 intends)"
 ---
 
 # Phase 22 Plan 05: Pi headless smoke and protected snapshot Summary
