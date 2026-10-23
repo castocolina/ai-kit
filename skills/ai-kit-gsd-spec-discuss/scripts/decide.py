@@ -1,44 +1,38 @@
 #!/usr/bin/env python3
-"""Decision ladder: Laya (local, one item per call) -> TypeSafe (remote, batched) -> own reasoning.
+"""Thin caller of the shared jev-fast-decision client: one client call per ladder run.
 
-stdlib only. Calls the installed jev-fast-decision client; never copies its protocol. Never
-prints a key value: detection reports key sources by label only. Every answer is advisory.
+This file holds no endpoint URL, no model id and no backend order. The backend table lives
+entirely in the client, which owns the ladder (local rungs first, one item per call, then one
+consented remote batch) and returns a per-item rung trail; decide.py maps that trail onto one
+column per table backend and keeps only item validation (summaries only), the scrubbed child
+environment, `detect`, `--second-opinion` and the consent delegation. stdlib only. Never
+prints a key value: every client JSON field passes a fixed allowlist before it reaches stdout.
+Every answer is advisory.
 
     decide.py detect
     decide.py ladder [--second-opinion] < {"items": [...]}
-    decide.py consent grant|revoke|show <typesafe|laya>
+    decide.py consent grant|revoke|show <backend>
 """
 
 from __future__ import annotations
 
 import argparse
-import datetime
-import ipaddress
 import json
 import os
 import re
-import socket
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
-from urllib.parse import urlsplit
 
-TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
-BACKEND_ENV = {
-    "laya": {"JEV_MODEL": "jev-1", "JEV_RESPONSE_MODEL": "laya-rl-agent"},
-    "typesafe": {"JEV_API_URL": TYPESAFE_URL, "JEV_MODEL": "jev-latest",
-                 "JEV_RESPONSE_MODEL": "jev-1.13.0"},
-}
-CALL_TIMEOUT_SECONDS = "30"
-MIN_CONFIDENCE = "0.7"
-CONNECT_TIMEOUT_SECONDS = 2.0
-ZERO_HEAD = "0" * 40
 CLIENT_REL = os.path.join("jev-fast-decision", "scripts", "jev_review.py")
-# Inherited variables the client would otherwise read (a parent-shell key must never reach Laya).
-_SCRUB_PREFIXES = ("JEV_", "GSD_PATH_JEV")
-_SCRUB_NAMES = {"OPENCODE_API_KEY", "AI_KIT_LAYA_URL", "AI_KIT_JEV_CLIENT"}
+CALL_TIMEOUT_SECONDS = 30
+ZERO_HEAD = "0" * 40
+CLIENT_PROTOCOL_RE = re.compile(r"^CLIENT_PROTOCOL = 2$", re.M)
+# The client's control variables: a parent-shell value must never widen the child's gate (D-09).
+# Key and URL variables pass through untouched, so each key reaches only its own backend's row.
+_CONTROL_NAMES = {"JEV_BACKEND", "JEV_ALLOW_REMOTE", "JEV_MIN_CONFIDENCE"}
+_CONTROL_PREFIXES = ("GSD_PATH_JEV",)
 
 ITEM_KEYS = {"id", "type", "instructions", "context", "criteria"}
 ITEM_TYPES = {"choice", "noul"}
@@ -47,6 +41,10 @@ MAX_FIELD_CHARS = 1500
 # 40-char commit SHA in a summary still passes). A false positive only means own reasoning.
 _SECRET_RE = re.compile(r"-----BEGIN|\b(?:sk|pk|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{12,}|"
                         r"[A-Za-z0-9+/]{48,}")
+# Fixed output allowlists (24 D-13): a leaky client's extra fields never reach stdout.
+_BACKEND_KEYS = ("name", "remote", "batch", "host", "usable", "reason", "key_source", "consent")
+_CONSENT_KEYS = ("ok", "backend", "host", "consent", "file", "note", "reason")
+_SCALAR_TYPES = (str, bool, int)
 
 
 class Seams(NamedTuple):
@@ -54,89 +52,14 @@ class Seams(NamedTuple):
 
     env: Mapping[str, str]
     run: Callable[..., Any]
-    connect: Callable[..., Any]
 
 
 def real_seams() -> Seams:
     """The production side effects."""
-    return Seams(env=os.environ, run=subprocess.run, connect=socket.create_connection)
+    return Seams(env=os.environ, run=subprocess.run)
 
 
-# ─── configuration and detection ──────────────────────────────────────────────
-
-def config_dir(env: Mapping[str, str]) -> str:
-    """ai-kit's per-user config dir: ${XDG_CONFIG_HOME:-~/.config}/ai-kit."""
-    base = env.get("XDG_CONFIG_HOME", "").strip() or os.path.join(env.get("HOME", "~"), ".config")
-    return os.path.join(os.path.expanduser(base), "ai-kit")
-
-
-def is_loopback(host: str | None) -> bool:
-    """True for localhost and loopback IPs only."""
-    if not host:
-        return False
-    if host.lower() == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
-def laya_url(env: Mapping[str, str]) -> tuple[str | None, str | None]:
-    """(url, source). JEV_API_URL counts only when loopback: it is also the client's target var."""
-    dedicated = env.get("AI_KIT_LAYA_URL", "").strip()
-    if dedicated:
-        return dedicated, "AI_KIT_LAYA_URL"
-    shared = env.get("JEV_API_URL", "").strip()
-    if shared and is_loopback(urlsplit(shared).hostname):
-        return shared, "JEV_API_URL"
-    return None, None
-
-
-def reachable(url: str, connect: Callable[..., Any]) -> bool:
-    """TCP reachability of the URL's host and port; proves nothing about the protocol."""
-    parts = urlsplit(url)
-    if not parts.hostname:
-        return False
-    port = parts.port or (443 if parts.scheme == "https" else 80)
-    try:
-        connect((parts.hostname, port), timeout=CONNECT_TIMEOUT_SECONDS).close()
-    except OSError:
-        return False
-    return True
-
-
-def _secrets_env_value(path: str, name: str) -> str | None:
-    """Flat KEY=VALUE parser (adapted from ai_kit_spec.local_secrets; this skill ships alone)."""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            lines = handle.read().splitlines()
-    except OSError:
-        return None
-    for line in lines:
-        key, sep, value = line.strip().partition("=")
-        if sep and key.strip() == name and not key.lstrip().startswith("#"):
-            return value.strip().strip("'\"") or None
-    return None
-
-
-def typesafe_key(env: Mapping[str, str]) -> tuple[str | None, str | None]:
-    """(value, source label). Callers print only the label."""
-    value = env.get("JEV_API_KEY", "").strip()
-    if value:
-        return value, "env"
-    key_file = env.get("JEV_API_KEY_FILE", "").strip()
-    if key_file:
-        try:
-            with open(os.path.expanduser(key_file), encoding="utf-8") as handle:
-                value = handle.read().strip()
-        except OSError:
-            value = ""
-        if value:
-            return value, "key_file"
-    value = _secrets_env_value(os.path.join(config_dir(env), "secrets.env"), "JEV_API_KEY") or ""
-    return (value, "secrets_env") if value else (None, None)
-
+# ─── client discovery ─────────────────────────────────────────────────────────
 
 def client_candidates(env: Mapping[str, str], override: str | None) -> list[str]:
     """Where the jev client may live, in lookup order."""
@@ -169,57 +92,25 @@ def find_client(env: Mapping[str, str], override: str | None) -> tuple[str | Non
     return None, tried
 
 
-# ─── consent ──────────────────────────────────────────────────────────────────
+def client_ok(path: str) -> bool:
+    """True only when the client's own text declares CLIENT_PROTOCOL = 2.
 
-def consent_path(env: Mapping[str, str]) -> str:
-    """The per-user consent record."""
-    return os.path.join(config_dir(env), "jev-consent.json")
-
-
-def read_consent(env: Mapping[str, str]) -> dict[str, Any]:
-    """The consent record, or {} when absent or unreadable."""
+    The text is read, never imported (D-10): an import would execute the client in this
+    process and reopen the env leak 24 D-06 closed. A client without the line — the live
+    global copy is env-driven and has no consent gate — is never run, so it never receives
+    the passed-through keys and URLs (T-21.1-22).
+    """
     try:
-        with open(consent_path(env), encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read(256 * 1024 + 1)
+    except (OSError, UnicodeError):
+        return False
+    if len(text) > 256 * 1024:
+        return False
+    return CLIENT_PROTOCOL_RE.search(text) is not None
 
 
-def write_consent(env: Mapping[str, str], data: dict[str, Any]) -> None:
-    """Atomic write (mkstemp + os.replace)."""
-    path = consent_path(env)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".jev-consent-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        os.replace(tmp, path)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
-
-
-def backend_host(backend: str, env: Mapping[str, str]) -> str | None:
-    """The endpoint host a consent entry is bound to."""
-    if backend == "typesafe":
-        return urlsplit(TYPESAFE_URL).hostname
-    url, _ = laya_url(env)
-    return urlsplit(url).hostname if url else None
-
-
-def consent_date(env: Mapping[str, str], backend: str) -> str | None:
-    """Consent is keyed by backend and endpoint host: a moved endpoint needs new consent."""
-    entry = read_consent(env).get(backend)
-    if isinstance(entry, dict) and entry.get("host") == backend_host(backend, env):
-        granted = entry.get("granted")
-        return granted if isinstance(granted, str) else None
-    return None
-
-
-# ─── items and calls ──────────────────────────────────────────────────────────
+# ─── items ────────────────────────────────────────────────────────────────────
 
 def _bad_text(value: Any) -> str | None:
     if not isinstance(value, str) or not value.strip():
@@ -234,19 +125,36 @@ def _bad_text(value: Any) -> str | None:
 
 
 def _criteria_error(item: dict[str, Any]) -> str | None:
-    criteria = item.get("criteria")
-    if item["type"] == "choice" and (not isinstance(criteria, dict) or len(criteria) < 2):
+    """A present `criteria` key — even null — is validated against the client's builder.
+
+    decide.py rejects, alone and before the one combined call, every shape the client would
+    reject the whole request for (T-21.1-29), so one bad item never loses its siblings'
+    answers.
+    """
+    if "criteria" not in item:
+        return None
+    criteria = item["criteria"]
+    if item["type"] == "noul":
+        if (not isinstance(criteria, dict) or set(criteria) != {"true", "false"}
+                or any(_bad_text(text) for text in criteria.values())):
+            return "bad_criteria"
+        return None
+    if not isinstance(criteria, dict) or len(criteria) < 2:
         return "choice_needs_two_criteria"
-    if criteria is not None and (not isinstance(criteria, dict) or any(
-            _bad_text(text) for text in criteria.values())):
+    if any(_bad_text(key) or _bad_text(text) for key, text in criteria.items()):
         return "bad_criteria"
     return None
 
 
 def item_error(item: Any) -> str | None:
     """Reason code when an item must not be sent anywhere, else None."""
-    if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
+    if (not isinstance(item, dict) or not isinstance(item.get("id"), str)
+            or not item["id"].strip()):
         return "missing_id"
+    if item["id"].startswith("#"):
+        # Reserved for decide.py's own rejection keys: an input id here could collide with
+        # the `#<stdin index>` key of a later rejected item.
+        return "reserved_id"
     if set(item) - ITEM_KEYS:
         return "unknown_key"
     if item.get("type") not in ITEM_TYPES:
@@ -258,16 +166,98 @@ def item_error(item: Any) -> str | None:
     return _criteria_error(item)
 
 
-def child_env(seams: Seams, backend: str, url: str, key: str | None) -> dict[str, str]:
-    """The client env for one backend: inherited JEV_*/OPENCODE_API_KEY dropped first."""
+def partition(items: list[Any]) -> tuple[list[dict[str, Any]], dict[str, Any], list[str]]:
+    """(valid items, result rows, stdin-order keys). Rejected items never leave; every later
+    item whose id already appeared — valid or not — is `duplicate_id`, and a rejected item
+    with a blank, repeated or reserved id is keyed `#<stdin index>` so the first occurrence
+    keeps its row and a rejection key never equals a legal id."""
+    valid, results, order = [], {}, []
+    seen: set[str] = set()
+    for index, item in enumerate(items):
+        reason = item_error(item)
+        identifier = item.get("id") if isinstance(item, dict) else None
+        identifier = identifier if isinstance(identifier, str) and identifier.strip() else ""
+        if not reason and identifier in seen:
+            reason = "duplicate_id"
+        if reason:
+            own_key = (identifier and not identifier.startswith("#")
+                       and identifier not in seen)
+            key = identifier if own_key else f"#{index}"
+            results[key] = {"error": "invalid_input", "reason": reason,
+                            "decided_by": "own_reasoning"}
+            order.append(key)
+            if identifier:
+                seen.add(identifier)
+            continue
+        valid.append(item)
+        seen.add(identifier)
+        results[identifier] = {}
+        order.append(identifier)
+    return valid, results, order
+
+
+# ─── output allowlists ────────────────────────────────────────────────────────
+
+def _scalar(value: Any) -> bool:
+    return value is None or isinstance(value, _SCALAR_TYPES)
+
+
+def public_backends(probe_list: Any) -> dict[str, dict[str, Any]]:
+    """The client's probe rows reduced to a fixed allowlist of scalar label fields.
+
+    A filtered pass-through, not: a compatible-but-leaky client's extra fields (a debug env,
+    a key copy) never reach stdout, whatever their names happen to be.
+    """
+    public = {}
+    for entry in probe_list if isinstance(probe_list, list) else []:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            continue
+        row = {key: entry[key] for key in _BACKEND_KEYS if key in entry and _scalar(entry[key])}
+        row["status"] = "usable" if row.get("usable") else str(row.get("reason") or "unusable")
+        public[entry["name"]] = row
+    return public
+
+
+def public_consent_used(raw: Any) -> list[dict[str, str]]:
+    """`[{backend, granted}]` string pairs only, so an announcement can name saved consent."""
+    used = []
+    for entry in raw if isinstance(raw, list) else []:
+        if (isinstance(entry, dict) and isinstance(entry.get("backend"), str)
+                and isinstance(entry.get("granted"), str)):
+            used.append({"backend": entry["backend"], "granted": entry["granted"]})
+    return used
+
+
+def public_remote_available(raw: Any) -> list[str]:
+    """Backend names only: the rows a consent question is owed to."""
+    if not isinstance(raw, list):
+        return []
+    return [entry for entry in raw if isinstance(entry, str)]
+
+
+def public_consent(got: dict[str, Any]) -> dict[str, Any]:
+    """The client's consent result reduced to the seven scalar announcement fields."""
+    if not isinstance(got.get("ok"), bool):
+        return {"ok": False, "reason": "client_bad_output"}
+    return {key: got[key] for key in _CONSENT_KEYS if key in got and _scalar(got[key])}
+
+
+# ─── the one client call ──────────────────────────────────────────────────────
+
+def child_env(seams: Seams, n_items: int) -> dict[str, str]:
+    """The child env: control variables scrubbed, decide.py's own bounds set.
+
+    Only the control variables are dropped; every key and URL variable passes through so the
+    client's rows resolve them (D-09). The deadline scales with the item count plus the local
+    rung's retry allowance: one call per item, two retries, one remote batch (D-12).
+    """
     env = {name: value for name, value in seams.env.items()
-           if not name.startswith(_SCRUB_PREFIXES) and name not in _SCRUB_NAMES}
-    env.update(BACKEND_ENV[backend])
-    env.update({"JEV_API_URL": url, "GSD_PATH_JEV": "1",
-                "GSD_PATH_JEV_TIMEOUT_SECONDS": CALL_TIMEOUT_SECONDS,
-                "JEV_MIN_CONFIDENCE": MIN_CONFIDENCE})
-    if key:
-        env["JEV_API_KEY"] = key
+           if name not in _CONTROL_NAMES
+           and not any(name.startswith(prefix) for prefix in _CONTROL_PREFIXES)}
+    env.update({"GSD_PATH_JEV": "1",
+                "GSD_PATH_JEV_TIMEOUT_SECONDS": str(CALL_TIMEOUT_SECONDS),
+                "GSD_PATH_JEV_DEADLINE_SECONDS": str(CALL_TIMEOUT_SECONDS * (n_items + 3)),
+                "JEV_CALLER": "ai-kit-gsd-spec-discuss"})
     return env
 
 
@@ -282,13 +272,19 @@ def reviewed_head(seams: Seams) -> str:
     return head if re.fullmatch(r"[0-9a-f]{40}", head) else ZERO_HEAD
 
 
-def call_client(seams: Seams, client: str, env: dict[str, str],
-                payload: dict[str, Any]) -> dict[str, Any]:
-    """Run the jev client; return its parsed JSON or a closed-set failure. Raw output is dropped."""
+def call_client(seams: Seams, client: str, env: dict[str, str], payload: dict[str, Any],
+                args: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Run the jev client once with `args` after it; parsed JSON or a closed-set failure.
+
+    argv is a list, never a shell. The subprocess timeout is the run deadline (scaled from
+    the item count) plus ten seconds. Raw client output is dropped on a parse failure: only
+    the closed-set status strings below can reach the caller.
+    """
+    items = payload.get("items")
+    timeout = float(CALL_TIMEOUT_SECONDS) * (len(items) + 3 if isinstance(items, list) else 3)
     try:
-        out = seams.run([sys.executable, "-B", client], input=json.dumps(payload),
-                        capture_output=True, text=True, env=env, check=False,
-                        timeout=float(CALL_TIMEOUT_SECONDS) + 10)
+        out = seams.run([sys.executable, "-B", client, *args], input=json.dumps(payload),
+                        capture_output=True, text=True, env=env, check=False, timeout=timeout + 10)
     except subprocess.TimeoutExpired:
         return {"status": "unavailable", "reason": "client_timeout"}
     except OSError:
@@ -301,143 +297,142 @@ def call_client(seams: Seams, client: str, env: dict[str, str],
                                                     "reason": "client_bad_output"}
 
 
-def typed_answer(answer: Any) -> dict[str, Any]:
-    """Re-emit only typed fields: choice, winning probability, fallback flag."""
-    if not isinstance(answer, dict):
-        return {"error": "invalid_response"}
-    if answer.get("type") == "noul" and isinstance(answer.get("noul"), (int, float)):
-        p = float(answer["noul"])
-        choice, top = ("yes", p) if p >= 0.5 else ("no", 1 - p)
-    elif isinstance(answer.get("probabilities"), dict) and isinstance(answer.get("choice"), str):
-        probabilities = answer["probabilities"].values()
-        if not all(isinstance(value, (int, float)) for value in probabilities):
-            return {"error": "invalid_response"}
-        choice, top = answer["choice"], float(max(probabilities))
-    else:
-        return {"error": "invalid_response"}
-    return {"choice": choice, "top": round(top, 4), "fallback": bool(answer.get("needs_fallback"))}
+def closed_status(got: dict[str, Any]) -> str:
+    """The closed-set status string of a client result that carried no trail."""
+    status = got.get("status")
+    return status if isinstance(status, str) else "unavailable"
 
 
-def answers_for(result: dict[str, Any], ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Per-id typed answers from one client result; a failed call marks every id with its reason."""
-    if result.get("status") != "ok":
-        reason = result.get("reason") if isinstance(result.get("reason"), str) else "unavailable"
-        return {identifier: {"error": reason} for identifier in ids}
-    answers = result.get("answers")
-    answers = answers if isinstance(answers, dict) else {}
-    return {identifier: typed_answer(answers.get(identifier)) for identifier in ids}
+# ─── trail mapping ────────────────────────────────────────────────────────────
+
+def typed_answer(entry: Any) -> dict[str, Any]:
+    """One trail rung reduced to the caller's column: {choice, top, fallback, model} or {error}."""
+    if not isinstance(entry, dict):
+        return {"error": "invalid_response"}
+    error = entry.get("error")
+    if error is not None:
+        return {"error": error if isinstance(error, str) else "invalid_response"}
+    top = entry.get("top")
+    if not isinstance(top, (int, float)) or isinstance(top, bool):
+        return {"error": "invalid_response"}
+    fallback = bool(entry.get("needs_fallback"))
+    model = entry.get("model") if isinstance(entry.get("model"), str) else None
+    choice: Any = None
+    noul = entry.get("noul")
+    if isinstance(noul, (int, float)) and not isinstance(noul, bool):
+        side = float(noul)
+        choice = "yes" if side >= 0.5 else "no"
+        top = max(side, 1.0 - side)
+    elif isinstance(entry.get("level"), str) and isinstance(entry.get("legend"), dict):
+        choice = entry["legend"].get(entry["level"])
+    elif isinstance(entry.get("choice"), str):
+        choice = entry["choice"]
+    if not isinstance(choice, str):
+        return {"error": "invalid_response"}
+    return {"choice": choice, "top": round(float(top), 4), "fallback": fallback, "model": model}
+
+
+def decided_by(trail: list[Any]) -> str:
+    """The backend of the last confident rung of the trail, else own reasoning (D-11)."""
+    winner = "own_reasoning"
+    for rung in trail:
+        if (isinstance(rung, dict) and "error" not in rung
+                and rung.get("needs_fallback") is False
+                and isinstance(rung.get("backend"), str)):
+            winner = rung["backend"]
+    return winner
+
+
+def fill_columns(got: dict[str, Any], results: dict[str, Any],
+                 valid: list[dict[str, Any]]) -> None:
+    """Map each valid item's rung trail onto one column per backend the client's table names."""
+    names = []
+    for entry in got.get("backends") if isinstance(got.get("backends"), list) else []:
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+            names.append(entry["name"])
+    for item in valid:
+        entry = results[item["id"]]
+        for name in names:
+            entry[name] = None
+        rungs = got.get("trail", {}).get(item["id"])
+        rungs = [rung for rung in rungs if isinstance(rung, dict)] \
+            if isinstance(rungs, list) else []
+        for rung in rungs:
+            name = rung.get("backend")
+            if name in entry:
+                entry[name] = typed_answer(rung)
+        entry["decided_by"] = decided_by(rungs)
 
 
 # ─── the ladder ───────────────────────────────────────────────────────────────
 
-def backend_status(seams: Seams) -> dict[str, dict[str, Any]]:
-    """Which backends are usable, and why not; carries the key internally, never printed."""
-    url, source = laya_url(seams.env)
-    laya: dict[str, Any] = {"url_source": source, "usable": False}
-    if not url:
-        laya["skip"] = "not_configured"
-    elif not reachable(url, seams.connect):
-        laya["skip"] = "unreachable"
-    elif not is_loopback(urlsplit(url).hostname) and not consent_date(seams.env, "laya"):
-        laya["skip"] = "no_consent"
-    else:
-        laya.update(usable=True, url=url)
-    key, key_source = typesafe_key(seams.env)
-    typesafe: dict[str, Any] = {"key_source": key_source, "usable": False}
-    if not key:
-        typesafe["skip"] = "no_key"
-    elif not consent_date(seams.env, "typesafe"):
-        typesafe["skip"] = "no_consent"
-    else:
-        typesafe.update(usable=True, key=key)
-    return {"laya": laya, "typesafe": typesafe}
-
-
-def needs_typesafe(entry: dict[str, Any], second_opinion: bool) -> bool:
-    """Laya missing, errored or low-confidence (or a forced second opinion)."""
-    laya = entry["laya"]
-    return second_opinion or laya is None or "error" in laya or laya["fallback"]
-
-
-def decided_by(entry: dict[str, Any]) -> str:
-    """The confident rung that settles an item; own reasoning when none is confident."""
-    for backend in ("typesafe", "laya"):
-        answer = entry[backend]
-        if answer and "error" not in answer and not answer["fallback"]:
-            return backend
-    return "own_reasoning"
-
-
-def partition(items: list[Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Valid items, plus result rows: rejected items carry their reason and never leave."""
-    valid, results = [], {}
-    for index, item in enumerate(items):
-        reason = item_error(item)
-        if reason:
-            identifier = item.get("id") if isinstance(item, dict) and item.get("id") else ""
-            results[str(identifier or f"#{index}")] = {
-                "error": "invalid_input", "reason": reason, "decided_by": "own_reasoning"}
-        else:
-            valid.append(item)
-            results[item["id"]] = {"laya": None, "typesafe": None}
-    return valid, results
-
-
 def run_ladder(seams: Seams, client: str | None, items: list[Any],
                second_opinion: bool = False) -> dict[str, Any]:
-    """Laya per item, then one TypeSafe batch of low or errored items (all, if second opinion)."""
-    status = backend_status(seams)
-    valid, results = partition(items)
-    head = reviewed_head(seams)
-    if client and status["laya"]["usable"] and not second_opinion:
-        env = child_env(seams, "laya", status["laya"]["url"], None)
-        for item in valid:  # one call per item: Laya reads the whole state, so contexts bleed
-            got = call_client(seams, client, env, {"reviewed_head": head, "items": [item]})
-            results[item["id"]]["laya"] = answers_for(got, [item["id"]])[item["id"]]
-    todo = [item for item in valid if needs_typesafe(results[item["id"]], second_opinion)]
-    if client and status["typesafe"]["usable"] and todo:
-        env = child_env(seams, "typesafe", TYPESAFE_URL, status["typesafe"]["key"])
-        got = call_client(seams, client, env, {"reviewed_head": head, "items": todo})
-        for identifier, answer in answers_for(got, [item["id"] for item in todo]).items():
-            results[identifier]["typesafe"] = answer
-    for item in valid:
-        results[item["id"]]["decided_by"] = decided_by(results[item["id"]])
-    public = {name: {k: v for k, v in info.items() if k not in ("key", "url")}
-              for name, info in status.items()}
-    public["client"] = {"found": bool(client)}
-    return {"advisory": True, "backends": public, "items": results}
+    """One client call carries every valid item; the trail becomes the per-backend columns.
 
+    `--second-opinion` asks the client to skip its local rungs, so every valid item goes to
+    the remote rung only. Without a compatible client every item is own reasoning (SPEC R4).
+    """
+    valid, results, order = partition(items)
+    backends: dict[str, Any] = {}
+    consent_used: list[dict[str, str]] = []
+    remote_available: list[str] = []
+    client_status: str | None = None
+    answered = False
+    if client is not None and valid:
+        if client_ok(client):
+            got = call_client(seams, client, child_env(seams, len(valid)),
+                              {"reviewed_head": reviewed_head(seams), "items": valid},
+                              args=("--skip-local",) if second_opinion else ())
+            if isinstance(got.get("trail"), dict):
+                answered = True
+                backends = public_backends(got.get("backends"))
+                consent_used = public_consent_used(got.get("consent_used"))
+                remote_available = public_remote_available(got.get("remote_available"))
+                fill_columns(got, results, valid)
+            else:
+                client_status = closed_status(got)
+        else:
+            client_status = "incompatible_client"
+    if not answered:
+        for item in valid:
+            results[item["id"]]["decided_by"] = "own_reasoning"
+    result = {"advisory": True, "backends": backends, "client": {"found": client is not None},
+              "consent_used": consent_used, "items": results, "order": order,
+              "remote_available": remote_available}
+    if client_status is not None:
+        result["client_status"] = client_status
+    return result
+
+
+# ─── detect and consent: delegated ────────────────────────────────────────────
 
 def detect(seams: Seams, override: str | None) -> dict[str, Any]:
-    """Detection report by label: no key values, no URL credentials."""
+    """Detection by label: one client `--probe`, its rows reduced to the fixed allowlist."""
     client, tried = find_client(seams.env, override)
-    status = backend_status(seams)
-    url, _ = laya_url(seams.env)
-    laya = {k: v for k, v in status["laya"].items() if k != "url"}
-    if url:
-        laya["endpoint"] = urlsplit(url).netloc.rpartition("@")[2]
-        laya["note"] = "TCP reachability only, not verified as a System One server"
-    typesafe = {k: v for k, v in status["typesafe"].items() if k != "key"}
-    for name, info in (("laya", laya), ("typesafe", typesafe)):
-        info["consent"] = consent_date(seams.env, name)
-    return {"laya": laya, "typesafe": typesafe,
-            "client": {"path": client, "tried": tried}}
+    if client is None:
+        return {"backends": {}, "client": {"path": None, "tried": tried},
+                "status": "no_client"}
+    if not client_ok(client):
+        return {"backends": {}, "client": {"path": client, "tried": tried},
+                "status": "incompatible_client"}
+    got = call_client(seams, client, child_env(seams, 1), {}, args=("--probe",))
+    status = got.get("status")
+    return {"backends": public_backends(got.get("backends")),
+            "client": {"path": client, "tried": tried},
+            "status": status if isinstance(status, str) else "client_bad_output"}
 
 
-def consent(seams: Seams, action: str, backend: str) -> dict[str, Any]:
-    """Grant, revoke or show the consent entry for one remote backend."""
-    host = backend_host(backend, seams.env)
-    data = read_consent(seams.env)
-    if action == "grant":
-        if not host:
-            return {"ok": False, "reason": "no_endpoint_configured"}
-        data[backend] = {"host": host, "granted": datetime.date.today().isoformat()}
-        write_consent(seams.env, data)
-    elif action == "revoke" and backend in data:
-        del data[backend]
-        write_consent(seams.env, data)
-    return {"ok": True, "backend": backend, "host": host,
-            "consent": consent_date(seams.env, backend), "file": consent_path(seams.env)}
+def consent(seams: Seams, action: str, backend: str, override: str | None) -> dict[str, Any]:
+    """Grant, revoke or show the consent entry: the client's record owns it (D-06)."""
+    client, _ = find_client(seams.env, override)
+    if client is None:
+        return {"ok": False, "reason": "no_client"}
+    if not client_ok(client):
+        return {"ok": False, "reason": "incompatible_client"}
+    got = call_client(seams, client, child_env(seams, 1), {},
+                      args=("consent", action, backend))
+    return public_consent(got)
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────────
@@ -448,13 +443,13 @@ def build_parser() -> argparse.ArgumentParser:
         prog="decide.py", description=(__doc__ or "").split("\n", 1)[0])
     parser.add_argument("--client", help="path to jev_review.py (else AI_KIT_JEV_CLIENT, roots)")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("detect", help="report backends by label; never prints a key")
+    sub.add_parser("detect", help="report the client's backend table by label; never a key")
     ladder = sub.add_parser("ladder", help='read {"items":[...]} on stdin')
     ladder.add_argument("--second-opinion", action="store_true",
-                        help="send every valid item to TypeSafe only")
+                        help="skip the local rungs: every valid item goes remote only")
     grant = sub.add_parser("consent", help="record, revoke or show remote-backend consent")
     grant.add_argument("action", choices=("grant", "revoke", "show"))
-    grant.add_argument("backend", choices=("typesafe", "laya"))
+    grant.add_argument("backend", help="a backend name from the client's table; it validates")
     return parser
 
 
@@ -465,7 +460,7 @@ def main(argv: list[str] | None = None, seams: Seams | None = None) -> int:
     if args.command == "detect":
         result = detect(seams, args.client)
     elif args.command == "consent":
-        result = consent(seams, args.action, args.backend)
+        result = consent(seams, args.action, args.backend, args.client)
     else:
         try:
             payload = json.load(sys.stdin)

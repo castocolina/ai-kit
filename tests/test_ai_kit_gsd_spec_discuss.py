@@ -1,11 +1,14 @@
-# tests/test_ai_kit_gsd_spec_discuss.py
 """Tests for skills/ai-kit-gsd-spec-discuss/scripts (decide.py, phase_range.py, edge_floor.py).
 
-Two layers: injected-seam unit tests, and subprocess tests that run the real CLI against a fake
-jev client in a tmpdir plus a real loopback listener. Never reads the user's real config.
+Two layers: injected-seam unit tests, and subprocess tests that run the real CLI against the
+real repo client (`skills/jev-fast-decision/scripts/jev_review.py`) with in-process HTTP stubs
+(`JevStub`, shared with tests.test_jev_fast_decision) standing in for the backends. Every env
+pins `JEV_LAYA_URL` to a stub or a closed loopback port (the client's default is the real local
+Laya) and uses a temp HOME/XDG tree. Never reads the user's real config.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -18,45 +21,75 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+from tests.test_jev_fast_decision import JevStub
+
 SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "ai-kit-gsd-spec-discuss" / "scripts"
+REPO_CLIENT = SCRIPTS.parent.parent / "jev-fast-decision" / "scripts" / "jev_review.py"
 sys.path.insert(0, str(SCRIPTS))
 import decide
 import edge_floor
 import phase_range
 
 SENTINEL = "SENTINEL-KEY-0123456789abcdef"
+HEAD = "0" * 40
+_PUBLIC_BACKEND_KEYS = {"name", "remote", "batch", "host", "usable", "reason", "key_source",
+                        "consent", "status"}
 
-# Fake jev client: logs what it received (env names, never a real key), answers by backend.
+# Fake jev client carrying the protocol line decide.py requires: logs its calls, answers every
+# item from one rung named "fake", and leaks its whole env when FAKE_JEV_LEAK is set (24 D-13).
 FAKE_CLIENT = textwrap.dedent('''
     import json, os, sys
+
+    CLIENT_PROTOCOL = 2
+
+    argv = sys.argv[1:]
+    if os.environ.get("FAKE_JEV_LOG"):
+        with open(os.environ["FAKE_JEV_LOG"], "a") as fh:
+            fh.write(json.dumps({"argv": argv}) + "\\n")
+
+    def emit(out):
+        if os.environ.get("FAKE_JEV_LEAK"):
+            out["debug_env"] = dict(os.environ)
+            sys.stderr.write(json.dumps(dict(os.environ)))
+        print(json.dumps(out))
+
+    if argv == ["--probe"]:
+        backends = [
+            {"name": "fake", "remote": False, "batch": False, "host": "127.0.0.1",
+             "usable": True, "key_source": None, "reason": None, "consent": None},
+            {"name": "remote-one", "remote": True, "batch": True, "host": "example.test",
+             "usable": False, "key_source": None, "reason": "no_key", "consent": None,
+             "debug_env": dict(os.environ)},
+        ]
+        emit({"status": "ok", "backends": backends})
+        sys.exit(0)
+    if len(argv) == 3 and argv[0] == "consent":
+        out = {"ok": True, "backend": argv[2], "host": "example.test",
+               "consent": "2026-10-18", "file": "/tmp/fake-consent.json",
+               "note": "fake note"}
+        if os.environ.get("FAKE_JEV_LEAK"):
+            out["debug_env"] = dict(os.environ)
+        print(json.dumps(out))
+        sys.exit(0)
+
     payload = json.load(sys.stdin)
-    url = os.environ.get("JEV_API_URL", "")
-    log = os.environ.get("FAKE_JEV_LOG")
-    if log:
-        with open(log, "a") as fh:
-            fh.write(json.dumps({"url": url, "model": os.environ.get("JEV_MODEL"),
-                                 "key": os.environ.get("JEV_API_KEY"),
-                                 "opencode": "OPENCODE_API_KEY" in os.environ,
-                                 "min": os.environ.get("JEV_MIN_CONFIDENCE"),
-                                 "ids": [i["id"] for i in payload["items"]]}) + "\\n")
-    remote = "typesafe" in url
-    answers = {}
+    answers, trail = {}, {}
     for item in payload["items"]:
-        names = list(item.get("criteria") or {"yes": 1, "no": 1})
-        top = 0.9 if remote or "sure" in item["id"] else 0.5
-        if item["type"] == "noul":
-            answers[item["id"]] = {"type": "noul", "noul": top, "needs_fallback": top < 0.7}
-            continue
-        rest = (1 - top) / (len(names) - 1)
-        answers[item["id"]] = {"type": "choice", "choice": names[0], "confidence": top,
-                               "probabilities": {n: (top if i == 0 else rest)
-                                                 for i, n in enumerate(names)},
-                               "needs_fallback": top < 0.7}
-    out = {"advisory": True, "status": "ok", "answers": answers}
-    if os.environ.get("FAKE_JEV_LEAK"):
-        out["debug_env"] = dict(os.environ)
-        sys.stderr.write(json.dumps(dict(os.environ)))
-    print(json.dumps(out))
+        names = list(item.get("criteria") or {"yes": "y", "no": "n"})
+        top = 0.9 if "sure" in item["id"] else 0.5
+        rest = round((1 - top) / (len(names) - 1), 4)
+        entry = {"backend": "fake", "model": "fake-1", "choice": names[0],
+                 "probabilities": {name: (top if i == 0 else rest)
+                                   for i, name in enumerate(names)},
+                 "top": top, "needs_fallback": top < 0.7}
+        answers[item["id"]] = entry
+        trail[item["id"]] = [entry]
+    emit({"status": "ok", "answers": answers, "trail": trail,
+          "backends": [{"name": "fake", "remote": False, "batch": False, "host": "127.0.0.1",
+                        "usable": True, "key_source": None, "reason": None, "consent": None}],
+          "consent_used": [{"backend": "remote-one", "granted": "2026-10-18",
+                            "debug_env": "leaked"}],
+          "remote_available": ["remote-one", 42]})
 ''')
 
 
@@ -65,154 +98,111 @@ def choice_item(identifier, context="Option A is smaller; option B is safer."):
             "context": context, "criteria": {"a": "the smaller option", "b": "the safer option"}}
 
 
-class _Listener:
-    """A real loopback TCP listener standing in for a reachable Laya."""
-
-    def __enter__(self):
-        self.sock = socket.socket()
-        self.sock.bind(("127.0.0.1", 0))
-        self.sock.listen(8)
-        self.url = f"http://127.0.0.1:{self.sock.getsockname()[1]}/v1/systemone"
-        return self
-
-    def __exit__(self, *exc):
-        self.sock.close()
+def noul_item(identifier, context="All green on the live check."):
+    return {"id": identifier, "type": "noul", "instructions": "Ship it?", "context": context}
 
 
 def closed_port_url():
+    """A loopback URL on a port nothing listens on (bound, then released right away)."""
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     return f"http://127.0.0.1:{port}/v1/systemone"
 
 
+def _isolated_decide(tmp):
+    """A copy of decide.py whose own skills root holds no client (the repo copy's always does)."""
+    scripts = Path(tmp) / "skills" / "ai-kit-gsd-spec-discuss" / "scripts"
+    scripts.mkdir(parents=True)
+    shutil.copy2(SCRIPTS / "decide.py", scripts / "decide.py")
+    return scripts
+
+
+def _load_client():
+    """The real client module, loaded by path: parity checks against its request builder."""
+    spec = importlib.util.spec_from_file_location("jev_review_parity", str(REPO_CLIENT))
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class _TmpHome(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.env = {"HOME": str(self.tmp), "XDG_CONFIG_HOME": str(self.tmp / "cfg"),
-                    "PATH": os.environ.get("PATH", "")}
+        home = self.tmp / "home"
+        home.mkdir()
+        self.env = {"HOME": str(home),
+                    "XDG_CONFIG_HOME": str(home / ".config"),
+                    "XDG_STATE_HOME": str(home / ".local" / "state"),
+                    "XDG_DATA_HOME": str(home / ".local" / "share"),
+                    "PATH": os.environ.get("PATH", ""),
+                    "JEV_LAYA_URL": closed_port_url()}
 
     def seams(self, **extra):
         env = {**self.env, **extra}
-        return decide.Seams(env=env, run=subprocess.run,
-                            connect=socket.create_connection)
+        return decide.Seams(env=env, run=subprocess.run)
 
 
 # ─── decide.py: unit layer ────────────────────────────────────────────────────
 
-class TestLayaUrl(unittest.TestCase):
-    def test_dedicated_variable_wins(self):
-        env = {"AI_KIT_LAYA_URL": "http://10.0.0.5:8010/x", "JEV_API_URL": "http://127.0.0.1:1/x"}
-        self.assertEqual(decide.laya_url(env), ("http://10.0.0.5:8010/x", "AI_KIT_LAYA_URL"))
-
-    def test_shared_variable_only_when_loopback(self):
-        self.assertEqual(decide.laya_url({"JEV_API_URL": "http://localhost:8010/v1"})[1],
-                         "JEV_API_URL")
-        self.assertEqual(decide.laya_url({"JEV_API_URL": "https://opencode.ai/zen/v1"}),
-                         (None, None))
-
-    def test_nothing_configured_probes_nothing(self):
-        self.assertEqual(decide.laya_url({}), (None, None))
-
-
-class TestTypesafeKey(_TmpHome):
-    def test_env_first(self):
-        self.assertEqual(decide.typesafe_key({**self.env, "JEV_API_KEY": SENTINEL}),
-                         (SENTINEL, "env"))
-
-    def test_key_file_named_by_env(self):
-        key_file = self.tmp / "k.txt"
-        key_file.write_text(SENTINEL + "\n")
-        env = {**self.env, "JEV_API_KEY_FILE": str(key_file)}
-        self.assertEqual(decide.typesafe_key(env), (SENTINEL, "key_file"))
-
-    def test_secrets_env_line(self):
-        secrets = self.tmp / "cfg" / "ai-kit" / "secrets.env"
-        secrets.parent.mkdir(parents=True)
-        secrets.write_text(f"# comment\nOTHER=1\nJEV_API_KEY='{SENTINEL}'\n")
-        self.assertEqual(decide.typesafe_key(self.env), (SENTINEL, "secrets_env"))
-
-    def test_none(self):
-        self.assertEqual(decide.typesafe_key(self.env), (None, None))
-
-
 class TestItemError(unittest.TestCase):
     def test_valid_items(self):
         self.assertIsNone(decide.item_error(choice_item("x")))
-        self.assertIsNone(decide.item_error({"id": "n", "type": "noul",
-                                             "instructions": "Ship it?", "context": "All green."}))
+        self.assertIsNone(decide.item_error(noul_item("n")))
+        self.assertIsNone(decide.item_error({**noul_item("n"),
+                                             "criteria": {"true": "holds",
+                                                          "false": "fails"}}))
 
     def test_commit_sha_in_summary_passes(self):
         sha = "a5b3fab" + "0" * 33
         self.assertIsNone(decide.item_error(choice_item("x", f"Amended in commit {sha}.")))
 
     def test_rejections(self):
-        cases = {
-            "empty_context": choice_item("x", context=" "),
-            "unknown_key": {**choice_item("x"), "evidence": "raw"},
-            "choice_needs_two_criteria": {**choice_item("x"), "criteria": {"a": "only"}},
-            "code_fence_context": choice_item("x", "```python\nprint(1)\n```"),
-            "secret_pattern_context": choice_item("x", "token sk-" + "a" * 30),
-            "too_long_context": choice_item("x", "y" * (decide.MAX_FIELD_CHARS + 1)),
-            "bad_type": {**choice_item("x"), "type": "score"},
-            "missing_id": {**choice_item(""), "id": ""},
-        }
-        for reason, item in cases.items():
-            with self.subTest(reason):
+        cases = [
+            ("empty_context", choice_item("x", context=" ")),
+            ("unknown_key", {**choice_item("x"), "evidence": "raw"}),
+            ("choice_needs_two_criteria", {**choice_item("x"), "criteria": {"a": "only"}}),
+            ("bad_criteria", {**noul_item("n"), "criteria": {"yes": "y", "no": "n"}}),
+            ("bad_criteria", {**noul_item("n"), "criteria": None}),
+            ("bad_criteria", {**noul_item("n"), "criteria": {"true": "holds"}}),
+            ("reserved_id", choice_item("#2")),
+            ("code_fence_context", choice_item("x", "```python\nprint(1)\n```")),
+            ("secret_pattern_context", choice_item("x", "token sk-" + "a" * 30)),
+            ("too_long_context", choice_item("x", "y" * (decide.MAX_FIELD_CHARS + 1))),
+            ("bad_type", {**choice_item("x"), "type": "box"}),
+            ("missing_id", {**choice_item(""), "id": ""}),
+            ("missing_id", {**choice_item(""), "id": " "}),
+        ]
+        for reason, item in cases:
+            with self.subTest(reason=reason, id=item["id"]):
                 self.assertEqual(decide.item_error(item), reason)
 
 
 class TestTypedAnswer(unittest.TestCase):
-    def test_choice_top_is_winning_probability(self):
-        got = decide.typed_answer({"type": "choice", "choice": "a", "confidence": 0.03,
-                                   "probabilities": {"a": 0.46, "b": 0.54 - 0.1, "c": 0.1},
-                                   "needs_fallback": True})
-        self.assertEqual(got, {"choice": "a", "top": 0.46, "fallback": True})
+    def test_choice_rung(self):
+        got = decide.typed_answer({"backend": "one", "model": "m-1", "type": "choice",
+                                   "choice": "a", "probabilities": {"a": 0.46, "b": 0.54},
+                                   "top": 0.54, "needs_fallback": True})
+        self.assertEqual(got, {"choice": "a", "top": 0.54, "fallback": True, "model": "m-1"})
 
-    def test_noul_maps_to_yes_no(self):
-        self.assertEqual(decide.typed_answer({"type": "noul", "noul": 0.2})["choice"], "no")
-        self.assertEqual(decide.typed_answer({"type": "noul", "noul": 0.2})["top"], 0.8)
+    def test_noul_rung_maps_to_yes_no(self):
+        low = decide.typed_answer({"backend": "one", "noul": 0.2, "top": 0.8,
+                                   "needs_fallback": False})
+        self.assertEqual(low["choice"], "no")
+        self.assertEqual(low["top"], 0.8)
+        self.assertEqual(decide.typed_answer({"backend": "one", "noul": 0.8, "top": 0.8,
+                                              "needs_fallback": False})["choice"], "yes")
+
+    def test_error_rung(self):
+        self.assertEqual(decide.typed_answer({"backend": "one", "error": "http_503"}),
+                         {"error": "http_503"})
 
     def test_garbage(self):
         self.assertEqual(decide.typed_answer("nope"), {"error": "invalid_response"})
-
-
-class TestConsent(_TmpHome):
-    def test_round_trip_and_host_binding(self):
-        with _Listener() as laya:
-            seams = self.seams(AI_KIT_LAYA_URL=laya.url.replace("127.0.0.1", "10.9.9.9"))
-            self.assertIsNone(decide.consent_date(seams.env, "laya"))
-            decide.consent(seams, "grant", "laya")
-            self.assertIsNotNone(decide.consent_date(seams.env, "laya"))
-            moved = self.seams(AI_KIT_LAYA_URL="http://10.1.1.1:8010/v1")
-            self.assertIsNone(decide.consent_date(moved.env, "laya"))
-            decide.consent(seams, "revoke", "laya")
-            self.assertIsNone(decide.consent_date(seams.env, "laya"))
-
-    def test_grant_without_endpoint_refuses(self):
-        self.assertFalse(decide.consent(self.seams(), "grant", "laya")["ok"])
-
-
-class TestBackendStatus(_TmpHome):
-    def test_detection_combinations(self):
-        with _Listener() as laya:
-            rows = [
-                ({}, "not_configured", "no_key"),
-                ({"AI_KIT_LAYA_URL": closed_port_url()}, "unreachable", "no_key"),
-                ({"AI_KIT_LAYA_URL": laya.url, "JEV_API_KEY": SENTINEL}, None, "no_consent"),
-            ]
-            for extra, laya_skip, ts_skip in rows:
-                with self.subTest(extra=sorted(extra)):
-                    status = decide.backend_status(self.seams(**extra))
-                    self.assertEqual(status["laya"].get("skip"), laya_skip)
-                    self.assertEqual(status["typesafe"].get("skip"), ts_skip)
-
-    def test_remote_laya_needs_its_own_consent(self):
-        seams = self.seams(AI_KIT_LAYA_URL="http://10.9.9.9:8010/v1", JEV_API_KEY=SENTINEL)
-        decide.consent(seams, "grant", "typesafe")
-        fake = decide.Seams(env=seams.env, run=seams.run, connect=lambda *a, **k: socket.socket())
-        self.assertEqual(decide.backend_status(fake)["laya"]["skip"], "no_consent")
+        self.assertEqual(decide.typed_answer({"backend": "one", "model": "m-1"}),
+                         {"error": "invalid_response"})
 
 
 class TestFindClient(_TmpHome):
@@ -220,7 +210,7 @@ class TestFindClient(_TmpHome):
         client = self.tmp / "jev_review.py"
         client.write_text("")
         self.assertEqual(decide.find_client(self.env, str(client))[0], str(client))
-        rooted = self.tmp / ".claude" / "skills" / decide.CLIENT_REL
+        rooted = self.tmp / "home" / ".claude" / "skills" / decide.CLIENT_REL
         rooted.parent.mkdir(parents=True)
         rooted.write_text("")
         # 21.1-01 put the client in this repo, so the repo's own skills/ root wins (D-02);
@@ -235,96 +225,249 @@ class TestFindClient(_TmpHome):
 class TestLadderCli(_TmpHome):
     def setUp(self):
         super().setUp()
-        self.client = self.tmp / "fake_jev.py"
-        self.client.write_text(FAKE_CLIENT)
+        self.fake = self.tmp / "fake_jev.py"
+        self.fake.write_text(FAKE_CLIENT)
         self.log = self.tmp / "calls.jsonl"
         self.env["FAKE_JEV_LOG"] = str(self.log)
 
-    def run_cli(self, args, stdin="", **extra):
+    def run_cli(self, args, stdin="", client=None, **extra):
+        target = str(client or REPO_CLIENT)
         return subprocess.run([sys.executable, str(SCRIPTS / "decide.py"),
-                               "--client", str(self.client), *args],
+                               "--client", target, *args],
                               input=stdin, capture_output=True, text=True, check=False,
-                              env={**self.env, **extra}, cwd=self.tmp, timeout=60)
+                              env={**self.env, **extra}, cwd=self.tmp, timeout=120)
+
+    def cli_json(self, args, **extra):
+        out = self.run_cli(args, **extra)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
 
     def calls(self):
         if not self.log.exists():
             return []
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
-    def ladder(self, items, *flags, **extra):
-        out = self.run_cli(["ladder", *flags], json.dumps({"items": items}), **extra)
+    def ladder(self, items, *flags, client=None, **extra):
+        out = self.run_cli(["ladder", *flags], json.dumps({"items": items}),
+                           client=client, **extra)
         self.assertEqual(out.returncode, 0, out.stderr)
         return json.loads(out.stdout), out
 
-    def grant_typesafe(self):
-        self.assertEqual(self.run_cli(["consent", "grant", "typesafe"]).returncode, 0)
+    def grant_typesafe(self, **extra):
+        return self.cli_json(["consent", "grant", "typesafe"], **extra)
 
-    def test_no_backend_completes_with_own_reasoning_and_no_calls(self):
-        result, _ = self.ladder([choice_item("a1"), choice_item("a2")])
-        self.assertEqual({v["decided_by"] for v in result["items"].values()}, {"own_reasoning"})
-        self.assertEqual(self.calls(), [])
+    @staticmethod
+    def _client_calls(calls):
+        return [call for call in calls if call[0][0][:2] == [sys.executable, "-B"]]
 
-    def test_laya_one_call_per_item_then_typesafe_batch(self):
-        self.grant_typesafe()
-        with _Listener() as laya:
+    def test_ladder_laya_then_remote_batch(self):
+        with (JevStub(tops={"low1": 0.5, "low2": 0.5}) as laya,
+              JevStub(model="typesafe-1") as remote):
+            extra = {"JEV_LAYA_URL": laya.url,
+                     "JEV_TYPESAFE_URL": f"http://127.0.0.1:{remote.port}",
+                     "TYPESAFE_API_KEY": SENTINEL}
+            granted = self.grant_typesafe(**extra)
+            self.assertTrue(granted["ok"])
             result, _ = self.ladder([choice_item("sure1"), choice_item("low1"),
-                                     choice_item("low2")],
-                                    AI_KIT_LAYA_URL=laya.url, JEV_API_KEY=SENTINEL,
-                                    OPENCODE_API_KEY="inherited", JEV_MIN_CONFIDENCE="0.1")
-        calls = self.calls()
-        laya_calls = [c for c in calls if "typesafe" not in c["url"]]
-        ts_calls = [c for c in calls if "typesafe" in c["url"]]
-        self.assertEqual([c["ids"] for c in laya_calls], [["sure1"], ["low1"], ["low2"]])
-        self.assertEqual([c["ids"] for c in ts_calls], [["low1", "low2"]])
-        self.assertTrue(all(c["key"] is None for c in laya_calls), "key reached Laya")
-        self.assertEqual(ts_calls[0]["key"], SENTINEL)
-        self.assertFalse(any(c["opencode"] for c in calls))
-        self.assertEqual({c["min"] for c in calls}, {decide.MIN_CONFIDENCE})
+                                     choice_item("low2")], **extra)
+            laya_bodies, remote_bodies = laya.bodies, remote.bodies
+            laya_headers = [record["headers"] for record in laya.posts]
+            remote_headers = [record["headers"] for record in remote.posts]
+        self.assertEqual([sorted(body["questions"]) for body in laya_bodies],
+                         [["sure1"], ["low1"], ["low2"]])
+        self.assertEqual([sorted(body["questions"]) for body in remote_bodies],
+                         [["low1", "low2"]])
+        self.assertNotIn("Authorization", laya_headers[0], "the key reached the local rung")
+        self.assertEqual(remote_headers[0].get("Authorization"), f"Bearer {SENTINEL}")
         self.assertEqual(result["items"]["sure1"]["decided_by"], "laya")
         self.assertEqual(result["items"]["low1"]["decided_by"], "typesafe")
+        self.assertTrue(result["items"]["low1"]["laya"]["fallback"])
+        for identifier in ("sure1", "low1", "low2"):
+            columns = set(result["items"][identifier]) - {"decided_by"}
+            self.assertEqual(columns, {"laya", "typesafe", "opencode"})
+        self.assertIsNone(result["items"]["sure1"]["opencode"])
 
-    def test_no_consent_means_zero_remote_calls(self):
-        result, _ = self.ladder([choice_item("x")], JEV_API_KEY=SENTINEL)
-        self.assertEqual(self.calls(), [])
-        self.assertEqual(result["backends"]["typesafe"]["skip"], "no_consent")
+    def test_ladder_no_consent_zero_remote(self):
+        environ_before = dict(os.environ)
+        with JevStub(tops={"low1": 0.5}) as laya, JevStub(model="typesafe-1") as remote:
+            result, _ = self.ladder([choice_item("low1")], JEV_LAYA_URL=laya.url,
+                                    JEV_TYPESAFE_URL=f"http://127.0.0.1:{remote.port}",
+                                    TYPESAFE_API_KEY=SENTINEL, JEV_ALLOW_REMOTE="1")
+            remote_posts = remote.posts
+        self.assertEqual(remote_posts, [], "the record check, not the parent env, gates remotes")
+        self.assertEqual(result["items"]["low1"]["decided_by"], "own_reasoning")
+        self.assertEqual(result["remote_available"], ["typesafe"])
+        self.assertEqual(result["consent_used"], [])
+        self.assertEqual(dict(os.environ), environ_before)
+        self.assertNotIn("GSD_PATH_JEV", os.environ, "the kill switch leaked into the parent env")
 
-    def test_second_opinion_skips_laya(self):
-        self.grant_typesafe()
-        with _Listener() as laya:
-            result, _ = self.ladder([choice_item("sure1")], "--second-opinion",
-                                    AI_KIT_LAYA_URL=laya.url, JEV_API_KEY=SENTINEL)
-        self.assertEqual([c["url"] for c in self.calls()], [decide.TYPESAFE_URL])
-        self.assertIsNone(result["items"]["sure1"]["laya"])
-        self.assertEqual(result["items"]["sure1"]["decided_by"], "typesafe")
+    def test_ladder_child_env_scrubbed(self):
+        items = [choice_item("a1"), choice_item("a2"), choice_item("a3")]
+        parent_env = {**self.env, "JEV_BACKEND": "laya", "JEV_ALLOW_REMOTE": "1",
+                      "JEV_MIN_CONFIDENCE": "0.1", "GSD_PATH_JEV_DEADLINE_SECONDS": "999",
+                      "TYPESAFE_API_KEY": SENTINEL, "JEV_TYPESAFE_URL": "http://127.0.0.1:9"}
+        env_before = dict(parent_env)
+        environ_before = dict(os.environ)
+        calls = []
+
+        def record(*args, **kwargs):
+            calls.append((args, kwargs))
+            return subprocess.run(*args, **kwargs)
+
+        result = decide.run_ladder(decide.Seams(env=parent_env, run=record),
+                                   str(REPO_CLIENT), items)
+        client_calls = self._client_calls(calls)
+        self.assertEqual(len(client_calls), 1)
+        child = client_calls[0][1]["env"]
+        for name in ("JEV_BACKEND", "JEV_ALLOW_REMOTE", "JEV_MIN_CONFIDENCE"):
+            self.assertNotIn(name, child, f"control variable {name} reached the client")
+        self.assertNotEqual(child["GSD_PATH_JEV_DEADLINE_SECONDS"], "999",
+                            "the parent's GSD_PATH_JEV* value reached the client")
+        self.assertEqual(child["GSD_PATH_JEV"], "1")
+        self.assertEqual(child["GSD_PATH_JEV_TIMEOUT_SECONDS"], "30")
+        self.assertEqual(child["GSD_PATH_JEV_DEADLINE_SECONDS"], str(30 * (len(items) + 3)))
+        self.assertEqual(child["JEV_CALLER"], "ai-kit-gsd-spec-discuss")
+        self.assertEqual(child["TYPESAFE_API_KEY"], SENTINEL, "keys pass through to the client")
+        self.assertEqual(child["JEV_TYPESAFE_URL"], "http://127.0.0.1:9")
+        self.assertEqual(parent_env, env_before)
+        self.assertEqual(dict(os.environ), environ_before)
+        self.assertEqual(result["client"], {"found": True})
+
+    def test_ladder_one_subprocess(self):
+        with JevStub() as laya:
+            calls = []
+
+            def record(*args, **kwargs):
+                calls.append((args, kwargs))
+                return subprocess.run(*args, **kwargs)
+
+            result = decide.run_ladder(decide.Seams(env={**self.env, "JEV_LAYA_URL": laya.url},
+                                                    run=record),
+                                       str(REPO_CLIENT), [choice_item("a1"), choice_item("a2")])
+        self.assertEqual(len(self._client_calls(calls)), 1)
+        self.assertEqual(result["items"]["a1"]["decided_by"], "laya")
+        self.assertEqual(result["items"]["a2"]["decided_by"], "laya")
+
+    def test_ladder_no_client(self):
+        scripts = _isolated_decide(self.tmp)
+        out = subprocess.run([sys.executable, str(scripts / "decide.py"), "ladder"],
+                             input=json.dumps({"items": [choice_item("a1"), choice_item("a2")]}),
+                             capture_output=True, text=True, check=False,
+                             env={"HOME": str(self.tmp / "home"), "PATH": self.env["PATH"]},
+                             cwd=self.tmp, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        result = json.loads(out.stdout)
+        self.assertFalse(result["client"]["found"])
+        self.assertNotIn("client_status", result)
+        self.assertEqual({row["decided_by"] for row in result["items"].values()},
+                         {"own_reasoning"})
+
+    def test_ladder_incompatible_client(self):
+        stale = self.tmp / "stale_jev.py"
+        stale.write_text(FAKE_CLIENT.replace("CLIENT_PROTOCOL = 2", "CLIENT_PROTOCOL = 1"))
+        result, _ = self.ladder([choice_item("a1")], client=stale)
+        self.assertEqual(self.calls(), [], "a client without the protocol line must never run")
+        self.assertEqual(result["client_status"], "incompatible_client")
+        self.assertEqual(result["items"]["a1"]["decided_by"], "own_reasoning")
+        self.assertEqual(result["client"], {"found": True})
+
+    def test_ladder_order_and_encoding(self):
+        items = [choice_item("b"), choice_item("a"), choice_item("naïve")]
+        result, out = self.ladder(items)
+        self.assertEqual(result["order"], ["b", "a", "naïve"])
+        self.assertEqual(json.loads(out.stdout)["items"]["naïve"]["decided_by"], "own_reasoning")
+        self.assertEqual(out.stdout, json.dumps(result, indent=1, sort_keys=True) + "\n")
+
+    def test_ladder_mixed_batch_keeps_valid_siblings(self):
+        items = [choice_item("good1"),
+                 {**noul_item("bad_noul"), "criteria": {"yes": "y", "no": "n"}},
+                 choice_item("good1"),
+                 " ",
+                 noul_item("good2")]
+        with JevStub() as laya:
+            result, _ = self.ladder(items, JEV_LAYA_URL=laya.url)
+            again, _ = self.ladder([noul_item("#2"), noul_item("good"), noul_item("good")],
+                                   JEV_LAYA_URL=laya.url)
+            bodies = laya.bodies
+        self.assertEqual([sorted(body["questions"]) for body in bodies],
+                         [["good1"], ["good2"], ["good"]])
+        self.assertEqual(result["items"]["bad_noul"]["reason"], "bad_criteria")
+        self.assertEqual(result["items"]["#2"]["reason"], "duplicate_id")
+        self.assertEqual(result["items"]["#3"]["reason"], "missing_id")
+        self.assertEqual(result["order"], ["good1", "bad_noul", "#2", "#3", "good2"])
+        self.assertEqual(result["items"]["good1"]["decided_by"], "laya")
+        self.assertEqual(result["items"]["good2"]["decided_by"], "laya")
+        self.assertEqual(again["items"]["#0"]["reason"], "reserved_id")
+        self.assertEqual(again["items"]["#2"]["reason"], "duplicate_id")
+        self.assertEqual(again["items"]["good"]["decided_by"], "laya")
+        self.assertEqual(again["order"], ["#0", "good", "#2"])
+        self.assertEqual(set(again["items"]), {"#0", "good", "#2"})
 
     def test_no_key_value_in_any_output_even_from_a_leaky_client(self):
-        self.grant_typesafe()
-        result, out = self.ladder([choice_item("x")], JEV_API_KEY=SENTINEL, FAKE_JEV_LEAK="1")
-        self.assertEqual(result["items"]["x"]["decided_by"], "typesafe")
+        result, out = self.ladder([choice_item("sure1")], client=self.fake,
+                                  JEV_API_KEY=SENTINEL, FAKE_JEV_LEAK="1")
+        self.assertEqual(result["items"]["sure1"]["decided_by"], "fake")
         self.assertNotIn(SENTINEL, out.stdout + out.stderr)
-        detect = self.run_cli(["detect"], JEV_API_KEY=SENTINEL)
-        self.assertNotIn(SENTINEL, detect.stdout + detect.stderr)
-        self.assertEqual(json.loads(detect.stdout)["typesafe"]["key_source"], "env")
+        self.assertEqual(result["consent_used"],
+                         [{"backend": "remote-one", "granted": "2026-10-18"}])
+        self.assertEqual(result["remote_available"], ["remote-one"])
+        for entry in result["backends"].values():
+            self.assertLessEqual(set(entry), _PUBLIC_BACKEND_KEYS)
+
+    def test_item_validation_matches_client(self):
+        client = _load_client()
+        edges = [
+            {**noul_item("n_true_false"), "criteria": {"true": "holds", "false": "fails"}},
+            {**noul_item("n_null"), "criteria": None},
+            {**noul_item("n_yes_no"), "criteria": {"yes": "y", "no": "n"}},
+            {**noul_item("n_one_key"), "criteria": {"true": "holds"}},
+            {**choice_item("c_one_key"), "criteria": {"a": "only"}},
+            {**choice_item("c_empty_key"), "criteria": {"": "empty", "b": "fine"}},
+            {**choice_item("c_space_key"), "criteria": {" ": "space", "b": "fine"}},
+            {**noul_item(" "), },
+            {**noul_item("empty_ctx"), "context": " "},
+            {**noul_item("extra_key"), "evidence": "raw"},
+        ]
+        for item in edges:
+            with self.subTest(id=item["id"]):
+                if decide.item_error(item) is None:
+                    client.request_body({"reviewed_head": HEAD, "items": [item]}, "jev-1")
+
+    def test_ladder_reports_consent_metadata(self):
+        with (JevStub(tops={"low1": 0.5, "low2": 0.5}) as laya,
+              JevStub(model="typesafe-1") as remote):
+            extra = {"JEV_LAYA_URL": laya.url,
+                     "JEV_TYPESAFE_URL": f"http://127.0.0.1:{remote.port}",
+                     "TYPESAFE_API_KEY": SENTINEL}
+            granted = self.grant_typesafe(**extra)
+            with_record, _ = self.ladder([choice_item("low1"), choice_item("low2")], **extra)
+            no_record, _ = self.ladder([choice_item("low1")],
+                                       XDG_CONFIG_HOME=str(self.tmp / "other"), **extra)
+        self.assertEqual(with_record["consent_used"],
+                         [{"backend": "typesafe", "granted": granted["consent"]}])
+        self.assertEqual(with_record["items"]["low1"]["decided_by"], "typesafe")
+        self.assertEqual(no_record["consent_used"], [])
+        self.assertEqual(no_record["remote_available"], ["typesafe"])
+        self.assertEqual(no_record["items"]["low1"]["decided_by"], "own_reasoning")
 
     def test_invalid_item_rejected_alone(self):
-        self.grant_typesafe()
-        result, _ = self.ladder([choice_item("bad", context=""), choice_item("good")],
-                                JEV_API_KEY=SENTINEL)
+        with JevStub() as laya:
+            result, _ = self.ladder([choice_item("bad", context=""), choice_item("good")],
+                                    JEV_LAYA_URL=laya.url)
+            bodies = laya.bodies
         self.assertEqual(result["items"]["bad"]["reason"], "empty_context")
-        self.assertEqual([c["ids"] for c in self.calls()], [["good"]])
+        self.assertEqual([sorted(body["questions"]) for body in bodies], [["good"]])
 
     def test_unusable_stdin_exits_2(self):
         self.assertEqual(self.run_cli(["ladder"], "not json").returncode, 2)
         self.assertEqual(self.run_cli(["ladder"], '{"items": []}').returncode, 2)
 
 
-@unittest.skipUnless((Path.home() / ".claude" / "skills" / decide.CLIENT_REL).is_file(),
-                     "jev-fast-decision not installed")
 class TestRealClientSmoke(_TmpHome):
     def test_real_client_answers_disabled_shape_without_backends(self):
-        real = Path.home() / ".claude" / "skills" / decide.CLIENT_REL
-        out = subprocess.run([sys.executable, "-B", str(real)], input="{}", capture_output=True,
-                             text=True, env={"PATH": self.env["PATH"]}, check=False, timeout=30)
+        out = subprocess.run([sys.executable, "-B", str(REPO_CLIENT)], input="{}",
+                             capture_output=True, text=True,
+                             env={"PATH": self.env["PATH"]}, check=False, timeout=30)
         self.assertEqual(json.loads(out.stdout)["status"], "disabled")
 
 
