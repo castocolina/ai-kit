@@ -117,3 +117,22 @@ fixture-backed, and the plan states only the effect the spike proves. The WHAT i
 
 *Phase: 22-pi-live-validation*
 *Context gathered: 2026-10-14*
+
+## Orchestrator rulings on 22-RESEARCH.md open questions (2026-10-23)
+
+- **Q1 (agent-run L2 mock provider and headless pi smoke):** yes, only inside a scratch
+  `PI_CODING_AGENT_DIR` with no real credentials and a local mock provider; nothing leaves the
+  machine. Ladder: Laya A 0.97, consistent with the owner's scratch-HOME rule.
+- **Q2 (real 85-model capture):** owner-run. It needs the real pi agent directory, which the run
+  never reads; the plan ships the parser against a trimmed fixture the owner refreshes.
+- **Q3 (L3 provider arms):** owner-run (real model calls, approval); the plan records the verdict
+  as `session-steer (static + mock evidence)` until the owner's L3 run upgrades or refutes it.
+- **Q4 (context window / max output in the snapshot):** carry the exact integers and bump
+  `RUNTIMES_SCHEMA_VERSION` with a migration test (R1 names both fields). Ladder: Laya A 0.82.
+- **Q5 (`_PI_SKILL_SKIP` text cites gsd-core 1.16.0):** re-check against the installed 1.17.0 and
+  update the cited version only where the behaviour is unchanged.
+- **Q6 (upstream hook steers the `sonnet` tier only):** a documented limitation; labels say opus
+  and haiku are inert on pi. No upstream change in this phase.
+- Skill-judge for the changed SKILL.md: judge the pre-change digest first (no baseline exists for
+  the new lane), then the post-change digest, with the owner's judge set (one clean-context
+  native Opus subagent + opencode `router-env/my-plan-review`).
