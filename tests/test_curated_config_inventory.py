@@ -1125,6 +1125,30 @@ class TestBuildCandidates(unittest.TestCase):
 
 
 class TestGsdCoreResolution(unittest.TestCase):
+    def test_pi_session_provider_recorded_on_pi_only(self):
+        values = (("anthropic", "anthropic"), (None, None), ("a b", None), ("$(id)", None))
+        for raw, expected in values:
+            with self.subTest(provider=raw):
+                _home, env = self._home_env()
+                project = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+                make_gsd_install(os.path.join(project, ".pi", "gsd-core"), version="1.16.0")
+                if raw is None:
+                    env.pop("PI_PROVIDER", None)
+                else:
+                    env["PI_PROVIDER"] = raw
+                code, parsed, _ = run_inventory(project, env, FakeRun(), "--host", "pi")
+                self.assertEqual(code, 0)
+                self.assertEqual(parsed["pi_session"], {"provider": expected})
+        _home, env = self._home_env()
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        make_gsd_install(os.path.join(project, ".claude", "gsd-core"), version="1.16.0")
+        env["PI_PROVIDER"] = "anthropic"
+        code, parsed, _ = run_inventory(project, env, FakeRun(), "--host", "codex")
+        self.assertEqual(code, 0)
+        self.assertNotIn("pi_session", parsed)
+
     def _home_env(self):
         home = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, home, ignore_errors=True)

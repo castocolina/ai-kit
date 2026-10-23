@@ -204,6 +204,49 @@ class TestPlanSetTracer(unittest.TestCase):
 
 
 class TestPlanSetRefusals(unittest.TestCase):
+    def test_pi_sonnet_session_bare_id_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = _write_pair(tmp, host="pi")
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "model_profile_overrides.pi.sonnet", "claude-sonnet-5"
+            )
+            self.assertEqual(code, 0, err)
+            saved = json.loads(_read_bytes(plan_path))
+            entry = next(
+                e for e in saved["entries"] if e["key"] == "model_profile_overrides.pi.sonnet"
+            )
+            self.assertEqual(
+                (entry["op"], entry["value"], entry["source"]),
+                ("set", "claude-sonnet-5", "user"),
+            )
+
+    def test_pi_sonnet_other_values_refused_even_forced(self):
+        for value in ("router-env/my-coding", "gpt-5.6-terra", "anthropic/claude-sonnet-5"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                inv_path, plan_path, _inv, _plan = _write_pair(tmp, host="pi")
+                raw = _read_bytes(plan_path)
+                code, _, err = _run_plan_set(
+                    plan_path, inv_path, "model_profile_overrides.pi.sonnet", value, force=True
+                )
+                self.assertEqual(code, 2, err)
+                self.assertEqual(_read_bytes(plan_path), raw)
+
+    def test_pi_sonnet_refused_without_session_provider(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _inv_path, _plan_path, inv, plan = _write_pair(tmp, host="pi")
+            inv["pi_session"] = {"provider": None}
+            call = plan_edit.EditCall(plan, inv, True, _strict_encode())
+            with self.assertRaisesRegex(plan_edit.PlanEditError, "PI_PROVIDER.*plan-unset"):
+                plan_edit.plan_set(call, "model_profile_overrides.pi.sonnet", "anything")
+
+    def test_pi_unset_still_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = _write_pair(tmp, host="pi")
+            code, _, err = _run_plan_unset(
+                plan_path, inv_path, "model_profile_overrides.pi.sonnet"
+            )
+            self.assertEqual(code, 0, err)
+
     def _assert_refusal(self, tmp, argv_extra, needle):
         inv_path, plan_path, _inv, _plan = _write_pair(tmp)
         raw = _read_bytes(plan_path)

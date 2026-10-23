@@ -492,6 +492,22 @@ def _fast_twin_warnings(inv: dict, value: Any) -> list[str]:
 def _special_keys(
     call: EditCall, key: str, entry: dict, value: Any, warnings: list[str],
 ) -> tuple[Any, bool]:
+    if key == "model_profile_overrides.pi.sonnet":
+        allowed = roles.pi_session_ids(call.inv)
+        session = call.inv.get("pi_session")
+        provider = session.get("provider") if isinstance(session, dict) else None
+        if not allowed:
+            raise PlanEditError(
+                "model_profile_overrides.pi.sonnet: no candidate from the session provider "
+                "(PI_PROVIDER was unset when inventory ran, or the provider serves no listed "
+                "model); run inventory inside the pi session, or plan-unset it"
+            )
+        if value not in allowed:
+            raise PlanEditError(
+                f"{value!r} is not a bare model id the session provider {provider} serves "
+                f"(candidates: {', '.join(allowed)}); gsd-core's hook writes it into every "
+                "request, so --force cannot pin it"
+            )
     if key == "workflow.cross_ai_timeout":
         return _check_timeout(value), False
     if key in cross_ai.COMMAND_KEYS:

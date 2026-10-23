@@ -918,6 +918,66 @@ class TestSlotEdges(unittest.TestCase):
         )
         self.assertEqual(len([n for n in plan["notes"] if n["kind"] == "pi"]), 1)
 
+    def test_pi_sonnet_candidates_are_session_provider_bare_ids(self):
+        candidates = [
+            cand("anthropic/b", runtime="pi"),
+            cand("anthropic/a", runtime="pi"),
+            cand("openai/c", runtime="pi"),
+            cand("anthropic/z", runtime="codex"),
+        ]
+        for provider, expected in (("anthropic", ["a", "b"]), ("openai", ["c"])):
+            inv = make_inventory(host="pi", candidates=candidates)
+            inv["pi_session"] = {"provider": provider}
+            entry = entry_map(build(inv))["model_profile_overrides.pi.sonnet"]
+            self.assertEqual(entry["candidates"], [
+                {"model": model, "runtime": "pi"} for model in expected
+            ])
+            self.assertTrue(all("/" not in row["model"] for row in entry["candidates"]))
+        inv = make_inventory(host="pi", candidates=candidates)
+        inv["pi_session"] = {"provider": None}
+        entry = entry_map(build(inv))["model_profile_overrides.pi.sonnet"]
+        self.assertEqual(entry["candidates"], [])
+        self.assertIn("PI_PROVIDER is unset", entry["why"])
+
+    def test_pi_plan_writes_no_per_agent_or_opus_haiku_keys(self):
+        for rigor in ("mvp", "standard", "rigorous"):
+            for profile in ("adaptive", "quality", "budget"):
+                plan = build(make_inventory(host="pi"), rigor=rigor, profile=profile)
+                entries = plan["entries"]
+                keys = {entry["key"] for entry in entries}
+                self.assertFalse(any(
+                    entry["key"].startswith("model_overrides.") and entry["op"] == "set"
+                    for entry in entries
+                ))
+                self.assertNotIn("model_profile_overrides.pi.opus", keys)
+                self.assertNotIn("model_profile_overrides.pi.haiku", keys)
+
+    def test_pi_labels_pinned_verbatim(self):
+        plan = build(make_inventory(host="pi"), rigor="rigorous")
+        entries = plan["entries"]
+        for entry in entries:
+            if entry["key"] in {"model_profile", "models.planning", "models.execution"}:
+                self.assertEqual(
+                    entry["effect"],
+                    "effect unverified on pi (gsd-core registry: namedDispatch false)",
+                )
+            elif entry["key"].startswith("agent_skills."):
+                self.assertEqual(
+                    entry["effect"], "no effect on pi (no GSD agent files installed)"
+                )
+            elif entry["key"] == "model_profile_overrides.pi.sonnet":
+                self.assertEqual(
+                    entry["effect"],
+                    "steers every request in this project's pi session "
+                    "(session-steer: static and mock evidence, unverified on a real provider)",
+                )
+
+    def test_pi_plan_is_pure(self):
+        inv = make_inventory(host="pi", candidates=[cand("anthropic/a", runtime="pi")])
+        inv["pi_session"] = {"provider": "anthropic"}
+        first = plan_io.canonical_json(build(inv))
+        self.assertEqual(first, plan_io.canonical_json(build(inv)))
+
     def test_codex_zero_candidates_keeps_native(self):
         inv = make_inventory(host="codex", candidates=[])
         plan = build(inv, rigor="standard")
