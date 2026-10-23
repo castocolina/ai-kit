@@ -4,17 +4,17 @@ milestone: v1.3
 milestone_name: GSD Curated Config v2
 current_phase: 22
 current_phase_name: Pi Live Validation
-status: executing
+status: verifying
 stopped_at: Completed 22-06-PLAN.md
-last_updated: "2026-10-23T18:18:40.910Z"
+last_updated: "2026-10-23T20:23:31.858Z"
 last_activity: 2026-10-23
 last_activity_desc: Phase 22 execution started
-state_head: 92afc178b2c6afb9f550c2c4d1546ac74913cfa1
+state_head: aadc28b67fa4ba2e9449f5514a84d81880ae0ec5
 progress:
   total_phases: 17
   completed_phases: 1
   total_plans: 142
-  completed_plans: 141
+  completed_plans: 142
   percent: 6
 ---
 
@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 
 Phase: 22 (Pi Live Validation) — EXECUTING
 Plan: 7 of 7
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-10-23 — Phase 22 execution started
 
 Progress: [█░░░░░░░░░] 6%
@@ -259,6 +259,7 @@ Progress: [█░░░░░░░░░] 6%
 | Phase 22 P04 | 1452s | 2 tasks | 7 files |
 | Phase 22 P05 | 797s | 2 tasks | 5 files |
 | Phase 22 P06 | 144s | 2 tasks | 4 files |
+| Phase 22 P07 | 0s | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -499,8 +500,9 @@ any order, or deferred, without blocking anything else in this milestone.
 
 | Phase | State | Resume |
 |-------|-------|--------|
+| 22 | human_needed (automated part complete, 0 gaps; security 22/22, Nyquist 7/7; 2026-10-23) | owner runs `22-INTERACTIVE-PI.md` (C1 real RPC capture, S1-S5 interactive smoke, D9; L3a-L3c optional), then its `## Orchestrator close-out`; `live/check_pi_live.py` gates the label lift; until then the pi label stays `not live-validated` and the verdict `session-steer (static + mock evidence)`; EVAL-08 stays Pending; then `/gsd-verify-work 22` |
 | 21.3 | human_needed (ADV-01..03 automatable criteria pass, 0 gaps; 2026-10-23) | owner runs the 21.3-LIVE.md matrix (L-C1..8 Claude Code, L-P1..4 pi) and the S-OC opencode spike (`opencode --standalone`) in a scratch HOME with an interactive login; `live/check_live.py 21.3-LIVE.md` must exit 0 (an S-OC pass needs a `/gsd-plan-phase 21.3 --gaps` opencode adapter plan first); then `/gsd-verify-work 21.3` |
-| 21.2 | human_needed (automatable criteria pass, 0 gaps; 2026-10-23) | owner runs live checks S2-S5 and the R9 measurements in a scratch HOME (interactive host login), then the 21.2-MEASUREMENTS.md close-out (`verdict.py`, `PRECOMPACT_VERDICTS`, ROADMAP/REQUIREMENTS amendments); until then every precompact row is `unmeasured` and default off; then `/gsd-verify-work 21.2` |
+| 21.2 | human_needed (automatable criteria pass, 0 gaps; 2026-10-23; S2 run headless on the machine install 2026-10-23, three live defects fixed in 9bcfb04/ea455dc, see 21.2-SPIKE.md S2) | owner runs live checks S3-S5 and the R9 measurements in a scratch HOME (interactive host login), then the 21.2-MEASUREMENTS.md close-out (`verdict.py`, `PRECOMPACT_VERDICTS`, ROADMAP/REQUIREMENTS amendments); until then every precompact row is `unmeasured` and default off; then `/gsd-verify-work 21.2` |
 | 21.1 | human_needed (4/4 roadmap criteria, 0 gaps; 2026-10-23) | owner decides LIVE 6 (Laya accuracy_when_not_fallback 0.5 < 0.95, no calibrated winner) and the skill-judge UNRESOLVED (opencode lane: jev D8 11/15 + 2 Important, spec-discuss 1 Important; both clean-Opus rows pass); live TypeSafe/Zen checks need key + consent + budget; reinstall the global copy with `python3 tools/setup.py install --headless --skills jev-fast-decision --replace-existing`; then `/gsd-verify-work 21.1` |
 | 21 | human_needed (5/5 roadmap criteria, 0 gaps; 2026-10-19) | uz runs `21-INTERACTIVE-CURSOR.md` steps 1-4; owner decides the skill-judge UNRESOLVED (pi 114 vs 116 baseline) after the pending re-judge on digest f0c43a5da52a587d; then `/gsd-verify-work 21` |
 | 20 | human_needed (8/9 automated truths, 0 gaps; 2026-10-18) | uz runs `20-INTERACTIVE-OPENCODE.md`, then `/gsd-verify-work 20`; EVAL-05 stays Pending until then. The codex TUI run (EVAL-04) is deferred to backlog 999.6 (codex is a secondary runtime) |
