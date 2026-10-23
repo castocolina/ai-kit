@@ -703,7 +703,7 @@ downstream depends on it)
      18.1-VERIFICATION deferred item).
 **Plans**: TBD
 - [x] 22-01-PLAN.md
-- [ ] 22-02-PLAN.md
+- [x] 22-02-PLAN.md
 - [ ] 22-03-PLAN.md
 - [ ] 22-04-PLAN.md
 - [ ] 22-05-PLAN.md
