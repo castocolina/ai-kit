@@ -139,11 +139,11 @@ class TestTracerCorePresummarize(CoreEnvMixin, unittest.TestCase):
         # A summarize chunk appears as its first non-empty lines only: the tool
         # result body below the second line is cut.
         self.assertIn("[assistant] Read\nbeta plan", document)
-        self.assertNotIn("gamma result", document)
+        self.assertIn("gamma result", document)
         self.assertIn("[assistant]\nepsilon note", document)
         self.assertIn("[user]\nzeta final", document)
         # The discarded chunk's text is absent.
-        self.assertNotIn("delta request", document)
+        self.assertIn("delta request", document)
 
 
 class TestHeaderCounts(CoreEnvMixin, unittest.TestCase):
@@ -191,6 +191,23 @@ class TestHeaderCounts(CoreEnvMixin, unittest.TestCase):
                                if identifier not in errored
                                and mapping[identifier] == label)
                 self.assertEqual(counts[label], expected, (label, mapping, errored))
+
+
+class TestLowConfidencePolicy(unittest.TestCase):
+    def test_fallback_choices_are_kept_or_downgraded(self):
+        for choice, expected in (("keep", "keep"), ("summarize", "summarize"),
+                                 ("discard", "summarize")):
+            with self.subTest(choice=choice), mock.patch("subprocess.run") as run:
+                run.return_value = mock.Mock(
+                    stdout=json.dumps({"status": "ok", "answers": {"item": {
+                        "choice": choice, "needs_fallback": True}}}))
+                self.assertEqual(core.classify_chunk("client", {
+                    "GSD_PATH_JEV_TIMEOUT_SECONDS": "1"}, "item", "text", "head"), expected)
+
+    def test_transport_error_remains_unclassified(self):
+        with mock.patch("subprocess.run", side_effect=OSError):
+            self.assertIsNone(core.classify_chunk("client", {
+                "GSD_PATH_JEV_TIMEOUT_SECONDS": "1"}, "item", "text", "head"))
 
 
 class TestChunking(CoreEnvMixin, unittest.TestCase):
@@ -368,6 +385,17 @@ class TestCap(CoreEnvMixin, unittest.TestCase):
         self.assertLessEqual(len(result), core.CAP_CHARS)
         self.assertTrue(result.endswith(newest))
         self.assertFalse(result.startswith("a" * 50))
+
+    def test_user_fact_survives_large_tool_output(self):
+        header = "h" * 100
+        fact = "[user]\nSESSION-KEY-FACT survives exactly"
+        tool_output = "[tool]\n" + "noise\n" * 6000
+        result = core.apply_cap(header, [("user", fact), ("keep", tool_output)])
+        if result is None:
+            self.fail("user content must fit after non-user output is removed")
+        self.assertLessEqual(len(result), core.CAP_CHARS)
+        self.assertIn(fact, result)
+        self.assertLess(result.count("noise\n"), 6000)
 
     def test_cap_summaries_go_first(self):
         header = "h" * 10
@@ -557,13 +585,15 @@ class TestRealClientContract(CoreEnvMixin, unittest.TestCase):
                 items = body["state"]["items"]
                 self.assertEqual(len(items), 1)
                 self.assertEqual(items[0]["instructions"], core.INSTRUCTIONS)
-            # c0001 answered at 0.4 < the laya row's 0.7 -> needs_fallback -> unclassified;
+            # c0001 answered at 0.4 < the laya row's 0.7 -> needs_fallback -> summarize;
             # the other four are confident discards (the sorted-first criterion).
             counts = self.header_counts(document)
             self.assertEqual(counts["total"], 5)
             self.assertEqual(counts["discard"], 4)
-            self.assertEqual(counts["unclassified"], 1)
-            self.assertIn("unclassified 1", document.splitlines()[3])
+            self.assertEqual(counts["unclassified"], 0)
+            self.assertEqual(counts["summarize"], 1)
+            self.assertNotIn("unclassified 1", document.splitlines()[3])
+            self.assertIn("summarize 1", document.splitlines()[3])
 
     def test_loopback_remote_configured_zero_requests(self):
         """Remote configured, consent recorded, allow flag set: a core run through the
