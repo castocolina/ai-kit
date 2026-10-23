@@ -9,9 +9,22 @@ import os
 import re
 import sys
 
+
+def _fail_open(*_exc_info):
+    """Emit an empty successful response even when a sibling import fails."""
+    try:
+        sys.stdout.write("{}")
+        sys.stdout.flush()
+    except OSError:
+        pass
+    os._exit(0)
+
+
+sys.excepthook = _fail_open
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-# pylint: disable=wrong-import-position
-from claude_session_start import _drain_stdin, _fail_open, emit
+_session_start = importlib.import_module("claude_session_start")
+_drain_stdin = _session_start.__dict__["_drain_stdin"]
+emit = _session_start.emit
 
 PROBE_TIMEOUT_SECONDS = 3.0
 _BACKEND_NAME = re.compile(r"^[a-z0-9_-]{1,32}$")
@@ -40,7 +53,9 @@ def main():
     """Drain the host payload, run the shared bounded probe, then emit or fail open."""
     _drain_stdin()
     core = importlib.import_module("precompact_core")
-    env = dict(os.environ)
+    env = core.client_env(os.environ, None, PROBE_TIMEOUT_SECONDS,
+                          os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                       ".never-created-config"))
     client = core.find_client(env)
     if client is None:
         emit(None)
@@ -52,5 +67,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.excepthook = _fail_open
     raise SystemExit(main())

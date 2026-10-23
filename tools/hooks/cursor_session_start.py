@@ -17,9 +17,20 @@ import json
 import os
 import sys
 
+
+def _fail_open(*_exc_info):
+    try:
+        sys.stdout.write("{}")
+        sys.stdout.flush()
+    except OSError:
+        pass
+    os._exit(0)
+
+
+sys.excepthook = _fail_open
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-# pylint: disable=wrong-import-position
-from claude_session_start import _drain_stdin, _fail_open
+_session_start = importlib.import_module("claude_session_start")
+_drain_stdin = _session_start.__dict__["_drain_stdin"]
 
 
 def emit(message):
@@ -39,5 +50,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.excepthook = _fail_open
     raise SystemExit(main())

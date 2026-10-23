@@ -272,7 +272,8 @@ class AdvisorCoreTests(unittest.TestCase):
         for entry, core_name, script_name in (
                 ("claude_tool_advisor.py", "advisor_core.py", "claude_tool_advisor.py"),
                 ("claude_tool_reminder.py", "advisor_core.py", "claude_tool_reminder.py"),
-                ("claude_decision_probe.py", "precompact_core.py", "claude_decision_probe.py")):
+                ("claude_decision_probe.py", "precompact_core.py", "claude_decision_probe.py"),
+                ("cursor_session_start.py", "detect.py", "cursor_session_start.py")):
             with self.subTest(entry=entry):
                 root, env = self._sandbox()
                 self.addCleanup(shutil.rmtree, root, ignore_errors=True)
@@ -281,8 +282,11 @@ class AdvisorCoreTests(unittest.TestCase):
                 for source in os.listdir(_HOOKS):
                     if source.endswith(".py"):
                         shutil.copy(os.path.join(_HOOKS, source), install)
-                with open(os.path.join(install, core_name), "w", encoding="utf-8") as handle:
-                    handle.write('raise RuntimeError("x")\\n')
+                if core_name == "claude_session_start.py":
+                    os.unlink(os.path.join(install, core_name))
+                else:
+                    with open(os.path.join(install, core_name), "w", encoding="utf-8") as handle:
+                        handle.write('raise RuntimeError("x")\\n')
                 env["AI_KIT_PRECOMPACT_CLIENT"] = _STUB
                 payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash",
                            "tool_input": {"command": "grep x f"}, "session_id": uuid.uuid4().hex}

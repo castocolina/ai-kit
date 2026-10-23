@@ -5,9 +5,21 @@ import importlib
 import os
 import sys
 
+
+def _fail_open(*_exc_info):
+    try:
+        sys.stdout.write("{}")
+        sys.stdout.flush()
+    except OSError:
+        pass
+    os._exit(0)
+
+
+sys.excepthook = _fail_open
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-# pylint: disable=wrong-import-position
-from claude_session_start import _fail_open, emit, read_stdin
+_session_start = importlib.import_module("claude_session_start")
+emit = _session_start.emit
+read_stdin = _session_start.read_stdin
 
 
 def main():
@@ -20,5 +32,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.excepthook = _fail_open
     raise SystemExit(main())
