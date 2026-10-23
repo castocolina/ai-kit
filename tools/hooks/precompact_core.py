@@ -841,6 +841,21 @@ def private_dir(env, name="compact"):
     path = os.path.join(base, "ai-kit", name)
     parent_fd = None
     try:
+        if env.get("XDG_RUNTIME_DIR") is None and not env.get("XDG_CACHE_HOME"):
+            home_fd = os.open(env["HOME"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(".cache", 0o700, dir_fd=home_fd)
+                cache_fd = os.open(".cache", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                   dir_fd=home_fd)
+                info = os.fstat(cache_fd)
+                if info.st_uid != os.getuid():
+                    os.close(cache_fd)
+                    return None
+                os.fchmod(cache_fd, 0o700)
+                os.close(cache_fd)
+            finally:
+                os.close(home_fd)
         parent_fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         for component in ("ai-kit", name):
             with contextlib.suppress(FileExistsError):

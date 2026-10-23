@@ -85,6 +85,13 @@ class AdvisorStateTests(unittest.TestCase):
                 self.assertEqual(state["session"], "s-a")
                 self.assertEqual(state["counts"]["grep"], 1)
 
+    def test_fallback_cache_base_persists_frequency_state(self):
+        env = {"HOME": os.path.join(self.base, "fresh-home"), "PATH": os.environ.get("PATH", "")}
+        os.makedirs(env["HOME"])
+        for number in range(1, 22):
+            shown = core.advise(self.event(session="fallback", call_id=f"call{number}"), env)
+            self.assertEqual(bool(shown), number in (1, 11, 21))
+
     def test_state_params_and_mode(self):
         self.assertTrue(precompact.private_dir(self.env).endswith("ai-kit/compact"))
         directory = precompact.private_dir(self.env, name="advisor")
