@@ -58,7 +58,7 @@ class TestRuntimeTracer(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         snapshot = json.loads(buf.getvalue())
-        self.assertEqual(snapshot["schema_version"], 5)
+        self.assertEqual(snapshot["schema_version"], 6)
         cursor = snapshot["clis"]["cursor"]
         self.assertTrue(cursor["installed"])
         self.assertEqual(cursor["models"], ["auto"])
@@ -118,6 +118,10 @@ class TestRuntimeTable(unittest.TestCase):
         self.assertEqual(detection.RUNTIMES["codex"].native_selectors, ())
         self.assertEqual(detection.RUNTIMES["opencode"].native_selectors, ())
         self.assertEqual(detection.RUNTIMES["cursor"].native_selectors, ())
+        self.assertEqual(detection.RUNTIMES["pi"].native_selectors, ())
+        # ROADMAP Phase 22 SC4 and the 22-01 verdict (D-01): no named dispatch,
+        # so pi remains session-default-only.
+        self.assertFalse(host_can_select("pi", "anthropic/claude-sonnet-5", "pi"))
         # ROADMAP Phase 21 SC5 keeps cursor session-default-only.
         self.assertFalse(host_can_select("cursor", "composer-2.5", "cursor"))
         # ROADMAP Phase 20 SC3's session-default-only OR branch satisfies the criterion;

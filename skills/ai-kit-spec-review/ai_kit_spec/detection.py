@@ -24,8 +24,10 @@ RUNTIMES_TTL_SECONDS = 30 * 24 * 3600   # ~30 days: CLI/model presence is near-s
 # opencode 2.x `/api/model` image source (clis.opencode.image_input_source), so snapshots
 # written before it re-detect even while their TTL is still fresh. Version 4 (18 D-25) adds
 # clis.pi from pi's RPC get_available_models.
+# Version 6 (22, ruling Q4) adds clis.pi.context_window and clis.pi.max_tokens,
+# the exact RPC integers.
 # 18.1 D-04/D-13: clis keyed by runtime id, node recorded
-RUNTIMES_SCHEMA_VERSION = 5
+RUNTIMES_SCHEMA_VERSION = 6
 
 # ── Runtime/CLI detection ───────────────────────────────────────────────
 
@@ -436,17 +438,20 @@ def detect_codex_models(binary: str, run_fn=subprocess.run) -> list | None:
 
 
 def _pi_reasoning_modes(item: dict) -> list[str]:
+    """Mirror pi-ai getSupportedThinkingLevels; omit off because this feeds effort pins."""
+    if not item.get("reasoning"):
+        return []
     level_map = item.get("thinkingLevelMap")
-    modes: list[str] = []
     if not isinstance(level_map, dict):
-        return modes
-    for level, mapped in level_map.items():
-        if not isinstance(level, str) or not level.strip() or not mapped:
-            continue
-        if level in modes:
-            continue
-        modes.append(level)
-    return modes
+        level_map = {}
+    levels = ("minimal", "low", "medium", "high", "xhigh", "max")
+    return [level for level in levels
+            if (level not in level_map or level_map[level] is not None)
+            and (level not in ("xhigh", "max") or level in level_map)]
+
+
+def _exact_int(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _parse_one_pi_model(item, seen: set) -> dict | None:
@@ -464,28 +469,24 @@ def _parse_one_pi_model(item, seen: set) -> dict | None:
     seen.add(full_id)
     input_cap = item.get("input")
     image_input = isinstance(input_cap, list) and "image" in input_cap
-    ctx = item.get("contextWindow")
-    context_window = ctx if isinstance(ctx, int) and not isinstance(ctx, bool) else None
     return {
         "id": full_id,
         "reasoning_modes": _pi_reasoning_modes(item),
         "image_input": image_input,
-        "context_window": context_window,
+        "context_window": _exact_int(item.get("contextWindow")),
+        "max_tokens": _exact_int(item.get("maxTokens")),
     }
 
 
 def parse_pi_models(stdout) -> list | None:
-    """Parses pi RPC stdout for `get_available_models` into model records with
-    `provider/id` ids. Shape verified live 2026-10-15 (pi 1.2.0); not live-validated
-    from a pi host (Phase 22). Scans line-by-line for the first JSON object whose
-    `command` is `get_available_models`; returns None when no usable envelope exists
-    (non-str input, invalid JSON on every candidate line, `success` not true, missing
-    or non-list `data.models`). Inside a valid envelope, skips non-dict models and
-    blank id/provider pairs, keeps the first duplicate `provider/id`, and returns []
-    when every model is skipped. Never raises."""
+    """Parse pi RPC records; the envelope was re-checked on pi 1.3.0 with an empty scratch
+    agent dir (22-RESEARCH Pitfall 3). Exactly one response is required; None is the structured
+    error (the snapshot omits `models`, inventory reports `failed`). Invalid input/envelopes return
+    None; invalid model rows are skipped, first duplicate provider/id wins, and an all-skipped
+    listing returns []. Never raises."""
     if not isinstance(stdout, str):
         return None
-    envelope = None
+    envelopes = []
     for line in stdout.splitlines():
         line = line.strip()
         if not line:
@@ -495,10 +496,10 @@ def parse_pi_models(stdout) -> list | None:
         except json.JSONDecodeError:
             continue
         if isinstance(parsed, dict) and parsed.get("command") == "get_available_models":
-            envelope = parsed
-            break
-    if envelope is None:
+            envelopes.append(parsed)
+    if len(envelopes) != 1:
         return None
+    envelope = envelopes[0]
     if envelope.get("success") is not True:
         return None
     data = envelope.get("data")
@@ -518,7 +519,8 @@ def parse_pi_models(stdout) -> list | None:
 
 def _listing_fields(rid, binary, run_fn, env=None) -> dict | None:
     """The snapshot fields one runtime's listing yields: `models`, plus `reasoning_modes`
-    (codex, pi; only ids with a non-empty list) and `image_input` (pi). None means the
+    (codex, pi; only ids with a non-empty list), `image_input` (pi), and pi integer maps
+    `context_window` and `max_tokens` (only ids with exact integers). None means the
     listing failed or the runtime has no lister (claude's ids come from the catalog)."""
     if rid in ("opencode", "cursor"):
         models = (detect_opencode_models(binary, run_fn=run_fn, env=env) if rid == "opencode"
@@ -534,6 +536,10 @@ def _listing_fields(rid, binary, run_fn, env=None) -> dict | None:
                                   for item in listed if item["reasoning_modes"]}}
     if rid == "pi":
         fields["image_input"] = {item["id"]: item["image_input"] for item in listed}
+        fields["context_window"] = {item["id"]: item["context_window"] for item in listed
+                                    if item["context_window"] is not None}
+        fields["max_tokens"] = {item["id"]: item["max_tokens"] for item in listed
+                                if item["max_tokens"] is not None}
     return fields
 
 
@@ -1030,7 +1036,8 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalo
     "path"?: str, "real_path"?: str, "models"?: [str],
     "reasoning_modes"?: {model_id: [effort, ...]},
     "aliases"?: [str], "models_source"?: str, "models_as_of"?: str, "image_input"?: {id: bool},
-    "image_input_source"?: str, "image_input_probe"?: "failed"}}}.
+    "image_input_source"?: str, "image_input_probe"?: "failed",
+    "context_window"?: {id: int}, "max_tokens"?: {id: int}}}}.
     `models` is set only when a listing succeeded, an empty list included, so a missing
     key means the listing failed (opencode, cursor, codex, pi); claude's models come from
     the 16 D-04 hybrid (aliases + full ids); `reasoning_modes` maps each enumerated model id
@@ -1049,7 +1056,7 @@ def build_runtimes_snapshot(which_fn=shutil.which, run_fn=subprocess.run, catalo
         if not binpath:
             snapshot["clis"][cli] = {"installed": False}
             continue
-        # Informational only; consumers rely on schema v5 fields, so no bump is needed.
+        # Informational only; consumers rely on schema v6 fields.
         entry = {"installed": True, "path": binpath, "real_path": os.path.realpath(binpath)}
         entry.update(_listing_fields(cli, binpath, run_fn, opencode.env) or {})
         if cli == "opencode":

@@ -163,7 +163,7 @@ OPENCODE_API_FIXTURE_PATH = os.path.join(
 #   --offline --no-session --no-extensions --no-skills --no-context-files --no-mcp`
 # - pi 1.2.0, 2026-10-15, recorded in 18-RESEARCH L8.
 # - Values synthetic; `baseUrl` never present (stripped from live captures).
-# - Phase 22 replaces this with a trimmed real capture (22 D-04).
+# - The owner's trimmed real capture lands separately through 22-INTERACTIVE-PI.md C1 (ruling Q2).
 PI_RPC_FIXTURE_PATH = os.path.join(
     os.path.dirname(__file__), "fixtures", "pi_rpc_get_available_models.json"
 )
@@ -1445,6 +1445,7 @@ class TestListerOutcomes(unittest.TestCase):
                     "reasoning_modes": [],
                     "image_input": False,
                     "context_window": None,
+                    "max_tokens": None,
                 }],
             ),
             "pi-empty": (
@@ -2543,10 +2544,11 @@ class TestPiRpcModels(unittest.TestCase):
         assert parsed is not None
         self.assertEqual(
             [m["id"] for m in parsed],
-            ["anthropic/claude-sonnet-5", "openai/gpt-5.6-terra", "router-env/my-coding"],
+            ["anthropic/claude-sonnet-5", "openai/gpt-5.6-terra", "router-env/my-coding",
+             "opencode-go/claude-sonnet-5", "radius/default-reasoning", "xai/partial-thinking"],
         )
-        sonnet, terra, router = parsed
-        self.assertEqual(sonnet["reasoning_modes"], ["low", "medium", "high"])
+        sonnet, terra, router, opencode_sonnet, radius_model, partial = parsed
+        self.assertEqual(sonnet["reasoning_modes"], ["minimal", "low", "medium", "high"])
         self.assertTrue(sonnet["image_input"])
         self.assertEqual(sonnet["context_window"], 200000)
         self.assertEqual(terra["reasoning_modes"], ["minimal", "low", "medium", "high"])
@@ -2554,6 +2556,53 @@ class TestPiRpcModels(unittest.TestCase):
         self.assertEqual(terra["context_window"], 400000)
         self.assertEqual(router["reasoning_modes"], [])
         self.assertFalse(router["image_input"])
+        self.assertEqual(radius_model["reasoning_modes"], ["minimal", "low", "medium", "high"])
+        self.assertEqual(partial["reasoning_modes"], ["low", "medium", "high", "xhigh"])
+        self.assertEqual(opencode_sonnet["id"], "opencode-go/claude-sonnet-5")
+
+    def test_reasoning_modes_follow_pi_supported_levels(self):
+        cases = (
+            ({"reasoning": False}, []),
+            ({}, []),
+            ({"reasoning": True}, ["minimal", "low", "medium", "high"]),
+            ({"reasoning": True, "thinkingLevelMap": {"xhigh": None}},
+             ["minimal", "low", "medium", "high"]),
+            ({"reasoning": True, "thinkingLevelMap": {"xhigh": "xhigh"}},
+             ["minimal", "low", "medium", "high", "xhigh"]),
+            ({"reasoning": True, "thinkingLevelMap": {"minimal": None}},
+             ["low", "medium", "high"]),
+            ({"reasoning": True, "thinkingLevelMap": "invalid"},
+             ["minimal", "low", "medium", "high"]),
+        )
+        for values, expected in cases:
+            model = {"id": "m", "provider": "p", **values}
+            with self.subTest(values=values):
+                self.assertEqual(detection._pi_reasoning_modes(model), expected)
+
+    def test_max_tokens_exact_integer(self):
+        for value, expected in ((1048576, 1048576), (128000.0, None), (True, None)):
+            line = json.dumps({"command": "get_available_models", "success": True,
+                               "data": {"models": [{"id": "m", "provider": "p",
+                                                   "maxTokens": value}]}})
+            parsed = detection.parse_pi_models(line)
+            assert parsed is not None
+            self.assertEqual(parsed[0]["max_tokens"], expected)
+
+    def test_same_model_two_providers_stay_distinct(self):
+        models = [{"id": "claude-sonnet-5", "provider": provider}
+                  for provider in ("anthropic", "opencode-go")]
+        parsed = detection.parse_pi_models(json.dumps({"command": "get_available_models",
+            "success": True, "data": {"models": models}}))
+        assert parsed is not None
+        self.assertEqual([row["id"] for row in parsed],
+                         ["anthropic/claude-sonnet-5", "opencode-go/claude-sonnet-5"])
+
+    def test_exactly_one_envelope(self):
+        response = json.dumps({"command": "get_available_models", "success": True,
+                               "data": {"models": []}})
+        self.assertIsNone(detection.parse_pi_models(response + "\n" + response))
+        mixed = "noise\n" + json.dumps({"type": "event"}) + "\n" + response
+        self.assertEqual(detection.parse_pi_models(mixed), [])
 
     def test_snapshot_pi_installed_with_fixture_listing(self):
         fixture = self._fixture_text()
@@ -2579,15 +2628,30 @@ class TestPiRpcModels(unittest.TestCase):
                     "anthropic/claude-sonnet-5",
                     "openai/gpt-5.6-terra",
                     "router-env/my-coding",
+                    "opencode-go/claude-sonnet-5",
+                    "radius/default-reasoning",
+                    "xai/partial-thinking",
                 ],
                 "reasoning_modes": {
-                    "anthropic/claude-sonnet-5": ["low", "medium", "high"],
+                    "anthropic/claude-sonnet-5": ["minimal", "low", "medium", "high"],
                     "openai/gpt-5.6-terra": ["minimal", "low", "medium", "high"],
+                    "opencode-go/claude-sonnet-5": ["minimal", "low", "medium", "high"],
+                    "radius/default-reasoning": ["minimal", "low", "medium", "high"],
+                    "xai/partial-thinking": ["low", "medium", "high", "xhigh"],
                 },
+                "context_window": {"anthropic/claude-sonnet-5": 200000,
+                                   "openai/gpt-5.6-terra": 400000,
+                                   "router-env/my-coding": 200000},
+                "max_tokens": {"anthropic/claude-sonnet-5": 1048576,
+                               "openai/gpt-5.6-terra": 128000,
+                               "router-env/my-coding": 128000},
                 "image_input": {
                     "anthropic/claude-sonnet-5": True,
                     "openai/gpt-5.6-terra": False,
                     "router-env/my-coding": False,
+                    "opencode-go/claude-sonnet-5": False,
+                    "radius/default-reasoning": False,
+                    "xai/partial-thinking": False,
                 },
             },
         )
@@ -2686,6 +2750,8 @@ class TestPiRpcModels(unittest.TestCase):
                 "real_path": pi_path,
                 "models": [],
                 "reasoning_modes": {},
+                "context_window": {},
+                "max_tokens": {},
                 "image_input": {},
             },
         )
@@ -2745,7 +2811,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
         snapshot = build_runtimes_snapshot(
             which_fn=lambda *_a, **_k: None, run_fn=lambda *a, **k: None)
         self.assertEqual(snapshot["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
-        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 5)
+        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 6)
 
     def test_fresh_but_unversioned_cache_redetects_and_stamps(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2800,6 +2866,24 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             assert cached is not None
             self.assertEqual(
                 cached["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
+
+    def test_fresh_version_5_cache_redetects_and_restamps(self):
+        import io
+        from contextlib import redirect_stdout
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "runtimes.json")
+            cache_write_json(path, {"schema_version": 5, "clis": {}})
+            recorded = []
+            with redirect_stdout(io.StringIO()):
+                code = main(["detect-runtimes", "--if-stale", path],
+                            which_fn=lambda n, **_k: recorded.append(n) or None,
+                            run_fn=lambda *a, **k: None)
+            self.assertEqual(code, 0)
+            self.assertTrue(recorded)
+            cached = cache_read_json(path)
+            assert cached is not None
+            self.assertEqual(cached["schema_version"], 6)
 
     def test_fresh_version_2_cache_redetects_and_restamps(self):
         # 17 D-32: version 2 predates the opencode 2.x /api/model source, so even a
@@ -2911,9 +2995,10 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             {"schema_version": 2},
             {"schema_version": 3},
             {"schema_version": 4},
+            {"schema_version": 5},
         ):
             self.assertFalse(f(bad))
-        for good in ({"schema_version": 5}, {"schema_version": 6}):
+        for good in ({"schema_version": 6}, {"schema_version": 7}):
             self.assertTrue(f(good))
 
     def test_cache_is_stale_stays_schema_agnostic(self):
