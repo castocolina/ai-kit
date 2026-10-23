@@ -172,7 +172,11 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
         engine = find_engine(env, os.path.dirname(os.path.abspath(args.spec)), args.engine)
         if not engine:
             raise RuntimeError("edge-probe.cjs not found (install gsd-core or pass --engine)")
-        floor = run_engine(engine, requirements(text))
+        reqs = requirements(text)
+        if not reqs:  # an empty floor would let any table pass the gate
+            raise ValueError("no requirements extracted: expected numbered **bold** entries "
+                             "under ## Requirements")
+        floor = run_engine(engine, reqs)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print(json.dumps({"error": str(error), "fail_closed": True}), file=sys.stderr)
         return 2

@@ -725,6 +725,17 @@ class TestEdgeFloor(unittest.TestCase):
         self.assertEqual(got["unmarked_extra"], [("ordering", "R2")])
         self.assertEqual(got["unclassified_not_unresolved"], [("unclassified", "R2")])
 
+    def test_no_extracted_requirements_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            engine = self._engine_at(root)
+            for text in ("# Spec\n", "## Requirements\n\n1. Parse rows\n"):
+                spec = root / "09-SPEC.md"
+                spec.write_text(text)
+                with self.subTest(text=text), unittest.mock.patch("sys.stderr"):
+                    self.assertEqual(edge_floor.main(["check", str(spec), "--engine", engine],
+                                                     env={"HOME": tmp}), 2)
+
     def test_missing_engine_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             spec = Path(tmp) / "09-SPEC.md"

@@ -17,7 +17,7 @@ From this skill's directory, run `python3 -B scripts/jev_review.py --probe` befo
 | `typesafe` | direct API; needs `TYPESAFE_API_KEY` | one batch | yes |
 | `opencode` | OpenCode Zen (`jev-1.13-free`→`jev-1.13`) | one call per item | yes |
 
-`JEV_BACKEND=<name>` overrides auto, never falls back. Remotes need consent: a recorded `consent grant <backend>` (once per user, after the user said yes) or session `JEV_ALLOW_REMOTE=1`, exported only after a yes. Without it, auto uses laya only. `typesafe` and `opencode` are different routes: "use TypeSafe" is not "use Zen"; a missing key makes `typesafe` unavailable, and switching is the user's call.
+`JEV_BACKEND=<name>` overrides auto, never falls back. Remotes need consent: a recorded `consent grant <backend>` (once per user, after the user said yes) or session `JEV_ALLOW_REMOTE=<approved backends>` (`1` opens every remote), exported only after a yes. Without it, auto uses laya only. `typesafe` and `opencode` are different routes: "use TypeSafe" is not "use Zen"; a missing key makes `typesafe` unavailable, and switching is the user's call.
 
 ## Call it
 
@@ -51,10 +51,6 @@ Write `instructions`/`criteria` in English; criteria name concrete signals.
 ## Red Flags
 
 "The key is set." / "The ladder says TypeSafe next." / "The user said use Jev today." — none is consent; ask. Full texts: `reference.md`, `## Red Flags (full text)`.
-
-## Common Mistakes
-
-- Batching Laya items yourself: the client sends one call per item. For other mistakes, see NEVER and the result recipe.
 
 ## Required reading
 
