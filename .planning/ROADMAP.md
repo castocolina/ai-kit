@@ -658,13 +658,13 @@ task checks that 21.2-05 landed)*
      the size report reaches the model with that read and informs the next one; stopping the read would need a permission decision, which stays forbidden)*
   4. A PostToolUse reminder ("you used grep; next time rg") fires only for installed tools; both
      advisors are live-verified in a real session, not only unit-tested.
-**Plans:** 7/8 plans executed
+**Plans:** 8/8 plans executed
 
 Plans (cross-AI plans; executed after Phases 21.1 and 21.2; 21.3-08 stages the live checks the
 orchestrator runs after wave 5, and its opencode spike S-OC can run as soon as it lands):
 **Wave 1**
 - [x] 21.3-01-PLAN.md — Tracer: `--with-hooks=tool-advisor` to rg advice through the shared `emit` gate and the host-neutral core; full grep/cat/sed/find table; large-read report (ADV-03, ADV-01)
-- [ ] 21.3-08-PLAN.md — Live-verification kit for the orchestrator: `21.3-LIVE.md` Claude Code and pi matrix, the opencode `tool.execute.after` spike and the close-out (ADV-04, ADV-02, ADV-03)
+- [x] 21.3-08-PLAN.md — Live-verification kit for the orchestrator: `21.3-LIVE.md` Claude Code and pi matrix, the opencode `tool.execute.after` spike and the close-out (ADV-04, ADV-02, ADV-03)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [x] 21.3-02-PLAN.md — Visible SessionStart briefing (`systemMessage` plus flags) from installed tools only; the third-party rewrite tool removed from every hook file; doctor citation (ADV-02)
