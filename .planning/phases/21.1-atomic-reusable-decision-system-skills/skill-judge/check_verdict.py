@@ -71,8 +71,10 @@ def valid_block(block: str, digest: str, tree: str, threshold: int,
     trees = line_values(block, r"^TREE ([0-9a-f]+)\s*$")
     if digests != [digest] or trees != [tree]:
         return False, "digest/tree mismatch", None
-    # An end line is the whole line (`D3 13/15`); a narrative `D3 13/15 — ...` is not one.
-    dim_rows = re.findall(r"^D([1-8]) (\d+)/\d+\s*$", block, re.M)
+    # An end line is the whole line (`D3 13/15`); a narrative `D3 13/15 — ...` counts only in a
+    # block with no whole-line D rows (judges that print the score line with its rationale).
+    dim_rows = (re.findall(r"^D([1-8]) (\d+)/\d+\s*$", block, re.M)
+                or re.findall(r"^D([1-8]) (\d+)/\d+\b", block, re.M))
     dims = {int(key): int(score) for key, score in dim_rows}
     once = {name: line_values(block, pattern) for name, pattern in ONCE.items()}
     if (len(dim_rows) != len(DIMENSIONS) or set(dims) != set(DIMENSIONS)
@@ -189,7 +191,9 @@ def self_test() -> bool:
         # The real row loop (row_result's), minus its file, git and dirty-tree reads.
         return judge_blocks(text, (digest, tree), 96, require_activation, skill)[0] == "pass"
     good = block(100)
+    narrative = re.sub(r"(?m)^(D[1-8] \d+/\d+)$", r"\1 — rationale", good)
     tests = [
+        synthetic_row(narrative),
         synthetic_row(block(96)),
         not synthetic_row(block(95)),
         not synthetic_row(block(95) + "\n" + block(110)),

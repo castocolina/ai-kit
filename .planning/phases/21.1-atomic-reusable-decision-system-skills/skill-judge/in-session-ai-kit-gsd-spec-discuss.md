@@ -304,3 +304,36 @@ CRITICAL 0
 IMPORTANT 1
 FLOORS ok
 VERDICT pass
+
+## Run 5 (final tree 07a1efc; one clean-context native Opus subagent — owner judge set 2026-10-23)
+
+DIGEST 8d484b07e7d397df
+TREE 13d2a9400afdcb361253344e86beeb43ceb63f36
+
+Claims in SKILL.md and the references checked against `jev_review.py`, `decide.py` and the
+project-local gsd-core 1.17.0; the run-4 Important items (size flag, thresholds) are resolved.
+`needs_fallback` recipe present at SKILL.md:149-150.
+
+Open for the owner (not fixed, to keep the judged tree final; gate passes on score):
+- Important I1: §3 says to send a phase's questions in one ladder run, but TypeSafe gets every
+  pending item in one request with an 8,000-character state cap; an over-cap batch force-flags
+  every TypeSafe answer and, since a low remote answer is final, Zen is never asked. Add: split
+  remote-bound items so each call's combined state stays under the smallest remote cap.
+- Minors: row-5 `client_status`/`remote_available` wording; SKILL.md:139-140 omits the
+  truncation cause; "select the recommended default" vs spec-phase.md:188 wording; the
+  setup.py command needs the ai-kit checkout; "consent grant typesafe still works" is history;
+  `noul` cells read yes/no.
+
+D1 18/20
+D2 14/15
+D3 14/15
+D4 14/15
+D5 14/15
+D6 14/15
+D7 9/10
+D8 13/15
+CURRENT 110/120
+CRITICAL 0
+IMPORTANT 1
+FLOORS ok
+VERDICT pass

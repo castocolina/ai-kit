@@ -382,3 +382,39 @@ ACTIVATION ok
 CITE_PROBE skills/jev-fast-decision/SKILL.md:12
 CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
 VERDICT pass
+
+## Run 6 (final tree 07a1efc; one clean-context native Opus subagent — owner judge set 2026-10-23)
+
+DIGEST 8539e9d42a797883
+TREE 4e0b112816d8f3cd409dcc8866a68b099e8b7999
+
+Activation picks from frontmatter only, before any body: lines 1-4 pick jev-fast-decision,
+lines 5-12 pick none. Pass rule holds. `needs_fallback` recipe present at SKILL.md:38. The
+run-5 Important (laya pin) is resolved.
+
+Open for the owner (not fixed, to keep the judged tree final; gate passes on score):
+- Important I1: the canonical example sends `"evidence": "your grep output"` while NEVER
+  (SKILL.md:47) bans raw sources without saying whether it covers local Laya; scope the rule to
+  off-machine rows or make the example a value-free summary.
+- Minors: 4xx caller-error wording in both backend notes (and the `_opencode` docstring); Laya
+  401/403 token in reference.md; laya.md:37-38 fragment; `--calibrate` belongs to
+  eval_cases.py; Required-reading links without a trigger; Red Flags / Common Mistakes repeat
+  NEVER; the TypeSafe key sources in the SKILL.md table; `remote_available` on `ok`;
+  `--skip-local` undocumented. D2, D5 and D8 sit at their floor of 12.
+
+D1 17/20
+D2 12/15
+D3 13/15
+D4 14/15
+D5 12/15
+D6 14/15
+D7 9/10
+D8 12/15
+CURRENT 103/120
+CRITICAL 0
+IMPORTANT 1
+FLOORS ok
+ACTIVATION ok
+CITE_PROBE skills/jev-fast-decision/SKILL.md:12
+CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
+VERDICT pass
