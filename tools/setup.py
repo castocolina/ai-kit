@@ -50,7 +50,7 @@ Paths = namedtuple(
     "Paths",
     "install_dir claude_dir pi_dir backups_dir settings config_dir config_toml "
     "sample status_line statusline_doctor segments_dir claude_hook cursor_dir "
-    "cursor_hooks cursor_hook",
+    "cursor_hooks cursor_hook opencode_dir",
 )
 
 
@@ -68,6 +68,8 @@ def resolve_paths(env):
     backups_dir = os.path.join(state_base, "ai-kit", "backups")
     cursor_dir = env.get("CURSOR_CONFIG_DIR") or os.path.join(home, ".cursor")
     config_base = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    opencode_dir = (env.get("OPENCODE_CONFIG_DIR") or
+                    os.path.join(config_base, "opencode"))
     config_dir = os.path.join(config_base, "ai-kit")
     return Paths(
         install_dir=install_dir,
@@ -87,6 +89,7 @@ def resolve_paths(env):
         cursor_hooks=os.path.join(cursor_dir, "hooks.json"),
         cursor_hook=os.path.join(
             install_dir, "tools", "hooks", "cursor_session_start.py"),
+        opencode_dir=opencode_dir,
     )
 
 
@@ -1038,11 +1041,12 @@ def _install_dir_of(link, target):
     return os.path.dirname(os.path.dirname(target))
 
 
-def link_one(link_path, target, dry, counts):
+def link_one(link_path, target, dry, counts, install_dir=None):
     """Create or refresh one symlink, never clobbering a real file or a foreign
     symlink (port of install.sh link_one). 'foreign' = an existing symlink whose
-    target is NOT inside the same install dir as `target`."""
-    install_dir = _install_dir_of(link_path, target)
+    target is NOT inside the same install dir as `target`. Nested hook targets
+    pass their explicit install root; category links retain the inferred root."""
+    install_dir = install_dir or _install_dir_of(link_path, target)
     if os.path.islink(link_path):
         cur = os.readlink(link_path)
         if cur == target:
@@ -2062,22 +2066,115 @@ def _commit_unwire(path, data, dry, would_msg):
     return True
 
 
-def unwire_hook_claude(settings, dry):
-    """Remove ai-kit's own SessionStart entry; leave every foreign entry.
-    False when the file was refused or the write failed."""
-    ok, data, _ = _load_hook_config(settings, CLAUDE_HOOK_EVENT, nested=True)
+def _drop_owned_hooks(entries, markers):
+    """Remove only nested hook objects whose command contains a marker.
+    Preserve user hook objects and every entry key; drop an entry only when its
+    hooks list becomes empty. Entries without a hooks list remain unchanged."""
+    changed = False
+    kept_entries = []
+    for entry in entries:
+        if "hooks" not in entry:
+            kept_entries.append(entry)
+            continue
+        hooks = entry["hooks"]
+        kept_hooks = [hook for hook in hooks if not any(
+            marker in hook.get("command", "") for marker in markers)]
+        if kept_hooks != hooks:
+            changed = True
+            if kept_hooks:
+                entry["hooks"] = kept_hooks
+                kept_entries.append(entry)
+        else:
+            kept_entries.append(entry)
+    return kept_entries, changed
+
+
+def unwire_claude_rows(settings, rows, dry):
+    """Unwire Claude registry rows in one guarded read/write, preserving
+    foreign entries and user hooks nested in ai-kit's entries."""
+    if not os.path.isfile(settings):
+        return True
+    events = sorted({row.event for row in rows})
+    ok, data = _load_hook_config_multi(settings, events)
     if not ok:
         return False
-    assert data is not None  # ok True <=> data is a dict, see _load_hook_config
+    assert data is not None
     hooks = data.get("hooks") or {}
-    if CLAUDE_HOOK_EVENT not in hooks:
+    changed = False
+    for event in events:
+        if event not in hooks:
+            continue
+        markers = [os.path.join(*row.script.split("/"))
+                   for row in rows if row.event == event]
+        hooks[event], event_changed = _drop_owned_hooks(hooks[event], markers)
+        changed = changed or event_changed
+    if not changed:
         return True
-    entries = hooks[CLAUDE_HOOK_EVENT]
-    kept = [e for e in entries if not _entry_is_ours_nested(e, CLAUDE_HOOK_MARKER)]
-    if kept == entries:
-        return True
-    hooks[CLAUDE_HOOK_EVENT] = kept
-    return _commit_unwire(settings, data, dry, "would remove ai-kit SessionStart hook")
+    return _commit_unwire(settings, data, dry, "would remove ai-kit hook rows")
+
+
+def unwire_hook_claude(settings, dry):
+    """Remove ai-kit's own SessionStart briefing hook object only."""
+    row = type("BriefingRow", (), {"event": CLAUDE_HOOK_EVENT,
+                                   "script": CLAUDE_HOOK_MARKER})()
+    return unwire_claude_rows(settings, [row], dry)
+
+
+def unwire_hook_rows(paths, rows, dry, counts):
+    """Unwire selected Claude rows and only links owned by this install."""
+    ok = True
+    claude_rows = [row for row in rows if row.host == "claude"]
+    if claude_rows and not unwire_claude_rows(paths.settings, claude_rows, dry):
+        ok = False
+    for row in rows:
+        if row.host == "claude":
+            continue
+        link_path = hook_link_path(paths, row)
+        if link_path is not None and os.path.islink(link_path) and _is_inside(
+                os.readlink(link_path), paths.install_dir):
+            try:
+                unlink_one(link_path, dry, counts)
+            except OSError as exc:
+                print(f"warn: failed to unlink {link_path}: {exc}", file=sys.stderr)
+                ok = False
+    return ok
+
+
+def hook_installed_hosts(paths, hook_id):
+    """Hosts with an installed ai-kit hook row for `hook_id`."""
+    installed = set()
+    rows = [row for row in HOOK_REGISTRY if row.id == hook_id]
+    claude_rows = [row for row in rows if row.host == "claude"]
+    if claude_rows and os.path.isfile(paths.settings):
+        ok, data = _load_hook_config_multi(paths.settings,
+                                           sorted({row.event for row in claude_rows}))
+        if ok and data is not None:
+            hooks = data.get("hooks") or {}
+            for row in claude_rows:
+                if any(_entry_is_ours_nested(entry,
+                          os.path.join(*row.script.split("/")))
+                       for entry in hooks.get(row.event, [])):
+                    installed.add("claude")
+    for row in rows:
+        if row.host == "claude":
+            continue
+        link_path = hook_link_path(paths, row)
+        if link_path is not None and os.path.islink(link_path) and _is_inside(
+                os.readlink(link_path), paths.install_dir):
+            installed.add(row.host)
+    return installed
+
+
+def hook_description(hook_id):
+    """Compact, registry-driven one-line description capped at 200 chars."""
+    rows = [row for row in HOOK_REGISTRY if row.id == hook_id]
+    detail = "; ".join(
+        f"{host}: {row.verdict} ({'on' if row.default else 'off'})"
+        + (", experimental" if row.experimental else "")
+        for host in dict.fromkeys(row.host for row in rows)
+        for row in [next(item for item in rows if item.host == host)]
+    )
+    return _cap_desc(f"PreCompact pre-summary (local Laya). {detail}")
 
 
 def unwire_hook_cursor(cursor_hooks, dry):
@@ -3233,19 +3330,56 @@ def _headless_wire_hooks(paths, dry):
                 or (cursor_present and not cursor_ok))
 
 
+def hook_host_present(paths, host):
+    """Whether the host's config directory already exists (never create it)."""
+    host_dirs = {"claude": paths.claude_dir, "pi": paths.pi_dir,
+                 "opencode": paths.opencode_dir}
+    return os.path.isdir(host_dirs[host])
+
+
+def hook_link_path(paths, row):
+    """The link location for a symlink row; Claude rows are config-backed."""
+    if row.host == "pi":
+        return os.path.join(paths.pi_dir, "extensions", os.path.basename(row.script))
+    if row.host == "opencode":
+        return os.path.join(paths.opencode_dir, "plugins", os.path.basename(row.script))
+    return None
+
+
+def wire_hook_rows(paths, rows, dry, counts):
+    """Wire all selected hook rows by host, using guarded Claude writes and
+    owned symlinks for pi/opencode. Every host is attempted; absent hosts are
+    benign skips, while a failed write or foreign path makes the result false."""
+    ok = True
+    claude_rows = [row for row in rows if row.host == "claude"]
+    if claude_rows:
+        present = hook_host_present(paths, "claude")
+        result = wire_claude_rows(paths.settings, claude_rows, paths.install_dir, dry)
+        if present and not result:
+            ok = False
+    for row in rows:
+        if row.host == "claude":
+            continue
+        if not hook_host_present(paths, row.host):
+            print(f"skipped {row.id} for {row.host} — no {row.host} dir")
+            continue
+        link_path = hook_link_path(paths, row)
+        target = os.path.join(paths.install_dir, *row.script.split("/"))
+        before_foreign = counts["skip_foreign"]
+        before_real = counts["skip_real"]
+        try:
+            link_one(link_path, target, dry, counts, install_dir=paths.install_dir)
+        except OSError as exc:
+            print(f"warn: failed to link {link_path}: {exc}", file=sys.stderr)
+            ok = False
+        if counts["skip_foreign"] > before_foreign or counts["skip_real"] > before_real:
+            ok = False
+    return ok
+
+
 def _headless_wire_hook_ids(paths, selection, dry, counts):
-    """Wire the registry rows a `--with-hooks=<id[:host],...>` selection names.
-    Task 1 handles the Claude rows only; the pi and opencode link rows join in
-    Task 2 (wire_hook_rows)."""
-    del counts  # the link rows' counts join in Task 2
-    rows = [row for row in hook_rows(selection) if row.host == "claude"]
-    if not rows:
-        return True
-    claude_present = os.path.isdir(paths.claude_dir)
-    if not wire_claude_rows(paths.settings, rows, paths.install_dir, dry):
-        # An absent host dir is an expected skip, not a failure.
-        return not claude_present
-    return True
+    """Wire selected registry rows; absent hosts are expected skips."""
+    return wire_hook_rows(paths, hook_rows(selection), dry, counts)
 
 
 def _headless_install_examples(paths, examples_flag, dry):
@@ -3408,7 +3542,7 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     return 0
 
 
-def cmd_uninstall(env, dry):
+def cmd_uninstall(env, dry, hooks=None):
     """Remove every ai-kit symlink under ~/.claude, the ai-kit statusLine (only
     if it points into install_dir), and ai-kit's own session-start hook entries
     from both Claude Code and Cursor. Foreign hook entries are never touched.
@@ -3426,11 +3560,23 @@ def cmd_uninstall(env, dry):
         pi_installed = installed_links(paths.pi_dir, paths.install_dir)
         for name in sorted(pi_installed["skills"]):
             unlink_one(os.path.join(paths.pi_dir, "skills", name), dry, counts)
-    unwired = [
-        unwire_statusline(paths.settings, paths.install_dir, dry),
-        unwire_hook_claude(paths.settings, dry),
-        unwire_hook_cursor(paths.cursor_hooks, dry),
-    ]
+    if hooks is None:
+        selected_rows = HOOK_REGISTRY
+        hook_ok = unwire_hook_rows(paths, selected_rows, dry, counts)
+        print(f"removed {counts['unlinked']} ai-kit symlink(s). "
+              f"install dir left in place: {paths.install_dir}")
+        unwired = [
+            unwire_statusline(paths.settings, paths.install_dir, dry),
+            unwire_hook_claude(paths.settings, dry),
+            unwire_hook_cursor(paths.cursor_hooks, dry),
+            hook_ok,
+        ]
+    else:
+        hook_ok = unwire_hook_rows(paths, hook_rows(hooks), dry, counts)
+        print(f"removed hook entries for: {', '.join(dict.fromkeys(i for i, _h in hooks))}")
+        unwired = [hook_ok]
+        print(f"removed {counts['unlinked']} ai-kit symlink(s). "
+              f"install dir left in place: {paths.install_dir}")
     print(f"removed {counts['unlinked']} ai-kit symlink(s). "
           f"install dir left in place: {paths.install_dir}")
     if not all(unwired):
@@ -3602,7 +3748,7 @@ def ensure_rich_runtime(env):
     _reexec_under_uv(uv_path)               # normally never returns
 
 
-def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-branches
+def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-branches,too-many-statements
     """Parse the subcommand and dispatch. Default subcommand is install."""
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(prog="setup.py", add_help=True)
@@ -3636,7 +3782,10 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
                         metavar="<id[:host],...>",
                         help="(--headless only) bare: wire the SessionStart "
                              "briefing hooks (Claude Code + Cursor); =<id"
-                             "[:host],...>: wire registry hooks (see below).")
+                             "[:host],...>: registry hooks: "
+                             + "; ".join(hook_description(i) for i in HOOK_IDS))
+    parser.add_argument("--hooks", default=None, metavar="<id[:host],...>",
+                        help="(uninstall only) remove only these hooks")
     parser.add_argument(
         "--replace-existing", action="store_true",
         help="(--headless --skills only) move a real dir or foreign symlink "
@@ -3658,6 +3807,19 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
                 args.with_hooks = parse_hook_selector(args.with_hooks)
             except ValueError as exc:
                 parser.error(f"--with-hooks: unknown hook {str(exc)!r} "
+                             f"(known: {', '.join(HOOK_IDS)})")
+    if args.hooks is not None:
+        if args.subcommand != "uninstall":
+            parser.error("--hooks is only valid with uninstall")
+        tokens = [t for t in re.split(r"[,\s]+", args.hooks.strip()) if t]
+        if not tokens:
+            print("warn: --hooks= named no hook id; nothing removed", file=sys.stderr)
+            args.hooks = []
+        else:
+            try:
+                args.hooks = parse_hook_selector(args.hooks)
+            except ValueError as exc:
+                parser.error(f"--hooks: unknown hook {str(exc)!r} "
                              f"(known: {', '.join(HOOK_IDS)})")
     if args.replace_existing and not (args.headless and args.skills is not None):
         parser.error("--replace-existing requires --headless and --skills")
@@ -3688,7 +3850,7 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
         finally:
             tty.close()
     if args.subcommand == "uninstall":
-        return cmd_uninstall(env, dry)
+        return cmd_uninstall(env, dry, hooks=args.hooks)
     if args.subcommand == "doctor":
         return cmd_doctor(env)
     if args.subcommand == "check":

@@ -225,6 +225,82 @@ class TestClaudeRowsGuard(unittest.TestCase):
             self.assertEqual(handle.read(), payload)
 
 
+class TestHookPathsAndDescription(unittest.TestCase):
+    def test_opencode_dir_precedence(self):
+        home = "/tmp/home"
+        xdg = "/tmp/xdg"
+        paths = setup.resolve_paths({"HOME": home, "XDG_CONFIG_HOME": xdg,
+                                     "OPENCODE_CONFIG_DIR": "/tmp/oc"})
+        self.assertEqual(paths.opencode_dir, "/tmp/oc")
+        paths = setup.resolve_paths({"HOME": home, "XDG_CONFIG_HOME": xdg})
+        self.assertEqual(paths.opencode_dir, os.path.join(xdg, "opencode"))
+        paths = setup.resolve_paths({"HOME": home})
+        self.assertEqual(paths.opencode_dir, os.path.join(home, ".config", "opencode"))
+        rows = [r for r in setup.HOOK_REGISTRY if r.id == "precompact"]
+        self.assertIsNone(setup.hook_link_path(paths, rows[0]))
+        self.assertEqual(setup.hook_link_path(paths, rows[2]),
+                         os.path.join(paths.pi_dir, "extensions", "ai-kit-precompact.ts"))
+        self.assertEqual(setup.hook_link_path(paths, rows[3]),
+                         os.path.join(paths.opencode_dir, "plugins", "ai-kit-precompact.ts"))
+
+    def test_hook_description_and_help(self):
+        desc = setup.hook_description("precompact")
+        self.assertLessEqual(len(desc), 200)
+        for host in ("claude", "pi", "opencode"):
+            row = next(r for r in setup.HOOK_REGISTRY if r.host == host)
+            self.assertIn(f"{host}: {row.verdict} ({'on' if row.default else 'off'})", desc)
+        self.assertIn("experimental", desc)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as ctx:
+            setup.main(["--help"])
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertIn("PreCompact pre-summary (local Laya).", out.getvalue())
+        for host in ("claude", "pi", "opencode"):
+            self.assertIn(f"{host}: unmeasured (off)", out.getvalue())
+
+    def test_hook_description_gap_verdicts(self):
+        rows = []
+        for row in setup.HOOK_REGISTRY:
+            if row.id == "precompact":
+                reason = {"claude": "a" * 24, "pi": "b" * 24,
+                          "opencode": "c" * 24}[row.host]
+                row = row._replace(verdict="gap: " + reason, default=False)
+            rows.append(row)
+        with mock.patch.object(setup, "HOOK_REGISTRY", tuple(rows)):
+            desc = setup.hook_description("precompact")
+        self.assertLessEqual(len(desc), 200)
+        for reason in ("a" * 24, "b" * 24, "c" * 24):
+            self.assertIn(reason, desc)
+        self.assertNotIn("…", desc)
+
+
+class TestUninstallKeepsNestedUserHook(unittest.TestCase):
+    def test_uninstall_keeps_nested_user_hook(self):
+        for briefing in (False, True):
+            with self.subTest(briefing=briefing):
+                tmp = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+                if briefing:
+                    event, marker, unwire = (
+                        "SessionStart", setup.CLAUDE_HOOK_MARKER,
+                        lambda path: setup.unwire_hook_claude(path, False))
+                else:
+                    row = PRECOMPACT_CLAUDE_ROWS[0]
+                    event, marker = row.event, os.path.join(*row.script.split("/"))
+                    unwire = lambda path, row=row: setup.unwire_claude_rows(
+                        path, [row], False)
+                user = {"type": "command", "command": "echo mine"}
+                ours = {"type": "command", "command": "python3 -S /old/" + marker}
+                only_ours = {"matcher": "only-ours", "hooks": [ours]}
+                mixed = {"matcher": "keep", "hooks": [user, ours], "note": "x"}
+                settings = _wire_settings(tmp, {"hooks": {event: [only_ours, mixed]}})
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertTrue(unwire(settings))
+                entries = _read(settings)["hooks"][event]
+                self.assertEqual(entries, [{"matcher": "keep", "hooks": [user],
+                                            "note": "x"}])
+
+
 class TestHookCommandQuoting(unittest.TestCase):
     def test_wire_hook_claude_quotes_script_path(self):
         tmp = tempfile.mkdtemp(prefix="ai kit ")
