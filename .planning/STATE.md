@@ -2,14 +2,14 @@
 gsd_state_version: "1.0"
 milestone: v1.3
 milestone_name: GSD Curated Config v2
-current_phase: "21.2"
-current_phase_name: PreCompact pre-summary hook via the decision system
-status: verifying
+current_phase: "21.3"
+current_phase_name: Visible tool-advisory hooks as setup knobs
+status: executing
 stopped_at: Completed 21.2-05-PLAN.md
-last_updated: "2026-10-23T09:57:19.602Z"
+last_updated: "2026-10-23T10:51:25.920Z"
 last_activity: 2026-10-23
-last_activity_desc: Phase 21.2 execution started
-state_head: afa969c456ba58dde8a7b29675a65d38a8adc1c3
+last_activity_desc: Phase 21.3 execution started
+state_head: 46a0d100f4e0335adbb5de2c74f3707217d8bd2e
 progress:
   total_phases: 17
   completed_phases: 1
@@ -25,14 +25,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-23)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 21.2 — PreCompact pre-summary hook via the decision system
+**Current focus:** Phase 21.3 — Visible tool-advisory hooks as setup knobs
 
 ## Current Position
 
-Phase: 21.2 (PreCompact pre-summary hook via the decision system) — EXECUTING
-Plan: 5 of 5
-Status: Phase complete — ready for verification
-Last activity: 2026-10-23 — Phase 21.2 execution started
+Phase: 21.3 (Visible tool-advisory hooks as setup knobs) — EXECUTING
+Plan: 1 of 8
+Status: Executing Phase 21.3
+Last activity: 2026-10-23 — Phase 21.3 execution started
 
 Progress: [█░░░░░░░░░] 6%
 
