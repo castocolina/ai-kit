@@ -303,6 +303,22 @@ class TestTranscriptMatrix(HookCaseMixin, unittest.TestCase):
         self.assertIn("VALID-TURN-TEXT", text)
         self.assertIn("malformed 1", text)
 
+    def test_transcript_invalid_utf8_boundary_looking_line_is_malformed(self):
+        env = self.make_env()
+        base = os.path.dirname(env["HOME"])
+        invalid_boundary = b'{"type":"system","subtype":"compact_boundary",\xff}\n'
+        path = self._write_lines(base, "t.jsonl",
+                                 [self._user_line("before"), invalid_boundary,
+                                  self._user_line("after")])
+        names = self._precompact(env, path)
+        self.assertEqual(names, ["sess-m-proj-compact.md"])
+        with open(os.path.join(self.compact_dir(env), names[0]),
+                  encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("malformed 1", text)
+        self.assertIn("before", text)
+        self.assertIn("after", text)
+
     def test_transcript_invalid_utf8_line_skipped(self):
         env = self.make_env()
         base = os.path.dirname(env["HOME"])
@@ -316,6 +332,19 @@ class TestTranscriptMatrix(HookCaseMixin, unittest.TestCase):
             text = handle.read()
         self.assertIn("malformed 1", text)
         self.assertIn("after", text)
+
+    def test_fifo_transcript_fails_open_without_file(self):
+        env = self.make_env()
+        base = os.path.dirname(env["HOME"])
+        path = os.path.join(base, "fifo.jsonl")
+        os.mkfifo(path)
+        self.assertEqual(self._precompact(env, path), [])
+
+    def test_over_cap_transcript_fails_open_without_file(self):
+        env = self.make_env()
+        base = os.path.dirname(env["HOME"])
+        path = self._write_lines(base, "large.jsonl", [b" " * (core.MAX_TRANSCRIPT_BYTES + 1)])
+        self.assertEqual(self._precompact(env, path), [])
 
     def test_transcript_file_order_kept(self):
         env = self.make_env()

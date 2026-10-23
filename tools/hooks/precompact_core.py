@@ -23,7 +23,6 @@ import re
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 
 CAP_CHARS = 9500
@@ -37,6 +36,7 @@ PER_CALL_CAP_SECONDS = 2.0
 PROBE_CAP_SECONDS = 3.0
 TTL_SECONDS = 86400
 MAX_STDIN_BYTES = 32 * 1024 * 1024
+MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024  # Fail open above 64 MiB to bound hook work.
 TOOL_RESULT_HEAD_LINES = 5
 SUMMARY_HEAD_LINES = 2
 LABELS = ("keep", "summarize", "discard")
@@ -424,18 +424,25 @@ def _group_messages(messages):
 
 
 def _cut_line(line):
-    """The longest prefix of an over-long line that still fits, plus an exact marker."""
-    suffix = " [cut %d chars]"
-    best = 0
-    low, high = 0, len(line)
-    while low <= high:
-        mid = (low + high) // 2
-        if fits(line[:mid] + suffix % (len(line) - mid)):
-            best = mid
-            low = mid + 1
-        else:
-            high = mid - 1
-    return line[:best] + suffix % (len(line) - best)
+    """Split a long line into consecutive fitting pieces without dropping text."""
+    if not line:
+        return [line]
+    pieces = []
+    while line:
+        low, high = 1, len(line)
+        best = 0
+        while low <= high:
+            mid = (low + high) // 2
+            if fits(line[:mid]):
+                best = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+        if not best:
+            raise ValueError("chunk limit cannot fit one code point")
+        pieces.append(line[:best])
+        line = line[best:]
+    return pieces
 
 
 def _split_message(message):
@@ -453,7 +460,7 @@ def _split_message(message):
         if fits(line):
             buf.append(line)
         else:
-            parts.append(_cut_line(line))
+            parts.extend(_cut_line(line))
     if buf:
         parts.append("\n".join(buf))
     return parts
@@ -556,7 +563,7 @@ def apply_cap(header, entries):
     for label, text in reversed(work):
         if label == _PINNED or (label not in ("summarize", _TAIL, _PINNED)
                                 and not seen_kept):
-            floor += len(text) + 2
+            floor += len(text) + (2 if floor > len(header) else 0)
             if label != _PINNED:
                 seen_kept = True
     if floor > CAP_CHARS:
@@ -823,16 +830,26 @@ def private_dir(env):
     if not base or not os.path.isabs(base):
         return None
     path = os.path.join(base, "ai-kit", "compact")
+    parent_fd = None
     try:
-        os.makedirs(path, mode=0o700, exist_ok=True)
-        info = os.lstat(path)
+        parent_fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        for component in ("ai-kit", "compact"):
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(component, 0o700, dir_fd=parent_fd)
+            child_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                               dir_fd=parent_fd)
+            info = os.fstat(child_fd)
+            if info.st_uid != os.getuid() or info.st_mode & 0o077:
+                os.close(child_fd)
+                return None
+            os.close(parent_fd)
+            parent_fd = child_fd
+        return path
     except OSError:
         return None
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
-        return None
-    if info.st_mode & 0o077:
-        return None
-    return path
+    finally:
+        if parent_fd is not None:
+            os.close(parent_fd)
 
 
 def sweep(path):
@@ -869,18 +886,25 @@ def safe_session_id(value):
 def write_presummary(text, session_id, slug, directory):
     """Atomic write: mkstemp in the private dir, 0600, os.replace to the final
     name; a reader never sees a partial file. Returns the path or None."""
-    fd, tmp = tempfile.mkstemp(prefix=".precompact-", suffix=".tmp", dir=directory)
+    dir_fd = None
+    temp_name = f".precompact-{os.getpid()}-{time.time_ns()}.tmp"
+    target_name = f"{session_id}-{slug}-compact.md"
     try:
-        os.fchmod(fd, 0o600)
+        dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=dir_fd)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
-        path = os.path.join(directory, f"{session_id}-{slug}-compact.md")
-        os.replace(tmp, path)
+        os.replace(temp_name, target_name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
     except OSError:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
+        if dir_fd is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(temp_name, dir_fd=dir_fd)
         return None
-    return path
+    finally:
+        if dir_fd is not None:
+            os.close(dir_fd)
+    return os.path.join(directory, target_name)
 
 
 def read_header(path):
@@ -905,13 +929,25 @@ def read_header(path):
     return None
 
 
-def last_boundary(path, size):
-    """A verbatim copy of status-line's probe_transcript_compaction boundary rule
-    (the byte-marker check, json.loads in try, the type/subtype test, the running
-    byte offset), reading at most ``size`` bytes. Returns (offset of the last valid
-    boundary line or None, count). The only boundary implementation in the core."""
+def _is_boundary(raw_line):
+    """Copy status-line's compact-boundary predicate; undecodable lines are not boundaries."""
+    if _BOUNDARY_MARKER not in raw_line:
+        return False
     try:
-        with open(path, "rb") as handle:
+        obj = json.loads(raw_line)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    return (isinstance(obj, dict) and obj.get("type") == "system"
+            and obj.get("subtype") == "compact_boundary")
+
+
+def last_boundary(path, size):
+    """Compatibility probe matching status-line's boundary predicate and bounded size."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                return None, 0
             data = handle.read(max(0, size))
     except OSError:
         return None, 0
@@ -919,17 +955,9 @@ def last_boundary(path, size):
     count = 0
     offset = 0
     for raw_line in _lines(data):
-        if _BOUNDARY_MARKER in raw_line:
-            try:
-                obj = json.loads(raw_line)
-            except json.JSONDecodeError:
-                obj = None
-            if isinstance(obj, dict):
-                rec = obj
-                if (rec.get("type") == "system"
-                        and rec.get("subtype") == "compact_boundary"):
-                    last_offset = offset
-                    count += 1
+        if _is_boundary(raw_line):
+            last_offset = offset
+            count += 1
         offset += len(raw_line)
     return last_offset, count
 
@@ -991,43 +1019,42 @@ def _content_messages(kind, record, skipped):
 
 
 def read_claude_transcript(path):
-    """The defensive Claude Code transcript read (SPEC R2).
-
-    Measures the size at open, uses only the part after the last recognized
-    compact boundary (the whole file, flagged boundary_unrecognized, when none),
-    never reads past the measured size, and skips and counts malformed lines
-    (non-JSON, non-dict, bad UTF-8) and unknown types. Returns (messages, skipped);
-    a missing or unreadable file gives ([], counters)."""
+    """Stream one bounded regular transcript pass, retaining messages after its last boundary."""
     skipped = {"malformed": 0, "unknown_type": 0, "boundary_unrecognized": 0,
                "dropped_before_classify": 0}
-    try:
-        size = os.path.getsize(path)
-    except OSError:
-        return [], skipped
-    boundary_offset, _count = last_boundary(path, size)
-    try:
-        with open(path, "rb") as handle:
-            data = handle.read(max(0, size))
-    except OSError:
-        return [], skipped
-    if boundary_offset is None:
-        start = 0
-        skipped["boundary_unrecognized"] = 1
-    else:
-        newline = data.find(b"\n", boundary_offset)
-        start = len(data) if newline == -1 else newline + 1
     messages = []
-    for raw_line in _lines(data[start:]):
-        record = _parse_line(raw_line, skipped)
-        if record is None:
-            continue
-        kind = record.get("type")
-        if kind == "system":
-            continue
-        if kind not in ("user", "assistant"):
-            skipped["unknown_type"] += 1
-            continue
-        messages.extend(_content_messages(kind, record, skipped))
+    boundary_seen = False
+    total = 0
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_TRANSCRIPT_BYTES:
+                return [], skipped
+            while total < info.st_size:
+                raw_line = handle.readline(min(info.st_size - total,
+                                               MAX_TRANSCRIPT_BYTES - total))
+                if not raw_line:
+                    break
+                total += len(raw_line)
+                if _is_boundary(raw_line):
+                    messages.clear()
+                    boundary_seen = True
+                    continue
+                record = _parse_line(raw_line, skipped)
+                if record is None:
+                    continue
+                kind = record.get("type")
+                if kind == "system":
+                    continue
+                if kind not in ("user", "assistant"):
+                    skipped["unknown_type"] += 1
+                    continue
+                messages.extend(_content_messages(kind, record, skipped))
+    except OSError:
+        return [], skipped
+    if not boundary_seen:
+        skipped["boundary_unrecognized"] = 1
     return [m for m in messages if m["text"] or m["tools"]], skipped
 
 

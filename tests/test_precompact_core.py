@@ -222,19 +222,13 @@ class TestChunking(CoreEnvMixin, unittest.TestCase):
             for line in part.split("\n"):
                 self.assertIn(line, rendered_more.split("\n"))
 
-    def test_chunk_overlong_line_cut_with_marker(self):
+    def test_chunk_overlong_line_splits_without_data_loss(self):
         message = {"role": "user", "text": "y" * 8000, "tools": []}
         chunks = core.chunk_messages([message])
-        # A cut line loses its tail (that is what the marker counts); the head
-        # lines before it still rejoin whole.
-        cut_chunk = next(chunk for chunk in chunks if " [cut " in chunk)
-        self.assertTrue(core.fits(cut_chunk))
-        marker_start = cut_chunk.rfind(" [cut ")
-        marker = cut_chunk[marker_start:]
-        self.assertRegex(marker, r"^ \[cut \d+ chars\]$")
-        cut = int(marker[len(" [cut "):-len(" chars]")])
-        prefix = len(cut_chunk) - len(marker)
-        self.assertEqual(prefix + cut, len(message["text"]))
+        line_pieces = [chunk.removeprefix("[user]") for chunk in chunks]
+        self.assertEqual("".join(line_pieces), "y" * 8000)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(core.fits(chunk) for chunk in chunks))
 
     def test_chunk_tool_results_stay_together(self):
         pad = self.pad_message
@@ -351,6 +345,18 @@ class TestCap(CoreEnvMixin, unittest.TestCase):
         self.assertEqual(len(argvs), 1 + len(chunks))
         self.assertEqual(sum(1 for argv in argvs if "--probe" in argv), 1)
 
+    def test_cap_exactly_one_protected_entry(self):
+        header = "h"
+        entry = "x" * (core.CAP_CHARS - len(header))
+        self.assertEqual(core.apply_cap(header, [("keep", entry)]), header + entry)
+
+    def test_cap_exact_pinned_and_newest_protected_entries(self):
+        header = "h"
+        pinned = "p" * 4000
+        newest = "n" * (core.CAP_CHARS - len(header) - len(pinned) - 2)
+        self.assertEqual(core.apply_cap(header, [(core._PINNED, pinned), ("keep", newest)]),
+                         header + pinned + "\n\n" + newest)
+
     def test_cap_boundary(self):
         header = "h" * 100
         newest = "n" * 100
@@ -406,21 +412,20 @@ class TestCap(CoreEnvMixin, unittest.TestCase):
         real_replace = os.replace
         seen = {}
 
-        def spy(src, dst):
+        def spy(src, dst, **kwargs):
             seen["tmp"] = src
             seen["dst"] = dst
-            seen["mode"] = os.stat(src).st_mode & 0o777
-            with open(src, encoding="utf-8") as handle:
+            seen["mode"] = os.stat(src, dir_fd=kwargs["src_dir_fd"]).st_mode & 0o777
+            fd = os.open(src, os.O_RDONLY, dir_fd=kwargs["src_dir_fd"])
+            with os.fdopen(fd, encoding="utf-8") as handle:
                 seen["text"] = handle.read()
-            return real_replace(src, dst)
+            return real_replace(src, dst, **kwargs)
 
         with mock.patch("os.replace", side_effect=spy):
             path = core.run_claude({"session_id": "sess-w",
                                     "transcript_path": transcript, "cwd": cwd}, env)
         self.assertTrue(path)
-        directory = core.private_dir(env)
-        self.assertEqual(os.path.dirname(seen["tmp"]), directory)
-        self.assertTrue(os.path.basename(seen["tmp"]).startswith(".precompact-"))
+        self.assertTrue(seen["tmp"].startswith(".precompact-"))
         self.assertEqual(seen["mode"], 0o600)
         self.assertTrue(seen["text"].startswith(core.HEADER_FIRST_LINE))
         with open(path, encoding="utf-8") as handle:
@@ -476,6 +481,14 @@ class TestPrivateDir(CoreEnvMixin, unittest.TestCase):
         self.assertIsNone(core.private_dir(env))
         os.unlink(os.path.join(ai_dir, "compact"))
         os.makedirs(os.path.join(ai_dir, "compact"), mode=0o755)
+        self.assertIsNone(core.private_dir(env))
+
+    def test_private_dir_rejects_unsafe_ai_kit_ancestor(self):
+        env = self.make_env()
+        base = os.path.join(os.path.dirname(env["HOME"]), "run")
+        ai_dir = os.path.join(base, "ai-kit")
+        os.makedirs(ai_dir)
+        os.chmod(ai_dir, 0o770)
         self.assertIsNone(core.private_dir(env))
 
     def test_sweep_removes_only_old_ours(self):
