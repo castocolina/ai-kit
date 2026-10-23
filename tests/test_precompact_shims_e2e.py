@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -138,3 +139,70 @@ class TestPiTracer(ShimHarnessMixin, unittest.TestCase):
 
 class TestOpencodeTracer(ShimHarnessMixin, unittest.TestCase):
     """Task 2 tracer: a recorded opencode session through the repo plugin."""
+
+    def test_opencode_tracer_pushes_once(self):
+        base = self._make_base()
+        proc, env = self._run_harness("opencode", OC_SHIM, OC_FIXTURE, base)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["calls"], 1)
+        self.assertFalse(result["promptSet"])
+        context = result["output"]["context"]
+        self.assertEqual(len(context), 2)
+        self.assertEqual(context[0], "prior plugin context")
+        summary = context[1]
+        self.assertTrue(summary.startswith(HEADER_FIRST_LINE))
+        self.assertLessEqual(len(summary), 9500)
+        # Only the part after the last boundary is summarized; dropped parts.
+        self.assertNotIn("earlier segment", summary)
+        self.assertNotIn("hidden reasoning", summary)
+        self.assertNotIn("before the last compaction", summary)
+        self.assertNotIn("data:", summary)
+        self.assertNotIn("U1RPUkFHSUVTREVG", summary)
+        # Completed, not-yet-compacted tool output is kept to its head lines.
+        self.assertIn("line one of store.py", summary)
+        self.assertNotIn("line six past the head", summary)
+        self.assertIn("host: opencode", header_of(summary))
+        leftovers = [name for name in os.listdir(self._compact_dir(env))
+                     if name.endswith("-compact.md")]
+        self.assertEqual(leftovers, [])
+
+    def test_opencode_messages_failure_untouched(self):
+        base = self._make_base()
+        for mode in ("throw", "hang", "array"):
+            with self.subTest(mode=mode):
+                proc, _env = self._run_harness("opencode", OC_SHIM, OC_FIXTURE, base,
+                                               mode=mode,
+                                               timeout=12 if mode == "hang" else 60)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                result = json.loads(proc.stdout)
+                self.assertFalse(result["promptSet"])
+                expected = 2 if mode == "array" else 1
+                self.assertEqual(len(result["output"]["context"]), expected)
+                self.assertEqual(result["output"]["context"][:1], ["prior plugin context"])
+
+    def test_opencode_messages_hang_finishes_within_11s(self):
+        base = self._make_base()
+        started = time.monotonic()
+        proc, _env = self._run_harness("opencode", OC_SHIM, OC_FIXTURE, base,
+                                       mode="hang", timeout=15)
+        elapsed = time.monotonic() - started
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertLess(elapsed, 11.0)
+
+    def test_opencode_two_events_push_twice(self):
+        base = self._make_base()
+        proc, _env = self._run_harness("opencode", OC_SHIM, OC_FIXTURE, base, mode="twice")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["calls"], 2)
+        context = result["output"]["context"]
+        self.assertEqual(len(context), 3)
+        self.assertTrue(context[1].startswith(HEADER_FIRST_LINE))
+        self.assertTrue(context[2].startswith(HEADER_FIRST_LINE))
+        self.assertFalse(result["promptSet"])
+
+
+def header_of(document):
+    """The header block of a pre-summary document."""
+    return document.split("\n---\n", 1)[0]

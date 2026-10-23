@@ -50,6 +50,7 @@ if (host === "pi") {
   console.log(JSON.stringify(result ?? null));
 } else if (host === "opencode") {
   const calls = [];
+  // `calls` counts hook invocations only.
   let client;
   if (mode === "throw") {
     client = { session: { messages: () => Promise.reject(new Error("backend down")) } };
@@ -59,7 +60,7 @@ if (host === "pi") {
     client = {
       session: {
         messages: (args) => {
-          calls.push({ client: args });
+          void args;
           return mode === "array" ? fixture.messages : Promise.resolve({ data: fixture.messages });
         },
       },
@@ -70,8 +71,8 @@ if (host === "pi") {
   const output = { context: [...(fixture.existingContext ?? [])] };
   const times = mode === "twice" ? 2 : 1;
   for (let index = 0; index < times; index += 1) {
-    calls.push({ hook: index });
     await hook({ sessionID: fixture.sessionID }, output);
+    calls.push(index);
   }
   console.log(JSON.stringify({
     output,

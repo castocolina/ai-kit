@@ -765,5 +765,42 @@ class TestChunkLimitWithinClientGuard(CoreEnvMixin, unittest.TestCase):
             self.assertLessEqual(size, core.CHUNK_STATE_CHARS)
 
 
+class TestOpencodeEntry(CoreEnvMixin, unittest.TestCase):
+    """The core's opencode entry: ordering, boundary and result shape (SPEC R7)."""
+
+    @staticmethod
+    def _item(created, role="user", text="body", parts=None):
+        if parts is None:
+            parts = [{"type": "text", "text": text}]
+        return {"info": {"role": role, "time": {"created": created}}, "parts": parts}
+
+    def test_opencode_entry_sorted_by_created(self):
+        items = [self._item(3000, text="third"), self._item(1000, text="first"),
+                 self._item(2000, text="second")]
+        messages, _skipped = core.messages_from_opencode(items)
+        self.assertEqual([m["text"] for m in messages if m["role"] == "user"],
+                         ["first", "second", "third"])
+
+    def test_opencode_entry_no_boundary_flagged(self):
+        items = [self._item(1000, text="alpha"), self._item(2000, text="beta")]
+        messages, skipped = core.messages_from_opencode(items)
+        self.assertEqual(skipped["boundary_unrecognized"], 1)
+        self.assertEqual(len([m for m in messages if m["role"] == "user"]), 2)
+
+    def test_opencode_entry_run_result(self):
+        env = self.make_env()
+        items = [self._item(1000, text="hello the opencode entry")]
+        result = core.run_opencode({"sessionID": "oc-sess-9", "directory": "demo-project",
+                                    "messages": items}, env)
+        self.assertIsNotNone(result)
+        self.assertIn("context", result)
+        self.assertLessEqual(len(result["context"]), core.CAP_CHARS)
+        self.assertIn("host: opencode", result["context"])
+        directory = core.private_dir(env)
+        leftovers = [name for name in os.listdir(directory)
+                     if name.endswith("-compact.md")]
+        self.assertEqual(leftovers, [])
+
+
 if __name__ == "__main__":
     unittest.main()

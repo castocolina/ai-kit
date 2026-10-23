@@ -1,0 +1,26 @@
+{
+  "sessionID": "oc-sess-1",
+  "directory": "demo-project",
+  "existingContext": ["prior plugin context"],
+  "messages": [
+    {"info": {"role": "user", "time": {"created": 1000}},
+     "parts": [{"type": "text", "text": "earlier segment: pick the storage backend"}]},
+    {"info": {"role": "assistant", "time": {"created": 2000}},
+     "parts": [{"type": "compaction", "auto": true}]},
+    {"info": {"role": "assistant", "summary": true, "time": {"created": 2500}},
+     "parts": []},
+    {"info": {"role": "user", "time": {"created": 3000}},
+     "parts": [{"type": "text", "text": "Now wire the sqlite backend and run the migration check."}]},
+    {"info": {"role": "assistant", "time": {"created": 4000}},
+     "parts": [
+       {"type": "tool", "tool": "read", "state": {"status": "completed",
+        "output": "line one of store.py\nline two\nline three\nline four\nline five\nline six past the head"}},
+       {"type": "tool", "tool": "grep", "state": {"status": "completed",
+        "output": "output from before the last compaction", "time": {"compacted": true}}},
+       {"type": "tool", "tool": "bash", "state": {"status": "pending", "output": ""}},
+       {"type": "reasoning", "text": "hidden reasoning text"},
+       {"type": "file", "url": "data:text/plain;base64,U1RPUkFHSUVTREVG"},
+       {"type": "text", "text": "Wired store.py to sqlite; the migration check passes with two warnings."}
+     ]}
+  ]
+}
