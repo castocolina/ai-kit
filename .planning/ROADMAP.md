@@ -572,7 +572,7 @@ Phase 21
      probe availability, honor consent for remote backends, and log every advisory answer.
   4. Research settles which Jev 1.14 features ship now (`score`, `box`, images incl. comparing
      several, long context, multi-question batching) and what local Laya supports.
-**Plans:** 3/7 plans executed
+**Plans:** 4/7 plans executed
 
 Plans (cross-AI plans run one per wave; the only live uses are local Laya in 21.1-06/07 and the
 pi judge in 21.1-07; the orchestrator runs the in-session pressure arms and judge between waves):
@@ -586,7 +586,7 @@ pi judge in 21.1-07; the orchestrator runs the in-session pressure arms and judg
 - [x] 21.1-03-PLAN.md — `decide.py` as a thin caller (one client call, columns from the table, detect and consent delegated, `score` items), tests on the real repo client, spec-discuss docs (DEC-02)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 21.1-04-PLAN.md — pi link root derived from the claude selection on every link/unlink/prune path, `--replace-existing` backup under XDG state, R8 e2e module, PTY env isolation (DEC-03)
+- [x] 21.1-04-PLAN.md — pi link root derived from the claude selection on every link/unlink/prune path, `--replace-existing` backup under XDG state, R8 e2e module, PTY env isolation (DEC-03)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 21.1-05-PLAN.md — Wizard housekeeping kind `replace` (default No) and a PTY run through it (DEC-03)
