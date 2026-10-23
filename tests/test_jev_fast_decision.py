@@ -570,8 +570,8 @@ class TestScreen(_ClientCase):
         self.assertEqual(result["reason"], "no_backend_available")
         # Task 2: the two remote rows are gated, so they are reported and never dialled.
         self.assertEqual(result["unavailable"], {"laya": "unreachable",
-                                                 "typesafe": "consent_required",
-                                                 "opencode": "consent_required"})
+                                                 "typesafe": "missing_api_key",
+                                                 "opencode": "missing_api_key"})
 
     def test_screen_min_confidence_override_marks_fallback(self):
         with JevStub(top=0.8) as stub:
@@ -961,7 +961,7 @@ class TestRemoteRows(_ClientCase):
         with (mock.patch.object(JR, "_read_key", return_value=("ssn-key", None)),
               self.assertRaises(PermissionError) as refused):
             JR._send(row, body, 1.0)
-        self.assertEqual(str(refused.exception), "consent_required")
+        self.assertEqual(str(refused.exception), "consent_required_for_remote")
 
 
 class TestGate(_ClientCase):
@@ -1003,7 +1003,8 @@ class TestGate(_ClientCase):
             os.environ["LAYA_API_KEY"] = ""
             _code, report = self.run_probe()
         self.assertEqual(self.backend_entry(report, "typesafe")["usable"], False)
-        self.assertEqual(self.backend_entry(report, "typesafe")["reason"], "consent_required")
+        self.assertEqual(self.backend_entry(report, "typesafe")["reason"],
+                         "consent_required_for_remote")
         self.assertEqual(self.backend_entry(report, "typesafe")["key_source"], "env")
         self.assertEqual(self.backend_entry(report, "typesafe")["remote"], True)
         self.assertEqual(stub.requests, [])
@@ -1019,7 +1020,7 @@ class TestGate(_ClientCase):
             _code, report = self.run_probe()
             self.assertEqual(report["candidates"], ["typesafe"])  # named, reachable
             self.assertEqual(self.backend_entry(report, "opencode")["reason"],
-                             "consent_required")
+                             "consent_required_for_remote")
             result = self.run_screen(payload(noul_item("a")))
         self.assertEqual(result["backend"], "typesafe")
         self.assertEqual(zen.requests, [])  # the other remote was never dialled

@@ -706,7 +706,7 @@ def _typesafe_probe(row, timeout, deadline=None):
         return reason
     key, key_reason = row["key"]()
     if not key:
-        return key_reason or "missing_key"
+        return _missing_key_reason(key_reason)
     return _bearer_probe(_origin(endpoint, "/v1/models"), key, timeout,
                          deadline)
 
@@ -770,7 +770,7 @@ def _opencode_probe(row, timeout, deadline=None):
         return reason
     key, key_reason = row["key"]()
     if not key:
-        return key_reason or "missing_key"
+        return _missing_key_reason(key_reason)
     return _bearer_probe(_origin(endpoint, "/models"), key, timeout, deadline)
 
 
@@ -1110,12 +1110,27 @@ def _threshold_for(row):
 
 # ─── probe ────────────────────────────────────────────────────────────────────
 
+def _missing_key_reason(key_reason):
+    """`missing_api_key` when no key exists anywhere; a present-but-unusable file keeps its own
+    reason (`world_readable`, `empty_file`) so the user knows what to fix."""
+    return "missing_api_key" if key_reason in (None, "missing_file") else key_reason
+
+
 def _row_probe(row, deadline=None):
     """Probe one row, gate first: a remote row this session has not allowed is never dialed,
-    not even for a reachability check that would send no question. The timeout is the smaller
-    of the probe bound and the time left; with no time left nothing is dialed at all."""
+    not even for a reachability check that would send no question. A remote row reports, in
+    order and with no network call, its URL reason, then `missing_api_key` (or the key file's
+    own reason), then `consent_required_for_remote` (21.1-01 plan order). The timeout is the
+    smaller of the probe bound and the time left; with no time left nothing is dialed at all."""
+    if row["remote"]:
+        _endpoint, url_reason = row["url"]()
+        if url_reason:
+            return url_reason
+        key, key_reason = row["key"]()
+        if not key:
+            return _missing_key_reason(key_reason)
     if not _remote_allowed(row):
-        return "consent_required"
+        return "consent_required_for_remote"
     timeout = _PROBE_TIMEOUT if deadline is None else min(_PROBE_TIMEOUT, deadline.left())
     if timeout <= 0:
         return "deadline"
@@ -1368,7 +1383,7 @@ def _send(row, body, timeout, deadline=None):
     if os.environ.get(_KILL_SWITCH) != "1":
         raise PermissionError("disabled")
     if not _remote_allowed(row):
-        raise PermissionError("consent_required")
+        raise PermissionError("consent_required_for_remote")
     url, reason = row["url"]()
     if reason:
         raise PermissionError(reason)

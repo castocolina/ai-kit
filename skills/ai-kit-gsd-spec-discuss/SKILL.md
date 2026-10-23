@@ -47,9 +47,8 @@ decided provisionally and shown at the end.
    Check `git log -1 -- <SPEC>`; if that commit only appended an amendment the CONTEXT already
    reflects, drop the phase from the proposal and say why.
 5. **Ask exactly one question**, only when needed: confirm or trim the proposed range, and —
-   if a remote backend's `detect` entry has `status: consent_required` and `key_source` `env`
-   or `file` (a keyed remote; the top-level `consent_required_for_remote` appears only when no
-   backend at all is usable) — ask for consent
+   if a remote backend's `detect` entry has `status: consent_required_for_remote` (a keyed
+   remote this session has not allowed; a keyless one reads `missing_api_key`) — ask for consent
    in the same question, naming each backend and its host, "summaries only, never code or
    secrets", and the revoke command (`python3 "$S/decide.py" consent revoke <backend>`). On yes: `python3 "$S/decide.py" consent grant <backend>`
    (`consent grant typesafe` still works; the client keeps the record, same once-per-user
