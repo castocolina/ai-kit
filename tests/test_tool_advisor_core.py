@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -330,6 +331,78 @@ class AdvisorCoreTests(unittest.TestCase):
         proc = subprocess.run([sys.executable, "-S", script], input="", text=True,
                               capture_output=True, env=env, timeout=10)
         self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "{}", ""))
+
+
+_LIVE_DIR = os.path.join(_ROOT, ".planning", "phases",
+                         "21.3-visible-tool-advisory-hooks-as-setup-knobs")
+_LIVE_MD = os.path.join(_LIVE_DIR, "21.3-LIVE.md")
+
+
+def _load_live_checker():
+    spec = importlib.util.spec_from_file_location(
+        "check_live_test", os.path.join(_LIVE_DIR, "live", "check_live.py"))
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class LiveEvidenceCheckerTests(unittest.TestCase):
+    """Phase 21.3 live gate: check_live.py must reject unobserved evidence (SPEC R10)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.checker = _load_live_checker()
+        with open(_LIVE_MD, encoding="utf-8") as handle:
+            cls.template = handle.read()
+
+    def _write(self, text):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        path = os.path.join(root, "21.3-LIVE.md")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+    def _all_pass(self, sign_off="pass", launch="opencode --standalone"):
+        out = []
+        for line in self.template.splitlines():
+            if line.startswith("| L-"):
+                line = re.sub(r"not run \([^|]*\) \|$", "pass |", line)
+            elif line.startswith("Result:"):
+                line = f"Result: {sign_off}"
+            elif line.startswith("Launched with:"):
+                line = f"Launched with: {launch}"
+            out.append(line)
+        return "\n".join(out) + "\n"
+
+    def test_checked_in_live_evidence_is_rejected(self):
+        failures = self.checker.check(_LIVE_MD)
+        self.assertIn("L-C1: Result is 'not run (needs an interactive host login "
+                      "in the scratch HOME; owner)', expected 'pass'", failures)
+        self.assertTrue(any(f.startswith("S-OC: unresolved Result 'not run") for f in failures))
+        self.assertIn("S-OC: Launched with must contain --standalone", failures)
+        self.assertEqual(len(failures), 12 + 2)
+
+    def test_all_rows_pass_clears_matrix_failures(self):
+        failures = self.checker.check(self._write(self._all_pass(sign_off="fail (no append)")))
+        self.assertEqual(failures, [])
+
+    def test_pass_on_s_oc_needs_adapter_plan(self):
+        failures = self.checker.check(self._write(self._all_pass()))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("pass requires a later adapter plan", failures[0])
+
+    def test_missing_row_and_missing_standalone_are_rejected(self):
+        text = self._all_pass(sign_off="fail (no append)", launch="opencode")
+        text = "\n".join(l for l in text.splitlines() if not l.startswith("| L-P4 ")) + "\n"
+        failures = self.checker.check(self._write(text))
+        self.assertIn("L-P4: expected exactly one row, found 0", failures)
+        self.assertIn("S-OC: Launched with must contain --standalone", failures)
+
+    def test_usage_error_exits_2(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.checker.main(["a", "b"]), 2)
 
 
 if __name__ == "__main__":
