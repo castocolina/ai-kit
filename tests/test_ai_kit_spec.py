@@ -2607,8 +2607,28 @@ class TestPiRpcModels(unittest.TestCase):
         response = json.dumps({"command": "get_available_models", "success": True,
                                "data": {"models": []}})
         self.assertIsNone(detection.parse_pi_models(response + "\n" + response))
-        mixed = "noise\n" + json.dumps({"type": "event"}) + "\n" + response
-        self.assertEqual(detection.parse_pi_models(mixed), [])
+        # 22 review WR-03: the earlier form of this test treated a non-JSON line as noise
+        # and still parsed the envelope. D-04/R1 locks that line as a structured failure;
+        # an unrelated valid JSON event stays allowed.
+        event = json.dumps({"type": "event"})
+        self.assertEqual(detection.parse_pi_models(event + "\n" + response), [])
+        self.assertIsNone(detection.parse_pi_models("noise\n" + response))
+
+    def test_non_json_line_and_escaping_integer_are_structured_failures(self):
+        response = json.dumps({"command": "get_available_models", "success": True,
+                               "data": {"models": [{"id": "m", "provider": "p"}]}})
+        for line in ("not json", "{", "   {truncated", '"unterminated'):
+            with self.subTest(line=line):
+                self.assertIsNone(detection.parse_pi_models(line + "\n" + response))
+                self.assertIsNone(detection.parse_pi_models(response + "\n" + line))
+        self.assertEqual(detection.parse_pi_models("\n\n" + response + "\n"),
+                         detection.parse_pi_models(response))
+        # Built as text: constructing the int here raises before the parser can catch it.
+        huge = (
+            '{"command":"get_available_models","success":true,"data":{"models":'
+            '[{"id":"m","provider":"p","maxTokens":' + ("9" * 5000) + "}]}}"
+        )
+        self.assertIsNone(detection.parse_pi_models(huge))
 
     def test_trimmed_real_capture(self):
         if not os.path.exists(PI_RPC_REAL_FIXTURE_PATH):
@@ -2700,7 +2720,7 @@ class TestPiRpcModels(unittest.TestCase):
         self.assertEqual(recorded["kwargs"]["timeout"], 15)
 
     def test_parse_returns_none_without_usable_envelope(self):
-        for bad in (None, "", "not json", '{"command":"other"}'):
+        for bad in (None, "", "not json", " \n ", '{"command":"other"}'):
             self.assertIsNone(detection.parse_pi_models(bad))
         false_resp = (
             '{"command":"get_available_models","success":false,"data":{"models":[]}}'

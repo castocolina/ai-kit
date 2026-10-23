@@ -478,35 +478,54 @@ def _parse_one_pi_model(item, seen: set) -> dict | None:
     }
 
 
+_PI_JSON_BAD = object()
+
+
+def _pi_json_line(line: str):
+    """One JSON value, or ``_PI_JSON_BAD`` when the line is not JSON (22 D-04/R1).
+
+    ValueError covers an integer past the conversion limit (a 5,000-digit maxTokens);
+    RecursionError covers a deeply nested payload. A JSON null stays a value: only a
+    parse error is the structured failure.
+    """
+    try:
+        return json.loads(line)
+    except (json.JSONDecodeError, ValueError, RecursionError):
+        return _PI_JSON_BAD
+
+
+def _pi_models_envelope(stdout: str):
+    """The one ``get_available_models`` envelope, or None when the output is unusable.
+
+    A blank line is ignored. A non-blank line that is not JSON, including an integer past
+    the conversion limit, fails the whole listing (22 D-04/R1). A valid JSON event that is
+    not the models response is allowed and does not count.
+    """
+    lines = [_pi_json_line(line.strip()) for line in stdout.splitlines() if line.strip()]
+    if any(line is _PI_JSON_BAD for line in lines):
+        return None
+    envelopes = [line for line in lines
+                 if isinstance(line, dict) and line.get("command") == "get_available_models"]
+    if len(envelopes) != 1 or envelopes[0].get("success") is not True:
+        return None
+    data = envelopes[0].get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("models"), list):
+        return None
+    return data["models"]
+
+
 def parse_pi_models(stdout) -> list | None:
     """Parse pi RPC records; the envelope was re-checked on pi 1.3.0 with an empty scratch
     agent dir (22-RESEARCH Pitfall 3). Exactly one response is required; None is the structured
-    error (the snapshot omits `models`, inventory reports `failed`). Invalid input/envelopes return
-    None; invalid model rows are skipped, first duplicate provider/id wins, and an all-skipped
-    listing returns []. Never raises."""
+    error (the snapshot omits `models`, inventory reports `failed`). Invalid input/envelopes,
+    a non-blank non-JSON line (22 D-04/R1), and an integer that escapes JSON parsing return
+    None; blank lines and unrelated valid JSON events are ignored. Invalid model rows are
+    skipped, the first duplicate provider/id wins, and an all-skipped listing returns [].
+    Never raises."""
     if not isinstance(stdout, str):
         return None
-    envelopes = []
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            parsed = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict) and parsed.get("command") == "get_available_models":
-            envelopes.append(parsed)
-    if len(envelopes) != 1:
-        return None
-    envelope = envelopes[0]
-    if envelope.get("success") is not True:
-        return None
-    data = envelope.get("data")
-    if not isinstance(data, dict):
-        return None
-    models_raw = data.get("models")
-    if not isinstance(models_raw, list):
+    models_raw = _pi_models_envelope(stdout)
+    if models_raw is None:
         return None
     parsed_models = []
     seen: set[str] = set()
