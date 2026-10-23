@@ -113,21 +113,26 @@ def pick_local_backend(report):
     return None
 
 
-def probe_backend(client, env, deadline, config_home):
-    """One ``--probe`` run inside the remaining budget; the parsed report or None."""
-    remaining = deadline - _monotonic()
-    if remaining <= 0:
-        return None
-    child_env = client_env(env, None, min(remaining, PROBE_CAP_SECONDS), config_home)
+def run_probe(client, env, timeout):
+    """Run the decision client's question-free probe once; return its JSON object or None."""
     try:
         proc = subprocess.run(
             [sys.executable, "-S", "-B", client, "--probe"],
-            capture_output=True, text=True, encoding="utf-8", check=False,
-            timeout=min(PROBE_CAP_SECONDS, remaining), env=child_env)
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+            check=False, timeout=timeout, env=env)
         report = json.loads(proc.stdout)
     except (subprocess.TimeoutExpired, OSError, ValueError):
         return None
     return report if isinstance(report, dict) else None
+
+
+def probe_backend(client, env, deadline, config_home):
+    """One scrubbed ``--probe`` run inside the remaining budget; parsed report or None."""
+    remaining = deadline - _monotonic()
+    if remaining <= 0:
+        return None
+    child_env = client_env(env, None, min(remaining, PROBE_CAP_SECONDS), config_home)
+    return run_probe(client, child_env, min(PROBE_CAP_SECONDS, remaining))
 
 
 def build_request(head, item_id, text):

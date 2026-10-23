@@ -3,8 +3,9 @@
 
 Selected through AI_KIT_PRECOMPACT_CLIENT so no test reaches the real client
 or a real backend. With argv ["--probe"] it prints a probe report chosen by
-STUB_PROBE ("up" default, "down", "remote_only"); otherwise it reads one JSON
-request object on stdin and answers items[0] with a label chosen by
+STUB_PROBE ("up" default, "down", "remote_only", "hang", "pinned_down",
+"consent_needed"); otherwise it reads one JSON request object on stdin and
+answers items[0] with a label chosen by
 STUB_LABELS (JSON map by id), else STUB_LABEL_CYCLE (comma list, index = the
 integer after the id's "c"), else "keep". Ids in STUB_ERROR_IDS get a
 status "unavailable" reply; ids in STUB_FALLBACK_IDS get needs_fallback true.
@@ -49,14 +50,23 @@ def _probe():
             "usable": True, "key_source": "stub"}
     typesafe = {"name": "typesafe", "remote": True, "batch": True, "host": "api.example",
                 "usable": True, "key_source": "stub"}
-    if mode == "down":
+    if mode == "hang":
+        time.sleep(3600)
+    if mode in ("down", "pinned_down", "consent_needed"):
         laya = {"name": "laya", "remote": False, "batch": False, "host": "127.0.0.1",
                 "usable": False, "reason": "unreachable", "key_source": "stub"}
-        return {"status": "unavailable", "backends": [laya]}
+    if mode == "down":
+        return {"status": "unavailable", "candidates": [], "backends": [laya]}
+    if mode == "pinned_down":
+        return {"status": "unavailable", "candidates": [], "backends": [laya, typesafe]}
+    if mode == "consent_needed":
+        return {"status": "consent_required_for_remote", "candidates": [],
+                "backends": [laya, typesafe]}
     if mode == "remote_only":
         laya = {"name": "laya", "remote": False, "batch": False, "host": "127.0.0.1",
                 "usable": False, "reason": "unreachable", "key_source": "stub"}
-    return {"status": "ok", "backends": [laya, typesafe]}
+        return {"status": "ok", "candidates": ["typesafe"], "backends": [laya, typesafe]}
+    return {"status": "ok", "candidates": ["laya", "typesafe"], "backends": [laya, typesafe]}
 
 
 def _label_for(item_id):
