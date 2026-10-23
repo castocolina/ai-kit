@@ -1139,6 +1139,7 @@ class TestGsdCoreResolution(unittest.TestCase):
                     env["PI_PROVIDER"] = raw
                 code, parsed, _ = run_inventory(project, env, FakeRun(), "--host", "pi")
                 self.assertEqual(code, 0)
+                assert parsed
                 self.assertEqual(parsed["pi_session"], {"provider": expected})
         _home, env = self._home_env()
         project = tempfile.mkdtemp()
@@ -1147,6 +1148,7 @@ class TestGsdCoreResolution(unittest.TestCase):
         env["PI_PROVIDER"] = "anthropic"
         code, parsed, _ = run_inventory(project, env, FakeRun(), "--host", "codex")
         self.assertEqual(code, 0)
+        assert parsed
         self.assertNotIn("pi_session", parsed)
 
     def _home_env(self):

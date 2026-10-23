@@ -310,7 +310,7 @@ def dry_run_report(
 
 
 _PI_SKILL_SKIP = (
-    "GSD_RUNTIME=pi is not canonicalized by gsd-core 1.16.0; "
+    "GSD_RUNTIME=pi is not canonicalized by gsd-core 1.17.0; "
     "agent skills have no effect on pi"
 )
 

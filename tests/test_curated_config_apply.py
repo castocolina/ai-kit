@@ -2383,11 +2383,13 @@ class TestSkillDocCommands(unittest.TestCase):
             "GSD_PATH_JEV=1",
             "AIKIT-XAI",
             "full permissions",
-            "2026-10-18",
+            "2026-10-23",
             ".opencode/gsd-core",
             ".cursor/gsd-core",
             "enabledPlugins",
             "unverified",
+            "session-steer (static + mock evidence)",
+            "pi session steer",
             "declined",
             "extraArgs",
             ".new",
@@ -2442,7 +2444,7 @@ class TestSkillDocCommands(unittest.TestCase):
         interactive confirmation (SPEC R3 as amended; never a bare lift)."""
         text = _skill_md_text()
         self.assertNotIn("cursor / pi hosts", text)
-        self.assertIn("| pi hosts | **not live-validated** |", text)
+        self.assertIn("| pi hosts | **not live-validated** (", text)
         self.assertIn("21-SMOKE-CURSOR.md", text)
         self.assertIn("21-INTERACTIVE-CURSOR.md", text)
         row = text.split("| cursor host |", 1)[1].split("\n", 1)[0]
@@ -2451,6 +2453,22 @@ class TestSkillDocCommands(unittest.TestCase):
         with open(readme_path, encoding="utf-8") as handle:
             readme = handle.read()
         self.assertIn("cursor validated headless", readme)
+
+    def test_pi_row_keeps_label_and_states_verdict(self) -> None:
+        text = _skill_md_text()
+        row = next(line for line in text.splitlines() if line.startswith("| pi hosts |"))
+        for phrase in (
+            "**not live-validated**",
+            "22-INTERACTIVE-PI.md",
+            "session-steer (static + mock evidence)",
+            "model_profile_overrides.pi.sonnet",
+            "pi.opus",
+            "agent_skills",
+        ):
+            self.assertIn(phrase, row)
+        readme_path = os.path.join(os.path.dirname(__file__), "..", "README.md")
+        with open(readme_path, encoding="utf-8") as handle:
+            self.assertIn("pi not live-validated", handle.read())
 
     def test_family_list_matches_managed_prefixes(self) -> None:
         """Review L14: the Removals step lists every family v2 manages, as `<prefix>*`."""

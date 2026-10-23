@@ -113,6 +113,11 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
      of runner ids, in order). `plan-unset script:cross-ai.model.<runner>` reopens a choice.
      A pi or codex model with reasoning modes also pins its effort (`config.effort`, medium
      or the nearest mode); the runner passes it as pi `--thinking` / codex effort.
+   - **pi session steer** (`model_profile_overrides.pi.sonnet`, pi hosts only): the
+     candidates are the bare model ids the session provider serves (`PI_PROVIDER`, which
+     `inventory` reads inside a pi session). `plan-set` refuses any other value, `--force`
+     included, because gsd-core's hook writes it into every request of the project's pi
+     session; with no candidate, decline it with `plan-unset`.
    - **Trusted roots** (`agent_skills_security.trusted_global_roots`): the one candidate's
      `value` is the whole list — already-configured roots first, then the new `~/` roots.
      Approve it with that list, or decline with `plan-unset`. A list that drops an
@@ -246,11 +251,11 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
 - **Plugin skills** need install plus layered `enabledPlugins` (user, project, local).
   Per-key layering is **unverified**: entries that rely on it carry an `effect` flag.
 
-## Limits (as of 2026-10-18)
+## Limits (as of 2026-10-23)
 
 | Topic | Limit |
 |---|---|
-| pi hosts | **not live-validated** |
+| pi hosts | **not live-validated** (the interactive run is pending: `22-INTERACTIVE-PI.md`). Verdict **session-steer (static + mock evidence)**: GSD spawns no named agents on pi; only `model_profile_overrides.pi.sonnet`, a bare id the session provider serves, changes the model, for every request of the project's pi session; `pi.opus`, `pi.haiku`, `model_overrides` and `agent_skills` have no effect there |
 | cursor host | validated headless from a cursor-agent 2026.10.14-941492e session (`21-SMOKE-CURSOR.md`: local install, apply, resolve-model-only chain, 420-check matrix); the user's interactive confirmation (`21-INTERACTIVE-CURSOR.md`) is **pending** |
 | opencode providers | Providers defined only in a project's `opencode.json` are not candidates |
 | effort sync | Skipped for workstream configs; `--config-dir <project>/<host dir>` value **unverified** |
