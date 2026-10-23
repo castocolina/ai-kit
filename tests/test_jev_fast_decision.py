@@ -664,6 +664,19 @@ class TestTaxonomy(_ClientCase):
         # One attempt-log entry per rung that failed, not per retry inside that rung.
         self.assertEqual([entry["reason"] for entry in result["attempts"]], ["http_503"])
 
+    def test_typesafe_row_targets_documented_endpoint(self):
+        """The default is the documented POST URL, and the probe is the documented bearer GET
+        `/v1/models` on the row's own origin (docs.typesafe.ai/api.md)."""
+        os.environ.pop("JEV_TYPESAFE_URL", None)
+        self.assertEqual(JR._typesafe_url(), ("https://api.typesafe.ai/v1/systemone", None))
+        with JevStub() as typesafe:
+            self.point_remote("typesafe", typesafe)
+            os.environ["TYPESAFE_API_KEY"] = "dummy"
+            row = JR.row_named("typesafe")
+            self.assertIsNone(row["probe"](row, 5))
+        self.assertEqual([(r["method"], r["path"]) for r in typesafe.requests],
+                         [("GET", "/v1/models")])
+
     def test_taxonomy_500_escalates_without_retry(self):
         result, stub = self.scripted([{"status": 500, "body": b"inference failed"}])
         self.assertEqual(len(stub.posts), 1)

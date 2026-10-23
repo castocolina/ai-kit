@@ -75,7 +75,7 @@ Keep results in durable artifacts as advisory evidence, never in a verdict field
 | `JEV_LAYA_URL` / `AI_KIT_LAYA_URL` | Laya endpoint; loopback only, non-loopback refused (`non_loopback_url`) |
 | `LAYA_API_KEY` | optional bearer for Laya |
 | `JEV_LAYA_MODEL` | pins Laya's request model (default `jev-1`) |
-| `JEV_TYPESAFE_URL` | TypeSafe root (default `https://api.typesafe.dev`) |
+| `JEV_TYPESAFE_URL` | TypeSafe question URL (default `https://api.typesafe.ai/v1/systemone`) |
 | `TYPESAFE_API_KEY` | TypeSafe key; falls back to `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` (0600 enforced) |
 | `JEV_TYPESAFE_MODEL` | pins the request id (default `jev-latest`) |
 | `JEV_OPENCODE_URL` | Zen base URL (default `https://opencode.ai/zen/v1`) |

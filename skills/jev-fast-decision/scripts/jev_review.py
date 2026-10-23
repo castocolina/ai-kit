@@ -678,10 +678,10 @@ def _env_key(name):
 def _typesafe_url():
     """TypeSafe's own API root: no loopback rule (it is remote by design), no fallback URL.
 
-    The question POST goes to this URL verbatim. Which path the real API answers on is not
-    verified from here (SPEC O2) — 21.1-05's live probe is what confirms it.
+    The question POST goes to this URL verbatim: `POST https://api.typesafe.ai/v1/systemone`
+    (docs.typesafe.ai/api.md, checked 2026-10-23).
     """
-    default = "https://api.typesafe.dev"  # the row's own endpoint, kept inside its adapter (D-06)
+    default = "https://api.typesafe.ai/v1/systemone"  # the row's own endpoint (D-06)
     return os.environ.get("JEV_TYPESAFE_URL", default).strip(), None
 
 
@@ -696,7 +696,7 @@ def _typesafe_key():
 
 
 def _typesafe_probe(row, timeout, deadline=None):
-    """`GET /api/v1/user/subscription` with the bearer key: 200, else `unauthorized`/`unreachable`.
+    """`GET /v1/models` with the bearer key: 200, else `unauthorized`/`unreachable`.
 
     No question bytes: this is the only way to know a plan is actually active before spending
     an inference (D-10).
@@ -707,7 +707,7 @@ def _typesafe_probe(row, timeout, deadline=None):
     key, key_reason = row["key"]()
     if not key:
         return key_reason or "missing_key"
-    return _bearer_probe(_origin(endpoint, "/api/v1/user/subscription"), key, timeout,
+    return _bearer_probe(_origin(endpoint, "/v1/models"), key, timeout,
                          deadline)
 
 

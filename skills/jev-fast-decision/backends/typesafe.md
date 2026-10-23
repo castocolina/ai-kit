@@ -6,8 +6,8 @@ leaves the machine.
 
 ## Endpoint, models, keys
 
-- URL: `https://api.typesafe.dev` (override `JEV_TYPESAFE_URL`); the probe is a bearer
-  `GET /api/v1/user/subscription` — it confirms the plan is active before any question is sent.
+- URL: `POST https://api.typesafe.ai/v1/systemone` (override `JEV_TYPESAFE_URL`); the probe is a
+  bearer `GET /v1/models` on the same origin — it checks the key before any question is sent.
 - Request model: `jev-latest`. **The alias moves**: `jev-preview` is 1.14.0, and `jev-latest`
   moves onto it about a week after a release; `jev-1.13.0` stays available for a while.
   Versioned request ids are documented (`docs.typesafe.ai/models`, cited 2026-10-18) but not
