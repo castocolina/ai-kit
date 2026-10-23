@@ -112,6 +112,10 @@ PATHS = ("P1", "P2")
 # Poison fixture (D-08): `resolve_model_ids` is the key that empties `resolve-model`; a
 # `model_policy` resolves before the omit gate and would hide the bug, so it is absent.
 POISON_DEFAULTS = {"resolve_model_ids": "omit", "runtime": "codex"}
+# Control one omits pi's resolver setting to prove the oracle discriminates.
+PI_CONTROL_ONE_DEFAULTS = {"runtime": "codex"}
+# Control two uses the pi installer's intended resolver defaults.
+PI_INSTALLER_DEFAULTS = {"resolve_model_ids": "omit", "runtime": "pi"}
 
 WHY_INFORMATIONAL = (
     "a project-level runtime key steers resolve-model when GSD_RUNTIME is unset; the plan "
@@ -508,6 +512,44 @@ _LIVE_TABLES_SCRIPT = (
 )
 
 
+_PI_HOOK_PROBE_SCRIPT = r"""
+(async () => {
+  try {
+    const loaded = require(process.argv[1]);
+    const extension = typeof loaded === 'function' ? loaded : loaded.default;
+    const handlers = {};
+    extension({
+      registerCommand() {}, registerTool() {},
+      on(event, handler) { handlers[event] = handler; }
+    });
+    const result = await handlers.before_provider_request(
+      {payload: {model: 'selected'}}, {cwd: process.argv[2]}
+    );
+    process.stdout.write(JSON.stringify({model: result ? result.model : null}));
+  } catch (error) { process.stderr.write(String(error)); process.exitCode = 1; }
+})();
+"""
+
+
+def pi_hook_probe(
+    node_bin: str, ext_path: str, project: str, env: dict, run_fn: Callable = subprocess.run
+) -> str | None:
+    """Run the cached pi extension's real request handler against a scratch project."""
+    try:
+        result = run_fn(
+            [node_bin, "-e", _PI_HOOK_PROBE_SCRIPT, ext_path, project, "probe-selection"],
+            capture_output=True, text=True, check=False, timeout=60, env=dict(env)
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise _refusal(1, f"pi hook probe failed: {str(exc)[-300:]}") from exc
+    parsed = _json_object(_text(getattr(result, "stdout", "")))
+    if getattr(result, "returncode", 1) != 0 or parsed is None or not (
+        parsed.get("model") is None or isinstance(parsed.get("model"), str)
+    ):
+        raise _refusal(1, f"pi hook probe failed: {_text(getattr(result, 'stderr', ''))[-300:]}")
+    return parsed.get("model")
+
+
 def live_tables(node_bin: str, gsd_core_root: str, run_fn: Callable = subprocess.run) -> dict:
     """gsd-core's live `MODEL_PROFILES` and `AGENT_TO_PHASE_TYPE`, asserted to cover the
     same agent key set before any comparison (D-10) - exits 1 naming the difference."""
@@ -580,6 +622,9 @@ def _host_model(plan: dict, tables: dict, host: str, tier: str) -> str:
 
 def promised(agent: str, plan: dict, tables: dict, host: str = "claude") -> str:
     """Return the plan-derived model promise, never consulting the applied config."""
+    if host == "pi":
+        # omit is pi's intended resolver state (D-07); the hook's wire model is checked by probes.
+        return ""
     sets = _set_entries(plan)
     override = f"model_overrides.{agent}"
     if override in sets:
@@ -630,6 +675,8 @@ class _MatrixCtx(NamedTuple):
     apply_fn: Callable = _real_apply
     run_fn: Callable = subprocess.run
     tables_fn: Callable = staticmethod(live_tables)
+    installer_dir: str | None = None
+    probe_fn: Callable = staticmethod(pi_hook_probe)
 
 
 def _seams(node_bin: str, tools_path: str, home: str, host: str) -> _MatrixCtx:
@@ -801,6 +848,15 @@ def _row_for(
         plan = _load_plan(bundle)
         got = _resolve_all(ctx, agents, bundle["project"], env)
         mismatches = _mismatches(agents, plan, tables, got, ctx.host)
+        probe = None
+        if ctx.host == "pi" and start == "P1":
+            planned = _set_entries(plan).get("model_profile_overrides.pi.sonnet")
+            wire = ctx.probe_fn(
+                ctx.node_bin, os.path.join(ctx.installer_dir or "", "pi", "gsd.cjs"),
+                bundle["project"], env
+            )
+            probe = {"combo": f"{rigor}/{profile}", "planned": planned, "wire": wire,
+                     "ok": planned == wire}
     finally:
         shutil.rmtree(bundle["scratch"], ignore_errors=True)
     return {
@@ -810,6 +866,7 @@ def _row_for(
         "combo": f"{rigor}/{profile}",
         "mismatches": mismatches,
         "checks": len(agents),
+        **({"probe": probe} if probe is not None else {}),
     }
 
 
@@ -852,13 +909,17 @@ def _control_one(ctx: _MatrixCtx, agents: list[str], tables: dict) -> dict:
     `resolve_model_ids` unset removed. Every agent without a `model_overrides` entry must
     then fail; if one of them matches, the oracle is not discriminating and the matrix must
     exit 1 with `control 1 vacuous`."""
-    bundle = _bundle_for(ctx, ("standard", "adaptive"), "P2", POISON_DEFAULTS)
+    defaults = PI_CONTROL_ONE_DEFAULTS if ctx.host == "pi" else POISON_DEFAULTS
+    start = "P1" if ctx.host == "pi" else "P2"
+    bundle = _bundle_for(ctx, ("standard", "adaptive"), start, defaults)
     try:
         plan = _load_plan(bundle)
         expected = (
-            _unoverridden(agents, plan) if ctx.host == "claude" else _overridden(agents, plan)
+            sorted(agents) if ctx.host == "pi"
+            else _unoverridden(agents, plan) if ctx.host == "claude" else _overridden(agents, plan)
         )
-        _write_control_plan(bundle, plan, ctx.host)
+        if ctx.host != "pi":
+            _write_control_plan(bundle, plan, ctx.host)
         env = _apply_bundle(bundle, ctx.home, ctx.node_bin, ctx.apply_fn, ctx.host)
         got = _resolve_all(ctx, agents, bundle["project"], env)
         mismatches = _mismatches(agents, plan, tables, got, ctx.host)
@@ -875,7 +936,8 @@ def _control_one(ctx: _MatrixCtx, agents: list[str], tables: dict) -> dict:
 
 def _control_two(ctx: _MatrixCtx, agents: list[str], tables: dict) -> dict:
     """Control 2 (D-09): a P1 bundle with clean defaults (no poison at all) must pass."""
-    bundle = _bundle_for(ctx, ("standard", "adaptive"), "P1", None)
+    defaults = PI_INSTALLER_DEFAULTS if ctx.host == "pi" else None
+    bundle = _bundle_for(ctx, ("standard", "adaptive"), "P1", defaults)
     try:
         env = _apply_bundle(bundle, ctx.home, ctx.node_bin, ctx.apply_fn, ctx.host)
         plan = _load_plan(bundle)
@@ -931,11 +993,21 @@ def _informational_row(ctx: _MatrixCtx) -> dict:
 
 
 def run_matrix(
-    node_bin: str, tools_path: str, home: str, host: str = "claude", ctx: _MatrixCtx | None = None
+    node_bin: str, tools_path: str, home: str, host: str = "claude", ctx: _MatrixCtx | None = None,
+    installer_dir: str | None = None,
 ) -> dict:
     """5 combinations x 2 start paths over every live agent, plus both controls and an
     informational runtime row."""
     ctx = ctx or _seams(node_bin, tools_path, home, host)
+    if host == "pi":
+        version = gsd_tools.gsd_core_version(tools_path)
+        package = installer_dir or ctx.installer_dir or _cached_installer(version, home)
+        if package is None or not os.path.isfile(os.path.join(package, "pi", "gsd.cjs")):
+            raise _refusal(
+                3, f"pi hook probe needs a cached @opengsd/gsd-core {version} package "
+                "with pi/gsd.cjs; pass --installer-dir"
+            )
+        ctx = ctx._replace(installer_dir=package)
     tables = ctx.tables_fn(node_bin, ctx.core_root)
     agents = sorted(tables["profiles"])
     rows = [_row_for(ctx, combo, start, agents, tables) for combo in COMBOS for start in PATHS]
@@ -946,6 +1018,7 @@ def run_matrix(
     checks = sum(row["checks"] for row in rows) + sum(c["checks"] for c in controls.values())
     return {
         "rows": rows,
+        **({"probes": [row["probe"] for row in rows if "probe" in row]} if host == "pi" else {}),
         "controls": controls,
         "informational": _informational_row(ctx) if host == "claude" else None,
         "gsd_core": {"version": gsd_tools.gsd_core_version(tools_path), "path": GSD_CORE_LABEL},
@@ -2357,14 +2430,19 @@ def _cmd_matrix(args: argparse.Namespace) -> int:
         print(reason or "no node executable")
         return 3
     result = run_matrix(
-        node_bin, args.tools, str(_abs(args.home or pathlib.Path.home())), args.host
+        node_bin, args.tools, str(_abs(args.home or pathlib.Path.home())), args.host,
+        installer_dir=args.installer_dir,
     )
     failed = _matrix_failed(result)
     if args.json:
         print(json.dumps(result, sort_keys=True))
     else:
         print(_render_matrix(result))
-        print("matrix FAILED" if failed else f"matrix ok ({result['checks']} checks)")
+        summary = (
+            f"matrix ok ({result['checks']} checks, {len(result.get('probes', []))} hook probes)"
+            if args.host == "pi" else f"matrix ok ({result['checks']} checks)"
+        )
+        print("matrix FAILED" if failed else summary)
     return 1 if failed else 0
 
 
@@ -2374,6 +2452,8 @@ def _matrix_failed(result: dict) -> bool:
         any(row["mismatches"] for row in result["rows"])
         or not controls["control_1"]["ok"]
         or not controls["control_2"]["ok"]
+        or any(not probe.get("ok") for probe in result.get("probes", []))
+        or ("probes" in result and len(result["probes"]) != len(COMBOS))
     )
 
 
@@ -2391,6 +2471,11 @@ def _render_matrix(result: dict) -> str:
             f"control 1 vacuous: expected {control['expected_failures']} "
             f"observed {control['observed']}"
         )
+    for probe in result.get("probes", []):
+        if not probe.get("ok"):
+            lines.append(
+                f"probe {probe['combo']} planned={probe['planned']} wire={probe['wire']}"
+            )
     control_2 = result["controls"]["control_2"]
     if not control_2["ok"]:
         lines.append("control 2 mismatches: " + ",".join(control_2.get("mismatches") or []))
@@ -4653,7 +4738,9 @@ def _run_matrix_step(ctx: SmokeCtx) -> dict:
     holder: dict = {}
 
     def run() -> str:
-        holder["matrix"] = run_matrix(ctx.node_bin, ctx.tools_path, ctx.home, host=ctx.host)
+        holder["matrix"] = run_matrix(
+            ctx.node_bin, ctx.tools_path, ctx.home, host=ctx.host, installer_dir=ctx.installer_dir
+        )
         if _matrix_failed(holder["matrix"]):  # review H2: mismatches are data, not a raise
             raise SystemExit(_render_matrix(holder["matrix"]) or "matrix FAILED")
         return f"matrix ran: {holder['matrix']['checks']} checks"
@@ -4977,12 +5064,13 @@ def _build_parser() -> argparse.ArgumentParser:
     mat.add_argument("--json", action="store_true", help="print the structured result as JSON")
     mat.add_argument(
         "--host",
-        choices=("claude", "codex", "opencode", "cursor"),
+        choices=("claude", "codex", "opencode", "cursor", "pi"),
         default="claude",
-        help="runtime host: claude, codex, opencode or cursor",
+        help="runtime host: claude, codex, opencode, cursor or pi",
     )
     mat.add_argument("--tools", default=GSD_TOOLS_PATH, help="path to gsd-tools.cjs")
     mat.add_argument("--home", help="real HOME for the gsd-tools subprocesses (D-08)")
+    mat.add_argument("--installer-dir", help="cached gsd-core package directory; never fetched")
     mat.set_defaults(func=_cmd_matrix)
 
     fix = sub.add_parser("fixture", help="build one scenario's scratch project and caches")

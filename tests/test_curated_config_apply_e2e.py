@@ -205,6 +205,11 @@ def _golden_bundle(
         json.dump({"dependencies": {"react": "19.0.0"}}, handle)
     seed_cache(xdg, load_fixture("runtimes.json"), load_fixture("model-catalog.json"))
     env = _scratch_env(home, gsd_home, xdg)
+    if host_name == "pi":
+        from tests.test_curated_config_golden import SEEDED_PI_PROVIDER
+
+        # pi exports its session provider to bash; seeded runtimes include the Sonnet model.
+        env["PI_PROVIDER"] = SEEDED_PI_PROVIDER
     resolve_env = {**env, "RUNTIME_DIR": str(REPO_ROOT)}
     child_env = dict(env)
     if pre_inventory is not None:

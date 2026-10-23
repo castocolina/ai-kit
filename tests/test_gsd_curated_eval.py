@@ -983,6 +983,42 @@ class TestMatrixShape(unittest.TestCase):
         self.assertIsNone(seen["pre_inventory"])
         self.assertIsNone(seen["defaults"])
 
+    def test_promised_is_empty_on_pi_and_host_model_elsewhere(self) -> None:
+        plan = _plan([_set("model_profile_overrides.pi.sonnet", "claude-sonnet-5")])
+        tables = {"profiles": {"gsd-planner": {"adaptive": "opus"}},
+                  "phase": {"gsd-planner": "planning"},
+                  "runtime_profiles": {"codex": {"opus": {"model": "codex-opus"}}}}
+        self.assertEqual(ev.promised("gsd-planner", plan, tables, "pi"), "")
+        self.assertEqual(ev.promised("gsd-planner", plan, tables, "codex"), "codex-opus")
+
+    def test_pi_controls_use_their_own_defaults(self) -> None:
+        self.assertNotIn("resolve_model_ids", ev.PI_CONTROL_ONE_DEFAULTS)
+        self.assertEqual(ev.PI_INSTALLER_DEFAULTS["resolve_model_ids"], "omit")
+        self.assertEqual(ev.PI_INSTALLER_DEFAULTS["runtime"], "pi")
+
+    def test_pi_probe_mismatch_fails_the_matrix(self) -> None:
+        probes = [{"combo": f"{i}", "planned": "s1", "wire": "s1", "ok": True}
+                  for i in range(len(ev.COMBOS))]
+        result = {"rows": [], "probes": probes,
+                  "controls": {"control_1": {"ok": True}, "control_2": {"ok": True}}}
+        self.assertFalse(ev._matrix_failed(result))
+        probes[2] = {"combo": "rigorous/adaptive", "planned": "s1", "wire": "wrong", "ok": False}
+        self.assertTrue(ev._matrix_failed(result))
+        self.assertIn("probe rigorous/adaptive planned=s1 wire=wrong", ev._render_matrix(result))
+        result["probes"] = probes[:4]
+        self.assertTrue(ev._matrix_failed(result))
+
+    def test_run_matrix_pi_refuses_without_installer_package(self) -> None:
+        with (
+            mock.patch.object(ev, "_cached_installer", return_value=None),
+            self.assertRaises(ev._refusal) as caught,
+        ):
+            ev.run_matrix(
+                "node", "/tools/gsd-tools.cjs", "/home", host="pi", ctx=_ctx(host="pi")
+            )
+        self.assertEqual(caught.exception.exit_code, 3)
+        self.assertIn("--installer-dir", caught.exception.reason)
+
     def test_unoverridden_lists_only_agents_without_an_override(self) -> None:
         plan = _plan([_set("model_overrides.gsd-planner", "moon"), _unset("resolve_model_ids")])
         self.assertEqual(ev._unoverridden(["gsd-planner", "gsd-executor"], plan), ["gsd-executor"])
@@ -1165,6 +1201,21 @@ class TestCli(unittest.TestCase):
             missing = os.path.join(tempfile.gettempdir(), "no-such-gsd-tools.cjs")
             self.assertEqual(ev.main(["matrix", "--host", "opencode", "--tools", missing]), 0)
         self.assertEqual(run.call_args.args[3], "opencode")
+
+    def test_matrix_cli_pi_reaches_run_matrix_with_installer_dir(self) -> None:
+        result = {"rows": [], "controls": {"control_1": {"ok": True}, "control_2": {"ok": True}},
+                  "checks": 0, "probes": [{"ok": True} for _ in ev.COMBOS]}
+        with (
+            mock.patch.object(ev.shutil, "which", return_value="node"),
+            mock.patch.object(ev, "gsd_run_reason", return_value=""),
+            mock.patch.object(ev, "run_matrix", return_value=result) as run,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(
+                ev.main(["matrix", "--host", "pi", "--installer-dir", "/scratch/pkg"]), 0
+            )
+        self.assertEqual(run.call_args.kwargs["installer_dir"], "/scratch/pkg")
+        self.assertEqual(run.call_args.args[3], "pi")
 
     def test_render_matrix_is_mismatches_plus_control_verdict(self) -> None:
         result = {
@@ -4033,7 +4084,7 @@ class TestSmoke(unittest.TestCase):
     def test_smoke_passes_host_to_matrix(self) -> None:
         seen: dict = {}
 
-        def fake_matrix(node, tools, home, host="claude", ctx=None):
+        def fake_matrix(node, tools, home, host="claude", ctx=None, installer_dir=None):
             seen["host"] = host
             return {
                 "checks": 0,
@@ -4133,7 +4184,7 @@ class TestSmoke(unittest.TestCase):
 class TestMatrixModuleCollection(unittest.TestCase):
     """20-REVIEW WR-02 / ponytail M4: a collected mixin re-ran the full claude matrix."""
 
-    def test_matrix_module_collects_four_host_classes_only(self) -> None:
+    def test_matrix_module_collects_six_host_classes_only(self) -> None:
         suite = unittest.TestLoader().loadTestsFromName(  # never the -k-filtered default
             "tests.test_ai_kit_gsd_curated_config_matrix"
         )
@@ -4142,13 +4193,15 @@ class TestMatrixModuleCollection(unittest.TestCase):
         self.assertEqual(
             classes,
             [
+                "TestPiHookProbe",
                 "TestResolveModelMatrix",
                 "TestResolveModelMatrixCodex",
                 "TestResolveModelMatrixCursor",
                 "TestResolveModelMatrixOpencode",
+                "TestResolveModelMatrixPi",
             ],
         )
-        self.assertEqual(suite.countTestCases(), 36)
+        self.assertEqual(suite.countTestCases(), 47)
 
 
 class TestReviewFixes(unittest.TestCase):
