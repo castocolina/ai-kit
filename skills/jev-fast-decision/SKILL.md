@@ -36,8 +36,8 @@ Write `instructions`/`criteria` in English; criteria name concrete signals.
 ## Read the result
 
 - `ok` → match requested ids to `answers` or `errors`. `needs_fallback: true` → **you decide that item with your own reasoning**; otherwise advisory. Decide errors/missing ids yourself; partial results do not cover them. `trail` shows rungs; announce `consent_used`.
-- `consent_required_for_remote` (or `reason: backend_unavailable:<name>:consent_required_for_remote`) → ask the user; on yes grant or export, retry.
-- any other status → the status table in `reference.md`.
+- `consent_required_for_remote` (auto mode), or `reason: backend_unavailable:<name>:consent_required` (explicit remote) → ask the user; on yes grant or export, retry.
+- otherwise → the status table in `reference.md`.
 - Screening a diff hunk: summarize into value-free question text (name the pattern, not the value); never the raw hunk.
 
 ## NEVER
@@ -63,4 +63,4 @@ Write `instructions`/`criteria` in English; criteria name concrete signals.
 - [Images](https://docs.typesafe.ai/images) — image inputs (no builder here: `unsupported_feature`).
 - [Confidence](https://docs.typesafe.ai/confidence) — uncalibrated.
 
-Read `reference.md` before a `choice` item (≥2-option map), `score` or receipt.
+Read `reference.md` before `choice` (≥2 options), `score` or receipt.
