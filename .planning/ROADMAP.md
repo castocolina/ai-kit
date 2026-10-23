@@ -617,6 +617,33 @@ post-compaction context uses.
      the injected summary fits the 10,000-character hook output cap.
   3. Installable and removable as its own ai-kit setup knob; measured token or time saving
      recorded against a baseline compaction.
+**Plans:** 8 plans
+
+Plans (cross-AI plans, one per wave; only 21.2-02 Task 3 calls the local Laya; the orchestrator
+runs the live checks and measurements staged by 21.2-07 before wave 8):
+**Wave 1**
+- [ ] 21.2-01-PLAN.md — Core tracer through Claude Code (PreCompact prepares, compact SessionStart injects and deletes), chunking, the 9,500-character cap, the private 0700 dir and session-id safety (PCH-01)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 21.2-02-PLAN.md — The real 21.1 client: loopback-only pinning, env scrub, zero remote requests with consent recorded, the 10 s budget, and the S1 Laya spike that sets the chunk and call constants (PCH-01)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 21.2-03-PLAN.md — Defensive Claude transcript reading (R2 fixture matrix, boundary parity with the status line) and injector edges (PCH-01)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 21.2-04-PLAN.md — pi `session_before_compact` shim and the core's `pi` entry: previous summary kept whole or nothing (D-08), file lists, node e2e tests (PCH-01)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 21.2-05-PLAN.md — opencode `experimental.session.compacting` plugin and the core's `opencode` entry, context appended once, prompt never replaced (PCH-01)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 21.2-06-PLAN.md — Hook registry, headless `--with-hooks=<id[:host]>`, pi/opencode link rows, `uninstall --hooks=<ids>`, README (PCH-02)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 21.2-07-PLAN.md — Wizard `hooks` row and the live-check and measurement kit for the orchestrator (PCH-02, PCH-01)
+
+**Wave 8** *(blocked on Wave 7 and the orchestrator's live checks and measurements)*
+- [ ] 21.2-08-PLAN.md — Per-host defaults and verdicts from the recorded measurements, dated amendments, phase gates (PCH-02, PCH-01)
 
 ### Phase 21.3: Visible tool-advisory hooks as setup knobs (INSERTED)
 
