@@ -617,14 +617,14 @@ post-compaction context uses.
      the injected summary fits the 10,000-character hook output cap.
   3. Installable and removable as its own ai-kit setup knob; measured token or time saving
      recorded against a baseline compaction.
-**Plans:** 1/5 plans executed
+**Plans:** 2/5 plans executed
 
 Plans (cross-AI plans; 21.2-01 and 21.2-02 share wave 1 with disjoint files; only 21.2-03 Task 2
 calls the local Laya; after 21.2-05 the orchestrator runs the live checks and measurements staged
 by 21.2-02, then its close-out sets the per-host verdicts):
 **Wave 1**
 - [x] 21.2-01-PLAN.md — Core tracer through Claude Code (PreCompact prepares, compact SessionStart injects and deletes), chunking, the 9,500-character cap, the private 0700 dir, session-id safety, defensive transcript reading and boundary parity, injector edges (PCH-01)
-- [ ] 21.2-02-PLAN.md — Live-check (S2-S5) and measurement kit for the orchestrator: logging hooks, the verdict rule with its self-test, the measurement protocol and the close-out procedure (PCH-02, PCH-01)
+- [x] 21.2-02-PLAN.md — Live-check (S2-S5) and measurement kit for the orchestrator: logging hooks, the verdict rule with its self-test, the measurement protocol and the close-out procedure (PCH-02, PCH-01)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 21.2-03-PLAN.md — The real 21.1 client: loopback-only pinning, env scrub, zero remote requests with consent recorded, the 10 s budget, and the S1 Laya spike for the chunk constant (`measured: false` when Laya is down) (PCH-01)
