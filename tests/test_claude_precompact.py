@@ -81,6 +81,41 @@ class HookCaseMixin(unittest.TestCase):
             return [json.loads(line) for line in handle if line.strip()]
 
 
+class TestBudgetSlowStub(HookCaseMixin, unittest.TestCase):
+    """SPEC R8's acceptance run: a 1 s/chunk stub with 30+ chunks still returns in budget."""
+
+    def test_budget_slow_stub_30_chunks(self):
+        env = self.make_env(STUB_SLEEP="1")
+        base = os.path.dirname(env["HOME"])
+        env["STUB_LOG"] = os.path.join(base, "stub.log")
+        # 32 over-limit user turns: 32 chunks, one per chunk (two never fit together).
+        transcript = os.path.join(base, "transcript.jsonl")
+        with open(transcript, "w", encoding="utf-8") as handle:
+            for index in range(32):
+                handle.write(json.dumps(
+                    {"type": "user", "timestamp": f"t{index}",
+                     "message": {"role": "user", "content": f"turn {index} " + "x" * 900}})
+                    + "\n")
+        payload = {"hook_event_name": "PreCompact", "session_id": "sess-slow",
+                   "transcript_path": transcript, "cwd": os.path.join(base, "proj"),
+                   "trigger": "manual", "custom_instructions": None}
+        started = time.monotonic()
+        proc = self.run_hook(payload, env)
+        elapsed = time.monotonic() - started
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "{}")
+        self.assertNotIn("decision", proc.stdout)
+        self.assertLess(elapsed, 10.5, f"hook took {elapsed:.2f}s")
+        screen_calls = [line for line in self.read_stub_log(env)
+                        if line["argv"] != ["--probe"]]
+        self.assertLessEqual(len(screen_calls), 9)
+        directory = self.compact_dir(env)
+        files = [name for name in os.listdir(directory) if name.endswith("-compact.md")]
+        for name in files:
+            with open(os.path.join(directory, name), encoding="utf-8") as handle:
+                self.assertEqual(handle.readline().rstrip("\n"), core.HEADER_FIRST_LINE)
+
+
 class TestTracerPrecompactThenInject(HookCaseMixin, unittest.TestCase):
     """Task 1 tracer: PreCompact prepares, compact SessionStart injects and deletes."""
 

@@ -13,11 +13,14 @@ import random
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest import mock
+
+from tests.test_jev_fast_decision import JR, JevStub, closed_port_url
 
 REPO = Path(__file__).resolve().parents[1]
 CORE_PATH = REPO / "tools" / "hooks" / "precompact_core.py"
@@ -491,6 +494,275 @@ class TestPrivateDir(CoreEnvMixin, unittest.TestCase):
         core.sweep(directory)
         self.assertEqual(set(os.listdir(directory)),
                          {"s3-fresh-compact.md", "notes.txt"})
+
+
+class TestRealClientContract(CoreEnvMixin, unittest.TestCase):
+    """The unmodified repo client through find_client's realpath branch, against an
+    in-process JevStub on loopback only (SPEC R3; D-01, D-02)."""
+
+    # A request to any real remote default URL must fail on this machine: the closed
+    # https proxy refuses it, while no_proxy keeps the loopback stub reachable.
+    PROXY = {"https_proxy": "http://127.0.0.1:1", "HTTPS_PROXY": "http://127.0.0.1:1",
+             "no_proxy": "127.0.0.1,localhost", "NO_PROXY": "127.0.0.1,localhost"}
+
+    def real_env(self, base, **extra):
+        """A scratch env with AI_KIT_PRECOMPACT_CLIENT unset, so the repo client is used."""
+        env = self.make_env(tmp=base, **{**self.PROXY, **extra})
+        env.pop("AI_KIT_PRECOMPACT_CLIENT")
+        return env
+
+    def five_chunks(self):
+        """Five pad messages: one chunk each."""
+        pad = self.pad_message
+        return [pad("user", f"chunk {index} text ", 0.85) for index in range(5)]
+
+    def test_real_client_contract(self):
+        with JevStub(top=0.9, tops={"c0001": 0.4}) as stub:
+            base = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+            env = self.real_env(base, AI_KIT_LAYA_URL=stub.url)
+            meta = self.make_meta(env=env)
+            messages = self.five_chunks()
+            self.assertEqual(len(core.chunk_messages(messages)), 5)
+            document = core.presummarize(messages, meta, env)
+            self.assertIsNotNone(document)
+            # One POST per chunk, the GET /health probe first, one item each.
+            self.assertEqual(len(stub.posts), 5)
+            self.assertEqual(stub.requests[0]["method"], "GET")
+            self.assertEqual(
+                len({json.dumps(body["questions"], sort_keys=True) for body in stub.bodies}), 5)
+            for body in stub.bodies:
+                questions = body["questions"]
+                self.assertEqual(len(questions), 1)
+                (question,) = questions.values()
+                self.assertEqual(question["type"], "choice")
+                self.assertEqual(set(question["criteria"]), set(core.LABELS))
+            # Every chunk's text travels as context only, never as instructions.
+            contexts = sorted(next(iter(body["questions"])) for body in stub.bodies)
+            self.assertEqual(contexts, ["c0000", "c0001", "c0002", "c0003", "c0004"])
+            for body in stub.bodies:
+                items = body["state"]["items"]
+                self.assertEqual(len(items), 1)
+                self.assertEqual(items[0]["instructions"], core.INSTRUCTIONS)
+            # c0001 answered at 0.4 < the laya row's 0.7 -> needs_fallback -> unclassified;
+            # the other four are confident discards (the sorted-first criterion).
+            counts = self.header_counts(document)
+            self.assertEqual(counts["total"], 5)
+            self.assertEqual(counts["discard"], 4)
+            self.assertEqual(counts["unclassified"], 1)
+            self.assertIn("unclassified 1", document.splitlines()[3])
+
+    def test_loopback_remote_configured_zero_requests(self):
+        """Remote configured, consent recorded, allow flag set: a core run through the
+        real client still makes zero requests of the remote stub; the same parent env
+        driving the client directly does reach it (the non-vacuity control)."""
+        with JevStub() as remote, JevStub() as laya:
+            base = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+            env = self.real_env(base, AI_KIT_LAYA_URL=laya.url, JEV_TYPESAFE_URL=remote.url,
+                                TYPESAFE_API_KEY="sentinel-key", JEV_ALLOW_REMOTE="1",
+                                JEV_BACKEND="typesafe")
+            consent_dir = os.path.join(env["XDG_CONFIG_HOME"], "ai-kit")
+            os.makedirs(consent_dir)
+            with open(os.path.join(consent_dir, "jev-consent.json"), "w",
+                      encoding="utf-8") as handle:
+                json.dump({"typesafe": {"host": "127.0.0.1", "granted": "2026-10-19"}},
+                          handle)
+            meta = self.make_meta(env=env)
+            document = core.presummarize(self.five_chunks(), meta, env)
+            self.assertIsNotNone(document)
+            self.assertEqual(remote.requests, [])
+            self.assertTrue(laya.posts)
+            # Control: the same parent env, the client run directly, reaches the remote.
+            payload = {"reviewed_head": "0" * 40,
+                       "items": [{"id": "a", "type": "choice", "instructions": "q",
+                                  "criteria": dict(core.CRITERIA), "context": "c"}]}
+            control_env = dict(env)
+            control_env["GSD_PATH_JEV"] = "1"
+            control_env["GSD_PATH_JEV_TIMEOUT_SECONDS"] = "5"
+            proc = subprocess.run([sys.executable, core.find_client(env)],
+                                  input=json.dumps(payload), capture_output=True, text=True,
+                                  check=False, env=control_env, timeout=30)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(remote.requests, "control run must reach the remote stub")
+
+    def test_loopback_laya_down_no_file(self):
+        """The probed loopback row is down: None, no file, the hook prints {} and exits 0."""
+        base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        env = self.real_env(base, AI_KIT_LAYA_URL=closed_port_url())
+        transcript = self.synthetic_transcript(base, ["one", "two"])
+        payload = {"hook_event_name": "PreCompact", "session_id": "sess-9",
+                   "transcript_path": transcript, "cwd": os.path.join(base, "proj"),
+                   "trigger": "manual", "custom_instructions": None}
+        self.assertIsNone(core.run_claude(payload, env))
+        directory = core.private_dir(env)
+        self.assertEqual([name for name in os.listdir(directory)
+                          if name.endswith("-compact.md")], [])
+        hook_path = REPO / "tools" / "hooks" / "claude_precompact.py"
+        proc = subprocess.run(["python3", "-S", str(hook_path)], input=json.dumps(payload),
+                              capture_output=True, text=True, check=False, env=env,
+                              timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "{}")
+
+    def test_loopback_error_item_is_keep(self):
+        """One errored item among confident neighbours counts as unclassified only."""
+        env = self.make_env(STUB_ERROR_IDS="c0002", STUB_LABEL_CYCLE="discard")
+        meta = self.make_meta(env=env)
+        document = core.presummarize(self.five_chunks(), meta, env)
+        self.assertIsNotNone(document)
+        counts = self.header_counts(document)
+        self.assertEqual(counts["discard"], 4)
+        self.assertEqual(counts["unclassified"], 1)
+
+    def test_loopback_remote_only_probe_no_file(self):
+        """No usable loopback row in the probe: None, no screen call after the probe."""
+        base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        env = self.make_env(tmp=base, STUB_PROBE="remote_only",
+                            STUB_LOG=os.path.join(base, "stub.log"))
+        meta = self.make_meta(env=env)
+        self.assertIsNone(core.presummarize(self.five_chunks(), meta, env))
+        lines = self.stub_log_lines(env)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["argv"], ["--probe"])
+
+    def test_loopback_child_calls_from_log(self):
+        """The log of the stub children: one probe, then one screen per chunk with the
+        scrubbed, pinned env and the fixed English instructions/criteria (D-01)."""
+        base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        env = self.make_env(tmp=base, STUB_LOG=os.path.join(base, "stub.log"),
+                            JEV_ALLOW_REMOTE="1", JEV_BACKEND="typesafe",
+                            GSD_PATH_JEV="0", JEV_MIN_CONFIDENCE="0.1")
+        messages = self.five_chunks()[:3]
+        self.assertEqual(len(core.chunk_messages(messages)), 3)
+        meta = self.make_meta(env=env)
+        document = core.presummarize(messages, meta, env)
+        self.assertIsNotNone(document)
+        lines = self.stub_log_lines(env)
+        self.assertEqual(lines[0]["argv"], ["--probe"])
+        screens = lines[1:]
+        self.assertEqual(len(screens), 3)
+        self.assertEqual(len({line["pid"] for line in screens}), 3)
+        for line in screens:
+            child = line["env"]
+            self.assertEqual(child.get("JEV_BACKEND"), "laya")
+            self.assertEqual(child.get("GSD_PATH_JEV"), "1")
+            self.assertEqual(child.get("JEV_CALLER"), "ai-kit-precompact")
+            self.assertNotIn("JEV_ALLOW_REMOTE", child)
+            self.assertNotIn("JEV_MIN_CONFIDENCE", child)
+            config_home = child.get("XDG_CONFIG_HOME", "")
+            self.assertTrue(config_home.endswith(".no-config"))
+            self.assertFalse(os.path.exists(config_home))
+            payload = line["payload"]
+            self.assertEqual(set(payload), {"reviewed_head", "items"})
+            items = payload["items"]
+            self.assertEqual(len(items), 1)
+            item = items[0]
+            self.assertEqual(set(item), {"id", "type", "instructions", "criteria", "context"})
+            self.assertEqual(item["instructions"], core.INSTRUCTIONS)
+            self.assertEqual(item["criteria"], dict(core.CRITERIA))
+            self.assertIn(item["context"],
+                          [core.render_message(message) for message in messages])
+
+
+class TestBudget(CoreEnvMixin, unittest.TestCase):
+    """Budget edges: never in the way, checked before each call, monotonic seam."""
+
+    def test_budget_hung_child_killed(self):
+        base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        env = self.make_env(tmp=base, STUB_HANG="1", STUB_LOG=os.path.join(base, "stub.log"))
+        meta = self.make_meta(env=env)
+        messages = self.pad_message("user", "hang case ", 0.85)
+        chunks = core.chunk_messages([messages] * 4)
+        self.assertEqual(len(chunks), 4)
+        started = time.monotonic()
+        with mock.patch.object(core, "CLASSIFY_SECONDS", 1.5), \
+                mock.patch.object(core, "PER_CALL_CAP_SECONDS", 0.5):
+            core.presummarize([messages] * 4, meta, env)
+        self.assertLess(time.monotonic() - started, 3.0)
+        pids = {line["pid"] for line in self.stub_log_lines(env)
+                if line["argv"] != ["--probe"]}
+        self.assertGreater(len(pids), 0)
+        for pid in pids:
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+
+    def test_budget_checked_before_each_call(self):
+        clock = [0.0]
+        calls = []
+
+        def fake_monotonic():
+            return clock[0]
+
+        def fake_chunk(_client, _env, _item_id, _text, _head):
+            calls.append(clock[0])
+            clock[0] += 3.0
+            return "keep"
+
+        env = self.make_env()
+        messages = [self.pad_message("user", f"call {index} ", 0.85) for index in range(10)]
+        self.assertEqual(len(core.chunk_messages(messages)), 10)
+        meta = self.make_meta(env=env)
+        meta["started"] = 0.0
+        with mock.patch.object(core, "_monotonic", fake_monotonic), \
+                mock.patch.object(core, "CLASSIFY_SECONDS", 8.0), \
+                mock.patch.object(core, "classify_chunk", fake_chunk):
+            document = core.presummarize(messages, meta, env)
+            self.assertIsNotNone(document)
+            self.assertEqual(calls, [0.0, 3.0, 6.0])
+            # A clock already at the deadline: the probe gives up, zero calls start.
+            clock[0] = 8.0
+            calls.clear()
+            self.assertIsNone(core.presummarize(messages, meta, env))
+            self.assertEqual(calls, [])
+
+    def test_budget_last_chunk_timeout_keeps_earlier(self):
+        env = self.make_env(STUB_HANG="1", STUB_SLEEP_IDS="c0000",
+                            STUB_LABELS=json.dumps({"c0001": "summarize",
+                                                    "c0002": "discard",
+                                                    "c0003": "discard"}))
+        meta = self.make_meta(env=env)
+        messages = [self.pad_message("user", f"older {index} ", 0.85) for index in range(4)]
+        self.assertEqual(len(core.chunk_messages(messages)), 4)
+        with mock.patch.object(core, "PER_CALL_CAP_SECONDS", 0.5):
+            document = core.presummarize(messages, meta, env)
+        self.assertIsNotNone(document)
+        counts = self.header_counts(document)
+        self.assertEqual(counts["summarize"], 1)
+        self.assertEqual(counts["discard"], 2)
+        self.assertEqual(counts["unclassified"], 1)
+
+    def test_budget_zero_chunks_immediate(self):
+        base = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        env = self.make_env(tmp=base, STUB_LOG=os.path.join(base, "stub.log"))
+        meta = self.make_meta(env=env)
+        started = time.monotonic()
+        self.assertIsNone(core.presummarize([], meta, env))
+        self.assertLess(time.monotonic() - started, 0.1)
+        self.assertFalse(os.path.exists(env["STUB_LOG"]),
+                         "no stub call may run for zero chunks")
+
+
+class TestChunkLimitWithinClientGuard(CoreEnvMixin, unittest.TestCase):
+    """CHUNK_STATE_CHARS never exceeds the client's own non-remote guard (D-03)."""
+
+    def test_chunk_limit_within_client_guard(self):
+        guard = min(row["state_chars_limit"] for row in JR.TABLE if not row["remote"])
+        self.assertGreater(guard, 0)
+        self.assertLessEqual(core.CHUNK_STATE_CHARS, guard)
+        text = ("plain ascii line\n"
+                "héllo wörld with accénts and ñ's\n"
+                "日本語のテキストと中文文本\n") * 40
+        chunks = core.chunk_messages([{"role": "user", "text": text, "tools": []}])
+        self.assertGreater(len(chunks), 0)
+        for chunk in chunks:
+            size = core.request_state_chars(core.build_request("0" * 40, "c0000", chunk))
+            self.assertLessEqual(size, core.CHUNK_STATE_CHARS)
 
 
 if __name__ == "__main__":
