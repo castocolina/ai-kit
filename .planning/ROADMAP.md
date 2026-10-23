@@ -658,7 +658,7 @@ task checks that 21.2-05 landed)*
      the size report reaches the model with that read and informs the next one; stopping the read would need a permission decision, which stays forbidden)*
   4. A PostToolUse reminder ("you used grep; next time rg") fires only for installed tools; both
      advisors are live-verified in a real session, not only unit-tested.
-**Plans:** 5/8 plans executed
+**Plans:** 6/8 plans executed
 
 Plans (cross-AI plans; executed after Phases 21.1 and 21.2; 21.3-08 stages the live checks the
 orchestrator runs after wave 5, and its opencode spike S-OC can run as soon as it lands):
@@ -675,7 +675,7 @@ orchestrator runs after wave 5, and its opencode spike S-OC can run as soon as i
 - [x] 21.3-05-PLAN.md — Decision-probe SessionStart hook (backend names only); the R9 hook budget, fail-open per entry script, installed-only coverage (ADV-01, ADV-03, ADV-04)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 21.3-06-PLAN.md — Five hook ids as registry rows with Cursor as a host; bare `--with-hooks` = defaults; single-hook wiring removed (ADV-01)
+- [x] 21.3-06-PLAN.md — Five hook ids as registry rows with Cursor as a host; bare `--with-hooks` = defaults; single-hook wiring removed (ADV-01)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 21.3-07-PLAN.md — Wizard Review stops counting hooks as components; five PTY rows; READMEs and the host x hook table (ADV-01, ADV-02)
