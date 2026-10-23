@@ -2,14 +2,14 @@
 gsd_state_version: "1.0"
 milestone: v1.3
 milestone_name: GSD Curated Config v2
-current_phase: "21.1"
-current_phase_name: Atomic reusable decision-system skills
-status: verifying
+current_phase: "21.2"
+current_phase_name: PreCompact pre-summary hook via the decision system
+status: executing
 stopped_at: Completed 21.1-07-PLAN.md
-last_updated: "2026-10-23T06:37:41.424Z"
-last_activity: 2026-10-19
-last_activity_desc: Phase 21.1 execution started
-state_head: e6099fa34cd3c1b91fa6677be0578d2782de522f
+last_updated: "2026-10-23T06:41:25.638Z"
+last_activity: 2026-10-23
+last_activity_desc: Phase 21.2 execution started
+state_head: 5d8df7990a9e49a38d3be3522173ae15a5de2bb0
 progress:
   total_phases: 17
   completed_phases: 1
@@ -25,14 +25,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-23)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 21.1 — Atomic reusable decision-system skills
+**Current focus:** Phase 21.2 — PreCompact pre-summary hook via the decision system
 
 ## Current Position
 
-Phase: 21.1 (Atomic reusable decision-system skills) — EXECUTING
-Plan: 7 of 7
-Status: Phase complete — ready for verification
-Last activity: 2026-10-19 — Phase 21.1 execution started
+Phase: 21.2 (PreCompact pre-summary hook via the decision system) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 21.2
+Last activity: 2026-10-23 — Phase 21.2 execution started
 
 Progress: [█░░░░░░░░░] 6%
 
