@@ -1,72 +1,25 @@
 #!/usr/bin/env python3
-"""Cursor sessionStart wrapper for the tool-substitution briefing.
+"""Cursor sessionStart wrapper for the modern-tool briefing.
 
-Reads (and discards) the host's stdin payload, runs detect + compose, and
-emits a Cursor sessionStart envelope on stdout. Every failure path exits
-0 with parseable JSON — a hung or missing rtk must never block session
-start. Uncaught errors reach module-level ``_fail_open`` via
-``sys.excepthook``.
+Reads and discards the host's stdin payload, runs the shared detector and
+composer, and emits the model context in Cursor's additional_context field.
+Every failure path exits 0 with parseable JSON.
 
-Output schema: `{ additional_context?: string }`, from Cursor's own
-already-installed `gsd-cursor-session-start.js` header. Because the field
-is optional, a bare `{}` is contract-valid on this host.
+Output schema: `{ additional_context?: string }`; Cursor has no user-visible
+briefing field. Empty output is a bare `{}`.
 
-Empty-output evidence, per host, rather than a uniform claim:
-
-- Cursor: a bare `{}` is an OBSERVED live precedent. Cursor's own installed
-  `gsd-cursor-session-start.js` writes that shape on its error path.
-- Claude Code: the same shape is INFERRED rather than observed. The
-  documented envelope makes every output field optional, so a `{}` body
-  carries no recognized field and is read as a no-op.
-
-Host coverage: Claude Code and Cursor are both wired. opencode has no
-documented session-start injection point today, an accepted and documented
-gap (ROADMAP SC-4, PROJECT.md Out of Scope).
+Host coverage: Claude Code and Cursor are wired. opencode has no documented
+session-start injection point today, an accepted and documented gap.
 """
 
 import importlib
 import json
 import os
-import select
 import sys
 
-
-def _fail_open(*_exc_info):
-    """Process-level SC-3 backstop: emit ``{}`` and exit 0 on any uncaught error.
-
-    If stdout is broken, the excepthook itself fails and Python prints its
-    default traceback and exits 1 (same exposure as an in-main handler).
-    ``sys.excepthook`` never sees ``SystemExit``; these hooks must not gain
-    argparse or any other ``SystemExit`` beyond ``raise SystemExit(main())``.
-    """
-    sys.stdout.write("{}")
-    sys.stdout.flush()
-    os._exit(0)
-
-
-def _drain_stdin():
-    """Discard stdin in bounded chunks so a partial payload cannot wedge us."""
-    try:
-        fd = sys.stdin.fileno()
-    except (OSError, ValueError, AttributeError, TypeError):
-        return
-    total = 0
-    for _ in range(16):
-        if total >= 1024 * 1024:
-            return
-        try:
-            readable, _, _ = select.select([sys.stdin], [], [], 0.5)
-        except (OSError, ValueError, AttributeError, TypeError):
-            return
-        if not readable:
-            return
-        try:
-            chunk = os.read(fd, 65536)
-        except (OSError, ValueError, AttributeError, TypeError):
-            return
-        if not chunk:
-            return
-        total += len(chunk)
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+# pylint: disable=wrong-import-position
+from claude_session_start import _drain_stdin, _fail_open
 
 
 def emit(message):
@@ -77,13 +30,11 @@ def emit(message):
 
 
 def main():
-    """Detect, compose, emit. Failures reach ``_fail_open``."""
-    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    """Detect, compose, emit. Failures reach the shared ``_fail_open``."""
     detect = importlib.import_module("detect")
     _drain_stdin()
-    detection = detect.detect_substitutions()
-    message = detect.compose_message(detection)
-    emit(message)
+    _user_line, context = detect.compose_message(detect.detect_substitutions())
+    emit(context)
     return 0
 
 

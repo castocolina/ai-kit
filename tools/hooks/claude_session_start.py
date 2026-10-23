@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Claude Code SessionStart wrapper for the tool-substitution briefing.
+"""Claude Code SessionStart wrapper for the modern-tool briefing.
 
 Reads (and discards) the host's stdin payload, runs detect + compose, and
-emits a Claude Code SessionStart envelope on stdout. Every failure path
-exits 0 with parseable JSON — a hung or missing rtk must never block
-session start. Uncaught errors reach module-level ``_fail_open`` via
-``sys.excepthook``.
+emits a user-visible line and model context. Every failure path exits 0
+with parseable JSON. Uncaught errors reach ``_fail_open`` via ``sys.excepthook``.
 
 Empty-output evidence, per host, rather than a uniform claim:
 
@@ -105,8 +103,8 @@ def main():
     detect = importlib.import_module("detect")
     _drain_stdin()
     detection = detect.detect_substitutions()
-    message = detect.compose_message(detection)
-    emit(message)
+    user_line, context = detect.compose_message(detection)
+    emit(context, user_line)
     return 0
 
 
