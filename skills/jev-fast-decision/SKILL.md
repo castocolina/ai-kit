@@ -1,6 +1,6 @@
 ---
 name: jev-fast-decision
-description: "Use when a fast, cheap typed judgment beats a full reasoning pass: yes/no (noul), picking among named options (choice), a rubric score (score), or screening evidence against a criterion — through the shared System One client (scripts/jev_review.py) on Laya (local), TypeSafe or OpenCode Zen (remote, consent required). Every answer is advisory: a needs_fallback answer means you decide that item with your own reasoning, and no answer is ever a verdict or gate."
+description: "Use when a fast, cheap typed judgment beats a full reasoning pass: yes/no (noul), picking among named options (choice), a rubric score (score), or screening evidence against a criterion, through the shared System One client on Laya (local), TypeSafe or OpenCode Zen (remote, consent required). Advisory only: needs_fallback means you decide that item yourself, and no answer is a verdict or gate. Not for building TypeSafe into an app (typesafe-ai) or for editing code."
 ---
 
 # Jev fast-decision (shared System One client)
@@ -9,7 +9,7 @@ Advisory typed judgments from local Laya or a consented remote (TypeSafe, OpenCo
 
 ## Pick the backend
 
-Run `python3 -B scripts/jev_review.py --probe` before the first call of a session; read `backends/<selected>.md` before the first call with that backend.
+From this skill's directory, run `python3 -B scripts/jev_review.py --probe` before the first call of a session; read `backends/<selected>.md` before the first call with that backend.
 
 | Backend | When chosen | Batching | Consent needed |
 |---|---|---|---|
@@ -24,7 +24,7 @@ Run `python3 -B scripts/jev_review.py --probe` before the first call of a sessio
 ```bash
 GSD_PATH_JEV=1 JEV_BACKEND=laya JEV_LAYA_URL=http://127.0.0.1:<port> GSD_PATH_JEV_TIMEOUT_SECONDS=20 \
 python3 -B scripts/jev_review.py <<'JSON'
-{"reviewed_head": "0*40hex", "items": [
+{"reviewed_head": "<git rev-parse HEAD>", "items": [
  {"id": "F1", "criterion": "This finding is a real bug.", "evidence": "your grep output"},
  {"id": "sev", "type": "score", "instructions": "How severe?", "context": "crash on launch",
   "criteria": ["cosmetic","minor","major","critical"]}]}

@@ -22,7 +22,8 @@ Phase 18.1, T2: "Delete the Claude subprocess inventory?"
 - Laya `delete_all 0.75`; TypeSafe second opinion `keep_for_review 0.74`.
 - The models are effectively split. Evidence decides: Phase 18 R2 fills `review.models.claude`
   on codex/opencode hosts from that inventory.
-- Logged as **Laya overridden** with that reason.
+- Logged as **Laya overridden** with that reason. (Recorded at the time; under today's 0.8 TypeSafe threshold
+  that 0.74 is `(fb)`, so the override rests on the evidence alone.)
 
 Lesson: when the models tie, do not average them — the evidence breaks the tie, and the log
 says which fact did.

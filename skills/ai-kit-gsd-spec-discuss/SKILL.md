@@ -25,15 +25,17 @@ decided provisionally and shown at the end.
        [ -f "$c/decide.py" ] && { printf '%s\n' "$c"; break 2; }; done; done
    ```
 2. **Resolve `gsd_run`** with gsd-core's standard resolver (`references/gsd-run-resolver.md`
-   inside the gsd-core install; in Claude Code: `node ~/.claude/gsd-core/bin/gsd-tools.cjs`).
+   inside the gsd-core install; it finds the repo's own `.claude/gsd-core/bin/gsd-tools.cjs`
+   before any user-level install).
    The workflows dir is `<dir of gsd-tools.cjs>/../workflows/`. No gsd-core → stop with the
    resolver's own install hint.
 3. **Detect backends:** `python3 "$S/decide.py" detect` — the shared `jev-fast-decision`
    client's probe table, one entry per table backend (`laya`, `typesafe`, `opencode`), labels
    only (key *source*, never the key). Laya's URL comes from `JEV_LAYA_URL`, `AI_KIT_LAYA_URL`
    or a loopback `JEV_API_URL`, default `http://127.0.0.1:8010`, probed via `/health` (not
-   bare TCP). TypeSafe keys: `TYPESAFE_API_KEY`, `JEV_API_KEY`, `JEV_API_KEY_FILE`, or
-   `JEV_API_KEY=` in `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`. A status
+   bare TCP). Keys the client reads: TypeSafe `TYPESAFE_API_KEY` or
+   `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key`; OpenCode Zen `OPENCODE_ZEN_API_KEY` or
+   `opencode-zen.key` in `~/.pi/agent/keys.json`. A status `no_client` (no client found) or
    `incompatible_client` (the client beside the skill predates the shared one) means own
    reasoning only, until the owner runs `python3 tools/setup.py install --headless --skills
    jev-fast-decision --replace-existing`.
@@ -45,7 +47,9 @@ decided provisionally and shown at the end.
    Check `git log -1 -- <SPEC>`; if that commit only appended an amendment the CONTEXT already
    reflects, drop the phase from the proposal and say why.
 5. **Ask exactly one question**, only when needed: confirm or trim the proposed range, and —
-   if a remote backend's `detect` entry reads `consent_required_for_remote` — ask for consent
+   if a remote backend's `detect` entry has `status: consent_required` and `key_source` `env`
+   or `file` (a keyed remote; the top-level `consent_required_for_remote` appears only when no
+   backend at all is usable) — ask for consent
    in the same question, naming each backend and its host, "summaries only, never code or
    secrets", and the revoke command. On yes: `python3 "$S/decide.py" consent grant <backend>`
    (`consent grant typesafe` still works; the client keeps the record, same once-per-user
@@ -82,7 +86,7 @@ Read and execute `<workflows>/discuss-phase-assumptions.md` with argument `N` �
 `--assumptions` (routes to `list-phase-assumptions.md`, which writes no files) and **never**
 pass `--auto` (it chains into plan-phase and auto-accepts Unclear items). Encode the user's
 `--analyze --all --batch` intent yourself: every analyzer area in one pass; 2–3 alternatives
-per Likely/Unclear item with best and easy marked; all the phase's questions in one ladder run.
+per Likely/Unclear item with best and easy marked; all the phase's questions in one ladder run (the client still sends Laya one item per call).
 
 Pre-answer the workflow's prompts by rule:
 - existing CONTEXT → "Update it" (in place, additively — locked decisions stay verbatim);
@@ -133,7 +137,7 @@ runs the local backend one item per call; `fallback` follows each row's own thre
   T2, 23 B10/B12, 24 C13).
 - Laya is not deterministic: the same item scored 0.74 then 0.67 (fb) on two runs. Never treat
   a single Laya number as stable.
-- Every answering column low or errored → **own reasoning** against the SPEC, earlier CONTEXT
+- Every answering column low (`fallback: true`) or errored → **own reasoning** against the SPEC, earlier CONTEXT
   files and the live facts. Log it, and ledger it when it blocks nothing.
 
 ## 4. Ledger and stop rule
@@ -176,8 +180,8 @@ in sequence (flag that gap in the log).
   writes nothing; the run looks complete and produces no CONTEXT.
 - **NEVER pass `--auto` to discuss** — it auto-advances into plan-phase and accepts the
   analyzer's default for Unclear items, bypassing the ladder and the log.
-- **NEVER batch items to Laya** — one item's context changes another's answer.
-- **NEVER treat a Laya or TypeSafe answer as the decision** — log it as advisory; the decision
+- **NEVER hand-batch items into one Laya question** — one item's context changes another's answer.
+- **NEVER treat a Laya, TypeSafe or OpenCode Zen answer as the decision** — log it as advisory; the decision
   column is yours, with its reason.
 - **NEVER send code, diffs, file contents, config values or secrets** — summaries only;
   `decide.py` rejects fences and key shapes, but it is defense in depth, not a guarantee.
