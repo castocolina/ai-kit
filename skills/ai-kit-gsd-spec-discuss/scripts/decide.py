@@ -35,7 +35,7 @@ _CONTROL_NAMES = {"JEV_BACKEND", "JEV_ALLOW_REMOTE", "JEV_MIN_CONFIDENCE"}
 _CONTROL_PREFIXES = ("GSD_PATH_JEV",)
 
 ITEM_KEYS = {"id", "type", "instructions", "context", "criteria"}
-ITEM_TYPES = {"choice", "noul"}
+ITEM_TYPES = {"choice", "noul", "score"}
 MAX_FIELD_CHARS = 1500
 # Defense in depth, not a guarantee: obvious key shapes and long opaque base64 runs (48+ so a
 # 40-char commit SHA in a summary still passes). A false positive only means own reasoning.
@@ -135,10 +135,13 @@ def _criteria_error(item: dict[str, Any]) -> str | None:
         return None
     criteria = item["criteria"]
     if item["type"] == "noul":
-        if (not isinstance(criteria, dict) or set(criteria) != {"true", "false"}
-                or any(_bad_text(text) for text in criteria.values())):
-            return "bad_criteria"
-        return None
+        ok = (isinstance(criteria, dict) and set(criteria) == {"true", "false"}
+              and not any(_bad_text(text) for text in criteria.values()))
+        return None if ok else "bad_criteria"
+    if item["type"] == "score":
+        ok = (isinstance(criteria, list) and 2 <= len(criteria) <= 10
+              and not any(_bad_text(level) for level in criteria))
+        return None if ok else "bad_criteria"
     if not isinstance(criteria, dict) or len(criteria) < 2:
         return "choice_needs_two_criteria"
     if any(_bad_text(key) or _bad_text(text) for key, text in criteria.items()):
@@ -346,10 +349,10 @@ def decided_by(trail: list[Any]) -> str:
 def fill_columns(got: dict[str, Any], results: dict[str, Any],
                  valid: list[dict[str, Any]]) -> None:
     """Map each valid item's rung trail onto one column per backend the client's table names."""
-    names = []
-    for entry in got.get("backends") if isinstance(got.get("backends"), list) else []:
-        if isinstance(entry, dict) and isinstance(entry.get("name"), str):
-            names.append(entry["name"])
+    probe = got.get("backends")
+    names = [entry["name"] for entry in probe
+             if isinstance(entry, dict) and isinstance(entry.get("name"), str)] \
+        if isinstance(probe, list) else []
     for item in valid:
         entry = results[item["id"]]
         for name in names:

@@ -34,6 +34,7 @@ SENTINEL = "SENTINEL-KEY-0123456789abcdef"
 HEAD = "0" * 40
 _PUBLIC_BACKEND_KEYS = {"name", "remote", "batch", "host", "usable", "reason", "key_source",
                         "consent", "status"}
+_PUBLIC_CONSENT_KEYS = {"ok", "backend", "host", "consent", "file", "note", "reason"}
 
 # Fake jev client carrying the protocol line decide.py requires: logs its calls, answers every
 # item from one rung named "fake", and leaks its whole env when FAKE_JEV_LEAK is set (24 D-13).
@@ -102,6 +103,11 @@ def noul_item(identifier, context="All green on the live check."):
     return {"id": identifier, "type": "noul", "instructions": "Ship it?", "context": context}
 
 
+def score_item(identifier, levels=None, context="The refund is duplicated."):
+    return {"id": identifier, "type": "score", "instructions": "How severe is it?",
+            "context": context, "criteria": levels or ["low", "mid", "high"]}
+
+
 def closed_port_url():
     """A loopback URL on a port nothing listens on (bound, then released right away)."""
     with socket.socket() as sock:
@@ -154,6 +160,7 @@ class TestItemError(unittest.TestCase):
         self.assertIsNone(decide.item_error({**noul_item("n"),
                                              "criteria": {"true": "holds",
                                                           "false": "fails"}}))
+        self.assertIsNone(decide.item_error(score_item("s")))
 
     def test_commit_sha_in_summary_passes(self):
         sha = "a5b3fab" + "0" * 33
@@ -172,6 +179,10 @@ class TestItemError(unittest.TestCase):
             ("secret_pattern_context", choice_item("x", "token sk-" + "a" * 30)),
             ("too_long_context", choice_item("x", "y" * (decide.MAX_FIELD_CHARS + 1))),
             ("bad_type", {**choice_item("x"), "type": "box"}),
+            ("bad_criteria", score_item("s", ["only"])),
+            ("bad_criteria", score_item("s", [f"l{i}" for i in range(11)])),
+            ("bad_criteria", score_item("s", {"low": "high"})),
+            ("bad_criteria", score_item("s", ["low", " "])),
             ("missing_id", {**choice_item(""), "id": ""}),
             ("missing_id", {**choice_item(""), "id": " "}),
         ]
@@ -198,6 +209,14 @@ class TestTypedAnswer(unittest.TestCase):
     def test_error_rung(self):
         self.assertEqual(decide.typed_answer({"backend": "one", "error": "http_503"}),
                          {"error": "http_503"})
+
+    def test_score_rung_names_the_winning_level(self):
+        got = decide.typed_answer({"backend": "one", "model": "m-1", "type": "score",
+                                   "level": "2", "legend": {"0": "low", "1": "mid",
+                                                            "2": "high"},
+                                   "top": 0.91, "needs_fallback": False})
+        self.assertEqual(got, {"choice": "high", "top": 0.91, "fallback": False,
+                               "model": "m-1"})
 
     def test_garbage(self):
         self.assertEqual(decide.typed_answer("nope"), {"error": "invalid_response"})
@@ -424,6 +443,12 @@ class TestLadderCli(_TmpHome):
             {**choice_item("c_one_key"), "criteria": {"a": "only"}},
             {**choice_item("c_empty_key"), "criteria": {"": "empty", "b": "fine"}},
             {**choice_item("c_space_key"), "criteria": {" ": "space", "b": "fine"}},
+            score_item("s_1", ["only"]),
+            score_item("s_11", [f"l{i}" for i in range(11)]),
+            score_item("s_dict", {"a": "b"}),
+            score_item("s_empty_level", ["low", " "]),
+            score_item("s_2", ["low", "high"]),
+            score_item("s_10", [f"l{i}" for i in range(10)]),
             {**noul_item(" "), },
             {**noul_item("empty_ctx"), "context": " "},
             {**noul_item("extra_key"), "evidence": "raw"},
@@ -449,6 +474,112 @@ class TestLadderCli(_TmpHome):
         self.assertEqual(no_record["consent_used"], [])
         self.assertEqual(no_record["remote_available"], ["typesafe"])
         self.assertEqual(no_record["items"]["low1"]["decided_by"], "own_reasoning")
+
+    def test_detect_reports_probe(self):
+        with JevStub() as laya, JevStub(model="typesafe-1") as remote:
+            out = self.run_cli(["detect"], JEV_LAYA_URL=laya.url,
+                               JEV_TYPESAFE_URL=f"http://127.0.0.1:{remote.port}",
+                               TYPESAFE_API_KEY=SENTINEL)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            report = json.loads(out.stdout)
+        self.assertNotIn(SENTINEL, out.stdout + out.stderr)
+        self.assertEqual(report["client"]["path"], str(REPO_CLIENT))
+        self.assertIn(str(REPO_CLIENT), report["client"]["tried"])
+        self.assertEqual(set(report["backends"]), {"laya", "typesafe", "opencode"})
+        for entry in report["backends"].values():
+            self.assertLessEqual(set(entry), _PUBLIC_BACKEND_KEYS)
+        self.assertTrue(report["backends"]["laya"]["usable"])
+        self.assertIsInstance(report["status"], str)
+        scripts = _isolated_decide(self.tmp)
+        out = subprocess.run([sys.executable, str(scripts / "decide.py"), "detect"],
+                             capture_output=True, text=True, check=False,
+                             env={"HOME": str(self.tmp / "home"),
+                                  "PATH": self.env["PATH"]},
+                             cwd=self.tmp, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        report = json.loads(out.stdout)
+        self.assertEqual(report["status"], "no_client")
+        self.assertEqual(report["backends"], {})
+        self.assertIsNone(report["client"]["path"])
+
+    def test_no_key_value_in_detect_or_consent_from_a_leaky_client(self):
+        for args in (["detect"], ["consent", "show", "typesafe"],
+                     ["consent", "grant", "remote-one"]):
+            with self.subTest(args=args):
+                out = self.run_cli(args, client=self.fake, JEV_API_KEY=SENTINEL,
+                                   FAKE_JEV_LEAK="1")
+                self.assertEqual(out.returncode, 0, out.stderr)
+                self.assertNotIn(SENTINEL, out.stdout + out.stderr)
+                result = json.loads(out.stdout)
+                if args == ["detect"]:
+                    for entry in result["backends"].values():
+                        self.assertLessEqual(set(entry), _PUBLIC_BACKEND_KEYS)
+                else:
+                    self.assertTrue(result["ok"])
+                    self.assertLessEqual(set(result), _PUBLIC_CONSENT_KEYS)
+
+    def test_detect_and_consent_refuse_incompatible_client(self):
+        stale = self.tmp / "stale_jev.py"
+        stale.write_text(FAKE_CLIENT.replace("CLIENT_PROTOCOL = 2", "CLIENT_PROTOCOL = 1"))
+        report = self.cli_json(["detect"], client=stale)
+        self.assertEqual(report["status"], "incompatible_client")
+        self.assertEqual(report["backends"], {})
+        self.assertEqual(report["client"]["path"], str(stale))
+        refused = self.cli_json(["consent", "grant", "typesafe"], client=stale)
+        self.assertEqual(refused, {"ok": False, "reason": "incompatible_client"})
+        self.assertEqual(self.calls(), [], "a client without the protocol line must never run")
+
+    def test_consent_delegated(self):
+        with JevStub(model="typesafe-1") as remote:
+            url = f"http://127.0.0.1:{remote.port}"
+            granted = self.grant_typesafe(JEV_TYPESAFE_URL=url, TYPESAFE_API_KEY=SENTINEL)
+            self.assertTrue(granted["ok"])
+            record = self.tmp / "home" / ".config" / "ai-kit" / "jev-consent.json"
+            self.assertTrue(record.is_file())
+            shown = self.cli_json(["consent", "show", "typesafe"], JEV_TYPESAFE_URL=url)
+            self.assertEqual(shown["consent"], granted["consent"])
+            self.assertTrue(shown["file"].startswith(str(self.tmp)))
+            moved = f"http://127.0.0.2:{remote.port}"
+            shown_moved = self.cli_json(["consent", "show", "typesafe"],
+                                        JEV_TYPESAFE_URL=moved)
+            self.assertIsNone(shown_moved["consent"])
+            revoked = self.cli_json(["consent", "revoke", "typesafe"], JEV_TYPESAFE_URL=url)
+            self.assertTrue(revoked["ok"])
+            shown_after = self.cli_json(["consent", "show", "typesafe"],
+                                        JEV_TYPESAFE_URL=url)
+            self.assertIsNone(shown_after["consent"])
+        laya_grant = self.cli_json(["consent", "grant", "laya"])
+        self.assertEqual(laya_grant, {"ok": False, "reason": "not_remote"})
+
+    def test_second_opinion_skips_laya(self):
+        with JevStub() as laya, JevStub(model="typesafe-1") as remote:
+            extra = {"JEV_LAYA_URL": laya.url,
+                     "JEV_TYPESAFE_URL": f"http://127.0.0.1:{remote.port}",
+                     "TYPESAFE_API_KEY": SENTINEL}
+            self.grant_typesafe(**extra)
+            result, _ = self.ladder([choice_item("sure1")], "--second-opinion", **extra)
+            laya_requests = list(laya.requests)
+        self.assertEqual(laya_requests, [], "--skip-local must make zero local requests")
+        self.assertIsNone(result["items"]["sure1"].get("laya"),
+                          "the local rung was skipped: no column answer at all")
+        self.assertEqual(result["items"]["sure1"]["decided_by"], "typesafe")
+
+    def test_score_item_through_ladder(self):
+        with JevStub() as laya:
+            result, _ = self.ladder([score_item("sev")], JEV_LAYA_URL=laya.url)
+            bodies = laya.bodies
+        answer = result["items"]["sev"]["laya"]
+        self.assertEqual(answer["choice"], "high", "the winning level, not the index")
+        self.assertEqual(answer["model"], "laya-rl-agent")
+        self.assertFalse(answer["fallback"])
+        self.assertEqual(result["items"]["sev"]["decided_by"], "laya")
+        self.assertEqual(list(bodies[0]["questions"]), ["sev"])
+        for bad in (["only"], [f"l{i}" for i in range(11)]):
+            with JevStub() as laya:
+                result, _ = self.ladder([score_item("sev", bad)], JEV_LAYA_URL=laya.url)
+                posts = laya.posts
+            self.assertEqual(result["items"]["sev"]["reason"], "bad_criteria")
+            self.assertEqual(posts, [], "a rejected score item must never reach the client")
 
     def test_invalid_item_rejected_alone(self):
         with JevStub() as laya:
