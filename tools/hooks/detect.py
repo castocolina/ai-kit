@@ -69,7 +69,6 @@ def compose_message(detection):
             readme = "~" + readme[len(home):]
         usage_suffix = f" Usage: {readme}"
         if (len(user_line + usage_suffix) <= 200
-                and len(readme) < 150
                 and all(character.isascii() and character.isprintable()
                         for character in usage_suffix)):
             user_line += usage_suffix
