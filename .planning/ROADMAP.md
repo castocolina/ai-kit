@@ -617,7 +617,7 @@ post-compaction context uses.
      the injected summary fits the 10,000-character hook output cap.
   3. Installable and removable as its own ai-kit setup knob; measured token or time saving
      recorded against a baseline compaction.
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 
 Plans (cross-AI plans; 21.2-01 and 21.2-02 share wave 1 with disjoint files; only 21.2-03 Task 2
 calls the local Laya; after 21.2-05 the orchestrator runs the live checks and measurements staged
@@ -630,7 +630,7 @@ by 21.2-02, then its close-out sets the per-host verdicts):
 - [x] 21.2-03-PLAN.md — The real 21.1 client: loopback-only pinning, env scrub, zero remote requests with consent recorded, the 10 s budget, and the S1 Laya spike for the chunk constant (`measured: false` when Laya is down) (PCH-01)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 21.2-04-PLAN.md — pi `session_before_compact` shim and opencode `experimental.session.compacting` plugin over the core's entries: previous summary kept whole or nothing (D-08), context appended once, shared node harness (PCH-01)
+- [x] 21.2-04-PLAN.md — pi `session_before_compact` shim and opencode `experimental.session.compacting` plugin over the core's entries: previous summary kept whole or nothing (D-08), context appended once, shared node harness (PCH-01)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 21.2-05-PLAN.md — Hook registry, headless `--with-hooks=<id[:host]>`, pi/opencode link rows, `uninstall --hooks=<ids>`, the wizard `hooks` row, README (PCH-02)
