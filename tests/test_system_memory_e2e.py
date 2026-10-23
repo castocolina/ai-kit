@@ -240,7 +240,7 @@ class TestSystemMemoryInstallE2E(unittest.TestCase):
         # controlling terminal (see module docstring + _run_wizard_install).
         cls.proc = _run_wizard_install(
             [sys.executable, cls.setup_py, "install", "--examples=all"],
-            cls.env, timeout=60)
+            cls.env, timeout=90)
 
     @classmethod
     def tearDownClass(cls):

@@ -2159,7 +2159,8 @@ def hook_installed_hosts(paths, hook_id):
         if row.host == "cursor":
             if os.path.isfile(paths.cursor_hooks):
                 state, data = _read_json_checked(paths.cursor_hooks)
-                hooks = data.get("hooks") if state == JSON_STATE_OK else None
+                hooks = (data.get("hooks")
+                         if state == JSON_STATE_OK and isinstance(data, dict) else None)
                 entries = hooks.get(row.event, []) if isinstance(hooks, dict) else []
                 marker = os.path.join(*row.script.split("/"))
                 if isinstance(entries, list) and any(

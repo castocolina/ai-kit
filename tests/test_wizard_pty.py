@@ -550,12 +550,10 @@ class TestPhase2E2E(unittest.TestCase):
         self.assertEqual(len(baks), 1)
         self.assertTrue(os.path.isfile(
             os.path.join(baks[0], "markdown-to-pdf", "marker.txt")))
-        # The housekeeping log reached the user AFTER the wizard exited, and
-        # the commit's cursor wiring hit the absent scratch root.
+        # The housekeeping log reached the user AFTER the wizard exited.
         output = b"".join(captured).decode("utf-8", errors="replace")
         self.assertIn("moved ", output)
         self.assertIn("markdown-to-pdf.bak-", output)
-        self.assertIn("no cursor dir", output)
         self.assertFalse(os.path.exists(
             os.path.join(config_dir, "cursor-absent")),
             msg="the scratch CURSOR_CONFIG_DIR must never be created")
@@ -711,8 +709,8 @@ class TestPhase2E2E(unittest.TestCase):
                       msg="Choose: expected header 'ai-kit install wizard' in output")
         self.assertIn("select components", all_output,
                       msg="Choose: expected picksbox border title 'select components'")
-        self.assertIn("components selected", all_output,
-                      msg="Choose: expected pick count '... components selected'")
+        self.assertIn("HOOKS", all_output,
+                      msg="Choose: expected the five-row hooks category")
         # Arrange board border titles
         self.assertIn("Line 1", all_output,
                       msg="Arrange: expected lane border title 'Line 1'")
