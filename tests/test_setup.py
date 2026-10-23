@@ -1491,7 +1491,7 @@ class TestReplaceAndBackupAndLink(unittest.TestCase):
         with open(marker, "w") as f:
             f.write("x")
 
-        def partial_move(src_, dst):
+        def partial_move(_src, dst):
             os.makedirs(dst)
             with open(os.path.join(dst, "partial"), "w") as f:
                 f.write("partial")
@@ -1683,7 +1683,7 @@ class TestBackupEntry(unittest.TestCase):
         with open(os.path.join(src, "marker"), "w") as f:
             f.write("x")
 
-        def partial_move(src_, dst):
+        def partial_move(_src, dst):
             os.makedirs(dst)
             with open(os.path.join(dst, "partial"), "w") as f:
                 f.write("partial")
@@ -1710,7 +1710,7 @@ class TestBackupEntry(unittest.TestCase):
         src = os.path.join(self.tmp, "alpha")
         os.makedirs(src)
 
-        def failing_move(src_, dst):
+        def failing_move(_src, dst):
             raise OSError("boom")
 
         err = io.StringIO()
