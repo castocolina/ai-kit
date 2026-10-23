@@ -330,7 +330,7 @@ class TestCap(CoreEnvMixin, unittest.TestCase):
     def test_cap_newest_kept_whole_and_no_model_call(self):
         env = self.make_env(STUB_LABEL_CYCLE="keep",
                             STUB_LOG=os.path.join(tempfile.mkdtemp(), "stub.log"))
-        messages = [self.pad_message("user", f"MARK-{i:02d} ", 0.85) for i in range(30)]
+        messages = [self.pad_message("user", f"MARK-{i:02d} ", 0.85) for i in range(70)]
         chunks = core.chunk_messages(messages)
         self.assertGreaterEqual(sum(len(chunk) for chunk in chunks), 30000)
         real_run = subprocess.run

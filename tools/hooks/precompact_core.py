@@ -27,8 +27,9 @@ import tempfile
 import time
 
 CAP_CHARS = 9500
-# 0.8 x the client's laya state_chars_limit; 21.2-03 S1 lowers it to the measured Laya bound (D-03)
-CHUNK_STATE_CHARS = 1600
+# 21.2-SPIKE.md S1 (measured on the local Laya): smallest non-truncating state length is
+# 1179 (the code fixture); floor(0.8 x 1179) = 943, under the client's 2000 laya guard.
+CHUNK_STATE_CHARS = 943
 MAX_CHUNKS = 2000
 # Room inside the SPEC R8 10 s budget for process start, the probe and the write.
 CLASSIFY_SECONDS = 8.0
