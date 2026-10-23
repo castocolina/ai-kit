@@ -127,7 +127,7 @@ class JevStub:
     the stub is closed.
     """
 
-    def __init__(self, model="laya-rl-agent", top=0.9, tops=None, truncated=False,
+    def __init__(self, model: str | None = "laya-rl-agent", top=0.9, tops=None, truncated=False,
                  uniform=False, delay=0.0, health=200, script=None, places=4):
         self.model = model
         self.top = top

@@ -3210,13 +3210,13 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     replaced = (_headless_replace(paths, entries, skills_flag, dry, counts)
                 if replace_existing else set())
     ok, chosen = _headless_link_skills(skills_flag, entries, paths.claude_dir,
-                                       dry, counts, replaced=replaced or set())
+                                       dry, counts, replaced=frozenset(replaced or ()))
     ok = ok and replaced is not None
     # Only a run that named --skills touches the pi root; bare --headless and
     # hooks/statusline-only runs leave every pi link exactly as it was.
     if chosen is not None and not _headless_sync_pi(paths, entries, dry,
                                                     counts, chosen,
-                                                    replaced=replaced or set()):
+                                                    replaced=frozenset(replaced or ())):
         ok = False
     if with_statusline and not _headless_wire_statusline(paths, dry):
         ok = False
