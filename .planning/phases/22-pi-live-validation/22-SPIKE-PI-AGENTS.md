@@ -55,8 +55,8 @@ Only the sonnet key steers; the qualified id passes unchanged (D-05 and ruling Q
 
 ## Findings (R7)
 
-- `skills-root pi` on the scratch install printed `{"skills_root":"<scratch-home>/.pi/agent/skills"}`. pi 1.3.0 `docs/skills.md:61` also documents `~/.agents/skills/` and `.agents/skills/`. **No fix needed in this phase:** upstream gsd-core behavior, and `agent_skills` is inert on pi (D-06).
-- With `resolve_model_ids: "omit"`, `runtime: "pi"`, and `pi.sonnet` set, `resolve-model gsd-planner` returned an empty model result while the L1/L2 hook steered the wire. Thus `resolve-model` is not an oracle on pi; the 22-04 matrix checks the wire through the hook instead (D-03). **No fix needed in this phase.**
+- `skills-root pi` on the scratch install printed `{"skills_root":"<scratch-home>/.pi/agent/skills"}`. pi 1.3.0 `docs/skills.md:61` also documents `~/.agents/skills/` and `.agents/skills/`. **no fix needed in this phase:** upstream gsd-core behavior, and `agent_skills` is inert on pi (D-06).
+- With `resolve_model_ids: "omit"`, `runtime: "pi"`, and `pi.sonnet` set, `resolve-model gsd-planner` returned an empty model result while the L1/L2 hook steered the wire. Thus `resolve-model` is not an oracle on pi; the 22-04 matrix checks the wire through the hook instead (D-03). **no fix needed in this phase.**
 
 ## Verdict
 
