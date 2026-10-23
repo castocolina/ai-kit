@@ -167,6 +167,12 @@ OPENCODE_API_FIXTURE_PATH = os.path.join(
 PI_RPC_FIXTURE_PATH = os.path.join(
     os.path.dirname(__file__), "fixtures", "pi_rpc_get_available_models.json"
 )
+# Owner capture from the real pi agent dir, trimmed by trim_pi_capture.py; absent until
+# 22-INTERACTIVE-PI.md C1. Counts use its own _capture block because live models drift; the
+# SPEC's 85-model 2026-10-14 split is historical.
+PI_RPC_REAL_FIXTURE_PATH = os.path.join(
+    os.path.dirname(__file__), "fixtures", "pi_rpc_get_available_models_real.json"
+)
 
 def _read_bytes(path: str) -> bytes:
     with open(path, "rb") as handle:
@@ -2603,6 +2609,40 @@ class TestPiRpcModels(unittest.TestCase):
         self.assertIsNone(detection.parse_pi_models(response + "\n" + response))
         mixed = "noise\n" + json.dumps({"type": "event"}) + "\n" + response
         self.assertEqual(detection.parse_pi_models(mixed), [])
+
+    def test_trimmed_real_capture(self):
+        if not os.path.exists(PI_RPC_REAL_FIXTURE_PATH):
+            self.skipTest("owner capture pending: 22-INTERACTIVE-PI.md C1 writes this fixture")
+        with open(PI_RPC_REAL_FIXTURE_PATH, encoding="utf-8") as handle:
+            text = handle.read()
+        lowered = text.lower()
+        self.assertFalse(any(marker in lowered for marker in
+                             ("baseurl", "apikey", "authorization", "bearer", '"headers"')))
+        envelope = json.loads(text)
+        capture = envelope.get("_capture")
+        self.assertIsInstance(capture, dict)
+        parsed = detection.parse_pi_models(text)
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(len(parsed), capture["count"])
+        providers = {}
+        for record in parsed:
+            provider = record["id"].split("/", 1)[0]
+            providers[provider] = providers.get(provider, 0) + 1
+            self.assertTrue(set(record["reasoning_modes"]).issubset(
+                {"minimal", "low", "medium", "high", "xhigh", "max"}))
+            self.assertIsInstance(record["image_input"], bool)
+        self.assertEqual(dict(sorted(providers.items())), capture["providers"])
+        raw_models = envelope["data"]["models"]
+        raw_by_id = {f"{model.get('provider')}/{model.get('id')}": model
+                     for model in raw_models}
+        for record in parsed:
+            raw_model = raw_by_id[record["id"]]
+            for source, target in (("contextWindow", "context_window"),
+                                   ("maxTokens", "max_tokens")):
+                value = raw_model.get(source)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    self.assertEqual(record[target], value)
 
     def test_snapshot_pi_installed_with_fixture_listing(self):
         fixture = self._fixture_text()
