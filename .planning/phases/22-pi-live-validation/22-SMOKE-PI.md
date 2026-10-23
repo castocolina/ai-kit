@@ -89,3 +89,13 @@ not run (owner): R4 acceptance is the user's interactive pi session, 22-INTERACT
 Findings needing no fix: `skills-root pi` does not include pi's additional `~/.agents/skills` location (upstream behavior; agent-bound settings are inert on pi); `resolve-model` is not a pi effect oracle under `resolve_model_ids: omit` (the matrix verifies tiers independently and the request hook effect directly). These are recorded in `22-SPIKE-PI-AGENTS.md`, Findings (R7).
 
 No other fix was needed in this phase's automated part.
+
+## Phase status
+
+The automated part is complete (22-01..22-07): the skill-judge evidence reads `## Verdict: PASS`
+(`22-SKILL-JUDGE.md`), the gates (ruff, pyright, vulture, `make test`, `make validate`) pass, the
+22-01 verdict re-derives as `session-steer (static + mock evidence)`, and the headless smoke above
+is green. The phase is `human_needed`: the owner runs `22-INTERACTIVE-PI.md` (C1, S1-S5 and D9
+required, L3a-L3c optional) and then its `## Orchestrator close-out`. Until then the SKILL.md pi
+label stays `not live-validated`, the verdict stays `session-steer (static + mock evidence)`,
+EVAL-08 stays Pending, and SPEC-05's real-capture acceptance waits on C1.
