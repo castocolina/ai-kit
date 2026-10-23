@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -95,8 +96,8 @@ class AdvisorStateTests(unittest.TestCase):
         for path in (old, new, os.path.join(directory, "notes.txt"),
                      os.path.join(directory, ".advisor.lock")):
             Path(path).touch()
-        old_time = time_now() - 25 * 3600
-        new_time = time_now() - 23 * 3600
+        old_time = time.time() - 25 * 3600
+        new_time = time.time() - 23 * 3600
         os.utime(old, (old_time, old_time))
         os.utime(new, (new_time, new_time))
         precompact.sweep(directory, patterns=core.STATE_PATTERNS)
@@ -156,13 +157,16 @@ for index in range(50):
         for order in ("advisor-first", "reminder-first"):
             with self.subTest(order=order):
                 session = "single-" + order
-                advisor = self.event(session=session, call_id="single", single_block=True)
+                advisor = self.event(session=session, call_id="single", output_lines=500,
+                                      output_chars=2000, single_block=True)
                 reminder = self.event("reminder", session=session, call_id="single",
                                       output_lines=500, output_chars=2000, single_block=True)
                 results = [self.advise(item) for item in
                            ((advisor, reminder) if order == "advisor-first" else
                             (reminder, advisor))]
                 self.assertEqual(sum(bool(item) for item in results), 1)
+                self.assertTrue(any("500 lines" in item and "tokens" in item
+                                    for item in results if item))
         advisor = self.event(session="claude", call_id="claude")
         reminder = self.event("reminder", session="claude", call_id="claude", output_lines=500,
                               output_chars=2000)
@@ -174,13 +178,17 @@ for index in range(50):
             with self.subTest(order=order):
                 session = "cadence-" + order
                 for i in range(1, 26):
-                    advisor = self.event(session=session, call_id=f"{order}{i}", single_block=True)
+                    advisor = self.event(session=session, call_id=f"{order}{i}",
+                                          output_lines=500, output_chars=2000, single_block=True)
                     reminder = self.event("reminder", session=session, call_id=f"{order}{i}",
                                           output_lines=500, output_chars=2000,
                                           single_block=True)
                     pair = (advisor, reminder) if order == "advisor-first" else (reminder, advisor)
                     results = [self.advise(item) for item in pair]
                     self.assertEqual(any(results), i in (1, 11, 21))
+                    if i in (1, 11, 21):
+                        self.assertTrue(any("500 lines" in item and "tokens" in item
+                                            for item in results if item))
                     self.assertFalse(all(results))
                 state = self.state(session)
                 self.assertEqual(state["counts"]["grep"], 25)
@@ -237,9 +245,6 @@ for index in range(50):
         self.assertEqual((empty.returncode, empty.stdout, empty.stderr), (0, "{}", ""))
 
 
-def time_now():
-    import time
-    return time.time()
 
 
 if __name__ == "__main__":

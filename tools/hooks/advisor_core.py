@@ -34,7 +34,6 @@ LEGACY_NAMES = {"grep": "grep", "cat": "cat", "sed-range": "sed",
                 "sed-edit": "sed", "find": "find"}
 _ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _RANGE_RE = re.compile(r"^(\d+)(?:,(\d+))?p$")
-_SUBST_RE = re.compile(r"^s(.).*\1.*\1[A-Za-z0-9]*$")
 
 
 def unquote(token):
@@ -88,9 +87,20 @@ def _command_tokens(command):
     lexer.whitespace_split = True
     lexer.commenters = ""
     try:
-        return list(lexer)
+        tokens = list(lexer)
     except ValueError:
         return []
+    merged = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if _ASSIGN_RE.match(token) and token.count("'") % 2:
+            while token.count("'") % 2 and index + 1 < len(tokens):
+                index += 1
+                token += " " + tokens[index]
+        merged.append(token)
+        index += 1
+    return merged
 
 
 def _separator(token):
@@ -99,7 +109,8 @@ def _separator(token):
 
 
 def _command_words(tokens):
-    """Yield command words and argument tokens at simple-command boundaries."""
+    """Yield command words and arguments bounded by each shell separator."""
+    # pylint: disable=too-many-branches
     index = 0
     expect_command = True
     while index < len(tokens):
@@ -114,30 +125,29 @@ def _command_words(tokens):
             index += 1
             continue
         if expect_command:
-            while index < len(tokens) and (
-                    _ASSIGN_RE.match(unquote(tokens[index]))
-                    or unquote(tokens[index]) in KEYWORDS):
+            while index < len(tokens) and unquote(tokens[index]) in KEYWORDS:
                 index += 1
-            while index < len(tokens) and unquote(tokens[index]) in WRAPPERS:
-                index += 1
-                while index < len(tokens) and unquote(tokens[index]).startswith("-"):
+            while index < len(tokens):
+                word = unquote(tokens[index])
+                if _ASSIGN_RE.match(word):
                     index += 1
-                # shortcut: sudo -u root treats root as command; upgrade if live checks miss.
+                elif word in WRAPPERS:
+                    index += 1
+                    while index < len(tokens) and unquote(tokens[index]).startswith("-"):
+                        index += 1
+                    if index < len(tokens) and unquote(tokens[index]) in ("-u", "-g"):
+                        index += 1
+                else:
+                    break
             if index < len(tokens) and not _separator(tokens[index]):
-                yield os.path.basename(unquote(tokens[index])), tokens[index + 1:]
+                name = os.path.basename(unquote(tokens[index]))
+                end = index + 1
+                while (end < len(tokens) and not _separator(tokens[end])
+                       and not tokens[end].startswith("#")):
+                    end += 1
+                yield name, tokens[index + 1:end]
                 expect_command = False
         index += 1
-
-
-def simple_commands(command):
-    """Return command-word-first token lists for each lexed simple command."""
-    if not isinstance(command, str) or not command.strip():
-        return []
-    tokens = _command_tokens(command)
-    commands = []
-    for name, args in _command_words(tokens):
-        commands.append([name, *args])
-    return commands
 
 
 def installed_tools(env):
@@ -163,6 +173,25 @@ def _cat_line(tokens):
     return f"ai-kit advice: use Read or bat --plain --paging=never{language}."
 
 
+def _is_substitution(arg):
+    """Recognize sed s<delimiter>... forms with a linear delimiter scan."""
+    if len(arg) < 4 or arg[0] != "s":
+        return False
+    delimiter = arg[1]
+    found = 0
+    escaped = False
+    for char in arg[2:]:
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == delimiter:
+            found += 1
+            if found == 2:
+                return True
+    return False
+
+
 def _sed_line(tokens):
     args = _arguments(tokens)
     range_requested = any(arg in ("-n", "--quiet", "--silent") for arg in args)
@@ -175,7 +204,7 @@ def _sed_line(tokens):
                                  f"{start}:{end} or Read with offset {start} and limit "
                                  f"{max(1, end - start + 1)}.")
     if any(arg.startswith(("-i", "--in-place")) for arg in args) or any(
-            _SUBST_RE.fullmatch(arg) for arg in args):
+            _is_substitution(arg) for arg in args):
         return "sed-edit", "ai-kit advice: use sd for in-place edits and sd -p to preview."
     return None
 
@@ -187,7 +216,7 @@ def _advice_for(name, args, installed):
         return "cat", _cat_line(args)
     if name == "find" and "fd" in installed:
         return "find", "ai-kit advice: use fd --type f --glob for file searches."
-    if name == "sed":
+    if name == "sed" and ("sd" in installed or "bat" in installed):
         advice = _sed_line(args)
         if advice and ((advice[0] == "sed-range" and "bat" in installed)
                        or (advice[0] == "sed-edit" and "sd" in installed)):
@@ -404,6 +433,9 @@ def advise(event, env):
                     due.append((advice_id, line))
         if not due:
             return None
+        already_shown = key is not None and SHOWN in record
+        if event.get("single_block") and already_shown:
+            return None
         if kind == "reminder":
             tokens = math.ceil(event.get("output_chars", 0) / 4)
             line = (f"ai-kit reminder: that command printed {event['output_lines']} lines, "
@@ -412,11 +444,12 @@ def advise(event, env):
                     f"{', '.join(LEGACY_NAMES[item[0]] for item in due)}.")
         else:
             line = "\n".join(item[1] for item in due)
-        already_shown = key is not None and SHOWN in record
+        if (event.get("single_block") and event.get("output_lines", 0) > OUTPUT_LINE_LIMIT):
+            tokens = math.ceil(event.get("output_chars", 0) / 4)
+            line += (f"\nai-kit reminder: that command printed {event['output_lines']} lines, "
+                     f"about {tokens} tokens.")
         if key is not None:
             record.append(SHOWN)
-        if event.get("single_block") and already_shown:
-            return None
         return line
 
     return with_state(env, event.get("session_id"), update)
@@ -447,16 +480,15 @@ def event_from_pi(data):
              "limit": tool_input.get("limit") if tool_input else None,
              "call_id": data.get("toolCallId"), "session_id": data.get("sessionId"),
              "single_block": True}
-    if event["kind"] == "reminder":
-        details = data.get("details")
-        truncation = details.get("truncation") if isinstance(details, dict) else None
-        if (isinstance(truncation, dict) and truncation.get("truncated") is True
-                and isinstance(truncation.get("totalLines"), int)
-                and isinstance(truncation.get("totalBytes"), int)):
-            event["output_lines"] = truncation["totalLines"]
-            event["output_chars"] = truncation["totalBytes"]
-        else:
-            event["output_lines"], event["output_chars"] = output_size([text])
+    details = data.get("details")
+    truncation = details.get("truncation") if isinstance(details, dict) else None
+    if (isinstance(truncation, dict) and truncation.get("truncated") is True
+            and isinstance(truncation.get("totalLines"), int)
+            and isinstance(truncation.get("totalBytes"), int)):
+        event["output_lines"] = truncation["totalLines"]
+        event["output_chars"] = truncation["totalBytes"]
+    else:
+        event["output_lines"], event["output_chars"] = output_size([text])
     return event
 
 
