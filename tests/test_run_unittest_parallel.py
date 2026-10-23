@@ -113,6 +113,32 @@ class GroupModeTest(unittest.TestCase):
     def test_mixing_group_and_module_names_is_usage_error(self) -> None:
         self.assertEqual(run("--group", "arch", "tests.test_arch").returncode, 2)
 
+    def test_module_temp_directories_are_removed(self) -> None:
+        runner = load_runner()
+        with tempfile.TemporaryDirectory() as parent:
+            tests_dir = pathlib.Path(parent) / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "__init__.py").write_text("")
+            (tests_dir / "test_tempdir.py").write_text(
+                "import tempfile\n"
+                "path = tempfile.mkdtemp()\n"
+                "print('CREATED_TEMP_DIR=' + path)\n"
+                "import unittest\n"
+                "class TestSynthetic(unittest.TestCase):\n"
+                "    def test_ok(self):\n"
+                "        self.assertTrue(path)\n"
+            )
+            _, rc, output, _ = runner.run_module(
+                "tests.test_tempdir", cwd=pathlib.Path(parent)
+            )
+            self.assertEqual(rc, 0, output)
+            created = next(
+                line.split("=", 1)[1] for line in output.splitlines()
+                if line.startswith("CREATED_TEMP_DIR=")
+            )
+            self.assertFalse(pathlib.Path(created).exists())
+            self.assertEqual(list(pathlib.Path(parent).iterdir()), [tests_dir])
+
     def test_module_with_no_tests_fails_its_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tests_dir = pathlib.Path(tmp) / "tests"

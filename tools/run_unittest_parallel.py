@@ -28,8 +28,10 @@ AI_KIT_TEST_CPU_SHARE may lower that share, never raise it.
 """
 import math
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -138,16 +140,22 @@ def worker_count(n_modules: int, cpus: int | None, share_env: str | None = None)
 
 def run_module(module: str, cwd: Path = REPO_ROOT) -> tuple[str, int, str, float]:
     start = time.monotonic()
+    temp_dir = tempfile.mkdtemp(prefix="aikit-ut-")
+    env = os.environ.copy()
+    env.update({"TMPDIR": temp_dir, "TEMP": temp_dir, "TMP": temp_dir})
     try:
-        proc = subprocess.run(
-            [sys.executable, "-m", "unittest", module],
-            capture_output=True, text=True, check=False, cwd=cwd,
-            timeout=MODULE_TIMEOUT_SECS,
-        )
-    except subprocess.TimeoutExpired:
-        output = f"timed out after {MODULE_TIMEOUT_SECS}s"
-        return module, 124, output, time.monotonic() - start
-    return module, proc.returncode, proc.stdout + proc.stderr, time.monotonic() - start
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "unittest", module],
+                capture_output=True, text=True, check=False, cwd=cwd, env=env,
+                timeout=MODULE_TIMEOUT_SECS,
+            )
+        except subprocess.TimeoutExpired:
+            output = f"timed out after {MODULE_TIMEOUT_SECS}s"
+            return module, 124, output, time.monotonic() - start
+        return module, proc.returncode, proc.stdout + proc.stderr, time.monotonic() - start
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _parse_groups(argv: list[str]) -> tuple[list[str] | None, str | None]:
