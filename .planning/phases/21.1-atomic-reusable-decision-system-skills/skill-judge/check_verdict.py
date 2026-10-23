@@ -9,7 +9,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path.cwd()
 PHASE = Path(".planning/phases/21.1-atomic-reusable-decision-system-skills")
 REPORTS = {
     "jev-fast-decision": {
@@ -27,6 +26,9 @@ REPORTS = {
 }
 DIMENSIONS = {1: (20, 16), 2: (15, 12), 3: (15, 12), 4: (15, 12),
               5: (15, 12), 6: (15, 12), 7: (10, 8), 8: (15, 12)}
+# The end lines a block holds once each (judge-prompt.md); a repeat fails the row (WR-09).
+ONCE = {"CURRENT": r"^CURRENT (\d+)/120\s*$", "CRITICAL": r"^CRITICAL (\d+)\s*$",
+        "IMPORTANT": r"^IMPORTANT (\d+)\s*$"}
 
 
 def run(*argv: str) -> str:
@@ -68,21 +70,22 @@ def valid_block(block: str, digest: str, tree: str, threshold: int,
     trees = line_values(block, r"^TREE ([0-9a-f]+)\s*$")
     if digests != [digest] or trees != [tree]:
         return False, "digest/tree mismatch", None
-    dim_rows = re.findall(r"^D([1-8]) (\d+)/\d+\b", block, re.M)
+    # An end line is the whole line (`D3 13/15`); a narrative `D3 13/15 — ...` is not one.
+    dim_rows = re.findall(r"^D([1-8]) (\d+)/\d+\s*$", block, re.M)
     dims = {int(key): int(score) for key, score in dim_rows}
-    currents = line_values(block, r"^CURRENT (\d+)/120\s*$")
-    critical = line_values(block, r"^CRITICAL (\d+)\s*$")
-    important = line_values(block, r"^IMPORTANT (\d+)\s*$")
-    if (set(dims) != set(DIMENSIONS) or not currents or not critical or not important):
+    once = {name: line_values(block, pattern) for name, pattern in ONCE.items()}
+    if (len(dim_rows) != len(DIMENSIONS) or set(dims) != set(DIMENSIONS)
+            or any(len(values) != 1 for values in once.values())
+            or len(line_values(block, r"^VERDICT \S+\s*$")) > 1):
         return False, "missing or duplicate score/end lines", None
     if any(dims[k] < floor or dims[k] > maximum
            for k, (maximum, floor) in DIMENSIONS.items()):
         return False, "dimension below floor", None
     total = sum(dims.values())
-    score = int(currents[-1])
+    score = int(once["CURRENT"][0])
     if score != total:
         return False, "CURRENT differs from D1-D8 sum", score
-    if critical[-1] != "0":
+    if once["CRITICAL"][0] != "0":
         return False, "Critical findings remain", score
     if "FLOORS ok" not in block:
         return False, "FLOORS not ok", score
@@ -107,6 +110,14 @@ def row_result(skill: str, lane: str) -> tuple[str, str]:
     if dirty:
         return "fail", "skill tree dirty"
     skill_text = Path(f"skills/{skill}/SKILL.md").read_text(encoding="utf-8")
+    return judge_blocks(text, (digest, tree), config["threshold"], config["activation"],
+                        skill_text)
+
+
+def judge_blocks(text: str, current: tuple[str, str], threshold: int,
+                 activation: bool, skill_text: str) -> tuple[str, str]:
+    """(state, reason) over every block judged on the current (digest, tree)."""
+    digest, tree = current
     scores = []
     reasons = []
     important_counts = []
@@ -115,16 +126,13 @@ def row_result(skill: str, lane: str) -> tuple[str, str]:
         if (f"DIGEST {digest}" not in headers
                 or f"TREE {tree}" not in headers):
             continue
-        ok, reason, score = valid_block(block, digest, tree, config["threshold"],
-                                        config["activation"], skill_text)
-        if score is not None:
-            scores.append(score)
+        ok, reason, score = valid_block(block, digest, tree, threshold, activation,
+                                        skill_text)
         if score is None or not ok:
             reasons.append(reason)
         if score is not None:
-            block_important = line_values(block, r"^IMPORTANT (\d+)\s*$")
-            if block_important:
-                important_counts.append(int(block_important[-1]))
+            scores.append(score)
+            important_counts.append(int(line_values(block, ONCE["IMPORTANT"])[0]))
     if not scores:
         return "fail", "no valid current-tree judged block"
     lowest = min(scores)
@@ -132,7 +140,7 @@ def row_result(skill: str, lane: str) -> tuple[str, str]:
         return "fail", f"{'; '.join(reasons)}; lowest={lowest}"
     if important_counts and max(important_counts) > 0:
         return "fail", f"Important findings remain ({max(important_counts)}); lowest={lowest}"
-    return "pass", f"lowest={lowest} threshold={config['threshold']}"
+    return "pass", f"lowest={lowest} threshold={threshold}"
 
 
 def live_result() -> str:
@@ -153,12 +161,6 @@ def written_verdict() -> tuple[str, str]:
 
 def self_test() -> bool:
     digest, tree = "a" * 16, "b" * 40
-    synthetic = "\n".join([f"DIGEST {digest}", f"TREE {tree}"] +
-                          [f"D{k} {max(floor, 12)}/{maximum}"
-                           for k, (maximum, floor) in DIMENSIONS.items()] +
-                          ["CURRENT 96/120", "CRITICAL 0", "IMPORTANT 0", "FLOORS ok",
-                           "ACTIVATION ok", "CITE_PROBE skills/jev-fast-decision/SKILL.md:1",
-                           "CITE_BACKEND skills/jev-fast-decision/SKILL.md:2"])
     floors = [floor for _, floor in DIMENSIONS.values()]
     def block(total: int, tree_id: str = tree, activation: str = "ok",
               important: int = 0, d7: int | None = None, cites: bool = True) -> str:
@@ -183,18 +185,9 @@ def self_test() -> bool:
         return "\n".join(lines)
     skill = "run --probe before call\nread backends/ notes\nempty\n"
     def synthetic_row(text: str, require_activation: bool = True) -> bool:
-        candidates = [candidate for candidate in split_blocks(text)
-                      if f"DIGEST {digest}" in candidate.splitlines()[:4]
-                      and f"TREE {tree}" in candidate.splitlines()[:4]]
-        passed_scores = []
-        for candidate in candidates:
-            ok, _, score = valid_block(candidate, digest, tree, 96,
-                                       require_activation, skill)
-            if score is not None:
-                passed_scores.append(score)
-            if not ok or line_values(candidate, r"^IMPORTANT ([1-9]\d*)\s*$"):
-                return False
-        return bool(passed_scores) and min(passed_scores) >= 96
+        # The real row loop (row_result's), minus its file, git and dirty-tree reads.
+        return judge_blocks(text, (digest, tree), 96, require_activation, skill)[0] == "pass"
+    good = block(100)
     tests = [
         synthetic_row(block(96)),
         not synthetic_row(block(95)),
@@ -215,10 +208,18 @@ def self_test() -> bool:
         synthetic_row(block(80, tree_id="c" * 40) + "\n" + block(100)),
         synthetic_row(block(96), False),
         not synthetic_row(block(95), False),
+        # WR-09: a repeated end line fails the row, whichever value comes last.
+        not synthetic_row(good.replace("CRITICAL 0", "CRITICAL 2\nCRITICAL 0")),
+        not synthetic_row(good.replace("IMPORTANT 0", "IMPORTANT 1\nIMPORTANT 0")),
+        not synthetic_row(good.replace("CURRENT 100/120", "CURRENT 90/120\nCURRENT 100/120")),
+        not synthetic_row(good.replace("D3 ", "D3 15/15\nD3 ", 1)),
+        not synthetic_row(good + "\nVERDICT fail\nVERDICT pass"),
+        synthetic_row(good + "\nVERDICT pass"),
+        synthetic_row(good.replace("D3 ", "D3 13/15 — narrative, not an end line\nD3 ", 1)),
     ]
     if not all(tests):
         print(f"self-test cases failed: {[i for i, passed in enumerate(tests, 1) if not passed]}")
-    if all(tests) and synthetic:
+    if all(tests):
         print("self-test ok")
         return True
     print("self-test failed")
