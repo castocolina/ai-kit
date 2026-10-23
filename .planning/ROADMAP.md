@@ -617,6 +617,23 @@ post-compaction context uses.
      the injected summary fits the 10,000-character hook output cap.
   3. Installable and removable as its own ai-kit setup knob; measured token or time saving
      recorded against a baseline compaction.
+**Plans:** 5 plans
+
+Plans (cross-AI plans; 21.2-01 and 21.2-02 share wave 1 with disjoint files; only 21.2-03 Task 2
+calls the local Laya; after 21.2-05 the orchestrator runs the live checks and measurements staged
+by 21.2-02, then its close-out sets the per-host verdicts):
+**Wave 1**
+- [ ] 21.2-01-PLAN.md — Core tracer through Claude Code (PreCompact prepares, compact SessionStart injects and deletes), chunking, the 9,500-character cap, the private 0700 dir, session-id safety, defensive transcript reading and boundary parity, injector edges (PCH-01)
+- [ ] 21.2-02-PLAN.md — Live-check (S2-S5) and measurement kit for the orchestrator: logging hooks, the verdict rule with its self-test, the measurement protocol and the close-out procedure (PCH-02, PCH-01)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 21.2-03-PLAN.md — The real 21.1 client: loopback-only pinning, env scrub, zero remote requests with consent recorded, the 10 s budget, and the S1 Laya spike for the chunk constant (`measured: false` when Laya is down) (PCH-01)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 21.2-04-PLAN.md — pi `session_before_compact` shim and opencode `experimental.session.compacting` plugin over the core's entries: previous summary kept whole or nothing (D-08), context appended once, shared node harness (PCH-01)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 21.2-05-PLAN.md — Hook registry, headless `--with-hooks=<id[:host]>`, pi/opencode link rows, `uninstall --hooks=<ids>`, the wizard `hooks` row, README (PCH-02)
 
 ### Phase 21.3: Visible tool-advisory hooks as setup knobs (INSERTED)
 
@@ -624,7 +641,9 @@ post-compaction context uses.
 cat/grep/sed/find and how to read large files cheaply, and the user can see and toggle each hook.
 **Requirements**: ADV-01, ADV-02, ADV-03, ADV-04
 **Depends on:** Phase 21.1 (for the decision-system knob only; the advisors themselves are
-independent)
+independent) *(amended 2026-10-23, 21.3 planning: also Phase 21.2, whose plan 21.2-05 builds the
+hook registry, `--with-hooks=<id>` and `uninstall --hooks=` that 21.3 extends; 21.3-01's first
+task checks that 21.2-05 landed)*
 **Success Criteria** (what must be TRUE):
 
   1. ai-kit setup lists each hook as its own knob (wizard row and headless flag) to install or
@@ -639,6 +658,27 @@ independent)
      the size report reaches the model with that read and informs the next one; stopping the read would need a permission decision, which stays forbidden)*
   4. A PostToolUse reminder ("you used grep; next time rg") fires only for installed tools; both
      advisors are live-verified in a real session, not only unit-tested.
+**Plans:** 8 plans
+
+Plans (cross-AI plans; executed after Phases 21.1 and 21.2; 21.3-08 stages the live checks the
+orchestrator runs after wave 5, and its opencode spike S-OC can run as soon as it lands):
+**Wave 1**
+- [ ] 21.3-01-PLAN.md — Tracer: `--with-hooks=tool-advisor` to rg advice through the shared `emit` gate and the host-neutral core; full grep/cat/sed/find table; large-read report (ADV-03, ADV-01)
+- [ ] 21.3-08-PLAN.md — Live-verification kit for the orchestrator: `21.3-LIVE.md` Claude Code and pi matrix, the opencode `tool.execute.after` spike and the close-out (ADV-04, ADV-02, ADV-03)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 21.3-02-PLAN.md — Visible SessionStart briefing (`systemMessage` plus flags) from installed tools only; the third-party rewrite tool removed from every hook file; doctor citation (ADV-02)
+- [ ] 21.3-03-PLAN.md — Per-session advice frequency under a locked private state file; PostToolUse reminder (ADV-04, ADV-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 21.3-04-PLAN.md — pi `tool_result` advisor and reminder shims over the core's pi entry (ADV-03, ADV-04)
+- [ ] 21.3-05-PLAN.md — Decision-probe SessionStart hook (backend names only); the R9 hook budget, fail-open per entry script, installed-only coverage (ADV-01, ADV-03, ADV-04)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 21.3-06-PLAN.md — Five hook ids as registry rows with Cursor as a host; bare `--with-hooks` = defaults; single-hook wiring removed (ADV-01)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 21.3-07-PLAN.md — Wizard Review stops counting hooks as components; five PTY rows; READMEs and the host x hook table (ADV-01, ADV-02)
 
 ### Phase 22: Pi Live Validation
 
