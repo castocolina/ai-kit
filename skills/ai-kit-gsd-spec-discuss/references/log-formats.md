@@ -8,7 +8,7 @@ ledger. All artifacts in English.
 - `choice 0.NN` — winning probability `top`, high.
 - `choice 0.NN (fb)` — `fallback` true (below the threshold).
 - `choice 0.NN (second opinion)` — from `--second-opinion`.
-- `–` — not called (Laya was high, or the backend was unavailable).
+- `–` — not called (an earlier rung was high, or the backend was unavailable).
 - `error: <code>` — the call failed; say what you did instead.
 
 ## SPEC Interview Log
@@ -16,10 +16,11 @@ ledger. All artifacts in English.
 ```markdown
 ## Interview Log
 
-`--auto`, one round. The open items went through the decision ladder (Laya first;
-`needs_fallback` to TypeSafe direct). Summaries only, advisory. Rule: <quality rule branch>.
+`--auto`, one round. The open items went through the decision ladder (the local backend
+first; `needs_fallback` items batched to the consented remotes in table order). Summaries
+only, advisory. Rule: <quality rule branch>.
 
-| Round | Perspective | Question summary | Laya (advisory) | TypeSafe (advisory) | Decision locked |
+| Round | Perspective | Question summary | <backend> (advisory) | <backend> (advisory) | Decision locked |
 |-------|-------------|------------------|-----------------|---------------------|-----------------|
 | 1 | Simplifier | The skill's name? | ai-kit-gsd-phase-prep 0.46 (fb) | ai-kit-gsd-spec-discuss 0.89 | `ai-kit-gsd-spec-discuss` (R1) |
 | 1 | Boundary Keeper | Delete the Claude subprocess inventory? | delete_all 0.75 | keep_for_review 0.74 (second opinion) | **Laya overridden:** Phase 18 R2 fills `review.models.claude` from it (R8) |
@@ -38,8 +39,8 @@ in the intro line.
     second opinion scratch_config_dir 0.98.
 ```
 
-The attribution comes last: `Laya <choice> 0.NN[ (fb)], TypeSafe <choice> 0.NN.`, or
-`**Own reasoning** (Laya … , TypeSafe …): <why>. Ledger.`
+The attribution comes last: one `<backend> <choice> 0.NN[ (fb)]` per answering backend, or
+`**Own reasoning** (<backend> … , <backend> …): <why>. Ledger.`
 
 ## Updating an existing CONTEXT (never regenerate)
 
@@ -80,9 +81,10 @@ what it did not>.
 
 ## jev screening
 
-One Laya call per item; `needs_fallback` items batched to TypeSafe direct. Summaries only.
+One local call per item; `needs_fallback` items batched to the consented remotes in table
+order. Summaries only.
 
-| Item | Laya | TypeSafe | Outcome |
+| Item | <backend> | <backend> | Outcome |
 |---|---|---|---|
 | B10 spike capture | edit_real_file 0.72 | scratch_config_dir 0.98 (second opinion) | **Laya overridden**: D-14 |
 | B14 preview | static_samples 0.35 (fb) | static_samples 0.66 (fb) | **Own reasoning:** synthetic cache (D-24, ledger) |

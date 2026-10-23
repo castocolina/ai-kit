@@ -1,6 +1,6 @@
 ---
 name: ai-kit-gsd-spec-discuss
-description: "Chains GSD /gsd-spec-phase --auto then assumptions-mode /gsd-discuss-phase over a range of phases (SPEC.md, then CONTEXT.md + DISCUSSION-LOG.md, committed per phase), settling gray areas through an optional decision ladder (local Laya / System One, then TypeSafe jev, then the agent's own reasoning) with logged decisions, a deferred ledger, cross-phase amendments and a best-over-easy design rule (simplest-that-keeps-user-quality under workflow.mvp_mode). Use when asked to spec and discuss several GSD phases unattended or in one run (\"spec/discuss phases 17-24\", \"run spec-phase and discuss-phase for every undiscussed phase\", \"--analyze --all --batch --assumptions\"), or to use jev / Laya / TypeSafe / System One for GSD planning decisions. Works with no decision backend installed. Not for plan-phase or execute-phase."
+description: "Chains GSD /gsd-spec-phase --auto then assumptions-mode /gsd-discuss-phase over a range of phases (SPEC.md, then CONTEXT.md + DISCUSSION-LOG.md, committed per phase), settling gray areas through the `jev-fast-decision` client's decision ladder (local first, then consented remotes in table order, then own reasoning) with logged decisions, a deferred ledger, cross-phase amendments and a best-over-easy design rule (simplest-that-keeps-user-quality under workflow.mvp_mode). Use when asked to spec and discuss several GSD phases unattended or in one run (\"spec/discuss phases 17-24\", \"run spec-phase and discuss-phase for every undiscussed phase\", \"--analyze --all --batch --assumptions\"), or to use jev / Laya / TypeSafe / System One for GSD planning decisions. Works with no decision backend installed. Not for plan-phase or execute-phase."
 ---
 
 # ai-kit-gsd-spec-discuss
@@ -28,10 +28,15 @@ decided provisionally and shown at the end.
    inside the gsd-core install; in Claude Code: `node ~/.claude/gsd-core/bin/gsd-tools.cjs`).
    The workflows dir is `<dir of gsd-tools.cjs>/../workflows/`. No gsd-core → stop with the
    resolver's own install hint.
-3. **Detect backends:** `python3 "$S/decide.py" detect`. It reports labels only (key *source*,
-   never the key). Laya comes from `AI_KIT_LAYA_URL` (or a loopback `JEV_API_URL`); TypeSafe
-   from `JEV_API_KEY`, a file named by `JEV_API_KEY_FILE`, or `JEV_API_KEY=` in
-   `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`. "Reachable" means TCP only.
+3. **Detect backends:** `python3 "$S/decide.py" detect` — the shared `jev-fast-decision`
+   client's probe table, one entry per table backend (`laya`, `typesafe`, `opencode`), labels
+   only (key *source*, never the key). Laya's URL comes from `JEV_LAYA_URL`, `AI_KIT_LAYA_URL`
+   or a loopback `JEV_API_URL`, default `http://127.0.0.1:8010`, probed via `/health` (not
+   bare TCP). TypeSafe keys: `TYPESAFE_API_KEY`, `JEV_API_KEY`, `JEV_API_KEY_FILE`, or
+   `JEV_API_KEY=` in `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`. A status
+   `incompatible_client` (the client beside the skill predates the shared one) means own
+   reasoning only, until the owner runs `python3 tools/setup.py install --headless --skills
+   jev-fast-decision --replace-existing`.
 4. **Pick the range.** Explicit `--from N --to M` or a list wins. Otherwise:
    `gsd_run query roadmap analyze > <tmp>.json` then
    `python3 "$S/phase_range.py" --roadmap <tmp>.json` — proposes phases with no CONTEXT or a
@@ -40,11 +45,12 @@ decided provisionally and shown at the end.
    Check `git log -1 -- <SPEC>`; if that commit only appended an amendment the CONTEXT already
    reflects, drop the phase from the proposal and say why.
 5. **Ask exactly one question**, only when needed: confirm or trim the proposed range, and —
-   if a remote backend is usable but `consent` is null — ask for consent in the same question,
-   naming the host, "summaries only, never code or secrets", and the revoke command. On yes:
-   `python3 "$S/decide.py" consent grant typesafe`. An explicit range with consent on file
-   asks nothing. Announce each run: "using TypeSafe (consent recorded <date>; revoke with
-   `decide.py consent revoke typesafe`)".
+   if a remote backend's `detect` entry reads `consent_required_for_remote` — ask for consent
+   in the same question, naming each backend and its host, "summaries only, never code or
+   secrets", and the revoke command. On yes: `python3 "$S/decide.py" consent grant <backend>`
+   (`consent grant typesafe` still works; the client keeps the record, same once-per-user
+   rule). Consent on file asks nothing. Announce from the output's `consent_used`:
+   "using <backend> (consent recorded <date>)".
 6. **Read the quality rule:** `gsd_run query phase.mvp-mode <N>` per phase (`active` true →
    MVP branch), falling back to `gsd_run query config-get workflow.mvp_mode --default false
    --raw`. Bare `config-get` exits "Key not found" when the key is unset.
@@ -90,8 +96,8 @@ when it resolves to `inherit` or empty. No subagent support → run the brief in
 in the DISCUSSION-LOG.
 
 **MANDATORY — read `references/analyzer-brief.md` before spawning; fill every placeholder.**
-The analyzer returns "Jev question" lines; it never calls jev itself (consent, the one-item Laya
-rule and the log belong to you).
+The analyzer returns "Jev question" lines; it never calls jev itself (consent, the ladder
+and the answer log belong to the shared client).
 
 Then: ladder (§3) → write CONTEXT + DISCUSSION-LOG (**MANDATORY — read
 `references/log-formats.md` first**) → one commit:
@@ -106,25 +112,29 @@ python3 "$S/decide.py" ladder < items.json        # {"items": [...]}
 python3 "$S/decide.py" ladder --second-opinion < contested.json
 ```
 
-Item shape (`choice` or `noul`), summaries only:
+Item shape (`choice`, `noul` or `score`), summaries only:
 `{"id": "B07_segments", "type": "choice", "instructions": "<standalone question>",
 "context": "<the facts it turns on, non-empty>", "criteria": {"opt": "neutral description"}}`.
-A malformed or code-bearing item is rejected alone (`invalid_input` + reason) — fix and resubmit
-it; it is never silently "decided".
+A `noul` item takes no `criteria` or exactly `{"true": "...", "false": "..."}`; a `score`
+item's `criteria` is a list of 2-10 levels. Malformed or code-bearing items are rejected
+alone (`invalid_input` + reason) — fix and resubmit. A repeated `id` is rejected alone
+(`duplicate_id`); an `id` starting with `#` is `reserved_id` (that prefix keys rejections).
 
-Per item the result gives `laya`, `typesafe` (`{choice, top, fallback}`, `{error}` or null =
-not called) and `decided_by`. `top` is the winning probability, not the client's `confidence`.
+The ladder is **one client call per run**: decide.py validates the items and maps the
+client's per-item rung trail onto one column per table backend, each
+`{choice, top, fallback, model}`, `{error}` or null = not called, plus `decided_by` (the
+last confident rung, else `own_reasoning`) and `top`, the winning probability. The client
+runs the local backend one item per call; `fallback` follows each row's own threshold.
 
 - Describe options **neutrally**. Labelling one "best" or "easy" just echoes your framing back.
-- Laya runs one item per call (it reads the whole state, so contexts bleed between items);
-  TypeSafe gets one batch of the fallback/errored items.
-- A Laya answer ≥ 0.7 that **contradicts verified evidence or a locked decision** gets
-  `--second-opinion` before you override it. Expect this: in this milestone TypeSafe sided with
-  the evidence in every such case (17 K01/K08, 18.1 T2, 23 B10/B12, 24 C13).
+- A high local answer contradicting verified evidence or a locked decision gets
+  `--second-opinion` before you override it (the client skips the local rung; remotes answer
+  in table order). The remote rung sided with the evidence every time here (17 K01/K08, 18.1
+  T2, 23 B10/B12, 24 C13).
 - Laya is not deterministic: the same item scored 0.74 then 0.67 (fb) on two runs. Never treat
   a single Laya number as stable.
-- Both low → **own reasoning** against the SPEC, earlier CONTEXT files and the live facts. Log it
-  as own reasoning, and ledger it when it does not block anything.
+- Every answering column low or errored → **own reasoning** against the SPEC, earlier CONTEXT
+  files and the live facts. Log it, and ledger it when it blocks nothing.
 
 ## 4. Ledger and stop rule
 
