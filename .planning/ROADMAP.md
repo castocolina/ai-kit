@@ -672,13 +672,13 @@ orchestrator runs after wave 5, and its opencode spike S-OC can run as soon as i
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 21.3-04-PLAN.md — pi `tool_result` advisor and reminder shims over the core's pi entry (ADV-03, ADV-04)
-- [ ] 21.3-05-PLAN.md — Decision-probe SessionStart hook; cross-hook budget, fail-open and prohibition sweep (ADV-01, ADV-03, ADV-04)
+- [ ] 21.3-05-PLAN.md — Decision-probe SessionStart hook (backend names only); the R9 hook budget, fail-open per entry script, installed-only coverage (ADV-01, ADV-03, ADV-04)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 21.3-06-PLAN.md — Five hook ids as registry rows with Cursor as a host; bare `--with-hooks` = defaults; single-hook wiring removed (ADV-01)
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 21.3-07-PLAN.md — Wizard Review counts hooks apart from components; five PTY rows; READMEs and the host x hook table (ADV-01, ADV-02)
+- [ ] 21.3-07-PLAN.md — Wizard Review stops counting hooks as components; five PTY rows; READMEs and the host x hook table (ADV-01, ADV-02)
 
 ### Phase 22: Pi Live Validation
 
