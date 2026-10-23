@@ -57,6 +57,9 @@ DATA_NOT_INSTRUCTIONS = (
 )
 SKIPPED_KEYS = ("malformed", "unknown_type", "boundary_unrecognized", "dropped_before_classify")
 _BOUNDARY_MARKER = b'"compact_boundary"'
+_TAIL_MORE_RE = re.compile(r"\(\+\d+ more\)")
+_PINNED = "pinned"
+_TAIL = "tail"
 _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
 _SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -187,6 +190,197 @@ def classify_all(chunks, client, backend, ctx):
         labels[index] = classify_chunk(client, env, f"c{index:04d}", chunks[index],
                                        ctx["head"])
     return labels
+
+
+def _path_set(value):
+    """A set of the non-empty strings in one host file-ops list (arrays or Sets)."""
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return {item for item in value if isinstance(item, str) and item}
+    return set()
+
+
+def file_list_block(file_ops):
+    """pi's file-operations block: modified = edited plus written, read-only =
+    read minus modified, both sorted (SPEC R6). Empty string when both empty."""
+    if not isinstance(file_ops, dict):
+        return ""
+    read = _path_set(file_ops.get("read"))
+    written = _path_set(file_ops.get("written"))
+    edited = _path_set(file_ops.get("edited"))
+    modified = sorted(written | edited)
+    read_only = sorted(read - written - edited)
+    if not read_only and not modified:
+        return ""
+    lines = []
+    if read_only:
+        lines += ["<read-files>", *read_only, "</read-files>"]
+    if modified:
+        lines += ["<modified-files>", *modified, "</modified-files>"]
+    return "\n".join(lines)
+
+
+def _pi_text(content):
+    """Text of one pi content value: a string, or the text blocks of a list
+    (image, thinking and other blocks dropped)."""
+    if isinstance(content, str):
+        return _clean_text(content)
+    if isinstance(content, list):
+        texts = [block.get("text", "") for block in content
+                 if isinstance(block, dict) and block.get("type") == "text"
+                 and isinstance(block.get("text"), str)]
+        return _clean_text("\n".join(texts))
+    return ""
+
+
+def messages_from_pi(preparation):
+    """Convert pi's `preparation` into host-neutral messages (SPEC R6).
+
+    Walks `messagesToSummarize` then `turnPrefixMessages` (so a turn-prefix
+    marker always lands after every summarized marker). `user`/`custom` keep
+    their text, `assistant` keeps text plus toolCall names (thinking dropped),
+    `toolResult` and `bashExecution` become tool messages of head lines, and
+    `branchSummary` becomes user text. `compactionSummary` entries are skipped
+    because the previous summary arrives separately as the pinned entry. An
+    unknown role or a non-dict is counted. Returns (messages, skipped)."""
+    skipped = dict.fromkeys(SKIPPED_KEYS, 0)
+    messages = []
+    to_summarize = preparation.get("messagesToSummarize") if isinstance(preparation, dict) else None
+    prefix = preparation.get("turnPrefixMessages") if isinstance(preparation, dict) else None
+    for source in (to_summarize if isinstance(to_summarize, list) else [],
+                   prefix if isinstance(prefix, list) else []):
+        for item in source:
+            if not isinstance(item, dict):
+                skipped["malformed"] += 1
+                continue
+            role = item.get("role")
+            if role in ("user", "custom"):
+                messages.append({"role": "user", "text": _pi_text(item.get("content")),
+                                 "tools": []})
+            elif role == "assistant":
+                messages.append({"role": "assistant", "text": _pi_text(item.get("content")),
+                                 "tools": _pi_tool_names(item.get("content"))})
+            elif role == "toolResult":
+                messages.append({"role": "tool",
+                                 "text": _tool_result_text({"content": item.get("content")}),
+                                 "tools": []})
+            elif role == "bashExecution":
+                if item.get("excludeFromContext"):
+                    continue
+                messages.append({"role": "tool", "text": _pi_bash_text(item), "tools": []})
+            elif role == "branchSummary":
+                summary = item.get("summary")
+                messages.append({"role": "user",
+                                 "text": _clean_text(summary) if isinstance(summary, str) else "",
+                                 "tools": []})
+            elif role == "compactionSummary":
+                continue
+            else:
+                skipped["unknown_type"] += 1
+    return [m for m in messages if m["text"] or m["tools"]], skipped
+
+
+def _pi_tool_names(content):
+    """The toolCall names of one pi assistant content value."""
+    if not isinstance(content, list):
+        return []
+    return [block.get("name") for block in content
+            if isinstance(block, dict) and block.get("type") == "toolCall"
+            and isinstance(block.get("name"), str)]
+
+
+def _pi_bash_text(item):
+    """One bashExecution as a tool message: the command, then head output lines."""
+    command = item.get("command")
+    text = "$ " + (command if isinstance(command, str) else "")
+    output = item.get("output")
+    if isinstance(output, str):
+        text += "\n" + "\n".join(output.split("\n")[:TOOL_RESULT_HEAD_LINES])
+    return _clean_text(text)
+
+
+def _oc_created(item):
+    """The message's `info.time.created` epoch ms, or 0 when absent/malformed."""
+    info = item.get("info")
+    stamp = info.get("time") if isinstance(info, dict) else None
+    created = stamp.get("created") if isinstance(stamp, dict) else None
+    return created if isinstance(created, (int, float)) else 0
+
+
+def _oc_is_boundary(item):
+    """A prior opencode compaction: a message holding a `compaction` part, or an
+    assistant message with `summary: true` (RESEARCH Pattern 5)."""
+    info = item.get("info")
+    if isinstance(info, dict) and info.get("role") == "assistant" \
+            and info.get("summary") is True:
+        return True
+    parts = item.get("parts")
+    return isinstance(parts, list) and any(
+        isinstance(part, dict) and part.get("type") == "compaction" for part in parts)
+
+
+def _oc_item_messages(item, skipped):
+    """One opencode message as host-neutral messages: text parts (not `ignored`)
+    joined per role, and completed, not-yet-compacted tool outputs as tool
+    messages of head lines. Reasoning, file, compaction and step parts drop."""
+    info = item.get("info")
+    if not isinstance(info, dict):
+        skipped["malformed"] += 1
+        return []
+    role = info.get("role")
+    if role not in ("user", "assistant"):
+        skipped["unknown_type"] += 1
+        return []
+    parts = item.get("parts")
+    if not isinstance(parts, list):
+        return []
+    texts = []
+    messages = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        ptype = part.get("type")
+        if ptype == "text":
+            if part.get("ignored"):
+                continue
+            text = part.get("text")
+            if isinstance(text, str):
+                texts.append(text)
+        elif ptype == "tool":
+            state = part.get("state") if isinstance(part.get("state"), dict) else {}
+            stamp = state.get("time") if isinstance(state.get("time"), dict) else {}
+            if state.get("status") != "completed" or stamp.get("compacted"):
+                continue
+            output = state.get("output")
+            head = "\n".join(output.split("\n")[:TOOL_RESULT_HEAD_LINES]) \
+                if isinstance(output, str) else ""
+            messages.append({"role": "tool", "text": _clean_text(head), "tools": []})
+    if texts:
+        messages.append({"role": role, "text": _clean_text("\n".join(texts)), "tools": []})
+    return messages
+
+
+def messages_from_opencode(items):
+    """Convert opencode's `client.session.messages` result into host-neutral
+    messages (SPEC R7): sorted by `info.time.created` (then original index),
+    restricted to the part after the last prior-compaction boundary — the whole
+    session, flagged boundary_unrecognized, when none is found (RESEARCH
+    Pattern 5). Returns (messages, skipped)."""
+    skipped = dict.fromkeys(SKIPPED_KEYS, 0)
+    if not isinstance(items, list):
+        return [], skipped
+    valid = [item for item in items if isinstance(item, dict)]
+    skipped["malformed"] += len(items) - len(valid)
+    ordered = sorted(enumerate(valid), key=lambda pair: (_oc_created(pair[1]), pair[0]))
+    last_cut = -1
+    for index, (_, item) in enumerate(ordered):
+        if _oc_is_boundary(item):
+            last_cut = index
+    if last_cut < 0:
+        skipped["boundary_unrecognized"] = 1
+    messages = []
+    for _, item in ordered[last_cut + 1:]:
+        messages.extend(_oc_item_messages(item, skipped))
+    return [m for m in messages if m["text"] or m["tools"]], skipped
 
 
 def render_message(message):
@@ -333,33 +527,87 @@ def render_header(meta, chunks, labels):
 
 
 def apply_cap(header, entries):
-    """Fit header + entries under CAP_CHARS (SPEC R4, D-16).
+    """Fit header + entries under CAP_CHARS (SPEC R4, D-16, D-08).
 
     Over the cap, summarize entries go oldest first, then whole lines are removed
-    from the front of the oldest kept/unclassified entry, entry by entry, never
-    touching the newest such entry; an emptied entry is dropped. Trimming works on
-    str lines only, so it never splits a multi-byte character. Returns None when
-    even the header plus the newest kept entry cannot fit (21.2-04 relies on it)."""
-    kept = [text for label, text in entries if label != "summarize"]
-    newest = kept[-1] if kept else ""
-    if len(header) + len(newest) > CAP_CHARS:
-        return None
+    from the front of the oldest kept/unclassified entry, entry by entry, then
+    the tail's paths drop from the end (each trimmed list ends with a `(+N more)`
+    line); a pinned entry is never trimmed and the newest kept/unclassified entry
+    is never touched; an emptied entry is dropped. Trimming works on str lines
+    only, so it never splits a multi-byte character. Returns None when even the
+    header plus the pinned entries plus the newest kept entry cannot fit — a pi
+    replacement summary then never happens, so no earlier history is dropped."""
     work = [[label, text] for label, text in entries]
-    while len(header + "\n\n".join(text for _, text in work)) > CAP_CHARS:
+    total = len(header) + sum(len(text) + 2 for _, text in work) - (2 if work else 0)
+    seen_kept = False
+    floor = len(header)
+    for label, text in reversed(work):
+        if label == _PINNED or (label not in ("summarize", _TAIL, _PINNED)
+                                and not seen_kept):
+            floor += len(text) + 2
+            if label != _PINNED:
+                seen_kept = True
+    if floor > CAP_CHARS:
+        return None
+    while total > CAP_CHARS:
         index = _oldest_summarize(work)
         if index is not None:
+            total -= len(work[index][1]) + 2
             del work[index]
             continue
         index = _oldest_trim_entry(work)
-        if index is None:
-            return None
-        text = work[index][1]
-        newline = text.find("\n")
-        if newline == -1:
-            del work[index]
-        else:
-            work[index][1] = text[newline + 1:]
+        if index is not None:
+            text = work[index][1]
+            newline = text.find("\n")
+            if newline == -1:
+                total -= len(text) + 2
+                del work[index]
+            else:
+                total -= newline + 1
+                work[index][1] = text[newline + 1:]
+            continue
+        index = _tail_index(work)
+        if index is not None:
+            trimmed = _trim_tail(work[index][1])
+            if trimmed is None:
+                total -= len(work[index][1]) + 2
+                del work[index]
+            else:
+                total -= len(work[index][1]) - len(trimmed)
+                work[index][1] = trimmed
+            continue
+        return None
     return header + "\n\n".join(text for _, text in work)
+
+
+def _tail_index(entries):
+    """The index of the tail (file list) entry, or None."""
+    for index, (label, _) in enumerate(entries):
+        if label == _TAIL:
+            return index
+    return None
+
+
+def _trim_tail(text):
+    """The file-list block with its last path dropped and a `(+N more)` line in
+    its place; None when no path line remains to drop."""
+    lines = text.split("\n")
+    dropped = 0
+    kept = []
+    for line in lines:
+        more = _TAIL_MORE_RE.fullmatch(line)
+        if more:
+            dropped += int(more.group(0)[2:-7])
+        else:
+            kept.append(line)
+    path_indexes = [index for index, line in enumerate(kept)
+                    if line and not line.startswith("<")]
+    if not path_indexes:
+        return None
+    del kept[path_indexes[-1]]
+    closing = max(index for index, line in enumerate(kept) if line.startswith("</"))
+    kept.insert(closing, f"(+{dropped + 1} more)")
+    return "\n".join(kept)
 
 
 def _oldest_summarize(entries):
@@ -379,10 +627,18 @@ def _oldest_trim_entry(entries):
 
 
 def build_document(meta, chunks, labels):
-    """The full pre-summary: header, then entries chronologically (SPEC R1, R4)."""
+    """The full pre-summary: header, then the pinned previous summary (D-08,
+    rendered under a `[previous summary]` line and never trimmed), the entries
+    chronologically (SPEC R1, R4), and the tail file block last (SPEC R6)."""
     header = render_header(meta, chunks, labels)
     entries = [(labels[index], _render_entry(labels[index], chunks[index]))
                for index in range(len(chunks)) if labels[index] != "discard"]
+    pinned = meta.get("pinned")
+    if isinstance(pinned, str) and pinned:
+        entries.insert(0, (_PINNED, "[previous summary]\n" + pinned))
+    tail = meta.get("tail")
+    if isinstance(tail, str) and tail:
+        entries.append((_TAIL, tail))
     return apply_cap(header, entries)
 
 
@@ -408,6 +664,133 @@ def presummarize(messages, meta, env):
            "deadline": deadline, "parent": env, "config_home": meta["config_home"]}
     labels = classify_all(chunks, client, backend, ctx)
     return build_document(meta, chunks, labels)
+
+
+_COUNTS_RE = re.compile(r"chunks: (\d+) total, (\d+) classified, keep (\d+), "
+                        r"summarize (\d+), discard (\d+), unclassified (\d+)")
+
+
+def count_details(document):
+    """The six chunk counts a document's header records, as the `details` object
+    the pi extension returns (SPEC R6 target); None when the header is odd."""
+    match = _COUNTS_RE.search(document or "")
+    if match is None:
+        return None
+    keys = ("total", "classified", "keep", "summarize", "discard", "unclassified")
+    return dict(zip(keys, (int(group) for group in match.groups()), strict=True))
+
+
+def _slug_from(value, fallback_basename):
+    """A slug from a session name, else the cwd basename, else `session`."""
+    if isinstance(value, str) and value:
+        return slugify(value)
+    if isinstance(fallback_basename, str) and fallback_basename:
+        return slugify(os.path.basename(fallback_basename))
+    return "session"
+
+
+def _produce(messages, meta, env, session_id, slug):
+    """Shared pi/opencode tail: classify, build, write the private file (SPEC R1:
+    the core writes `{session-id}-{name}-compact.md` for every host), unlink it
+    (the shim returns the text to its host in the same call) and return the
+    result dict, or None when nothing could be produced."""
+    document = presummarize(messages, meta, env)
+    if document is None:
+        return None
+    directory = private_dir(env)
+    if directory is None:
+        return None
+    path = write_presummary(document, session_id, slug, directory)
+    if path is None:
+        return None
+    with contextlib.suppress(OSError):
+        os.unlink(path)
+    return document
+
+
+def run_pi(data, env):
+    """The pi entry (SPEC R6, D-07, D-08): validate, sweep, convert, classify and
+    build with the previous summary pinned and the file lists as the tail.
+    Returns `{summary, details}` or None."""
+    preparation = data.get("preparation") if isinstance(data, dict) else None
+    to_summarize = preparation.get("messagesToSummarize") if isinstance(preparation, dict) else None
+    directory = private_dir(env)
+    if not isinstance(to_summarize, list) or not to_summarize or directory is None:
+        return None
+    session_id = data.get("sessionId")
+    if not safe_session_id(session_id):
+        session_id = f"pi-{os.getpid()}"
+    sweep(directory)
+    messages, skipped = messages_from_pi(preparation)
+    if not messages:
+        return None
+    previous = preparation.get("previousSummary")
+    file_ops = preparation.get("fileOps")
+    meta = {"session_id": session_id, "host": "pi", "skipped": skipped,
+            "started": _monotonic(),
+            "config_home": os.path.join(directory, ".no-config"),
+            "pinned": previous if isinstance(previous, str) else "",
+            "tail": file_list_block(file_ops) if isinstance(file_ops, dict) else ""}
+    slug = _slug_from(data.get("sessionName"), data.get("cwd"))
+    document = _produce(messages, meta, env, session_id, slug)
+    if document is None:
+        return None
+    return {"summary": document, "details": count_details(document)}
+
+
+def run_opencode(data, env):
+    """The opencode entry (SPEC R7, D-09): validate, sweep, convert, classify and
+    build. Returns `{context}` or None."""
+    if not isinstance(data, dict):
+        return None
+    items = data.get("messages")
+    session_id = data.get("sessionID")
+    if not safe_session_id(session_id):
+        session_id = f"opencode-{os.getpid()}"
+    directory = private_dir(env)
+    if directory is None:
+        return None
+    sweep(directory)
+    messages, skipped = messages_from_opencode(items if isinstance(items, list) else [])
+    if not messages:
+        return None
+    meta = {"session_id": session_id, "host": "opencode", "skipped": skipped,
+            "started": _monotonic(),
+            "config_home": os.path.join(directory, ".no-config")}
+    slug = _slug_from(None, data.get("directory"))
+    document = _produce(messages, meta, env, session_id, slug)
+    if document is None:
+        return None
+    return {"context": document}
+
+
+def main(argv, environ=None):
+    """The `python3 -S precompact_core.py pi|opencode` entry: read at most
+    MAX_STDIN_BYTES, run the matching host entry, print one JSON object (`{}`
+    when there is nothing to return, the entry is unknown, or the payload was
+    over the limit). Always exits 0 (SPEC R6, R7, R8)."""
+    # Imports here so `python3 -S` finds the sibling even when this file is
+    # reached through a symlink (the shim's own realpath handles its side).
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    from claude_session_start import read_stdin  # pylint: disable=import-outside-toplevel
+    env = os.environ if environ is None else environ
+    entry = argv[0] if argv else ""
+    raw = read_stdin(MAX_STDIN_BYTES)
+    result = None
+    if len(raw) <= MAX_STDIN_BYTES:
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            if entry == "pi":
+                result = run_pi(data, env)
+            elif entry == "opencode":
+                result = run_opencode(data, env)
+    text = json.dumps(result) if isinstance(result, dict) else "{}"
+    sys.stdout.write(text)
+    sys.stdout.flush()
+    return 0
 
 
 def private_dir(env):
@@ -666,3 +1049,10 @@ def run_claude(payload, env):
     if document is None:
         return None
     return write_presummary(document, session_id, slug, directory)
+
+
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    from claude_session_start import _fail_open  # pylint: disable=import-outside-toplevel
+    sys.excepthook = _fail_open
+    raise SystemExit(main(sys.argv[1:]))

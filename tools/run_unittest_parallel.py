@@ -60,6 +60,7 @@ E2E_MODULES = frozenset({
     "tests.test_ai_kit_gsd_spec_discuss_e2e",
     "tests.test_jev_skill_install_e2e",  # R8: real setup.py runs under a temp HOME
     "tests.test_cross_ai_runner_e2e",
+    "tests.test_precompact_shims_e2e",  # node runs of the pi and opencode shims (D-18)
 })
 EXPLICIT_GROUPS = {
     "arch": ARCH_MODULES,

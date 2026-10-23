@@ -1,0 +1,37 @@
+{
+  "ctx": {
+    "sessionId": "pi-sess-1",
+    "sessionName": "Refactor parser",
+    "cwd": "demo-project"
+  },
+  "preparation": {
+    "firstKeptEntryId": "e42",
+    "tokensBefore": 123456,
+    "previousSummary": "Earlier compacted summary: the parser rewrite began at commit 9f2c; module layout decided; CLI flags frozen.",
+    "messagesToSummarize": [
+      {"role": "user", "content": "Start the parser rewrite: tokenizer first, keep the public API stable."},
+      {"role": "assistant", "content": [
+        {"type": "thinking", "thinking": "internal reasoning, dropped"},
+        {"type": "text", "text": "I will split tokenization from parsing and add a token stream type."},
+        {"type": "toolCall", "name": "Read", "arguments": {"path": "src/tokenizer.ts"}}
+      ]},
+      {"role": "toolResult", "toolName": "Read", "content": [
+        {"type": "text", "text": "export function tokenize(input: string): Token[] {\n  const tokens: Token[] = [];\n  let index = 0;\n  while (index < input.length) {\n    index = scan(input, index, tokens);\n  }\n  return tokens;\n}"}
+      ]},
+      {"role": "user", "content": "The stream type should be lazy; benchmarks showed 3x allocation overhead."},
+      {"role": "bashExecution", "command": "pnpm test tokenizer", "output": "PASS tests/tokenizer.test.ts\nPASS tests/stream.test.ts\n2 passed, 0 failed"},
+      {"role": "custom", "customType": "note", "content": "Decision recorded: lazy streams land behind a flag."},
+      {"role": "branchSummary", "summary": "Branch compaction: the lazy-stream experiment was merged into the rewrite."},
+      {"role": "compactionSummary", "summary": "Superseded summary text that must be skipped; the previous summary arrives separately."},
+      {"role": "future-thing", "content": "A role from a pi version this shim predates."}
+    ],
+    "turnPrefixMessages": [
+      {"role": "user", "content": "Now summarize where we are and open the next step."}
+    ],
+    "fileOps": {
+      "read": ["src/tokenizer.ts", "src/parser.ts"],
+      "written": ["src/tokenStream.ts"],
+      "edited": ["src/parser.ts", "README.md"]
+    }
+  }
+}
