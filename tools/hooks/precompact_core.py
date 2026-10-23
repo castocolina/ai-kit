@@ -57,7 +57,7 @@ DATA_NOT_INSTRUCTIONS = (
 )
 SKIPPED_KEYS = ("malformed", "unknown_type", "boundary_unrecognized", "dropped_before_classify")
 _BOUNDARY_MARKER = b'"compact_boundary"'
-_TAIL_MORE_RE = re.compile(r"\(\+\d+ more\)")
+_TAIL_MORE_RE = re.compile(r"\(\+(\d+) more\)")
 _PINNED = "pinned"
 _TAIL = "tail"
 _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
@@ -318,6 +318,23 @@ def _oc_is_boundary(item):
         isinstance(part, dict) and part.get("type") == "compaction" for part in parts)
 
 
+def _oc_tool_message(part):
+    """One completed, not-yet-compacted tool part as a tool message of head
+    lines, or None (pending, errored and already-compacted outputs drop)."""
+    state = part.get("state")
+    if not isinstance(state, dict):
+        return None
+    stamp = state.get("time")
+    if not isinstance(stamp, dict):
+        stamp = {}
+    if state.get("status") != "completed" or stamp.get("compacted"):
+        return None
+    output = state.get("output")
+    head = "\n".join(output.split("\n")[:TOOL_RESULT_HEAD_LINES]) \
+        if isinstance(output, str) else ""
+    return {"role": "tool", "text": _clean_text(head), "tools": []}
+
+
 def _oc_item_messages(item, skipped):
     """One opencode message as host-neutral messages: text parts (not `ignored`)
     joined per role, and completed, not-yet-compacted tool outputs as tool
@@ -346,14 +363,9 @@ def _oc_item_messages(item, skipped):
             if isinstance(text, str):
                 texts.append(text)
         elif ptype == "tool":
-            state = part.get("state") if isinstance(part.get("state"), dict) else {}
-            stamp = state.get("time") if isinstance(state.get("time"), dict) else {}
-            if state.get("status") != "completed" or stamp.get("compacted"):
-                continue
-            output = state.get("output")
-            head = "\n".join(output.split("\n")[:TOOL_RESULT_HEAD_LINES]) \
-                if isinstance(output, str) else ""
-            messages.append({"role": "tool", "text": _clean_text(head), "tools": []})
+            tool_message = _oc_tool_message(part)
+            if tool_message is not None:
+                messages.append(tool_message)
     if texts:
         messages.append({"role": role, "text": _clean_text("\n".join(texts)), "tools": []})
     return messages
@@ -597,7 +609,7 @@ def _trim_tail(text):
     for line in lines:
         more = _TAIL_MORE_RE.fullmatch(line)
         if more:
-            dropped += int(more.group(0)[2:-7])
+            dropped += int(more.group(1))
         else:
             kept.append(line)
     path_indexes = [index for index, line in enumerate(kept)
@@ -620,9 +632,11 @@ def _oldest_summarize(entries):
 
 def _oldest_trim_entry(entries):
     """The oldest kept/unclassified entry that still has a removable line, or None.
-    The newest such entry is never trimmed, so the newest kept chunk survives whole."""
+    Pinned and tail entries are never line-trimmed here (the tail drops whole
+    paths instead), and the newest such entry is never trimmed, so the newest
+    kept chunk survives whole."""
     trimmable = [index for index, (label, text) in enumerate(entries)
-                 if label != "summarize" and text]
+                 if label not in ("summarize", _PINNED, _TAIL) and text]
     return trimmable[0] if len(trimmable) > 1 else None
 
 
@@ -713,9 +727,13 @@ def run_pi(data, env):
     build with the previous summary pinned and the file lists as the tail.
     Returns `{summary, details}` or None."""
     preparation = data.get("preparation") if isinstance(data, dict) else None
-    to_summarize = preparation.get("messagesToSummarize") if isinstance(preparation, dict) else None
+    if not isinstance(preparation, dict):
+        return None
+    to_summarize = preparation.get("messagesToSummarize")
+    if not isinstance(to_summarize, list) or not to_summarize:
+        return None
     directory = private_dir(env)
-    if not isinstance(to_summarize, list) or not to_summarize or directory is None:
+    if directory is None:
         return None
     session_id = data.get("sessionId")
     if not safe_session_id(session_id):

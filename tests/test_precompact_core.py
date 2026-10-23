@@ -748,6 +748,157 @@ class TestBudget(CoreEnvMixin, unittest.TestCase):
                          "no stub call may run for zero chunks")
 
 
+class TestPiEntry(CoreEnvMixin, unittest.TestCase):
+    """The core's pi entry: pinned history, ordering, counters, file lists."""
+
+    def _pi_user(self, prefix, fraction):
+        """One pi user message whose text takes ~`fraction` of a chunk budget."""
+        return {"role": "user", "content": self.pad_message("user", prefix, fraction)["text"]}
+
+    def _pi_data(self, **prep_overrides):
+        prep = {"messagesToSummarize": [self._pi_user("chunk body ", 0.9)],
+                "turnPrefixMessages": [], "fileOps": {"read": [], "written": [],
+                                                      "edited": []}}
+        prep.update(prep_overrides)
+        return {"preparation": prep, "sessionId": "sess-pi-1", "sessionName": "demo",
+                "cwd": "demo-project"}
+
+    def test_pi_entry_previous_summary_kept_first(self):
+        env = self.make_env()
+        data = self._pi_data(
+            previousSummary="PREV-SUMMARY-MARKER text of the earlier compaction")
+        result = core.run_pi(data, env)
+        self.assertIsNotNone(result)
+        document = result["summary"]
+        body = document.split("\n---\n", 1)[1]
+        self.assertTrue(body.startswith("[previous summary]\nPREV-SUMMARY-MARKER"))
+        self.assertLess(body.index("PREV-SUMMARY-MARKER"), body.index("chunk body"))
+
+    def test_pi_entry_previous_plus_newest_too_big_returns_none(self):
+        env = self.make_env()
+        data = self._pi_data(previousSummary="P" * 9000)
+        self.assertIsNone(core.run_pi(data, env))
+
+    def test_pi_entry_empty_messages_returns_none(self):
+        env = self.make_env()
+        self.assertIsNone(core.run_pi(self._pi_data(messagesToSummarize=[]), env))
+
+    def test_pi_entry_turn_prefix_after_messages(self):
+        env = self.make_env()
+        data = self._pi_data(
+            turnPrefixMessages=[self._pi_user("PREFIX-MARKER ", 0.9)])
+        document = core.run_pi(data, env)["summary"]
+        self.assertLess(document.rindex("chunk body"), document.index("PREFIX-MARKER"))
+
+    def test_pi_entry_unknown_role_counted(self):
+        env = self.make_env()
+        data = self._pi_data(messagesToSummarize=[
+            {"role": "future-thing", "content": "a role this shim predates"},
+            self._pi_user("kept body ", 0.9),
+        ])
+        result = core.run_pi(data, env)
+        self.assertIsNotNone(result)
+        self.assertIn("unknown_type 1", result["summary"].split("\n---\n")[0])
+        self.assertNotIn("future-thing", result["summary"])
+
+    def test_pi_entry_file_lists(self):
+        env = self.make_env()
+        data = self._pi_data(fileOps={"read": ["a.py", "b.py"], "written": ["c.py"],
+                                      "edited": ["b.py"]})
+        document = core.run_pi(data, env)["summary"]
+        self.assertIn("<read-files>\na.py\n</read-files>", document)
+        self.assertIn("<modified-files>\nb.py\nc.py\n</modified-files>", document)
+        self.assertNotIn("<read-files>\na.py\nb.py", document)
+
+    def test_pi_entry_file_lists_trim_with_more_line(self):
+        env = self.make_env()
+        long_paths = [f"src/pkg{i}/module/with/a/longish/name/file-{i:03d}.py"
+                      for i in range(500)]
+        data = self._pi_data(
+            previousSummary="PREV-MARKER " + "x" * 4000,
+            messagesToSummarize=[self._pi_user("NEWEST-MARKER ", 0.9)],
+            fileOps={"read": long_paths, "written": [], "edited": []})
+        result = core.run_pi(data, env)
+        self.assertIsNotNone(result)
+        document = result["summary"]
+        self.assertLessEqual(len(document), core.CAP_CHARS)
+        self.assertIn("PREV-MARKER", document)
+        self.assertIn("NEWEST-MARKER", document)
+        self.assertRegex(document, r"\(\+\d+ more\)")
+
+
+class TestMainEntry(unittest.TestCase):
+    """`python3 -S precompact_core.py pi|opencode`: the stdin/argv contract."""
+
+    def _base_env(self):
+        base = tempfile.mkdtemp(prefix="aikit-main-")
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        paths = {"HOME": os.path.join(base, "home"),
+                 "XDG_RUNTIME_DIR": os.path.join(base, "run"),
+                 "XDG_CACHE_HOME": os.path.join(base, "cache"),
+                 "XDG_CONFIG_HOME": os.path.join(base, "config")}
+        for path in paths.values():
+            os.makedirs(path, exist_ok=True)
+        os.chmod(paths["XDG_RUNTIME_DIR"], 0o700)
+        env = dict(paths)
+        env["AI_KIT_PRECOMPACT_CLIENT"] = str(STUB_PATH)
+        return env, base
+
+    def _run_main(self, argv, payload, env):
+        return subprocess.run(
+            [sys.executable, "-S", str(CORE_PATH), *argv],
+            input=payload if isinstance(payload, bytes) else payload.encode("utf-8"),
+            capture_output=True, timeout=120, env=env, check=False)
+
+    def test_main_stdin_contract(self):
+        fixtures = (("pi", REPO / "tests" / "fixtures" / "precompact" / "pi_preparation.json",
+                     "summary"),
+                    ("opencode",
+                     REPO / "tests" / "fixtures" / "precompact" / "opencode_messages.json",
+                     "context"))
+        for entry, fixture_path, key in fixtures:
+            with self.subTest(entry=entry):
+                env, base = self._base_env()
+                payload = Path(fixture_path).read_bytes()
+                proc = self._run_main([entry], payload, env)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                result = json.loads(proc.stdout)
+                self.assertIn(key, result)
+                self.assertTrue(result[key])
+                compact_dir = os.path.join(base, "run", "ai-kit", "compact")
+                leftovers = [name for name in os.listdir(compact_dir)
+                             if name.endswith("-compact.md")]
+                self.assertEqual(leftovers, [])
+                for argv, stdin in (([entry], b"not json"), (["other"], payload),
+                                    ([], payload)):
+                    proc = self._run_main(argv, stdin, env)
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    self.assertEqual(proc.stdout.decode("utf-8"), "{}")
+
+    def test_main_reads_payload_over_one_mib(self):
+        env, _base = self._base_env()
+        filler = "\n".join(f"line {index:06d} padding text for the big payload"
+                           for index in range(46000))
+        self.assertGreater(len(filler), 1024 * 1024)
+        payload = json.dumps({
+            "preparation": {
+                "messagesToSummarize": [
+                    {"role": "user", "content": "hello big payload"},
+                    {"role": "toolResult", "toolName": "Read",
+                     "content": [{"type": "text", "text": filler}]},
+                ],
+                "turnPrefixMessages": [], "previousSummary": None,
+                "fileOps": {"read": [], "written": [], "edited": []},
+            },
+            "sessionId": "sess-big-1", "sessionName": "big", "cwd": "demo-project",
+        }).encode("utf-8")
+        self.assertGreater(len(payload), 1024 * 1024)
+        proc = self._run_main(["pi"], payload, env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertTrue(result.get("summary"))
+
+
 class TestChunkLimitWithinClientGuard(CoreEnvMixin, unittest.TestCase):
     """CHUNK_STATE_CHARS never exceeds the client's own non-remote guard (D-03)."""
 

@@ -19,6 +19,8 @@ reports "not active" rather than guessing.
 | Cursor | `hooks.sessionStart` in `hooks.json`, flat array, no matcher | Wired. Live-verified during Phase 4's discussion; Cursor is not a gap (D-09). |
 | opencode | none | Accepted gap. opencode has no documented session-start injection point today. This is recorded in `.planning/PROJECT.md` (Out of Scope) and `REQ-tool-substitution-hook-wiring`, not an oversight. The gap is pending upstream support; nothing in this directory has an opencode code path. |
 | Claude Code | `hooks.PreCompact` (matcher `manual\|auto`) + `hooks.SessionStart` (matcher `compact`) in `settings.json`, via `claude_precompact.py` | Wired in Phase 21.2; see `## PreCompact pre-summary` below. Both entries are separate from the briefing rows above, so unwiring one never removes the other. |
+| pi | `session_before_compact` extension, via `pi/ai-kit-precompact.ts` (linked as one file into `${PI_CODING_AGENT_DIR:-~/.pi/agent}/extensions/` by setup in 21.2-05) | The extension returns the core's pre-summary as `compaction.summary` with the event's own `firstKeptEntryId` and `tokensBefore`, so pi stores it in place of the summary its model would write; on any failure it returns nothing and pi's default compaction runs. |
+| opencode | `experimental.session.compacting` plugin, via `opencode/ai-kit-precompact.ts` (linked as one file into the opencode global `plugins/` dir by setup in 21.2-05) | **Experimental** — the upstream hook is. The plugin appends the pre-summary to `output.context` on top of opencode's own summary and never replaces the prompt; on any failure it leaves `output` untouched. Whether installed opencode v2 still calls this hook is unverified until the phase's S4 live check records otherwise. |
 
 ## PreCompact pre-summary
 
@@ -39,6 +41,19 @@ its own compaction summary — the pre-summary only adds context after it. The
 transcript format is undocumented and internal to Claude Code; the reader is
 defensive (malformed, truncated, unknown and foreign lines are skipped and
 counted, never raised) and no test reads a real transcript.
+
+The same core serves the pi and opencode routes. On pi (D-08), the previous
+compaction summary that the event hands over is pinned first in the
+replacement summary and never trimmed — when the header, the previous summary
+and the newest kept chunk cannot fit the cap whole, the pi entry returns
+nothing so pi's default compaction runs; a replacement summary never drops
+earlier-compacted history. The pi summary also ends with `<read-files>` /
+`<modified-files>` blocks computed the way pi's own file lists are (modified =
+edited plus written, read = read minus modified, sorted), because pi does not
+carry file lists from an extension summary into later compactions; over the
+cap the lists are trimmed path by path, ending with a `(+N more)` line. On
+opencode the pre-summary is one extra `output.context` string and the compaction
+prompt stays opencode's own.
 
 ## Non-goals
 

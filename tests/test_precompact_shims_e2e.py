@@ -10,7 +10,9 @@ The whole class skips only when node is absent or cannot strip types.
 
 import json
 import os
+import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -99,6 +101,196 @@ class ShimHarnessMixin(unittest.TestCase):
 @unittest.skipUnless(_node_ready(), "node with type stripping is not available")
 class TestShimsE2E(ShimHarnessMixin, unittest.TestCase):
     """Every shim case runs node from PATH; failure cases cover both hosts."""
+
+    HOSTS = (("pi", PI_SHIM, PI_FIXTURE), ("opencode", OC_SHIM, OC_FIXTURE))
+
+    def _pi_fixture(self, **prep_overrides):
+        """The recorded pi fixture with `preparation` fields overridden."""
+        fixture = json.loads(PI_FIXTURE.read_text(encoding="utf-8"))
+        fixture["preparation"].update(prep_overrides)
+        return fixture
+
+    def _oc_fixture(self, **overrides):
+        """The recorded opencode fixture with top-level fields overridden."""
+        fixture = json.loads(OC_FIXTURE.read_text(encoding="utf-8"))
+        fixture.update(overrides)
+        return fixture
+
+    def test_shims_empty_input_gives_nothing(self):
+        base = self._make_base()
+        with self.subTest(host="pi"):
+            proc, _env = self._run_harness(
+                "pi", PI_SHIM, self._pi_fixture(messagesToSummarize=[]), base)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(proc.stdout.strip(), "null")
+        with self.subTest(host="opencode"):
+            proc, _env = self._run_harness(
+                "opencode", OC_SHIM, self._oc_fixture(messages=[]), base)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            result = json.loads(proc.stdout)
+            self.assertEqual(result["output"], {"context": ["prior plugin context"]})
+            self.assertFalse(result["promptSet"])
+
+    def test_shims_core_failure_gives_nothing(self):
+        base = self._make_base()
+        empty_exit0 = self._write_interpreter_script(
+            base, "empty_exit0.py", "import sys\nsys.stdin.buffer.read()\n")
+        cases = (("missing interpreter", {"AI_KIT_PYTHON": os.path.join(base, "no-python")}, None),
+                 ("exit 0 empty stdout", {"AI_KIT_PYTHON": empty_exit0}, None),
+                 ("backend down", None, "down"))
+        for host, shim, fixture in self.HOSTS:
+            for name, extra, probe in cases:
+                with self.subTest(host=host, case=name):
+                    merged = dict(extra or {})
+                    if probe:
+                        merged["STUB_PROBE"] = probe
+                    proc, _env = self._run_harness(host, shim, fixture, base, extra=merged)
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    if host == "pi":
+                        self.assertEqual(proc.stdout.strip(), "null")
+                    else:
+                        result = json.loads(proc.stdout)
+                        self.assertEqual(result["output"],
+                                         {"context": ["prior plugin context"]})
+                        self.assertFalse(result["promptSet"])
+
+    def test_shims_hanging_interpreter_killed(self):
+        for host, shim, fixture in self.HOSTS:
+            with self.subTest(host=host):
+                base = self._make_base()
+                pidfile = os.path.join(base, "sleeper.pid")
+                script = self._write_interpreter_script(
+                    base, "sleeper.py",
+                    "import os, sys\n"
+                    f"with open({pidfile!r}, 'w', encoding='utf-8') as handle:\n"
+                    "    handle.write(str(os.getpid()))\n"
+                    "os.execv(sys.executable,\n"
+                    "    [sys.executable, '-c', 'import time; time.sleep(30)'])\n")
+                env = self._harness_env(base, {"AI_KIT_PYTHON": script})
+                cmd = ["node", str(HARNESS), host, str(shim), str(fixture)]
+                started = time.monotonic()
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        text=True, cwd=str(REPO), env=env)
+                timed_out = False
+                stdout = ""
+                try:
+                    stdout, _stderr = proc.communicate(timeout=15)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                elapsed = time.monotonic() - started
+                try:
+                    self.assertFalse(timed_out)
+                    self.assertGreaterEqual(elapsed, 9.5)
+                    self.assertLessEqual(elapsed, 11.0)
+                    if host == "pi":
+                        self.assertEqual(stdout.strip(), "null")
+                    else:
+                        result = json.loads(stdout)
+                        self.assertEqual(result["output"],
+                                         {"context": ["prior plugin context"]})
+                    with open(pidfile, encoding="utf-8") as handle:
+                        sleeper = int(handle.read().strip())
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(sleeper, 0)
+                finally:
+                    if os.path.exists(pidfile):
+                        try:
+                            with open(pidfile, encoding="utf-8") as handle:
+                                os.kill(int(handle.read().strip()), signal.SIGKILL)
+                        except (OSError, ValueError):
+                            pass
+                    if proc.poll() is None:
+                        proc.kill()
+                    proc.wait()
+
+    def test_shims_text_encoding(self):
+        weird = ("café_accents, 日本語_CJK, \U0001f680_emoji, "
+                 "\x07_bell \x1b[31m_escape \x00_nul \x7f_del")
+        pi_fixture = self._pi_fixture(messagesToSummarize=[{"role": "user",
+                                                            "content": weird}])
+        oc_fixture = self._oc_fixture(messages=[
+            {"info": {"role": "user", "time": {"created": 1000}},
+             "parts": [{"type": "text", "text": weird}]}])
+        for host, shim, fixture in (("pi", PI_SHIM, pi_fixture),
+                                    ("opencode", OC_SHIM, oc_fixture)):
+            with self.subTest(host=host):
+                base = self._make_base()
+                proc, _env = self._run_harness(host, shim, fixture, base)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                if host == "pi":
+                    document = json.loads(proc.stdout)["compaction"]["summary"]
+                else:
+                    document = json.loads(proc.stdout)["output"]["context"][1]
+                for marker in ("café_accents", "日本語_CJK", "\U0001f680_emoji"):
+                    self.assertIn(marker, document)
+                bad = [char for char in document
+                       if (ord(char) < 0x20 and char not in "\n\t") or ord(char) == 0x7f]
+                self.assertEqual(bad, [])
+
+    def test_shims_self_contained(self):
+        expected_exports = {"pi": ["default"], "opencode": ["AiKitPrecompact"]}
+        for host, shim, _fixture in self.HOSTS:
+            with self.subTest(host=host):
+                files = [path.name for path in shim.parent.iterdir()]
+                self.assertEqual(files, [shim.name])
+                for line in shim.read_text(encoding="utf-8").splitlines():
+                    if re.match(r"\s*import\b", line) and " from " in line:
+                        self.assertIn('"node:', line, line)
+                base = self._make_base()
+                proc, _env = self._run_harness(host, shim, fixture_for(host), base,
+                                               mode="exports")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(json.loads(proc.stdout), expected_exports[host])
+
+    def test_shims_symlinked_finds_core(self):
+        base = self._make_base()
+        for host, shim, fixture in self.HOSTS:
+            with self.subTest(host=host):
+                link = os.path.join(base, f"linked-{host}-{shim.name}")
+                os.symlink(shim, link)
+                proc, _env = self._run_harness(host, Path(link), fixture, base)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                result = json.loads(proc.stdout)
+                if host == "pi":
+                    self.assertTrue(result["compaction"]["summary"])
+                else:
+                    self.assertEqual(len(result["output"]["context"]), 2)
+
+    def test_pi_abort_returns_nothing(self):
+        base = self._make_base()
+        proc, _env = self._run_harness("pi", PI_SHIM, PI_FIXTURE, base, mode="abort",
+                                       timeout=2)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "null")
+
+    def test_pi_image_data_blanked_on_stdin(self):
+        base = self._make_base()
+        sink = os.path.join(base, "sink.bin")
+        image_data = "A" * 200000
+        fixture = self._pi_fixture(messagesToSummarize=[
+            {"role": "user", "content": [
+                {"type": "text", "text": "describe this image"},
+                {"type": "image", "data": image_data},
+            ]}])
+        interpreter = self._write_interpreter_script(
+            base, "sink.py",
+            "import os, sys\n"
+            "with open(os.environ['SINK_PATH'], 'wb') as handle:\n"
+            "    handle.write(sys.stdin.buffer.read())\n"
+            "raise SystemExit(1)\n")
+        proc, _env = self._run_harness("pi", PI_SHIM, fixture, base,
+                                      extra={"AI_KIT_PYTHON": interpreter,
+                                             "SINK_PATH": sink})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "null")
+        with open(sink, "rb") as handle:
+            piped = handle.read()
+        self.assertNotIn(b"A" * 1000, piped)
+
+
+def fixture_for(host):
+    """The recorded fixture path of one host."""
+    return PI_FIXTURE if host == "pi" else OC_FIXTURE
 
 
 class TestPiTracer(ShimHarnessMixin, unittest.TestCase):
