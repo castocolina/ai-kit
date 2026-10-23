@@ -1393,6 +1393,132 @@ class TestApplyPredecessorLinksPure(unittest.TestCase):
         self.assertEqual(c["relinked"], 1)   # still counted as intended
 
 
+class TestReplaceAndBackupAndLink(unittest.TestCase):
+    """replace_candidates + backup_and_link: the confirmed backup flow
+    (D-15/D-16)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install = os.path.join(self.tmp, "ai-kit")
+        self.claude = os.path.join(self.tmp, "claude")
+        self.pi = os.path.join(self.tmp, "pi")
+        os.makedirs(os.path.join(self.install, "skills", "jev-fast-decision"))
+        os.makedirs(os.path.join(self.install, "skills", "other-skill"))
+        for _name in ("jev-fast-decision", "other-skill"):
+            with open(os.path.join(self.install, "skills", _name, "SKILL.md"),
+                      "w", encoding="utf-8") as f:
+                f.write(f"---\nname: {_name}\n---\nbody\n")
+        os.makedirs(os.path.join(self.claude, "skills"))
+        os.makedirs(os.path.join(self.pi, "skills"))
+        self.paths = setup.resolve_paths({
+            "HOME": self.tmp, "AI_KIT_DIR": self.install,
+            "CLAUDE_CONFIG_DIR": self.claude, "PI_CODING_AGENT_DIR": self.pi})
+        self.jev_target = os.path.join(self.install, "skills", "jev-fast-decision")
+        self.entries = {"skills": [("jev-fast-decision", self.jev_target),
+                                   ("other-skill",
+                                    os.path.join(self.install, "skills", "other-skill"))],
+                        "commands": [], "agents": []}
+        self.names = {"jev-fast-decision"}
+
+    def test_replace_candidates(self):
+        claude_jev = os.path.join(self.claude, "skills", "jev-fast-decision")
+        # a real dir, a live foreign link and a dangling link are candidates
+        os.makedirs(claude_jev)
+        cands = setup.replace_candidates(self.paths, self.entries, self.names)
+        self.assertEqual([(l, n) for l, _p, _t, n in cands],
+                         [("claude", "jev-fast-decision")])
+        shutil.rmtree(claude_jev)
+        live = os.path.join(self.tmp, "elsewhere")
+        os.makedirs(live)
+        os.symlink(live, claude_jev)
+        cands = setup.replace_candidates(self.paths, self.entries, self.names)
+        self.assertEqual(len(cands), 1)
+        shutil.rmtree(live)
+        os.remove(claude_jev)
+        os.symlink(os.path.join(self.tmp, "gone", "jev-fast-decision"), claude_jev)
+        cands = setup.replace_candidates(self.paths, self.entries, self.names)
+        self.assertEqual(len(cands), 1)
+        # an ai-kit link is not; a name outside `names` is not
+        os.remove(claude_jev)
+        os.symlink(self.jev_target, claude_jev)
+        other = os.path.join(self.claude, "skills", "other-skill")
+        os.makedirs(other)
+        self.assertEqual(
+            setup.replace_candidates(self.paths, self.entries,
+                                     {"jev-fast-decision", "other-skill"}),
+            [("claude", other,
+              os.path.join(self.install, "skills", "other-skill"), "other-skill")])
+        # the backup path never sits inside a skills root
+        backups = setup.resolve_paths({
+            "HOME": self.tmp, "AI_KIT_DIR": self.install,
+            "CLAUDE_CONFIG_DIR": self.claude, "PI_CODING_AGENT_DIR": self.pi,
+            "XDG_STATE_HOME": os.path.join(self.tmp, "state")}).backups_dir
+        for root in (self.claude, self.pi):
+            self.assertFalse(setup._is_inside(backups, root))
+
+    def test_backup_and_link_restores_on_link_failure(self):
+        claude_jev = os.path.join(self.claude, "skills", "jev-fast-decision")
+        marker = os.path.join(claude_jev, "marker")
+        os.makedirs(claude_jev)
+        with open(marker, "w") as f:
+            f.write("precious")
+        cands = setup.replace_candidates(self.paths, self.entries, self.names)
+        c = setup.new_counts()
+        err = io.StringIO()
+
+        def raising_link_one(link_path, target, dry, counts):
+            raise OSError("no space left on device")
+
+        with mock.patch.object(setup, "link_one", raising_link_one), \
+                contextlib.redirect_stderr(err):
+            setup.backup_and_link(cands, self.paths, False, c)
+        # the original dir and its marker are back at the path
+        self.assertTrue(os.path.isfile(marker))
+        with open(marker, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "precious")
+        # the claimed backup dir is gone
+        self.assertEqual(os.listdir(
+            os.path.join(self.tmp, ".local", "state", "ai-kit", "backups",
+                         "claude")), [])
+        self.assertIn("restored it from the backup", err.getvalue())
+        self.assertEqual(c["skip_real"], 1)
+
+    def test_headless_replace_move_failure_exits_1(self):
+        claude_jev = os.path.join(self.claude, "skills", "jev-fast-decision")
+        marker = os.path.join(claude_jev, "marker")
+        os.makedirs(claude_jev)
+        with open(marker, "w") as f:
+            f.write("x")
+
+        def partial_move(src_, dst):
+            os.makedirs(dst)
+            with open(os.path.join(dst, "partial"), "w") as f:
+                f.write("partial")
+            raise OSError("cross-device link")
+
+        err = io.StringIO()
+        with mock.patch.object(setup.shutil, "move", partial_move), \
+                contextlib.redirect_stderr(err):
+            rc = setup.cmd_install_headless(
+                {"HOME": self.tmp, "AI_KIT_DIR": self.install,
+                 "CLAUDE_CONFIG_DIR": self.claude,
+                 "PI_CODING_AGENT_DIR": self.pi},
+                False, "jev-fast-decision", False, False,
+                replace_existing=True)
+        self.assertEqual(rc, 1)
+        self.assertTrue(os.path.isfile(marker))
+        backups = os.path.join(self.tmp, ".local", "state", "ai-kit", "backups",
+                               "claude")
+        claims = os.listdir(backups)
+        self.assertEqual(len(claims), 1)
+        self.assertTrue(os.path.exists(os.path.join(
+            backups, claims[0], "jev-fast-decision", "partial")))
+        out = err.getvalue()
+        self.assertIn(claude_jev, out)
+        self.assertIn(backups, out)
+
+
 class TestResolvePathsPiDir(unittest.TestCase):
     """D-14: the pi agent dir, resolved with the claude-dir idiom."""
 
@@ -2800,7 +2926,8 @@ class TestHeadlessMainDispatch(unittest.TestCase):
             rc = setup.main(["install", "--headless", "--examples", "all"])
         self.assertEqual(rc, 0)
         headless_mock.assert_called_once_with(
-            mock.ANY, False, None, False, False, examples_flag="all")
+            mock.ANY, False, None, False, False, examples_flag="all",
+            replace_existing=False)
 
     def test_headless_propagates_the_nonzero_exit_code(self):
         with mock.patch.object(setup, "cmd_install_headless", return_value=1):

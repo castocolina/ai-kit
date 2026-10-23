@@ -38,7 +38,7 @@ class JevInstallE2E(unittest.TestCase):
         _write_skill(self.kit, OTHER)
         self.claude = os.path.join(self.home, "claude")
         self.pi = os.path.join(self.home, "pi agent")
-        os.makedirs(self.pi)
+        os.makedirs(os.path.join(self.pi, "skills"))
         self.state = os.path.join(self.home, "state")
         self.config = os.path.join(self.home, "config")
         self.env = {
@@ -102,12 +102,81 @@ class JevInstallE2E(unittest.TestCase):
         self.assertTrue(os.path.isdir(mine))
         self.assertTrue(os.path.exists(os.path.join(mine, "marker")))
 
+    def test_real_dir_survives_without_flag(self):
+        claude_jev = self.link(self.claude, JEV)
+        os.makedirs(claude_jev)
+        marker = os.path.join(claude_jev, "marker")
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write("keep")
+        r = self.run_setup("install", "--headless", "--skills", JEV)
+        self.assertEqual(r.returncode, 1, msg=r.stderr)
+        self.assertTrue(os.path.isfile(marker), "real dir untouched")
+        self.assertFalse(os.path.exists(
+            os.path.join(self.state, "ai-kit", "backups")),
+            "no backup without the flag")
+
+    def test_real_dir_moved_with_flag(self):
+        claude_jev = self.link(self.claude, JEV)
+        os.makedirs(claude_jev)
+        marker = os.path.join(claude_jev, "marker")
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write("keep")
+        r = self.run_setup("install", "--headless", "--skills", JEV,
+                           "--replace-existing")
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertEqual(os.readlink(claude_jev),
+                         os.path.join(self.kit, "skills", JEV))
+        backups = os.path.join(self.state, "ai-kit", "backups", "claude")
+        claims = os.listdir(backups)
+        self.assertEqual(len(claims), 1)
+        self.assertTrue(claims[0].startswith(JEV + ".bak-"))
+        self.assertTrue(os.path.isfile(
+            os.path.join(backups, claims[0], JEV, "marker")))
+        self.assertIn("moved", r.stderr)
+        self.assertIn(claude_jev, r.stderr)
+
+    def test_foreign_pi_link_moved_with_flag(self):
+        elsewhere = os.path.join(self.home, "elsewhere", "skills", JEV)
+        os.makedirs(elsewhere)
+        pi_jev = self.link(self.pi, JEV)
+        os.symlink(elsewhere, pi_jev)
+        r = self.run_setup("install", "--headless", "--skills", JEV,
+                           "--replace-existing")
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertEqual(os.readlink(pi_jev),
+                         os.path.join(self.kit, "skills", JEV))
+        backups = os.path.join(self.state, "ai-kit", "backups", "pi")
+        claims = os.listdir(backups)
+        self.assertEqual(len(claims), 1)
+        moved = os.path.join(backups, claims[0], JEV)
+        self.assertTrue(os.path.islink(moved))
+        self.assertEqual(os.readlink(moved), elsewhere,
+                         "the symlink moved as a symlink; its target untouched")
+        self.assertTrue(os.path.isdir(elsewhere))
+
+    def test_flag_scope(self):
+        # without --headless, or without --skills: argparse error (exit 2)
+        for args in (("install", "--replace-existing"),
+                     ("install", "--headless", "--replace-existing")):
+            r = self.run_setup(*args)
+            self.assertEqual(r.returncode, 2, msg=r.stderr)
+        # a real dir at another skill's path not named in --skills is untouched
+        other_dir = self.link(self.claude, OTHER)
+        os.makedirs(other_dir)
+        with open(os.path.join(other_dir, "marker"), "w", encoding="utf-8") as f:
+            f.write("keep")
+        r = self.run_setup("install", "--headless", "--skills", JEV,
+                           "--replace-existing")
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertTrue(os.path.isdir(other_dir))
+        self.assertFalse(os.path.islink(other_dir))
+
     def test_headless_without_skills_keeps_pi_links(self):
         # The shape the commit mirror removes when the skill is unselected:
         # an ai-kit pi link with no claude counterpart. Bare and hooks-only
         # headless runs are pure no-ops for the pi root (T-21.1-30).
         target = os.path.join(self.kit, "skills", JEV)
-        os.makedirs(os.path.join(self.pi, "skills"))
+        os.makedirs(os.path.join(self.pi, "skills"), exist_ok=True)
         os.symlink(target, self.link(self.pi, JEV))
         for args in (("install", "--headless"),
                      ("install", "--headless", "--with-hooks")):

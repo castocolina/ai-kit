@@ -51,7 +51,7 @@ The repo is the source of truth. `tools/install.sh`:
 
 1. **fetch** — clones (or `git pull`s) the repo into `~/.local/share/ai-kit`; falls back to a tarball download when `git` is absent.
 2. **verify** — enumerates `skills/`, `commands/`, and `agents/` and validates each entry's shape (skills need a `SKILL.md`; commands/agents need Markdown with frontmatter). Malformed entries are skipped with a warning.
-3. **link** — symlinks each valid entry into `~/.claude/<category>/`. Existing real files and symlinks that point outside ai-kit are never touched.
+3. **link** — symlinks each valid entry into `~/.claude/<category>/`. Existing real files and symlinks that point outside ai-kit are never touched. The `jev-fast-decision` skill is additionally linked into `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` for pi, derived from the same selection (opencode reads `~/.claude/skills`; nothing is ever linked under `~/.agents/skills`; codex and cursor have no link — see the skill's reference for their status). A missing pi agent dir is skipped with a message, never created.
 4. **prune** — removes broken symlinks under `~/.claude/` that point into the install dir, so deleting a skill from the repo and re-running cleans up after itself.
 5. **statusline** — sets `statusLine` in `~/.claude/settings.json` to the bundled `tools/status-line.py` (a backup is written to `settings.json.bak`).
 
@@ -444,7 +444,14 @@ pure no-op). Combine with the flags below to opt into specific pieces —
 nothing is touched unless explicitly requested:
 
 - `--skills all` — link every skill (or `--skills name1,name2` for a subset).
-  Additive only: never unlinks a skill already present from a prior run.
+  Additive only: never unlinks a skill already present from a prior run. A
+  `jev-fast-decision` link is mirrored into the pi agent skills dir
+  (`${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills`) when its claude link is made.
+- `--replace-existing` — (requires `--headless --skills`) move a real directory
+  or foreign symlink standing at one of the named skills' link paths into
+  `${XDG_STATE_HOME:-~/.local/state}/ai-kit/backups/<claude|pi>/<name>.bak-<timestamp>/`
+  (outside every scanned skills dir) and link the repo copy in its place.
+  Without this flag such content is left alone with a warning and the run exits 1.
 - `--with-statusline` — wire the ai-kit status line into `settings.json`. If the
   Claude Code config dir does not exist, this is skipped with a message and
   nothing is created — ai-kit never conjures a `~/.claude/` on a machine that

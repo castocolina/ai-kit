@@ -2905,10 +2905,65 @@ def _headless_link_skills(skills_flag, entries, claude_dir, dry, counts):
         return False, chosen
     if counts["skip_foreign"] + counts["skip_real"] > blocked_before:
         print("warn: one or more requested skills were left alone (a foreign "
-              "symlink or a real file occupies the link path) — see the warnings "
-              "above", file=sys.stderr)
+              "symlink or a real file occupies the link path) — re-run with "
+              "--replace-existing to back it up and link the repo copy — see "
+              "the warnings above", file=sys.stderr)
         return False, chosen
     return True, chosen
+
+
+def replace_candidates(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        paths, entries, names):
+    """The real content standing at a named link path that --replace-existing
+    (D-16) would move into the backups dir: for each skills entry in `names`,
+    the claude path and (PI_SKILLS names, existing pi dir) the pi path. A path
+    is a candidate when it exists (lexists) and is NOT a current ai-kit link:
+    real dirs, files, live foreign links AND dangling links all count — the
+    flag is the explicit confirmation, and headless never runs the predecessor
+    gate (the wizard's replace gate drops the paths its own gates own).
+    Returns (label, path, target, name) tuples."""
+    by_name = dict(entries["skills"])
+    claude_installed = installed_links(paths.claude_dir, paths.install_dir)["skills"]
+    pi_installed = (installed_links(paths.pi_dir, paths.install_dir)["skills"]
+                    if os.path.isdir(paths.pi_dir) else {})
+    out = []
+    for name in sorted(names):
+        target = by_name.get(name)
+        if target is None:
+            continue
+        for label, root, installed in (
+                ("claude", paths.claude_dir, claude_installed),
+                ("pi", paths.pi_dir, pi_installed)):
+            if label == "pi" and name not in PI_SKILLS:
+                continue
+            path = os.path.join(root, "skills", name)
+            if not os.path.lexists(path) or name in installed:
+                continue
+            out.append((label, path, target, name))
+    return out
+
+
+def backup_and_link(cands, paths, dry, counts):
+    """Move each candidate into its per-root backups dir (D-15) and link the
+    repo copy in its place. When link_one raises after the move, the entry is
+    moved back, the empty claim removed, a `warn:` line printed and skip_real
+    counted, so a failed replace never leaves the skill path empty (the caller
+    exits 1)."""
+    for label, path, target, name in cands:
+        if dry:
+            print(f"would move {path} to {os.path.join(paths.backups_dir, label)}")
+            continue
+        dest = _backup_entry(path, os.path.join(paths.backups_dir, label), name)
+        print(f"moved {path} -> {dest}", file=sys.stderr)
+        claim = os.path.dirname(dest)
+        try:
+            link_one(path, target, dry, counts)
+        except OSError as exc:
+            shutil.move(dest, path)
+            os.rmdir(claim)
+            print(f"warn: linking {path} failed ({exc}); "
+                  "restored it from the backup", file=sys.stderr)
+            counts["skip_real"] += 1
 
 
 def _headless_sync_pi(paths, entries, dry, counts, chosen):
@@ -3017,7 +3072,8 @@ def _headless_summary(requested, skills_matched_nothing, counts):
 
 
 def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        env, dry, skills_flag, with_statusline, with_hooks, examples_flag=None):
+        env, dry, skills_flag, with_statusline, with_hooks, examples_flag=None,
+        replace_existing=False):
     """The --headless counterpart to cmd_install: no Textual, no tty, no
     require_tty gate. Bare (all flags falsy) is a pure no-op -- 'nothing
     touched unless asked' (and nothing fetched -- see the plan's sync note;
@@ -3061,8 +3117,28 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     # "nothing touched unless asked." A future --prune-stale flag plugs in here.
 
     counts = new_counts()
+    replace_ok = True
+    if replace_existing:
+        # main() already rejects --replace-existing without --headless --skills,
+        # so skills_flag is not None here and resolve_skills_flag is pure; the
+        # chosen_pre[0] set is the same one _headless_link_skills re-resolves
+        # below (unknown names are warned there). Under --dry-run
+        # backup_and_link prints `would move` and links nothing.
+        try:
+            backup_and_link(
+                replace_candidates(
+                    paths, entries, resolve_skills_flag(skills_flag, entries)[0]),
+                paths, dry, counts)
+        except OSError:
+            # _backup_entry has already reported the failure naming source and
+            # destination; keep going so the linking step runs (link_one leaves
+            # whatever is still at an unmoved path alone).
+            print("warn: --replace-existing could not back up every entry "
+                  "(see above)", file=sys.stderr)
+            replace_ok = False
     ok, chosen = _headless_link_skills(skills_flag, entries, paths.claude_dir,
                                        dry, counts)
+    ok = ok and replace_ok
     # Only a run that named --skills touches the pi root; bare --headless and
     # hooks/statusline-only runs leave every pi link exactly as it was.
     if chosen is not None and not _headless_sync_pi(paths, entries, dry,
@@ -3318,10 +3394,18 @@ def main(argv=None):  # pylint: disable=too-many-return-statements
     parser.add_argument("--with-hooks", action="store_true",
                          help="(--headless only) wire SessionStart hooks "
                               "(Claude Code + Cursor).")
+    parser.add_argument(
+        "--replace-existing", action="store_true",
+        help="(--headless --skills only) move a real dir or foreign symlink "
+             "standing at a named skill's link path into "
+             "${XDG_STATE_HOME:-~/.local/state}/ai-kit/backups/<root>/ before "
+             "linking the repo copy.")
     args = parser.parse_args(argv)
     if (args.skills is not None or args.with_statusline or args.with_hooks) \
             and not args.headless:
         parser.error("--skills/--with-statusline/--with-hooks require --headless")
+    if args.replace_existing and not (args.headless and args.skills is not None):
+        parser.error("--replace-existing requires --headless and --skills")
     if args.headless and args.subcommand not in ("install", "reconfigure"):
         parser.error("--headless is only valid with the install/reconfigure subcommands")
     if args.headless and args.config_doctor:
@@ -3339,7 +3423,8 @@ def main(argv=None):  # pylint: disable=too-many-return-statements
         if args.headless:
             return cmd_install_headless(
                 env, dry, args.skills, args.with_statusline, args.with_hooks,
-                examples_flag=args.examples)
+                examples_flag=args.examples,
+                replace_existing=args.replace_existing)
         ensure_rich_runtime(env)              # may re-exec; must be BEFORE open_tty
         tty = cast("_StdTty", require_tty(open_tty()))  # fail-closed (FR-W.1/B)
         try:
