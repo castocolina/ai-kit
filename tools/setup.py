@@ -1523,14 +1523,12 @@ PRECOMPACT_VERDICTS = {
 # D-11: flat rows, one per id x host x event; `default` is derived from the
 # verdict for precompact rows and explicit for advisory rows.
 HOOK_SUMMARIES = {
-    "session-briefing": (
-        "SessionStart briefing names installed modern tools for the user and model."
-    ),
+    "session-briefing": "SessionStart briefing lists modern tools available to the user and model.",
     "tool-advisor": (
         "PreToolUse advisor: suggests rg, bat, fd or sd for grep, cat, find or sed "
         "and reports large reads; advice only."
     ),
-    "tool-reminder": "After grep/cat/sed/find, names output size and a better installed tool.",
+    "tool-reminder": "After grep/cat/sed/find, names output size and a better available tool.",
     "decision-probe": "Reports whether jev-fast-decision backends are usable; off by default.",
     "precompact": "PreCompact pre-summary (local Laya).",
 }
