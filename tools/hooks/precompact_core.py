@@ -1102,8 +1102,8 @@ def read_claude_transcript(path):
                     handle.readline()  # Drop the partial first line in the bounded tail window.
                 total = handle.tell()
             while total < info.st_size:
-                raw_line = handle.readline(min(info.st_size - total,
-                                               MAX_TRANSCRIPT_BYTES - total))
+                # The window starts at most MAX_TRANSCRIPT_BYTES before the end, so this bounds it.
+                raw_line = handle.readline(info.st_size - total)
                 if not raw_line:
                     break
                 total += len(raw_line)
