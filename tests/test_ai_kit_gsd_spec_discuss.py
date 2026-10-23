@@ -171,6 +171,8 @@ class TestItemError(unittest.TestCase):
             ("empty_context", choice_item("x", context=" ")),
             ("unknown_key", {**choice_item("x"), "evidence": "raw"}),
             ("choice_needs_two_criteria", {**choice_item("x"), "criteria": {"a": "only"}}),
+            ("missing_criteria", {k: v for k, v in choice_item("x").items() if k != "criteria"}),
+            ("missing_criteria", {k: v for k, v in score_item("s").items() if k != "criteria"}),
             ("bad_criteria", {**noul_item("n"), "criteria": {"yes": "y", "no": "n"}}),
             ("bad_criteria", {**noul_item("n"), "criteria": None}),
             ("bad_criteria", {**noul_item("n"), "criteria": {"true": "holds"}}),

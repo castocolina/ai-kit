@@ -125,14 +125,16 @@ def _bad_text(value: Any) -> str | None:
 
 
 def _criteria_error(item: dict[str, Any]) -> str | None:
-    """A present `criteria` key — even null — is validated against the client's builder.
+    """`criteria` is validated against the client's builder (present, even null, or missing).
 
     decide.py rejects, alone and before the one combined call, every shape the client would
     reject the whole request for (T-21.1-29), so one bad item never loses its siblings'
     answers.
     """
     if "criteria" not in item:
-        return None
+        # Only noul may omit criteria; the client rejects a whole request whose choice or
+        # score item lacks them (jev_review.request_body).
+        return None if item["type"] == "noul" else "missing_criteria"
     criteria = item["criteria"]
     if item["type"] == "noul":
         ok = (isinstance(criteria, dict) and set(criteria) == {"true", "false"}

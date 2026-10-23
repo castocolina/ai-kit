@@ -65,4 +65,4 @@ Write `instructions`/`criteria` in English; criteria name concrete signals.
 - [Images](https://docs.typesafe.ai/images) — image inputs (no builder here: `unsupported_feature`).
 - [Confidence](https://docs.typesafe.ai/confidence) — uncalibrated.
 
-Read `reference.md` before interpreting `score` or a receipt.
+Read `reference.md` before a `choice` item (≥2-option map), `score` or receipt.

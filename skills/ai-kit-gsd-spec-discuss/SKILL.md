@@ -51,7 +51,7 @@ decided provisionally and shown at the end.
    or `file` (a keyed remote; the top-level `consent_required_for_remote` appears only when no
    backend at all is usable) — ask for consent
    in the same question, naming each backend and its host, "summaries only, never code or
-   secrets", and the revoke command. On yes: `python3 "$S/decide.py" consent grant <backend>`
+   secrets", and the revoke command (`python3 "$S/decide.py" consent revoke <backend>`). On yes: `python3 "$S/decide.py" consent grant <backend>`
    (`consent grant typesafe` still works; the client keeps the record, same once-per-user
    rule). Consent on file asks nothing. Announce from the output's `consent_used`:
    "using <backend> (consent recorded <date>)".
@@ -118,16 +118,17 @@ python3 "$S/decide.py" ladder --second-opinion < contested.json
 
 Item shape (`choice`, `noul` or `score`), summaries only:
 `{"id": "B07_segments", "type": "choice", "instructions": "<standalone question>",
-"context": "<the facts it turns on, non-empty>", "criteria": {"opt": "neutral description"}}`.
-A `noul` item takes no `criteria` or exactly `{"true": "...", "false": "..."}`; a `score`
-item's `criteria` is a list of 2-10 levels. Malformed or code-bearing items are rejected
+"context": "<the facts it turns on, non-empty>", "criteria": {"a": "neutral description",
+"b": "neutral description"}}`. A `choice` item needs `criteria` with two or more options; a
+`noul` item takes no `criteria` or exactly `{"true": "...", "false": "..."}`; a `score` item's
+`criteria` is a list of 2-10 levels. Malformed or code-bearing items are rejected
 alone (`invalid_input` + reason) — fix and resubmit. A repeated `id` is rejected alone
 (`duplicate_id`); an `id` starting with `#` is `reserved_id` (that prefix keys rejections).
 
 The ladder is **one client call per run**: decide.py validates the items and maps the
 client's per-item rung trail onto one column per table backend, each
 `{choice, top, fallback, model}`, `{error}` or null = not called, plus `decided_by` (the
-last confident rung, else `own_reasoning`) and `top`, the winning probability. The client
+last confident rung, else `own_reasoning`); each column's `top` is its winning probability. The client
 runs the local backend one item per call; `fallback` follows each row's own threshold.
 
 - Describe options **neutrally**. Labelling one "best" or "easy" just echoes your framing back.
@@ -137,7 +138,7 @@ runs the local backend one item per call; `fallback` follows each row's own thre
   T2, 23 B10/B12, 24 C13).
 - Laya is not deterministic: the same item scored 0.74 then 0.67 (fb) on two runs. Never treat
   a single Laya number as stable.
-- Every answering column low (`fallback: true`) or errored → **own reasoning** against the SPEC, earlier CONTEXT
+- Every answering column low (`fallback: true`, the client's `needs_fallback`) or errored → **own reasoning** against the SPEC, earlier CONTEXT
   files and the live facts. Log it, and ledger it when it blocks nothing.
 
 ## 4. Ledger and stop rule
