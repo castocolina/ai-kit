@@ -2023,5 +2023,92 @@ class TestMatrix(_ClientCase):
                     self.assertRegex(date, r"^\d{4}-\d{2}-\d{2}$")
 
 
+class TestDocs(unittest.TestCase):
+    """Doc tests (tag `doc`): the shipped documents cannot drift from the client table."""
+
+    SKILL_MD = (Path(__file__).resolve().parents[1] / "skills" / "jev-fast-decision"
+                / "SKILL.md")
+    REFERENCE_MD = (Path(__file__).resolve().parents[1] / "skills" / "jev-fast-decision"
+                    / "reference.md")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.skill_text = cls.SKILL_MD.read_text(encoding="utf-8")
+        cls.reference_text = cls.REFERENCE_MD.read_text(encoding="utf-8")
+        lines = cls.skill_text.splitlines()
+        closes = [i for i, line in enumerate(lines) if line == "---"]
+        cls.frontmatter = "\n".join(lines[1:closes[1]])
+        cls.body = "\n".join(lines[closes[1] + 1:])
+
+    def test_doc_frontmatter(self):
+        name = re.search(r"^name:\s*(\S+)", self.frontmatter, re.M)
+        description = re.search(r'^description:\s*"(.*)"\s*$', self.frontmatter, re.M)
+        self.assertIsNotNone(name)
+        self.assertIsNotNone(description)
+        self.assertEqual(name.group(1), "jev-fast-decision")
+        text = description.group(1)
+        self.assertTrue(text.startswith("Use when"))
+        self.assertLess(len(text), 500)
+        for needle in ("Laya", "TypeSafe", "OpenCode Zen", "needs_fallback", "consent"):
+            self.assertIn(needle, text)
+
+    def test_doc_body_words(self):
+        # the plan's awk rule: words after the closing frontmatter `---`
+        self.assertLess(len(self.body.split()), 500)
+
+    def test_doc_required_reading(self):
+        for url in ("https://typesafe.ai/blog/jev-1-14", "https://docs.typesafe.ai/primitives",
+                    "https://docs.typesafe.ai/images", "https://docs.typesafe.ai/confidence"):
+            self.assertIn(url, self.skill_text)
+
+    def test_doc_recipes(self):
+        self.assertIn("--probe", self.body)
+        self.assertIn("backends/<selected>.md", self.body)
+        self.assertRegex(self.body, r"needs_fallback[\s\S]*you decide that item "
+                                    r"with your own reasoning")
+        self.assertRegex(self.body, r"consent_required_for_remote[\s\S]*ask the user")
+
+    def test_doc_matrix_matches_table(self):
+        # Every matrix cell is non-empty, one of the four statuses, carries a source and an
+        # ISO date, and equals the status of that row's `cells` entry in the client table.
+        section = self.reference_text.split("## Capability matrix", 1)[1].split("\n## ", 1)[0]
+        rows = [line for line in section.splitlines() if line.startswith("| ")]
+        header = [cell.strip() for cell in rows[0].strip("|").split("|")]
+        self.assertEqual(header[0], "Feature")
+        columns = header[1:]
+        self.assertEqual(sorted(columns), sorted(row["name"] for row in JR.TABLE))
+        parsed = {}
+        for line in rows[2:]:
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            feature = cells[0].strip()
+            parsed[feature] = dict(zip(columns, cells[1:], strict=True))
+        features = {"choice": JR.CHOICE, "noul": JR.NOUL, "score": JR.SCORE, "box": JR.BOX,
+                    "image": JR.IMAGE, "images_compared": JR.IMAGES_COMPARED,
+                    "long_context": JR.LONG_CONTEXT, "batch": JR.BATCH}
+        self.assertEqual(sorted(parsed), sorted(features))
+        for row in JR.TABLE:
+            for doc_name, table_key in features.items():
+                cell = parsed[doc_name][row["name"]]
+                self.assertTrue(cell.strip(), f"empty cell: {row['name']}/{doc_name}")
+                status, rest = cell.split(" (", 1)
+                source, date = rest.rstrip(")").rsplit(", ", 1)
+                self.assertIn(status, JR.CELL_STATUSES)
+                self.assertTrue(source.strip())
+                self.assertRegex(date, r"^\d{4}-\d{2}-\d{2}$")
+                self.assertEqual(status, row["cells"][table_key][0])
+
+    def test_doc_backend_files(self):
+        for row in JR.TABLE:
+            path = self.SKILL_MD.parent / "backends" / f"{row['name']}.md"
+            self.assertTrue(path.is_file(), path)
+
+    def test_doc_hosts(self):
+        self.assertIn("documented gap", self.reference_text)
+        self.assertIn("learn.chatgpt.com/docs/build-skills", self.reference_text)
+        self.assertIn("cursor.com/docs/context/skills", self.reference_text)
+        self.assertIn("~/.claude/skills", self.reference_text)
+        self.assertIn("not live-verified", self.reference_text)
+
+
 if __name__ == "__main__":
     unittest.main()
