@@ -1,0 +1,12 @@
+{"prompt": "Triage these review findings. For each, yes or no: is it a real bug? Evidence is in this message. Do not edit files or run commands. F1: scripts/check-setup.sh exits 0 while the system-one section is absent. F2: a comment typo in the README.", "expect": "jev-fast-decision"}
+{"prompt": "Pick one title for the changelog line already written above: 'fix idle cpu', 'stop system-one spinning', 'cap laya idle'. Reply with the choice only.", "expect": "jev-fast-decision"}
+{"prompt": "Score this bug report from 0 cosmetic to 3 critical. Report text is in this message: the app crashes on launch for every user. Do not investigate the code.", "expect": "jev-fast-decision"}
+{"prompt": "I already have these grep hits. For each, yes or no, is it a false positive? No code changes. Hit 1: models.yml missing and make start failed. Hit 2: the string system-one inside a comment.", "expect": "jev-fast-decision"}
+{"prompt": "Edit scripts/check-setup.sh so the system-one section is required, and update the tests.", "expect": "none"}
+{"prompt": "Trace why make start fails when ~/.config/llm-env/models.yml is missing. Walk the call chain and explain it.", "expect": "none"}
+{"prompt": "Run make check-server and fix whatever fails.", "expect": "none"}
+{"prompt": "Plan and implement the migration from JEV_API_URL to the three-backend table. Multiple steps, then change the code.", "expect": "none"}
+{"prompt": "Add a support-ticket router to our web app so the product calls TypeSafe Jev and returns billing vs support to end users.", "expect": "typesafe-ai"}
+{"prompt": "Brainstorm product features that could use TypeSafe System One as a programming primitive for our users.", "expect": "typesafe-ai"}
+{"prompt": "Replace the prompt-and-parse step in the checkout service with a TypeSafe typed judgment that application code calls.", "expect": "typesafe-ai"}
+{"prompt": "Build an in-app severity ranker with Jev for end users of the product, including the API call from our backend.", "expect": "typesafe-ai"}
