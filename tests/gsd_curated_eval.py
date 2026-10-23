@@ -1000,7 +1000,7 @@ def run_matrix(
     informational runtime row."""
     ctx = ctx or _seams(node_bin, tools_path, home, host)
     if host == "pi":
-        version = gsd_tools.gsd_core_version(tools_path)
+        version = gsd_tools.gsd_core_version(tools_path) or "unknown"
         package = installer_dir or ctx.installer_dir or _cached_installer(version, home)
         if package is None or not os.path.isfile(os.path.join(package, "pi", "gsd.cjs")):
             raise _refusal(

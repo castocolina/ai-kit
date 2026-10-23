@@ -1,4 +1,4 @@
-"""Real-node resolve-model matrices for Claude, Codex, OpenCode and Cursor hosts."""
+"""Real-node resolve-model matrices and pi hook probes for supported hosts."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import unittest
 
 from tests import gsd_curated_eval as ev
 from tests.test_curated_config_apply_e2e import _REPO_CONFIG, _REPO_RUNNER, _gsd16_or_skip, _sha256
-from tests.test_curated_config_e2e import REPO_ROOT, _RealGsdTestCase
+from tests.test_curated_config_e2e import REPO_ROOT, _real_node_executable, _RealGsdTestCase
 
 _TOOLS = str(REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs")
 _ROW_COUNT = len(ev.COMBOS) * len(ev.PATHS)
@@ -109,6 +109,50 @@ class TestResolveModelMatrixOpencode(TestResolveModelMatrix):
 
 class TestResolveModelMatrixCursor(TestResolveModelMatrix):
     HOST = "cursor"
+
+
+class TestResolveModelMatrixPi(TestResolveModelMatrix):
+    HOST = "pi"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        if ev._cached_installer(ev._pinned_version(), str(pathlib.Path.home())) is None:
+            raise unittest.SkipTest("no cached pi package; pass --installer-dir to the matrix")
+        super().setUpClass()
+
+    def test_pi_hook_probes_follow_the_plan(self) -> None:
+        probes = self.result["probes"]
+        self.assertEqual(len(probes), len(ev.COMBOS))
+        for probe in probes:
+            with self.subTest(combo=probe["combo"]):
+                self.assertTrue(probe["ok"])
+                self.assertEqual(probe["planned"], "claude-sonnet-5")
+                self.assertEqual(probe["wire"], probe["planned"])
+
+
+class TestPiHookProbe(unittest.TestCase):
+    def test_six_configurations(self) -> None:
+        node = _real_node_executable()
+        package = ev._cached_installer(ev._pinned_version(), str(pathlib.Path.home()))
+        if node is None or package is None:
+            self.skipTest("node or cached installer package is missing")
+        cases = (({}, None), ({"opus": "o1"}, None), ({"haiku": "h1"}, None),
+                 ({"sonnet": ""}, None), ({"sonnet": "s1"}, "s1"),
+                 ({"sonnet": "router-env/my-coding"}, "router-env/my-coding"))
+        with tempfile.TemporaryDirectory(prefix="pi-hook-probe-") as scratch:
+            project = pathlib.Path(scratch, "project")
+            planning = project / ".planning"
+            planning.mkdir(parents=True)
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": scratch}
+            for config, expected in cases:
+                with self.subTest(config=config):
+                    (planning / "config.json").write_text(
+                        json.dumps({"model_profile_overrides": {"pi": config}}), encoding="utf-8"
+                    )
+                    self.assertEqual(
+                        ev.pi_hook_probe(node, os.path.join(package, "pi", "gsd.cjs"),
+                                         str(project), env), expected
+                    )
 
 
 if __name__ == "__main__":
