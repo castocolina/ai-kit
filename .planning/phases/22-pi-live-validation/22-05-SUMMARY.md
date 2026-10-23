@@ -61,6 +61,7 @@ metrics:
   duration: 75min
   completed: 2026-10-23
   status: complete
+orchestrator_verify: "VERIFY 22-05: 0/2 passed"
 ---
 
 # Phase 22 Plan 05: Pi headless smoke and protected snapshot Summary
