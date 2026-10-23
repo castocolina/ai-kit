@@ -135,6 +135,24 @@ class JevInstallE2E(unittest.TestCase):
         self.assertIn("moved", r.stderr)
         self.assertIn(claude_jev, r.stderr)
 
+    def test_dry_run_with_flag_predicts_success(self):
+        # WR-08: a dry run of a replace that would succeed exits 0, never
+        # advises the flag it already has, and moves nothing.
+        claude_jev = self.link(self.claude, JEV)
+        pi_jev = self.link(self.pi, JEV)
+        for path in (claude_jev, pi_jev):
+            os.makedirs(path)
+        r = self.run_setup("--dry-run", "install", "--headless", "--skills", JEV,
+                           "--replace-existing")
+        self.assertEqual(r.returncode, 0, msg=r.stderr)
+        self.assertIn(f"would move {claude_jev}", r.stdout)
+        self.assertIn(f"would move {pi_jev}", r.stdout)
+        self.assertNotIn("re-run with --replace-existing", r.stderr)
+        self.assertNotIn("leaving it alone", r.stderr)
+        for path in (claude_jev, pi_jev):
+            self.assertTrue(os.path.isdir(path) and not os.path.islink(path))
+        self.assertFalse(os.path.exists(os.path.join(self.state, "ai-kit", "backups")))
+
     def test_foreign_pi_link_moved_with_flag(self):
         elsewhere = os.path.join(self.home, "elsewhere", "skills", JEV)
         os.makedirs(elsewhere)

@@ -2925,8 +2925,14 @@ def _headless_paths_and_entries(env):
         return None, None
 
 
-def _headless_link_skills(skills_flag, entries, claude_dir, dry, counts):
+def _headless_link_skills(  # pylint: disable=too-many-arguments
+        skills_flag, entries, claude_dir, dry, counts, *, replaced=frozenset()):
     """Resolve --skills and link the result additively. Returns (ok, chosen).
+
+    `replaced` holds the link paths a --dry-run --replace-existing pass would
+    have moved and linked (backup_and_link counted them): they are skipped
+    here, so the dry run predicts the real run instead of reporting them as
+    blocked.
 
     `chosen` is resolve_skills_flag's value -- None when --skills was not passed
     at all, an empty set when it named only unknown skills -- so the caller can
@@ -2947,8 +2953,10 @@ def _headless_link_skills(skills_flag, entries, claude_dir, dry, counts):
     if not chosen:
         return True, chosen
     blocked_before = counts["skip_foreign"] + counts["skip_real"]
+    to_link = {name for name in chosen
+               if os.path.join(claude_dir, "skills", name) not in replaced}
     try:
-        apply_additive_skills(chosen, entries, claude_dir, dry, counts)
+        apply_additive_skills(to_link, entries, claude_dir, dry, counts)
     except OSError as exc:
         print(f"warn: failed to link one or more requested skills: {exc}",
               file=sys.stderr)
@@ -2998,10 +3006,14 @@ def backup_and_link(cands, paths, dry, counts):
     repo copy in its place. When link_one raises after the move, the entry is
     moved back, the empty claim removed, a `warn:` line printed and skip_real
     counted, so a failed replace never leaves the skill path empty (the caller
-    exits 1)."""
+    exits 1). Returns the paths a dry run would have moved and linked (each
+    counted as linked), so the link steps can skip them; empty when not dry."""
+    planned = set()
     for label, path, target, name in cands:
         if dry:
             print(f"would move {path} to {os.path.join(paths.backups_dir, label)}")
+            planned.add(path)
+            counts["linked"] += 1
             continue
         dest = _backup_entry(path, os.path.join(paths.backups_dir, label), name)
         print(f"moved {path} -> {dest}", file=sys.stderr)
@@ -3014,15 +3026,21 @@ def backup_and_link(cands, paths, dry, counts):
             print(f"warn: linking {path} failed ({exc}); "
                   "restored it from the backup", file=sys.stderr)
             counts["skip_real"] += 1
+    return planned
 
 
-def _headless_sync_pi(paths, entries, dry, counts, chosen):
+def _headless_sync_pi(  # pylint: disable=too-many-arguments
+        paths, entries, dry, counts, chosen, *, replaced=frozenset()):
     """Run sync_pi_links for a headless --skills run (additive, never unlinks:
     mirror=False). Only called when `chosen` is not None — a bare or hooks-only
     headless run never touches the pi root. Returns False when the mirror hit a
-    foreign link or real content at a pi link path (link_one counted it)."""
+    foreign link or real content at a pi link path (link_one counted it). A pi
+    path in `replaced` (a dry run's planned move) is skipped, as in
+    _headless_link_skills."""
     blocked_before = counts["skip_foreign"] + counts["skip_real"]
-    sync_pi_links(paths, entries, dry, counts, names=chosen, mirror=False)
+    names = {name for name in chosen
+             if os.path.join(paths.pi_dir, "skills", name) not in replaced}
+    sync_pi_links(paths, entries, dry, counts, names=names, mirror=False)
     if counts["skip_foreign"] + counts["skip_real"] > blocked_before:
         print("warn: one or more pi links were left alone (a foreign symlink "
               "or a real file occupies the pi link path) — see the warnings "
@@ -3121,6 +3139,28 @@ def _headless_summary(requested, skills_matched_nothing, counts):
             f"{counts['skip_real']} real-skipped")
 
 
+def _headless_replace(paths, entries, skills_flag, dry, counts):
+    """The --replace-existing pass: the paths a dry run would move (empty
+    for a real run), or None when an entry could not be backed up.
+
+    main() already rejects --replace-existing without --headless --skills, so
+    skills_flag is not None here and resolve_skills_flag is pure; the set is
+    the same one _headless_link_skills re-resolves (unknown names are warned
+    there). Under --dry-run backup_and_link prints `would move`, links nothing
+    and returns the planned paths, which the link steps then skip."""
+    try:
+        return backup_and_link(
+            replace_candidates(paths, entries, resolve_skills_flag(skills_flag, entries)[0]),
+            paths, dry, counts)
+    except OSError:
+        # _backup_entry has already reported the failure naming source and
+        # destination; keep going so the linking step runs (link_one leaves
+        # whatever is still at an unmoved path alone).
+        print("warn: --replace-existing could not back up every entry "
+              "(see above)", file=sys.stderr)
+        return None
+
+
 def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         env, dry, skills_flag, with_statusline, with_hooks, examples_flag=None,
         replace_existing=False):
@@ -3167,32 +3207,16 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     # "nothing touched unless asked." A future --prune-stale flag plugs in here.
 
     counts = new_counts()
-    replace_ok = True
-    if replace_existing:
-        # main() already rejects --replace-existing without --headless --skills,
-        # so skills_flag is not None here and resolve_skills_flag is pure; the
-        # chosen_pre[0] set is the same one _headless_link_skills re-resolves
-        # below (unknown names are warned there). Under --dry-run
-        # backup_and_link prints `would move` and links nothing.
-        try:
-            backup_and_link(
-                replace_candidates(
-                    paths, entries, resolve_skills_flag(skills_flag, entries)[0]),
-                paths, dry, counts)
-        except OSError:
-            # _backup_entry has already reported the failure naming source and
-            # destination; keep going so the linking step runs (link_one leaves
-            # whatever is still at an unmoved path alone).
-            print("warn: --replace-existing could not back up every entry "
-                  "(see above)", file=sys.stderr)
-            replace_ok = False
+    replaced = (_headless_replace(paths, entries, skills_flag, dry, counts)
+                if replace_existing else set())
     ok, chosen = _headless_link_skills(skills_flag, entries, paths.claude_dir,
-                                       dry, counts)
-    ok = ok and replace_ok
+                                       dry, counts, replaced=replaced or set())
+    ok = ok and replaced is not None
     # Only a run that named --skills touches the pi root; bare --headless and
     # hooks/statusline-only runs leave every pi link exactly as it was.
     if chosen is not None and not _headless_sync_pi(paths, entries, dry,
-                                                    counts, chosen):
+                                                    counts, chosen,
+                                                    replaced=replaced or set()):
         ok = False
     if with_statusline and not _headless_wire_statusline(paths, dry):
         ok = False
