@@ -48,7 +48,7 @@ Every answer also carries `model` (what answered it), `backend`, `top` (the winn
 | `unavailable` / `backend_unavailable:<name>:consent_required_for_remote` | explicit backend without consent | ask; on yes grant/export, retry |
 | `unavailable` / `invalid_input` (+ `item`) | one bad item named in `item` | fix that item, retry explicitly |
 | `unavailable` / other reasons (`http_503`, `unauthorized`, `network_error`, `deadline`, `no_backend_available`, `unsupported_feature`, ...) | read `reason`, `unavailable`, `attempts` | fix or reason it yourself; never retry blindly |
-| `unsupported_feature` | the item asks for a shape no row can run | reason it yourself |
+| `unsupported_feature` | the item asks for a shape no row can run, or the explicit `JEV_BACKEND` row cannot run one item (the whole request stops; e.g. `score` on `opencode`) | reason it yourself, or drop that item and retry |
 
 ## Receipts
 
@@ -80,7 +80,7 @@ Keep results in durable artifacts as advisory evidence, never in a verdict field
 | `JEV_TYPESAFE_MODEL` | pins the request id (default `jev-latest`) |
 | `JEV_OPENCODE_URL` | Zen POST target (default `https://opencode.ai/inference/systemone/v1/systemone`) |
 | `OPENCODE_ZEN_API_KEY` | Zen key; falls back to `~/.pi/agent/keys.json`'s `opencode-zen.key` |
-| `JEV_OPENCODE_MODEL` | pins the request id(s) (default `jev-1.13-free`, then `jev-1.13`) |
+| `JEV_OPENCODE_MODEL` | pins one request id, turning off the free-to-paid step (default `jev-1.13-free`, then `jev-1.13`) |
 | `JEV_CALLER` | a label written into answer-log lines |
 
 **Deprecated:** `JEV_MODEL` / `JEV_RESPONSE_MODEL` (the single-endpoint variables of the pre-table skill). `JEV_API_URL` survives only as a loopback Laya alias; remote rows ignore it.

@@ -890,6 +890,7 @@ class TestRemoteRows(_ClientCase):
         self.assertEqual([body["model"] for body in stub.bodies],
                          ["jev-1.13-free", "jev-1.13"])  # the same group body, next id
         self.assertEqual(result["answers"]["a"]["model"], "opencode-1")
+        self.assertEqual(result["attempts"], [])  # a recovered free 429 leaves no entry
 
     def test_model_policy_opencode_402_switches_model(self):
         script = [{"status": 402, "body": b"billing"}]
@@ -912,6 +913,9 @@ class TestRemoteRows(_ClientCase):
                          ["jev-1.13-free", "jev-1.13"])
         self.assertEqual(result["status"], "unavailable")
         self.assertEqual(result["errors"]["a"], "http_429")
+        # the entry names the paid id that gave the final error, not the free one
+        self.assertEqual(result["attempts"],
+                         [{"backend": "opencode", "model": "jev-1.13", "reason": "http_429"}])
 
     def test_model_policy_opencode_pinned_sends_only_that_id(self):
         script = [{"status": 429, "body": b"quota"}] * 2

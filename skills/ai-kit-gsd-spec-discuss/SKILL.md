@@ -52,8 +52,9 @@ decided provisionally and shown at the end.
    in the same question, naming each backend and its host, "summaries only, never code or
    secrets", and the revoke command (`python3 "$S/decide.py" consent revoke <backend>`). On yes: `python3 "$S/decide.py" consent grant <backend>`
    (`consent grant typesafe` still works; the client keeps the record, same once-per-user
-   rule). Consent on file asks nothing. After a ladder call, announce any `consent_used` entry:
-   "using <backend> (consent recorded <date>)".
+   rule). Consent on file asks nothing. After a ladder call, announce a `consent_used` entry only
+   when that backend's column is non-null: "using <backend> (consent recorded <date>)" (the
+   list names every remote with consent on file, called or not).
 6. **Read the quality rule:** `gsd_run query phase.mvp-mode <N>` per phase (`active` true →
    MVP branch), falling back to `gsd_run query config-get workflow.mvp_mode --default false
    --raw`. Bare `config-get` exits "Key not found" when the key is unset.
@@ -130,7 +131,11 @@ The ladder is **one client call per run**: decide.py validates the items and map
 client's per-item rung trail onto one column per table backend, each
 `{choice, top, fallback, model}`, `{error}` or null = not called, plus `decided_by` (the
 last confident rung, else `own_reasoning`); each column's `top` is its winning probability. The client
-runs the local backend one item per call; `fallback` follows each row's own threshold.
+runs the local backend one item per call; `fallback` follows each row's own threshold, and
+is also forced when one request's state exceeds the row's size cap (Laya 2,000 characters,
+TypeSafe and OpenCode Zen 8,000; TypeSafe sends every pending item in one request). Keep each
+item's text short; `fallback: true` with a `top` above the threshold is that size flag:
+shorten the item and re-ask instead of logging it as low confidence.
 
 - Describe options **neutrally**. Labelling one "best" or "easy" just echoes your framing back.
 - A high local answer contradicting verified evidence or a locked decision gets

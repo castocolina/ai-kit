@@ -11,7 +11,8 @@ below — the free promotion does not waive consent.
   2026-10-23); the client does not append a path or follow redirects. A live check on 2026-10-11
   also saw `/zen/v1/systemone` answer. The bearer probe (`GET /models` on the origin) is not
   documented and stays unverified until a run with a real key.
-- Ordered model ids: `jev-1.13-free`, then `jev-1.13` (pin both with `JEV_OPENCODE_MODEL`).
+- Ordered model ids: `jev-1.13-free`, then `jev-1.13`. `JEV_OPENCODE_MODEL` pins one id: the
+  client then sends only that id, so there is no free-to-paid step.
   Responses fullmatch `opencode-*`; the result's `model` is the id that answered. Choice
   probabilities may arrive as integers 0/1.
 - One question per call on this row (`batch: false`).
@@ -24,8 +25,9 @@ below — the free promotion does not waive consent.
   error body, so it does not special-case a 400 `Model is unavailable` response. Do not rely on
   a free-to-paid transition for 5xx, network errors or 400 until code and tests implement it.
 - A paid 429 is `Account budget exceeded`: the ladder stops there — it never asks the user for
-  budget. A free failure is an `attempts` entry such as
-  `{"backend": "opencode", "model": "jev-1.13-free", "reason": "http_429"}`.
+  budget. An `attempts` entry is written only when the row's final outcome is a failure, and its
+  `model` is the id that gave that error: a free 429 recovered by the paid id leaves none, both
+  refused leaves `{"backend": "opencode", "model": "jev-1.13", "reason": "http_429"}`.
 - The free-tier reset window is undocumented (issue #32391; reported waits run from hours to
   about 17 h; no `Retry-After`).
 - Key: `OPENCODE_ZEN_API_KEY`, else the `opencode-zen.key` field of `~/.pi/agent/keys.json`.
@@ -38,6 +40,8 @@ the bare `Python-urllib/x.y` default. Do not spoof the OpenCode client UA (issue
 
 ## Status
 
-`choice`, `noul` and batch are `verified-live` on `jev-1.13-free` (14/14, 2026-10-11); `score`,
-images, `box` and long context are `unverified` (the Zen docs list text ids only). Live use is
+`choice`, `noul` and batch are `verified-live` on `jev-1.13-free` (14/14, 2026-10-11; the client
+still sends one item per call); `score`, images, `box` and long context are `unverified` (the Zen
+docs list text ids only), so this row refuses them: in auto mode a `score` item skips it, and with
+`JEV_BACKEND=opencode` one `score` item stops the whole request with `unsupported_feature`. Live use is
 waiting for budget; when it returns, confirm which endpoint path answers and record it here.

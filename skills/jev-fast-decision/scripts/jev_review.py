@@ -1511,11 +1511,12 @@ def _group_answer(row, group, timeout, run):
     return _finalize(row, checked, run), None, sent_body
 
 
-def _attempt(row, reason):
-    """One attempt-log entry; the model id is named only for a row that can switch models."""
+def _attempt(row, reason, sent_body):
+    """One attempt-log entry; the model id (the one that gave the final error) is named only
+    for a row that can switch models."""
     entry = {"backend": row["name"], "reason": reason}
     if len(row["models"]) > 1:
-        entry["model"] = _request_model(row)
+        entry["model"] = json.loads(sent_body).get("model", _request_model(row))
     return entry
 
 
@@ -1547,7 +1548,7 @@ def _rung(row, items, timeout, run):
         answers.update(got)
         if failed is None:
             continue
-        run.attempts.append(_attempt(row, failed[1]))
+        run.attempts.append(_attempt(row, failed[1], sent_body))
         for item in group:
             errors[item["id"]] = failed
             run.trail.setdefault(item["id"], []).append(

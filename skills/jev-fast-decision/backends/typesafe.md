@@ -36,7 +36,7 @@ leaves the machine.
 | --- | --- |
 | 401 / 403 | escalate + `unauthorized` (the key is wrong) |
 | 503 (+ `Retry-After`) | retry, at most 2, then escalate |
-| 402 | next model id (none second here → escalate) |
+| 402 | next model id; there is none here, so the item ends with `http_402` (final: the ladder does not move on to OpenCode Zen) |
 | other 4xx | final `caller_error:http_<code>` for that item |
 
 ## Consent

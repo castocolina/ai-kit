@@ -6,7 +6,7 @@ ledger. All artifacts in English.
 ## Cell format for a backend answer
 
 - `choice 0.NN` — winning probability `top`, high.
-- `choice 0.NN (fb)` — `fallback` true (below the threshold).
+- `choice 0.NN (fb)` — `fallback` true (below the threshold, or over the size cap: see SKILL.md §3).
 - `choice 0.NN (second opinion)` — from `--second-opinion`.
 - `–` — not called (an earlier rung was high, or the backend was unavailable).
 - `error: <code>` — the call failed; say what you did instead.
