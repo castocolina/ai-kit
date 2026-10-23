@@ -1,9 +1,9 @@
 ---
 phase: "22"
 slug: pi-live-validation
-status: open
+status: verified
 # threats_open = count of OPEN threats at or above workflow.security_block_on severity (high)
-threats_open: 1
+threats_open: 0
 asvs_level: 1
 block_on: high
 created: "2026-10-23"
@@ -50,7 +50,7 @@ created: "2026-10-23"
 | T-22-15 | Repudiation (over-claim) | pi label lift | high | mitigate | `live/check_pi_live.py` rejects a lifted row without S1-S5 pass and an unlifted row once they pass; L3b-only no longer earns a live verdict (5262e92); `--self-test` ok both directions | closed |
 | T-22-16 | Information disclosure | owner artifacts, raw capture | high | mitigate | trimmer allowlist plus fail-closed marker/secret scan (see T-22-06); 22-INTERACTIVE-PI.md runbook; no owner artifacts committed yet (secret-scan of phase dir rc 0) | closed |
 | T-22-17 | Tampering | owner run against `~/.pi/agent` | medium | mitigate | `snapshot --out/--check` wrapping, `--host-rewrite` choices restricted to `CURSOR_CLI_CONFIG_LABEL`, `PI_SETTINGS_LABEL`, `PI_TRUST_LABEL` (argparse `choices`); runbook steps in 22-INTERACTIVE-PI.md | closed |
-| T-22-18 | Repudiation | judge evidence vs committed skill bytes | high | mitigate | MITIGATION BYPASSED: commit a53569b (review fix) edited SKILL.md after the judges ran on digest `2e55b8f4212d167c`. At HEAD `python3 tests/gsd_curated_eval.py digest` prints `6faf9b459284c6f0` and `digest --check 22-SKILL-JUDGE.md` exits 1 (`2e55b8f4212d167c != 6faf9b459284c6f0`). The plan required a fix to supersede earlier post rows and re-run both judges; neither happened | open |
+| T-22-18 | Repudiation | judge evidence vs committed skill bytes | high | mitigate | Closed after re-run (r1): both judges re-ran on `6faf9b459284c6f0` (Opus 106, opencode 114, both pass); the earlier post rows are marked superseded and `digest --check` prints `digests ok`. Originally: commit a53569b (review fix) edited SKILL.md after the judges ran on digest `2e55b8f4212d167c`. At HEAD `python3 tests/gsd_curated_eval.py digest` prints `6faf9b459284c6f0` and `digest --check 22-SKILL-JUDGE.md` exits 1 (`2e55b8f4212d167c != 6faf9b459284c6f0`). The plan required a fix to supersede earlier post rows and re-run both judges; neither happened | closed |
 | T-22-19 | Information disclosure | judge prompts | low | accept | see Accepted Risks Log AR-22-01 | closed |
 | T-22-20 | Denial of service | hung judge | low | mitigate | runner deadlines and status lines recorded in 22-SKILL-JUDGE.md "Judge attempts" (`status=ok`, elapsed 273 s and 78 s, `tree=clean`); no leaked process at audit time | closed |
 | T-22-21 | Elevation of privilege | cached package `pi/gsd.cjs` executed in node | low | accept | see Accepted Risks Log AR-22-02; `pi_hook_probe` uses a 60 s timeout and explicit env; WR-04 fix 8bfa224 enforces package version equals the tools version | closed |
@@ -78,7 +78,9 @@ None. The phase SUMMARY files carry no `## Threat Flags` section.
 
 ## Open Threat Detail
 
-- T-22-18 (high, blocking): re-run both skill-judge lanes on the current SKILL.md digest (`6faf9b459284c6f0`), mark the earlier post rows in `22-SKILL-JUDGE.md` `superseded (6faf9b459284c6f0)`, add the new post rows, and confirm `python3 tests/gsd_curated_eval.py digest --check .planning/phases/22-pi-live-validation/22-SKILL-JUDGE.md` prints `digests ok`. The edit in a53569b is a wording-only sentence, but the plan's rule is that a fix voids the earlier rows. This audit changed no code or evidence.
+None open. Closed in the re-audit: T-22-18 (high). The original detail follows.
+
+- T-22-18 (high, blocking at first audit): re-run both skill-judge lanes on the current SKILL.md digest (`6faf9b459284c6f0`), mark the earlier post rows in `22-SKILL-JUDGE.md` `superseded (6faf9b459284c6f0)`, add the new post rows, and confirm `python3 tests/gsd_curated_eval.py digest --check .planning/phases/22-pi-live-validation/22-SKILL-JUDGE.md` prints `digests ok`. The edit in a53569b is a wording-only sentence, but the plan's rule is that a fix voids the earlier rows. This audit changed no code or evidence.
 
 ---
 
@@ -87,6 +89,7 @@ None. The phase SUMMARY files carry no `## Threat Flags` section.
 | Audit Date | Threats Total | Closed | Open | Run By |
 |------------|---------------|--------|------|--------|
 | 2026-10-23 | 22 | 21 | 1 | gsd-security-auditor (ASVS L1, block_on high) |
+| 2026-10-23 | 22 | 22 | 0 | orchestrator re-check after the r1 judge re-run (`digest --check`: digests ok) |
 
 ---
 
@@ -94,7 +97,7 @@ None. The phase SUMMARY files carry no `## Threat Flags` section.
 
 - [x] All threats have a disposition (mitigate / accept / transfer)
 - [x] Accepted risks documented in Accepted Risks Log
-- [ ] `threats_open: 0` confirmed
-- [ ] `status: verified` set in frontmatter
+- [x] `threats_open: 0` confirmed
+- [x] `status: verified` set in frontmatter
 
-**Approval:** pending (T-22-18 open)
+**Approval:** verified 2026-10-23 (T-22-18 closed by the r1 judge re-run)
