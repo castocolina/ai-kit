@@ -49,11 +49,7 @@ _LOG = logging.getLogger("jev_review")
 
 LAYA_DEFAULT_URL = "http://127.0.0.1:8010"
 SYSTEMONE_PATH = "/v1/systemone"
-# http.client has its own debug logging; on a watchdog-killed exchange it narrates the death
-# of the socket in detail. Silence that logger only — this client's own `_LOG` stays live
-# because the consent ask must remain visible to the host (SPEC R5).
-logging.getLogger("http.client").setLevel(logging.CRITICAL)
-ZEN_KEY_FILE = "~/.pi/agent/keys.json"  # opencode's own file, pre-existing and read-only here
+ZEN_KEY_FILE = "keys.json"  # pi's key file under PI_CODING_AGENT_DIR, read-only here
 USER_AGENT = "jev-fast-decision/2.0"
 _VALIDATION_MODEL = "x"  # request_body needs a model string to validate with; nothing is sent
 # A real answer is a few KiB; anything bigger is refused, never parsed (T-21.1-11).
@@ -68,6 +64,7 @@ _OPENCODE_CALLER_CODES = (400,)  # the 2026-10-11 note: a 400 from Zen is a bad 
 _WORLD_READABLE = 0o077  # the state-file key is unusable when group or other can read it
 _FORCED_FLAG = "forced_fallback"  # internal: popped in _finalize, never in the output
 _KILL_SWITCH = "GSD_PATH_JEV"
+_NOT_SENT = "not_sent"  # a _DeadlineHit raised before any socket: its body never left
 _READ_CHUNK = 65536
 
 CHOICE, NOUL, SCORE = "choice", "noul", "score"
@@ -205,12 +202,14 @@ class _RecordingHTTPSHandler(urllib.request.HTTPSHandler):
 
 
 @contextlib.contextmanager
-def _exchange(deadline, timeout):
+def _exchange(deadline, timeout, remote=True):
     """Run one HTTP exchange (a probe GET or a question POST) with the opener armed for it.
 
     The watchdog timer fires at the deadline instant and shuts down every socket this
     exchange opened; `deadline.fired` then turns whatever the exchange returned into the
-    deadline outcome. Cancelled in `finally` so a fast exchange never arms a stray timer."""
+    deadline outcome. Cancelled in `finally` so a fast exchange never arms a stray timer.
+    A local row's exchange never uses an env proxy: `http_proxy` would otherwise carry the
+    loopback-only question, `context` and all, to whatever host the proxy is (CR-02)."""
     sockets: list[socket.socket] = []
     timer = None
     if deadline is not None:
@@ -219,7 +218,9 @@ def _exchange(deadline, timeout):
         timer.daemon = True
         timer.start()
     try:
-        yield urllib.request.build_opener(NoRedirect(), _RecordingHTTPHandler(sockets),
+        handlers = [] if remote else [urllib.request.ProxyHandler({})]
+        yield urllib.request.build_opener(*handlers, NoRedirect(),
+                                          _RecordingHTTPHandler(sockets),
                                           _RecordingHTTPSHandler(sockets))
     finally:
         if timer is not None:
@@ -582,25 +583,27 @@ def _laya_key():
     return _env_key("LAYA_API_KEY")
 
 
-def _bearer_probe(endpoint, key, timeout, deadline=None):
-    """The shared remote reachability check: a bearer GET that asks no question.
+def _get_probe(endpoint, key, timeout, deadline=None, remote=True):
+    """The shared reachability check: a GET that asks no question (bearer when `key`).
 
     Lives in the generic block, not in an adapter: the *URL* is the backend-specific part and
     stays with the adapter that calls this. The exchange runs under the deadline watchdog
-    like every other request this client makes.
+    like every other request this client makes; a 401/403 is `unauthorized` only when a key
+    was sent, and a local probe never sees an env proxy (`remote=False`).
     """
-    request = urllib.request.Request(endpoint, headers={"Authorization": f"Bearer {key}",
-                                                       "User-Agent": USER_AGENT})
+    headers = {"User-Agent": USER_AGENT, **({"Authorization": f"Bearer {key}"} if key else {})}
+    request = urllib.request.Request(endpoint, headers=headers)
     try:
-        with (_exchange(deadline, timeout) as opener,
+        with (_exchange(deadline, timeout, remote) as opener,
               opener.open(request, timeout=timeout) as stream):
             status = None if stream.status == 200 else "unreachable"
         if deadline is not None and deadline.fired:
             return "deadline"
         return status
     except urllib.error.HTTPError as answered:
-        reason = "unauthorized" if answered.code in _UNAUTHORIZED_CODES else "unreachable"
-        answered.close()
+        reason = ("unauthorized" if key and answered.code in _UNAUTHORIZED_CODES
+                  else "unreachable")
+        answered.close()  # never leak the error body
         return reason
     except (OSError, ValueError, http.client.HTTPException):
         return "unreachable"
@@ -611,19 +614,7 @@ def _laya_probe(row, timeout, deadline=None):
     endpoint, reason = row["url"]()
     if reason:
         return reason
-    parts = urllib.parse.urlsplit(endpoint)
-    health = urllib.parse.urlunsplit((parts.scheme, parts.netloc, "/health", "", ""))
-    try:
-        with _exchange(deadline, timeout) as opener, opener.open(health, timeout=timeout) as stream:
-            status = None if stream.status == 200 else "unreachable"
-        if deadline is not None and deadline.fired:
-            return "deadline"
-        return status
-    except urllib.error.HTTPError as answered:
-        answered.close()  # a 4xx/5xx on /health is just "unreachable", but do not leak the body
-        return "unreachable"
-    except (OSError, ValueError, http.client.HTTPException):
-        return "unreachable"
+    return _get_probe(_origin(endpoint, "/health"), None, timeout, deadline, remote=False)
 
 
 def _laya_classify(error):
@@ -675,6 +666,54 @@ def _env_key(name):
     return (value, "env") if value else (None, None)
 
 
+def _remote_url(raw):
+    """(url, None) or (None, "insecure_url"): a remote row's key travels only over https.
+
+    Plain http is allowed for a loopback host alone (the in-process test stubs); any other
+    scheme or a non-loopback http host is refused before a socket opens (T-21.1-07)."""
+    parts = urllib.parse.urlsplit(raw)
+    if parts.scheme == "https" or (parts.scheme == "http" and _is_loopback(parts.hostname)):
+        return raw, None
+    return None, "insecure_url"
+
+
+def _secrets_env_value(path, name):
+    """(value, None) or (None, reason) for `name=` in a flat KEY=VALUE file, 0600 enforced."""
+    try:
+        if os.stat(path).st_mode & _WORLD_READABLE:
+            return None, "world_readable"
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except (OSError, UnicodeError):
+        return None, "missing_file"
+    for line in lines:
+        key, sep, value = line.strip().partition("=")
+        if sep and key.strip() == name:
+            value = value.strip().strip("'\"")
+            return (value, None) if value else (None, "empty_file")
+    return None, "missing_file"
+
+
+def _first_key(env_names, files):
+    """(value, label) from the first env name set, else the first usable file source.
+
+    `files` is a list of zero-argument callables returning (value, reason). With no key the
+    reason is the first present-but-unusable file's own (`world_readable`, `empty_file`), so
+    the user knows what to fix, else `missing_file`."""
+    for name in env_names:
+        value, label = _env_key(name)
+        if value:
+            return value, label
+    reason = None
+    for source in files:
+        value, why = source()
+        if value:
+            return value, "file"
+        if why != "missing_file" and reason is None:
+            reason = why
+    return None, reason or "missing_file"
+
+
 def _typesafe_url():
     """TypeSafe's own API root: no loopback rule (it is remote by design), no fallback URL.
 
@@ -682,33 +721,32 @@ def _typesafe_url():
     (docs.typesafe.ai/api.md, checked 2026-10-23).
     """
     default = "https://api.typesafe.ai/v1/systemone"  # the row's own endpoint (D-06)
-    return os.environ.get("JEV_TYPESAFE_URL", default).strip(), None
+    return _remote_url(os.environ.get("JEV_TYPESAFE_URL", default).strip())
 
 
 def _typesafe_key():
-    """`TYPESAFE_API_KEY` wins over `XDG_STATE_HOME/typesafe/api_key` (D-09)."""
-    value, label = _env_key("TYPESAFE_API_KEY")
-    if value:
-        return value, label
+    """D-07's order: `TYPESAFE_API_KEY`, `JEV_API_KEY`, `JEV_API_KEY_FILE`,
+    `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, then the
+    `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` state file. Every file is 0600."""
+    key_file = os.path.expanduser(os.environ.get("JEV_API_KEY_FILE", "").strip())
     state = os.environ.get("XDG_STATE_HOME", "").strip() or os.path.expanduser("~/.local/state")
-    key, reason = _read_key(os.path.join(state, "typesafe", "api_key"))
-    return (key, "file") if key else (None, reason)
+    secrets = os.path.join(_config_dir(), "secrets.env")
+    return _first_key(("TYPESAFE_API_KEY", "JEV_API_KEY"), [
+        lambda: _read_key(key_file) if key_file else (None, "missing_file"),
+        lambda: _secrets_env_value(secrets, "TYPESAFE_API_KEY"),
+        lambda: _secrets_env_value(secrets, "JEV_API_KEY"),
+        lambda: _read_key(os.path.join(state, "typesafe", "api_key")),
+    ])
 
 
 def _typesafe_probe(row, timeout, deadline=None):
     """`GET /v1/models` with the bearer key: 200, else `unauthorized`/`unreachable`.
 
     No question bytes: this is the only way to know a plan is actually active before spending
-    an inference (D-10).
+    an inference (D-10). `_row_probe` has already checked the URL and the key.
     """
-    endpoint, reason = row["url"]()
-    if reason:
-        return reason
-    key, key_reason = row["key"]()
-    if not key:
-        return _missing_key_reason(key_reason)
-    return _bearer_probe(_origin(endpoint, "/v1/models"), key, timeout,
-                         deadline)
+    return _get_probe(_origin(row["url"]()[0], "/v1/models"), row["key"]()[0], timeout,
+                      deadline)
 
 
 def _typesafe_classify(error):
@@ -739,40 +777,39 @@ def _opencode_url():
     2026-10-23). The bearer probe path is not documented and stays unverified until a live run.
     """
     default = "https://opencode.ai/inference/systemone/v1/systemone"  # the row's own endpoint
-    return os.environ.get("JEV_OPENCODE_URL", default).strip(), None
+    return _remote_url(os.environ.get("JEV_OPENCODE_URL", default).strip())
 
 
-def _opencode_key():
-    """`OPENCODE_ZEN_API_KEY` wins over the first line of `~/.pi/agent/keys.json`'s
-    `opencode-zen.key` (D-11)."""
-    value, label = _env_key("OPENCODE_ZEN_API_KEY")
-    if value:
-        return value, label
+def _opencode_key_file():
+    """(value, reason) from `opencode-zen.key` in pi's keys.json, 0600 enforced like TypeSafe's."""
+    agent = os.environ.get("PI_CODING_AGENT_DIR", "").strip() or "~/.pi/agent"
+    path = os.path.join(os.path.expanduser(agent), ZEN_KEY_FILE)
     try:
-        with open(os.path.expanduser(ZEN_KEY_FILE), encoding="utf-8") as handle:
+        if os.stat(path).st_mode & _WORLD_READABLE:
+            return None, "world_readable"
+        with open(path, encoding="utf-8") as handle:
             parsed = json.load(handle)
     except (OSError, ValueError, UnicodeError, RecursionError):
         return None, "missing_file"
     entry = parsed.get("opencode-zen") if isinstance(parsed, dict) else None
     key = entry.get("key") if isinstance(entry, dict) else None
     if isinstance(key, str) and key.strip():
-        return key.strip(), "file"
+        return key.strip(), None
     return None, "empty_file"
 
 
-def _opencode_probe(row, timeout, deadline=None):
-    """`GET /models` with the bearer key; a 401/403 reports `unauthorized` (D-11).
+def _opencode_key():
+    """`OPENCODE_ZEN_API_KEY` wins over `${PI_CODING_AGENT_DIR:-~/.pi/agent}/keys.json`'s
+    `opencode-zen.key` (D-11)."""
+    return _first_key(("OPENCODE_ZEN_API_KEY",), [_opencode_key_file])
 
-    Which exact path answers on the real endpoint is unverified from here (SPEC O2); the
-    bearer probe is what says "this credential works" before any question leaves the machine.
-    """
-    endpoint, reason = row["url"]()
-    if reason:
-        return reason
-    key, key_reason = row["key"]()
-    if not key:
-        return _missing_key_reason(key_reason)
-    return _bearer_probe(_origin(endpoint, "/models"), key, timeout, deadline)
+
+def _opencode_probe(row, timeout, deadline=None):
+    """A bearer `GET /inference/v1/models` on the endpoint's origin: Zen's documented model
+    list (opencode.ai/docs/zen, 2026-10-23). The docs show it without auth, so a 200 proves
+    reachability only, not the key: the row's `key_check` is `unverified` (D-11)."""
+    return _get_probe(_origin(row["url"]()[0], "/inference/v1/models"), row["key"]()[0],
+                      timeout, deadline)
 
 
 def _opencode_classify(error):
@@ -796,6 +833,10 @@ def _opencode_classify(error):
 
 
 Row = dict[str, Any]
+
+# SPEC R5 / RESEARCH Pitfall 5: a remote answer names the versioned id that answered
+# (`jev-1.14.0`, `jev-1.14.0-preview`), whatever alias the request asked for.
+_JEV_RESPONSE = re.compile(r"jev-[0-9]+(?:\.[0-9]+)*(?:-[A-Za-z0-9.]+)?")
 
 # One row per backend: its data in front, its adapters behind. 21.1-06's --calibrate reads a
 # row's min_confidence out of this literal with `ast`, so the numbers stay written out here.
@@ -834,14 +875,15 @@ TABLE: tuple[Row, ...] = (
         "remote": True,
         "batch": True,  # no per-question channel contamination observed
         "min_confidence": 0.8,
-        "models": ("jev-latest",),  # a real id from the provider, never a "latest" alias
+        "models": ("jev-latest",),  # D-26: the moving alias; pin with JEV_TYPESAFE_MODEL
         "model_env": "JEV_TYPESAFE_MODEL",
-        "response_model": re.compile(r"typesafe-[a-z0-9_.-]+"),
+        "response_model": _JEV_RESPONSE,
         "retry_limit": 2,  # 503 + Retry-After, then escalate
         "state_chars_limit": 8000,
         "url": _typesafe_url,
         "key": _typesafe_key,
         "probe": _typesafe_probe,
+        "key_check": "documented",  # its GET /v1/models needs the key (docs.typesafe.ai)
         "classify": _typesafe_classify,
         "cells": {CHOICE: ("verified-live", "todo notes 2026-10-13/14", "2026-10-14"),
                   NOUL: ("verified-live", "todo notes 2026-10-13/14", "2026-10-14"),
@@ -859,12 +901,13 @@ TABLE: tuple[Row, ...] = (
         "min_confidence": 0.75,
         "models": ("jev-1.13-free", "jev-1.13"),
         "model_env": "JEV_OPENCODE_MODEL",
-        "response_model": re.compile(r"opencode-[a-z0-9_.-]+"),
+        "response_model": _JEV_RESPONSE,
         "retry_limit": 2,  # a 5xx gets bounded backoff, then the item escalates
         "state_chars_limit": 8000,
         "url": _opencode_url,
         "key": _opencode_key,
         "probe": _opencode_probe,
+        "key_check": "unverified",  # its model list is documented without auth
         "classify": _opencode_classify,
         "cells": {CHOICE: ("verified-live", "jev-1.13-free 14/14", "2026-10-11"),
                   NOUL: ("verified-live", "jev-1.13-free 14/14", "2026-10-11"),
@@ -1201,44 +1244,29 @@ def _backend_entry(row, reason):
              "usable": reason is None, "key_source": row["key"]()[1]}
     if row["remote"]:
         entry["consent"] = record_consent(row)
+    if row.get("key_check"):
+        entry["key_check"] = row["key_check"]
     if reason:
         entry["reason"] = reason
     return entry
 
 
-def _probe_all():
-    """One probe per row, in table order: ({name: row}, {name: reason}, {name: entry}).
-
-    `--probe` answers from these results instead of calling `_selection()` on top of them: a
-    row is never probed twice by one `--probe`, so the whole report costs one socket per row.
-    """
-    rows, reasons, entries = {}, {}, {}
-    for row in TABLE:
-        name = row["name"]
-        reason = _row_probe(row)
-        rows[name], reasons[name], entries[name] = row, reason, _backend_entry(row, reason)
-    return rows, reasons, entries
-
-
-def _probe_candidates(choice, rows, reasons):
-    """The ladder order `--probe` would run in: `JEV_BACKEND` narrows it, as the screen does."""
-    if choice != "auto" and choice not in rows:
-        return [], {choice: "unknown_backend"}
-    reachable = [row["name"] for row in rows_in_order() if reasons[row["name"]] is None]
-    candidates = reachable if choice == "auto" else [name for name in reachable
-                                                     if name == choice]
-    return candidates, {name: reason for name, reason in reasons.items() if reason}
-
-
 def probe_report():
-    """The `--probe` JSON: every row in table order plus the selection outcome (SPEC R9)."""
+    """The `--probe` JSON: every row in table order plus the selection outcome (SPEC R9).
+
+    One probe per row (one socket at most): the ladder order `JEV_BACKEND` would run in is
+    read from those results, never from a second `_selection()` pass."""
     choice = _backend_choice()
-    rows, reasons, entries = _probe_all()
-    candidates, unavailable = _probe_candidates(choice, rows, reasons)
+    usable, unavailable, entries = _probe_reasons(TABLE)
+    names = {row["name"] for row in usable}
+    candidates = [row["name"] for row in rows_in_order()
+                  if row["name"] in names and choice in ("auto", row["name"])]
+    if choice != "auto" and row_named(choice) is None:
+        unavailable = {choice: "unknown_backend"}
     report = {"status": "ok" if candidates else "unavailable",
               "selected": candidates[0] if candidates else None,
               "candidates": candidates, "unavailable": unavailable,
-              "backends": [entries[row["name"]] for row in TABLE]}
+              "backends": entries}
     if candidates:
         return report
     consent = _consent_result(choice, unavailable, [], {})
@@ -1281,8 +1309,6 @@ class _Run:
         self.sent: list[bytes] = []
         self.attempts: list[dict] = []
         self.usage = {"input_tokens": 0, "output_tokens": 0}
-        self.backend = None
-        self.model = None
         self.answers: dict[str, dict] = {}    # final answer per id
         self.tentative: dict[str, dict] = {}  # low local answers, not final yet
         self.failed: dict[str, str] = {}      # final item errors by id
@@ -1389,7 +1415,7 @@ def _send(row, body, timeout, deadline=None):
     if reason:
         raise PermissionError(reason)
     if deadline is not None and deadline.left() <= 0:
-        raise _DeadlineHit("deadline")
+        raise _DeadlineHit(_NOT_SENT)
     encoded = _encode(body)
     key, _label = row["key"]()
     headers = {**({"Authorization": f"Bearer {key}"} if key else {}),
@@ -1400,13 +1426,17 @@ def _send(row, body, timeout, deadline=None):
                "User-Agent": USER_AGENT}
     request = urllib.request.Request(url, data=encoded, headers=headers)
     timeout = _capped_timeout(deadline, timeout)
-    with _exchange(deadline, timeout) as opener, opener.open(request, timeout=timeout) as stream:
+    with (_exchange(deadline, timeout, row["remote"]) as opener,
+          opener.open(request, timeout=timeout) as stream):
         data, over_cap = _read_body(stream, _MAX_RESPONSE_BYTES, deadline)
     if deadline is not None and deadline.fired:
         raise _DeadlineHit("deadline")  # whatever came back is not an answer (review cycle 3)
     if over_cap:
         raise ValueError("invalid_response")  # T-21.1-11: this request only, not the run
-    return json.loads(data), encoded
+    try:
+        return json.loads(data), encoded
+    except RecursionError:  # a deeply nested body under the cap: a bad answer, not a crash
+        raise ValueError("invalid_response") from None
 
 
 def _outcome(row, failure):
@@ -1429,22 +1459,26 @@ def _post(row, body, timeout, run):
     Returns `(response, state_chars, action, reason, sent_body)`; `sent_body` is the encoded
     body the row last saw, so every rung entry can name the bytes its outcome came from. A
     `next_model` row action re-sends this same group with the row's next model id; an
-    exhausted `retry` becomes an escalate-class error, so auto selection moves that item to
+    exhausted `retry` or `next_model` (a TypeSafe 402, a paid Zen 402/429) becomes an
+    escalate-class error, so auto selection moves that item to
     the next usable row exactly as it moves a 500 (SPEC R1, the 2026-10-11 todo) while an
     explicit backend keeps it as the item error.
     """
     encoded, state_chars = _encode(body), _state_chars(body)
     index, retries_left = 0, int(row["retry_limit"])
     while True:
-        run.sent.append(encoded)
         try:
-            response, sent_body = _send(row, body, timeout, run.deadline)
-            return response, state_chars, "ok", None, sent_body
-        except _DeadlineHit:
+            response = _send(row, body, timeout, run.deadline)[0]  # it sends `encoded`
+            run.sent.append(encoded)
+            return response, state_chars, "ok", None, encoded
+        except _DeadlineHit as hit:
+            if str(hit) != _NOT_SENT:
+                run.sent.append(encoded)
             return None, state_chars, "deadline", "deadline", encoded
         except PermissionError as refused:
             raise DispatchError(run.sent, refused) from refused
         except (OSError, ValueError, http.client.HTTPException) as failure:
+            run.sent.append(encoded)  # the exchange reached the socket stage
             if run.deadline is not None and (run.deadline.fired or run.deadline.expired()):
                 # A request that fails once the deadline has passed is the deadline's, not a
                 # network error, and it is final: it never escalates (D-12, review cycle 3).
@@ -1462,7 +1496,8 @@ def _post(row, body, timeout, run):
                     return None, state_chars, "deadline", "deadline", encoded
                 _sleep(_capped_nap(_retry_after(failure), run.deadline))
                 continue
-            if action == "retry":
+            if action in ("retry", "next_model"):
+                # Retries or model ids exhausted: the next consented rung may still answer.
                 return None, state_chars, "escalate", reason, encoded
             return None, state_chars, action, reason, encoded
 
@@ -1489,8 +1524,6 @@ def _finalize(row, checked, run):
         answer["top"] = top_of(answer)
         answer["needs_fallback"] = forced or answer["top"] < threshold
         answers[identifier] = answer
-    if run.backend is None:
-        run.backend, run.model = row["name"], checked["model"]
     for token in run.usage:
         run.usage[token] += checked["usage"][token]
     return answers
@@ -1731,8 +1764,10 @@ def _result(run):
     if not run.answers:
         return {"status": "unavailable",
                 "reason": next(iter(run.failed.values()), "no_backend_available"), **outcome}
-    outcome["backend"] = run.backend
-    outcome["model"] = run.model
+    # The rung that gave the final answers: a name only when every answer shares it.
+    for field in ("backend", "model"):
+        values = {answer[field] for answer in run.answers.values()}
+        outcome[field] = values.pop() if len(values) == 1 else None
     outcome["answers"] = run.answers
     return {"status": "ok", **outcome}
 
@@ -1744,7 +1779,8 @@ def _fold_rung(row, answers, errors, run):
     final. A low or forced-fallback answer is final on a remote row — the consented second
     opinion is the last rung money can buy — and stays pending on a local row, where the next
     rung may know better. An `escalate` error (including an exhausted Laya 503) keeps the
-    item pending; a `caller_error` is final where it landed."""
+    item pending; any other error is final where it landed — and an item already holding a
+    low local answer keeps that answer (still `needs_fallback`) instead of losing it."""
     for identifier, answer in answers.items():
         if not answer["needs_fallback"] or row["remote"]:
             run.answers[identifier] = answer
@@ -1752,7 +1788,11 @@ def _fold_rung(row, answers, errors, run):
             run.tentative[identifier] = answer
     for identifier, (action, reason) in errors.items():
         run.last_error[identifier] = reason
-        if action != "escalate":
+        if action == "escalate":
+            continue
+        if identifier in run.tentative:
+            run.answers[identifier] = run.tentative[identifier]
+        else:
             run.failed[identifier] = reason
 
 

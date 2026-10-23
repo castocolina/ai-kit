@@ -21,7 +21,7 @@ Write `instructions`/`context` or `criterion`/`evidence` as self-contained Engli
 
 ## Response shape
 
-An `ok` result carries `status`, `backend`, `model`, `answers`, plus `trail` (per-item ordered rung entries, each with `request_sha256`), `attempts`, `unavailable`, `usage`, `request_sha256` (over every body sent), `reviewed_head`, `backends` (the probe entries), `remote_available` and `consent_used` where relevant, and `errors` for item-level failures.
+An `ok` result carries `status`, `backend` and `model` (the rung that gave every final answer, `null` when answers came from different rungs), `answers`, plus `trail` (per-item ordered rung entries, each with `request_sha256`), `attempts`, `unavailable`, `usage`, `request_sha256` (over every body sent), `reviewed_head`, `backends` (the probe entries), `remote_available` and `consent_used` where relevant, and `errors` for item-level failures.
 
 | Type | Answer fields |
 | --- | --- |
@@ -72,14 +72,14 @@ Keep results in durable artifacts as advisory evidence, never in a verdict field
 | `JEV_BACKEND` | `auto` (default) or one row name; explicit never falls back |
 | `JEV_ALLOW_REMOTE` | the session consent gate (see above) |
 | `JEV_MIN_CONFIDENCE` | overrides every row's `min_confidence` for the call |
-| `JEV_LAYA_URL` / `AI_KIT_LAYA_URL` | Laya endpoint; loopback only, non-loopback refused (`non_loopback_url`) |
+| `JEV_LAYA_URL` / `AI_KIT_LAYA_URL` | Laya endpoint; loopback only, non-loopback refused (`non_loopback_url`); Laya traffic never uses `http_proxy`/`https_proxy` |
 | `LAYA_API_KEY` | optional bearer for Laya |
 | `JEV_LAYA_MODEL` | pins Laya's request model (default `jev-1`) |
-| `JEV_TYPESAFE_URL` | TypeSafe question URL (default `https://api.typesafe.ai/v1/systemone`) |
-| `TYPESAFE_API_KEY` | TypeSafe key; falls back to `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` (0600 enforced) |
+| `JEV_TYPESAFE_URL` | TypeSafe question URL (default `https://api.typesafe.ai/v1/systemone`; `https` only, else `insecure_url`) |
+| `TYPESAFE_API_KEY` | TypeSafe key; then `JEV_API_KEY`, the file `JEV_API_KEY_FILE` names, a `TYPESAFE_API_KEY=`/`JEV_API_KEY=` line in `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, then `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` (every file 0600 enforced) |
 | `JEV_TYPESAFE_MODEL` | pins the request id (default `jev-latest`) |
-| `JEV_OPENCODE_URL` | Zen POST target (default `https://opencode.ai/inference/systemone/v1/systemone`) |
-| `OPENCODE_ZEN_API_KEY` | Zen key; falls back to `~/.pi/agent/keys.json`'s `opencode-zen.key` |
+| `JEV_OPENCODE_URL` | Zen POST target (default `https://opencode.ai/inference/systemone/v1/systemone`; `https` only, else `insecure_url`) |
+| `OPENCODE_ZEN_API_KEY` | Zen key; falls back to `${PI_CODING_AGENT_DIR:-~/.pi/agent}/keys.json`'s `opencode-zen.key` (0600 enforced) |
 | `JEV_OPENCODE_MODEL` | pins one request id, turning off the free-to-paid step (default `jev-1.13-free`, then `jev-1.13`) |
 | `JEV_CALLER` | a label written into answer-log lines |
 

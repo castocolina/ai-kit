@@ -647,8 +647,8 @@ class TestTaxonomy(_ClientCase):
         row pointed at its own port by `JEV_TYPESAFE_URL`."""
         with (JevStub(script=[{"status": 503, "headers": {"Retry-After": "0"},
                                 "body": b"busy"}] * 3) as laya,
-              JevStub(model="typesafe-1") as typesafe,
-              JevStub(model="opencode-1") as zen):
+              JevStub(model="jev-1.13.0") as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
             self.point_at(laya)
             self.point_remote("typesafe", typesafe)
             self.point_remote("opencode", zen)
@@ -657,7 +657,7 @@ class TestTaxonomy(_ClientCase):
                 result = self.run_screen(payload(noul_item("a")))
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["backend"], "typesafe")
-        self.assertEqual(result["model"], "typesafe-1")
+        self.assertEqual(result["model"], "jev-1.13.0")
         self.assertEqual(len(laya.posts), 3)  # the original plus the two retries it allows
         self.assertEqual(len(typesafe.posts), 1)
         self.assertEqual(zen.posts, [])  # the item is answered: nothing reaches the next rung
@@ -682,6 +682,64 @@ class TestTaxonomy(_ClientCase):
         os.environ.pop("JEV_OPENCODE_URL", None)
         self.assertEqual(JR._opencode_url(),
                          ("https://opencode.ai/inference/systemone/v1/systemone", None))
+
+    def test_opencode_probe_uses_the_documented_model_list(self):
+        """WR-07: the bearer GET goes to `/inference/v1/models` on the row's own origin, and the
+        probe entry says the key check is unverified (the list is documented without auth)."""
+        with JevStub() as zen:
+            self.point_remote("opencode", zen)
+            os.environ["OPENCODE_ZEN_API_KEY"] = "dummy"
+            os.environ["JEV_ALLOW_REMOTE"] = "opencode"
+            _code, report = self.run_probe()
+        self.assertEqual([(r["method"], r["path"]) for r in zen.requests],
+                         [("GET", "/inference/v1/models")])
+        self.assertEqual(self.backend_entry(report, "opencode")["key_check"], "unverified")
+        self.assertEqual(self.backend_entry(report, "typesafe")["key_check"], "documented")
+
+    def test_remote_url_must_be_https(self):
+        """WR-04: a bearer key never travels over plain http or another scheme to a real host;
+        loopback http stays allowed for the in-process stubs."""
+        for raw in (f"http://{REMOTE_HOST}/v1/systemone", "ftp://127.0.0.1/x",
+                    "file:///etc/hosts"):
+            with self.subTest(raw=raw):
+                os.environ["JEV_TYPESAFE_URL"] = raw
+                os.environ["JEV_OPENCODE_URL"] = raw
+                self.assertEqual(JR._typesafe_url(), (None, "insecure_url"))
+                self.assertEqual(JR._opencode_url(), (None, "insecure_url"))
+        os.environ["JEV_TYPESAFE_URL"] = f"https://{REMOTE_HOST}/v1/systemone"
+        self.assertEqual(JR._typesafe_url()[1], None)
+        os.environ["JEV_TYPESAFE_URL"] = f"http://{REMOTE_HOST}/v1/systemone"
+        os.environ["TYPESAFE_API_KEY"] = "dummy"
+        os.environ["JEV_ALLOW_REMOTE"] = "1"
+        _code, report = self.run_probe()
+        self.assertEqual(self.backend_entry(report, "typesafe")["reason"], "insecure_url")
+        self.assertEqual(JR.consent_command("grant", "typesafe"),
+                         {"ok": False, "reason": "no_endpoint_configured"})
+
+    def test_taxonomy_deeply_nested_json_is_invalid_response(self):
+        # WR-03: a body of nested brackets under the size cap is a bad answer, never a traceback.
+        code, result = 0, None
+        with JevStub(script=[{"status": 200, "body": b"[" * 200000}]) as stub:
+            self.point_at(stub)
+            self.enable("laya")
+            code, result = self.run_main(payload(noul_item("a")))
+        self.assertEqual(code, 0)
+        self.assertEqual(result["errors"], {"a": "invalid_response"})
+
+    def test_laya_traffic_never_goes_to_an_env_proxy(self):
+        # CR-02: http_proxy pointing at a loopback listener sees nothing from a Laya probe or
+        # screen; the questions reach the Laya stub directly.
+        with JevStub() as proxy, JevStub() as laya:
+            for name in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY"):
+                os.environ[name] = f"http://127.0.0.1:{proxy.port}"
+            self.point_at(laya)
+            self.enable("laya")
+            _code, report = self.run_probe()
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(proxy.requests, [])
+        self.assertTrue(self.backend_entry(report, "laya")["usable"])
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(laya.posts), 1)
 
     def test_taxonomy_500_escalates_without_retry(self):
         result, stub = self.scripted([{"status": 500, "body": b"inference failed"}])
@@ -829,7 +887,7 @@ class TestRemoteRows(_ClientCase):
 
     def test_typesafe_batch_two_items_one_request(self):
         items = payload(noul_item("a"), noul_item("b"))
-        with JevStub(model="typesafe-1") as stub:
+        with JevStub(model="jev-1.13.0") as stub:
             self.point_remote("typesafe", stub)
             self.enable_remote("typesafe")
             result = self.run_screen(items)
@@ -843,7 +901,7 @@ class TestRemoteRows(_ClientCase):
     def test_tolerance_typesafe_two_decimals_are_accepted(self):
         # TypeSafe rounds to 2 decimals: a 3-way answer sums to 0.99, inside the tolerance.
         items = payload(choice_item("c1"))
-        with JevStub(model="typesafe-1", uniform=True, places=2, top=0.33) as stub:
+        with JevStub(model="jev-1.13.0", uniform=True, places=2, top=0.33) as stub:
             self.point_remote("typesafe", stub)
             self.enable_remote("typesafe")
             os.environ["JEV_MIN_CONFIDENCE"] = "0.3"  # below the row's own 0.8
@@ -857,23 +915,50 @@ class TestRemoteRows(_ClientCase):
     def test_typesafe_one_decimal_sum_is_rejected(self):
         # The tolerance is bounded: a 3-way answer summing to 0.90 is not a probability space.
         items = payload(choice_item("c1"))
-        with JevStub(model="typesafe-1", uniform=True, places=1, top=0.3) as stub:
+        with JevStub(model="jev-1.13.0", uniform=True, places=1, top=0.3) as stub:
             self.point_remote("typesafe", stub)
             self.enable_remote("typesafe")
             result = self.run_screen(items)
         self.assertEqual(result["errors"], {"c1": "invalid_response"})
 
     def test_model_policy_typesafe_single_id_402_escalates(self):
-        with JevStub(script=[{"status": 402, "body": b"billing"}], model="typesafe-1") as stub:
+        # WR-01: a 402 with no next model id moves the item on to the next consented rung.
+        with (JevStub(script=[{"status": 402, "body": b"billing"}],
+                      model="jev-1.13.0") as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
+            self.point_remote("typesafe", typesafe)
+            self.point_remote("opencode", zen)
+            self.enable_remote(None)  # auto, both remotes consented, Laya on a closed port
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(len(typesafe.posts), 1)  # one model id: nothing else to try there
+        self.assertEqual(len(zen.posts), 1)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["answers"]["a"]["backend"], "opencode")
+        self.assertEqual([e.get("error") for e in result["trail"]["a"]], ["http_402", None])
+
+    def test_model_policy_typesafe_402_explicit_is_the_item_error(self):
+        with JevStub(script=[{"status": 402, "body": b"billing"}], model="jev-1.13.0") as stub:
             self.point_remote("typesafe", stub)
             self.enable_remote("typesafe")
             result = self.run_screen(payload(noul_item("a")))
-        self.assertEqual(len(stub.posts), 1)  # one model id: nothing else to try
-        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(len(stub.posts), 1)
         self.assertEqual(result["errors"], {"a": "http_402"})
 
+    def test_model_policy_remote_response_model_versions(self):
+        # SPEC R5: a remote row accepts the versioned `jev-<version>` id that answered.
+        for name in ("typesafe", "opencode"):
+            for model, ok in (("jev-1.14.0", True), ("jev-1.15.2", True),
+                              ("jev-1.14.0-preview", True), ("jevx-1", False),
+                              ("gpt-4o", False), (None, False)):
+                with self.subTest(row=name, model=model), JevStub(model=model) as stub:
+                    result = self.remote_screen(name, stub)
+                    if ok:
+                        self.assertEqual(result["answers"]["a"]["model"], model)
+                    else:
+                        self.assertEqual(result["errors"], {"a": "invalid_response"})
+
     def test_model_policy_typesafe_pinned_sends_only_that_id(self):
-        with JevStub(model="typesafe-1") as stub:
+        with JevStub(model="jev-1.13.0") as stub:
             self.point_remote("typesafe", stub)
             self.enable_remote("typesafe")
             os.environ["JEV_TYPESAFE_MODEL"] = "jev-2027-01"
@@ -882,19 +967,19 @@ class TestRemoteRows(_ClientCase):
 
     def test_model_policy_opencode_free_id_first_then_paid(self):
         script = [{"status": 429, "body": b"quota"}]
-        with JevStub(script=script, model="opencode-1") as stub:
+        with JevStub(script=script, model="jev-1.14.0") as stub:
             self.point_remote("opencode", stub)
             self.enable_remote("opencode")
             result = self.run_screen(payload(noul_item("a")))
         self.assertEqual(result["status"], "ok")
         self.assertEqual([body["model"] for body in stub.bodies],
                          ["jev-1.13-free", "jev-1.13"])  # the same group body, next id
-        self.assertEqual(result["answers"]["a"]["model"], "opencode-1")
+        self.assertEqual(result["answers"]["a"]["model"], "jev-1.14.0")
         self.assertEqual(result["attempts"], [])  # a recovered free 429 leaves no entry
 
     def test_model_policy_opencode_402_switches_model(self):
         script = [{"status": 402, "body": b"billing"}]
-        with JevStub(script=script, model="opencode-1") as stub:
+        with JevStub(script=script, model="jev-1.14.0") as stub:
             self.point_remote("opencode", stub)
             self.enable_remote("opencode")
             result = self.run_screen(payload(noul_item("a")))
@@ -904,7 +989,7 @@ class TestRemoteRows(_ClientCase):
 
     def test_opencode_both_models_exhausted_keeps_the_last_reason(self):
         script = [{"status": 429, "body": b"quota"}] * 2
-        with JevStub(script=script, model="opencode-1") as stub:
+        with JevStub(script=script, model="jev-1.14.0") as stub:
             self.point_remote("opencode", stub)
             self.enable_remote("opencode")
             result = self.run_screen(payload(noul_item("a")))
@@ -919,7 +1004,7 @@ class TestRemoteRows(_ClientCase):
 
     def test_model_policy_opencode_pinned_sends_only_that_id(self):
         script = [{"status": 429, "body": b"quota"}] * 2
-        with JevStub(script=script, model="opencode-1") as stub:
+        with JevStub(script=script, model="jev-1.14.0") as stub:
             self.point_remote("opencode", stub)
             self.enable_remote("opencode")
             os.environ["JEV_OPENCODE_MODEL"] = "jev-custom"
@@ -931,7 +1016,7 @@ class TestRemoteRows(_ClientCase):
 
     def test_opencode_5xx_retries_then_escalates(self):
         script = [{"status": 500, "body": b"bad gateway"}] * 3
-        with (JevStub(script=script, model="opencode-1") as stub,
+        with (JevStub(script=script, model="jev-1.14.0") as stub,
               mock.patch.object(JR, "_sleep", side_effect=lambda _seconds: None)):
             self.point_remote("opencode", stub)
             self.enable_remote("opencode")
@@ -940,7 +1025,7 @@ class TestRemoteRows(_ClientCase):
         self.assertEqual(result["errors"], {"a": "http_500"})
 
     def test_opencode_401_is_unauthorized_and_not_retried(self):
-        with JevStub(script=[{"status": 401, "body": b"nope"}], model="opencode-1") as stub:
+        with JevStub(script=[{"status": 401, "body": b"nope"}], model="jev-1.14.0") as stub:
             self.point_remote("opencode", stub)
             self.enable_remote("opencode")
             result = self.run_screen(payload(noul_item("a")))
@@ -950,15 +1035,15 @@ class TestRemoteRows(_ClientCase):
     def test_opencode_400_is_a_caller_error(self):
         # The 2026-10-11 note: a 400 from Zen means a model id that does not exist.
         with JevStub(script=[{"status": 400, "body": b"unknown model"}],
-                     model="opencode-1") as stub:
+                     model="jev-1.14.0") as stub:
             self.point_remote("opencode", stub)
             self.enable_remote("opencode")
             result = self.run_screen(payload(noul_item("a")))
         self.assertEqual(result["errors"], {"a": "caller_error:http_400"})
 
     def test_wrong_response_model_pattern_is_invalid_response(self):
-        # The typesafe row only accepts `typesafe-*`: a Zen id in that seat is a bad response.
-        with JevStub(model="opencode-1") as stub:
+        # The typesafe row only accepts `jev-<version>`: a Laya id in that seat is a bad response.
+        with JevStub(model="laya-rl-agent") as stub:
             self.point_remote("typesafe", stub)
             self.enable_remote("typesafe")
             result = self.run_screen(payload(noul_item("a")))
@@ -996,7 +1081,7 @@ class TestGate(_ClientCase):
         self.assertFalse(JR._gate_open("typesafe"))
 
     def test_screen_remote_requires_consent_and_sends_zero(self):
-        with JevStub(model="typesafe-1") as stub:
+        with JevStub(model="jev-1.13.0") as stub:
             self.point_remote("typesafe", stub)
             os.environ["TYPESAFE_API_KEY"] = "ssn-key"
             os.environ.pop("JEV_ALLOW_REMOTE", None)  # auto, no consent
@@ -1007,7 +1092,7 @@ class TestGate(_ClientCase):
             self.assertEqual(stub.requests, [])
 
     def test_probe_reports_consent_required_without_dialling(self):
-        with JevStub(model="typesafe-1") as stub:
+        with JevStub(model="jev-1.13.0") as stub:
             self.point_remote("typesafe", stub)
             os.environ["TYPESAFE_API_KEY"] = "ssn-key"
             os.environ["LAYA_API_KEY"] = ""
@@ -1020,7 +1105,7 @@ class TestGate(_ClientCase):
         self.assertEqual(stub.requests, [])
 
     def test_gate_by_name_dials_only_the_named_remote(self):
-        with JevStub(model="typesafe-1") as typesafe, JevStub(model="opencode-1") as zen:
+        with JevStub(model="jev-1.13.0") as typesafe, JevStub(model="jev-1.14.0") as zen:
             os.environ["JEV_ALLOW_REMOTE"] = "typesafe"
             os.environ["TYPESAFE_API_KEY"] = "ssn-key"
             os.environ["OPENCODE_ZEN_API_KEY"] = "zen-key"
@@ -1036,7 +1121,7 @@ class TestGate(_ClientCase):
         self.assertEqual(zen.requests, [])  # the other remote was never dialled
 
     def test_consent_seam_is_logged_when_the_gate_is_closed(self):
-        with JevStub(model="typesafe-1") as stub:
+        with JevStub(model="jev-1.13.0") as stub:
             self.point_remote("typesafe", stub)
             os.environ["TYPESAFE_API_KEY"] = "ssn-key"
             self.enable(None)
@@ -1047,7 +1132,7 @@ class TestGate(_ClientCase):
         self.assertIn("typesafe", captured.output[0])
 
     def test_consent_seam_is_silent_when_the_gate_is_open(self):
-        with JevStub(model="typesafe-1") as stub:
+        with JevStub(model="jev-1.13.0") as stub:
             self.point_remote("typesafe", stub)
             self.enable_remote("typesafe")
             with self.assertNoLogs("jev_review", level="INFO"):
@@ -1078,6 +1163,37 @@ class TestKeys(_ClientCase):
         os.environ["TYPESAFE_API_KEY"] = self.SENTINEL
         self.assertEqual(JR._typesafe_key(), (self.SENTINEL, "env"))
 
+    def test_typesafe_key_order_d07(self):
+        # D-07: TYPESAFE_API_KEY, JEV_API_KEY, JEV_API_KEY_FILE, secrets.env, then the state file.
+        self.typesafe_file("from-state\n")
+        secrets = Path(os.environ["XDG_CONFIG_HOME"]) / "ai-kit" / "secrets.env"
+        secrets.parent.mkdir(parents=True)
+        secrets.write_text("# comment\nOTHER=x\nJEV_API_KEY='from-secrets'\n", encoding="utf-8")
+        os.chmod(secrets, 0o600)
+        key_file = self.tmp / "jev.key"
+        key_file.write_text("from-key-file\n", encoding="utf-8")
+        os.chmod(key_file, 0o600)
+        os.environ.update({"TYPESAFE_API_KEY": "from-ts-env", "JEV_API_KEY": "from-jev-env",
+                           "JEV_API_KEY_FILE": str(key_file)})
+        expected = [("TYPESAFE_API_KEY", ("from-ts-env", "env")),
+                    ("JEV_API_KEY", ("from-jev-env", "env")),
+                    ("JEV_API_KEY_FILE", ("from-key-file", "file")),
+                    (None, ("from-secrets", "file"))]
+        for drop, want in expected:
+            self.assertEqual(JR._typesafe_key(), want)
+            if drop:
+                os.environ.pop(drop)
+        secrets.write_text("TYPESAFE_API_KEY=ts-secret\nJEV_API_KEY=jev-secret\n",
+                           encoding="utf-8")
+        self.assertEqual(JR._typesafe_key(), ("ts-secret", "file"))
+        os.chmod(secrets, 0o644)  # refused, so the state file answers
+        self.assertEqual(JR._typesafe_key(), ("from-state", "file"))
+        os.chmod(key_file, 0o644)
+        os.environ["JEV_API_KEY_FILE"] = str(key_file)
+        self.assertEqual(JR._typesafe_key(), ("from-state", "file"))
+        Path(os.environ["XDG_STATE_HOME"], "typesafe", "api_key").unlink()
+        self.assertEqual(JR._typesafe_key(), (None, "world_readable"))
+
     def test_typesafe_file_key_when_no_env(self):
         os.environ.pop("TYPESAFE_API_KEY", None)
         self.typesafe_file()
@@ -1101,13 +1217,25 @@ class TestKeys(_ClientCase):
         path.unlink()
         self.assertEqual(JR._typesafe_key(), (None, "missing_file"))
 
+    def zen_file(self, text, mode=0o600, agent=None):
+        keys = agent or Path(os.environ["HOME"]) / ".pi" / "agent"
+        keys.mkdir(parents=True, exist_ok=True)
+        (keys / "keys.json").write_text(text, encoding="utf-8")
+        os.chmod(keys / "keys.json", mode)
+
     def test_zen_key_reads_the_opencode_zen_entry(self):
         os.environ.pop("OPENCODE_ZEN_API_KEY", None)
-        keys = Path(os.environ["HOME"]) / ".pi" / "agent"
-        keys.mkdir(parents=True)
-        (keys / "keys.json").write_text(json.dumps({"opencode-zen": {"key": self.SENTINEL}}),
-                                        encoding="utf-8")
+        self.zen_file(json.dumps({"opencode-zen": {"key": self.SENTINEL}}))
         self.assertEqual(JR._opencode_key(), (self.SENTINEL, "file"))
+
+    def test_zen_key_file_honors_pi_dir_and_0600(self):
+        os.environ.pop("OPENCODE_ZEN_API_KEY", None)
+        agent = self.tmp / "pi-agent"
+        os.environ["PI_CODING_AGENT_DIR"] = str(agent)
+        self.zen_file(json.dumps({"opencode-zen": {"key": "zen-from-pi-dir"}}), agent=agent)
+        self.assertEqual(JR._opencode_key(), ("zen-from-pi-dir", "file"))
+        os.chmod(agent / "keys.json", 0o644)
+        self.assertEqual(JR._opencode_key(), (None, "world_readable"))
 
     def test_zen_missing_file_is_a_reason_not_an_exception(self):
         os.environ.pop("OPENCODE_ZEN_API_KEY", None)
@@ -1116,9 +1244,7 @@ class TestKeys(_ClientCase):
 
     def test_zen_unparseable_file_is_a_reason_not_an_exception(self):
         os.environ.pop("OPENCODE_ZEN_API_KEY", None)
-        keys = Path(os.environ["HOME"]) / ".pi" / "agent"
-        keys.mkdir(parents=True)
-        (keys / "keys.json").write_text("{not json", encoding="utf-8")
+        self.zen_file("{not json")
         self.assertEqual(JR._opencode_key(), (None, "missing_file"))
 
     def test_probe_labels_key_sources_and_never_prints_a_value(self):
@@ -1271,8 +1397,8 @@ class TestEscalation(_ClientCase):
 
     def test_escalation_low_items(self):
         with (JevStub(tops={"a1": 0.5, "a3": 0.5}) as laya,
-              JevStub(model="typesafe-1") as typesafe,
-              JevStub(model="opencode-1") as zen):
+              JevStub(model="jev-1.13.0") as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
             result = self.scenario(laya, typesafe, zen)
         self.assertEqual(result["status"], "ok")
         self.assertEqual(len(laya.posts), 3)  # local first, one item per Laya request
@@ -1286,12 +1412,32 @@ class TestEscalation(_ClientCase):
         self.assertTrue(trail[0]["needs_fallback"])
         self.assertEqual(trail[0]["top"], 0.5)
         self.assertFalse(trail[1]["needs_fallback"])
-        self.assertEqual(trail[1]["model"], "typesafe-1")
+        self.assertEqual(trail[1]["model"], "jev-1.13.0")
         self.assertEqual(zen.posts, [])
+        # WR-02: the answers came from two rungs, so the top level names neither.
+        self.assertIsNone(result["backend"])
+        self.assertIsNone(result["model"])
+
+    def test_escalation_final_remote_error_keeps_the_low_local_answer(self):
+        # WR-01: a remote caller error for an item holding a low Laya answer keeps that answer
+        # (needs_fallback) in the result, as the answer log does.
+        with (JevStub(top=0.5) as laya,
+              JevStub(model="jev-1.13.0", script=[{"status": 400, "body": b"bad"}]) as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
+            result = self.scenario(laya, typesafe, zen, items=payload(noul_item("a1")))
+            log = Path(JR.answer_log_path()).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(result["status"], "ok")
+        self.assertNotIn("errors", result)
+        answer = result["answers"]["a1"]
+        self.assertEqual(answer["backend"], "laya")
+        self.assertTrue(answer["needs_fallback"])
+        self.assertEqual(result["trail"]["a1"][-1]["error"], "caller_error:http_400")
+        self.assertEqual(zen.posts, [])
+        self.assertEqual(json.loads(log[-1])["backend"], "laya")
 
     def test_escalation_explicit_never_escalates(self):
         with (JevStub(tops={"a1": 0.5, "a3": 0.5}) as laya,
-              JevStub(model="typesafe-1") as typesafe):
+              JevStub(model="jev-1.13.0") as typesafe):
             self.point_at(laya)
             self.point_remote("typesafe", typesafe)
             self.assertTrue(JR.consent_command("grant", "typesafe")["ok"])
@@ -1308,8 +1454,8 @@ class TestEscalation(_ClientCase):
         # SPEC R3 adjacency edge: `top >= threshold` is confident, not `<`.
         laya_threshold = JR.row_named("laya")["min_confidence"]
         with (JevStub(top=laya_threshold) as laya,  # exactly the laya row's min_confidence
-              JevStub(model="typesafe-1") as typesafe,
-              JevStub(model="opencode-1") as zen):
+              JevStub(model="jev-1.13.0") as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
             result = self.scenario(laya, typesafe, zen)
         self.assertEqual(typesafe.posts, [])
         self.assertFalse(any(a["needs_fallback"] for a in result["answers"].values()))
@@ -1319,8 +1465,8 @@ class TestEscalation(_ClientCase):
         # Review cycle 2 / T-21.1-28: a truncated answer at 0.95 is not confident in auto.
         script = [{"answer": True, "truncated": True}, None]  # a1 truncated, a2 clean
         with (JevStub(top=0.95, script=script) as laya,
-              JevStub(model="typesafe-1") as typesafe,
-              JevStub(model="opencode-1") as zen):
+              JevStub(model="jev-1.13.0") as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
             result = self.scenario(laya, typesafe, zen, items=payload(noul_item("a1"),
                                                                       noul_item("a2")))
         self.assertEqual(len(typesafe.posts), 1)
@@ -1332,7 +1478,7 @@ class TestEscalation(_ClientCase):
         # and under JEV_BACKEND=laya the same answers make zero remote requests (RESEARCH
         # Pitfall 2): the explicit run keeps needs_fallback: true instead of escalating.
         with (JevStub(top=0.95, script=list(script)) as laya2,
-              JevStub(model="typesafe-1") as typesafe2):
+              JevStub(model="jev-1.13.0") as typesafe2):
             self.point_at(laya2)
             self.point_remote("typesafe", typesafe2)
             self.enable("laya")
@@ -1343,8 +1489,8 @@ class TestEscalation(_ClientCase):
     def test_escalation_none_low(self):
         # SPEC R3 empty edge: every Laya answer high means no remote request at all.
         with (JevStub(top=0.9) as laya,
-              JevStub(model="typesafe-1") as typesafe,
-              JevStub(model="opencode-1") as zen):
+              JevStub(model="jev-1.13.0") as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
             result = self.scenario(laya, typesafe, zen)
         self.assertEqual(typesafe.posts, [])
         self.assertEqual(zen.posts, [])
@@ -1353,8 +1499,8 @@ class TestEscalation(_ClientCase):
     def test_escalation_remote_low_is_final(self):
         # A low answer from a remote row is final with needs_fallback: true (D-11).
         with (JevStub(top=0.5) as laya,
-              JevStub(model="typesafe-1", top=0.5) as typesafe,
-              JevStub(model="opencode-1") as zen):
+              JevStub(model="jev-1.13.0", top=0.5) as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
             self.point_at(laya)
             self.point_remote("typesafe", typesafe)
             self.point_remote("opencode", zen)
@@ -1374,8 +1520,8 @@ class TestEscalation(_ClientCase):
         # Only escalate-errored items fall through to a later remote row.
         script = [{"status": 503, "headers": {"Retry-After": "0"}, "body": b"busy"}] * 3
         with (JevStub(top=0.5) as laya,
-              JevStub(model="typesafe-1", script=script) as typesafe,
-              JevStub(model="opencode-1") as zen):
+              JevStub(model="jev-1.13.0", script=script) as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
             self.point_at(laya)
             self.point_remote("typesafe", typesafe)
             self.point_remote("opencode", zen)
@@ -1394,8 +1540,8 @@ class TestEscalation(_ClientCase):
         # A caller_error is final: the item never goes to a remote row (D-13).
         script = [{"status": 422, "body": b"bad"}, None]
         with (JevStub(script=script) as laya,
-              JevStub(model="typesafe-1") as typesafe,
-              JevStub(model="opencode-1") as zen):
+              JevStub(model="jev-1.13.0") as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
             result = self.scenario(laya, typesafe, zen)
         self.assertEqual(typesafe.posts, [])
         self.assertEqual(result["errors"]["a1"], "caller_error:http_422")
@@ -1410,8 +1556,8 @@ class TestEscalation(_ClientCase):
         script = [None] + [{"status": 503, "headers": {"Retry-After": "0"},
                              "body": b"busy"}] * 3
         with (JevStub(script=script) as laya,
-              JevStub(model="typesafe-1") as typesafe,
-              JevStub(model="opencode-1") as zen):
+              JevStub(model="jev-1.13.0") as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
             result = self.scenario(laya, typesafe, zen,
                                    items=payload(noul_item("a1"), noul_item("a2")))
         self.assertEqual(len(laya.posts), 4)  # a1 once; a2 the first try plus two retries
@@ -1426,8 +1572,8 @@ class TestEscalation(_ClientCase):
         # D-11: --skip-local skips every non-remote row, so a second opinion makes zero
         # Laya requests — not even the health probe.
         with (JevStub() as laya,
-              JevStub(model="typesafe-1") as typesafe,
-              JevStub(model="opencode-1") as zen):
+              JevStub(model="jev-1.13.0") as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
             self.point_at(laya)
             self.point_remote("typesafe", typesafe)
             self.point_remote("opencode", zen)
@@ -1444,8 +1590,8 @@ class TestEscalation(_ClientCase):
         # SPEC R3 concurrency edge (backstop): escalation starts only after every local
         # answer is in — the remote request arrives after the last Laya response.
         with (JevStub(top=0.5, delay=0.2) as laya,
-              JevStub(model="typesafe-1") as typesafe,
-              JevStub(model="opencode-1") as zen):
+              JevStub(model="jev-1.13.0") as typesafe,
+              JevStub(model="jev-1.14.0") as zen):
             result = self.scenario(laya, typesafe, zen)
         self.assertEqual(len(typesafe.posts), 1)
         self.assertGreater(typesafe.posts[0]["at"], laya.posts[-1]["at"])
@@ -1458,8 +1604,8 @@ class TestConsent(_ClientCase):
 
     def remotes(self, laya_top=0.5):
         """The stub trio open on the stack for the rest of the test: the caller owns them."""
-        return (JevStub(top=laya_top), JevStub(model="typesafe-1"),
-                JevStub(model="opencode-1"))
+        return (JevStub(top=laya_top), JevStub(model="jev-1.13.0"),
+                JevStub(model="jev-1.14.0"))
 
     def wire(self, laya, typesafe, zen, keys="typesafe"):
         """The stub trio wired as the three rows: only the named remotes have a key.
@@ -1557,8 +1703,8 @@ class TestConsent(_ClientCase):
         # D-07 / T-21.1-13: a record for one remote never enables another on fallthrough.
         script = [{"status": 503, "headers": {"Retry-After": "0"}, "body": b"busy"}] * 3
         laya = JevStub(top=0.5)
-        typesafe = JevStub(model="typesafe-1", script=script)
-        zen = JevStub(model="opencode-1")
+        typesafe = JevStub(model="jev-1.13.0", script=script)
+        zen = JevStub(model="jev-1.14.0")
         with laya, typesafe, zen:
             self.wire(laya, typesafe, zen, keys="both")
             JR.consent_command("grant", "typesafe")
@@ -1834,7 +1980,7 @@ class TestDeadline(_ClientCase):
         self.assertLess(elapsed, 1.5)
 
     def test_deadline_never_escalates(self):
-        laya, typesafe = JevStub(delay=0.3), JevStub(model="typesafe-1")
+        laya, typesafe = JevStub(delay=0.3), JevStub(model="jev-1.13.0")
         with laya, typesafe:
             self.wire_typesafe(laya, typesafe)
             started = time.monotonic()
@@ -1850,7 +1996,7 @@ class TestDeadline(_ClientCase):
         """The trickle setup shared by the three deadline-at-any-layer cases: item one is
         answered normally, item two gets `drip`, and the run must stop at the deadline."""
         laya = JevStub(script=[None, drip])
-        typesafe = JevStub(model="typesafe-1")
+        typesafe = JevStub(model="jev-1.13.0")
         with laya, typesafe:
             self.wire_typesafe(laya, typesafe)
             os.environ["GSD_PATH_JEV_DEADLINE_SECONDS"] = "0.8"
@@ -1924,7 +2070,7 @@ class TestMatrix(_ClientCase):
     def test_matrix_explicit_documented_accepted(self):
         # A score cell may be only `documented` for typesafe, but documented is enough (D-24).
         self.enable("typesafe")
-        with JevStub(model="typesafe-1") as typesafe:
+        with JevStub(model="jev-1.13.0") as typesafe:
             self.wire_typesafe(typesafe)
             result = self.run_screen(payload(score_item("s")))
         self.assertEqual(len(typesafe.posts), 1)
@@ -1935,7 +2081,7 @@ class TestMatrix(_ClientCase):
         self.enable("opencode")
         os.environ["JEV_ALLOW_REMOTE"] = "1"
         os.environ["OPENCODE_ZEN_API_KEY"] = "zen-key"
-        with JevStub(model="opencode-1") as zen:
+        with JevStub(model="jev-1.14.0") as zen:
             self.point_remote("opencode", zen)
             result = self.run_screen(payload(score_item("s")))
         self.assertEqual(result["status"], "unavailable")
@@ -1945,7 +2091,7 @@ class TestMatrix(_ClientCase):
 
     def test_matrix_image_item(self):
         # D-21: no builder exists for image or box — the refusal is the same on every row.
-        laya, typesafe = JevStub(), JevStub(model="typesafe-1")
+        laya, typesafe = JevStub(), JevStub(model="jev-1.13.0")
         with laya, typesafe:
             for backend in ("laya", "typesafe"):
                 for case, item in (("image", self.image_item("img")),
@@ -1966,8 +2112,8 @@ class TestMatrix(_ClientCase):
     def test_matrix_auto_skips_rung(self):
         # D-25: the score item's rung list drops opencode (cell `unverified`), so the
         # typesafe error is where the item ends — never a detour through that rung.
-        typesafe = JevStub(model="typesafe-1", script=[{"status": 503, "body": b"busy"}] * 3)
-        zen = JevStub(model="opencode-1")
+        typesafe = JevStub(model="jev-1.13.0", script=[{"status": 503, "body": b"busy"}] * 3)
+        zen = JevStub(model="jev-1.14.0")
         with typesafe, zen:
             self.point_remote("typesafe", typesafe)
             self.point_remote("opencode", zen)
@@ -2021,8 +2167,8 @@ class TestMatrix(_ClientCase):
         # The batch shape the docs promise: one consented remote request over one state
         # holds every question; the local row still asks one question per request.
         laya = JevStub(top=0.5)  # low on Laya: the items escalate to the remote batch
-        typesafe = JevStub(model="typesafe-1")
-        zen = JevStub(model="opencode-1")
+        typesafe = JevStub(model="jev-1.13.0")
+        zen = JevStub(model="jev-1.14.0")
         with laya, typesafe, zen:
             self.point_at(laya)
             self.point_remote("typesafe", typesafe)

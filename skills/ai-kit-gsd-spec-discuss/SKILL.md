@@ -33,9 +33,11 @@ decided provisionally and shown at the end.
    client's probe table, one entry per table backend (`laya`, `typesafe`, `opencode`), labels
    only (key *source*, never the key). Laya's URL comes from `JEV_LAYA_URL`, `AI_KIT_LAYA_URL`
    or a loopback `JEV_API_URL`, default `http://127.0.0.1:8010`, probed via `/health` (not
-   bare TCP). Keys the client reads: TypeSafe `TYPESAFE_API_KEY` or
+   bare TCP). Keys the client reads: TypeSafe `TYPESAFE_API_KEY`, `JEV_API_KEY`,
+   `JEV_API_KEY_FILE`, `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, then
    `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key`; OpenCode Zen `OPENCODE_ZEN_API_KEY` or
-   `opencode-zen.key` in `~/.pi/agent/keys.json`. A status `no_client` (no client found) or
+   `opencode-zen.key` in `${PI_CODING_AGENT_DIR:-~/.pi/agent}/keys.json`. Key files must be
+   0600. A status `no_client` (no client found) or
    `incompatible_client` (the client beside the skill predates the shared one) means own
    reasoning only, until the owner runs `python3 tools/setup.py install --headless --skills
    jev-fast-decision --replace-existing`.

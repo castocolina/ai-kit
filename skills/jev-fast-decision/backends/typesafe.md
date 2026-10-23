@@ -6,19 +6,22 @@ leaves the machine.
 
 ## Endpoint, models, keys
 
-- URL: `POST https://api.typesafe.ai/v1/systemone` (override `JEV_TYPESAFE_URL`); the probe is a
-  bearer `GET /v1/models` on the same origin — it checks the key before any question is sent.
+- URL: `POST https://api.typesafe.ai/v1/systemone` (override `JEV_TYPESAFE_URL`, which must be
+  `https`: any other URL is refused as `insecure_url`); the probe is a bearer `GET /v1/models`
+  on the same origin — it checks the key before any question is sent.
 - Request model: `jev-latest`. **The alias moves**: `jev-preview` is 1.14.0, and `jev-latest`
   moves onto it about a week after a release; `jev-1.13.0` stays available for a while.
   Versioned request ids are documented (`docs.typesafe.ai/models`, cited 2026-10-18) but not
-  live-tested here — pin with `JEV_TYPESAFE_MODEL` if you need a fixed id, and accept any
-  response whose `model` fullmatches `typesafe-*` (the exact returned string is unverified on
-  this host: record it on the first live call).
-- Key sources, in order: `TYPESAFE_API_KEY`, then the first line of
-  `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` (0600 enforced — a world-readable key
-  file is refused). Non-interactive agent shells do not inherit login-shell exports, so the
-  file source is the one that works there; export the variable only for the session, after the
-  user consented.
+  live-tested here — pin with `JEV_TYPESAFE_MODEL` if you need a fixed id. Responses fullmatch
+  `jev-<version>` (`jev-1.13.0`, `jev-1.14.0-preview`; SPEC R5): the response names the
+  versioned id that answered, whatever alias was asked for.
+- Key sources, in order (D-07): `TYPESAFE_API_KEY`, `JEV_API_KEY`, the first line of the file
+  `JEV_API_KEY_FILE` names, a `TYPESAFE_API_KEY=` or `JEV_API_KEY=` line in
+  `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, then the first line of
+  `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key`. Every file must be 0600 — a group- or
+  world-readable one is refused. Non-interactive agent shells do not inherit login-shell
+  exports, so the file sources are the ones that work there; export a variable only for the
+  session, after the user consented.
 
 ## Behaviour
 
@@ -36,7 +39,7 @@ leaves the machine.
 | --- | --- |
 | 401 / 403 | escalate + `unauthorized` (the key is wrong) |
 | 503 (+ `Retry-After`) | retry, at most 2, then escalate |
-| 402 | next model id; there is none here, so the item ends with `http_402` (final: the ladder does not move on to OpenCode Zen) |
+| 402 | next model id; there is none here, so the item escalates to the next consented rung (OpenCode Zen); with no rung left it ends with `http_402` |
 | other 4xx | final `caller_error:http_<code>` for that item |
 
 ## Consent

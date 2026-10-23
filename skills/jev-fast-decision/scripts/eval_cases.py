@@ -12,18 +12,24 @@ that lacks or repeats the key, exits non-zero before anything is written.
 
 Every saved case carries the client's own `needs_fallback` flag and the answering `backend`
 beside `id`, `top`, `correct` and `ambiguous`, so a recorded `fallback_rate` can be re-derived
-from the file alone.
+from the file alone. Cases are recorded under the backend that actually answered them, so an
+auto-mode case a remote rung answered never lands in the Laya calibration set. Both writes are
+atomic (mkstemp + os.replace).
 """
 
 from __future__ import annotations
 
 import ast
+import contextlib
 import importlib.util
 import io
 import json
 import math
+import os
 import pathlib
+import stat
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CASES = ROOT / "evals" / "cases.jsonl"
@@ -167,6 +173,21 @@ def rewrite_min_confidence(source: str, winners: dict) -> str:
     return "".join(lines)
 
 
+def _atomic_write(path: pathlib.Path, text: str) -> None:
+    """Replace `path` whole or not at all, keeping an existing file's mode."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        if path.exists():
+            os.chmod(tmp, stat.S_IMODE(path.stat().st_mode))
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 def _flag_value(name: str) -> str | None:
     if name in sys.argv:
         index = sys.argv.index(name)
@@ -194,7 +215,8 @@ def _run_calibration(results_path: pathlib.Path) -> int:
         if winner is None:
             print(f"{backend}: no qualifying threshold; keep the current value and say why in "
                   f"backends/{backend}.md", file=sys.stderr)
-    SCRIPT.write_text(updated, encoding="utf-8")
+    if updated != source:
+        _atomic_write(SCRIPT, updated)
     return 0
 
 
@@ -205,7 +227,6 @@ def main() -> int:
     record_path = _flag_value("--record")
     review = _review()
     records: list[dict] = []
-    cases_out: list[dict] = []
     for row in load_cases():
         item = row["item"]
         qtype = qtype_of(item)
@@ -221,13 +242,9 @@ def main() -> int:
         answer = result["answers"][item["id"]]
         record = case_record(item["id"], answer, row["expected"], qtype)
         record["needs_fallback"] = bool(answer["needs_fallback"])
-        record["backend"] = result["backend"]
+        record["backend"] = answer["backend"]  # the rung that answered, not the first one
         record["ambiguous"] = bool(row["ambiguous"])
         records.append(record)
-        cases_out.append({"id": record["id"], "top": record["top"],
-                          "correct": record["correct"], "ambiguous": record["ambiguous"],
-                          "needs_fallback": record["needs_fallback"],
-                          "backend": record["backend"]})
     report = summarize(records)
     if report["n"] != 32:
         return 1
@@ -237,9 +254,10 @@ def main() -> int:
         existing = (json.loads(path.read_text(encoding="utf-8"))
                     if path.exists() else {"results": []})
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = merge_results(existing, report["backend"], cases_out)
-        path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n",
-                        encoding="utf-8")
+        for backend in sorted({record["backend"] for record in records}):
+            existing = merge_results(existing, backend, [record for record in records
+                                                         if record["backend"] == backend])
+        _atomic_write(path, json.dumps(existing, sort_keys=True, indent=2) + "\n")
     return 0
 
 

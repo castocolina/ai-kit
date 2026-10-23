@@ -296,7 +296,7 @@ def call_client(seams: Seams, client: str, env: dict[str, str], payload: dict[st
         return {"status": "unavailable", "reason": "client_not_runnable"}
     try:
         result = json.loads(out.stdout)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         return {"status": "unavailable", "reason": "client_bad_output"}
     return result if isinstance(result, dict) else {"status": "unavailable",
                                                     "reason": "client_bad_output"}
@@ -310,8 +310,11 @@ def closed_status(got: dict[str, Any]) -> str:
 
 # ─── trail mapping ────────────────────────────────────────────────────────────
 
-def typed_answer(entry: Any) -> dict[str, Any]:
-    """One trail rung reduced to the caller's column: {choice, top, fallback, model} or {error}."""
+def typed_answer(entry: Any, item: Mapping[str, Any]) -> dict[str, Any]:
+    """One trail rung reduced to the caller's column: {choice, top, fallback, model} or {error}.
+
+    A score or choice pick is always one of `item`'s own criteria — the level text for a score,
+    the key for a choice — never backend text, which could be unbounded or an injection."""
     if not isinstance(entry, dict):
         return {"error": "invalid_response"}
     error = entry.get("error")
@@ -328,9 +331,12 @@ def typed_answer(entry: Any) -> dict[str, Any]:
         side = float(noul)
         choice = "yes" if side >= 0.5 else "no"
         top = max(side, 1.0 - side)
-    elif isinstance(entry.get("level"), str) and isinstance(entry.get("legend"), dict):
-        choice = entry["legend"].get(entry["level"])
-    elif isinstance(entry.get("choice"), str):
+    elif item.get("type") == "score":
+        levels, level = item.get("criteria"), entry.get("level")
+        if isinstance(levels, list) and isinstance(level, str) and level.isdigit() \
+                and int(level) < len(levels):
+            choice = levels[int(level)]
+    elif isinstance(entry.get("choice"), str) and entry["choice"] in (item.get("criteria") or {}):
         choice = entry["choice"]
     if not isinstance(choice, str):
         return {"error": "invalid_response"}
@@ -365,7 +371,7 @@ def fill_columns(got: dict[str, Any], results: dict[str, Any],
         for rung in rungs:
             name = rung.get("backend")
             if name in entry:
-                entry[name] = typed_answer(rung)
+                entry[name] = typed_answer(rung, item)
         entry["decided_by"] = decided_by(rungs)
 
 
@@ -469,7 +475,7 @@ def main(argv: list[str] | None = None, seams: Seams | None = None) -> int:
     else:
         try:
             payload = json.load(sys.stdin)
-        except ValueError:
+        except (ValueError, RecursionError):
             print(json.dumps({"error": "stdin is not JSON"}), file=sys.stderr)
             return 2
         items = payload.get("items") if isinstance(payload, dict) else None
