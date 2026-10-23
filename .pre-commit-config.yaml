@@ -4,10 +4,15 @@
 # All python tools come from the uv-locked dev env (`uv run`) — versions live in
 # uv.lock, NOT duplicated here. The ai-kit runtime stays stdlib-only; this is dev-only.
 #
-# Enforcement is intentionally LENIENT during the render refactor (relaxed pylint
-# design thresholds in pyproject.toml; a minimal test set below). After Phase 2 the
-# thresholds tighten (Task 2.6) and the test hook expands to the full suite.
+# Ruff and py-compile cover every shipped Python file under tools, skills and tests.
 default_install_hook_types: [pre-commit, pre-push]
+# BEGIN GENERATED test groups
+# arch: tests.test_arch
+# unit-uv: tests.test_framework_profiles
+# integration: tests.test_config_doctor tests.test_config_doctor_pty tests.test_wizard_app tests.test_wizard_pty
+# e2e: tests.test_ai_kit_gsd_curated_config_matrix tests.test_ai_kit_gsd_spec_discuss_e2e tests.test_ai_kit_spec_e2e tests.test_cross_ai_runner_e2e tests.test_curated_config_apply_e2e tests.test_curated_config_e2e tests.test_hook_registry_e2e tests.test_jev_skill_install_e2e tests.test_precompact_shims_e2e tests.test_system_memory_e2e tests.test_worktree_e2e
+# unit: tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_gsd_spec_discuss tests.test_ai_kit_opencode_providers tests.test_ai_kit_project_rules_agents tests.test_ai_kit_project_rules_all tests.test_ai_kit_project_rules_arch tests.test_ai_kit_project_rules_cicd tests.test_ai_kit_project_rules_docker tests.test_ai_kit_project_rules_makefile tests.test_ai_kit_project_rules_precommit tests.test_ai_kit_rules_common tests.test_ai_kit_spec tests.test_ai_kit_spec_env_scrub tests.test_ai_kit_spec_gsd tests.test_ai_kit_spec_gsd_tools tests.test_ai_kit_spec_legacy_config tests.test_ai_kit_spec_routing tests.test_ai_kit_spec_runner_dispatch tests.test_ai_kit_spec_runtimes_table tests.test_ai_kit_spec_superpowers tests.test_ai_kit_spec_trust tests.test_ai_kit_usage_metrics tests.test_claude_precompact tests.test_curated_config_apply tests.test_curated_config_cross_ai tests.test_curated_config_followups tests.test_curated_config_golden tests.test_curated_config_inventory tests.test_curated_config_plan_edit tests.test_curated_config_recommend tests.test_curated_config_script tests.test_curated_config_skills tests.test_cursor_agents tests.test_decision_probe tests.test_external_segments tests.test_gate_scope tests.test_gsd_curated_eval tests.test_hook_registry tests.test_jev_fast_decision tests.test_markdown_to_pdf tests.test_mermaid_style tests.test_precompact_core tests.test_run_unittest_parallel tests.test_setup tests.test_sibling_resolution tests.test_status_line tests.test_statusline_doctor tests.test_tool_advisor_core tests.test_tool_advisor_state tests.test_tool_substitution_hook
+# END GENERATED test groups
 repos:
   - repo: local
     hooks:
@@ -15,16 +20,14 @@ repos:
         name: ruff
         entry: uv run ruff check
         language: system
-        # Scoped to the refactor's modules + tests, plus review-spec.py.
-        # The rest of skills/ joins the gate later (the "enforce more
-        # after the refactor" expansion).
-        files: ^((tools|tests)/.*|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|skills/ai-kit-project-rules-agents/.*|skills/ai-kit-project-rules-makefile/.*|skills/ai-kit-project-rules-precommit/.*|skills/ai-kit-project-rules-arch/.*|skills/ai-kit-project-rules-docker/.*|skills/ai-kit-project-rules-cicd/.*|skills/ai-kit-project-rules-all/.*|skills/ai-kit-gsd-curated-config/.*|skills/_shared/.*)\.py$
+        files: ^(tools|skills|tests)/.*\.py$
         require_serial: true
       - id: pylint
         name: pylint
         entry: uv run pylint
         language: system
-        files: ^tools/(status-line|statusline-doctor|setup)\.py$
+        # Pylint covers every shipped Python file under tools and skills (not tests).
+        files: ^(tools|skills)/.*\.py$
         require_serial: true
       - id: pyright
         name: pyright
@@ -47,13 +50,13 @@ repos:
         name: py-compile
         entry: python3 -m py_compile
         language: system
-        files: ^(tools/(status-line|statusline-doctor|setup)|tools/hooks/[a-z_]+|tools/config_doctor_[a-z_]+|skills/ai-kit-spec-review/ai-kit-spec-review|skills/ai-kit-spec-execute-gsd/.*|skills/ai-kit-spec-execute/.*|skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|skills/ai-kit-project-rules-agents/.*|skills/ai-kit-project-rules-makefile/.*|skills/ai-kit-project-rules-precommit/.*|skills/ai-kit-project-rules-arch/.*|skills/ai-kit-project-rules-docker/.*|skills/ai-kit-project-rules-cicd/.*|skills/ai-kit-project-rules-all/.*|skills/ai-kit-gsd-curated-config/.*|skills/_shared/.*)\.py$
+        files: ^(tools|skills|tests)/.*\.py$
       # Tests run on the user's real runtime (system python3, stdlib-only), matching
-      # how the status line actually runs. Minimal core set for now; expands post-refactor.
+      # how the status line actually runs. Modules are discovered and grouped by the runner.
       # One subprocess per module, in parallel (tools/run_unittest_parallel.py, stdlib-only).
       - id: unittest
         name: unittest (core)
-        entry: python3 tools/run_unittest_parallel.py tests.test_run_unittest_parallel tests.test_status_line tests.test_setup tests.test_external_segments tests.test_statusline_doctor tests.test_arch tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_config_doctor tests.test_config_doctor_pty tests.test_ai_kit_usage_metrics tests.test_ai_kit_project_rules_agents tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_rules_common tests.test_ai_kit_project_rules_makefile tests.test_ai_kit_project_rules_precommit tests.test_ai_kit_project_rules_arch tests.test_ai_kit_project_rules_docker tests.test_ai_kit_project_rules_cicd tests.test_ai_kit_project_rules_all
+        entry: python3 tools/run_unittest_parallel.py --group unit --group arch -- tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_gsd_spec_discuss tests.test_ai_kit_opencode_providers tests.test_ai_kit_project_rules_agents tests.test_ai_kit_project_rules_all tests.test_ai_kit_project_rules_arch tests.test_ai_kit_project_rules_cicd tests.test_ai_kit_project_rules_docker tests.test_ai_kit_project_rules_makefile tests.test_ai_kit_project_rules_precommit tests.test_ai_kit_rules_common tests.test_ai_kit_spec tests.test_ai_kit_spec_env_scrub tests.test_ai_kit_spec_gsd tests.test_ai_kit_spec_gsd_tools tests.test_ai_kit_spec_legacy_config tests.test_ai_kit_spec_routing tests.test_ai_kit_spec_runner_dispatch tests.test_ai_kit_spec_runtimes_table tests.test_ai_kit_spec_superpowers tests.test_ai_kit_spec_trust tests.test_ai_kit_usage_metrics tests.test_claude_precompact tests.test_curated_config_apply tests.test_curated_config_cross_ai tests.test_curated_config_followups tests.test_curated_config_golden tests.test_curated_config_inventory tests.test_curated_config_plan_edit tests.test_curated_config_recommend tests.test_curated_config_script tests.test_curated_config_skills tests.test_cursor_agents tests.test_decision_probe tests.test_external_segments tests.test_gate_scope tests.test_gsd_curated_eval tests.test_hook_registry tests.test_jev_fast_decision tests.test_markdown_to_pdf tests.test_mermaid_style tests.test_precompact_core tests.test_run_unittest_parallel tests.test_setup tests.test_sibling_resolution tests.test_status_line tests.test_statusline_doctor tests.test_tool_advisor_core tests.test_tool_advisor_state tests.test_tool_substitution_hook tests.test_arch
         language: system
         pass_filenames: false
         always_run: true
@@ -62,7 +65,7 @@ repos:
       # Runs after the core suite so errors are easy to attribute.
       - id: unittest-wizard
         name: unittest (wizard — uv)
-        entry: uv run python tools/run_unittest_parallel.py tests.test_wizard_app tests.test_wizard_pty tests.test_config_doctor
+        entry: uv run python tools/run_unittest_parallel.py --group unit-uv --group integration -- tests.test_framework_profiles tests.test_config_doctor tests.test_config_doctor_pty tests.test_wizard_app tests.test_wizard_pty
         language: system
         pass_filenames: false
         always_run: true

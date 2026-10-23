@@ -6,8 +6,16 @@ import os
 import re
 
 from ai_kit_spec.cache import cache_base
+from ai_kit_spec.detection import normalize_runtime_keys
 
 CATALOG_TTL_SECONDS = 30 * 24 * 3600  # ~30 days -- spec Section 8, same order as RUNTIMES_TTL
+
+# 16 D-12: the catalog's own metadata lives in this reserved top-level object because every
+# other top-level key is a `provider/model` canonical key (canonical keys always contain `/`,
+# _meta never does); pre-Phase-16 catalogs have no `_meta` and count as version 1.
+# 18.1 D-04: entry runtimes keyed by runtime id.
+CATALOG_SCHEMA_VERSION = 3
+CATALOG_META_KEY = "_meta"
 
 _MANDATORY_CATALOG_FIELDS = {"provider", "runtimes", "source", "confidence", "last_verified"}
 _VALID_CONFIDENCE = {"high", "medium", "low"}
@@ -20,7 +28,11 @@ _FIELD_TYPES = {
     "batch_mode": bool, "is_router": bool, "fallback_quota": bool,
     "tokens_per_sec": (int, float), "max_output_tokens": int, "structured_output": bool,
     "tool_calling": bool, "native": bool, "reasoning_modes": list, "fast_mode": bool,
-    "speed_tier": str, "name_declared_purpose": str, "native_runtime": str,
+    "speed_tier": str, "name_declared_purpose": str,
+    # 16 D-09 — optional; absent means unknown; written only from a source statement.
+    "image_input": bool,
+    # 16 D-09 (review cycle 2 MEDIUM) — field-level provenance of image_input.
+    "image_input_source": str,
     # HIGH finding: is_router/batch_mode/fallback_quota have no external source (spec §3) --
     # they are ALWAYS either a naming heuristic's guess or a user's explicit confirmation of
     # that guess, and a plain bool alone cannot tell those two provenances apart. This list
@@ -36,11 +48,69 @@ _NUMERIC_SUBFIELD_TABLES = {
 }
 _RUNTIME_FIELD_TYPES = {"model_id": str, "ctx_window": (int, float)}
 _VALID_NAME_DECLARED_PURPOSE = {"review", "execute"}
-_VALID_NATIVE_RUNTIME = {"claude", "opencode", "codex", "cursor", "unknown"}
+_VALID_IMAGE_INPUT_SOURCE = {"models_dev", "opencode", "opencode-api"}
 
 
 def cache_catalog_path(env: dict) -> str:
     return os.path.join(cache_base(env), "model-catalog.json")
+
+
+def _runtime_migration_needed(meta: dict) -> bool:
+    """True when entry runtimes still use pre-id keys (18.1 D-04). Missing counts as old."""
+    version = meta.get("schema_version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        return True
+    return version < CATALOG_SCHEMA_VERSION
+
+
+def _entry_with_id_runtimes(entry):
+    """Shallow copy with runtime-id keys; entries without a dict `runtimes` stay put."""
+    if not isinstance(entry, dict):
+        return entry
+    runtimes = entry.get("runtimes")
+    if not isinstance(runtimes, dict):
+        return entry
+    copied = dict(entry)
+    copied["runtimes"] = normalize_runtime_keys(runtimes)
+    return copied
+
+
+def split_catalog_meta(raw) -> tuple:
+    """16 D-12: splits a raw catalog file's dict into (entries, meta). Entries is every
+    top-level key except the reserved CATALOG_META_KEY; meta is a shallow copy of that
+    key's value when it is a dict, else {}. Never raises, never mutates its input; a
+    non-dict `raw` (None, a list, a string) splits to ({}, {}). A schema older than
+    CATALOG_SCHEMA_VERSION returns each dict entry that has a dict `runtimes` as a
+    shallow copy whose keys are runtime ids; a current schema returns entries unchanged."""
+    if not isinstance(raw, dict):
+        return {}, {}
+    entries = {k: v for k, v in raw.items() if k != CATALOG_META_KEY}
+    meta_raw = raw.get(CATALOG_META_KEY)
+    meta = dict(meta_raw) if isinstance(meta_raw, dict) else {}
+    if _runtime_migration_needed(meta):
+        entries = {key: _entry_with_id_runtimes(value) for key, value in entries.items()}
+    return entries, meta
+
+
+def join_catalog_meta(entries: dict, meta: dict) -> dict:
+    """16 D-12: inverse of split_catalog_meta -- a new dict of `entries` plus the reserved
+    CATALOG_META_KEY only when `meta` is non-empty (an empty meta writes no `_meta` key).
+    Never mutates either input."""
+    joined = dict(entries)
+    if meta:
+        joined[CATALOG_META_KEY] = dict(meta)
+    return joined
+
+
+def catalog_schema_is_current(meta) -> bool:
+    """16 D-12: mirrors runtimes_schema_is_current -- True only for a dict whose
+    `schema_version` is a non-bool int >= CATALOG_SCHEMA_VERSION. A missing or older
+    version counts as stale whatever the TTL says. Never raises."""
+    if not isinstance(meta, dict):
+        return False
+    version = meta.get("schema_version")
+    return isinstance(version, int) and not isinstance(version, bool) \
+        and version >= CATALOG_SCHEMA_VERSION
 
 
 def canonical_key(provider: str, bare_model_id: str) -> str:
@@ -50,17 +120,14 @@ def canonical_key(provider: str, bare_model_id: str) -> str:
     return f"{provider}/{bare_model_id}"
 
 
-def validate_catalog_entry(model_id: str, entry: dict) -> str | None:
-    """Mandatory fields per spec Section 5: provider, runtimes (non-empty dict), source,
-    confidence, last_verified -- checked for PRESENCE and TYPE (last_verified additionally
-    checked for YYYY-MM-DD shape). Every optional field IS type-checked when present (a
-    missing optional field is never a validation failure -- only a reduced ranking signal
-    later, model_ranker.py); a present-but-wrong-typed one is. Every `runtimes` value's own
-    `model_id`/`ctx_window` sub-fields are type-checked too when present, not just the
-    top-level "is it a dict" shape check."""
+def _validate_mandatory_fields(model_id: str, entry: dict) -> str | None:
     missing = _MANDATORY_CATALOG_FIELDS - entry.keys()
     if missing:
         return f"{model_id}: missing mandatory field(s) {sorted(missing)}"
+    return None
+
+
+def _validate_runtimes_shape(model_id: str, entry: dict) -> str | None:
     if not isinstance(entry.get("runtimes"), dict) or not entry["runtimes"]:
         return f"{model_id}: 'runtimes' must be a non-empty object"
     for cli_name, rt in entry["runtimes"].items():
@@ -69,45 +136,47 @@ def validate_catalog_entry(model_id: str, entry: dict) -> str | None:
         for field, expected_type in _RUNTIME_FIELD_TYPES.items():
             if field in rt and rt[field] is not None and not isinstance(rt[field], expected_type):
                 return f"{model_id}: 'runtimes.{cli_name}.{field}' must be of type {expected_type}"
+    return None
+
+
+def _validate_confidence_and_dates(model_id: str, entry: dict) -> str | None:
     if entry.get("confidence") not in _VALID_CONFIDENCE:
         return f"{model_id}: 'confidence' must be one of {sorted(_VALID_CONFIDENCE)}"
     if "last_verified" in entry and isinstance(entry["last_verified"], str) and \
             not _LAST_VERIFIED_RE.match(entry["last_verified"]):
         return f"{model_id}: 'last_verified' must be YYYY-MM-DD"
+    return None
+
+
+def _validate_typed_fields(model_id: str, entry: dict) -> str | None:
     for field, expected_type in _FIELD_TYPES.items():
         if field not in entry:
             continue
-        # HIGH finding: an explicit None on an OPTIONAL field means "no value" (and, per
-        # merge_catalog_entry below, "clear this field on merge") -- it must never be rejected
-        # as a type mismatch, the same way a runtime sub-field's None is already exempted above.
-        # Important finding: that exemption must NOT extend to a MANDATORY field -- provider/
-        # source/last_verified are mandatory (in _MANDATORY_CATALOG_FIELDS) even though they
-        # also appear in this type table, so an explicit None there is a missing-mandatory-field
-        # failure, not a harmless clear signal.
         if entry[field] is None:
             if field in _MANDATORY_CATALOG_FIELDS:
                 return f"{model_id}: '{field}' must be of type {expected_type} (got None)"
             continue
         if not isinstance(entry[field], expected_type):
             return f"{model_id}: '{field}' must be of type {expected_type}"
+    return None
+
+
+def _validate_declared_purpose_fields(model_id: str, entry: dict) -> str | None:
     if "name_declared_purpose" in entry and entry["name_declared_purpose"] is not None \
             and entry["name_declared_purpose"] not in _VALID_NAME_DECLARED_PURPOSE:
         return (f"{model_id}: 'name_declared_purpose' must be one of "
                 f"{sorted(_VALID_NAME_DECLARED_PURPOSE)}")
-    # Forward-compatible schema support only: no current code path in this
-    # codebase produces a model_catalog.py entry with a `cli` key at all
-    # (verified this phase: `cli` does not appear anywhere in `_FIELD_TYPES` /
-    # `_MANDATORY_CATALOG_FIELDS` / `_RUNTIME_FIELD_TYPES`). Satisfies
-    # REQUIREMENTS.md's literal "model-catalog entries" wording without
-    # claiming it is reachable by any live code path today.
-    if "native_runtime" in entry and entry["native_runtime"] is not None \
-            and entry["native_runtime"] not in _VALID_NATIVE_RUNTIME:
-        return (f"{model_id}: 'native_runtime' must be one of "
-                f"{sorted(_VALID_NATIVE_RUNTIME)}")
-    if "native_runtime" in entry and entry.get("native_runtime") is not None \
-            and entry.get("cli") is not None:
-        return (f"{model_id}: 'native_runtime' must not be set on an "
-                f"entry with a non-null 'cli'")
+    if "image_input_source" in entry and entry["image_input_source"] is not None \
+            and entry["image_input_source"] not in _VALID_IMAGE_INPUT_SOURCE:
+        return (f"{model_id}: 'image_input_source' must be one of "
+                f"{sorted(_VALID_IMAGE_INPUT_SOURCE)}")
+    if entry.get("image_input_source") is not None \
+            and not isinstance(entry.get("image_input"), bool):
+        return f"{model_id}: 'image_input_source' requires a bool 'image_input'"
+    return None
+
+
+def _validate_list_and_numeric_tables(model_id: str, entry: dict) -> str | None:
     if "reasoning_modes" in entry and isinstance(entry["reasoning_modes"], list) and \
             not all(isinstance(m, str) for m in entry["reasoning_modes"]):
         return f"{model_id}: 'reasoning_modes' must be a list of strings"
@@ -126,6 +195,31 @@ def validate_catalog_entry(model_id: str, entry: dict) -> str | None:
     return None
 
 
+_CATALOG_ENTRY_VALIDATORS = (
+    _validate_mandatory_fields,
+    _validate_runtimes_shape,
+    _validate_confidence_and_dates,
+    _validate_typed_fields,
+    _validate_declared_purpose_fields,
+    _validate_list_and_numeric_tables,
+)
+
+
+def validate_catalog_entry(model_id: str, entry: dict) -> str | None:
+    """Mandatory fields per spec Section 5: provider, runtimes (non-empty dict), source,
+    confidence, last_verified -- checked for PRESENCE and TYPE (last_verified additionally
+    checked for YYYY-MM-DD shape). Every optional field IS type-checked when present (a
+    missing optional field is never a validation failure -- only a reduced ranking signal
+    later, model_ranker.py); a present-but-wrong-typed one is. Every `runtimes` value's own
+    `model_id`/`ctx_window` sub-fields are type-checked too when present, not just the
+    top-level "is it a dict" shape check."""
+    for validator in _CATALOG_ENTRY_VALIDATORS:
+        reason = validator(model_id, entry)
+        if reason:
+            return reason
+    return None
+
+
 def merge_catalog_entry(catalog: dict, model_id: str, entry: dict) -> tuple:
     """Returns (new_catalog, rejection_reason). Never mutates `catalog`. An invalid entry is
     rejected and reported (spec Section 8: "that single entry is rejected and reported; the
@@ -134,6 +228,8 @@ def merge_catalog_entry(catalog: dict, model_id: str, entry: dict) -> tuple:
     `runtimes` is MERGED into any existing entry at this key, never replaced wholesale --
     this is what lets two different CLIs' runtime mappings for the same real model coexist
     under one canonical key (HIGH finding: catalog identity must not lose runtime mappings)."""
+    if model_id == CATALOG_META_KEY:
+        return catalog, f"{model_id}: reserved catalog key, not a model id"
     reason = validate_catalog_entry(model_id, entry)
     if reason:
         return catalog, reason
@@ -161,10 +257,10 @@ def merge_catalog_entry(catalog: dict, model_id: str, entry: dict) -> tuple:
 
 def current_candidate_keys(catalog: dict, discovered_models: list) -> set:
     """The subset of catalog keys whose `runtimes` contain at least one (cli, model_id) pair
-    from `discovered_models` (the same [{"cli", "model_id"}, ...] shape Task 7 builds from a
+    from `discovered_models` (the same [{"runtime", "model_id"}, ...] shape Task 7 builds from a
     fresh runtimes snapshot). Used to exclude stale entries -- a model no longer installed --
     from ranking/presentation (Task 8) without deleting them from the cache."""
-    discovered_pairs = {(c["cli"], c["model_id"]) for c in discovered_models}
+    discovered_pairs = {(c["runtime"], c["model_id"]) for c in discovered_models}
     return {
         key for key, entry in catalog.items()
         if any((cli, rt.get("model_id")) in discovered_pairs

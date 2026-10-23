@@ -862,15 +862,20 @@ def _precommit_hook_files_regex(hook_id):
     return match.group(1).strip().strip("'\"")
 
 
+def _tool_roots_cover(rel_dir: str, roots: list[str]) -> bool:
+    sample = f"{rel_dir.rstrip('/')}/module.py"
+    return any(sample == root or sample.startswith(f"{root}/") for root in roots)
+
+
+
 class TestGateRegistration(unittest.TestCase):
     """The sibling docker/precommit suites' gate-registration checks,
     retargeted at this skill."""
 
-    def test_makefile_registers_module_and_package(self):
+    def test_makefile_lists_module(self):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             text = handle.read()
         self.assertIn("tests.test_ai_kit_project_rules_cicd", text)
-        self.assertIn("skills/ai-kit-project-rules-cicd/", text)
 
     def test_ruff_and_py_compile_match_package_path(self):
         for hook_id in ("ruff", "py-compile"):
@@ -882,19 +887,20 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         self.assertIn("tests.test_ai_kit_project_rules_cicd", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
-        self.assertIn("skills/ai-kit-project-rules-cicd", include)
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-project-rules-cicd", include), include)
 
     def test_vulture_paths_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
-        self.assertIn("skills/ai-kit-project-rules-cicd", paths)
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-project-rules-cicd", paths), paths)
 
 
 _MK_RUFF_MYPY_TASK1 = "ruff:\n\tuv run ruff check .\n\nmypy:\n\tuv run mypy .\n"

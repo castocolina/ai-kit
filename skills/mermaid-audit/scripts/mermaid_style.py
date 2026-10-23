@@ -6,8 +6,14 @@ per-node class assignments, edge out-degrees — then runs near-binary color (C*
 and shape (S*) rules. Companion to audit_mermaid.py (which owns syntax/render).
 Scope: flowchart/graph blocks. Other diagram types are skipped (returns no facts).
 """
+import argparse
+import os
 import re
+import struct
+import sys
 from dataclasses import dataclass, field
+
+FENCE_OPEN = re.compile(r"^(\s*)(`{3,}|~{3,})\s*mermaid\b", re.IGNORECASE)
 
 # Node shapes — ORDER MATTERS: match multi-bracket forms before single-bracket.
 _NODE_RE = re.compile(r"""
@@ -37,6 +43,40 @@ _CLASS_RE = re.compile(r"^\s*class\s+(?P<ids>[\w, ]+?)\s+(?P<name>\w+)\s*$", re.
 _TRIPLE_RE = re.compile(r"(?P<id>\b[A-Za-z0-9_]+)(?:\[[^\]]*\]|\([^)]*\))?:::(?P<name>\w+)")
 _SHAPE_NAMES = ("cylinder", "subroutine", "stadium", "circle", "hexagon",
                 "lean_r", "rhombus", "round", "rect")
+
+
+def iter_md(paths):
+    for p in paths:
+        if os.path.isdir(p):
+            for root, _, files in os.walk(p):
+                for f in sorted(files):
+                    if f.endswith((".md", ".markdown")):
+                        yield os.path.join(root, f)
+        else:
+            yield p
+
+
+def extract(md_file):
+    """Yield (start_line, body) per mermaid block. start_line is 1-based."""
+    with open(md_file, encoding="utf-8", errors="replace") as fh:
+        lines = fh.readlines()
+    i = 0
+    while i < len(lines):
+        m = FENCE_OPEN.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        indent, fence = m.group(1), m.group(2)
+        close = re.compile(r"^\s*" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}\s*$")
+        start = i + 1
+        body = []
+        i += 1
+        while i < len(lines) and not close.match(lines[i]):
+            ln = lines[i]
+            body.append(ln[len(indent):] if ln.startswith(indent) else ln)
+            i += 1
+        i += 1
+        yield start, "".join(body)
 
 
 @dataclass
@@ -287,8 +327,6 @@ def shape_findings(facts):
     return findings
 
 
-import struct as _struct
-
 READING_COLUMN_PX = 900     # GitHub markdown content column (approx, centered)
 DEFAULT_FONT_PX = 16        # Mermaid default node font
 MIN_LEGIBLE_FONT_PX = 11    # below this, text reads only when expanded
@@ -303,11 +341,11 @@ def png_size(path):
         head = fh.read(24)
     if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
         return None
-    width, height = _struct.unpack(">II", head[16:24])
+    width, height = struct.unpack(">II", head[16:24])
     return (width, height)
 
 
-def geometry_findings(width, height, node_count):
+def geometry_findings(width, height):
     """R-rules over rendered pixel dimensions. Pure + deterministic."""
     findings = []
     if width <= 0 or height <= 0:
@@ -346,11 +384,6 @@ def geometry_findings(width, height, node_count):
     return findings
 
 
-import argparse
-import os as _os
-import sys as _sys
-
-
 def audit_block(block):
     facts = extract_style_facts(block)
     return color_findings(facts) + shape_findings(facts)
@@ -361,21 +394,16 @@ def main(argv=None):
     ap.add_argument("target", help="a .md file or a directory to scan")
     a = ap.parse_args(argv)
 
-    # Lazy import (inside main) of the proven fence extractor — keeps module load
-    # free of a cycle, since audit_mermaid imports this module at its top.
-    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-    from audit_mermaid import extract as _extract_blocks, iter_md as _iter_md
-
     total = 0
-    for md in _iter_md([a.target]):
-        for start, body in _extract_blocks(md):
+    for md in iter_md([a.target]):
+        for start, body in extract(md):
             for fnd in audit_block(body):
                 total += 1
                 where = f"{md}:{start}"
                 node = f" [{fnd.node}]" if fnd.node else ""
                 print(f"{where}\t{fnd.rule}\t{fnd.severity}\t{fnd.message}{node}\t→ {fnd.fix}")
-    print(f"--- {total} color/shape finding(s) ---", file=_sys.stderr)
-    _sys.exit(1 if total else 0)
+    print(f"--- {total} color/shape finding(s) ---", file=sys.stderr)
+    sys.exit(1 if total else 0)
 
 
 if __name__ == "__main__":

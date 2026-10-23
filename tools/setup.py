@@ -35,16 +35,22 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 from collections import namedtuple
 from typing import cast
 
 CATEGORIES = ("agents", "commands", "skills")
 
+# D-14: skills also linked into <pi_dir>/skills, derived from the claude
+# selection. Phase 22 widens this set.
+PI_SKILLS = frozenset({"jev-fast-decision"})
+
 Paths = namedtuple(
     "Paths",
-    "install_dir claude_dir settings config_dir config_toml sample status_line "
-    "statusline_doctor segments_dir claude_hook cursor_dir cursor_hooks cursor_hook",
+    "install_dir claude_dir pi_dir backups_dir settings config_dir config_toml "
+    "sample status_line statusline_doctor segments_dir cursor_dir "
+    "cursor_hooks opencode_dir",
 )
 
 
@@ -57,12 +63,19 @@ def resolve_paths(env):
         env.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share"), "ai-kit"
     )
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+    pi_dir = env.get("PI_CODING_AGENT_DIR") or os.path.join(home, ".pi", "agent")
+    state_base = env.get("XDG_STATE_HOME") or os.path.join(home, ".local", "state")
+    backups_dir = os.path.join(state_base, "ai-kit", "backups")
     cursor_dir = env.get("CURSOR_CONFIG_DIR") or os.path.join(home, ".cursor")
     config_base = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    opencode_dir = (env.get("OPENCODE_CONFIG_DIR") or
+                    os.path.join(config_base, "opencode"))
     config_dir = os.path.join(config_base, "ai-kit")
     return Paths(
         install_dir=install_dir,
         claude_dir=claude_dir,
+        pi_dir=pi_dir,
+        backups_dir=backups_dir,
         settings=os.path.join(claude_dir, "settings.json"),
         config_dir=config_dir,
         config_toml=os.path.join(config_dir, "statusline.toml"),
@@ -70,12 +83,9 @@ def resolve_paths(env):
         status_line=os.path.join(install_dir, "tools", "status-line.py"),
         statusline_doctor=os.path.join(install_dir, "tools", "statusline-doctor.py"),
         segments_dir=os.path.join(config_dir, "segments"),
-        claude_hook=os.path.join(
-            install_dir, "tools", "hooks", "claude_session_start.py"),
         cursor_dir=cursor_dir,
         cursor_hooks=os.path.join(cursor_dir, "hooks.json"),
-        cursor_hook=os.path.join(
-            install_dir, "tools", "hooks", "cursor_session_start.py"),
+        opencode_dir=opencode_dir,
     )
 
 
@@ -1027,11 +1037,12 @@ def _install_dir_of(link, target):
     return os.path.dirname(os.path.dirname(target))
 
 
-def link_one(link_path, target, dry, counts):
+def link_one(link_path, target, dry, counts, install_dir=None):
     """Create or refresh one symlink, never clobbering a real file or a foreign
     symlink (port of install.sh link_one). 'foreign' = an existing symlink whose
-    target is NOT inside the same install dir as `target`."""
-    install_dir = _install_dir_of(link_path, target)
+    target is NOT inside the same install dir as `target`. Nested hook targets
+    pass their explicit install root; category links retain the inferred root."""
+    install_dir = install_dir or _install_dir_of(link_path, target)
     if os.path.islink(link_path):
         cur = os.readlink(link_path)
         if cur == target:
@@ -1061,6 +1072,49 @@ def unlink_one(link_path, dry, counts):
     counts["unlinked"] += 1
     if not dry and os.path.lexists(link_path):
         os.remove(link_path)
+
+
+def _backup_stamp():
+    """UTC stamp for a backup claim dir name (a function so tests can fix it)."""
+    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+
+
+def _backup_entry(path, root_dir, name):
+    """Move `path` (a dir, file or symlink) into an exclusively claimed
+    <root_dir>/<name>.bak-<stamp> dir (D-15). The claim is made with os.mkdir
+    (exclusive — the idea of config_backup.py's _claim_copy, done with a
+    directory because the entry may be any of the three shapes), numbering
+    -1, -2, ... on a collision. Returns the moved entry's path inside the
+    claim. On a move failure the claim is removed ONLY when it is empty (across
+    filesystems shutil.move copies with copytree then deletes the source, so a
+    failure can leave a populated claim AND a partial source — deleting the
+    claim could destroy the only full copy); a non-empty claim is kept, one
+    `warn:` line names source and destination, and the error re-raises."""
+    os.makedirs(root_dir, mode=0o700, exist_ok=True)
+    stamp = _backup_stamp()
+    claim = os.path.join(root_dir, f"{name}.bak-{stamp}")
+    n = 0
+    while True:
+        try:
+            os.mkdir(claim, 0o700)
+            break
+        except FileExistsError:
+            n += 1
+            claim = os.path.join(root_dir, f"{name}.bak-{stamp}-{n}")
+    try:
+        dest = os.path.join(claim, name)
+        shutil.move(path, dest)
+    except OSError as exc:
+        if not os.listdir(claim):
+            os.rmdir(claim)
+            detail = "nothing was moved"
+        else:
+            detail = (f"the partial copy stays at {claim}; "
+                      "check both before retrying")
+        print(f"warn: moving {path} to {claim} failed ({exc}); {detail}",
+              file=sys.stderr)
+        raise
+    return dest
 
 
 def stale_link_candidates(claude_dir, install_dir, present):
@@ -1123,8 +1177,12 @@ def predecessor_candidates(claude_dir, install_dir, entries):
     symlink at <claude>/<cat>/<name> that is foreign to the CURRENT install_dir
     yet carries the ai-kit <root>/<cat>/<name> shape (target basename == name,
     its parent dir name == cat) AND whose <name> is a current repo entry, so it
-    can be re-pointed. Unrelated foreign symlinks (different shape, or no current
-    entry) are excluded — we never touch a link that isn't recognizably ours."""
+    can be re-pointed. The link must ALSO be dangling (its target does not
+    resolve): a live target is someone's content and belongs to the replace
+    path (headless --replace-existing / the wizard's replace gate), never to
+    this gate. Unrelated foreign symlinks (different shape, live, or no current
+    entry) are excluded — we never touch a link that isn't recognizably ours
+    and gone."""
     out = []
     for cat in CATEGORIES:
         by_name = dict(entries.get(cat, []))
@@ -1138,6 +1196,8 @@ def predecessor_candidates(claude_dir, install_dir, entries):
             old = os.readlink(link)
             if _is_inside(old, install_dir):
                 continue                       # already a current ai-kit link
+            if os.path.exists(link):
+                continue                       # live target: foreign content, replace path's job
             if os.path.basename(old) != name:
                 continue                       # not the ai-kit <cat>/<name> shape
             if os.path.basename(os.path.dirname(old)) != cat:
@@ -1148,15 +1208,23 @@ def predecessor_candidates(claude_dir, install_dir, entries):
     return out
 
 
-def apply_predecessor_links(claude_dir, cands, repoint, dry, counts):
+def apply_predecessor_links(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        claude_dir, cands, repoint, dry, counts, backup_dir=None):
     """Apply the repoint/delete decision for each predecessor-link candidate
     (mutating). `cands` is predecessor_candidates()'s output:
-    (cat, name, old, new_target)."""
+    (cat, name, old, new_target). With `backup_dir` given and not dry, each old
+    link is first moved into <backup_dir>/<name>.bak-<stamp>/ (SPEC R8: the
+    gate removes nothing without a backup); without it the old removal stays
+    (only the legacy raw-terminal adopt_predecessor_links relies on that)."""
     for cat, name, _old, new_target in cands:
         link = os.path.join(claude_dir, cat, name)
         if not dry:
             if os.path.lexists(link):
-                os.remove(link)
+                if backup_dir is not None:
+                    dest = _backup_entry(link, backup_dir, name)
+                    print(f"moved {link} -> {dest}")
+                else:
+                    os.remove(link)
             if repoint:
                 os.symlink(new_target, link)
         counts["relinked" if repoint else "pruned"] += 1
@@ -1372,24 +1440,52 @@ def _install_root(entries):
     return ""
 
 
-def _read_json(path):
-    """Load a JSON object, or {} on any error / non-dict (mirrors install.sh)."""
-    if not os.path.isfile(path):
-        return {}
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (ValueError, OSError):
-        return {}
-    return data if isinstance(data, dict) else {}
+def _pi_entries(entries):
+    """The entries the pi root can hold (D-14): skills whose names are in
+    PI_SKILLS; the pi root carries no agents or commands."""
+    return {"skills": [(n, p) for n, p in entries["skills"] if n in PI_SKILLS],
+            "commands": [], "agents": []}
 
 
-def _write_json(path, data):
-    """Write JSON with a 2-space indent + trailing newline, creating parents."""
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
+def sync_pi_links(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        paths, entries, dry, counts, names, mirror=False):
+    """Mirror the claude skills selection into <pi_dir>/skills for PI_SKILLS
+    names (D-14). `names` is the set of skill names the run selected; no pi
+    state is stored — the claude links ARE the selection.
+
+    Additive part (both call sites): for each PI_SKILLS name that is in
+    `names`, has a repo entry AND a claude ai-kit link, link_one the pi path.
+    A missing pi agent dir is a message and never created (SPEC R8 empty edge).
+
+    Mirror part (`mirror=True`, the wizard commit only): a PI_SKILLS repo entry
+    the commit's selection leaves unchecked is unlinked from the pi root — the
+    selection decides, never the claude path's state (so a claude path
+    link_one left alone costs no accepted pi link). Nothing else in the pi
+    root is unlinked: a stale link (repo entry gone) belongs to the stale gate
+    and a name outside PI_SKILLS is not this phase's.
+
+    shortcut: under --dry-run the mirror reads the current claude links, so
+    its counts can lag; fine until dry-run counts need to be exact."""
+    by_name = dict(entries["skills"])
+    if mirror:
+        pi_installed = installed_links(paths.pi_dir, paths.install_dir)["skills"]
+        for name in sorted(PI_SKILLS):
+            if name in by_name and name in pi_installed and name not in names:
+                unlink_one(os.path.join(paths.pi_dir, "skills", name), dry, counts)
+    if not any(name in names and name in by_name for name in PI_SKILLS):
+        return
+    claude_installed = installed_links(paths.claude_dir, paths.install_dir)["skills"]
+    for name in sorted(PI_SKILLS):
+        if name not in names or name not in by_name:
+            continue
+        if name not in claude_installed:
+            continue
+        if not os.path.isdir(paths.pi_dir):
+            print(f"note: pi agent dir {paths.pi_dir} not found; "
+                  f"{name} not linked for pi", file=sys.stderr)
+            continue
+        link_one(os.path.join(paths.pi_dir, "skills", name), by_name[name],
+                 dry, counts)
 
 
 JSON_STATE_ABSENT = "absent"
@@ -1406,13 +1502,129 @@ CURSOR_HOOK_EVENT = "sessionStart"
 CURSOR_HOOK_MARKER = os.path.join("tools", "hooks", "cursor_session_start.py")
 
 
+# ── Hook registry (D-11) ──────────────────────────────────────────────────────
+HookRow = namedtuple(
+    "HookRow",
+    "id host event matcher script default experimental verdict timeout",
+)
+
+# A verdict is one of HOOK_VERDICTS, or "gap: <reason>" (reason bounded to 24
+# characters by the 21.2 close-out so hook_description stays under the cap).
+HOOK_VERDICTS = ("positive", "non-positive", "unmeasured")
+
+# Recorded per-host verdicts (21.2-MEASUREMENTS.md); the 21.2 close-out edits
+# only this dict
+PRECOMPACT_VERDICTS = {
+    "claude": "unmeasured",
+    "pi": "unmeasured",
+    "opencode": "unmeasured",
+}
+
+# D-11: flat rows, one per id x host x event; `default` is derived from the
+# verdict for precompact rows and explicit for advisory rows.
+HOOK_SUMMARIES = {
+    "session-briefing": (
+        "SessionStart briefing names installed modern tools for the user and model."
+    ),
+    "tool-advisor": (
+        "PreToolUse advisor: suggests rg, bat, fd or sd for grep, cat, find or sed "
+        "and reports large reads; advice only."
+    ),
+    "tool-reminder": "After grep/cat/sed/find, names output size and a better installed tool.",
+    "decision-probe": "Reports whether jev-fast-decision backends are usable; off by default.",
+    "precompact": "PreCompact pre-summary (local Laya).",
+}
+
+HOOK_REGISTRY = (
+    HookRow(
+        id="session-briefing", host="claude", event=CLAUDE_HOOK_EVENT,
+        matcher=CLAUDE_HOOK_MATCHER, script="tools/hooks/claude_session_start.py",
+        default=True, experimental=False, verdict=None, timeout=None),
+    HookRow(
+        id="session-briefing", host="cursor", event=CURSOR_HOOK_EVENT,
+        matcher=None, script="tools/hooks/cursor_session_start.py",
+        default=True, experimental=False, verdict=None, timeout=None),
+    HookRow(
+        id="tool-advisor", host="claude", event="PreToolUse", matcher="Bash|Read",
+        script="tools/hooks/claude_tool_advisor.py", default=True,
+        experimental=False, verdict=None, timeout=3),
+    HookRow(
+        id="tool-advisor", host="pi", event="tool_result", matcher=None,
+        script="tools/hooks/pi/ai-kit-tool-advisor.ts", default=True,
+        experimental=False, verdict=None, timeout=None),
+    HookRow(
+        id="tool-reminder", host="claude", event="PostToolUse", matcher="Bash",
+        script="tools/hooks/claude_tool_reminder.py", default=True,
+        experimental=False, verdict=None, timeout=3),
+    HookRow(
+        id="tool-reminder", host="pi", event="tool_result", matcher=None,
+        script="tools/hooks/pi/ai-kit-tool-reminder.ts", default=True,
+        experimental=False, verdict=None, timeout=None),
+    HookRow(
+        id="decision-probe", host="claude", event="SessionStart", matcher="startup",
+        script="tools/hooks/claude_decision_probe.py", default=False,
+        experimental=False, verdict=None, timeout=5),
+    HookRow(
+        id="precompact", host="claude", event="PreCompact", matcher="manual|auto",
+        script="tools/hooks/claude_precompact.py",
+        default=PRECOMPACT_VERDICTS["claude"] == "positive",
+        experimental=False, verdict=PRECOMPACT_VERDICTS["claude"], timeout=10),
+    HookRow(
+        id="precompact", host="claude", event="SessionStart", matcher="compact",
+        script="tools/hooks/claude_precompact.py",
+        default=PRECOMPACT_VERDICTS["claude"] == "positive",
+        experimental=False, verdict=PRECOMPACT_VERDICTS["claude"], timeout=10),
+    HookRow(
+        id="precompact", host="pi", event="session_before_compact", matcher=None,
+        script="tools/hooks/pi/ai-kit-precompact.ts",
+        default=PRECOMPACT_VERDICTS["pi"] == "positive",
+        experimental=False, verdict=PRECOMPACT_VERDICTS["pi"], timeout=None),
+    HookRow(
+        id="precompact", host="opencode", event="experimental.session.compacting",
+        matcher=None, script="tools/hooks/opencode/ai-kit-precompact.ts",
+        default=PRECOMPACT_VERDICTS["opencode"] == "positive",
+        experimental=True, verdict=PRECOMPACT_VERDICTS["opencode"], timeout=None),
+)
+
+HOOK_IDS = tuple(dict.fromkeys(row.id for row in HOOK_REGISTRY))
+
+
+def parse_hook_selector(value):
+    """Parse `id` / `id:host` tokens (comma or whitespace separated) into
+    (id, host-or-None) pairs in order. A token naming an unknown id, or a host
+    no registry row carries, raises ValueError whose message is that token."""
+    pairs = []
+    for token in [t for t in re.split(r"[,\s]+", value.strip()) if t]:
+        if ":" in token:
+            hook_id, host = token.split(":", 1)
+            if hook_id not in HOOK_IDS or not any(
+                    row.id == hook_id and row.host == host for row in HOOK_REGISTRY):
+                raise ValueError(token)
+            pairs.append((hook_id, host))
+        elif token in HOOK_IDS:
+            pairs.append((token, None))
+        else:
+            raise ValueError(token)
+    return pairs
+
+
+def hook_rows(selection):
+    """Registry rows matching any (id, host-or-None) pair, in registry order."""
+    return tuple(
+        row for row in HOOK_REGISTRY
+        if any(row.id == hook_id and (host is None or row.host == host)
+               for hook_id, host in selection)
+    )
+
+
 def _read_json_checked(path):
     """Three-state JSON reader: absent / ok-dict / unreadable.
 
-    Distinct from `_read_json`, which collapses all three into `{}`. Treating
-    that `{}` as "fresh file, safe to create" would replace an existing but
-    unparseable settings.json with a brand-new file containing only ai-kit's
-    entry — the corruption PROJECT.md's core value forbids.
+    Collapsing all three states into `{}` would treat a corrupted file as
+    "fresh file, safe to create" and replace an existing but unparseable
+    settings.json with a brand-new file containing only ai-kit's entry — the
+    corruption PROJECT.md's core value forbids. Pair it with
+    `_atomic_write_json`, never with a plain open-for-write.
     """
     if not os.path.isfile(path):
         return JSON_STATE_ABSENT, {}
@@ -1531,50 +1743,92 @@ def _load_hook_config(path, event_key, nested=False):
     return True, data, False
 
 
-def _refresh_or_append_claude_hook(entries, command):
-    """Replace an existing ai-kit SessionStart entry in place, or append one."""
-    new_entry = {
-        "matcher": CLAUDE_HOOK_MATCHER,
-        "hooks": [{"type": "command", "command": command}],
-    }
-    for index, entry in enumerate(entries):
-        for hook in entry.get("hooks") or []:
-            if CLAUDE_HOOK_MARKER in hook.get("command", ""):
-                entries[index] = new_entry
+def _refresh_or_append_claude_hook(entries, command,
+                                   matcher=CLAUDE_HOOK_MATCHER,
+                                   marker=CLAUDE_HOOK_MARKER, timeout=None):
+    """Refresh ai-kit's hook object in place, or append a fresh entry.
+
+    Ownership is per hook OBJECT, not per entry: only the hook dict whose
+    `command` contains `marker` is replaced or moved. A user hook nested in
+    ai-kit's entry — and every other key of that entry — survives both the
+    in-place refresh (when the entry's matcher already equals `matcher`) and
+    the move to a fresh entry (when it differs). The hook dict carries
+    `timeout` only when it is not None, so entries written before timeouts
+    existed stay byte-identical on refresh."""
+    hook = {"type": "command", "command": command}
+    if timeout is not None:
+        hook["timeout"] = timeout
+    for entry in entries:
+        hooks = entry.get("hooks") or []
+        for index, member in enumerate(hooks):
+            if marker in member.get("command", ""):
+                if entry.get("matcher") == matcher:
+                    hooks[index] = hook
+                else:
+                    del hooks[index]
+                    if not hooks:
+                        entries.remove(entry)
+                    entries.append({"matcher": matcher, "hooks": [hook]})
                 return True
-    entries.append(new_entry)
+    entries.append({"matcher": matcher, "hooks": [hook]})
     return False
 
 
-def wire_hook_claude(settings, hook_script, dry):
-    """Append-if-absent Claude Code SessionStart entry for the briefing wrapper.
+def _load_hook_config_multi(path, event_keys):
+    """`_load_hook_config` over every event key at once: the grouped writer's
+    guard. Validates each key's container shape BEFORE anything changes, so a
+    file refused here stays byte-identical. Returns (ok, data); data is a dict
+    ({} for an absent file) exactly when ok is True."""
+    state, data = _read_json_checked(path)
+    if state == JSON_STATE_UNREADABLE:
+        _warn_hook_config(path, "cannot parse as a JSON object")
+        return False, None
+    if state == JSON_STATE_ABSENT:
+        return True, {}
+    assert data is not None
+    for key in event_keys:
+        reason = _hook_container_reason(data, key, nested=True)
+        if reason:
+            _warn_hook_config(path, reason)
+            return False, None
+    return True, data
 
-    Never materializes ~/.claude/settings.json when the parent directory does
-    not exist. Never overwrites a config it cannot fully interpret. Writes
-    through `_atomic_write_json`; an OSError leaves the target byte-identical
-    and returns False rather than aborting a wizard commit.
-    """
+
+def wire_claude_rows(settings, rows, install_dir, dry):
+    """Write every Claude row of one hook id in ONE grouped atomic write
+    (D-11): a PreCompact entry is never written without its compact
+    SessionStart injector. One `_load_hook_config_multi` read-validate, per-row
+    refresh-or-append, then one `_atomic_write_json`. Returns False on an absent
+    Claude directory, refused file, or failed write."""
     if not os.path.isdir(os.path.dirname(settings) or "."):
-        print("skipped Claude Code SessionStart hook — no claude dir")
+        print("skipped Claude Code hook rows — no claude dir")
         return False
-    ok, data, _ = _load_hook_config(
-        settings, CLAUDE_HOOK_EVENT, nested=True)
+    events = sorted({row.event for row in rows})
+    ok, data = _load_hook_config_multi(settings, events)
     if not ok:
         return False
-    assert data is not None  # ok True <=> data is a dict, see _load_hook_config
+    assert data is not None  # ok True <=> data is a dict
     hooks = data.setdefault("hooks", {})
-    entries = hooks.setdefault(CLAUDE_HOOK_EVENT, [])
-    command = "python3 -S " + hook_script
-    _refresh_or_append_claude_hook(entries, command)
+    commands = []
+    for row in rows:
+        script_path = os.path.join(install_dir, *row.script.split("/"))
+        command = "python3 -S " + shlex.quote(script_path)
+        commands.append((row, command))
+        entries = hooks.setdefault(row.event, [])
+        _refresh_or_append_claude_hook(
+            entries, command, matcher=row.matcher,
+            marker=os.path.join(*row.script.split("/")), timeout=row.timeout)
     if dry:
-        print(f"would wire SessionStart hook -> {command}")
+        for row, command in commands:
+            print(f"would wire {row.event} hook -> {command}")
         return True
     try:
         _atomic_write_json(settings, data)
     except OSError as exc:
         print(f"warn: failed to write {settings}: {exc}", file=sys.stderr)
         return False
-    print(f"wired SessionStart hook -> {command}")
+    for row, command in commands:
+        print(f"wired {row.event} hook ({row.id}) -> {command}")
     return True
 
 
@@ -1607,7 +1861,7 @@ def wire_hook_cursor(cursor_hooks, hook_script, dry):
     assert data is not None  # ok True <=> data is a dict, see _load_hook_config
     hooks = data.setdefault("hooks", {})
     entries = hooks.setdefault(CURSOR_HOOK_EVENT, [])
-    command = "python3 -S " + hook_script
+    command = "python3 -S " + shlex.quote(hook_script)
     refreshed = _refresh_or_append_cursor_hook(entries, command)
     if created:
         data["version"] = 1
@@ -1681,7 +1935,7 @@ def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
 
     Reads via `_read_json_checked` (absent/ok/unreadable) and writes via
     `_atomic_write_json` — the same malformed-aware, atomic primitives
-    `wire_hook_claude`/`wire_hook_cursor` already use. A settings.json that
+    the registry hook writers already use. A settings.json that
     exists but cannot be parsed as a JSON object is refused outright (never
     silently treated as "empty, safe to overwrite"), and a write failure
     leaves the file byte-identical rather than raising past the caller.
@@ -1746,7 +2000,9 @@ def detect_statusline(paths):
 
     statusLine may be a bare string or an object with a string "command" (both
     shapes are supported by Claude Code).  Writes nothing."""
-    data = _read_json(paths.settings)
+    state, data = _read_json_checked(paths.settings)
+    if state != JSON_STATE_OK or data is None:
+        data = {}
     # _statusline_command returns "" for unset and None for an unsupported
     # shape; both are falsy, so both fall through to "unset" below.
     cur_cmd = _statusline_command(data.get("statusLine"))
@@ -1775,17 +2031,25 @@ def copy_recipe_if_absent(sample, config_toml, dry):
 
 def unwire_statusline(settings, install_dir, dry):
     """Uninstall: remove the statusLine ONLY if it points into install_dir (never
-    clobber a foreign one). Preserves all other settings keys."""
-    data = _read_json(settings)
+    clobber a foreign one). Preserves all other settings keys.
+
+    Reads through `_read_json_checked` and writes through `_atomic_write_json`
+    (D-22): an absent, empty or unparseable settings.json is never written, and
+    the rewrite is a same-directory os.replace — the old bytes survive intact
+    until the new content is complete. Returns False when an unreadable file was
+    skipped or the write failed (the statusLine may still be wired), else True."""
+    state, data = _read_json_checked(settings)
+    if state == JSON_STATE_UNREADABLE:
+        _warn_hook_config(settings, "cannot parse as a JSON object; statusLine left as is")
+        return False
+    if state != JSON_STATE_OK or data is None:
+        return True
     cur = data.get("statusLine")
     cur_cmd = cur.get("command", "") if isinstance(cur, dict) else ""
     if not (cur_cmd and _is_inside_str(install_dir, cur_cmd)):
-        return
-    if dry:
-        print("would clear ai-kit statusLine")
-        return
+        return True
     data.pop("statusLine", None)
-    _write_json(settings, data)
+    return _commit_unwire(settings, data, dry, "would clear ai-kit statusLine")
 
 
 def _entry_is_ours_nested(entry, marker):
@@ -1794,54 +2058,160 @@ def _entry_is_ours_nested(entry, marker):
 
 
 def _commit_unwire(path, data, dry, would_msg):
-    """Honour dry, then atomically rewrite `path`. Never raises."""
+    """Honour dry, then atomically rewrite `path`. Never raises; False on a failed write."""
     if dry:
         print(would_msg)
-        return
+        return True
     try:
         _atomic_write_json(path, data)
     except OSError as exc:
         print(f"warn: failed to write {path}: {exc}", file=sys.stderr)
+        return False
+    return True
 
 
-def unwire_hook_claude(settings, dry):
-    """Remove ai-kit's own SessionStart entry; leave every foreign entry."""
-    ok, data, _ = _load_hook_config(settings, CLAUDE_HOOK_EVENT, nested=True)
+def _drop_owned_hooks(entries, markers):
+    """Remove only nested hook objects whose command contains a marker.
+    Preserve user hook objects and every entry key; drop an entry only when its
+    hooks list becomes empty. Entries without a hooks list remain unchanged."""
+    changed = False
+    kept_entries = []
+    for entry in entries:
+        if "hooks" not in entry:
+            kept_entries.append(entry)
+            continue
+        hooks = entry["hooks"]
+        kept_hooks = [hook for hook in hooks if not any(
+            marker in hook.get("command", "") for marker in markers)]
+        if kept_hooks != hooks:
+            changed = True
+            if kept_hooks:
+                entry["hooks"] = kept_hooks
+                kept_entries.append(entry)
+        else:
+            kept_entries.append(entry)
+    return kept_entries, changed
+
+
+def unwire_claude_rows(settings, rows, dry):
+    """Unwire Claude registry rows in one guarded read/write, preserving
+    foreign entries and user hooks nested in ai-kit's entries."""
+    if not os.path.isfile(settings):
+        return True
+    events = sorted({row.event for row in rows})
+    ok, data = _load_hook_config_multi(settings, events)
     if not ok:
-        return
-    assert data is not None  # ok True <=> data is a dict, see _load_hook_config
+        return False
+    assert data is not None
     hooks = data.get("hooks") or {}
-    if CLAUDE_HOOK_EVENT not in hooks:
-        return
-    entries = hooks[CLAUDE_HOOK_EVENT]
-    kept = [e for e in entries if not _entry_is_ours_nested(e, CLAUDE_HOOK_MARKER)]
-    if kept == entries:
-        return
-    hooks[CLAUDE_HOOK_EVENT] = kept
-    _commit_unwire(settings, data, dry, "would remove ai-kit SessionStart hook")
+    changed = False
+    for event in events:
+        if event not in hooks:
+            continue
+        markers = [os.path.join(*row.script.split("/"))
+                   for row in rows if row.event == event]
+        hooks[event], event_changed = _drop_owned_hooks(hooks[event], markers)
+        changed = changed or event_changed
+    if not changed:
+        return True
+    return _commit_unwire(settings, data, dry, "would remove ai-kit hook rows")
+
+
+def unwire_hook_rows(paths, rows, dry, counts):
+    """Unwire selected registry rows and only links owned by this install."""
+    ok = True
+    claude_rows = [row for row in rows if row.host == "claude"]
+    if claude_rows and not unwire_claude_rows(paths.settings, claude_rows, dry):
+        ok = False
+    cursor_rows = [row for row in rows if row.host == "cursor"]
+    if cursor_rows and not unwire_hook_cursor(paths.cursor_hooks, dry):
+        ok = False
+    for row in rows:
+        if row.host in ("claude", "cursor"):
+            continue
+        link_path = hook_link_path(paths, row)
+        if link_path is not None and os.path.islink(link_path) and _is_inside(
+                os.readlink(link_path), paths.install_dir):
+            try:
+                unlink_one(link_path, dry, counts)
+            except OSError as exc:
+                print(f"warn: failed to unlink {link_path}: {exc}", file=sys.stderr)
+                ok = False
+    return ok
+
+
+def hook_installed_hosts(paths, hook_id):
+    """Hosts with an installed ai-kit hook row for `hook_id`."""
+    installed = set()
+    rows = [row for row in HOOK_REGISTRY if row.id == hook_id]
+    claude_rows = [row for row in rows if row.host == "claude"]
+    if claude_rows and os.path.isfile(paths.settings):
+        ok, data = _load_hook_config_multi(paths.settings,
+                                           sorted({row.event for row in claude_rows}))
+        if ok and data is not None:
+            hooks = data.get("hooks") or {}
+            for row in claude_rows:
+                if any(_entry_is_ours_nested(entry,
+                          os.path.join(*row.script.split("/")))
+                       for entry in hooks.get(row.event, [])):
+                    installed.add("claude")
+    for row in rows:
+        if row.host == "cursor":
+            if os.path.isfile(paths.cursor_hooks):
+                state, data = _read_json_checked(paths.cursor_hooks)
+                hooks = (data.get("hooks")
+                         if state == JSON_STATE_OK and isinstance(data, dict) else None)
+                entries = hooks.get(row.event, []) if isinstance(hooks, dict) else []
+                marker = os.path.join(*row.script.split("/"))
+                if isinstance(entries, list) and any(
+                        isinstance(entry, dict) and marker in entry.get("command", "")
+                        for entry in entries):
+                    installed.add("cursor")
+            continue
+        if row.host == "claude":
+            continue
+        link_path = hook_link_path(paths, row)
+        if link_path is not None and os.path.islink(link_path) and _is_inside(
+                os.readlink(link_path), paths.install_dir):
+            installed.add(row.host)
+    return installed
+
+
+def hook_description(hook_id):
+    """Compact, registry-driven one-line description capped at 200 chars."""
+    rows = [row for row in HOOK_REGISTRY if row.id == hook_id]
+    detail = "; ".join(
+        (f"{host} ({'on' if row.default else 'off'})" if row.verdict is None
+         else f"{host}: {row.verdict} ({'on' if row.default else 'off'})"
+              + (", experimental" if row.experimental else ""))
+        for host in dict.fromkeys(row.host for row in rows)
+        for row in [next(item for item in rows if item.host == host)]
+    )
+    return _cap_desc(f"{HOOK_SUMMARIES[hook_id]} {detail}")
 
 
 def unwire_hook_cursor(cursor_hooks, dry):
-    """Remove ai-kit's own sessionStart entry; leave every foreign entry."""
+    """Remove ai-kit's own sessionStart entry; leave every foreign entry.
+    False when the file was refused or the write failed."""
     parent = os.path.dirname(cursor_hooks) or "."
     if not os.path.isdir(parent) or not os.path.isfile(cursor_hooks):
-        return
+        return True
     ok, data, _ = _load_hook_config(cursor_hooks, CURSOR_HOOK_EVENT)
     if not ok:
-        return
+        return False
     assert data is not None  # ok True <=> data is a dict, see _load_hook_config
     hooks = data.get("hooks") or {}
     if CURSOR_HOOK_EVENT not in hooks:
-        return
+        return True
     entries = hooks[CURSOR_HOOK_EVENT]
     kept = [
         e for e in entries
         if CURSOR_HOOK_MARKER not in e.get("command", "")
     ]
     if kept == entries:
-        return
+        return True
     hooks[CURSOR_HOOK_EVENT] = kept
-    _commit_unwire(
+    return _commit_unwire(
         cursor_hooks, data, dry, "would remove ai-kit sessionStart hook")
 
 
@@ -2330,8 +2700,25 @@ def _engine_ns(paths, sample_json):
     )
 
 
+def _hook_selection_items(paths):
+    """Return the hooks category rows and installed-state baseline."""
+    items = []
+    initial = {}
+    for hook_id in HOOK_IDS:
+        installed = bool(hook_installed_hosts(paths, hook_id))
+        on = installed or any(
+            row.default and hook_host_present(paths, row.host)
+            for row in hook_rows([(hook_id, None)])
+        )
+        items.append(("hooks", hook_id, on))
+        initial[("hooks", hook_id)] = installed
+    return items, initial
+
+
 def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
-    paths, entries, installed, sample_json, wizard_app_mod, stale=None, predecessor_cands=None,
+    paths, entries, installed, sample_json, wizard_app_mod,
+    stale=None, predecessor_cands=None, pi_predecessor_cands=(), pi_stale=(),
+    replace_cands=(),
 ):
     """Construct WizardContext for launch_wizard (extracted for testability).
 
@@ -2364,6 +2751,9 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
         for cat in CATEGORIES
         for name, _ in entries[cat]
     }
+    hook_items, hook_initial = _hook_selection_items(paths)
+    sel.items.extend([list(item) for item in hook_items])
+    initial_enabled.update(hook_initial)
 
     sl_state = detect_statusline(paths)
     inventory = load_segment_inventory(INVENTORY_PATH)
@@ -2389,10 +2779,16 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
         for cat in CATEGORIES
         for name, abspath in entries[cat]
     }
+    component_meta.update({hook_id: hook_description(hook_id) for hook_id in HOOK_IDS})
 
     housekeeping = {
-        "stale": stale,
-        "predecessors": [f"{cat}/{name}" for cat, name, _old, _new in predecessor_cands],
+        "stale": stale + [f"{item} (pi)" for item in pi_stale],
+        "predecessors": [f"{cat}/{name}" for cat, name, _old, _new in predecessor_cands]
+                        + [f"{cat}/{name} (pi)"
+                           for cat, name, _old, _new in pi_predecessor_cands],
+        # Real content at a named skills link path (D-16) — default-No gate.
+        "replace": [f"skills/{name} ({label})"
+                    for label, _path, _target, name in replace_cands],
     }
 
     return wizard_app_mod.WizardContext(
@@ -2411,6 +2807,40 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
         component_meta=component_meta,
         housekeeping=housekeeping,
     )
+
+
+def apply_hook_selection(paths, checked, dry, counts):
+    """Apply the wizard's checked hook ids per D-12: installed hosts plus
+    present default-on hosts; an empty set means all present hosts. Unchecked
+    ids remove the hook from every host where it is currently installed."""
+    ok = True
+    checked_ids = set(checked)
+    for hook_id in HOOK_IDS:
+        if hook_id in checked_ids:
+            installed = hook_installed_hosts(paths, hook_id)
+            selected_hosts = installed | {
+                row.host for row in hook_rows([(hook_id, None)])
+                if row.default and hook_host_present(paths, row.host)
+            }
+            if not selected_hosts:
+                selected_hosts = {
+                    row.host for row in hook_rows([(hook_id, None)])
+                    if hook_host_present(paths, row.host)
+                }
+            rows = [row for row in hook_rows([(hook_id, None)])
+                    if row.host in selected_hosts]
+            result = wire_hook_rows(paths, rows, dry, counts)
+            host_list = ", ".join(sorted(selected_hosts)) or "no present hosts"
+            print(f"hooks: wired {hook_id} on {host_list}")
+        else:
+            hosts = hook_installed_hosts(paths, hook_id)
+            rows = [row for row in hook_rows([(hook_id, None)]) if row.host in hosts]
+            result = unwire_hook_rows(paths, rows, dry, counts)
+            host_list = ", ".join(sorted(hosts)) or "no installed hosts"
+            print(f"hooks: removed {hook_id} from {host_list}")
+        if not result:
+            ok = False
+    return ok
 
 
 def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
@@ -2441,10 +2871,18 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
         buf = io.StringIO()
         ok = True
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            apply_selection(sel.category_sets(CATEGORIES), entries,
+            sel_sets = sel.category_sets(CATEGORIES)
+            all_sets = sel.category_sets((*CATEGORIES, "hooks"))
+            apply_selection(sel_sets, entries,
                             paths.claude_dir, dry, counts)
-            wire_hook_claude(paths.settings, paths.claude_hook, dry)
-            wire_hook_cursor(paths.cursor_hooks, paths.cursor_hook, dry)
+            # The pi root mirrors the same selection (D-14): a deselected
+            # PI_SKILLS entry is unlinked there too, through sync_pi_links'
+            # mirror branch.
+            sync_pi_links(paths, entries, dry, counts,
+                          names=sel_sets["skills"], mirror=True)
+            hooks_ok = apply_hook_selection(
+                paths, all_sets.get("hooks", set()), dry, counts)
+            statusline_ok = True
             if adopt:
                 # A discovered bundled example segment (e.g. system_memory) must
                 # actually exist under paths.segments_dir before persist_statusline's
@@ -2523,44 +2961,102 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
                     e["id"] for e in examples
                     if e["id"] not in known_ext_ids and e["id"] not in desired_ids
                 }
-                ok = persist_statusline(
+                statusline_ok = persist_statusline(
                     paths, state, adopt, dry, tty=None,
                     assume_overwrite=True,
                     known_ext_ids=known_ext_ids | newly_installed_desired_off,
                 )
+                if statusline_ok is False:
+                    ok = False
+            ok = bool(hooks_ok) and bool(statusline_ok) and ok
         return {"ok": ok, "adopt": adopt, "log": buf.getvalue()}
     return commit
 
 
 def _make_apply_housekeeping(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     paths, entries, stale, predecessor_cands, dry, counts,
+    pi_predecessor_cands=(), pi_stale=(), replace_cands=(), log_sink=None,
 ):
     """Build the apply_housekeeping(prune, repoint) callable the wizard runs
     IN-UI right after its housekeeping gate is answered (before Choose becomes
-    usable). Applies the stale-prune and/or predecessor-repoint decision, then
-    rebuilds installed_links + the default component selection from scratch —
-    a repointed predecessor link becomes a current ai-kit link, which can
-    change which components default to pre-checked on Choose (mirrors the
-    ordering the old CLI-side prune_stale/adopt_predecessor_links ->
-    installed_links sequence relied on)."""
-    def apply_housekeeping(prune, repoint):
-        if stale and prune:
-            apply_stale_prune(paths.claude_dir, stale, dry, counts)
-        if predecessor_cands:
-            apply_predecessor_links(paths.claude_dir, predecessor_cands, repoint, dry, counts)
-        installed = installed_links(paths.claude_dir, paths.install_dir)
-        default = _default_selection(entries, installed)
-        sel = Selection(
-            (cat, name, name in default[cat])
-            for cat in CATEGORIES
-            for name, _ in entries[cat]
-        )
-        initial_enabled = {
-            (cat, name): (name in installed[cat])
-            for cat in CATEGORIES
-            for name, _ in entries[cat]
-        }
-        return {"selection": sel, "initial_enabled": initial_enabled}
+    usable). Applies the stale-prune and/or predecessor-repoint decision on
+    BOTH roots (claude and pi, D-17), then rebuilds installed_links + the
+    default component selection from scratch — a repointed predecessor link
+    becomes a current ai-kit link, which can change which components default
+    to pre-checked on Choose (mirrors the ordering the old CLI-side
+    prune_stale/adopt_predecessor_links -> installed_links sequence relied
+    on). Each predecessor answer moves the old link into the per-root backups
+    dir first (SPEC R8). A pi link this callable creates (a pi-only repoint)
+    pre-checks that skill in the returned selection, so the commit links its
+    claude path and the mirror keeps the pi link.
+
+    Like `commit`, this runs on a Textual worker thread, so it must NOT print
+    to the real stdout/stderr: everything the inner helpers emit is captured
+    into the returned dict's `log` string.
+
+    ``replace_cands`` is launch_wizard's pre-computed replace_candidates list
+    (the real content standing at a skills link path, minus the paths the
+    predecessor gates own). With ``replace`` true, backup_and_link (D-15/D-16)
+    moves each into the per-root backups dir and links the repo copy; every
+    pi-labelled candidate it linked joins the pre-checked set, so the commit
+    keeps an accepted pi-only replace instead of the mirror unlinking it.
+    ``log_sink``, when a list, receives the captured log in a ``finally`` —
+    even when a later move raises — so launch_wizard can print where each
+    backup went after the wizard has exited."""
+    def apply_housekeeping(prune, repoint, replace=False):
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                if stale and prune:
+                    apply_stale_prune(paths.claude_dir, stale, dry, counts)
+                if pi_stale and prune:
+                    apply_stale_prune(paths.pi_dir, pi_stale, dry, counts)
+                if predecessor_cands:
+                    apply_predecessor_links(
+                        paths.claude_dir, predecessor_cands, repoint, dry, counts,
+                        backup_dir=os.path.join(paths.backups_dir, "claude"))
+                if pi_predecessor_cands:
+                    apply_predecessor_links(
+                        paths.pi_dir, pi_predecessor_cands, repoint, dry, counts,
+                        backup_dir=os.path.join(paths.backups_dir, "pi"))
+                if replace and replace_cands:
+                    # The replace gate's explicit yes: move each into the
+                    # per-root backups dir (D-15) and link the repo copy
+                    # (D-16). Its `moved` lines reach the returned log.
+                    backup_and_link(replace_cands, paths, dry, counts)
+                installed = installed_links(paths.claude_dir, paths.install_dir)
+                default = _default_selection(entries, installed)
+                default = {cat: set(names) for cat, names in default.items()}
+                # A pi link created here must survive the commit's mirror:
+                # pre-check the skill so the commit links its claude path and
+                # never unlinks the accepted pi link (D-14; replace: D-16).
+                precheck = ({name for _c, name, _o, _n in pi_predecessor_cands}
+                            if repoint else set())
+                if replace:
+                    precheck |= {name for label, _p, _t, name in replace_cands
+                                 if label == "pi"}
+                for name in precheck:
+                    default["skills"].add(name)
+                hook_items, hook_initial = _hook_selection_items(paths)
+                sel = Selection(
+                    [(cat, name, name in default[cat])
+                     for cat in CATEGORIES
+                     for name, _ in entries[cat]] + hook_items
+                )
+                initial_enabled = {
+                    (cat, name): (name in installed[cat])
+                    for cat in CATEGORIES
+                    for name, _ in entries[cat]
+                }
+                initial_enabled.update(hook_initial)
+        finally:
+            # Even when a later move raises, the log captured so far (with the
+            # backup destinations of the moves that succeeded) reaches the
+            # sink — launch_wizard prints it after the wizard has exited.
+            if isinstance(log_sink, list):
+                log_sink.append(buf.getvalue())
+        return {"selection": sel, "initial_enabled": initial_enabled,
+                "log": buf.getvalue()}
     return apply_housekeeping
 
 
@@ -2606,16 +3102,43 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
     present = {cat: {n for n, _ in entries[cat]} for cat in CATEGORIES}
     stale = stale_link_candidates(paths.claude_dir, paths.install_dir, present)
     predecessor_cands = predecessor_candidates(paths.claude_dir, paths.install_dir, entries)
+    # The pi root's own stale links and predecessors (D-17). Only computed when
+    # the pi agent dir exists — a missing one is a note at commit time, never
+    # created.
+    if os.path.isdir(paths.pi_dir):
+        pi_stale = [item for item in
+                    stale_link_candidates(paths.pi_dir, paths.install_dir, present)
+                    if item.startswith("skills/")]
+        pi_predecessor_cands = predecessor_candidates(
+            paths.pi_dir, paths.install_dir, _pi_entries(entries))
+    else:
+        pi_stale, pi_predecessor_cands = [], ()
+    # The replace gate's candidates (D-16): every real/foreign entry at a
+    # named skills link path, minus the paths the predecessor gates already
+    # own — the three gates' candidate sets stay disjoint, so no answer at an
+    # earlier gate can touch a path this gate listed.
+    pred_paths = ({os.path.join(paths.claude_dir, cat, name)
+                   for cat, name, _o, _n in predecessor_cands}
+                  | {os.path.join(paths.pi_dir, cat, name)
+                     for cat, name, _o, _n in pi_predecessor_cands})
+    replace_cands = [cand for cand in replace_candidates(
+        paths, entries, [name for name, _ in entries["skills"]])
+        if cand[1] not in pred_paths]
     ctx = _build_wizard_context(paths, entries, installed, sample_json, wizard_app,
-                                stale, predecessor_cands)
+                                stale, predecessor_cands,
+                                pi_predecessor_cands=pi_predecessor_cands,
+                                pi_stale=pi_stale, replace_cands=replace_cands)
     # The real install (component symlinks + doctor-validated status-line write +
     # settings.json wiring) now runs INSIDE the wizard on Review-confirm, so the
     # Done screen reflects the actual result. Inject the commit + housekeeping
     # callables here, where paths/entries/dry/counts are in scope.
+    hk_log: list[str] = []
     ctx = ctx._replace(
         commit=_make_wizard_commit(paths, entries, dry, counts, examples_flag=examples_flag),
         apply_housekeeping=_make_apply_housekeeping(
-            paths, entries, stale, predecessor_cands, dry, counts),
+            paths, entries, stale, predecessor_cands, dry, counts,
+            pi_predecessor_cands=pi_predecessor_cands, pi_stale=pi_stale,
+            replace_cands=replace_cands, log_sink=hk_log),
     )
     try:
         # curl | bash inherits the script pipe as fd 0; Textual reads keys from
@@ -2626,19 +3149,26 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
         reason = exc.args[0] if exc.args else exc
         print(f"error: wizard failed — {reason}", file=sys.stderr)
         sys.exit(2)
+    finally:
+        # The housekeeping log (every `moved <path> -> <dest>` backup line)
+        # reaches the user on confirm, abort and crash alike — but only once
+        # the alternate screen is gone, never while the wizard is up.
+        hk_text = "\n".join(hk_log).strip()
+        if hk_text:
+            print(hk_text, file=sys.stderr)
     if result is None:
         return None
     # apply_selection + persist_statusline already ran in-UI via the commit
     # callback (their counts mutations are reflected in `counts`). Surface the
     # captured diagnostics now that the alternate screen is gone, and warn on a
-    # status-line write that the doctor rejected.
+    # settings write (status line or hook) that was refused or failed.
     log = (result.state.get("_commit_log") or "").strip()
     if log:
         print(log, file=sys.stderr)
     if result.state.get("_commit_ok") is False:
         print(
-            "warning: the doctor rejected the status-line config — it was left "
-            "unchanged (component selections were still applied).",
+            "warning: some settings could not be written — see the log above "
+            "(component selections were still applied).",
             file=sys.stderr,
         )
     return result   # propagate wizard result to cmd_install (I-1)
@@ -2714,8 +3244,14 @@ def _headless_paths_and_entries(env):
         return None, None
 
 
-def _headless_link_skills(skills_flag, entries, claude_dir, dry, counts):
+def _headless_link_skills(  # pylint: disable=too-many-arguments
+        skills_flag, entries, claude_dir, dry, counts, *, replaced=frozenset()):
     """Resolve --skills and link the result additively. Returns (ok, chosen).
+
+    `replaced` holds the link paths a --dry-run --replace-existing pass would
+    have moved and linked (backup_and_link counted them): they are skipped
+    here, so the dry run predicts the real run instead of reporting them as
+    blocked.
 
     `chosen` is resolve_skills_flag's value -- None when --skills was not passed
     at all, an empty set when it named only unknown skills -- so the caller can
@@ -2736,18 +3272,100 @@ def _headless_link_skills(skills_flag, entries, claude_dir, dry, counts):
     if not chosen:
         return True, chosen
     blocked_before = counts["skip_foreign"] + counts["skip_real"]
+    to_link = {name for name in chosen
+               if os.path.join(claude_dir, "skills", name) not in replaced}
     try:
-        apply_additive_skills(chosen, entries, claude_dir, dry, counts)
+        apply_additive_skills(to_link, entries, claude_dir, dry, counts)
     except OSError as exc:
         print(f"warn: failed to link one or more requested skills: {exc}",
               file=sys.stderr)
         return False, chosen
     if counts["skip_foreign"] + counts["skip_real"] > blocked_before:
         print("warn: one or more requested skills were left alone (a foreign "
-              "symlink or a real file occupies the link path) — see the warnings "
-              "above", file=sys.stderr)
+              "symlink or a real file occupies the link path) — re-run with "
+              "--replace-existing to back it up and link the repo copy — see "
+              "the warnings above", file=sys.stderr)
         return False, chosen
     return True, chosen
+
+
+def replace_candidates(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        paths, entries, names):
+    """The real content standing at a named link path that --replace-existing
+    (D-16) would move into the backups dir: for each skills entry in `names`,
+    the claude path and (PI_SKILLS names, existing pi dir) the pi path. A path
+    is a candidate when it exists (lexists) and is NOT a current ai-kit link:
+    real dirs, files, live foreign links AND dangling links all count — the
+    flag is the explicit confirmation, and headless never runs the predecessor
+    gate (the wizard's replace gate drops the paths its own gates own).
+    Returns (label, path, target, name) tuples."""
+    by_name = dict(entries["skills"])
+    claude_installed = installed_links(paths.claude_dir, paths.install_dir)["skills"]
+    pi_installed = (installed_links(paths.pi_dir, paths.install_dir)["skills"]
+                    if os.path.isdir(paths.pi_dir) else {})
+    out = []
+    for name in sorted(names):
+        target = by_name.get(name)
+        if target is None:
+            continue
+        for label, root, installed in (
+                ("claude", paths.claude_dir, claude_installed),
+                ("pi", paths.pi_dir, pi_installed)):
+            if label == "pi" and name not in PI_SKILLS:
+                continue
+            path = os.path.join(root, "skills", name)
+            if not os.path.lexists(path) or name in installed:
+                continue
+            out.append((label, path, target, name))
+    return out
+
+
+def backup_and_link(cands, paths, dry, counts):
+    """Move each candidate into its per-root backups dir (D-15) and link the
+    repo copy in its place. When link_one raises after the move, the entry is
+    moved back, the empty claim removed, a `warn:` line printed and skip_real
+    counted, so a failed replace never leaves the skill path empty (the caller
+    exits 1). Returns the paths a dry run would have moved and linked (each
+    counted as linked), so the link steps can skip them; empty when not dry."""
+    planned = set()
+    for label, path, target, name in cands:
+        if dry:
+            print(f"would move {path} to {os.path.join(paths.backups_dir, label)}")
+            planned.add(path)
+            counts["linked"] += 1
+            continue
+        dest = _backup_entry(path, os.path.join(paths.backups_dir, label), name)
+        print(f"moved {path} -> {dest}", file=sys.stderr)
+        claim = os.path.dirname(dest)
+        try:
+            link_one(path, target, dry, counts)
+        except OSError as exc:
+            shutil.move(dest, path)
+            os.rmdir(claim)
+            print(f"warn: linking {path} failed ({exc}); "
+                  "restored it from the backup", file=sys.stderr)
+            counts["skip_real"] += 1
+    return planned
+
+
+def _headless_sync_pi(  # pylint: disable=too-many-arguments
+        paths, entries, dry, counts, chosen, *, replaced=frozenset()):
+    """Run sync_pi_links for a headless --skills run (additive, never unlinks:
+    mirror=False). Only called when `chosen` is not None — a bare or hooks-only
+    headless run never touches the pi root. Returns False when the mirror hit a
+    foreign link or real content at a pi link path (link_one counted it). A pi
+    path in `replaced` (a dry run's planned move) is skipped, as in
+    _headless_link_skills."""
+    blocked_before = counts["skip_foreign"] + counts["skip_real"]
+    names = {name for name in chosen
+             if os.path.join(paths.pi_dir, "skills", name) not in replaced}
+    sync_pi_links(paths, entries, dry, counts, names=names, mirror=False)
+    if counts["skip_foreign"] + counts["skip_real"] > blocked_before:
+        print("warn: one or more pi links were left alone (a foreign symlink "
+              "or a real file occupies the pi link path) — see the warnings "
+              "above", file=sys.stderr)
+        return False
+    return True
 
 
 def _headless_wire_statusline(paths, dry):
@@ -2755,10 +3373,8 @@ def _headless_wire_statusline(paths, dry):
     actually there. wire_statusline has no host-presence guard of its own and
     _atomic_write_json would os.makedirs the parent, so calling it blind would
     CREATE ~/.claude/settings.json on a machine with no Claude Code installed.
-    wire_hook_claude already refuses to do that ('Never materializes
-    ~/.claude/settings.json when the parent directory does not exist' --
-    docstring at tools/setup.py:1506-1507, guard + skip + `return False` at
-    tools/setup.py:1511-1513); this gives --with-statusline the same guarantee
+    registry hook writers already refuse to do that; this gives
+    --with-statusline the same guarantee
     without touching wire_statusline's interactive contract.
 
     An absent host dir is a benign skip -> True (exit 0), exactly like the hook
@@ -2771,18 +3387,75 @@ def _headless_wire_statusline(paths, dry):
                            assume_overwrite=False)
 
 
-def _headless_wire_hooks(paths, dry):
-    """Wire the SessionStart hook for both hosts. Both wirers already no-op
-    cleanly when their config dir is absent, so neither call is gated -- the
-    isdir() checks only CLASSIFY the outcome: a host that isn't installed on
-    this machine is an expected skip (True), a host that is installed and still
-    failed is a real failure (False)."""
-    claude_present = os.path.isdir(paths.claude_dir)
-    cursor_present = os.path.isdir(paths.cursor_dir)
-    claude_ok = wire_hook_claude(paths.settings, paths.claude_hook, dry)
-    cursor_ok = wire_hook_cursor(paths.cursor_hooks, paths.cursor_hook, dry)
-    return not ((claude_present and not claude_ok)
-                or (cursor_present and not cursor_ok))
+def hook_host_present(paths, host):
+    """Whether the host's config directory already exists (never create it)."""
+    host_dirs = {"claude": paths.claude_dir, "cursor": paths.cursor_dir,
+                 "pi": paths.pi_dir, "opencode": paths.opencode_dir}
+    return os.path.isdir(host_dirs[host])
+
+
+def hook_link_path(paths, row):
+    """The link location for a symlink row; Claude rows are config-backed."""
+    if row.host == "cursor":
+        return None
+    if row.host == "pi":
+        return os.path.join(paths.pi_dir, "extensions", os.path.basename(row.script))
+    if row.host == "opencode":
+        return os.path.join(paths.opencode_dir, "plugins", os.path.basename(row.script))
+    return None
+
+
+def _wire_cursor_rows(paths, rows, dry):
+    """Wire Cursor briefing rows through the existing Cursor writer."""
+    if not rows:
+        return True
+    present = hook_host_present(paths, "cursor")
+    script_path = os.path.join(paths.install_dir, *rows[0].script.split("/"))
+    return not present or wire_hook_cursor(paths.cursor_hooks, script_path, dry)
+
+
+def wire_hook_rows(paths, rows, dry, counts):
+    """Wire all selected hook rows by host, using guarded Claude writes and
+    owned symlinks for pi/opencode. Every host is attempted; absent hosts are
+    benign skips, while a failed write or foreign path makes the result false."""
+    ok = True
+    claude_rows = [row for row in rows if row.host == "claude"]
+    if claude_rows:
+        present = hook_host_present(paths, "claude")
+        result = wire_claude_rows(paths.settings, claude_rows, paths.install_dir, dry)
+        if present and not result:
+            ok = False
+    if not _wire_cursor_rows(paths, [row for row in rows if row.host == "cursor"], dry):
+        ok = False
+    for row in rows:
+        if row.host in ("claude", "cursor"):
+            continue
+        if not hook_host_present(paths, row.host):
+            print(f"skipped {row.id} for {row.host} — no {row.host} dir")
+            continue
+        link_path = hook_link_path(paths, row)
+        target = os.path.join(paths.install_dir, *row.script.split("/"))
+        before_foreign = counts["skip_foreign"]
+        before_real = counts["skip_real"]
+        try:
+            link_one(link_path, target, dry, counts, install_dir=paths.install_dir)
+        except OSError as exc:
+            print(f"warn: failed to link {link_path}: {exc}", file=sys.stderr)
+            ok = False
+        if counts["skip_foreign"] > before_foreign or counts["skip_real"] > before_real:
+            ok = False
+    return ok
+
+
+def _headless_wire_hook_ids(paths, selection, dry, counts):
+    """Wire selected registry rows; absent hosts are expected skips."""
+    return wire_hook_rows(paths, hook_rows(selection), dry, counts)
+
+
+def _headless_wire_default_hooks(paths, dry, counts):
+    """Wire every default row once in registry order."""
+    rows = [row for row in HOOK_REGISTRY if row.default]
+    return wire_hook_rows(paths, rows, dry, counts)
 
 
 def _headless_install_examples(paths, examples_flag, dry):
@@ -2840,8 +3513,31 @@ def _headless_summary(requested, skills_matched_nothing, counts):
             f"{counts['skip_real']} real-skipped")
 
 
+def _headless_replace(paths, entries, skills_flag, dry, counts):
+    """The --replace-existing pass: the paths a dry run would move (empty
+    for a real run), or None when an entry could not be backed up.
+
+    main() already rejects --replace-existing without --headless --skills, so
+    skills_flag is not None here and resolve_skills_flag is pure; the set is
+    the same one _headless_link_skills re-resolves (unknown names are warned
+    there). Under --dry-run backup_and_link prints `would move`, links nothing
+    and returns the planned paths, which the link steps then skip."""
+    try:
+        return backup_and_link(
+            replace_candidates(paths, entries, resolve_skills_flag(skills_flag, entries)[0]),
+            paths, dry, counts)
+    except OSError:
+        # _backup_entry has already reported the failure naming source and
+        # destination; keep going so the linking step runs (link_one leaves
+        # whatever is still at an unmoved path alone).
+        print("warn: --replace-existing could not back up every entry "
+              "(see above)", file=sys.stderr)
+        return None
+
+
 def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        env, dry, skills_flag, with_statusline, with_hooks, examples_flag=None):
+        env, dry, skills_flag, with_statusline, with_hooks, examples_flag=None,
+        replace_existing=False):
     """The --headless counterpart to cmd_install: no Textual, no tty, no
     require_tty gate. Bare (all flags falsy) is a pure no-op -- 'nothing
     touched unless asked' (and nothing fetched -- see the plan's sync note;
@@ -2849,7 +3545,7 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     additively (apply_additive_skills, never unlinks). --with-statusline/
     --with-hooks independently opt into wiring those, reusing the existing
     tty-safe primitives (wire_statusline is now itself headless-safe -- see
-    Task 1 -- and wire_hook_claude/wire_hook_cursor already were); both wiring
+    Task 1 -- and registry hook writers already were); both wiring
     flags treat an absent host config dir as a benign skip and create nothing
     (_headless_wire_statusline supplies that guard for the status line).
     --examples
@@ -2885,11 +3581,23 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     # "nothing touched unless asked." A future --prune-stale flag plugs in here.
 
     counts = new_counts()
+    replaced = (_headless_replace(paths, entries, skills_flag, dry, counts)
+                if replace_existing else set())
     ok, chosen = _headless_link_skills(skills_flag, entries, paths.claude_dir,
-                                       dry, counts)
+                                       dry, counts, replaced=frozenset(replaced or ()))
+    ok = ok and replaced is not None
+    # Only a run that named --skills touches the pi root; bare --headless and
+    # hooks/statusline-only runs leave every pi link exactly as it was.
+    if chosen is not None and not _headless_sync_pi(paths, entries, dry,
+                                                    counts, chosen,
+                                                    replaced=frozenset(replaced or ())):
+        ok = False
     if with_statusline and not _headless_wire_statusline(paths, dry):
         ok = False
-    if with_hooks and not _headless_wire_hooks(paths, dry):
+    if with_hooks is True:
+        if not _headless_wire_default_hooks(paths, dry, counts):
+            ok = False
+    elif with_hooks and not _headless_wire_hook_ids(paths, with_hooks, dry, counts):
         ok = False
     if examples_flag is not None and not _headless_install_examples(
             paths, examples_flag, dry):
@@ -2910,22 +3618,40 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     return 0
 
 
-def cmd_uninstall(env, dry):
+def cmd_uninstall(env, dry, hooks=None):
     """Remove every ai-kit symlink under ~/.claude, the ai-kit statusLine (only
     if it points into install_dir), and ai-kit's own session-start hook entries
     from both Claude Code and Cursor. Foreign hook entries are never touched.
-    Leaves install_dir, foreign links, and the config TOML in place."""
+    Leaves install_dir, foreign links, and the config TOML in place. Exits 1 when
+    a settings file could not be read or rewritten, so ai-kit may still be wired."""
     paths = resolve_paths(env)
     counts = new_counts()
-    installed = installed_links(paths.claude_dir, paths.install_dir)
-    for cat in CATEGORIES:
-        for name in sorted(installed[cat]):
-            unlink_one(os.path.join(paths.claude_dir, cat, name), dry, counts)
-    unwire_statusline(paths.settings, paths.install_dir, dry)
-    unwire_hook_claude(paths.settings, dry)
-    unwire_hook_cursor(paths.cursor_hooks, dry)
+    if hooks is None:
+        installed = installed_links(paths.claude_dir, paths.install_dir)
+        for cat in CATEGORIES:
+            for name in sorted(installed[cat]):
+                unlink_one(os.path.join(paths.claude_dir, cat, name), dry, counts)
+        # The pi root holds skills only (D-14/D-17); foreign links and real dirs
+        # are never touched (installed_links only reports ai-kit symlinks).
+        if os.path.isdir(paths.pi_dir):
+            pi_installed = installed_links(paths.pi_dir, paths.install_dir)
+            for name in sorted(pi_installed["skills"]):
+                unlink_one(os.path.join(paths.pi_dir, "skills", name), dry, counts)
+        selected_rows = HOOK_REGISTRY
+        hook_ok = unwire_hook_rows(paths, selected_rows, dry, counts)
+        print(f"removed {counts['unlinked']} ai-kit symlink(s). "
+              f"install dir left in place: {paths.install_dir}")
+        unwired = [unwire_statusline(paths.settings, paths.install_dir, dry), hook_ok]
+    else:
+        hook_ok = unwire_hook_rows(paths, hook_rows(hooks), dry, counts)
+        print(f"removed hook entries for: {', '.join(dict.fromkeys(i for i, _h in hooks))}")
+        unwired = [hook_ok]
     print(f"removed {counts['unlinked']} ai-kit symlink(s). "
           f"install dir left in place: {paths.install_dir}")
+    if not all(unwired):
+        print("uninstall: one or more settings files could not be updated "
+              "(see warnings above) — exiting non-zero", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -3091,7 +3817,7 @@ def ensure_rich_runtime(env):
     _reexec_under_uv(uv_path)               # normally never returns
 
 
-def main(argv=None):  # pylint: disable=too-many-return-statements
+def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-branches,too-many-statements
     """Parse the subcommand and dispatch. Default subcommand is install."""
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(prog="setup.py", add_help=True)
@@ -3121,13 +3847,50 @@ def main(argv=None):  # pylint: disable=too-many-return-statements
                               "never unlinks anything not named.")
     parser.add_argument("--with-statusline", action="store_true",
                          help="(--headless only) wire the ai-kit status line.")
-    parser.add_argument("--with-hooks", action="store_true",
-                         help="(--headless only) wire SessionStart hooks "
-                              "(Claude Code + Cursor).")
+    parser.add_argument("--with-hooks", nargs="?", const=True, default=False,
+                        metavar="<id[:host],...>",
+                        help="(--headless only) bare wires rows marked on below; "
+                             "=<id[:host],...> wires exactly those rows additively: "
+                             + "; ".join(hook_description(i) for i in HOOK_IDS))
+    parser.add_argument("--hooks", default=None, metavar="<id[:host],...>",
+                        help="(uninstall only) remove only these hooks")
+    parser.add_argument(
+        "--replace-existing", action="store_true",
+        help="(--headless --skills only) move a real dir or foreign symlink "
+             "standing at a named skill's link path into "
+             "${XDG_STATE_HOME:-~/.local/state}/ai-kit/backups/<root>/ before "
+             "linking the repo copy.")
     args = parser.parse_args(argv)
-    if (args.skills is not None or args.with_statusline or args.with_hooks) \
-            and not args.headless:
+    if (args.skills is not None or args.with_statusline
+            or args.with_hooks is not False) and not args.headless:
         parser.error("--skills/--with-statusline/--with-hooks require --headless")
+    if isinstance(args.with_hooks, str):
+        tokens = [t for t in re.split(r"[,\s]+", args.with_hooks.strip()) if t]
+        if not tokens:
+            print("warn: --with-hooks= named no hook id; nothing wired",
+                  file=sys.stderr)
+            args.with_hooks = []
+        else:
+            try:
+                args.with_hooks = parse_hook_selector(args.with_hooks)
+            except ValueError as exc:
+                parser.error(f"--with-hooks: unknown hook {str(exc)!r} "
+                             f"(known: {', '.join(HOOK_IDS)})")
+    if args.hooks is not None:
+        if args.subcommand != "uninstall":
+            parser.error("--hooks is only valid with uninstall")
+        tokens = [t for t in re.split(r"[,\s]+", args.hooks.strip()) if t]
+        if not tokens:
+            print("warn: --hooks= named no hook id; nothing removed", file=sys.stderr)
+            args.hooks = []
+        else:
+            try:
+                args.hooks = parse_hook_selector(args.hooks)
+            except ValueError as exc:
+                parser.error(f"--hooks: unknown hook {str(exc)!r} "
+                             f"(known: {', '.join(HOOK_IDS)})")
+    if args.replace_existing and not (args.headless and args.skills is not None):
+        parser.error("--replace-existing requires --headless and --skills")
     if args.headless and args.subcommand not in ("install", "reconfigure"):
         parser.error("--headless is only valid with the install/reconfigure subcommands")
     if args.headless and args.config_doctor:
@@ -3145,7 +3908,8 @@ def main(argv=None):  # pylint: disable=too-many-return-statements
         if args.headless:
             return cmd_install_headless(
                 env, dry, args.skills, args.with_statusline, args.with_hooks,
-                examples_flag=args.examples)
+                examples_flag=args.examples,
+                replace_existing=args.replace_existing)
         ensure_rich_runtime(env)              # may re-exec; must be BEFORE open_tty
         tty = cast("_StdTty", require_tty(open_tty()))  # fail-closed (FR-W.1/B)
         try:
@@ -3154,7 +3918,7 @@ def main(argv=None):  # pylint: disable=too-many-return-statements
         finally:
             tty.close()
     if args.subcommand == "uninstall":
-        return cmd_uninstall(env, dry)
+        return cmd_uninstall(env, dry, hooks=args.hooks)
     if args.subcommand == "doctor":
         return cmd_doctor(env)
     if args.subcommand == "check":

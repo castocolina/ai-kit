@@ -5,18 +5,30 @@ curated `tier` writes runtime + model_profile_overrides.<runtime>.<tier> directl
 curated tier but with a real cross-AI command falls to cross_ai_hook (command string only -- the
 write into workflow.cross_ai_command happens in Task 5, after checking the plan's own cross_ai:
 true frontmatter); otherwise an honest fallback notice that makes no unenforced vendor claim."""
+import sys
+from collections.abc import Callable
+from typing import Any, NamedTuple
+
+from ai_kit_spec.commands import execute_cli_error
 from ai_kit_spec.config_io import cfg_resolve
-from ai_kit_spec.execute_selection import candidates_to_ladder, resolve_execute_candidates
+from ai_kit_spec.detection import RUNTIMES
+from ai_kit_spec.execute_selection import (
+    ExecuteResolveOptions,
+    candidates_to_ladder,
+    resolve_execute_candidates,
+    screen_execute_clis,
+)
 from ai_kit_spec.quota import resolve_ladder_pick
+from ai_kit_spec.runner_dispatch import PI_EXEC_NOTE, PROJECT_GUIDANCE_PATH
 
 from ai_kit_spec_gsd.gsd_config import (
     KNOWN_GSD_TIERS,
     TIER_TO_MODEL_PROFILE,
-    model_profile_is_adapter_owned,
-    override_is_adapter_owned,
-    write_active_runtime,
-    write_model_profile,
-    write_native_tier_override,
+    ApplyResult,
+    GsdWriteContext,
+    apply_changes,
+    is_adapter_owned,
+    resolve_native_tier,
 )
 from ai_kit_spec_gsd.gsd_cross_ai import build_cross_ai_command
 
@@ -35,25 +47,70 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
     for r in resolved.get("reviewers", []):
         if "key" not in r:
             continue
-        cli = r.get("cli")
-        # tier: curated field wins; a native (cli is None) entry's own `model` is already a
-        # Claude-tier-alias by this repo's existing convention (e.g. "opus-native" -> model:
-        # "opus"); a cli-set entry with no curated tier cannot be expressed natively at all.
+        runtime = r.get("runtime")
+        command = r.get("command")
         tier = r.get("tier")
-        if tier is None and cli is None:
+        alias_native = (runtime is None and not command) or (
+            runtime == "claude" and r.get("model") in RUNTIMES["claude"].native_selectors
+        )
+        if tier is None and alias_native:
             tier = r.get("model")
         candidates.append({
-            "key": r["key"], "model": r.get("model", ""), "cli": cli,
-            "vendor": r.get("vendor", ""), "command": r.get("command"),
+            "key": r["key"], "model": r.get("model", ""),
+            "runtime": None if alias_native else runtime,
+            "vendor": r.get("vendor", ""), "command": command,
             "task_affinity": r.get("task_affinity"), "context_limit": r.get("context_limit"),
-            "tier": tier,
+            "tier": tier, "purpose": r.get("purpose"),
+            "effort": r.get("effort"), "service_tier": r.get("service_tier"),
         })
     top_n_keys = resolved.get("policy", {}).get("ladder", [])
     return candidates, top_n_keys
 
 
+class DispatchInputs(NamedTuple):
+    candidates: list
+    top_n_keys: list
+    gsd_config: dict
+    ctx: GsdWriteContext
+
+
+class DispatchContext(NamedTuple):
+    target_dir: str
+    current_runtime: str = "claude"
+    required_context: int = 0
+    quota: dict | None = None
+
+
+class DispatchSeams(NamedTuple):
+    apply_changes_fn: Callable[..., ApplyResult] = apply_changes
+    is_adapter_owned_fn: Callable[..., bool] = is_adapter_owned
+    resolve_ladder_pick_fn: Callable[..., Any] = resolve_ladder_pick
+
+
+class NativeTierOutcome(NamedTuple):
+    runtime: str
+    tier: str
+    model: str
+    key: Any
+    written: bool
+    provenance: str
+
+
 def _runtime_identity(cli) -> str:
     return cli if cli is not None else "claude"
+
+
+# D-15 names the review-only and runner-less rows (claude, grok). Whether D-15 also covers
+# GSD's own native-tier route for them is not settled, so they stay screened (fail closed).
+_D15_NAMED_CLIS = frozenset(rid for rid, row in RUNTIMES.items()
+                            if row.review_only or not row.runner)
+
+
+def _native_tier_route(candidate: dict) -> bool:
+    """A curated GSD tier is written as GSD config and run by GSD's own runtime -- it never
+    uses an ai-kit execute builder, so D-15's builder screen does not apply (A-WR-08)."""
+    return (candidate.get("tier") in KNOWN_GSD_TIERS
+            and candidate.get("runtime") not in _D15_NAMED_CLIS)
 
 
 def _fallback_notice(top_choice_key, reason_code: str, reason_prose: str) -> dict:
@@ -61,7 +118,7 @@ def _fallback_notice(top_choice_key, reason_code: str, reason_prose: str) -> dic
     return {
         "mode": "fallback_notice",
         "key": top_choice_key,
-        "cli": None,
+        "runtime": None,
         "provenance": "fallback",
         "reason": reason_code,
         "message": (
@@ -72,100 +129,113 @@ def _fallback_notice(top_choice_key, reason_code: str, reason_prose: str) -> dic
     }
 
 
-def resolve_gsd_dispatch(candidates: list, top_n_keys: list, gsd_config: dict,
-                          gsd_config_path: str, target_dir: str, current_runtime: str = "claude",
-                          required_context: int = 0, quota: dict | None = None,
-                          run_id: str | None = None, write_tier_fn=write_native_tier_override,
-                          write_runtime_fn=write_active_runtime,
-                          write_model_profile_fn=write_model_profile,
-                          resolve_ladder_pick_fn=resolve_ladder_pick) -> dict:
-    quota = dict(quota or {})
+def _write_failed(apply_result: ApplyResult, runtime, tier, key) -> dict:
+    return {"mode": "write_failed", "applied": apply_result.applied,
+            "failed": apply_result.failed, "reverted": apply_result.reverted,
+            "revert_failed": apply_result.revert_failed, "error": apply_result.error,
+            "runtime": runtime, "tier": tier, "key": key}
 
-    if not candidates:
-        return _fallback_notice(
-            None, "no_configured_candidate",
-            "ai-kit-spec-execute has no configured candidate at all (review-spec.toml has no "
-            "[[reviewers]] entries) -- nothing to select from")
 
-    # task_type is execute_selection's own frontend/backend/mixed "task_affinity" axis -- no
-    # curated data exists yet, so this is always None (see Global Constraints).
-    ranked = resolve_execute_candidates(candidates, None, required_context, {}, top_n_keys)
-    if not ranked:
-        return _fallback_notice(
-            None, "all_candidates_context_rejected",
-            f"every one of the {len(candidates)} configured candidate(s) was rejected on context "
-            f"size -- each candidate's curated context_limit is smaller than this phase's "
-            f"estimated required_context of {required_context}")
+def _native_tier_result(outcome: NativeTierOutcome) -> dict:
+    return {"mode": "native_tier", **outcome._asdict()}
 
-    by_key = {c["key"]: c for c in ranked}
-    remaining_ladder = candidates_to_ladder(ranked)
-    top_key = ranked[0]["key"]
 
-    while remaining_ladder:
-        pick = resolve_ladder_pick_fn(ranked, remaining_ladder, skip_vendor="", quota=quota)
-        if pick is None:
-            break  # nothing left in remaining_ladder currently has quota
-        candidate = by_key[pick.key]
-        cli = candidate["cli"]
-        tier = candidate.get("tier")
-        # Task 7 smoke-test finding: GSD's own model resolution (gsd-core/bin/lib/core.cjs's
-        # RUNTIME_OVERRIDE_TIERS) ONLY ever consults opus/sonnet/haiku -- a tier outside that set
-        # (e.g. the Agent-tool's own 4th alias "fable") would write a real key GSD's own resolution
-        # never reads back, so it must never be treated as native-tier-eligible here.
-        if tier is not None and tier in KNOWN_GSD_TIERS:
-            runtime = _runtime_identity(cli)
-            # Task 7 smoke-test finding: model_profile_overrides.<runtime>.<tier> is only ever
-            # consulted by GSD's own resolution when runtime is set AND != "claude" -- for the
-            # claude runtime (the overwhelmingly common case), the real, live-read lever is the
-            # top-level model_profile scalar instead. See gsd_config.py's own TIER_TO_MODEL_PROFILE
-            # docstring for the full citation.
-            if runtime == "claude":
-                profile = TIER_TO_MODEL_PROFILE[tier]
-                existing_profile = gsd_config.get("model_profile")
-                # Known, accepted trade-off (live-verified 2026-08-31 against a real project
-                # scaffolded by GSD's own `gsd-tools.cjs config-new-project`): GSD itself seeds
-                # every fresh project's model_profile to "balanced" -- not a deliberate user
-                # choice, just GSD's own default. This check can't distinguish that default from
-                # a genuine hand-set "balanced" pin, so it treats both the same way (never
-                # overwrite) -- meaning in practice this branch rarely ever reaches the write
-                # below in a real, freshly-scaffolded project. Confirmed the write mechanism
-                # itself works correctly when model_profile is genuinely unset (write_model_profile
-                # writes "quality"/"balanced"/"budget" and GSD's own tooling reads it back
-                # correctly) -- the gap is only in this condition, and it's being kept as-is:
-                # never risking a genuine user pin is worth more than this adapter's own tier
-                # decision reliably taking effect.
-                if existing_profile is not None and not model_profile_is_adapter_owned(gsd_config):
-                    return {"mode": "native_tier", "runtime": runtime, "tier": tier,
-                            "model": existing_profile, "written": False, "cli": cli, "key": None,
-                            "provenance": "existing_gsd_config"}
-                gsd_config = write_model_profile_fn(gsd_config_path, gsd_config, profile,
-                                                      run_id=run_id)
-                return {"mode": "native_tier", "runtime": runtime, "tier": tier,
-                        "model": profile, "written": True, "cli": cli,
-                        "key": candidate["key"], "provenance": "resolved_candidate"}
-            existing = gsd_config.get("model_profile_overrides", {}).get(runtime, {}).get(tier)
-            if existing is not None and not override_is_adapter_owned(gsd_config, runtime, tier):
-                return {"mode": "native_tier", "runtime": runtime, "tier": tier,
-                        "model": existing, "written": False, "cli": cli, "key": None,
-                        "provenance": "existing_gsd_config"}
-            if current_runtime != runtime:
-                gsd_config = write_runtime_fn(gsd_config_path, gsd_config, runtime, run_id=run_id)
-            gsd_config = write_tier_fn(gsd_config_path, gsd_config, runtime, tier,
-                                        candidate["model"], run_id=run_id)
-            return {"mode": "native_tier", "runtime": runtime, "tier": tier,
-                    "model": candidate["model"], "written": True, "cli": cli,
-                    "key": candidate["key"], "provenance": "resolved_candidate"}
-        cross_ai_command = build_cross_ai_command(candidate, target_dir)
-        if cross_ai_command is not None:
-            return {"mode": "cross_ai_hook", "cross_ai_command": cross_ai_command, "cli": cli,
-                    "key": candidate["key"], "model": candidate["model"],
-                    "provenance": "resolved_candidate"}
-        # No usable dispatch mechanism for this candidate at all -- drop it and keep walking.
-        remaining_ladder = [k for k in remaining_ladder if k != pick.key]
+def _dispatch_claude_tier(
+    candidate: dict, gsd_config: dict, ctx: GsdWriteContext, seams: DispatchSeams,
+) -> dict | None:
+    tier = candidate.get("tier")
+    if tier is None or tier not in KNOWN_GSD_TIERS:
+        return None
+    runtime = _runtime_identity(candidate["runtime"])
+    if runtime != "claude":
+        return None
+    profile = TIER_TO_MODEL_PROFILE[tier]
+    existing_profile = gsd_config.get("model_profile")
+    if existing_profile is not None and not seams.is_adapter_owned_fn(
+            gsd_config, ctx.config_path, "model_profile"):
+        return _native_tier_result(NativeTierOutcome(
+            runtime, tier, existing_profile, None, False, "existing_gsd_config"))
+    applied = seams.apply_changes_fn(ctx, [("model_profile", profile)])
+    if applied.failed:
+        return _write_failed(applied, runtime, tier, candidate["key"])
+    return _native_tier_result(NativeTierOutcome(
+        runtime, tier, profile, candidate["key"], True, "resolved_candidate"))
 
+
+def _dispatch_non_claude_tier(
+    candidate: dict, gsd_config: dict, ctx: GsdWriteContext, dispatch: DispatchContext,
+    seams: DispatchSeams,
+) -> dict | None:
+    tier = candidate.get("tier")
+    if tier is None or tier not in KNOWN_GSD_TIERS:
+        return None
+    runtime = _runtime_identity(candidate["runtime"])
+    if runtime == "claude":
+        return None
+    tier_dotted = f"model_profile_overrides.{runtime}.{tier}"
+    existing = resolve_native_tier(gsd_config, runtime, tier)
+    if existing is not None and not seams.is_adapter_owned_fn(
+            gsd_config, ctx.config_path, tier_dotted):
+        return _native_tier_result(NativeTierOutcome(
+            runtime, tier, existing, None, False, "existing_gsd_config"))
+    changes = []
+    if dispatch.current_runtime != runtime:
+        changes.append(("runtime", runtime))
+    changes.append((tier_dotted, candidate["model"]))
+    applied = seams.apply_changes_fn(ctx, changes)
+    if applied.failed:
+        return _write_failed(applied, runtime, tier, candidate["key"])
+    return _native_tier_result(NativeTierOutcome(
+        runtime, tier, candidate["model"], candidate["key"], True, "resolved_candidate"))
+
+
+def _try_candidate_dispatch(
+    candidate: dict, gsd_config: dict, ctx: GsdWriteContext, dispatch: DispatchContext,
+    seams: DispatchSeams,
+) -> dict | None:
+    result = _dispatch_claude_tier(candidate, gsd_config, ctx, seams)
+    if result is not None:
+        return result
+    result = _dispatch_non_claude_tier(candidate, gsd_config, ctx, dispatch, seams)
+    if result is not None:
+        return result
+    command = build_cross_ai_command(candidate)
+    if command is not None:
+        runtime = candidate["runtime"]
+        result = {"mode": "cross_ai_hook", "cross_ai_command": command,
+                  "runtime": runtime,
+                  "key": candidate["key"], "model": candidate["model"],
+                  "guidance_path": PROJECT_GUIDANCE_PATH,
+                  "provenance": "resolved_candidate"}
+        if runtime == "pi":
+            # D-35: visible before the hook is enabled; self-test verified only.
+            print(PI_EXEC_NOTE, file=sys.stderr)
+            result["notes"] = [PI_EXEC_NOTE]
+        return result
+    return None
+
+
+def _unsafe_hook_notice(candidate: dict) -> dict | None:
+    """The notice for an exec runtime whose model the unquoted hook cannot carry (M9).
+
+    None for anything else, so a runtime with no builder at all still falls through the
+    ladder to a later usable candidate. A hook that did build is not this case either.
+    """
+    if build_cross_ai_command(candidate) is not None:
+        return None
+    if execute_cli_error(candidate.get("runtime")) is not None:
+        return None
+    return _fallback_notice(
+        candidate["key"], "unsafe_hook_token",
+        "the model id contains a character GSD's unquoted hook expansion cannot carry")
+
+
+def _ladder_exhausted_notice(
+    top_key: str, remaining_ladder: list, by_key: dict,
+) -> dict:
     has_retryable_remaining = any(
         by_key[k].get("tier") in KNOWN_GSD_TIERS
-        or build_cross_ai_command(by_key[k], target_dir) is not None
+        or build_cross_ai_command(by_key[k]) is not None
         for k in remaining_ladder
     )
     reason_code = "quota_exhausted" if has_retryable_remaining else "no_usable_dispatch"
@@ -175,3 +245,77 @@ def resolve_gsd_dispatch(candidates: list, top_n_keys: list, gsd_config: dict,
         "no quota-available candidate in the ladder has a usable native slot or cross-AI command"
     )
     return _fallback_notice(top_key, reason_code, reason_prose)
+
+
+class _RankedLadder(NamedTuple):
+    """The screened ladder, or an early notice when nothing can be resolved."""
+
+    ranked: list | None
+    notice: dict | None
+
+
+def _screened_ladder(candidates: list, top_n_keys: list, required_context: int) -> _RankedLadder:
+    """Rank the roster, or the notice for an empty, screened-out or context-rejected one."""
+    if not candidates:
+        return _RankedLadder(None, _fallback_notice(
+            None, "no_configured_candidate",
+            "ai-kit-spec-execute has no configured candidate at all (review-spec.toml has no "
+            "[[reviewers]] entries) -- nothing to select from"))
+    ranked = resolve_execute_candidates(
+        candidates,
+        ExecuteResolveOptions(
+            None, required_context, {}, top_n_keys,
+            warn_fn=lambda msg: print(msg, file=sys.stderr),
+            screen_exempt_fn=_native_tier_route),
+    )
+    if ranked:
+        return _RankedLadder(ranked, None)
+    if not screen_execute_clis(candidates, lambda _msg: None, _native_tier_route):
+        return _RankedLadder(None, _fallback_notice(
+            candidates[0]["key"], "no_usable_dispatch",
+            "no configured candidate has a usable native GSD tier or a CLI with an execute "
+            "builder (each was skipped with a warning above)"))
+    return _RankedLadder(None, _fallback_notice(
+        None, "all_candidates_context_rejected",
+        f"every one of the {len(candidates)} configured candidate(s) was rejected on context "
+        f"size -- each candidate's curated context_limit is smaller than this phase's "
+        f"estimated required_context of {required_context}"))
+
+
+def resolve_gsd_dispatch(
+    inputs: DispatchInputs,
+    dispatch: DispatchContext,
+    seams: DispatchSeams | None = None,
+) -> dict:
+    seams = seams or DispatchSeams()
+    candidates = inputs.candidates
+    gsd_config = inputs.gsd_config
+    ctx = inputs.ctx
+    quota = dict(dispatch.quota or {})
+
+    screened = _screened_ladder(candidates, inputs.top_n_keys, dispatch.required_context)
+    if screened.notice is not None or not screened.ranked:
+        return screened.notice or _fallback_notice(None, "no_usable_dispatch", "no candidate")
+
+    by_key = {c["key"]: c for c in screened.ranked}
+    remaining_ladder = candidates_to_ladder(screened.ranked)
+    top_key = screened.ranked[0]["key"]
+
+    while remaining_ladder:
+        pick = seams.resolve_ladder_pick_fn(
+            screened.ranked, remaining_ladder, skip_vendor="", quota=quota)
+        if pick is None:
+            break
+        candidate = by_key[pick.key]
+        result = _try_candidate_dispatch(candidate, gsd_config, ctx, dispatch, seams)
+        if result is not None:
+            return result
+        remaining_ladder = [k for k in remaining_ladder if k != pick.key]
+
+    # The ladder's own first choice whose model the unquoted hook cannot carry is a reason of
+    # its own, not a generic exhausted-ladder notice (plan review M9).
+    notice = _unsafe_hook_notice(by_key[top_key])
+    if notice is not None:
+        return notice
+
+    return _ladder_exhausted_notice(top_key, remaining_ladder, by_key)

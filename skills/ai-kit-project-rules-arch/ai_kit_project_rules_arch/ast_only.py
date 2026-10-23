@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+from typing import ClassVar
 
 from ai_kit_rules_common.criticality import CRITICALITY_ADVISORY, CRITICALITY_MEDIUM
 from ai_kit_rules_common.makefile_parse import parse_makefile_recipe
@@ -212,10 +213,25 @@ class _ScopeCollector(ast.NodeVisitor):
     inside a class is still a `FunctionDef` and gets its own scope exactly
     as a module-level function does, which is all D-A8 needs."""
 
+    _VISIT_HANDLERS: ClassVar[dict[type[ast.AST], str]] = {
+        ast.Module: "_visit_scope",
+        ast.FunctionDef: "_visit_scope",
+        ast.AsyncFunctionDef: "_visit_scope",
+        ast.Assign: "_visit_assign",
+        ast.Call: "_visit_call",
+    }
+
     def __init__(self) -> None:
         self.call_scope: dict[ast.Call, ast.AST] = {}
         self.scope_assignments: dict[ast.AST, dict[str, list[ast.expr]]] = {}
         self._scope_stack: list[ast.AST] = []
+
+    def visit(self, node: ast.AST) -> None:
+        handler_name = self._VISIT_HANDLERS.get(type(node))
+        if handler_name is not None:
+            getattr(self, handler_name)(node)
+            return
+        self.generic_visit(node)
 
     def _push_scope(self, node: ast.AST) -> None:
         self._scope_stack.append(node)
@@ -224,29 +240,19 @@ class _ScopeCollector(ast.NodeVisitor):
     def _pop_scope(self) -> None:
         self._scope_stack.pop()
 
-    def visit_Module(self, node: ast.Module) -> None:
+    def _visit_scope(self, node: ast.AST) -> None:
         self._push_scope(node)
         self.generic_visit(node)
         self._pop_scope()
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._push_scope(node)
-        self.generic_visit(node)
-        self._pop_scope()
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._push_scope(node)
-        self.generic_visit(node)
-        self._pop_scope()
-
-    def visit_Assign(self, node: ast.Assign) -> None:
+    def _visit_assign(self, node: ast.Assign) -> None:
         scope = self._scope_stack[-1]
         for target in node.targets:
             if isinstance(target, ast.Name):
                 self.scope_assignments[scope].setdefault(target.id, []).append(node.value)
         self.generic_visit(node)
 
-    def visit_Call(self, node: ast.Call) -> None:
+    def _visit_call(self, node: ast.Call) -> None:
         self.call_scope[node] = self._scope_stack[-1]
         self.generic_visit(node)
 
@@ -375,65 +381,88 @@ def _execution_finding(backing_path: str, repo_root: str, intersection: set[str]
     }
 
 
-def _find_ast_only_finding(repo_root: str, makefile_path: str, target_name: str) -> dict | None:
+def _open_backing_ast_module(
+    repo_root: str, makefile_path: str, target_name: str
+) -> tuple[str, ast.Module] | dict | None:
+    """Success: `(backing_path, tree)`. Advisory: a finding dict. Silent skip: `None`."""
     backing_path, any_candidate = find_backing_test_file(repo_root, makefile_path, target_name)
     if backing_path is None:
         if not any_candidate:
-            # The recipe never formed a single file-shaped candidate (no
-            # token matched a known source extension or a dotted-identifier
-            # path) -- e.g. a bare `echo` no-op, or an external CLI tool
-            # invoked with no file-shaped argument. There is no evidence
-            # this target even points at a checkable backing file, so this
-            # check declines silently rather than manufacturing an advisory
-            # from no evidence at all.
             return None
         return _not_verifiable_finding("not_discoverable", None, repo_root)
     if not backing_path.endswith(".py"):
         return _not_verifiable_finding("not_python", backing_path, repo_root)
-
     try:
         with open(backing_path, encoding="utf-8") as handle:
             source = handle.read()
-        tree = ast.parse(source)
+        return backing_path, ast.parse(source)
     except (SyntaxError, ValueError, RecursionError):
         return _not_verifiable_finding("unparseable", backing_path, repo_root)
 
-    collector = _ScopeCollector()
-    collector.visit(tree)
-    ast_alias, parse_alias = _detect_ast_aliases(tree)
-    helpers = _build_parser_helpers(tree, collector, ast_alias, parse_alias)
 
-    has_parse_call = False
+def _collect_parsed_subjects(
+    tree: ast.Module,
+    collector: _ScopeCollector,
+    ast_alias: str | None,
+    parse_alias: str | None,
+    helpers: set[str],
+) -> tuple[set[str], bool]:
     parsed_subjects: set[str] = set()
+    has_parse_call = False
     for call, scope in collector.call_scope.items():
         is_direct = _is_direct_ast_parse_call(call, ast_alias, parse_alias)
         calls_helper = isinstance(call.func, ast.Name) and call.func.id in helpers
-        if is_direct or calls_helper:
-            has_parse_call = True
-            assignments = collector.scope_assignments.get(scope, {})
-            for literal in _collect_call_literals(call, assignments):
-                parsed_subjects.add(_normalize_module_token(literal))
+        if not is_direct and not calls_helper:
+            continue
+        has_parse_call = True
+        assignments = collector.scope_assignments.get(scope, {})
+        for literal in _collect_call_literals(call, assignments):
+            parsed_subjects.add(_normalize_module_token(literal))
+    return parsed_subjects, has_parse_call
 
-    if not has_parse_call:
-        return _not_verifiable_finding("no_parse_call", backing_path, repo_root)
 
+def _collect_executed_subjects(tree: ast.Module, collector: _ScopeCollector) -> set[str]:
     executed_subjects: set[str] = set()
     for call, scope in collector.call_scope.items():
-        if _is_executed_call(call):
-            assignments = collector.scope_assignments.get(scope, {})
-            for literal in _collect_call_literals(call, assignments):
-                executed_subjects.add(_normalize_module_token(literal))
+        if not _is_executed_call(call):
+            continue
+        assignments = collector.scope_assignments.get(scope, {})
+        for literal in _collect_call_literals(call, assignments):
+            executed_subjects.add(_normalize_module_token(literal))
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 executed_subjects.add(_normalize_module_token(alias.name))
         elif isinstance(node, ast.ImportFrom) and node.module:
             executed_subjects.add(_normalize_module_token(node.module))
+    return executed_subjects
 
+
+def _ast_only_finding_from_tree(
+    backing_path: str, repo_root: str, tree: ast.Module, collector: _ScopeCollector
+) -> dict | None:
+    ast_alias, parse_alias = _detect_ast_aliases(tree)
+    helpers = _build_parser_helpers(tree, collector, ast_alias, parse_alias)
+    parsed_subjects, has_parse_call = _collect_parsed_subjects(
+        tree, collector, ast_alias, parse_alias, helpers
+    )
+    if not has_parse_call:
+        return _not_verifiable_finding("no_parse_call", backing_path, repo_root)
+    executed_subjects = _collect_executed_subjects(tree, collector)
     intersection = parsed_subjects & executed_subjects
     if not intersection:
         return None
     return _execution_finding(backing_path, repo_root, intersection)
+
+
+def _find_ast_only_finding(repo_root: str, makefile_path: str, target_name: str) -> dict | None:
+    opened = _open_backing_ast_module(repo_root, makefile_path, target_name)
+    if opened is None or isinstance(opened, dict):
+        return opened
+    backing_path, tree = opened
+    collector = _ScopeCollector()
+    collector.visit(tree)
+    return _ast_only_finding_from_tree(backing_path, repo_root, tree, collector)
 
 
 def build_ast_only_findings(repo_root: str, makefile_path: str, target_name: str) -> list[dict]:

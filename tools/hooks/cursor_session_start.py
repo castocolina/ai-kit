@@ -1,57 +1,36 @@
 #!/usr/bin/env python3
-"""Cursor sessionStart wrapper for the tool-substitution briefing.
+"""Cursor sessionStart wrapper for the modern-tool briefing.
 
-Reads (and discards) the host's stdin payload, runs detect + compose, and
-emits a Cursor sessionStart envelope on stdout. Every failure path exits
-0 with parseable JSON — a hung or missing rtk must never block session
-start.
+Reads and discards the host's stdin payload, runs the shared detector and
+composer, and emits the model context in Cursor's additional_context field.
+Every failure path exits 0 with parseable JSON.
 
-Output schema: `{ additional_context?: string }`, from Cursor's own
-already-installed `gsd-cursor-session-start.js` header. Because the field
-is optional, a bare `{}` is contract-valid on this host.
+Output schema: `{ additional_context?: string }`; Cursor has no user-visible
+briefing field. Empty output is a bare `{}`.
 
-Empty-output evidence, per host, rather than a uniform claim:
-
-- Cursor: a bare `{}` is an OBSERVED live precedent. Cursor's own installed
-  `gsd-cursor-session-start.js` writes that shape on its error path.
-- Claude Code: the same shape is INFERRED rather than observed. The
-  documented envelope makes every output field optional, so a `{}` body
-  carries no recognized field and is read as a no-op.
-
-Host coverage: Claude Code and Cursor are both wired. opencode has no
-documented session-start injection point today, an accepted and documented
-gap (ROADMAP SC-4, PROJECT.md Out of Scope).
+Host coverage: Claude Code and Cursor are wired. opencode has no documented
+session-start injection point today, an accepted and documented gap.
 """
 
+import importlib
 import json
 import os
-import select
 import sys
 
 
-def _drain_stdin():
-    """Discard stdin in bounded chunks so a partial payload cannot wedge us."""
+def _fail_open(*_exc_info):
     try:
-        fd = sys.stdin.fileno()
-    except Exception:
-        return
-    total = 0
-    for _ in range(16):
-        if total >= 1024 * 1024:
-            return
-        try:
-            readable, _, _ = select.select([sys.stdin], [], [], 0.5)
-        except Exception:
-            return
-        if not readable:
-            return
-        try:
-            chunk = os.read(fd, 65536)
-        except Exception:
-            return
-        if not chunk:
-            return
-        total += len(chunk)
+        sys.stdout.write("{}")
+        sys.stdout.flush()
+    except OSError:
+        pass
+    os._exit(0)
+
+
+sys.excepthook = _fail_open
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+_session_start = importlib.import_module("claude_session_start")
+_drain_stdin = _session_start.__dict__["_drain_stdin"]
 
 
 def emit(message):
@@ -62,21 +41,11 @@ def emit(message):
 
 
 def main():
-    """Detect, compose, emit. Never raise, never exit non-zero."""
-    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-    try:
-        import detect
-        _drain_stdin()
-        detection = detect.detect_substitutions()
-        message = detect.compose_message(detection)
-        emit(message)
-    except Exception:
-        # Covers a missing/corrupted sibling `detect.py` (partial install,
-        # interrupted copy, disk error) as well as any detect/compose
-        # failure — the import must degrade the same way every other
-        # failure path does, never raise past this function.
-        sys.stdout.write("{}")
-        sys.stdout.flush()
+    """Detect, compose, emit. Failures reach the shared ``_fail_open``."""
+    detect = importlib.import_module("detect")
+    _drain_stdin()
+    _user_line, context = detect.compose_message(detect.detect_substitutions())
+    emit(context)
     return 0
 
 

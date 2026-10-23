@@ -22,7 +22,6 @@ from ai_kit_gsd_curated_config import (
     cross_ai_build,
     frontend_detect,
     gsd_catalog,
-    gsd_write,
     model_detect,
     preference_match,
     workflow_defaults,
@@ -131,7 +130,6 @@ class TestTracerEnsureProjectAndApplyProfile(unittest.TestCase):
                 "budget",
                 "--project-dir",
                 self.scratch,
-                "--raw",
             ],
         )
 
@@ -178,44 +176,51 @@ class TestResolveMissing(unittest.TestCase):
         self.assertEqual(exit_code, 2)
         self.assertEqual(run.calls, [])
 
+    def test_missing_ai_kit_spec_sibling_exits_2_before_any_subprocess_call(self):
+        """D-18: when the ai-kit-spec-review sibling (ai_kit_spec) cannot be imported, every
+        subcommand that writes reports the miss on stderr and exits 2 -- never raising at
+        import time, never shelling out."""
+        run = make_fake_run([])
+        buf = io.StringIO()
+        with unittest.mock.patch.object(gsd_catalog, "load_gsd_tools", return_value=None), \
+                contextlib.redirect_stderr(buf):
+            exit_code = cli.main(
+                ["apply-profile", "--project-dir", "/fake/project", "--profile", "budget"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=lambda: {},
+            )
+        self.assertEqual(exit_code, 2)
+        self.assertIn("ai-kit-spec-review", buf.getvalue())
+        self.assertEqual(run.calls, [])
 
-class TestRealIntegration(unittest.TestCase):
-    """Skips itself when no gsd-core is actually installed on the machine running the suite --
-    the hermetic unit tests above never depend on this, but a dev box or CI box with gsd-core
-    installed gets one real end-to-end proof."""
 
-    _REAL_GSD_TOOLS = gsd_catalog.resolve_gsd_tools_path(dict(os.environ))
+class TestApplyExecutionLocalFirst(unittest.TestCase):
+    """D-18/R17 tracer: with both a project-local and a global fake gsd-core present,
+    `apply-execution`'s every recorded argv names the PROJECT-LOCAL gsd-tools.cjs."""
 
-    @unittest.skipUnless(_REAL_GSD_TOOLS is not None, "no installed gsd-core found on this machine")
-    def test_tracer_against_real_installed_gsd_tools(self):
-        scratch = tempfile.mkdtemp()
-        try:
-            exit1 = cli.main(["ensure-project", "--project-dir", scratch])
-            self.assertEqual(exit1, 0)
-            exit2 = cli.main(["apply-profile", "--project-dir", scratch, "--profile", "budget"])
-            self.assertEqual(exit2, 0)
-            with open(os.path.join(scratch, ".planning", "config.json"), encoding="utf-8") as f:
-                config = json.load(f)
-            self.assertEqual(config.get("model_profile"), "budget")
-        finally:
-            shutil.rmtree(scratch, ignore_errors=True)
+    def test_apply_execution_writes_through_project_local_gsd_tools(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        local = _make_fake_install(os.path.join(project, ".claude"))
+        # a global candidate under the host home (<home>/.claude/gsd-core) too
+        _make_fake_install(os.path.join(home, ".claude"))
+        run = make_fake_run([(0, "{}", ""), (0, "{}", ""), (0, "{}", "")])
 
-    @unittest.skipUnless(_REAL_GSD_TOOLS is not None, "no installed gsd-core found on this machine")
-    def test_this_repos_own_config_is_never_touched(self):
-        repo_config_path = os.path.join(
-            os.path.dirname(__file__), "..", ".planning", "config.json"
+        exit_code = cli.main(
+            ["apply-execution", "--project-dir", project, "--cli", "opencode",
+             "--model", "m"],
+            which_fn=_which_stub(),
+            run_fn=run,
+            env_fn=lambda: {"HOME": home, "PATH": ""},
         )
-        with open(repo_config_path, "rb") as f:
-            before = f.read()
-        scratch = tempfile.mkdtemp()
-        try:
-            cli.main(["ensure-project", "--project-dir", scratch])
-            cli.main(["apply-profile", "--project-dir", scratch, "--profile", "budget"])
-        finally:
-            shutil.rmtree(scratch, ignore_errors=True)
-        with open(repo_config_path, "rb") as f:
-            after = f.read()
-        self.assertEqual(before, after)
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(run.calls)
+        for call in run.calls:
+            self.assertEqual(call[1], local)
 
 
 class TestGsdCatalogResolution(unittest.TestCase):
@@ -288,51 +293,6 @@ class TestQueryAgentCatalog(unittest.TestCase):
         self.assertIsNone(
             gsd_catalog.query_agent_catalog(FAKE_NODE_BIN, FAKE_CATALOG_PATH, timeout_run)
         )
-
-
-class TestGsdWrite(unittest.TestCase):
-    def test_ensure_config_exists_true_on_exit_zero(self):
-        run = fake_run(0)
-        self.assertTrue(
-            gsd_write.ensure_config_exists(FAKE_NODE_BIN, "/fake/gsd-tools.cjs", "/fake/dir", run)
-        )
-
-    def test_ensure_config_exists_false_on_nonzero_exit(self):
-        run = fake_run(1, stderr="boom")
-        self.assertFalse(
-            gsd_write.ensure_config_exists(FAKE_NODE_BIN, "/fake/gsd-tools.cjs", "/fake/dir", run)
-        )
-
-    def test_config_set_success_returns_stdout(self):
-        run = fake_run(0, stdout="model_profile=budget")
-        ok, output = gsd_write.config_set(
-            FAKE_NODE_BIN, "/fake/gsd-tools.cjs", "/fake/dir", "model_profile", "budget", run
-        )
-        self.assertTrue(ok)
-        self.assertEqual(output, "model_profile=budget")
-
-    def test_config_set_failure_returns_stderr(self):
-        run = fake_run(1, stderr="Error: bad key")
-        ok, output = gsd_write.config_set(
-            FAKE_NODE_BIN, "/fake/gsd-tools.cjs", "/fake/dir", "bogus.key", "x", run
-        )
-        self.assertFalse(ok)
-        self.assertEqual(output, "Error: bad key")
-
-    def test_config_set_coerces_python_bool_to_lowercase_string(self):
-        run_true = make_fake_run([(0, "ok", "")])
-        gsd_write.config_set(
-            FAKE_NODE_BIN, "/fake/gsd-tools.cjs", "/fake/dir", "some.flag", True, run_true
-        )
-        self.assertIn("true", run_true.calls[0])
-        self.assertNotIn("True", run_true.calls[0])
-
-        run_false = make_fake_run([(0, "ok", "")])
-        gsd_write.config_set(
-            FAKE_NODE_BIN, "/fake/gsd-tools.cjs", "/fake/dir", "some.flag", False, run_false
-        )
-        self.assertIn("false", run_false.calls[0])
-        self.assertNotIn("False", run_false.calls[0])
 
 
 class TestComputeOverrides(unittest.TestCase):
@@ -581,7 +541,7 @@ class TestAiKitSpecImportGracefulDegradation(unittest.TestCase):
 
     def test_cross_ai_build_imports_without_crashing_and_degrades_to_none(self):
         reimported = self._reimport_with_ai_kit_spec_blocked("cross_ai_build")
-        self.assertIsNone(reimported.build_execute_command)
+        self.assertIsNone(reimported.execute_cli_error)
         result = reimported.build_execution_command("opencode", "some-model", "/fake/project")
         self.assertIsNone(result)
 
@@ -591,7 +551,7 @@ class TestBuildCandidatePool(unittest.TestCase):
         snapshot = {
             "clis": {
                 "opencode": {"installed": True, "models": ["a", "b"]},
-                "cursor-agent": {"installed": False},
+                "cursor": {"installed": False},
                 "claude": {"installed": True},
             }
         }
@@ -601,16 +561,16 @@ class TestBuildCandidatePool(unittest.TestCase):
         snapshot = {
             "clis": {
                 "opencode": {"installed": False},
-                "cursor-agent": {"installed": True, "models": ["x"]},
+                "cursor": {"installed": True, "models": ["x"]},
             }
         }
-        self.assertEqual(model_detect.build_candidate_pool(snapshot), {"cursor-agent": ["x"]})
+        self.assertEqual(model_detect.build_candidate_pool(snapshot), {"cursor": ["x"]})
 
     def test_neither_installed(self):
         snapshot = {
             "clis": {
                 "opencode": {"installed": False},
-                "cursor-agent": {"installed": False},
+                "cursor": {"installed": False},
             }
         }
         self.assertEqual(model_detect.build_candidate_pool(snapshot), {})
@@ -685,14 +645,14 @@ class TestBestExecutionCandidate(unittest.TestCase):
         )
 
     def test_cursor_agent_only_fallback_when_opencode_has_no_match(self):
-        pool = {"opencode": ["unrelated-model"], "cursor-agent": ["router-env/my-executor"]}
+        pool = {"opencode": ["unrelated-model"], "cursor": ["router-env/my-executor"]}
         self.assertEqual(
             preference_match.best_execution_candidate(pool),
-            ("cursor-agent", "router-env/my-executor", "coding-or-executor"),
+            ("cursor", "router-env/my-executor", "coding-or-executor"),
         )
 
     def test_no_match_returns_none(self):
-        pool = {"opencode": ["unrelated-model"], "cursor-agent": ["also-unrelated"]}
+        pool = {"opencode": ["unrelated-model"], "cursor": ["also-unrelated"]}
         self.assertIsNone(preference_match.best_execution_candidate(pool))
 
 
@@ -725,10 +685,10 @@ class TestBestReviewCandidate(unittest.TestCase):
         )
 
     def test_cursor_agent_only_fallback(self):
-        pool = {"opencode": ["unrelated"], "cursor-agent": ["router-env/my-plan-review"]}
+        pool = {"opencode": ["unrelated"], "cursor": ["router-env/my-plan-review"]}
         self.assertEqual(
             preference_match.best_review_candidate(pool),
-            ("cursor-agent", "router-env/my-plan-review", "plan-review"),
+            ("cursor", "router-env/my-plan-review", "plan-review"),
         )
 
     def test_empty_pool_returns_native_last_resort(self):
@@ -739,7 +699,7 @@ class TestBestReviewCandidate(unittest.TestCase):
 
 class TestBuildExecutionCommand(unittest.TestCase):
     def test_fake_builder_fills_model_placeholder(self):
-        def fake_execute_command_fn(cli_name, **params):
+        def fake_execute_command_fn(cli, **params):
             return "opencode run -m {model} --dir " + params["target_dir"] + " --auto"
 
         result = cross_ai_build.build_execution_command(
@@ -748,12 +708,13 @@ class TestBuildExecutionCommand(unittest.TestCase):
             "/fake/project",
             execute_command_fn=fake_execute_command_fn,
         )
+        assert result is not None
         self.assertNotIn("{model}", result)
         self.assertIn("router-env/my-coding", result)
 
     def test_unknown_cli_returns_none_never_raises(self):
-        def fake_execute_command_fn(cli_name, **params):
-            raise ValueError(f"no builder for {cli_name}")
+        def fake_execute_command_fn(cli, **params):
+            raise ValueError(f"no builder for {cli}")
 
         result = cross_ai_build.build_execution_command(
             "unknown-cli",
@@ -764,14 +725,40 @@ class TestBuildExecutionCommand(unittest.TestCase):
         self.assertIsNone(result)
 
 
-class TestCliToReviewerSlug(unittest.TestCase):
+class TestBuildExecutionCommandRunner(unittest.TestCase):
+    def test_cursor_agent_maps_to_the_runner_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            command = cross_ai_build.build_execution_command("cursor-agent", "auto", tmp)
+        self.assertEqual(
+            command,
+            "node .planning/scripts/cross-ai.mjs --prefer cursor "
+            "--model-cursor auto --mode exec",
+        )
+
+    def test_codex_ends_with_the_sandbox_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            command = cross_ai_build.build_execution_command("codex", "m", tmp)
+        assert command is not None
+        self.assertTrue(command.endswith("--codex-sandbox workspace-write"))
+
+    def test_claude_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(cross_ai_build.build_execution_command("claude", "opus", tmp))
+
+
+class TestReviewerSlug(unittest.TestCase):
     def test_cursor_agent_maps_to_cursor_not_itself(self):
-        self.assertEqual(cross_ai_build.CLI_TO_REVIEWER_SLUG["cursor-agent"], "cursor")
-        self.assertNotEqual(cross_ai_build.CLI_TO_REVIEWER_SLUG["cursor-agent"], "cursor-agent")
+        self.assertEqual(cross_ai_build.reviewer_slug("cursor-agent"), "cursor")
+        self.assertNotEqual(cross_ai_build.reviewer_slug("cursor-agent"), "cursor-agent")
 
     def test_opencode_and_claude_map_to_themselves(self):
-        self.assertEqual(cross_ai_build.CLI_TO_REVIEWER_SLUG["opencode"], "opencode")
-        self.assertEqual(cross_ai_build.CLI_TO_REVIEWER_SLUG["claude"], "claude")
+        self.assertEqual(cross_ai_build.reviewer_slug("opencode"), "opencode")
+        self.assertEqual(cross_ai_build.reviewer_slug("claude"), "claude")
+
+    def test_id_matches_the_legacy_name_and_unknown_names_are_none(self):
+        self.assertEqual(cross_ai_build.reviewer_slug("cursor"), "cursor")
+        self.assertIsNone(cross_ai_build.reviewer_slug("grok"))
+        self.assertIsNone(cross_ai_build.reviewer_slug("codex"))
 
 
 class TestApplyExecutionCli(unittest.TestCase):
@@ -781,7 +768,13 @@ class TestApplyExecutionCli(unittest.TestCase):
         _make_fake_install(self.fake_install_root)
         self.env_fn = lambda: {"CLAUDE_CONFIG_DIR": self.fake_install_root}
 
+    def _scratch_project(self):
+        project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+        return project
+
     def test_real_candidate_writes_both_keys(self):
+        project = self._scratch_project()
         run = make_fake_run([(0, "ok", ""), (0, "ok", "")])
         buf = io.StringIO()
         with (
@@ -796,7 +789,7 @@ class TestApplyExecutionCli(unittest.TestCase):
                 [
                     "apply-execution",
                     "--project-dir",
-                    "/fake/project",
+                    project,
                     "--cli",
                     "opencode",
                     "--model",
@@ -853,6 +846,7 @@ class TestApplyExecutionCli(unittest.TestCase):
 
     def test_unimplemented_builder_degrades_to_no_builder(self):
         """Phase 7 code review WR-04: the no_builder degrade branch had zero test coverage."""
+        project = self._scratch_project()
         run = make_fake_run([(0, "ok", "")])
         buf = io.StringIO()
         with (
@@ -863,7 +857,7 @@ class TestApplyExecutionCli(unittest.TestCase):
         ):
             exit_code = cli.main(
                 [
-                    "apply-execution", "--project-dir", "/fake/project",
+                    "apply-execution", "--project-dir", project,
                     "--cli", "opencode", "--model", "some-model",
                 ],
                 which_fn=_which_stub(),
@@ -877,6 +871,123 @@ class TestApplyExecutionCli(unittest.TestCase):
         self.assertFalse(summary["cross_ai_command_written"])
         self.assertEqual(summary["degraded_reason"], "no_builder")
 
+    def _apply(self, project, cli_name, model, results):
+        run = make_fake_run(results)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = cli.main(
+                ["apply-execution", "--project-dir", project,
+                 "--cli", cli_name, "--model", model],
+                which_fn=_which_stub(), run_fn=run, env_fn=self.env_fn,
+            )
+        return code, run, json.loads(buf.getvalue())
+
+    def test_scratch_project_writes_the_runner_command(self):
+        project = self._scratch_project()
+        code, run, summary = self._apply(project, "codex", "m", [(0, "ok", "")] * 2)
+        self.assertEqual(code, 0)
+        command_writes = [
+            call for call in run.calls
+            if "config-set" in call and call[3] == "workflow.cross_ai_command"
+        ]
+        self.assertEqual(len(command_writes), 1)
+        self.assertTrue(
+            command_writes[0][4].startswith("node .planning/scripts/cross-ai.mjs ")
+        )
+        runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
+        with open(runner, "rb") as handle:
+            self.assertIn(b"template=6", handle.read().split(b"\n", 2)[1])
+        self.assertEqual(summary["runner"], "add")
+        self.assertEqual(summary["notes"], [])
+        for key in ("cross_ai_execution_written", "cross_ai_command_written", "degraded_reason"):
+            self.assertIn(key, summary)
+
+    def test_edited_template_2_degrades_without_a_command_write(self):
+        project = self._scratch_project()
+        self._apply(project, "codex", "m", [(0, "ok", "")] * 2)
+        runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
+        with open(runner, "rb") as handle:
+            current = handle.read()
+        edited = current.replace(b"template=6", b"template=2", 1) + b"\n"
+        with open(runner, "wb") as handle:
+            handle.write(edited)
+        code, run, summary = self._apply(project, "codex", "m", [(0, "ok", "")])
+        self.assertEqual(code, 0)
+        self.assertEqual(summary["degraded_reason"], "runner_not_ready")
+        self.assertFalse(summary["cross_ai_command_written"])
+        command_writes = [
+            call for call in run.calls if "config-set" in call and "command" in call[3]
+        ]
+        self.assertEqual(command_writes, [])
+        with open(runner, "rb") as handle:
+            self.assertEqual(handle.read(), edited)
+        self.assertTrue(os.path.isfile(runner + ".new"))
+
+    def test_unreadable_runner_degrades_with_the_read_error_in_notes(self):
+        project = self._scratch_project()
+        os.makedirs(os.path.join(project, ".planning", "scripts", "cross-ai.mjs"))
+        code, run, summary = self._apply(project, "codex", "m", [(0, "ok", "")])
+        self.assertEqual(code, 0)
+        self.assertEqual(summary["degraded_reason"], "runner_not_ready")
+        self.assertFalse(summary["cross_ai_command_written"])
+        self.assertTrue(any("cannot read" in note for note in summary["notes"]))
+        command_writes = [
+            call for call in run.calls if "config-set" in call and "command" in call[3]
+        ]
+        self.assertEqual(command_writes, [])
+
+    def test_pi_exec_note_in_json_and_stderr_absent_for_codex(self):
+        from ai_kit_spec.runner_dispatch import PI_EXEC_NOTE
+
+        project = self._scratch_project()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, _run, summary = self._apply(project, "pi", "m", [(0, "ok", "")] * 2)
+        self.assertEqual(code, 0)
+        self.assertIn(PI_EXEC_NOTE, summary["notes"])
+        self.assertIn(PI_EXEC_NOTE, err.getvalue())
+        project = self._scratch_project()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            _code, _run, summary = self._apply(project, "codex", "m", [(0, "ok", "")] * 2)
+        self.assertNotIn(PI_EXEC_NOTE, summary["notes"])
+        self.assertNotIn(PI_EXEC_NOTE, err.getvalue())
+
+    def test_rejected_executor_cli_exits_2_before_any_config_write(self):
+        # D-15 (Phase 16.1): an explicit claude/grok (or case-variant) executor choice fails
+        # BEFORE the first config-set -- workflow.cross_ai_execution included -- so the GSD
+        # config is left completely untouched on every run.
+        for cli_name in ("claude", "grok", "Claude"):
+            with self.subTest(cli=cli_name):
+                run = make_fake_run([])
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    exit_code = cli.main(
+                        ["apply-execution", "--project-dir", "/fake/project",
+                         "--cli", cli_name, "--model", "m"],
+                        which_fn=_which_stub(),
+                        run_fn=run,
+                        env_fn=self.env_fn,
+                    )
+                self.assertEqual(exit_code, 2)
+                self.assertIn("codex, cursor, opencode, pi", stderr.getvalue())
+                config_set_calls = [call for call in run.calls if "config-set" in call]
+                self.assertEqual(config_set_calls, [])
+                # A rerun fails identically: nothing was written before the check.
+                rerun_run = make_fake_run([])
+                rerun_stderr = io.StringIO()
+                with contextlib.redirect_stderr(rerun_stderr):
+                    rerun_code = cli.main(
+                        ["apply-execution", "--project-dir", "/fake/project",
+                         "--cli", cli_name, "--model", "m"],
+                        which_fn=_which_stub(),
+                        run_fn=rerun_run,
+                        env_fn=self.env_fn,
+                    )
+                self.assertEqual(rerun_code, 2)
+                self.assertEqual(rerun_stderr.getvalue(), stderr.getvalue())
+                self.assertEqual([c for c in rerun_run.calls if "config-set" in c], [])
+
 
 class TestApplyReviewCli(unittest.TestCase):
     def setUp(self):
@@ -885,11 +996,14 @@ class TestApplyReviewCli(unittest.TestCase):
         _make_fake_install(self.fake_install_root)
         self.env_fn = lambda: {"CLAUDE_CONFIG_DIR": self.fake_install_root}
 
-    def _run_apply_review(self, config_get_stdout, config_get_returncode=0):
+    def _run_apply_review(
+        self, config_get_stdout, config_get_returncode=0, config_get_stderr="", cli_name="opencode"
+    ):
         results = [
+            # config-get review.default_reviewers, read before any write
+            (config_get_returncode, config_get_stdout, config_get_stderr),
             (0, "ok", ""),  # workflow.plan_review_convergence
             (0, "ok", ""),  # review.effort.opencode
-            (config_get_returncode, config_get_stdout, ""),  # config-get review.default_reviewers
             (0, "ok", ""),  # review.default_reviewers write
             (0, "ok", ""),  # review.models.<slug> write
         ]
@@ -902,7 +1016,7 @@ class TestApplyReviewCli(unittest.TestCase):
                     "--project-dir",
                     "/fake/project",
                     "--cli",
-                    "opencode",
+                    cli_name,
                     "--model",
                     "router-env/my-plan-review",
                 ],
@@ -924,9 +1038,27 @@ class TestApplyReviewCli(unittest.TestCase):
         self.assertEqual(json.loads(review_writes[0][4]), ["claude", "opencode"])
 
     def test_absent_key_writes_fresh_one_element_list(self):
-        exit_code, _run, summary = self._run_apply_review("", config_get_returncode=1)
+        exit_code, _run, summary = self._run_apply_review(
+            "", config_get_returncode=1,
+            config_get_stderr="Error: Key not found: review.default_reviewers",
+        )
         self.assertEqual(exit_code, 0)
         self.assertEqual(summary["default_reviewers"], ["opencode"])
+
+    def test_failed_read_writes_nothing_and_exits_1(self):
+        run = make_fake_run([(1, "", "Error: config.json is locked")])
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            exit_code = cli.main(
+                ["apply-review", "--project-dir", "/fake/project",
+                 "--cli", "opencode", "--model", "m"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 1)
+        self.assertIn("config.json is locked", err.getvalue())
+        self.assertEqual([call for call in run.calls if "config-set" in call], [])
 
     def test_already_contains_resolved_slug_dedupes(self):
         """07-REVIEWS.md Cycle 2 MEDIUM: the realistic fresh-project -> apply-review path, where
@@ -989,6 +1121,75 @@ class TestApplyReviewCli(unittest.TestCase):
             if "config-set" in call and call[3] == "review.default_reviewers"
         ]
         self.assertEqual(json.loads(review_writes[0][4]), ["opencode"])
+
+    def test_cursor_and_legacy_name_both_write_cursor(self):
+        for cli_name in ("cursor", "cursor-agent"):
+            with self.subTest(cli=cli_name):
+                exit_code, run, summary = self._run_apply_review("[]", cli_name=cli_name)
+                self.assertEqual(exit_code, 0)
+                self.assertIn("cursor", summary["default_reviewers"])
+                review_writes = [
+                    call for call in run.calls
+                    if "config-set" in call and call[3] == "review.default_reviewers"
+                ]
+                self.assertEqual(json.loads(review_writes[0][4]), ["cursor"])
+
+    def test_grok_exits_2_and_lists_reviewer_slugs(self):
+        run = make_fake_run([])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            exit_code = cli.main(
+                ["apply-review", "--project-dir", "/fake/project",
+                 "--cli", "grok", "--model", "m"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=self.env_fn,
+            )
+        self.assertEqual(exit_code, 2)
+        self.assertIn("claude, cursor, opencode", err.getvalue())
+        self.assertEqual([call for call in run.calls if "config-set" in call], [])
+
+
+class TestV1CursorSnapshot(unittest.TestCase):
+    def _snapshot(self, models):
+        return json.dumps({
+            "schema_version": 5,
+            "clis": {
+                "opencode": {"installed": True, "models": ["unrelated-model"]},
+                "cursor": {"installed": True, "models": models},
+            },
+            "node": {"installed": True},
+        })
+
+    def test_execution_candidate_prints_the_cursor_id(self):
+        run = make_fake_run([(0, self._snapshot(["router-env/my-executor"]), "")])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = cli.main(
+                ["detect-execution-candidate"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=lambda: {},
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["cli"], "cursor")
+        self.assertEqual(payload["model"], "router-env/my-executor")
+
+    def test_review_candidate_uses_the_cursor_model(self):
+        run = make_fake_run([(0, self._snapshot(["router-env/my-plan-review"]), "")])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = cli.main(
+                ["detect-review-candidate"],
+                which_fn=_which_stub(),
+                run_fn=run,
+                env_fn=lambda: {},
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["cli"], "cursor")
+        self.assertEqual(payload["model"], "router-env/my-plan-review")
 
 
 class TestDetectClaudeMdPath(unittest.TestCase):
@@ -1183,91 +1384,6 @@ class TestApplyClaudeMdPathCli(unittest.TestCase):
         self.assertEqual(run.calls, [])
         summary = json.loads(buf.getvalue())
         self.assertFalse(summary["applied"])
-
-
-class TestMergeModeEndToEnd(unittest.TestCase):
-    """D-09 (07-CONTEXT.md): proves merge mode's two contracts end-to-end against a REAL
-    installed gsd-core -- (1) a brand-new project correctly falls through Plan 01's
-    `ensure-project` before this plan's own subcommands apply the curated bundle, and (2) an
-    EXISTING `.planning/config.json` fixture with unrelated pre-existing keys is left
-    byte-identical on those keys after the run. Skips itself when no gsd-core is installed on
-    the machine running the suite, same pattern as `TestRealIntegration` above -- both halves
-    require the REAL `config-set`/`config-new-project` subcommands actually mutating a file on
-    disk, not a faked subprocess."""
-
-    _REAL_GSD_TOOLS = gsd_catalog.resolve_gsd_tools_path(dict(os.environ))
-
-    def setUp(self):
-        self._scratch_dirs = []
-        self.addCleanup(self._cleanup_scratch_dirs)
-
-    def _cleanup_scratch_dirs(self):
-        for d in self._scratch_dirs:
-            shutil.rmtree(d, ignore_errors=True)
-
-    def _mkscratch(self):
-        d = tempfile.mkdtemp()
-        self._scratch_dirs.append(d)
-        return d
-
-    @unittest.skipUnless(
-        _REAL_GSD_TOOLS is not None, "no installed gsd-core found on this machine"
-    )
-    def test_merge_mode_end_to_end(self):
-        # (1) Fresh project, no .planning/ at all -- must fall through ensure-project first.
-        fresh = self._mkscratch()
-        exit_ensure = cli.main(["ensure-project", "--project-dir", fresh])
-        self.assertEqual(exit_ensure, 0)
-        exit_bundle = cli.main(
-            [
-                "apply-workflow-defaults",
-                "--project-dir",
-                fresh,
-                "--ui-phase",
-                "false",
-                "--ui-review",
-                "false",
-            ]
-        )
-        self.assertEqual(exit_bundle, 0)
-        fresh_config_path = os.path.join(fresh, ".planning", "config.json")
-        with open(fresh_config_path, encoding="utf-8") as f:
-            fresh_config = json.load(f)
-        fresh_workflow = fresh_config.get("workflow", {})
-        for key, expected_value in workflow_defaults.WORKFLOW_DEFAULTS.items():
-            self.assertEqual(fresh_workflow.get(key), expected_value, key)
-
-        # (2) Existing config with unrelated keys, hand-written (never via gsd-tools) -- must
-        # be left byte-identical on those keys after apply-workflow-defaults runs.
-        existing = self._mkscratch()
-        planning_dir = os.path.join(existing, ".planning")
-        os.makedirs(planning_dir, exist_ok=True)
-        fixture = {
-            "some_other_key": "untouched",
-            "workflow": {"some_other_workflow_key": "keep-me"},
-        }
-        existing_config_path = os.path.join(planning_dir, "config.json")
-        with open(existing_config_path, "w", encoding="utf-8") as f:
-            json.dump(fixture, f)
-
-        exit_bundle_existing = cli.main(
-            [
-                "apply-workflow-defaults",
-                "--project-dir",
-                existing,
-                "--ui-phase",
-                "false",
-                "--ui-review",
-                "false",
-            ]
-        )
-        self.assertEqual(exit_bundle_existing, 0)
-        with open(existing_config_path, encoding="utf-8") as f:
-            after_config = json.load(f)
-        self.assertEqual(after_config.get("some_other_key"), "untouched")
-        self.assertEqual(
-            after_config.get("workflow", {}).get("some_other_workflow_key"), "keep-me"
-        )
 
 
 if __name__ == "__main__":

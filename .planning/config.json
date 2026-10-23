@@ -43,8 +43,8 @@
     "security_asvs_level": 1,
     "security_block_on": "high",
     "cross_ai_execution": true,
-    "cross_ai_command": "opencode run --model router-env/my-coding",
-    "cross_ai_timeout": 3600,
+    "cross_ai_command": "node .planning/scripts/cross-ai.mjs",
+    "cross_ai_timeout": 1800,
     "plan_review_convergence": true,
     "_auto_chain_active": false
   },
@@ -54,24 +54,23 @@
         "cli": "opencode",
         "model": "router-env/my-plan-review"
       },
+      "opencode-glm": {
+        "cli": "opencode",
+        "model": "zai-coding-plan/glm-5.3"
+      },
       "opencode-sol": {
         "cli": "opencode",
-        "model": "openai/gpt-5.6-sol"
-      },
-      "codex-sol-high": {
-        "cli": "codex",
-        "model": "gpt-5.6-sol"
+        "model": "openai/gpt-6.1-sol"
       }
     },
     "default_reviewers": [
-      "opencode-plan-review",
-      "opencode"
+      "opencode-plan-review"
     ],
-    "models": {
-      "opencode": "xai/grok-4.6"
-    },
     "timeouts": {
       "opencode": 1800
+    },
+    "effort": {
+      "opencode": "inherit"
     }
   },
   "ship": {
@@ -82,10 +81,46 @@
   },
   "project_code": null,
   "phase_naming": "sequential",
-  "agent_skills": {},
-  "claude_md_path": "./CLAUDE.md",
+  "agent_skills": {
+    "gsd-assumptions-analyzer": [
+      "global:jev-fast-decision"
+    ],
+    "gsd-advisor-researcher": [
+      "global:jev-fast-decision"
+    ]
+  },
+  "claude_md_path": "./AGENTS.md",
   "plan_review": {
     "source_grounding": true,
     "source_grounding_authority": "grep"
+  },
+  "effort": {
+    "default": "high",
+    "agent_overrides": {
+      "gsd-planner": "xhigh",
+      "gsd-code-reviewer": "high"
+    },
+    "routing_tier_defaults": {
+      "heavy": "high",
+      "light": "low",
+      "standard": "medium"
+    }
+  },
+  "model_overrides": {
+    "gsd-planner": "opus",
+    "gsd-code-reviewer": "opus",
+    "gsd-plan-checker": "sonnet"
+  },
+  "runtime": "claude",
+  "resolve_model_ids": false,
+  "dynamic_routing": {
+    "enabled": true,
+    "tier_models": {
+      "light": "haiku",
+      "standard": "sonnet",
+      "heavy": "opus"
+    },
+    "escalate_on_failure": true,
+    "max_escalations": 1
   }
 }

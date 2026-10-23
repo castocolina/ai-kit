@@ -34,7 +34,7 @@ def _atomic_write_text(path: str, text: str) -> None:
     `skills/ai-kit-opencode-providers` `atomic_write.py`
     (`write_preserving_mode`: temp file, fsync, chmod, os.replace, dir fsync).
     Mode-preservation pre-check ported from
-    `tools/config_doctor_appliers.py::_atomic_write_text` (lines 109-134):
+    `tools/config_doctor_appliers.py::atomic_write_text` (lines 109-134):
     `existed = os.path.isfile(target)`; `os.stat` only when the target already
     exists; new files get mode 0o600 with no exception-driven control flow.
     """

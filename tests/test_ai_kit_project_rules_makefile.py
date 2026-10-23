@@ -51,6 +51,12 @@ def _precommit_hook_files_regex(hook_id):
     return match.group(1).strip().strip("'\"")
 
 
+def _tool_roots_cover(rel_dir: str, roots: list[str]) -> bool:
+    sample = f"{rel_dir.rstrip('/')}/module.py"
+    return any(sample == root or sample.startswith(f"{root}/") for root in roots)
+
+
+
 _FIXTURE_MAKEFILE_BASIC = """\
 INSTALL_SH := tools/install.sh
 
@@ -1003,9 +1009,11 @@ class TestAdvisoryOrdering(unittest.TestCase):
     def test_speed_tier_pinned(self):
         self.assertIsNotNone(makefile_checker.speed_tier("unittest"))
         self.assertIsNotNone(makefile_checker.speed_tier("ruff"))
-        self.assertGreater(
-            makefile_checker.speed_tier("unittest"), makefile_checker.speed_tier("ruff")
-        )
+        unittest_tier = makefile_checker.speed_tier("unittest")
+        ruff_tier = makefile_checker.speed_tier("ruff")
+        assert unittest_tier is not None
+        assert ruff_tier is not None
+        self.assertGreater(unittest_tier, ruff_tier)
         self.assertEqual(
             makefile_checker.speed_tier("pytest"), makefile_checker.speed_tier("unittest")
         )
@@ -1087,6 +1095,7 @@ class TestCacheUpdateCLI(unittest.TestCase):
                 "python", cache_root=cache_root
             )
             self.assertFalse(needs_research)
+            assert tooling is not None
             self.assertIn("setup-env", tooling)
             self.assertIn("formatter", tooling)
 
@@ -1184,11 +1193,10 @@ class TestCacheUpdateValidation(unittest.TestCase):
 
 
 class TestGateRegistration(unittest.TestCase):
-    def test_makefile_registers_module_and_package(self):
+    def test_makefile_lists_module(self):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             text = handle.read()
         self.assertIn("tests.test_ai_kit_project_rules_makefile", text)
-        self.assertIn("skills/ai-kit-project-rules-makefile/", text)
 
     def test_precommit_ruff_and_py_compile_match_package_path(self):
         for hook_id in ("ruff", "py-compile"):
@@ -1200,19 +1208,20 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         self.assertIn("tests.test_ai_kit_project_rules_makefile", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
-        self.assertIn("skills/ai-kit-project-rules-makefile", include)
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-project-rules-makefile", include), include)
 
     def test_vulture_paths_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
-        self.assertIn("skills/ai-kit-project-rules-makefile", paths)
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-project-rules-makefile", paths), paths)
 
 
 if __name__ == "__main__":

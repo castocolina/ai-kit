@@ -1,93 +1,98 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v1.2",
+  "milestone": "v1.3 — GSD Curated Config v2",
   "phases": [
     {
-      "number": "1.1",
-      "name": "Autonomous-Run Infrastructure (INSERTED)",
+      "number": "16",
+      "name": "ai_kit_spec Extensions",
       "status": "complete"
     },
     {
-      "number": "1.2",
-      "name": "Multi-CLI Runtime Foundation",
+      "number": "16.1",
+      "name": "Hardening",
       "status": "complete"
     },
     {
-      "number": "2",
-      "name": "Opencode Provider Management",
+      "number": "17",
+      "name": "Curated-Config Inventory & Recommendation Engine",
       "status": "complete"
     },
     {
-      "number": "3",
-      "name": "Tool-Substitution Awareness Hook",
+      "number": "18",
+      "name": "Cross-AI, Skills & Apply Pipeline",
       "status": "complete"
     },
     {
-      "number": "4",
-      "name": "Config Doctor",
+      "number": "18.1",
+      "name": "One runtime model",
       "status": "complete"
     },
     {
-      "number": "5",
-      "name": "Usage Metrics Dashboard",
+      "number": "19",
+      "name": "Evaluation on Claude",
       "status": "complete"
     },
     {
-      "number": "6",
-      "name": "AGENTS.md Rules Checker Skill",
-      "status": "complete"
+      "number": "20",
+      "name": "Live Validation on Codex + Opencode",
+      "status": "pending"
     },
     {
-      "number": "7",
-      "name": "Curated GSD Config Skill",
-      "status": "complete"
+      "number": "21",
+      "name": "Cursor Live Validation",
+      "status": "pending"
     },
     {
-      "number": "8",
-      "name": "Status-line Quota Color Refactor",
-      "status": "complete"
+      "number": "21.1",
+      "name": "Atomic reusable decision-system skills",
+      "status": "pending"
     },
     {
-      "number": "9",
-      "name": "AGENTS.md Checker Prune",
-      "status": "complete"
+      "number": "21.2",
+      "name": "PreCompact pre-summary hook",
+      "status": "pending"
     },
     {
-      "number": "10",
-      "name": "Makefile Rules Checker",
-      "status": "complete"
+      "number": "21.3",
+      "name": "Visible tool-advisory hooks",
+      "status": "pending"
     },
     {
-      "number": "11",
-      "name": "Pre-commit Rules Checker",
-      "status": "complete"
+      "number": "22",
+      "name": "Pi Live Validation",
+      "status": "in_progress"
     },
     {
-      "number": "12",
-      "name": "Architecture Rules Checker",
-      "status": "complete"
+      "number": "23",
+      "name": "Host-split status line for Claude Code and Cursor CLI",
+      "status": "pending"
     },
     {
-      "number": "13",
-      "name": "Docker Rules Checker",
-      "status": "complete"
+      "number": "24",
+      "name": "Spec-and-discuss chain skill",
+      "status": "pending"
     },
     {
-      "number": "14",
-      "name": "CI/CD Rules Checker",
-      "status": "complete"
+      "number": "25",
+      "name": "Quota-aware cross-AI subprocess supervision",
+      "status": "pending"
     },
     {
-      "number": "15",
-      "name": "Rules Orchestrator",
-      "status": "complete"
+      "number": "26",
+      "name": "Session self-resume and OpenGSD quota rules",
+      "status": "pending"
+    },
+    {
+      "number": "27",
+      "name": "One-shot goal and loop prompt skill",
+      "status": "pending"
     }
   ],
   "next": {
-    "command": "/gsd:progress --next",
-    "label": "Advance to the next step (verify)",
-    "reason": "Phase 15.2 of 19 · ready to verify"
+    "command": "/gsd-progress --next",
+    "label": "Advance to the next step",
+    "reason": "Phase 12 of 17 · 6% · executing"
   },
-  "updated_at": "2026-09-24T00:34:37.639Z"
+  "updated_at": "2026-10-23T18:18:37.056Z"
 }

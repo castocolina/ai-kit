@@ -1490,35 +1490,47 @@ def util_rate_window_seconds(key: str) -> int | None:
     return n * secs
 
 
-def util_rate_burn_ratio(pct: float, key: str, reset: int | None, now: float) -> float:
-    """Pace-based burn-rate ratio feeding the unchanged util_rate_color/
-    theme.ramps["rate"] ramp: used_percentage relative to how much of the
-    bucket's window has ALREADY ELAPSED, not how much remains -- i.e. "at
-    this rate, where would usage land by window end." 2026-09-13 reversal of
-    08-01-PLAN.md's "Formula Direction -- Resolved" (pct / remaining_fraction):
-    that formula made the ratio spike near a window's end even at low usage
-    (e.g. 25% used with most of the window already elapsed still read
-    orange/YELLOW), which is backwards -- low usage well into the window is
-    good pacing, not urgency. Falls back to `pct` unchanged when the window
-    can't be reliably derived (unparseable key, missing reset, a stale
-    resets_at already in the past, a resets_at implying more time remaining
-    than the key's parsed window allows -- clock skew or a window/key
-    mismatch), or when elapsed_fraction is ~0 -- too early in the window to
-    extrapolate a pace from a single low-elapsed-time data point, which
-    would otherwise spike the ratio toward INF on essentially no signal."""
+def util_rate_gap(pct: float, key: str, reset: int | None, now: float) -> float | None:
+    """Signed percentage-point gap between used_percentage and the window's
+    elapsed percentage (positive: usage ahead of elapsed time; negative:
+    behind). None when the window can't be reliably derived (unparseable
+    key, missing reset, a resets_at already in the past [remaining_pct < 0],
+    or a resets_at implying more time remaining than the key's parsed
+    window allows [remaining_pct > 100] -- clock skew or window/key
+    mismatch). Replaces the pace ratio (pct / elapsed_fraction): the gap
+    is computed from the remaining percentage directly -- no division by
+    an elapsed fraction -- so elapsed == 0 (window just started) is a
+    normal computable case, not a fallback."""
     window_seconds = util_rate_window_seconds(key)
     if window_seconds is None or reset is None:
-        return pct
-    remaining_fraction = (reset - now) / window_seconds
-    elapsed_fraction = 1.0 - remaining_fraction
-    if elapsed_fraction < 0.0 or elapsed_fraction > 1.0 or elapsed_fraction < 1e-9:
-        return pct
-    return pct / elapsed_fraction
+        return None
+    remaining_pct = (reset - now) * 100.0 / window_seconds
+    if remaining_pct < 0.0 or remaining_pct > 100.0:
+        return None
+    return pct - (100.0 - remaining_pct)
 
 
-def util_rate_color(pct: float, theme: "Theme") -> str:
-    """Pick the rate-limit ramp color for a usage percentage."""
-    return util_pick_color(float(pct), theme.ramps["rate"])
+def util_gap_color(delta: float, theme: "Theme") -> str:
+    """Quota-gap band color: |gap| in percentage points graded against the
+    spec's INCLUSIVE bounds (<=5 GREEN, <11 YELLOW, <=15 ORANGE, >15 RED).
+    Deliberately NOT util_pick_color -- that helper is strictly-below and
+    cannot express <=5 / <11 / 11..15-inclusive."""
+    if delta <= 5.0:
+        return theme.c("GREEN")
+    if delta < 11.0:
+        return theme.c("YELLOW")
+    if delta <= 15.0:
+        return theme.c("ORANGE")
+    return theme.c("RED")
+
+
+def util_gap_sign(gap: float) -> str:
+    """Pace sign glued to the displayed percentage by the caller: '+' when
+    usage is at or behind the window clock (under pace -- slack), '-' when
+    usage is ahead (burning faster than the clock). The sign is the gap
+    direction INVERTED (gap = used - elapsed_pct); its magnitude is
+    carried by the color band, never shown next to the number."""
+    return "+" if gap <= 0.0 else "-"
 
 
 def util_branch_from_porcelain(header: str) -> str:
@@ -1675,9 +1687,8 @@ def util_rate_group_str(
     # is shown whenever it reports a percentage, regardless of whether its reset
     # is in the past or future, so a wrong system clock or timezone change can
     # never hide a bucket. Color, however, now does depend on the clock: the
-    # burn-rate ratio below weighs used_percentage against how much of the
-    # bucket's window has already elapsed (elapsed_fraction, via `now` and each
-    # bucket's resets_at).
+    # gap below weighs used_percentage against how much of the bucket's window
+    # has already elapsed (elapsed pct, via `now` and each bucket's resets_at).
     for key in sorted(rate_limits):
         if _rate_bucket_hourly(key) != hourly:
             continue
@@ -1688,9 +1699,18 @@ def util_rate_group_str(
         pct = float(pct_raw)
         reset: int | None = (int(info["resets_at"]) if info.get("resets_at") is not None
                              else None)
-        ratio = util_rate_burn_ratio(pct, key, reset, now)
-        color = util_rate_color(ratio, theme)
-        parts.append(f"{fmt_rate_key_label(key)}: {color}{round(pct)}%{RESET}"
+        gap = util_rate_gap(pct, key, reset, now)
+        if gap is None:
+            color = theme.c("WHITE")
+            sign = ""
+        else:
+            color = util_gap_color(abs(gap), theme)
+            # Same tier gate as the reset suffix (spec: the narrow/terse tier
+            # omits the pace sign) -- seg_alt_h_rate_limit renders the terse
+            # tier via util_rate_group_str(rl, True, False, theme), so an
+            # ungated sign would leak into it.
+            sign = util_gap_sign(gap) if show_reset else ""
+        parts.append(f"{fmt_rate_key_label(key)}: {color}{sign}{round(pct)}%{RESET}"
                      + (suffix_fn(reset) if show_reset else ""))
     return util_icon("⚡", " | ".join(parts)) if parts else None
 

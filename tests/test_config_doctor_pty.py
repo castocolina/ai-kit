@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import time
 import unittest
 
@@ -20,6 +21,15 @@ from tests.test_wizard_pty import (
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _MARKER = b"3650"
+
+
+def _uv_cache_dir():
+    """The caller's uv package cache (a cache, not config), resolved before HOME changes."""
+    if os.environ.get("UV_CACHE_DIR"):
+        return os.environ["UV_CACHE_DIR"]
+    return subprocess.run(
+        [_uv_cmd(), "cache", "dir"], capture_output=True, text=True, check=True
+    ).stdout.strip()
 
 
 class TestConfigDoctorPty(unittest.TestCase):
@@ -41,6 +51,9 @@ class TestConfigDoctorPty(unittest.TestCase):
             json.dump({"cleanupPeriodDays": 15}, handle)
         env = dict(
             os.environ,
+            # The scratch HOME would point uv at an empty cache, so an offline gate
+            # (UV_OFFLINE=1) could not resolve setup.py's textual dependency.
+            UV_CACHE_DIR=_uv_cache_dir(),
             HOME=self._mk_dir(),
             CLAUDE_CONFIG_DIR=claude,
             OPENCODE_CONFIG_DIR=self._mk_dir(),
@@ -160,6 +173,7 @@ class TestConfigDoctorPty(unittest.TestCase):
         )
         env = dict(
             os.environ,
+            UV_CACHE_DIR=_uv_cache_dir(),
             HOME=home,
             PATH=safe_path,
             CLAUDE_CONFIG_DIR=claude,
@@ -209,6 +223,7 @@ class TestConfigDoctorPty(unittest.TestCase):
             json.dump({"cleanupPeriodDays": 5}, handle)
         env = dict(
             os.environ,
+            UV_CACHE_DIR=_uv_cache_dir(),
             HOME=self._mk_dir(),
             CLAUDE_CONFIG_DIR=claude,
             OPENCODE_CONFIG_DIR=self._mk_dir(),

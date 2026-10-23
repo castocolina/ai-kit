@@ -73,6 +73,12 @@ def _precommit_hook_files_regex(hook_id):
     return match.group(1).strip().strip("'\"")
 
 
+def _tool_roots_cover(rel_dir: str, roots: list[str]) -> bool:
+    sample = f"{rel_dir.rstrip('/')}/module.py"
+    return any(sample == root or sample.startswith(f"{root}/") for root in roots)
+
+
+
 class TestToolPresence(unittest.TestCase):
     def test_empty_path_and_repo_all_false(self):
         with tempfile.TemporaryDirectory() as bin_dir, tempfile.TemporaryDirectory() as repo:
@@ -120,6 +126,12 @@ class TestRuleChecker(unittest.TestCase):
                 return finding
         return None
 
+    @classmethod
+    def _require_find(cls, findings, rule_id):
+        finding = cls._find(findings, rule_id)
+        assert finding is not None
+        return finding
+
     def _always_false_presence(self):
         presence = {"rtk": False, "modern-cli": False, "codegraph": False,
                     "graphify": False, "gsd": False}
@@ -134,26 +146,26 @@ class TestRuleChecker(unittest.TestCase):
         missing = rule_checker.check_workflow_rules(
             "nothing related here", presence, include_present=True
         )
-        self.assertEqual(self._find(missing, "R01")["status"], "missing")
+        self.assertEqual(self._require_find(missing, "R01")["status"], "missing")
 
         present = rule_checker.check_workflow_rules(
             "All docs are english-only and this is non-negotiable.",
             presence,
             include_present=True,
         )
-        self.assertEqual(self._find(present, "R01")["status"], "present")
+        self.assertEqual(self._require_find(present, "R01")["status"], "present")
 
         near = rule_checker.check_workflow_rules(
             "We write docs in english only.", presence, include_present=True
         )
-        self.assertEqual(self._find(near, "R01")["status"], "near_miss")
+        self.assertEqual(self._require_find(near, "R01")["status"], "near_miss")
 
     def test_tool_presence_condition_not_applicable(self):
         presence = {"rtk": False}
         findings = rule_checker.check_workflow_rules(
             "no rtk mention here", presence, include_present=True
         )
-        self.assertEqual(self._find(findings, "R05")["status"], "not_applicable")
+        self.assertEqual(self._require_find(findings, "R05")["status"], "not_applicable")
 
     def test_r02_included_by_signals_not_category(self):
         presence = self._always_false_presence()
@@ -169,7 +181,7 @@ class TestRuleChecker(unittest.TestCase):
         review_only = rule_checker.check_workflow_rules(
             "we run cross-ai review on every plan", presence, include_present=True
         )
-        self.assertEqual(self._find(review_only, "R04")["status"], "near_miss")
+        self.assertEqual(self._require_find(review_only, "R04")["status"], "near_miss")
 
         all_groups = rule_checker.check_workflow_rules(
             "we run cross-ai review, cheap-model execution, and "
@@ -177,12 +189,12 @@ class TestRuleChecker(unittest.TestCase):
             presence,
             include_present=True,
         )
-        self.assertEqual(self._find(all_groups, "R04")["status"], "present")
+        self.assertEqual(self._require_find(all_groups, "R04")["status"], "present")
 
         none_present = rule_checker.check_workflow_rules(
             "no relevant text here", presence, include_present=True
         )
-        self.assertEqual(self._find(none_present, "R04")["status"], "missing")
+        self.assertEqual(self._require_find(none_present, "R04")["status"], "missing")
 
     def test_r06_tool_scoped_groups_only_require_installed_tools(self):
         presence = self._always_false_presence()
@@ -193,14 +205,14 @@ class TestRuleChecker(unittest.TestCase):
         rg_only = rule_checker.check_workflow_rules(
             "use ripgrep instead of grep", presence, include_present=True
         )
-        r06 = self._find(rg_only, "R06")
+        r06 = self._require_find(rg_only, "R06")
         self.assertEqual(r06["status"], "near_miss")
         self.assertEqual(r06["missing_tools"], ["bat"])
 
         both = rule_checker.check_workflow_rules(
             "use ripgrep and bat instead of grep/cat", presence, include_present=True
         )
-        r06 = self._find(both, "R06")
+        r06 = self._require_find(both, "R06")
         self.assertEqual(r06["status"], "present")
         self.assertEqual(r06["missing_tools"], [])
 
@@ -208,21 +220,21 @@ class TestRuleChecker(unittest.TestCase):
         findings = rule_checker.check_workflow_rules(
             "use ripgrep and bat instead of grep/cat", no_tools, include_present=True
         )
-        self.assertEqual(self._find(findings, "R06")["status"], "not_applicable")
+        self.assertEqual(self._require_find(findings, "R06")["status"], "not_applicable")
 
     def test_matched_signals_field(self):
         presence = self._always_false_presence()
         findings = rule_checker.check_workflow_rules(
             "we write docs in english only", presence, include_present=True
         )
-        r01 = self._find(findings, "R01")
+        r01 = self._require_find(findings, "R01")
         self.assertEqual(r01["status"], "near_miss")
         self.assertTrue(r01["matched_signals"])
         self.assertTrue(set(r01["matched_signals"]) <= set(rules.RULES[0]["signals"]))
 
 
 class TestCliCheck(unittest.TestCase):
-    def test_check_returns_workflow_only_and_orders_by_criticality(self):
+    def test_check_returns_workflow_and_links_keys(self):
         with tempfile.TemporaryDirectory() as repo:
             _write(
                 os.path.join(repo, "AGENTS.md"),
@@ -230,9 +242,10 @@ class TestCliCheck(unittest.TestCase):
             )
             result = cli.check(repo)
             # ROADMAP Success Criterion 1's machine-checkable form: `check`
-            # is single-kind post-prune -- the second ("makefile") key
-            # this skill used to return is gone entirely, not merely empty.
-            self.assertEqual(set(result.keys()), {"workflow"})
+            # stays workflow-only for rule findings. `links` is the separate
+            # broken-link key (RUN-11); it is not a second rule kind.
+            self.assertEqual(set(result.keys()), {"workflow", "links"})
+            self.assertEqual(result["links"], [])
             ids = [f["id"] for f in result["workflow"]]
             self.assertIn("R01", ids)
             self.assertIn("R17", ids)
@@ -299,6 +312,148 @@ class TestCliCheck(unittest.TestCase):
             self.assertIn("R03", ids)
 
 
+def _listing(root):
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for name in sorted(filenames):
+            found.append(os.path.relpath(os.path.join(dirpath, name), root))
+    return found
+
+
+class TestLinkHandling(unittest.TestCase):
+    def test_image_link_to_binary_png_is_not_decoded(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "![logo](img/logo.png)\n",
+            )
+            png = os.path.join(repo, "img", "logo.png")
+            os.makedirs(os.path.dirname(png))
+            with open(png, "wb") as handle:
+                handle.write(b"\x89PNG\r\n\x1a\n\x00\x01")
+            result = cli.check(repo)
+            self.assertEqual(result["links"], [])
+
+    def test_anchored_link_appends_target_text(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "[guide](docs/guide.md#setup)\n",
+            )
+            _write(
+                os.path.join(repo, "docs", "guide.md"),
+                "Every commit is one coherent logical commit, after a "
+                "compaction pass.",
+            )
+            result = cli.check(repo)
+            self.assertEqual(result["links"], [])
+            ids = [f["id"] for f in result["workflow"]]
+            self.assertNotIn("R03", ids)
+
+    def test_query_and_title_are_stripped_before_the_path_check(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                '[x](docs/guide.md?plain=1 "Title")\n',
+            )
+            _write(
+                os.path.join(repo, "docs", "guide.md"),
+                "Every commit is one coherent logical commit, after a "
+                "compaction pass.",
+            )
+            result = cli.check(repo)
+            self.assertEqual(result["links"], [])
+            ids = [f["id"] for f in result["workflow"]]
+            self.assertNotIn("R03", ids)
+
+    def test_anchor_only_link_is_skipped(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(os.path.join(repo, "AGENTS.md"), "[top](#section)\n")
+            result = cli.check(repo)
+            self.assertEqual(result["links"], [])
+
+    def test_missing_markdown_target_is_a_broken_link(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "[gone](docs/missing.md)\n",
+            )
+            result = cli.check(repo)
+            self.assertEqual(
+                result["links"],
+                [
+                    {
+                        "kind": "link",
+                        "status": "broken",
+                        "target": "docs/missing.md",
+                        "source": "AGENTS.md",
+                    }
+                ],
+            )
+
+    def test_missing_image_target_is_a_broken_link(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "![gone](img/missing.png)\n",
+            )
+            result = cli.check(repo)
+            self.assertEqual(
+                [finding["target"] for finding in result["links"]],
+                ["img/missing.png"],
+            )
+            self.assertEqual(result["links"][0]["kind"], "link")
+            self.assertEqual(result["links"][0]["status"], "broken")
+
+    def test_directory_encoded_and_fenced_links_are_not_broken(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "[docs](docs/) [root](./) [sub](sub) [enc](sub/My%20File.md)\n"
+                "```\n[example](path/to/file.md)\n```\n"
+                "~~~~\n[tilde](also/missing.md)\n```\n~~~~\n"
+                "[gone](after/fence.md)\n",
+            )
+            _write(os.path.join(repo, "docs", "a.md"), "x")
+            _write(os.path.join(repo, "sub", "My File.md"), "x")
+            result = cli.check(repo)
+            self.assertEqual(
+                [finding["target"] for finding in result["links"]], ["after/fence.md"]
+            )
+
+    def test_url_scheme_and_absolute_links_are_skipped(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "[web](https://example.com/a.md) "
+                "[mail](mailto:a@b.example) "
+                "[abs](/etc/passwd)\n",
+            )
+            result = cli.check(repo)
+            self.assertEqual(result["links"], [])
+
+    def test_check_is_read_only_and_repeatable(self):
+        with tempfile.TemporaryDirectory() as repo:
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "![logo](img/logo.png) [gone](docs/missing.md)\n",
+            )
+            png = os.path.join(repo, "img", "logo.png")
+            os.makedirs(os.path.dirname(png))
+            with open(png, "wb") as handle:
+                handle.write(bytes(range(256)))
+            before = _listing(repo)
+            first = cli.check(repo)
+            second = cli.check(repo)
+            self.assertEqual(first, second)
+            self.assertEqual(_listing(repo), before)
+            self.assertEqual(
+                [finding["target"] for finding in first["links"]],
+                ["docs/missing.md"],
+            )
+
+
 class TestRemediation(unittest.TestCase):
     def test_missing_and_near_miss_auto_apply(self):
         report = {
@@ -352,13 +507,11 @@ class TestRemediation(unittest.TestCase):
 
 
 class TestGateRegistration(unittest.TestCase):
-    def test_makefile_registers_module_and_package(self):
+    def test_makefile_lists_module(self):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             text = handle.read()
         self.assertIn("tests.test_ai_kit_project_rules_agents", text)
-        self.assertIn("skills/ai-kit-project-rules-agents/", text)
         self.assertIn("tests.test_ai_kit_rules_common", text)
-        self.assertIn("skills/_shared/ai_kit_rules_common/", text)
 
     def test_precommit_ruff_and_py_compile_match_package_path(self):
         for hook_id in ("ruff", "py-compile"):
@@ -374,6 +527,7 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         self.assertIn("tests.test_ai_kit_project_rules_agents", match.group(1))
         self.assertIn("tests.test_ai_kit_rules_common", match.group(1))
 
@@ -381,15 +535,15 @@ class TestGateRegistration(unittest.TestCase):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
-        self.assertIn("skills/ai-kit-project-rules-agents", include)
-        self.assertIn("skills/_shared", include)
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-project-rules-agents", include), include)
+        self.assertTrue(_tool_roots_cover("skills/_shared/ai_kit_rules_common", include), include)
 
     def test_vulture_paths_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
-        self.assertIn("skills/ai-kit-project-rules-agents", paths)
-        self.assertIn("skills/_shared", paths)
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-project-rules-agents", paths), paths)
+        self.assertTrue(_tool_roots_cover("skills/_shared/ai_kit_rules_common", paths), paths)
 
     def test_validate_covers_every_precommit_hook(self):
         with open(_PRECOMMIT_PATH, encoding="utf-8") as handle:
@@ -406,6 +560,7 @@ class TestGateRegistration(unittest.TestCase):
             makefile = handle.read()
         match = re.search(r"^validate:\s*(.*)$", makefile, re.MULTILINE)
         self.assertIsNotNone(match, "no validate: target in Makefile")
+        assert match is not None
         prerequisites = match.group(1).split()
         makefile_targets = set(
             re.findall(r"^(?!\.)([A-Za-z0-9_.-]+)\s*:(?!=)", makefile, re.MULTILINE)

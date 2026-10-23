@@ -18,6 +18,7 @@ _DOCTOR_PATH = os.path.join(_HERE, "..", "tools", "statusline-doctor.py")
 
 def load_module():
     spec = importlib.util.spec_from_file_location("statusline_doctor", _DOCTOR_PATH)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
@@ -127,6 +128,7 @@ class TestDoctor(unittest.TestCase):
 
     def test_doctor_flags_a_raising_builder(self):
         def boom(data, avail, theme):
+            del avail
             raise RuntimeError("x")
         with mock.patch.dict(sl.BUILDERS, {"path": boom}):
             rc = doctor.cmd_doctor(self.env)
@@ -137,6 +139,7 @@ class TestDoctor(unittest.TestCase):
         # dry-rendered: the doctor catches a builder that would crash once enabled.
         self.assertFalse(sl.cfg_default_config().segments.get("alt_cost"))
         def boom(data, avail, theme):
+            del avail
             raise RuntimeError("x")
         with mock.patch.dict(sl.BUILDERS, {"alt_cost": boom}):
             rc = doctor.cmd_doctor(self.env)

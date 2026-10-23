@@ -98,20 +98,17 @@ def _indent_of(line: str) -> int:
     return len(line) - len(line.lstrip(" "))
 
 
-def _extract_scoped_value(lines: list[str], key_idx: int, key_indent: int, trailing: str):
-    """`trailing` is the text (if any) already found on the key's own
-    line. Non-empty trailing -> scalar or inline list (this function
-    decides which). Empty trailing -> look for a block sequence on the
-    following more-indented lines."""
-    if trailing:
-        if trailing.startswith("["):
-            if not trailing.endswith("]"):
-                return NOT_READABLE
-            inner = trailing[1:-1]
-            items = [_strip_quotes(part.strip()) for part in inner.split(",") if part.strip()]
-            return items
-        return _strip_quotes(trailing)
+def _parse_inline_yaml_list(trailing: str):
+    if not trailing.startswith("["):
+        return NOT_READABLE
+    if not trailing.endswith("]"):
+        return NOT_READABLE
+    inner = trailing[1:-1]
+    items = [_strip_quotes(part.strip()) for part in inner.split(",") if part.strip()]
+    return items
 
+
+def _parse_yaml_block_sequence(lines: list[str], key_idx: int, key_indent: int):
     items: list[str] = []
     idx = key_idx + 1
     while idx < len(lines):
@@ -124,8 +121,6 @@ def _extract_scoped_value(lines: list[str], key_idx: int, key_indent: int, trail
         stripped = raw.strip()
         item_match = re.match(r"^-\s*(.*)$", stripped)
         if item_match is None:
-            # A shape this reader does not understand (e.g. a nested
-            # mapping under the key) -- degrade rather than guess.
             return NOT_READABLE
         item = item_match.group(1).strip()
         if not item:
@@ -135,6 +130,18 @@ def _extract_scoped_value(lines: list[str], key_idx: int, key_indent: int, trail
     if not items:
         return NOT_READABLE
     return items
+
+
+def _extract_scoped_value(lines: list[str], key_idx: int, key_indent: int, trailing: str):
+    """`trailing` is the text (if any) already found on the key's own
+    line. Non-empty trailing -> scalar or inline list (this function
+    decides which). Empty trailing -> look for a block sequence on the
+    following more-indented lines."""
+    if trailing:
+        if trailing.startswith("["):
+            return _parse_inline_yaml_list(trailing)
+        return _strip_quotes(trailing)
+    return _parse_yaml_block_sequence(lines, key_idx, key_indent)
 
 
 def _scope_for_key(lines: list[str], start: int, end: int, base_indent: int, key: str):
@@ -155,6 +162,20 @@ def _scope_for_key(lines: list[str], start: int, end: int, base_indent: int, key
             continue
         return idx, indent, match.group(1).strip()
     return None
+
+
+def _nested_scope_bounds(lines: list[str], end: int, key_idx: int, key_indent: int):
+    new_start = key_idx + 1
+    new_end = new_start
+    while new_end < end:
+        raw = lines[new_end]
+        if raw.strip() == "":
+            new_end += 1
+            continue
+        if _indent_of(raw) <= key_indent:
+            break
+        new_end += 1
+    return new_start, new_end, key_indent
 
 
 def read_yaml_value(path: str, key_path: tuple[str, ...]):
@@ -183,17 +204,7 @@ def read_yaml_value(path: str, key_path: tuple[str, ...]):
         key_idx, key_indent, trailing = located
         if depth == len(key_path) - 1:
             return _extract_scoped_value(lines, key_idx, key_indent, trailing)
-        new_start = key_idx + 1
-        new_end = new_start
-        while new_end < end:
-            raw = lines[new_end]
-            if raw.strip() == "":
-                new_end += 1
-                continue
-            if _indent_of(raw) <= key_indent:
-                break
-            new_end += 1
-        start, end, base_indent = new_start, new_end, key_indent
+        start, end, base_indent = _nested_scope_bounds(lines, end, key_idx, key_indent)
 
     return NOT_READABLE
 

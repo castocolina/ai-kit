@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 import webbrowser
 
@@ -29,6 +30,20 @@ CAPTURE_SOURCES = {
     "cursor": capture_cursor.capture,
 }
 
+# Per-source isolation: one source's failure must not abort the rest.
+# LookupError covers KeyError/IndexError; ValueError covers JSON and Unicode
+# decode errors; RuntimeError covers RecursionError from a deeply nested line.
+_CAPTURE_ERRORS = (
+    OSError,
+    ValueError,
+    LookupError,
+    TypeError,
+    AttributeError,
+    RuntimeError,
+    sqlite3.Error,
+)
+_PERSIST_ERRORS = (OSError, ValueError, LookupError, TypeError, AttributeError, RuntimeError)
+
 
 def _read_raw_jsonl(path: str) -> list[dict]:
     if not os.path.isfile(path):
@@ -51,22 +66,13 @@ def cmd_capture(env: dict) -> None:
         try:
             cursor = raw_store.read_cursor(env, name)
             result = fn(env, cursor)
-        except Exception as exc:
-            # fn() itself failed (e.g. a malformed cursor entry or a
-            # mid-batch parsing error) -- nothing was returned to persist,
-            # so skip straight to the next source rather than also trying
-            # to write from an undefined `result`.
+        except _CAPTURE_ERRORS as exc:
             print(f"capture[{name}] failed: {exc}", file=sys.stderr)
             continue
         try:
             raw_store.append_records(paths.raw_jsonl_path(env, name), result.records)
             raw_store.write_cursor(env, name, result.cursor)
-        except Exception as exc:
-            # Persistence failed after a successful capture -- keep this
-            # separate from the capture-failure branch above (distinct
-            # error message) and, like it, must not abort the loop: one
-            # source's persistence failure must not prevent the remaining
-            # sources in CAPTURE_SOURCES from being captured this run.
+        except _PERSIST_ERRORS as exc:
             print(f"capture[{name}] persist failed: {exc}", file=sys.stderr)
 
 

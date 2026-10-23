@@ -49,11 +49,18 @@ ignore = [
 # ─────────────────────────── pylint ───────────────────────────
 [tool.pylint.main]
 py-version = "3.12"
+# Cross-skill imports resolve the same whichever files are staged (D-03). The paths are
+# repo-relative, so run pylint from the repo root (pre-commit and make do; an editor
+# running it from another cwd loses cross-skill imports).
+init-hook = "import sys; sys.path[:0] = ['skills/ai-kit-spec-review', 'skills/_shared']"
 # Docstrings required only where they add signal: builders (seg_*), private
 # helpers (_*), and tests are self-documenting via the segment contract / name.
 no-docstring-rgx = "^(_|seg_|test_)"
 
 [tool.pylint.basic]
+# Skill entrypoint shims are hyphenated script names by the Agent Skills layout, never
+# imported as modules (RUN-08).
+module-rgx = "[a-z_][a-z0-9_-]*$"
 # `bar` is a domain term here (context / effort progress bar), not a placeholder.
 bad-names = ["foo", "baz", "toto", "tutu", "tata"]
 # Conditional stdlib import aliases that read as module-level constants.
@@ -80,18 +87,50 @@ disable = [
     "duplicate-code",         # cross-occurrence false positives on small idiomatic blocks.
     "fixme",                  # TODO/NOTE markers are allowed in-tree.
     "too-few-public-methods", # data carriers (e.g. _RenderData dict subclass) are not APIs.
+    "missing-module-docstring", # docstrings are required only where they add signal; small
+                                # helpers follow "comment only the why" (R2).
+    "missing-class-docstring",
+    "missing-function-docstring",
 ]
 
 # ─────────────────────────── vulture ───────────────────────────
 [tool.vulture]
 min_confidence = 80
-paths = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "skills/ai-kit-usage-metrics", "skills/ai-kit-project-rules-agents", "skills/ai-kit-project-rules-makefile", "skills/ai-kit-project-rules-precommit", "skills/ai-kit-project-rules-arch", "skills/ai-kit-project-rules-docker", "skills/ai-kit-project-rules-cicd", "skills/ai-kit-project-rules-all", "skills/ai-kit-gsd-curated-config", "skills/_shared"]
+paths = ["tools", "skills", "tests"]
 # signal-handler / context-manager params required by their signature
 ignore_names = ["signum", "frame", "offset", "whence"]
 
 # ─────────────────────────── pyright ───────────────────────────
 [tool.pyright]
-include = ["tools/status-line.py", "tools/statusline-doctor.py", "tools/setup.py", "tools/hooks", "tools/config_doctor_checks.py", "tools/config_doctor_readers.py", "tools/config_doctor_app.py", "tools/config_doctor_appliers.py", "skills/ai-kit-usage-metrics", "skills/ai-kit-project-rules-agents", "skills/ai-kit-project-rules-makefile", "skills/ai-kit-project-rules-precommit", "skills/ai-kit-project-rules-arch", "skills/ai-kit-project-rules-docker", "skills/ai-kit-project-rules-cicd", "skills/ai-kit-project-rules-all", "skills/ai-kit-gsd-curated-config", "skills/_shared"]
+include = ["tools", "skills", "tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
-extraPaths = ["skills/_shared"]
+extraPaths = [
+    "skills/_shared",
+    "skills/ai-kit-gsd-curated-config",
+    "skills/ai-kit-gsd-spec-discuss",
+    "skills/ai-kit-opencode-providers",
+    "skills/ai-kit-project-rules-agents",
+    "skills/ai-kit-project-rules-all",
+    "skills/ai-kit-project-rules-arch",
+    "skills/ai-kit-project-rules-cicd",
+    "skills/ai-kit-project-rules-docker",
+    "skills/ai-kit-project-rules-makefile",
+    "skills/ai-kit-project-rules-precommit",
+    "skills/ai-kit-spec-config",
+    "skills/ai-kit-spec-execute",
+    "skills/ai-kit-spec-execute-gsd",
+    "skills/ai-kit-spec-execute-superpowers",
+    "skills/ai-kit-spec-review",
+    "skills/ai-kit-spec-review-checklist",
+    "skills/ai-kit-spec-review-fixer",
+    "skills/ai-kit-usage-metrics",
+    "skills/cst-refactor",
+    "skills/markdown-to-pdf",
+    "skills/mermaid-audit",
+    "tools",
+    "tools/hooks",
+    "skills/markdown-to-pdf/scripts",
+    "skills/mermaid-audit/scripts",
+    "skills/ai-kit-gsd-spec-discuss/scripts",
+]

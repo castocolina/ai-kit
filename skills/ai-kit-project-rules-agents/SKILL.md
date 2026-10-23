@@ -14,16 +14,16 @@ This skill checks a target repo's AGENTS.md/CLAUDE.md-style instruction file aga
 Resolve once per invocation, in one Bash call, and record the printed path as a literal absolute path:
 
 ```bash
-for d in "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-project-rules-agents}" \
+for d in "$(dirname "<absolute path to THIS SKILL.md>")" \
+         "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-project-rules-agents}" \
          "$HOME/.claude/skills/ai-kit-project-rules-agents" \
          "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-project-rules-agents" \
-         "$HOME/.agents/skills/ai-kit-project-rules-agents" \
-         "$(dirname "<absolute path to THIS SKILL.md>")"; do
+         "$HOME/.agents/skills/ai-kit-project-rules-agents"; do
   [ -f "$d/ai-kit-project-rules-agents.py" ] && { printf '%s\n' "$d/ai-kit-project-rules-agents.py"; break; }
 done
 ```
 
-If no candidate exists, stop and report that the skill is not installed. The fifth candidate covers a from-checkout invocation — substitute the directory actually containing this `SKILL.md`.
+If no candidate exists, stop and report that the skill is not installed. Substitute the directory actually containing this `SKILL.md` into the first candidate; it comes first so a checkout runs its own copy rather than an installed one that may be on another branch.
 
 Only the `$HOME/.claude/skills/...` symlink install (`tools/setup.py`) and a direct git checkout can actually import this skill: those layouts keep `skills/_shared/` beside the skill package. The other three candidates (`$CLAUDE_PLUGIN_ROOT`, opencode's skills dir, `~/.agents/skills`) raise `ImportError` at import time by design — they are copy-installs that do not carry `skills/_shared/`. A successful path lookup is not proof the import will succeed; prefer the symlink or a checkout.
 
@@ -34,7 +34,7 @@ python3 "$ENTRYPOINT" check <repo_root>
 python3 "$ENTRYPOINT" remediate <repo_root>
 ```
 
-`check` returns `{"workflow": [...]}`. `remediate` runs `check` internally and returns the ordered hand-off payload this skill wraps around: `{"remediate": [...ordered...], "blocked": [...]}` — the shared builder always returns both keys, but this skill has no research-dispatch domain, so `blocked` is always empty here. Trimmed example:
+`check` returns `{"workflow": [...], "links": [...]}`. `links` lists broken relative links from the root instruction file (image links included, `#anchor`/`?query` stripped, anchor-only links skipped); fix a broken link by correcting or removing it, since `remediate` does not touch links. `remediate` runs `check` internally and returns the ordered hand-off payload this skill wraps around: `{"remediate": [...ordered...], "blocked": [...]}` — the shared builder always returns both keys, but this skill has no research-dispatch domain, so `blocked` is always empty here. Trimmed example:
 
 ```json
 {
@@ -83,8 +83,8 @@ Invoke `/agent-md-refactor` via WHICHEVER skill-invocation mechanism the current
   pass risks pruning the first pass's insert.
 - **NEVER hardcode a `~/.claude/...` path** when resolving this skill's own
   entrypoint or `agent-md-refactor`'s — always walk the host-neutral
-  candidate list (Claude Code plugin root, `$HOME/.claude`, opencode XDG
-  path, `~/.agents`, from-checkout sibling).
+  candidate list (from-checkout sibling first, then Claude Code plugin
+  root, `$HOME/.claude`, opencode XDG path, `~/.agents`).
 - **NEVER assume `rules.py`'s `category` field drives what gets checked
   here.** `check_workflow_rules` filters by non-empty `signals`, not by
   `category`. R02 carries a non-workflow `category` label, yet its

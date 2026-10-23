@@ -7,8 +7,10 @@ its output into a plain `{cli_name: [model_id, ...]}` pool for `preference_match
 
 `resolve_ai_kit_spec_path` mirrors `ai-kit-spec-execute-gsd/SKILL.md`'s own Step 0 multi-
 candidate resolution pattern (`CLAUDE_PLUGIN_ROOT`-relative, then `~/.claude/skills/<name>`,
-then a sibling-of-this-skill's-own-directory fallback) since THIS skill has no guaranteed
-`CLAUDE_PLUGIN_ROOT` either -- it locates `ai-kit-spec-review`'s own CLI entrypoint
+then a sibling-of-this-skill's-own-directory fallback). It prefers the sibling-of-this-skill
+copy first, because an installed copy under `~/.claude/skills` or a plugin root may point at
+another branch -- the checkout's own sibling must win so a branch checkout tests its own code.
+It locates `ai-kit-spec-review`'s own CLI entrypoint
 (`ai-kit-spec.py`), never assumes a fixed absolute path.
 """
 import json
@@ -26,19 +28,19 @@ _SIBLING_SHIM_NAME = "ai-kit-spec.py"
 def resolve_ai_kit_spec_path(this_skill_dir, env=None, isdir_fn=os.path.isdir):
     """Returns the absolute path to `ai-kit-spec-review`'s own `ai-kit-spec.py` CLI entrypoint,
     or `None` when none of the candidate directories exist. Candidates, in order:
-      1. `$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review` (only when `CLAUDE_PLUGIN_ROOT` is set)
-      2. `$HOME/.claude/skills/ai-kit-spec-review`
-      3. `<dirname(this_skill_dir)>/ai-kit-spec-review` (sibling-of-this-skill fallback)
+      1. `<dirname(this_skill_dir)>/ai-kit-spec-review` (sibling-of-this-skill first: an
+         installed copy may point at another branch, so the checkout's own sibling must win)
+      2. `$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-review` (only when `CLAUDE_PLUGIN_ROOT` is set)
+      3. `$HOME/.claude/skills/ai-kit-spec-review`
     Never raises -- a missing sibling skill degrades detection to "no candidates", not a crash.
     """
     env = env if env is not None else dict(os.environ)
-    candidates = []
+    candidates = [os.path.join(os.path.dirname(this_skill_dir), _SIBLING_SKILL_NAME)]
     plugin_root = env.get("CLAUDE_PLUGIN_ROOT")
     if plugin_root:
         candidates.append(os.path.join(plugin_root, "skills", _SIBLING_SKILL_NAME))
     home = env.get("HOME") or os.path.expanduser("~")
     candidates.append(os.path.join(home, ".claude", "skills", _SIBLING_SKILL_NAME))
-    candidates.append(os.path.join(os.path.dirname(this_skill_dir), _SIBLING_SKILL_NAME))
 
     for candidate_dir in candidates:
         if isdir_fn(candidate_dir):
@@ -71,13 +73,16 @@ def detect_runtimes_snapshot(python_bin, ai_kit_spec_path, run_fn=subprocess.run
 
 def build_candidate_pool(runtimes_snapshot):
     """Pure function, no I/O, taking the ALREADY-parsed snapshot dict. Returns
-    `{"opencode": [model_id, ...], "cursor-agent": [model_id, ...]}`, omitting a CLI key
-    entirely when that CLI's `installed` is falsy or it has no `"models"` list at all (never an
-    empty-list placeholder for a CLI that was never enumerable in the first place --
-    claude/codex/grok never appear as keys, matching `build_runtimes_snapshot`'s own shape:
-    only opencode/cursor-agent ever carry a `"models"` list). An installed CLI whose `"models"`
-    key is present but genuinely empty (`[]`) DOES appear as a key with an empty list -- that is
-    a real "installed, zero models detected" result, distinct from "never enumerable"."""
+    a `{cli_name: [model_id, ...]}` pool containing a CLI only when that CLI is
+    installed AND its snapshot entry carries a `"models"` list: the opencode and cursor
+    runtimes always (cursor's binary is `cursor-agent`), and since Phase 16 also codex
+    (when `codex debug models` enumerates its user-selectable slugs) and claude (when its
+    snapshot entry carries a models list) -- never an empty-list placeholder for a CLI
+    that was never enumerable in the first place (grok never appears as a key). An
+    installed CLI whose `"models"` key is present but genuinely empty (`[]`) DOES appear
+    as a key with an empty list -- that is a real "installed, zero models detected"
+    result, distinct from "never enumerable". The ladder walk searches `opencode` then
+    `cursor`."""
     pool = {}
     clis = (runtimes_snapshot or {}).get("clis", {}) or {}
     for cli_name, entry in clis.items():

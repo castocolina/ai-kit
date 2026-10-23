@@ -9,10 +9,10 @@ Deliberate, scoped exception to "this skill stays self-contained" (D-02): import
 `ai_kit_spec.model_heuristics` -- reusing that ONE regex mechanism, never `ai_kit_spec`'s
 detection/ranking classes wholesale. `ai_kit_spec`'s own skill directory is resolved via
 `model_detect.resolve_ai_kit_spec_path`'s sibling-dir logic and added to `sys.path` before the
-import, since this skill has no declared dependency contract on `ai_kit_spec` being importable
-otherwise. The import is wrapped in `try/except ImportError` with a local fallback that
-reimplements the same delimiter-bounded match: since `ai_kit_spec` is not a declared dependency,
-its absence must degrade this module's regex helper, never crash the whole CLI at import time.
+import. The import is wrapped in `try/except ImportError` with a local fallback that
+reimplements the same delimiter-bounded match, so the sibling's absence degrades this module's
+regex helper instead of crashing the whole CLI at import time. (The skill's gsd-tools writes do
+require the sibling, through the shared `ai_kit_spec.gsd_tools` wrappers, D-18.)
 """
 import os
 import re
@@ -30,9 +30,9 @@ if _ai_kit_spec_shim is not None:
 try:
     from ai_kit_spec.model_heuristics import _hint_matches  # pyright: ignore
 except ImportError:
-    # `ai_kit_spec` is a best-effort sibling, never a hard dependency (module docstring above):
-    # if its skill directory can't be resolved, or the sibling install is missing/broken, this
-    # skill must keep working rather than take the whole CLI down at import time. Fallback
+    # `ai_kit_spec` is optional at import time (module docstring above): if its skill
+    # directory can't be resolved, or the sibling install is missing/broken, this module must
+    # not take the whole CLI down at import time (gsd-tools writes still need it). Fallback
     # reimplements the exact delimiter-bounded substring match `_hint_matches` documents.
     def _hint_matches(hint: str, lowered: str) -> bool:
         return re.search(rf"\b{re.escape(hint)}\b", lowered) is not None
@@ -41,7 +41,7 @@ except ImportError:
 # order for plan-review explicitly and gives no contrary order for execution, so this module
 # applies the same order to both for one consistent, documented search policy rather than
 # inventing a second one).
-_RUNTIME_ORDER = ("opencode", "cursor-agent")
+_RUNTIME_ORDER = ("opencode", "cursor")
 
 # `best_review_candidate` has no "no match" return value at all -- this is it.
 NATIVE_LAST_RESORT = ("claude", "opus", "native-last-resort")
@@ -105,7 +105,7 @@ REVIEW_RULES = (
 
 def _walk_rules(pool, rules):
     """Walks `rules` in declared order; for EACH rule, searches `pool.get("opencode", [])` then
-    `pool.get("cursor-agent", [])` before moving to the next rule. Returns the FIRST
+    `pool.get("cursor", [])` before moving to the next rule. Returns the FIRST
     `(cli, model, rule_label)` match found in that nested order, or `None` if no rule matches
     anything in either list."""
     for label, predicate in rules:

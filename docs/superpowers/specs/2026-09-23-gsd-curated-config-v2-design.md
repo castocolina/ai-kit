@@ -274,3 +274,75 @@ Execution (question: "delegate plan execution to another CLI?", recommended on C
 4. **Live validation on codex + opencode** — smoke from each host; fix what surfaces; resolve the
    two open verifications (opencode lane from an opencode host, codex session env signal).
 5. *(later)* **cursor live validation**; 6. *(later)* **pi live validation**.
+
+## 11. Errata (decisions taken during phase discussions, 2026-09-23)
+
+The phase CONTEXT files are authoritative where they differ from the sections above.
+
+**Host detection**
+- Order: **pi > opencode > cursor > codex > claude**, with claude last (Phase 20 D-02; it
+  replaces §1/§3.1).
+- Codex signals: `CODEX_THREAD_ID` or `CODEX_VERSION`. `CODEX_SANDBOX` is dropped because it was
+  never observed (Phase 16 D-02).
+- Scope: pi model enumeration moved to Phase 22 (SPEC-05); cursor wrapper resolution moved to
+  Phase 21 (SPEC-06) (Phase 16 D-06).
+
+**Catalog**
+- Reasoning levels use the existing `reasoning_modes` field, not `reasoning_levels`
+  (Phase 16 D-08).
+
+**Enumeration**
+- `runtimes.json` `clis.claude` carries `aliases` (`fable`, `opus`, `sonnet`, `haiku`, what
+  `claude --model` resolves), `models` (full ids), `models_source` and `models_as_of`. The
+  full ids come from `model-catalog.json` `_meta.anthropic_model_ids`, recorded by
+  `fetch-model-catalog` from models.dev's `anthropic` provider (`models_source: catalog`);
+  otherwise a dated in-code fallback is used (`models_source: dated-fallback`). Aliases stay
+  out of `models` so catalog discovery never matches a bare alias (Phase 16 D-04).
+- `detect-runtimes --if-stale` also treats the cached `clis.claude` entry as stale when its
+  `aliases`/`models`/`models_source`/`models_as_of` differ from what the current
+  `model-catalog.json` `_meta` yields, because those ids are derived from the catalog. A
+  `fetch-model-catalog` run where models.dev answered and `claude` is on PATH also builds an
+  `anthropic/<id>` catalog entry with a `claude` runtime for every recorded anthropic id in
+  that same fetch, including ids the runtimes snapshot does not list yet. Those extra entries
+  never appear in its printed `discovered` or `unmatched` lists. Bare claude ids are matched
+  with the `anthropic` provider hint, because every anthropic id also appears under many
+  reseller providers on models.dev. In the standard order (`detect-runtimes --if-stale`, then
+  `fetch-model-catalog --if-stale`), the next `detect-runtimes --if-stale` (a second call in
+  the same run, or the next run) lists the catalog ids, and each one already has a catalog
+  entry. A later network-skipping `fetch-model-catalog --if-stale` keeps those entries instead
+  of reporting them unmatched, so a consumer can score them without waiting for the 30-day
+  catalog TTL. If claude is installed only after the last real fetch, run
+  `fetch-model-catalog` once without `--if-stale` (Phase 16 D-04, D-12).
+- `clis.codex.models` lists the `codex debug models` slugs with `visibility: list`, and
+  `clis.codex.reasoning_modes` maps each slug to its effort levels. When codex enumeration
+  yields nothing, the `models` key is omitted and codex keeps the pre-Phase-16
+  single-provider path (Phase 16 D-05).
+
+**Skills (§7)**
+- Missing recommended skills are silently omitted, never offered or installed (Phase 18 D-03).
+- The cap per agent depends on rigor instead of a fixed 3 (Phase 18 D-04).
+- Users see bare skill names; the skill translates them to gsd reference forms (Phase 18 D-02).
+
+**v1 coexistence (§3 "Removed")**
+- v1 modules and subcommands are **kept**; v2 coexists with them (Phase 18 D-08).
+
+**opencode**
+- Per-project models only take effect through a **local** gsd install; the global alternative
+  is explained, never run (Phase 20 D-03).
+
+**Evaluation (§9)**
+- The pressure scenarios are B/C/D/E, with no-skill and v1 baselines (Phase 19 D-01/D-02).
+
+**Ranker**
+- Purposes are `planning`, `general`, `mechanical`, `execution`, `review`; `execute` is an alias of `execution` (and `review` of itself). The bundled file renames `[execute]` to `[execution]`; an older file with only `[review]`/`[execute]` still loads, and missing purposes come from the defaults. `execute` callers therefore rank with the `execution` weights, whose price weight is higher than the old `execute` section's (Phase 16 D-10).
+- `[mechanical.floor] coding_index = 35` applies to the raw Artificial Analysis coding index: a candidate below it, or without that score, is excluded from the result. Without an `ARTIFICIAL_ANALYSIS_API_KEY` no entry carries scores, so the mechanical ranking is empty and the caller must fall back (the §4 "no catalog" path) (Phase 16 D-11).
+
+**Cache**
+- `runtimes.json` carries a top-level integer `schema_version` (currently 2);
+  `model-catalog.json` carries it inside a reserved top-level `_meta` object, because every
+  other key there is a `provider/model` entry. A missing or older version counts as stale under
+  `--if-stale` whatever the TTL says; only a run where models.dev answered stamps the catalog
+  current, so an upgraded cache gets one successful refresh and a failed refresh is retried on the
+  next `--if-stale` run (Phase 16 D-12).
+- Cache writes are single-writer atomic (`cache_write_json`: one fixed `<path>.tmp` +
+  `os.replace`); concurrent writers to the same cache file are not supported.

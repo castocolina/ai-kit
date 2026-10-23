@@ -1,0 +1,149 @@
+{
+  "clis": {
+    "claude": {
+      "aliases": [
+        "fable",
+        "opus",
+        "sonnet",
+        "haiku"
+      ],
+      "installed": true,
+      "models": [
+        "claude-fable-5-1",
+        "claude-haiku-4-5",
+        "claude-haiku-5-5",
+        "claude-opus-4-8",
+        "claude-opus-5-5",
+        "claude-sonnet-5"
+      ],
+      "models_as_of": "2026-10-15",
+      "models_source": "catalog"
+    },
+    "codex": {
+      "installed": true,
+      "models": [
+        "gpt-6.1-sol",
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna"
+      ],
+      "reasoning_modes": {
+        "gpt-5.6-luna": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "gpt-5.6-sol": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "gpt-5.6-terra": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "gpt-6-astra": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "gpt-6-luna": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "gpt-6-sol": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "gpt-6.1-sol": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      }
+    },
+    "cursor": {
+      "installed": true,
+      "models": [
+        "claude-opus-5-5-high",
+        "claude-opus-5-5-low",
+        "claude-opus-5-5-xhigh",
+        "composer-2.5",
+        "composer-2.5-fast",
+        "gemini-3.8-flash-high",
+        "gemini-3.8-flash-low",
+        "gpt-5.6-luna-low",
+        "gpt-5.6-luna-medium",
+        "gpt-5.6-luna-xhigh",
+        "gpt-5.6-sol-high",
+        "gpt-5.6-sol-high-fast",
+        "gpt-5.6-sol-low",
+        "gpt-5.6-sol-max",
+        "gpt-5.6-sol-medium",
+        "gpt-5.6-sol-xhigh"
+      ]
+    },
+    "grok": {
+      "installed": true
+    },
+    "opencode": {
+      "installed": true,
+      "models": [
+        "openai/gpt-5.6-luna",
+        "openai/gpt-5.6-sol",
+        "openai/gpt-5.6-sol-fast",
+        "openai/gpt-5.6-terra",
+        "opencode/big-pickle",
+        "router-env/my-coding",
+        "router-env/my-plan-review",
+        "xai/grok-4.6",
+        "zai-coding-plan/glm-5.3"
+      ]
+    },
+    "pi": {
+      "installed": true,
+      "models": [
+        "anthropic/claude-sonnet-5",
+        "openai/gpt-5.6-terra",
+        "router-env/my-coding"
+      ],
+      "context_window": {
+        "anthropic/claude-sonnet-5": 200000,
+        "openai/gpt-5.6-terra": 400000,
+        "router-env/my-coding": 200000
+      },
+      "max_tokens": {
+        "anthropic/claude-sonnet-5": 64000,
+        "openai/gpt-5.6-terra": 128000,
+        "router-env/my-coding": 128000
+      },
+      "synthetic": true
+    }
+  },
+  "schema_version": 6
+}

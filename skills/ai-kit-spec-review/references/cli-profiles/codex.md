@@ -10,50 +10,38 @@ source: codex --help + live smoke test against a real installed codex CLI
 
 # codex — reviewer profile
 
-Non-interactive: `codex exec`. Model: `-m <model>`. Reasoning effort and
-service speed tier are SEPARATE knobs, each set via `-c key='"value"'`.
+A codex reviewer stores the pair `runtime = "codex"` and the bare `model`, plus
+optional `effort` and `service_tier` knobs. It stores no `command`. Dispatch
+runs the pair through the supervised runner, which builds the argv.
 
-**No `{prompt}` in this template — prompt delivery is stdin-only,
-confirmed live**: `codex --help` documents the positional `PROMPT` arg as
-"If not provided as an argument (or if `-` is used), instructions are
-read from stdin" — omitting it entirely (as this template does) reads the
-whole prompt from stdin. `review-spec/SKILL.md`'s Step 1 external
-dispatch and `probe_reviewer_quota` both redirect the already-on-disk
-prompt file as this process's stdin unconditionally, so this needs no
-special-casing at the dispatch step.
+Non-interactive: `codex exec`. Model: `-m <model>`. Reasoning effort and the
+service-speed tier are separate knobs (`--codex-effort`, `--codex-service-tier`
+on the runner), never a suffix on the model id. Confirmed live 2026-08-29:
+`codex exec -m gpt-5.6-sol-high` is rejected; the pair is `model = "gpt-5.6-sol"`
+with `effort = "high"`.
 
-```bash
-codex exec --sandbox read-only --skip-git-repo-check \
-  -m {model} \
-  -c model_reasoning_effort='"{effort}"' \
-  -c service_tier='"{service_tier}"'
+**Review** runs read-only:
+
+```text
+codex exec --sandbox read-only --skip-git-repo-check -C <cwd> -m <model>
 ```
 
-`{model}` above is the literal config `command` template placeholder —
-bare, unquoted. `{effort}`/`{service_tier}` are also literal
-`command`-template placeholders, but filled from the reviewer entry's own
-`extra` table (e.g. `effort = "high"`, `service_tier = "fast"` in
-`review-spec.toml`), not from `{model}` — `render_reviewer_command` fills
-every placeholder the template references via
-`resolved.command.format(model=..., prompt=..., **resolved.extra)`
-(`{prompt}` is always accepted too, `shlex.quote`d, for a hand-written
-open-hatch template that prefers to inline it instead — this profile's
-own template simply doesn't reference it), so an entry that omits
-`effort`/`service_tier` from its `extra` table and still references them
-here fails to render (a config error, surfaced at dispatch — see
-`review-spec/SKILL.md`'s reviewer dispatch step). **Do not append
-`2>/dev/null`** — `probe_reviewer_quota` classifies availability from
-`stdout + stderr` combined, so suppressing stderr hides the exact
-usage-limit signal the probe below depends on.
+The runner adds `--json`, an output file and `-` (the prompt on stdin).
+
+**Exec has two branches, and only one of them confines writes.**
+
+- ai-kit's own exec dispatch passes `--codex-sandbox workspace-write`. The
+  runner then uses `--sandbox workspace-write` instead of the bypass, so writes
+  stay inside the target dir plus `/tmp` and `$TMPDIR`, which workspace-write
+  always allows. Whether that sandbox also allows writes inside `.git` is
+  unverified.
+- A runner call that does not pass the flag (GSD's own hook, and any other
+  caller that leaves the default) uses `--dangerously-bypass-approvals-and-sandbox`.
+  That branch has no confinement.
+
+The prompt arrives on stdin (`-`), so a table-runtime entry has no `{prompt}`
+placeholder.
 
 **Quota probe — confirmed live**: a low-effort/fast-tier call against an
-exhausted quota returns a usage-limit error. Example that produced exactly
-that error during this design's research:
-
-```bash
-codex exec -m gpt-5.6-luna -c model_reasoning_effort='"low"' -c service_tier='"fast"' 'Only say: Hello world!'
-```
-
-This is the reference implementation for the "cheap probe, detect the
-error" quota-check mechanism — parse the exit code / stderr for a
-usage-limit signal rather than looking for a dedicated quota subcommand.
+exhausted quota returns a usage-limit error. Availability is classified from
+the runner's `AIKIT-XAI status=` line, not from a dedicated quota subcommand.

@@ -41,11 +41,21 @@ DOMAIN_TIMEOUT_SECONDS = 30
 
 
 def resolve_entrypoint(skill_name: str) -> str | None:
-    """Walk the same 5 host-neutral candidates every sibling `SKILL.md`
-    already documents, returning the first candidate whose
-    `<name>/<name>.py` file exists, or `None` if none do.
+    """Walk the host-neutral candidates every sibling `SKILL.md` already
+    documents, returning the first candidate whose `<name>/<name>.py` file
+    exists, or `None` if none do. The from-checkout sibling is tried first:
+    an installed copy (`~/.claude/skills`, plugin root) may point at another
+    branch, so the checkout's own sibling must win.
     """
     candidates: list[str] = []
+
+    # From-checkout sibling, FIRST: walk up from this module's own real
+    # path -- dispatch.py's directory -> package dir -> this skill's dir
+    # (ai-kit-project-rules-all) -> skills root -> join <name>.
+    pkg_dir = os.path.dirname(os.path.realpath(__file__))
+    skill_dir = os.path.dirname(pkg_dir)
+    skills_root = os.path.dirname(skill_dir)
+    candidates.append(os.path.join(skills_root, skill_name))
 
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if plugin_root:
@@ -62,14 +72,6 @@ def resolve_entrypoint(skill_name: str) -> str | None:
     candidates.append(os.path.join(xdg_config_home, "opencode", "skills", skill_name))
 
     candidates.append(os.path.join(home, ".agents", "skills", skill_name))
-
-    # From-checkout sibling: walk up from this module's own real path --
-    # dispatch.py's directory -> package dir -> this skill's dir
-    # (ai-kit-project-rules-all) -> skills root -> join <name>.
-    pkg_dir = os.path.dirname(os.path.realpath(__file__))
-    skill_dir = os.path.dirname(pkg_dir)
-    skills_root = os.path.dirname(skill_dir)
-    candidates.append(os.path.join(skills_root, skill_name))
 
     for candidate in candidates:
         entry = os.path.join(candidate, f"{skill_name}.py")
@@ -104,6 +106,7 @@ def run_domain(domain: str, repo_root: str) -> dict:
             capture_output=True,
             text=True,
             timeout=DOMAIN_TIMEOUT_SECONDS,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         return {

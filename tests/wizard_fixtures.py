@@ -6,6 +6,8 @@ real ``Selection`` / inventory loaders / defaults — the wizard view itself
 imports nothing from setup, so exercising it through a real context is the
 faithful test seam.
 """
+from typing import cast
+
 from tools import setup
 from tools import wizard_app as wa
 
@@ -32,7 +34,7 @@ def make_ctx(with_external=False, sl_state="unset"):
               for r in setup.LAYOUT_DEFAULTS]
     initial = {(c, n): False for c, n, _ in sel.items}
     return wa.WizardContext(
-        selection=sel,
+        selection=cast(wa.SelectionLike, sel),
         state={"segments": segments, "layout": layout, "dirty": False,
                "adopt": sl_state == "ours", "_initial_enabled": initial},
         sample_json="{}", engine=None,

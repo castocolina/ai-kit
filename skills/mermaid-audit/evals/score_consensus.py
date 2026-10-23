@@ -37,30 +37,35 @@ def _rules_in_gold(gold):
     return rules
 
 
-def score(gold, verdicts, threshold=0.8):
-    k = max(len(verdicts), 1)
-    agreement = {}           # fixture -> rule -> fraction of judges that flagged it
+def _build_agreement(gold, verdicts, k):
+    agreement = {}
     for fixture, labels in gold.items():
         agreement[fixture] = {}
         for rule in labels:
             hits = sum(1 for v in verdicts if rule in v.get(fixture, []))
             agreement[fixture][rule] = hits / k
+    return agreement
 
-    # a rule is well-formed if, on EVERY fixture that truly has it, judges concur
-    rule_well_formed = {}
+
+def _rule_well_formed(gold, agreement, threshold):
+    out = {}
     for rule in _rules_in_gold(gold):
         fixtures_with = [fx for fx, lbl in gold.items() if rule in lbl]
-        rule_well_formed[rule] = bool(fixtures_with) and all(
+        out[rule] = bool(fixtures_with) and all(
             agreement[fx][rule] >= threshold for fx in fixtures_with)
+    return out
 
-    # false-positive rate on clean fixtures (gold == [])
-    false_positive_rate = {}
+
+def _false_positive_rates(gold, verdicts, k):
+    rates = {}
     for fixture, labels in gold.items():
         if not labels:
             fp = sum(1 for v in verdicts if v.get(fixture))
-            false_positive_rate[fixture] = fp / k
+            rates[fixture] = fp / k
+    return rates
 
-    # global precision/recall vs gold
+
+def _precision_recall(gold, verdicts):
     tp = fp = fn = 0
     for v in verdicts:
         for fixture, gold_labels in gold.items():
@@ -71,6 +76,15 @@ def score(gold, verdicts, threshold=0.8):
             fn += len(want - got)
     precision = tp / (tp + fp) if (tp + fp) else 1.0
     recall = tp / (tp + fn) if (tp + fn) else 1.0
+    return precision, recall
+
+
+def score(gold, verdicts, threshold=0.8):
+    k = max(len(verdicts), 1)
+    agreement = _build_agreement(gold, verdicts, k)
+    rule_well_formed = _rule_well_formed(gold, agreement, threshold)
+    false_positive_rate = _false_positive_rates(gold, verdicts, k)
+    precision, recall = _precision_recall(gold, verdicts)
 
     return {
         "judges": k,

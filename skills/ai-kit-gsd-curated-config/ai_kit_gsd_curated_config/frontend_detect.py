@@ -25,7 +25,8 @@ _README_FRAMEWORK_HINTS = ("react", "vue", "svelte", "angular", "next.js")
 
 
 def _read_text(path):
-    with open(path, encoding="utf-8") as f:
+    # errors="replace": a non-UTF-8 README/package.json degrades, never raises.
+    with open(path, encoding="utf-8", errors="replace") as f:
         return f.read()
 
 
@@ -36,23 +37,29 @@ def _hint_matches(hint, lowered_text):
     return re.search(rf"\b{re.escape(hint)}\b", lowered_text) is not None
 
 
-def _package_json_signals_frontend(project_dir, isfile_fn, read_fn):
+def package_json_deps(project_dir, isfile_fn=os.path.isfile, read_fn=_read_text):
+    """Merged `dependencies` + `devDependencies`, or `{}` when absent or unreadable."""
     package_json_path = os.path.join(project_dir, "package.json")
     if not isfile_fn(package_json_path):
-        return False
+        return {}
     try:
         manifest = json.loads(read_fn(package_json_path))
-    except (json.JSONDecodeError, OSError):
-        return False
+    except (OSError, ValueError):  # ValueError covers JSONDecodeError and UnicodeDecodeError
+        return {}
     if not isinstance(manifest, dict):
-        return False
-    deps = {}
+        return {}
+    deps: dict = {}
     deps_raw = manifest.get("dependencies")
     if isinstance(deps_raw, dict):
         deps.update(deps_raw)
     dev_deps_raw = manifest.get("devDependencies")
     if isinstance(dev_deps_raw, dict):
         deps.update(dev_deps_raw)
+    return deps
+
+
+def _package_json_signals_frontend(project_dir, isfile_fn, read_fn):
+    deps = package_json_deps(project_dir, isfile_fn, read_fn)
     return any(hint in deps for hint in _PACKAGE_JSON_DEPENDENCY_HINTS)
 
 
@@ -62,7 +69,7 @@ def _readme_signals_frontend(project_dir, isfile_fn, read_fn):
         return False
     try:
         text = read_fn(readme_path)
-    except OSError:
+    except (OSError, ValueError):
         return False
     lowered = text.lower()
     return any(_hint_matches(hint, lowered) for hint in _README_FRAMEWORK_HINTS)

@@ -27,15 +27,14 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 |---|---|---|
 | [`ai-kit-spec-review-checklist`](skills/ai-kit-spec-review-checklist/SKILL.md) | skill | Audit-only reviewer for design/plan documents. Framework-aware (EARS, RFC-2119, Given/When/Then, OpenSpec, Spec Kit, GSD, …). |
 | [`ai-kit-spec-review-fixer`](skills/ai-kit-spec-review-fixer/SKILL.md) | skill | Fixer that addresses each finding from a `ai-kit-spec-review-checklist` report, in place. |
-| [`commit-message`](skills/commit-message/SKILL.md) | skill | Generate a git commit message for staged/working changes, an amend, or a specific commit. |
 | [`cst-refactor`](skills/cst-refactor/SKILL.md) | skill | LibCST-based Python codemod helper — multi-file renames and signature changes that survive comments and formatting. |
 | [`mermaid-audit`](skills/mermaid-audit/SKILL.md) | skill | Render and review Mermaid diagrams embedded in Markdown — syntax, layout, **color palette, node shapes, and aspect ratio**; emits ready-to-paste `classDef` fixes and ships a consensus eval that checks the rules are reproducible across agents. |
 | [`markdown-to-pdf`](skills/markdown-to-pdf/SKILL.md) | skill | Convert a Markdown document with embedded mermaid diagrams into a **PDF** (or a **marp** slide deck) — every ` ```mermaid ` block is auto-rendered with `mmdc` and embedded; auto-selects the best installed backend (Typst/Pandoc, LaTeX, WeasyPrint, Chromium) and never auto-installs. |
-| [`ai-kit-spec-review`](skills/ai-kit-spec-review/SKILL.md) | skill | Orchestrates a clean-context review-and-fix loop: `ai-kit-spec-review-checklist` to review, then routes the rewrite by framework (superpowers → `brainstorming`/`writing-plans`; GSD → `/gsd-plan-phase --reviews` + `gsd-plan-checker`; else `ai-kit-spec-review-fixer`). Loops until approved. |
-| [`ai-kit-spec-config`](skills/ai-kit-spec-config/SKILL.md) | skill | Interactive setup wizard for `ai-kit-spec-review`'s cross-AI reviewer config — detects installed CLIs/models, asks which to configure, writes `review-spec.toml`. |
+| [`ai-kit-spec-review`](skills/ai-kit-spec-review/SKILL.md) | skill | Review-and-fix loop over (runtime, model) pairs: native when the host can select the model, otherwise the supervised runner (`claude` is review-only). Loops until approved. |
+| [`ai-kit-spec-config`](skills/ai-kit-spec-config/SKILL.md) | skill | Wizard for the reviewer config: picks (runtime, model) pairs, writes `review-spec.toml`; a runtime outside the runner table is a trust-gated custom command. |
 | [`ai-kit-spec-execute`](skills/ai-kit-spec-execute/SKILL.md) | skill | Router: detects which framework (GSD, superpowers, …) generated a plan/phase, then delegates execution to that framework's `ai-kit-spec-execute-*` adapter. |
-| [`ai-kit-spec-execute-gsd`](skills/ai-kit-spec-execute-gsd/SKILL.md) | skill | Resolves the best available model/CLI for a GSD phase, prepares GSD's own `.planning/config.json` (native `runtime`/`model_profile_overrides`, or `workflow.cross_ai_command`), then hands off to GSD's own `/gsd-execute-phase` skill — never subprocess-dispatches GSD itself. |
-| [`ai-kit-opencode-providers`](skills/ai-kit-opencode-providers/SKILL.md) | skill | List and remove config-based custom opencode providers from `opencode.jsonc` without hand-editing JSONC or touching `auth.json`. |
+| [`ai-kit-spec-execute-gsd`](skills/ai-kit-spec-execute-gsd/SKILL.md) | skill | Resolves the best available (runtime, model) pair for a GSD phase, prepares GSD's own `.planning/config.json` (a native-tier pin, or `workflow.cross_ai_command` naming the project's supervised runner), then hands off to GSD's own `/gsd-execute-phase` skill — never subprocess-dispatches GSD itself. |
+| [`ai-kit-opencode-providers`](skills/ai-kit-opencode-providers/SKILL.md) | skill | List and remove config-based custom opencode providers from `opencode.jsonc` without hand-editing JSONC or touching `auth.json`; `remove` scans each reviewer's `runtime`, legacy `cli` and `model`. |
 | [`ai-kit-project-rules-agents`](skills/ai-kit-project-rules-agents/SKILL.md) | skill | Checks an AGENTS.md/CLAUDE.md file against ai-kit's own 17-rule house ruleset, then wraps `/agent-md-refactor` to remediate gaps. |
 | [`ai-kit-project-rules-makefile`](skills/ai-kit-project-rules-makefile/SKILL.md) | skill | Checks a target repo's Makefile target shape — validate-<category> alias chain, recipe length, Docker build-before-up, shellcheck threshold. Detects and reports only. |
 | [`ai-kit-project-rules-precommit`](skills/ai-kit-project-rules-precommit/SKILL.md) | skill | Checks Makefile↔pre-commit parity (both directions), classifies pre-commit tooling into the 6-category taxonomy, and flags enable-everything configs, missing Duplicate-code/Dead-code tooling, and ruff/golangci-lint anti-patterns. Detects and reports only. |
@@ -43,7 +42,9 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`ai-kit-project-rules-docker`](skills/ai-kit-project-rules-docker/SKILL.md) | skill | Checks a target repo's local-dev Docker Compose conventions — the eight-member `docker-*` Makefile target family, the local-dev runbook, healthcheck timing bounds, `depends_on` discipline, and hot-reload bind-mount-plus-override wiring. Detects and reports only. |
 | [`ai-kit-project-rules-cicd`](skills/ai-kit-project-rules-cicd/SKILL.md) | skill | Checks that a target repo's CI config (`.github/workflows/*.yml`/`.gitlab-ci.yml`) reuses commands already defined in a Makefile target, pre-commit hook, `package.json` script, or Gradle build task rather than duplicating a tool invocation inline. Detects and reports only. |
 | [`ai-kit-project-rules-all`](skills/ai-kit-project-rules-all/SKILL.md) | skill | Runs all 6 `ai-kit-project-rules-*` checkers (agents, makefile, precommit, arch, docker, cicd) against a target repo and merges their findings into one cross-domain, criticality-ordered report, preserving the AGENTS.md-only `/agent-md-refactor` hand-off. Detects and reports only. |
-| [`ai-kit-gsd-curated-config`](skills/ai-kit-gsd-curated-config/SKILL.md) | skill | Curated, one-question (`model_profile`) GSD `.planning/config.json` setup — writes live-derived critical-agent overrides, detected cross-AI execution/review candidates, and preset workflow defaults through gsd-tools' own schema-validated CLI, coexisting with `gsd-settings`/`gsd-config` rather than replacing them. |
+| [`ai-kit-gsd-curated-config`](skills/ai-kit-gsd-curated-config/SKILL.md) | skill | v2-primary GSD config pipeline: inventory, recommend, plan-set/unset, apply (dry-run + backup), the template-6 cross-ai.mjs runner (`ensure-runner`, `--prepend-file` guidance), skill wiring, and grouped follow-ups; kept v1 one-question `model_profile` path that writes the runner command; pi not live-validated; cursor validated headless (interactive confirmation pending); config keys written only through gsd-tools (a failed apply restores the backup bytes directly). |
+| [`ai-kit-gsd-spec-discuss`](skills/ai-kit-gsd-spec-discuss/SKILL.md) | skill | Chains GSD `/gsd-spec-phase --auto` then assumptions-mode discuss over a phase range, settling gray areas through an optional local → consented-remote → own-reasoning decision ladder that runs through the shared `jev-fast-decision` client (`scripts/decide.py` validates summaries and maps the client's per-item trail to per-backend columns, stdlib, consent-gated), with decision logs, a deferred ledger, engine-checked Edge Coverage and a best-over-easy (or `mvp_mode`) design rule. Works with no decision backend. |
+| [`jev-fast-decision`](skills/jev-fast-decision/SKILL.md) | skill | Shared System One client: one backend table (local Laya, TypeSafe, OpenCode Zen), `--probe`, one escalation ladder with a per-item trail, a consent record, an answer log, and a dated capability matrix — advisory only. Linked for claude/opencode and pi; codex is a documented gap (`~/.agents/skills` is shared by other hosts) and cursor is reached through its `~/.claude/skills` compatibility read (cited in `reference.md`, not live-verified). |
 
 ## How the installer works
 
@@ -51,11 +52,13 @@ The repo is the source of truth. `tools/install.sh`:
 
 1. **fetch** — clones (or `git pull`s) the repo into `~/.local/share/ai-kit`; falls back to a tarball download when `git` is absent.
 2. **verify** — enumerates `skills/`, `commands/`, and `agents/` and validates each entry's shape (skills need a `SKILL.md`; commands/agents need Markdown with frontmatter). Malformed entries are skipped with a warning.
-3. **link** — symlinks each valid entry into `~/.claude/<category>/`. Existing real files and symlinks that point outside ai-kit are never touched.
+3. **link** — symlinks each valid entry into `~/.claude/<category>/`. Existing real files and symlinks that point outside ai-kit are never touched. The `jev-fast-decision` skill is additionally linked into `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` for pi, derived from the same selection (opencode reads `~/.claude/skills`; nothing is ever linked under `~/.agents/skills`; codex and cursor have no link — see the skill's reference for their status). A missing pi agent dir is skipped with a message, never created.
 4. **prune** — removes broken symlinks under `~/.claude/` that point into the install dir, so deleting a skill from the repo and re-running cleans up after itself.
 5. **statusline** — sets `statusLine` in `~/.claude/settings.json` to the bundled `tools/status-line.py` (a backup is written to `settings.json.bak`).
 
-Adding or removing skills/commands/agents needs no change to the script — entries are discovered dynamically.
+Adding or removing skills/commands/agents needs no change to the script — entries are discovered dynamically. The interactive wizard asks before it touches real content at a link path: if a skill path holds a real directory or a foreign symlink, a confirmation gate (default No) offers to back it up into the same XDG-state backups dir and link the repo copy — the same move the headless `--replace-existing` flag makes, and the backup destination is printed after the wizard exits.
+
+`cursor-agents/` holds ai-kit's own Cursor executor subagents, `composer-worker` and `grok-worker`, each pinned to an explicit non-fast model id. They stay out of `agents/` because that directory links into `~/.claude/agents`, where Claude would load an unrunnable pin. The Cursor CLI reads subagents only from a project's `.cursor/agents`, so automated per-file linking is backlog 999.7. Until then, from a project root link one file by hand: `ln -s <ai-kit checkout>/cursor-agents/composer-worker.md .cursor/agents/` (never link the directory; owner decision 2026-10-18).
 
 ### The install wizard
 
@@ -91,6 +94,15 @@ headless defaults — this is deliberate. A separate, explicit
 install](#headless-install-ci--containers--no-tty) below); it is opt-in per
 piece and defaults to doing nothing, so it is not a "headless defaults" mode.
 A clean `Ctrl-C`, `q`, or `esc` abort leaves the original config intact.
+
+The picks screen includes a **HOOKS** group with one row per hook knob:
+`session-briefing`, `tool-advisor`, `tool-reminder`, `decision-probe` and
+`precompact`. Defaults set the initial checkboxes. Checked rows are installed;
+unchecked rows remove that ai-kit hook from every host where it is installed.
+The precompact row wires Claude's `PreCompact` producer and compact
+`SessionStart` injector, plus symlinks the pi extension and experimental
+opencode plugin when those host directories exist. The review counts hook rows
+separately from components.
 
 #### Install-picks screen keybindings
 
@@ -193,7 +205,14 @@ segment. Toggle it like any other segment (`[segments] alt_git_worktree = false`
 (7-day bucket), both **off by default**. Each renders `{Nh|Nd}: {pct}%` and degrades to that bare
 form when space is tight; with room, the hourly segment adds a time-only reset stamp
 (`5h: 42% (↺ 14:10)` — never a date, since a 5-hour window can't cross into a different day), and
-the weekly segment adds a weekday + time stamp (`7d: 13% (↺ Sun 14:10)`). In the diagnostics row,
+the weekly segment adds a weekday + time stamp (`7d: 13% (↺ Sun 14:10)`). Color is an absolute
+pace gap: |used% − elapsed%| in percentage points — ≤5 green, under 11 yellow, ≤15 orange, more
+red. In the rich tier the percentage carries a pace sign: `+` when usage is at or behind the
+window clock (under pace — `5h: +0%` early in a window), `-` when it burns faster than the clock
+(`5h: -60%` with 60% used and only 45% of the clock gone). The legacy `[ramp.rate]` config block
+is kept only for parse compat and no longer
+colors these segments. An unreliable window (missing/past `resets_at`, clock skew) paints the
+percentage white with no pace sign. In the diagnostics row,
 `alt_h_rate_limit` sits to the left of `alt_w_rate_limit`, so the weekly segment is always the
 first of the two dropped under column pressure.
 
@@ -366,15 +385,45 @@ single-line. A failing, slow (past `timeout`), or empty provider is simply omitt
 
 ```bash
 install.sh --dry-run            # show what would change, mutate nothing
-install.sh --uninstall          # remove every ai-kit symlink + statusLine (keeps the install dir)
+install.sh --uninstall          # remove ai-kit symlinks, statusLine and hook entries (keeps the install dir)
+python3 tools/setup.py uninstall --hooks=tool-advisor,precompact  # remove only selected hook rows/links
 install.sh --examples=all|none|<ids>   # which bundled example segments to install (default: all)
 install.sh --branch <name>      # fetch a specific branch  (or --branch=<name>; fork via AI_KIT_REPO)
 install.sh reconfigure          # re-open the wizard pre-loaded with your current selection + layout
 ```
 
-**Try a branch without merging it.** `--branch <name>` is consumed by the bootstrapper (not passed
-to the wizard) and overrides which branch is fetched. A fork is selected with the `AI_KIT_REPO` env
-var; the default is `castocolina/ai-kit`.
+`--uninstall` exits 1, naming the file, when a Claude Code or Cursor settings file could not be
+read or rewritten, so ai-kit may still be wired there; fix the file and re-run it.
+
+**Try a branch without merging it.** `--branch <name>` (or `--branch=<name>`, or the
+`AI_KIT_BRANCH` env var) is consumed by the bootstrapper (not passed to the wizard) and overrides
+which branch is fetched. It applies only when install.sh fetches (piped from curl/wget); run from a
+local checkout it is ignored with a note. On an **existing clone** at the install dir, an explicit
+branch runs this sequence:
+
+1. `git check-ref-format --branch B` rejects a malformed name.
+2. It refuses when the tree is dirty, `git status` fails, or a `.git/index.lock` is left over from
+   an interrupted run, naming `git -C <dir> status` to inspect it. It never auto-recovers.
+3. It refuses when local `B` has commits that no `origin` branch has (checked before fetching,
+   because a `--depth 1` fetch hides older history).
+4. `--dry-run` prints the remaining steps and stops here.
+5. `git ls-remote --exit-code --heads origin B` refuses a branch that is not on `origin`.
+6. `git remote set-branches --add origin B`, skipped when that refspec is already configured.
+7. `git fetch --depth 1 origin B`, then `git switch -C B --track origin/B`. If either fails, the
+   refspec added in step 6 is removed again.
+
+The default `main` never triggers a switch: with no explicit branch an existing clone runs
+`git pull --ff-only origin <current branch>`, and refuses on a detached HEAD. Naming the branch
+means a refspec left over from a branch deleted upstream cannot break the update.
+
+`--dry-run` mutates nothing on any path: it prints the planned git commands (the sequence above,
+the `pull`, or the clone/tarball command) and runs no fetch, pull, switch, set-branches, clone or
+download, including over an earlier tarball (non-git) install. On an existing install it still
+hands `--dry-run` to the wizard; on a not-yet-fetched bootstrap it stops before running setup.py.
+
+A fork is selected with the `AI_KIT_REPO` env var (default `castocolina/ai-kit`) for a new clone or
+tarball download. An existing clone fetches from its own `origin`, and install.sh prints a note
+that `AI_KIT_REPO` is ignored.
 
 One catch: the `install.sh` you pipe must itself be a *flag-aware* version — `--branch` only exists
 in `install.sh` from a branch that has it (or from `main` once it's merged there). So to bootstrap a
@@ -406,13 +455,37 @@ pure no-op). Combine with the flags below to opt into specific pieces —
 nothing is touched unless explicitly requested:
 
 - `--skills all` — link every skill (or `--skills name1,name2` for a subset).
-  Additive only: never unlinks a skill already present from a prior run.
+  Additive only: never unlinks a skill already present from a prior run. A
+  `jev-fast-decision` link is mirrored into the pi agent skills dir
+  (`${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills`) when its claude link is made.
+- `--replace-existing` — (requires `--headless --skills`) move a real directory
+  or foreign symlink standing at one of the named skills' link paths into
+  `${XDG_STATE_HOME:-~/.local/state}/ai-kit/backups/<claude|pi>/<name>.bak-<timestamp>/`
+  (outside every scanned skills dir) and link the repo copy in its place.
+  Without this flag such content is left alone with a warning and the run exits 1.
 - `--with-statusline` — wire the ai-kit status line into `settings.json`. If the
   Claude Code config dir does not exist, this is skipped with a message and
   nothing is created — ai-kit never conjures a `~/.claude/` on a machine that
   has no Claude Code.
-- `--with-hooks` — wire the SessionStart hook for Claude Code and Cursor. Same
-  rule: a host that isn't installed here is skipped, not an error.
+- `--with-hooks` — bare form wires every default-on hook knob, including the
+  two per-call advisors; this is a behavior change from the briefing-only
+  default. Defaults: `session-briefing`, `tool-advisor` and `tool-reminder` on;
+  `decision-probe` off; `precompact` follows each host's recorded verdict.
+  `--with-hooks=<id[:host],...>` (for example `--with-hooks=tool-advisor`) is
+  additive: it only adds the named hooks and never removes existing ones. The five ids are documented here:
+
+  | Id | What it does | Hosts | Default |
+  |---|---|---|---|
+  | `session-briefing` | Installed-tool briefing to user/model | Claude Code, Cursor | on |
+  | `tool-advisor` | Advice for grep/cat/sed/find and large reads | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
+  | `tool-reminder` | Output-size reminder with a better installed tool | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
+  | `decision-probe` | Reports usable decision backends | Claude Code | off |
+  | `precompact` | Decision-system pre-summary before compaction | Claude Code, pi, experimental opencode | Per recorded host verdict |
+
+  `python3 tools/setup.py uninstall --hooks=<ids>` removes only those hook
+  ids (comma-separated, with optional `:host` selectors). Claude Code settings
+  are wired per event; pi extensions and opencode plugins use symlinks. Absent
+  hosts are skipped. The pre-summary fails open without blocking compaction.
 - `--examples=all|none|<ids>` — the same pre-existing flag `install.sh` and
   the interactive wizard use for bundled example segments; it works
   identically here, with or without `--headless`.
@@ -473,8 +546,8 @@ Agent-Skills-conformant tool its orchestrator logic in
 
 Session-start hooks in [`tools/hooks/`](tools/hooks/README.md) inject a live
 briefing of which curated `rtk` substitutions are actually on PATH. Claude Code
-and Cursor are wired; opencode has no documented injection point and that gap
-is accepted.
+and Cursor are wired. The same directory documents the pre-summary hook, which
+uses the local decision backend to classify context before compaction.
 
 `tools/setup.py --config-doctor` opens a read-only Checks Catalog for Claude
 Code, opencode, Codex, and Cursor — retention, sandboxing, telemetry, and
@@ -507,17 +580,18 @@ user's own `python3` with no dependencies. The lint/type toolchain below is
 
 ```bash
 make dev        # uv sync + install pre-commit hooks (sets up the dev env)
-make test       # full test suite on system python3 (real runtime fidelity)
-make lint       # shellcheck + py_compile (quick static checks)
+make test       # full suite in parallel, one subprocess per module, through tools/run_unittest_parallel.py (system python3 for the unit group)
+make lint       # shellcheck + py-compile hooks (pre-commit, all files)
 make validate   # the full quality gate (see below)
 ```
 
 **The quality gate is pre-commit.** `.pre-commit-config.yaml` is the single
-source of truth: `make validate` runs `uv run pre-commit run --all-files`, the
-*same* hooks (ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest)
-that gate every commit — so the gate and your local checks can never drift. Tool
-versions are pinned in `uv.lock`; `make dev` installs the hooks so commits are
-gated even if you skip `make validate`. Run it once after cloning:
+source of truth: `make validate` runs each hook via the Makefile's per-tool
+targets (same hooks as commit-time: ruff, pylint, pyright, vulture, shellcheck,
+py-compile, unittest). Ruff, py-compile, pyright and vulture cover every shipped
+Python file under `tools/`, `skills/` and `tests/`; pylint covers `tools/` and
+`skills/`. Tool versions are pinned in `uv.lock`; `make dev` installs the hooks
+so commits are gated even if you skip `make validate`. Run it once after cloning:
 
 ```bash
 make dev        # then commits are automatically gated
@@ -526,7 +600,9 @@ make dev        # then commits are automatically gated
 ## Compatibility notes
 
 - All `SKILL.md` files use the base [Agent Skills](https://agentskills.io/specification) frontmatter (`name`, `description`). No Claude-only fields, so the skills run unmodified on every conformant tool.
-- The `cst-refactor` skill resolves its bundled `codemod_template.py` via `${CLAUDE_PLUGIN_ROOT}`. On non-Claude tools, substitute the path to wherever this repo is cloned.
+- The `cst-refactor` skill ships its template as `codemod_template.py.txt`; `SKILL.md`
+  copies it into the project as `tools/codemod_template.py` from the skill's own directory
+  on any host (Claude Code: `${CLAUDE_PLUGIN_ROOT}/skills/cst-refactor`).
 
 ## License
 

@@ -37,10 +37,12 @@ from ai_kit_usage_metrics.classify_loop import (
     normalize_skeleton,
     run_classification,
 )
-from ai_kit_usage_metrics.cli import CAPTURE_SOURCES, main
+from ai_kit_usage_metrics.cli import CAPTURE_SOURCES, cmd_capture, main
 from ai_kit_usage_metrics.cwd_state import CwdState
 from ai_kit_usage_metrics.dashboard import generate
 from ai_kit_usage_metrics.decomposer import classify_segment, decompose, scan_command
+from ai_kit_usage_metrics.paths import catalog_path
+from ai_kit_usage_metrics.pricing import estimate_price
 from ai_kit_usage_metrics.raw_store import CaptureResult
 from ai_kit_usage_metrics.refiner import refine_all
 
@@ -1390,6 +1392,7 @@ class TestCaptureCodex(unittest.TestCase):
 
         self.assertEqual(session_ids, {_CODEX_SESSION_UUID})
         self.assertIsNotNone(function_call)
+        assert function_call is not None
         arguments = function_call["payload"]["payload"]["arguments"]
         self.assertIsInstance(arguments, str)
         self.assertNotIsInstance(arguments, dict)
@@ -1813,54 +1816,60 @@ class TestRefinerFull(unittest.TestCase):
         session_id = "ses_cwd"
         message_id = "msg_cwd"
         message = capture_opencode._base_envelope(
-            "/opencode.db",
-            "message",
-            message_id,
-            json.dumps(
-                {
-                    "role": "assistant",
-                    "tokens": {"input": 5, "output": 5},
-                    "modelID": MODEL,
-                    "providerID": "anthropic",
-                    "path": {"cwd": "/repo"},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "message",
+                message_id,
+                json.dumps(
+                    {
+                        "role": "assistant",
+                        "tokens": {"input": 5, "output": 5},
+                        "modelID": MODEL,
+                        "providerID": "anthropic",
+                        "path": {"cwd": "/repo"},
+                    }
+                ),
+                captured_at,
+                session_id,
+                None,
+                10,
             ),
-            captured_at,
-            session_id,
-            None,
-            10,
         )
         cd_part = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "prt_cd",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "cd src"}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "prt_cd",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "cd src"}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                20,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            20,
         )
         grep_part = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "prt_grep",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "grep -r FIXME ."}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "prt_grep",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "grep -r FIXME ."}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                30,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            30,
         )
         rows = refine_all([message, cd_part, grep_part])
         by_text = {row["command_text"]: row for row in rows}
@@ -1999,48 +2008,54 @@ class TestRefinerFull(unittest.TestCase):
         session_id = "ses_rebase"
         message_id = "msg_rebase"
         message = capture_opencode._base_envelope(
-            "/opencode.db",
-            "message",
-            message_id,
-            json.dumps({"path": {"cwd": "/repo"}}),
-            captured_at,
-            session_id,
-            None,
-            10,
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "message",
+                message_id,
+                json.dumps({"path": {"cwd": "/repo"}}),
+                captured_at,
+                session_id,
+                None,
+                10,
+            ),
         )
         with_workdir = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "prt_wd",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {
-                        "input": {"command": "echo hi", "workdir": "/rebased"},
-                    },
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "prt_wd",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {
+                            "input": {"command": "echo hi", "workdir": "/rebased"},
+                        },
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                20,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            20,
         )
         without_workdir = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "prt_later",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "grep -r TODO ."}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "prt_later",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "grep -r TODO ."}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                30,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            30,
         )
         rows = refine_all([message, with_workdir, without_workdir])
         by_text = {row["command_text"]: row for row in rows}
@@ -2186,12 +2201,14 @@ class TestRefinerFull(unittest.TestCase):
             "savings_pct": 20.0,
         }
         history = capture_rtk._envelope(
-            "/rtk/history.db",
-            "history",
-            "1",
-            history_payload,
-            captured_at,
-            json.dumps(history_payload),
+            capture_rtk._RtkEnvelopeArgs(
+                "/rtk/history.db",
+                "history",
+                "1",
+                history_payload,
+                captured_at,
+                json.dumps(history_payload),
+            ),
         )
         tee_payload = {
             "source_type": "tee",
@@ -2199,21 +2216,25 @@ class TestRefinerFull(unittest.TestCase):
             "content": "ignored",
         }
         tee = capture_rtk._envelope(
-            "/rtk/tee/1_cmd.log",
-            "tee",
-            "1_cmd.log:abc",
-            tee_payload,
-            captured_at,
-            "ignored",
+            capture_rtk._RtkEnvelopeArgs(
+                "/rtk/tee/1_cmd.log",
+                "tee",
+                "1_cmd.log:abc",
+                tee_payload,
+                captured_at,
+                "ignored",
+            ),
         )
         failure_payload = {"source_type": "parse_failure", "id": 1, "raw_command": "x"}
         failure = capture_rtk._envelope(
-            "/rtk/history.db",
-            "parse_failure",
-            "1",
-            failure_payload,
-            captured_at,
-            json.dumps(failure_payload),
+            capture_rtk._RtkEnvelopeArgs(
+                "/rtk/history.db",
+                "parse_failure",
+                "1",
+                failure_payload,
+                captured_at,
+                json.dumps(failure_payload),
+            ),
         )
         rows = refine_all([history, tee, failure])
         self.assertEqual(len(rows), 1)
@@ -2242,62 +2263,70 @@ class TestRefinerFull(unittest.TestCase):
         session_id = "ses_chrono"
         message_id = "msg_chrono"
         message = capture_opencode._base_envelope(
-            "/opencode.db",
-            "message",
-            message_id,
-            json.dumps({"path": {"cwd": "/repo"}}),
-            captured_at,
-            session_id,
-            None,
-            1,
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "message",
+                message_id,
+                json.dumps({"path": {"cwd": "/repo"}}),
+                captured_at,
+                session_id,
+                None,
+                1,
+            ),
         )
         later_grep = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "b",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "grep -r TODO ."}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "b",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "grep -r TODO ."}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                300,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            300,
         )
         middle = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "a",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "echo mid"}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "a",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "echo mid"}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                200,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            200,
         )
         first_cd = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "c",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "cd src"}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "c",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "cd src"}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                100,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            100,
         )
         rows = refine_all([message, later_grep, middle, first_cd])
         by_text = {row["command_text"]: row for row in rows}
@@ -2495,20 +2524,22 @@ class TestRefinerFull(unittest.TestCase):
         message_id = "msg_date_check"
         time_created = 1758000000000
         rec = capture_opencode._base_envelope(
-            "/opencode.db",
-            "part",
-            "prt_date_check",
-            json.dumps(
-                {
-                    "type": "tool",
-                    "tool": "bash",
-                    "state": {"input": {"command": "echo hi"}},
-                }
+            capture_opencode._OpencodeEnvelopeArgs(
+                "/opencode.db",
+                "part",
+                "prt_date_check",
+                json.dumps(
+                    {
+                        "type": "tool",
+                        "tool": "bash",
+                        "state": {"input": {"command": "echo hi"}},
+                    }
+                ),
+                captured_at,
+                session_id,
+                message_id,
+                time_created,
             ),
-            captured_at,
-            session_id,
-            message_id,
-            time_created,
         )
         self.assertNotIn("timestamp", rec)
         self.assertIsNone(rec["payload"].get("timestamp"))
@@ -2528,6 +2559,44 @@ class TestPricing(unittest.TestCase):
         )
         self.assertIsNone(price)
         self.assertEqual(confidence, "unknown")
+
+    def _write_meta_catalog(self, env):
+        # Regression pin (Phase 16 plan 03 / 16 D-12): the catalog now reserves the
+        # top-level `_meta` key for cache metadata. estimate_price looks entries up by
+        # canonical `provider/model` key, so `_meta` can never collide -- pinned here.
+        path = catalog_path(env)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "_meta": {"schema_version": 2},
+                    "anthropic/claude-x": {
+                        "pricing": {"input_per_1m": 3.0, "output_per_1m": 15.0}
+                    },
+                },
+                handle,
+            )
+        return path
+
+    def test_reserved_meta_key_does_not_disturb_price_lookup(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = {"HOME": d, "XDG_CACHE_HOME": os.path.join(d, ".cache")}
+            self._write_meta_catalog(env)
+            price, confidence = estimate_price(
+                "anthropic", "claude-x", 1000000, 0, env
+            )
+            self.assertEqual(price, 3.0)
+            self.assertEqual(confidence, "high")
+
+    def test_meta_catalog_missing_model_is_unknown(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = {"HOME": d, "XDG_CACHE_HOME": os.path.join(d, ".cache")}
+            self._write_meta_catalog(env)
+            price, confidence = estimate_price(
+                "anthropic", "absent-model", 1000000, 0, env
+            )
+            self.assertIsNone(price)
+            self.assertEqual(confidence, "unknown")
 
 
 class TestDashboard(unittest.TestCase):
@@ -2580,10 +2649,62 @@ class TestDashboard(unittest.TestCase):
             html = handle.read()
         start = html.find('<script type="application/json" id="usage-metrics-data">')
         self.assertNotEqual(start, -1)
-        end = html.find("</script>", start)
-        embedded = html[start:end]
-        self.assertNotIn("</script", embedded.replace("<script type", ""))
-        self.assertIn("<\\/script", embedded)
+        open_end = html.find(">", start)
+        end = html.find("</script>", open_end)
+        embedded = html[open_end + 1 : end]
+        self.assertNotIn("<", embedded)
+        self.assertEqual(_parse_embedded_rows(html)[0]["command_text"], SCRIPT_COMMAND)
+
+    def test_case_variant_script_breakouts_are_escaped(self):
+        payloads = ("</SCRIPT>", "</ScRiPt>", "<!-- x", "<\\/script>")
+        conn = refined_store.open_refined_db(self.env)
+        self.addCleanup(conn.close)
+        refined_store.insert_commands(
+            conn,
+            [
+                _dashboard_row(command_text=payloads[0], family=payloads[1]),
+                _dashboard_row(
+                    raw_ref="claude:/a.jsonl:2",
+                    command_text=payloads[2],
+                    family=payloads[3],
+                ),
+            ],
+        )
+        out = os.path.join(self.root, "dashboard.html")
+        generate(conn, out)
+        with open(out, encoding="utf-8") as handle:
+            html = handle.read()
+        start = html.find('<script type="application/json" id="usage-metrics-data">')
+        open_end = html.find(">", start)
+        close = html.find("</script>", open_end)
+        block = html[open_end + 1 : close].lower()
+        self.assertNotIn("</script", block)
+        self.assertNotIn("<!--", block)
+        rows = _parse_embedded_rows(html)
+        self.assertEqual(
+            (rows[0]["command_text"], rows[0]["family"]),
+            (payloads[0], payloads[1]),
+        )
+        self.assertEqual(
+            (rows[1]["command_text"], rows[1]["family"]),
+            (payloads[2], payloads[3]),
+        )
+
+    def test_empty_payload_renders(self):
+        conn = refined_store.open_refined_db(self.env)
+        self.addCleanup(conn.close)
+        out = os.path.join(self.root, "dashboard.html")
+        generate(conn, out)
+        with open(out, encoding="utf-8") as handle:
+            html = handle.read()
+        self.assertEqual(_parse_embedded_rows(html), [])
+
+    def test_escape_runs_after_serialization(self):
+        from ai_kit_usage_metrics.dashboard import _encode_payload
+
+        encoded = _encode_payload([{"k": "<"}])
+        self.assertNotIn("<", encoded)
+        self.assertEqual(json.loads(encoded), [{"k": "<"}])
 
 
 _DASHBOARD_PY = os.path.join(
@@ -2699,7 +2820,7 @@ def _parse_embedded_rows(html):
         raise AssertionError("embedded JSON script tag missing")
     open_end = html.find(">", start)
     close = html.find("</script>", open_end)
-    payload = html[open_end + 1 : close].replace("<\\/script", "</script")
+    payload = html[open_end + 1 : close]
     return json.loads(payload)
 
 
@@ -3900,6 +4021,8 @@ class TestDashboardFull(unittest.TestCase):
         )
         self.assertIsNotNone(flat_row_match, "no #thead-flat header row found")
         self.assertIsNotNone(grouped_row_match, "no #thead-grouped header row found")
+        assert flat_row_match is not None
+        assert grouped_row_match is not None
 
         flat_header_count = len(re.findall(r"<th\b", flat_row_match.group(1)))
         grouped_header_count = len(re.findall(r"<th\b", grouped_row_match.group(1)))
@@ -4485,6 +4608,8 @@ class TestDashboardFull(unittest.TestCase):
         )
         self.assertIsNotNone(flat_thead)
         self.assertIsNotNone(grouped_thead)
+        assert flat_thead is not None
+        assert grouped_thead is not None
         flat_header_keys = re.findall(r'data-sort-key="([^"]+)"', flat_thead.group(1))
         grouped_header_keys = re.findall(
             r'data-sort-key="([^"]+)"', grouped_thead.group(1)
@@ -4505,6 +4630,122 @@ class TestDashboardFull(unittest.TestCase):
         self.assertEqual(len(grouped_keys), len(grouped_header_keys))
         self.assertIn("date", flat_keys)
         self.assertIn("session_id", grouped_keys)
+
+
+
+class TestCmdCaptureIsolation(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="ai-kit-um-capture-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.env = _scratch_env(self.root)
+
+    @staticmethod
+    def _empty_stats() -> dict:
+        return {
+            "captured": 0,
+            "malformed": 0,
+            "recognized_no_data": 0,
+            "unreadable_files": [],
+        }
+
+    def test_capture_value_error_continues(self):
+        ok_calls: list[str] = []
+
+        def fail_capture(_env, _cursor):
+            raise ValueError("bad parse")
+
+        def ok_capture(_env, _cursor):
+            ok_calls.append("ok")
+            return CaptureResult(records=[], cursor={}, stats=self._empty_stats())
+
+        sources = {"fail": fail_capture, "ok": ok_capture}
+        from io import StringIO
+
+        stderr = StringIO()
+        with patch("ai_kit_usage_metrics.cli.CAPTURE_SOURCES", sources), patch(
+            "ai_kit_usage_metrics.cli.raw_store.read_cursor", return_value={}
+        ), patch("ai_kit_usage_metrics.cli.raw_store.append_records"), patch(
+            "ai_kit_usage_metrics.cli.raw_store.write_cursor"
+        ), patch("sys.stderr", stderr):
+            cmd_capture(self.env)
+        self.assertIn("capture[fail] failed:", stderr.getvalue())
+        self.assertEqual(ok_calls, ["ok"])
+
+    def test_capture_attribute_error_continues(self):
+        ok_calls: list[str] = []
+
+        def fail_capture(_env, _cursor):
+            raise AttributeError("malformed record")
+
+        def ok_capture(_env, _cursor):
+            ok_calls.append("ok")
+            return CaptureResult(records=[], cursor={}, stats=self._empty_stats())
+
+        sources = {"bad": fail_capture, "ok": ok_capture}
+        from io import StringIO
+
+        stderr = StringIO()
+        with patch("ai_kit_usage_metrics.cli.CAPTURE_SOURCES", sources), patch(
+            "ai_kit_usage_metrics.cli.raw_store.read_cursor", return_value={}
+        ), patch("ai_kit_usage_metrics.cli.raw_store.append_records"), patch(
+            "ai_kit_usage_metrics.cli.raw_store.write_cursor"
+        ), patch("sys.stderr", stderr):
+            cmd_capture(self.env)
+        self.assertIn("capture[bad] failed:", stderr.getvalue())
+        self.assertEqual(ok_calls, ["ok"])
+
+    def test_capture_recursion_error_continues(self):
+        # A deeply nested transcript line raises RecursionError, a RuntimeError.
+        ok_calls: list[str] = []
+
+        def deep_capture(_env, _cursor):
+            return json.loads("[" * 200000)
+
+        def ok_capture(_env, _cursor):
+            ok_calls.append("ok")
+            return CaptureResult(records=[], cursor={}, stats=self._empty_stats())
+
+        sources = {"deep": deep_capture, "ok": ok_capture}
+        from io import StringIO
+
+        stderr = StringIO()
+        with patch("ai_kit_usage_metrics.cli.CAPTURE_SOURCES", sources), patch(
+            "ai_kit_usage_metrics.cli.raw_store.read_cursor", return_value={}
+        ), patch("ai_kit_usage_metrics.cli.raw_store.append_records"), patch(
+            "ai_kit_usage_metrics.cli.raw_store.write_cursor"
+        ), patch("sys.stderr", stderr):
+            cmd_capture(self.env)
+        self.assertIn("capture[deep] failed:", stderr.getvalue())
+        self.assertEqual(ok_calls, ["ok"])
+
+    def test_capture_persist_oserror_continues(self):
+        record = {"raw_ref": "test:1", "payload": {}}
+        stats = self._empty_stats()
+
+        def ok_capture(_env, _cursor):
+            return CaptureResult(records=[record], cursor={"n": 1}, stats=stats)
+
+        sources = {"first": ok_capture, "second": ok_capture}
+        persisted: list[str] = []
+
+        def append_records(path, _records):
+            if path.endswith("first.jsonl"):
+                raise OSError("disk full")
+            persisted.append(path)
+
+        from io import StringIO
+
+        stderr = StringIO()
+        with patch("ai_kit_usage_metrics.cli.CAPTURE_SOURCES", sources), patch(
+            "ai_kit_usage_metrics.cli.raw_store.read_cursor", return_value={}
+        ), patch(
+            "ai_kit_usage_metrics.cli.raw_store.append_records", side_effect=append_records
+        ), patch("ai_kit_usage_metrics.cli.raw_store.write_cursor"), patch(
+            "sys.stderr", stderr
+        ):
+            cmd_capture(self.env)
+        self.assertIn("capture[first] persist failed:", stderr.getvalue())
+        self.assertTrue(any(path.endswith("second.jsonl") for path in persisted))
 
 
 class TestPermissions(unittest.TestCase):
@@ -4657,6 +4898,7 @@ class TestTracer151(unittest.TestCase):
         thead_start = html.index("<thead>") + len("<thead>")
         first_th_tag = re.search(r"<th[^>]*>", html[thead_start:])
         self.assertIsNotNone(first_th_tag)
+        assert first_th_tag is not None
         self.assertIn('data-sort-key="runtime"', first_th_tag.group(0))
 
         self.assertIn("md-checkbox", html)
@@ -4974,12 +5216,17 @@ def _precommit_hook_files_regex(hook_id):
     return match.group(1).strip().strip("'\"")
 
 
+def _tool_roots_cover(rel_dir: str, roots: list[str]) -> bool:
+    sample = f"{rel_dir.rstrip('/')}/module.py"
+    return any(sample == root or sample.startswith(f"{root}/") for root in roots)
+
+
+
 class TestGateRegistration(unittest.TestCase):
-    def test_makefile_registers_module_and_package(self):
+    def test_makefile_lists_module(self):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             text = handle.read()
         self.assertIn("tests.test_ai_kit_usage_metrics", text)
-        self.assertIn("skills/ai-kit-usage-metrics/", text)
 
     def test_precommit_ruff_and_py_compile_match_package_path(self):
         for hook_id in ("ruff", "py-compile"):
@@ -4991,13 +5238,14 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         self.assertIn("tests.test_ai_kit_usage_metrics", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
-        self.assertIn("skills/ai-kit-usage-metrics", include)
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-usage-metrics", include), include)
 
 
 class TestPhaseGateRegistration(unittest.TestCase):
@@ -5007,7 +5255,6 @@ class TestPhaseGateRegistration(unittest.TestCase):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             makefile = handle.read()
         self.assertIn("tests.test_ai_kit_usage_metrics", makefile)
-        self.assertIn("skills/ai-kit-usage-metrics/", makefile)
         for hook_id in ("ruff", "py-compile"):
             regex = _precommit_hook_files_regex(hook_id)
             self.assertIsNotNone(
@@ -5016,7 +5263,8 @@ class TestPhaseGateRegistration(unittest.TestCase):
             )
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
-        self.assertIn("skills/ai-kit-usage-metrics", data["tool"]["pyright"]["include"])
+        include = data["tool"]["pyright"]["include"]
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-usage-metrics", include), include)
 
 
 _SKILL_MD = os.path.join(

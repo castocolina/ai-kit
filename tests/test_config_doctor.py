@@ -24,6 +24,7 @@ def load_readers():
         sys.path.insert(0, _TOOLS_DIR)
     path = os.path.join(_TOOLS_DIR, "config_doctor_readers.py")
     spec = importlib.util.spec_from_file_location("config_doctor_readers", path)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules["config_doctor_readers"] = mod
     spec.loader.exec_module(mod)
@@ -35,6 +36,7 @@ def load_checks():
     load_readers()
     path = os.path.join(_TOOLS_DIR, "config_doctor_checks.py")
     spec = importlib.util.spec_from_file_location("config_doctor_checks", path)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules["config_doctor_checks"] = mod
     spec.loader.exec_module(mod)
@@ -47,6 +49,7 @@ def load_appliers():
         sys.path.insert(0, _TOOLS_DIR)
     path = os.path.join(_TOOLS_DIR, "config_doctor_appliers.py")
     spec = importlib.util.spec_from_file_location("config_doctor_appliers", path)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules["config_doctor_appliers"] = mod
     spec.loader.exec_module(mod)
@@ -307,6 +310,13 @@ class TestUnknownDegrade(_ScratchRuntimes):
         self.assertEqual(row["current_display"], "30")
 
 
+def _tool_roots_cover(rel_path: str, roots: list[str]) -> bool:
+    return any(
+        rel_path == root or rel_path.startswith(f"{root}/")
+        for root in roots
+    )
+
+
 class TestGateRegistration(unittest.TestCase):
     def test_py_compile_regex_matches_config_doctor_modules(self):
         regex = precommit_hook_files_regex("py-compile")
@@ -316,10 +326,12 @@ class TestGateRegistration(unittest.TestCase):
                 f"{path} did not match py-compile files: {regex}",
             )
 
-    def test_unittest_core_entry_includes_config_doctor_modules(self):
-        block = precommit_hook_block("unittest")
+    def test_unittest_wizard_entry_includes_config_doctor_modules(self):
+        # Their Textual tests skip under system python3, so they run in the uv hook.
+        block = precommit_hook_block("unittest-wizard")
         match = re.search(r"^\s*entry:\s*(.+)$", block, re.MULTILINE)
-        self.assertIsNotNone(match, "no entry: value for hook unittest")
+        self.assertIsNotNone(match, "no entry: value for hook unittest-wizard")
+        assert match is not None
         entry = match.group(1)
         self.assertIn("tests.test_config_doctor", entry)
         self.assertIn("tests.test_config_doctor_pty", entry)
@@ -329,19 +341,22 @@ class TestGateRegistration(unittest.TestCase):
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
         for path in _CONFIG_DOCTOR_PY:
-            self.assertIn(path, include)
-        self.assertIn("tools/config_doctor_appliers.py", include)
+            self.assertTrue(_tool_roots_cover(path, include), include)
+        self.assertTrue(
+            _tool_roots_cover("tools/config_doctor_appliers.py", include),
+            include,
+        )
 
-    def test_pylint_files_does_not_match_config_doctor(self):
+    def test_pylint_files_matches_config_doctor(self):
         regex = precommit_hook_files_regex("pylint")
-        self.assertIsNone(re.match(regex, "tools/config_doctor_checks.py"))
+        self.assertIsNotNone(re.match(regex, "tools/config_doctor_checks.py"))
 
-    def test_vulture_paths_does_not_contain_config_doctor(self):
+    def test_vulture_paths_cover_config_doctor(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
-        joined = " ".join(paths)
-        self.assertNotIn("config_doctor", joined)
+        sample = "tools/config_doctor_checks.py"
+        self.assertTrue(_tool_roots_cover(sample, paths), paths)
 
 
 _CLAUDE_EXPANDED_IDS = (
@@ -870,7 +885,10 @@ class TestCrossRuntimeRow(_ScratchRuntimes):
         row = _row_by_id(catalog, "rtk-cursor-integration")
         self.assertEqual(row["current_display"], "registered")
         self.assertEqual(row["confidence"], "HIGH")
-        self.assertEqual(row["source"], "tools/hooks/README.md")
+        self.assertEqual(
+            row["source"],
+            ".planning/milestones/v1.0-phases/03-tool-substitution-awareness-hook/03-CONTEXT.md",
+        )
         self.assertIn("point-in-time", row["why"].lower())
         self.assertIn("re-probe", row["why"])
 
@@ -899,7 +917,7 @@ class TestCrossRuntimeRow(_ScratchRuntimes):
         self.assertEqual(row["current_display"], "unreadable (see Why)")
 
     def test_probe_docstring_cites_research(self):
-        doc = readers._probe_rtk_cursor_hook.__doc__ or ""
+        doc = readers.probe_rtk_cursor_hook.__doc__ or ""
         self.assertIn("03-RESEARCH.md:527-540", doc)
         self.assertIn("not fixed by this research session", doc)
         self.assertIn("Cursor hook", doc)
@@ -1205,6 +1223,58 @@ class TestApplyRows(_ScratchRuntimes):
         self.assertIn("applier error", result["reason"])
         self.assertIn("injected", result["reason"])
 
+    def test_apply_row_contains_attribute_error(self):
+        def _bad(_ctx, _target, _dry):
+            raise AttributeError("injected attribute")
+
+        fake = checks.CheckRow(
+            id="fake-attr",
+            runtime="claude",
+            scope="runtime",
+            check="attr",
+            read=lambda _ctx: None,
+            recommended=None,
+            confidence="HIGH",
+            why="test",
+            source="test",
+            apply=_bad,
+        )
+        checks.CONFIG_DOCTOR_ROWS.append(fake)
+        try:
+            result = checks.apply_row("fake-attr", self._ctx(), dry=False)
+        finally:
+            checks.CONFIG_DOCTOR_ROWS.pop()
+        self.assertFalse(result["ok"])
+        self.assertIn("applier error", result["reason"])
+        self.assertIn("injected attribute", result["reason"])
+        follow = checks.apply_row("claude-sandbox-enabled", self._ctx(), dry=True)
+        self.assertTrue(follow["ok"])
+
+    def test_apply_row_contains_an_unlisted_exception_type(self):
+        # The catch is a TUI backstop: any applier exception, not a fixed list.
+        def _assert(_ctx, _target, _dry):
+            raise AssertionError("injected assertion")
+
+        fake = checks.CheckRow(
+            id="fake-assert",
+            runtime="claude",
+            scope="runtime",
+            check="assert",
+            read=lambda _ctx: None,
+            recommended=None,
+            confidence="HIGH",
+            why="test",
+            source="test",
+            apply=_assert,
+        )
+        checks.CONFIG_DOCTOR_ROWS.append(fake)
+        try:
+            result = checks.apply_row("fake-assert", self._ctx(), dry=False)
+        finally:
+            checks.CONFIG_DOCTOR_ROWS.pop()
+        self.assertFalse(result["ok"])
+        self.assertIn("injected assertion", result["reason"])
+
     def test_apply_claude_sandbox_preserves_sibling_and_carries_literal(self):
         path = os.path.join(self.claude, "settings.json")
         _write(
@@ -1284,7 +1354,7 @@ class TestApplyRows(_ScratchRuntimes):
         with mock.patch.object(
             checks.config_doctor_appliers, "set_jsonc_value", return_value="{not-json"
         ), mock.patch.object(
-            checks.config_doctor_appliers, "_atomic_write_text"
+            checks.config_doctor_appliers, "atomic_write_text"
         ) as writer:
             result = checks.apply_row("opencode-share-mode", self._ctx(), dry=False)
         self.assertFalse(result["ok"])
@@ -1480,6 +1550,7 @@ def load_app():
         sys.path.insert(0, _TOOLS_DIR)
     path = os.path.join(_TOOLS_DIR, "config_doctor_app.py")
     spec = importlib.util.spec_from_file_location("config_doctor_app", path)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules["config_doctor_app"] = mod
     spec.loader.exec_module(mod)

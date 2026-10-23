@@ -57,7 +57,7 @@ class MermaidRenderError(Exception):
 
 def _puppeteer_config(work_dir):
     path = os.path.join(work_dir, "puppeteer-config.json")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write('{ "args": ["--no-sandbox", "--disable-setuid-sandbox"] }\n')
     return path
 
@@ -66,26 +66,43 @@ def render_one(body, out_path, pptr, scale=3, run=subprocess.run):
     mmd_path = out_path + ".mmd"
     with open(mmd_path, "w", encoding="utf-8") as fh:
         fh.write(body)
-    p = run(["mmdc", "-p", pptr, "-i", mmd_path, "-o", out_path, "-s", str(scale)],
-            capture_output=True, text=True)
+    p = run(
+        ["mmdc", "-p", pptr, "-i", mmd_path, "-o", out_path, "-s", str(scale)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     return p.returncode, (p.stderr or p.stdout)
+
+
+def _fail_on_render(fence, err):
+    m = LINE_RE.search(err or "")
+    loc = fence["start_line"] + int(m.group(1)) - 1 if m else fence["start_line"]
+    raise MermaidRenderError(loc, (err or "").strip())
+
+
+def _render_fences(fences, work_dir, fmt, scale, run):
+    pptr = _puppeteer_config(work_dir)
+    rendered = []
+    for n, fence in enumerate(fences):
+        img = os.path.join(work_dir, f"diagram-{n}.{fmt}")
+        rc, err = render_one(fence["body"], img, pptr, scale=scale, run=run)
+        if rc != 0:
+            _fail_on_render(fence, err)
+        rendered.append((fence, img))
+    return rendered
+
+
+def _substitute_images(md_text, rendered):
+    out = md_text
+    for fence, img in reversed(rendered):
+        out = out[:fence["start"]] + f"![diagram]({img})\n" + out[fence["end"]:]
+    return out
 
 
 def render_all(md_text, work_dir, fmt="png", scale=3, run=subprocess.run):
     fences = find_fences(md_text)
     if not fences:
         return md_text
-    pptr = _puppeteer_config(work_dir)
-    rendered = []
-    for n, f in enumerate(fences):
-        img = os.path.join(work_dir, f"diagram-{n}.{fmt}")
-        rc, err = render_one(f["body"], img, pptr, scale=scale, run=run)
-        if rc != 0:
-            m = LINE_RE.search(err or "")
-            loc = f["start_line"] + int(m.group(1)) - 1 if m else f["start_line"]
-            raise MermaidRenderError(loc, (err or "").strip())
-        rendered.append((f, img))
-    out = md_text
-    for f, img in reversed(rendered):            # back-to-front keeps spans valid
-        out = out[:f["start"]] + f"![diagram]({img})\n" + out[f["end"]:]
-    return out
+    rendered = _render_fences(fences, work_dir, fmt, scale, run)
+    return _substitute_images(md_text, rendered)

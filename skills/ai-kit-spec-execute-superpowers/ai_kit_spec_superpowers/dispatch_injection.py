@@ -4,16 +4,31 @@ ai-kit-spec-execute-superpowers. Never bypasses subagent-driven-development (des
 injection's output is an INPUT to that harness's own "Dispatch the implementer" step, not a
 replacement for it, and dispatch_superpowers_task is the ONLY place an external_cli injection
 actually runs a subprocess -- always through the existing, live-verified
-ai_kit_spec.execute_dispatch.dispatch_execute path, never a raw dispatch_with_heartbeat call and
+ai_kit_spec.execute_dispatch.dispatch_execute path, never a second supervisor and
 never a target_dir placeholder baked in ahead of the real dispatch call (HIGH finding)."""
 import os
 import re
+import sys
+from collections.abc import Callable, Mapping
+from typing import Any, NamedTuple
 
-from ai_kit_spec.commands import build_execute_command
 from ai_kit_spec.config_io import cfg_resolve
-from ai_kit_spec.execute_dispatch import dispatch_execute
-from ai_kit_spec.execute_selection import candidates_to_ladder, resolve_execute_candidates
-from ai_kit_spec.quota import resolve_ladder_pick
+from ai_kit_spec.execute_dispatch import ExecuteDispatchSpec, dispatch_execute
+from ai_kit_spec.execute_selection import (
+    ExecuteResolveOptions,
+    candidates_to_ladder,
+    resolve_execute_candidates,
+    screen_execute_clis,
+)
+from ai_kit_spec.quota import entry_reason, resolve_ladder_pick
+from ai_kit_spec.routing import (
+    SKIP_ROUTES,
+    Inventory,
+    RouteInput,
+    route,
+    skip_note,
+    unverified_note,
+)
 
 from ai_kit_spec_superpowers.task_classification import (
     classify_task,
@@ -21,28 +36,41 @@ from ai_kit_spec_superpowers.task_classification import (
     extract_touched_paths,
 )
 
-# Rate/usage-limit signals only -- genuinely time-bound, worth an hourly quota-wake retry.
-_DISPATCH_QUOTA_SIGNALS = ("usage limit", "quota", "rate limit", "rate_limit")
-# Auth/entitlement/setup signals -- HIGH finding: these never get better by waiting, so they must
-# classify as real_error (never "quota"), or an unauthenticated CLI triggers a futile hourly
-# CronCreate wake loop forever. Mirrors ai_kit_spec.quota's own private _UNAVAILABLE_SIGNALS
-# auth-flavored entries (duplicated, not imported -- that name is a private implementation detail
-# of quota.py's probe_reviewer_quota, not a shared public constant). Keep in sync by hand.
-_AUTH_SIGNALS = ("actionrequirederror", "not authenticated", "not logged in")
-# A probe timeout -- quota.py's own probe_reviewer_quota literally returns this exact detail text
-# ("timed out after 30s") on subprocess.TimeoutExpired. Never quota-recoverable: a hung/broken CLI
-# invocation does not get better by waiting for quota to refill (HIGH finding).
-_TIMEOUT_SIGNAL = "timed out"
-# A malformed/missing command template -- ai_kit_spec.commands.render_reviewer_command's own
-# ValueError text ("... has cli=... set but no command template" / "... has a malformed command
-# template: ..."), confirmed by reading commands.py. A config problem, not a quota problem --
-# waiting an hour never fixes a bad template (HIGH finding).
-_CONFIGURATION_SIGNALS = ("command template", "no command builder registered",
-                           "no execute-mode")
-# The CLI binary itself could not be invoked at all -- quota.py's probe_reviewer_quota returns the
-# raw OSError text verbatim on a failed subprocess launch (e.g. the binary isn't on PATH). Also
-# never quota-recoverable (HIGH finding).
-_DISPATCH_UNAVAILABLE_SIGNALS = ("no such file or directory", "command not found", "errno 2")
+
+class BuildInjectionSeams(NamedTuple):
+    resolve_ladder_pick_fn: Callable[..., Any] = resolve_ladder_pick
+
+
+class BuildInjectionRequest(NamedTuple):
+    task_markdown: str
+    candidates: list
+    files_touched_sizes: dict
+    affinity_table: dict
+    top_n_keys: list
+
+
+class BuildInjectionOptions(NamedTuple):
+    quota: dict | None = None
+    seams: BuildInjectionSeams = BuildInjectionSeams()
+    routes: Mapping[str, str] | None = None
+
+
+class DispatchTaskRequest(NamedTuple):
+    injection: dict
+    prompt: str
+    target_dir: str
+    timeout: int
+
+
+class SuperpowersDispatchGuidance(NamedTuple):
+    format_block: str | None = None
+    tool_availability: dict | None = None
+    agents_tooling_path: str | None = None
+    codegraph_registered: bool = False
+
+
+class SuperpowersDispatchSeams(NamedTuple):
+    dispatch_execute_fn: Callable[..., dict] = dispatch_execute
 
 
 def reasons_summary(reasons: dict) -> dict:
@@ -67,20 +95,20 @@ class QuotaExhaustedError(RuntimeError):
     mechanism for this task. `tried` carries every candidate key the walk actually visited, in
     ladder order, so a caller can persist the complete excluded set verbatim into resumable state
     (design spec Section 10, HIGH finding) -- never a bare string a caller has to re-parse.
-    `reasons` maps each tried key to why it was skipped -- one of SEVEN typed reasons (HIGH finding:
+    `reasons` maps each tried key to why it was skipped -- a typed reason from
+    ai_kit_spec.error_classifier.REASONS (quota/auth/timeout/configuration/dispatch_unavailable/
+    real_error -- the one shared, stderr-and-exit-status-only classifier, D-13; HIGH finding:
     a real probe/dispatch failure has more shapes than "quota" vs "auth", and only one of them is
-    ever worth an hourly wait):
+    ever worth an hourly wait), PLUS one superpowers-local reason:
       - "quota": a genuine, time-bound rate/usage-limit signal -- worth the hourly wake.
       - "auth": an authentication/entitlement/setup problem -- never fixed by waiting.
       - "timeout": the probe itself hung/timed out -- a broken invocation, not a rate limit.
       - "configuration": a missing/malformed command template -- a config problem.
-      - "dispatch_unavailable": the CLI binary itself could not be invoked (OSError) --
-        no registered execute-mode builder falls under this same umbrella via "no_usable_dispatch"
-        below, which is set directly by build_dispatch_injection's own dispatchability check, not
-        by _unavailability_reason.
-      - "no_usable_dispatch": had quota, but build_execute_command_fn has no registered
-        execute-mode builder for this candidate's cli (set directly by build_dispatch_injection,
-        never by _unavailability_reason -- see the drop-and-continue branch below).
+      - "dispatch_unavailable": the CLI binary itself could not be invoked (OSError).
+      - a route name (bad_model, review_only, not_installed, no_inventory, unknown_runtime,
+        no_model): the per-call route walk skipped this candidate. Permanent, like every reason
+        below except "quota" -- waiting never changes which host this process runs on or which
+        model a runtime lists.
       - "real_error": anything else -- a real, non-time-bound failure (a bad model id, an
         unrelated nonzero exit) that must never be mistaken for a recoverable quota wait.
     `all_auth_failures` is True only when every entry in `reasons` is "auth" (kept for the
@@ -109,8 +137,9 @@ class QuotaExhaustedError(RuntimeError):
     def any_quota_recoverable(self) -> bool:
         """HIGH finding: the real gate for scheduling an hourly CronCreate wake. True only if at
         least one tried candidate's reason is "quota" -- a genuine, time-bound rate/usage limit.
-        Every other reason (auth/timeout/configuration/dispatch_unavailable/no_usable_dispatch/
-        real_error) never improves by waiting; if NONE of `reasons` is "quota", waiting an hour
+        Every other reason (auth/timeout/configuration/dispatch_unavailable/real_error, and
+        every route name the walk records) never improves by waiting; if NONE of `reasons` is
+        "quota", waiting an hour
         fixes nothing for any candidate, and the caller must stop and report the real problem(s)
         instead. Delegates to the shared reasons_summary (above) -- see its own docstring for why
         a caller merging reasons across more than one resolve-injection call must recompute this
@@ -126,7 +155,7 @@ def compute_resume_exclusions(tried: list, reasons: dict, prior_excluded_keys: l
     event schedules. This function is the single place that decides what belongs in a PERSISTED
     exclusion set: `prior_excluded_keys` (already permanent, carried forward unchanged) plus every
     key in `tried` whose reason is NOT "quota" (auth/timeout/configuration/dispatch_unavailable/
-    no_usable_dispatch/real_error -- genuinely permanent, by construction of QuotaExhaustedError's
+    real_error, or a route name -- genuinely permanent, by construction of QuotaExhaustedError's
     own typed reasons above). A "quota" reason is deliberately DROPPED from the returned set, so
     the next resolve-injection call -- which always refreshes quota fresh -- gets a real chance to
     see that candidate recovered. Returns a sorted list (deterministic for a caller diffing/
@@ -151,7 +180,8 @@ def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tupl
         if "key" not in r:
             continue
         candidates.append({
-            "key": r["key"], "model": r.get("model", ""), "cli": r.get("cli"),
+            "key": r["key"], "model": r.get("model", ""),
+            "runtime": r.get("runtime"),
             "vendor": r.get("vendor", ""), "command": r.get("command"),
             "task_affinity": r.get("task_affinity"), "context_limit": r.get("context_limit"),
             "purpose": r.get("purpose"),
@@ -195,185 +225,188 @@ def derive_files_touched_sizes(task_markdown: str, cwd: str, isfile_fn=os.path.i
 
 
 def _unavailability_reason(quota: dict, key: str) -> str:
-    """Classifies why a quota-unavailable candidate is unavailable, from the SAME `detail` text
-    quota.py's probe_reviewer_quota already records. HIGH finding (fixed this revision): the
-    probe's own generic heuristic marks a candidate unavailable on ANY nonzero exit, a timeout, an
-    OSError, or a malformed command template -- NOT only on a genuine rate/usage-limit signal --
-    so this function must positively MATCH each typed reason from the real `detail` text rather
-    than defaulting everything non-auth to "quota". Only a signal in _DISPATCH_QUOTA_SIGNALS ever
-    returns "quota"; every other case returns its own typed reason, and an unmatched/ambiguous/
-    empty detail returns "real_error" (never "quota") -- a false "quota" here would wrongly
-    schedule an hourly CronCreate wake for a failure that will never improve by waiting, exactly
-    the bug this finding closes."""
-    detail = (quota.get(key) or {}).get("detail", "").lower()
-    if any(signal in detail for signal in _AUTH_SIGNALS):
-        return "auth"
-    if any(signal in detail for signal in _DISPATCH_QUOTA_SIGNALS):
-        return "quota"
-    if _TIMEOUT_SIGNAL in detail:
-        return "timeout"
-    if any(signal in detail for signal in _CONFIGURATION_SIGNALS):
-        return "configuration"
-    if any(signal in detail for signal in _DISPATCH_UNAVAILABLE_SIGNALS):
-        return "dispatch_unavailable"
-    return "real_error"
+    """Why a quota-unavailable candidate is unavailable: the TYPED `reason` the shared
+    classifier (ai_kit_spec.error_classifier, D-13) already stored on the quota.json entry
+    at probe time -- never a re-parse of the human-readable `detail` text. A legacy entry
+    written before reasons existed reads "real_error" (never "quota" -- a false "quota"
+    here would wrongly schedule an hourly CronCreate wake for a failure that will never
+    improve by waiting, exactly the bug the HIGH finding closed)."""
+    return entry_reason(quota.get(key) or {}) or "real_error"
 
 
-# A non-empty sentinel ONLY for _is_dispatchable's own probe call below -- build_execute_command's
-# real builders raise ValueError on an EMPTY target_dir (their own _require_target_dir guard, a
-# separate, correct check that a write-capable dispatch never silently lands in the orchestrator's
-# own cwd) unrelated to whether the cli has a registered builder at all. This sentinel exists only
-# to get past that guard during registration-probing; the resulting command string is discarded
-# immediately and NEVER reaches an actual dispatch -- the real target_dir is supplied later, at
-# the moment of real dispatch, by dispatch_superpowers_task -> dispatch_execute (Global
-# Constraints' "never a literal placeholder baked in ahead of time" rule governs THAT call, not
-# this internal capability probe).
-_PROBE_TARGET_DIR = "/__ai_kit_spec_execute_superpowers_dispatch_probe__"
+def _route_of(candidate: dict, routes: Mapping[str, str]) -> str:
+    """The candidate's route. A missing mapping fails closed: an unknown host and an empty
+    inventory, so only the session default (no runtime, no model) is dispatchable. A runtime-less
+    candidate that still names a model is the pre-routing native shape; it stays the session
+    default rather than becoming an unknown runtime."""
+    key = candidate["key"]
+    if key in routes:
+        return routes[key]
+    runtime = candidate.get("runtime")
+    model = "" if runtime is None and not candidate.get("command") else candidate.get("model", "")
+    return route(RouteInput(runtime, model, candidate.get("command")),
+                 "unknown", "exec", Inventory(frozenset(), {}))
 
 
-def _is_dispatchable(candidate: dict, build_execute_command_fn) -> bool:
-    """True for a native candidate (cli is None -- always executes in-process via the Agent
-    tool). For ANY CLI-set candidate, including cli == "claude" (CRITICAL finding: only cli is
-    None is a native Agent-tool alias -- "claude" is a real, subprocess-invoked entry with its
-    own registered execute-mode builder, ai_kit_spec.commands._build_claude_execute_command, and
-    must be probed/dispatched exactly like any other CLI), True only if build_execute_command_fn
-    actually has a registered execute-mode builder for its cli (raises ValueError otherwise,
-    design spec Section 12's "execute-mode builder not yet live-verified for a CLI: refuse ...
-    never attempt an unverified invocation" rule) -- CRITICAL finding: this is what makes
-    "usable-dispatch filtering" real instead of assumed."""
-    cli = candidate.get("cli")
-    if cli is None:
-        return True
-    try:
-        build_execute_command_fn(cli, target_dir=_PROBE_TARGET_DIR, effort=candidate.get("effort"),
-                                  service_tier=candidate.get("service_tier"))
-        return True
-    except ValueError:
-        return False
+def _screen_exempt(routes: Mapping[str, str]):
+    """D-15 screen order: only an explicit purpose="execute" choice is screened before the walk.
+    A native route needs no execute builder, and every other candidate's skip is the walk's."""
+    return lambda candidate: (
+        candidate.get("purpose") != "execute" or _route_of(candidate, routes) == "native"
+    )
 
 
-def _narrow_and_rank(task_markdown: str, candidates: list, files_touched_sizes: dict,
-                      affinity_table: dict, top_n_keys: list) -> tuple:
+def _narrow_and_rank(request: BuildInjectionRequest, routes: Mapping[str, str]) -> tuple:
     """Shared by build_dispatch_injection and compute_ladder_keys (CRITICAL finding: the two
     must never compute the narrowed/ranked candidate order via two independently-drifting code
     paths) -- classifies the task, estimates required context, and narrows+ranks via
     resolve_execute_candidates. Returns (task_type, required_context, ranked)."""
-    task_type = classify_task(task_markdown)
-    required_context = estimate_required_context(task_markdown, files_touched_sizes)
+    task_type = classify_task(request.task_markdown)
+    required_context = estimate_required_context(
+        request.task_markdown, request.files_touched_sizes)
     ranked = resolve_execute_candidates(
-        candidates, task_type, required_context, affinity_table, top_n_keys)
+        request.candidates,
+        ExecuteResolveOptions(
+            task_type, required_context, request.affinity_table, request.top_n_keys,
+            warn_fn=lambda msg: print(msg, file=sys.stderr),
+            screen_exempt_fn=_screen_exempt(routes),
+        ),
+    )
     return task_type, required_context, ranked
 
 
-def compute_ladder_keys(task_markdown: str, candidates: list, files_touched_sizes: dict,
-                         affinity_table: dict, top_n_keys: list) -> list:
+def compute_ladder_keys(request: BuildInjectionRequest, routes=None) -> list:
     """CRITICAL finding (Rounds 4-5 capability escalation): the FULL ordered candidate-key list
     -- via the SAME narrowing/ranking build_dispatch_injection itself walks (_narrow_and_rank,
     above) -- turned into keys via candidates_to_ladder. Deliberately NOT `list(top_n_keys)`: a
     candidate ranked here but absent from `top_n_keys` (policy.ladder's own configured keys)
     still gets a real, ordered (last-ranked) position, so a caller computing "every candidate
     ranked strictly above the stuck one" (Task 4's SKILL.md escalation rule) never silently misses
-    an out-of-ladder candidate the live walk could actually have picked."""
-    _, _, ranked = _narrow_and_rank(task_markdown, candidates, files_touched_sizes,
-                                     affinity_table, top_n_keys)
+    an out-of-ladder candidate the live walk could actually have picked.
+
+    Bundled into a request so the routes mapping fits the argument limit. The pre-screen stays
+    silent: resolve-injection runs build_dispatch_injection right after, which emits the same
+    D-15 skip warnings once (A-IN-06). A purpose="execute" error still raises."""
+    screened = screen_execute_clis(
+        request.candidates, lambda _msg: None, _screen_exempt(routes or {}))
+    _, _, ranked = _narrow_and_rank(request._replace(candidates=screened), routes or {})
     return candidates_to_ladder(ranked)
 
 
-def build_dispatch_injection(task_markdown: str, candidates: list, files_touched_sizes: dict,
-                              affinity_table: dict, top_n_keys: list, quota: dict | None = None,
-                              resolve_ladder_pick_fn=resolve_ladder_pick,
-                              build_execute_command_fn=build_execute_command) -> dict:
-    task_type, required_context, ranked = _narrow_and_rank(
-        task_markdown, candidates, files_touched_sizes, affinity_table, top_n_keys)
+def _injection_for(candidate: dict, decision: str) -> dict:
+    """The host-agnostic payload. `unverified` still dispatches: the model list was unavailable,
+    so neither side could check the model before it runs."""
+    if decision == "unverified":
+        print(unverified_note(candidate["key"], candidate.get("runtime"),
+                              candidate.get("model", "")), file=sys.stderr)
+    if decision == "native":
+        return {"mode": "native", "key": candidate["key"], "runtime": candidate.get("runtime"),
+                "model": candidate["model"]}
+    return {
+        "mode": "external_cli", "key": candidate["key"], "runtime": candidate.get("runtime"),
+        "model": candidate["model"], "effort": candidate.get("effort"),
+        "service_tier": candidate.get("service_tier"),
+    }
+
+
+def _record_remaining(remaining: list, quota: dict, tried: list, reasons: dict) -> None:
+    for key in remaining:
+        tried.append(key)
+        reasons[key] = _unavailability_reason(quota, key)
+
+
+def _skip_route(candidate: dict, decision: str, tried: list, reasons: dict) -> None:
+    """A skip route is permanent: recorded under the route name, never picked, one stderr line."""
+    tried.append(candidate["key"])
+    reasons[candidate["key"]] = decision
+    print(skip_note(f"{candidate['key']} for execution", decision), file=sys.stderr)
+
+
+def _walk_ladder_for_injection(
+    task_type, ranked: list, quota: dict, seams: BuildInjectionSeams, routes: Mapping[str, str],
+) -> dict:
+    """Route first, then quota. Skip routes are recorded before the pick, so a cached row can
+    never hide one. Native rows are NOT dropped here: the CLI refresh already removed them, and a
+    library caller that passes a quota dict means that dict to be honored."""
+    by_key = {c["key"]: c for c in ranked}
+    remaining = candidates_to_ladder(ranked)
+    tried: list = []
+    reasons: dict = {}
+    for candidate in list(ranked):
+        decision = _route_of(candidate, routes)
+        if decision in SKIP_ROUTES:
+            _skip_route(candidate, decision, tried, reasons)
+            remaining = [k for k in remaining if k != candidate["key"]]
+    visible = quota
+    while remaining:
+        pick = seams.resolve_ladder_pick_fn(ranked, remaining, skip_vendor="", quota=visible)
+        if pick is None:
+            break
+        candidate = by_key[pick.key]
+        return _injection_for(candidate, _route_of(candidate, routes))
+    _record_remaining(remaining, visible, tried, reasons)
+    raise QuotaExhaustedError(task_type, tried, reasons)
+
+
+def build_dispatch_injection(request: BuildInjectionRequest,
+                              options: BuildInjectionOptions | None = None) -> dict:
+    opts = options or BuildInjectionOptions()
+    routes = opts.routes or {}
+    task_type, required_context, ranked = _narrow_and_rank(request, routes)
     if not ranked:
         raise ValueError(
             f"no execute candidate survived affinity/context narrowing for "
             f"task_type={task_type!r}, required_context={required_context} -- cannot build a "
             f"dispatch injection"
         )
-    by_key = {c["key"]: c for c in ranked}
-    remaining_ladder = candidates_to_ladder(ranked)
-    quota = dict(quota or {})
-    tried = []
-    reasons = {}
-    while remaining_ladder:
-        pick = resolve_ladder_pick_fn(ranked, remaining_ladder, skip_vendor="", quota=quota)
-        if pick is None:
-            break  # nothing left in remaining_ladder currently has quota
-        candidate = by_key[pick.key]
-        if not _is_dispatchable(candidate, build_execute_command_fn):
-            # Has quota, but no usable dispatch mechanism -- drop it and keep walking (CRITICAL
-            # finding), same drop-and-continue shape ai_kit_spec_gsd.adapter.resolve_gsd_dispatch
-            # already uses for its own equivalent case.
-            tried.append(pick.key)
-            reasons[pick.key] = "no_usable_dispatch"
-            remaining_ladder = [k for k in remaining_ladder if k != pick.key]
-            continue
-        cli = candidate["cli"]
-        # CRITICAL finding: only cli is None is a native Agent-tool alias. cli == "claude" is a
-        # real, subprocess-invoked entry (ai_kit_spec.commands.py registers a real
-        # (_EXECUTE, "claude") builder for it) -- it falls through to the external_cli branch
-        # below like any other CLI-set entry, never silently treated as native.
-        if cli is None:
-            return {"mode": "native_claude", "model": candidate["model"], "key": candidate["key"]}
-        return {
-            "mode": "external_cli", "key": candidate["key"], "cli": cli,
-            "model": candidate["model"], "effort": candidate.get("effort"),
-            "service_tier": candidate.get("service_tier"),
-        }
-    # Nothing left in remaining_ladder currently has quota -- classify each one's own reason
-    # (HIGH finding: distinguishes a real, time-bound quota wait from a futile auth retry) and
-    # fold it into `tried` so the complete excluded set is what QuotaExhaustedError carries.
-    for key in remaining_ladder:
-        tried.append(key)
-        reasons[key] = _unavailability_reason(quota, key)
-    raise QuotaExhaustedError(task_type, tried, reasons)
+    return _walk_ladder_for_injection(
+        task_type, ranked, dict(opts.quota or {}), opts.seams, routes)
 
 
-def dispatch_superpowers_task(injection: dict, prompt: str, target_dir: str,
-                               heartbeat_interval: int, timeout: int,
-                               format_block: str | None = None,
-                               tool_availability: dict | None = None, agents_tooling_path=None,
-                               codegraph_registered: bool = False,
-                               dispatch_execute_fn=dispatch_execute) -> dict:
+def dispatch_superpowers_task(request: DispatchTaskRequest,
+                               guidance: SuperpowersDispatchGuidance | None = None,
+                               seams: SuperpowersDispatchSeams | None = None) -> dict:
     """The ONLY place a mode="external_cli" injection actually runs a subprocess. `target_dir` is
     a real, caller-supplied path at the moment of dispatch -- never resolved ahead of time and
     never a placeholder string (HIGH finding). Always routes through
     ai_kit_spec.execute_dispatch.dispatch_execute, which builds the real execute-mode command,
-    composes the reinforcement/tooling/soft-confinement prose, and performs the real dispatch via
-    dispatch_with_heartbeat -- this function adds no dispatch mechanics of its own."""
-    if injection.get("mode") != "external_cli":
+    composes the reinforcement/tooling/soft-confinement prose, and runs it through the one
+    supervision core -- this function adds no dispatch mechanics of its own."""
+    if request.injection.get("mode") != "external_cli":
         raise ValueError(
             f"dispatch_superpowers_task is for mode='external_cli' injections only -- got "
-            f"mode={injection.get('mode')!r}; a native_claude injection dispatches via the "
+            f"mode={request.injection.get('mode')!r}; a native injection dispatches via the "
             f"Agent tool directly, in-process, and never reaches this function"
         )
-    candidate = {"cli": injection["cli"], "model": injection["model"],
+    guide = guidance or SuperpowersDispatchGuidance()
+    seam = seams or SuperpowersDispatchSeams()
+    injection = request.injection
+    candidate = {"runtime": injection["runtime"], "model": injection["model"],
                  "effort": injection.get("effort"), "service_tier": injection.get("service_tier")}
-    return dispatch_execute_fn(
-        candidate, prompt, target_dir, heartbeat_interval, timeout, format_block=format_block,
-        tool_availability=tool_availability, agents_tooling_path=agents_tooling_path,
-        codegraph_registered=codegraph_registered,
+    return seam.dispatch_execute_fn(
+        ExecuteDispatchSpec(
+            candidate,
+            request.prompt,
+            request.target_dir,
+            request.timeout,
+            format_block=guide.format_block,
+            tool_availability=guide.tool_availability,
+            agents_tooling_path=guide.agents_tooling_path,
+            codegraph_registered=guide.codegraph_registered,
+        )
     )
 
 
 def classify_dispatch_failure(dispatch_result: dict) -> str:
-    """Classifies a completed dispatch_superpowers_task result: "ok" (returncode 0), "quota"
-    (nonzero returncode + a genuine rate/usage-limit signal in combined stdout+stderr -- retry
-    with the next ladder candidate, never this same one), or "real_error" (anything else,
-    including a timeout regardless of its own text, AND an auth/entitlement/setup signal --
-    HIGH finding: those never get better by waiting, so they must never come back "quota" and
-    trigger the caller's hourly CronCreate wake loop -- surfaced honestly to the harness's own
-    BLOCKED/fix-loop path instead, design spec Section 12's explicit "never silently retry
-    disguised as quota-wait" rule)."""
-    if dispatch_result.get("timed_out"):
-        return "real_error"
-    returncode = dispatch_result.get("returncode", 0)
-    if returncode == 0:
+    """Classifies a completed dispatch_superpowers_task result from the runner's own reason:
+    "ok" (returncode 0), "quota" when the runner reported reason `quota` (retry with the next
+    ladder candidate, never this same one), or "real_error" for anything else, including a
+    timeout and every auth/entitlement/setup signal -- HIGH finding: those never get better by
+    waiting, so they must never come back "quota" and trigger the caller's hourly CronCreate
+    wake loop -- surfaced honestly to the harness's own BLOCKED/fix-loop path instead, design
+    spec Section 12's explicit "never silently retry disguised as quota-wait" rule."""
+    if dispatch_result.get("returncode", 0) == 0:
         return "ok"
-    combined = (dispatch_result.get("stdout", "") + dispatch_result.get("stderr", "")).lower()
-    if any(signal in combined for signal in _AUTH_SIGNALS):
-        return "real_error"
-    if any(signal in combined for signal in _DISPATCH_QUOTA_SIGNALS):
+    if dispatch_result.get("reason") == "quota":
         return "quota"
     return "real_error"

@@ -106,7 +106,7 @@ def write_toml_region_replace(path, new_text):
     return True
 
 
-def _atomic_write_text(path, text):
+def atomic_write_text(path, text):
     """Atomically write arbitrary text via sibling temp-file + os.replace.
 
     Mirrors write_toml_region_replace's temp-file+replace mechanics but for
@@ -151,64 +151,79 @@ def _atomic_write_text(path, text):
 # 04-RESEARCH.md Common Pitfall 1).
 
 
+def _classify_in_string(text, kinds, i, mode):
+    c = text[i]
+    kinds[i] = KIND_STRING
+    if mode["escaped"]:
+        mode["escaped"] = False
+        return i + 1
+    if c == "\\":
+        mode["escaped"] = True
+    elif c == '"':
+        mode["in_string"] = False
+    return i + 1
+
+
+def _classify_in_line(text, kinds, i, mode):
+    kinds[i] = KIND_COMMENT
+    if text[i] == "\n":
+        mode["in_line"] = False
+    return i + 1
+
+
+def _classify_in_block(text, kinds, i, n, mode):
+    kinds[i] = KIND_COMMENT
+    if text[i] == "*" and i + 1 < n and text[i + 1] == "/":
+        kinds[i + 1] = KIND_COMMENT
+        mode["in_block"] = False
+        return i + 2
+    return i + 1
+
+
+def _classify_in_code(text, kinds, i, n, mode):
+    c = text[i]
+    if c == "/" and i + 1 < n and text[i + 1] == "/":
+        kinds[i] = KIND_COMMENT
+        kinds[i + 1] = KIND_COMMENT
+        mode["in_line"] = True
+        return i + 2
+    if c == "/" and i + 1 < n and text[i + 1] == "*":
+        kinds[i] = KIND_COMMENT
+        kinds[i + 1] = KIND_COMMENT
+        mode["in_block"] = True
+        return i + 2
+    if c == '"':
+        kinds[i] = KIND_STRING
+        mode["in_string"] = True
+        return i + 1
+    kinds[i] = KIND_CODE
+    return i + 1
+
+
+def _classify_step(text, kinds, i, n, mode):
+    """Single-character JSONC scanner step; mutates ``mode`` and ``kinds``."""
+    if mode["in_string"] or mode["escaped"]:
+        return _classify_in_string(text, kinds, i, mode)
+    if mode["in_line"]:
+        return _classify_in_line(text, kinds, i, mode)
+    if mode["in_block"]:
+        return _classify_in_block(text, kinds, i, n, mode)
+    return _classify_in_code(text, kinds, i, n, mode)
+
+
 def _classify(text: str) -> list[str]:
     """Classify every character from offset 0 (neutral seed)."""
     n = len(text)
     kinds = [KIND_CODE] * n
+    mode = {
+        "in_string": False,
+        "escaped": False,
+        "in_line": False,
+        "in_block": False,
+    }
     i = 0
-    in_string = False
-    escaped = False
-    in_line = False
-    in_block = False
     while i < n:
-        c = text[i]
-        if escaped:
-            kinds[i] = KIND_STRING
-            escaped = False
-            i += 1
-            continue
-        if in_string:
-            kinds[i] = KIND_STRING
-            if c == "\\":
-                escaped = True
-            elif c == '"':
-                in_string = False
-            i += 1
-            continue
-        if in_line:
-            kinds[i] = KIND_COMMENT
-            if c == "\n":
-                in_line = False
-            i += 1
-            continue
-        if in_block:
-            kinds[i] = KIND_COMMENT
-            if c == "*" and i + 1 < n and text[i + 1] == "/":
-                kinds[i + 1] = KIND_COMMENT
-                in_block = False
-                i += 2
-                continue
-            i += 1
-            continue
-        if c == "/" and i + 1 < n and text[i + 1] == "/":
-            kinds[i] = KIND_COMMENT
-            kinds[i + 1] = KIND_COMMENT
-            in_line = True
-            i += 2
-            continue
-        if c == "/" and i + 1 < n and text[i + 1] == "*":
-            kinds[i] = KIND_COMMENT
-            kinds[i + 1] = KIND_COMMENT
-            in_block = True
-            i += 2
-            continue
-        if c == '"':
-            kinds[i] = KIND_STRING
-            in_string = True
-            i += 1
-            continue
-        kinds[i] = KIND_CODE
-        i += 1
+        i = _classify_step(text, kinds, i, n, mode)
     return kinds
 
 
@@ -342,6 +357,21 @@ def _first_code_brace(text):
     return None
 
 
+def _jsonc_insert_key(text, key_name, dumped, open_i, close_i):
+    """Insert a new top-level key into an existing JSONC object span."""
+    sig = significant_indices(text, open_i, close_i)
+    last_before_close = None
+    for idx in reversed(sig):
+        if idx < close_i - 1:
+            last_before_close = idx
+            break
+    if last_before_close is None or text[last_before_close] == "{":
+        insert = f'\n  "{key_name}": {dumped}\n'
+        return text[: open_i + 1] + insert + text[close_i - 1 :]
+    insert = f',\n  "{key_name}": {dumped}'
+    return text[: last_before_close + 1] + insert + text[last_before_close + 1 :]
+
+
 def set_jsonc_value(text, key_path, new_value):
     """Surgically set a top-level JSONC key, preserving every other byte.
 
@@ -373,14 +403,4 @@ def set_jsonc_value(text, key_path, new_value):
     if brace is None:
         return '{\n  "' + key_name + '": ' + dumped + "\n}\n"
     open_i, close_i = find_object_span(text, brace)
-    sig = significant_indices(text, open_i, close_i)
-    last_before_close = None
-    for idx in reversed(sig):
-        if idx < close_i - 1:
-            last_before_close = idx
-            break
-    if last_before_close is None or text[last_before_close] == "{":
-        insert = f'\n  "{key_name}": {dumped}\n'
-        return text[: open_i + 1] + insert + text[close_i - 1 :]
-    insert = f',\n  "{key_name}": {dumped}'
-    return text[: last_before_close + 1] + insert + text[last_before_close + 1 :]
+    return _jsonc_insert_key(text, key_name, dumped, open_i, close_i)

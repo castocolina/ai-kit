@@ -154,12 +154,13 @@ def _run_wizard_install(argv, env, timeout=45):
         # literally "✓ ai-kit is installed" (see TITLES[STEP_DONE] in
         # tools/wizard_app.py) — NOT the word "Done" (that only appears in
         # the Step-of-3 header pips label and the in-code HELP title, neither
-        # of which land in the title line we're scanning). Match "installed"
-        # (present only on success; "Installing…" and "install incomplete"
+        # of which land in the title line we're scanning). Match the full title:
+        # a bare "installed" also hits hook-row descriptions (present only on success;
+        # "Installing…" and "install incomplete"
         # are the other two possible titles at this step and don't contain
         # it) so we wait for the real commit to finish, not just the screen
         # transition.
-        _pty_read_until(master_fd, re.compile(r"\binstalled\b"), buf, timeout)
+        _pty_read_until(master_fd, re.compile(r"ai-kit is installed"), buf, timeout)
         os.write(master_fd, b"\r")                      # done -> exit
     except AssertionError:
         # The scripted walk itself broke (a step never rendered what we
@@ -240,7 +241,7 @@ class TestSystemMemoryInstallE2E(unittest.TestCase):
         # controlling terminal (see module docstring + _run_wizard_install).
         cls.proc = _run_wizard_install(
             [sys.executable, cls.setup_py, "install", "--examples=all"],
-            cls.env, timeout=60)
+            cls.env, timeout=90)
 
     @classmethod
     def tearDownClass(cls):

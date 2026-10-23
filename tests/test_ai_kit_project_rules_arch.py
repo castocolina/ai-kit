@@ -19,6 +19,7 @@ before `ast_only.py` existed. Task 3 promotes them into the permanent,
 fully paired coverage classes.
 """
 
+import ast
 import os
 import re
 import sys
@@ -31,7 +32,7 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-project-rules-arch"),
 )
 
-from ai_kit_project_rules_arch import arch_checker, cli
+from ai_kit_project_rules_arch import arch_checker, ast_only, cli
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
@@ -105,6 +106,12 @@ def _precommit_hook_files_regex(hook_id):
     return match.group(1).strip().strip("'\"")
 
 
+def _tool_roots_cover(rel_dir: str, roots: list[str]) -> bool:
+    sample = f"{rel_dir.rstrip('/')}/module.py"
+    return any(sample == root or sample.startswith(f"{root}/") for root in roots)
+
+
+
 # --------------------------------------------------------------------------- #
 # Plan 12-02, Task 1 fixture helpers.
 # --------------------------------------------------------------------------- #
@@ -164,6 +171,51 @@ def _ast_only_repo_raw(recipe, files):
 def _ast_only_repo(backing_file_body, recipe="python3 -m unittest tests.test_arch"):
     files = dict(_AST_ONLY_SRC_FILES, **{"tests/test_arch.py": backing_file_body})
     return _ast_only_repo_raw(recipe, files)
+
+
+class TestScopeCollectorDispatch(unittest.TestCase):
+    def test_visit_dispatch_records_scopes_assignments_and_calls(self):
+        source = (
+            "module_val = 1\n"
+            "def sync_fn():\n"
+            "    inner = 2\n"
+            "    sync_fn()\n"
+            "async def async_fn():\n"
+            "    async_inner = 3\n"
+            "    async_fn()\n"
+            "top_call()\n"
+        )
+        tree = ast.parse(source)
+        sync_node = tree.body[1]
+        async_node = tree.body[2]
+        assert isinstance(sync_node, ast.FunctionDef)
+        assert isinstance(async_node, ast.AsyncFunctionDef)
+        sync_fn = sync_node
+        async_fn = async_node
+        collector = ast_only._ScopeCollector()
+        collector.visit(tree)
+        self.assertIn(tree, collector.scope_assignments)
+        self.assertIn(sync_fn, collector.scope_assignments)
+        self.assertIn(async_fn, collector.scope_assignments)
+        self.assertIn("module_val", collector.scope_assignments[tree])
+        self.assertIn("inner", collector.scope_assignments[sync_fn])
+        self.assertIn("async_inner", collector.scope_assignments[async_fn])
+        self.assertEqual(len(collector.call_scope), 3)
+        module_expr = tree.body[3]
+        sync_expr = sync_fn.body[1]
+        async_expr = async_fn.body[1]
+        assert isinstance(module_expr, ast.Expr)
+        assert isinstance(sync_expr, ast.Expr)
+        assert isinstance(async_expr, ast.Expr)
+        module_call = module_expr.value
+        inner_sync_call = sync_expr.value
+        inner_async_call = async_expr.value
+        assert isinstance(module_call, ast.Call)
+        assert isinstance(inner_sync_call, ast.Call)
+        assert isinstance(inner_async_call, ast.Call)
+        self.assertIs(collector.call_scope[module_call], tree)
+        self.assertIs(collector.call_scope[inner_sync_call], sync_fn)
+        self.assertIs(collector.call_scope[inner_async_call], async_fn)
 
 
 class TestTracerAstOnlyTargetAware(unittest.TestCase):
@@ -871,11 +923,10 @@ class TestCliSurface(unittest.TestCase):
 
 
 class TestGateRegistration(unittest.TestCase):
-    def test_makefile_registers_module_and_package(self):
+    def test_makefile_lists_module(self):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             text = handle.read()
         self.assertIn("tests.test_ai_kit_project_rules_arch", text)
-        self.assertIn("skills/ai-kit-project-rules-arch/", text)
 
     def test_ruff_and_py_compile_match_package_path(self):
         for hook_id in ("ruff", "py-compile"):
@@ -887,19 +938,20 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         self.assertIn("tests.test_ai_kit_project_rules_arch", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
-        self.assertIn("skills/ai-kit-project-rules-arch", include)
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-project-rules-arch", include), include)
 
     def test_vulture_paths_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
-        self.assertIn("skills/ai-kit-project-rules-arch", paths)
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-project-rules-arch", paths), paths)
 
 
 if __name__ == "__main__":

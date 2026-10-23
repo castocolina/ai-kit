@@ -132,8 +132,8 @@ def apply_row(row_id, ctx, dry):
     row with ``apply is None`` returns ``{"ok": False, "reason": "not
     apply-eligible"}`` — never a silent no-op write. Any exception an
     applier raises is converted to ``{"ok": False, "reason": "applier
-    error: ..."}`` so an unhandled exception cannot reach ConfigDoctorApp's
-    event loop (Textual 8.x swallows those into a graceful shutdown;
+    error: ..."}`` so it cannot reach ConfigDoctorApp's event loop (Textual
+    8.x swallows unhandled exceptions into a graceful shutdown;
     tools/wizard_app.py:129-137).
     """
     row = _row_by_id(row_id)
@@ -142,7 +142,7 @@ def apply_row(row_id, ctx, dry):
     try:
         apply_fn = cast(Callable[[object, object, bool], dict], row.apply)
         result = apply_fn(ctx, row.apply_target, dry)
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught  # TUI backstop, see docstring
         return {"ok": False, "reason": f"applier error: {exc}"}
     if not isinstance(result, dict):
         return {"ok": False, "reason": f"applier error: non-dict result {result!r}"}
@@ -241,7 +241,7 @@ def _apply_opencode_share_mode(ctx, target, dry):
             ),
         }
     if not dry:
-        config_doctor_appliers._atomic_write_text(path, spliced)
+        config_doctor_appliers.atomic_write_text(path, spliced)
     return {
         "ok": True,
         "before": before,
@@ -551,7 +551,7 @@ def read_rtk_cursor_integration(ctx):
     rtk_path = shutil.which("rtk", path=search_path)
     if rtk_path is None:
         return "rtk not installed on PATH"
-    signal = config_doctor_readers._probe_rtk_cursor_hook(rtk_path, ctx.runner)
+    signal = config_doctor_readers.probe_rtk_cursor_hook(rtk_path, ctx.runner)
     if signal == config_doctor_readers.RTK_SIGNAL_CONFIRMED:
         return "registered"
     if signal == config_doctor_readers.RTK_SIGNAL_NOT_REGISTERED:
@@ -1004,8 +1004,7 @@ CONFIG_DOCTOR_ROWS = [
         ),
         source=_CURSOR_CONFIG_SOURCE,
     ),
-    # source is a repo-relative citation (in-repo cross-reference), not an
-    # external URL — tools/hooks/README.md's own closing line.
+    # Source is a repo-relative citation to Phase 03 D-02, not an external URL.
     CheckRow(
         id="rtk-cursor-integration",
         runtime="cross",
@@ -1016,13 +1015,12 @@ CONFIG_DOCTOR_ROWS = [
         confidence="HIGH",
         why=(
             "Point-in-time — MUST be re-probed at build/verify time, never "
-            "cached or assumed stable across sessions, not fixed by this "
-            "research session. Fold-in of Phase 3's Non-Goals note per "
-            "tools/hooks/README.md's own closing line: \"Phase 4's config "
-            "doctor folds this non-goals note in as its cross-runtime "
-            'rtk-integration check." Apply: None in this wave.'
+            "cached or assumed stable across sessions. Per Phase 03 D-02, "
+            "ai-kit's hook entries are separate and never edit another tool's "
+            "own registration; this row only reports Cursor integration. "
+            "Apply: None in this wave."
         ),
-        source="tools/hooks/README.md",
+        source=".planning/milestones/v1.0-phases/03-tool-substitution-awareness-hook/03-CONTEXT.md",
         reads_section_file=False,
     ),
 ]

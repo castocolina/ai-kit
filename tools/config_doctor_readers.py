@@ -23,6 +23,66 @@ KIND_STRING = "string"
 KIND_COMMENT = "comment"
 
 
+def _classify_in_string(text, kinds, i, mode):
+    c = text[i]
+    kinds[i] = KIND_STRING
+    if mode["escaped"]:
+        mode["escaped"] = False
+        return i + 1
+    if c == "\\":
+        mode["escaped"] = True
+    elif c == '"':
+        mode["in_string"] = False
+    return i + 1
+
+
+def _classify_in_line(text, kinds, i, mode):
+    kinds[i] = KIND_COMMENT
+    if text[i] == "\n":
+        mode["in_line"] = False
+    return i + 1
+
+
+def _classify_in_block(text, kinds, i, n, mode):
+    kinds[i] = KIND_COMMENT
+    if text[i] == "*" and i + 1 < n and text[i + 1] == "/":
+        kinds[i + 1] = KIND_COMMENT
+        mode["in_block"] = False
+        return i + 2
+    return i + 1
+
+
+def _classify_in_code(text, kinds, i, n, mode):
+    c = text[i]
+    if c == "/" and i + 1 < n and text[i + 1] == "/":
+        kinds[i] = KIND_COMMENT
+        kinds[i + 1] = KIND_COMMENT
+        mode["in_line"] = True
+        return i + 2
+    if c == "/" and i + 1 < n and text[i + 1] == "*":
+        kinds[i] = KIND_COMMENT
+        kinds[i + 1] = KIND_COMMENT
+        mode["in_block"] = True
+        return i + 2
+    if c == '"':
+        kinds[i] = KIND_STRING
+        mode["in_string"] = True
+        return i + 1
+    kinds[i] = KIND_CODE
+    return i + 1
+
+
+def _classify_step(text, kinds, i, n, mode):
+    """Single-character JSONC scanner step; mutates ``mode`` and ``kinds``."""
+    if mode["in_string"] or mode["escaped"]:
+        return _classify_in_string(text, kinds, i, mode)
+    if mode["in_line"]:
+        return _classify_in_line(text, kinds, i, mode)
+    if mode["in_block"]:
+        return _classify_in_block(text, kinds, i, n, mode)
+    return _classify_in_code(text, kinds, i, n, mode)
+
+
 def _classify(text: str) -> list[str]:
     """Classify every character from offset 0 (neutral seed).
 
@@ -31,60 +91,15 @@ def _classify(text: str) -> list[str]:
     """
     n = len(text)
     kinds = [KIND_CODE] * n
+    mode = {
+        "in_string": False,
+        "escaped": False,
+        "in_line": False,
+        "in_block": False,
+    }
     i = 0
-    in_string = False
-    escaped = False
-    in_line = False
-    in_block = False
     while i < n:
-        c = text[i]
-        if escaped:
-            kinds[i] = KIND_STRING
-            escaped = False
-            i += 1
-            continue
-        if in_string:
-            kinds[i] = KIND_STRING
-            if c == "\\":
-                escaped = True
-            elif c == '"':
-                in_string = False
-            i += 1
-            continue
-        if in_line:
-            kinds[i] = KIND_COMMENT
-            if c == "\n":
-                in_line = False
-            i += 1
-            continue
-        if in_block:
-            kinds[i] = KIND_COMMENT
-            if c == "*" and i + 1 < n and text[i + 1] == "/":
-                kinds[i + 1] = KIND_COMMENT
-                in_block = False
-                i += 2
-                continue
-            i += 1
-            continue
-        if c == "/" and i + 1 < n and text[i + 1] == "/":
-            kinds[i] = KIND_COMMENT
-            kinds[i + 1] = KIND_COMMENT
-            in_line = True
-            i += 2
-            continue
-        if c == "/" and i + 1 < n and text[i + 1] == "*":
-            kinds[i] = KIND_COMMENT
-            kinds[i + 1] = KIND_COMMENT
-            in_block = True
-            i += 2
-            continue
-        if c == '"':
-            kinds[i] = KIND_STRING
-            in_string = True
-            i += 1
-            continue
-        kinds[i] = KIND_CODE
-        i += 1
+        i = _classify_step(text, kinds, i, n, mode)
     return kinds
 
 
@@ -193,8 +208,10 @@ def get_nested(data, *keys, default=UNKNOWN):
     return current
 
 
-def _probe_rtk_cursor_hook(rtk_path, runner):
-    """Classify rtk's Cursor hook from ``rtk init --show`` stdout. Never raises.
+def probe_rtk_cursor_hook(rtk_path, runner):
+    """Classify rtk's Cursor hook from ``rtk init --show`` stdout.
+
+    Catches ``OSError``, ``ValueError``, and ``subprocess.SubprocessError`` only.
 
     Line text sourced from 03-RESEARCH.md:527-540's verbatim output block:
     ``[ok] Cursor hook: registered in hooks.json`` (lowercase ``hook``),
@@ -216,7 +233,7 @@ def _probe_rtk_cursor_hook(rtk_path, runner):
             check=False,
             stdin=subprocess.DEVNULL,
         )
-    except Exception:
+    except (OSError, ValueError, subprocess.SubprocessError):
         return RTK_SIGNAL_UNREADABLE
     stdout = proc.stdout or ""
     for line in stdout.splitlines():

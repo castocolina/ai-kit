@@ -24,9 +24,11 @@ Conventions parsed from the source:
 """
 import ast
 import importlib.util
+import io
 import os
 import re
 import sys
+import tokenize
 import unittest
 
 _TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
@@ -35,6 +37,7 @@ _TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
 _SETUP_SPEC = importlib.util.spec_from_file_location(
     "setup", os.path.join(_TOOLS, "setup.py")
 )
+assert _SETUP_SPEC is not None and _SETUP_SPEC.loader is not None
 _SETUP_MOD = importlib.util.module_from_spec(_SETUP_SPEC)
 _SETUP_SPEC.loader.exec_module(_SETUP_MOD)
 setup = _SETUP_MOD
@@ -361,6 +364,138 @@ def check_no_doctor_symbols(tree):
     ]
 
 
+def check_no_shell_true(tree):
+    """Rule 8: no ``shell=`` keyword on a Call unless the value is the constant False."""
+    violations = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg != "shell":
+                continue
+            allowed = isinstance(kw.value, ast.Constant) and kw.value.value is False
+            if not allowed:
+                violations.append(f"line {kw.lineno}: shell= must be constant False")
+    return violations
+
+
+# Rule 9: the only places allowed to swallow every exception. Each is a documented
+# backstop that keeps one failure from blanking the status line or killing a TUI, or
+# (curated-config apply) from crashing a committed apply, where SPEC R13 says only warn.
+_CURATED_APPLY = "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/apply.py"
+_BROAD_EXCEPT_BACKSTOPS = frozenset({
+    (_CURATED_APPLY, "_cleanup_committed"),
+    (_CURATED_APPLY, "_execute_apply"),
+    ("tools/wizard_app.py", "_apply_housekeeping"),
+    ("tools/wizard_app.py", "_run_commit"),
+    ("tools/status-line.py", "core_safe_build"),
+    ("tools/status-line.py", "safe_render"),
+    ("tools/statusline-doctor.py", "cmd_doctor"),
+    ("tools/config_doctor_checks.py", "apply_row"),
+})
+
+
+def broad_except_sites(src):
+    """Rule 9 helper: (line, enclosing function or None) for every comment that
+    disables pylint's broad-exception-caught."""
+    tree = ast.parse(src)
+    funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    sites = []
+    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+        if tok.type != tokenize.COMMENT or "broad-exception-caught" not in tok.string:
+            continue
+        line = tok.start[0]
+        enclosing = [f for f in funcs if f.lineno <= line <= (f.end_lineno or f.lineno)]
+        inner = max(enclosing, key=lambda f: f.lineno, default=None)
+        sites.append((line, inner.name if inner else None))
+    return sites
+
+
+def check_broad_except_allowlist(relpath, src):
+    """Rule 9: a broad-exception-caught suppression only inside an allowlisted backstop."""
+    return [
+        f"{relpath}:{line}: broad-exception-caught suppressed outside a listed backstop"
+        for line, func in broad_except_sites(src)
+        if (relpath, func) not in _BROAD_EXCEPT_BACKSTOPS
+    ]
+
+
+# Built by concatenation so this file never contains a retired literal as a string constant.
+_RETIRED_CURSOR = "cursor" + "-agent"
+_RETIRED_FIELD = "native" + "_runtime"
+_RETIRED_MODE = "native" + "_claude"
+_RETIRED_LITERALS = {
+    _RETIRED_CURSOR: frozenset({"skills/ai-kit-spec-review/ai_kit_spec/detection.py"}),
+    _RETIRED_FIELD: frozenset({"skills/ai-kit-spec-review/ai_kit_spec/config_io.py"}),
+    _RETIRED_MODE: frozenset(),
+}
+
+
+def check_retired_literals(relpath, tree):
+    """Rule 10: retired runtime literals occur only in their explicit legacy map."""
+    hits = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        allowed = _RETIRED_LITERALS.get(node.value)
+        if allowed is not None and relpath not in allowed:
+            hits.append(f"{relpath}:{node.lineno}: retired literal {node.value!r}")
+    return hits
+
+
+# Rule 11: one supervision core. A new process session is how a supervisor owns a
+# killable group, so it may appear only in the runner and the two probes that are not
+# supervisors (the opencode server probe, and the curated-config catalog probe).
+_START_NEW_SESSION_ALLOWED = frozenset({
+    "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py",
+    "skills/ai-kit-spec-review/ai_kit_spec/detection.py",
+    "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/catalog_adapter.py",
+})
+_SUPERVISOR_OWNER = "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py"
+
+
+def supervisor_spawn_count(tree):
+    """How many calls start a new session with the constant True."""
+    return len(check_one_supervisor("", tree))
+
+
+def check_one_supervisor(relpath, tree):
+    """Rule 11: a `start_new_session=True` call outside the allowlist is a second supervisor."""
+    hits = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg != "start_new_session":
+                continue
+            if not (isinstance(kw.value, ast.Constant) and kw.value.value is True):
+                continue
+            hits.append(f"{relpath}:{kw.lineno}: start_new_session=True")
+    if relpath in _START_NEW_SESSION_ALLOWED:
+        return []
+    return hits
+
+
+def _is_main_guard(node):
+    test = node.test if isinstance(node, ast.If) else None
+    return (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Name) and test.left.id == "__name__"
+        and len(test.comparators) == 1
+        and isinstance(test.comparators[0], ast.Constant)
+        and test.comparators[0].value == "__main__"
+    )
+
+
+def check_main_guard_last(relpath, tree):
+    """Rule 12: a test module's `__main__` guard is its last statement, so running the file
+    as a script never calls `unittest.main()` before the classes below it exist."""
+    return [
+        f"{relpath}:{node.lineno}: __main__ guard is not the last statement"
+        for node in tree.body[:-1] if _is_main_guard(node)
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Live-tree tests — every rule must pass against the real render module.
 # --------------------------------------------------------------------------- #
@@ -399,6 +534,98 @@ class TestArchitecture(unittest.TestCase):
 
     def test_rule7_no_doctor_symbols_in_render(self):
         self.assertEqual([], check_no_doctor_symbols(self.render_tree))
+
+    def test_rule8_no_shell_true_in_spec_family(self):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        skills_root = os.path.join(repo_root, "skills")
+        violations = []
+        for skill_dir in sorted(os.listdir(skills_root)):
+            if not skill_dir.startswith("ai-kit-spec-"):
+                continue
+            for dirpath, _dirnames, filenames in os.walk(os.path.join(skills_root, skill_dir)):
+                for filename in filenames:
+                    if not filename.endswith(".py"):
+                        continue
+                    path = os.path.join(dirpath, filename)
+                    with open(path, encoding="utf-8") as handle:
+                        tree = ast.parse(handle.read(), filename=path)
+                    for msg in check_no_shell_true(tree):
+                        violations.append(f"{os.path.relpath(path, repo_root)}: {msg}")
+        self.assertEqual([], violations)
+
+    def test_rule10_retired_literals_only_in_allowlist(self):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        violations = []
+        seen_allowlist = set()
+        for top in ("skills", "tools"):
+            for dirpath, _dirnames, filenames in os.walk(os.path.join(repo_root, top)):
+                for filename in filenames:
+                    if not filename.endswith(".py"):
+                        continue
+                    path = os.path.join(dirpath, filename)
+                    relpath = os.path.relpath(path, repo_root).replace(os.sep, "/")
+                    with open(path, encoding="utf-8") as handle:
+                        tree = ast.parse(handle.read(), filename=path)
+                    violations.extend(check_retired_literals(relpath, tree))
+                    strings = {node.value for node in ast.walk(tree)
+                               if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+                    # An allowlist entry counts only while its file still holds the literal.
+                    if any(relpath in allowed and literal in strings
+                           for literal, allowed in _RETIRED_LITERALS.items()):
+                        seen_allowlist.add(relpath)
+        self.assertEqual([], violations)
+        expected = set().union(*_RETIRED_LITERALS.values())
+        self.assertEqual(expected, seen_allowlist)
+
+    def test_rule11_one_supervisor(self):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        violations = []
+        owner_count = 0
+        for top in ("skills", "tools"):
+            for dirpath, _dirnames, filenames in os.walk(os.path.join(repo_root, top)):
+                for filename in filenames:
+                    if not filename.endswith(".py"):
+                        continue
+                    path = os.path.join(dirpath, filename)
+                    relpath = os.path.relpath(path, repo_root).replace(os.sep, "/")
+                    with open(path, encoding="utf-8") as handle:
+                        tree = ast.parse(handle.read(), filename=path)
+                    violations.extend(check_one_supervisor(relpath, tree))
+                    if relpath == _SUPERVISOR_OWNER:
+                        owner_count = supervisor_spawn_count(tree)
+        self.assertEqual([], violations)
+        self.assertGreaterEqual(owner_count, 1)
+
+    def test_rule12_main_guard_is_the_last_statement(self):
+        tests_root = os.path.dirname(os.path.abspath(__file__))
+        violations, guarded = [], 0
+        for filename in sorted(os.listdir(tests_root)):
+            if not (filename.startswith("test_") and filename.endswith(".py")):
+                continue
+            with open(os.path.join(tests_root, filename), encoding="utf-8") as handle:
+                tree = ast.parse(handle.read(), filename=filename)
+            violations += check_main_guard_last(f"tests/{filename}", tree)
+            guarded += any(_is_main_guard(node) for node in tree.body)
+        self.assertEqual([], violations)
+        self.assertGreater(guarded, 0)
+
+    def test_rule9_broad_except_only_in_listed_backstops(self):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        violations, seen = [], set()
+        for top in ("tools", "skills"):
+            for dirpath, _dirnames, filenames in os.walk(os.path.join(repo_root, top)):
+                for filename in filenames:
+                    if not filename.endswith(".py"):
+                        continue
+                    path = os.path.join(dirpath, filename)
+                    relpath = os.path.relpath(path, repo_root).replace(os.sep, "/")
+                    with open(path, encoding="utf-8") as handle:
+                        src = handle.read()
+                    violations += check_broad_except_allowlist(relpath, src)
+                    seen.update((relpath, func) for _, func in broad_except_sites(src))
+        self.assertEqual([], violations)
+        # A listed backstop that no longer suppresses anything is a stale entry.
+        self.assertEqual(set(), _BROAD_EXCEPT_BACKSTOPS - seen)
 
     def test_rule7b_doctor_symbols_present_in_doctor(self):
         """Companion to rule 7: the doctor symbols were EXTRACTED, not deleted.
@@ -586,6 +813,63 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertNotEqual([], check_no_doctor_symbols(bad_assign))
         self.assertEqual([], check_no_doctor_symbols(good))
 
+    def test_rule8_flags_shell_true(self):
+        bad_true = ast.parse("subprocess.run(x, shell=True)\n")
+        bad_var = ast.parse("run(x, shell=flag)\n")
+        good = ast.parse("run(x, shell=False)\n")
+        self.assertEqual(1, len(check_no_shell_true(bad_true)))
+        self.assertEqual(1, len(check_no_shell_true(bad_var)))
+        self.assertEqual([], check_no_shell_true(good))
+
+
+    def test_rule10_flags_retired_literal(self):
+        bad = ast.parse(f'x = "{_RETIRED_CURSOR}"')
+        binary = ast.parse(f'x = "{_RETIRED_CURSOR} -p"')
+        allowlisted = "skills/ai-kit-spec-review/ai_kit_spec/detection.py"
+        self.assertEqual(1, len(check_retired_literals("skills/other.py", bad)))
+        self.assertEqual([], check_retired_literals(allowlisted, bad))
+        self.assertEqual([], check_retired_literals("skills/other.py", binary))
+        retired = ast.parse(f'x = "{_RETIRED_FIELD}"')
+        config_io = "skills/ai-kit-spec-review/ai_kit_spec/config_io.py"
+        self.assertEqual(1, len(check_retired_literals("skills/other.py", retired)))
+        self.assertEqual([], check_retired_literals(config_io, retired))
+        mode = ast.parse(f'x = "{_RETIRED_MODE}"')
+        dispatch = ("skills/ai-kit-spec-execute-superpowers/"
+                    "ai_kit_spec_superpowers/dispatch_injection.py")
+        self.assertEqual(1, len(check_retired_literals(dispatch, mode)))
+        self.assertEqual(1, len(check_retired_literals("skills/other.py", mode)))
+
+    def test_rule11_flags_a_second_supervisor(self):
+        bad = ast.parse('subprocess.Popen(["x"], start_new_session=True)\n')
+        self.assertEqual(1, len(check_one_supervisor("skills/other.py", bad)))
+        self.assertEqual([], check_one_supervisor(_SUPERVISOR_OWNER, bad))
+        self.assertEqual(0, supervisor_spawn_count(ast.parse("x = 1\n")))
+        variable = ast.parse("subprocess.Popen([\"x\"], start_new_session=flag)\n")
+        self.assertEqual([], check_one_supervisor("skills/other.py", variable))
+
+    def test_rule12_flags_an_early_main_guard(self):
+        early = ast.parse(
+            'if __name__ == "__main__":\n    main()\n\nclass TestLate:\n    pass\n'
+        )
+        last = ast.parse('class TestA:\n    pass\n\nif __name__ == "__main__":\n    main()\n')
+        self.assertEqual(1, len(check_main_guard_last("tests/test_x.py", early)))
+        self.assertEqual([], check_main_guard_last("tests/test_x.py", last))
+        self.assertEqual([], check_main_guard_last("tests/test_x.py", ast.parse("x = 1\n")))
+
+    def test_rule9_flags_unlisted_broad_except(self):
+        src = (
+            "def apply_row():\n"
+            "    try:\n"
+            "        pass\n"
+            "    except Exception:  # pylint: disable=broad-exception-caught\n"
+            "        pass\n"
+        )
+        self.assertEqual([], check_broad_except_allowlist("tools/config_doctor_checks.py", src))
+        self.assertEqual(1, len(check_broad_except_allowlist("tools/other.py", src)))
+        renamed = src.replace("apply_row", "helper")
+        flagged = check_broad_except_allowlist("tools/config_doctor_checks.py", renamed)
+        self.assertEqual(1, len(flagged))
+
 
 class TestSegmentInventory(unittest.TestCase):
     """Segment inventory: coverage, line-mirror, and icon-mirror (Task 7)."""
@@ -605,6 +889,7 @@ class TestSegmentInventory(unittest.TestCase):
     def _sl(self):
         sl_path = os.path.join(_TOOLS, "status-line.py")
         spec = importlib.util.spec_from_file_location("status_line_inv", sl_path)
+        assert spec is not None and spec.loader is not None
         mod = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = mod
         spec.loader.exec_module(mod)

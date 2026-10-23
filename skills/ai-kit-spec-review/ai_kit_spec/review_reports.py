@@ -13,29 +13,33 @@ _BULLET_RE = re.compile(
     re.MULTILINE)
 
 
-def report_has_status(report_text: str) -> bool:
-    """True iff report_text contains a `### Status:` line — the one thing
-    every conforming reviewer report guarantees (per review-spec-checklist's
-    output template). Used by the merge-reports CLI subcommand to
-    detect a failed/non-conforming/empty reviewer report BEFORE merging, so
-    a broken external CLI call can never silently read as a clean Approved
-    merge (it never produces findings, so an unguarded merge would treat it
-    as "zero issues")."""
-    return "### Status:" in report_text
+_STATUS_LINE_RE = re.compile(r"^### Status:\s*(.*)$", re.MULTILINE)
 
 
-def report_declares_issues(report_text: str) -> bool:
-    """True iff report_text's own Status line says Issues Found. A plain
-    substring check, deliberately independent of `_BULLET_RE`'s strict
-    per-bullet shape — `parse_findings` can miss a bullet that wraps across
-    lines or uses slightly different punctuation, but the report's own
-    Status line is a single fixed string every conforming report ends
-    with. Used as a second, structurally-independent signal alongside
-    parsed findings so a report that says "Issues Found" can never merge
-    into a false "Approved" just because none of its bullets happened to
-    match the strict bullet regex."""
-    return "### Status: Issues Found" in report_text
+_STATUS_SEVERITY = ("approved", "issues", "failure")
 
+
+def _status_value(line: str) -> str:
+    value = line.strip().lower()
+    if value.startswith("approved"):
+        return "approved"
+    if value.startswith("failure"):
+        return "failure"
+    return "issues"
+
+
+def report_status(report_text: str) -> str | None:
+    """The report's declared status, the MOST SEVERE of all its `### Status:` lines
+    (failure > issues > approved), so a later duplicated or echoed `Approved` line can
+    never downgrade an earlier Issues/Failure (A-WR-06, fail-closed). Closed vocabulary
+    (D-12): "approved" for a lowercase value starting `approved`; "failure" for one starting
+    `failure`; anything else on a Status line ("issues found", unknown text) reads "issues";
+    no Status line at all returns None. Used by the merge-reports CLI subcommand (D-12/R7)
+    so a failed or missing review lane can never merge into a false Approved."""
+    values = [_status_value(m) for m in _STATUS_LINE_RE.findall(report_text)]
+    if not values:
+        return None
+    return max(values, key=_STATUS_SEVERITY.index)
 
 def parse_findings(report_text: str) -> list:
     """[{severity, title, location, required, why}] in document order, per
@@ -106,13 +110,13 @@ def render_merged_report(findings: list, doc_paths: str, any_source_issues: bool
     any `### SEVERITY` heading) falls back to MEDIUM, tagged exactly as
     parsed — this can only happen on non-conforming input, since
     the merge-reports CLI subcommand already filters those out (via
-    report_has_status) before this function ever runs. Deliberately
+    report_status) before this function ever runs. Deliberately
     drops each source report's own
     `### Document Type`/`### Files Read` lines — those describe a single
     reviewer's run, not a property of the merge — in favor of a fixed
     `cross-ai merged` marker.
 
-    `any_source_issues` (from `report_declares_issues` on each raw source
+    `any_source_issues` (from `report_status` on each raw source
     report, computed by the caller) is OR'd into the parsed-findings-based
     status: a report can legitimately say "Issues Found" while containing
     a bullet `_BULLET_RE` fails to parse (wrapped line, off-template

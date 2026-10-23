@@ -1,0 +1,1123 @@
+{
+  "_meta": {
+    "anthropic_model_ids": [
+      "claude-fable-5",
+      "claude-fable-5-1",
+      "claude-haiku-4-5",
+      "claude-haiku-4-5-20251001",
+      "claude-haiku-5-5",
+      "claude-opus-4-5",
+      "claude-opus-4-5-20251101",
+      "claude-opus-4-6",
+      "claude-opus-4-7",
+      "claude-opus-4-8",
+      "claude-opus-5",
+      "claude-opus-5-5",
+      "claude-sonnet-4-5",
+      "claude-sonnet-4-5-20250929",
+      "claude-sonnet-4-6",
+      "claude-sonnet-5",
+      "claude-sonnet-5-5"
+    ],
+    "anthropic_model_ids_as_of": "2026-10-15",
+    "fixture_note": "synthetic: scores and tokens_per_sec are rank-preserving synthetic values, not Artificial Analysis data; pricing and capabilities are trimmed from models.dev",
+    "schema_version": 3
+  },
+  "anthropic/claude-fable-5-1": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 10,
+      "output_per_1m": 50
+    },
+    "provider": "anthropic",
+    "runtimes": {
+      "claude": {
+        "ctx_window": 1000000,
+        "model_id": "claude-fable-5-1"
+      }
+    },
+    "scores": {
+      "agentic_index": 90.0,
+      "coding_index": 90.0,
+      "intelligence_index": 79.6
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 26.7,
+    "tool_calling": true
+  },
+  "anthropic/claude-haiku-4-5": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 64000,
+    "pricing": {
+      "input_per_1m": 1,
+      "output_per_1m": 5
+    },
+    "provider": "anthropic",
+    "runtimes": {
+      "claude": {
+        "ctx_window": 200000,
+        "model_id": "claude-haiku-4-5"
+      }
+    },
+    "source": {
+      "artificial_analysis": false,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tool_calling": true
+  },
+  "anthropic/claude-haiku-5-5": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 0.1,
+      "output_per_1m": 0.5
+    },
+    "provider": "anthropic",
+    "runtimes": {
+      "claude": {
+        "ctx_window": 1000000,
+        "model_id": "claude-haiku-5-5"
+      }
+    },
+    "scores": {
+      "agentic_index": null,
+      "coding_index": null,
+      "intelligence_index": 51.7
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 90.0,
+    "tool_calling": true
+  },
+  "anthropic/claude-opus-4-8": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 5,
+      "output_per_1m": 25
+    },
+    "provider": "anthropic",
+    "runtimes": {
+      "claude": {
+        "ctx_window": 1000000,
+        "model_id": "claude-opus-4-8"
+      }
+    },
+    "scores": {
+      "agentic_index": 42.9,
+      "coding_index": 45.0,
+      "intelligence_index": 41.3
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 20.0,
+    "tool_calling": true
+  },
+  "anthropic/claude-opus-5-5": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 4,
+      "output_per_1m": 20
+    },
+    "provider": "anthropic",
+    "runtimes": {
+      "claude": {
+        "ctx_window": 1000000,
+        "model_id": "claude-opus-5-5"
+      }
+    },
+    "scores": {
+      "agentic_index": null,
+      "coding_index": null,
+      "intelligence_index": 90.0
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 63.3,
+    "tool_calling": true
+  },
+  "anthropic/claude-opus-5-5-high": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 4,
+      "output_per_1m": 20
+    },
+    "provider": "anthropic",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": 1000000,
+        "model_id": "claude-opus-5-5-high"
+      }
+    },
+    "scores": {
+      "agentic_index": null,
+      "coding_index": null,
+      "intelligence_index": 83.0
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": false
+    },
+    "structured_output": true,
+    "tokens_per_sec": 36.7,
+    "tool_calling": true
+  },
+  "anthropic/claude-opus-5-5-low": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 4,
+      "output_per_1m": 20
+    },
+    "provider": "anthropic",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": 1000000,
+        "model_id": "claude-opus-5-5-low"
+      }
+    },
+    "scores": {
+      "agentic_index": null,
+      "coding_index": null,
+      "intelligence_index": 48.3
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": false
+    },
+    "structured_output": true,
+    "tokens_per_sec": 46.7,
+    "tool_calling": true
+  },
+  "anthropic/claude-opus-5-5-xhigh": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 4,
+      "output_per_1m": 20
+    },
+    "provider": "anthropic",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": 1000000,
+        "model_id": "claude-opus-5-5-xhigh"
+      }
+    },
+    "scores": {
+      "agentic_index": null,
+      "coding_index": null,
+      "intelligence_index": 86.5
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": false
+    },
+    "structured_output": true,
+    "tokens_per_sec": 43.3,
+    "tool_calling": true
+  },
+  "anthropic/claude-sonnet-5": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 2,
+      "output_per_1m": 10
+    },
+    "provider": "anthropic",
+    "runtimes": {
+      "claude": {
+        "ctx_window": 1000000,
+        "model_id": "claude-sonnet-5"
+      }
+    },
+    "scores": {
+      "agentic_index": 57.1,
+      "coding_index": 35.0,
+      "intelligence_index": 30.9
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 33.3,
+    "tool_calling": true
+  },
+  "google/gemini-3.8-flash-high": {
+    "batch_mode": true,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 65536,
+    "pricing": {
+      "input_per_1m": 0.75,
+      "output_per_1m": 3.75
+    },
+    "provider": "google",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": 1048576,
+        "model_id": "gemini-3.8-flash-high"
+      }
+    },
+    "scores": {
+      "agentic_index": 38.2,
+      "coding_index": 55.0,
+      "intelligence_index": 37.8
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": false
+    },
+    "structured_output": true,
+    "tokens_per_sec": 86.7,
+    "tool_calling": true
+  },
+  "google/gemini-3.8-flash-low": {
+    "batch_mode": true,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 65536,
+    "pricing": {
+      "input_per_1m": 0.75,
+      "output_per_1m": 3.75
+    },
+    "provider": "google",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": 1048576,
+        "model_id": "gemini-3.8-flash-low"
+      }
+    },
+    "scores": {
+      "agentic_index": 24.1,
+      "coding_index": 40.0,
+      "intelligence_index": 17.0
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": false
+    },
+    "structured_output": true,
+    "tool_calling": true
+  },
+  "openai/gpt-5.6-luna": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 0.2,
+      "output_per_1m": 1.2
+    },
+    "provider": "openai",
+    "reasoning_modes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "runtimes": {
+      "codex": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-5.6-luna"
+      },
+      "opencode": {
+        "ctx_window": 1050000,
+        "model_id": "openai/gpt-5.6-luna"
+      }
+    },
+    "scores": {
+      "agentic_index": 47.6,
+      "coding_index": 30.0,
+      "intelligence_index": 23.9
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 70.0,
+    "tool_calling": true
+  },
+  "openai/gpt-5.6-luna-low": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 0.2,
+      "output_per_1m": 1.2
+    },
+    "provider": "openai",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-5.6-luna-low"
+      }
+    },
+    "scores": {
+      "agentic_index": 10.0,
+      "coding_index": 10.0,
+      "intelligence_index": 10.0
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": false
+    },
+    "structured_output": true,
+    "tokens_per_sec": 73.3,
+    "tool_calling": true
+  },
+  "openai/gpt-5.6-luna-xhigh": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 0.2,
+      "output_per_1m": 1.2
+    },
+    "provider": "openai",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-5.6-luna-xhigh"
+      }
+    },
+    "scores": {
+      "agentic_index": 28.8,
+      "coding_index": 20.0,
+      "intelligence_index": 20.4
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": false
+    },
+    "structured_output": true,
+    "tokens_per_sec": 80.0,
+    "tool_calling": true
+  },
+  "openai/gpt-5.6-sol": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 4,
+      "output_per_1m": 20
+    },
+    "provider": "openai",
+    "reasoning_modes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "runtimes": {
+      "codex": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-5.6-sol"
+      },
+      "opencode": {
+        "ctx_window": 1050000,
+        "model_id": "openai/gpt-5.6-sol"
+      }
+    },
+    "scores": {
+      "agentic_index": 71.2,
+      "coding_index": 80.0,
+      "intelligence_index": 65.7
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 56.7,
+    "tool_calling": true
+  },
+  "openai/gpt-5.6-sol-high": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 4,
+      "output_per_1m": 20
+    },
+    "provider": "openai",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-5.6-sol-high"
+      }
+    },
+    "scores": {
+      "agentic_index": 61.8,
+      "coding_index": 75.0,
+      "intelligence_index": 48.3
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": false
+    },
+    "structured_output": true,
+    "tokens_per_sec": 50.0,
+    "tool_calling": true
+  },
+  "openai/gpt-5.6-sol-low": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 4,
+      "output_per_1m": 20
+    },
+    "provider": "openai",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-5.6-sol-low"
+      }
+    },
+    "scores": {
+      "agentic_index": 19.4,
+      "coding_index": 25.0,
+      "intelligence_index": 17.0
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": false
+    },
+    "structured_output": true,
+    "tokens_per_sec": 30.0,
+    "tool_calling": true
+  },
+  "openai/gpt-5.6-sol-max": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "pricing": {
+      "input_per_1m": 4,
+      "output_per_1m": 20
+    },
+    "provider": "openai",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": null,
+        "model_id": "gpt-5.6-sol-max"
+      }
+    },
+    "scores": {
+      "agentic_index": 71.2,
+      "coding_index": 80.0,
+      "intelligence_index": 65.7
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": false
+    },
+    "tokens_per_sec": 56.7
+  },
+  "openai/gpt-5.6-sol-xhigh": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 4,
+      "output_per_1m": 20
+    },
+    "provider": "openai",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-5.6-sol-xhigh"
+      }
+    },
+    "scores": {
+      "agentic_index": 66.5,
+      "coding_index": 85.0,
+      "intelligence_index": 55.2
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": false
+    },
+    "structured_output": true,
+    "tokens_per_sec": 53.3,
+    "tool_calling": true
+  },
+  "openai/gpt-5.6-terra": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 2,
+      "output_per_1m": 12
+    },
+    "provider": "openai",
+    "reasoning_modes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "runtimes": {
+      "codex": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-5.6-terra"
+      },
+      "opencode": {
+        "ctx_window": 1050000,
+        "model_id": "openai/gpt-5.6-terra"
+      }
+    },
+    "scores": {
+      "agentic_index": 52.4,
+      "coding_index": 60.0,
+      "intelligence_index": 44.8
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 66.7,
+    "tool_calling": true
+  },
+  "openai/gpt-6-astra": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 10,
+      "output_per_1m": 50
+    },
+    "provider": "openai",
+    "reasoning_modes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "runtimes": {
+      "codex": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-6-astra"
+      },
+      "opencode": {
+        "ctx_window": 1050000,
+        "model_id": "openai/gpt-6-astra"
+      }
+    },
+    "scores": {
+      "agentic_index": 75.9,
+      "coding_index": 70.0,
+      "intelligence_index": 76.1
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 10.0,
+    "tool_calling": true
+  },
+  "openai/gpt-6-luna": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 0.1,
+      "output_per_1m": 0.5
+    },
+    "provider": "openai",
+    "reasoning_modes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "runtimes": {
+      "codex": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-6-luna"
+      },
+      "opencode": {
+        "ctx_window": 1050000,
+        "model_id": "openai/gpt-6-luna"
+      }
+    },
+    "scores": {
+      "agentic_index": null,
+      "coding_index": null,
+      "intelligence_index": 27.4
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 76.7,
+    "tool_calling": true
+  },
+  "openai/gpt-6-sol": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 2,
+      "output_per_1m": 10
+    },
+    "provider": "openai",
+    "reasoning_modes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "runtimes": {
+      "codex": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-6-sol"
+      },
+      "opencode": {
+        "ctx_window": 1050000,
+        "model_id": "openai/gpt-6-sol"
+      }
+    },
+    "scores": {
+      "agentic_index": null,
+      "coding_index": null,
+      "intelligence_index": 69.1
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 60.0,
+    "tool_calling": true
+  },
+  "openai/gpt-6.1-sol": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 2,
+      "output_per_1m": 10
+    },
+    "provider": "openai",
+    "reasoning_modes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra"
+    ],
+    "runtimes": {
+      "codex": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-6.1-sol"
+      },
+      "opencode": {
+        "ctx_window": 1050000,
+        "model_id": "openai/gpt-6.1-sol"
+      }
+    },
+    "scores": {
+      "agentic_index": null,
+      "coding_index": null,
+      "intelligence_index": 72.6
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 13.3,
+    "tool_calling": true
+  },
+  "opencode/big-pickle": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": false,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 32000,
+    "pricing": {
+      "input_per_1m": 0,
+      "output_per_1m": 0
+    },
+    "provider": "opencode",
+    "runtimes": {
+      "opencode": {
+        "ctx_window": 200000,
+        "model_id": "opencode/big-pickle"
+      }
+    },
+    "source": {
+      "artificial_analysis": false,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tool_calling": true
+  },
+  "requesty/gpt-5.6-luna-medium": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 0.22,
+      "output_per_1m": 1.32
+    },
+    "provider": "requesty",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-5.6-luna-medium"
+      }
+    },
+    "scores": {
+      "agentic_index": 14.7,
+      "coding_index": 15.0,
+      "intelligence_index": 13.5
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 83.3,
+    "tool_calling": true
+  },
+  "requesty/gpt-5.6-sol-medium": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 128000,
+    "pricing": {
+      "input_per_1m": 4.4,
+      "output_per_1m": 22
+    },
+    "provider": "requesty",
+    "runtimes": {
+      "cursor": {
+        "ctx_window": 1050000,
+        "model_id": "gpt-5.6-sol-medium"
+      }
+    },
+    "scores": {
+      "agentic_index": 33.5,
+      "coding_index": 55.0,
+      "intelligence_index": 34.3
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 40.0,
+    "tool_calling": true
+  },
+  "router-env/my-coding": {
+    "batch_mode": false,
+    "confidence": "low",
+    "fallback_quota": true,
+    "heuristic_confirmed": [
+      "is_router"
+    ],
+    "is_router": true,
+    "last_verified": "2026-10-15",
+    "name_declared_purpose": "execute",
+    "provider": "router-env",
+    "runtimes": {
+      "opencode": {
+        "ctx_window": null,
+        "model_id": "router-env/my-coding"
+      },
+      "pi": {
+        "ctx_window": null,
+        "model_id": "router-env/my-coding"
+      }
+    },
+    "source": {
+      "artificial_analysis": false,
+      "manual": false,
+      "models_dev": false
+    }
+  },
+  "router-env/my-plan-review": {
+    "batch_mode": false,
+    "confidence": "low",
+    "fallback_quota": true,
+    "is_router": true,
+    "last_verified": "2026-10-15",
+    "name_declared_purpose": "review",
+    "provider": "router-env",
+    "runtimes": {
+      "opencode": {
+        "ctx_window": null,
+        "model_id": "router-env/my-plan-review"
+      }
+    },
+    "source": {
+      "artificial_analysis": false,
+      "manual": false,
+      "models_dev": false
+    }
+  },
+  "xai/grok-4.6": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": true,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 500000,
+    "pricing": {
+      "input_per_1m": 2,
+      "output_per_1m": 6
+    },
+    "provider": "xai",
+    "runtimes": {
+      "opencode": {
+        "ctx_window": 500000,
+        "model_id": "xai/grok-4.6"
+      }
+    },
+    "scores": {
+      "agentic_index": 80.6,
+      "coding_index": 65.0,
+      "intelligence_index": 58.7
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 16.7,
+    "tool_calling": true
+  },
+  "zai-coding-plan/glm-5.3": {
+    "batch_mode": false,
+    "confidence": "high",
+    "fallback_quota": false,
+    "image_input": false,
+    "image_input_source": "models_dev",
+    "is_router": false,
+    "last_verified": "2026-10-15",
+    "max_output_tokens": 131072,
+    "pricing": {
+      "input_per_1m": 0,
+      "output_per_1m": 0
+    },
+    "provider": "zai-coding-plan",
+    "runtimes": {
+      "opencode": {
+        "ctx_window": 1000000,
+        "model_id": "zai-coding-plan/glm-5.3"
+      }
+    },
+    "scores": {
+      "agentic_index": 85.3,
+      "coding_index": 50.0,
+      "intelligence_index": 62.2
+    },
+    "source": {
+      "artificial_analysis": true,
+      "manual": false,
+      "models_dev": true
+    },
+    "structured_output": true,
+    "tokens_per_sec": 23.3,
+    "tool_calling": true
+  }
+}

@@ -22,21 +22,30 @@ plus the `ai-kit-project-rules-all` orchestrator) shares
 `skills/_shared/ai_kit_rules_common/`. The usage-metrics dashboard handles the
 real ~85k-row refined store without freezing.
 
-## Next Milestone Goals
+## Current Milestone: v1.3 GSD Curated Config v2
 
-**v1.3 — `ai-kit-gsd-curated-config` v2** (host-aware, role-scored GSD config
-wizard). Source spec:
+**Goal:** Rewrite `ai-kit-gsd-curated-config` into a host-aware, role-scored GSD config wizard
+that configures a target project's `.planning/config.json` in four questions plus one
+review-and-adjust pass, so every GSD agent runs on the model that best fits its role on the
+runtime hosting the session. Source spec (approved 2026-09-23):
 `docs/superpowers/specs/2026-09-23-gsd-curated-config-v2-design.md`.
 
-- Detect the host runtime and inventory the models of every installed runtime.
-- Score models per role (planning, review, execution, mechanical, vision) using
-  the cached `ai_kit_spec` model catalog.
-- Ask a model profile (quality / budget / adaptive) and a product rigor
-  (MVP / Standard / Rigorous).
-- Emit a minimal config: per-phase-type models, `model_profile_overrides` per
-  runtime, and few `model_overrides`.
-- Wire a counterpart-provider cross-AI reviewer and a cheap cross-AI executor.
-- Live-validate on claude, codex and opencode. Cursor and pi are deferred.
+**Target features:**
+- `ai_kit_spec` extensions — host detection pi > opencode > cursor > codex > claude;
+  pi/codex/claude model enumeration; `image_input`/`reasoning_modes` catalog data;
+  planning/general/mechanical/execution/review ranker purposes
+- Hardening (Phase 16.1) — gate scope, sibling-first imports, security and correctness fixes
+  from the 2026-10-13 audit; closes Phase 16
+- Curated-config rewrite — inventory → recommend → `plan.json` → plan-set → apply
+  (dry-run, backup/restore); three model layers plus an execution override; rigor
+  (MVP/Standard/Rigorous) × profile presets; counterpart cross-AI review and cheap
+  cross-AI execution through a generated `.planning/scripts/cross-ai.mjs`
+  (pi > cursor > opencode); curated `skill_affinity.json`
+- One runtime model (Phase 18.1) — model candidates as (runtime, model) pairs
+- Evaluation on claude — writing-skills RED/GREEN, `/skill-judge` in code review,
+  real-gsd-tools `resolve-model` check for all 35 agents, live smoke
+- Live validation on codex and opencode; cursor (Phase 21) and pi (Phase 22) as independent
+  phases that may run any time after Phase 19
 
 ## Core Value
 
@@ -89,11 +98,12 @@ verified live rather than assumed from a catalog.
 
 ### Active
 
-<!-- v1.3 scope; detailed requirements will live in REQUIREMENTS.md once
-     /gsd-new-milestone defines them. -->
+<!-- v1.3 scope; checkable requirements live in REQUIREMENTS.md. -->
 
-- [ ] `ai-kit-gsd-curated-config` v2 — host-aware, role-scored GSD config
-      wizard (see Next Milestone Goals)
+- [ ] `ai_kit_spec` host detection, enumeration and catalog/ranker extensions
+- [ ] `ai-kit-gsd-curated-config` v2 — inventory/recommend/plan/apply pipeline,
+      rigor × profile presets, cross-AI review/execution, skill affinity
+- [ ] v2 evaluated on claude and live-validated on codex and opencode
 
 ### Out of Scope
 
@@ -122,6 +132,13 @@ verified live rather than assumed from a catalog.
   flagged known gap (Backlog 999.3).
 
 ## Context
+
+**Host facts (live-verified 2026-10-15):**
+- gsd-core: 1.16.0
+- GSD installs missing on: ~/.codex/gsd-core, ~/.config/opencode/gsd-core, ~/.cursor/gsd-core, ~/.pi/gsd-core
+- ~/.gsd/defaults.json runtime: codex
+- Artificial Analysis key: set
+- Live catalog fetch scored: 150 of 195 entries
 
 ai-kit is a solo-maintainer (uz) toolkit that started as a Claude-Code-only
 installer + status line and grew a family of spec-review/execute skills.
@@ -191,7 +208,7 @@ introduced without an explicit, justified exception.
 | Adopt all 5 ingested proposal PRDs as this milestone's roadmap scope | 0 blockers, 0 competing variants after cycle resolution (`.planning/intel/SYNTHESIS.md`); each PRD already defines its own measurable acceptance criteria | ✓ Good — all 5 shipped in v1.0 |
 | Sequence Multi-CLI Runtime Foundation, Opencode Provider Management, and Tool-Substitution Awareness Hook ahead of Config Doctor and Usage Metrics Dashboard | Real cross-PRD reuse dependencies found during ingest (surgical-edit pattern, curated substitution list) — see Context | ✓ Good — reuse landed as planned |
 | Split the AGENTS.md checker into a single-domain rules family sharing `ai_kit_rules_common` (v1.2) | One checker was accumulating Makefile, pre-commit and prose domains; a shared package prevents divergent copies | ✓ Good — 6 checkers plus an orchestrator, no divergent copies (v1.2 integration check) |
-| Rate-limit coloring by burn pace, not remaining fraction (v1.1, Phase 8.1) | Phase 8's formula flagged early-window light usage as RED | ✓ Good |
+| Rate-limit coloring by burn pace, not remaining fraction (v1.1, Phase 8.1) | Phase 8's formula flagged early-window light usage as RED | Superseded 2026-10-09 by absolute gap coloring (`docs/superpowers/specs/2026-10-09-statusline-quota-window-gap-design.md`): the pace ratio treated low usage late in a window as healthy |
 | Close milestones with a cleanup phase before archiving, not with accepted debt (v1.2, Phase 15.2) | The audit found in-milestone defects (pyright error, sort-key asymmetry) that were cheap to fix | ✓ Good — closed at pyright 0 errors |
 | Track `.planning/` in git from 2026-09-16 | Earlier milestones lost their start-date history | ⚠️ Revisit — v1.0 dates are only partially recoverable |
 
@@ -213,4 +230,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-23 after v1.2 milestone*
+*Last updated: 2026-09-23 after starting milestone v1.3*

@@ -1,68 +1,59 @@
-"""Locates the installed gsd-core's gsd-tools.cjs and lib/model-catalog.cjs, and queries the
-live AGENT_DEFAULT_TIERS/AGENT_TO_PHASE_TYPE export via a `node -e` subprocess call.
+"""Locates the installed gsd-core's gsd-tools.cjs and its lib modules, and queries them via
+`node -e`: AGENT_DEFAULT_TIERS/AGENT_TO_PHASE_TYPE for the v1 flow, and for the v2 inventory
+RUNTIME_PROFILE_MAP, MODEL_PROFILES (stored profile-first), AGENT_TO_PHASE_TYPE and
+`isValidConfigKey` probes in one call.
 
-The install-root candidate list below mirrors the multi-host gsd-core install-root search
-every GSD agent already performs (per-host env var with a `$HOME`-relative default, tried in
-a fixed order) -- never narrow this to `~/.claude` alone; several hosts (Cursor, Codex,
-OpenCode, Kilo, etc.) install gsd-core under their own config directory instead.
+The gsd-tools path resolution itself is delegated to the one shared resolver in
+`ai_kit_spec.gsd_tools` (D-18, 16.1-CONTEXT.md), which searches the PROJECT-LOCAL gsd-core
+installs first (in GSD's own launcher order) before any per-host global one, and returns
+`None` when this skill's ai-kit-spec-review sibling is not importable.
 """
+import importlib
 import json
 import os
 import shutil
 import subprocess
+import sys
+from typing import NamedTuple
 
-# (env_var_name, default_path_relative_to_home) pairs, in the exact canonical order every GSD
-# planner/orchestrator agent already resolves gsd-tools.cjs through.
-GSD_CORE_ROOT_CANDIDATES = (
-    ("CLAUDE_CONFIG_DIR", ".claude"),
-    ("HERMES_HOME", ".hermes"),
-    ("CURSOR_CONFIG_DIR", ".cursor"),
-    ("CODEX_HOME", ".codex"),
-    ("GEMINI_CONFIG_DIR", ".gemini"),
-    ("COPILOT_CONFIG_DIR", ".copilot"),
-    ("WINDSURF_CONFIG_DIR", ".codeium/windsurf"),
-    ("AUGMENT_CONFIG_DIR", ".augment"),
-    ("TRAE_CONFIG_DIR", ".trae"),
-    ("QWEN_CONFIG_DIR", ".qwen"),
-    ("CODEBUDDY_CONFIG_DIR", ".codebuddy"),
-    ("CLINE_CONFIG_DIR", ".cline"),
-    ("GROK_AGENTS_HOME", ".agents"),
-    ("ANTIGRAVITY_CONFIG_DIR", ".gemini/antigravity"),
-    ("OPENCODE_CONFIG_DIR", ".config/opencode"),  # falls back through XDG_CONFIG_HOME first
-    ("KILO_CONFIG_DIR", ".config/kilo"),  # falls back through XDG_CONFIG_HOME first
+from . import model_detect
+
+_THIS_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+SIBLING_MISSING = (
+    "the ai-kit-spec-review sibling skill (ai_kit_spec) is not installed next to this skill"
 )
 
-# The two candidates above whose default path is itself XDG_CONFIG_HOME-relative, not
-# $HOME-relative -- XDG_CONFIG_HOME (when set) is consulted before the $HOME/default fallback.
-_XDG_RELATIVE_SUBPATH = {
-    "OPENCODE_CONFIG_DIR": "opencode",
-    "KILO_CONFIG_DIR": "kilo",
-}
+
+def load_ai_kit_spec_module(name: str):
+    """Returns the shared `ai_kit_spec.<name>` module, or `None` when the
+    ai-kit-spec-review sibling skill cannot be located/imported (importlib keeps pyright
+    clean with no ignore comment; the caller reports the miss, never raising at import
+    time)."""
+    shim = model_detect.resolve_ai_kit_spec_path(_THIS_SKILL_DIR)
+    if shim is None:
+        return None
+    skill_dir = os.path.dirname(shim)
+    if skill_dir not in sys.path:
+        sys.path.insert(0, skill_dir)
+    try:
+        return importlib.import_module(f"ai_kit_spec.{name}")
+    except ImportError:
+        return None
 
 
-def _resolve_root(env_var_name: str, default_relative: str, env: dict) -> str:
-    explicit = env.get(env_var_name)
-    if explicit:
-        return explicit
-    if env_var_name in _XDG_RELATIVE_SUBPATH:
-        xdg_config_home = env.get("XDG_CONFIG_HOME")
-        if xdg_config_home:
-            return os.path.join(xdg_config_home, _XDG_RELATIVE_SUBPATH[env_var_name])
-    home = env.get("HOME") or os.path.expanduser("~")
-    return os.path.join(home, default_relative)
+def load_gsd_tools():
+    return load_ai_kit_spec_module("gsd_tools")
 
 
-def resolve_gsd_tools_path(env: dict | None = None, isfile_fn=os.path.isfile):
-    """Returns the first existing `<root>/gsd-core/bin/gsd-tools.cjs` path across the
-    canonical multi-host candidate list, or `None` when none exist. Never raises, never
-    prints -- the caller decides how to report a miss."""
-    env = env if env is not None else dict(os.environ)
-    for env_var_name, default_relative in GSD_CORE_ROOT_CANDIDATES:
-        root = _resolve_root(env_var_name, default_relative, env)
-        candidate = os.path.join(root, "gsd-core", "bin", "gsd-tools.cjs")
-        if isfile_fn(candidate):
-            return candidate
-    return None
+def resolve_gsd_tools_path(env: dict | None = None, isfile_fn=os.path.isfile, start=None):
+    """Delegates to `ai_kit_spec.gsd_tools.resolve_gsd_tools` (project-local gsd-core
+    first, D-18); returns `None` when the shared module is unavailable or nothing is found.
+    Never raises, never prints -- the caller decides how to report a miss."""
+    gsd_tools = load_gsd_tools()
+    if gsd_tools is None:
+        return None
+    return gsd_tools.resolve_gsd_tools(env=env, start=start, isfile_fn=isfile_fn)
 
 
 def resolve_model_catalog_cjs_path(gsd_tools_path, isfile_fn=os.path.isfile):
@@ -74,6 +65,26 @@ def resolve_model_catalog_cjs_path(gsd_tools_path, isfile_fn=os.path.isfile):
         return None
     candidate = os.path.join(os.path.dirname(gsd_tools_path), "lib", "model-catalog.cjs")
     return candidate if isfile_fn(candidate) else None
+
+
+def resolve_config_schema_cjs_path(gsd_tools_path, isfile_fn=os.path.isfile):
+    """Returns `<dirname(gsd_tools_path)>/lib/config-schema.cjs` when that sibling exists,
+    else `None`."""
+    if not gsd_tools_path:
+        return None
+    candidate = os.path.join(os.path.dirname(gsd_tools_path), "lib", "config-schema.cjs")
+    return candidate if isfile_fn(candidate) else None
+
+
+class GsdCorePaths(NamedTuple):
+    """Resolved node binary and the two gsd-core lib modules for one inventory query, plus
+    the host ids whose global skills roots it reads (``host.HOSTS``; passed in because
+    ``host`` imports this module)."""
+
+    node_bin: str
+    model_catalog: str
+    config_schema: str
+    skills_hosts: tuple[str, ...] = ()
 
 
 def resolve_node_binary(which_fn=shutil.which):
@@ -98,6 +109,22 @@ _AGENT_CATALOG_QUERY_SCRIPT = (
 )
 
 
+def _parse_catalog_output(stdout: str) -> dict | None:
+    try:
+        parsed = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    tiers = parsed.get("tiers")
+    phase_types = parsed.get("phaseTypes")
+    if not isinstance(tiers, dict) or not tiers:
+        return None
+    if not isinstance(phase_types, dict) or not phase_types:
+        return None
+    return {"tiers": tiers, "phaseTypes": phase_types}
+
+
 def query_agent_catalog(node_bin, model_catalog_path, run_fn=subprocess.run):
     """Returns the parsed `{"tiers": {...}, "phaseTypes": {...}}` dict on a clean `node -e`
     run (exit 0, valid JSON, both keys present and non-empty dicts); returns `None` on ANY
@@ -116,16 +143,168 @@ def query_agent_catalog(node_bin, model_catalog_path, run_fn=subprocess.run):
         return None
     if result.returncode != 0:
         return None
+    return _parse_catalog_output(result.stdout)
+
+
+_GSD_TABLES_QUERY_SCRIPT = (
+    "try { const path = require('path'); const m = require(process.argv[1]); "
+    "const cs = require(process.argv[2]); "
+    "if (typeof cs.isValidConfigKey !== 'function') throw new Error('missing'); "
+    "const cwd = process.argv[3]; const keys = JSON.parse(process.argv[4]); "
+    "const lib = path.dirname(process.argv[1]); let review_lanes = null; "
+    "try { const ld = require(lib + '/review-lane-descriptor.cjs'); "
+    "const cl = require(lib + '/capability-loader.cjs'); "
+    "const reg = cl.loadRegistry({includeInstalled: true, cwd}); "
+    "const merged = ld.mergeReviewerLanes(ld.REVIEWER_LANES, reg); "
+    "review_lanes = merged.map((x) => ({slug: x.slug, transport: x.transport || null, "
+    "binary: (x.probe && x.probe.binary) || null, model_key: x.modelConfigKey || null, "
+    "effort_key: x.effortConfigKey || null, default_effort: x.defaultEffort || null})); "
+    "} catch (e) { review_lanes = null; } let skills_roots = null; "
+    "try { const rh = require(lib + '/runtime-homes.cjs'); "
+    "const rts = JSON.parse(process.argv[5]); skills_roots = {}; "
+    "for (const rt of rts) { try { skills_roots[rt] = rh.getGlobalSkillsBase(rt); "
+    "} catch (e) { skills_roots[rt] = null; } } } catch (e) { skills_roots = null; } "
+    "const extra = []; const agents = m.AGENT_TO_PHASE_TYPE || {}; "
+    "for (const agent of Object.keys(agents)) { extra.push('agent_skills.' + agent); } "
+    "if (Array.isArray(review_lanes)) { for (const lane of review_lanes) { "
+    "if (lane.model_key) extra.push(lane.model_key); "
+    "if (lane.effort_key) extra.push(lane.effort_key); } } "
+    "const allKeys = Array.from(new Set(keys.concat(extra))); "
+    "const accepted = allKeys.filter((k) => cs.isValidConfigKey(k, cwd) === true); "
+    "const rejected = allKeys.filter((k) => !accepted.includes(k)); "
+    "process.stdout.write(JSON.stringify({runtime_profile_map: m.RUNTIME_PROFILE_MAP, "
+    "model_profiles: m.MODEL_PROFILES, agent_to_phase_type: m.AGENT_TO_PHASE_TYPE, "
+    "valid_keys: {accepted, rejected}, review_lanes, skills_roots})); "
+    "} catch (e) { process.stdout.write('null'); }"
+)
+
+_LANE_ROW_KEYS = ("slug", "transport", "binary", "model_key", "effort_key", "default_effort")
+
+
+def _lane_runtime(binary: str | None, detection) -> str | None:
+    if not isinstance(binary, str):
+        return None
+    if detection is None:
+        return binary
+    return detection.runtime_id(binary)
+
+
+def _parse_review_lanes(raw) -> list | None:
+    if raw is None or not isinstance(raw, list):
+        return None
+    detection = load_ai_kit_spec_module("detection")
+    rows: list[dict] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        slug = row.get("slug")
+        if not isinstance(slug, str):
+            continue
+        cleaned: dict[str, str | None] = {"slug": slug}
+        for key in _LANE_ROW_KEYS[1:]:
+            val = row.get(key)
+            cleaned[key] = val if isinstance(val, str) else None
+        cleaned["runtime"] = _lane_runtime(cleaned["binary"], detection)
+        rows.append(cleaned)
+    return rows
+
+
+def _parse_skills_roots(raw) -> dict[str, str | None] | None:
+    if raw is None or not isinstance(raw, dict):
+        return None
+    out: dict[str, str | None] = {}
+    for key, val in raw.items():
+        if not isinstance(key, str):
+            continue
+        out[key] = val if isinstance(val, str) else None
+    return out
+
+
+def profile_first(agent_first) -> dict:
+    """gsd-core exports `MODEL_PROFILES` agent -> {profile: tier}; the inventory stores
+    it profile -> {agent: tier}, the shape `roles` reads. Non-dict rows and non-str
+    tiers are dropped."""
+    out: dict[str, dict[str, str]] = {}
+    for agent, per_profile in agent_first.items():
+        if not isinstance(per_profile, dict):
+            continue
+        for profile, tier in per_profile.items():
+            if isinstance(tier, str):
+                out.setdefault(profile, {})[agent] = tier
+    return out
+
+
+def _parse_tables_output(stdout: str) -> dict | None:
     try:
-        parsed = json.loads(result.stdout)
+        parsed = json.loads(stdout)
     except json.JSONDecodeError:
         return None
     if not isinstance(parsed, dict):
         return None
-    tiers = parsed.get("tiers")
-    phase_types = parsed.get("phaseTypes")
-    if not isinstance(tiers, dict) or not tiers:
+    rpm = parsed.get("runtime_profile_map")
+    profiles = parsed.get("model_profiles")
+    phase = parsed.get("agent_to_phase_type")
+    valid_keys = parsed.get("valid_keys")
+    if not isinstance(valid_keys, dict):
+        valid_keys = {}
+    accepted = valid_keys.get("accepted")
+    rejected = valid_keys.get("rejected")
+    by_profile = profile_first(profiles) if isinstance(profiles, dict) else {}
+    tables_ok = isinstance(rpm, dict) and rpm and isinstance(phase, dict) and phase and by_profile
+    if not tables_ok or not isinstance(accepted, list) or not isinstance(rejected, list):
         return None
-    if not isinstance(phase_types, dict) or not phase_types:
+    if not all(isinstance(k, str) for k in accepted + rejected):
         return None
-    return {"tiers": tiers, "phaseTypes": phase_types}
+    out = {
+        "runtime_profile_map": rpm,
+        "model_profiles": by_profile,
+        "agent_to_phase_type": phase,
+        "valid_keys": {"accepted": sorted(accepted), "rejected": sorted(rejected)},
+    }
+    if "review_lanes" in parsed:
+        out["review_lanes"] = _parse_review_lanes(parsed.get("review_lanes"))
+    if "skills_roots" in parsed:
+        out["skills_roots"] = _parse_skills_roots(parsed.get("skills_roots"))
+    return out
+
+
+class NodeQueryError(RuntimeError):
+    """`node` itself failed (spawn error, timeout or non-zero exit). The query script
+    catches its own errors and prints `null`, so this never means missing exports."""
+
+
+_TABLES_TIMEOUT_S = 30
+
+
+def query_gsd_tables(paths: GsdCorePaths, project_dir, keys, run_fn=subprocess.run, env=None):
+    """One node call: gsd-core tables plus `isValidConfigKey` probes for `keys`. Returns
+    `None` when the script reports `null` (require failed or exports missing) or prints
+    malformed output; raises `NodeQueryError` when node itself fails. `env` (default:
+    this process's) reaches node, so gsd-core sees the same GSD_HOME as the inventory."""
+    try:
+        result = run_fn(
+            [
+                paths.node_bin,
+                "-e",
+                _GSD_TABLES_QUERY_SCRIPT,
+                paths.model_catalog,
+                paths.config_schema,
+                project_dir,
+                json.dumps(keys),
+                json.dumps(list(paths.skills_hosts)),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_TABLES_TIMEOUT_S,
+            env=env,
+        )
+    except OSError as exc:
+        raise NodeQueryError(f"node failed to start ({exc.strerror or exc})") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise NodeQueryError(f"node timed out after {_TABLES_TIMEOUT_S}s") from exc
+    if result.returncode != 0:
+        lines = (result.stderr or "").strip().splitlines()
+        detail = f": {lines[-1]}" if lines else ""
+        raise NodeQueryError(f"node exited {result.returncode}{detail}")
+    return _parse_tables_output(result.stdout)

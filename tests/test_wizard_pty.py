@@ -32,12 +32,13 @@ import time
 import unittest
 
 # A roomy PTY window so the full Arrange board (3 lane panels + focused-chip +
-# OFF tray + live preview) renders without being clipped off a short screen.
+# OFF tray + live preview) and the five hook rows with their descriptions render
+# without being clipped off a short screen.
 # Also needs to fit the whole Choose-screen skills picksbox (grows by ~2-3
 # rows per installed skill, plus the "N of M components selected" footer
 # below it) — 50 stopped being enough once the usage-metrics skill (05-01)
 # brought the installed-skill count to 13.
-_PTY_ROWS = 80
+_PTY_ROWS = 100
 _PTY_COLS = 120
 
 # Absolute path to the wizard so the tests work from any cwd.
@@ -63,6 +64,53 @@ def _uv_cmd():
 def _tmp_config_dir():
     """Create and return a fresh temp dir for CLAUDE_CONFIG_DIR."""
     return tempfile.mkdtemp(prefix="ai-kit-test-")
+
+
+# The five host roots every PTY env must point at scratch paths (T-21.1-15):
+# without them a wizard commit inheriting the real HOME would rewrite the
+# real ~/.cursor/hooks.json (the commit always calls wire_hook_cursor) and
+# could touch the real ~/.pi, ~/.config and state dirs.
+_HOST_ROOT_KEYS = ("CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "CURSOR_CONFIG_DIR",
+                   "PI_CODING_AGENT_DIR", "XDG_STATE_HOME", "OPENCODE_CONFIG_DIR")
+
+
+def _scratch_roots(config_dir):
+    """The four root overrides derived from the test's temp config dir, as an
+    explicit-keyword dict for `dict(os.environ, ...)`. CURSOR_CONFIG_DIR and
+    PI_CODING_AGENT_DIR point at ABSENT dirs, so the wizard commit prints its
+    'skipped ... no cursor dir' line and writes nothing."""
+    base = os.path.dirname(config_dir)
+    return {
+        "XDG_CONFIG_HOME": os.path.join(base, "xdg-config"),
+        "CURSOR_CONFIG_DIR": os.path.join(base, "cursor-absent"),
+        "PI_CODING_AGENT_DIR": os.path.join(base, "pi-agent-absent"),
+        "XDG_STATE_HOME": os.path.join(base, "state"),
+        "OPENCODE_CONFIG_DIR": os.path.join(base, "opencode-absent"),
+    }
+
+
+def _env_calls_missing_roots(source):
+    """Static AST check over module source: return (lineno, missing_keys) for
+    every `dict(os.environ, ...)` call that does not set all five host-root
+    overrides. No spawn, no subprocess."""
+    import ast
+    bad = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name) and node.func.id == "dict"
+                and node.args
+                and isinstance(node.args[0], ast.Attribute)
+                and node.args[0].attr == "environ"):
+            continue
+        set_keys = {kw.arg for kw in node.keywords if kw.arg}
+        # A **_scratch_roots(...) spread satisfies all roots: the helper's
+        # return dict is pinned by test_every_pty_env_isolates_host_roots.
+        if any(kw.arg is None for kw in node.keywords):
+            continue
+        missing = [k for k in _HOST_ROOT_KEYS if k not in set_keys]
+        if missing:
+            bad.append((node.lineno, missing))
+    return bad
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +290,8 @@ class TestPhase1E2E(unittest.TestCase):
         """
         uv = _uv_cmd()
         config_dir = self._mk_config_dir()
-        env = dict(os.environ, CLAUDE_CONFIG_DIR=config_dir)
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=config_dir,
+                   **_scratch_roots(config_dir))
         result = subprocess.run(
             [uv, "run", "--script", SETUP, "install"],
             env=env,
@@ -277,8 +326,8 @@ class TestPhase1E2E(unittest.TestCase):
         """
         uv = _uv_cmd()
         config_dir = self._mk_config_dir()
-        env = dict(os.environ, CLAUDE_CONFIG_DIR=config_dir, AI_KIT_UV_REEXEC="1")
-
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=config_dir,
+                   AI_KIT_UV_REEXEC="1", **_scratch_roots(config_dir))
         pid, master_fd = spawn_pty(
             [uv, "run", "--script", SETUP, "--dry-run", "install"],
             env,
@@ -377,6 +426,140 @@ class TestPhase2E2E(unittest.TestCase):
         self._tmpdirs.append(d)
         return d
 
+    def test_replace_gate_backs_up_and_links(self):
+        """The housekeeping `replace` gate (D-16): a pre-created real directory
+        at a skill link path renders the gate; `y` moves it into the XDG-state
+        backups dir and links the repo copy; the `moved` backup line reaches
+        the user on the PTY output after the wizard exits. The env sets all
+        five scratch host roots (T-21.1-15), so the commit's cursor wiring hits
+        the absent scratch CURSOR_CONFIG_DIR and never the real hooks file."""
+        uv = _uv_cmd()
+        # A private base dir: _scratch_roots() derives the cursor/pi/state
+        # roots from dirname(config_dir), so the config dir must NOT sit
+        # directly in a shared parent (e.g. /tmp) or every run would share
+        # one backups dir.
+        base = self._mk_config_dir()
+        config_dir = os.path.join(base, "claude")
+        os.makedirs(config_dir)
+        xdg_config_home = os.path.join(base, "xdg")
+        os.makedirs(xdg_config_home)
+        self._tmpdirs.append(config_dir)
+        self._tmpdirs.append(xdg_config_home)
+
+        # Real content standing at a link path the repo also ships — the gate
+        # must list it and default to leaving it alone.
+        real_skill = os.path.join(config_dir, "skills", "markdown-to-pdf")
+        os.makedirs(real_skill)
+        marker = os.path.join(real_skill, "marker.txt")
+        with open(marker, "w") as f:
+            f.write("user content")
+
+        env = dict(
+            os.environ,
+            CLAUDE_CONFIG_DIR=config_dir,
+            AI_KIT_DIR=_REPO_ROOT,
+            AI_KIT_UV_REEXEC="1",
+            **_scratch_roots(config_dir),
+        )
+        # Assigned as an item, not a duplicate kwarg: _scratch_roots already
+        # sets XDG_CONFIG_HOME, and a literal keyword collision is a TypeError.
+        env["XDG_CONFIG_HOME"] = xdg_config_home
+        # All five host roots are scratch overrides (T-21.1-15); the cursor,
+        # pi and state roots come from _scratch_roots (outside every scanned
+        # dir), XDG_CONFIG_HOME is the isolated temp dir set after the spread.
+        for key in _HOST_ROOT_KEYS:
+            self.assertIn(key, env)
+        self.assertEqual(env["XDG_CONFIG_HOME"], xdg_config_home)
+        self.assertEqual(env["CURSOR_CONFIG_DIR"],
+                         os.path.join(os.path.dirname(config_dir), "cursor-absent"))
+
+        _BOOT_DEADLINE = 45.0
+        _STEP_DEADLINE = 120.0
+        _DRAIN_DEADLINE = 30.0
+
+        pid, master_fd = spawn_pty(
+            [uv, "run", "--script", SETUP, "install"],
+            env,
+        )
+
+        def press_until(key: bytes, marker: bytes, deadline: float) -> None:
+            """Send `key`, wait for `marker`; re-press every few seconds until
+            the deadline (a keypress landing mid-render or mid-apply is
+            consumed as a no-op, so the wait must retry)."""
+            while True:
+                with contextlib.suppress(OSError):
+                    os.write(master_fd, key)
+                try:
+                    drive_until(master_fd, marker, min(time.time() + 10.0, deadline),
+                                captured=captured)
+                    return
+                except AssertionError:
+                    if time.time() >= deadline:
+                        raise
+
+        captured: list[bytes] = []
+        try:
+            # The housekeeping gate renders before the picks are usable.
+            drive_until(
+                master_fd,
+                b"hold a real directory or a foreign link",
+                time.time() + _BOOT_DEADLINE,
+                captured=captured,
+            )
+            # y = back up and link the repo copy (the only path that moves data;
+            # the decline path is covered by the Textual + unit tests).
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"y")
+
+            # Gate resolved -> the Choose picks screen becomes usable.
+            drive_until(
+                master_fd,
+                "\u25c9".encode(),
+                time.time() + _STEP_DEADLINE,
+                captured=captured,
+            )
+            _drain(master_fd, time.time() + 2.0)   # let the apply worker finish
+            # From here the existing pick test's key sequence:
+            # Enter (Choose -> Arrange, adoption gate) -> y (board) ->
+            # Enter (Arrange -> Review) -> Enter (commit -> Done) -> Enter (exit).
+            press_until(b"\r", b"Wire your status line?",
+                        time.time() + _STEP_DEADLINE)
+            _drain(master_fd, time.time() + 1.0)
+            press_until(b"y", b"git_branch", time.time() + _STEP_DEADLINE)
+            _drain(master_fd, time.time() + 1.0)
+            press_until(b"\r", b"Review & confirm", time.time() + _STEP_DEADLINE)
+            press_until(b"\r", b"ai-kit is installed", time.time() + _STEP_DEADLINE)
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"\r")
+            tail = _drain(master_fd, time.time() + _DRAIN_DEADLINE)
+            captured.append(tail)
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(master_fd)
+            with contextlib.suppress(ChildProcessError, OSError):
+                os.waitpid(pid, 0)
+
+        # The accepted replace: the path is now a repo symlink.
+        self.assertTrue(os.path.islink(real_skill),
+                        msg=f"{real_skill} must be a repo symlink after `y`")
+        self.assertEqual(os.readlink(real_skill),
+                         os.path.join(_REPO_ROOT, "skills", "markdown-to-pdf"))
+        # The backup holds the original content, under XDG state.
+        import glob
+        baks = glob.glob(os.path.join(
+            os.path.dirname(config_dir), "state", "ai-kit", "backups",
+            "claude", "markdown-to-pdf.bak-*"))
+        self.assertEqual(len(baks), 1)
+        self.assertTrue(os.path.isfile(
+            os.path.join(baks[0], "markdown-to-pdf", "marker.txt")))
+        # The housekeeping log reached the user AFTER the wizard exited.
+        output = b"".join(captured).decode("utf-8", errors="replace")
+        self.assertIn("moved ", output)
+        self.assertIn("markdown-to-pdf.bak-", output)
+        self.assertFalse(os.path.exists(
+            os.path.join(config_dir, "cursor-absent")),
+            msg="the scratch CURSOR_CONFIG_DIR must never be created")
+
     def test_pick_skill_and_confirm_creates_symlink(self):
         """Fresh install: accept all-ON defaults → confirm → symlink created.
 
@@ -408,10 +591,13 @@ class TestPhase2E2E(unittest.TestCase):
         env = dict(
             os.environ,
             CLAUDE_CONFIG_DIR=config_dir,
-            XDG_CONFIG_HOME=xdg_config_home,
             AI_KIT_DIR=_REPO_ROOT,
             AI_KIT_UV_REEXEC="1",
+            **_scratch_roots(config_dir),
         )
+        # Assigned as an item, not a duplicate kwarg: _scratch_roots already
+        # sets XDG_CONFIG_HOME, and a literal keyword collision is a TypeError.
+        env["XDG_CONFIG_HOME"] = xdg_config_home
 
         _BOOT_DEADLINE = 45.0   # generous: uv + textual init from warm cache
         _SUMMARY_DEADLINE = 120.0  # widened from 30.0 (RESEARCH.md Pitfall 2: this
@@ -525,8 +711,20 @@ class TestPhase2E2E(unittest.TestCase):
                       msg="Choose: expected header 'ai-kit install wizard' in output")
         self.assertIn("select components", all_output,
                       msg="Choose: expected picksbox border title 'select components'")
-        self.assertIn("components selected", all_output,
-                      msg="Choose: expected pick count '... components selected'")
+        self.assertIn("HOOKS", all_output,
+                      msg="Choose: expected the five-row hooks category")
+        hook_ids = ("session-briefing", "tool-advisor", "tool-reminder",
+                    "decision-probe", "precompact")
+        positions = [all_output.find(hook_id) for hook_id in hook_ids]
+        self.assertTrue(all(position >= 0 for position in positions),
+                        msg=f"Choose: missing hook row in {hook_ids!r}: {positions!r}")
+        self.assertEqual(positions, sorted(positions),
+                         msg=f"Choose: hook rows are out of registry order: {positions!r}")
+        for description in ("SessionStart briefing names", "PreToolUse advisor:",
+                            "After grep/cat/sed/find", "Reports whether jev-fast-decision",
+                            "PreCompact pre-summary"):
+            self.assertIn(description, all_output,
+                          msg=f"Choose: missing hook description {description!r}")
         # Arrange board border titles
         self.assertIn("Line 1", all_output,
                       msg="Arrange: expected lane border title 'Line 1'")
@@ -631,13 +829,17 @@ class TestPhase3E2E(unittest.TestCase):
     def _base_env(self, claude_dir: str, xdg_config_home: str) -> dict:
         """Build a minimal env with temp dirs, AI_KIT_UV_REEXEC bypass, and
         AI_KIT_DIR pointing at the repo root so enumerate_entries finds skills/."""
-        return dict(
+        env = dict(
             os.environ,
             CLAUDE_CONFIG_DIR=claude_dir,
-            XDG_CONFIG_HOME=xdg_config_home,
             AI_KIT_DIR=_REPO_ROOT,
             AI_KIT_UV_REEXEC="1",
+            **_scratch_roots(claude_dir),
         )
+        # Assigned as an item, not a duplicate kwarg: _scratch_roots already
+        # sets XDG_CONFIG_HOME, and a literal keyword collision is a TypeError.
+        env["XDG_CONFIG_HOME"] = xdg_config_home
+        return env
 
     def _config_toml_path(self, xdg_config_home: str) -> str:
         """Compute the config_toml path given XDG_CONFIG_HOME.
@@ -953,6 +1155,7 @@ class TestCurlBashE2E(unittest.TestCase):
             CLAUDE_CONFIG_DIR=config_dir,
             AI_KIT_DIR=_REPO_ROOT,
             AI_KIT_UV_REEXEC="1",
+            **_scratch_roots(config_dir),
         )
 
         # stdin = pipe (curl|bash); ctty + stdout/stderr = PTY.
@@ -1024,6 +1227,41 @@ class TestCurlBashE2E(unittest.TestCase):
             msg=f"expected clean abort exit 0 under piped stdin; got {exit_code}, "
                 f"output={decoded!r}",
         )
+
+
+class TestEveryPtyEnvIsolatesHostRoots(unittest.TestCase):
+    """Static (no spawn) check: every `dict(os.environ, ...)` in this module
+    sets all five host-root overrides, so no PTY run can write the real
+    ~/.claude, ~/.pi, ~/.cursor, XDG config or state dirs (T-21.1-15)."""
+
+    def test_scratch_roots_helper_sets_all_non_claude_roots(self):
+        roots = _scratch_roots("/tmp/x/cfg")
+        for key in ("XDG_CONFIG_HOME", "CURSOR_CONFIG_DIR",
+                    "PI_CODING_AGENT_DIR", "XDG_STATE_HOME"):
+            self.assertIn(key, roots)
+
+    def test_every_pty_env_isolates_host_roots(self):
+        with open(__file__, encoding="utf-8") as f:
+            source = f.read()
+        bad = _env_calls_missing_roots(source)
+        self.assertEqual(bad, [],
+                         msg=f"env dicts missing host-root overrides: {bad}")
+        # at least five such calls must exist, or the check is vacuous
+        import ast
+        calls = [
+            n for n in ast.walk(ast.parse(source))
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+            and n.func.id == "dict" and n.args
+            and isinstance(n.args[0], ast.Attribute) and n.args[0].attr == "environ"
+        ]
+        self.assertGreaterEqual(len(calls), 5)
+
+    def test_checker_is_not_vacuous(self):
+        synthetic = "env = dict(os.environ, CLAUDE_CONFIG_DIR=x)"
+        bad = _env_calls_missing_roots(synthetic)
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(bad[0][1], [k for k in _HOST_ROOT_KEYS
+                                     if k != "CLAUDE_CONFIG_DIR"])
 
 
 if __name__ == "__main__":

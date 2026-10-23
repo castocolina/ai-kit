@@ -18,6 +18,7 @@ _MODULE_PATH = os.path.join(_HERE, "..", "tools", "status-line.py")
 
 def load_module():
     spec = importlib.util.spec_from_file_location("status_line", _MODULE_PATH)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod          # register so @dataclass can resolve cls.__module__
     spec.loader.exec_module(mod)
@@ -149,10 +150,15 @@ class TestPickColor(unittest.TestCase):
             self.assertEqual(sl.util_pick_color(pct, THEME.ramps["context"]), want, pct)
 
     def test_rate_ramp_bands(self):
-        cases = [(0, THEME.c("GREEN")), (49, THEME.c("GREEN")), (50, THEME.c("YELLOW")),
-                 (79, THEME.c("YELLOW")), (80, THEME.c("RED+bold")), (100, THEME.c("RED+bold"))]
-        for pct, want in cases:
-            self.assertEqual(sl.util_rate_color(pct, THEME), want, pct)
+        # [ramp.rate] still resolves into theme.ramps["rate"] (config parse
+        # compat, kept so existing overrides don't error) but quota coloring
+        # no longer reads it -- assert the resolved structure directly,
+        # without the pace-era color helper (this refactoring deletes it).
+        self.assertEqual(
+            [(ceil, c) for ceil, c in THEME.ramps["rate"]],
+            [(50.0, THEME.c("GREEN")), (80.0, THEME.c("YELLOW")),
+             (float("inf"), THEME.c("RED+bold"))],
+        )
 
     def test_slowest_ramp_bands(self):
         # The single shared SLO/SLA ramp for the slowest segment: green under the
@@ -176,14 +182,14 @@ class TestPickColor(unittest.TestCase):
         self.assertEqual(sl.util_pick_color(200 * ms, theme.ramps["slowest"]), theme.c("WHITE"))
 
 
-class TestRateBurnRatio(unittest.TestCase):
-    """Pure-function tests for util_rate_window_seconds / util_rate_burn_ratio
-    (the pace-based burn-rate ratio feeding the unchanged util_rate_color/
-    theme.ramps["rate"] ramp -- see util_rate_burn_ratio's own docstring for
-    the 2026-09-13 reversal of 08-01-PLAN.md's "Formula Direction --
-    Resolved"). `now` is passed directly as NOW; no time mocking needed for
-    pure-function calls (that comes in TestCooperativeBuilders' render-level
-    tests)."""
+class TestWindowSeconds(unittest.TestCase):
+    """Pure-function tests for util_rate_window_seconds (the window-key
+    parser util_rate_gap now depends on). The four parsing tests are
+    unchanged from the pace-ratio era; the pace-ratio tests that shared
+    this class are deleted along with their helpers -- per
+    docs/superpowers/specs/2026-10-09-statusline-quota-window-gap-design.md
+    §Tests: "Keep util_rate_window_seconds parsing tests. They are
+    unchanged"."""
 
     def test_window_seconds_parses_known_keys(self):
         self.assertEqual(sl.util_rate_window_seconds("five_hour"), 5 * 3600)
@@ -202,76 +208,76 @@ class TestRateBurnRatio(unittest.TestCase):
         # _UNIT_SECONDS.
         self.assertIsNone(sl.util_rate_window_seconds("five_fortnight"))
 
-    def test_burn_ratio_one_hour_remaining_of_five_hour_window(self):
-        # 1h remaining of a 5h window: remaining_fraction = 3600/18000 = 0.2,
-        # elapsed_fraction = 0.8, ratio = 50/0.8 = 62.5 -- middle (YELLOW)
-        # band. Most of the window has already elapsed at this usage level,
-        # which is a middling (not worst-case) pace.
-        ratio = sl.util_rate_burn_ratio(50, "five_hour", NOW + 3600, NOW)
-        self.assertEqual(ratio, 62.5)
-        self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("YELLOW"))
 
-    def test_burn_ratio_four_hours_remaining_same_pct_more_urgent(self):
-        # SAME 50% usage as above, but 4h remaining (remaining_fraction=0.8,
-        # elapsed_fraction=0.2): ratio = 50/0.2 = 250 -- top (RED+bold) band.
-        # Pace direction check: identical pct reached with far LESS elapsed
-        # time is a faster burn rate, and must render strictly more urgently
-        # than the case above, never less.
-        ratio = sl.util_rate_burn_ratio(50, "five_hour", NOW + 3600 * 4, NOW)
-        self.assertAlmostEqual(ratio, 250.0)
-        self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("RED+bold"))
+class TestRateGap(unittest.TestCase):
+    """Pure-function tests for util_rate_gap (SIGNED percentage-point gap
+    between used_percentage and the window's elapsed percentage),
+    util_gap_color (absolute-gap band picker, inclusive bounds), and
+    util_gap_sign -- the quota-window coloring defined by
+    docs/superpowers/specs/2026-10-09-statusline-quota-window-gap-design.md."""
 
-    def test_burn_ratio_lower_pct_one_hour_remaining_is_green(self):
-        # 1h remaining (elapsed_fraction=0.8) at a lower usage pct: ratio =
-        # 30/0.8 = 37.5 -- well-paced, most of the window elapsed for modest
-        # usage.
-        ratio = sl.util_rate_burn_ratio(30, "five_hour", NOW + 3600, NOW)
-        self.assertEqual(ratio, 37.5)
-        self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("GREEN"))
+    def test_gap_signed_behind_and_ahead(self):
+        # 45% of a 5h window elapsed (reset = NOW + 0.55 * 18000 = NOW + 9900):
+        # 50% used is 5 points AHEAD (+5); 40% used is 5 points BEHIND (-5).
+        self.assertAlmostEqual(sl.util_rate_gap(50, "five_hour", NOW + 9900, NOW), 5.0)
+        self.assertAlmostEqual(sl.util_rate_gap(40, "five_hour", NOW + 9900, NOW), -5.0)
 
-    def test_burn_ratio_at_exact_window_reset_reduces_to_raw_pct_unclamped(self):
-        # remaining_fraction == 0 (reset == now exactly) -- elapsed_fraction
-        # == 1.0, so ratio == pct unclamped: having used `pct` over the
-        # ENTIRE window is exactly today's raw-percentage signal, not a
-        # special max-urgency case.
-        self.assertEqual(sl.util_rate_burn_ratio(50, "five_hour", NOW, NOW), 50.0)
-        self.assertEqual(sl.util_rate_burn_ratio(1, "five_hour", NOW, NOW), 1.0)
-        self.assertEqual(sl.util_rate_burn_ratio(0, "five_hour", NOW, NOW), 0.0)
+    def test_gap_color_bands_inclusive_bounds(self):
+        cases = [(5.0, "GREEN"), (5.001, "YELLOW"), (10.999, "YELLOW"),
+                 (11.0, "ORANGE"), (15.0, "ORANGE"), (15.001, "RED")]
+        for delta, want in cases:
+            self.assertEqual(sl.util_gap_color(delta, THEME), THEME.c(want), delta)
 
-    def test_burn_ratio_at_window_start_falls_back_to_raw_pct(self):
-        # remaining_fraction == 1.0 (reset = now + window_seconds exactly --
-        # elapsed_fraction == 0): too early in the window to extrapolate a
-        # pace from essentially zero elapsed time -- falls back to raw pct
-        # rather than spiking toward INF on no real signal.
-        ratio = sl.util_rate_burn_ratio(50, "five_hour", NOW + 5 * 3600, NOW)
-        self.assertEqual(ratio, 50.0)
+    def test_gap_live_spec_case_45_elapsed(self):
+        # Spec worked checks: 45% elapsed + 43% used -> delta 2 GREEN;
+        # 45% elapsed + 15% used -> delta 30 RED.
+        gap_ok = sl.util_rate_gap(43, "five_hour", NOW + 9900, NOW)
+        self.assertAlmostEqual(gap_ok, -2.0)
+        self.assertEqual(sl.util_gap_color(abs(gap_ok), THEME), THEME.c("GREEN"))
+        gap_bad = sl.util_rate_gap(15, "five_hour", NOW + 9900, NOW)
+        self.assertAlmostEqual(gap_bad, -30.0)
+        self.assertEqual(sl.util_gap_color(abs(gap_bad), THEME), THEME.c("RED"))
 
-    def test_burn_ratio_past_reset_falls_back_to_raw_pct(self):
-        # resets_at already in the past (remaining_fraction < 0.0, so
-        # elapsed_fraction > 1.0) -- "no reliable read on the current
-        # window, don't invent urgency."
-        self.assertEqual(sl.util_rate_burn_ratio(50, "five_hour", NOW - 1, NOW), 50.0)
+    def test_gap_at_window_start_color_and_gap(self):
+        # elapsed_fraction == 0 (the old 1e-9 guard is gone): 0% used is a
+        # 0 gap, grading GREEN; 6% used is a 6-point gap, grading YELLOW --
+        # the spec's §Tests start-of-window cases pinned at BOTH levels.
+        gap_zero = sl.util_rate_gap(0, "five_hour", NOW + 5 * 3600, NOW)
+        self.assertAlmostEqual(gap_zero, 0.0)
+        self.assertEqual(sl.util_gap_color(gap_zero, THEME), THEME.c("GREEN"))
+        gap_six = sl.util_rate_gap(6, "five_hour", NOW + 5 * 3600, NOW)
+        self.assertAlmostEqual(gap_six, 6.0)
+        self.assertEqual(sl.util_gap_color(gap_six, THEME), THEME.c("YELLOW"))
 
-    def test_burn_ratio_missing_reset_falls_back_to_raw_pct(self):
-        self.assertEqual(sl.util_rate_burn_ratio(50, "five_hour", None, NOW), 50.0)
+    def test_gap_at_exact_reset_elapsed_is_100(self):
+        # reset == now: elapsed_pct 100 (remaining_pct 0.0 exact). 100% used
+        # -> 0 gap; 0% used -> -100.
+        self.assertAlmostEqual(sl.util_rate_gap(100, "five_hour", NOW, NOW), 0.0)
+        self.assertAlmostEqual(sl.util_rate_gap(0, "five_hour", NOW, NOW), -100.0)
 
-    def test_burn_ratio_remaining_fraction_over_one_falls_back_to_raw_pct(self):
-        # resets_at implies MORE time remaining than the key's parsed
-        # window_seconds allows (clock skew / window-key mismatch) --
-        # remaining_fraction = 6h/5h = 1.2 > 1.0, so elapsed_fraction =
-        # -0.2 < 0.0. Falls back to pct unchanged.
-        self.assertEqual(sl.util_rate_burn_ratio(50, "five_hour", NOW + 3600 * 6, NOW), 50.0)
+    def test_gap_missing_reset_is_none(self):
+        self.assertIsNone(sl.util_rate_gap(50, "five_hour", None, NOW))
 
-    def test_burn_ratio_unknown_key_falls_back_to_raw_pct(self):
-        self.assertEqual(sl.util_rate_burn_ratio(50, "nonsense_unit", NOW + 3600, NOW), 50.0)
+    def test_gap_past_reset_is_none(self):
+        self.assertIsNone(sl.util_rate_gap(50, "five_hour", NOW - 1, NOW))
 
-    def test_burn_ratio_live_regression_low_pct_late_in_window_is_green(self):
-        # Live-observed regression: 25% used with 4h of a 5h window elapsed
-        # (elapsed_fraction = 0.8). Landed ratio = 25 / 0.8 = 31.25 GREEN.
-        # Superseded formula: 25 / 0.2 = 125 -> RED+bold.
-        ratio = sl.util_rate_burn_ratio(25, "five_hour", NOW + 3600, NOW)
-        self.assertAlmostEqual(ratio, 31.25)
-        self.assertEqual(sl.util_rate_color(ratio, THEME), THEME.c("GREEN"))
+    def test_gap_clock_skew_is_none(self):
+        # 6h remaining of a 5h window: remaining_pct = 120 > 100.
+        self.assertIsNone(sl.util_rate_gap(50, "five_hour", NOW + 3600 * 6, NOW))
+
+    def test_gap_unknown_key_is_none(self):
+        self.assertIsNone(sl.util_rate_gap(50, "nonsense_unit", NOW + 3600, NOW))
+
+    def test_gap_sign_marks(self):
+        # Sign is the INVERTED gap direction, glued to the displayed
+        # percentage by the caller: + = usage at or behind the window clock
+        # (under pace), - = usage ahead (burning faster than the clock).
+        self.assertEqual(sl.util_gap_sign(5.0), "-")
+        self.assertEqual(sl.util_gap_sign(-5.0), "+")
+        self.assertEqual(sl.util_gap_sign(0.0), "+")
+        self.assertEqual(sl.util_gap_sign(0.4), "-")
+        self.assertEqual(sl.util_gap_sign(-0.4), "+")
+        self.assertEqual(sl.util_gap_sign(-55.0), "+")
 
 
 class TestFormatters(unittest.TestCase):
@@ -641,69 +647,78 @@ class TestCooperativeBuilders(unittest.TestCase):
         out = strip(sl.seg_alt_w_rate_limit(_data(rate_limits=rl), 200, THEME))
         self.assertIn("7d: 50%", out)
 
-    def test_h_rate_limit_colors_by_pace_more_elapsed_time_is_less_urgent(self):
-        # Pins the pace-based direction (see util_rate_burn_ratio's own
-        # docstring for the 2026-09-13 reversal of 08-01-PLAN.md's "Formula
-        # Direction -- Resolved"): identical used_percentage, MORE elapsed
-        # time (= LESS time remaining) means a slower burn pace and must
-        # render strictly LESS urgently, never more. Two SEPARATE calls --
-        # both fixtures use the SAME "five_hour" key, so a shared dict would
-        # silently collide, leaving only one entry.
+    def test_h_rate_limit_colors_by_absolute_gap(self):
+        # Absolute-gap direction (spec): 45% of a 5h window elapsed, 15%
+        # used is 30 points apart -> RED; 43% used is 2 points -> GREEN.
+        # Reverses the pace ratio's "low usage late in the window is calm".
+        # Separate calls -- same key in a shared dict would collide.
         with mock.patch.object(sl.time, "time", return_value=NOW):
-            rl_4h = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600 * 4}}
-            out_4h = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_4h), 200, THEME)
-            self.assertIn(THEME.c("RED+bold"), out_4h)
+            rl_low = {"five_hour": {"used_percentage": 15, "resets_at": NOW + 9900}}
+            out_low = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_low), 200, THEME)
+            self.assertIn(THEME.c("RED"), out_low)
+            self.assertNotIn(THEME.c("GREEN"), out_low)
+            self.assertIn("+15%", strip(out_low))
 
-            rl_1h = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600}}
-            out_1h = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_1h), 200, THEME)
-            self.assertIn(THEME.c("YELLOW"), out_1h)
-            self.assertNotIn(THEME.c("RED+bold"), out_1h)
+            rl_ok = {"five_hour": {"used_percentage": 43, "resets_at": NOW + 9900}}
+            out_ok = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_ok), 200, THEME)
+            self.assertIn(THEME.c("GREEN"), out_ok)
+            self.assertNotIn(THEME.c("RED"), out_ok)
+            self.assertIn("+43%", strip(out_ok))
+
+    def test_h_rate_limit_negative_sign_marks_usage_ahead(self):
+        # Sign inverted from the gap direction: 50% used with 45% elapsed is
+        # 5 points AHEAD of the clock -> '-' glued to the percentage. gap =
+        # 50 - (100.0 - 9900.0 * 100.0 / 18000) = 5.0 float-exact, so
+        # abs(gap) hits the GREEN band's <= 5.0 boundary exactly.
+        with mock.patch.object(sl.time, "time", return_value=NOW):
+            rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 9900}}
+            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
+            self.assertIn("-50%", strip(out))
+            self.assertIn(THEME.c("GREEN"), out)
+
+    def test_h_rate_limit_unreliable_window_paints_white_no_marker(self):
+        # Past reset and clock skew both make the gap uncomputable: WHITE,
+        # no marker, bucket still visible (spec fallback, not the old ramp).
+        # The marker-absence asserts are per spec ("the fallback case renders
+        # no marker"); the missing-reset case is equality-pinned separately
+        # by test_rate_limit_no_reset_stamp_when_absent.
+        with mock.patch.object(sl.time, "time", return_value=NOW):
+            rl_past = {"five_hour": {"used_percentage": 50, "resets_at": NOW - 1}}
+            out_past = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_past), 200, THEME)
+            self.assertIn(THEME.c("WHITE"), out_past)
+            self.assertNotIn(THEME.c("RED"), out_past)
+            self.assertNotIn("+", strip(out_past))
+            self.assertNotIn("-", strip(out_past))
+
+            rl_skew = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600 * 6}}
+            out_skew = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_skew), 200, THEME)
+            self.assertIn(THEME.c("WHITE"), out_skew)
+            self.assertNotIn("+", strip(out_skew))
+            self.assertNotIn("-", strip(out_skew))
+
+    def test_h_rate_limit_live_regression_low_pct_late_in_window_is_red(self):
+        # Reversal pinned by the spec: the Phase 8.1 live case (25% used,
+        # 4h of a 5h window elapsed -> 80%) was GREEN under the pace ratio
+        # (25/0.8 = 31.25); the absolute gap is 55 points -> RED.
+        with mock.patch.object(sl.time, "time", return_value=NOW):
+            rl = {"five_hour": {"used_percentage": 25, "resets_at": NOW + 3600}}
+            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
+            self.assertIn(THEME.c("RED"), out)
+            self.assertNotIn(THEME.c("GREEN"), out)
+            self.assertIn("+25%", strip(out))
 
     def test_h_rate_limit_display_unchanged_by_color_refactor(self):
-        # ROADMAP SC2: displayed percentage/reset-suffix text stays
-        # byte-identical -- only which ramp color is picked changes. Full
-        # assertEqual against the complete stripped string, not assertIn.
+        # Rich-tier text: the pace sign glued to the percentage (42 used,
+        # 80% elapsed -> usage behind the clock -> '+'), then the reset
+        # suffix; the terse/narrow tier stays byte-identical (its own test
+        # pins that).
         with mock.patch.object(sl.time, "time", return_value=NOW):
             rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600}}
             out = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
             self.assertEqual(
                 out,
-                f"⚡️ 5h: 42% (↺ {sl.datetime.fromtimestamp(NOW + 3600).strftime('%H:%M')})",
+                f"⚡️ 5h: +42% (↺ {sl.datetime.fromtimestamp(NOW + 3600).strftime('%H:%M')})",
             )
-
-    def test_rate_limit_past_reset_color_matches_raw_pct(self):
-        # D-03: a stale resets_at (already in the past) yields
-        # elapsed_fraction > 1.0, so the ratio falls back to raw pct --
-        # zero regression on the existing past-reset fixtures.
-        # Compared against sl.util_rate_color(50, THEME) directly -- NOT
-        # THEME.c(sl.util_pick_color(...)): util_pick_color already returns
-        # a resolved ANSI escape, and wrapping it in THEME.c() a second time
-        # would re-parse it as a color NAME and return "" (08-REVIEWS.md
-        # cycle 3 HIGH, fixed 2026-09-11).
-        with mock.patch.object(sl.time, "time", return_value=NOW):
-            rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW - 1}}
-            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
-            self.assertIn(sl.util_rate_color(50, THEME), out)
-
-    def test_h_rate_limit_clock_skew_falls_back_to_raw_pct(self):
-        # A resets_at further out than the key-parsed window (6h remaining of
-        # a 5h window) yields elapsed_fraction < 0.0; D-03 falls back to raw
-        # pct, not Phase 8's superseded D-03/D-04 clamp.
-        with mock.patch.object(sl.time, "time", return_value=NOW):
-            rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600 * 6}}
-            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
-            self.assertIn(sl.util_rate_color(50, THEME), out)
-
-    def test_h_rate_limit_live_regression_low_pct_late_in_window_is_green(self):
-        # Live-observed regression: 25% used with 4h of a 5h window elapsed.
-        # Landed pace is GREEN (25 / 0.8 = 31.25); superseded formula was
-        # RED+bold (25 / 0.2 = 125).
-        with mock.patch.object(sl.time, "time", return_value=NOW):
-            rl = {"five_hour": {"used_percentage": 25, "resets_at": NOW + 3600}}
-            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
-            self.assertIn(THEME.c("GREEN"), out)
-            self.assertNotIn(THEME.c("YELLOW"), out)
-            self.assertNotIn(THEME.c("RED+bold"), out)
 
     def test_weekly_drops_before_hourly_under_column_pressure(self):
         # No resets_at, so each segment's terse form is its only form: "5h: 42%"
@@ -849,7 +864,7 @@ class TestMetaPositionIndependent(unittest.TestCase):
         time.sleep(0.005)
         return "SLOW"
 
-    def _make_cfg_with_slowest_on_line(self, line_idx: int) -> "sl.Config":
+    def _make_cfg_with_slowest_on_line(self, line_idx: int):
         """A two-line config: `slow_seg` always lives on line 1 (so it is the
         global slowest), while the `slowest` readout is placed on `line_idx`."""
         cfg = sl.cfg_default_config()
@@ -907,18 +922,23 @@ class TestSlowestTiming(unittest.TestCase):
         with mock.patch.object(sl, "probe_git_snapshot", side_effect=slow_git):
             _pack(["git_branch"], ctx, 200, cfg=cfg)
         # The probe must have run during the measure phase (proves laziness via probe_cache):
-        self.assertIsNotNone(ctx.probe_cache.get("git"))
+        cache = ctx.probe_cache
+        self.assertIsNotNone(cache)
+        assert cache is not None
+        self.assertIsNotNone(cache.get("git"))
         name, ns = ctx.slowest
         self.assertEqual(name, "git_branch")
         self.assertGreaterEqual(ns, 4_000_000)   # >= ~4ms: probe cost is inside the build
 
     @staticmethod
     def _slow(data, avail, theme):
+        del avail
         time.sleep(0.005)
         return "SLOW"
 
     @staticmethod
     def _fast(data, avail, theme):
+        del avail
         return "FAST"
 
     def test_pack_line_records_slowest_builder(self):
@@ -949,6 +969,7 @@ class TestSlowestTiming(unittest.TestCase):
         # A segment that crashes never rendered, so its time must not crown it the
         # slowest culprit (else seg_slowest would name a broken segment).
         def boom(data, avail, theme):
+            del avail
             raise RuntimeError("nope")
         builders = {"boom": boom, "fast_seg": self._fast}
         cfg = sl.cfg_default_config()
@@ -961,6 +982,7 @@ class TestSlowestTiming(unittest.TestCase):
         # A segment that renders nothing (e.g. a failing external provider that is
         # gracefully omitted) is not a visible culprit, so it isn't crowned slowest.
         def empty(data, avail, theme):
+            del avail
             return None
         builders = {"empty_seg": empty, "fast_seg": self._fast}
         cfg = sl.cfg_default_config()
@@ -993,6 +1015,7 @@ class TestSlowestTiming(unittest.TestCase):
     def test_render_time_not_crowned_slowest(self):
         # M1: render_time is a meta-segment (reports the whole render); never a culprit.
         def slow_rt(data, avail, theme):
+            del avail
             time.sleep(0.005)
             return "RT"
         builders = {"render_time": slow_rt, "fast_seg": self._fast}
@@ -1006,6 +1029,7 @@ class TestSlowestTiming(unittest.TestCase):
         # L1: a slow segment whose output is too wide to fit is dropped — it never
         # rendered, so it must not be crowned slowest.
         def slow_wide(data, avail, theme):
+            del avail
             time.sleep(0.005)
             return "X" * 100
         builders = {"wide_seg": slow_wide, "fast_seg": self._fast}
@@ -1122,6 +1146,7 @@ class TestProcAndGit(unittest.TestCase):
         # probe_git_snapshot parses branch + dirty from the porcelain --branch output;
         # mock subprocess so the test is independent of the live working tree.
         def fake_run(cmd, **kw):
+            del kw
             class R:
                 returncode = 0
                 stdout = ("## main...origin/main [ahead 1]\n M tools/x.py\n?? new.py\n"
@@ -1142,6 +1167,7 @@ class TestProcAndGit(unittest.TestCase):
         cfg = sl.cfg_default_config()._replace(cache_base=sl.cfg_cache_base(env))
         seen = []
         def fake_run(cmd, *, _seen=seen, **kw):
+            del kw
             _seen.append(cmd)
             class R:
                 returncode = 0
@@ -1159,6 +1185,7 @@ class TestProcAndGit(unittest.TestCase):
         cfg = sl.cfg_default_config()._replace(cache_base=sl.cfg_cache_base(env))
         seen = []
         def fake_run(cmd, *, _seen=seen, **kw):
+            del kw
             _seen.append(cmd)
             class R:
                 returncode = 0
@@ -1170,6 +1197,7 @@ class TestProcAndGit(unittest.TestCase):
 
     def test_git_snapshot_clean_and_worktree_name(self):
         def fake_run(cmd, **kw):
+            del kw
             class R:
                 returncode = 0
                 stdout = ("## main\n" if "status" in cmd
@@ -1188,6 +1216,7 @@ class TestProcAndGit(unittest.TestCase):
 
     def test_git_snapshot_root_name_non_worktree(self):
         def fake_run(cmd, **kw):
+            del kw
             class R:
                 returncode = 0
                 stdout = ("## main\n" if "status" in cmd
@@ -1205,6 +1234,7 @@ class TestProcAndGit(unittest.TestCase):
         # --git-common-dir must be absolute or root_name's dirname() math breaks.
         seen = []
         def fake_run(cmd, **kw):
+            del kw
             seen.append(cmd)
             class R:
                 returncode = 0
@@ -1221,6 +1251,7 @@ class TestProcAndGit(unittest.TestCase):
         # to the common-dir's own basename instead of walking one level too
         # far up (which would report the bare repo's PARENT dir as the name).
         def fake_run(cmd, **kw):
+            del kw
             class R:
                 returncode = 0
                 stdout = "/srv/bare-repo\n/srv/bare-repo\n/srv/bare-repo\n"
@@ -1238,6 +1269,7 @@ class TestProcAndGit(unittest.TestCase):
         cfg = sl.cfg_default_config()._replace(cache_base=cache_base, git={"cache_ttl": 100})
         calls = []
         def fake_run(cmd, **kw):
+            del kw
             calls.append(cmd)
             class R:
                 returncode = 0
@@ -1254,6 +1286,7 @@ class TestProcAndGit(unittest.TestCase):
         cfg = sl.cfg_default_config()._replace(cache_base=cache_base, git={"cache_ttl": 0})
         calls = []
         def fake_run(cmd, **kw):
+            del kw
             calls.append(cmd)
             class R:
                 returncode = 0
@@ -1272,6 +1305,7 @@ class TestProcAndGit(unittest.TestCase):
         cache_base = sl.cfg_cache_base(env)
         cfg = sl.cfg_default_config()._replace(cache_base=cache_base, git={"cache_ttl": 0})
         def fake_run(cmd, **kw):
+            del kw
             class R:
                 returncode = 0
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
@@ -1474,6 +1508,7 @@ class TestLazyCompute(unittest.TestCase):
             # probe_git_snapshot receives the config; the ttl is read off it.
             args = gs.call_args
             passed_cfg = args.args[1] if args.args[1:] else args.kwargs.get("config")
+            assert passed_cfg is not None
             self.assertEqual((passed_cfg.git or {}).get("cache_ttl"), 42)
 
     def test_git_probe_fires_for_any_git_segment_agnostically(self):
@@ -1868,6 +1903,7 @@ class TestProcRssMacOS(unittest.TestCase):
 class TestTputFallback(unittest.TestCase):
     def test_tput_used_when_stty_yields_nothing(self):
         def fake_run(cmd, **kw):
+            del kw
             class R:
                 stdout = ""
             r = R()
@@ -2504,6 +2540,7 @@ class TestRendererRobustness(unittest.TestCase):
 
     def test_safe_build_passes_through_ok_builder(self):
         def good(data, avail, theme):
+            del avail
             return "HELLO"
         ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"path": good}):
@@ -2513,6 +2550,7 @@ class TestRendererRobustness(unittest.TestCase):
 
     def test_safe_build_records_and_marks_on_raise(self):
         def boom(data, avail, theme):
+            del avail
             raise RuntimeError("kaboom")
         ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"path": boom}):
@@ -2523,6 +2561,7 @@ class TestRendererRobustness(unittest.TestCase):
 
     def test_safe_build_bare_marker_when_no_room_for_name(self):
         def boom(data, avail, theme):
+            del avail
             raise RuntimeError("x")
         ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"context": boom}):
@@ -2534,9 +2573,11 @@ class TestRendererRobustness(unittest.TestCase):
         # "path" is PINNED — even when its builder raises, the line still renders
         # the other segments and records the failure.
         def boom(data, avail, theme):
+            del avail
             raise ValueError("nope")
         cfg = sl.cfg_default_config()
         def ok(data, avail, theme):
+            del avail
             return "CTX"
         ctx = _data()
         with mock.patch.dict(sl.BUILDERS, {"path": boom, "context": ok}):
@@ -2555,6 +2596,7 @@ class TestRendererRobustness(unittest.TestCase):
 
     def test_render_appends_diagnostic_on_builder_crash(self):
         def boom(data, avail, theme):
+            del avail
             raise RuntimeError("x")
         cfg = sl.cfg_default_config()
         layout = [sl.Line(0, ["path"])]
@@ -2778,7 +2820,7 @@ class TestThinContext(unittest.TestCase):
 class TestGitProbeMemoized(unittest.TestCase):
     def test_probe_git_for_runs_once_per_render(self):
         calls = []
-        def fake(work_dir, conf):
+        def fake(work_dir, _conf):
             calls.append(work_dir)
             return sl.GitSnapshot(in_repo=True, branch="main", dirty="clean",
                                   is_worktree=False, wt_name="")

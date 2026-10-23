@@ -10,11 +10,11 @@ import subprocess
 import sys
 import tempfile
 from collections import namedtuple
+from collections.abc import Callable
+from typing import NamedTuple
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, _HERE)
-import render_mermaid
 import detect_backends
+import render_mermaid
 
 _PANDOC_ENGINE = {"typst": "typst", "weasyprint": "weasyprint"}
 
@@ -47,38 +47,67 @@ class BackendUnavailable(Exception):
         super().__init__("no Markdown->PDF backend available")
 
 
-def convert(src_md, out_path=None, fmt=None, backend=None,
-            which=shutil.which, run=subprocess.run, render=render_mermaid.render_all):
+class ConvertOptions(NamedTuple):
+    out_path: str | None = None
+    fmt: str | None = None
+    backend: str | None = None
+    deck_to: str = "pdf"
+    which: Callable = shutil.which
+    run: Callable = subprocess.run
+    render: Callable = render_mermaid.render_all
+
+
+def _select_backend(backend_name, which):
+    if backend_name:
+        chosen = next(b for b in detect_backends.BACKENDS if b.name == backend_name)
+        if not detect_backends.is_available(chosen, which):
+            raise BackendUnavailable(chosen)
+        return chosen
+    sel = detect_backends.select_backend(which)
+    if sel.backend is None:
+        raise BackendUnavailable(sel.recommend_install)
+    return sel.backend
+
+
+def _run_pdf_command(chosen, copy_md, tmp_pdf, which, run):
+    cmd = build_command(
+        chosen.name,
+        copy_md,
+        tmp_pdf,
+        engine=_resolve_engine(chosen, which),
+    )
+    p = run(cmd, capture_output=True, text=True, check=False)
+    if p.returncode != 0:
+        raise RuntimeError(f"{chosen.name} failed: {(p.stderr or p.stdout).strip()}")
+
+
+def _finalize_output(tmp_path, out_path):
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    shutil.move(tmp_path, out_path)
+
+
+def convert(src_md, options=None):
+    opts = options or ConvertOptions()
+    return _convert_with_options(src_md, opts)
+
+
+def _convert_with_options(src_md, opts):
     src_md = os.path.abspath(src_md)
     with open(src_md, encoding="utf-8") as fh:
         text = fh.read()
 
-    if backend:
-        chosen = next(b for b in detect_backends.BACKENDS if b.name == backend)
-        if not detect_backends.is_available(chosen, which):
-            raise BackendUnavailable(chosen)
-    else:
-        sel = detect_backends.select_backend(which)
-        if sel.backend is None:
-            raise BackendUnavailable(sel.recommend_install)
-        chosen = sel.backend
-
-    render_fmt = fmt or chosen.fmt
+    chosen = _select_backend(opts.backend, opts.which)
+    render_fmt = opts.fmt or chosen.fmt
     work = tempfile.mkdtemp(prefix="markdown-to-pdf-")
     try:
-        new_text = render(text, work, fmt=render_fmt, run=run)   # may raise MermaidRenderError
+        new_text = opts.render(text, work, fmt=render_fmt, run=opts.run)
         copy_md = os.path.join(work, "doc.md")
         with open(copy_md, "w", encoding="utf-8") as fh:
             fh.write(new_text)
-        out_path = os.path.abspath(out_path or os.path.splitext(src_md)[0] + ".pdf")
+        out_path = os.path.abspath(opts.out_path or os.path.splitext(src_md)[0] + ".pdf")
         tmp_pdf = os.path.join(work, "doc.pdf")
-        cmd = build_command(chosen.name, copy_md, tmp_pdf,
-                            engine=_resolve_engine(chosen, which))
-        p = run(cmd, capture_output=True, text=True)
-        if p.returncode != 0:
-            raise RuntimeError(f"{chosen.name} failed: {(p.stderr or p.stdout).strip()}")
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        shutil.move(tmp_pdf, out_path)
+        _run_pdf_command(chosen, copy_md, tmp_pdf, opts.which, opts.run)
+        _finalize_output(tmp_pdf, out_path)
         return Result(chosen.name, f"mmdc({render_fmt})", out_path)
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -88,45 +117,59 @@ _MARP = detect_backends.Backend("marp-cli", 0, [("marp",)], "svg",
                                 "pnpm add -g @marp-team/marp-cli")
 
 
-def convert_deck(src_md, out_path=None, fmt="svg", to="pdf",
-                 which=shutil.which, run=subprocess.run, render=render_mermaid.render_all):
-    if not detect_backends.marp_available(which):
+def convert_deck(src_md, options=None):
+    opts = options or ConvertOptions(fmt="svg")
+    return _convert_deck_with_options(src_md, opts)
+
+
+def _convert_deck_with_options(src_md, opts):
+    if not detect_backends.marp_available(opts.which):
         raise BackendUnavailable(_MARP)
     src_md = os.path.abspath(src_md)
     with open(src_md, encoding="utf-8") as fh:
         text = fh.read()
     work = tempfile.mkdtemp(prefix="markdown-to-pdf-deck-")
     try:
-        new_text = render(text, work, fmt=fmt, run=run)
+        new_text = opts.render(text, work, fmt=opts.fmt or "svg", run=opts.run)
         copy_md = os.path.join(work, "deck.md")
         with open(copy_md, "w", encoding="utf-8") as fh:
             fh.write(new_text)
-        out_path = os.path.abspath(out_path or os.path.splitext(src_md)[0] + "." + to)
-        tmp_out = os.path.join(work, "deck." + to)
-        p = run(["marp", copy_md, "-o", tmp_out], capture_output=True, text=True)
+        out_path = os.path.abspath(
+            opts.out_path or os.path.splitext(src_md)[0] + "." + opts.deck_to,
+        )
+        tmp_out = os.path.join(work, "deck." + opts.deck_to)
+        p = opts.run(
+            ["marp", copy_md, "-o", tmp_out],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if p.returncode != 0:
             raise RuntimeError(f"marp failed: {(p.stderr or p.stdout).strip()}")
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        shutil.move(tmp_out, out_path)
-        return Result("marp-cli", f"mmdc({fmt})", out_path)
+        _finalize_output(tmp_out, out_path)
+        return Result("marp-cli", f"mmdc({opts.fmt or 'svg'})", out_path)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def render_only(src_md, out_md=None, fmt="svg",
-                which=shutil.which, run=subprocess.run, render=render_mermaid.render_all):
+def render_only(src_md, options=None):
     """Pre-render mermaid and emit a marp-ready copy for the marp-slide handoff.
 
     Diagrams are rendered into a PERSISTENT sibling `<out>-assets/` dir (not a
     temp dir) so the emitted image links still resolve after this returns. The
     source .md is never modified. Returns the path of the written .rendered.md."""
+    opts = options or ConvertOptions(fmt="svg")
+    return _render_only_with_options(src_md, opts)
+
+
+def _render_only_with_options(src_md, opts):
     src_md = os.path.abspath(src_md)
     with open(src_md, encoding="utf-8") as fh:
         text = fh.read()
-    out_md = os.path.abspath(out_md or os.path.splitext(src_md)[0] + ".rendered.md")
+    out_md = os.path.abspath(opts.out_path or os.path.splitext(src_md)[0] + ".rendered.md")
     assets = os.path.splitext(out_md)[0] + "-assets"
     os.makedirs(assets, exist_ok=True)
-    new_text = render(text, assets, fmt=fmt, run=run)   # images persist in assets/
+    new_text = opts.render(text, assets, fmt=opts.fmt or "svg", run=opts.run)
     os.makedirs(os.path.dirname(out_md), exist_ok=True)
     with open(out_md, "w", encoding="utf-8") as fh:
         fh.write(new_text)
@@ -134,8 +177,10 @@ def render_only(src_md, out_md=None, fmt="svg",
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="markdown-to-pdf",
-        description="Render embedded mermaid and convert Markdown to PDF (or a marp deck).")
+    ap = argparse.ArgumentParser(
+        prog="markdown-to-pdf",
+        description="Render embedded mermaid and convert Markdown to PDF (or a marp deck).",
+    )
     ap.add_argument("src", help="source .md file")
     ap.add_argument("-o", "--out", help="output path (default: <src>.pdf)")
     ap.add_argument("--format", choices=["png", "svg"], help="mermaid render format override")
@@ -143,26 +188,52 @@ def main(argv=None):
     # NOTE: marp-cli is NOT a choice here — it is reachable only via --deck.
     # _MARP is intentionally excluded from detect_backends.BACKENDS so it never
     # auto-selects in the document path; the --deck flag is its sole entry point.
-    ap.add_argument("--deck", action="store_true", help="build a marp deck instead of a doc PDF")
-    ap.add_argument("--to", default="pdf", choices=["pdf", "pptx", "html"], help="deck output format")
-    ap.add_argument("--render-only", action="store_true",
-                    help="pre-render mermaid and emit a marp-ready .md (for marp-slide handoff)")
+    ap.add_argument(
+        "--deck",
+        action="store_true",
+        help="build a marp deck instead of a doc PDF",
+    )
+    ap.add_argument(
+        "--to",
+        default="pdf",
+        choices=["pdf", "pptx", "html"],
+        help="deck output format",
+    )
+    ap.add_argument(
+        "--render-only",
+        action="store_true",
+        help="pre-render mermaid and emit a marp-ready .md (for marp-slide handoff)",
+    )
     a = ap.parse_args(argv)
     try:
         if a.render_only:
-            out_md = render_only(a.src, out_md=a.out, fmt=a.format or "svg")
+            out_md = render_only(
+                a.src,
+                ConvertOptions(out_path=a.out, fmt=a.format or "svg"),
+            )
             print(f"Wrote {out_md}  (mermaid pre-rendered; hand this file to marp-slide)")
             return 0
-        res = (convert_deck(a.src, out_path=a.out, fmt=a.format or "svg", to=a.to)
-               if a.deck else
-               convert(a.src, out_path=a.out, fmt=a.format, backend=a.backend))
+        if a.deck:
+            opts = ConvertOptions(out_path=a.out, fmt=a.format or "svg", deck_to=a.to)
+            res = convert_deck(a.src, opts)
+        else:
+            res = convert(
+                a.src,
+                ConvertOptions(out_path=a.out, fmt=a.format, backend=a.backend),
+            )
     except render_mermaid.MermaidRenderError as e:
-        print(f"ABORT: mermaid block at line {e.line} failed to render:\n{e.stderr}", file=sys.stderr)
+        print(
+            f"ABORT: mermaid block at line {e.line} failed to render:\n{e.stderr}",
+            file=sys.stderr,
+        )
         return 2
     except BackendUnavailable as e:
         print("No backend available — nothing was converted.", file=sys.stderr)
         if e.recommend:
-            print(f"Recommended: install {e.recommend.name}:\n  {e.recommend.install}", file=sys.stderr)
+            print(
+                f"Recommended: install {e.recommend.name}:\n  {e.recommend.install}",
+                file=sys.stderr,
+            )
         return 3
     print(f"Wrote {res.out}  (backend: {res.backend}, diagrams: {res.renderer})")
     return 0

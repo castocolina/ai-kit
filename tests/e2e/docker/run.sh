@@ -24,6 +24,8 @@ echo "==> make test"
 make test
 
 echo "==> make lint"
+# Build context drops .git; pre-commit lists files from the git index.
+git init -q . && git add -A
 make lint
 
 echo "==> ai-kit clean-room E2E: PASS"

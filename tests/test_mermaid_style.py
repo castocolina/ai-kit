@@ -7,6 +7,44 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
 import mermaid_style as ms
 
 
+class TestFenceExtractor(unittest.TestCase):
+    def test_iter_md_yields_sorted_md_under_directory(self):
+        with tempfile.TemporaryDirectory() as root:
+            sub = os.path.join(root, "nested")
+            os.makedirs(sub)
+            paths = {
+                os.path.join(sub, "b.md"),
+                os.path.join(sub, "a.md"),
+                os.path.join(root, "skip.txt"),
+            }
+            for p in paths:
+                with open(p, "w", encoding="utf-8") as fh:
+                    fh.write("# x\n")
+            found = list(ms.iter_md([root]))
+            self.assertEqual(found, sorted([os.path.join(sub, "a.md"), os.path.join(sub, "b.md")]))
+
+    def test_extract_yields_start_line_and_body(self):
+        md = (
+            "# title\n\n"
+            "```mermaid\n"
+            "flowchart TD\n"
+            "    A --> B\n"
+            "```\n"
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as fh:
+            fh.write(md)
+            path = fh.name
+        try:
+            blocks = list(ms.extract(path))
+            self.assertEqual(len(blocks), 1)
+            start, body = blocks[0]
+            self.assertEqual(start, 3)
+            self.assertIn("flowchart TD", body)
+            self.assertIn("A --> B", body)
+        finally:
+            os.remove(path)
+
+
 class TestExtract(unittest.TestCase):
     def test_parses_nodes_shapes_classdefs_edges(self):
         block = (
@@ -182,19 +220,19 @@ class TestGeometry(unittest.TestCase):
 
     def test_R1_too_horizontal(self):
         # 1280x360 -> ratio 0.28 < 0.4
-        self.assertIn("R1", {f.rule for f in ms.geometry_findings(1280, 360, 8)})
+        self.assertIn("R1", {f.rule for f in ms.geometry_findings(1280, 360)})
 
     def test_R2_text_shrinks_below_legible_when_fit_to_column(self):
         # width 1600 -> scale 900/1600=0.56 -> font 16*0.56=9px < 11px
-        self.assertIn("R2", {f.rule for f in ms.geometry_findings(1600, 1200, 8)})
+        self.assertIn("R2", {f.rule for f in ms.geometry_findings(1600, 1200)})
 
     def test_R3_too_tall(self):
         # height 3400 > 3000 (≈3 pages)
-        self.assertIn("R3", {f.rule for f in ms.geometry_findings(700, 3400, 30)})
+        self.assertIn("R3", {f.rule for f in ms.geometry_findings(700, 3400)})
 
     def test_vertical_in_band_is_clean(self):
         # 760x1100 -> ratio 1.45, width under column, height under 3 pages
-        self.assertEqual([], ms.geometry_findings(760, 1100, 10))
+        self.assertEqual([], ms.geometry_findings(760, 1100))
 
 
 class TestPalettes(unittest.TestCase):
@@ -250,17 +288,21 @@ class TestSkillDocs(unittest.TestCase):
         self.assertEqual([], ms.audit_block(block("good-palette.mmd")))
 
 
+import importlib.util
 import json
 
 _SCORER = os.path.join(os.path.dirname(__file__), "..", "skills",
                        "mermaid-audit", "evals", "score_consensus.py")
-sys.path.insert(0, os.path.dirname(_SCORER))
 
 
 class TestConsensusScorer(unittest.TestCase):
     def setUp(self):
-        import score_consensus
-        self.sc = score_consensus
+        spec = importlib.util.spec_from_file_location("score_consensus", _SCORER)
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.sc = module
 
     def test_high_agreement_when_judges_concur(self):
         gold = {"01-flat-gray.md": ["C1"], "04-clean.md": []}

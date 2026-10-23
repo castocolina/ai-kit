@@ -4,6 +4,14 @@
 INSTALL_SH := tools/install.sh
 SETUP_PY   := tools/setup.py
 
+# BEGIN GENERATED test groups
+# arch: tests.test_arch
+# unit-uv: tests.test_framework_profiles
+# integration: tests.test_config_doctor tests.test_config_doctor_pty tests.test_wizard_app tests.test_wizard_pty
+# e2e: tests.test_ai_kit_gsd_curated_config_matrix tests.test_ai_kit_gsd_spec_discuss_e2e tests.test_ai_kit_spec_e2e tests.test_cross_ai_runner_e2e tests.test_curated_config_apply_e2e tests.test_curated_config_e2e tests.test_hook_registry_e2e tests.test_jev_skill_install_e2e tests.test_precompact_shims_e2e tests.test_system_memory_e2e tests.test_worktree_e2e
+# unit: tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_gsd_spec_discuss tests.test_ai_kit_opencode_providers tests.test_ai_kit_project_rules_agents tests.test_ai_kit_project_rules_all tests.test_ai_kit_project_rules_arch tests.test_ai_kit_project_rules_cicd tests.test_ai_kit_project_rules_docker tests.test_ai_kit_project_rules_makefile tests.test_ai_kit_project_rules_precommit tests.test_ai_kit_rules_common tests.test_ai_kit_spec tests.test_ai_kit_spec_env_scrub tests.test_ai_kit_spec_gsd tests.test_ai_kit_spec_gsd_tools tests.test_ai_kit_spec_legacy_config tests.test_ai_kit_spec_routing tests.test_ai_kit_spec_runner_dispatch tests.test_ai_kit_spec_runtimes_table tests.test_ai_kit_spec_superpowers tests.test_ai_kit_spec_trust tests.test_ai_kit_usage_metrics tests.test_claude_precompact tests.test_curated_config_apply tests.test_curated_config_cross_ai tests.test_curated_config_followups tests.test_curated_config_golden tests.test_curated_config_inventory tests.test_curated_config_plan_edit tests.test_curated_config_recommend tests.test_curated_config_script tests.test_curated_config_skills tests.test_cursor_agents tests.test_decision_probe tests.test_external_segments tests.test_gate_scope tests.test_gsd_curated_eval tests.test_hook_registry tests.test_jev_fast_decision tests.test_markdown_to_pdf tests.test_mermaid_style tests.test_precompact_core tests.test_run_unittest_parallel tests.test_setup tests.test_sibling_resolution tests.test_status_line tests.test_statusline_doctor tests.test_tool_advisor_core tests.test_tool_advisor_state tests.test_tool_substitution_hook
+# END GENERATED test groups
+
 .PHONY: install reconfigure uninstall doctor check test lint dev setup-env validate e2e-docker \
         test-unit test-integration e2e-test arch-test \
         py-compile pylint pyright ruff shellcheck vulture unittest unittest-wizard \
@@ -40,35 +48,33 @@ check:
 	bash $(INSTALL_SH) --check
 
 # In-process modules with no subprocess/PTY/container — the fast, pure-unit tier.
-# Runs under bare system python3 (stdlib-only, matching the runtime) except
-# test_framework_profiles, which needs PyYAML (uv's venv, not the system python3).
+# `unit` runs under bare system python3 (stdlib-only, matching the runtime);
+# `unit-uv` needs PyYAML from uv.
 test-unit:
-	python3 -m unittest tests.test_setup tests.test_status_line tests.test_external_segments tests.test_statusline_doctor tests.test_markdown_to_pdf tests.test_mermaid_style tests.test_ai_kit_spec tests.test_ai_kit_spec_gsd tests.test_ai_kit_spec_superpowers tests.test_ai_kit_opencode_providers tests.test_tool_substitution_hook tests.test_ai_kit_usage_metrics tests.test_ai_kit_project_rules_agents tests.test_ai_kit_gsd_curated_config tests.test_ai_kit_rules_common tests.test_ai_kit_project_rules_makefile tests.test_ai_kit_project_rules_precommit tests.test_ai_kit_project_rules_arch tests.test_ai_kit_project_rules_docker tests.test_ai_kit_project_rules_cicd tests.test_ai_kit_project_rules_all
-	uv run python3 -m unittest tests.test_framework_profiles
+	python3 tools/run_unittest_parallel.py --group unit
+	uv run python3 tools/run_unittest_parallel.py --group unit-uv
 
-# Multiple real components wired together (Textual app, PTY-driven subprocess)
-# without being a full install/E2E flow.
+# The `integration` group: Textual app and PTY-driven subprocesses wired
+# together, without being a full install/E2E flow.
 test-integration:
-	uv run python -m unittest tests.test_wizard_app tests.test_config_doctor_pty tests.test_config_doctor
+	uv run python tools/run_unittest_parallel.py --group integration
 
-# Genuine end-to-end flows: real git worktrees, PTY-spawned wizard/setup
-# subprocesses, and the shell-level install script.
+# The `e2e` group: real git worktrees, memory checks and real `node` runs
+# against the checkout-local gsd-core, plus the shell-level install script.
 e2e-test:
-	uv run python -m unittest tests.test_worktree_e2e tests.test_wizard_pty tests.test_system_memory_e2e
+	uv run python tools/run_unittest_parallel.py --group e2e
 	bash tests/test_install.sh
 
-# AST architecture-fitness check (tests/test_arch.py) — no import/execution.
+# AST architecture-fitness check (the runner's `arch` group) — no import/execution.
 arch-test:
-	python3 -m unittest tests.test_arch
+	python3 tools/run_unittest_parallel.py --group arch
 
 # `test` is the aggregate entrypoint: tiers stay single-source-of-truth in
 # their own targets above, never duplicated here.
 test: test-unit test-integration e2e-test arch-test
 
-lint:
-	shellcheck $(INSTALL_SH) tests/test_install.sh
-	python3 -m py_compile $(SETUP_PY) tools/status-line.py tools/statusline-doctor.py tools/hooks/*.py tools/config_doctor_*.py skills/ai-kit-usage-metrics/ai-kit-usage-metrics.py skills/ai-kit-usage-metrics/ai_kit_usage_metrics/*.py skills/ai-kit-project-rules-agents/ai-kit-project-rules-agents.py skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/*.py skills/ai-kit-project-rules-makefile/ai-kit-project-rules-makefile.py skills/ai-kit-project-rules-makefile/ai_kit_project_rules_makefile/*.py skills/ai-kit-project-rules-precommit/ai-kit-project-rules-precommit.py skills/ai-kit-project-rules-precommit/ai_kit_project_rules_precommit/*.py skills/ai-kit-project-rules-arch/ai-kit-project-rules-arch.py skills/ai-kit-project-rules-arch/ai_kit_project_rules_arch/*.py skills/ai-kit-project-rules-docker/ai-kit-project-rules-docker.py skills/ai-kit-project-rules-docker/ai_kit_project_rules_docker/*.py skills/ai-kit-project-rules-cicd/ai-kit-project-rules-cicd.py skills/ai-kit-project-rules-cicd/ai_kit_project_rules_cicd/*.py skills/ai-kit-project-rules-all/ai-kit-project-rules-all.py skills/ai-kit-project-rules-all/ai_kit_project_rules_all/*.py skills/ai-kit-gsd-curated-config/ai-kit-gsd-curated-config.py skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/*.py skills/_shared/ai_kit_rules_common/*.py
-
+# shellcheck + py-compile hooks (pre-commit, all files) — aggregate like validate.
+lint: shellcheck py-compile
 # Single-tool targets — each a thin delegate to its .pre-commit-config.yaml
 # hook (never a duplicated file-scope regex) so a dev can run one check alone.
 py-compile:

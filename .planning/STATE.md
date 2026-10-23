@@ -1,21 +1,21 @@
 ---
 gsd_state_version: "1.0"
-milestone: v1.2
-current_phase: "15.2"
-current_phase_name: v1.2 Tech Debt Cleanup (pre-close)
-current_plan: 1
-status: milestone_complete
-stopped_at: v1.2 milestone archived
-last_updated: "2026-09-23T00:00:00.000Z"
-last_activity: 2026-09-23
-last_activity_desc: v1.2 milestone archived (override closeout); v1.1 and v1.0 roadmap archives written retroactively
-state_head: 2a52b254ccbe1b9fb4d2aa5259d917bceeac5057
+milestone: v1.3
+milestone_name: GSD Curated Config v2
+current_phase: 22
+current_phase_name: Pi Live Validation
+status: executing
+stopped_at: Completed 22-06-PLAN.md
+last_updated: "2026-10-23T18:18:40.910Z"
+last_activity: 2026-10-23
+last_activity_desc: Phase 22 execution started
+state_head: 92afc178b2c6afb9f550c2c4d1546ac74913cfa1
 progress:
-  total_phases: 19
-  completed_phases: 19
-  total_plans: 55
-  completed_plans: 55
-milestone_name: ai-kit Rules Skill Family
+  total_phases: 17
+  completed_phases: 1
+  total_plans: 142
+  completed_plans: 141
+  percent: 6
 ---
 
 # Project State
@@ -25,20 +25,22 @@ milestone_name: ai-kit Rules Skill Family
 See: .planning/PROJECT.md (updated 2026-09-23)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Planning next milestone (v1.3 — ai-kit-gsd-curated-config v2)
+**Current focus:** Phase 22 — Pi Live Validation
 
 ## Current Position
 
-Milestone: v1.2 ai-kit Rules Skill Family — SHIPPED 2026-09-23 (override closeout)
-Phase: none active (all v1.2 phases archived to `.planning/milestones/v1.2-phases/`)
-Status: Milestone complete — ready for `/gsd-new-milestone`
-Last activity: 2026-09-23 — v1.2 milestone archived
+Phase: 22 (Pi Live Validation) — EXECUTING
+Plan: 7 of 7
+Status: Ready to execute
+Last activity: 2026-10-23 — Phase 22 execution started
+
+Progress: [█░░░░░░░░░] 6%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 54
+- Total plans completed: 154
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -74,11 +76,17 @@ Last activity: 2026-09-23 — v1.2 milestone archived
 | 14 | 4 | - | - |
 | 15 | 2 | - | - |
 | 15.1 | 5 | - | - |
+| 16 | 6 | - | - |
+| 16.1 | 31 | - | - |
+| 17 | 9 | - | - |
+| 18 | 22 | - | - |
+| 18.1 | 22 | - | - |
+| 19 | 10 | - | - |
 
 **Recent Trend:**
 
 - Last 5 plans: 05-06, 05-05, 05-04, 05-03, 05-02 (v1.0 close-out)
-- Trend: v1.0/v1.1 complete; v1.2 roadmap created, no plans executed yet
+- Trend: v1.0/v1.1/v1.2 complete; v1.3 roadmap created, no plans executed yet
 
 *Updated after each plan completion*
 **Per-Plan Metrics:**
@@ -117,6 +125,140 @@ Last activity: 2026-09-23 — v1.2 milestone archived
 | Phase 15.1 P03 | 75min | 3 tasks | 3 files |
 | Phase 15.1 P04 | ~70min | 3 tasks | 4 files |
 | Phase 15.2 P01 | ~35min | 3 tasks | 7 files |
+| Phase 16.1 P02 | 206s | 3 tasks | 6 files |
+| Phase 16.1 P03 | 805s | 3 tasks | 9 files |
+| Phase 16.1 P04 | 463s | 3 tasks | 8 files |
+| Phase 16.1 P29 | 244s | 2 tasks | 2 files |
+| Phase 16.1 P01 | 831s | 3 tasks | 14 files |
+| Phase 16.1 P05 | 676s | 3 tasks | 6 files |
+| Phase 16.1 P06 | 756s | 2 tasks | 9 files |
+| Phase 16.1 P07 | 685s | 3 tasks | 9 files |
+| Phase 16.1 P08 | 478s | 2 tasks | 11 files |
+| Phase 16.1 P30 | 364s | 2 tasks | 3 files |
+| Phase 16.1 P09 | 82s | 3 tasks | 8 files |
+| Phase 16.1 P10 | 1315s | 2 tasks | 6 files |
+| Phase 16.1 P11 | 184s | 2 tasks | 7 files |
+| Phase 16.1 P12 | 88s | 3 tasks | 10 files |
+| Phase 16.1 P13 | 1226s | 2 tasks | 9 files |
+| Phase 16.1 P15 | 173s | 2 tasks | 8 files |
+| Phase 16.1 P16 | 191s | 3 tasks | 12 files |
+| Phase 16.1 P18 | 208s | 3 tasks | 6 files |
+| Phase 16.1 P19 | 174s | 2 tasks | 8 files |
+| Phase 16.1 P26 | 143s | 2 tasks | 6 files |
+| Phase 16.1 P31 | 93s | 2 tasks | 2 files |
+| Phase 16.1 P17 | 222s | 3 tasks | 10 files |
+| Phase 16.1 P25 | 331s | 2 tasks | 3 files |
+| Phase 16.1 P27 | 122s | 2 tasks | 12 files |
+| Phase 16.1 P14 | 239s | 2 tasks | 3 files |
+| Phase 16.1 P21 | 260s | 3 tasks | 9 files |
+| Phase 16.1 P22 | 111s | 3 tasks | 11 files |
+| Phase 16.1 P28 | 276s | 2 tasks | 4 files |
+| Phase 16.1 P20 | 299s | 3 tasks | 5 files |
+| Phase 16.1 P23 | 637s | 3 tasks | 18 files |
+| Phase 16.1 P24 | 32s | 3 tasks | 8 files |
+| Phase 17 P01 | 898s | 3 tasks | 7 files |
+| Phase 17 P02 | 188s | 3 tasks | 8 files |
+| Phase 17 P03 | 222s | 3 tasks | 8 files |
+| Phase 17 P04 | 446s | 3 tasks | 4 files |
+| Phase 17 P05 | 420s | 3 tasks | 4 files |
+| Phase 17 P06 | 405s | 3 tasks | 3 files |
+| Phase 17 P07 | 453s | 3 tasks | 4 files |
+| Phase 17 P08 | 243s | 3 tasks | 4 files |
+| Phase 17 P09 | 321s | 3 tasks | 24 files |
+| Phase 18 P01 | 251s | 3 tasks | 7 files |
+| Phase 18 P02 | 381s | 3 tasks | 10 files |
+| Phase 18 P03 | 354s | 3 tasks | 11 files |
+| Phase 18 P04 | 222s | 2 tasks | 26 files |
+| Phase 18 P05 | 172s | 2 tasks | 3 files |
+| Phase 18 P06 | 333s | 2 tasks | 12 files |
+| Phase 18 P07 | 334s | 2 tasks | 26 files |
+| Phase 18 P08 | 176s | 2 tasks | 11 files |
+| Phase 18 P09 | 296s | 3 tasks | 7 files |
+| Phase 18 P10 | 775s | 2 tasks | 2 files |
+| Phase 18 P11 | 557s | 2 tasks | 1 files |
+| Phase 18 P12 | 541s | 2 tasks | 1 files |
+| Phase 18 P13 | 306s | 3 tasks | 7 files |
+| Phase 18 P14 | 478s | 2 tasks | 6 files |
+| Phase 18 P15 | 262s | 2 tasks | 4 files |
+| Phase 18 P16 | 176s | 3 tasks | 8 files |
+| Phase 18 P17 | 417s | 3 tasks | 3 files |
+| Phase 18 P18 | 729s | 2 tasks | 7 files |
+| Phase 18 P19 | 626s | 3 tasks | 2 files |
+| Phase 18 P20 | 315s | 3 tasks | 6 files |
+| Phase 18 P21 | 171s | 2 tasks | 4 files |
+| Phase 18 P22 | 402s | 2 tasks | 7 files |
+| Phase 18.1 P01 | 1431s | 3 tasks | 16 files |
+| Phase 18.1 P02 | 1046s | 3 tasks | 34 files |
+| Phase 18.1 P03 | 937s | 3 tasks | 7 files |
+| Phase 18.1 P04 | 342s | 2 tasks | 7 files |
+| Phase 18.1 P05 | 726s | 2 tasks | 16 files |
+| Phase 18.1 P06 | 414s | 3 tasks | 5 files |
+| Phase 18.1 P07 | 573s | 3 tasks | 18 files |
+| Phase 18.1 P08 | 661s | 3 tasks | 9 files |
+| Phase 18.1 P09 | 1243s | 3 tasks | 12 files |
+| Phase 18.1 P10 | 723s | 3 tasks | 9 files |
+| Phase 18.1 P11 | 138s | 3 tasks | 13 files |
+| Phase 18.1 P12 | 1519s | 3 tasks | 4 files |
+| Phase 18.1 P13 | 985s | 3 tasks | 5 files |
+| Phase 18.1 P14 | 424s | 3 tasks | 9 files |
+| Phase 18.1 P15 | 676s | 3 tasks | 12 files |
+| Phase 18.1 P16 | 1363s | 3 tasks | 11 files |
+| Phase 18.1 P17 | 851s | 3 tasks | 7 files |
+| Phase 18.1 P18 | 572s | 3 tasks | 10 files |
+| Phase 18.1 P19 | 674s | 2 tasks | 12 files |
+| Phase 18.1 P20 | 557s | 2 tasks | 13 files |
+| Phase 18.1 P21 | 1498s | 3 tasks | 8 files |
+| Phase 18.1 P22 | 1913s | 3 tasks | 14 files |
+| Phase 19 P01 | 2113s | 2 tasks | 8 files |
+| Phase 19 P02 | 815s | 2 tasks | 7 files |
+| Phase 19 P03 | 928s | 2 tasks | 7 files |
+| Phase 19 P04 | 438s | 2 tasks | 3 files |
+| Phase 19 P05 | 3600s | 2 tasks | 4 files |
+| Phase 19 P06 | 1500s | 2 tasks | 16 files |
+| Phase 19 P07 | 2658s | 3 tasks | 42 files |
+| Phase 19 P08 | 444s | 2 tasks | 8 files |
+| Phase 19 P09 | 1837s | 3 tasks | 40 files |
+| Phase 19 P10 | 590s | 2 tasks | 4 files |
+| Phase 20 P01 | 1603s | 2 tasks | 18 files |
+| Phase 20 P02 | 1770s | 2 tasks | 4 files |
+| Phase 20 P03 | 245s | 3 tasks | 4 files |
+| Phase 20 P04 | 336s | 3 tasks | 2 files |
+| Phase 20 P05 | 489s | 3 tasks | 2 files |
+| Phase 20 P06 | 1157s | 3 tasks | 25 files |
+| Phase 20 P07 | 960s | 2 tasks | 10 files |
+| Phase 21 P01 | 431s | 2 tasks | 9 files |
+| Phase 21 P07 | 543s | 2 tasks | 18 files |
+| Phase 21 P02 | 230s | 2 tasks | 10 files |
+| Phase 21 P03 | 1250s | 2 tasks | 8 files |
+| Phase 21 P04 | 1937s | 2 tasks | 17 files |
+| Phase 21 P05 | 759s | 2 tasks | 10 files |
+| Phase 21 P06 | 1263s | 2 tasks | 16 files |
+| Phase 21.1 P01 | 908s | 3 tasks | 21 files |
+| Phase 21.1 P02 | 3600s | 3 tasks | 2 files |
+| Phase 21.1 P03 | 746s | 3 tasks | 7 files |
+| Phase 21.1 P04 | 1837s | 3 tasks | 10 files |
+| Phase 21.1 P05 | 2004s | 2 tasks | 7 files |
+| Phase 21.1 P06 | 1990s | 3 tasks | 19 files |
+| Phase 21.1 P07 | 2586s | 3 tasks | 53 files |
+| Phase 21.2 P01 | 1842s | 3 tasks | 11 files |
+| Phase 21.2 P02 | 327s | 2 tasks | 8 files |
+| Phase 21.2 P03 | 1694s | 2 tasks | 6 files |
+| Phase 21.2 P04 | 2544s | 3 tasks | 13 files |
+| Phase 21.2 P05 | 1563s | 3 tasks | 10 files |
+| Phase 21.3 P01 | 451s | 3 tasks | 10 files |
+| Phase 21.3 P02 | 360s | 2 tasks | 8 files |
+| Phase 21.3 P03 | 725s | 2 tasks | 7 files |
+| Phase 21.3 P04 | 1763s | 2 tasks | 7 files |
+| Phase 21.3 P05 | 414s | 2 tasks | 8 files |
+| Phase 21.3 P06 | 1409s | 2 tasks | 8 files |
+| Phase 21.3 P07 | 1203s | 2 tasks | 10 files |
+| Phase 21.3 P08 | 482s | 2 tasks | 4 files |
+| Phase 22 P01 | 440s | 2 tasks | 3 files |
+| Phase 22 P02 | 925s | 2 tasks | 7 files |
+| Phase 22 P03 | 609s | 3 tasks | 15 files |
+| Phase 22 P04 | 1452s | 2 tasks | 7 files |
+| Phase 22 P05 | 797s | 2 tasks | 5 files |
+| Phase 22 P06 | 144s | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -215,6 +357,23 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 15.1]: Phase 15.1 Plan 03: D-12 filter bar/column rebuild with runtime+subfamily axes, unified date range, and D-16 null-vs-zero rendering implemented per the cross-AI-reviewed plan verbatim. — date column placement resolves a gap in D-12's own wording (planner decision, not a user decision); the date-range wrapper span was renamed off the filter-* id prefix to avoid false-matching the clear-filters coverage test.
 - [Phase 15.1]: Phase 15.1 Plan 04: turnKey() SD-4 dedup identity replaces the under-counting session-grouping key (D-16 session dup) and refined_store.py's docstring now states it; a full-command detail dialog (indexByRawRef/stepEntries) makes the two-line command clamp lossless (D-14); empty/loading/error page states added with an SD-10 double-requestAnimationFrame paint guarantee for the loading bar. Plan 05 must reuse turnKey and match the corrected docstring wording in SKILL.md.
 - [Phase 15.2]: Phase 15.2 Plan 01: closed all four Phase 15.2 SCs — PairRow TypedDict for pyright 0 errors (SC1), symmetric flat/grouped sort-key fallback with node regression tests in both directions closing 15.1-REVIEW WR-01/WR-02 (SC2), ruff-clean test file (SC3), 3 resolved v1.1 todos moved to todos/completed (SC4). gsd_run check tdd-red-evidence is Node-TAP-only and could not classify Python unittest RED evidence; verified manually against the plan's documented behavior spec instead.
+- v1.3: Phase numbering continues from v1.2's last phase (Phase 15.2) — v1.3
+  starts at Phase 16, per ROADMAP.md's Phase Numbering convention
+  (2026-09-23). Roadmap derived from this milestone's 31 requirements
+  (SPEC/INV/REC/XAI/SKL/APP/EVAL prefixes — REQUIREMENTS.md's earlier "29
+  total" placeholder was a stale pre-roadmap estimate, corrected to the
+  actual count during roadmap creation) into 7 phases (16-22), following the
+  source spec's §10 delivery-phase split. Phase 17 (originally one
+  "curated-config rewrite" phase per the spec) was split into Phase 17
+  (inventory + recommend) and Phase 18 (cross-AI + skills + apply) because
+  the combined scope (18 requirements) was too large for one phase; EVAL-06
+  (removed-module cleanup, make test/validate green, README/SKILL.md
+  updates) was grouped into Phase 18 rather than Phase 17 since it is the
+  natural finish line for the whole rewrite, not just the inventory/recommend
+  half. Cursor (Phase 21) and pi (Phase 22) live-validation stay their own
+  standalone phases, each depending only on Phase 19 (not on each other or
+  on Phase 20), per the spec's explicit "own phase, may run later, nothing
+  depends on it" framing for both hosts.
 
 ### Pending Todos
 
@@ -225,6 +384,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [2026-10-14] [skills] Wire jev-fast-decision cross-host discovery scaffolding — [todo file](.planning/todos/pending/2026-10-14-wire-jev-fast-decision-cross-host-discovery-scaffolding.md)
 
 ### Blockers/Concerns
+
+**Phase 24 review flag (2026-10-17).** Phase 24 shows "Executed", not "Complete": it ran on 2026-10-14 as a single plan outside the convergence flow, with no cross-AI review, code review or VERIFICATION.md. Its 13 SPEC acceptance boxes are unchecked and SDC-01..04 are Pending. When the v1.3 run reaches it, verify against all 13 SPEC requirements and run code review (ponytail and skill-judge) plus cross-AI review before marking it Complete; gaps become gap-closure plans. See ROADMAP Phase 24 "Review flag".
 
 **Phase 7 plan-review convergence — reviewer lane structurally blocked, not converged (2026-09-11).**
 `/gsd-review --phase 7 --opencode` returned a numerically "clean" CYCLE_SUMMARY
@@ -309,10 +470,42 @@ even though `.planning/config.json` has `parallelization: true` — that
 setting applies to independent plans within a phase, not to this milestone's
 cross-phase ordering constraint.
 
+**v1.3 (Phases 16-22) — mostly linear, with two independent tail phases
+(2026-09-23).** Phases 16 → 17 → 18 → 19 form a strict build chain (each
+later phase's code depends on the prior phase's modules). Phase 20 (codex +
+opencode) depends on Phase 19's completed, evaluated rewrite. Phases 21
+(cursor) and 22 (pi) each depend only on Phase 19 — they are mutually
+independent of each other and of Phase 20, and may be planned/executed in
+any order, or deferred, without blocking anything else in this milestone.
+
 ### Roadmap Evolution
 
 - Phase 15.1 inserted after Phase 15: Usage Metrics Dashboard UX/Perf Overhaul — 14 UX/perf/bug findings from live dashboard.html review (empty date col, family showing garbage tokens, session-group row dup, no pagination/virtualization causing browser freeze, filter bar unordered, missing runtime column, no launch detection, price always 0, no charts, no MUI styling) (URGENT)
 - Phase 15.2 inserted after Phase 15: v1.2 tech debt cleanup from milestone audit (pyright typing, 15.1 WR-01/WR-02, 15.1 lint, resolved todos) (URGENT)
+- v1.3 roadmap created 2026-09-23: Phases 16-22 derived from 31 v1.3
+  requirements per the approved source spec's §10 delivery-phase split
+  (Phase 17 split into 17/18 for size; cursor/pi kept as separate tail
+  phases per the spec).
+- Phase 16.1 inserted after Phase 16: Hardening: gate scope, sibling-first imports, security/correctness fixes from the 2026-10-13 audit; closes Phase 16
+- Phase 18.1 inserted after Phase 18: One runtime model: (runtime, model) candidates, native_runtime removed
+- Phase 24 added after Phase 23: Spec-and-discuss chain skill (learned from the tools-installer run, 2026-10-14)
+- Phase 21.1 inserted after Phase 21: Cursor project-level subagent linking (AGT-02; D-01 spike: cursor CLI ignores ~/.cursor/agents)
+- Phase 21.1 moved to backlog 999.7 (2026-10-18, owner decision: cursor is a secondary runtime; Phase 21 documents manual per-file linking)
+- Phase 21.1 inserted after Phase 21: Atomic reusable decision-system skills (DEC-01..03); from the 2026-10-18 todos, owner-prioritized ahead of 22/23
+- Phase 21.2 inserted after Phase 21: PreCompact pre-summary hook via the decision system (PCH-01..02); from the 2026-10-18 todos, owner-prioritized ahead of 22/23
+- Phase 21.3 inserted after Phase 21: Visible tool-advisory hooks as setup knobs (ADV-01..04); from the 2026-10-18 todos, owner-prioritized ahead of 22/23
+
+## Deferred Verification
+
+| Phase | State | Resume |
+|-------|-------|--------|
+| 21.3 | human_needed (ADV-01..03 automatable criteria pass, 0 gaps; 2026-10-23) | owner runs the 21.3-LIVE.md matrix (L-C1..8 Claude Code, L-P1..4 pi) and the S-OC opencode spike (`opencode --standalone`) in a scratch HOME with an interactive login; `live/check_live.py 21.3-LIVE.md` must exit 0 (an S-OC pass needs a `/gsd-plan-phase 21.3 --gaps` opencode adapter plan first); then `/gsd-verify-work 21.3` |
+| 21.2 | human_needed (automatable criteria pass, 0 gaps; 2026-10-23) | owner runs live checks S2-S5 and the R9 measurements in a scratch HOME (interactive host login), then the 21.2-MEASUREMENTS.md close-out (`verdict.py`, `PRECOMPACT_VERDICTS`, ROADMAP/REQUIREMENTS amendments); until then every precompact row is `unmeasured` and default off; then `/gsd-verify-work 21.2` |
+| 21.1 | human_needed (4/4 roadmap criteria, 0 gaps; 2026-10-23) | owner decides LIVE 6 (Laya accuracy_when_not_fallback 0.5 < 0.95, no calibrated winner) and the skill-judge UNRESOLVED (opencode lane: jev D8 11/15 + 2 Important, spec-discuss 1 Important; both clean-Opus rows pass); live TypeSafe/Zen checks need key + consent + budget; reinstall the global copy with `python3 tools/setup.py install --headless --skills jev-fast-decision --replace-existing`; then `/gsd-verify-work 21.1` |
+| 21 | human_needed (5/5 roadmap criteria, 0 gaps; 2026-10-19) | uz runs `21-INTERACTIVE-CURSOR.md` steps 1-4; owner decides the skill-judge UNRESOLVED (pi 114 vs 116 baseline) after the pending re-judge on digest f0c43a5da52a587d; then `/gsd-verify-work 21` |
+| 20 | human_needed (8/9 automated truths, 0 gaps; 2026-10-18) | uz runs `20-INTERACTIVE-OPENCODE.md`, then `/gsd-verify-work 20`; EVAL-05 stays Pending until then. The codex TUI run (EVAL-04) is deferred to backlog 999.6 (codex is a secondary runtime) |
+
+Phase 16: 4/4 success criteria verified 2026-10-14; the one human item (real codex/pi host signal) is scheduled for Phases 20 and 22.
 
 ## Deferred Items
 
@@ -331,6 +524,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-09-23
-Stopped at: v1.2 milestone archived
+Last session: 2026-10-23T18:18:39.740Z
+Stopped at: Completed 22-06-PLAN.md
 Resume file: None

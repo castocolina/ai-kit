@@ -637,6 +637,7 @@ class TestPrecommitPrepushSplit(unittest.TestCase):
             )
             finding = check_precommit_prepush_split(repo)
             self.assertIsNotNone(finding)
+            assert finding is not None
             self.assertIn("unittest", finding["slow_hooks_missing_push_stage"])
 
     def test_slow_hook_with_own_push_stage_not_flagged(self):
@@ -1248,6 +1249,8 @@ class TestProvenanceCitationRegexDriftGuard(unittest.TestCase):
 # defaults, out-of-taxonomy markers, Makefile-category alias table (+ its
 # drift guard), and the redundant-vs-complementary pairs lookup.
 
+from typing import cast
+
 from ai_kit_rules_common import tool_catalog as _tc
 
 
@@ -1331,6 +1334,12 @@ class TestToolCategoryIndexDerivation(unittest.TestCase):
         with self.assertRaises(ImportError):
             _derive_from(colliding)
 
+    def test_supplementary_merge_collision_guard_is_non_vacuous(self):
+        index = {"shared-tool": "formatting"}
+        supplementary = {"shared-tool": "linting"}
+        with self.assertRaises(ImportError):
+            _tc._merge_supplementary(index, supplementary)
+
 
 def _derive_from(baseline):
     """Re-implements `_derive_tool_category_index`'s collision rule against
@@ -1382,7 +1391,9 @@ class TestResolveToolCategory(unittest.TestCase):
     def test_unknown_name_resolves_to_none(self):
         self.assertIsNone(_tc.resolve_tool_category("definitely-not-a-real-tool"))
         self.assertIsNone(_tc.resolve_tool_category(""))
-        self.assertIsNone(_tc.resolve_tool_category(None))
+        self.assertIsNone(
+            _tc.resolve_tool_category(None)  # pyright: ignore[reportArgumentType]  # deliberately ill-typed input: None must not resolve
+        )
 
 
 class TestPairsReachability(unittest.TestCase):
@@ -1463,7 +1474,7 @@ class TestPairsReachability(unittest.TestCase):
             "reason": "fixture row for the non-vacuity guard",
         }
         with self.assertRaises(ImportError):
-            _tc._validate_pairs_reachability((row,))
+            _tc._validate_pairs_reachability((cast(_tc.PairRow, row),))
 
     def test_import_guard_raises_on_cross_category_redundancy(self):
         row = {
@@ -1474,7 +1485,7 @@ class TestPairsReachability(unittest.TestCase):
             "reason": "fixture row for the non-vacuity guard",
         }
         with self.assertRaises(ImportError):
-            _tc._validate_pairs_reachability((row,))
+            _tc._validate_pairs_reachability((cast(_tc.PairRow, row),))
 
 
 class TestFindPairRelationship(unittest.TestCase):
@@ -1482,6 +1493,7 @@ class TestFindPairRelationship(unittest.TestCase):
         forward = _tc.find_pair_relationship("knip", "ts-prune")
         backward = _tc.find_pair_relationship("ts-prune", "knip")
         self.assertIsNotNone(forward)
+        assert forward is not None
         self.assertEqual(forward, backward)
         self.assertEqual(forward["relationship"], "supersession")
 
@@ -2127,6 +2139,8 @@ def _load_compose_parse_module():
     spec = importlib.util.spec_from_file_location(
         "_compose_parse_for_yaml_text_drift_guard", _COMPOSE_PARSE_PATH
     )
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

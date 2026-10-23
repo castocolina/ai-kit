@@ -34,7 +34,7 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   `tools/setup.py`) — never a silent runtime import.
 - Every write to a runtime's config file (opencode.jsonc, Codex TOML, Claude
   JSON, ai-kit's own `settings.json` wiring) is atomic (`tempfile.mkstemp()`
-  + `os.replace()`), reusing `_read_json()`/`_write_json()`. JSONC surgical
+  + `os.replace()`), reusing `_read_json_checked()`/`_atomic_write_json()`. JSONC surgical
   edits preserve every other byte untouched — comments, formatting,
   unrelated entries.
 - No diagnostic, detection, or catalog result is presented with more
@@ -64,23 +64,25 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 
 ## Architecture
 
-- `detect_installed_clis()` (binary-on-PATH) and `detect_current_runtime()`
-  (which CLI hosts *this* process) are deliberately different questions —
-  never conflate them. `KNOWN_CLIS` in
-  `skills/ai-kit-spec-review/ai_kit_spec/detection.py` is the single source
-  of truth for which CLIs ai-kit knows about.
-- A model-catalog entry with `cli: None` means "native" (host-agnostic
-  wording — never Claude/opus-specific). `native_runtime` is only ever set
-  on entries with `cli: None`.
-  > **Amended 2026-09-09** (Phase 1.2 plan 01.2-02): `cli: None`/`cli`-omitted
-  > semantics actually live in `review-spec.toml`'s native `[[reviewers]]`
-  > entries (and the candidate dicts `quota.py` builds from them) — not in
-  > `model_catalog.py`, whose catalog entries never carry a `cli` key at all.
-  > `native_runtime` schema validation exists in both files: `config_io.py`
-  > is the functionally-reachable path (native review-spec.toml entries),
-  > `model_catalog.py`'s is forward-compatible-only (no live producer sets a
-  > `cli` key there today). Both reject `native_runtime` co-present with a
-  > non-null `cli` on the same entry.
+- The `RUNTIMES` table in `skills/ai-kit-spec-review/ai_kit_spec/detection.py`
+  is the single source of truth for runtime ids, binaries, host signals,
+  listing, native selectors and the review-only flag. `KNOWN_CLIS` derives
+  from it. `detect_installed_clis()` (binary-on-PATH) and
+  `detect_current_runtime()` (which CLI hosts *this* process) stay different
+  questions — never conflate them.
+- A reviewer or executor entry is a (runtime, model) pair, the session default
+  (neither a runtime nor a model), or a trust-gated custom `command` entry
+  (a command and no runtime). Native versus subprocess is decided per call by
+  `ai_kit_spec/routing.py` and never stored. Every subprocess runs through the
+  runner template via `ai_kit_spec/runner_dispatch.py`; a custom entry runs
+  through the custom launcher on the same core. Legacy reviewer fields still
+  load in memory, with a note naming the entry and the re-save command.
+- `model-catalog.json` reserves the top-level key `_meta` for cache metadata such as
+  `schema_version`; every other top-level key is a `provider/model` entry. Code that iterates
+  the catalog must skip `_meta` (the sibling skills that read this file already skip non-model
+  values, pinned by regression tests); writers go through
+  `model_catalog.split_catalog_meta`/`join_catalog_meta`, and `merge_catalog_entry` rejects
+  `_meta` as a model id.
 - `tools/status-line.py` is organized into banner-delimited blocks
   (`# ═══ N. <ROLE> — ...`) with a role-prefix convention on top-level
   functions (`cfg_`/`probe_`/`fmt_`/`util_`/`core_`/`seg_`, plus the
@@ -120,18 +122,32 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 
 ## Testing
 
-- `make test` is the aggregate over four pyramid tiers, never a duplicated
-  unittest list: `test-unit` (in-process stdlib modules, plus
-  `tests.test_framework_profiles` under `uv`), `test-integration` (Textual
-  app / PTY-driven subprocesses), `e2e-test` (real git worktrees,
-  PTY-spawned wizard/setup, and `bash tests/test_install.sh`), and
-  `arch-test` (AST architecture-fitness via `tests/test_arch.py`). Run
-  `make test` before considering work done — the Python suite alone
-  doesn't cover installer behavior (fetch, symlink, wiring).
-- `make lint` — shellcheck + `py_compile`. `make validate` — the same
-  pre-commit hooks that gate commits, run across all files via the
-  per-hook single-tool targets (`ruff`, `pylint`, `pyright`, `vulture`,
-  `shellcheck`, `py-compile`, `unittest`, `unittest-wizard`).
+- `make test` is the aggregate over four pyramid tiers, each a runner group:
+  `test-unit` runs `unit` under system python3 plus `unit-uv` under uv;
+  `test-integration` runs `integration`, the Textual app and PTY suites;
+  `e2e-test` runs `e2e`, the real git worktrees, memory checks and real
+  `node` runs against the checkout-local gsd-core, plus
+  `bash tests/test_install.sh`; `arch-test` runs `arch`. Run `make test`
+  before considering work done — the Python suite alone doesn't cover
+  installer behavior (fetch, symlink, wiring).
+- Every tier runs one subprocess per module, in parallel, through
+  `tools/run_unittest_parallel.py --group <name>`, never a sequential
+  `python3 -m unittest` list. A new `tests/test_*.py` joins the `unit` group
+  automatically. A module that needs uv, a PTY or Textual run, or must stay
+  out of `make validate` goes into the matching commented exception set in
+  the runner; a module that cannot run in parallel goes into an explicit,
+  commented exception set, never a silent sequential path.
+  `tests/test_gate_scope.py` enforces this.
+- Parallelism is a share of the available CPUs (`os.process_cpu_count()`,
+  then the affinity mask, then `os.cpu_count()`), capped at 40%.
+  `AI_KIT_TEST_CPU_SHARE` may lower the share, never raise it. Never
+  hardcode a worker or core count.
+- `make lint` — the shellcheck and py-compile hooks (pre-commit, all files),
+  aggregated like `validate`. `make validate` — the same pre-commit hooks that
+  gate commits, run across all files via the per-hook single-tool targets
+  (`ruff`, `pylint`, `pyright`, `vulture`, `shellcheck`, `py-compile`,
+  `unittest`, `unittest-wizard`). Ruff, py-compile, pyright and vulture cover
+  `tools/`, `skills/` and `tests/`; pylint covers `tools/` and `skills/`.
   `security-scanner` and `duplicate-code` are informational-only Makefile
   targets, not wired into `validate`.
 - `tests/*` gets a lighter ruff bar than runtime code (idiomatic test
@@ -222,7 +238,7 @@ unavailable or insufficient.
 - `make dev` — `setup-env` plus install the pre-commit hooks
 - `make test` — aggregate of `test-unit`, `test-integration`, `e2e-test`, `arch-test`
 - `make test-unit` / `test-integration` / `e2e-test` / `arch-test` — individual pyramid tiers
-- `make lint` — shellcheck + `py_compile`
+- `make lint` — shellcheck + py-compile hooks (pre-commit, all files)
 - `make validate` — the same pre-commit hooks that gate commits, all files (via per-hook targets)
 - `make format` — `ruff format .` (dev-only, mutates files, not wired into validate)
 - `make security-scanner` / `make duplicate-code` — informational/non-gating checks, not wired into `validate`

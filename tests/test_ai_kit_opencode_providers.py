@@ -123,6 +123,7 @@ class TestTracerRemoveEndToEnd(unittest.TestCase):
         )
         span = jsonc_edit.find_provider_object(both)
         self.assertIsNotNone(span)
+        assert span is not None
         slice_text = both[span[0] : span[1]]
         self.assertIn("real-router", slice_text)
         self.assertNotIn("decoy-router", slice_text)
@@ -166,6 +167,7 @@ class TestRemoveCommaCases(unittest.TestCase):
         original = _fixture_text()
         result = jsonc_edit.remove_provider(original, "alpha-router")
         self.assertIsNotNone(result)
+        assert result is not None
         parsed = _assert_parses(self, result)
         self.assertEqual(
             list(parsed["provider"].keys()), ["beta-router", "gamma-router"]
@@ -181,6 +183,7 @@ class TestRemoveCommaCases(unittest.TestCase):
     def test_remove_middle_leaves_one_comma(self):
         original = _fixture_text()
         result = jsonc_edit.remove_provider(original, "beta-router")
+        assert result is not None
         parsed = _assert_parses(self, result)
         self.assertEqual(
             list(parsed["provider"].keys()), ["alpha-router", "gamma-router"]
@@ -194,6 +197,7 @@ class TestRemoveCommaCases(unittest.TestCase):
     def test_remove_last_consumes_preceding_comma_keeps_comment(self):
         original = _fixture_text()
         result = jsonc_edit.remove_provider(original, "gamma-router")
+        assert result is not None
         parsed = _assert_parses(self, result)
         self.assertEqual(
             list(parsed["provider"].keys()), ["alpha-router", "beta-router"]
@@ -212,6 +216,7 @@ class TestRemoveCommaCases(unittest.TestCase):
     def test_remove_sole_entry_leaves_empty_object(self):
         original = _fixture_text("opencode-single-provider.jsonc")
         result = jsonc_edit.remove_provider(original, "solo-router")
+        assert result is not None
         parsed = _assert_parses(self, result)
         self.assertEqual(parsed["provider"], {})
         self.assertIn("// keep this comment for byte-identity", result)
@@ -271,6 +276,7 @@ class TestRemoveEdgeCases(unittest.TestCase):
         self.assertEqual(ids, ["real-router"])
         result = jsonc_edit.remove_provider(text, "real-router")
         self.assertIsNotNone(result)
+        assert result is not None
         self.assertIn("decoy-router", result)
         self.assertNotIn("real-router", jsonc_edit.strip_jsonc_comments(result))
 
@@ -333,6 +339,7 @@ class TestRemoveUnbalancedBraceGuard(unittest.TestCase):
         )
         result = jsonc_edit.remove_provider(text, "broken")
         self.assertIsNotNone(result)
+        assert result is not None
         with self.assertRaises(json.JSONDecodeError):
             json.loads(jsonc_edit.strip_trailing_commas(jsonc_edit.strip_jsonc_comments(result)))
         self.assertFalse(jsonc_edit.validate_removal(text, result, "broken"))
@@ -341,6 +348,7 @@ class TestRemoveUnbalancedBraceGuard(unittest.TestCase):
         original = _fixture_text()
         result = jsonc_edit.remove_provider(original, "beta-router")
         self.assertIsNotNone(result)
+        assert result is not None
         self.assertTrue(jsonc_edit.validate_removal(original, result, "beta-router"))
 
     def test_validate_removal_survives_duplicate_ids(self):
@@ -351,6 +359,7 @@ class TestRemoveUnbalancedBraceGuard(unittest.TestCase):
             "} }\n"
         )
         first = jsonc_edit.remove_provider(text, "dup-router")
+        assert first is not None
         self.assertTrue(jsonc_edit.validate_removal(text, first, "dup-router"))
 
 
@@ -376,6 +385,7 @@ class TestWalkerSeeding(unittest.TestCase):
         text = _fixture_text()
         span = jsonc_edit.find_provider_object(text)
         self.assertIsNotNone(span)
+        assert span is not None
         open_i, close_i = span
         sig = set(jsonc_edit.significant_indices(text, open_i, close_i))
         stripped = jsonc_edit.strip_jsonc_comments(text)
@@ -389,6 +399,7 @@ class TestWalkerSeeding(unittest.TestCase):
     def test_last_entry_deletes_real_comma_not_decoy(self):
         original = _fixture_text()
         result = jsonc_edit.remove_provider(original, "gamma-router")
+        assert result is not None
         self.assertIn("// decoy separator , between last two", result)
         _assert_parses(self, result)
         after_beta = result[
@@ -409,10 +420,12 @@ class TestDuplicateProviderId(unittest.TestCase):
         )
         first = jsonc_edit.remove_provider(text, "dup-router")
         self.assertIsNotNone(first)
+        assert first is not None
         self.assertNotIn('"npm": "first"', first)
         self.assertIn('"npm": "second"', first)
         second = jsonc_edit.remove_provider(first, "dup-router")
         self.assertIsNotNone(second)
+        assert second is not None
         self.assertNotIn("dup-router", jsonc_edit.strip_jsonc_comments(second))
 
 
@@ -440,6 +453,7 @@ class TestNonObjectProviderValue(unittest.TestCase):
     def test_remove_following_object_still_works(self):
         result = jsonc_edit.remove_provider(self.TEXT, "obj-two")
         self.assertIsNotNone(result)
+        assert result is not None
         ids = [e.provider_id for e in jsonc_edit.iter_provider_entries(result)]
         self.assertEqual(ids, ["obj-one"])
 
@@ -884,6 +898,21 @@ class TestCrossReferenceReviewSpec(_XrefScratch):
         self.assertEqual(refs[0].field, "cli")
         self.assertEqual(refs[0].value, "synth-router")
 
+    def test_runtime_form_model_yields_reference(self):
+        _write_file(
+            self.local_spec,
+            "\n".join([
+                "[[reviewers]]",
+                'key = "pair-reviewer"',
+                'runtime = "opencode"',
+                'model = "synth-router/demo-model"',
+                "",
+            ]),
+        )
+        refs = scan_review_spec(self.local_spec, "synth-router")
+        self.assertEqual([(ref.field, ref.value) for ref in refs],
+                         [("model", "synth-router/demo-model")])
+
     def test_missing_file_is_empty(self):
         self.assertEqual(scan_review_spec(self.local_spec, "synth-router"), [])
 
@@ -949,6 +978,31 @@ class TestCrossReferenceCatalog(_XrefScratch):
             json.dumps({"synth-router/demo": "not-a-dict", "ok": 1}),
         )
         self.assertEqual(scan_catalog(self.catalog, "synth-router"), [])
+
+    def test_reserved_meta_key_is_never_reported(self):
+        # Regression pin (Phase 16 plan 03 / 16 D-12): model-catalog.json now reserves the
+        # top-level `_meta` key for cache metadata. scan_catalog skips non-model values
+        # naturally (its own non-dict/shape checks) -- this pins that a `_meta` object (even
+        # one carrying strings mentioning a provider id) is never reported as a reference.
+        _write_file(
+            self.catalog,
+            json.dumps(
+                {
+                    "_meta": {
+                        "schema_version": 2,
+                        "anthropic_model_ids": ["synth-router-x"],
+                    },
+                    "synth-router/demo": {
+                        "provider": "synth-router",
+                        "runtimes": {},
+                    },
+                }
+            ),
+        )
+        refs = scan_catalog(self.catalog, "synth-router")
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].locator, "synth-router/demo")
+        self.assertNotEqual(refs[0].locator, "_meta")
 
     def test_dict_provider_is_not_stringified(self):
         blob = {"name": "synth-router", "nested": ["synth-router"]}

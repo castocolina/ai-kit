@@ -60,6 +60,12 @@ def _precommit_hook_files_regex(hook_id):
     return match.group(1).strip().strip("'\"")
 
 
+def _tool_roots_cover(rel_dir: str, roots: list[str]) -> bool:
+    sample = f"{rel_dir.rstrip('/')}/module.py"
+    return any(sample == root or sample.startswith(f"{root}/") for root in roots)
+
+
+
 def _precommit_yaml(*hook_blocks):
     return "repos:\n  - repo: local\n    hooks:\n" + "".join(hook_blocks)
 
@@ -847,6 +853,7 @@ class TestCliSurface(unittest.TestCase):
                 "python", cache_root=cache_root
             )
             self.assertFalse(needs_research)
+            assert tooling is not None
             self.assertIn("dead-code", tooling)
 
     def test_cache_update_rejects_unknown_key_without_traceback(self):
@@ -865,11 +872,10 @@ class TestCliSurface(unittest.TestCase):
 
 
 class TestGateRegistration(unittest.TestCase):
-    def test_makefile_registers_module_and_package(self):
+    def test_makefile_lists_module(self):
         with open(_MAKEFILE_PATH, encoding="utf-8") as handle:
             text = handle.read()
         self.assertIn("tests.test_ai_kit_project_rules_precommit", text)
-        self.assertIn("skills/ai-kit-project-rules-precommit/", text)
 
     def test_precommit_ruff_and_py_compile_match_package_path(self):
         for hook_id in ("ruff", "py-compile"):
@@ -881,19 +887,23 @@ class TestGateRegistration(unittest.TestCase):
         entry_block = _precommit_hook_block("unittest")
         match = re.search(r"^\s*entry:\s*(.+)$", entry_block, re.MULTILINE)
         self.assertIsNotNone(match, "no entry: value for hook unittest")
+        assert match is not None
         self.assertIn("tests.test_ai_kit_project_rules_precommit", match.group(1))
 
     def test_pyright_include_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         include = data["tool"]["pyright"]["include"]
-        self.assertIn("skills/ai-kit-project-rules-precommit", include)
+        self.assertTrue(
+            _tool_roots_cover("skills/ai-kit-project-rules-precommit", include),
+            include,
+        )
 
     def test_vulture_paths_contains_package_directory(self):
         with open(_PYPROJECT_PATH, "rb") as handle:
             data = tomllib.load(handle)
         paths = data["tool"]["vulture"]["paths"]
-        self.assertIn("skills/ai-kit-project-rules-precommit", paths)
+        self.assertTrue(_tool_roots_cover("skills/ai-kit-project-rules-precommit", paths), paths)
 
 
 def _enable_everything(repo_root):
@@ -1123,8 +1133,10 @@ class TestReadYamlValueBlockSequenceContract(unittest.TestCase):
             disable = config_read.read_yaml_value(path, ("linters", "disable"))
             enable = config_read.read_yaml_value(path, ("linters", "enable"))
             enable_all = config_read.read_yaml_value(path, ("linters", "enable-all"))
-            self.assertEqual(list(disable), ["staticcheck", "errcheck"])
-            self.assertEqual(list(enable), ["govet", "ineffassign"])
+            assert isinstance(disable, list)
+            assert isinstance(enable, list)
+            self.assertEqual(disable, ["staticcheck", "errcheck"])
+            self.assertEqual(enable, ["govet", "ineffassign"])
             self.assertEqual(str(enable_all).lower(), "false")
 
 

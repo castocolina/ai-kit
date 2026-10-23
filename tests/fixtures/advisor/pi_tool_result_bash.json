@@ -1,0 +1,11 @@
+{
+  "event": {
+    "toolName": "bash",
+    "toolCallId": "call-1",
+    "input": {"command": "grep -rn TODO ."},
+    "content": [{"type": "text", "text": "src/a.py:3:# TODO tidy\n"}],
+    "details": {},
+    "isError": false
+  },
+  "ctx": {"sessionId": "pi-adv-1", "cwd": "demo-project"}
+}
