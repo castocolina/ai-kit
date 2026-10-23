@@ -572,7 +572,7 @@ Phase 21
      probe availability, honor consent for remote backends, and log every advisory answer.
   4. Research settles which Jev 1.14 features ship now (`score`, `box`, images incl. comparing
      several, long context, multi-question batching) and what local Laya supports.
-**Plans:** 5/7 plans executed
+**Plans:** 6/7 plans executed
 
 Plans (cross-AI plans run one per wave; the only live uses are local Laya in 21.1-06/07 and the
 pi judge in 21.1-07; the orchestrator runs the in-session pressure arms and judge between waves):
@@ -592,7 +592,7 @@ pi judge in 21.1-07; the orchestrator runs the in-session pressure arms and judg
 - [x] 21.1-05-PLAN.md — Wizard housekeeping kind `replace` (default No) and a PTY run through it (DEC-03)
 
 **Wave 6** *(blocked on Wave 5 and the orchestrator's RED arms)*
-- [ ] 21.1-06-PLAN.md — GREEN SKILL.md, reference.md with the dated capability matrix, backends/*.md, README row; evals and the live-calibrated Laya threshold; GREEN/REFACTOR staging (DEC-01, DEC-03)
+- [x] 21.1-06-PLAN.md — GREEN SKILL.md, reference.md with the dated capability matrix, backends/*.md, README row; evals and the live-calibrated Laya threshold; GREEN/REFACTOR staging (DEC-01, DEC-03)
 
 **Wave 7** *(blocked on Wave 6 and the orchestrator's GREEN/REFACTOR arms)*
 - [ ] 21.1-07-PLAN.md — Nine live Laya checks, skill-judge on both skills (in-session + pi), phase gates (DEC-03, DEC-01)
