@@ -16,6 +16,7 @@ by a parity test; the transcript format is undocumented and read defensively.
 """
 
 import contextlib
+import fnmatch
 import hashlib
 import json
 import os
@@ -23,6 +24,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 
 CAP_CHARS = 9500
@@ -818,7 +820,7 @@ def main(argv, environ=None):
     return 0
 
 
-def private_dir(env):
+def private_dir(env, name="compact"):
     """The D-15 private dir: $XDG_RUNTIME_DIR/ai-kit/compact, else the cache
     fallback; absolute bases only. Created 0700 and accepted only as a real
     directory owned by this uid with no group/other bits, else None."""
@@ -829,11 +831,13 @@ def private_dir(env):
         base = cache if cache else (os.path.join(home, ".cache") if home else None)
     if not base or not os.path.isabs(base):
         return None
-    path = os.path.join(base, "ai-kit", "compact")
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name):
+        return None
+    path = os.path.join(base, "ai-kit", name)
     parent_fd = None
     try:
         parent_fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        for component in ("ai-kit", "compact"):
+        for component in ("ai-kit", name):
             with contextlib.suppress(FileExistsError):
                 os.mkdir(component, 0o700, dir_fd=parent_fd)
             child_fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
@@ -852,8 +856,8 @@ def private_dir(env):
             os.close(parent_fd)
 
 
-def sweep(path):
-    """Delete this dir's *-compact.md and .precompact-*.tmp files older than TTL."""
+def sweep(path, patterns=("*-compact.md", ".precompact-*.tmp")):
+    """Delete matching entries older than TTL; defaults preserve 21.2 behavior."""
     try:
         entries = list(os.scandir(path))
     except OSError:
@@ -861,9 +865,7 @@ def sweep(path):
     now = time.time()
     for entry in entries:
         name = entry.name
-        ours = (name.endswith("-compact.md") and not name.startswith(".")) or \
-            (name.startswith(".precompact-") and name.endswith(".tmp"))
-        if not ours:
+        if not any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns):
             continue
         try:
             if now - entry.stat().st_mtime > TTL_SECONDS:
@@ -883,28 +885,32 @@ def safe_session_id(value):
     return isinstance(value, str) and SESSION_ID_RE.fullmatch(value) is not None
 
 
-def write_presummary(text, session_id, slug, directory):
-    """Atomic write: mkstemp in the private dir, 0600, os.replace to the final
-    name; a reader never sees a partial file. Returns the path or None."""
+def write_private(directory, name, text, prefix):
+    """Atomically write private text with a 0600 temporary file and replace."""
+    temp_path = None
     dir_fd = None
-    temp_name = f".precompact-{os.getpid()}-{time.time_ns()}.tmp"
-    target_name = f"{session_id}-{slug}-compact.md"
     try:
         dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                     0o600, dir_fd=dir_fd)
+        fd, temp_path = tempfile.mkstemp(dir=directory, prefix=prefix, suffix=".tmp")
+        temp_name = os.path.basename(temp_path)
+        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
-        os.replace(temp_name, target_name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        os.replace(temp_name, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        return os.path.join(directory, name)
     except OSError:
-        if dir_fd is not None:
+        if temp_path:
             with contextlib.suppress(OSError):
-                os.unlink(temp_name, dir_fd=dir_fd)
+                os.unlink(temp_path)
         return None
     finally:
         if dir_fd is not None:
             os.close(dir_fd)
-    return os.path.join(directory, target_name)
+
+
+def write_presummary(text, session_id, slug, directory):
+    """Write a private atomic pre-summary, preserving the 21.2 filename shape."""
+    return write_private(directory, f"{session_id}-{slug}-compact.md", text, ".precompact-")
 
 
 def read_header(path):

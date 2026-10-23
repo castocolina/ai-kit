@@ -1,5 +1,8 @@
 """Host-neutral advisor core: stdlib-only, advice-only and fail-safe via its caller."""
 
+import contextlib
+import fcntl
+import hashlib
 import importlib
 import json
 import math
@@ -18,6 +21,16 @@ READ_TOKEN_LIMIT = 10000
 READ_LINE_LIMIT = 2000
 READ_CAP_BYTES = 64 * 1024 * 1024
 READ_CHUNK_BYTES = 1024 * 1024
+REPEAT_EVERY = 10
+MAX_CALL_RECORDS = 256
+OUTPUT_LINE_LIMIT = 200
+STATE_PATTERNS = ("*.json", ".advisor-*.tmp")
+LOCK_NAME = ".advisor.lock"
+SHOWN = "*shown"
+LEGACY_TO_MODERN = {"grep": "rg", "cat": "bat", "sed-range": "bat",
+                    "sed-edit": "sd", "find": "fd"}
+LEGACY_NAMES = {"grep": "grep", "cat": "cat", "sed-range": "sed",
+                "sed-edit": "sed", "find": "find"}
 _ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _RANGE_RE = re.compile(r"^(\d+)(?:,(\d+))?p$")
 _SUBST_RE = re.compile(r"^s(.).*\1.*\1[A-Za-z0-9]*$")
@@ -242,30 +255,171 @@ def read_report(path, offset, limit, installed):
     return "read-large", line + "."
 
 
+def output_size(texts):
+    """Count output lines and characters across texts."""
+    valid = [text for text in texts if isinstance(text, str)]
+    chars = sum(map(len, valid))
+    lines = sum(text.count("\n") + int(bool(text) and not text.endswith("\n"))
+                for text in valid)
+    return lines, chars
+
+
 def event_from_claude(payload, kind):
     """Map a Claude payload to the host-neutral advisor event."""
     tool_input = payload.get("tool_input") if isinstance(payload, dict) else None
     tool_input = tool_input if isinstance(tool_input, dict) else {}
     tool = payload.get("tool_name") if isinstance(payload, dict) else None
-    return {"kind": kind, "tool": tool.lower() if isinstance(tool, str) else None,
-            "command": tool_input.get("command"), "path": tool_input.get("file_path"),
-            "offset": tool_input.get("offset"), "limit": tool_input.get("limit"),
-            "session_id": payload.get("session_id") if isinstance(payload, dict) else None,
-            "call_id": payload.get("tool_use_id") if isinstance(payload, dict) else None}
+    event = {"kind": kind, "tool": tool.lower() if isinstance(tool, str) else None,
+             "command": tool_input.get("command"), "path": tool_input.get("file_path"),
+             "offset": tool_input.get("offset"), "limit": tool_input.get("limit"),
+             "session_id": payload.get("session_id") if isinstance(payload, dict) else None,
+             "call_id": payload.get("tool_use_id") if isinstance(payload, dict) else None}
+    if kind == "reminder":
+        response = payload.get("tool_response") if isinstance(payload, dict) else None
+        response = response if isinstance(response, dict) else {}
+        event["output_lines"], event["output_chars"] = output_size(
+            (response.get("stdout"), response.get("stderr")))
+    return event
+
+
+def _fresh_state(session_id):
+    return {"session": session_id, "counts": {}, "calls": {}}
+
+
+def _valid_state(state, session_id):
+    if not isinstance(state, dict) or state.get("session") != session_id:
+        return False
+    counts, calls = state.get("counts"), state.get("calls")
+    return (isinstance(counts, dict)
+            and all(isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                    for value in counts.values())
+            and isinstance(calls, dict)
+            and all(isinstance(key, str) and isinstance(value, list)
+                    and all(isinstance(item, str) for item in value)
+                    for key, value in calls.items()))
+
+
+def call_key(event):
+    """Hash a host call id; events without one are intentionally uncorrelated."""
+    call_id = event.get("call_id")
+    if not isinstance(call_id, str) or not call_id:
+        return None
+    return hashlib.sha256(call_id.encode("utf-8")).hexdigest()[:16]
+
+
+def count_due(state, advice_id):
+    """Increment one counter and show its first and every tenth repeat."""
+    count = state["counts"].get(advice_id, 0) + 1
+    state["counts"][advice_id] = count
+    return count == 1 or count % REPEAT_EVERY == 1
+
+
+def with_state(env, session_id, update):
+    """Run one state update under a per-session flock and atomic private write."""
+    helpers = importlib.import_module("precompact_core")
+    if not helpers.safe_session_id(session_id):
+        return update(_fresh_state(session_id))
+    directory = helpers.private_dir(env, name="advisor")
+    if directory is None:
+        return update(_fresh_state(session_id))
+    flags = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        fd = os.open(os.path.join(directory, LOCK_NAME), flags, 0o600)
+    except OSError:
+        return update(_fresh_state(session_id))
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        helpers.sweep(directory, patterns=STATE_PATTERNS)
+        path = os.path.join(directory, f"{session_id}.json")
+        try:
+            state_fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            with os.fdopen(state_fd, encoding="utf-8") as handle:
+                loaded = json.load(handle)
+            state = loaded if _valid_state(loaded, session_id) else _fresh_state(session_id)
+        except (OSError, ValueError):
+            state = _fresh_state(session_id)
+        result = update(state)
+        state["calls"] = dict(list(state["calls"].items())[-MAX_CALL_RECORDS:])
+        helpers.write_private(directory, f"{session_id}.json",
+                              json.dumps(state, separators=(",", ":")), ".advisor-")
+        return result
+    except OSError:
+        return update(_fresh_state(session_id))
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _candidate_advice(event, installed):
+    if event.get("tool") == "bash":
+        return bash_advice(event.get("command"), installed)
+    if event.get("tool") == "read":
+        item = read_report(event.get("path"), event.get("offset"), event.get("limit"), installed)
+        return [item] if item else []
+    return []
 
 
 def advise(event, env):
-    """Build advice for a host-neutral event, or None when no advice applies."""
+    """Build frequency-limited advice for advisor or reminder events."""
+    # pylint: disable=too-many-branches
     if not isinstance(event, dict):
         return None
+    kind = event.get("kind", "advisor")
+    if kind not in ("advisor", "reminder"):
+        return None
     installed = installed_tools(env)
-    if event.get("tool") == "bash":
-        lines = bash_advice(event.get("command"), installed)
-        return "\n".join(line for _identity, line in lines) or None
-    if event.get("tool") == "read":
-        result = read_report(event.get("path"), event.get("offset"), event.get("limit"), installed)
-        return result[1] if result else None
-    return None
+    if kind == "reminder" and (event.get("tool") != "bash"
+                               or event.get("output_lines", 0) <= 0):
+        return None
+    candidates = _candidate_advice(event, installed)
+    if not candidates:
+        return None
+    key = call_key(event)
+
+    def update(state):
+        calls = state["calls"]
+        record = calls.get(key) if key is not None else None
+        if key is not None and record is None:
+            record = []
+            calls[key] = record
+        due = []
+        for advice_id, line in candidates:
+            counted = key is None or advice_id not in record
+            if kind == "advisor":
+                if counted:
+                    if key is not None:
+                        record.append(advice_id)
+                    if count_due(state, advice_id):
+                        due.append((advice_id, line))
+            else:
+                id_due = False
+                if counted:
+                    if key is not None:
+                        record.append(advice_id)
+                    id_due = count_due(state, advice_id)
+                big_due = (count_due(state, "big:" + advice_id)
+                           if event.get("output_lines", 0) > OUTPUT_LINE_LIMIT else False)
+                if id_due or big_due:
+                    due.append((advice_id, line))
+        if not due:
+            return None
+        if kind == "reminder":
+            tokens = math.ceil(event.get("output_chars", 0) / 4)
+            line = (f"ai-kit reminder: that command printed {event['output_lines']} lines, "
+                    f"about {tokens} tokens; next time use "
+                    f"{', '.join(LEGACY_TO_MODERN[item[0]] for item in due)} instead of "
+                    f"{', '.join(LEGACY_NAMES[item[0]] for item in due)}.")
+        else:
+            line = "\n".join(item[1] for item in due)
+        already_shown = key is not None and SHOWN in record
+        if key is not None:
+            record.append(SHOWN)
+        if event.get("single_block") and already_shown:
+            return None
+        return line
+
+    return with_state(env, event.get("session_id"), update)
 
 
 def run_claude(raw, kind, env):
