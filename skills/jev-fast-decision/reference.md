@@ -78,7 +78,7 @@ Keep results in durable artifacts as advisory evidence, never in a verdict field
 | `JEV_TYPESAFE_URL` | TypeSafe question URL (default `https://api.typesafe.ai/v1/systemone`) |
 | `TYPESAFE_API_KEY` | TypeSafe key; falls back to `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` (0600 enforced) |
 | `JEV_TYPESAFE_MODEL` | pins the request id (default `jev-latest`) |
-| `JEV_OPENCODE_URL` | Zen base URL (default `https://opencode.ai/zen/v1`) |
+| `JEV_OPENCODE_URL` | Zen POST target (default `https://opencode.ai/inference/systemone/v1/systemone`) |
 | `OPENCODE_ZEN_API_KEY` | Zen key; falls back to `~/.pi/agent/keys.json`'s `opencode-zen.key` |
 | `JEV_OPENCODE_MODEL` | pins the request id(s) (default `jev-1.13-free`, then `jev-1.13`) |
 | `JEV_CALLER` | a label written into answer-log lines |

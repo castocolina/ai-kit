@@ -734,10 +734,11 @@ def _typesafe_classify(error):
 def _opencode_url():
     """Zen's OpenAI-compatible root: `JEV_OPENCODE_URL` replaces the whole base (D-11).
 
-    Same caveat as TypeSafe: the POST target is this URL verbatim and the real path is 21.1-05's
-    to confirm (SPEC O2) — nothing in this plan dials it.
+    The POST target is this URL verbatim: the documented Jev endpoint
+    `https://opencode.ai/inference/systemone/v1/systemone` (opencode.ai/docs/zen, checked
+    2026-10-23). The bearer probe path is not documented and stays unverified until a live run.
     """
-    default = "https://opencode.ai/zen/v1"  # the row's own endpoint, kept inside its adapter
+    default = "https://opencode.ai/inference/systemone/v1/systemone"  # the row's own endpoint
     return os.environ.get("JEV_OPENCODE_URL", default).strip(), None
 
 

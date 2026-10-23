@@ -6,13 +6,11 @@ below — the free promotion does not waive consent.
 
 ## Endpoints and ids
 
-- `JEV_OPENCODE_URL` is the complete POST target, defaulting to
-  `https://opencode.ai/zen/v1`; the client does not append a path or follow redirects. A live
-  check observed `/zen/v1/systemone` on 2026-10-11, while the docs' path is
-  `/inference/systemone/v1/systemone` (opencode.ai/docs/zen, cited 2026-10-18). Neither observation
-  establishes that the current default POST target works. Treat the endpoint contract as
-  unresolved until the actual client POST path is verified; do not claim either path is the
-  client's verified default.
+- `JEV_OPENCODE_URL` is the complete POST target, defaulting to the documented
+  `https://opencode.ai/inference/systemone/v1/systemone` (opencode.ai/docs/zen, checked
+  2026-10-23); the client does not append a path or follow redirects. A live check on 2026-10-11
+  also saw `/zen/v1/systemone` answer. The bearer probe (`GET /models` on the origin) is not
+  documented and stays unverified until a run with a real key.
 - Ordered model ids: `jev-1.13-free`, then `jev-1.13` (pin both with `JEV_OPENCODE_MODEL`).
   Responses fullmatch `opencode-*`; the result's `model` is the id that answered. Choice
   probabilities may arrive as integers 0/1.

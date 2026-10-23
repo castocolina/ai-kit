@@ -677,6 +677,12 @@ class TestTaxonomy(_ClientCase):
         self.assertEqual([(r["method"], r["path"]) for r in typesafe.requests],
                          [("GET", "/v1/models")])
 
+    def test_opencode_row_targets_documented_endpoint(self):
+        """The default POST target is Zen's documented Jev endpoint (opencode.ai/docs/zen)."""
+        os.environ.pop("JEV_OPENCODE_URL", None)
+        self.assertEqual(JR._opencode_url(),
+                         ("https://opencode.ai/inference/systemone/v1/systemone", None))
+
     def test_taxonomy_500_escalates_without_retry(self):
         result, stub = self.scripted([{"status": 500, "body": b"inference failed"}])
         self.assertEqual(len(stub.posts), 1)
