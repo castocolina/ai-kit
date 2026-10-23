@@ -46,7 +46,7 @@ class AdvisorStateTests(unittest.TestCase):
         self._installed_patch.start()
         self.addCleanup(self._installed_patch.stop)
 
-    def event(self, kind="advisor", session="s-a", call_id="c1", output_lines=0,
+    def event(self, kind="advisor", session="s-a", call_id: str | None = "c1", output_lines=0,
               output_chars=0, command="grep -rn x .", single_block=False):
         return {"kind": kind, "tool": "bash", "command": command, "session_id": session,
                 "call_id": call_id, "output_lines": output_lines,
@@ -95,8 +95,10 @@ class AdvisorStateTests(unittest.TestCase):
         for path in (old, new, os.path.join(directory, "notes.txt"),
                      os.path.join(directory, ".advisor.lock")):
             Path(path).touch()
-        os.utime(old, (time_now() - 25 * 3600,) * 2)
-        os.utime(new, (time_now() - 23 * 3600,) * 2)
+        old_time = time_now() - 25 * 3600
+        new_time = time_now() - 23 * 3600
+        os.utime(old, (old_time, old_time))
+        os.utime(new, (new_time, new_time))
         precompact.sweep(directory, patterns=core.STATE_PATTERNS)
         self.assertFalse(os.path.exists(old))
         self.assertTrue(os.path.exists(new))

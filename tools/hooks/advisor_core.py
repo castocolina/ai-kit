@@ -379,9 +379,8 @@ def advise(event, env):
 
     def update(state):
         calls = state["calls"]
-        record = calls.get(key) if key is not None else None
-        if key is not None and record is None:
-            record = []
+        record = calls.get(key, []) if key is not None else []
+        if key is not None and key not in calls:
             calls[key] = record
         due = []
         for advice_id, line in candidates:
