@@ -10,7 +10,7 @@ import json
 import os
 import posixpath
 
-from . import cross_ai, gsd_catalog, host, presets, skill_scan
+from . import cross_ai, gsd_catalog, host, presets, roles, skill_scan
 from . import skills as skills_mod
 from .plan_schema import PLAN_SCHEMA_VERSION, canonical_json, inventory_digest
 
@@ -477,6 +477,9 @@ def load_plan_and_inventory(
     problem = check_plan_inventory(plan, inv)
     if problem:
         return None, None, problem
+    problem = pi_sonnet_problem(plan, inv)
+    if problem:
+        return None, None, problem
     return plan, inv, None
 
 
@@ -498,6 +501,48 @@ def check_plan_inventory(plan: dict, inv: dict) -> str | None:
     return None
 
 
+def _plan_entry(plan: dict, key: str) -> dict | None:
+    for entry in plan.get("entries") or []:
+        if entry.get("key") == key:
+            return entry
+    return None
+
+
+PI_SONNET_KEY = "model_profile_overrides.pi.sonnet"
+
+
+def pi_sonnet_value_problem(inv: dict, value) -> str | None:
+    """The one membership rule for plan-set and for a hand-edited plan (22 D-05).
+
+    gsd-core's hook writes this value into every request, so a provider/model string or
+    any id the session provider does not serve is refused. ``--force`` cannot pin it.
+    """
+    allowed = roles.pi_session_ids(inv)
+    session = inv.get("pi_session")
+    provider = session.get("provider") if isinstance(session, dict) else None
+    if not allowed:
+        return (
+            f"{PI_SONNET_KEY}: no candidate from the session provider "
+            "(PI_PROVIDER was unset when inventory ran, or the provider serves no listed "
+            "model); run inventory inside the pi session, or plan-unset it"
+        )
+    if value not in allowed:
+        return (
+            f"{value!r} is not a bare model id the session provider {provider} serves "
+            f"(candidates: {', '.join(allowed)}); gsd-core's hook writes it into every "
+            "request, so --force cannot pin it"
+        )
+    return None
+
+
+def pi_sonnet_problem(plan: dict, inv: dict) -> str | None:
+    """Refuse a decided ``pi.sonnet`` before a dry run or an apply writes anything."""
+    entry = _plan_entry(plan, PI_SONNET_KEY)
+    if entry is None or entry.get("op") != "set" or entry.get("status") == "needs_choice":
+        return None
+    return pi_sonnet_value_problem(inv, entry.get("value"))
+
+
 def entry_effective_value(entry: dict | None):
     """Effective config value: ``set`` uses ``value``, ``keep`` uses ``existing``."""
     if entry is None:
@@ -513,13 +558,6 @@ def entry_effective_value(entry: dict | None):
 def execution_effective_on(plan: dict) -> bool:
     entry = _plan_entry(plan, "workflow.cross_ai_execution")
     return entry_effective_value(entry) is True
-
-
-def _plan_entry(plan: dict, key: str) -> dict | None:
-    for entry in plan.get("entries") or []:
-        if entry.get("key") == key:
-            return entry
-    return None
 
 
 def validate_plan(plan: dict) -> str | None:

@@ -116,8 +116,9 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
    - **pi session steer** (`model_profile_overrides.pi.sonnet`, pi hosts only): the
      candidates are the bare model ids the session provider serves (`PI_PROVIDER`, which
      `inventory` reads inside a pi session). `plan-set` refuses any other value, `--force`
-     included, because gsd-core's hook writes it into every request of the project's pi
-     session; with no candidate, decline it with `plan-unset`.
+     included, and so do `apply --dry-run` and `apply` when the value was written into
+     the plan by hand, because gsd-core's hook writes it into every request of the
+     project's pi session; with no candidate, decline it with `plan-unset`.
    - **Trusted roots** (`agent_skills_security.trusted_global_roots`): the one candidate's
      `value` is the whole list — already-configured roots first, then the new `~/` roots.
      Approve it with that list, or decline with `plan-unset`. A list that drops an

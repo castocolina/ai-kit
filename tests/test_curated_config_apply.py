@@ -1560,6 +1560,43 @@ class TestApplyWritePath(unittest.TestCase):
             code2, _report2 = _write_apply(plan_path, inv_path, project, env, rec)
             self.assertEqual(code2, 2)
 
+    def test_hand_edited_pi_sonnet_outside_provider_refused_before_write(self) -> None:
+        """22 review: plan-set already refuses it; a hand edit must not reach a write."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, config_path = _setup_scratch_project(tmp)
+            env["PI_PROVIDER"] = "anthropic"
+            fake = _tables_fake(config_path, env["HOME"])
+            inv_path = os.path.join(tmp, "inventory.json")
+            inv = scratch_inventory(project, env, fake, inv_path, host_name="pi")
+            plan = _minimal_plan(
+                "pi",
+                inv,
+                [
+                    {
+                        "key": "model_profile_overrides.pi.sonnet",
+                        "op": "set",
+                        "value": "router-env/my-coding",
+                        "source": "user",
+                    }
+                ],
+            )
+            plan_path = os.path.join(tmp, "plan.json")
+            plan_io.write_plan(plan_path, plan)
+            before = _tree_snapshot(project)
+            rec = _RecordingRun(fake)
+            for dry_run in (True, False):
+                with self.subTest(dry_run=dry_run):
+                    code, _parsed, _out, err = _run_apply(
+                        plan_path, inv_path, project, env, rec, dry_run=dry_run
+                    )
+                    self.assertEqual(code, 2)
+                    self.assertIn("router-env/my-coding", err)
+                    self.assertIn("not a bare model id", err)
+            self.assertEqual(_tree_snapshot(project), before)
+            joined = [" ".join(row) for row in rec.argv_log]
+            self.assertFalse(any("config-set" in row or "config-new-project" in row
+                                 for row in joined))
+
     def test_pi_skips_agent_skills_probe(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, config_path = _setup_scratch_project(tmp)
