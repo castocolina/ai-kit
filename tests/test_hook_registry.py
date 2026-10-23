@@ -366,6 +366,24 @@ class TestHookSelectionItems(unittest.TestCase):
             pi, "extensions", "ai-kit-precompact.ts")))
         self.assertFalse(os.path.exists(self.paths.settings))
 
+    def test_apply_hook_selection_foreign_pi_file_reports_failure(self):
+        # WR-05: a foreign file at the pi link path must surface as a failed
+        # install (False), not a silent success, and must be left untouched.
+        pi = os.path.join(self.tmp, "pi")
+        foreign_path = os.path.join(pi, "extensions", "ai-kit-precompact.ts")
+        os.makedirs(os.path.dirname(foreign_path))
+        with open(foreign_path, "w", encoding="utf-8") as handle:
+            handle.write("foreign")
+        rows = tuple(row._replace(default=(row.host == "pi"))
+                     for row in setup.HOOK_REGISTRY)
+        with mock.patch.object(setup, "HOOK_REGISTRY", rows), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertFalse(setup.apply_hook_selection(
+                self.paths, {"precompact"}, False, setup.new_counts()))
+        self.assertFalse(os.path.islink(foreign_path))
+        with open(foreign_path, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "foreign")
+
 
 try:
     import textual  # noqa: F401
