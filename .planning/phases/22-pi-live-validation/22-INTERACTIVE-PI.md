@@ -70,7 +70,10 @@ pi --skill skills/ai-kit-gsd-curated-config --model <provider>/<id>
 ```
 
 Record pi's version and whether a project-trust prompt appeared, what you answered, and whether
-the decision persisted (RESEARCH OQ4). Your answer is the consent action.
+the decision persisted (RESEARCH OQ4). Your answer is the consent action. In the bash tool, run
+the default-agent-dir guard, take the S1 snapshot at
+`tmp/p22/interactive/pi-before.json` (the same baseline S2 uses), and check it after the smoke
+and the S5 dry run as directed in S4/S5.
 
 expect: pi starts in the Phase 22 checkout with the curated-config skill available.
 
@@ -167,33 +170,42 @@ the config. Take a snapshot before the run. Then run:
 pi --mode json -p --no-session -ne -e .pi/extensions/gsd.js --model <provider>/<selected> "Reply with the single word ok." > "$P/l3a.jsonl"
 ```
 
-Print only the `model` and `responseModel` fields from message events using a short Python reader;
-then run the snapshot check (with `--host-rewrite` for pi's own settings and trust files) and remove
-`$P`.
+Immediately before invoking pi, run the default-agent-dir guard and
+`python3 tests/gsd_curated_eval.py snapshot --out "$P/pi-before.json"`. The pi invocation for
+this optional real-provider arm uses the owner's normal pi agent dir for credentials; it does not
+copy or inspect credential files. Print only the `model` and `responseModel` fields from message
+events using a short Python reader; then run
+`python3 tests/gsd_curated_eval.py snapshot --check "$P/pi-before.json" --host-rewrite '<home>/.pi/agent/settings.json' --host-rewrite '<home>/.pi/agent/trust.json'`
+and remove `$P`.
 
 expect: `pass` when `responseModel` names the steered id; `inconclusive (provider does not echo the served model)` when it is absent; `fail (served model unchanged with the override)` when the provider echoes the selected id.
 
 ### L3b (OPTIONAL) — Override absent
 
-Use a fresh scratch project, throwaway HOME and snapshot as above; set up the same provider and
-selected id but leave `pi.sonnet` unset. Run the same JSON command as L3a, print only the two
-message fields, check the snapshot with the two pi host-rewrite labels, then remove the scratch
-project.
+Use a fresh scratch project and throwaway HOME as above; set up the same provider and selected
+id but leave `pi.sonnet` unset. Immediately before invoking pi, run the default-agent-dir guard
+and `python3 tests/gsd_curated_eval.py snapshot --out "$P/pi-before.json"`. Run the same JSON
+command as L3a, print only the two message fields, then run
+`python3 tests/gsd_curated_eval.py snapshot --check "$P/pi-before.json" --host-rewrite '<home>/.pi/agent/settings.json' --host-rewrite '<home>/.pi/agent/trust.json'`
+and remove the scratch project.
 
 expect: `pass` when no `responseModel` differs from the selection. An observed different served
 model is `fail (<observed>)`; an absent echo is inconclusive rather than proof of no change.
 
 ### L3c (OPTIONAL) — Override with one-shot approval
 
-Use another fresh scratch project, throwaway HOME and snapshot. Restore the same `pi.sonnet`
-override and run the call with one-shot extension approval instead of explicit extension loading:
+Use another fresh scratch project and throwaway HOME. Restore the same `pi.sonnet` override,
+then immediately before invoking pi run the default-agent-dir guard and
+`python3 tests/gsd_curated_eval.py snapshot --out "$P/pi-before.json"`. Run the call with one-shot
+extension approval instead of explicit extension loading:
 
 ```bash
 pi --mode json -p --no-session --approve --model <provider>/<selected> "Reply with the single word ok." > "$P/l3c.jsonl"
 ```
 
-Print only `model` and `responseModel` from message events, check the snapshot with the two pi
-host-rewrite labels, and remove `$P`.
+Print only `model` and `responseModel` from message events, then run
+`python3 tests/gsd_curated_eval.py snapshot --check "$P/pi-before.json" --host-rewrite '<home>/.pi/agent/settings.json' --host-rewrite '<home>/.pi/agent/trust.json'`
+and remove `$P`.
 
 expect: `pass` when `responseModel` names the steered id; `inconclusive (provider does not echo the served model)` when absent; `fail (served model unchanged with the override)` when it echoes the selected id.
 
