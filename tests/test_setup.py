@@ -1393,6 +1393,140 @@ class TestApplyPredecessorLinksPure(unittest.TestCase):
         self.assertEqual(c["relinked"], 1)   # still counted as intended
 
 
+class TestResolvePathsPiDir(unittest.TestCase):
+    """D-14: the pi agent dir, resolved with the claude-dir idiom."""
+
+    def test_resolve_paths_pi_dir(self):
+        p = setup.resolve_paths({"HOME": "/home/u"})
+        self.assertEqual(p.pi_dir, "/home/u/.pi/agent")
+        p = setup.resolve_paths({"HOME": "/home/u",
+                                 "PI_CODING_AGENT_DIR": "/pi/agent"})
+        self.assertEqual(p.pi_dir, "/pi/agent")
+
+
+class TestSyncPiLinks(unittest.TestCase):
+    """The derived pi link root (D-14): sync_pi_links mirrors the claude
+    selection into <pi_dir>/skills for PI_SKILLS names only."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install = os.path.join(self.tmp, "ai-kit")
+        self.claude = os.path.join(self.tmp, "claude")
+        self.pi = os.path.join(self.tmp, "pi")
+        os.makedirs(os.path.join(self.install, "skills", "jev-fast-decision"))
+        os.makedirs(os.path.join(self.install, "skills", "other-skill"))
+        os.makedirs(os.path.join(self.claude, "skills"))
+        os.makedirs(os.path.join(self.pi, "skills"))
+        self.paths = setup.resolve_paths({
+            "HOME": self.tmp, "AI_KIT_DIR": self.install,
+            "CLAUDE_CONFIG_DIR": self.claude, "PI_CODING_AGENT_DIR": self.pi})
+        self.jev_target = os.path.join(self.install, "skills", "jev-fast-decision")
+        self.other_target = os.path.join(self.install, "skills", "other-skill")
+        self.entries = {"skills": [("jev-fast-decision", self.jev_target),
+                                   ("other-skill", self.other_target)],
+                        "commands": [], "agents": []}
+
+    def pi_link(self):
+        return os.path.join(self.pi, "skills", "jev-fast-decision")
+
+    def claude_link(self):
+        return os.path.join(self.claude, "skills", "jev-fast-decision")
+
+    def _link_claude_jev(self):
+        os.symlink(self.jev_target, self.claude_link())
+
+    def test_claude_ai_kit_link_gives_pi_link(self):
+        self._link_claude_jev()
+        c = setup.new_counts()
+        setup.sync_pi_links(self.paths, self.entries, False, c,
+                            names={"jev-fast-decision"})
+        self.assertEqual(os.readlink(self.pi_link()), self.jev_target)
+        self.assertEqual(c["linked"], 1)
+
+    def test_name_outside_pi_skills_gives_none(self):
+        os.symlink(self.other_target,
+                   os.path.join(self.claude, "skills", "other-skill"))
+        c = setup.new_counts()
+        setup.sync_pi_links(self.paths, self.entries, False, c,
+                            names={"other-skill"})
+        self.assertFalse(os.path.lexists(self.pi_link()))
+        self.assertEqual(c["linked"], 0)
+
+    def test_mirror_false_never_unlinks(self):
+        os.symlink(self.jev_target, self.pi_link())
+        c = setup.new_counts()
+        setup.sync_pi_links(self.paths, self.entries, False, c,
+                            names=set(), mirror=False)
+        self.assertEqual(os.readlink(self.pi_link()), self.jev_target)
+        self.assertEqual(c["unlinked"], 0)
+
+    def test_foreign_pi_link_left_alone(self):
+        self._link_claude_jev()
+        foreign = os.path.join(self.tmp, "elsewhere")
+        os.makedirs(foreign)
+        os.symlink(foreign, self.pi_link())
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            c = setup.new_counts()
+            setup.sync_pi_links(self.paths, self.entries, False, c,
+                                names={"jev-fast-decision"})
+        self.assertEqual(os.readlink(self.pi_link()), foreign)
+        self.assertEqual(c["skip_foreign"], 1)
+        self.assertIn("leaving it alone", err.getvalue())
+
+    def test_missing_pi_dir_note_and_no_creation(self):
+        self._link_claude_jev()
+        missing = os.path.join(self.tmp, "no-pi")
+        paths = setup.resolve_paths({
+            "HOME": self.tmp, "AI_KIT_DIR": self.install,
+            "CLAUDE_CONFIG_DIR": self.claude, "PI_CODING_AGENT_DIR": missing})
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            c = setup.new_counts()
+            setup.sync_pi_links(paths, self.entries, False, c,
+                                names={"jev-fast-decision"})
+        self.assertFalse(os.path.exists(missing))
+        self.assertIn("not found", err.getvalue())
+        self.assertIn("jev-fast-decision", err.getvalue())
+        self.assertEqual(c["linked"], 0)
+
+    def test_mirror_unlinks_deselected_pi_skills_name(self):
+        os.symlink(self.jev_target, self.pi_link())
+        c = setup.new_counts()
+        setup.sync_pi_links(self.paths, self.entries, False, c,
+                            names=set(), mirror=True)
+        self.assertFalse(os.path.lexists(self.pi_link()))
+        self.assertEqual(c["unlinked"], 1)
+
+    def test_sync_pi_links_mirror_scope(self):
+        # selected, but the claude path holds a real dir (no claude ai-kit
+        # link): the pi link survives — the selection decides, never the
+        # claude path's state.
+        os.symlink(self.jev_target, self.pi_link())
+        real_dir = os.path.join(self.claude, "skills", "jev-fast-decision")
+        os.makedirs(real_dir)
+        c = setup.new_counts()
+        setup.sync_pi_links(self.paths, self.entries, False, c,
+                            names={"jev-fast-decision"}, mirror=True)
+        self.assertEqual(os.readlink(self.pi_link()), self.jev_target)
+        self.assertEqual(c["unlinked"], 0)
+
+        # a stale pi ai-kit link (repo entry gone) survives: stale gate's job
+        stale = os.path.join(self.pi, "skills", "ghost")
+        os.symlink(os.path.join(self.install, "skills", "ghost"), stale)
+        # an ai-kit pi link for a name outside PI_SKILLS survives
+        outside = os.path.join(self.pi, "skills", "other-skill")
+        os.symlink(self.other_target, outside)
+        c = setup.new_counts()
+        setup.sync_pi_links(self.paths, self.entries, False, c,
+                            names={"jev-fast-decision"}, mirror=True)
+        self.assertEqual(os.readlink(stale),
+                         os.path.join(self.install, "skills", "ghost"))
+        self.assertEqual(os.readlink(outside), self.other_target)
+        self.assertEqual(c["unlinked"], 0)
+
+
 class TestSelectionModel(unittest.TestCase):
     """The shared in-memory pick model behind the install skill-picker and the
     status-line segment toggle: ordered (category, name) items + per-item

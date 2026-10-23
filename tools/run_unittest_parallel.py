@@ -58,6 +58,7 @@ E2E_MODULES = frozenset({
     "tests.test_ai_kit_gsd_curated_config_matrix",
     "tests.test_ai_kit_spec_e2e",
     "tests.test_ai_kit_gsd_spec_discuss_e2e",
+    "tests.test_jev_skill_install_e2e",  # R8: real setup.py runs under a temp HOME
     "tests.test_cross_ai_runner_e2e",
 })
 EXPLICIT_GROUPS = {

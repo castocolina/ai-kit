@@ -41,10 +41,15 @@ from typing import cast
 
 CATEGORIES = ("agents", "commands", "skills")
 
+# D-14: skills also linked into <pi_dir>/skills, derived from the claude
+# selection. Phase 22 widens this set.
+PI_SKILLS = frozenset({"jev-fast-decision"})
+
 Paths = namedtuple(
     "Paths",
-    "install_dir claude_dir settings config_dir config_toml sample status_line "
-    "statusline_doctor segments_dir claude_hook cursor_dir cursor_hooks cursor_hook",
+    "install_dir claude_dir pi_dir settings config_dir config_toml sample "
+    "status_line statusline_doctor segments_dir claude_hook cursor_dir "
+    "cursor_hooks cursor_hook",
 )
 
 
@@ -57,12 +62,14 @@ def resolve_paths(env):
         env.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share"), "ai-kit"
     )
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+    pi_dir = env.get("PI_CODING_AGENT_DIR") or os.path.join(home, ".pi", "agent")
     cursor_dir = env.get("CURSOR_CONFIG_DIR") or os.path.join(home, ".cursor")
     config_base = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
     config_dir = os.path.join(config_base, "ai-kit")
     return Paths(
         install_dir=install_dir,
         claude_dir=claude_dir,
+        pi_dir=pi_dir,
         settings=os.path.join(claude_dir, "settings.json"),
         config_dir=config_dir,
         config_toml=os.path.join(config_dir, "statusline.toml"),
@@ -1372,6 +1379,47 @@ def _install_root(entries):
     return ""
 
 
+def sync_pi_links(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        paths, entries, dry, counts, names, mirror=False):
+    """Mirror the claude skills selection into <pi_dir>/skills for PI_SKILLS
+    names (D-14). `names` is the set of skill names the run selected; no pi
+    state is stored — the claude links ARE the selection.
+
+    Additive part (both call sites): for each PI_SKILLS name that is in
+    `names`, has a repo entry AND a claude ai-kit link, link_one the pi path.
+    A missing pi agent dir is a message and never created (SPEC R8 empty edge).
+
+    Mirror part (`mirror=True`, the wizard commit only): a PI_SKILLS repo entry
+    the commit's selection leaves unchecked is unlinked from the pi root — the
+    selection decides, never the claude path's state (so a claude path
+    link_one left alone costs no accepted pi link). Nothing else in the pi
+    root is unlinked: a stale link (repo entry gone) belongs to the stale gate
+    and a name outside PI_SKILLS is not this phase's.
+
+    shortcut: under --dry-run the mirror reads the current claude links, so
+    its counts can lag; fine until dry-run counts need to be exact."""
+    by_name = dict(entries["skills"])
+    if mirror:
+        pi_installed = installed_links(paths.pi_dir, paths.install_dir)["skills"]
+        for name in sorted(PI_SKILLS):
+            if name in by_name and name in pi_installed and name not in names:
+                unlink_one(os.path.join(paths.pi_dir, "skills", name), dry, counts)
+    if not any(name in names and name in by_name for name in PI_SKILLS):
+        return
+    claude_installed = installed_links(paths.claude_dir, paths.install_dir)["skills"]
+    for name in sorted(PI_SKILLS):
+        if name not in names or name not in by_name:
+            continue
+        if name not in claude_installed:
+            continue
+        if not os.path.isdir(paths.pi_dir):
+            print(f"note: pi agent dir {paths.pi_dir} not found; "
+                  f"{name} not linked for pi", file=sys.stderr)
+            continue
+        link_one(os.path.join(paths.pi_dir, "skills", name), by_name[name],
+                 dry, counts)
+
+
 JSON_STATE_ABSENT = "absent"
 JSON_STATE_OK = "ok"
 JSON_STATE_UNREADABLE = "unreadable"
@@ -2436,8 +2484,14 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
         buf = io.StringIO()
         ok = True
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            apply_selection(sel.category_sets(CATEGORIES), entries,
+            sel_sets = sel.category_sets(CATEGORIES)
+            apply_selection(sel_sets, entries,
                             paths.claude_dir, dry, counts)
+            # The pi root mirrors the same selection (D-14): a deselected
+            # PI_SKILLS entry is unlinked there too, through sync_pi_links'
+            # mirror branch.
+            sync_pi_links(paths, entries, dry, counts,
+                          names=sel_sets["skills"], mirror=True)
             wire_hook_claude(paths.settings, paths.claude_hook, dry)
             wire_hook_cursor(paths.cursor_hooks, paths.cursor_hook, dry)
             if adopt:
@@ -2745,6 +2799,21 @@ def _headless_link_skills(skills_flag, entries, claude_dir, dry, counts):
     return True, chosen
 
 
+def _headless_sync_pi(paths, entries, dry, counts, chosen):
+    """Run sync_pi_links for a headless --skills run (additive, never unlinks:
+    mirror=False). Only called when `chosen` is not None — a bare or hooks-only
+    headless run never touches the pi root. Returns False when the mirror hit a
+    foreign link or real content at a pi link path (link_one counted it)."""
+    blocked_before = counts["skip_foreign"] + counts["skip_real"]
+    sync_pi_links(paths, entries, dry, counts, names=chosen, mirror=False)
+    if counts["skip_foreign"] + counts["skip_real"] > blocked_before:
+        print("warn: one or more pi links were left alone (a foreign symlink "
+              "or a real file occupies the pi link path) — see the warnings "
+              "above", file=sys.stderr)
+        return False
+    return True
+
+
 def _headless_wire_statusline(paths, dry):
     """Wire the ai-kit status line, but only if the Claude Code config dir is
     actually there. wire_statusline has no host-presence guard of its own and
@@ -2882,6 +2951,11 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     counts = new_counts()
     ok, chosen = _headless_link_skills(skills_flag, entries, paths.claude_dir,
                                        dry, counts)
+    # Only a run that named --skills touches the pi root; bare --headless and
+    # hooks/statusline-only runs leave every pi link exactly as it was.
+    if chosen is not None and not _headless_sync_pi(paths, entries, dry,
+                                                    counts, chosen):
+        ok = False
     if with_statusline and not _headless_wire_statusline(paths, dry):
         ok = False
     if with_hooks and not _headless_wire_hooks(paths, dry):

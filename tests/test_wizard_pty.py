@@ -65,6 +65,52 @@ def _tmp_config_dir():
     return tempfile.mkdtemp(prefix="ai-kit-test-")
 
 
+# The five host roots every PTY env must point at scratch paths (T-21.1-15):
+# without them a wizard commit inheriting the real HOME would rewrite the
+# real ~/.cursor/hooks.json (the commit always calls wire_hook_cursor) and
+# could touch the real ~/.pi, ~/.config and state dirs.
+_HOST_ROOT_KEYS = ("CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "CURSOR_CONFIG_DIR",
+                   "PI_CODING_AGENT_DIR", "XDG_STATE_HOME")
+
+
+def _scratch_roots(config_dir):
+    """The four root overrides derived from the test's temp config dir, as an
+    explicit-keyword dict for `dict(os.environ, ...)`. CURSOR_CONFIG_DIR and
+    PI_CODING_AGENT_DIR point at ABSENT dirs, so the wizard commit prints its
+    'skipped ... no cursor dir' line and writes nothing."""
+    base = os.path.dirname(config_dir)
+    return {
+        "XDG_CONFIG_HOME": os.path.join(base, "xdg-config"),
+        "CURSOR_CONFIG_DIR": os.path.join(base, "cursor-absent"),
+        "PI_CODING_AGENT_DIR": os.path.join(base, "pi-agent-absent"),
+        "XDG_STATE_HOME": os.path.join(base, "state"),
+    }
+
+
+def _env_calls_missing_roots(source):
+    """Static AST check over module source: return (lineno, missing_keys) for
+    every `dict(os.environ, ...)` call that does not set all five host-root
+    overrides. No spawn, no subprocess."""
+    import ast
+    bad = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name) and node.func.id == "dict"
+                and node.args
+                and isinstance(node.args[0], ast.Attribute)
+                and node.args[0].attr == "environ"):
+            continue
+        set_keys = {kw.arg for kw in node.keywords if kw.arg}
+        # A **_scratch_roots(...) spread satisfies all roots: the helper's
+        # return dict is pinned by test_every_pty_env_isolates_host_roots.
+        if any(kw.arg is None for kw in node.keywords):
+            continue
+        missing = [k for k in _HOST_ROOT_KEYS if k not in set_keys]
+        if missing:
+            bad.append((node.lineno, missing))
+    return bad
+
+
 # ---------------------------------------------------------------------------
 # Shared PTY helpers (seam for both Phase-1 and Phase-2 tests)
 # ---------------------------------------------------------------------------
@@ -242,7 +288,8 @@ class TestPhase1E2E(unittest.TestCase):
         """
         uv = _uv_cmd()
         config_dir = self._mk_config_dir()
-        env = dict(os.environ, CLAUDE_CONFIG_DIR=config_dir)
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=config_dir,
+                   **_scratch_roots(config_dir))
         result = subprocess.run(
             [uv, "run", "--script", SETUP, "install"],
             env=env,
@@ -277,8 +324,8 @@ class TestPhase1E2E(unittest.TestCase):
         """
         uv = _uv_cmd()
         config_dir = self._mk_config_dir()
-        env = dict(os.environ, CLAUDE_CONFIG_DIR=config_dir, AI_KIT_UV_REEXEC="1")
-
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=config_dir,
+                   AI_KIT_UV_REEXEC="1", **_scratch_roots(config_dir))
         pid, master_fd = spawn_pty(
             [uv, "run", "--script", SETUP, "--dry-run", "install"],
             env,
@@ -411,6 +458,7 @@ class TestPhase2E2E(unittest.TestCase):
             XDG_CONFIG_HOME=xdg_config_home,
             AI_KIT_DIR=_REPO_ROOT,
             AI_KIT_UV_REEXEC="1",
+            **_scratch_roots(config_dir),
         )
 
         _BOOT_DEADLINE = 45.0   # generous: uv + textual init from warm cache
@@ -637,6 +685,7 @@ class TestPhase3E2E(unittest.TestCase):
             XDG_CONFIG_HOME=xdg_config_home,
             AI_KIT_DIR=_REPO_ROOT,
             AI_KIT_UV_REEXEC="1",
+            **_scratch_roots(claude_dir),
         )
 
     def _config_toml_path(self, xdg_config_home: str) -> str:
@@ -953,6 +1002,7 @@ class TestCurlBashE2E(unittest.TestCase):
             CLAUDE_CONFIG_DIR=config_dir,
             AI_KIT_DIR=_REPO_ROOT,
             AI_KIT_UV_REEXEC="1",
+            **_scratch_roots(config_dir),
         )
 
         # stdin = pipe (curl|bash); ctty + stdout/stderr = PTY.
@@ -1024,6 +1074,41 @@ class TestCurlBashE2E(unittest.TestCase):
             msg=f"expected clean abort exit 0 under piped stdin; got {exit_code}, "
                 f"output={decoded!r}",
         )
+
+
+class TestEveryPtyEnvIsolatesHostRoots(unittest.TestCase):
+    """Static (no spawn) check: every `dict(os.environ, ...)` in this module
+    sets all five host-root overrides, so no PTY run can write the real
+    ~/.claude, ~/.pi, ~/.cursor, XDG config or state dirs (T-21.1-15)."""
+
+    def test_scratch_roots_helper_sets_all_non_claude_roots(self):
+        roots = _scratch_roots("/tmp/x/cfg")
+        for key in ("XDG_CONFIG_HOME", "CURSOR_CONFIG_DIR",
+                    "PI_CODING_AGENT_DIR", "XDG_STATE_HOME"):
+            self.assertIn(key, roots)
+
+    def test_every_pty_env_isolates_host_roots(self):
+        with open(__file__, encoding="utf-8") as f:
+            source = f.read()
+        bad = _env_calls_missing_roots(source)
+        self.assertEqual(bad, [],
+                         msg=f"env dicts missing host-root overrides: {bad}")
+        # at least five such calls must exist, or the check is vacuous
+        import ast
+        calls = [
+            n for n in ast.walk(ast.parse(source))
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+            and n.func.id == "dict" and n.args
+            and isinstance(n.args[0], ast.Attribute) and n.args[0].attr == "environ"
+        ]
+        self.assertGreaterEqual(len(calls), 5)
+
+    def test_checker_is_not_vacuous(self):
+        synthetic = "env = dict(os.environ, CLAUDE_CONFIG_DIR=x)"
+        bad = _env_calls_missing_roots(synthetic)
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(bad[0][1], [k for k in _HOST_ROOT_KEYS
+                                     if k != "CLAUDE_CONFIG_DIR"])
 
 
 if __name__ == "__main__":
