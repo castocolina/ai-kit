@@ -813,6 +813,15 @@ class TestTaxonomy(_ClientCase):
         self.assertTrue(over_size["needs_fallback"], "an over-limit state forces the flag")
         self.assertFalse(clean["needs_fallback"], "0.95 with neither condition is confident")
 
+    def test_taxonomy_truncated_flags_at_any_top(self):
+        # DEC-01 (R9): usage.truncated keeps needs_fallback whatever the confidence.
+        self.enable("laya")
+        for top in (0.0, 0.5, 0.8, 0.95, 0.99):
+            with self.subTest(top=top), JevStub(top=top, truncated=True) as stub:
+                self.point_at(stub)
+                answer = self.run_screen(payload(noul_item("a")))["answers"]["a"]
+                self.assertTrue(answer["needs_fallback"], f"truncated at top={top} must flag")
+
     def test_taxonomy_oversized_200(self):
         padded = json.dumps({"model": "laya-rl-agent",
                              "answers": {"b": {"type": "noul", "noul": 0.95}},
