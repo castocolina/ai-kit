@@ -11,6 +11,7 @@ import json
 import os
 import shlex
 import shutil
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -299,6 +300,130 @@ class TestUninstallKeepsNestedUserHook(unittest.TestCase):
                 entries = _read(settings)["hooks"][event]
                 self.assertEqual(entries, [{"matcher": "keep", "hooks": [user],
                                             "note": "x"}])
+
+
+class TestHookSelectionItems(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.claude = os.path.join(self.tmp, "claude")
+        self.env = {"HOME": self.tmp, "AI_KIT_DIR": _REPO,
+                    "CLAUDE_CONFIG_DIR": self.claude,
+                    "PI_CODING_AGENT_DIR": os.path.join(self.tmp, "pi"),
+                    "OPENCODE_CONFIG_DIR": os.path.join(self.tmp, "opencode")}
+        self.paths = setup.resolve_paths(self.env)
+
+    def test_hook_selection_items_precheck(self):
+        items, initial = setup._hook_selection_items(self.paths)
+        self.assertEqual(items, [("hooks", "precompact", False)])
+        self.assertFalse(initial[("hooks", "precompact")])
+        os.makedirs(self.claude)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(setup.wire_claude_rows(
+                self.paths.settings, PRECOMPACT_CLAUDE_ROWS, _REPO, False))
+        items, initial = setup._hook_selection_items(self.paths)
+        self.assertEqual(items, [("hooks", "precompact", True)])
+        self.assertTrue(initial[("hooks", "precompact")])
+
+    def test_hook_selection_prechecks_default_present_host(self):
+        os.makedirs(self.claude)
+        rows = tuple(row._replace(default=(row.host == "claude"))
+                     for row in setup.HOOK_REGISTRY)
+        with mock.patch.object(setup, "HOOK_REGISTRY", rows):
+            items, initial = setup._hook_selection_items(self.paths)
+        self.assertTrue(items[0][2])
+        self.assertFalse(initial[("hooks", "precompact")])
+
+    def test_apply_hook_selection_wires_and_unwires(self):
+        os.makedirs(self.claude)
+        foreign = {"matcher": "manual", "hooks": [{"type": "command",
+                                                       "command": "echo foreign"}]}
+        with open(self.paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"hooks": {"PreCompact": [foreign]}}, handle)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(setup.apply_hook_selection(
+                self.paths, {"precompact"}, False, setup.new_counts()))
+        data = _read(self.paths.settings)
+        self.assertEqual(len(data["hooks"]["PreCompact"]), 2)
+        self.assertEqual(len(data["hooks"]["SessionStart"]), 1)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(setup.apply_hook_selection(
+                self.paths, set(), False, setup.new_counts()))
+        data = _read(self.paths.settings)
+        self.assertEqual(data["hooks"]["PreCompact"], [foreign])
+        self.assertEqual(data["hooks"]["SessionStart"], [])
+
+    def test_apply_hook_selection_default_hosts_only(self):
+        pi = os.path.join(self.tmp, "pi")
+        os.makedirs(pi)
+        rows = tuple(row._replace(default=(row.host == "pi"))
+                     for row in setup.HOOK_REGISTRY)
+        with mock.patch.object(setup, "HOOK_REGISTRY", rows), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(setup.apply_hook_selection(
+                self.paths, {"precompact"}, False, setup.new_counts()))
+        self.assertTrue(os.path.islink(os.path.join(
+            pi, "extensions", "ai-kit-precompact.ts")))
+        self.assertFalse(os.path.exists(self.paths.settings))
+
+
+try:
+    import textual  # noqa: F401
+    HAVE_TEXTUAL = True
+except ImportError:
+    HAVE_TEXTUAL = False
+
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestWizardHookRouting(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.env = {"HOME": self.tmp, "AI_KIT_DIR": _REPO,
+                    "CLAUDE_CONFIG_DIR": os.path.join(self.tmp, "claude"),
+                    "CURSOR_CONFIG_DIR": os.path.join(self.tmp, "cursor"),
+                    "PI_CODING_AGENT_DIR": os.path.join(self.tmp, "pi"),
+                    "OPENCODE_CONFIG_DIR": os.path.join(self.tmp, "opencode"),
+                    "XDG_CONFIG_HOME": os.path.join(self.tmp, "xdg"),
+                    "XDG_STATE_HOME": os.path.join(self.tmp, "state")}
+        self.paths = setup.resolve_paths(self.env)
+        os.makedirs(self.paths.claude_dir)
+
+    def _wizard_app(self):
+        tools = os.path.join(_REPO, "tools")
+        if tools not in sys.path:
+            sys.path.insert(0, tools)
+        import wizard_app
+        return wizard_app
+
+    def _context(self):
+        entries = setup.enumerate_entries(self.paths.install_dir)
+        installed = {cat: set() for cat in setup.CATEGORIES}
+        return setup._build_wizard_context(
+            self.paths, entries, installed, "{}", self._wizard_app())
+
+    def test_wizard_commit_routes_hooks(self):
+        ctx = self._context()
+        self.assertIn(["hooks", "precompact", False], ctx.selection.items)
+        self.assertEqual(ctx.component_meta["precompact"],
+                         setup.hook_description("precompact"))
+        ctx.selection.toggle(ctx.selection.items.index(["hooks", "precompact", False]))
+        commit = setup._make_wizard_commit(
+            self.paths, setup.enumerate_entries(self.paths.install_dir), False,
+            setup.new_counts())
+        outcome = commit(ctx.selection, ctx.state)
+        self.assertTrue(outcome["ok"])
+        self.assertIn("PreCompact", outcome["log"])
+        self.assertTrue(os.path.isfile(self.paths.settings))
+
+    def test_housekeeping_keeps_hooks_row(self):
+        self._context()
+        entries = setup.enumerate_entries(self.paths.install_dir)
+        housekeeping = setup._make_apply_housekeeping(
+            self.paths, entries, [], [], False, setup.new_counts())
+        result = housekeeping(False, False)
+        self.assertIn(["hooks", "precompact", False], result["selection"].items)
+        self.assertFalse(result["initial_enabled"][("hooks", "precompact")])
 
 
 class TestHookCommandQuoting(unittest.TestCase):

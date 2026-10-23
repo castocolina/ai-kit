@@ -2687,6 +2687,21 @@ def _engine_ns(paths, sample_json):
     )
 
 
+def _hook_selection_items(paths):
+    """Return the hooks category rows and installed-state baseline."""
+    items = []
+    initial = {}
+    for hook_id in HOOK_IDS:
+        installed = bool(hook_installed_hosts(paths, hook_id))
+        on = installed or any(
+            row.default and hook_host_present(paths, row.host)
+            for row in hook_rows([(hook_id, None)])
+        )
+        items.append(("hooks", hook_id, on))
+        initial[("hooks", hook_id)] = installed
+    return items, initial
+
+
 def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
     paths, entries, installed, sample_json, wizard_app_mod,
     stale=None, predecessor_cands=None, pi_predecessor_cands=(), pi_stale=(),
@@ -2723,6 +2738,9 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
         for cat in CATEGORIES
         for name, _ in entries[cat]
     }
+    hook_items, hook_initial = _hook_selection_items(paths)
+    sel.items.extend([list(item) for item in hook_items])
+    initial_enabled.update(hook_initial)
 
     sl_state = detect_statusline(paths)
     inventory = load_segment_inventory(INVENTORY_PATH)
@@ -2748,6 +2766,7 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
         for cat in CATEGORIES
         for name, abspath in entries[cat]
     }
+    component_meta.update({hook_id: hook_description(hook_id) for hook_id in HOOK_IDS})
 
     housekeeping = {
         "stale": stale + [f"{item} (pi)" for item in pi_stale],
@@ -2775,6 +2794,40 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
         component_meta=component_meta,
         housekeeping=housekeeping,
     )
+
+
+def apply_hook_selection(paths, checked, dry, counts):
+    """Apply the wizard's checked hook ids per D-12: installed hosts plus
+    present default-on hosts; an empty set means all present hosts. Unchecked
+    ids remove the hook from every host where it is currently installed."""
+    ok = True
+    checked_ids = set(checked)
+    for hook_id in HOOK_IDS:
+        if hook_id in checked_ids:
+            installed = hook_installed_hosts(paths, hook_id)
+            selected_hosts = installed | {
+                row.host for row in hook_rows([(hook_id, None)])
+                if row.default and hook_host_present(paths, row.host)
+            }
+            if not selected_hosts:
+                selected_hosts = {
+                    row.host for row in hook_rows([(hook_id, None)])
+                    if hook_host_present(paths, row.host)
+                }
+            rows = [row for row in hook_rows([(hook_id, None)])
+                    if row.host in selected_hosts]
+            result = wire_hook_rows(paths, rows, dry, counts)
+            host_list = ", ".join(sorted(selected_hosts)) or "no present hosts"
+            print(f"hooks: wired {hook_id} on {host_list}")
+        else:
+            hosts = hook_installed_hosts(paths, hook_id)
+            rows = [row for row in hook_rows([(hook_id, None)]) if row.host in hosts]
+            result = unwire_hook_rows(paths, rows, dry, counts)
+            host_list = ", ".join(sorted(hosts)) or "no installed hosts"
+            print(f"hooks: removed {hook_id} from {host_list}")
+        if not result:
+            ok = False
+    return ok
 
 
 def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
@@ -2806,6 +2859,7 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
         ok = True
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             sel_sets = sel.category_sets(CATEGORIES)
+            all_sets = sel.category_sets((*CATEGORIES, "hooks"))
             apply_selection(sel_sets, entries,
                             paths.claude_dir, dry, counts)
             # The pi root mirrors the same selection (D-14): a deselected
@@ -2815,6 +2869,7 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
                           names=sel_sets["skills"], mirror=True)
             wire_hook_claude(paths.settings, paths.claude_hook, dry)
             wire_hook_cursor(paths.cursor_hooks, paths.cursor_hook, dry)
+            apply_hook_selection(paths, all_sets.get("hooks", set()), dry, counts)
             if adopt:
                 # A discovered bundled example segment (e.g. system_memory) must
                 # actually exist under paths.segments_dir before persist_statusline's
@@ -2966,16 +3021,18 @@ def _make_apply_housekeeping(  # pylint: disable=too-many-arguments,too-many-pos
                                  if label == "pi"}
                 for name in precheck:
                     default["skills"].add(name)
+                hook_items, hook_initial = _hook_selection_items(paths)
                 sel = Selection(
-                    (cat, name, name in default[cat])
-                    for cat in CATEGORIES
-                    for name, _ in entries[cat]
+                    [(cat, name, name in default[cat])
+                     for cat in CATEGORIES
+                     for name, _ in entries[cat]] + hook_items
                 )
                 initial_enabled = {
                     (cat, name): (name in installed[cat])
                     for cat in CATEGORIES
                     for name, _ in entries[cat]
                 }
+                initial_enabled.update(hook_initial)
         finally:
             # Even when a later move raises, the log captured so far (with the
             # backup destinations of the moves that succeeded) reaches the
