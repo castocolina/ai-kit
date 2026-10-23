@@ -5,16 +5,16 @@ milestone_name: GSD Curated Config v2
 current_phase: "21.3"
 current_phase_name: Visible tool-advisory hooks as setup knobs
 status: executing
-stopped_at: Completed 21.2-05-PLAN.md
-last_updated: "2026-10-23T10:51:25.920Z"
+stopped_at: Completed 21.3-01-PLAN.md
+last_updated: "2026-10-23T11:01:15.075Z"
 last_activity: 2026-10-23
 last_activity_desc: Phase 21.3 execution started
-state_head: 46a0d100f4e0335adbb5de2c74f3707217d8bd2e
+state_head: 87b44d0f9d7fb75b34022de584f5f2a63075c25c
 progress:
   total_phases: 17
   completed_phases: 1
   total_plans: 135
-  completed_plans: 127
+  completed_plans: 128
   percent: 6
 ---
 
@@ -30,8 +30,8 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 ## Current Position
 
 Phase: 21.3 (Visible tool-advisory hooks as setup knobs) — EXECUTING
-Plan: 1 of 8
-Status: Executing Phase 21.3
+Plan: 2 of 8
+Status: Ready to execute
 Last activity: 2026-10-23 — Phase 21.3 execution started
 
 Progress: [█░░░░░░░░░] 6%
@@ -245,6 +245,7 @@ Progress: [█░░░░░░░░░] 6%
 | Phase 21.2 P03 | 1694s | 2 tasks | 6 files |
 | Phase 21.2 P04 | 2544s | 3 tasks | 13 files |
 | Phase 21.2 P05 | 1563s | 3 tasks | 10 files |
+| Phase 21.3 P01 | 451s | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -506,6 +507,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-23T09:57:18.525Z
-Stopped at: Completed 21.2-05-PLAN.md
+Last session: 2026-10-23T11:01:13.946Z
+Stopped at: Completed 21.3-01-PLAN.md
 Resume file: None
