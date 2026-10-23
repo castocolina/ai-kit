@@ -1191,6 +1191,16 @@ class TestCompose(unittest.TestCase):
         for guidance in detect.TOOL_GUIDANCE.values():
             self.assertIn(guidance, readme)
 
+    def test_usage_path_collapses_a_symlinked_home(self):
+        # Fedora atomic: HOME=/home/u while realpaths live under /var/home/u.
+        real_home = os.path.dirname(os.path.realpath(_REPO))
+        with tempfile.TemporaryDirectory() as scratch:
+            link = os.path.join(scratch, "home")
+            os.symlink(real_home, link)
+            with mock.patch.object(detect.os.path, "expanduser", return_value=link):
+                user_line, _context = detect.compose_message(_detection("rg"))
+        self.assertIn(" Usage: ~/", user_line)
+
     def test_usage_suffix_dropped_if_line_would_exceed_limit(self):
         detection = _detection("rg", "bat", "fd", "sd", "eza")
         with mock.patch.object(detect.os.path, "dirname", return_value="/" + "x" * 210):
