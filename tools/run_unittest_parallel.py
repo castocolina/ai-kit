@@ -59,6 +59,7 @@ E2E_MODULES = frozenset({
     "tests.test_ai_kit_spec_e2e",
     "tests.test_ai_kit_gsd_spec_discuss_e2e",
     "tests.test_jev_skill_install_e2e",  # R8: real setup.py runs under a temp HOME
+    "tests.test_hook_registry_e2e",  # R10: real setup.py hook runs under a temp HOME
     "tests.test_cross_ai_runner_e2e",
     "tests.test_precompact_shims_e2e",  # node runs of the pi and opencode shims (D-18)
 })

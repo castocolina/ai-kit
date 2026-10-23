@@ -1502,6 +1502,81 @@ CURSOR_HOOK_EVENT = "sessionStart"
 CURSOR_HOOK_MARKER = os.path.join("tools", "hooks", "cursor_session_start.py")
 
 
+# ── Hook registry (D-11) ──────────────────────────────────────────────────────
+HookRow = namedtuple(
+    "HookRow",
+    "id host event matcher script default experimental verdict timeout",
+)
+
+# A verdict is one of HOOK_VERDICTS, or "gap: <reason>" (reason bounded to 24
+# characters by the 21.2 close-out so hook_description stays under the cap).
+HOOK_VERDICTS = ("positive", "non-positive", "unmeasured")
+
+# Recorded per-host verdicts (21.2-MEASUREMENTS.md); the 21.2 close-out edits
+# only this dict
+PRECOMPACT_VERDICTS = {
+    "claude": "unmeasured",
+    "pi": "unmeasured",
+    "opencode": "unmeasured",
+}
+
+# D-11: flat rows, one per id x host x event; 21.3 adds rows here with their
+# own default. `default` is derived from the verdict for precompact rows; it
+# stays a field because 21.3's rows have defaults without a verdict.
+HOOK_REGISTRY = (
+    HookRow(
+        id="precompact", host="claude", event="PreCompact", matcher="manual|auto",
+        script="tools/hooks/claude_precompact.py",
+        default=PRECOMPACT_VERDICTS["claude"] == "positive",
+        experimental=False, verdict=PRECOMPACT_VERDICTS["claude"], timeout=15),
+    HookRow(
+        id="precompact", host="claude", event="SessionStart", matcher="compact",
+        script="tools/hooks/claude_precompact.py",
+        default=PRECOMPACT_VERDICTS["claude"] == "positive",
+        experimental=False, verdict=PRECOMPACT_VERDICTS["claude"], timeout=10),
+    HookRow(
+        id="precompact", host="pi", event="session_before_compact", matcher=None,
+        script="tools/hooks/pi/ai-kit-precompact.ts",
+        default=PRECOMPACT_VERDICTS["pi"] == "positive",
+        experimental=False, verdict=PRECOMPACT_VERDICTS["pi"], timeout=None),
+    HookRow(
+        id="precompact", host="opencode", event="experimental.session.compacting",
+        matcher=None, script="tools/hooks/opencode/ai-kit-precompact.ts",
+        default=PRECOMPACT_VERDICTS["opencode"] == "positive",
+        experimental=True, verdict=PRECOMPACT_VERDICTS["opencode"], timeout=None),
+)
+
+HOOK_IDS = tuple(dict.fromkeys(row.id for row in HOOK_REGISTRY))
+
+
+def parse_hook_selector(value):
+    """Parse `id` / `id:host` tokens (comma or whitespace separated) into
+    (id, host-or-None) pairs in order. A token naming an unknown id, or a host
+    no registry row carries, raises ValueError whose message is that token."""
+    pairs = []
+    for token in [t for t in re.split(r"[,\s]+", value.strip()) if t]:
+        if ":" in token:
+            hook_id, host = token.split(":", 1)
+            if hook_id not in HOOK_IDS or not any(
+                    row.id == hook_id and row.host == host for row in HOOK_REGISTRY):
+                raise ValueError(token)
+            pairs.append((hook_id, host))
+        elif token in HOOK_IDS:
+            pairs.append((token, None))
+        else:
+            raise ValueError(token)
+    return pairs
+
+
+def hook_rows(selection):
+    """Registry rows matching any (id, host-or-None) pair, in registry order."""
+    return tuple(
+        row for row in HOOK_REGISTRY
+        if any(row.id == hook_id and (host is None or row.host == host)
+               for hook_id, host in selection)
+    )
+
+
 def _read_json_checked(path):
     """Three-state JSON reader: absent / ok-dict / unreadable.
 
@@ -1628,18 +1703,34 @@ def _load_hook_config(path, event_key, nested=False):
     return True, data, False
 
 
-def _refresh_or_append_claude_hook(entries, command):
-    """Replace an existing ai-kit SessionStart entry in place, or append one."""
-    new_entry = {
-        "matcher": CLAUDE_HOOK_MATCHER,
-        "hooks": [{"type": "command", "command": command}],
-    }
-    for index, entry in enumerate(entries):
-        for hook in entry.get("hooks") or []:
-            if CLAUDE_HOOK_MARKER in hook.get("command", ""):
-                entries[index] = new_entry
+def _refresh_or_append_claude_hook(entries, command,
+                                   matcher=CLAUDE_HOOK_MATCHER,
+                                   marker=CLAUDE_HOOK_MARKER, timeout=None):
+    """Refresh ai-kit's hook object in place, or append a fresh entry.
+
+    Ownership is per hook OBJECT, not per entry: only the hook dict whose
+    `command` contains `marker` is replaced or moved. A user hook nested in
+    ai-kit's entry — and every other key of that entry — survives both the
+    in-place refresh (when the entry's matcher already equals `matcher`) and
+    the move to a fresh entry (when it differs). The hook dict carries
+    `timeout` only when it is not None, so entries written before timeouts
+    existed stay byte-identical on refresh."""
+    hook = {"type": "command", "command": command}
+    if timeout is not None:
+        hook["timeout"] = timeout
+    for entry in entries:
+        hooks = entry.get("hooks") or []
+        for index, member in enumerate(hooks):
+            if marker in member.get("command", ""):
+                if entry.get("matcher") == matcher:
+                    hooks[index] = hook
+                else:
+                    del hooks[index]
+                    if not hooks:
+                        entries.remove(entry)
+                    entries.append({"matcher": matcher, "hooks": [hook]})
                 return True
-    entries.append(new_entry)
+    entries.append({"matcher": matcher, "hooks": [hook]})
     return False
 
 
@@ -1661,7 +1752,7 @@ def wire_hook_claude(settings, hook_script, dry):
     assert data is not None  # ok True <=> data is a dict, see _load_hook_config
     hooks = data.setdefault("hooks", {})
     entries = hooks.setdefault(CLAUDE_HOOK_EVENT, [])
-    command = "python3 -S " + hook_script
+    command = "python3 -S " + shlex.quote(hook_script)
     _refresh_or_append_claude_hook(entries, command)
     if dry:
         print(f"would wire SessionStart hook -> {command}")
@@ -1672,6 +1763,64 @@ def wire_hook_claude(settings, hook_script, dry):
         print(f"warn: failed to write {settings}: {exc}", file=sys.stderr)
         return False
     print(f"wired SessionStart hook -> {command}")
+    return True
+
+
+def _load_hook_config_multi(path, event_keys):
+    """`_load_hook_config` over every event key at once: the grouped writer's
+    guard. Validates each key's container shape BEFORE anything changes, so a
+    file refused here stays byte-identical. Returns (ok, data); data is a dict
+    ({} for an absent file) exactly when ok is True."""
+    state, data = _read_json_checked(path)
+    if state == JSON_STATE_UNREADABLE:
+        _warn_hook_config(path, "cannot parse as a JSON object")
+        return False, None
+    if state == JSON_STATE_ABSENT:
+        return True, {}
+    assert data is not None
+    for key in event_keys:
+        reason = _hook_container_reason(data, key, nested=True)
+        if reason:
+            _warn_hook_config(path, reason)
+            return False, None
+    return True, data
+
+
+def wire_claude_rows(settings, rows, install_dir, dry):
+    """Write every Claude row of one hook id in ONE grouped atomic write
+    (D-11): a PreCompact entry is never written without its compact
+    SessionStart injector. One `_load_hook_config_multi` read-validate, per-row
+    refresh-or-append, then one `_atomic_write_json`. Returns a bool like
+    `wire_hook_claude` (False: no claude dir, refused file, failed write)."""
+    if not os.path.isdir(os.path.dirname(settings) or "."):
+        print("skipped Claude Code hook rows — no claude dir")
+        return False
+    events = sorted({row.event for row in rows})
+    ok, data = _load_hook_config_multi(settings, events)
+    if not ok:
+        return False
+    assert data is not None  # ok True <=> data is a dict
+    hooks = data.setdefault("hooks", {})
+    commands = []
+    for row in rows:
+        script_path = os.path.join(install_dir, *row.script.split("/"))
+        command = "python3 -S " + shlex.quote(script_path)
+        commands.append((row, command))
+        entries = hooks.setdefault(row.event, [])
+        _refresh_or_append_claude_hook(
+            entries, command, matcher=row.matcher,
+            marker=os.path.join(*row.script.split("/")), timeout=row.timeout)
+    if dry:
+        for row, command in commands:
+            print(f"would wire {row.event} hook -> {command}")
+        return True
+    try:
+        _atomic_write_json(settings, data)
+    except OSError as exc:
+        print(f"warn: failed to write {settings}: {exc}", file=sys.stderr)
+        return False
+    for row, command in commands:
+        print(f"wired {row.event} hook ({row.id}) -> {command}")
     return True
 
 
@@ -1704,7 +1853,7 @@ def wire_hook_cursor(cursor_hooks, hook_script, dry):
     assert data is not None  # ok True <=> data is a dict, see _load_hook_config
     hooks = data.setdefault("hooks", {})
     entries = hooks.setdefault(CURSOR_HOOK_EVENT, [])
-    command = "python3 -S " + hook_script
+    command = "python3 -S " + shlex.quote(hook_script)
     refreshed = _refresh_or_append_cursor_hook(entries, command)
     if created:
         data["version"] = 1
@@ -3084,6 +3233,21 @@ def _headless_wire_hooks(paths, dry):
                 or (cursor_present and not cursor_ok))
 
 
+def _headless_wire_hook_ids(paths, selection, dry, counts):
+    """Wire the registry rows a `--with-hooks=<id[:host],...>` selection names.
+    Task 1 handles the Claude rows only; the pi and opencode link rows join in
+    Task 2 (wire_hook_rows)."""
+    del counts  # the link rows' counts join in Task 2
+    rows = [row for row in hook_rows(selection) if row.host == "claude"]
+    if not rows:
+        return True
+    claude_present = os.path.isdir(paths.claude_dir)
+    if not wire_claude_rows(paths.settings, rows, paths.install_dir, dry):
+        # An absent host dir is an expected skip, not a failure.
+        return not claude_present
+    return True
+
+
 def _headless_install_examples(paths, examples_flag, dry):
     """Install the example segments --examples selects, reusing the same
     primitives cmd_install uses (select_examples never touches tty on the
@@ -3220,7 +3384,10 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
         ok = False
     if with_statusline and not _headless_wire_statusline(paths, dry):
         ok = False
-    if with_hooks and not _headless_wire_hooks(paths, dry):
+    if with_hooks is True:
+        if not _headless_wire_hooks(paths, dry):
+            ok = False
+    elif with_hooks and not _headless_wire_hook_ids(paths, with_hooks, dry, counts):
         ok = False
     if examples_flag is not None and not _headless_install_examples(
             paths, examples_flag, dry):
@@ -3435,7 +3602,7 @@ def ensure_rich_runtime(env):
     _reexec_under_uv(uv_path)               # normally never returns
 
 
-def main(argv=None):  # pylint: disable=too-many-return-statements
+def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-branches
     """Parse the subcommand and dispatch. Default subcommand is install."""
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(prog="setup.py", add_help=True)
@@ -3465,9 +3632,11 @@ def main(argv=None):  # pylint: disable=too-many-return-statements
                               "never unlinks anything not named.")
     parser.add_argument("--with-statusline", action="store_true",
                          help="(--headless only) wire the ai-kit status line.")
-    parser.add_argument("--with-hooks", action="store_true",
-                         help="(--headless only) wire SessionStart hooks "
-                              "(Claude Code + Cursor).")
+    parser.add_argument("--with-hooks", nargs="?", const=True, default=False,
+                        metavar="<id[:host],...>",
+                        help="(--headless only) bare: wire the SessionStart "
+                             "briefing hooks (Claude Code + Cursor); =<id"
+                             "[:host],...>: wire registry hooks (see below).")
     parser.add_argument(
         "--replace-existing", action="store_true",
         help="(--headless --skills only) move a real dir or foreign symlink "
@@ -3475,9 +3644,21 @@ def main(argv=None):  # pylint: disable=too-many-return-statements
              "${XDG_STATE_HOME:-~/.local/state}/ai-kit/backups/<root>/ before "
              "linking the repo copy.")
     args = parser.parse_args(argv)
-    if (args.skills is not None or args.with_statusline or args.with_hooks) \
-            and not args.headless:
+    if (args.skills is not None or args.with_statusline
+            or args.with_hooks is not False) and not args.headless:
         parser.error("--skills/--with-statusline/--with-hooks require --headless")
+    if isinstance(args.with_hooks, str):
+        tokens = [t for t in re.split(r"[,\s]+", args.with_hooks.strip()) if t]
+        if not tokens:
+            print("warn: --with-hooks= named no hook id; nothing wired",
+                  file=sys.stderr)
+            args.with_hooks = []
+        else:
+            try:
+                args.with_hooks = parse_hook_selector(args.with_hooks)
+            except ValueError as exc:
+                parser.error(f"--with-hooks: unknown hook {str(exc)!r} "
+                             f"(known: {', '.join(HOOK_IDS)})")
     if args.replace_existing and not (args.headless and args.skills is not None):
         parser.error("--replace-existing requires --headless and --skills")
     if args.headless and args.subcommand not in ("install", "reconfigure"):

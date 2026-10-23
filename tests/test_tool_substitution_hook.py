@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -123,7 +124,7 @@ class TestClaudeWrapper(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.install = os.path.join(self.tmp, "ai-kit")
+        self.install = os.path.join(self.tmp, "ai kit")
         self.hooks_dir = os.path.join(self.install, "tools", "hooks")
         os.makedirs(self.hooks_dir)
         shutil.copy(_DETECT_PATH, os.path.join(self.hooks_dir, "detect.py"))
@@ -204,8 +205,10 @@ class TestClaudeWrapper(unittest.TestCase):
         ]
         ours = [c for c in commands if setup.CLAUDE_HOOK_MARKER in c]
         self.assertEqual(len(ours), 1)
-        self.assertTrue(ours[0].startswith("python3 -S "))
-        script = ours[0][len("python3 -S "):]
+        argv = shlex.split(ours[0])
+        self.assertEqual(argv[:2], ["python3", "-S"])
+        self.assertEqual(len(argv), 3)
+        script = argv[2]
         fake_bin(self.bin_dir, ["rtk"], _rtk_stub_body(_VERIFIED_RTK_SHOW))
         fake_bin(self.bin_dir, ["rg"], "#!/bin/sh\nexit 0\n")
         env = scoped_env(self.bin_dir, self.home)
@@ -650,7 +653,7 @@ class TestCursorWrapper(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.install = os.path.join(self.tmp, "ai-kit")
+        self.install = os.path.join(self.tmp, "ai kit")
         self.hooks_dir = os.path.join(self.install, "tools", "hooks")
         os.makedirs(self.hooks_dir)
         shutil.copy(_DETECT_PATH, os.path.join(self.hooks_dir, "detect.py"))
@@ -720,8 +723,10 @@ class TestCursorWrapper(unittest.TestCase):
             if setup.CURSOR_HOOK_MARKER in entry.get("command", "")
         ]
         self.assertEqual(len(ours), 1)
-        self.assertTrue(ours[0].startswith("python3 -S "))
-        script = ours[0][len("python3 -S "):]
+        argv = shlex.split(ours[0])
+        self.assertEqual(argv[:2], ["python3", "-S"])
+        self.assertEqual(len(argv), 3)
+        script = argv[2]
         fake_bin(self.bin_dir, ["rtk"], _rtk_stub_body(_VERIFIED_RTK_SHOW))
         fake_bin(self.bin_dir, ["rg"], "#!/bin/sh\nexit 0\n")
         env = scoped_env(self.bin_dir, self.home)
