@@ -94,9 +94,12 @@ def _command_words(tokens):
             while index < len(tokens) and tokens[index] != NEWLINE_TOKEN:
                 index += 1
             expect_command = True
-        elif _separator(token):
+            continue
+        if _separator(token):
             expect_command = True
-        elif expect_command:
+            index += 1
+            continue
+        if expect_command:
             while index < len(tokens) and (
                     _ASSIGN_RE.match(unquote(tokens[index]))
                     or unquote(tokens[index]) in KEYWORDS):
@@ -109,8 +112,6 @@ def _command_words(tokens):
             if index < len(tokens) and not _separator(tokens[index]):
                 yield os.path.basename(unquote(tokens[index])), tokens[index + 1:]
                 expect_command = False
-        else:
-            index += 1
         index += 1
 
 
