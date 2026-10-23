@@ -424,6 +424,142 @@ class TestPhase2E2E(unittest.TestCase):
         self._tmpdirs.append(d)
         return d
 
+    def test_replace_gate_backs_up_and_links(self):
+        """The housekeeping `replace` gate (D-16): a pre-created real directory
+        at a skill link path renders the gate; `y` moves it into the XDG-state
+        backups dir and links the repo copy; the `moved` backup line reaches
+        the user on the PTY output after the wizard exits. The env sets all
+        five scratch host roots (T-21.1-15), so the commit's cursor wiring hits
+        the absent scratch CURSOR_CONFIG_DIR and never the real hooks file."""
+        uv = _uv_cmd()
+        # A private base dir: _scratch_roots() derives the cursor/pi/state
+        # roots from dirname(config_dir), so the config dir must NOT sit
+        # directly in a shared parent (e.g. /tmp) or every run would share
+        # one backups dir.
+        base = self._mk_config_dir()
+        config_dir = os.path.join(base, "claude")
+        os.makedirs(config_dir)
+        xdg_config_home = os.path.join(base, "xdg")
+        os.makedirs(xdg_config_home)
+        self._tmpdirs.append(config_dir)
+        self._tmpdirs.append(xdg_config_home)
+
+        # Real content standing at a link path the repo also ships — the gate
+        # must list it and default to leaving it alone.
+        real_skill = os.path.join(config_dir, "skills", "markdown-to-pdf")
+        os.makedirs(real_skill)
+        marker = os.path.join(real_skill, "marker.txt")
+        with open(marker, "w") as f:
+            f.write("user content")
+
+        env = dict(
+            os.environ,
+            CLAUDE_CONFIG_DIR=config_dir,
+            AI_KIT_DIR=_REPO_ROOT,
+            AI_KIT_UV_REEXEC="1",
+            **_scratch_roots(config_dir),
+        )
+        # Assigned as an item, not a duplicate kwarg: _scratch_roots already
+        # sets XDG_CONFIG_HOME, and a literal keyword collision is a TypeError.
+        env["XDG_CONFIG_HOME"] = xdg_config_home
+        # All five host roots are scratch overrides (T-21.1-15); the cursor,
+        # pi and state roots come from _scratch_roots (outside every scanned
+        # dir), XDG_CONFIG_HOME is the isolated temp dir set after the spread.
+        for key in _HOST_ROOT_KEYS:
+            self.assertIn(key, env)
+        self.assertEqual(env["XDG_CONFIG_HOME"], xdg_config_home)
+        self.assertEqual(env["CURSOR_CONFIG_DIR"],
+                         os.path.join(os.path.dirname(config_dir), "cursor-absent"))
+
+        _BOOT_DEADLINE = 45.0
+        _STEP_DEADLINE = 120.0
+        _DRAIN_DEADLINE = 30.0
+
+        pid, master_fd = spawn_pty(
+            [uv, "run", "--script", SETUP, "install"],
+            env,
+        )
+
+        def press_until(key: bytes, marker: bytes, deadline: float) -> None:
+            """Send `key`, wait for `marker`; re-press every few seconds until
+            the deadline (a keypress landing mid-render or mid-apply is
+            consumed as a no-op, so the wait must retry)."""
+            while True:
+                with contextlib.suppress(OSError):
+                    os.write(master_fd, key)
+                try:
+                    drive_until(master_fd, marker, min(time.time() + 10.0, deadline),
+                                captured=captured)
+                    return
+                except AssertionError:
+                    if time.time() >= deadline:
+                        raise
+
+        captured: list[bytes] = []
+        try:
+            # The housekeeping gate renders before the picks are usable.
+            drive_until(
+                master_fd,
+                b"hold a real directory or a foreign link",
+                time.time() + _BOOT_DEADLINE,
+                captured=captured,
+            )
+            # y = back up and link the repo copy (the only path that moves data;
+            # the decline path is covered by the Textual + unit tests).
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"y")
+
+            # Gate resolved -> the Choose picks screen becomes usable.
+            drive_until(
+                master_fd,
+                "\u25c9".encode(),
+                time.time() + _STEP_DEADLINE,
+                captured=captured,
+            )
+            _drain(master_fd, time.time() + 2.0)   # let the apply worker finish
+            # From here the existing pick test's key sequence:
+            # Enter (Choose -> Arrange, adoption gate) -> y (board) ->
+            # Enter (Arrange -> Review) -> Enter (commit -> Done) -> Enter (exit).
+            press_until(b"\r", b"Wire your status line?",
+                        time.time() + _STEP_DEADLINE)
+            _drain(master_fd, time.time() + 1.0)
+            press_until(b"y", b"git_branch", time.time() + _STEP_DEADLINE)
+            _drain(master_fd, time.time() + 1.0)
+            press_until(b"\r", b"Review & confirm", time.time() + _STEP_DEADLINE)
+            press_until(b"\r", b"ai-kit is installed", time.time() + _STEP_DEADLINE)
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"\r")
+            tail = _drain(master_fd, time.time() + _DRAIN_DEADLINE)
+            captured.append(tail)
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(master_fd)
+            with contextlib.suppress(ChildProcessError, OSError):
+                os.waitpid(pid, 0)
+
+        # The accepted replace: the path is now a repo symlink.
+        self.assertTrue(os.path.islink(real_skill),
+                        msg=f"{real_skill} must be a repo symlink after `y`")
+        self.assertEqual(os.readlink(real_skill),
+                         os.path.join(_REPO_ROOT, "skills", "markdown-to-pdf"))
+        # The backup holds the original content, under XDG state.
+        import glob
+        baks = glob.glob(os.path.join(
+            os.path.dirname(config_dir), "state", "ai-kit", "backups",
+            "claude", "markdown-to-pdf.bak-*"))
+        self.assertEqual(len(baks), 1)
+        self.assertTrue(os.path.isfile(
+            os.path.join(baks[0], "markdown-to-pdf", "marker.txt")))
+        # The housekeeping log reached the user AFTER the wizard exited, and
+        # the commit's cursor wiring hit the absent scratch root.
+        output = b"".join(captured).decode("utf-8", errors="replace")
+        self.assertIn("moved ", output)
+        self.assertIn("markdown-to-pdf.bak-", output)
+        self.assertIn("no cursor dir", output)
+        self.assertFalse(os.path.exists(
+            os.path.join(config_dir, "cursor-absent")),
+            msg="the scratch CURSOR_CONFIG_DIR must never be created")
+
     def test_pick_skill_and_confirm_creates_symlink(self):
         """Fresh install: accept all-ON defaults → confirm → symlink created.
 
@@ -455,11 +591,13 @@ class TestPhase2E2E(unittest.TestCase):
         env = dict(
             os.environ,
             CLAUDE_CONFIG_DIR=config_dir,
-            XDG_CONFIG_HOME=xdg_config_home,
             AI_KIT_DIR=_REPO_ROOT,
             AI_KIT_UV_REEXEC="1",
             **_scratch_roots(config_dir),
         )
+        # Assigned as an item, not a duplicate kwarg: _scratch_roots already
+        # sets XDG_CONFIG_HOME, and a literal keyword collision is a TypeError.
+        env["XDG_CONFIG_HOME"] = xdg_config_home
 
         _BOOT_DEADLINE = 45.0   # generous: uv + textual init from warm cache
         _SUMMARY_DEADLINE = 120.0  # widened from 30.0 (RESEARCH.md Pitfall 2: this
@@ -679,14 +817,17 @@ class TestPhase3E2E(unittest.TestCase):
     def _base_env(self, claude_dir: str, xdg_config_home: str) -> dict:
         """Build a minimal env with temp dirs, AI_KIT_UV_REEXEC bypass, and
         AI_KIT_DIR pointing at the repo root so enumerate_entries finds skills/."""
-        return dict(
+        env = dict(
             os.environ,
             CLAUDE_CONFIG_DIR=claude_dir,
-            XDG_CONFIG_HOME=xdg_config_home,
             AI_KIT_DIR=_REPO_ROOT,
             AI_KIT_UV_REEXEC="1",
             **_scratch_roots(claude_dir),
         )
+        # Assigned as an item, not a duplicate kwarg: _scratch_roots already
+        # sets XDG_CONFIG_HOME, and a literal keyword collision is a TypeError.
+        env["XDG_CONFIG_HOME"] = xdg_config_home
+        return env
 
     def _config_toml_path(self, xdg_config_home: str) -> str:
         """Compute the config_toml path given XDG_CONFIG_HOME.

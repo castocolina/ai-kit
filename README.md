@@ -55,7 +55,7 @@ The repo is the source of truth. `tools/install.sh`:
 4. **prune** — removes broken symlinks under `~/.claude/` that point into the install dir, so deleting a skill from the repo and re-running cleans up after itself.
 5. **statusline** — sets `statusLine` in `~/.claude/settings.json` to the bundled `tools/status-line.py` (a backup is written to `settings.json.bak`).
 
-Adding or removing skills/commands/agents needs no change to the script — entries are discovered dynamically.
+Adding or removing skills/commands/agents needs no change to the script — entries are discovered dynamically. The interactive wizard asks before it touches real content at a link path: if a skill path holds a real directory or a foreign symlink, a confirmation gate (default No) offers to back it up into the same XDG-state backups dir and link the repo copy — the same move the headless `--replace-existing` flag makes, and the backup destination is printed after the wizard exits.
 
 `cursor-agents/` holds ai-kit's own Cursor executor subagents, `composer-worker` and `grok-worker`, each pinned to an explicit non-fast model id. They stay out of `agents/` because that directory links into `~/.claude/agents`, where Claude would load an unrunnable pin. The Cursor CLI reads subagents only from a project's `.cursor/agents`, so automated per-file linking is backlog 999.7. Until then, from a project root link one file by hand: `ln -s <ai-kit checkout>/cursor-agents/composer-worker.md .cursor/agents/` (never link the directory; owner decision 2026-10-18).
 
