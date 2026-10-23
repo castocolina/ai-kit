@@ -418,3 +418,40 @@ ACTIVATION ok
 CITE_PROBE skills/jev-fast-decision/SKILL.md:12
 CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
 VERDICT pass
+
+## Run 7 (final tree e34499e; one clean-context native Opus subagent; final round, no further fixes)
+
+DIGEST 4e0a4fcbf5ef4634
+TREE 675622459707a4131f602cdae8d17ba668def16d
+
+Activation picks from frontmatter only: lines 1-4 pick jev-fast-decision, 5-8 none, 9-12
+typesafe-ai (host-installed). Pass rule holds. `needs_fallback` recipe present at SKILL.md:38;
+the example payload validated in-process against `request_body`. The run-6 Important (raw
+evidence in the example) is resolved.
+
+Open for the owner:
+- Important I1: SKILL.md:20/:39 show only `JEV_ALLOW_REMOTE=1`, which opens every remote; a
+  TypeSafe-only yes exported as `=1` lets an escalated item reach OpenCode Zen without consent.
+  Say: export the approved backends as a comma list, `1` only when every remote was approved,
+  or use `consent grant <backend>`.
+- Minors: 4xx caller-error wording (both notes, `_opencode_classify` docstring); Laya 401/403
+  token; `answer_confidence` vs `confidence`; `consent_used` lists uncalled remotes;
+  `remote_available` on `ok`; read every candidate's backend note; noul shape trigger;
+  Required-reading links; laya.md:37-38 fragment; Red Flags repetition; loopback-http exception.
+
+D1 18/20
+D2 13/15
+D3 13/15
+D4 14/15
+D5 12/15
+D6 13/15
+D7 9/10
+D8 12/15
+CURRENT 104/120
+CRITICAL 0
+IMPORTANT 1
+FLOORS ok
+ACTIVATION ok
+CITE_PROBE skills/jev-fast-decision/SKILL.md:12
+CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
+VERDICT pass

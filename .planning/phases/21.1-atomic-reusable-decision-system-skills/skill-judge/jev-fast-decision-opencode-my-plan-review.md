@@ -80,3 +80,91 @@ CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
 > From this skill's directory, run `python3 -B scripts/jev_review.py --probe` before the first call of a session; read `backends/<selected>.md` before the first call with that backend.
 
 VERDICT pass
+
+DIGEST 4e0a4fcbf5ef4634
+TREE 675622459707a4131f602cdae8d17ba668def16d
+
+# Skill evaluation: jev-fast-decision
+
+Using **skill-judge** with `tmp/judge/rubric.md`. Evaluated commit `e34499e`; the working tree is clean. No files were edited.
+
+## Activation picks
+
+Listed all 22 `skills/*/SKILL.md` files and extracted only their frontmatter `name` and `description` before opening the judged body. `typesafe-ai` is not in this checkout, so its installed frontmatter supplied that candidate’s description.
+
+The activation fixture resolves to `.planning/phases/21.1-atomic-reusable-decision-system-skills/skill-judge/activation.jsonl`.
+
+| Line | Single skill to load | Frontmatter-only reasoning |
+|---|---|---|
+| 1 | `jev-fast-decision` | Yes/no triage of supplied evidence is an advisory typed judgment, with no editing required. |
+| 2 | `jev-fast-decision` | Selecting one of three named titles matches its `choice` trigger. |
+| 3 | `jev-fast-decision` | Scoring supplied report text against a severity rubric matches its `score` trigger. |
+| 4 | `jev-fast-decision` | Screening existing grep evidence against a false-positive criterion matches its description. |
+| 5 | none | Editing a shell script and tests is explicitly outside its scope; no listed specialist matches. |
+| 6 | none | Tracing a call chain requires investigation and reasoning, not a snap judgment over supplied evidence. |
+| 7 | none | Running diagnostics and fixing failures is not advisory screening. |
+| 8 | none | Planning and implementing a migration is multi-step code work, explicitly excluded. |
+| 9 | `typesafe-ai` | Building product-facing TypeSafe routing matches programmable application judgments. |
+| 10 | `typesafe-ai` | Its description explicitly covers brainstorming AI-powered product features. |
+| 11 | `typesafe-ai` | Its description explicitly covers replacing prompt-and-parse with structured application decisions. |
+| 12 | `typesafe-ai` | An in-app ranker with backend integration matches its ranking and application-building scope. |
+
+All four expected positive cases select `jev-fast-decision`; none of the eight negative cases selects it.
+
+## Part 1 — Dimensions
+
+D1 18/20 — 90%. Strong backend-specific knowledge: measured state contamination, truncation guards, moving aliases and confidence semantics. Some repetition dilutes the otherwise high knowledge delta.
+
+D2 14/15 — 93.3%. Transfers the advisory mindset and a concrete probe → backend-read → call → interpret workflow. A compact instruction to split compound judgments into independently answerable items would strengthen question design.
+
+D3 14/15 — 93.3%. Specific prohibitions cover consent inference, raw-source disclosure, unsupported-answer dismissal and Laya batching. The batching rationale is excellent in the backend notes; several body prohibitions leave their rationale implicit.
+
+D4 15/15 — 100%. Valid frontmatter, compliant name, specific capabilities and triggers, and explicit exclusions distinguishing agent screening from application integration.
+
+D5 13/15 — 86.7%. The 66-line entry point routes to backend notes and conditionally loads the reference for richer shapes. It lacks explicit “do not load unselected backends” guidance, and the unconditional external reading list weakens otherwise selective loading.
+
+D6 15/15 — 100%. Appropriate constraints around transmission, consent and typed contracts, while preserving the agent’s own judgment. `needs_fallback` never authorizes an automatic verdict.
+
+D7 9/10 — 90%. Clear Navigation/Tool hybrid: concise routing, executable client and detailed backend resources. Repeated warning sections slightly fragment the entry point.
+
+D8 13/15 — 86.7%. Covers partial results, missing IDs, unavailable backends, unsupported features and provenance. Minor documentation discrepancies remain in the HTTP error taxonomy.
+
+**Total: 111/120 (92.5%, A).** Estimated knowledge ratio: Expert 80%, Activation 15%, Redundant 5%.
+
+### Findings
+
+**Critical:** none.
+
+**Important:** none.
+
+**Minor**
+1. **Repeated warning content.** `skills/jev-fast-decision/SKILL.md:46`, `:53`, and `:57` repeat consent or batching warnings already present in the workflow/NEVER list. Consolidate the duplicate reminders while retaining the measured rationale in the backend reference.
+2. **Loading boundaries could be sharper.** `skills/jev-fast-decision/SKILL.md:59–66` requires four external documents without scenario-specific loading conditions. Make feature-specific documents conditional and explicitly exclude unselected backend notes.
+3. **HTTP error tables overgeneralize client behavior.** `skills/jev-fast-decision/backends/typesafe.md:43` says other 4xx responses are final caller errors, but `scripts/jev_review.py:767–769` classifies only 400/404/413/422 that way and escalates others. Likewise, `backends/opencode.md:27` generalizes other 4xx responses, while `scripts/jev_review.py:830–832` uses the caller-error classification only for 400. Align the tables with the implemented classifications.
+
+### Required fallback recipe
+
+Present at `skills/jev-fast-decision/SKILL.md:38`:
+
+> “`needs_fallback: true` → **you decide that item with your own reasoning**”
+
+This is an actionable recipe, not merely a field definition.
+
+### Evidence and limitations
+
+Read the complete skill body, reference, all three backend notes, both bundled scripts and evaluation cases. The 88 KB client was read in chunks. Also checked the four required external pages and recomputed the recorded evaluation metrics.
+
+No live inference or test suite was run. The recorded Laya evaluation reports **50% accuracy among non-fallback, unambiguous cases**; the skill correctly discloses this and requires independent verification.
+
+CURRENT 111/120
+CRITICAL 0
+IMPORTANT 0
+FLOORS ok
+ACTIVATION ok
+CITE_PROBE skills/jev-fast-decision/SKILL.md:12
+> From this skill's directory, run `python3 -B scripts/jev_review.py --probe` before the first call of a session; read `backends/<selected>.md` before the first call with that backend.
+
+CITE_BACKEND skills/jev-fast-decision/SKILL.md:12
+> From this skill's directory, run `python3 -B scripts/jev_review.py --probe` before the first call of a session; read `backends/<selected>.md` before the first call with that backend.
+
+VERDICT pass

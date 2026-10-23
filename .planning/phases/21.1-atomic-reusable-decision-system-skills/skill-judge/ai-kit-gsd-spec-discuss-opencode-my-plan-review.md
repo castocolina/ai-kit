@@ -78,3 +78,76 @@ CRITICAL 0
 IMPORTANT 2
 FLOORS ok
 VERDICT pass
+
+DIGEST fd6afc654e0c4f76
+TREE 605c224074237b4bb8817fe9ed2c68553caa4508
+
+# Skill evaluation: ai-kit-gsd-spec-discuss
+
+Evaluated committed tree `e34499eae26a0cd73ddf5e39e458b1d821c80f70` using `tmp/judge/rubric.md`. Read the complete skill, all four references, all three bundled scripts, the shared client, and relevant installed GSD workflows. Files larger than 50 KB were read in chunks. No files were edited.
+
+**Pattern:** Process, with Tool-style decision routing.  
+**Estimated knowledge ratio:** Expert 85% / Activation 12% / Redundant 3%.  
+**Assessment:** Strong domain-specific guidance, but the bundled Edge Coverage gate can report success after extracting no requirements.
+
+## PART 1 — Dimensions
+
+D1 18/20 — 90.0%. Substantial knowledge delta: GSD routing traps, advisory confidence handling, immutable user decisions, and cross-phase amendment rules. Improvement: move historical phase identifiers and repeated empirical anecdotes into the worked examples (`SKILL.md:145–150`, `173–179`).
+
+D2 14/15 — 93.3%. The evidence-first mindset connects well to concrete procedures, including neutral questions, second opinions, and blocking-versus-ledger decisions (`SKILL.md:12–16`, `144–152`; `references/decision-table.md:17–55`). Improvement: make successful repair verification part of the incompatible-client recovery procedure.
+
+D3 15/15 — 100.0%. The NEVER list names specific failure modes and explains their consequences: listing instead of writing CONTEXT, unwanted plan advancement, cross-item contamination, lost locked decisions, and coverage drift (`SKILL.md:188–205`).
+
+D4 15/15 — 100.0%. Valid frontmatter and matching directory/name. The description specifies WHAT, WHEN, searchable invocation examples, backend-free operation, and exclusions (`SKILL.md:1–4`). The 500-word cap was not applied.
+
+D5 14/15 — 93.3%. Explicit mandatory loading points, conditional worked examples, and “Do NOT load” guidance provide effective layering (`SKILL.md:64`, `106`, `110–111`, `214–224`). Improvement: keep historical supporting evidence in the conditional examples rather than the core recipe.
+
+D6 13/15 — 86.7%. Appropriately constrains consent, data disclosure, workflow routing, and locked decisions while preserving agent judgment. Improvement: enforce the promised fail-closed behavior when requirement extraction produces an empty input (`scripts/edge_floor.py:36–43`, `169–184`).
+
+D7 9/10 — 90.0%. A clear Process pattern covers setup, phase progression, decision resolution, logging, amendments, and stopping. Improvement: consolidate repeated ladder/logging guidance to sharpen the primary execution path.
+
+D8 11/15 — 73.3%. **Below floor 12.** Common-case guidance is actionable, with useful fallback and error handling, but the coverage gate has a verified false-success path. Improvement: reject missing, empty, or unparseable Requirements before invoking the engine; add a regression check proving malformed input cannot yield a successful gate. Also make the client-repair recipe locate its installer and verify compatibility afterward.
+
+## Findings
+
+### Important — Empty requirement extraction can pass the coverage gate
+
+**Sources:** `skills/ai-kit-gsd-spec-discuss/scripts/edge_floor.py:36–43`, `146–157`, `169–184`; `skills/ai-kit-gsd-spec-discuss/SKILL.md:76–82`.
+
+The extractor recognizes only numbered entries beginning with bold text under `## Requirements`. A missing section or an entry such as `1. Parse rows` produces an empty requirement list. Nothing rejects that list before engine execution.
+
+Read-only checks confirmed:
+
+- Both malformed examples extract `[]`.
+- The installed engine accepts `[]` and returns an empty floor.
+- Comparing that floor with an absent coverage table returns `ok: true`.
+
+The skill presents `check` as the coverage gate, so this can appear successful without checking any requirement.
+
+**Required improvement:** fail closed on zero extracted requirements and detect unsupported requirement formatting. Add regression coverage for missing and malformed Requirements sections.
+
+### Minor — Incompatible-client recovery assumes an installer location and source
+
+**Source:** `skills/ai-kit-gsd-spec-discuss/SKILL.md:40–43`.
+
+The replacement command is supported, but `python3 tools/setup.py …` assumes a working directory containing that script. Inspection also confirmed that setup selects its source through `AI_KIT_DIR` or the configured installation location, not automatically from the script’s checkout. The command relinks content; it does not fetch an updated client.
+
+An agent following the recipe from a consuming GSD project may therefore fail to locate the installer or relink an unchanged client.
+
+**Improvement:** identify the ai-kit installation first, state the source requirement, and rerun `detect` to confirm compatibility rather than treating command completion as repair.
+
+## Special check — `needs_fallback` recipe
+
+**Confirmed present.** `skills/ai-kit-gsd-spec-discuss/SKILL.md:151–152` explicitly maps answering columns carrying `fallback: true`—the client’s `needs_fallback`—to the agent’s **own reasoning** against the SPEC, earlier CONTEXT files, and live facts, followed by logging and appropriate ledgering.
+
+This is an actionable recipe, not merely a mention of the field. No Critical finding applies.
+
+## Verification limits
+
+Skipped end-to-end workflow execution, network calls, and the test suite to preserve read-only evaluation. The demonstrated empty-input gate remains the material risk.
+
+CURRENT 109/120
+CRITICAL 0
+IMPORTANT 1
+FLOORS fail
+VERDICT fail

@@ -337,3 +337,34 @@ CRITICAL 0
 IMPORTANT 1
 FLOORS ok
 VERDICT pass
+
+## Run 6 (final tree e34499e; one clean-context native Opus subagent; final round, no further fixes)
+
+DIGEST fd6afc654e0c4f76
+TREE 605c224074237b4bb8817fe9ed2c68553caa4508
+
+Claims checked against `jev_review.py` (all 1,987 lines), `decide.py` and the project-local
+gsd-core 1.17.0. `needs_fallback` recipe present at SKILL.md:151. No Important finding: the
+run-5 and opencode Important items (batch split, codegraph init, key_check) are resolved.
+
+Minors left for the owner: the workflow's own git_commit/update_state steps vs the skill's
+one commit; `roadmap analyze` output over 50 KB comes back as `@file:<path>`; `init phase-op`
+vs `init.discuss-phase-assumptions`; spec-phase.md:188 wording; row-5 `client_status`;
+`budget_exceeded` is not a client code (Zen ends as `http_402`/`http_429`); remote-column
+condition omits "local unavailable"; row-1 scope vs SKILL §4; noul/score column values;
+one-run vs split-batch wording; `key_check: unverified` on every opencode row; log-formats
+`(fb)` cause; Zen never answers `score`.
+
+D1 18/20
+D2 14/15
+D3 14/15
+D4 14/15
+D5 14/15
+D6 14/15
+D7 9/10
+D8 13/15
+CURRENT 110/120
+CRITICAL 0
+IMPORTANT 0
+FLOORS ok
+VERDICT pass
