@@ -705,7 +705,7 @@ downstream depends on it)
 - [x] 22-01-PLAN.md
 - [x] 22-02-PLAN.md
 - [x] 22-03-PLAN.md
-- [ ] 22-04-PLAN.md
+- [x] 22-04-PLAN.md
 - [ ] 22-05-PLAN.md
 - [ ] 22-06-PLAN.md
 - [ ] 22-07-PLAN.md
