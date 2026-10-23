@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -379,31 +380,25 @@ class TestTranscriptMatrix(HookCaseMixin, unittest.TestCase):
         self.assertIn("unknown_type 2", text)
 
     def test_transcript_growing_file_reads(self):
+        """Lines appended after the reader's size snapshot are not read (deterministic: the
+        append happens inside the patched fstat, right after the snapshot is taken)."""
         base = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, base, ignore_errors=True)
         path = os.path.join(base, "t.jsonl")
         with open(path, "wb") as handle:
             for index in range(3):
                 handle.write(self._user_line(f"OPEN-{index}"))
-        failures = []
+        real_fstat = os.fstat
 
-        def grow():
-            try:
-                with open(path, "ab") as handle:
-                    for index in range(200):
-                        handle.write(self._user_line(f"APPENDED-{index}"))
-                        handle.flush()
-                        time.sleep(0.001)
-            except (OSError, ValueError) as error:  # pragma: no cover
-                failures.append(error)
+        def fstat_then_grow(fd):
+            info = real_fstat(fd)
+            with open(path, "ab") as handle:
+                for index in range(200):
+                    handle.write(self._user_line(f"APPENDED-{index}"))
+            return info
 
-        thread = threading.Thread(target=grow)
-        thread.start()
-        try:
+        with unittest.mock.patch.object(core.os, "fstat", fstat_then_grow):
             messages, _skipped = core.read_claude_transcript(path)
-        finally:
-            thread.join(timeout=30)
-        self.assertEqual(failures, [])
         texts = "\n".join(message["text"] for message in messages)
         self.assertIn("OPEN-0", texts)
         self.assertNotIn("APPENDED-", texts)
