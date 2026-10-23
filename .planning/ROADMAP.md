@@ -702,6 +702,13 @@ downstream depends on it)
      `host_can_select` keeps the session-default-only label for pi (amended 2026-10-17 per
      18.1-VERIFICATION deferred item).
 **Plans**: TBD
+- [x] 22-01-PLAN.md
+- [ ] 22-02-PLAN.md
+- [ ] 22-03-PLAN.md
+- [ ] 22-04-PLAN.md
+- [ ] 22-05-PLAN.md
+- [ ] 22-06-PLAN.md
+- [ ] 22-07-PLAN.md
 
 ### Phase 23: Host-split status line for Claude Code and Cursor CLI
 
