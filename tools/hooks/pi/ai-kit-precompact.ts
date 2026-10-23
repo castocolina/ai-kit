@@ -82,9 +82,9 @@ function runCore(core: string, entry: string, input: string, signal?: AbortSigna
     };
     const kill = () => {
       try {
-        child.kill("SIGKILL");
+        if (child.pid) process.kill(-child.pid, "SIGKILL");
       } catch {
-        // already gone
+        // already gone or process groups unavailable
       }
     };
     const onAbort = () => {
@@ -92,7 +92,8 @@ function runCore(core: string, entry: string, input: string, signal?: AbortSigna
     };
     try {
       child = spawn(process.env.AI_KIT_PYTHON || "python3", ["-S", core, entry],
-                    { stdio: ["pipe", "pipe", "ignore"] });
+                    { stdio: ["pipe", "pipe", "ignore"], detached: true });
+      child.stdout?.setEncoding("utf8");
     } catch {
       resolve(undefined);
       return;
@@ -106,9 +107,9 @@ function runCore(core: string, entry: string, input: string, signal?: AbortSigna
       }
     }
     child.on("error", () => finish(undefined));
-    child.stdout?.on("data", (chunk: Buffer) => {
+    child.stdout?.on("data", (chunk: string) => {
       if (stdout.length < 4 * 1024 * 1024) {
-        stdout += chunk.toString("utf-8");
+        stdout += chunk;
       }
     });
     child.stdin?.on("error", () => {

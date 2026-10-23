@@ -175,11 +175,12 @@ class TestShimsE2E(ShimHarnessMixin, unittest.TestCase):
                 pidfile = os.path.join(base, "sleeper.pid")
                 script = self._write_interpreter_script(
                     base, "sleeper.py",
-                    "import os, sys\n"
+                    "import os, subprocess, sys, time\n"
                     f"with open({pidfile!r}, 'w', encoding='utf-8') as handle:\n"
-                    "    handle.write(str(os.getpid()))\n"
-                    "os.execv(sys.executable,\n"
-                    "    [sys.executable, '-c', 'import time; time.sleep(30)'])\n")
+                    "    child = subprocess.Popen([sys.executable, '-c',\n"
+                    "        'import time; time.sleep(30)'])\n"
+                    "    handle.write(f'{os.getpid()} {child.pid}')\n"
+                    "time.sleep(30)\n")
                 env = self._harness_env(base, {"AI_KIT_PYTHON": script})
                 cmd = [NODE or "node", str(HARNESS), host, str(shim), str(fixture)]
                 started = time.monotonic()
@@ -203,14 +204,16 @@ class TestShimsE2E(ShimHarnessMixin, unittest.TestCase):
                         self.assertEqual(result["output"],
                                          {"context": ["prior plugin context"]})
                     with open(pidfile, encoding="utf-8") as handle:
-                        sleeper = int(handle.read().strip())
-                    with self.assertRaises(ProcessLookupError):
-                        os.kill(sleeper, 0)
+                        pids = [int(pid) for pid in handle.read().split()]
+                    for pid in pids:
+                        with self.assertRaises(ProcessLookupError):
+                            os.kill(pid, 0)
                 finally:
                     if os.path.exists(pidfile):
                         try:
                             with open(pidfile, encoding="utf-8") as handle:
-                                os.kill(int(handle.read().strip()), signal.SIGKILL)
+                                for pid in handle.read().split():
+                                    os.kill(int(pid), signal.SIGKILL)
                         except (OSError, ValueError):
                             pass
                     if proc.poll() is None:
@@ -351,7 +354,6 @@ class TestOpencodeTracer(ShimHarnessMixin, unittest.TestCase):
         proc, env = self._run_harness("opencode", OC_SHIM, OC_FIXTURE, base)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         result = json.loads(proc.stdout)
-        self.assertEqual(result["calls"], 1)
         self.assertFalse(result["promptSet"])
         context = result["output"]["context"]
         self.assertEqual(len(context), 2)
@@ -401,7 +403,6 @@ class TestOpencodeTracer(ShimHarnessMixin, unittest.TestCase):
         proc, _env = self._run_harness("opencode", OC_SHIM, OC_FIXTURE, base, mode="twice")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         result = json.loads(proc.stdout)
-        self.assertEqual(result["calls"], 2)
         context = result["output"]["context"]
         self.assertEqual(len(context), 3)
         self.assertTrue(context[1].startswith(HEADER_FIRST_LINE))

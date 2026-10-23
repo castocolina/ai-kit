@@ -11,7 +11,7 @@
 //                   bare array result; `throw`: rejects; `hang`: never
 //                   settles) and the output object, calls the
 //                   `experimental.session.compacting` hook once (twice in
-//                   mode `twice`); prints `{output, promptSet, calls}`.
+//                   mode `twice`); prints `{output, promptSet}`.
 // No test starts a real pi or opencode process.
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -49,8 +49,6 @@ if (host === "pi") {
   const result = await handler(event, ctx);
   console.log(JSON.stringify(result ?? null));
 } else if (host === "opencode") {
-  const calls = [];
-  // `calls` counts hook invocations only.
   let client;
   if (mode === "throw") {
     client = { session: { messages: () => Promise.reject(new Error("backend down")) } };
@@ -72,12 +70,10 @@ if (host === "pi") {
   const times = mode === "twice" ? 2 : 1;
   for (let index = 0; index < times; index += 1) {
     await hook({ sessionID: fixture.sessionID }, output);
-    calls.push(index);
   }
   console.log(JSON.stringify({
     output,
     promptSet: Object.hasOwn(output, "prompt"),
-    calls: calls.length,
   }));
 } else {
   console.error(`unknown host: ${host}`);
