@@ -95,16 +95,14 @@ install](#headless-install-ci--containers--no-tty) below); it is opt-in per
 piece and defaults to doing nothing, so it is not a "headless defaults" mode.
 A clean `Ctrl-C`, `q`, or `esc` abort leaves the original config intact.
 
-The picks screen includes a **HOOKS** group with one row per hook knob. The
-**precompact pre-summary** row wires Claude's `PreCompact` producer and compact
+The picks screen includes a **HOOKS** group with one row per hook knob:
+`session-briefing`, `tool-advisor`, `tool-reminder`, `decision-probe` and
+`precompact`. Checked rows are installed; unchecked rows follow the row's
+recorded default (the decision probe and unmeasured precompact hook default
+off). The precompact row wires Claude's `PreCompact` producer and compact
 `SessionStart` injector, plus symlinks the pi extension and experimental
-opencode plugin when those host directories exist. Checking it wires hosts
-where it is already installed and hosts whose default is on; if neither set
-applies, it wires every present host. Unchecking removes the hook from every
-host where it is installed. The row description shows each host's recorded
-verdict and whether its default is on; the precompact default remains off until
-measured. The pre-summary requires the local decision backend (Laya on loopback)
-and otherwise fails open without blocking compaction.
+opencode plugin when those host directories exist. The review counts hook rows
+separately from components.
 
 #### Install-picks screen keybindings
 
@@ -388,7 +386,7 @@ single-line. A failing, slow (past `timeout`), or empty provider is simply omitt
 ```bash
 install.sh --dry-run            # show what would change, mutate nothing
 install.sh --uninstall          # remove ai-kit symlinks, statusLine and hook entries (keeps the install dir)
-python3 tools/setup.py uninstall --hooks=precompact  # remove only the pre-summary hook rows/links
+python3 tools/setup.py uninstall --hooks=tool-advisor,precompact  # remove only selected hook rows/links
 install.sh --examples=all|none|<ids>   # which bundled example segments to install (default: all)
 install.sh --branch <name>      # fetch a specific branch  (or --branch=<name>; fork via AI_KIT_REPO)
 install.sh reconfigure          # re-open the wizard pre-loaded with your current selection + layout
@@ -469,16 +467,25 @@ nothing is touched unless explicitly requested:
   Claude Code config dir does not exist, this is skipped with a message and
   nothing is created — ai-kit never conjures a `~/.claude/` on a machine that
   has no Claude Code.
-- `--with-hooks` — bare form wires the SessionStart briefing hook for Claude
-  Code and Cursor. `--with-hooks=precompact[:claude|pi|opencode]` wires the
-  pre-summary hook on every present host, or only the qualified host. Claude
-  gets `PreCompact` and compact `SessionStart` settings entries; pi gets one
-  symlink in `extensions/`; opencode gets one symlink in `plugins/` (the
-  opencode hook is experimental). Absent hosts are skipped. The pre-summary
-  requires the local decision backend (Laya on loopback); otherwise it fails
-  open without blocking compaction. Defaults follow each host's recorded
-  verdict, shown in `--help` and the wizard row; defaults are off until
-  measured. A host that isn't installed is skipped, not an error.
+- `--with-hooks` — bare form wires every default-on hook knob, including the
+  two per-call advisors; this is a behavior change from the briefing-only
+  default. Defaults: `session-briefing`, `tool-advisor` and `tool-reminder` on;
+  `decision-probe` off; `precompact` follows each host's recorded verdict.
+  `--with-hooks=<id[:host],...>` (for example `--with-hooks=tool-advisor`) is
+  additive: it only adds the named hooks and never removes existing ones. The five ids are documented here:
+
+  | Id | What it does | Hosts | Default |
+  |---|---|---|---|
+  | `session-briefing` | Installed-tool briefing to user/model | Claude Code, Cursor | on |
+  | `tool-advisor` | Advice for grep/cat/sed/find and large reads | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
+  | `tool-reminder` | Output-size reminder with a better installed tool | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
+  | `decision-probe` | Reports usable decision backends | Claude Code | off |
+  | `precompact` | Decision-system pre-summary before compaction | Claude Code, pi, experimental opencode | Per recorded host verdict |
+
+  `python3 tools/setup.py uninstall --hooks=<ids>` removes only those hook
+  ids (comma-separated, with optional `:host` selectors). Claude Code settings
+  are wired per event; pi extensions and opencode plugins use symlinks. Absent
+  hosts are skipped. The pre-summary fails open without blocking compaction.
 - `--examples=all|none|<ids>` — the same pre-existing flag `install.sh` and
   the interactive wizard use for bundled example segments; it works
   identically here, with or without `--headless`.

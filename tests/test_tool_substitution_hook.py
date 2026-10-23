@@ -1212,6 +1212,43 @@ class TestHostCoverageDocs(unittest.TestCase):
         self.assertIn("## Host coverage", text)
         self.assertIn("## Non-goals", text)
 
+    def _host_table(self):
+        path = os.path.join(_REPO, "tools", "hooks", "README.md")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        section = text.split("## Host coverage", 1)[1].split("\n## ", 1)[0]
+        lines = [line.strip() for line in section.splitlines() if line.strip().startswith("|")]
+        cells = [[cell.strip() for cell in line.strip("|").split("|")] for line in lines]
+        return cells[0], {row[0]: row[1:] for row in cells[2:]}
+
+    def test_host_table_has_no_empty_cell(self):
+        header, rows = self._host_table()
+        hook_ids = ("session-briefing", "tool-advisor", "tool-reminder",
+                    "decision-probe", "precompact")
+        self.assertEqual(header, ["Host", *hook_ids])
+        for host in ("Claude Code", "Cursor", "pi", "opencode", "Codex"):
+            self.assertIn(host, rows)
+            self.assertEqual(len(rows[host]), len(hook_ids))
+            for cell in rows[host]:
+                self.assertTrue(cell, f"empty status: {host}")
+                self.assertTrue(cell.startswith(("wired", "gap (", "experimental")),
+                                f"invalid status {host}: {cell}")
+
+    def test_precompact_cells_follow_verdicts(self):
+        _header, rows = self._host_table()
+        for host in ("claude", "pi", "opencode"):
+            with self.subTest(host=host):
+                host_row = {"claude": "Claude Code", "pi": "pi",
+                            "opencode": "opencode"}[host]
+                cell = rows[host_row][-1]
+                verdict = setup.PRECOMPACT_VERDICTS[host]
+                if verdict.startswith("gap:"):
+                    self.assertTrue(cell.startswith("gap ("))
+                else:
+                    prefix = "experimental" if host == "opencode" else "wired"
+                    self.assertTrue(cell.startswith(prefix))
+                    self.assertEqual("default on" in cell, verdict == "positive")
+
     def test_hooks_readme_names_opencode(self):
         path = os.path.join(_REPO, "tools", "hooks", "README.md")
         with open(path, encoding="utf-8") as handle:

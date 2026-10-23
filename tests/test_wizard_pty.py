@@ -32,12 +32,13 @@ import time
 import unittest
 
 # A roomy PTY window so the full Arrange board (3 lane panels + focused-chip +
-# OFF tray + live preview) renders without being clipped off a short screen.
+# OFF tray + live preview) and the five hook rows with their descriptions render
+# without being clipped off a short screen.
 # Also needs to fit the whole Choose-screen skills picksbox (grows by ~2-3
 # rows per installed skill, plus the "N of M components selected" footer
 # below it) — 50 stopped being enough once the usage-metrics skill (05-01)
 # brought the installed-skill count to 13.
-_PTY_ROWS = 80
+_PTY_ROWS = 100
 _PTY_COLS = 120
 
 # Absolute path to the wizard so the tests work from any cwd.
@@ -719,6 +720,11 @@ class TestPhase2E2E(unittest.TestCase):
                         msg=f"Choose: missing hook row in {hook_ids!r}: {positions!r}")
         self.assertEqual(positions, sorted(positions),
                          msg=f"Choose: hook rows are out of registry order: {positions!r}")
+        for description in ("SessionStart briefing names", "PreToolUse advisor:",
+                            "After grep/cat/sed/find", "Reports whether jev-fast-decision",
+                            "PreCompact pre-summary"):
+            self.assertIn(description, all_output,
+                          msg=f"Choose: missing hook description {description!r}")
         # Arrange board border titles
         self.assertIn("Line 1", all_output,
                       msg="Arrange: expected lane border title 'Line 1'")

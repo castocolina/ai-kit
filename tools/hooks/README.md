@@ -1,23 +1,28 @@
-# Session-start tool briefing and advisory hooks
+# Session-start briefing and advisory hooks
 
 ## What these hooks do
 
-At session start and after compaction, the wrapper scripts report which of
-aikit's curated modern-tool pairs are available on PATH. The model receives
-concise guidance for using those tools; Claude Code also shows the user a
-plain-text briefing. Detection uses ai-kit's pair list and live binary
-presence only.
+- **Session briefing (`session-briefing`)** runs at session start and after compaction. It names installed modern tools from ai-kit's curated pairs crossed with `shutil.which`; Claude Code shows the user one `systemMessage` line, while the model receives the useful flags as context.
+- **Tool advisor (`tool-advisor`)** advises on Bash uses of grep, cat, sed and find when their replacements are installed, and reports the size of an unranged large Read. Advice only: the large-read note arrives alongside that read's result and applies to the next read.
+- **Tool reminder (`tool-reminder`)** reports output size and a better installed tool after a matching command. It appears on the first occurrence and every tenth repeat; shared state lives in `$XDG_RUNTIME_DIR/ai-kit/advisor/` (with the cache fallback).
+- **Decision probe (`decision-probe`)** runs the `startup` probe, off by default, and names usable backends only. It performs one bounded probe of at most 3 seconds.
+- **PreCompact pre-summary (`precompact`)** is described below; its host behavior and default follow the recorded verdicts.
+
+No hook rewrites, approves, denies or blocks a tool call. Hook results are fail-open.
 
 ## Host coverage
 
-| Host | Injection point | Status |
-|------|-----------------|--------|
-| Claude Code | `hooks.SessionStart` in `settings.json`, matcher `startup\|compact` | Wired |
-| Cursor | `hooks.sessionStart` in `hooks.json`, flat array, no matcher | Wired. Live-verified during Phase 4's discussion; Cursor is not a gap (D-09). |
-| opencode | none | Accepted gap. opencode has no documented session-start injection point today. This is recorded in `.planning/PROJECT.md` (Out of Scope) and `REQ-tool-substitution-hook-wiring`, not an oversight. The gap is pending upstream support; nothing in this directory has an opencode code path. |
-| Claude Code | `hooks.PreCompact` (matcher `manual\|auto`) + `hooks.SessionStart` (matcher `compact`) in `settings.json`, via `claude_precompact.py` | Wired in Phase 21.2; see `## PreCompact pre-summary` below. Both entries are separate from the briefing rows above, so unwiring one never removes the other. |
-| pi | `session_before_compact` extension, via `pi/ai-kit-precompact.ts` (linked as one file into `${PI_CODING_AGENT_DIR:-~/.pi/agent}/extensions/` by setup in 21.2-05) | The extension returns the core's pre-summary as `compaction.summary` with the event's own `firstKeptEntryId` and `tokensBefore`, so pi stores it in place of the summary its model would write; on any failure it returns nothing and pi's default compaction runs. |
-| opencode | `experimental.session.compacting` plugin, via `opencode/ai-kit-precompact.ts` (linked as one file into the opencode global `plugins/` dir by setup in 21.2-05) | **Experimental** — the upstream hook is. The plugin appends the pre-summary to `output.context` on top of opencode's own summary and never replaces the prompt; on any failure it leaves `output` untouched. Whether installed opencode v2 still calls this hook is unverified until the phase's S4 live check records otherwise. |
+Every cell gives an explicit status. PreCompact delivery/default wording reflects `PRECOMPACT_VERDICTS` in `tools/setup.py` at the time this table was written; a live result in `21.3-LIVE.md` can change a cell.
+
+| Host | session-briefing | tool-advisor | tool-reminder | decision-probe | precompact |
+|------|------------------|--------------|---------------|----------------|------------|
+| Claude Code | wired | wired | wired | wired (default off) | wired; default off: unmeasured |
+| Cursor | wired (model context only; no user-visible field) | gap (secondary host, SPEC R7) | gap (secondary host, SPEC R7) | gap (secondary host) | gap (no verified PreCompact route) |
+| pi | gap (no verified session-start route) | wired (tool_result) | wired (tool_result) | gap (no verified session-start route) | wired; default off: unmeasured (`session_before_compact`) |
+| opencode | gap (no documented session-start injection point) | gap (tool.execute.after append unverified; spike S-OC in 21.3-LIVE.md) | gap (tool.execute.after append unverified; spike S-OC in 21.3-LIVE.md) | gap (no documented session-start injection point) | experimental; default off: unmeasured (`experimental.session.compacting`) |
+| Codex | gap (no verified hook route) | gap (no verified hook route) | gap (no verified hook route) | gap (no verified hook route) | gap (no verified hook route) |
+
+The precompact delivery verdict and default are separate: a `gap: <reason>` verdict is shown as `gap (<reason>)`; a non-gap route is `wired` (opencode is `experimental`), with `default on` only for `positive` and `default off: <verdict>` otherwise. A live result in `21.3-LIVE.md` can change a cell.
 
 ## PreCompact pre-summary
 
