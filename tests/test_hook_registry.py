@@ -472,6 +472,55 @@ class TestHookSelectionItems(unittest.TestCase):
         self.assertEqual(data["hooks"]["PreCompact"], [foreign])
         self.assertEqual(data["hooks"]["SessionStart"], [])
 
+    def test_unchecking_briefing_keeps_siblings(self):
+        os.makedirs(self.claude)
+        pi = self.paths.pi_dir
+        os.makedirs(pi)
+        foreign = {"matcher": "manual", "hooks": [{"type": "command",
+                                                       "command": "echo foreign"}]}
+        with open(self.paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"hooks": {"PreCompact": [foreign]}}, handle)
+
+        selected = {"session-briefing", "tool-advisor", "tool-reminder"}
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(setup.apply_hook_selection(
+                self.paths, selected, False, setup.new_counts()))
+
+        before = _read(self.paths.settings)
+        siblings = {
+            event: entries for event, entries in before["hooks"].items()
+            if event in {row.event for row in setup.HOOK_REGISTRY
+                         if row.id in {"tool-advisor", "tool-reminder"}
+                         and row.host == "claude"}
+        }
+        sibling_links = {}
+        pi_sibling_rows = [
+            row for row in setup.HOOK_REGISTRY
+            if row.id in {"tool-advisor", "tool-reminder"} and row.host == "pi"
+        ]
+        for row in pi_sibling_rows:
+            path = setup.hook_link_path(self.paths, row)
+            self.assertTrue(os.path.islink(path))
+            sibling_links[path] = os.readlink(path)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(setup.apply_hook_selection(
+                self.paths, {"tool-advisor", "tool-reminder"}, False,
+                setup.new_counts()))
+
+        after = _read(self.paths.settings)
+        self.assertEqual(after["hooks"]["SessionStart"], [])
+        self.assertEqual(
+            {event: after["hooks"][event] for event in siblings}, siblings)
+        self.assertEqual(after["hooks"]["PreCompact"], [foreign])
+        for path, target in sibling_links.items():
+            self.assertTrue(os.path.islink(path))
+            self.assertEqual(os.readlink(path), target)
+        for row in setup.HOOK_REGISTRY:
+            if row.id == "session-briefing" and row.host == "pi":
+                path = setup.hook_link_path(self.paths, row)
+                self.assertFalse(os.path.lexists(path))
+
     def test_apply_hook_selection_default_hosts_only(self):
         pi = os.path.join(self.tmp, "pi")
         os.makedirs(pi)
