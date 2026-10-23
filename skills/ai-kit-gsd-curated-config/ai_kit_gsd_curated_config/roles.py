@@ -16,6 +16,26 @@ EFFORT_LADDER = ("minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 CLAUDE_ALIASES = ("fable", "opus", "sonnet", "haiku")
 
 
+def pi_session_ids(inv: dict) -> list[str]:
+    """Return bare ids only: gsd-core writes the value into every request verbatim,
+    and a provider/model string would break the session."""
+    session = inv.get("pi_session")
+    provider = session.get("provider") if isinstance(session, dict) else None
+    if not isinstance(provider, str) or not provider:
+        return []
+    prefix = provider + "/"
+    ids = {
+        model[len(prefix):]
+        for row in inv.get("candidates", [])
+        if isinstance(row, dict)
+        and row.get("runtime") == "pi"
+        and isinstance((model := row.get("model")), str)
+        and model.startswith(prefix)
+        and model[len(prefix):]
+    }
+    return sorted(ids)
+
+
 def claude_alias_for(model: str) -> str | None:
     for alias in CLAUDE_ALIASES:
         if model.startswith(f"claude-{alias}-"):

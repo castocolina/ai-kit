@@ -911,7 +911,11 @@ class TestSlotEdges(unittest.TestCase):
         entry = entry_map(plan)["model_profile_overrides.pi.sonnet"]
         self.assertEqual(entry["status"], "needs_choice")
         self.assertEqual(entry["candidates"], [])
-        self.assertEqual(entry["effect"], presets.PI_EFFECT)
+        self.assertEqual(
+            entry["effect"],
+            "steers every request in this project's pi session "
+            "(session-steer: static and mock evidence, unverified on a real provider)",
+        )
         self.assertEqual(len([n for n in plan["notes"] if n["kind"] == "pi"]), 1)
 
     def test_codex_zero_candidates_keeps_native(self):

@@ -292,13 +292,18 @@ def _codex_empty_slots(ctx: PlanCtx, tiers: tuple[str, ...]) -> tuple[list, list
     return entries, []
 
 
+_PI_SESSION_EFFECT = (
+    "steers every request in this project's pi session (session-steer: static and mock evidence, "
+    "unverified on a real provider)"
+)
+
 _PI_NOTE = {
     "kind": "pi",
     "key": None,
     "text": (
-        "pi: only an opt-in model_profile_overrides.pi.sonnet is offered; "
-        "no per-agent model_overrides (effect unverified on pi, gsd-core registry: "
-        "namedDispatch false)"
+        "pi: only model_profile_overrides.pi.sonnet changes the model, for every request of the "
+        "project's pi session; no per-agent model_overrides; pi.opus and pi.haiku are inert "
+        "(the gsd-core hook reads pi.sonnet only)"
     ),
 }
 
@@ -307,11 +312,18 @@ def _pi_slot(ctx: PlanCtx, tiers: tuple[str, ...]) -> tuple[list, list]:
     if "sonnet" not in tiers:
         return [], [dict(_PI_NOTE)]
     key = "model_profile_overrides.pi.sonnet"
-    why = (
-        "opt-in session steer (D-22): choose a bare model id of the session provider "
-        "with plan-set (the session provider is unknown before Phase 22), or drop this "
-        "entry with plan-unset"
-    )
+    session = ctx.inv.get("pi_session")
+    provider = session.get("provider") if isinstance(session, dict) else None
+    if isinstance(provider, str) and provider:
+        why = (
+            f"opt-in session steer: plan-set one bare model id the session provider {provider} "
+            "serves (PI_PROVIDER), or plan-unset it to keep pi's own selection"
+        )
+    else:
+        why = (
+            "opt-in session steer: no candidate, because the session provider is unknown "
+            "(PI_PROVIDER is unset; run inventory inside the pi session); plan-unset it"
+        )
     entry = make_entry(
         ctx,
         key,
@@ -319,8 +331,8 @@ def _pi_slot(ctx: PlanCtx, tiers: tuple[str, ...]) -> tuple[list, list]:
         "preset",
         why,
         status="needs_choice",
-        candidates=[],
-        effect=presets.PI_EFFECT,
+        candidates=[{"model": mid, "runtime": "pi"} for mid in roles.pi_session_ids(ctx.inv)],
+        effect=_PI_SESSION_EFFECT,
     )
     return [entry], [dict(_PI_NOTE)]
 

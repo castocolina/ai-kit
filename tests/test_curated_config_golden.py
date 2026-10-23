@@ -71,6 +71,10 @@ def golden_basename(host_name: str, rigor: str, profile: str) -> str:
     return f"{host_name}-{rigor}-{profile}"
 
 
+# Provider of the seeded runtimes fixture's anthropic/claude-sonnet-5 model.
+SEEDED_PI_PROVIDER = "anthropic"
+
+
 def load_fixture(name: str) -> dict:
     with open(FIXTURES / name, encoding="utf-8") as handle:
         return json.load(handle)
@@ -179,6 +183,8 @@ def build_golden_inventory(
             "XDG_CACHE_HOME": xdg,
             "PATH": "",
         }
+        if host_name == "pi":
+            env["PI_PROVIDER"] = SEEDED_PI_PROVIDER
         fake = FakeRun(
             node_stdout=lambda argv, h=home: json.dumps(
                 tables_answer(json.loads(argv[6]), h)
@@ -418,7 +424,18 @@ class TestGoldenProperties(unittest.TestCase):
                         e for e in entries if e["key"] == "model_profile_overrides.pi.sonnet"
                     )
                     self.assertEqual(sonnet.get("status"), "needs_choice")
-                    self.assertEqual(sonnet.get("candidates"), [])
+                    self.assertEqual(
+                        sonnet.get("candidates"), [{"model": "claude-sonnet-5", "runtime": "pi"}]
+                    )
+                    self.assertEqual(
+                        sonnet.get("effect"),
+                        "steers every request in this project's pi session "
+                        "(session-steer: static and mock evidence, unverified on a real provider)",
+                    )
+                    self.assertNotIn("model_profile_overrides.pi.opus", {e["key"] for e in entries})
+                    self.assertNotIn(
+                        "model_profile_overrides.pi.haiku", {e["key"] for e in entries}
+                    )
 
 
     def test_skill_cap(self):

@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import NamedTuple
 
 from . import catalog_adapter, gsd_catalog, host, plan_io, presets, project_facts, skill_scan
+
+_PI_PROVIDER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 _PROBE_UNAVAILABLE = (
     "gsd-core at {root} (version {version}): isValidConfigKey unavailable "
@@ -424,6 +427,7 @@ def _assemble_inventory(project_dir, host_name, host_source, core: host.GsdCore,
         "conflicts": conflicts,
         "info": info,
         "warnings": sorted(warnings),
+        **({"pi_session": parts["pi_session"]} if "pi_session" in parts else {}),
     }
 
 
@@ -463,6 +467,11 @@ def build_inventory(project_dir, opts: InventoryOpts, deps: host.InventoryDeps):
     if fields is None:
         return None, error
     parts = {**configs, **fields}
+    if host_name == "pi":
+        # pi exports the session provider id to its bash tool; this is an id, not a secret.
+        provider = deps.env_fn().get("PI_PROVIDER")
+        valid = isinstance(provider, str) and _PI_PROVIDER_RE.fullmatch(provider)
+        parts["pi_session"] = {"provider": provider if valid else None}
     parts["system_one_backend"] = skill_scan.system_one_backend(
         deps.env_fn(), deps.connect_fn
     )

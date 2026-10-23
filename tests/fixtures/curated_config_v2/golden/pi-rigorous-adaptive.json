@@ -128,15 +128,20 @@
       "why": "profile adaptive (adaptive recommended)"
     },
     {
-      "candidates": [],
-      "effect": "effect unverified on pi (gsd-core registry: namedDispatch false)",
+      "candidates": [
+        {
+          "model": "claude-sonnet-5",
+          "runtime": "pi"
+        }
+      ],
+      "effect": "steers every request in this project's pi session (session-steer: static and mock evidence, unverified on a real provider)",
       "existing": null,
       "key": "model_profile_overrides.pi.sonnet",
       "op": "set",
       "source": "preset",
       "status": "needs_choice",
       "value": null,
-      "why": "opt-in session steer (D-22): choose a bare model id of the session provider with plan-set (the session provider is unknown before Phase 22), or drop this entry with plan-unset"
+      "why": "opt-in session steer: plan-set one bare model id the session provider anthropic serves (PI_PROVIDER), or plan-unset it to keep pi's own selection"
     },
     {
       "effect": "effect unverified on pi (gsd-core registry: namedDispatch false)",
@@ -280,7 +285,7 @@
     {
       "key": null,
       "kind": "pi",
-      "text": "pi: only an opt-in model_profile_overrides.pi.sonnet is offered; no per-agent model_overrides (effect unverified on pi, gsd-core registry: namedDispatch false)"
+      "text": "pi: only model_profile_overrides.pi.sonnet changes the model, for every request of the project's pi session; no per-agent model_overrides; pi.opus and pi.haiku are inert (the gsd-core hook reads pi.sonnet only)"
     },
     {
       "key": "workflow.plan_review_convergence",
