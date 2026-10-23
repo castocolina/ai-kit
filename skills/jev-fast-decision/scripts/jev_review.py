@@ -803,7 +803,8 @@ TABLE: tuple[Row, ...] = (
         "name": "laya",
         "remote": False,
         "batch": False,  # Laya reads the whole state per question: contamination, measured
-        "min_confidence": 0.7,  # the plan default until 21.1-06 calibrates Laya live
+        # 2026-10-23 live eval found no qualifying threshold; 0.7 default kept
+        "min_confidence": 0.7,
         "models": ("jev-1",),
         "model_env": "JEV_LAYA_MODEL",
         "response_model": re.compile(r"laya-[a-z0-9_-]+"),
@@ -1599,9 +1600,12 @@ def _log_line(item, answer, error_entry):
     `request_sha256` — and `_log_run` does not log such a line at all.
     """
     qtype = item.get("type", CHOICE)
+    # A shorthand item carries `criterion` instead of `instructions`; the criterion is the
+    # caller's own question text, the same channel the general items log.
+    question = item["instructions"] if "instructions" in item else item.get("criterion", "")
     fields = {"ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
               "caller": os.environ.get("JEV_CALLER", "").strip() or "direct",
-              "id": item["id"], "type": qtype, "instructions": item["instructions"]}
+              "id": item["id"], "type": qtype, "instructions": question}
     if answer is not None:
         key, value = _answer_value(qtype, answer)
         fields.update({"backend": answer["backend"], "model": answer["model"],

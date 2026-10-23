@@ -182,7 +182,7 @@ class JevStub:
                 except OSError:  # the client gave up (the timeout case): nothing to report
                     self.close_connection = True
 
-            def log_message(self, *args):
+            def log_message(self, *_ignored):
                 pass
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -524,7 +524,7 @@ class TestScreen(_ClientCase):
 
     def test_screen_kill_switch_before_stdin(self):
         class _NoStdin:
-            def read(self, *args):
+            def read(self, *_ignored):
                 raise AssertionError("stdin was read with the kill switch off")
 
         os.environ.pop("GSD_PATH_JEV", None)
@@ -1282,7 +1282,8 @@ class TestEscalation(_ClientCase):
 
     def test_escalation_threshold_is_confident(self):
         # SPEC R3 adjacency edge: `top >= threshold` is confident, not `<`.
-        with (JevStub(top=0.7) as laya,  # exactly the laya row's min_confidence
+        laya_threshold = JR.row_named("laya")["min_confidence"]
+        with (JevStub(top=laya_threshold) as laya,  # exactly the laya row's min_confidence
               JevStub(model="typesafe-1") as typesafe,
               JevStub(model="opencode-1") as zen):
             result = self.scenario(laya, typesafe, zen)
@@ -2023,6 +2024,16 @@ class TestMatrix(_ClientCase):
                     self.assertRegex(date, r"^\d{4}-\d{2}-\d{2}$")
 
 
+def _eval():
+    """The eval script, loaded by path."""
+    path = SCRIPT.parent / "eval_cases.py"
+    spec = importlib.util.spec_from_file_location("eval_cases_under_test", str(path))
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class TestDocs(unittest.TestCase):
     """Doc tests (tag `doc`): the shipped documents cannot drift from the client table."""
 
@@ -2043,8 +2054,7 @@ class TestDocs(unittest.TestCase):
     def test_doc_frontmatter(self):
         name = re.search(r"^name:\s*(\S+)", self.frontmatter, re.M)
         description = re.search(r'^description:\s*"(.*)"\s*$', self.frontmatter, re.M)
-        self.assertIsNotNone(name)
-        self.assertIsNotNone(description)
+        assert name is not None and description is not None
         self.assertEqual(name.group(1), "jev-fast-decision")
         text = description.group(1)
         self.assertTrue(text.startswith("Use when"))
@@ -2108,6 +2118,183 @@ class TestDocs(unittest.TestCase):
         self.assertIn("cursor.com/docs/context/skills", self.reference_text)
         self.assertIn("~/.claude/skills", self.reference_text)
         self.assertIn("not live-verified", self.reference_text)
+
+
+TABLE_SOURCE = '''TABLE = (
+    {
+        "name": "laya",
+        "min_confidence": 0.7,
+    },
+    {
+        "name": "typesafe",
+        "min_confidence": 0.8,
+    },
+)
+'''
+
+TABLE_SOURCE_NO_LAYA = TABLE_SOURCE.replace('        "min_confidence": 0.7,\n', '')
+TABLE_SOURCE_DOUBLE = TABLE_SOURCE.replace('        "min_confidence": 0.7,\n',
+                                           '        "min_confidence": 0.7,\n'
+                                           '        "min_confidence": 0.6,\n')
+
+
+class TestEval(_ClientCase):
+    """The 32-case eval script (tag `eval`): metrics, recording and the bounded calibration."""
+
+    def run_eval(self, *argv):
+        """eval_cases.main(argv) with captured stdout: (exit code, parsed stdout line)."""
+        out = io.StringIO()
+        with (mock.patch.object(sys, "argv", ["eval_cases.py", *argv]),
+              mock.patch.object(sys, "stdout", out)):
+            code = _eval().main()
+        text = out.getvalue().strip()
+        return code, (json.loads(text) if text else None)
+
+    def test_eval_cases_composition(self):
+        cases = SCRIPT.parents[1] / "evals" / "cases.jsonl"
+        rows = [json.loads(line) for line in cases.read_text(encoding="utf-8").splitlines()
+                if line.strip()]
+        self.assertEqual(len(rows), 32)
+
+        def kind(row):
+            item = row["item"]
+            return "shorthand" if set(item) == {"id", "criterion", "evidence"} else item["type"]
+
+        counts, ambiguous = {}, {}
+        for row in rows:
+            counts[kind(row)] = counts.get(kind(row), 0) + 1
+            if row["ambiguous"]:
+                ambiguous[kind(row)] = ambiguous.get(kind(row), 0) + 1
+        self.assertEqual(counts, {"choice": 10, "noul": 10, "score": 6, "shorthand": 6})
+        self.assertEqual({row["item"]["id"] for row in rows if row["ambiguous"]},
+                         {"c09", "c10", "n10", "r06", "s06"})
+
+    def test_eval_reports_accuracy(self):
+        with JevStub() as stub:
+            self.point_at(stub)
+            self.enable("laya")
+            code, report = self.run_eval()
+        self.assertEqual(code, 0)
+        assert report is not None
+        self.assertEqual(report["backend"], "laya")
+        self.assertEqual(report["n"], 32)
+        for key in ("accuracy", "fallback_rate", "accuracy_when_not_fallback"):
+            self.assertIn(key, report)
+
+    def test_eval_ambiguous_rows(self):
+        module = _eval()
+        rows = [{"backend": "laya", "ambiguous": False, "correct": True,
+                 "needs_fallback": False},
+                {"backend": "laya", "ambiguous": False, "correct": False,
+                 "needs_fallback": False},
+                {"backend": "laya", "ambiguous": True, "correct": False,
+                 "needs_fallback": True}]
+        report = module.summarize(rows)
+        self.assertEqual(report["n"], 3)
+        self.assertEqual(report["accuracy"], 0.5)
+        self.assertAlmostEqual(report["fallback_rate"], 1 / 3)
+        self.assertEqual(report["accuracy_when_not_fallback"], 0.5)
+
+    def test_eval_kill_switch(self):
+        with JevStub() as stub:
+            self.point_at(stub)
+            code, report = self.run_eval()
+        self.assertEqual(code, 0)
+        self.assertEqual(report, {"status": "disabled"})
+        self.assertEqual(stub.bodies, [])
+
+    def test_eval_record_path(self):
+        target = self.tmp / "results.json"
+        other = self.tmp / "elsewhere.json"
+        with JevStub() as stub:
+            self.point_at(stub)
+            self.enable("laya")
+            code, _report = self.run_eval("--record", str(target))
+            self.assertEqual(code, 0)
+            self.assertTrue(target.is_file())
+            self.assertFalse(other.exists())
+            code, _report = self.run_eval()
+            self.assertEqual(code, 0)
+        # without --record nothing new is written anywhere under the temp dir
+        self.assertEqual([path.name for path in self.tmp.iterdir() if path.name.endswith("json")],
+                         ["results.json"])
+
+    def test_eval_record_fallback_flags(self):
+        target = self.tmp / "results.json"
+        with JevStub(tops={"c01": 0.4, "n02": 0.4, "r01": 0.4}) as stub:
+            self.point_at(stub)
+            self.enable("laya")
+            code, report = self.run_eval("--record", str(target))
+            self.assertEqual(code, 0)
+            assert report is not None
+        saved = json.loads(target.read_text(encoding="utf-8"))
+        laya = next(entry for entry in saved["results"] if entry["backend"] == "laya")
+        self.assertEqual(len(laya["cases"]), 32)
+        for case in laya["cases"]:
+            self.assertIsInstance(case["needs_fallback"], bool)
+            self.assertEqual(case["backend"], "laya")
+        self.assertAlmostEqual(report["fallback_rate"],
+                               sum(case["needs_fallback"] for case in laya["cases"]) / 32)
+
+    def test_eval_calibrate_none(self):
+        self.assertIsNone(_eval().calibrate([{"top": 0.4, "correct": True}] * 30))
+
+    def test_eval_calibrate_picks_lowest_qualifying_threshold(self):
+        rows = ([{"top": 0.96, "correct": True}] * 20
+                + [{"top": 0.2, "correct": False}] * 10)
+        self.assertEqual(_eval().calibrate(rows), 0.50)
+
+    def test_eval_calibrate_excludes_ambiguous_from_accuracy(self):
+        clear = [{"top": 0.96, "correct": True}] * 20
+        confident_wrong_ambiguous = [{"top": 0.96, "correct": False, "ambiguous": True}] * 5
+        flagged_ambiguous = [{"top": 0.2, "correct": False, "ambiguous": True}] * 5
+        self.assertEqual(
+            _eval().calibrate(clear + confident_wrong_ambiguous + flagged_ambiguous), 0.50)
+
+    def _calib_dir(self, source):
+        skill = self.tmp / "skill"
+        (skill / "scripts").mkdir(parents=True, exist_ok=True)
+        script = skill / "scripts" / "eval_cases.py"
+        shutil.copy(SCRIPT.parent / "eval_cases.py", script)
+        (skill / "scripts" / "jev_review.py").write_text(source, encoding="utf-8")
+        results = skill / "results.json"
+        results.write_text(json.dumps({"results": [
+            {"backend": "laya", "cases": ([{"top": 0.96, "correct": True,
+                                            "ambiguous": False}] * 20
+                                          + [{"top": 0.2, "correct": False}] * 10)}]}),
+            encoding="utf-8")
+        return script, skill / "scripts" / "jev_review.py", results
+
+    def test_eval_calibrate_rewrites_one_row(self):
+        script, target, results = self._calib_dir(TABLE_SOURCE)
+        proc = subprocess.run([sys.executable, "-B", str(script), "--calibrate", str(results)],
+                              capture_output=True, text=True, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        text = target.read_text(encoding="utf-8")
+        self.assertIn('"min_confidence": 0.5,', text)
+        self.assertIn('"min_confidence": 0.8,', text)  # the typesafe row is untouched
+        self.assertEqual(len(text.splitlines()), len(TABLE_SOURCE.splitlines()))
+
+    def test_eval_calibrate_row_bounded(self):
+        for source in (TABLE_SOURCE_NO_LAYA, TABLE_SOURCE_DOUBLE):
+            with self.subTest(case="missing" if source is TABLE_SOURCE_NO_LAYA else "double"):
+                script, target, results = self._calib_dir(source)
+                before = target.read_bytes()
+                proc = subprocess.run(
+                    [sys.executable, "-B", str(script), "--calibrate", str(results)],
+                    capture_output=True, text=True, check=False)
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertEqual(target.read_bytes(), before, "the file must stay byte-identical")
+
+    def test_eval_min_confidence_env_overrides(self):
+        with JevStub() as stub:
+            self.point_at(stub)
+            self.enable("laya")
+            os.environ["JEV_MIN_CONFIDENCE"] = "0.99"
+            code, report = self.run_eval()
+        self.assertEqual(code, 0)
+        assert report is not None
+        self.assertEqual(report["fallback_rate"], 1.0)
 
 
 if __name__ == "__main__":

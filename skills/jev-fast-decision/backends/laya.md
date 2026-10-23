@@ -51,11 +51,17 @@ Never retry blindly: fix the cause (input, timeout, server down) or reason the i
 
 choice/noul/score all `verified-live`; ~12 ms per call on the dGPU; idle unload after 600 s.
 
-## Laya eval object (live, 2026-10-19)
+## Laya eval object (live, 2026-10-23)
 
-Stored in `.planning/phases/21.1-atomic-reusable-decision-system-skills/eval/eval-results.json`
-alongside `repeat_max_prob_diff` and `vague_alone_top`; `--calibrate` derives the row's
-`min_confidence` from it. The v3 0.6 default came from synthetic rows, not from these.
+32 labelled cases through `screen()` on this machine (results in
+`.planning/phases/21.1-atomic-reusable-decision-system-skills/eval/eval-results.json`, each
+saved case carrying its own `needs_fallback` and `backend`): metrics line
+`{"accuracy": 0.5555555555555556, "accuracy_when_not_fallback": 0.5, "backend": "laya",
+"fallback_rate": 0.6875, "n": 32}`; `repeat_max_prob_diff` 0.0, `vague_alone_top` 0.4624.
+`--calibrate` proposed **null**: no threshold in 0.50–0.95 keeps >= 0.95 accuracy on
+>= max(10, 30% of n) cases (even confident answers score 0.5 on these make-target criteria),
+so the conservative `min_confidence` **0.7 stays**. For comparison, the v3 0.6 default came
+from synthetic rows, not from these measurements.
 
 ## Starting it
 
