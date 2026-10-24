@@ -23,15 +23,131 @@ Conventions parsed from the source:
   after ``seg_``) which are unprefixed by design.
 """
 import ast
+import hashlib
 import importlib.util
 import io
 import os
 import re
+import subprocess
 import sys
 import tokenize
 import unittest
+from typing import NamedTuple
 
 _TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
+_AUDIT_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "statusline_split", "audit.md")
+_AUDIT_VOCABULARY = re.compile(
+    r"claude|CC_AI_KIT|rate_limits|settings\.json|\.claude", re.IGNORECASE
+)
+
+
+class AuditRow(NamedTuple):
+    number: int
+    name: str
+    kind: str
+    base_line: int
+    base_ast: str
+    stage: str
+    module: str
+    target: str
+    new_name: str
+    neutral: str
+    fate: str
+    taint: str
+    reason: str
+
+
+def audit_rows(text):
+    """Parse audit metadata and position-keyed data rows."""
+    headers = {}
+    rows = []
+    for line in text.splitlines():
+        if line.startswith("| ") and not line.startswith("| # |") and not line.startswith("|---"):
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if len(cells) == 13:
+                rows.append(AuditRow(
+                    int(cells[0]), cells[1], cells[2], int(cells[3]), cells[4], *cells[5:13]
+                ))
+        elif ": " in line and not line.startswith("#"):
+            key, value = line.split(": ", 1)
+            headers[key] = value
+    return headers, rows
+
+
+def base_definitions(source):
+    """Return top-level definitions in source order, preserving duplicate names."""
+    definitions = []
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.FunctionDef):
+            definitions.append((node.name, "function", node.lineno, node))
+        elif isinstance(node, ast.ClassDef):
+            definitions.append((node.name, "class", node.lineno, node))
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name):
+            definitions.append((node.targets[0].id, "assign", node.lineno, node))
+    return definitions
+
+
+def ast_hash(node):
+    return hashlib.sha256(ast.dump(node).encode()).hexdigest()[:12]
+
+
+def taint_map(source):
+    """Compute pinned-vocabulary taint and name-reference propagation."""
+    definitions = base_definitions(source)
+    result = {}
+    for name, _, _, node in definitions:
+        segment = ast.get_source_segment(source, node) or ""
+        if _AUDIT_VOCABULARY.search(segment):
+            result[name] = "seed"
+    while True:
+        prior = set(result)
+        for name, _, _, node in definitions:
+            if name not in result and any(
+                isinstance(child, ast.Name) and child.id in prior for child in ast.walk(node)
+            ):
+                result[name] = "prop"
+        if set(result) == prior:
+            break
+    return [result.get(name, "-") for name, _, _, _ in definitions]
+
+
+def check_audit_against_base(rows, definitions):
+    violations = []
+    if len(rows) != len(definitions):
+        violations.append(f"row count {len(rows)} != base definition count {len(definitions)}")
+    for position, (row, definition) in enumerate(zip(rows, definitions, strict=False), 1):
+        name, kind, line, node = definition
+        if row.number != position or (row.name, row.kind, row.base_line, row.base_ast) != (
+            name, kind, line, ast_hash(node)
+        ):
+            violations.append(f"row {position} differs from base definition {name}")
+    return violations
+
+
+def check_audit_reasons(rows):
+    violations = []
+    for row in rows:
+        if row.taint in {"seed", "prop"} and row.neutral == "y" \
+                and "taint-override:" not in row.reason:
+            violations.append(f"row {row.number} needs a taint override")
+        if row.taint == "-" and row.neutral == "n" and "data-source:" not in row.reason:
+            violations.append(f"row {row.number} needs a data-source reason")
+        if len(row.reason.strip()) < 12:
+            violations.append(f"row {row.number} reason is too short")
+    return violations
+
+
+def check_audit_columns(rows, modules):
+    violations = []
+    valid_targets = set(modules) | {"common_types+claude_host"}
+    for row in rows:
+        if row.stage not in {"1", "2", "3"} or row.module not in modules \
+                or row.target not in valid_targets or row.neutral not in {"y", "n"} \
+                or row.fate not in {"reused", "generalized", "split", "deleted"} \
+                or row.taint not in {"seed", "prop", "-"}:
+            violations.append(f"row {row.number} has an invalid classification column")
+    return violations
 
 # Load setup module for inventory tests.
 _SETUP_SPEC = importlib.util.spec_from_file_location(
@@ -653,8 +769,84 @@ class TestArchitecture(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 
 
+def _load_audit_fixture():
+    with open(_AUDIT_PATH, encoding="ascii") as handle:
+        headers, rows = audit_rows(handle.read())
+    proc = subprocess.run(
+        ["git", "show", f"{headers['base']}:{headers['base_path']}"],
+        check=False, capture_output=True, text=True,
+    )
+    if proc.returncode:
+        raise AssertionError(f"git show failed: {proc.stderr}")
+    return rows, base_definitions(proc.stdout)
+
+
+class TestSplitAudit(unittest.TestCase):
+    """Keep the reviewed move map complete against its pinned source blob."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(_AUDIT_PATH, encoding="ascii") as handle:
+            cls.audit_text = handle.read()
+        cls.headers, cls.rows = audit_rows(cls.audit_text)
+        proc = subprocess.run(
+            ["git", "show", f"{cls.headers['base']}:{cls.headers['base_path']}"],
+            check=False, capture_output=True, text=True,
+        )
+        if proc.returncode:
+            raise AssertionError(f"git show failed: {proc.stderr}")
+        cls.base_source = proc.stdout
+        cls.definitions = base_definitions(cls.base_source)
+        cls.modules = cls.headers["modules"].split()
+
+    def test_complete_rows_and_source_order(self):
+        self.assertEqual(182, len(self.rows))
+        self.assertEqual(list(range(1, 183)), [row.number for row in self.rows])
+        self.assertEqual([], check_audit_against_base(self.rows, self.definitions))
+
+    def test_reviewed_classification_and_taint(self):
+        self.assertEqual([], check_audit_columns(self.rows, self.modules))
+        self.assertEqual([row.taint for row in self.rows], taint_map(self.base_source))
+        self.assertEqual(134, sum(row.kind == "function" for row in self.rows))
+        self.assertEqual(7, sum(row.kind == "class" for row in self.rows))
+        self.assertEqual(41, sum(row.kind == "assign" for row in self.rows))
+        theme = next(row for row in self.rows if row.name == "core_default_theme")
+        self.assertEqual("generalized", theme.fate)
+        self.assertIn("parameterless theme/config builders", theme.reason)
+        self.assertIn("Plan 23-06 adds host/spec parameters", theme.reason)
+
+    def test_table_is_ascii(self):
+        self.assertTrue(self.audit_text.encode("ascii"))
+
+
 class TestArchNonVacuity(unittest.TestCase):
     """Prove rules 1-7 catch real violations rather than passing vacuously."""
+
+    def test_audit_detects_removed_row(self):
+        rows, definitions = _load_audit_fixture()
+        self.assertTrue(check_audit_against_base(rows[:-1], definitions))
+
+    def test_audit_detects_wrong_hash(self):
+        rows, definitions = _load_audit_fixture()
+        rows[0] = rows[0]._replace(base_ast="000000000000")
+        self.assertTrue(check_audit_against_base(rows, definitions))
+
+    def test_audit_detects_swapped_order(self):
+        rows, definitions = _load_audit_fixture()
+        rows[0], rows[1] = rows[1], rows[0]
+        self.assertTrue(check_audit_against_base(rows, definitions))
+
+    def test_audit_keeps_same_named_definitions_adjacent(self):
+        definitions = base_definitions("def x(): pass\nclass x: pass\n")
+        self.assertEqual([("x", "function"), ("x", "class")],
+                         [(name, kind) for name, kind, _, _ in definitions])
+
+    def test_audit_checks_disagreement_prefixes(self):
+        row = _load_audit_fixture()[0][0]
+        tainted = row._replace(taint="seed", neutral="y", reason="missing")
+        untainted = row._replace(taint="-", neutral="n", reason="missing")
+        self.assertTrue(check_audit_reasons([tainted]))
+        self.assertTrue(check_audit_reasons([untainted]))
 
     def test_rule1_flags_config_env_outside_cfg(self):
         bad = ast.parse(
