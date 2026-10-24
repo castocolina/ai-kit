@@ -97,9 +97,7 @@ def util_percent(value: object) -> float | None:
 
 
 # ═══ 3. CORE — normalization and cache state ═══
-def util_spend_fields(
-    spend: dict[str, object]
-) -> tuple[float, float | None, float, float, bool]:
+def util_spend_fields(spend: dict[str, object]) -> tuple[float, float | None, float, float, bool]:
     raw_used = util_pick(spend, "individualUsed", "individual_used")
     used = util_spend(raw_used) if raw_used is not None else 0.0
     raw_limit = util_pick(spend, "individualLimit", "individual_limit")
@@ -174,10 +172,15 @@ def core_normalize(usage: object, hard_limit: object, plan_info: object) -> dict
     od_kind, od_used, od_ceiling = util_on_demand(spend_usage, hard_limit)
     window = util_plan_window(plan_obj)
     return {
-        "cycle_start_ms": start, "cycle_end_ms": end, "included_pct": included_pct,
-        "api_pct": api_pct, "included_period": window[0],
-        "included_resets_at_ms": window[1], "od_kind": od_kind,
-        "od_used_usd": od_used, "od_ceiling_usd": od_ceiling,
+        "cycle_start_ms": start,
+        "cycle_end_ms": end,
+        "included_pct": included_pct,
+        "api_pct": api_pct,
+        "included_period": window[0],
+        "included_resets_at_ms": window[1],
+        "od_kind": od_kind,
+        "od_used_usd": od_used,
+        "od_ceiling_usd": od_ceiling,
         "plan_usage": bool(plan_usage),
     }
 
@@ -201,16 +204,32 @@ def core_quota_state(cache: object, now: float) -> QuotaResult:
     error_kind = value.get("last_error_kind")
     if data is None:
         hidden_errors = {"auth_expired", "auth_unsupported", "auth_missing"}
-        state = str(error_kind) if error_kind in hidden_errors else (
-            "network_error" if error_kind == "network_error" else "absent")
-        return QuotaResult(state, "inferred", str(value.get("last_error") or ""), None,
-                           None, None, None, None, None, "unavailable", None, None)
+        state = (
+            str(error_kind)
+            if error_kind in hidden_errors
+            else ("network_error" if error_kind == "network_error" else "absent")
+        )
+        return QuotaResult(
+            state,
+            "inferred",
+            str(value.get("last_error") or ""),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "unavailable",
+            None,
+            None,
+        )
     start = data.get("cycle_start_ms")
     end = data.get("cycle_end_ms")
     if isinstance(end, int) and now * 1000 >= end:
         state = "cycle_ended"
     elif error_kind in {"auth_expired", "auth_unsupported", "auth_missing"} and (
-            last_attempt is not None and (fetched is None or last_attempt > fetched)):
+        last_attempt is not None and (fetched is None or last_attempt > fetched)
+    ):
         state = str(error_kind)
     elif error_kind == "network_error":
         state = "stale"
@@ -219,18 +238,24 @@ def core_quota_state(cache: object, now: float) -> QuotaResult:
     else:
         state = "stale"
     return QuotaResult(
-        state, "inferred", str(value.get("last_error") or ""), fetched,
+        state,
+        "inferred",
+        str(value.get("last_error") or ""),
+        fetched,
         int(start) if isinstance(start, (int, float)) else None,
         int(end) if isinstance(end, (int, float)) else None,
         cast(float, data["included_pct"])
-        if isinstance(data.get("included_pct"), (int, float)) else None,
-        cast(float, data["api_pct"])
-        if isinstance(data.get("api_pct"), (int, float)) else None,
-        core_included_window(data), str(data.get("od_kind", "unavailable")),
+        if isinstance(data.get("included_pct"), (int, float))
+        else None,
+        cast(float, data["api_pct"]) if isinstance(data.get("api_pct"), (int, float)) else None,
+        core_included_window(data),
+        str(data.get("od_kind", "unavailable")),
         cast(float, data["od_used_usd"])
-        if isinstance(data.get("od_used_usd"), (int, float)) else None,
+        if isinstance(data.get("od_used_usd"), (int, float))
+        else None,
         cast(float, data["od_ceiling_usd"])
-        if isinstance(data.get("od_ceiling_usd"), (int, float)) else None,
+        if isinstance(data.get("od_ceiling_usd"), (int, float))
+        else None,
     )
 
 
@@ -247,18 +272,31 @@ def core_synthetic_cache(now: float) -> dict[str, object]:
     """Return fresh, token-free mid-cycle cache data for previews."""
     end = int((now + 86400) * 1000)
     data: dict[str, object] = {
-        "cycle_start_ms": end - 30 * 86400 * 1000, "cycle_end_ms": end,
-        "included_pct": 42.0, "api_pct": 18.0, "included_period": "monthly",
-        "included_resets_at_ms": None, "od_kind": "fixed", "od_used_usd": 2.5,
-        "od_ceiling_usd": 20.0, "plan_usage": True,
+        "cycle_start_ms": end - 30 * 86400 * 1000,
+        "cycle_end_ms": end,
+        "included_pct": 42.0,
+        "api_pct": 18.0,
+        "included_period": "monthly",
+        "included_resets_at_ms": None,
+        "od_kind": "fixed",
+        "od_used_usd": 2.5,
+        "od_ceiling_usd": 20.0,
+        "plan_usage": True,
     }
-    return {"data": data, "data_fetched_at": now, "last_attempt_at": now,
-            "last_error": None, "last_error_kind": None}
+    return {
+        "data": data,
+        "data_fetched_at": now,
+        "last_attempt_at": now,
+        "last_error": None,
+        "last_error_kind": None,
+    }
 
 
 # ═══ 4. PROBE — private cache, lock and refresh lifecycle ═══
 def probe_cache_paths(cache_base: str) -> tuple[str, str]:
-    """Prepare the private cursor cache directory and return cache/lock paths."""
+    """Prepare the private Cursor cache directory; reject unsafe relative bases."""
+    if not os.path.isabs(cache_base):
+        raise OSError("Cursor cache base must be absolute")
     directory = os.path.join(cache_base, "cursor")
     os.makedirs(directory, mode=0o700, exist_ok=True)
     info = os.lstat(directory)
@@ -342,8 +380,15 @@ def probe_spawn_detached(
 ) -> bool:
     """Start a stdio-independent background child in its own session."""
     try:
-        popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-              stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True, env=env)
+        popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            start_new_session=True,
+            env=env,
+        )
         return True
     except OSError:
         return False
@@ -352,14 +397,17 @@ def probe_spawn_detached(
 def probe_spawn_refresher(
     cache_base: str, env: dict[str, str], popen: Callable[..., Any] = subprocess.Popen
 ) -> bool:
-    argv = [sys.executable, "-S", os.path.realpath(__file__), "--refresh",
-            "--cache-base", cache_base]
+    if not os.path.isabs(cache_base):
+        return False
+    argv = [sys.executable, "-S", os.path.realpath(__file__), "--refresh"]
     return probe_spawn_detached(argv, env, popen)
 
 
 def probe_read_quota(
-    cache_base: str, env: dict[str, str], now: float,
-    spawn: Callable[[str, dict[str, str]], bool] | None = None
+    cache_base: str,
+    env: dict[str, str],
+    now: float,
+    spawn: Callable[[str, dict[str, str]], bool] | None = None,
 ) -> QuotaResult:
     """Return cache state immediately and schedule refresh without a network wait."""
     try:
@@ -372,15 +420,28 @@ def probe_read_quota(
                 (spawn or probe_spawn_refresher)(cache_base, env)
         return core_quota_state(cache, now)
     except OSError as exc:
-        return QuotaResult("absent", "inferred", str(exc), None, None, None, None, None,
-                           None, "unavailable", None, None)
+        return QuotaResult(
+            "absent",
+            "inferred",
+            str(exc),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "unavailable",
+            None,
+            None,
+        )
 
 
 def probe_refresh(
-    cache_base: str, env: dict[str, str], now_fn: Callable[[], float] = time.time,
-    fetch_quota: Callable[
-        [dict[str, str]], tuple[dict[str, object] | None, str | None, str]
-    ] | None = None
+    cache_base: str,
+    env: dict[str, str],
+    now_fn: Callable[[], float] = time.time,
+    fetch_quota: Callable[[dict[str, str]], tuple[dict[str, object] | None, str | None, str]]
+    | None = None,
 ) -> int:
     """Acquire child-owned single-flight lock and publish refresh outcome."""
     try:
@@ -413,11 +474,12 @@ def probe_refresh(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--refresh", action="store_true")
-    parser.add_argument("--cache-base", required=True)
     args = parser.parse_args()
     if not args.refresh:
         parser.error("--refresh is required")
-    return probe_refresh(args.cache_base, dict(os.environ))
+    common_config = importlib.import_module("common_config")
+    env = dict(os.environ)
+    return probe_refresh(common_config.cfg_cache_base(env), env)
 
 
 # ═══ 5. UTIL — endpoint and credential support ═══
@@ -428,8 +490,9 @@ def probe_validate_endpoint(url: str) -> str | None:
         parsed = urlsplit(url)
         host = parsed.hostname
         valid_scheme = parsed.scheme.lower() == "https"
-        valid_host = bool(host) and (host.lower() == "cursor.sh" or
-                                     host.lower().endswith(".cursor.sh"))
+        valid_host = bool(host) and (
+            host.lower() == "cursor.sh" or host.lower().endswith(".cursor.sh")
+        )
         valid_credentials = parsed.username is None and parsed.password is None
         valid_port = parsed.port in (None, 443)
         valid_suffix = parsed.path in ("", "/") and not parsed.query and not parsed.fragment
@@ -446,10 +509,12 @@ def probe_auth_path(env: dict[str, str], platform: str = "") -> str:
     sys_module = importlib.import_module("sys")
     system = platform or sys_module.platform
     if system == "darwin":
-        return os_module.path.join(env.get("HOME", os_module.path.expanduser("~")),
-                                   ".cursor", "auth.json")
+        return os_module.path.join(
+            env.get("HOME", os_module.path.expanduser("~")), ".cursor", "auth.json"
+        )
     config = env.get("XDG_CONFIG_HOME") or os_module.path.join(
-        env.get("HOME", os_module.path.expanduser("~")), ".config")
+        env.get("HOME", os_module.path.expanduser("~")), ".config"
+    )
     return os_module.path.join(config, "cursor", "auth.json")
 
 
@@ -484,8 +549,7 @@ def probe_fetch_all(base: str, token: str, opener: Any, timeout_s: float) -> Fet
     """Fetch three Dashboard methods concurrently within one body-inclusive deadline."""
     runtime = importlib.import_module
     futures_module = runtime("concurrent.futures")
-    context = FetchContext(base, token, opener, runtime("time").monotonic() + timeout_s,
-                          timeout_s)
+    context = FetchContext(base, token, opener, runtime("time").monotonic() + timeout_s, timeout_s)
 
     def call(method: str) -> tuple[dict[str, object] | None, str | None]:
         return probe_dashboard_call(context, method)
@@ -501,17 +565,21 @@ def probe_fetch_all(base: str, token: str, opener: Any, timeout_s: float) -> Fet
         return FetchResult(None, None, None, usage_error)
     return FetchResult(usage, hard, plan, None)
 
+
 def probe_submit_calls(
     futures_module: Any,
     call: Callable[[str], tuple[dict[str, object] | None, str | None]],
-    methods: tuple[str, ...], deadline: float
+    methods: tuple[str, ...],
+    deadline: float,
 ) -> dict[str, tuple[dict[str, object] | None, str | None]] | None:
     """Run method calls concurrently and bound executor wait by the shared deadline."""
     executor = futures_module.ThreadPoolExecutor(max_workers=len(methods))
     futures = {method: executor.submit(call, method) for method in methods}
     _, pending = futures_module.wait(
-        futures.values(), timeout=max(0.0, deadline - importlib.import_module("time").monotonic()),
-        return_when=futures_module.ALL_COMPLETED)
+        futures.values(),
+        timeout=max(0.0, deadline - importlib.import_module("time").monotonic()),
+        return_when=futures_module.ALL_COMPLETED,
+    )
     if pending:
         for future in pending:
             future.cancel()
@@ -535,9 +603,15 @@ def probe_dashboard_call(
     if remaining <= 0:
         return None, "network_error"
     request = request_module.Request(
-        f"{context.base}/aiserver.v1.DashboardService/{method}", data=b"{}", method="POST",
-        headers={"Authorization": f"Bearer {context.token}", "Content-Type": "application/json",
-                 "Connect-Protocol-Version": "1"})
+        f"{context.base}/aiserver.v1.DashboardService/{method}",
+        data=b"{}",
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {context.token}",
+            "Content-Type": "application/json",
+            "Connect-Protocol-Version": "1",
+        },
+    )
     try:
         with context.opener.open(request, timeout=min(context.timeout_s, remaining)) as response:
             sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
@@ -553,8 +627,11 @@ def probe_dashboard_call(
                     break
                 chunks.append(chunk)
             value = json.loads(b"".join(chunks))
-            return (cast(dict[str, object], value), None) if isinstance(value, dict) else (
-                None, "network_error")
+            return (
+                (cast(dict[str, object], value), None)
+                if isinstance(value, dict)
+                else (None, "network_error")
+            )
     except http_error as exc:
         return None, "auth_expired" if exc.code in (401, 403) else "network_error"
     except (OSError, ValueError, json.JSONDecodeError, TimeoutError):
@@ -562,8 +639,9 @@ def probe_dashboard_call(
 
 
 def probe_fetch_quota(
-    env: dict[str, str], opener: Any = None,
-    fetch: Callable[[str, str, Any, float], FetchResult] = probe_fetch_all
+    env: dict[str, str],
+    opener: Any = None,
+    fetch: Callable[[str, str, Any, float], FetchResult] = probe_fetch_all,
 ) -> tuple[dict[str, object] | None, str | None, str]:
     """Validate before reading the token, fetch, and return only normalized data."""
     endpoint = probe_validate_endpoint(env.get("CURSOR_API_ENDPOINT", "https://api2.cursor.sh"))
@@ -572,8 +650,9 @@ def probe_fetch_quota(
     token, error = probe_access_token(env)
     if error:
         return None, error, "Cursor authentication unavailable"
-    result = fetch(endpoint, cast(str, token), opener or probe_build_opener(),
-                   DEFAULT_CALL_TIMEOUT_S)
+    result = fetch(
+        endpoint, cast(str, token), opener or probe_build_opener(), DEFAULT_CALL_TIMEOUT_S
+    )
     if result.error_kind:
         return None, result.error_kind, "Cursor Dashboard request failed"
     return core_normalize(result.usage, result.hard_limit, result.plan_info), None, ""

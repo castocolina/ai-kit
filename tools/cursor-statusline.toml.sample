@@ -1,0 +1,35 @@
+## ai-kit Cursor CLI status-line configuration
+## Location: ~/.config/ai-kit/cursor-statusline.toml
+## Cursor quota is inferred from an undocumented Dashboard API and marked with ≈.
+## Providers: ~/.config/ai-kit/segments-cursor (AI_KIT_CURSOR_EXTERNAL_DIR).
+## Cursor config overrides use AI_KIT_CURSOR_CONFIG_FILE, AI_KIT_CURSOR_SEGMENT_<KEY>,
+## AI_KIT_CURSOR_GIT_CACHE_TTL, AI_KIT_CURSOR_EXTERNAL_DIR and
+## AI_KIT_CURSOR_EXTERNAL_CACHE_TTL. Provider subprocesses receive
+## AI_KIT_CURSOR_PROVIDER_COLS/ID/LINE/POSITION.
+
+# [segments]
+# path = true
+# git_branch = true
+# git_dirty = true
+# alt_git_worktree = false
+# model = true
+# context = true
+# cursor_included = true
+# cursor_api = false
+# cursor_extra = true
+# cursor_reset = true
+# render_time = false
+# slowest = false
+# alt_time_clock = false
+# alt_term_dimensions = false
+
+## Uncomment and edit all [[line]] blocks to replace the default layout.
+# [[line]]
+# min_rows = 0
+# segments = ["path", "git_branch", "alt_git_worktree", "git_dirty"]
+# [[line]]
+# min_rows = 0
+# segments = ["model", "context", "cursor_included", "cursor_api", "cursor_extra", "cursor_reset"]
+# [[line]]
+# min_rows = 0
+# segments = ["render_time", "slowest", "alt_time_clock", "alt_term_dimensions"]

@@ -50,16 +50,46 @@ class TestCursorQuota(unittest.TestCase):
         auth.write_text(json.dumps({"accessToken": token}), encoding="utf-8")
         return {"HOME": str(home), "XDG_CONFIG_HOME": str(config)}, token
 
+    def test_relative_or_empty_cache_base_fails_closed_without_spawn_or_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cwd = pathlib.Path(directory)
+            previous = pathlib.Path.cwd()
+            os.chdir(cwd)
+            try:
+                for base in ("", "relative-cache"):
+                    with self.subTest(base=base):
+                        spawned = []
+
+                        def record_spawn(path, env, seen=spawned):
+                            seen.append((path, env))
+                            return True
+
+                        result = probe_read_quota(base, {}, 1000, record_spawn)
+                        self.assertEqual(result.state, "absent")
+                        self.assertEqual(
+                            probe_refresh(
+                                base, {}, lambda: 1000, lambda _env: self.fail("must not fetch")
+                            ),
+                            1,
+                        )
+                        self.assertEqual(spawned, [])
+                        self.assertEqual(list(cwd.iterdir()), [])
+            finally:
+                os.chdir(previous)
+
     def test_cache_write_refresh_and_cache_only_read(self):
         with tempfile.TemporaryDirectory() as directory:
             cache_base = str(pathlib.Path(directory) / "cache")
             cache_path, lock_path = probe_cache_paths(cache_base)
-            self.assertEqual(stat.S_IMODE(os.stat(pathlib.Path(cache_base) / "cursor").st_mode),
-                             0o700)
+            self.assertEqual(
+                stat.S_IMODE(os.stat(pathlib.Path(cache_base) / "cursor").st_mode), 0o700
+            )
             token = "synthetic-cursor-token"
             data = core_synthetic_cache(1000)["data"]
+
             def fetch(_env):
                 return cast(dict[str, object], data), None, token
+
             self.assertEqual(probe_refresh(cache_base, {}, lambda: 1000, fetch), 0)
             cache = cast(dict[str, object], probe_read_cache(cache_path))
             self.assertEqual(cache["data"], data)
@@ -67,8 +97,9 @@ class TestCursorQuota(unittest.TestCase):
             self.assertTrue(os.path.exists(lock_path))
             self.assertFalse(token.encode() in pathlib.Path(cache_path).read_bytes())
             spawned = []
-            result = probe_read_quota(cache_base, {}, 1001,
-                                      lambda base, env: spawned.append((base, env)) or True)
+            result = probe_read_quota(
+                cache_base, {}, 1001, lambda base, env: spawned.append((base, env)) or True
+            )
             self.assertEqual(result.state, "ok")
             self.assertEqual(spawned, [])
 
@@ -93,20 +124,31 @@ class TestCursorQuota(unittest.TestCase):
 
     def test_cli_records_auth_missing_without_network(self):
         with tempfile.TemporaryDirectory() as directory:
-            cache_base = str(pathlib.Path(directory) / "cache" / "ai-kit")
             home = pathlib.Path(directory) / "home"
             config = pathlib.Path(directory) / "config"
             env = {
-                "PATH": os.environ["PATH"], "HOME": str(home),
+                "PATH": os.environ["PATH"],
+                "HOME": str(home),
                 "XDG_CONFIG_HOME": str(config),
                 "XDG_CACHE_HOME": str(pathlib.Path(directory) / "cache"),
             }
             proc = subprocess.run(
-                [sys.executable, "-S", str(pathlib.Path(__file__).parents[1] / "tools" /
-                 "cursor_quota.py"), "--refresh", "--cache-base", cache_base],
-                env=env, capture_output=True, text=True, check=False, timeout=10)
+                [
+                    sys.executable,
+                    "-S",
+                    str(pathlib.Path(__file__).parents[1] / "tools" / "cursor_quota.py"),
+                    "--refresh",
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            cache_path = pathlib.Path(cache_base) / "cursor" / "usage.json"
+            cache_path = pathlib.Path(env["XDG_CACHE_HOME"]) / "ai-kit" / "cursor" / "usage.json"
+            self.assertTrue(cache_path.exists())
+            self.assertFalse((pathlib.Path.cwd() / "cursor").exists())
             cache = json.loads(cache_path.read_text(encoding="utf-8"))
             self.assertEqual(cache["last_error_kind"], "auth_missing")
             self.assertIsNone(cache["data"])
@@ -119,9 +161,11 @@ class TestCursorQuota(unittest.TestCase):
             previous = core_synthetic_cache(0)
             self.assertTrue(probe_write_cache(path, previous))
             calls = []
+
             def failed(_env):
                 calls.append(1)
                 return None, "network_error", "synthetic failure"
+
             self.assertEqual(probe_refresh(base, {}, lambda: 1200, failed), 0)
             saved = cast(dict[str, object], probe_read_cache(path))
             self.assertEqual(saved["data"], previous["data"])
@@ -133,11 +177,14 @@ class TestCursorQuota(unittest.TestCase):
     def test_flock_contention_and_sigkill_release(self):
         with tempfile.TemporaryDirectory() as directory:
             _path, lock_path = probe_cache_paths(directory)
-            script = ("import fcntl, os, sys, time; fd=os.open(sys.argv[1], os.O_CREAT|os.O_RDWR, "
-                      "0o600); fcntl.flock(fd, fcntl.LOCK_EX); print('held', flush=True); "
-                      "time.sleep(30)")
-            holder = subprocess.Popen([sys.executable, "-c", script, lock_path],
-                                      stdout=subprocess.PIPE, text=True)
+            script = (
+                "import fcntl, os, sys, time; fd=os.open(sys.argv[1], os.O_CREAT|os.O_RDWR, "
+                "0o600); fcntl.flock(fd, fcntl.LOCK_EX); print('held', flush=True); "
+                "time.sleep(30)"
+            )
+            holder = subprocess.Popen(
+                [sys.executable, "-c", script, lock_path], stdout=subprocess.PIPE, text=True
+            )
             try:
                 assert holder.stdout is not None
                 self.assertEqual(holder.stdout.readline().strip(), "held")
@@ -147,6 +194,7 @@ class TestCursorQuota(unittest.TestCase):
                 descriptor = probe_try_lock(lock_path)
                 self.assertIsNotNone(descriptor)
                 from tools.cursor_quota import probe_release_lock
+
                 probe_release_lock(cast(int, descriptor))
             finally:
                 if holder.poll() is None:
@@ -161,6 +209,7 @@ class TestCursorQuota(unittest.TestCase):
             self.assertIsNotNone(held)
             fetched = []
             try:
+
                 def not_fetched(_env):
                     fetched.append(1)
                     return None, "network_error", "unexpected fetch"
@@ -169,11 +218,15 @@ class TestCursorQuota(unittest.TestCase):
                 self.assertEqual(fetched, [])
             finally:
                 from tools.cursor_quota import probe_release_lock
+
                 probe_release_lock(cast(int, held))
             data = core_synthetic_cache(5000)["data"]
             self.assertEqual(
-                probe_refresh(base, {}, lambda: 5000,
-                              lambda _env: (cast(dict[str, object], data), None, "")), 0)
+                probe_refresh(
+                    base, {}, lambda: 5000, lambda _env: (cast(dict[str, object], data), None, "")
+                ),
+                0,
+            )
             saved = probe_read_cache(_path)
             assert saved is not None
             self.assertEqual(saved["data"], data)
@@ -181,7 +234,7 @@ class TestCursorQuota(unittest.TestCase):
     def test_production_read_spawns_detached_refresher(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            cache_base = root / "cache"
+            cache_base = root / "xdg-cache" / "ai-kit"
             home = root / "home"
             config = root / "config"
             pid_file = root / "child.pid"
@@ -194,22 +247,31 @@ class TestCursorQuota(unittest.TestCase):
                 f"base={str(cache_base)!r}; pidfile={str(pid_file)!r}\n"
                 "def spawn(base, env):\n"
                 "    proc = subprocess.Popen([sys.executable, '-S', "
-                "os.path.join(sys.path[0], 'cursor_quota.py'), '--refresh', "
-                "'--cache-base', base], env=env, stdin=subprocess.DEVNULL, "
+                "os.path.join(sys.path[0], 'cursor_quota.py'), '--refresh'], "
+                "env=env, stdin=subprocess.DEVNULL, "
                 "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, "
                 "close_fds=True, start_new_session=True)\n"
                 "    open(pidfile, 'w').write(str(proc.pid))\n"
                 "    return True\n"
                 "probe_read_quota(base, os.environ.copy(), 1000, spawn)\n"
                 "import time; time.sleep(2)\n",
-                encoding="utf-8")
+                encoding="utf-8",
+            )
             env = {
-                "PATH": os.environ["PATH"], "PYTHONPATH": str(tools),
-                "HOME": str(home), "XDG_CONFIG_HOME": str(config),
+                "PATH": os.environ["PATH"],
+                "PYTHONPATH": str(tools),
+                "HOME": str(home),
+                "XDG_CONFIG_HOME": str(config),
                 "XDG_CACHE_HOME": str(root / "xdg-cache"),
             }
-            result = run_like_cursor([sys.executable, str(script)], {}, cwd=str(root),
-                                     env=env, kill_after_ms=50, timeout_s=2)
+            result = run_like_cursor(
+                [sys.executable, str(script)],
+                {},
+                cwd=str(root),
+                env=env,
+                kill_after_ms=50,
+                timeout_s=2,
+            )
             self.assertTrue(result.killed, result)
             self.assertFalse(result.blocked)
             child_pid = int(pid_file.read_text(encoding="utf-8"))
@@ -225,8 +287,9 @@ class TestCursorQuota(unittest.TestCase):
             self.assertEqual(cache["last_error_kind"], "auth_missing")
             self.assertIsNone(cache["data"])
             self.assertTrue((cache_path.parent / "usage.lock").exists())
-            self.assertEqual(probe_read_quota(str(cache_base), env, time.time()).state,
-                             "auth_missing")
+            self.assertEqual(
+                probe_read_quota(str(cache_base), env, time.time()).state, "auth_missing"
+            )
             self.assertNotIn("token", cache_path.read_text(encoding="utf-8"))
             self.assertGreater(child_pid, 0)
 
@@ -241,9 +304,13 @@ class TestCursorQuota(unittest.TestCase):
                 "fcntl.flock(fd, fcntl.LOCK_EX|fcntl.LOCK_NB)\n"
                 f"open({str(pathlib.Path(directory) / 'locked')!r}, 'w').close()\n"
                 "time.sleep(30)\n",
-                encoding="utf-8")
-            holder = subprocess.Popen([sys.executable, "-S", str(worker)],
-                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                encoding="utf-8",
+            )
+            holder = subprocess.Popen(
+                [sys.executable, "-S", str(worker)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             try:
                 marker = pathlib.Path(directory) / "locked"
                 deadline = time.monotonic() + 5
@@ -257,12 +324,15 @@ class TestCursorQuota(unittest.TestCase):
                 acquired = probe_try_lock(lock_path)
                 self.assertIsNotNone(acquired)
                 from tools.cursor_quota import probe_release_lock
+
                 probe_release_lock(cast(int, acquired))
                 replacement_data = cast(dict[str, object], core_synthetic_cache(7000)["data"])
                 calls = []
+
                 def replacement(_env):
                     calls.append(1)
                     return replacement_data, None, ""
+
                 self.assertEqual(probe_refresh(str(base), {}, lambda: 7000, replacement), 0)
                 self.assertEqual(calls, [1])
                 saved = probe_read_cache(str(cache_path))
@@ -284,11 +354,13 @@ class TestCursorQuota(unittest.TestCase):
             entered = __import__("threading").Event()
             release = __import__("threading").Event()
             results = []
+
             def reader():
                 observed = probe_read_cache(cache_path)
                 entered.set()
                 release.wait(timeout=5)
                 results.append(observed)
+
             thread = __import__("threading").Thread(target=reader)
             thread.start()
             self.assertTrue(entered.wait(timeout=5))
@@ -297,11 +369,13 @@ class TestCursorQuota(unittest.TestCase):
             release.set()
             thread.join(timeout=5)
             from tools.cursor_quota import probe_release_lock
+
             probe_release_lock(cast(int, lock))
             self.assertFalse(thread.is_alive())
             self.assertEqual(probe_read_cache(cache_path), fresh)
             self.assertEqual(results, [stale])
             fetched = []
+
             def not_fetched(_env):
                 fetched.append(1)
                 return None, "network_error", "unexpected fetch"
@@ -316,8 +390,15 @@ class TestCursorQuota(unittest.TestCase):
             good = core_synthetic_cache(0)
             self.assertTrue(probe_write_cache(path, good))
             ticks = iter((700, 701))
-            self.assertEqual(probe_refresh(base, {}, lambda: next(ticks),
-                                           lambda _env: (None, "auth_expired", "unauthorized")), 0)
+            self.assertEqual(
+                probe_refresh(
+                    base,
+                    {},
+                    lambda: next(ticks),
+                    lambda _env: (None, "auth_expired", "unauthorized"),
+                ),
+                0,
+            )
             cache = cast(dict[str, object], probe_read_cache(path))
             self.assertEqual(cache["last_error_kind"], "auth_expired")
             self.assertEqual(core_quota_state(cache, 702).state, "auth_expired")
@@ -339,16 +420,20 @@ class TestCursorQuota(unittest.TestCase):
                 fetched = probe_fetch_all(dashboard.url, token, probe_build_opener(), 2.0)
                 self.assertEqual(fetched, (*expected_parts, None))
                 self.assertEqual(len(dashboard.requests), 3)
-                self.assertTrue(all(
-                    request["method"] == "POST"
-                    and request["authorization"] == "Bearer " + token
-                    for request in dashboard.requests
-                ))
+                self.assertTrue(
+                    all(
+                        request["method"] == "POST"
+                        and request["authorization"] == "Bearer " + token
+                        for request in dashboard.requests
+                    )
+                )
             env["CURSOR_API_ENDPOINT"] = "https://api2.cursor.sh"
+
             def fetch(base, fetched_token, opener, timeout_s):
                 self.assertEqual(base, "https://api2.cursor.sh")
                 self.assertEqual(fetched_token, token)
                 return fetched
+
             normalized, error, _diagnostic = probe_fetch_quota(env, fetch=fetch)
             self.assertIsNone(error)
             self.assertEqual(normalized, expected)
@@ -362,6 +447,7 @@ class TestCursorQuota(unittest.TestCase):
             ) as reader:
                 capture = __import__("contextlib").redirect_stderr
                 import io
+
                 stderr = io.StringIO()
                 with capture(stderr):
                     data, error, diagnostic = probe_fetch_quota(env)
@@ -374,9 +460,14 @@ class TestCursorQuota(unittest.TestCase):
     def test_endpoint_validation_and_rejection_precedes_auth(self):
         accepted = ("https://api2.cursor.sh", "https://cursor.sh", "https://API2.Cursor.sh/")
         rejected = (
-            "http://api2.cursor.sh", "https://cursor.sh.evil.com", "https://xcursor.sh",
-            "https://user:pw@api2.cursor.sh", "https://api2.cursor.sh:8443",
-            "https://api2.cursor.sh/path", "ftp://api2.cursor.sh", "",
+            "http://api2.cursor.sh",
+            "https://cursor.sh.evil.com",
+            "https://xcursor.sh",
+            "https://user:pw@api2.cursor.sh",
+            "https://api2.cursor.sh:8443",
+            "https://api2.cursor.sh/path",
+            "ftp://api2.cursor.sh",
+            "",
         )
         for endpoint in accepted:
             with self.subTest(endpoint=endpoint):
@@ -394,16 +485,21 @@ class TestCursorQuota(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home = pathlib.Path(directory) / "home"
             xdg = pathlib.Path(directory) / "xdg"
-            env = {"HOME": str(home), "XDG_CONFIG_HOME": str(xdg),
-                   "CURSOR_CONFIG_DIR": str(pathlib.Path(directory) / "other")}
+            env = {
+                "HOME": str(home),
+                "XDG_CONFIG_HOME": str(xdg),
+                "CURSOR_CONFIG_DIR": str(pathlib.Path(directory) / "other"),
+            }
             self.assertEqual(probe_auth_path(env, "linux"), str(xdg / "cursor" / "auth.json"))
-            self.assertEqual(probe_auth_path({"HOME": str(home)}, "linux"),
-                             str(home / ".config" / "cursor" / "auth.json"))
+            self.assertEqual(
+                probe_auth_path({"HOME": str(home)}, "linux"),
+                str(home / ".config" / "cursor" / "auth.json"),
+            )
             self.assertEqual(probe_auth_path(env, "darwin"), str(home / ".cursor" / "auth.json"))
             self.assertEqual(probe_access_token(env), (None, "auth_missing"))
             auth = xdg / "cursor" / "auth.json"
             auth.parent.mkdir(parents=True)
-            for content in ('{}', '{"apiKey":"ignored"}', '', '{'):
+            for content in ("{}", '{"apiKey":"ignored"}', "", "{"):
                 auth.write_text(content, encoding="utf-8")
                 expected = "network_error" if content in ("", "{") else "auth_unsupported"
                 self.assertEqual(probe_access_token(env), (None, expected))
@@ -414,12 +510,18 @@ class TestCursorQuota(unittest.TestCase):
         with FakeDashboard() as destination:
             destination.script("GetCurrentPeriodUsage", body={})
             with FakeDashboard() as source:
-                source.script("GetCurrentPeriodUsage", status=302, body={},
-                              location=destination.url + "/redirected")
+                source.script(
+                    "GetCurrentPeriodUsage",
+                    status=302,
+                    body={},
+                    location=destination.url + "/redirected",
+                )
                 result = probe_dashboard_call(
-                    FetchContext(source.url, "synthetic", probe_build_opener(),
-                                 time.monotonic() + 2, 2),
-                    "GetCurrentPeriodUsage")
+                    FetchContext(
+                        source.url, "synthetic", probe_build_opener(), time.monotonic() + 2, 2
+                    ),
+                    "GetCurrentPeriodUsage",
+                )
                 self.assertEqual(result[1], "network_error")
                 self.assertEqual(len(source.requests), 1)
                 self.assertEqual(destination.requests, [])
@@ -430,8 +532,11 @@ class TestCursorQuota(unittest.TestCase):
             load_dashboard_fixture("hard_limit_fixed"),
             load_dashboard_fixture("plan_info_monthly"),
         )
-        for status, expected in ((401, "auth_expired"), (403, "auth_expired"),
-                                 (500, "network_error")):
+        for status, expected in (
+            (401, "auth_expired"),
+            (403, "auth_expired"),
+            (500, "network_error"),
+        ):
             with self.subTest(status=status), FakeDashboard() as dashboard:
                 dashboard.script("GetCurrentPeriodUsage", status=status)
                 result = self._fetch_scripted(dashboard, responses)
@@ -451,9 +556,10 @@ class TestCursorQuota(unittest.TestCase):
             dashboard.script("GetPlanInfo", status=500)
             result = probe_fetch_all(dashboard.url, "synthetic", probe_build_opener(), 2)
             normalized = core_normalize(result.usage, result.hard_limit, result.plan_info)
-            self.assertEqual(core_quota_state(
-                {"data": normalized, "data_fetched_at": 1}, 2).included_window,
-                (1791590400000, 1794268800000))
+            self.assertEqual(
+                core_quota_state({"data": normalized, "data_fetched_at": 1}, 2).included_window,
+                (1791590400000, 1794268800000),
+            )
 
     @staticmethod
     def _fetch_scripted(dashboard, responses):
@@ -495,9 +601,22 @@ class TestCursorQuota(unittest.TestCase):
         self.assertEqual(result.state, "ok")
         self.assertEqual(result.confidence, "inferred")
         self.assertEqual(result.included_window, (1791590400000, 1794268800000))
-        self.assertTrue(all(not isinstance(value, str) or value in {
-            "monthly", "weekly", "unspecified", "fixed", "unlimited", "disabled", "unavailable"
-        } for value in data.values()))
+        self.assertTrue(
+            all(
+                not isinstance(value, str)
+                or value
+                in {
+                    "monthly",
+                    "weekly",
+                    "unspecified",
+                    "fixed",
+                    "unlimited",
+                    "disabled",
+                    "unavailable",
+                }
+                for value in data.values()
+            )
+        )
 
     def test_numeric_validation(self):
         for value in (True, "abc", float("nan"), float("inf"), -5, None, object()):
@@ -506,12 +625,16 @@ class TestCursorQuota(unittest.TestCase):
 
     def test_string_epoch_and_derive_else_hide(self):
         self.assertEqual(
-            core_normalize(load_dashboard_fixture("usage_string_ms"),
-                           load_dashboard_fixture("hard_limit_fixed"),
-                           load_dashboard_fixture("plan_info_monthly")),
-            core_normalize(load_dashboard_fixture("usage_pro"),
-                           load_dashboard_fixture("hard_limit_fixed"),
-                           load_dashboard_fixture("plan_info_monthly")),
+            core_normalize(
+                load_dashboard_fixture("usage_string_ms"),
+                load_dashboard_fixture("hard_limit_fixed"),
+                load_dashboard_fixture("plan_info_monthly"),
+            ),
+            core_normalize(
+                load_dashboard_fixture("usage_pro"),
+                load_dashboard_fixture("hard_limit_fixed"),
+                load_dashboard_fixture("plan_info_monthly"),
+            ),
         )
         usage = load_dashboard_fixture("usage_missing_percents")
         data = core_normalize(usage, None, None)
@@ -542,8 +665,10 @@ class TestCursorQuota(unittest.TestCase):
         team_without_evidence = core_normalize(usage, None, None)
         self.assertEqual(team_without_evidence["od_kind"], "unavailable")
         self.assertEqual(core_normalize(usage, {}, None)["od_kind"], "unavailable")
-        for fixture, expected in (("hard_limit_unlimited", "unlimited"),
-                                  ("hard_limit_disabled", "disabled")):
+        for fixture, expected in (
+            ("hard_limit_unlimited", "unlimited"),
+            ("hard_limit_disabled", "disabled"),
+        ):
             with self.subTest(fixture=fixture):
                 result = core_normalize(usage, load_dashboard_fixture(fixture), None)
                 self.assertEqual(result["od_kind"], expected)
@@ -576,17 +701,22 @@ class TestCursorQuota(unittest.TestCase):
         self.assertEqual(monthly_result.included_window, (1791590400000, 1794268800000))
         weekly_no_reset = load_dashboard_fixture("plan_info_weekly")
         weekly_no_reset["planInfo"].pop("includedUsageResetsAt")
-        self.assertIsNone(core_quota_state({"data": core_normalize(usage, None, weekly_no_reset),
-                                            "data_fetched_at": 1}, 2).included_window)
+        self.assertIsNone(
+            core_quota_state(
+                {"data": core_normalize(usage, None, weekly_no_reset), "data_fetched_at": 1}, 2
+            ).included_window
+        )
         fallback = load_dashboard_fixture("usage_pro")
         fallback.pop("billingCycleEnd")
         fallback_result = core_normalize(
-            fallback, None, load_dashboard_fixture("plan_info_monthly"))
+            fallback, None, load_dashboard_fixture("plan_info_monthly")
+        )
         self.assertEqual(fallback_result["cycle_end_ms"], 1794268800000)
         conflict = load_dashboard_fixture("usage_pro")
         conflict["billingCycleEnd"] = 123
         conflict_result = core_normalize(
-            conflict, None, load_dashboard_fixture("plan_info_monthly"))
+            conflict, None, load_dashboard_fixture("plan_info_monthly")
+        )
         self.assertEqual(conflict_result["cycle_end_ms"], 123)
 
     def test_states_and_refresh_edges(self):
@@ -596,15 +726,25 @@ class TestCursorQuota(unittest.TestCase):
                 cache = {"data": data, "data_fetched_at": 100}
                 self.assertEqual(core_quota_state(cache, 100 + age).state, expected)
         cycle_end = cast(float, data["cycle_end_ms"])
-        self.assertEqual(core_quota_state({"data": data, "data_fetched_at": 100},
-                                          cycle_end / 1000).state, "cycle_ended")
-        auth = {"data": data, "data_fetched_at": 100, "last_attempt_at": 101,
-                "last_error_kind": "auth_expired"}
+        self.assertEqual(
+            core_quota_state({"data": data, "data_fetched_at": 100}, cycle_end / 1000).state,
+            "cycle_ended",
+        )
+        auth = {
+            "data": data,
+            "data_fetched_at": 100,
+            "last_attempt_at": 101,
+            "last_error_kind": "auth_expired",
+        }
         self.assertEqual(core_quota_state(auth, 102).state, "auth_expired")
         auth["last_error_kind"] = "auth_unsupported"
         self.assertEqual(core_quota_state(auth, 102).state, "auth_unsupported")
-        network = {"data": data, "data_fetched_at": 100, "last_attempt_at": 101,
-                   "last_error_kind": "network_error"}
+        network = {
+            "data": data,
+            "data_fetched_at": 100,
+            "last_attempt_at": 101,
+            "last_error_kind": "network_error",
+        }
         self.assertEqual(core_quota_state(network, 102).state, "stale")
         no_data_error = {"last_error_kind": "network_error"}
         self.assertEqual(core_quota_state(no_data_error, 102).state, "network_error")
@@ -612,8 +752,11 @@ class TestCursorQuota(unittest.TestCase):
         self.assertTrue(core_needs_refresh({}, 102))
         self.assertFalse(core_needs_refresh({"data_fetched_at": 100}, 100))
         self.assertFalse(core_needs_refresh({"data_fetched_at": 1, "last_attempt_at": 100}, 400))
-        self.assertTrue(core_needs_refresh({"data_fetched_at": 1, "last_attempt_at": 100},
-                                           100 + NEGATIVE_TTL_S + 1))
+        self.assertTrue(
+            core_needs_refresh(
+                {"data_fetched_at": 1, "last_attempt_at": 100}, 100 + NEGATIVE_TTL_S + 1
+            )
+        )
         synthetic = core_synthetic_cache(500)
         self.assertEqual(core_quota_state(synthetic, 500).state, "ok")
 
