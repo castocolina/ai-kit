@@ -31,9 +31,12 @@ index, explore with ordinary reads. In a git worktree the index may belong to th
 (another branch): treat results as hints and re-read the worktree files.
 </CODEGRAPH BLOCK>
 
-<COUPLING BLOCK — include only when this analyzer runs in the background beside other work>
-This runs while phase <K> is being written. Known coupling: <what K decides that may affect
-this phase, or "none known">. Report any dependency on phase <K>'s open items explicitly.
+<COUPLING BLOCK — include only when this analyzer runs in the background beside other work,
+which may only happen after this phase's spec step has finished (its SPEC is committed and
+current)>
+This runs after the phase's SPEC was committed, while other in-range work proceeds. Known
+coupling: <what other in-range work may affect this phase, or "none known">. Report any
+dependency on other phases' open items explicitly.
 </COUPLING BLOCK>
 
 Output, per area: the standard Assumption / Why this way / If wrong / Confidence fields, plus

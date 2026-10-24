@@ -6,7 +6,8 @@ ledger. All artifacts in English.
 ## Cell format for a backend answer
 
 - `choice 0.NN` — winning probability `top`, high.
-- `choice 0.NN (fb)` — `fallback` true (below the threshold, or over the size cap: see SKILL.md §3).
+- `choice 0.NN (fb)` — `fallback` true (below the threshold, or over the size cap: see
+  decision-table.md, "Forced columns").
 - `choice 0.NN (second opinion)` — from `--second-opinion`.
 - `–` — not called (an earlier rung was high, or the backend was unavailable).
 - `error: <code>` — the call failed; say what you did instead.
@@ -16,7 +17,8 @@ ledger. All artifacts in English.
 ```markdown
 ## Interview Log
 
-`--auto`, one round. The open items went through the decision ladder (the local backend
+<Run mode and rounds: `--auto`, one round for the auto path; `interactive`, <round count>
+rounds otherwise>. The open items went through the decision ladder (the local backend
 first; `needs_fallback` items go to the first consented remote, a later remote only on an error). Summaries
 only, advisory. Rule: <quality rule branch>.
 
@@ -61,14 +63,17 @@ requirement. Edge Coverage rows: `~~old resolution~~ *(superseded, D-NN)* new re
 ## DISCUSSION-LOG (new)
 
 ```markdown
-# Phase NN: <name> - Discussion Log (Assumptions Mode)
+# Phase NN: <name> - Discussion Log (<run mode: Assumptions Mode for the auto path, standard
+# discuss mode for the interactive path>)
 
 > **Audit trail only.** Do not use as input to planning, research, or execution agents.
 > Decisions captured in CONTEXT.md — this log preserves the analysis.
 
 **Date:** YYYY-MM-DD
 **Phase:** NN-slug
-**Mode:** assumptions (`--analyze --all --batch`), decision ladder, <quality rule>, CodeGraph
+**Mode:** <run mode — auto path: assumptions (`--analyze --all --batch`); interactive path:
+standard discuss mode with the user>, decision ladder, <quality rule> — add
+", CodeGraph" only when the brief included the CodeGraph block.
 **Areas analyzed:** <areas>
 
 ## Assumptions Presented

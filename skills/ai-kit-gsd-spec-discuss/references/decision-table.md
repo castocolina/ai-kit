@@ -2,9 +2,7 @@
 
 Read before the first ladder call. "High" means a column's `fallback` is false — the
 threshold of that backend's own row in the client's table (per-backend; the numbers are in
-`jev-fast-decision`'s `reference.md` and `backends/`). A `fallback: true` column whose `top`
-is at or above its backend's threshold was forced (size cap or a server truncation report),
-not low confidence.
+`jev-fast-decision`'s `reference.md` and `backends/`).
 "Evidence" means what you verified live or what an earlier SPEC/CONTEXT locks — not what
 seems plausible.
 
@@ -15,9 +13,16 @@ backend's column (today `laya`) and one column per remote backend, in the client
 order (today TypeSafe, then OpenCode Zen). A remote column is filled only when the local
 rung was low or errored, or under `--second-opinion`.
 
-1. **The item touches a user-locked decision** (an earlier interactive CONTEXT, a decision the
-   user stated): decide provisionally, flag `needs confirmation`, put it on the ledger. Never a
-   silent override, whatever the models say.
+**Forced columns:** a `fallback: true` column whose `top` is at or above its backend's
+threshold was forced (size cap or a server truncation report), not low confidence. It answers
+at face value: its `top` counts as high for rows 2–4 — a forced local answer still gets row
+3's evidence check, and a forced remote answer is a high remote answer. Only `fallback: true`
+with `top` below the threshold means low confidence.
+
+1. **The item would change or contradict a user-locked decision** (a decision from an earlier
+   interactive CONTEXT or one the user stated): decide provisionally, flag `needs
+   confirmation`, put it on the ledger. Never a silent override, whatever the models say. An
+   answer that agrees with a user-locked decision is not flagged.
 2. **`decided_by` is the local backend and the answer is consistent with the evidence** → take
    it. Log `choice 0.NN`.
 3. **The local answer is high but contradicts the evidence** → `decide.py ladder --second-opinion`

@@ -17,19 +17,25 @@ Phase 17, K08: "Which model pairs form the price-ceiling sample?"
 
 Phase 18.1, T2: "Delete the Claude subprocess inventory?"
 - Laya `delete_all 0.75`; TypeSafe second opinion `keep_for_review 0.74`.
-- The models are effectively split. Evidence decides: Phase 18 R2 fills `review.models.claude`
-  on codex/opencode hosts from that inventory.
-- Logged as **Laya overridden** with that reason. (Recorded at the time; under today's 0.8 TypeSafe threshold
-  that 0.74 is `(fb)`, so the override rests on the evidence alone.)
+- The models are effectively split, and the 0.74 second opinion is below TypeSafe's threshold
+  (`fb`) — no high remote answer, so decision-table row 3 ends in own reasoning. Evidence
+  decides: Phase 18 R2 fills `review.models.claude` on codex/opencode hosts from that
+  inventory.
+- Logged: `| T2 inventory | delete_all 0.75 | keep_for_review 0.74 (fb, second opinion) |
+  **Own reasoning:** no high remote answer; R2 fills review.models.claude from it (D-19,
+  ledger) |`.
 
 ## 3. Both low → own reasoning, ledgered, flagged for the user
 
 Phase 24, C08: consent model for remote calls.
 - Laya `session_only 0.65 (fb)`; TypeSafe `user_level_persistent 0.60 (fb)`.
-- The SPEC wants consent "recorded once"; the companion jev skill says "confirm before the first
-  call each session". Two documents disagree, so no model settles it.
-- Decided provisionally (persistent per-user record, announced every run, revocable), flagged
-  `needs confirmation`, ledgered — not a stop, because nothing else in the run depended on it.
+- The SPEC's "consent recorded once" is a user-locked decision; the companion jev skill says
+  "confirm before the first call each session". Two documents disagree, so no model settles it.
+- Decided provisionally (persistent per-user record, announced every run, revocable). Because
+  the provisional answer would change that user-locked decision, it is flagged
+  `needs confirmation` — the only rule that flags — and ledgered; not a stop, because nothing
+  else in the run depended on it. (An answer that agreed with the locked decision would not be
+  flagged; decision-table row 1.)
 
 ## 4. A confident out-of-scope recommendation
 

@@ -1049,6 +1049,12 @@ class TestSkillContract(unittest.TestCase):
         self.assertIn("Use when", head)
         self.assertIn("Not for plan-phase or execute-phase", head)
 
+    def test_description_is_within_the_1024_char_limit(self):
+        # Agent Skills standard: frontmatter description <= 1024 characters.
+        head = self.read("SKILL.md").split("---", 2)[1]
+        line = next(l for l in head.splitlines() if l.startswith("description:"))
+        self.assertLessEqual(len(line[len("description:"):].strip()), 1024)
+
     def test_quality_rule_reads_mode_and_states_both_branches(self):
         skill = self.read("SKILL.md")
         for needle in ("phase.mvp-mode", "workflow.mvp_mode", "--default false",
@@ -1091,6 +1097,115 @@ class TestSkillContract(unittest.TestCase):
         self.assertIn("Explicit `--from N --to M` or a list wins", skill)
         self.assertIn("automatic proposal skipped", skill)
         self.assertIn("explicit range or list still runs that phase", skill)
+
+    def test_rules_cover_both_run_paths(self):
+        # Round-3 item 2: no "the rules below are the auto path" scoping — the shared rules
+        # are stated as both-paths, with the ladder/analyzer split per path.
+        skill = " ".join(self.read("SKILL.md").split())
+        self.assertIn("**Rules that hold in both paths:**", skill)
+        self.assertIn("the skill never plans or executes", skill)
+        self.assertIn("the interactive path the user answers the workflow's prompts, and the "
+                      "ladder only screens the items the user asks it to screen", skill)
+        self.assertIn("in the auto path the ladder runs on every open item", skill)
+
+    def test_analyzer_never_starts_before_its_own_spec(self):
+        # Round-3 item 3: pacing — phase K's analyzer needs K's SPEC committed and current.
+        skill = " ".join(self.read("SKILL.md").split())
+        self.assertIn("must never start before that phase's spec step has finished", skill)
+        brief = self.read("references/analyzer-brief.md")
+        self.assertIn("after this phase's spec step has finished", brief)
+        self.assertNotIn("while phase <K> is being written", brief)
+
+    def test_auto_flag_and_recommendation_rule(self):
+        # Item 5: the skill takes an optional --auto; without it, one config-backed ask.
+        # (Round 3 moved run-mode mechanics out of the description into the body, so the
+        # flag wording is asserted in the body, not the frontmatter.)
+        head = self.read("SKILL.md").split("---", 2)[1]
+        self.assertIn("Two run modes, picked once: auto", head)
+        skill = " ".join(self.read("SKILL.md").split())
+        self.assertIn("Pick the run mode", skill)
+        self.assertIn("With the skill's `--auto` flag: auto path", skill)
+        self.assertIn("config-get mode", skill)
+        self.assertIn("config-get workflow.mvp_mode", skill)
+        self.assertIn("Key not found", skill)
+        self.assertIn("default (`interactive`)", skill)
+        # the recommendation rule: auto when yolo mode or the phase's mvp-mode is active —
+        # the same per-phase source as the quality rule (round-3 item: read mvp once)
+        self.assertIn("recommend the **auto path** when `mode` is `yolo` or the phase's "
+                      "`mvp-mode` is active", skill)
+        self.assertIn("**interactive path** otherwise", skill)
+        self.assertIn("Never flip config keys to pick a path", skill)
+        # per-phase steps follow the picked mode
+        self.assertIn("arguments `N --auto` (auto path) or plain `N` (interactive path)", skill)
+        self.assertIn("The **interactive path** runs `<workflows>/discuss-phase.md` instead", skill)
+        self.assertIn("with the user answering its prompts", skill)
+        # NEVER list keeps both guards
+        self.assertIn("NEVER pass `--auto` to discuss in assumptions mode", skill)
+        self.assertIn("`workflow.discuss_mode`, `mode` or `workflow.mvp_mode`", skill)
+
+    def test_one_needs_confirmation_rule_in_both_places(self):
+        # Item 2: flag only when an item would change or contradict a user-locked decision.
+        rule = "would change or contradict"
+        not_flagged = "agrees with"
+        skill = " ".join(self.read("SKILL.md").split())
+        table = " ".join(self.read("references/decision-table.md").split())
+        for text in (skill, table):
+            self.assertIn(rule, text)
+            self.assertIn(not_flagged, text)
+        self.assertIn("decision-table row 1, same rule", skill)
+        self.assertIn("**The item would change or contradict a user-locked decision**", table)
+
+    def test_forced_fallback_rule_stated_once_in_decision_table(self):
+        # Item 1: no circular pointer — decision-table.md states the rule; the others point
+        # at it. And the definition appears exactly once in the table (round-3 minor).
+        table = self.read("references/decision-table.md")
+        self.assertIn("**Forced columns:**", table)
+        self.assertEqual(table.count("was forced (size cap or a server truncation report)"), 1)
+        self.assertIn("counts as high for rows 2–4", table)
+        self.assertIn("Only `fallback: true`\nwith `top` below the threshold means low "
+                      "confidence", table)
+        skill = " ".join(self.read("SKILL.md").split())
+        self.assertIn("What a forced `fallback: true` column does in \"Which answer wins\"",
+                      skill)
+        self.assertIn("defined once in `references/decision-table.md`", skill)
+        logs = " ".join(self.read("references/log-formats.md").split())
+        self.assertIn("decision-table.md, \"Forced columns\"", logs)
+        self.assertNotIn("see SKILL.md §3", logs)
+
+    def test_worked_example_two_owns_the_low_second_opinion(self):
+        # Item 3: a 0.74 (fb) TypeSafe second opinion is no high remote answer — own
+        # reasoning, ledgered, never "Laya overridden".
+        text = self.read("references/worked-examples.md")
+        example2 = text.split("## 2.", 1)[1].split("## 3.", 1)[0]
+        self.assertNotIn("Laya overridden", example2)
+        self.assertIn("**Own reasoning:**", example2)
+        self.assertIn("ledger", example2)
+
+    def test_ladder_call_count_and_prose_minors(self):
+        # Item 4 + item 6 minors.
+        skill = " ".join(self.read("SKILL.md").split())
+        self.assertIn("one client call per step that has open items", skill)
+        self.assertIn("spec and discuss ladder separately", skill)
+        self.assertIn("plus an optional `--second-opinion` run", skill)
+        self.assertNotIn("one client call per phase", skill)
+        self.assertNotIn("init phase-op", skill)
+        self.assertIn("init.phase-op", skill)
+        self.assertIn("`--from N --to M`, or `--list a,b`", skill)
+        self.assertIn("CLAUDE_ENV_FILE", skill)
+        self.assertIn("print the resolved gsd-tools path", skill)
+
+    def test_prose_minors_round_three(self):
+        skill = " ".join(self.read("SKILL.md").split())
+        # the todo threshold is sourced, not invented
+        self.assertIn("gsd-core's workflow constant", skill)
+        # the Interview Log trigger uses the MANDATORY framing
+        self.assertIn("MANDATORY — read `references/log-formats.md` before writing it", skill)
+        # mvp is read once, per phase, for both the quality rule and the recommendation
+        self.assertIn("do not read `workflow.mvp_mode` a second way", skill)
+        # log formats parameterize run mode and round count
+        logs = self.read("references/log-formats.md")
+        self.assertIn("<Run mode and rounds:", logs)
+        self.assertIn("<run mode: Assumptions Mode for the auto path", logs)
 
     def test_readme_registers_the_skill(self):
         readme = (self.ROOT.parent.parent / "README.md").read_text(encoding="utf-8")

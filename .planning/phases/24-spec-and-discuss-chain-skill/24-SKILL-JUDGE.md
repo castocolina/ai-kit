@@ -51,3 +51,35 @@ is still owed (see the user memory note on skill-judge in code review).
   this commit (their amended requirement text changed the floor); 16.1–19 drift (floors computed
   earlier with a truncating prototype extractor) and are ledgered for regeneration before their
   planning.
+
+## Close-out re-judge rounds (2026-10-24)
+
+Re-judged after the Phase 24 code-review fixes (c14a753, dde6e12, 735af73), which changed SKILL.md.
+The judge set changed mid-run: native Opus + opencode `router-env/my-plan-review` for r0-r1, then
+(owner, 2026-10-24) native Opus + `router-env/my-referee-one` + `router-env/my-referee-two`.
+
+| Round | Digest | Native Opus | my-plan-review | my-referee-one | my-referee-two | Fixes after |
+|---|---|---|---|---|---|---|
+| r0 | b4dba01851891ec0 | 105, I2 | 117, I1 | - | - | 9c2b6e4 |
+| r1 | 59cedabbd9b0cc53 | 105, I3 | 116, I1 | - | - | ec6cc06 (+ owner `--auto` mode) |
+| r2 | 4ce07543b1aafd75 | 99, C1 I1 | - | 97, I3 | 111, I1 | b99f3e5 |
+| r3 | 7fc3f03ffb2fb714 | 108, I1 | - | 101, I3 | 109, I2 | - |
+
+The r2 regression came from the new `--auto` mode: the description grew to 1,167 characters,
+past the spec's 1,024 cap, and the interactive path was underspecified. r3 fixed both and added a
+test that pins the description length.
+
+**Verdict at r3: PASS.** Every judge has CRITICAL 0 and CURRENT >= 96. Native Opus is at or above
+its 105 baseline; the two referees are new judges with no baseline. Three fix rounds ran (one past
+the usual cap of two), so the remaining Importants are recorded as polish for backlog 999.11
+rather than a fourth round:
+- Opus: a forced local answer can match no decision-table row (`decided_by` is never set for a
+  forced column).
+- referee-one: the description's "one commit per phase" vs the spec workflow's own commit; the
+  analyzer may start while the same phase's CONTEXT is written; `state.record-session` is
+  unspecified on an early stop.
+- referee-two: trigger keywords sit late in the description; `no_client`/`incompatible_client`
+  names a remedy but not the agent's action.
+
+Native Opus reports are summarized in the orchestrator log; the opencode reports are verbatim
+under `skill-judge/`.
