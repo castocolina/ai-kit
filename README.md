@@ -297,18 +297,24 @@ See `tools/claude-statusline.toml.sample` for the full default palette and ramps
 
 **Inspect & validate:** the render module `claude-status-line.py` is intentionally silent
 — it never writes to stderr. All validation (bad config values, unknown keys,
-bad env overrides) is surfaced by `tools/statusline-doctor.py`:
+bad env overrides) is surfaced by `tools/statusline-doctor.py`, which diagnoses
+one status line at a time via `--host claude|cursor` (default `claude`):
 
 ```sh
 python3 tools/statusline-doctor.py --print-config   # resolved config as JSON (incl. ramps)
 python3 tools/statusline-doctor.py --check          # validate file + env overrides
 python3 tools/statusline-doctor.py --doctor         # validate + dry-render every segment
-python3 tools/statusline-doctor.py --help           # full env-var list
+python3 tools/statusline-doctor.py --help           # full env-var list for the selected host
+python3 tools/statusline-doctor.py --host cursor --doctor  # diagnose the Cursor CLI line instead
 ```
 
 Environment variables: `CC_AI_KIT_CONFIG_FILE` (config path),
-`CC_AI_KIT_SEGMENT_<KEY>` (per-segment toggle). Requires Python 3.11+ for the
-TOML file; on older Python the file is ignored and only env toggles apply.
+`CC_AI_KIT_SEGMENT_<KEY>` (per-segment toggle); the Cursor host uses the
+`AI_KIT_CURSOR_*` names instead (see `--host cursor --help`). The Cursor
+doctor also reports the quota fetch status, always labeled
+`inferred — undocumented Cursor API`, and may attempt one foreground quota
+refresh — save-time validation and previews never fetch. Requires Python 3.11+
+for the TOML file; on older Python the file is ignored and only env toggles apply.
 
 ### External drop-in segments
 
