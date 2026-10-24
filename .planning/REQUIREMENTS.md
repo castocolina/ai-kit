@@ -116,11 +116,11 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 
 ### Host-Split Status Line
 
-- [ ] **STL-01**: `tools/status-line.py` splits into host-neutral `common_*` modules, `claude_*` host modules and a thin `claude-status-line.py` entry; the Claude render is byte-identical; a hard rename with an idempotent, atomic migration of the Claude `statusLine.command` and `statusline.toml` ships in the same change; the split files stay ruff/pylint clean; the stale status-line pipeline doc is fixed or deleted
-- [ ] **STL-02**: A `cursor-status-line.py` entry renders model, context and three separately placeable quota segments (API, included, extra against its ceiling) plus the billing-cycle reset; every quota segment on both hosts uses the shared gap gauge (bands 5/10/15, sign kept); Cursor quota is marked inferred (`≈`)
+- [x] **STL-01**: `tools/status-line.py` splits into host-neutral `common_*` modules, `claude_*` host modules and a thin `claude-status-line.py` entry; the Claude render is byte-identical; a hard rename with an idempotent, atomic migration of the Claude `statusLine.command` and `statusline.toml` ships in the same change; the split files stay ruff/pylint clean; the stale status-line pipeline doc is fixed or deleted
+- [x] **STL-02**: A `cursor-status-line.py` entry renders model, context and three separately placeable quota segments (API, included, extra against its ceiling) plus the billing-cycle reset; every quota segment on both hosts uses the shared gap gauge (bands 5/10/15, sign kept); Cursor quota is marked inferred (`≈`)
 - [ ] **STL-03**: `cursor_quota.py` is the only network and credential code: HTTPS to `*.cursor.sh` only (`CURSOR_API_ENDPOINT` validated), no cross-origin redirects, token never persisted or logged; the cache separates `data_fetched_at` from `last_attempt_at`/`last_error`, hides quota on 401/403 and after `cycle_end`; every `git` call has a timeout; resets show in local time; a bad TOML value renders an error segment; redacted real Dashboard responses are fixtures
 - [ ] **STL-04**: Render-versus-fetch timing is measured in a spike before choosing an inline fetch with a cache or a background refresher
-- [ ] **STL-05**: `setup.py --with-statusline[=claude,cursor]` wires each detected host headless, and the wizard runs verify/replace/keep per detected host; both entries are reachable after v1.3 merges; `tests/test_arch.py` covers the new modules; `make test` and `make validate` are green
+- [x] **STL-05**: `setup.py --with-statusline[=claude,cursor]` wires each detected host headless, and the wizard runs verify/replace/keep per detected host; both entries are reachable after v1.3 merges; `tests/test_arch.py` covers the new modules; `make test` and `make validate` are green
 
 ### Quota Resilience
 
@@ -213,11 +213,11 @@ None deferred beyond v1.3 at definition time.
 | SDC-02 | Phase 24 | Pending |
 | SDC-03 | Phase 24 | Pending |
 | SDC-04 | Phase 24 | Pending |
-| STL-01 | Phase 23 | Pending |
-| STL-02 | Phase 23 | Pending |
-| STL-03 | Phase 23 | Pending |
-| STL-04 | Phase 23 | Pending |
-| STL-05 | Phase 23 | Pending |
+| STL-01 | Phase 23 | Complete |
+| STL-02 | Phase 23 | Complete |
+| STL-03 | Phase 23 | Pending (owner: redacted real Dashboard fixtures from 23-SPIKE S2) |
+| STL-04 | Phase 23 | Pending (owner: 23-SPIKE S1-S7) |
+| STL-05 | Phase 23 | Complete |
 | QTA-01 | Phase 25 | Pending |
 | QTA-02 | Phase 25 | Pending |
 | QTA-03 | Phase 25 | Pending |

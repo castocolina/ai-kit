@@ -68,7 +68,7 @@ verified live rather than assumed from a catalog.
 - ✓ Interactive Textual install wizard (`tools/setup.py`) — install-picks
   screen + 2-D status-line layout board, fail-closed with no headless-defaults
   mode.
-- ✓ Responsive status line (`tools/status-line.py`) — zero-dependency,
+- ✓ Responsive status line (`tools/claude-status-line.py`, host-split in v1.3 Phase 23 with a Cursor CLI twin `tools/cursor-status-line.py`) — zero-dependency,
   stdlib-only renderer with configurable segments, ramps, and external
   drop-in segment providers; validated by `tools/statusline-doctor.py`.
 - ✓ `ai-kit-spec-review` skill family (`ai-kit-spec-review`,
@@ -147,7 +147,7 @@ installer + status line and grew a family of spec-review/execute skills.
 - The unit suite has about 2535 tests.
 - The only failing test is `TestRenderRealMmdc`, caused by an environment problem (an incomplete pnpm-global mermaid-cli install).
 - Pyright reports 0 errors.
-- Known debt: pre-v1.2 ruff/pylint findings in `tools/status-line.py`, `tools/wizard_app.py` and `tests/test_ai_kit_spec_superpowers.py`.
+- Known debt: pre-v1.2 ruff/pylint findings in `tools/wizard_app.py` and `tests/test_ai_kit_spec_superpowers.py` (the status line's share was cleared by the v1.3 Phase 23 split, whose modules are ruff/pylint clean).
 - No v1.2 phase has a Nyquist VALIDATION.md.
 
 v1.0's scope came from 5 PRDs ingested from `docs/prds/` — all framed
@@ -162,7 +162,7 @@ pattern and folds in a Non-Goals note from Tool-Substitution Awareness Hook;
 Usage Metrics Dashboard mirrors Tool-Substitution Awareness Hook's curated
 substitution list as its single source of truth for command-family tagging.
 
-The shipped runtime code (`tools/status-line.py`) is deliberately
+The shipped runtime code (the `tools/claude-status-line.py` / `tools/cursor-status-line.py` entries and their `common_*`/`claude_*`/`cursor_*` modules) is deliberately
 stdlib-only; `uv`/`textual` are dev/wizard-only and never required at render
 time. All 5 proposal PRDs preserve this split — no new runtime dependency is
 introduced without an explicit, justified exception.

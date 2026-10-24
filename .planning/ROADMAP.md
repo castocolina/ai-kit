@@ -749,7 +749,7 @@ are already on this branch; mark the gap spec accepted and amend PROJECT.md (bur
 **Linked assets:** spec + REVIEW on `spec/host-split-statusline`; POC branch
 `poc/cursor-statusline` (reference only, never promoted or merged; inventory what works first);
 research notes 13 and 13b; todo `2026-10-12-promote-cursor-statusline-poc-into-999-4.md` on main.
-**Plans**: 17/18 plans executed
+**Plans**: 18/18 plans executed (human_needed: owner spike S1-S7)
 - [x] 23-01-PLAN.md
 - [x] 23-02-PLAN.md
 - [x] 23-03-PLAN.md
@@ -767,7 +767,7 @@ research notes 13 and 13b; todo `2026-10-12-promote-cursor-statusline-poc-into-9
 - [x] 23-15-PLAN.md
 - [x] 23-16-PLAN.md
 - [x] 23-17-PLAN.md
-- [ ] 23-18-PLAN.md
+- [x] 23-18-PLAN.md
 
 ### Phase 24: Spec-and-discuss chain skill
 
