@@ -795,7 +795,7 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
             await pilot.press("n")                  # decline claude → cursor gate
             self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
             self.assertFalse(app.flow.gate_done)    # the SECOND host must be asked
-            self.assertEqual(app.host_i, 1)
+            self.assertEqual(app.flow.host_index, 1)
             lane0 = str(_query_static(app, "#lane0").content)
             self.assertIn("Cursor", lane0)          # cursor's wording, not Claude's
 
@@ -831,7 +831,7 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             await pilot.press("escape")
             self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
-            self.assertEqual(app.host_i, 1)              # the LAST adopted host
+            self.assertEqual(app.flow.host_index, 1)              # the LAST adopted host
             self.assertTrue(app.flow.gate_done)          # its board, not its gate
 
     async def test_reedit_second_host_then_confirm_keeps_both(self):
@@ -890,6 +890,104 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result.state["claude"]["_commit_ok"], False)
         self.assertIn("cursor", (nxt + sub).lower())
         self.assertIn("Cursor CLI", nxt + sub)
+
+    async def test_escape_on_later_host_board_returns_to_previous_board(self):
+        """D-22: Esc on the Cursor board returns to the Claude board with its
+        own arrangement intact (nothing was reset by walking forward)."""
+        app = wa.WizardApp(make_ctx(host_ids=self.TWO, sl_state="unset"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")                  # choose → Claude's gate
+            await pilot.press("y")                      # adopt → Claude's board
+            await pilot.press("enter")                  # board → Cursor's gate
+            await pilot.press("y")                      # adopt → Cursor's board
+            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
+            self.assertEqual(app.flow.host_index, 1)
+            claude_first = app.views["claude"].board.lines[0][0]
+            cursor_first = app.board.lines[0][0]
+            app.board.focus_zp = (0, 0)
+            await pilot.press("space")               # re-arrange Cursor only
+            self.assertIn(cursor_first, app.board.tray)
+            await pilot.press("escape")              # back to Claude's board
+            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
+            self.assertEqual(app.flow.host_index, 0)
+            self.assertTrue(app.flow.gate_done)      # its board, not its gate
+            self.assertIn(claude_first, app.board.lines[0])   # arrangement intact
+
+    async def test_declining_second_host_lists_it_untouched_on_review(self):
+        seen = {}
+
+        def commit(selection, states):
+            seen["states"] = states
+            return {"ok": True, "adopt": True, "log": "",
+                    "hosts": {h: {"ok": True, "adopt": st["adopt"], "log": ""}
+                              for h, st in states.items()}}
+
+        ctx = make_ctx(host_ids=self.TWO, sl_state="unset")._replace(commit=commit)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await self._walk(app, pilot, ("y", "n"))   # Claude adopts, Cursor declines
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+            what = str(_query_static(app, "#rev-what").content)
+            self.assertIn("Cursor CLI: left untouched", what)
+            await pilot.press("enter")                 # confirm
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertIs(seen["states"]["cursor"]["adopt"], False)
+        result = app.flow.result
+        assert result is not None
+        self.assertIs(result.state["cursor"]["adopt"], False)
+
+    async def test_review_lists_each_adopted_hosts_config_and_wiring(self):
+        app = wa.WizardApp(make_ctx(host_ids=self.TWO, sl_state="unset"))
+        async with app.run_test() as pilot:
+            await self._walk(app, pilot, ("y", "y"))
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+            what = str(_query_static(app, "#rev-what").content)
+            self.assertIn("Claude Code: write ~/.config/ai-kit/claude-statusline.toml "
+                          "+ wire settings.json", what)
+            self.assertIn("Cursor CLI: write ~/.config/ai-kit/cursor-statusline.toml "
+                          "+ wire cli-config.json", what)
+
+    async def test_cursor_failure_shown_on_done_while_claude_succeeds(self):
+        def commit(selection, states):
+            return {"ok": False, "adopt": True, "log": "",
+                    "hosts": {"claude": {"ok": True, "adopt": True, "log": ""},
+                              "cursor": {"ok": False, "adopt": True,
+                                         "log": "cursor doctor refused"}}}
+
+        ctx = make_ctx(host_ids=self.TWO, sl_state="unset")._replace(commit=commit)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await self._walk(app, pilot, ("y", "y"))
+            await pilot.press("enter")                  # review → commit
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            nxt = str(_query_static(app, "#done-next").content)
+            title = str(_query_static(app, "#step-title").content)
+        self.assertIn("incomplete", title)
+        self.assertIn("Cursor CLI:", nxt)               # the failing host names itself
+        self.assertIn("cursor doctor refused", nxt)
+        self.assertIn("written OK:", nxt)               # the healthy host stays visible
+        self.assertIn("Claude Code", nxt)
+        result = app.flow.result
+        assert result is not None
+        self.assertIs(result.state["cursor"]["_commit_ok"], False)
+        self.assertIs(result.state["claude"]["_commit_ok"], True)
+
+    async def test_one_host_titles_are_host_labelled(self):
+        """The formerly Claude-only strings are host-labelled (D-22): the Arrange
+        title and the gate prompt name the host even in a one-host context."""
+        app = wa.WizardApp(make_ctx(host_ids=("claude",), sl_state="unset"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")                  # choose → Claude's gate
+            lane0 = str(_query_static(app, "#lane0").content)
+            self.assertIn("Wire your Claude Code status line?", lane0)
+            await pilot.press("y")                      # accept → the board
+            await pilot.pause()
+            title = str(_query_static(app, "#step-title").content)
+            self.assertIn("Arrange your Claude Code status line", title)
 
     async def test_zero_hosts_skips_arrange_entirely(self):
         seen = {}

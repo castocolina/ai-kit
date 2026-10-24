@@ -141,6 +141,19 @@ re-activates it onto line 1.
 selection triggers a confirm modal ("install nothing?") defaulting to No
 (`y` to proceed, `n` / `esc` / `q` to go back).
 
+**Per-host status-line flow.** The wizard walks every detected status-line
+host in order — Claude Code first, then the Cursor CLI — and asks each host
+its own adoption gate ("Wire your Claude Code status line?", "Wire your
+Cursor CLI status line?") before showing that host's layout board ("Arrange
+your <host> status line"). `Esc` on a later host's board steps back to the
+previous host's board with its arrangement intact. One Review then lists
+every host's writes (each adopted host's TOML plus its wiring file), and Done
+reports each host's outcome — one host's failure never blocks the other.
+Each host has its own config file: `~/.config/ai-kit/claude-statusline.toml`
+and `~/.config/ai-kit/cursor-statusline.toml`. **Declining a host at its gate
+skips its board and leaves that host untouched** — its TOML is never created
+and its CLI config (`settings.json` / `cli-config.json`) stays byte-identical.
+
 The board's **live preview** uses a representative fixture — it cannot show
 your live session's model/context/cost during a standalone wizard run, so it
 displays realistic sample values.
@@ -330,9 +343,10 @@ it alone; see [Headless install](#headless-install-ci--containers--no-tty)).
   `~/.config/ai-kit/cursor-statusline.toml` (override the path with
   `AI_KIT_CURSOR_CONFIG_FILE`, toggle a segment with `AI_KIT_CURSOR_SEGMENT_<KEY>`);
   layout alternates (worktree path, render time, slowest segment, terminal size)
-  are off by default. Nothing is copied there by `install`: with no file the Cursor
-  line renders ai-kit's defaults, and `tools/cursor-statusline.toml.sample` is the
-  starter to copy by hand (the wizard writes it in a later phase). See that sample
+  are off by default. With no file the Cursor line renders ai-kit's defaults,
+  and `tools/cursor-statusline.toml.sample` is the starter to copy by hand — or
+  adopt the Cursor host in the wizard, which writes and doctor-validates that
+  TOML for you. See that sample
   and `python3 tools/statusline-doctor.py --host cursor --help` for the full key
   and env list.
 - **Quota is an inference, always marked as one.** Cursor documents no quota API

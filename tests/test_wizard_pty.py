@@ -19,6 +19,7 @@ in ``test_setup.py`` and is not duplicated here.
 
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import pty
@@ -522,7 +523,7 @@ class TestPhase2E2E(unittest.TestCase):
             # From here the existing pick test's key sequence:
             # Enter (Choose -> Arrange, adoption gate) -> y (board) ->
             # Enter (Arrange -> Review) -> Enter (commit -> Done) -> Enter (exit).
-            press_until(b"\r", b"Wire Claude Code's status line?",
+            press_until(b"\r", b"Wire your Claude Code status line?",
                         time.time() + _STEP_DEADLINE)
             _drain(master_fd, time.time() + 1.0)
             press_until(b"y", b"git_branch", time.time() + _STEP_DEADLINE)
@@ -618,7 +619,7 @@ class TestPhase2E2E(unittest.TestCase):
 
         # Markers chosen from static text the re-ported app DEFINITELY renders:
         #   Choose screen → ◉ (UTF-8 bytes) — the glyph prepended to every enabled pick
-        #   Arrange gate  → "Wire Claude Code's status line?" — the unset-state gate prompt
+        #   Arrange gate  → "Wire your Claude Code status line?" — the unset-state gate prompt
         #   Arrange board → "git_branch" — a default-ON segment chip in Line 1
         #   Review screen → "Review & confirm" — the step title
         #   Done screen   → "ai-kit is installed" — the step title
@@ -646,7 +647,7 @@ class TestPhase2E2E(unittest.TestCase):
             # ── Step 2b: wait for the adoption gate prompt ───────────────────
             drive_until(
                 master_fd,
-                b"Wire Claude Code's status line?",
+                b"Wire your Claude Code status line?",
                 time.time() + _SUMMARY_DEADLINE,
                 captured=captured,
             )
@@ -790,7 +791,7 @@ class TestPhase3E2E(unittest.TestCase):
          CLAUDE_CONFIG_DIR (symlinks land there) and XDG_CONFIG_HOME (config_toml
          lands at ``$XDG_CONFIG_HOME/ai-kit/claude-statusline.toml``).
       2. Drive: Choose screen (◉ marker) → Enter (advance to Arrange) → gate
-         "Wire Claude Code's status line?" appears (state=unset) → press n (adopt=False)
+         "Wire your Claude Code status line?" appears (state=unset) → press n (adopt=False)
          → the segment board is SKIPPED and Review shows directly
          ("Review & confirm") → Enter (Review→Done) → "ai-kit is installed" →
          Enter (Done exits).
@@ -904,10 +905,10 @@ class TestPhase3E2E(unittest.TestCase):
                 os.write(master_fd, b"\r")
 
             # ── Step 2b: wait for the adoption gate prompt ───────────────────
-            # State is "unset" on a fresh install → "Wire Claude Code's status line? [Y/n]".
+            # State is "unset" on a fresh install → "Wire your Claude Code status line? [Y/n]".
             drive_until(
                 master_fd,
-                b"Wire Claude Code's status line?",
+                b"Wire your Claude Code status line?",
                 time.time() + self._BOARD_DEADLINE,
                 captured=captured,
             )
@@ -1052,10 +1053,10 @@ class TestPhase3E2E(unittest.TestCase):
 
             # ── Step 2b: wait for the adoption gate prompt ───────────────────
             # State is "unset" here (no statusLine command in settings.json),
-            # so the gate shows "Wire Claude Code's status line? [Y/n]".
+            # so the gate shows "Wire your Claude Code status line? [Y/n]".
             drive_until(
                 master_fd,
-                b"Wire Claude Code's status line?",
+                b"Wire your Claude Code status line?",
                 time.time() + self._BOARD_DEADLINE,
                 captured=captured,
             )
@@ -1227,6 +1228,215 @@ class TestCurlBashE2E(unittest.TestCase):
             msg=f"expected clean abort exit 0 under piped stdin; got {exit_code}, "
                 f"output={decoded!r}",
         )
+
+
+# ---------------------------------------------------------------------------
+# Two-host E2E (SPEC R12 / D-22): the real wizard detects BOTH hosts in a
+# scratch HOME and walks Choose -> Claude gate+board -> Cursor gate+board ->
+# one Review -> per-host Done.
+# ---------------------------------------------------------------------------
+
+def _two_host_env(base):
+    """Env for a two-host scratch run: every host root (the T-21.1-15 set)
+    points inside ``base``, and BOTH host config dirs exist so the wizard
+    detects Claude and Cursor (detection is dir-presence, never a binary)."""
+    return dict(
+        os.environ,
+        HOME=base,
+        CLAUDE_CONFIG_DIR=os.path.join(base, "claude"),
+        XDG_CONFIG_HOME=os.path.join(base, "xdg-config"),
+        CURSOR_CONFIG_DIR=os.path.join(base, "cursor"),
+        PI_CODING_AGENT_DIR=os.path.join(base, "pi-absent"),
+        XDG_STATE_HOME=os.path.join(base, "state"),
+        OPENCODE_CONFIG_DIR=os.path.join(base, "opencode-absent"),
+        AI_KIT_DIR=_REPO_ROOT,
+        AI_KIT_UV_REEXEC="1",
+    )
+
+
+def _press_until(master_fd, key, marker, deadline, captured):
+    """Send ``key``, wait for ``marker``; re-press every few seconds until the
+    deadline (a keypress landing mid-render is consumed as a no-op)."""
+    while True:
+        with contextlib.suppress(OSError):
+            os.write(master_fd, key)
+        try:
+            drive_until(master_fd, marker, min(time.time() + 10.0, deadline),
+                        captured=captured)
+            return
+        except AssertionError:
+            if time.time() >= deadline:
+                raise
+
+
+class TestTwoHostE2E(unittest.TestCase):
+    """The real ``uv run --script tools/setup.py install`` wizard, run under a
+    PTY in a scratch HOME with BOTH host config dirs present.
+
+    Scenario A adopts both hosts: after Done, Claude's settings.json points at
+    the Claude entry, Cursor's cli-config.json carries a {type: command} entry
+    pointing at the Cursor entry, and both host TOMLs exist.
+    Scenario B declines Cursor at its gate: every pre-existing Cursor config
+    file stays byte-identical and no cursor-statusline.toml is materialized,
+    while Claude is wired. Every matcher is an exact screen title or prompt.
+    """
+
+    _BOOT_DEADLINE = 45.0
+    _STEP_DEADLINE = 120.0
+    _DRAIN_DEADLINE = 30.0
+
+    def setUp(self):
+        self._tmpdirs: list[str] = []
+
+    def tearDown(self):
+        for d in self._tmpdirs:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def _scratch_base(self):
+        base = tempfile.mkdtemp(prefix="ai-kit-two-host-")
+        self._tmpdirs.append(base)
+        return base
+
+    def _ai_kit_config_dir(self, base):
+        return os.path.join(base, "xdg-config", "ai-kit")
+
+    def _drive(self, master_fd, captured, decline_cursor):
+        """Walk Choose -> Claude gate+board -> Cursor gate -> (board|Review).
+        Returns when the Done title is on screen; the caller drains/exits."""
+        step = self._STEP_DEADLINE
+        _press_until(master_fd, b"\r", b"Wire your Claude Code status line?",
+                     time.time() + step, captured)          # Claude's gate
+        _press_until(master_fd, b"y", b"git_branch",
+                     time.time() + step, captured)          # Claude's board
+        _press_until(master_fd, b"\r", b"Wire your Cursor CLI status line?",
+                     time.time() + step, captured)          # Cursor's gate
+        answer = b"n" if decline_cursor else b"y"
+        if decline_cursor:
+            _press_until(master_fd, answer, b"Review & confirm",
+                         time.time() + step, captured)      # declined -> Review
+        else:
+            # The Cursor board render names its host in the focused-chip panel;
+            # the gate clears that panel, so this marker proves the board showed.
+            _press_until(master_fd, answer, b"Cursor CLI \xc2\xb7 inventory",
+                         time.time() + step, captured)      # Cursor's board
+            _press_until(master_fd, b"\r", b"Review & confirm",
+                         time.time() + step, captured)      # Cursor board -> Review
+        _press_until(master_fd, b"\r", b"ai-kit is installed",
+                     time.time() + step, captured)          # Review -> commit -> Done
+
+    def _run_and_exit(self, env, captured, decline_cursor):
+        """Spawn the real wizard, drive it to Done and a clean exit; return the
+        child's exit code. The child is always waited (never orphaned)."""
+        uv = _uv_cmd()
+        pid, master_fd = spawn_pty(
+            [uv, "run", "--script", SETUP, "install"], env)
+        exit_code = None
+        try:
+            drive_until(master_fd, b"components selected",
+                        time.time() + self._BOOT_DEADLINE, captured=captured)
+            _drain(master_fd, time.time() + 1.0)
+            self._drive(master_fd, captured, decline_cursor)
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"\r")                  # Done -> exit
+            tail = _drain(master_fd, time.time() + self._DRAIN_DEADLINE)
+            captured.append(tail)
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(master_fd)
+            with contextlib.suppress(ChildProcessError, OSError):
+                _, status = os.waitpid(pid, 0)
+                exit_code = os.WEXITSTATUS(status)
+        return exit_code
+
+    def test_both_hosts_adopted_wire_both(self):
+        """Scenario A: adopting both hosts wires both CLI configs and writes
+        both host TOMLs; the child exits 0."""
+        base = self._scratch_base()
+        os.makedirs(os.path.join(base, "claude"))
+        cursor_dir = os.path.join(base, "cursor")
+        os.makedirs(cursor_dir)
+        # A benign, statusLine-free Cursor config: the gate classifies it as
+        # "unset" and the writer edits it in place.
+        cli_config = os.path.join(cursor_dir, "cli-config.json")
+        with open(cli_config, "w", encoding="utf-8") as fh:
+            fh.write('{"model": "synthetic"}')
+
+        captured: list[bytes] = []
+        exit_code = self._run_and_exit(_two_host_env(base), captured, False)
+        output = b"".join(captured).decode("utf-8", errors="replace")
+
+        self.assertEqual(exit_code, 0, msg=f"wizard exit {exit_code}:\n{output}")
+        # Both gates and both boards were shown, in Claude-then-Cursor order.
+        self.assertIn("Wire your Claude Code status line?", output)
+        self.assertIn("Arrange your Claude Code status line", output)
+        self.assertIn("Wire your Cursor CLI status line?", output)
+        self.assertIn("Arrange your Cursor CLI status line", output)
+        # One Review lists each host's writes.
+        self.assertIn("Claude Code: write ~/.config/ai-kit/claude-statusline.toml",
+                      output)
+        self.assertIn("Cursor CLI: write ~/.config/ai-kit/cursor-statusline.toml",
+                      output)
+        # Claude's settings.json points at the Claude entry.
+        with open(os.path.join(base, "claude", "settings.json"),
+                  encoding="utf-8") as fh:
+            claude_settings = json.load(fh)
+        claude_cmd = claude_settings["statusLine"]["command"]
+        self.assertTrue(claude_cmd.endswith(
+            os.path.join("tools", "claude-status-line.py")), msg=claude_cmd)
+        # Cursor's cli-config.json carries the command-shaped entry.
+        with open(cli_config, encoding="utf-8") as fh:
+            cursor_settings = json.load(fh)
+        entry = cursor_settings["statusLine"]
+        self.assertEqual(entry["type"], "command")
+        self.assertTrue(entry["command"].endswith(
+            os.path.join("tools", "cursor-status-line.py")), msg=entry["command"])
+        # Both host TOMLs exist.
+        cfg_dir = self._ai_kit_config_dir(base)
+        self.assertTrue(os.path.isfile(
+            os.path.join(cfg_dir, "claude-statusline.toml")))
+        self.assertTrue(os.path.isfile(
+            os.path.join(cfg_dir, "cursor-statusline.toml")))
+
+    def test_declined_cursor_left_untouched(self):
+        """Scenario B: declining the Cursor gate leaves every pre-existing
+        Cursor config file byte-identical and never materializes the Cursor
+        TOML, while Claude is wired (SPEC R12)."""
+        base = self._scratch_base()
+        os.makedirs(os.path.join(base, "claude"))
+        cursor_dir = os.path.join(base, "cursor")
+        os.makedirs(cursor_dir)
+        cli_config = os.path.join(cursor_dir, "cli-config.json")
+        original = b'{"model": "synthetic", "theme": "dark"}'
+        with open(cli_config, "wb") as fh:
+            fh.write(original)
+        # Every pre-existing Cursor config file, by content hash.
+        before = {}
+        for name in os.listdir(cursor_dir):
+            with open(os.path.join(cursor_dir, name), "rb") as fh:
+                before[name] = hashlib.sha256(fh.read()).hexdigest()
+
+        captured: list[bytes] = []
+        exit_code = self._run_and_exit(_two_host_env(base), captured, True)
+        output = b"".join(captured).decode("utf-8", errors="replace")
+
+        self.assertEqual(exit_code, 0, msg=f"wizard exit {exit_code}:\n{output}")
+        self.assertIn("Wire your Cursor CLI status line?", output)
+        # The declined host is named as left untouched on the shared Review.
+        self.assertIn("Cursor CLI: left untouched", output)
+        # Pre-existing Cursor config files are byte-identical.
+        for name, digest in before.items():
+            with open(os.path.join(cursor_dir, name), "rb") as fh:
+                self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), digest,
+                                 msg=f"{name} changed in the cursor config dir")
+        # No Cursor TOML was materialized for the declined host.
+        self.assertFalse(os.path.isfile(os.path.join(
+            self._ai_kit_config_dir(base), "cursor-statusline.toml")))
+        # ...while Claude is wired.
+        with open(os.path.join(base, "claude", "settings.json"),
+                  encoding="utf-8") as fh:
+            claude_settings = json.load(fh)
+        self.assertTrue(claude_settings["statusLine"]["command"].endswith(
+            os.path.join("tools", "claude-status-line.py")))
 
 
 class TestEveryPtyEnvIsolatesHostRoots(unittest.TestCase):

@@ -194,6 +194,7 @@ class FlowState:
     step: int = STEP_CHOOSE
     help_open: bool = False
     gate_done: bool = False
+    host_index: int = 0    # the detected host whose gate/board is on Arrange
     result: WizardResult | None = None
 
 
@@ -279,7 +280,6 @@ class WizardApp(App):
 
     def __init__(self, ctx: WizardContext) -> None:
         self.ctx = ctx
-        self.host_i = 0          # the host whose board is on the Arrange step
         hk_data = dict(ctx.housekeeping) if ctx.housekeeping else {}
         hk_pending = [k for k in ("stale", "predecessors", "replace") if hk_data.get(k)]
         self.views = {host.id: self._host_pane(host) for host in ctx.hosts}
@@ -367,13 +367,13 @@ class WizardApp(App):
         pane stands in — the flow never asks for more than that."""
         if not self.hosts:
             return self.pane
-        i = self.host_i if index is None else index
+        i = self.flow.host_index if index is None else index
         return self.views[self.hosts[i].id]
 
     def _enter_host_arrange(self, index):
         """Put host ``index``'s pane on the Arrange step and settle its gate:
         the gate is re-asked only when the host is not already adopted/ours."""
-        self.host_i = index
+        self.flow.host_index = index
         self.pane = self._pane(index)
         self.flow.gate_done = self.pane.answered
         self.flow.step = STEP_ARRANGE
@@ -480,7 +480,7 @@ class WizardApp(App):
             tray.border_title = "OFF — disabled  (Space activates → its home line)"
             yield tray
             pv = Static("", id="preview")
-            pv.border_title = ("live preview — " + (self.hosts[self.host_i].label
+            pv.border_title = ("live preview — " + (self.hosts[self.flow.host_index].label
                                if self.hosts else "no host")
                                + "  (full width, like the real status line)")
             yield pv
@@ -539,14 +539,23 @@ class WizardApp(App):
             self.query_one(f"#{sid}").display = False
         self.query_one("#step-help").display = self.flow.help_open
 
+    def _step_title(self) -> str:
+        """The current screen's title. Every formerly Claude-only string is
+        host-labelled (D-22): the Arrange title names the host whose board is
+        showing ("Arrange your Cursor CLI status line")."""
+        if self.flow.step == STEP_ARRANGE and self.hosts:
+            host = self.hosts[self.flow.host_index]
+            return f"Arrange your {host.label} status line"
+        return TITLES[self.flow.step]
+
     def _done_title_parts(self, done_failed: bool) -> tuple[str, str]:
         if self.flow.step == STEP_DONE and self.commit.committing:
             return ACCENT, "Installing…"
         if self.flow.step == STEP_DONE and done_failed:
             return WARN, "⚠ install incomplete"
         if self.flow.step == STEP_DONE:
-            return GREEN, TITLES[self.flow.step]
-        return "#f0f6fc", TITLES[self.flow.step]
+            return GREEN, self._step_title()
+        return "#f0f6fc", self._step_title()
 
     def _adopted_views(self) -> list[HostView]:
         """The hosts whose status line the user is adopting, in detection order."""
@@ -591,8 +600,6 @@ class WizardApp(App):
         done_failed = (self.commit.outcome is not None
                        and not self.commit.outcome.get("ok", True))
         title_color, done_title = self._done_title_parts(done_failed)
-        if self.flow.step == STEP_ARRANGE and len(self.hosts) > 1:
-            done_title = f"{done_title} — {self.hosts[self.host_i].label}"
         title_w.update(f"[{title_color}]{done_title}[/]")
         if self.flow.step == STEP_DONE:
             self._render_done_subtitle(sub_w, done_failed)
@@ -732,7 +739,7 @@ class WizardApp(App):
                     f"[{DIM}]Current:[/] {cmd}\n\n"
                     f"[#0d1117 on {WARN}] Replace it with ai-kit?  "
                     f"y = replace · N / Enter = keep mine [/]")
-        return (f"[b #f0f6fc]Wire {host.label}'s status line?[/]\n"
+        return (f"[b #f0f6fc]Wire your {host.label} status line?[/]\n"
                 f"[{DIM}]ai-kit can render git/model/diagnostics in your "
                 f"{host.label} status line.[/]\n\n"
                 f"[#0d1117 on {ACCENT}] Y / Enter = set it up · "
@@ -740,8 +747,10 @@ class WizardApp(App):
 
     def _render_adoption_gate(self, lane0: Static) -> None:
         lane0.add_class("gate-attention")
-        lane0.border_title = f"⚠ status line ({self.hosts[self.host_i].label}) — action needed"
-        lane0.update(self._adoption_gate_markup(self.hosts[self.host_i]))
+        lane0.border_title = (f"⚠ status line "
+                              f"({self.hosts[self.flow.host_index].label}) — action needed")
+        lane0.update(self._adoption_gate_markup(
+            self.hosts[self.flow.host_index]))
         for wid in ("#lane1", "#lane2", "#focchip", "#tray", "#preview"):
             self.query_one(wid, Static).update("")
 
@@ -754,7 +763,7 @@ class WizardApp(App):
             return
         seg = zone[fp]
         state = "off · in tray" if fz == 3 else f"on · Line {fz + 1}"
-        host = self.hosts[self.host_i]
+        host = self.hosts[self.flow.host_index]
         prov = (f"  [{CYAN}]external · {host.label} · "
                 f"{self.model.ext_by_id[seg].get('provenance', '')}[/]"
                 if seg in self.model.ext_by_id else
@@ -825,15 +834,21 @@ class WizardApp(App):
         return nseg, shown
 
     def _review_what_lines(self, ncomp: int, adopted: list[HostView]) -> list[str]:
-        """What happens on Confirm: the components, then EACH adopted host's own
-        config + wiring file, or the honest "left unchanged" line when every
-        detected host declined, or the "no host detected" line when none did."""
+        """What happens on Confirm: the components, then EVERY detected host's
+        outcome — each adopted host's own config + wiring file, each declined
+        host named as left untouched (SPEC R12), the honest "left unchanged"
+        line when every detected host declined, or the "no host detected" line
+        when none did."""
         what = [f"[{DIM}]•[/] Symlink [bold]{ncomp}[/] components into "
                 f"~/.claude/(agents|commands|skills)/"]
         if adopted:
+            adopted_ids = {h.id for h in adopted}
             for host in adopted:
                 what.append(f"[{DIM}]•[/] {host.label}: write {host.config_label} "
                             f"+ wire {host.wiring_label}")
+            for host in self.hosts:
+                if host.id not in adopted_ids:
+                    what.append(f"[{DIM}]•[/] {host.label}: left untouched")
             what.append(f"[{DIM}]•[/] Validate with the status line doctor "
                         "before saving")
         elif self.hosts:
@@ -961,7 +976,7 @@ class WizardApp(App):
         """Host traversal contract (the seam plan 23-17 walks): after the
         current host's gate decision or board Enter, move to the NEXT host's
         gate, or to Review once every detected host's pane has been visited."""
-        nxt = self.host_i + 1
+        nxt = self.flow.host_index + 1
         if nxt < len(self.hosts):
             self._enter_host_arrange(nxt)
         else:
@@ -1050,7 +1065,7 @@ class WizardApp(App):
 
     def _key_arrange_gate(self, event: events.Key) -> bool:
         ch, k = event.character, event.key
-        host = self.hosts[self.host_i]
+        host = self.hosts[self.flow.host_index]
         if k == "escape":
             self.flow.step = STEP_CHOOSE        # back out without answering
             return True
@@ -1091,7 +1106,7 @@ class WizardApp(App):
             "tab": lambda: self._cycle_focus(+1),
             "shift+tab": lambda: self._cycle_focus(-1),
             "enter": self._advance_host,
-            "escape": lambda: setattr(self.flow, "step", STEP_CHOOSE),
+            "escape": self._board_back,
         }
         if k == "left" and self._arrange_swap_horizontal(-1):
             return True
@@ -1114,6 +1129,19 @@ class WizardApp(App):
         """Board Enter: walk to the NEXT host's gate, or Review only once every
         detected host has answered its own gate (23-16's host traversal)."""
         self._advance_host()
+
+    def _board_back(self) -> None:
+        """Board Esc (D-22): on a LATER host's board step back to the previous
+        host's board — its own arrangement stays intact. When no earlier host
+        actually arranged a board (first host, or every earlier one declined),
+        back out to Choose."""
+        prev = max((i for i in range(self.flow.host_index)
+                    if self.views[self.hosts[i].id].model.state.get("adopt")),
+                   default=None)
+        if prev is None:
+            self.flow.step = STEP_CHOOSE
+        else:
+            self._enter_host_arrange(prev)
 
     def _move_chip_v(self, direction: str) -> None:
         z, p = self.board.focus_zp
