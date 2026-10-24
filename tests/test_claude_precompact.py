@@ -22,6 +22,11 @@ import unittest.mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+_TOOLS_DIR = str(REPO / "tools")
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+import claude_probes
+
 HOOK_PATH = REPO / "tools" / "hooks" / "claude_precompact.py"
 CORE_PATH = REPO / "tools" / "hooks" / "precompact_core.py"
 STUB_PATH = REPO / "tests" / "fixtures" / "precompact" / "stub_client.py"
@@ -448,13 +453,12 @@ class TestBoundaryParity(unittest.TestCase):
         return paths
 
     def test_boundary_parity_with_status_line(self):
-        status_line = load_module("status_line_under_test",
-                                  REPO / "tools" / "status-line.py")
+        load_module("status_line_under_test", REPO / "tools" / "status-line.py")
         for name, path in self._fixtures().items():
             with self.subTest(fixture=name):
                 size = os.path.getsize(path)
                 offset, count = core.last_boundary(path, size)
-                since, compact_count = status_line.probe_transcript_compaction(path, size)
+                since, compact_count = claude_probes.probe_transcript_compaction(path, size)
                 self.assertEqual(count, compact_count, name)
                 expected = size - offset if offset is not None else size
                 self.assertEqual(expected, since, name)

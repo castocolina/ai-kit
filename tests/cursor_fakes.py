@@ -122,8 +122,10 @@ def run_like_cursor(argv, payload, *, cwd, env, kill_after_ms=None, timeout_s=10
     _record_pid(proc.pid)
     killed = False
     try:
-        proc.stdin.write(json.dumps(payload).encode())
-        proc.stdin.close()
+        stdin = proc.stdin
+        assert stdin is not None
+        stdin.write(json.dumps(payload).encode())
+        stdin.close()
         proc.stdin = None
         if kill_after_ms is not None:
             time.sleep(kill_after_ms / 1000)

@@ -13,6 +13,11 @@ import unittest
 from unittest import mock
 
 _HERE = os.path.dirname(__file__)
+_TOOLS_DIR = os.path.abspath(os.path.join(_HERE, "..", "tools"))
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+import common_types
+
 _DOCTOR_PATH = os.path.join(_HERE, "..", "tools", "statusline-doctor.py")
 
 
@@ -43,7 +48,7 @@ class TestCLI(unittest.TestCase):
 
     def test_print_config_emits_resolved_json(self):
         import json
-        cfg = sl.Config(segments={"path": True}, layout=[sl.Line(0, ["path"])],
+        cfg = common_types.Config(segments={"path": True}, layout=[common_types.Line(0, ["path"])],
                         palette={"BLUE": "1;34"}, ramps={})
         out = doctor.cmd_print_config(cfg, {})
         parsed = json.loads(out)
@@ -98,8 +103,8 @@ class TestCLI(unittest.TestCase):
             rc = doctor.cmd_check("", env)
         self.assertEqual(rc, 1)
         self.assertIn(
-            f"{doctor.sl._DIM}status-line: CC_AI_KIT_GIT_CACHE_TTL must be an integer, "
-            f"got 'not-an-int' — ignored{doctor.sl.RESET}",
+            f"{sl.DIM}status-line: CC_AI_KIT_GIT_CACHE_TTL must be an integer, "
+            f"got 'not-an-int' — ignored{sl.RESET}",
             buf.getvalue(),
         )
 

@@ -3,6 +3,7 @@
 This reviewed table classifies each top-level definition in the pre-split render module and serves as the move and conformance map (D-01, D-05).
 
 base: c22b9de
+pre_move: 1e270bacd36e56e7567e886782f5c5fd8fc0968a
 base_path: tools/status-line.py
 vocabulary: claude|CC_AI_KIT|rate_limits|settings\.json|\.claude (case-insensitive)
 modules: common_types common_fmt common_config common_probe common_render common_segments claude_probes claude_payload claude_segments claude_host
@@ -28,8 +29,8 @@ modules: common_types common_fmt common_config common_probe common_render common
 | 17 | _EFFORT_GLYPHS | assign | 195 | 2aa0ba045289 | 1 | common_types | common_types | EFFORT_GLYPHS | y | reused | - | Host-neutral common_types _EFFORT_GLYPHS: uses generic inputs without host identity |
 | 18 | ExternalConf | class | 201 | f15b31c5265d | 1 | common_types | common_types | - | y | generalized | - | Host-neutral common_types ExternalConf: Resolved external-segment configuration for one render pass |
 | 19 | Config | class | 209 | 049d2c9017ee | 1 | common_types | common_types | - | y | reused | - | Host-neutral common_types Config: Resolved, validated configuration for one render pass |
-| 20 | _ENV_TRUE | assign | 221 | 3da312fa584f | 2 | common_config | common_config | - | y | reused | - | Host-neutral common_config _ENV_TRUE: uses generic inputs without host identity |
-| 21 | _ENV_FALSE | assign | 224 | 30ef008b8d09 | 2 | common_config | common_config | - | y | reused | - | Host-neutral common_config _ENV_FALSE: uses generic inputs without host identity |
+| 20 | _ENV_TRUE | assign | 221 | 3da312fa584f | 1 | common_fmt | common_fmt | - | y | reused | - | Host-neutral common_fmt _ENV_TRUE: bool-true tokens read by _coerce_env_bool |
+| 21 | _ENV_FALSE | assign | 224 | 30ef008b8d09 | 1 | common_fmt | common_fmt | - | y | reused | - | Host-neutral common_fmt _ENV_FALSE: bool-false tokens read by _coerce_env_bool |
 | 22 | RESET | assign | 228 | d6bee425a459 | 1 | common_types | common_types | - | y | reused | - | Host-neutral common_types RESET: uses generic inputs without host identity |
 | 23 | BG_LIGHTGRAY | assign | 231 | 02f6085af7de | 1 | common_types | common_types | - | y | reused | - | Host-neutral common_types BG_LIGHTGRAY: uses generic inputs without host identity |
 | 24 | _DIM | assign | 234 | 5e4a2538ecba | 1 | common_types | common_types | DIM | y | reused | - | Host-neutral common_types _DIM: uses generic inputs without host identity |
@@ -40,11 +41,11 @@ modules: common_types common_fmt common_config common_probe common_render common
 | 29 | ExtSpec | class | 271 | c367b1d4c4ca | 1 | common_types | common_types | - | y | reused | - | Host-neutral common_types ExtSpec: Metadata for one external segment provider discovered from the segments dir |
 | 30 | cfg_git_key_problem | function | 286 | 91276289e0fb | 2 | common_config | common_config | - | y | reused | - | Host-neutral common_config cfg_git_key_problem: Classify one `[git]` key/value so cfg_load_config and the doctor's |
 | 31 | cfg_warn | function | 300 | 5372a22ff631 | 2 | common_config | common_config | - | y | reused | - | Host-neutral common_config cfg_warn: The single render-format config-warning emitter: dim grey, 'status-line:' |
-| 32 | _coerce_env_bool | function | 310 | ae2eeda1066c | 1 | common_fmt | common_fmt | - | y | reused | - | Host-neutral common_fmt _coerce_env_bool: (value, recognized). Unrecognized -> (None, False) = tri-state no-override |
+| 32 | _coerce_env_bool | function | 310 | ae2eeda1066c | 1 | common_fmt | common_fmt | cfg_coerce_env_bool | y | reused | - | Host-neutral common_fmt _coerce_env_bool: (value, recognized). Unrecognized -> (None, False) = tri-state no-override |
 | 33 | cfg_coerce | function | 320 | fa4d772b8a06 | 2 | common_config | common_config | - | y | reused | - | Host-neutral common_config cfg_coerce: Coerce a raw config value to `kind` ('bool'/'int') from `source` |
 | 34 | cfg_source_get | function | 347 | 36b5b757f402 | 2 | common_config | common_config | - | y | generalized | seed | taint-override: only the CC_AI_KIT_ literal; generalized to a host prefix (D-20) |
-| 35 | _env_label | function | 370 | 63f54b5e5f8f | 1 | common_fmt | common_fmt | - | y | generalized | seed | taint-override: only the CC_AI_KIT_ literal; generalized to a host prefix (D-20) |
-| 36 | _env_segment_keys | function | 376 | b6116cffa89a | 1 | common_fmt | common_fmt | - | y | generalized | seed | taint-override: only the CC_AI_KIT_ literal; generalized to a host prefix (D-20) |
+| 35 | _env_label | function | 370 | 63f54b5e5f8f | 1 | common_fmt | common_fmt | cfg_env_label | y | generalized | seed | taint-override: only the CC_AI_KIT_ literal; generalized to a host prefix (D-20) |
+| 36 | _env_segment_keys | function | 376 | b6116cffa89a | 1 | common_fmt | common_fmt | cfg_env_segment_keys | y | generalized | seed | taint-override: only the CC_AI_KIT_ literal; generalized to a host prefix (D-20) |
 | 37 | cfg_bind_scalars | function | 382 | 285ef72d2d95 | 2 | common_config | common_config | - | y | generalized | seed | taint-override: only the CC_AI_KIT_ literal; generalized to a host prefix (D-20) |
 | 38 | cfg_bind_segments | function | 414 | 860f34cc78fb | 2 | common_config | common_config | - | y | generalized | prop | taint-override: only the CC_AI_KIT_ literal; generalized to a host prefix (D-20) |
 | 39 | cfg_default_config | function | 436 | bb9bc68885cf | 2 | common_config | common_config | - | y | generalized | - | Host-neutral common_config cfg_default_config: A Config snapshotting the current module-global defaults (SEGMENTS/LAYOUT, |
@@ -79,7 +80,7 @@ modules: common_types common_fmt common_config common_probe common_render common
 | 68 | probe_todo_from_todos_dir | function | 1028 | 8c22c15afdc1 | 2 | claude_probes | claude_probes | - | n | reused | seed | Claude-only claude_probes probe_todo_from_todos_dir: Read Claude's materialized TodoWrite snapshot: the most recent |
 | 69 | probe_todo_from_transcript | function | 1055 | 800bac0f5c18 | 2 | claude_probes | claude_probes | - | n | reused | seed | Claude-only claude_probes probe_todo_from_transcript: Last-resort fallback: replay the transcript JSONL to reconstruct task / |
 | 70 | probe_current_todo | function | 1106 | dc0190728453 | 2 | claude_probes | claude_probes | - | n | reused | seed | Claude-only claude_probes probe_current_todo: Return (state, text) for the active TODO, or (None, None) |
-| 71 | _memo | function | 1124 | d095a5a43f54 | 1 | common_fmt | common_fmt | probe_memo | y | reused | - | Host-neutral common_fmt _memo: Run fn() once per render, caching the result on ctx.probe_cache |
+| 71 | _memo | function | 1124 | d095a5a43f54 | 1 | common_probe | common_probe | probe_memo | y | reused | - | Host-neutral common_probe probe_memo: Run fn() once per render, caching the result on ctx.probe_cache |
 | 72 | probe_git_for | function | 1132 | 2f6fd109c686 | 2 | common_probe | common_probe | - | y | reused | - | Host-neutral common_probe probe_git_for: Memoized git snapshot for this render (branch/dirty/worktree/) |
 | 73 | probe_ago | function | 1138 | d892206ba256 | 2 | claude_probes | claude_probes | - | n | generalized | - | data-source: probe_ago encodes Claude-specific data or decisions in claude_probes |
 | 74 | probe_effort_auto | function | 1148 | 4b006724f7f9 | 2 | claude_probes | claude_probes | - | n | reused | seed | Claude-only claude_probes probe_effort_auto: Memoized: True when the Claude effort setting is 'auto' |
@@ -150,7 +151,7 @@ modules: common_types common_fmt common_config common_probe common_render common
 | 139 | core_build_theme | function | 1923 | 59b7d35d885c | 3 | common_render | common_render | - | y | generalized | - | Host-neutral common_render core_build_theme: Resolve a Config's palette + ramps + effort into a Theme |
 | 140 | core_default_theme | function | 1935 | c32fd51382ce | 3 | common_render | common_render | - | y | generalized | - | generalized: it currently calls parameterless theme/config builders; Plan 23-06 adds host/spec parameters |
 | 141 | core_discover_builders | function | 1943 | d16dcb401e62 | 3 | claude_host | common_render | - | y | generalized | - | Host-neutral claude_host core_discover_builders: The built-in builder map, derived by convention from this module's |
-| 142 | _SEG_HEADER_RE | assign | 1956 | f563bd31de1f | 2 | common_config | common_config | - | y | reused | - | Host-neutral common_config _SEG_HEADER_RE: uses generic inputs without host identity |
+| 142 | _SEG_HEADER_RE | assign | 1956 | f563bd31de1f | 2 | common_config | common_config | SEG_HEADER_RE | y | reused | - | Host-neutral common_config SEG_HEADER_RE: uses generic inputs without host identity |
 | 143 | core_parse_segment_header | function | 1959 | 9245a8ac4022 | 2 | common_config | common_config | - | y | reused | - | Host-neutral common_config core_parse_segment_header: Parse the `# ai-kit-segment:` header from a file's first lines |
 | 144 | core_discover_external | function | 1983 | 06b6c79bb39f | 2 | common_config | common_config | - | y | reused | - | Host-neutral common_config core_discover_external: Scan `directory` for executable providers and return a list of ExtSpec, |
 | 145 | core_cache_read | function | 2028 | dc07639462c8 | 3 | common_render | common_render | - | y | reused | - | Host-neutral common_render core_cache_read: Cached raw output line if present and younger than ttl, else None |

@@ -23,6 +23,9 @@ import time
 from collections.abc import Mapping
 from typing import Any, cast
 
+import common_config
+import common_types
+
 try:
     import tomllib as _tomllib_impl
     tomllib = _tomllib_impl
@@ -40,6 +43,9 @@ def _load_core() -> Any:
     """Import status-line.py (hyphenated, so not importable by name) as the
     `status_line` module. One-way dependency: the doctor imports the render core,
     never the reverse."""
+    tools_dir = os.path.dirname(os.path.abspath(__file__))
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
     spec = importlib.util.spec_from_file_location("status_line", _CORE)
     if spec is None or spec.loader is None:        # pragma: no cover - import shim guard
         raise ImportError(f"cannot load render core from {_CORE}")
@@ -56,12 +62,9 @@ sl = _load_core()
 # cross-module reader of them — bind them here at the one-way import boundary so
 # the deliberate "protected" access is acknowledged in exactly one place rather
 # than scattered through the validators below.
-# pylint: disable-next=protected-access
-_EXTERNAL_CACHE_TTL = sl._EXTERNAL_CACHE_TTL
-# pylint: disable-next=protected-access
-_PALETTE_DEFAULTS = sl._PALETTE_DEFAULTS
-# pylint: disable-next=protected-access
-_RAMP_DEFAULTS = sl._RAMP_DEFAULTS
+_EXTERNAL_CACHE_TTL = common_types.EXTERNAL_CACHE_TTL
+_PALETTE_DEFAULTS = common_types.PALETTE_DEFAULTS
+_RAMP_DEFAULTS = common_types.RAMP_DEFAULTS
 
 
 _NO_CHECK = object()   # sentinel: --check flag absent (vs. present with no FILE)
@@ -154,11 +157,11 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
     except (OSError, tomllib.TOMLDecodeError) as e:
         return [f"{path}: {e}"]
     errors: list[str] = []
-    ext_dir, ext_ttl = sl.cfg_resolve_external(raw, env)
-    _, ext_dir, ext_ttl, _ = sl.cfg_bind_scalars(
+    ext_dir, ext_ttl = common_config.cfg_resolve_external(raw, env)
+    _, ext_dir, ext_ttl, _ = common_config.cfg_bind_scalars(
         raw, env, sl.cfg_default_config().git, ext_dir, ext_ttl)
-    seg_cache = os.path.join(sl.cfg_cache_base(env), "segments")
-    ext_ids = {s.id for s in sl.core_discover_external(ext_dir, ext_ttl, seg_cache)}
+    seg_cache = os.path.join(common_config.cfg_cache_base(env), "segments")
+    ext_ids = {s.id for s in common_config.core_discover_external(ext_dir, ext_ttl, seg_cache)}
     known_segments = set(sl.cfg_default_config().segments) | ext_ids
     for k in cast(dict[str, Any], raw.get("segments") or {}):
         if k not in known_segments:
@@ -192,7 +195,7 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
             if sl.util_parse_color(str(spec), resolved_palette) is None:
                 errors.append(f"ramp [{band}] bad color: {spec!r}")
     for k, v in cast(dict[str, Any], raw.get("git") or {}).items():
-        problem = sl.cfg_git_key_problem(k, v)
+        problem = common_config.cfg_git_key_problem(k, v)
         if problem == "unknown":
             errors.append(f"unknown [git] key: {k}")
         elif problem == "bad_ttl":
@@ -259,8 +262,8 @@ def _env_problems(env: Env) -> list[str]:
     Calls cfg_load_config_verbose and filters to problems that originate from
     CC_AI_KIT_* env vars (identified by the 'CC_AI_KIT_' prefix in the message).
     Each returned string is a raw problem message (no ANSI, no 'status-line: '
-    prefix); pass through sl.cfg_warn to emit it as a dim warning."""
-    _, problems = sl.cfg_load_config_verbose(env)
+    prefix); pass through common_config.cfg_warn to emit it as a dim warning."""
+    _, problems = common_config.cfg_load_config_verbose(env)
     return [p for p in problems if "CC_AI_KIT_" in p]
 
 
@@ -268,7 +271,7 @@ def cmd_doctor(env: Env) -> int:
     """Validate the resolved config AND dry-render every segment builder (not just
     the enabled ones). Prints a report; returns process exit code (0 healthy, 1 if
     any problem)."""
-    path = sl.cfg_config_path(env)
+    path = common_config.cfg_config_path(env)
     errors: list[str] = []
     if os.path.exists(path):
         errors = [f"{path}: {e}" for e in validate_config_file(path, env)]
@@ -285,7 +288,7 @@ def cmd_doctor(env: Env) -> int:
     for key in sorted(failed):
         print(f"segment '{key}' raised during render", file=sys.stderr)
     for p in env_probs:
-        sl.cfg_warn(p)
+        common_config.cfg_warn(p)
     if errors or failed or env_probs:
         print(f"after fixing, re-run: {sl.core_doctor_cmd()}", file=sys.stderr)
         return 1
@@ -295,18 +298,18 @@ def cmd_doctor(env: Env) -> int:
 
 def cmd_check(path: str, env: Env) -> int:
     """Validate a config file; print result. Return process exit code (0/1)."""
-    path = path or sl.cfg_config_path(env)
+    path = path or common_config.cfg_config_path(env)
     errors = validate_config_file(path, env)
     env_probs = _env_problems(env)
     if errors:
         for e in errors:
             print(f"{path}: {e}", file=sys.stderr)
         for p in env_probs:
-            sl.cfg_warn(p)
+            common_config.cfg_warn(p)
         return 1
     if env_probs:
         for p in env_probs:
-            sl.cfg_warn(p)
+            common_config.cfg_warn(p)
         return 1
     print(f"{path}: OK")
     return 0

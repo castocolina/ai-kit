@@ -10,6 +10,12 @@ import tempfile
 import unittest
 from unittest import mock
 
+_TOOLS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tools"))
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+import common_config
+import common_types
+
 
 def load_module():
     here = os.path.dirname(os.path.abspath(__file__))
@@ -128,7 +134,7 @@ class TestTomlRead(unittest.TestCase):
         sys.modules[spec.name] = sl       # register so @dataclass can resolve cls.__module__
         spec.loader.exec_module(sl)
         expected = [{"min_rows": ln.min_rows, "segments": list(ln.segments)}
-                    for ln in sl.LAYOUT]
+                    for ln in common_types.LAYOUT]
         self.assertEqual(setup.LAYOUT_DEFAULTS, expected)
 
     def test_current_layout_file_replaces_all(self):
@@ -231,7 +237,8 @@ class TestPreviewFixture(unittest.TestCase):
 
     def test_fixture_drives_renderer_without_unavailable(self):
         """sample-input.json must produce a real render (not empty / unavailable)."""
-        with open(setup._sample_input_path(), encoding="utf-8") as f:  # pylint: disable=protected-access
+        with open(
+            setup._sample_input_path(), encoding="utf-8") as f:  # pylint: disable=protected-access
             sample = f.read()
         out = setup.render_preview(
             self._STATUS_LINE,
@@ -487,7 +494,7 @@ class TestDiscoverExampleSegments(unittest.TestCase):
         sl = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = sl       # register so @dataclass can resolve cls.__module__
         spec.loader.exec_module(sl)
-        self.assertEqual(setup._SEG_HEADER_RE.pattern, sl._SEG_HEADER_RE.pattern)
+        self.assertEqual(setup._SEG_HEADER_RE.pattern, common_config.SEG_HEADER_RE.pattern)
 
     def test_discover_finds_system_memory_pre_checked(self):
         d, _ = self._mk(self._HEADER)

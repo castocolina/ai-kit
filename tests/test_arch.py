@@ -35,6 +35,10 @@ import unittest
 from typing import NamedTuple
 
 _TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
+if os.path.abspath(_TOOLS) not in sys.path:
+    sys.path.insert(0, os.path.abspath(_TOOLS))
+import common_types
+
 _AUDIT_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "statusline_split", "audit.md")
 _AUDIT_VOCABULARY = re.compile(
     r"claude|CC_AI_KIT|rate_limits|settings\.json|\.claude", re.IGNORECASE
@@ -88,8 +92,120 @@ def base_definitions(source):
     return definitions
 
 
+NONE = {
+    'AnnAssign': {'value'},
+    'Assert': {'msg'},
+    'Assign': {'type_comment'},
+    'AsyncFor': {'type_comment'},
+    'AsyncFunctionDef': {'returns', 'type_comment'},
+    'AsyncWith': {'type_comment'},
+    'Constant': {'kind'},
+    'ExceptHandler': {'name', 'type'},
+    'For': {'type_comment'},
+    'FormattedValue': {'format_spec'},
+    'FunctionDef': {'returns', 'type_comment'},
+    'ImportFrom': {'level', 'module'},
+    'Interpolation': {'format_spec'},
+    'MatchAs': {'name', 'pattern'},
+    'MatchMapping': {'rest'},
+    'MatchStar': {'name'},
+    'ParamSpec': {'default_value'},
+    'Raise': {'cause', 'exc'},
+    'Return': {'value'},
+    'Slice': {'step', 'lower', 'upper'},
+    'TypeVar': {'default_value', 'bound'},
+    'TypeVarTuple': {'default_value'},
+    'With': {'type_comment'},
+    'Yield': {'value'},
+    'alias': {'asname'},
+    'arg': {'annotation', 'type_comment'},
+    'arguments': {'kwarg', 'vararg'},
+    'keyword': {'arg'},
+    'match_case': {'guard'},
+    'withitem': {'optional_vars'},
+}
+LISTS = {
+    'Assign': {'targets'},
+    'AsyncFor': {'body', 'orelse'},
+    'AsyncFunctionDef': {'body', 'decorator_list', 'type_params'},
+    'AsyncWith': {'body', 'items'},
+    'BoolOp': {'values'},
+    'Call': {'args', 'keywords'},
+    'ClassDef': {'body', 'decorator_list', 'bases', 'keywords', 'type_params'},
+    'Compare': {'comparators', 'ops'},
+    'Delete': {'targets'},
+    'Dict': {'keys', 'values'},
+    'DictComp': {'generators'},
+    'ExceptHandler': {'body'},
+    'For': {'body', 'orelse'},
+    'FunctionDef': {'body', 'decorator_list', 'type_params'},
+    'FunctionType': {'argtypes'},
+    'GeneratorExp': {'generators'},
+    'Global': {'names'},
+    'If': {'body', 'orelse'},
+    'Import': {'names'},
+    'ImportFrom': {'names'},
+    'Interactive': {'body'},
+    'JoinedStr': {'values'},
+    'List': {'elts'},
+    'ListComp': {'generators'},
+    'Match': {'cases'},
+    'MatchClass': {'kwd_attrs', 'patterns', 'kwd_patterns'},
+    'MatchMapping': {'keys', 'patterns'},
+    'MatchOr': {'patterns'},
+    'MatchSequence': {'patterns'},
+    'Module': {'body', 'type_ignores'},
+    'Nonlocal': {'names'},
+    'Set': {'elts'},
+    'SetComp': {'generators'},
+    'TemplateStr': {'values'},
+    'Try': {'body', 'finalbody', 'handlers', 'orelse'},
+    'TryStar': {'body', 'finalbody', 'handlers', 'orelse'},
+    'Tuple': {'elts'},
+    'TypeAlias': {'type_params'},
+    'While': {'body', 'orelse'},
+    'With': {'body', 'items'},
+    'arguments': {'kw_defaults', 'posonlyargs', 'kwonlyargs', 'args', 'defaults'},
+    'comprehension': {'ifs'},
+    'match_case': {'body'},
+}
+
+
+def _dump_hide_empty(node):
+    """ast.dump(show_empty=False) for interpreters that always print empty fields.
+
+    The audit hashes were taken on Python 3.14, whose dump omits None defaults
+    and empty lists. The uv test runner is 3.12 and has no show_empty flag.
+    """
+    def _format(node):
+        if isinstance(node, ast.AST):
+            cls = type(node).__name__
+            skip_none = NONE.get(cls, ())
+            skip_list = LISTS.get(cls, ())
+            args = []
+            for name in node._fields:
+                value = getattr(node, name)
+                if value is None and name in skip_none:
+                    continue
+                if value == [] and name in skip_list:
+                    continue
+                args.append(f"{name}={_format(value)}")
+            return f"{cls}({', '.join(args)})"
+        if isinstance(node, list):
+            return "[" + ", ".join(_format(item) for item in node) + "]"
+        return repr(node)
+
+    return _format(node)
+
+
 def ast_hash(node):
-    return hashlib.sha256(ast.dump(node).encode()).hexdigest()[:12]
+    if sys.version_info >= (3, 14):
+        dumped = ast.dump(node, show_empty=False)
+    else:
+        dumped = _dump_hide_empty(node)
+    return hashlib.sha256(dumped.encode()).hexdigest()[:12]
+
+
 
 
 def taint_map(source):
@@ -432,6 +548,32 @@ def check_defaults_data_only(tree, source):
     return violations
 
 
+def check_defaults_where_present(tree, source):
+    """Rule 5 for a module that may not have both a DEFAULTS banner and cfg_ defs.
+
+    No DEFAULTS banner is vacuously fine. A banner that exists must contain no
+    cfg_ or probe_ def. The banner-before-cfg_ order is checked only when the
+    module also defines a cfg_ function, by reusing check_defaults_data_only.
+    """
+    blocks = _banner_blocks(source)
+    defaults = next((block for block in blocks if block[1] == "DEFAULTS"), None)
+    if defaults is None:
+        return []
+    has_cfg = any(func.name.startswith("cfg_") for func in _top_functions(tree))
+    if has_cfg:
+        return check_defaults_data_only(tree, source)
+    violations = []
+    _, _, defaults_start, defaults_end = defaults
+    for func in _top_functions(tree):
+        if defaults_start <= func.lineno <= defaults_end and func.name.startswith(
+            ("cfg_", "probe_")
+        ):
+            violations.append(
+                f"DEFAULTS block contains non-data def {func.name} at line {func.lineno}"
+            )
+    return violations
+
+
 def check_role_prefix_integrity(tree, source):
     """Rule 6: each top-level function's prefix matches the banner block it lives
     in. SHELL (now the last named block) permits exactly ``main``/``safe_render``;
@@ -626,9 +768,10 @@ class TestArchitecture(unittest.TestCase):
         cls.doctor_tree, cls.doctor_src = _parse("statusline-doctor.py")
 
     def test_rule1_config_env_only_in_bootstrap(self):
-        self.assertEqual([], check_config_env_in_cfg(self.render_tree))
-        # non-vacuity: the bootstrap literal actually exists in the live module
-        literals = {key for _, key in _config_env_literals(self.render_tree)}
+        config_tree, _src = _parse("common_config.py")
+        self.assertEqual([], check_config_env_in_cfg(config_tree))
+        # non-vacuity: the bootstrap literal actually exists in the config module
+        literals = {key for _, key in _config_env_literals(config_tree)}
         self.assertIn("CC_AI_KIT_CONFIG_FILE", literals)
 
     def test_rule2_no_subscript_on_typed_models(self):
@@ -641,7 +784,9 @@ class TestArchitecture(unittest.TestCase):
         self.assertEqual([], check_seg_signature(self.render_tree))
 
     def test_rule5_defaults_precedes_cfg_and_is_data_only(self):
-        self.assertEqual([], check_defaults_data_only(self.render_tree, self.render_src))
+        self.assertEqual(
+            [], check_defaults_where_present(self.render_tree, self.render_src)
+        )
 
     def test_rule6_role_prefix_integrity(self):
         self.assertEqual(
@@ -781,6 +926,120 @@ def _load_audit_fixture():
     return rows, base_definitions(proc.stdout)
 
 
+_SPLIT_MODULES = (
+    "common_types",
+    "common_fmt",
+    "common_config",
+    "common_probe",
+    "common_render",
+    "common_segments",
+    "claude_probes",
+    "claude_payload",
+    "claude_segments",
+    "claude_host",
+)
+
+
+def _rename_names(text, mapping):
+    """Replace NAME tokens only. Same rule the stage mover uses to reverse renames."""
+    if not text or not mapping:
+        return text
+    edits = []
+    for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+        if tok.type == tokenize.NAME and tok.string in mapping and tok.start[0] == tok.end[0]:
+            edits.append((tok.start, tok.end, mapping[tok.string]))
+    if not edits:
+        return text
+    lines = text.splitlines(keepends=True)
+    for (start_line, start_col), (_end_line, end_col), new in reversed(edits):
+        line = lines[start_line - 1]
+        lines[start_line - 1] = line[:start_col] + new + line[end_col:]
+    return "".join(lines)
+
+
+def _split_sources():
+    """Source of each split module that exists, plus the monolith."""
+    sources = {}
+    for name in _SPLIT_MODULES:
+        path = os.path.join(_TOOLS, f"{name}.py")
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as handle:
+                sources[name] = handle.read()
+    with open(os.path.join(_TOOLS, "status-line.py"), encoding="utf-8") as handle:
+        sources["status-line"] = handle.read()
+    return sources
+
+
+def _public_name(row):
+    return row.name if row.new_name == "-" else row.new_name
+
+
+def _defs_by_name(source):
+    return {name: node for name, _kind, _line, node in base_definitions(source)}
+
+
+def split_hash_mismatches(include_generalized=False, rows=None, modules=None):
+    """Moved rows whose AST, after reversing renames, differs from ``base_ast``.
+
+    ``include_generalized=False`` checks ``reused`` rows. ``True`` also checks
+    ``generalized`` and ``split`` rows. Stage-3 rows stay in the monolith.
+    """
+    if rows is None:
+        with open(_AUDIT_PATH, encoding="ascii") as handle:
+            _headers, rows = audit_rows(handle.read())
+    if modules is None:
+        modules = _split_sources()
+    fates = {"reused", "generalized", "split"} if include_generalized else {"reused"}
+    rename = {row.new_name: row.name for row in rows if row.new_name != "-"}
+    restored = {
+        name: _defs_by_name(_rename_names(source, rename))
+        for name, source in modules.items()
+    }
+    problems = []
+    for row in rows:
+        if int(row.stage) > 2 or row.fate not in fates:
+            continue
+        node = restored.get(row.module, {}).get(row.name)
+        if node is None:
+            problems.append(f"{row.name} missing from {row.module}")
+            continue
+        digest = ast_hash(node)
+        if digest != row.base_ast:
+            problems.append(f"{row.name} hash {digest} != {row.base_ast}")
+    return problems
+
+
+def split_location_problems(rows=None, modules=None):
+    """Rows that are missing, duplicated, or stored in the wrong module."""
+    if rows is None:
+        with open(_AUDIT_PATH, encoding="ascii") as handle:
+            _headers, rows = audit_rows(handle.read())
+    if modules is None:
+        modules = _split_sources()
+    defined = {name: set(_defs_by_name(source)) for name, source in modules.items()}
+    problems = []
+    for row in rows:
+        names = {row.name, _public_name(row)}
+        hits = sorted(
+            module for module, have in defined.items() if names & have
+        )
+        expected = [row.module] if int(row.stage) <= 2 else ["status-line"]
+        if hits != expected:
+            problems.append(f"{row.name} found in {hits}, expected {expected}")
+    return problems
+
+
+def present_split_modules():
+    """``(name, tree, source)`` for each split module that exists on disk."""
+    found = []
+    for name in _SPLIT_MODULES:
+        path = os.path.join(_TOOLS, f"{name}.py")
+        if os.path.isfile(path):
+            tree, source = _parse(f"{name}.py")
+            found.append((name, tree, source))
+    return found
+
+
 class TestSplitAudit(unittest.TestCase):
     """Keep the reviewed move map complete against its pinned source blob."""
 
@@ -819,8 +1078,63 @@ class TestSplitAudit(unittest.TestCase):
         self.assertTrue(self.audit_text.encode("ascii"))
 
 
+class TestSplitModuleRules(unittest.TestCase):
+    """Rules 2, 3, 4, 5, 6 and 7 on every split module that exists."""
+
+    def test_rules_2_3_4_6_7(self):
+        for name, tree, source in present_split_modules():
+            self.assertEqual([], check_no_typed_model_subscript(tree), name)
+            self.assertEqual([], check_bookkeeping_readers(tree), name)
+            self.assertEqual([], check_seg_signature(tree), name)
+            self.assertEqual([], check_role_prefix_integrity(tree, source), name)
+            self.assertEqual([], check_no_doctor_symbols(tree), name)
+
+    def test_rule5_where_present(self):
+        for name, tree, source in present_split_modules():
+            self.assertEqual([], check_defaults_where_present(tree, source), name)
+
+
+class TestSplitConformance(unittest.TestCase):
+    """Every moved definition matches the base blob and lives in one module."""
+
+    def test_hashes_match_including_generalized(self):
+        self.assertEqual([], split_hash_mismatches(include_generalized=True))
+
+    def test_locations(self):
+        self.assertEqual([], split_location_problems())
+
+
 class TestArchNonVacuity(unittest.TestCase):
     """Prove rules 1-7 catch real violations rather than passing vacuously."""
+
+    def test_split_hash_flags_a_changed_statement(self):
+        source = "def kept():\n    return 1\n"
+        node = base_definitions(source)[0][3]
+        row = AuditRow(
+            1, "kept", "function", 1, ast_hash(node), "1", "common_types",
+            "common_types", "-", "y", "reused", "-", "snippet row for the hash twin",
+        )
+        changed = "def kept():\n    return 2\n"
+        self.assertNotEqual(
+            [], split_hash_mismatches(False, [row], {"common_types": changed})
+        )
+        self.assertEqual(
+            [], split_hash_mismatches(False, [row], {"common_types": source})
+        )
+
+    def test_split_location_flags_the_wrong_module(self):
+        row = AuditRow(
+            1, "kept", "function", 1, "unused-hash", "1", "common_types",
+            "common_types", "-", "y", "reused", "-", "snippet row for the location twin",
+        )
+        wrong = {"common_fmt": "def kept():\n    return 1\n"}
+        self.assertNotEqual([], split_location_problems([row], wrong))
+        right = {"common_types": "def kept():\n    return 1\n"}
+        self.assertEqual([], split_location_problems([row], right))
+
+    def test_split_module_rule_flags_a_doctor_symbol(self):
+        tree = ast.parse("def cmd_doctor():\n    return 1\n")
+        self.assertNotEqual([], check_no_doctor_symbols(tree))
 
     def test_audit_detects_removed_row(self):
         rows, definitions = _load_audit_fixture()
@@ -919,6 +1233,16 @@ class TestArchNonVacuity(unittest.TestCase):
         good = ast.parse("def seg_ok(ctx, avail, theme):\n    return ''\n")
         self.assertNotEqual([], check_seg_signature(bad))
         self.assertEqual([], check_seg_signature(good))
+
+    def test_rule5_where_present_ignores_a_module_without_a_banner(self):
+        src = "def cfg_real(env):\n    return env\n"
+        self.assertEqual([], check_defaults_where_present(ast.parse(src), src))
+        banner = (
+            "# ═══ 1. DEFAULTS — data ═══\n"
+            "def probe_sneaky():\n"
+            "    return 1\n"
+        )
+        self.assertNotEqual([], check_defaults_where_present(ast.parse(banner), banner))
 
     def test_rule5_flags_cfg_def_inside_defaults(self):
         src = (
@@ -1088,21 +1412,21 @@ class TestSegmentInventory(unittest.TestCase):
         return mod
 
     def _line_index(self, sl, key):
-        for i, ln in enumerate(sl.LAYOUT):
+        for i, ln in enumerate(common_types.LAYOUT):
             if key in ln.segments:
                 return i
         raise AssertionError(f"{key} not in LAYOUT")
 
     def test_coverage_every_segment_has_entry(self):
-        sl = self._sl()
+        self._sl()
         inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
-        for key in sl.SEGMENTS:
+        for key in common_types.SEGMENTS:
             self.assertIn(key, inv, f"SEGMENTS key {key} missing from inventory")
 
     def test_line_mirror(self):
         sl = self._sl()
         inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
-        for key in sl.SEGMENTS:
+        for key in common_types.SEGMENTS:
             self.assertEqual(inv[key]["line"], self._line_index(sl, key),
                              f"{key} inventory line != LAYOUT line")
 
