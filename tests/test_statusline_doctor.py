@@ -16,6 +16,8 @@ _HERE = os.path.dirname(__file__)
 _TOOLS_DIR = os.path.abspath(os.path.join(_HERE, "..", "tools"))
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
+import claude_host
+import common_config
 import common_types
 
 _DOCTOR_PATH = os.path.join(_HERE, "..", "tools", "statusline-doctor.py")
@@ -31,7 +33,7 @@ def load_module():
 
 
 doctor = load_module()
-sl = doctor.sl   # the render core the doctor imported
+sl = claude_host  # direct split-module access
 
 
 class TestCLI(unittest.TestCase):
@@ -103,8 +105,8 @@ class TestCLI(unittest.TestCase):
             rc = doctor.cmd_check("", env)
         self.assertEqual(rc, 1)
         self.assertIn(
-            f"{sl.DIM}status-line: CC_AI_KIT_GIT_CACHE_TTL must be an integer, "
-            f"got 'not-an-int' — ignored{sl.RESET}",
+            f"{common_types.DIM}status-line: CC_AI_KIT_GIT_CACHE_TTL must be an integer, "
+            f"got 'not-an-int' — ignored{common_types.RESET}",
             buf.getvalue(),
         )
 
@@ -135,18 +137,18 @@ class TestDoctor(unittest.TestCase):
         def boom(data, avail, theme):
             del avail
             raise RuntimeError("x")
-        with mock.patch.dict(sl.BUILDERS, {"path": boom}):
+        with mock.patch.dict(claude_host.BUILDERS, {"path": boom}):
             rc = doctor.cmd_doctor(self.env)
         self.assertEqual(rc, 1)
 
     def test_doctor_flags_a_raising_disabled_builder(self):
         # A builder that is DISABLED by default (`alt_cost`) must still be
         # dry-rendered: the doctor catches a builder that would crash once enabled.
-        self.assertFalse(sl.cfg_default_config().segments.get("alt_cost"))
+        self.assertFalse(common_config.cfg_default_config().segments.get("alt_cost"))
         def boom(data, avail, theme):
             del avail
             raise RuntimeError("x")
-        with mock.patch.dict(sl.BUILDERS, {"alt_cost": boom}):
+        with mock.patch.dict(claude_host.BUILDERS, {"alt_cost": boom}):
             rc = doctor.cmd_doctor(self.env)
         self.assertEqual(rc, 1)
 

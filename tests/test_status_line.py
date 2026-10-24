@@ -11,20 +11,23 @@ import tempfile
 import time
 import tomllib
 import unittest
-from typing import Any
 from unittest import mock
 
 _HERE = os.path.dirname(__file__)
 _TOOLS_DIR = os.path.abspath(os.path.join(_HERE, "..", "tools"))
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
-# Pre-split parity: the importlib-loaded monolith was Any-typed; tighten in a later typed-test pass.
-claude_probes: Any = importlib.import_module("claude_probes")
-claude_segments: Any = importlib.import_module("claude_segments")
-common_config: Any = importlib.import_module("common_config")
-common_probe: Any = importlib.import_module("common_probe")
-common_render: Any = importlib.import_module("common_render")
-common_types: Any = importlib.import_module("common_types")
+import datetime
+
+import claude_host
+import claude_payload
+import claude_probes
+import claude_segments
+import common_config
+import common_probe
+import common_render
+import common_segments
+import common_types
 
 _MODULE_PATH = os.path.join(_HERE, "..", "tools", "status-line.py")
 
@@ -35,20 +38,18 @@ def load_module():
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod          # register so @dataclass can resolve cls.__module__
     spec.loader.exec_module(mod)
-    mod.__dict__["datetime"] = __import__("datetime").datetime
     return mod
 
 
 sl = load_module()
 
-THEME = sl.core_default_theme()
+THEME = common_render.core_default_theme()
 
 ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
 
 def strip(s):
     return ANSI_RE.sub("", s)
-
 
 
 NOW = 1_000_000  # fixed epoch for deterministic rate-limit tests
@@ -58,11 +59,13 @@ def _ctx_from_env(raw, env, cfg, t_start=None):
     """Resolve the per-render SHELL inputs from `env` and build a Context — the
     test-side mirror of what safe_render does in production (terminal size, HOME,
     claude_dir, effort). Returns (ctx, cols, lines) for call-site convenience."""
-    cols, lines, assumed = sl.probe_terminal_size(env)
+    cols, lines, assumed = common_probe.probe_terminal_size(env)
     home = env.get("HOME", "")
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-    ctx = sl.core_build_context(raw, cfg, sl.core_default_theme(), cols, lines, assumed, t_start,
-                           effort=sl.cfg_resolve_effort(raw), home=home, claude_dir=claude_dir)
+    ctx = claude_payload.core_build_context(
+        raw, cfg, common_render.core_default_theme(), cols, lines, assumed, t_start,
+                           effort=claude_payload.cfg_resolve_effort(
+                               raw), home=home, claude_dir=claude_dir)
     return ctx, cols, lines
 
 
@@ -92,7 +95,8 @@ def _data(**over):
     eager_over = {k: over.pop(k) for k in list(over) if k in eager}
     probe_over = {**probe_defaults, **over}
     eager.update(eager_over)
-    ctx = common_render.Context(raw={}, line_conf=sl.cfg_default_config(), theme=THEME, **eager)
+    ctx = common_render.Context(
+        raw={}, line_conf=common_config.cfg_default_config(), theme=THEME, **eager)
     # Seed probe_cache directly so probes never fire during tests
     ctx.probe_cache["git"] = common_types.GitSnapshot(
         in_repo=probe_over["in_repo"], branch=probe_over["branch"],
@@ -122,16 +126,16 @@ def _pack(keys, ctx, cols, cfg=None, theme=None, builders=None):
     `core_assemble_line` structure so per-line packing assertions stay focused."""
     cfg = cfg or ctx.line_conf
     theme = theme or ctx.theme
-    builders = builders if builders is not None else sl.core_builders_for(cfg)
-    budget = cols - sl.RIGHT_MARGIN
-    sep_w = sl.util_visible_width(sl.SEP)
+    builders = builders if builders is not None else claude_host.core_builders_for(cfg)
+    budget = cols - common_types.RIGHT_MARGIN
+    sep_w = common_types.util_visible_width(common_types.SEP)
     cfg = cfg._replace(layout=[common_types.Line(min_rows=0, segments=list(keys))])
-    built = sl.core_measure_all(ctx, cfg, budget, sep_w, theme, builders)
-    meta_built = sl.core_build_meta(ctx, cfg, budget, theme, builders)
+    built = claude_host.core_measure_all(ctx, cfg, budget, sep_w, theme, builders)
+    meta_built = claude_host.core_build_meta(ctx, cfg, budget, theme, builders)
     enabled = [k for k in keys if cfg.segments.get(k, False)]
     line_built = {k: v for (_i, k), v in built.items()}
     line_built.update(meta_built)
-    return sl.core_assemble_line(enabled, line_built, budget, sep_w)
+    return common_render.core_assemble_line(enabled, line_built, budget, sep_w)
 
 
 def _load_cfg_with_toml(toml_text, **env_extra):
@@ -143,7 +147,7 @@ def _load_cfg_with_toml(toml_text, **env_extra):
         path = f.name
     env = {"HOME": "/h", "CC_AI_KIT_CONFIG_FILE": path, **env_extra}
     try:
-        return sl.cfg_load_config(env)
+        return common_config.cfg_load_config(env)
     finally:
         with contextlib.suppress(OSError):
             os.unlink(path)
@@ -162,7 +166,7 @@ class TestPickColor(unittest.TestCase):
             (50, THEME.c("MAGENTA_DARK+bold")), (99, THEME.c("MAGENTA_DARK+bold")),
         ]
         for pct, want in cases:
-            self.assertEqual(sl.util_pick_color(pct, THEME.ramps["context"]), want, pct)
+            self.assertEqual(common_types.util_pick_color(pct, THEME.ramps["context"]), want, pct)
 
     def test_rate_ramp_bands(self):
         # [ramp.rate] still resolves into theme.ramps["rate"] (config parse
@@ -186,15 +190,18 @@ class TestPickColor(unittest.TestCase):
             (40 * ms, THEME.c("RED+bold")), (200 * ms, THEME.c("RED+bold")),
         ]
         for ns, want in cases:
-            self.assertEqual(sl.util_pick_color(ns, THEME.ramps["slowest"]), want, ns)
+            self.assertEqual(common_types.util_pick_color(ns, THEME.ramps["slowest"]), want, ns)
 
     def test_slowest_ramp_override_replaces_band(self):
         # [ramp.slowest] in config REPLACES the default band wholesale.
-        cfg = sl.cfg_default_config()._replace(ramps={"slowest": {"100ms": "CYAN", "inf": "WHITE"}})
-        theme = sl.core_build_theme(cfg)
+        cfg = common_config.cfg_default_config(
+            )._replace(ramps={"slowest": {"100ms": "CYAN", "inf": "WHITE"}})
+        theme = common_render.core_build_theme(cfg)
         ms = 1_000_000
-        self.assertEqual(sl.util_pick_color(50 * ms, theme.ramps["slowest"]), theme.c("CYAN"))
-        self.assertEqual(sl.util_pick_color(200 * ms, theme.ramps["slowest"]), theme.c("WHITE"))
+        self.assertEqual(
+            common_types.util_pick_color(50 * ms, theme.ramps["slowest"]), theme.c("CYAN"))
+        self.assertEqual(
+            common_types.util_pick_color(200 * ms, theme.ramps["slowest"]), theme.c("WHITE"))
 
 
 class TestWindowSeconds(unittest.TestCase):
@@ -298,18 +305,18 @@ class TestRateGap(unittest.TestCase):
 
 class TestFormatters(unittest.TestCase):
     def test_fmt_number(self):
-        self.assertEqual(sl.fmt_number(1234567), "1,234,567")
+        self.assertEqual(common_types.fmt_number(1234567), "1,234,567")
 
     def test_fmt_time_ms(self):
-        self.assertEqual(sl.fmt_time_ms(500), "500ms")
-        self.assertEqual(sl.fmt_time_ms(1500), "1s")
-        self.assertEqual(sl.fmt_time_ms(65000), "1m 5s")
-        self.assertEqual(sl.fmt_time_ms(3_700_000), "1h 1m")
+        self.assertEqual(common_types.fmt_time_ms(500), "500ms")
+        self.assertEqual(common_types.fmt_time_ms(1500), "1s")
+        self.assertEqual(common_types.fmt_time_ms(65000), "1m 5s")
+        self.assertEqual(common_types.fmt_time_ms(3_700_000), "1h 1m")
 
     def test_fmt_tokens(self):
-        self.assertEqual(sl.fmt_tokens(200000), "200K")
-        self.assertEqual(sl.fmt_tokens(1_000_000), "1M")
-        self.assertEqual(sl.fmt_tokens(999), "999")
+        self.assertEqual(common_types.fmt_tokens(200000), "200K")
+        self.assertEqual(common_types.fmt_tokens(1_000_000), "1M")
+        self.assertEqual(common_types.fmt_tokens(999), "999")
 
     def test_fmt_ago(self):
         self.assertEqual(common_types.fmt_ago(0), "just now")
@@ -318,27 +325,28 @@ class TestFormatters(unittest.TestCase):
         self.assertEqual(common_types.fmt_ago(3700), "1h 1m ago")
 
     def test_fmt_bytes(self):
-        self.assertEqual(sl.fmt_bytes(512), "512B")
-        self.assertEqual(sl.fmt_bytes(1536), "1.5KB")
-        self.assertEqual(sl.fmt_bytes(305000), "298KB")  # ceil rounding
+        self.assertEqual(common_types.fmt_bytes(512), "512B")
+        self.assertEqual(common_types.fmt_bytes(1536), "1.5KB")
+        self.assertEqual(common_types.fmt_bytes(305000), "298KB")  # ceil rounding
 
     def test_fmt_duration(self):
         # adaptive ns/µs/ms/s; one decimal when the scaled value is < 10
-        self.assertEqual(sl.fmt_duration(0), "0ns")
-        self.assertEqual(sl.fmt_duration(840), "840ns")
-        self.assertEqual(sl.fmt_duration(1500), "1.5µs")
-        self.assertEqual(sl.fmt_duration(12_000), "12µs")
-        self.assertEqual(sl.fmt_duration(4_100_000), "4.1ms")
-        self.assertEqual(sl.fmt_duration(45_000_000), "45ms")
-        self.assertEqual(sl.fmt_duration(1_200_000_000), "1.2s")
+        self.assertEqual(common_types.fmt_duration(0), "0ns")
+        self.assertEqual(common_types.fmt_duration(840), "840ns")
+        self.assertEqual(common_types.fmt_duration(1500), "1.5µs")
+        self.assertEqual(common_types.fmt_duration(12_000), "12µs")
+        self.assertEqual(common_types.fmt_duration(4_100_000), "4.1ms")
+        self.assertEqual(common_types.fmt_duration(45_000_000), "45ms")
+        self.assertEqual(common_types.fmt_duration(1_200_000_000), "1.2s")
 
 
 class TestVisibleWidth(unittest.TestCase):
     def test_plain_ascii(self):
-        self.assertEqual(sl.util_visible_width("hello"), 5)
+        self.assertEqual(common_types.util_visible_width("hello"), 5)
 
     def test_ansi_is_zero_width(self):
-        self.assertEqual(sl.util_visible_width(f'{THEME.c("RED")}hi{sl.RESET}'), 2)
+        self.assertEqual(
+            common_types.util_visible_width(f'{THEME.c("RED")}hi{common_types.RESET}'), 2)
 
     def test_smp_emoji_is_two_cells(self):
         for ch in "📊📝🧠💬📡💾🧮🌿🌳📃":
@@ -357,10 +365,10 @@ class TestVisibleWidth(unittest.TestCase):
             self.assertEqual(common_types.util_char_width(ch), 1, ch)
 
     def test_combining_mark_is_zero(self):
-        self.assertEqual(sl.util_visible_width("é"), 1)  # e + combining acute
+        self.assertEqual(common_types.util_visible_width("é"), 1)  # e + combining acute
 
     def test_mixed_segment(self):
-        self.assertEqual(sl.util_visible_width("📊 12%"), 6)
+        self.assertEqual(common_types.util_visible_width("📊 12%"), 6)
 
     def test_variation_selector_is_zero_width(self):
         self.assertEqual(common_types.util_char_width("️"), 0)  # VS16 emoji presentation
@@ -368,72 +376,73 @@ class TestVisibleWidth(unittest.TestCase):
 
     def test_glyph_plus_vs16_measures_as_two(self):
         # ⏸ (modeled wide) + VS16 must stay 2 cells, not inflate to 3.
-        self.assertEqual(sl.util_visible_width("⏸️ x"), 4)  # 2 + 0 + 1(space) + 1(x)
+        self.assertEqual(common_types.util_visible_width("⏸️ x"), 4)  # 2 + 0 + 1(space) + 1(x)
 
 
 class TestFirstFitting(unittest.TestCase):
     def test_returns_richest_that_fits(self):
-        self.assertEqual(sl.util_first_fitting(["abcdef", "abc", "a"], 4), "abc")
+        self.assertEqual(common_types.util_first_fitting(["abcdef", "abc", "a"], 4), "abc")
 
     def test_returns_first_when_all_fit(self):
-        self.assertEqual(sl.util_first_fitting(["ab", "a"], 10), "ab")
+        self.assertEqual(common_types.util_first_fitting(["ab", "a"], 10), "ab")
 
     def test_none_when_nothing_fits(self):
-        self.assertIsNone(sl.util_first_fitting(["abcdef", "abcd"], 3))
+        self.assertIsNone(common_types.util_first_fitting(["abcdef", "abcd"], 3))
 
     def test_ignores_falsy_variants(self):
-        self.assertEqual(sl.util_first_fitting([None, "", "ok"], 5), "ok")
+        self.assertEqual(common_types.util_first_fitting([None, "", "ok"], 5), "ok")
 
 
 class TestTwoStateCap(unittest.TestCase):
     def test_returns_unchanged_when_it_fits_high(self):
-        self.assertEqual(sl.util_two_state_cap("proj", 30, 20), "proj")
+        self.assertEqual(common_types.util_two_state_cap("proj", 30, 20), "proj")
 
     def test_boundary_exactly_at_high_is_unchanged(self):
         s = "a" * 30
-        self.assertEqual(sl.util_two_state_cap(s, 30, 20), s)
+        self.assertEqual(common_types.util_two_state_cap(s, 30, 20), s)
 
     def test_one_over_high_clips_to_low(self):
         # 31 > high(30) -> util_trunc_cols(s, 20): limit-1=19 reserved for
         # text, appends 19 'a's and stops (19+1>19) -> 19 a's + "…", 20
         # display columns wide, matching low.
         s = "a" * 31
-        out = sl.util_two_state_cap(s, 30, 20)
+        out = common_types.util_two_state_cap(s, 30, 20)
         self.assertEqual(out, "a" * 19 + "…")
-        self.assertEqual(sl.util_visible_width(out), 20)
+        self.assertEqual(common_types.util_visible_width(out), 20)
 
     def test_far_over_high_still_clips_to_exactly_low(self):
-        out = sl.util_two_state_cap("a" * 40, 30, 20)
+        out = common_types.util_two_state_cap("a" * 40, 30, 20)
         self.assertEqual(out, "a" * 19 + "…")
-        self.assertEqual(sl.util_visible_width(out), 20)
+        self.assertEqual(common_types.util_visible_width(out), 20)
 
 
 class TestIconHelper(unittest.TestCase):
     def test_wide_emoji_gets_single_space(self):
-        self.assertEqual(sl.util_icon("\U0001F4C3", "x"), "\U0001F4C3 x")  # 📃 x
+        self.assertEqual(common_types.util_icon("\U0001F4C3", "x"), "\U0001F4C3 x")  # 📃 x
 
     def test_narrow_rendering_glyph_gets_vs16(self):
         # ⏱ ⏸ ⚡ are modeled wide but render narrow bare -> force emoji presentation.
-        self.assertEqual(sl.util_icon("⏱", "x"), "⏱️ x")  # ⏱️ x
-        self.assertEqual(sl.util_icon("⏸", "x"), "⏸️ x")  # ⏸️ x
-        self.assertEqual(sl.util_icon("⚡", "x"), "⚡️ x")  # ⚡️ x
+        self.assertEqual(common_types.util_icon("⏱", "x"), "⏱️ x")  # ⏱️ x
+        self.assertEqual(common_types.util_icon("⏸", "x"), "⏸️ x")  # ⏸️ x
+        self.assertEqual(common_types.util_icon("⚡", "x"), "⚡️ x")  # ⚡️ x
 
     def test_already_wide_bmp_alarm_clock_no_vs16(self):
-        self.assertEqual(sl.util_icon("⏰", "x"), "⏰ x")  # ⏰ is EAW=W already
+        self.assertEqual(common_types.util_icon("⏰", "x"), "⏰ x")  # ⏰ is EAW=W already
 
     def test_icon_width_is_two_plus_space_plus_text(self):
-        self.assertEqual(sl.util_visible_width(sl.util_icon("⏸", "12:00")), 8)  # 2+1+5
+        self.assertEqual(
+            common_types.util_visible_width(common_types.util_icon("⏸", "12:00")), 8)  # 2+1+5
 
 
 class TestNoCollapsedIcons(unittest.TestCase):
     # The five segments that previously glued the glyph to the value.
     def test_collapsers_have_a_space_after_the_icon(self):
         cases = {
-            "⏰": sl.seg_alt_time_clock(_data(), 80, THEME),                 # ⏰
-            "\U0001F4C3": sl.seg_lines(_data(), 80, THEME),            # 📃
-            "\U0001FA99": sl.seg_alt_cost(_data(cost=0.5), 80, THEME),     # 🪙
-            "\U0001F4AC": sl.seg_alt_time_session(_data(), 80, THEME),       # 💬
-            "\U0001F4E1": sl.seg_alt_time_api(_data(), 80, THEME),         # 📡
+            "⏰": common_segments.seg_alt_time_clock(_data(), 80, THEME),                 # ⏰
+            "\U0001F4C3": claude_segments.seg_lines(_data(), 80, THEME),            # 📃
+            "\U0001FA99": claude_segments.seg_alt_cost(_data(cost=0.5), 80, THEME),     # 🪙
+            "\U0001F4AC": claude_segments.seg_alt_time_session(_data(), 80, THEME),       # 💬
+            "\U0001F4E1": claude_segments.seg_alt_time_api(_data(), 80, THEME),         # 📡
         }
         for glyph, out in cases.items():
             plain = strip(out)
@@ -443,13 +452,14 @@ class TestNoCollapsedIcons(unittest.TestCase):
 
     def test_no_segment_emits_glyph_then_nonspace(self):
         # Property check across the iconed builders at a wide budget.
-        builders = [sl.seg_alt_time_clock, sl.seg_lines,
-                    lambda d, a, t: sl.seg_alt_cost(_data(cost=0.5), a, t),
-                    sl.seg_alt_time_session, sl.seg_alt_time_api, sl.seg_render_time,
-                    lambda d, a, t: sl.seg_context(_data(), a, t),
-                    sl.seg_chat_size, sl.seg_alt_process_memory]
+        builders = [common_segments.seg_alt_time_clock, claude_segments.seg_lines,
+                    lambda d, a, t: claude_segments.seg_alt_cost(_data(cost=0.5), a, t),
+                    claude_segments.seg_alt_time_session, \
+                        claude_segments.seg_alt_time_api, common_segments.seg_render_time,
+                    lambda d, a, t: common_segments.seg_context(_data(), a, t),
+                    claude_segments.seg_chat_size, claude_segments.seg_alt_process_memory]
         for b in builders:
-            out = b(_data(t_start=sl.time.perf_counter_ns()), 120, THEME)
+            out = b(_data(t_start=time.perf_counter_ns()), 120, THEME)
             if not out:
                 continue
             plain = strip(out)
@@ -480,9 +490,11 @@ class TestEffortTable(unittest.TestCase):
 
 class TestCooperativeBuilders(unittest.TestCase):
     def test_branch_content_then_self_hide(self):
-        self.assertIn("main", sl.seg_git_branch(_data(branch="main"), 50, THEME))
-        self.assertIsNone(sl.seg_git_branch(_data(branch="main"), 5, THEME))    # no room
-        self.assertIsNone(sl.seg_git_branch(_data(branch=""), 200, THEME))      # no data
+        self.assertIn("main", common_segments.seg_git_branch(_data(branch="main"), 50, THEME))
+        self.assertIsNone(
+            common_segments.seg_git_branch(_data(branch="main"), 5, THEME))    # no room
+        self.assertIsNone(
+            common_segments.seg_git_branch(_data(branch=""), 200, THEME))      # no data
 
     def test_branch_has_static_icon_not_worktree_state(self):
         # branch carries its own STATIC 🌿 icon, but it must NOT encode worktree
@@ -490,7 +502,7 @@ class TestCooperativeBuilders(unittest.TestCase):
         # and the icon never changes with is_worktree.
         outs = []
         for wt in (True, False):
-            out = sl.seg_git_branch(_data(branch="main", is_worktree=wt), 100, THEME)
+            out = common_segments.seg_git_branch(_data(branch="main", is_worktree=wt), 100, THEME)
             self.assertIn("main", out)
             self.assertIn("🌿", out)        # own branch icon restored
             self.assertNotIn("🌳", out)     # never the worktree-tree glyph
@@ -500,167 +512,175 @@ class TestCooperativeBuilders(unittest.TestCase):
 
     def test_branch_full_up_to_30_cols(self):
         branch = "feature/" + "x" * 20   # 28 cols, under the 30 cap
-        out = sl.seg_git_branch(_data(branch=branch), 100, THEME)
+        out = common_segments.seg_git_branch(_data(branch=branch), 100, THEME)
         self.assertIn(branch, strip(out))
         self.assertNotIn("…", out)
 
     def test_branch_over_30_truncates_to_20(self):
         branch = "feature/" + "x" * 50   # 58 cols, over the 30 cap
-        out = sl.seg_git_branch(_data(branch=branch), 100, THEME)
+        out = common_segments.seg_git_branch(_data(branch=branch), 100, THEME)
         expected = "feature/" + "x" * 11 + "…"   # util_trunc_cols(branch, 20)
         self.assertIn(expected, strip(out))
-        self.assertEqual(sl.util_visible_width(expected), 20)
+        self.assertEqual(common_types.util_visible_width(expected), 20)
 
     def test_branch_hides_when_even_20col_form_does_not_fit_avail(self):
         branch = "feature/" + "x" * 50
-        self.assertIsNone(sl.seg_git_branch(_data(branch=branch), 5, THEME))
+        self.assertIsNone(common_segments.seg_git_branch(_data(branch=branch), 5, THEME))
 
     def test_worktree_active_shows_name_cyan(self):
-        out = sl.seg_alt_git_worktree(
+        out = common_segments.seg_alt_git_worktree(
             _data(in_repo=True, is_worktree=True, wt_name="feat-x"), 100, THEME)
         self.assertIn("⎇ feat-x", strip(out))
         self.assertIn(THEME.c("CYAN"), out)        # active form is cyan
         self.assertNotIn("\033[9m", out)           # NOT struck
 
     def test_worktree_main_checkout_struck_placeholder(self):
-        out = sl.seg_alt_git_worktree(_data(in_repo=True, is_worktree=False), 100, THEME)
+        out = common_segments.seg_alt_git_worktree(
+            _data(in_repo=True, is_worktree=False), 100, THEME)
         self.assertIn("⎇ wt", strip(out))
         self.assertIn("\033[9m", out)              # strikethrough SGR
         self.assertIn(THEME.c("GREY"), out)        # dimmed/grey, distinct from cyan
 
     def test_worktree_hidden_outside_repo(self):
-        self.assertIsNone(sl.seg_alt_git_worktree(_data(in_repo=False), 100, THEME))
+        self.assertIsNone(common_segments.seg_alt_git_worktree(_data(in_repo=False), 100, THEME))
 
     def test_worktree_name_full_up_to_30_cols(self):
         name = "a" * 28
-        out = sl.seg_alt_git_worktree(
+        out = common_segments.seg_alt_git_worktree(
             _data(in_repo=True, is_worktree=True, wt_name=name), 100, THEME)
         self.assertIn(name, strip(out))
         self.assertNotIn("…", out)
 
     def test_worktree_name_over_30_truncates_to_20(self):
         name = "a" * 60
-        out = sl.seg_alt_git_worktree(
+        out = common_segments.seg_alt_git_worktree(
             _data(in_repo=True, is_worktree=True, wt_name=name), 100, THEME)
         expected = "a" * 19 + "…"   # util_trunc_cols(name, 20)
         self.assertIn(expected, strip(out))
-        self.assertEqual(sl.util_visible_width(expected), 20)
+        self.assertEqual(common_types.util_visible_width(expected), 20)
 
     def test_worktree_name_hides_when_even_20col_form_does_not_fit_avail(self):
         name = "a" * 60
-        self.assertIsNone(sl.seg_alt_git_worktree(
+        self.assertIsNone(common_segments.seg_alt_git_worktree(
             _data(in_repo=True, is_worktree=True, wt_name=name), 5, THEME))
 
     def test_effort_full_then_compact_then_hide(self):
-        self.assertIn("high", strip(sl.seg_effort(_data(effort="high"), 30, THEME)))
-        compact = strip(sl.seg_effort(_data(effort="high"), 10, THEME))
+        self.assertIn("high", strip(claude_segments.seg_effort(_data(effort="high"), 30, THEME)))
+        compact = strip(claude_segments.seg_effort(_data(effort="high"), 10, THEME))
         self.assertNotIn("high", compact)
         self.assertIn("▁▃▄", compact)
-        self.assertIsNone(sl.seg_effort(_data(effort="high"), 5, THEME))
-        self.assertIsNone(sl.seg_effort(_data(effort=""), 200, THEME))
+        self.assertIsNone(claude_segments.seg_effort(_data(effort="high"), 5, THEME))
+        self.assertIsNone(claude_segments.seg_effort(_data(effort=""), 200, THEME))
 
     def test_effort_all_levels_full(self):
         for level in ("low", "medium", "high", "xhigh", "max"):
-            out = strip(sl.seg_effort(_data(effort=level), 30, THEME))
+            out = strip(claude_segments.seg_effort(_data(effort=level), 30, THEME))
             self.assertIn(level, out)
             self.assertTrue(out.startswith("🧠"))
 
     def test_context_three_tiers_never_none(self):
-        self.assertIn("of 1M", strip(sl.seg_context(_data(context_pct=12), 200, THEME)))
-        mid = strip(sl.seg_context(_data(context_pct=12), 18, THEME))
+        self.assertIn(
+            "of 1M", strip(common_segments.seg_context(_data(context_pct=12), 200, THEME)))
+        mid = strip(common_segments.seg_context(_data(context_pct=12), 18, THEME))
         self.assertNotIn("of 1M", mid)
         self.assertIn("█", mid)
-        self.assertEqual(strip(sl.seg_context(_data(context_pct=12), 8, THEME)), "📊 12%")
-        self.assertIsNotNone(sl.seg_context(_data(context_pct=12), 2, THEME))  # floor
+        self.assertEqual(
+            strip(common_segments.seg_context(_data(context_pct=12), 8, THEME)), "📊 12%")
+        self.assertIsNotNone(common_segments.seg_context(_data(context_pct=12), 2, THEME))  # floor
 
     def test_context_low_pct_half_bar_and_zero_empty(self):
-        self.assertIn("▌", strip(sl.seg_context(_data(context_pct=5), 200, THEME)))
-        zero = strip(sl.seg_context(_data(context_pct=0), 200, THEME))
+        self.assertIn("▌", strip(common_segments.seg_context(_data(context_pct=5), 200, THEME)))
+        zero = strip(common_segments.seg_context(_data(context_pct=0), 200, THEME))
         self.assertNotIn("█", zero)
         self.assertNotIn("▌", zero)
 
     def test_render_time_times_self_then_self_hide(self):
-        d = _data(t_start=sl.time.perf_counter_ns())
-        out = sl.seg_render_time(d, 200, THEME)
+        d = _data(t_start=time.perf_counter_ns())
+        out = common_segments.seg_render_time(d, 200, THEME)
         self.assertIn(THEME.c("GREEN"), out)            # fast run -> SLO green band
         out_s = strip(out)
         self.assertTrue(out_s.startswith("⏱"))          # stopwatch mark
         self.assertRegex(out_s, r"\d+(\.\d+)?(ns|µs|ms|s)$")  # a formatted duration
-        self.assertIsNone(sl.seg_render_time(_data(), 200, THEME))  # no t_start -> omit
-        self.assertIsNone(sl.seg_render_time(d, 1, THEME))         # no room -> hide
+        self.assertIsNone(
+            common_segments.seg_render_time(_data(), 200, THEME))  # no t_start -> omit
+        self.assertIsNone(common_segments.seg_render_time(d, 1, THEME))         # no room -> hide
 
     def test_render_time_colors_by_slo_sla_ramp(self):
         # a slow run (200ms ago) lands in the red+bold band (beyond the SLA)
-        slow = _data(t_start=sl.time.perf_counter_ns() - 200_000_000)
-        self.assertIn(THEME.c("RED+bold"), sl.seg_render_time(slow, 200, THEME))
+        slow = _data(t_start=time.perf_counter_ns() - 200_000_000)
+        self.assertIn(THEME.c("RED+bold"), common_segments.seg_render_time(slow, 200, THEME))
 
     def test_dimensions_content_then_self_hide(self):
-        self.assertEqual(strip(sl.seg_alt_term_dimensions(_data(cols=120, lines=40), 200, THEME)),
+        self.assertEqual(
+            strip(common_segments.seg_alt_term_dimensions(_data(cols=120, lines=40), 200, THEME)),
                          "120×40")
-        self.assertIsNone(sl.seg_alt_term_dimensions(_data(cols=120, lines=40), 3, THEME))
+        self.assertIsNone(
+            common_segments.seg_alt_term_dimensions(_data(cols=120, lines=40), 3, THEME))
 
     def test_chat_memory_self_hide_when_cramped(self):
-        self.assertIsNotNone(sl.seg_chat_size(_data(), 200, THEME))
-        self.assertIsNone(sl.seg_chat_size(_data(), 3, THEME))
-        self.assertIsNone(sl.seg_chat_size(_data(chat_bytes=None), 200, THEME))
-        self.assertIsNone(sl.seg_alt_process_memory(_data(mem_bytes=None), 200, THEME))
+        self.assertIsNotNone(claude_segments.seg_chat_size(_data(), 200, THEME))
+        self.assertIsNone(claude_segments.seg_chat_size(_data(), 3, THEME))
+        self.assertIsNone(claude_segments.seg_chat_size(_data(chat_bytes=None), 200, THEME))
+        self.assertIsNone(claude_segments.seg_alt_process_memory(_data(mem_bytes=None), 200, THEME))
 
     def test_h_rate_limit_shows_time_only_reset_then_drops_it_when_narrow(self):
         rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600}}
-        rich = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
+        rich = strip(claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
         self.assertIn("5h: 42%", rich)
         self.assertIn("↺", rich)
         # time-only reset stamp — no date component at all
-        dt = sl.datetime.fromtimestamp(NOW + 3600)
+        dt = datetime.datetime.fromtimestamp(NOW + 3600)
         self.assertIn(dt.strftime("%H:%M"), rich)
         self.assertNotIn(dt.strftime("%b"), rich)
-        narrow = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 10, THEME))
+        narrow = strip(claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl), 10, THEME))
         self.assertEqual(narrow, "⚡️ 5h: 42%")
-        self.assertIsNone(sl.seg_alt_h_rate_limit(_data(rate_limits={}), 200, THEME))
+        self.assertIsNone(claude_segments.seg_alt_h_rate_limit(_data(rate_limits={}), 200, THEME))
 
     def test_h_rate_limit_hides_when_no_hourly_bucket(self):
         rl = {"seven_day": {"used_percentage": 13, "resets_at": NOW + 86400}}
-        self.assertIsNone(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
+        self.assertIsNone(claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
 
     def test_h_rate_limit_ignores_weekly_bucket(self):
         rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600},
               "seven_day": {"used_percentage": 13, "resets_at": NOW + 86400}}
-        out = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
+        out = strip(claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
         self.assertIn("5h:", out)
         self.assertNotIn("7d:", out)
 
     def test_w_rate_limit_shows_weekday_reset_then_drops_it_when_narrow(self):
         rl = {"seven_day": {"used_percentage": 13, "resets_at": NOW + 86400}}
-        rich = strip(sl.seg_alt_w_rate_limit(_data(rate_limits=rl), 200, THEME))
+        rich = strip(claude_segments.seg_alt_w_rate_limit(_data(rate_limits=rl), 200, THEME))
         self.assertIn("7d: 13%", rich)
-        dt = sl.datetime.fromtimestamp(NOW + 86400)
+        dt = datetime.datetime.fromtimestamp(NOW + 86400)
         self.assertIn(dt.strftime("%a"), rich)
         self.assertIn(dt.strftime("%H:%M"), rich)
         self.assertNotIn(dt.strftime("%b %d"), rich)
-        narrow = strip(sl.seg_alt_w_rate_limit(_data(rate_limits=rl), 10, THEME))
+        narrow = strip(claude_segments.seg_alt_w_rate_limit(_data(rate_limits=rl), 10, THEME))
         self.assertEqual(narrow, "⚡️ 7d: 13%")
-        self.assertIsNone(sl.seg_alt_w_rate_limit(_data(rate_limits={}), 200, THEME))
+        self.assertIsNone(claude_segments.seg_alt_w_rate_limit(_data(rate_limits={}), 200, THEME))
 
     def test_w_rate_limit_hides_when_no_weekly_bucket(self):
         rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600}}
-        self.assertIsNone(sl.seg_alt_w_rate_limit(_data(rate_limits=rl), 200, THEME))
+        self.assertIsNone(claude_segments.seg_alt_w_rate_limit(_data(rate_limits=rl), 200, THEME))
 
     def test_rate_limit_no_reset_stamp_when_absent(self):
         rl_h = {"five_hour": {"used_percentage": 30}}
-        self.assertEqual(strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl_h), 200, THEME)),
+        self.assertEqual(
+            strip(claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl_h), 200, THEME)),
                          "⚡️ 5h: 30%")
         rl_w = {"seven_day": {"used_percentage": 30}}
-        self.assertEqual(strip(sl.seg_alt_w_rate_limit(_data(rate_limits=rl_w), 200, THEME)),
+        self.assertEqual(
+            strip(claude_segments.seg_alt_w_rate_limit(_data(rate_limits=rl_w), 200, THEME)),
                          "⚡️ 7d: 30%")
 
     def test_h_rate_limit_shows_bucket_even_with_past_reset(self):
         rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW - 1}}
-        out = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
+        out = strip(claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
         self.assertIn("5h: 50%", out)
 
     def test_w_rate_limit_shows_bucket_even_with_past_reset(self):
         rl = {"seven_day": {"used_percentage": 50, "resets_at": NOW - 1}}
-        out = strip(sl.seg_alt_w_rate_limit(_data(rate_limits=rl), 200, THEME))
+        out = strip(claude_segments.seg_alt_w_rate_limit(_data(rate_limits=rl), 200, THEME))
         self.assertIn("7d: 50%", out)
 
     def test_h_rate_limit_colors_by_absolute_gap(self):
@@ -668,15 +688,15 @@ class TestCooperativeBuilders(unittest.TestCase):
         # used is 30 points apart -> RED; 43% used is 2 points -> GREEN.
         # Reverses the pace ratio's "low usage late in the window is calm".
         # Separate calls -- same key in a shared dict would collide.
-        with mock.patch.object(sl.time, "time", return_value=NOW):
+        with mock.patch.object(time, "time", return_value=NOW):
             rl_low = {"five_hour": {"used_percentage": 15, "resets_at": NOW + 9900}}
-            out_low = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_low), 200, THEME)
+            out_low = claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl_low), 200, THEME)
             self.assertIn(THEME.c("RED"), out_low)
             self.assertNotIn(THEME.c("GREEN"), out_low)
             self.assertIn("+15%", strip(out_low))
 
             rl_ok = {"five_hour": {"used_percentage": 43, "resets_at": NOW + 9900}}
-            out_ok = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_ok), 200, THEME)
+            out_ok = claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl_ok), 200, THEME)
             self.assertIn(THEME.c("GREEN"), out_ok)
             self.assertNotIn(THEME.c("RED"), out_ok)
             self.assertIn("+43%", strip(out_ok))
@@ -686,9 +706,9 @@ class TestCooperativeBuilders(unittest.TestCase):
         # 5 points AHEAD of the clock -> '-' glued to the percentage. gap =
         # 50 - (100.0 - 9900.0 * 100.0 / 18000) = 5.0 float-exact, so
         # abs(gap) hits the GREEN band's <= 5.0 boundary exactly.
-        with mock.patch.object(sl.time, "time", return_value=NOW):
+        with mock.patch.object(time, "time", return_value=NOW):
             rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 9900}}
-            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
+            out = claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
             self.assertIn("-50%", strip(out))
             self.assertIn(THEME.c("GREEN"), out)
 
@@ -698,16 +718,16 @@ class TestCooperativeBuilders(unittest.TestCase):
         # The marker-absence asserts are per spec ("the fallback case renders
         # no marker"); the missing-reset case is equality-pinned separately
         # by test_rate_limit_no_reset_stamp_when_absent.
-        with mock.patch.object(sl.time, "time", return_value=NOW):
+        with mock.patch.object(time, "time", return_value=NOW):
             rl_past = {"five_hour": {"used_percentage": 50, "resets_at": NOW - 1}}
-            out_past = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_past), 200, THEME)
+            out_past = claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl_past), 200, THEME)
             self.assertIn(THEME.c("WHITE"), out_past)
             self.assertNotIn(THEME.c("RED"), out_past)
             self.assertNotIn("+", strip(out_past))
             self.assertNotIn("-", strip(out_past))
 
             rl_skew = {"five_hour": {"used_percentage": 50, "resets_at": NOW + 3600 * 6}}
-            out_skew = sl.seg_alt_h_rate_limit(_data(rate_limits=rl_skew), 200, THEME)
+            out_skew = claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl_skew), 200, THEME)
             self.assertIn(THEME.c("WHITE"), out_skew)
             self.assertNotIn("+", strip(out_skew))
             self.assertNotIn("-", strip(out_skew))
@@ -716,9 +736,9 @@ class TestCooperativeBuilders(unittest.TestCase):
         # Reversal pinned by the spec: the Phase 8.1 live case (25% used,
         # 4h of a 5h window elapsed -> 80%) was GREEN under the pace ratio
         # (25/0.8 = 31.25); the absolute gap is 55 points -> RED.
-        with mock.patch.object(sl.time, "time", return_value=NOW):
+        with mock.patch.object(time, "time", return_value=NOW):
             rl = {"five_hour": {"used_percentage": 25, "resets_at": NOW + 3600}}
-            out = sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
+            out = claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
             self.assertIn(THEME.c("RED"), out)
             self.assertNotIn(THEME.c("GREEN"), out)
             self.assertIn("+25%", strip(out))
@@ -728,12 +748,12 @@ class TestCooperativeBuilders(unittest.TestCase):
         # 80% elapsed -> usage behind the clock -> '+'), then the reset
         # suffix; the terse/narrow tier stays byte-identical (its own test
         # pins that).
-        with mock.patch.object(sl.time, "time", return_value=NOW):
+        with mock.patch.object(time, "time", return_value=NOW):
             rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600}}
-            out = strip(sl.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
+            out = strip(claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
             self.assertEqual(
                 out,
-                f"⚡️ 5h: +42% (↺ {sl.datetime.fromtimestamp(NOW + 3600).strftime('%H:%M')})",
+                f"⚡️ 5h: +42% (↺ {datetime.datetime.fromtimestamp(NOW + 3600).strftime('%H:%M')})",
             )
 
     def test_weekly_drops_before_hourly_under_column_pressure(self):
@@ -765,17 +785,17 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertIn("7d: 13%", roomy)
 
     def test_model_and_clock(self):
-        self.assertEqual(strip(sl.seg_model(_data(), 200, THEME)), "Opus 4.8")
-        self.assertEqual(strip(sl.seg_alt_time_clock(_data(), 200, THEME)), "⏰ 14:30")
+        self.assertEqual(strip(common_segments.seg_model(_data(), 200, THEME)), "Opus 4.8")
+        self.assertEqual(strip(common_segments.seg_alt_time_clock(_data(), 200, THEME)), "⏰ 14:30")
 
     def test_todo_truncates_and_hides(self):
-        self.assertIn("hello", strip(sl.seg_todo(
+        self.assertIn("hello", strip(claude_segments.seg_todo(
             _data(todo_state="in_progress", todo_text="hello"), 200, THEME)))
-        self.assertIsNone(sl.seg_todo(
+        self.assertIsNone(claude_segments.seg_todo(
             _data(todo_state="in_progress", todo_text="hello"), 8, THEME))
 
     def test_path_never_none(self):
-        self.assertIsNotNone(sl.seg_path(_data(), 1, THEME))
+        self.assertIsNotNone(common_segments.seg_path(_data(), 1, THEME))
 
     def test_builders_registry_complete(self):
         for key in ("path", "git_branch", "git_dirty", "todo", "model",
@@ -783,27 +803,27 @@ class TestCooperativeBuilders(unittest.TestCase):
                     "alt_time_session", "alt_time_api", "render_time",
                     "alt_term_dimensions", "context", "chat_size",
                     "alt_process_memory", "alt_h_rate_limit", "alt_w_rate_limit"):
-            self.assertIn(key, sl.BUILDERS, key)
-            self.assertTrue(callable(sl.BUILDERS[key]))
+            self.assertIn(key, claude_host.BUILDERS, key)
+            self.assertTrue(callable(claude_host.BUILDERS[key]))
 
     def test_discovered_builders_cover_segments(self):
         # The registry is auto-discovered from the seg_* functions (FR-A.3, D7):
         # every SEGMENTS key has a discovered builder and discovery finds no stray
         # keys — guards the convention so adding a seg_x just works.
-        self.assertEqual(set(sl.BUILDERS), set(common_types.SEGMENTS))
-        self.assertTrue(all(callable(fn) for fn in sl.BUILDERS.values()))
+        self.assertEqual(set(claude_host.BUILDERS), set(common_types.SEGMENTS))
+        self.assertTrue(all(callable(fn) for fn in claude_host.BUILDERS.values()))
 
 
 class TestDisplayDir(unittest.TestCase):
     def test_short_path_kept_whole(self):
-        self.assertEqual(sl.util_display_dir("/home/u/proj", "/home/u"), "~/proj")
+        self.assertEqual(common_types.util_display_dir("/home/u/proj", "/home/u"), "~/proj")
 
     def test_medium_path_collapses_to_parent_slash_name(self):
         # full (~/workspaces/very-long-organization-name-here/short-repo) is
         # 56 cols, over the 50 structural cap -> falls to parent/name, which
         # is 43 cols, under the cap -> shown.
         work_dir = "/home/u/workspaces/very-long-organization-name-here/short-repo"
-        self.assertEqual(sl.util_display_dir(work_dir, "/home/u"),
+        self.assertEqual(common_types.util_display_dir(work_dir, "/home/u"),
                           "very-long-organization-name-here/short-repo")
 
     def test_falls_to_basename_alone_when_both_structural_forms_too_long(self):
@@ -812,7 +832,7 @@ class TestDisplayDir(unittest.TestCase):
         # cols) fits the 30-col name-floor high threshold, so it's shown
         # unclipped.
         work_dir = "/home/u/" + "a" * 60 + "/short-name"
-        self.assertEqual(sl.util_display_dir(work_dir, "/home/u"), "short-name")
+        self.assertEqual(common_types.util_display_dir(work_dir, "/home/u"), "short-name")
 
     def test_basename_clipped_to_20_when_over_30(self):
         # full is 88 cols and parent/name is 75 cols, both over the 50
@@ -821,12 +841,12 @@ class TestDisplayDir(unittest.TestCase):
         # clipped to 20 via util_two_state_cap.
         work_dir = ("/home/u/workspaces/very-long-organization-name-here-extended"
                     "/another-very-long-repository-name")
-        self.assertEqual(sl.util_display_dir(work_dir, "/home/u"),
+        self.assertEqual(common_types.util_display_dir(work_dir, "/home/u"),
                           "another-very-long-r…")
 
     def test_no_ellipsis_when_a_variant_fits_whole(self):
         work_dir = "/home/u/workspaces/very-long-organization-name-here/short-repo"
-        self.assertNotIn("…", sl.util_display_dir(work_dir, "/home/u"))
+        self.assertNotIn("…", common_types.util_display_dir(work_dir, "/home/u"))
 
 
 class TestPackLine(unittest.TestCase):
@@ -866,7 +886,7 @@ class TestPackLine(unittest.TestCase):
 
     def test_respects_right_margin(self):
         out = _pack(["model", "alt_time_clock", "effort", "lines"], _data(), 60)
-        self.assertLessEqual(sl.util_visible_width(out), 60 - sl.RIGHT_MARGIN)
+        self.assertLessEqual(common_types.util_visible_width(out), 60 - common_types.RIGHT_MARGIN)
 
 
 class TestMetaPositionIndependent(unittest.TestCase):
@@ -883,7 +903,7 @@ class TestMetaPositionIndependent(unittest.TestCase):
     def _make_cfg_with_slowest_on_line(self, line_idx: int):
         """A two-line config: `slow_seg` always lives on line 1 (so it is the
         global slowest), while the `slowest` readout is placed on `line_idx`."""
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         segs = {k: False for k in cfg.segments}
         for k in ("path", "model", "slowest", "slow_seg"):
             segs[k] = True
@@ -896,8 +916,8 @@ class TestMetaPositionIndependent(unittest.TestCase):
     def _render_slowest_on(self, line_idx: int) -> str:
         cfg = self._make_cfg_with_slowest_on_line(line_idx)
         ctx = _data()
-        with mock.patch.dict(sl.BUILDERS, {"slow_seg": self._slow_seg}):
-            rendered = sl.core_render(ctx, cfg=cfg)
+        with mock.patch.dict(claude_host.BUILDERS, {"slow_seg": self._slow_seg}):
+            rendered = claude_host.core_render(ctx, cfg=cfg)
         # seg_slowest emits "🐌 <name> <dur>"; assert on the crowned NAME (the
         # position-dependent part), not the duration (real-time jitter would make
         # the exact ms flaky across two independent renders).
@@ -929,11 +949,11 @@ class TestSlowestTiming(unittest.TestCase):
             time.sleep(0.005)
             return common_types.GitSnapshot(in_repo=True, branch="main", dirty="clean",
                                   is_worktree=False, wt_name="")
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         cfg.segments.update({"slowest": True, "git_branch": True})
-        ctx = sl.core_build_context(
+        ctx = claude_payload.core_build_context(
             raw={"workspace": {"current_dir": "/tmp"}}, config=cfg, theme=THEME,
-            cols=200, lines=50, dim_assumed=False, t_start=sl.time.perf_counter_ns(),
+            cols=200, lines=50, dim_assumed=False, t_start=time.perf_counter_ns(),
             effort="high", home="/home/u", claude_dir="/home/u/.claude")
         with mock.patch.object(common_probe, "probe_git_snapshot", side_effect=slow_git):
             _pack(["git_branch"], ctx, 200, cfg=cfg)
@@ -961,7 +981,7 @@ class TestSlowestTiming(unittest.TestCase):
         # With `slowest` enabled the packer times each builder and records the max
         # as ctx.slowest = (name, ns) — the exact attribute seg_slowest reads.
         builders = {"fast_seg": self._fast, "slow_seg": self._slow}
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         cfg.segments.update({"slowest": True, "fast_seg": True, "slow_seg": True})
         data = _data()
         _pack(["fast_seg", "slow_seg"], data, 200, cfg=cfg, builders=builders)
@@ -974,7 +994,7 @@ class TestSlowestTiming(unittest.TestCase):
         # core_render() measures all layout lines against one ctx; the running max
         # must survive across measure passes (slow line first, fast line second).
         builders = {"fast_seg": self._fast, "slow_seg": self._slow}
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         cfg.segments.update({"slowest": True, "fast_seg": True, "slow_seg": True})
         data = _data()
         _pack(["slow_seg"], data, 200, cfg=cfg, builders=builders)
@@ -988,7 +1008,7 @@ class TestSlowestTiming(unittest.TestCase):
             del avail
             raise RuntimeError("nope")
         builders = {"boom": boom, "fast_seg": self._fast}
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         cfg.segments.update({"slowest": True, "boom": True, "fast_seg": True})
         data = _data()
         _pack(["boom", "fast_seg"], data, 200, cfg=cfg, builders=builders)
@@ -1001,7 +1021,7 @@ class TestSlowestTiming(unittest.TestCase):
             del avail
             return None
         builders = {"empty_seg": empty, "fast_seg": self._fast}
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         cfg.segments.update({"slowest": True, "empty_seg": True, "fast_seg": True})
         data = _data()
         _pack(["empty_seg", "fast_seg"], data, 200, cfg=cfg, builders=builders)
@@ -1019,9 +1039,9 @@ class TestSlowestTiming(unittest.TestCase):
     def test_later_segment_reported_even_when_slowest_precedes_it(self):
         # Phase A times a slow non-meta segment before Phase B builds meta, so
         # seg_slowest names it even when `slowest` is positioned BEFORE it in the key order.
-        builders = dict(sl.BUILDERS)
+        builders = dict(claude_host.BUILDERS)
         builders["slow_seg"] = self._slow
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         cfg.segments.update({"slowest": True, "slow_seg": True})
         data = _data()
         out = _pack(["slowest", "slow_seg"], data, 200, cfg=cfg, builders=builders)
@@ -1035,7 +1055,7 @@ class TestSlowestTiming(unittest.TestCase):
             time.sleep(0.005)
             return "RT"
         builders = {"render_time": slow_rt, "fast_seg": self._fast}
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         cfg.segments.update({"slowest": True, "render_time": True, "fast_seg": True})
         data = _data()
         _pack(["render_time", "fast_seg"], data, 200, cfg=cfg, builders=builders)
@@ -1049,7 +1069,7 @@ class TestSlowestTiming(unittest.TestCase):
             time.sleep(0.005)
             return "X" * 100
         builders = {"wide_seg": slow_wide, "fast_seg": self._fast}
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         cfg.segments.update({"slowest": True, "wide_seg": True, "fast_seg": True})
         data = _data()
         _pack(["fast_seg", "wide_seg"], data, 20, cfg=cfg, builders=builders)
@@ -1059,22 +1079,22 @@ class TestSlowestTiming(unittest.TestCase):
         # Builds are always timed now (negligible, and FR-R.1 drops the per-segment
         # special case) — but with `slowest` disabled its readout is gated off and
         # never renders. The internal max may be tracked; the user never sees it.
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         cfg.segments["slowest"] = False
-        theme = sl.core_build_theme(cfg)
+        theme = common_render.core_build_theme(cfg)
         env = {"HOME": "/h", "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50"}
         with mock.patch.object(common_probe, "probe_git_snapshot",
                                return_value=common_types.GitSnapshot(
                                    True, "m", "clean", False, "")):
             data, _cols, _lines = _ctx_from_env(
                 {"workspace": {"current_dir": "."}, "transcript_path": ""}, env, cfg)
-            out = "\n".join(sl.core_render(data, cfg, theme))
+            out = "\n".join(claude_host.core_render(data, cfg, theme))
         self.assertNotIn("🐌", strip(out))
 
 
 class TestSlowestSegment(unittest.TestCase):
     def test_renders_culprit_name_and_duration(self):
-        out = sl.seg_slowest(_data(slowest=("git", 30_000_000)), 200, THEME)
+        out = common_segments.seg_slowest(_data(slowest=("git", 30_000_000)), 200, THEME)
         self.assertIn("🐌", out)
         self.assertIn("git", strip(out))       # names the culprit segment
         self.assertIn("30ms", strip(out))      # and its duration
@@ -1082,33 +1102,33 @@ class TestSlowestSegment(unittest.TestCase):
     def test_colored_by_single_slowest_ramp(self):
         # 30ms -> YELLOW band, 100ms -> RED+bold — the one shared slowest ramp.
         self.assertIn(THEME.c("YELLOW"),
-                      sl.seg_slowest(_data(slowest=("git", 30_000_000)), 200, THEME))
+                      common_segments.seg_slowest(_data(slowest=("git", 30_000_000)), 200, THEME))
         self.assertIn(THEME.c("RED+bold"),
-                      sl.seg_slowest(_data(slowest=("ext", 100_000_000)), 200, THEME))
+                      common_segments.seg_slowest(_data(slowest=("ext", 100_000_000)), 200, THEME))
 
     def test_omitted_when_no_timing(self):
-        self.assertIsNone(sl.seg_slowest(_data(), 200, THEME))   # no data["slowest"]
+        self.assertIsNone(common_segments.seg_slowest(_data(), 200, THEME))   # no data["slowest"]
 
     def test_on_by_default_and_registered(self):
         self.assertTrue(common_types.SEGMENTS["slowest"])
-        self.assertIn("slowest", sl.BUILDERS)
+        self.assertIn("slowest", claude_host.BUILDERS)
 
 
 class TestRenderLayout(unittest.TestCase):
     def test_three_lines_when_tall_and_wide(self):
-        self.assertEqual(len(sl.core_render(_data())), 3)
+        self.assertEqual(len(claude_host.core_render(_data())), 3)
 
     def test_line_gating_by_rows(self):
-        self.assertEqual(len(sl.core_render(_data(lines=10))), 1)   # identity only
-        self.assertEqual(len(sl.core_render(_data(lines=25))), 2)   # + model row
+        self.assertEqual(len(claude_host.core_render(_data(lines=10))), 1)   # identity only
+        self.assertEqual(len(claude_host.core_render(_data(lines=25))), 2)   # + model row
 
     def test_identity_line_never_empty(self):
-        out = sl.core_render(_data(branch="", dirty="clean", todo_text=None))
+        out = claude_host.core_render(_data(branch="", dirty="clean", todo_text=None))
         self.assertTrue(out[0].strip())
 
     def test_context_pinned(self):
-        self.assertIn("context", sl.PINNED)
-        self.assertIn("path", sl.PINNED)
+        self.assertIn("context", common_types.PINNED)
+        self.assertIn("path", common_types.PINNED)
 
 
 class TestDocumentation(unittest.TestCase):
@@ -1138,7 +1158,8 @@ class TestProcAndGit(unittest.TestCase):
         self.assertTrue(rss is None or isinstance(rss, int))
         with tempfile.TemporaryDirectory() as home:
             env = {"HOME": home}
-            cfg = sl.cfg_default_config()._replace(cache_base=common_config.cfg_cache_base(env))
+            cfg = common_config.cfg_default_config(
+                )._replace(cache_base=common_config.cfg_cache_base(env))
             snap = common_probe.probe_git_snapshot(".", cfg)
         self.assertIn(snap.dirty, ("clean", "untracked", "modified"))
         self.assertIsInstance(snap.is_worktree, bool)
@@ -1174,8 +1195,9 @@ class TestProcAndGit(unittest.TestCase):
                           if "status" in cmd else ".git\n.git\n/repo\n")
             return R()
         env = self._home_env()
-        cfg = sl.cfg_default_config()._replace(cache_base=common_config.cfg_cache_base(env))
-        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+        cfg = common_config.cfg_default_config(
+            )._replace(cache_base=common_config.cfg_cache_base(env))
+        with mock.patch.object(subprocess, "run", side_effect=fake_run):
             snap = common_probe.probe_git_snapshot(".", cfg)
             self.assertEqual(snap.branch, "main")
             self.assertEqual(snap.dirty, "untracked")   # ?? present -> untracked
@@ -1185,7 +1207,8 @@ class TestProcAndGit(unittest.TestCase):
         # The probe owns its policy: it ALWAYS does the full untracked walk (no
         # per-call gating knob). Laziness — not a flag — gates whether it runs.
         env = self._home_env()
-        cfg = sl.cfg_default_config()._replace(cache_base=common_config.cfg_cache_base(env))
+        cfg = common_config.cfg_default_config(
+            )._replace(cache_base=common_config.cfg_cache_base(env))
         seen = []
         def fake_run(cmd, *, _seen=seen, **kw):
             del kw
@@ -1194,7 +1217,7 @@ class TestProcAndGit(unittest.TestCase):
                 returncode = 0
                 stdout = "## main\n"
             return R()
-        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+        with mock.patch.object(subprocess, "run", side_effect=fake_run):
             common_probe.probe_git_snapshot(".", cfg)
         status_cmd = next(c for c in seen if "status" in c)
         self.assertNotIn("--untracked-files=no", status_cmd)   # always the full walk
@@ -1203,7 +1226,8 @@ class TestProcAndGit(unittest.TestCase):
         # The probe always runs the worktree rev-parse (no want_worktree knob);
         # laziness gates whether probe_git_snapshot is called at all, not this rev-parse.
         env = self._home_env()
-        cfg = sl.cfg_default_config()._replace(cache_base=common_config.cfg_cache_base(env))
+        cfg = common_config.cfg_default_config(
+            )._replace(cache_base=common_config.cfg_cache_base(env))
         seen = []
         def fake_run(cmd, *, _seen=seen, **kw):
             del kw
@@ -1212,7 +1236,7 @@ class TestProcAndGit(unittest.TestCase):
                 returncode = 0
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
             return R()
-        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+        with mock.patch.object(subprocess, "run", side_effect=fake_run):
             common_probe.probe_git_snapshot(".", cfg)
         self.assertTrue(any("rev-parse" in c for c in seen))
 
@@ -1225,8 +1249,9 @@ class TestProcAndGit(unittest.TestCase):
                           else "/wt/.git/worktrees/feat-x\n/main/.git\n/path/to/feat-x\n")
             return R()
         env = self._home_env()
-        cfg = sl.cfg_default_config()._replace(cache_base=common_config.cfg_cache_base(env))
-        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+        cfg = common_config.cfg_default_config(
+            )._replace(cache_base=common_config.cfg_cache_base(env))
+        with mock.patch.object(subprocess, "run", side_effect=fake_run):
             snap = common_probe.probe_git_snapshot(".", cfg)
             self.assertEqual((snap.branch, snap.dirty), ("main", "clean"))
             self.assertTrue(snap.is_worktree)        # git-dir != git-common-dir
@@ -1244,8 +1269,9 @@ class TestProcAndGit(unittest.TestCase):
                           else "/repo/.git\n/repo/.git\n/repo\n")
             return R()
         env = self._home_env()
-        cfg = sl.cfg_default_config()._replace(cache_base=common_config.cfg_cache_base(env))
-        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+        cfg = common_config.cfg_default_config(
+            )._replace(cache_base=common_config.cfg_cache_base(env))
+        with mock.patch.object(subprocess, "run", side_effect=fake_run):
             snap = common_probe.probe_git_snapshot(".", cfg)
             self.assertFalse(snap.is_worktree)
             self.assertEqual(snap.root_name, "repo")
@@ -1261,7 +1287,7 @@ class TestProcAndGit(unittest.TestCase):
                 returncode = 0
                 stdout = "/repo/.git\n/repo/.git\n/repo\n"
             return R()
-        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+        with mock.patch.object(subprocess, "run", side_effect=fake_run):
             common_probe.probe_git_worktree_info(".")
         self.assertIn("--path-format=absolute", seen[0])
 
@@ -1277,10 +1303,9 @@ class TestProcAndGit(unittest.TestCase):
                 returncode = 0
                 stdout = "/srv/bare-repo\n/srv/bare-repo\n/srv/bare-repo\n"
             return R()
-        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+        with mock.patch.object(subprocess, "run", side_effect=fake_run):
             in_repo, _is_worktree, _name, root_name, root_path = \
-                common_probe.probe_git_worktree_info(
-                    ".")
+                common_probe.probe_git_worktree_info(".")
         self.assertTrue(in_repo)
         self.assertEqual(root_name, "bare-repo")
         self.assertEqual(root_path, "/srv/bare-repo")
@@ -1289,7 +1314,8 @@ class TestProcAndGit(unittest.TestCase):
         # Second call within the TTL must NOT re-run the rev-parse (cached on disk).
         env = self._home_env()
         cache_base = common_config.cfg_cache_base(env)
-        cfg = sl.cfg_default_config()._replace(cache_base=cache_base, git={"cache_ttl": 100})
+        cfg = common_config.cfg_default_config(
+            )._replace(cache_base=cache_base, git={"cache_ttl": 100})
         calls = []
         def fake_run(cmd, **kw):
             del kw
@@ -1298,7 +1324,7 @@ class TestProcAndGit(unittest.TestCase):
                 returncode = 0
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
             return R()
-        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+        with mock.patch.object(subprocess, "run", side_effect=fake_run):
             common_probe.probe_git_snapshot(".", cfg)
             common_probe.probe_git_snapshot(".", cfg)
         self.assertEqual(sum("rev-parse" in c for c in calls), 1)   # only once
@@ -1306,7 +1332,8 @@ class TestProcAndGit(unittest.TestCase):
     def test_worktree_cache_bypassed_when_ttl_zero(self):
         env = self._home_env()
         cache_base = common_config.cfg_cache_base(env)
-        cfg = sl.cfg_default_config()._replace(cache_base=cache_base, git={"cache_ttl": 0})
+        cfg = common_config.cfg_default_config(
+            )._replace(cache_base=cache_base, git={"cache_ttl": 0})
         calls = []
         def fake_run(cmd, **kw):
             del kw
@@ -1315,7 +1342,7 @@ class TestProcAndGit(unittest.TestCase):
                 returncode = 0
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
             return R()
-        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+        with mock.patch.object(subprocess, "run", side_effect=fake_run):
             common_probe.probe_git_snapshot(".", cfg)
             common_probe.probe_git_snapshot(".", cfg)
         self.assertEqual(sum("rev-parse" in c for c in calls), 2)   # ttl<=0 always runs
@@ -1326,14 +1353,15 @@ class TestProcAndGit(unittest.TestCase):
         # the hot render path).
         env = self._home_env()
         cache_base = common_config.cfg_cache_base(env)
-        cfg = sl.cfg_default_config()._replace(cache_base=cache_base, git={"cache_ttl": 0})
+        cfg = common_config.cfg_default_config(
+            )._replace(cache_base=cache_base, git={"cache_ttl": 0})
         def fake_run(cmd, **kw):
             del kw
             class R:
                 returncode = 0
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
             return R()
-        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run):
+        with mock.patch.object(subprocess, "run", side_effect=fake_run):
             common_probe.probe_git_snapshot(".", cfg)
         self.assertFalse(os.path.exists(common_types.util_git_cache_path(".", cache_base)))
 
@@ -1452,9 +1480,9 @@ class TestEndToEnd(unittest.TestCase):
                      "total_duration_ms": 65000, "total_api_duration_ms": 4200},
         }
         env = {"STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50", "HOME": "/home/u"}
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         data, _cols, _lines = _ctx_from_env(raw, env, cfg)
-        out = sl.core_render(data)
+        out = claude_host.core_render(data)
         self.assertEqual(len(out), 3)
         self.assertIn("Opus 4.8", strip(out[1]))
         self.assertIn("47%", strip(out[1]))
@@ -1472,14 +1500,14 @@ class TestLazyCompute(unittest.TestCase):
 
     def _build_and_render(self, segs, raw=None, cfg=None):
         if cfg is None:
-            cfg = sl.cfg_default_config()
+            cfg = common_config.cfg_default_config()
         cfg.segments.clear()                       # cfg is a namedtuple; mutate the dict
         cfg.segments.update(dict.fromkeys(common_types.SEGMENTS, False))
         cfg.segments.update(segs)
-        theme = sl.core_build_theme(cfg)
+        theme = common_render.core_build_theme(cfg)
         # build_data is segment-agnostic; cfg.segments gates probes via render().
         data, _cols, _lines = _ctx_from_env(raw or self.RAW, self.ENV, cfg)
-        sl.core_render(data, cfg, theme)
+        claude_host.core_render(data, cfg, theme)
         return data
 
     def test_disabled_segments_skip_their_probes(self):
@@ -1521,21 +1549,21 @@ class TestLazyCompute(unittest.TestCase):
     def test_none_segments_computes_everything(self):
         # build_data is segment-agnostic: it never gates by flag. Rendering an
         # all-on config fires the probes (here the todo parse).
-        cfg = sl.cfg_default_config()
-        theme = sl.core_build_theme(cfg)
+        cfg = common_config.cfg_default_config()
+        theme = common_render.core_build_theme(cfg)
         with mock.patch.object(
             claude_probes, "probe_current_todo", return_value=(None, None)) as ct,\
              mock.patch.object(common_probe, "probe_git_snapshot",
                                return_value=common_types.GitSnapshot(
                                    True, "m", "clean", False, "")):
             data, _cols, _lines = _ctx_from_env(self.RAW, self.ENV, cfg)
-            sl.core_render(data, cfg, theme)
+            claude_host.core_render(data, cfg, theme)
             ct.assert_called_once()
 
     def test_git_ttl_threaded_to_snapshot(self):
         # The resolved [git] cache_ttl flows through build_data into probe_git_snapshot
         # via the Config object (D8 — consumers read cache_ttl off the object).
-        cfg = sl.cfg_default_config()._replace(git={"cache_ttl": 42})
+        cfg = common_config.cfg_default_config()._replace(git={"cache_ttl": 42})
         with mock.patch.object(common_probe, "probe_git_snapshot",
                                return_value=common_types.GitSnapshot(
                                    True, "m", "clean", False, "")) as gs:
@@ -1583,7 +1611,7 @@ class TestBlueFix(unittest.TestCase):
         self.assertEqual(THEME.c("LIGHTBLUE"), "\033[38;5;75m")
 
     def test_path_emits_true_blue_not_bold_ansi(self):
-        out = sl.seg_path(_data(), 80, THEME)
+        out = common_segments.seg_path(_data(), 80, THEME)
         self.assertIn("38;5;39", out)
         self.assertNotIn("\033[1;34m", out)
 
@@ -1592,14 +1620,14 @@ class TestSegPathProjectRoot(unittest.TestCase):
     def test_shows_root_name_inside_a_repo(self):
         ctx = _data(in_repo=True, root_name="ai-kit",
                     work_dir="/home/u/proj/.claude/worktrees/feat-x")
-        out = sl.seg_path(ctx, 80, THEME)
+        out = common_segments.seg_path(ctx, 80, THEME)
         self.assertIn("ai-kit", out)
         self.assertNotIn("feat-x", out)
 
     def test_ignores_cwd_depth_inside_a_repo(self):
         ctx = _data(in_repo=True, root_name="ai-kit",
                     work_dir="/home/u/proj/very/deeply/nested/subdir")
-        out = sl.seg_path(ctx, 80, THEME)
+        out = common_segments.seg_path(ctx, 80, THEME)
         self.assertIn("ai-kit", out)
 
     def test_non_worktree_short_subdir_shows_root_not_old_cwd_display(self):
@@ -1612,10 +1640,10 @@ class TestSegPathProjectRoot(unittest.TestCase):
         # substitution applies to every git-repo session, not only worktrees.
         work_dir = "/home/u/proj/tools"
         home = "/home/u"
-        old_display = sl.util_display_dir(work_dir, home)
+        old_display = common_types.util_display_dir(work_dir, home)
         self.assertEqual(old_display, "~/proj/tools")  # sanity: old behavior would show this
         ctx = _data(in_repo=True, root_name="proj", work_dir=work_dir, home=home)
-        out = sl.seg_path(ctx, 80, THEME)
+        out = common_segments.seg_path(ctx, 80, THEME)
         self.assertIn("proj", out)
         self.assertNotIn(old_display, out)
 
@@ -1626,13 +1654,13 @@ class TestSegPathProjectRoot(unittest.TestCase):
         # (util_two_state_cap(root_name, 30, 20)), which clips a 60-col name.
         long_name = "a" * 60
         ctx = _data(in_repo=True, root_name=long_name)
-        out = sl.seg_path(ctx, 80, THEME)
+        out = common_segments.seg_path(ctx, 80, THEME)
         self.assertIn("…", out)
         self.assertNotIn(long_name, out)
 
     def test_shows_full_home_relative_root_path_when_short(self):
         ctx = _data(in_repo=True, root_name="proj", root_path="/home/u/proj", home="/home/u")
-        out = sl.seg_path(ctx, 80, THEME)
+        out = common_segments.seg_path(ctx, 80, THEME)
         self.assertIn("~/proj", strip(out))
 
     def test_falls_to_parent_slash_name_when_full_path_too_long(self):
@@ -1641,7 +1669,7 @@ class TestSegPathProjectRoot(unittest.TestCase):
         # cols, fits).
         root_path = "/home/u/workspaces/very-long-organization-name-here/short-repo"
         ctx = _data(in_repo=True, root_name="short-repo", root_path=root_path, home="/home/u")
-        out = sl.seg_path(ctx, 80, THEME)
+        out = common_segments.seg_path(ctx, 80, THEME)
         self.assertIn("very-long-organization-name-here/short-repo", strip(out))
         self.assertNotIn("~/workspaces", strip(out))
 
@@ -1651,7 +1679,7 @@ class TestSegPathProjectRoot(unittest.TestCase):
         # 30-col name-floor high threshold, so it's shown unclipped.
         root_path = "/home/u/" + "a" * 60 + "/short-name"
         ctx = _data(in_repo=True, root_name="short-name", root_path=root_path, home="/home/u")
-        out = sl.seg_path(ctx, 80, THEME)
+        out = common_segments.seg_path(ctx, 80, THEME)
         self.assertIn("short-name", strip(out))
         self.assertNotIn("…", strip(out))
 
@@ -1664,7 +1692,7 @@ class TestSegPathProjectRoot(unittest.TestCase):
                      "/another-very-long-repository-name")
         ctx = _data(in_repo=True, root_name="another-very-long-repository-name",
                     root_path=root_path, home="/home/u")
-        out = sl.seg_path(ctx, 80, THEME)
+        out = common_segments.seg_path(ctx, 80, THEME)
         self.assertIn("another-very-long-r…", strip(out))
         self.assertNotIn("very-long-organization-name-here-extended/", strip(out))
 
@@ -1674,7 +1702,7 @@ class TestSegPathProjectRoot(unittest.TestCase):
         # verbatim as the first structural variant (design doc §3 edge case:
         # "Repo root not under ctx.home" falls back to the raw absolute path).
         ctx = _data(in_repo=True, root_name="proj", root_path="/mnt/other/proj", home="/home/u")
-        out = sl.seg_path(ctx, 80, THEME)
+        out = common_segments.seg_path(ctx, 80, THEME)
         self.assertIn("/mnt/other/proj", strip(out))
         self.assertNotIn("~", strip(out))
 
@@ -1685,13 +1713,13 @@ class TestSegPathProjectRoot(unittest.TestCase):
         # before this plan touched seg_path.
         ctx = _data(in_repo=True, root_name="", root_path="/home/u/proj",
                     work_dir="/home/u/proj", home="/home/u")
-        out = sl.seg_path(ctx, 80, THEME)
-        self.assertEqual(strip(out), sl.util_display_dir("/home/u/proj", "/home/u"))
+        out = common_segments.seg_path(ctx, 80, THEME)
+        self.assertEqual(strip(out), common_types.util_display_dir("/home/u/proj", "/home/u"))
 
     def test_falls_back_to_cwd_outside_a_repo(self):
         ctx = _data(in_repo=False, work_dir="/home/u/scratch", home="/home/u")
-        out = sl.seg_path(ctx, 80, THEME)
-        self.assertIn(sl.util_display_dir("/home/u/scratch", "/home/u"), out)
+        out = common_segments.seg_path(ctx, 80, THEME)
+        self.assertIn(common_types.util_display_dir("/home/u/scratch", "/home/u"), out)
 
 
 class TestProbeTranscriptCompaction(unittest.TestCase):
@@ -1773,37 +1801,38 @@ class TestChatSizeRamp(unittest.TestCase):
             (10 * MB, THEME.c("MAGENTA")), (20 * MB, THEME.c("MAGENTA")),
         ]
         for n, want in cases:
-            self.assertEqual(sl.util_pick_color(n, THEME.ramps["chat_size"]), want, n)
+            self.assertEqual(common_types.util_pick_color(n, THEME.ramps["chat_size"]), want, n)
 
     def test_seg_chat_size_colors_the_size(self):
-        out = sl.seg_chat_size(_data(chat_bytes=6 * self.MB), 40, THEME)
+        out = claude_segments.seg_chat_size(_data(chat_bytes=6 * self.MB), 40, THEME)
         self.assertIn("💾", out)
         self.assertIn(THEME.c("RED+bold"), out)       # 6 MB -> red band
 
     def test_seg_chat_size_none_when_no_bytes(self):
-        self.assertIsNone(sl.seg_chat_size(_data(chat_bytes=None), 40, THEME))
+        self.assertIsNone(claude_segments.seg_chat_size(_data(chat_bytes=None), 40, THEME))
 
     def test_never_compacted_shows_total_only_at_both_tiers(self):
-        out_wide = strip(sl.seg_chat_size(_data(chat_bytes=850_000), 200, THEME))
-        out_narrow = strip(sl.seg_chat_size(_data(chat_bytes=850_000), 40, THEME))
+        out_wide = strip(claude_segments.seg_chat_size(_data(chat_bytes=850_000), 200, THEME))
+        out_narrow = strip(claude_segments.seg_chat_size(_data(chat_bytes=850_000), 40, THEME))
         self.assertEqual(out_wide, out_narrow)
-        self.assertIn(sl.fmt_bytes(850_000), out_wide)
+        self.assertIn(common_types.fmt_bytes(850_000), out_wide)
         self.assertNotIn("/", out_wide)
         self.assertNotIn("x)", out_wide)
 
     def test_compacted_shows_since_over_total_with_count_when_room(self):
-        out = strip(sl.seg_chat_size(
+        out = strip(claude_segments.seg_chat_size(
             _data(chat_bytes=4_200_000, chat_since=320_000, chat_compactions=3), 200, THEME))
-        self.assertIn(f"{sl.fmt_bytes(320_000)}/{sl.fmt_bytes(4_200_000)} (3x)", out)
+        self.assertIn(
+            f"{common_types.fmt_bytes(320_000)}/{common_types.fmt_bytes(4_200_000)} (3x)", out)
 
     def test_compacted_drops_to_since_only_when_narrow(self):
-        out = strip(sl.seg_chat_size(
+        out = strip(claude_segments.seg_chat_size(
             _data(chat_bytes=4_200_000, chat_since=320_000, chat_compactions=3), 12, THEME))
-        self.assertEqual(out, f"💾 {sl.fmt_bytes(320_000)}")
+        self.assertEqual(out, f"💾 {common_types.fmt_bytes(320_000)}")
 
     def test_ramp_color_driven_by_since_not_total(self):
         # 6 MB total but only 900 KB since last compaction -> CYAN band, not RED
-        out = sl.seg_chat_size(
+        out = claude_segments.seg_chat_size(
             _data(chat_bytes=6 * self.MB, chat_since=900 * self.KB, chat_compactions=1), 200, THEME)
         self.assertIn(THEME.c("CYAN"), out)
         self.assertNotIn(THEME.c("RED+bold"), out)
@@ -1811,21 +1840,21 @@ class TestChatSizeRamp(unittest.TestCase):
 
 class TestEffortAutoSetting(unittest.TestCase):
     def test_auto_appends_bracket_when_room(self):
-        out = strip(sl.seg_effort(_data(effort="high", effort_auto=True), 40, THEME))
+        out = strip(claude_segments.seg_effort(_data(effort="high", effort_auto=True), 40, THEME))
         self.assertIn("high", out)
         self.assertIn("[auto]", out)
 
     def test_resolved_level_keeps_its_color_in_auto(self):
-        out = sl.seg_effort(_data(effort="high", effort_auto=True), 40, THEME)
+        out = claude_segments.seg_effort(_data(effort="high", effort_auto=True), 40, THEME)
         self.assertIn(f'{THEME.c("YELLOW")}high', out)   # level keeps its fixed color
 
     def test_auto_compacts_to_asterisk_when_tight(self):
-        out = strip(sl.seg_effort(_data(effort="medium", effort_auto=True), 18, THEME))
+        out = strip(claude_segments.seg_effort(_data(effort="medium", effort_auto=True), 18, THEME))
         self.assertIn("medium*", out)
         self.assertNotIn("[auto]", out)
 
     def test_non_auto_has_no_annotation(self):
-        out = strip(sl.seg_effort(_data(effort="high", effort_auto=False), 40, THEME))
+        out = strip(claude_segments.seg_effort(_data(effort="high", effort_auto=False), 40, THEME))
         self.assertIn("high", out)
         self.assertNotIn("[auto]", out)
         self.assertNotIn("*", out)
@@ -1882,14 +1911,14 @@ class TestEffortSettingAuto(unittest.TestCase):
 class TestResolveEffort(unittest.TestCase):
     def test_level_auto_normalized_away(self):
         # "auto" is a *setting*, never a resolved level — it must not survive here.
-        self.assertEqual(sl.cfg_resolve_effort({"effort": {"level": "auto"}}), "")
+        self.assertEqual(claude_payload.cfg_resolve_effort({"effort": {"level": "auto"}}), "")
 
     def test_case_normalized(self):
-        self.assertEqual(sl.cfg_resolve_effort({"effort": {"level": "HIGH"}}), "high")
+        self.assertEqual(claude_payload.cfg_resolve_effort({"effort": {"level": "HIGH"}}), "high")
 
     def test_missing_is_empty(self):
         # FR-1.9: effort resolves from JSON + settings only; no CLAUDE_EFFORT env source.
-        self.assertEqual(sl.cfg_resolve_effort({}), "")
+        self.assertEqual(claude_payload.cfg_resolve_effort({}), "")
 
 
 class TestProcRssLinux(unittest.TestCase):
@@ -1897,8 +1926,8 @@ class TestProcRssLinux(unittest.TestCase):
         # the wezterm bug: walk finds no `claude`, must return None (not a stray RSS)
         comm = {10: "zsh", 11: "wezterm-gui", 1: "systemd"}
         ppid = {10: 11, 11: 1, 1: 0}
-        with mock.patch.object(sl.os.path, "isdir", return_value=True),\
-             mock.patch.object(sl.os, "getppid", return_value=10),\
+        with mock.patch.object(os.path, "isdir", return_value=True),\
+             mock.patch.object(os, "getppid", return_value=10),\
              mock.patch.object(claude_probes, "probe_comm_via_proc", side_effect=comm.get),\
              mock.patch.object(claude_probes, "probe_ppid_via_proc", side_effect=ppid.get),\
              mock.patch.object(claude_probes, "probe_rss_kb_via_proc", side_effect=lambda p: 5000):
@@ -1907,8 +1936,8 @@ class TestProcRssLinux(unittest.TestCase):
     def test_returns_rss_when_claude_found(self):
         comm = {10: "zsh", 11: "claude", 1: "systemd"}
         ppid = {10: 11, 11: 1, 1: 0}
-        with mock.patch.object(sl.os.path, "isdir", return_value=True),\
-             mock.patch.object(sl.os, "getppid", return_value=10),\
+        with mock.patch.object(os.path, "isdir", return_value=True),\
+             mock.patch.object(os, "getppid", return_value=10),\
              mock.patch.object(claude_probes, "probe_comm_via_proc", side_effect=comm.get),\
              mock.patch.object(claude_probes, "probe_ppid_via_proc", side_effect=ppid.get),\
              mock.patch.object(claude_probes, "probe_rss_kb_via_proc",
@@ -1921,8 +1950,8 @@ class TestProcRssMacOS(unittest.TestCase):
         comm = {10: "login", 11: "claude", 1: "launchd"}
         ppid = {10: 11, 11: 1, 1: 0}
         rss = {11: 307200, 10: 100}
-        with mock.patch.object(sl.os.path, "isdir", return_value=False),\
-             mock.patch.object(sl.os, "getppid", return_value=10),\
+        with mock.patch.object(os.path, "isdir", return_value=False),\
+             mock.patch.object(os, "getppid", return_value=10),\
              mock.patch.object(claude_probes, "probe_comm_via_ps", side_effect=comm.get),\
              mock.patch.object(claude_probes, "probe_ppid_via_ps", side_effect=ppid.get),\
              mock.patch.object(claude_probes, "probe_rss_kb_via_ps", side_effect=rss.get):
@@ -1931,7 +1960,7 @@ class TestProcRssMacOS(unittest.TestCase):
     def test_ps_field_parses_one_value(self):
         class R:
             stdout = "  12345\n"
-        with mock.patch.object(sl.subprocess, "run", return_value=R()):
+        with mock.patch.object(subprocess, "run", return_value=R()):
             self.assertEqual(common_probe.probe_ps_field(99, "rss"), "12345")
 
 
@@ -1949,22 +1978,22 @@ class TestTputFallback(unittest.TestCase):
             elif cmd == ["tput", "lines"]:
                 r.stdout = "44\n"
             return r
-        with mock.patch.object(sl.subprocess, "run", side_effect=fake_run),\
+        with mock.patch.object(subprocess, "run", side_effect=fake_run),\
              mock.patch("builtins.open", mock.mock_open(read_data="")):
-            cols, lines, assumed = sl.probe_terminal_size({})
+            cols, lines, assumed = common_probe.probe_terminal_size({})
         self.assertEqual((cols, lines), (123, 44))
         self.assertFalse(assumed)
 
 
 class TestConfigScaffold(unittest.TestCase):
     def test_default_config_matches_globals(self):
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         self.assertEqual(cfg.segments, dict(common_types.SEGMENTS))
         self.assertEqual(cfg.layout, list(common_types.LAYOUT))
         self.assertEqual(cfg.palette, {})
 
     def test_default_config_is_a_snapshot(self):
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         cfg.segments["alt_time_clock"] = not cfg.segments["alt_time_clock"]
         self.assertNotEqual(cfg.segments["alt_time_clock"],
                             common_types.SEGMENTS["alt_time_clock"])  # snapshot, not alias
@@ -1986,8 +2015,8 @@ class TestEnvBool(unittest.TestCase):
         with redirect_stderr(buf):
             common_config.cfg_warn("segment 'x' must be true/false, got 'maybe' — ignored")
         expected = (
-            f"{sl.DIM}status-line: segment 'x' must be true/false, "
-            f"got 'maybe' — ignored{sl.RESET}\n"
+            f"{common_types.DIM}status-line: segment 'x' must be true/false, "
+            f"got 'maybe' — ignored{common_types.RESET}\n"
         )
         self.assertEqual(buf.getvalue(), expected)
 
@@ -2131,14 +2160,14 @@ class TestResolveSegments(unittest.TestCase):
 
     def test_defaults_when_no_file_no_env(self):
         env = {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"}
-        cfg = sl.cfg_load_config(env)
+        cfg = common_config.cfg_load_config(env)
         self.assertEqual(cfg.segments, dict(common_types.SEGMENTS))
         self.assertEqual(cfg.layout, list(common_types.LAYOUT))
         self.assertEqual(cfg.palette, {})
 
     def test_file_overrides_default(self):
         path = self._write("[segments]\nalt_cost = true\nalt_process_memory = false\n")
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertTrue(cfg.segments["alt_cost"])              # default False -> True
         self.assertFalse(cfg.segments["alt_process_memory"])   # default False, still False
         self.assertTrue(cfg.segments["model"])                # untouched default (non-alt)
@@ -2146,19 +2175,19 @@ class TestResolveSegments(unittest.TestCase):
     def test_env_overrides_file(self):
         path = self._write("[segments]\nalt_cost = true\n")
         env = {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h", "CC_AI_KIT_SEGMENT_ALT_COST": "0"}
-        cfg = sl.cfg_load_config(env)
+        cfg = common_config.cfg_load_config(env)
         self.assertFalse(cfg.segments["alt_cost"])  # env beats file
 
     def test_unknown_segment_key_ignored(self):
         path = self._write("[segments]\nbogus = true\n")
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertNotIn("bogus", cfg.segments)
 
     def test_wrong_type_value_ignored(self):
         # `alt_cost = "true"` (string, not bool) is a known key but a bad value:
         # it must be dropped (keeping the default), not silently coerced.
         path = self._write('[segments]\nalt_cost = "true"\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(
             cfg.segments["alt_cost"], common_types.SEGMENTS["alt_cost"])  # default kept
 
@@ -2168,7 +2197,7 @@ class TestResolveSegments(unittest.TestCase):
         env = {"CC_AI_KIT_GIT_CACHE_TTL": "not-an-int", "CC_AI_KIT_SEGMENT_NOPE": "1"}
         buf = io.StringIO()
         with redirect_stderr(buf):
-            cfg = sl.cfg_load_config(env)
+            cfg = common_config.cfg_load_config(env)
         self.assertEqual(buf.getvalue(), "")
         self.assertEqual(cfg.git["cache_ttl"], common_types.GIT_CACHE_TTL)
 
@@ -2191,39 +2220,40 @@ class TestGitConfig(unittest.TestCase):
 
     def test_cache_ttl_default_5(self):
         # Default [git] config carries cache_ttl=5 and nothing else.
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
         self.assertEqual(cfg.git, {"cache_ttl": 5})
 
     def test_cache_ttl_from_toml(self):
         path = self._write("[git]\ncache_ttl = 20\n")
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.git["cache_ttl"], 20)
 
     def test_cache_ttl_env_overrides_toml(self):
         # Precedence: default 5 < TOML [git] cache_ttl < env CC_AI_KIT_GIT_CACHE_TTL.
         path = self._write("[git]\ncache_ttl = 20\n")
         env = {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h", "CC_AI_KIT_GIT_CACHE_TTL": "99"}
-        self.assertEqual(sl.cfg_load_config(env).git["cache_ttl"], 99)
+        self.assertEqual(common_config.cfg_load_config(env).git["cache_ttl"], 99)
 
     def test_cache_ttl_env_over_default(self):
         env = {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h",
                "CC_AI_KIT_GIT_CACHE_TTL": "0"}
-        self.assertEqual(sl.cfg_load_config(env).git["cache_ttl"], 0)
+        self.assertEqual(common_config.cfg_load_config(env).git["cache_ttl"], 0)
 
     def test_cache_ttl_bad_toml_type_ignored(self):
         path = self._write('[git]\ncache_ttl = "soon"\n')   # string, not int
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.git["cache_ttl"], 5)            # default kept; render is silent
 
     def test_worktree_env_no_longer_read(self):
         # CC_AI_KIT_GIT_WORKTREE is retired — setting it does not affect cfg.git.
         env = {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h",
                "CC_AI_KIT_GIT_WORKTREE": "1"}
-        self.assertEqual(sl.cfg_load_config(env).git, {"cache_ttl": 5})
+        self.assertEqual(common_config.cfg_load_config(env).git, {"cache_ttl": 5})
 
     def test_unknown_git_key_ignored_silently(self):
         path = self._write("[git]\nbogus = true\n")
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertNotIn("bogus", cfg.git)             # bogus dropped; render is silent
 
 
@@ -2239,18 +2269,19 @@ class TestWorktreeSegmentToggle(unittest.TestCase):
     def test_worktree_segment_off_by_default(self):
         # alt_git_worktree is opt-in (OFF by default) since the alt_* default flip.
         self.assertIs(common_types.SEGMENTS.get("alt_git_worktree"), False)
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
         self.assertFalse(cfg.segments["alt_git_worktree"])
 
     def test_worktree_segment_disable_via_toml(self):
         path = self._write("[segments]\nalt_git_worktree = false\n")
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertFalse(cfg.segments["alt_git_worktree"])
 
     def test_worktree_segment_disable_via_env(self):
         env = {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h",
                "CC_AI_KIT_SEGMENT_ALT_GIT_WORKTREE": "0"}
-        self.assertFalse(sl.cfg_load_config(env).segments["alt_git_worktree"])
+        self.assertFalse(common_config.cfg_load_config(env).segments["alt_git_worktree"])
 
 
 class TestRenderWithConfig(unittest.TestCase):
@@ -2264,13 +2295,13 @@ class TestRenderWithConfig(unittest.TestCase):
     def test_render_honors_cfg_layout(self):
         cfg = common_types.Config(segments=dict(common_types.SEGMENTS),
                         layout=[common_types.Line(0, ["model"])], palette={}, ramps={})
-        lines = sl.core_render(_data(), cfg)
+        lines = claude_host.core_render(_data(), cfg)
         self.assertEqual(len(lines), 1)
         self.assertIn("Opus 4.8", strip(lines[0]))
 
     def test_render_default_cfg_unchanged(self):
         # No cfg arg -> same as today (three rows when tall+wide).
-        self.assertEqual(len(sl.core_render(_data())), 3)
+        self.assertEqual(len(claude_host.core_render(_data())), 3)
 
 
 class TestMainUsesConfig(unittest.TestCase):
@@ -2281,7 +2312,7 @@ class TestMainUsesConfig(unittest.TestCase):
              mock.patch.object(sys, "argv", ["status-line.py"]),\
              mock.patch.dict(os.environ, env, clear=True),\
              redirect_stdout(buf):
-            sl.main()
+            claude_host.main()
         return buf.getvalue()
 
     def test_segment_hidden_via_env(self):
@@ -2305,21 +2336,22 @@ class TestResolveLayout(unittest.TestCase):
         return f.name
 
     def test_no_line_keeps_default_layout(self):
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
         self.assertEqual(cfg.layout, list(common_types.LAYOUT))
 
     def test_line_replaces_layout(self):
         path = self._write(
             '[[line]]\nmin_rows = 0\nsegments = ["path", "model"]\n'
             '[[line]]\nmin_rows = 25\nsegments = ["context"]\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.layout,
                          [common_types.Line(
                              0, ["path", "model"]), common_types.Line(25, ["context"])])
 
     def test_line_missing_min_rows_defaults_zero(self):
         path = self._write('[[line]]\nsegments = ["path"]\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.layout, [common_types.Line(0, ["path"])])
 
 
@@ -2332,12 +2364,12 @@ class TestPaletteFromConfig(unittest.TestCase):
 
     def test_palette_parsed_into_config(self):
         path = self._write('[palette]\nBLUE = "1;34"\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.palette, {"BLUE": "1;34"})
 
     def test_unknown_palette_key_dropped(self):
         path = self._write('[palette]\nNOTACOLOR = "1;34"\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.palette, {})
 
     def test_main_applies_palette(self):
@@ -2352,7 +2384,7 @@ class TestPaletteFromConfig(unittest.TestCase):
         with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))),\
              mock.patch.object(sys, "argv", ["status-line.py"]),\
              mock.patch.dict(os.environ, env, clear=True), redirect_stdout(buf):
-            sl.main()
+            claude_host.main()
         # path segment is BLUE; overridden blue (1;34) must appear in the raw output.
         self.assertIn("\033[1;34m", buf.getvalue())
 
@@ -2386,11 +2418,11 @@ class TestSampleRecipe(unittest.TestCase):
         self.assertEqual(parsed.get("line"), want)
         # The [palette] block documents every overridable color with its real
         # default; assert it so the recipe can't silently drift from the code.
-        self.assertEqual(parsed.get("palette"), dict(sl.PALETTE_DEFAULTS))
+        self.assertEqual(parsed.get("palette"), dict(common_types.PALETTE_DEFAULTS))
         # [ramp.*] blocks document the real default tables.
         want_ramps = {
             band: {str(thr): spec for thr, spec in pairs}
-            for band, pairs in sl.RAMP_DEFAULTS.items()
+            for band, pairs in common_types.RAMP_DEFAULTS.items()
         }
         self.assertEqual(parsed.get("ramp"), want_ramps)
         # [git] knobs document their real defaults too.
@@ -2401,97 +2433,98 @@ class TestParseColor(unittest.TestCase):
     PAL = {"RED": "31", "BLUE": "38;5;39", "ORANGE": "38;5;208"}
 
     def test_palette_name(self):
-        self.assertEqual(sl.util_parse_color("RED", self.PAL), "\033[31m")
-        self.assertEqual(sl.util_parse_color("BLUE", self.PAL), "\033[38;5;39m")
+        self.assertEqual(common_types.util_parse_color("RED", self.PAL), "\033[31m")
+        self.assertEqual(common_types.util_parse_color("BLUE", self.PAL), "\033[38;5;39m")
 
     def test_raw_sgr_passthrough(self):
-        self.assertEqual(sl.util_parse_color("38;5;33"), "\033[38;5;33m")
-        self.assertEqual(sl.util_parse_color("1;31"), "\033[1;31m")
+        self.assertEqual(common_types.util_parse_color("38;5;33"), "\033[38;5;33m")
+        self.assertEqual(common_types.util_parse_color("1;31"), "\033[1;31m")
 
     def test_hex_six(self):
-        self.assertEqual(sl.util_parse_color("#3399ff"), "\033[38;2;51;153;255m")
+        self.assertEqual(common_types.util_parse_color("#3399ff"), "\033[38;2;51;153;255m")
 
     def test_hex_short_expands(self):
-        self.assertEqual(sl.util_parse_color("#39f"), "\033[38;2;51;153;255m")
+        self.assertEqual(common_types.util_parse_color("#39f"), "\033[38;2;51;153;255m")
 
     def test_hex_alpha_stripped(self):
-        self.assertEqual(sl.util_parse_color("#3399ffcc"), "\033[38;2;51;153;255m")
+        self.assertEqual(common_types.util_parse_color("#3399ffcc"), "\033[38;2;51;153;255m")
 
     def test_modifier_bold_on_name(self):
-        self.assertEqual(sl.util_parse_color("RED+bold", self.PAL), "\033[1;31m")
+        self.assertEqual(common_types.util_parse_color("RED+bold", self.PAL), "\033[1;31m")
 
     def test_modifier_on_hex(self):
-        self.assertEqual(sl.util_parse_color("#3399ff+bold"), "\033[1;38;2;51;153;255m")
+        self.assertEqual(common_types.util_parse_color("#3399ff+bold"), "\033[1;38;2;51;153;255m")
 
     def test_modifiers_canonical_order(self):
         # underline(4)+bold(1) -> ascending 1;4 regardless of input order
-        self.assertEqual(sl.util_parse_color("RED+underline+bold", self.PAL), "\033[1;4;31m")
+        self.assertEqual(
+            common_types.util_parse_color("RED+underline+bold", self.PAL), "\033[1;4;31m")
 
     def test_all_modifiers(self):
-        self.assertEqual(sl.util_parse_color("RED+bold+dim+italic+underline", self.PAL),
+        self.assertEqual(common_types.util_parse_color("RED+bold+dim+italic+underline", self.PAL),
                          "\033[1;2;3;4;31m")
 
     def test_unknown_name_is_none(self):
-        self.assertIsNone(sl.util_parse_color("NOTACOLOR", self.PAL))
+        self.assertIsNone(common_types.util_parse_color("NOTACOLOR", self.PAL))
 
     def test_name_without_palette_is_none(self):
-        self.assertIsNone(sl.util_parse_color("RED"))
+        self.assertIsNone(common_types.util_parse_color("RED"))
 
     def test_unknown_modifier_is_none(self):
-        self.assertIsNone(sl.util_parse_color("RED+blink", self.PAL))
+        self.assertIsNone(common_types.util_parse_color("RED+blink", self.PAL))
 
     def test_bad_hex_is_none(self):
-        self.assertIsNone(sl.util_parse_color("#zzz"))
-        self.assertIsNone(sl.util_parse_color("#12345"))   # 5 nibbles, not 3/6/8
+        self.assertIsNone(common_types.util_parse_color("#zzz"))
+        self.assertIsNone(common_types.util_parse_color("#12345"))   # 5 nibbles, not 3/6/8
 
     def test_empty_is_none(self):
-        self.assertIsNone(sl.util_parse_color(""))
-        self.assertIsNone(sl.util_parse_color(None))
+        self.assertIsNone(common_types.util_parse_color(""))
+        self.assertIsNone(common_types.util_parse_color(None))
 
 
 class TestParseThreshold(unittest.TestCase):
     def test_percent_int(self):
-        self.assertEqual(sl.util_parse_threshold(10), 10)
-        self.assertEqual(sl.util_parse_threshold("25"), 25)
+        self.assertEqual(common_types.util_parse_threshold(10), 10)
+        self.assertEqual(common_types.util_parse_threshold("25"), 25)
 
     def test_inf(self):
-        self.assertEqual(sl.util_parse_threshold("inf"), float("inf"))
-        self.assertEqual(sl.util_parse_threshold(float("inf")), float("inf"))
+        self.assertEqual(common_types.util_parse_threshold("inf"), float("inf"))
+        self.assertEqual(common_types.util_parse_threshold(float("inf")), float("inf"))
 
     def test_byte_suffixes(self):
-        self.assertEqual(sl.util_parse_threshold("512k"), 512 * 1024)
-        self.assertEqual(sl.util_parse_threshold("5M"), 5 * 1024 * 1024)
-        self.assertEqual(sl.util_parse_threshold("1G"), 1024 ** 3)
+        self.assertEqual(common_types.util_parse_threshold("512k"), 512 * 1024)
+        self.assertEqual(common_types.util_parse_threshold("5M"), 5 * 1024 * 1024)
+        self.assertEqual(common_types.util_parse_threshold("1G"), 1024 ** 3)
 
     def test_time_suffixes(self):
         # render_time thresholds resolve to nanoseconds
-        self.assertEqual(sl.util_parse_threshold("100ns"), 100)
-        self.assertEqual(sl.util_parse_threshold("500us"), 500_000)
-        self.assertEqual(sl.util_parse_threshold("500µs"), 500_000)
-        self.assertEqual(sl.util_parse_threshold("50ms"), 50_000_000)
-        self.assertEqual(sl.util_parse_threshold("2s"), 2_000_000_000)
+        self.assertEqual(common_types.util_parse_threshold("100ns"), 100)
+        self.assertEqual(common_types.util_parse_threshold("500us"), 500_000)
+        self.assertEqual(common_types.util_parse_threshold("500µs"), 500_000)
+        self.assertEqual(common_types.util_parse_threshold("50ms"), 50_000_000)
+        self.assertEqual(common_types.util_parse_threshold("2s"), 2_000_000_000)
 
     def test_bad_key_raises(self):
         with self.assertRaises(ValueError):
-            sl.util_parse_threshold("nonsense")
+            common_types.util_parse_threshold("nonsense")
         with self.assertRaises(ValueError):
-            sl.util_parse_threshold("5MB")   # only single-letter k/M/G suffix
+            common_types.util_parse_threshold("5MB")   # only single-letter k/M/G suffix
 
 
 class TestTheme(unittest.TestCase):
     def test_c_resolves_and_memoizes(self):
-        t = sl.core_default_theme()
+        t = common_render.core_default_theme()
         first = t.c("RED")
         self.assertTrue(first.startswith("\033["))
         self.assertEqual(t.c("RED"), first)          # same object/value, cached
         self.assertIn("RED", t._cache)
 
     def test_c_modifier(self):
-        t = sl.core_default_theme()
-        self.assertEqual(t.c("RED+bold"), sl.util_parse_color("RED+bold", t.palette))
+        t = common_render.core_default_theme()
+        self.assertEqual(t.c("RED+bold"), common_types.util_parse_color("RED+bold", t.palette))
 
     def test_c_invalid_is_empty_string(self):
-        t = sl.core_default_theme()
+        t = common_render.core_default_theme()
         self.assertEqual(t.c("NOTACOLOR"), "")        # never raises, no color
 
 
@@ -2502,41 +2535,41 @@ class TestBuildTheme(unittest.TestCase):
                          palette=palette or {}, ramps=ramps or {})
 
     def test_palette_merges_over_defaults(self):
-        t = sl.core_build_theme(self._cfg(palette={"BLUE": "1;34"}))
+        t = common_render.core_build_theme(self._cfg(palette={"BLUE": "1;34"}))
         self.assertEqual(t.palette["BLUE"], "1;34")
-        self.assertEqual(t.palette["RED"], sl.PALETTE_DEFAULTS["RED"])  # untouched
+        self.assertEqual(t.palette["RED"], common_types.PALETTE_DEFAULTS["RED"])  # untouched
 
     def test_palette_hex_override_resolved_to_params(self):
-        t = sl.core_build_theme(self._cfg(palette={"BLUE": "#3399ff"}))
+        t = common_render.core_build_theme(self._cfg(palette={"BLUE": "#3399ff"}))
         self.assertEqual(t.palette["BLUE"], "38;2;51;153;255")
 
     def test_bad_palette_value_keeps_default(self):
-        t = sl.core_build_theme(self._cfg(palette={"BLUE": "#zzz"}))
-        self.assertEqual(t.palette["BLUE"], sl.PALETTE_DEFAULTS["BLUE"])
+        t = common_render.core_build_theme(self._cfg(palette={"BLUE": "#zzz"}))
+        self.assertEqual(t.palette["BLUE"], common_types.PALETTE_DEFAULTS["BLUE"])
 
     def test_ramp_replaced_whole(self):
-        t = sl.core_build_theme(self._cfg(ramps={"rate": {"50": "GREEN", "inf": "RED"}}))
+        t = common_render.core_build_theme(self._cfg(ramps={"rate": {"50": "GREEN", "inf": "RED"}}))
         self.assertEqual([c for _, c in t.ramps["rate"]],
                          [t.c("GREEN"), t.c("RED")])
         self.assertEqual([ceil for ceil, _ in t.ramps["rate"]], [50, float("inf")])
 
     def test_unspecified_ramp_keeps_default(self):
-        t = sl.core_build_theme(self._cfg(ramps={"rate": {"inf": "RED"}}))
-        self.assertEqual(len(t.ramps["context"]), len(sl.RAMP_DEFAULTS["context"]))
+        t = common_render.core_build_theme(self._cfg(ramps={"rate": {"inf": "RED"}}))
+        self.assertEqual(len(t.ramps["context"]), len(common_types.RAMP_DEFAULTS["context"]))
 
     def test_bad_band_color_falls_back_to_default_band(self):
         # context default band at ceil 10 is WHITE; a bad override color for that
         # band falls back to the default band's resolved color.
         bad = {"10": "NOPE", "inf": "RED"}
-        t = sl.core_build_theme(self._cfg(ramps={"context": bad}))
+        t = common_render.core_build_theme(self._cfg(ramps={"context": bad}))
         self.assertEqual(t.ramps["context"][0], (10, t.c("WHITE")))
 
     def test_bad_threshold_keeps_whole_default_ramp(self):
-        t = sl.core_build_theme(self._cfg(ramps={"context": {"oops": "RED"}}))
-        self.assertEqual(t.ramps["context"], sl.core_default_theme().ramps["context"])
+        t = common_render.core_build_theme(self._cfg(ramps={"context": {"oops": "RED"}}))
+        self.assertEqual(t.ramps["context"], common_render.core_default_theme().ramps["context"])
 
     def test_effort_derives_from_palette(self):
-        t = sl.core_default_theme()
+        t = common_render.core_default_theme()
         self.assertEqual(t.effort["low"][0], t.c("CYAN"))
         self.assertEqual(t.effort["max"][0], t.c("RED"))
         self.assertEqual(t.effort["low"][1].count("▁"), 1)
@@ -2553,22 +2586,23 @@ class TestRampFromConfig(unittest.TestCase):
 
     def test_ramp_parsed_into_config(self):
         path = self._write('[ramp.rate]\n50 = "GREEN"\ninf = "RED+bold"\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.ramps, {"rate": {"50": "GREEN", "inf": "RED+bold"}})
 
     def test_unknown_ramp_dropped(self):
         path = self._write('[ramp.bogus]\n10 = "RED"\n')
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
         self.assertEqual(cfg.ramps, {})
 
     def test_no_ramp_block_is_empty(self):
-        cfg = sl.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
         self.assertEqual(cfg.ramps, {})
 
 
 class TestRendererRobustness(unittest.TestCase):
     def test_doctor_cmd_is_concrete(self):
-        cmd = sl.core_doctor_cmd()
+        cmd = common_render.core_doctor_cmd()
         # A copy-pasteable command, not a bare flag: ends with --doctor, names a
         # python executable, and references the sibling doctor script (introspection
         # moved out of the render module in Phase 4).
@@ -2577,16 +2611,16 @@ class TestRendererRobustness(unittest.TestCase):
         self.assertRegex(cmd, r"^\S*python\S*\s")
 
     def test_warn_is_an_sgr_code(self):
-        self.assertTrue(sl.WARN.startswith("\033["))
-        self.assertTrue(sl.WARN.endswith("m"))
+        self.assertTrue(common_types.WARN.startswith("\033["))
+        self.assertTrue(common_types.WARN.endswith("m"))
 
     def test_safe_build_passes_through_ok_builder(self):
         def good(data, avail, theme):
             del avail
             return "HELLO"
         ctx = _data()
-        with mock.patch.dict(sl.BUILDERS, {"path": good}):
-            out = sl.core_safe_build("path", ctx, 40, THEME)
+        with mock.patch.dict(claude_host.BUILDERS, {"path": good}):
+            out = claude_host.core_safe_build("path", ctx, 40, THEME)
         self.assertEqual(out, "HELLO")
         self.assertEqual(ctx.failed, set())
 
@@ -2595,19 +2629,19 @@ class TestRendererRobustness(unittest.TestCase):
             del avail
             raise RuntimeError("kaboom")
         ctx = _data()
-        with mock.patch.dict(sl.BUILDERS, {"path": boom}):
-            out = sl.core_safe_build("path", ctx, 40, THEME)
+        with mock.patch.dict(claude_host.BUILDERS, {"path": boom}):
+            out = claude_host.core_safe_build("path", ctx, 40, THEME)
         self.assertIn("path", ctx.failed)
         self.assertIn("path", strip(out))          # name shown when width allows
-        self.assertLessEqual(sl.util_visible_width(out), 40)
+        self.assertLessEqual(common_types.util_visible_width(out), 40)
 
     def test_safe_build_bare_marker_when_no_room_for_name(self):
         def boom(data, avail, theme):
             del avail
             raise RuntimeError("x")
         ctx = _data()
-        with mock.patch.dict(sl.BUILDERS, {"context": boom}):
-            out = sl.core_safe_build("context", ctx, 1, THEME)
+        with mock.patch.dict(claude_host.BUILDERS, {"context": boom}):
+            out = claude_host.core_safe_build("context", ctx, 1, THEME)
         self.assertIn("context", ctx.failed)
         self.assertNotIn("context", strip(out))    # name dropped, icon kept
 
@@ -2617,21 +2651,21 @@ class TestRendererRobustness(unittest.TestCase):
         def boom(data, avail, theme):
             del avail
             raise ValueError("nope")
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         def ok(data, avail, theme):
             del avail
             return "CTX"
         ctx = _data()
-        with mock.patch.dict(sl.BUILDERS, {"path": boom, "context": ok}):
+        with mock.patch.dict(claude_host.BUILDERS, {"path": boom, "context": ok}):
             line = _pack(["path", "context"], ctx, 80, cfg, THEME)
         self.assertIn("path", ctx.failed)
         self.assertIn("CTX", strip(line))          # the healthy segment still shows
 
     def test_diagnostic_line_none_when_no_failures(self):
-        self.assertIsNone(sl.core_diagnostic_line(set()))
+        self.assertIsNone(common_render.core_diagnostic_line(set()))
 
     def test_diagnostic_line_lists_failures_and_doctor(self):
-        line = strip(sl.core_diagnostic_line({"git", "context"}))
+        line = strip(common_render.core_diagnostic_line({"git", "context"}))
         self.assertIn("2 segments failed", line)
         self.assertIn("context, git", line)         # sorted
         self.assertIn("--doctor", line)
@@ -2640,31 +2674,31 @@ class TestRendererRobustness(unittest.TestCase):
         def boom(data, avail, theme):
             del avail
             raise RuntimeError("x")
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         layout = [common_types.Line(0, ["path"])]
         cfg = cfg._replace(layout=layout)
-        with mock.patch.dict(sl.BUILDERS, {"path": boom}):
-            out = sl.core_render(_data(cols=80, lines=40), cfg, THEME)
+        with mock.patch.dict(claude_host.BUILDERS, {"path": boom}):
+            out = claude_host.core_render(_data(cols=80, lines=40), cfg, THEME)
         self.assertTrue(any("--doctor" in strip(l) for l in out))
         self.assertTrue(any("path" in strip(l) for l in out))
 
     def test_render_no_diagnostic_when_healthy(self):
-        cfg = sl.cfg_default_config()
-        out = sl.core_render(_data(cols=80, lines=40), cfg, THEME)
+        cfg = common_config.cfg_default_config()
+        out = claude_host.core_render(_data(cols=80, lines=40), cfg, THEME)
         self.assertFalse(any("--doctor" in strip(l) for l in out))
 
     def test_safe_render_returns_diagnostic_on_catastrophic_failure(self):
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         theme = THEME
-        with mock.patch.object(sl, "core_build_context", side_effect=RuntimeError("boom")):
-            out = sl.safe_render({}, os.environ, cfg, theme, 0)
+        with mock.patch.object(claude_host, "core_build_context", side_effect=RuntimeError("boom")):
+            out = claude_host.safe_render({}, os.environ, cfg, theme, 0)
         self.assertEqual(len(out), 1)
         self.assertIn("status-line error", strip(out[0]))
         self.assertIn("--doctor", strip(out[0]))
 
     def test_safe_render_normal_path(self):
-        cfg = sl.cfg_default_config()
-        out = sl.safe_render({}, os.environ, cfg, THEME, 0)
+        cfg = common_config.cfg_default_config()
+        out = claude_host.safe_render({}, os.environ, cfg, THEME, 0)
         self.assertIsInstance(out, list)
         self.assertFalse(any("status-line error" in strip(l) for l in out))
 
@@ -2684,7 +2718,7 @@ class TestRendererRobustness(unittest.TestCase):
 
     def test_build_data_tolerates_present_but_null_fields(self):
         data, _cols, _lines = _ctx_from_env(
-            dict(self._NEW_SESSION_RAW), os.environ, sl.cfg_default_config())
+            dict(self._NEW_SESSION_RAW), os.environ, common_config.cfg_default_config())
         self.assertEqual(data.context_pct, 0)
         self.assertEqual(data.context_max, 0)
         self.assertEqual(data.added, 0)
@@ -2694,8 +2728,8 @@ class TestRendererRobustness(unittest.TestCase):
         self.assertEqual(data.api_ms, 0)
 
     def test_render_new_session_no_error_no_warn(self):
-        cfg = sl.cfg_default_config()
-        out = sl.safe_render(dict(self._NEW_SESSION_RAW), os.environ, cfg, THEME, 0)
+        cfg = common_config.cfg_default_config()
+        out = claude_host.safe_render(dict(self._NEW_SESSION_RAW), os.environ, cfg, THEME, 0)
         text = "\n".join(strip(l) for l in out)
         self.assertNotIn("status-line error", text)
         self.assertNotIn("⚠", text)        # no per-segment crashes either
@@ -2710,27 +2744,27 @@ class TestRenderDataLazy(unittest.TestCase):
     def test_git_probe_deferred_to_render_and_runs_once(self):
         snap = common_types.GitSnapshot(True, "main", "modified", False, "")
         raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s"}
-        cfg = sl.cfg_default_config()
-        theme = sl.core_build_theme(cfg)
+        cfg = common_config.cfg_default_config()
+        theme = common_render.core_build_theme(cfg)
         with mock.patch.object(common_probe, "probe_git_snapshot", return_value=snap) as gs:
             data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
             self.assertEqual(gs.call_count, 0, "git probe must NOT run during build_data")
-            sl.core_render(data, cfg, theme)
+            claude_host.core_render(data, cfg, theme)
             self.assertEqual(gs.call_count, 1, "git probe runs exactly once during render")
 
     def test_disabled_git_segments_skip_the_probe(self):
         raw = {"workspace": {"current_dir": "/repo"}}
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         # path is now also a git consumer (renders the project-root name), so
         # zero git probes requires disabling it too, not just the git_* segments.
         cfg.segments["path"] = False
         cfg.segments["git_branch"] = False
         cfg.segments["git_dirty"] = False
         cfg.segments["alt_git_worktree"] = False
-        theme = sl.core_build_theme(cfg)
+        theme = common_render.core_build_theme(cfg)
         with mock.patch.object(common_probe, "probe_git_snapshot") as gs:
             data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
-            sl.core_render(data, cfg, theme)
+            claude_host.core_render(data, cfg, theme)
             self.assertEqual(gs.call_count, 0, "no git-consuming segment enabled => no git probe")
 
 
@@ -2740,8 +2774,8 @@ class TestSlowestTruthful(unittest.TestCase):
 
     def test_slowest_captures_probe_cost_not_microseconds(self):
         raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s"}
-        cfg = sl.cfg_default_config()
-        theme = sl.core_build_theme(cfg)
+        cfg = common_config.cfg_default_config()
+        theme = common_render.core_build_theme(cfg)
 
         def slow_git(*_a, **_k):                 # a 20ms git status
             time.sleep(0.02)
@@ -2749,7 +2783,7 @@ class TestSlowestTruthful(unittest.TestCase):
 
         with mock.patch.object(common_probe, "probe_git_snapshot", side_effect=slow_git):
             data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
-            sl.core_render(data, cfg, theme)
+            claude_host.core_render(data, cfg, theme)
         name, ns = data.slowest
         # path renders first in line order and is now also a git consumer, so
         # it — not git_branch — is the one that actually pays the probe cost.
@@ -2765,14 +2799,14 @@ class TestTwoPassLayout(unittest.TestCase):
     def _diag_line(self):
         raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s",
                "cost": {"total_cost_usd": 0.5}}
-        cfg = sl.cfg_default_config()
-        theme = sl.core_build_theme(cfg)
+        cfg = common_config.cfg_default_config()
+        theme = common_render.core_build_theme(cfg)
         with mock.patch.object(common_probe, "probe_git_snapshot",
                                return_value=common_types.GitSnapshot(
                                    True, "main", "modified", False, "")):
             data, _c, _l = _ctx_from_env(raw, {"HOME": "/h"}, cfg,
                                          t_start=time.perf_counter_ns())
-            out = sl.core_render(data, cfg, theme)
+            out = claude_host.core_render(data, cfg, theme)
         return next(strip(l) for l in out if "⏱" in strip(l))
 
     def test_slowest_adjacent_to_render_time(self):
@@ -2803,8 +2837,8 @@ class TestGoldenOutput(unittest.TestCase):
     def _deterministic(self):
         snap = common_types.GitSnapshot(in_repo=True, branch="main", dirty="modified",
                               is_worktree=False, wt_name="")
-        with mock.patch.object(sl.time, "strftime", return_value="14:30"),\
-             mock.patch.object(sl.time, "time", return_value=NOW),\
+        with mock.patch.object(time, "strftime", return_value="14:30"),\
+             mock.patch.object(time, "time", return_value=NOW),\
              mock.patch.object(common_probe, "probe_git_snapshot", return_value=snap),\
              mock.patch.object(claude_probes, "probe_rss_bytes", return_value=448_790_528),\
              mock.patch.object(claude_probes, "probe_transcript_bytes", return_value=305_000),\
@@ -2815,14 +2849,14 @@ class TestGoldenOutput(unittest.TestCase):
     def _render_all(self):
         with open(os.path.join(self.GOLDEN, "inputs.json"), encoding="utf-8") as f:
             cases = json.load(f)
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         # The meta segments report the render itself and are inherently
         # non-deterministic (render_time / slowest durations) and are exactly what
         # the restructure changes — exclude them so the golden guards only the
         # non-meta segment output it is meant to protect.
         cfg.segments["render_time"] = False
         cfg.segments["slowest"] = False
-        theme = sl.core_build_theme(cfg)
+        theme = common_render.core_build_theme(cfg)
         blocks = []
         with self._deterministic():
             for c in cases:
@@ -2830,7 +2864,7 @@ class TestGoldenOutput(unittest.TestCase):
                        "STATUSLINE_COLS": str(c["cols"]),
                        "STATUSLINE_LINES": str(c["lines"])}
                 data, _cols, _lines = _ctx_from_env(c["raw"], env, cfg, t_start=None)
-                out = sl.core_render(data, cfg, theme)
+                out = claude_host.core_render(data, cfg, theme)
                 blocks.append(f"### {c['name']}\n" + "\n".join(strip(l) for l in out))
         return "\n\n".join(blocks) + "\n"
 
@@ -2875,13 +2909,13 @@ def render_full_cases():
             stream.write('{"type":"user","message":{"content":"hello"}}\n')
             stream.write('{"type":"system","subtype":"compact_boundary"}\n')
         os.utime(transcript, (NOW - 300, NOW - 300))
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         for key in cfg.segments:
             cfg.segments[key] = key not in {"render_time", "slowest"}
-        theme = sl.core_build_theme(cfg)
+        theme = common_render.core_build_theme(cfg)
         blocks = []
-        with (mock.patch.object(sl.time, "strftime", return_value="14:30"),
-              mock.patch.object(sl.time, "time", return_value=NOW),
+        with (mock.patch.object(time, "strftime", return_value="14:30"),
+              mock.patch.object(time, "time", return_value=NOW),
               mock.patch.object(claude_probes, "probe_rss_bytes", return_value=448_790_528)):
             for case in cases:
                 git = common_types.GitSnapshot(**case["git"])
@@ -2901,7 +2935,7 @@ def render_full_cases():
                     try:
                         os.chdir(cwd)
                         ctx, _, _ = _ctx_from_env(raw, env, cfg, t_start=None)
-                        output = sl.core_render(ctx, cfg, theme)
+                        output = claude_host.core_render(ctx, cfg, theme)
                     finally:
                         os.chdir(old_cwd)
                 blocks.append(f"### {case['name']}\n" + "\n".join(output))
@@ -3072,14 +3106,14 @@ class TestGitProbeMemoized(unittest.TestCase):
             return common_types.GitSnapshot(in_repo=True, branch="main", dirty="clean",
                                   is_worktree=False, wt_name="")
         # Use a fresh context without pre-seeded probe_cache so the probe fires.
-        ctx = sl.core_build_context(
+        ctx = claude_payload.core_build_context(
             raw={"workspace": {"current_dir": "/tmp"}},
-            config=sl.cfg_default_config(), theme=THEME,
+            config=common_config.cfg_default_config(), theme=THEME,
             cols=200, lines=50, dim_assumed=False, t_start=None,
             effort="high", home="/home/u", claude_dir="/home/u/.claude")
         with mock.patch.object(common_probe, "probe_git_snapshot", side_effect=fake):
-            snap1 = sl.probe_git_for(ctx)
-            snap2 = sl.probe_git_for(ctx)
+            snap1 = common_probe.probe_git_for(ctx)
+            snap2 = common_probe.probe_git_for(ctx)
         self.assertEqual(snap1.branch, "main")
         self.assertIs(snap1, snap2)
         self.assertEqual(len(calls), 1)
@@ -3089,20 +3123,20 @@ class TestEnvConvention(unittest.TestCase):
     """FR-1.6/1.7/1.8: all config env reading funnels through one structure-aware reader."""
 
     def test_git_cache_ttl_via_convention(self):
-        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_GIT_CACHE_TTL": "42"})
+        cfg = common_config.cfg_load_config({"HOME": "/h", "CC_AI_KIT_GIT_CACHE_TTL": "42"})
         self.assertEqual(cfg.git["cache_ttl"], 42)
 
     def test_segment_toggle_via_convention(self):
-        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_SEGMENT_GIT_BRANCH": "false"})
+        cfg = common_config.cfg_load_config({"HOME": "/h", "CC_AI_KIT_SEGMENT_GIT_BRANCH": "false"})
         self.assertFalse(cfg.segments["git_branch"])
 
     def test_external_dir_via_convention(self):
-        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_DIR": "/x/seg"})
+        cfg = common_config.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_DIR": "/x/seg"})
         # cfg.external is an ExternalConf; FR-1.6 routes EXTERNAL_DIR -> external.dir
         self.assertEqual(cfg.external.dir, "/x/seg")
 
     def test_external_cache_ttl_via_convention(self):
-        cfg = sl.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "30"})
+        cfg = common_config.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "30"})
         self.assertEqual(cfg.external.cache_ttl, 30)
 
 class TestAltSegmentsDefaultOff(unittest.TestCase):
@@ -3116,8 +3150,8 @@ class TestProcessMemoryRename(unittest.TestCase):
     def test_renamed_key_present_old_absent(self):
         self.assertIn("alt_process_memory", common_types.SEGMENTS)
         self.assertNotIn("alt_system_memory", common_types.SEGMENTS)
-        self.assertTrue(hasattr(sl, "seg_alt_process_memory"))
-        self.assertFalse(hasattr(sl, "seg_alt_system_memory"))
+        self.assertTrue(hasattr(claude_segments, "seg_alt_process_memory"))
+        self.assertFalse(hasattr(claude_segments, "seg_alt_system_memory"))
 
 
 class TestRendererHeaderIgnoresUIKeys(unittest.TestCase):

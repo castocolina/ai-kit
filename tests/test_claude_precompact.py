@@ -453,12 +453,12 @@ class TestBoundaryParity(unittest.TestCase):
         return paths
 
     def test_boundary_parity_with_status_line(self):
-        load_module("status_line_under_test", REPO / "tools" / "status-line.py")
+        status_line = claude_probes
         for name, path in self._fixtures().items():
             with self.subTest(fixture=name):
                 size = os.path.getsize(path)
                 offset, count = core.last_boundary(path, size)
-                since, compact_count = claude_probes.probe_transcript_compaction(path, size)
+                since, compact_count = status_line.probe_transcript_compaction(path, size)
                 self.assertEqual(count, compact_count, name)
                 expected = size - offset if offset is not None else size
                 self.assertEqual(expected, since, name)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """ai-kit status-line doctor — config validation + dry-render introspection.
 
-Renders nothing on the hot path. Imports the render core (status-line.py) one-way
-via an importlib shim and exercises every builder against a self-contained sample
+Renders nothing on the hot path. Imports the Claude host and shared modules directly
+and exercises every builder against a self-contained sample
 to surface a builder that raises. CLI:
   --doctor         validate the resolved config AND dry-render every segment
   --check [FILE]   validate a config file (default: the resolved path)
@@ -15,7 +15,6 @@ it renders only. All introspection lives here.
 # pylint: disable=invalid-name  # sibling script name is hyphenated (statusline-doctor.py)
 
 import argparse
-import importlib.util
 import json
 import os
 import sys
@@ -23,8 +22,12 @@ import time
 from collections.abc import Mapping
 from typing import Any, cast
 
+import claude_host
+import claude_payload
 import common_config
+import common_render
 import common_types
+from common_probe import probe_terminal_size
 
 try:
     import tomllib as _tomllib_impl
@@ -36,32 +39,7 @@ except ModuleNotFoundError:        # Python < 3.11 — config validation degrade
 # plain dict and os.environ (_Environ[str]).
 Env = Mapping[str, str]
 
-_CORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "status-line.py")
-
-
-def _load_core() -> Any:
-    """Import status-line.py (hyphenated, so not importable by name) as the
-    `status_line` module. One-way dependency: the doctor imports the render core,
-    never the reverse."""
-    tools_dir = os.path.dirname(os.path.abspath(__file__))
-    if tools_dir not in sys.path:
-        sys.path.insert(0, tools_dir)
-    spec = importlib.util.spec_from_file_location("status_line", _CORE)
-    if spec is None or spec.loader is None:        # pragma: no cover - import shim guard
-        raise ImportError(f"cannot load render core from {_CORE}")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-sl = _load_core()
-
-# The render core marks its config-defaults tables module-private (single leading
-# underscore = internal to status-line.py). The doctor is the ONE sanctioned
-# cross-module reader of them — bind them here at the one-way import boundary so
-# the deliberate "protected" access is acknowledged in exactly one place rather
-# than scattered through the validators below.
+# Public default tables are read directly from common_types.
 _EXTERNAL_CACHE_TTL = common_types.EXTERNAL_CACHE_TTL
 _PALETTE_DEFAULTS = common_types.PALETTE_DEFAULTS
 _RAMP_DEFAULTS = common_types.RAMP_DEFAULTS
@@ -121,7 +99,7 @@ def cmd_print_config(cfg: Any, env: Env) -> str:
     ext_ttl: Any = cfg.external.cache_ttl if cfg.external else _EXTERNAL_CACHE_TTL
     providers: list[dict[str, Any]] = [
         {"id": s.id, "path": s.path, "line": s.line,
-         "position": sl.util_position_str(s.position),
+         "position": common_types.util_position_str(s.position),
          "timeout": s.timeout, "ttl": s.ttl}
         for s in cast("list[Any]", ext_providers)
     ]
@@ -159,10 +137,10 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
     errors: list[str] = []
     ext_dir, ext_ttl = common_config.cfg_resolve_external(raw, env)
     _, ext_dir, ext_ttl, _ = common_config.cfg_bind_scalars(
-        raw, env, sl.cfg_default_config().git, ext_dir, ext_ttl)
+        raw, env, common_config.cfg_default_config().git or {}, ext_dir, ext_ttl)
     seg_cache = os.path.join(common_config.cfg_cache_base(env), "segments")
     ext_ids = {s.id for s in common_config.core_discover_external(ext_dir, ext_ttl, seg_cache)}
-    known_segments = set(sl.cfg_default_config().segments) | ext_ids
+    known_segments = set(common_config.cfg_default_config().segments) | ext_ids
     for k in cast(dict[str, Any], raw.get("segments") or {}):
         if k not in known_segments:
             errors.append(f"unknown segment key: {k}")
@@ -170,14 +148,15 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
         if k not in _PALETTE_DEFAULTS:
             errors.append(f"unknown palette key: {k}")
     for name, value in cast(dict[str, Any], raw.get("palette") or {}).items():
-        if name in _PALETTE_DEFAULTS and sl.util_parse_color(str(value), palette=None) is None:
+        if name in _PALETTE_DEFAULTS and common_types.util_parse_color(
+            str(value), palette=None) is None:
             errors.append(f"bad palette color: {name} = {value!r}")
     for i, line in enumerate(cast(list[Any], raw.get("line") or [])):
         line_dict = cast(dict[str, Any], line) if isinstance(line, dict) else {}
         for seg in cast(list[Any], line_dict.get("segments") or []):
-            if seg not in sl.BUILDERS and seg not in ext_ids:
+            if seg not in claude_host.BUILDERS and seg not in ext_ids:
                 errors.append(f"line[{i}] references unknown segment: {seg}")
-    resolved_palette = sl.core_resolve_palette(
+    resolved_palette = common_render.core_resolve_palette(
         {str(k): str(v) for k, v in cast(dict[str, Any], raw.get("palette") or {}).items()
          if k in _PALETTE_DEFAULTS})
     for band, table in cast(dict[str, Any], raw.get("ramp") or {}).items():
@@ -189,10 +168,10 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
             continue
         for thr, spec in cast(dict[Any, Any], table).items():
             try:
-                sl.util_parse_threshold(str(thr))
+                common_types.util_parse_threshold(str(thr))
             except ValueError:
                 errors.append(f"ramp [{band}] bad threshold: {thr!r}")
-            if sl.util_parse_color(str(spec), resolved_palette) is None:
+            if common_types.util_parse_color(str(spec), resolved_palette) is None:
                 errors.append(f"ramp [{band}] bad color: {spec!r}")
     for k, v in cast(dict[str, Any], raw.get("git") or {}).items():
         problem = common_config.cfg_git_key_problem(k, v)
@@ -244,16 +223,16 @@ def _dry_render_failures(cfg: Any, theme: Any, env: Env) -> set[str]:
 
     Note: this catches builders that crash on *valid* input. A builder that only
     raises on a missing/malformed key won't be surfaced by this happy-path sample."""
-    cols, lines, assumed = sl.probe_terminal_size(env)
+    cols, lines, assumed = probe_terminal_size(env)
     home = env.get("HOME", "")
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-    ctx = sl.core_build_context(dict(_DOCTOR_SAMPLE), cfg, theme, cols, lines, assumed,
+    ctx = claude_payload.core_build_context(dict(_DOCTOR_SAMPLE), cfg, theme, cols, lines, assumed,
                                 time.perf_counter_ns(),
-                                effort=sl.cfg_resolve_effort(_DOCTOR_SAMPLE),
+                                effort=claude_payload.cfg_resolve_effort(_DOCTOR_SAMPLE),
                                 home=home, claude_dir=claude_dir)
-    for key in sl.BUILDERS:
-        sl.core_safe_build(key, ctx, 200, theme)
-    return cast("set[str]", ctx.failed)
+    for key in claude_host.BUILDERS:
+        claude_host.core_safe_build(key, ctx, 200, theme)
+    return ctx.failed
 
 
 def _env_problems(env: Env) -> list[str]:
@@ -276,9 +255,10 @@ def cmd_doctor(env: Env) -> int:
     if os.path.exists(path):
         errors = [f"{path}: {e}" for e in validate_config_file(path, env)]
     failed: set[str] = set()
-    cfg = sl.cfg_load_config(env)                      # never raises (degrades to defaults)
+    cfg = common_config.cfg_load_config(
+        env)                      # never raises (degrades to defaults)
     try:
-        theme = sl.core_build_theme(cfg)
+        theme = common_render.core_build_theme(cfg)
         failed = _dry_render_failures(cfg, theme, env)
     except Exception as e:  # pylint: disable=broad-exception-caught  # diagnostic backstop reports any crash
         errors.append(f"render pipeline crashed: {e!r}")
@@ -290,9 +270,9 @@ def cmd_doctor(env: Env) -> int:
     for p in env_probs:
         common_config.cfg_warn(p)
     if errors or failed or env_probs:
-        print(f"after fixing, re-run: {sl.core_doctor_cmd()}", file=sys.stderr)
+        print(f"after fixing, re-run: {common_render.core_doctor_cmd()}", file=sys.stderr)
         return 1
-    print(f"{path}: OK — config valid, all {len(sl.BUILDERS)} segments render cleanly")
+    print(f"{path}: OK — config valid, all {len(claude_host.BUILDERS)} segments render cleanly")
     return 0
 
 
@@ -324,7 +304,7 @@ def main() -> None:
     if args.doctor:
         sys.exit(cmd_doctor(env))
     if args.print_config:
-        cfg = sl.cfg_load_config(env)
+        cfg = common_config.cfg_load_config(env)
         print(cmd_print_config(cfg, env))
         return
     parse_args(["--help"])

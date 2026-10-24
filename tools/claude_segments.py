@@ -5,10 +5,29 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from common_types import RESET, util_gap_color, util_gap_sign, util_icon
+from claude_probes import (
+    probe_ago,
+    probe_chat_compaction,
+    probe_chat_size,
+    probe_effort_auto,
+    probe_rss,
+    probe_todo,
+)
+from common_types import (
+    BG_LIGHTGRAY,
+    RESET,
+    fmt_bytes,
+    fmt_number,
+    fmt_time_ms,
+    util_first_fitting,
+    util_gap_color,
+    util_gap_sign,
+    util_icon,
+    util_pick_color,
+)
 
 if TYPE_CHECKING:
-    from common_render import Theme
+    from common_render import Context, Theme
 
 # ═══ 4. fmt_ — pure formatters (number / tokens / duration / bytes / ago) ═════
 
@@ -137,3 +156,109 @@ def util_rate_group_str(
         parts.append(f"{fmt_rate_key_label(key)}: {color}{sign}{round(pct)}%{RESET}"
                      + (suffix_fn(reset) if show_reset else ""))
     return util_icon("⚡", " | ".join(parts)) if parts else None
+
+# ═══ 7. seg_ — segment builders seg_x(ctx, avail, theme); auto-discovered registry
+
+
+def seg_todo(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    state, text = probe_todo(ctx)
+    if not text:
+        return None
+    limit = avail - 4                      # room for icon + space + ellipsis
+    if limit < 6:                          # too cramped to be useful -> hide
+        return None
+    if len(text) > limit:
+        text = text[:limit - 1] + "…"
+    if state == "in_progress":
+        return util_icon("📝", f"{theme.c('YELLOW')}{text}{RESET}")
+    if state == "pending":
+        return util_icon("⏸", f"{theme.c('GREY')}{text}{RESET}")
+    return None
+
+
+def seg_alt_time_ago(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    ago = probe_ago(ctx)
+    if not ago:
+        return None
+    return util_first_fitting([f"{theme.c('WHITE')}{ago}{RESET}"], avail)
+
+
+def seg_effort(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    level = ctx.effort
+    if not level:
+        return None
+    # Unknown level (stale/future): no color on the word, all-grey ladder — a safe
+    # degraded display. cfg_resolve_effort already strips "auto", so it never lands here.
+    color, bar = theme.effort.get(level.lower(), ("", f"{theme.c('GREY')}▁▃▄▆█"))
+    word = f"{color}{level}{RESET}"
+    bars = util_icon("🧠", f"{bar}{RESET}")
+    if probe_effort_auto(ctx):
+        # effortLevel is unset/auto in settings: flag the resolved level as
+        # auto-chosen. The flag degrades [auto] -> * -> dropped as space tightens.
+        variants = [f"{bars} {word} {theme.c('GREY')}[auto]{RESET}",
+                    f"{bars} {color}{level}*{RESET}",
+                    f"{bars} {word}",
+                    bars]
+    else:
+        variants = [f"{bars} {word}", bars]
+    return util_first_fitting(variants, avail)
+
+
+def seg_lines(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    body = (f"{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(ctx.added)}{RESET}"
+            f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(ctx.removed)}{RESET}")
+    return util_first_fitting([util_icon("📃", body)], avail)
+
+
+def seg_alt_cost(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    return util_first_fitting([util_icon("🪙", f"${float(ctx.cost):.3f}")], avail)
+
+
+def seg_alt_time_session(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    return util_first_fitting([util_icon("💬", fmt_time_ms(ctx.total_ms))], avail)
+
+
+def seg_alt_time_api(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    return util_first_fitting([util_icon("📡", fmt_time_ms(ctx.api_ms))], avail)
+
+
+def seg_chat_size(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    compaction = probe_chat_compaction(ctx)
+    if compaction is None:
+        return None
+    since, count = compaction
+    # memoized — free, already computed above; probe_chat_compaction is None
+    # exactly when this is None, so it's safe to narrow here.
+    total = cast(int, probe_chat_size(ctx))
+    color = util_pick_color(since, theme.ramps["chat_size"])
+    if count == 0:
+        return util_first_fitting(
+            [util_icon("💾", f"{color}{fmt_bytes(since)}{RESET}")], avail)
+    rich = util_icon("💾", f"{color}{fmt_bytes(since)}/{fmt_bytes(total)} ({count}x){RESET}")
+    terse = util_icon("💾", f"{color}{fmt_bytes(since)}{RESET}")
+    return util_first_fitting([rich, terse], avail)
+
+
+def seg_alt_process_memory(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    n = probe_rss(ctx)
+    if n is None:
+        return None
+    return util_first_fitting([util_icon("🧮", fmt_bytes(n))], avail)
+
+
+def seg_alt_h_rate_limit(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    rl = ctx.rate_limits
+    if not rl:
+        return None
+    return util_first_fitting(
+        [util_rate_group_str(rl, True, True, theme),
+         util_rate_group_str(rl, True, False, theme)], avail)
+
+
+def seg_alt_w_rate_limit(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    rl = ctx.rate_limits
+    if not rl:
+        return None
+    return util_first_fitting(
+        [util_rate_group_str(rl, False, True, theme),
+         util_rate_group_str(rl, False, False, theme)], avail)

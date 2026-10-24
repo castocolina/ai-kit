@@ -646,8 +646,8 @@ _BROAD_EXCEPT_BACKSTOPS = frozenset({
     (_CURATED_APPLY, "_execute_apply"),
     ("tools/wizard_app.py", "_apply_housekeeping"),
     ("tools/wizard_app.py", "_run_commit"),
-    ("tools/status-line.py", "core_safe_build"),
-    ("tools/status-line.py", "safe_render"),
+    ("tools/claude_host.py", "core_safe_build"),
+    ("tools/claude_host.py", "safe_render"),
     ("tools/statusline-doctor.py", "cmd_doctor"),
     ("tools/config_doctor_checks.py", "apply_row"),
 })
@@ -745,6 +745,17 @@ def _is_main_guard(node):
     )
 
 
+def check_thin_entry(tree):
+    """Allow only imports, the module docstring, and the main guard."""
+    return [
+        f"unexpected top-level {type(node).__name__} at line {node.lineno}"
+        for node in tree.body
+        if not isinstance(node, (ast.Import, ast.ImportFrom, ast.If))
+        and not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+                 and isinstance(node.value.value, str))
+    ]
+
+
 def check_main_guard_last(relpath, tree):
     """Rule 12: a test module's `__main__` guard is its last statement, so running the file
     as a script never calls `unittest.main()` before the classes below it exist."""
@@ -764,7 +775,7 @@ class TestArchitecture(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.render_tree, cls.render_src = _parse("status-line.py")
+        cls.render_tree, cls.render_src = _parse("common_config.py")
         cls.doctor_tree, cls.doctor_src = _parse("statusline-doctor.py")
 
     def test_rule1_config_env_only_in_bootstrap(self):
@@ -774,27 +785,20 @@ class TestArchitecture(unittest.TestCase):
         literals = {key for _, key in _config_env_literals(config_tree)}
         self.assertIn("CC_AI_KIT_CONFIG_FILE", literals)
 
-    def test_rule2_no_subscript_on_typed_models(self):
-        self.assertEqual([], check_no_typed_model_subscript(self.render_tree))
+    def test_rule2_to_7_on_each_split_module(self):
+        for name, tree, source in present_split_modules():
+            self.assertEqual([], check_no_typed_model_subscript(tree), name)
+            self.assertEqual([], check_bookkeeping_readers(tree), name)
+            self.assertEqual([], check_seg_signature(tree), name)
+            self.assertEqual(
+                [], check_defaults_where_present(tree, source), name
+            )
+            self.assertEqual([], check_role_prefix_integrity(tree, source), name)
+            self.assertEqual([], check_no_doctor_symbols(tree), name)
 
-    def test_rule3_only_meta_segments_read_bookkeeping(self):
-        self.assertEqual([], check_bookkeeping_readers(self.render_tree))
-
-    def test_rule4_segment_signatures(self):
-        self.assertEqual([], check_seg_signature(self.render_tree))
-
-    def test_rule5_defaults_precedes_cfg_and_is_data_only(self):
-        self.assertEqual(
-            [], check_defaults_where_present(self.render_tree, self.render_src)
-        )
-
-    def test_rule6_role_prefix_integrity(self):
-        self.assertEqual(
-            [], check_role_prefix_integrity(self.render_tree, self.render_src)
-        )
-
-    def test_rule7_no_doctor_symbols_in_render(self):
-        self.assertEqual([], check_no_doctor_symbols(self.render_tree))
+    def test_entry_is_thin(self):
+        entry_tree, _source = _parse("status-line.py")
+        self.assertEqual([], check_thin_entry(entry_tree))
 
     def test_rule8_no_shell_true_in_spec_family(self):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -902,8 +906,10 @@ class TestArchitecture(unittest.TestCase):
     def test_seg_signature_check_is_non_empty(self):
         """Sanity: the segment-signature rule actually inspected segments (guards
         against a future rename silently emptying the seg_ population)."""
-        seg_funcs = [f for f in _top_functions(self.render_tree)
-                     if f.name.startswith("seg_")]
+        seg_funcs = [
+            func for module in ("common_segments.py", "claude_segments.py")
+            for func in _top_functions(_parse(module)[0]) if func.name.startswith("seg_")
+        ]
         self.assertGreater(len(seg_funcs), 5)
 
 
@@ -982,7 +988,7 @@ def split_hash_mismatches(include_generalized=False, rows=None, modules=None):
     """Moved rows whose AST, after reversing renames, differs from ``base_ast``.
 
     ``include_generalized=False`` checks ``reused`` rows. ``True`` also checks
-    ``generalized`` and ``split`` rows. Stage-3 rows stay in the monolith.
+    ``generalized`` and ``split`` rows.
     """
     if rows is None:
         with open(_AUDIT_PATH, encoding="ascii") as handle:
@@ -997,7 +1003,7 @@ def split_hash_mismatches(include_generalized=False, rows=None, modules=None):
     }
     problems = []
     for row in rows:
-        if int(row.stage) > 2 or row.fate not in fates:
+        if row.fate not in fates:
             continue
         node = restored.get(row.module, {}).get(row.name)
         if node is None:
@@ -1023,7 +1029,7 @@ def split_location_problems(rows=None, modules=None):
         hits = sorted(
             module for module, have in defined.items() if names & have
         )
-        expected = [row.module] if int(row.stage) <= 2 else ["status-line"]
+        expected = [row.module]
         if hits != expected:
             problems.append(f"{row.name} found in {hits}, expected {expected}")
     return problems
@@ -1097,8 +1103,8 @@ class TestSplitModuleRules(unittest.TestCase):
 class TestSplitConformance(unittest.TestCase):
     """Every moved definition matches the base blob and lives in one module."""
 
-    def test_hashes_match_including_generalized(self):
-        self.assertEqual([], split_hash_mismatches(include_generalized=True))
+    def test_reused_hashes_match(self):
+        self.assertEqual([], split_hash_mismatches())
 
     def test_locations(self):
         self.assertEqual([], split_location_problems())
@@ -1121,6 +1127,10 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertEqual(
             [], split_hash_mismatches(False, [row], {"common_types": source})
         )
+
+    def test_thin_entry_flags_a_definition(self):
+        tree = ast.parse('"entry"\ndef extra():\n    return None\n')
+        self.assertNotEqual([], check_thin_entry(tree))
 
     def test_split_location_flags_the_wrong_module(self):
         row = AuditRow(
@@ -1403,13 +1413,7 @@ class TestSegmentInventory(unittest.TestCase):
     # the inventory icon is hand-mirrored and this test pins it to the reviewed map.
 
     def _sl(self):
-        sl_path = os.path.join(_TOOLS, "status-line.py")
-        spec = importlib.util.spec_from_file_location("status_line_inv", sl_path)
-        assert spec is not None and spec.loader is not None
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = mod
-        spec.loader.exec_module(mod)
-        return mod
+        return common_types
 
     def _line_index(self, sl, key):
         for i, ln in enumerate(common_types.LAYOUT):

@@ -7,15 +7,17 @@ import tempfile
 import time
 import types
 import unittest
-from typing import Any
 
 _HERE = os.path.dirname(__file__)
 _TOOLS_DIR = os.path.abspath(os.path.join(_HERE, "..", "tools"))
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
-# Pre-split parity: the importlib-loaded monolith was Any-typed; tighten in a later typed-test pass.
-common_config: Any = importlib.import_module("common_config")
-common_types: Any = importlib.import_module("common_types")
+import claude_host
+import claude_payload
+import common_config
+import common_probe
+import common_render
+import common_types
 
 _MODULE_PATH = os.path.join(_HERE, "..", "tools", "status-line.py")
 _DOCTOR_PATH = os.path.join(_HERE, "..", "tools", "statusline-doctor.py")
@@ -47,11 +49,13 @@ def _ctx_from_env(raw, env, cfg, t_start=None):
     """Resolve the per-render SHELL inputs from `env` and build a Context — the
     test-side mirror of what safe_render does in production (terminal size, HOME,
     claude_dir, effort). Returns (ctx, cols, lines) for call-site convenience."""
-    cols, lines, assumed = sl.probe_terminal_size(env)
+    cols, lines, assumed = common_probe.probe_terminal_size(env)
     home = env.get("HOME", "")
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-    ctx = sl.core_build_context(raw, cfg, sl.core_default_theme(), cols, lines, assumed, t_start,
-                           effort=sl.cfg_resolve_effort(raw), home=home, claude_dir=claude_dir)
+    ctx = claude_payload.core_build_context(
+        raw, cfg, common_render.core_default_theme(), cols, lines, assumed, t_start,
+                           effort=claude_payload.cfg_resolve_effort(
+                               raw), home=home, claude_dir=claude_dir)
     return ctx, cols, lines
 
 
@@ -139,28 +143,29 @@ class TestDiscover(unittest.TestCase):
 
 class TestSanitize(unittest.TestCase):
     def test_first_non_empty_line(self):
-        self.assertEqual(sl.util_sanitize_external("\n\n  hello \n second\n", 40), "  hello")
+        self.assertEqual(
+            common_types.util_sanitize_external("\n\n  hello \n second\n", 40), "  hello")
 
     def test_keeps_sgr_strips_other_csi(self):
         # \033[33m kept (SGR), \033[2J (clear) and cursor move \033[1A stripped
-        out = sl.util_sanitize_external("\033[33mhi\033[0m\033[2J\033[1A", 40)
+        out = common_types.util_sanitize_external("\033[33mhi\033[0m\033[2J\033[1A", 40)
         self.assertEqual(out, "\033[33mhi\033[0m")
 
     def test_strips_osc_and_control_chars(self):
-        out = sl.util_sanitize_external("\033]0;title\007ab\tc", 40)
+        out = common_types.util_sanitize_external("\033]0;title\007ab\tc", 40)
         self.assertEqual(out, "abc")
 
     def test_truncates_to_avail_and_resets(self):
-        out = sl.util_sanitize_external("\033[33mabcdef\033[0m", 3)
-        self.assertEqual(sl.util_visible_width(out), 3)
-        self.assertTrue(out.endswith(sl.RESET))
+        out = common_types.util_sanitize_external("\033[33mabcdef\033[0m", 3)
+        self.assertEqual(common_types.util_visible_width(out), 3)
+        self.assertTrue(out.endswith(common_types.RESET))
 
     def test_empty_after_sanitize_returns_none(self):
-        self.assertIsNone(sl.util_sanitize_external("\033[2J\n", 40))
-        self.assertIsNone(sl.util_sanitize_external("   \n", 40))
+        self.assertIsNone(common_types.util_sanitize_external("\033[2J\n", 40))
+        self.assertIsNone(common_types.util_sanitize_external("   \n", 40))
 
     def test_avail_zero_returns_none(self):
-        self.assertIsNone(sl.util_sanitize_external("hi", 0))
+        self.assertIsNone(common_types.util_sanitize_external("hi", 0))
 
 
 class TestRunExternal(unittest.TestCase):
@@ -183,12 +188,13 @@ class TestRunExternal(unittest.TestCase):
 
     def test_runs_and_returns_first_line(self):
         p = write_script(self.dir, "p", "#!/bin/sh\necho '\033[33mhi\033[0m'\n")
-        self.assertEqual(sl.core_run_external(self._spec(p), self._data(), 40),
+        self.assertEqual(common_render.core_run_external(self._spec(p), self._data(), 40),
                          "\033[33mhi\033[0m")
 
     def test_receives_cols_via_env(self):
         p = write_script(self.dir, "p", '#!/bin/sh\necho "cols=$AI_KIT_SEGMENT_COLS"\n')
-        self.assertEqual(sl.core_run_external(self._spec(p), self._data(), 17), "cols=17")
+        self.assertEqual(
+            common_render.core_run_external(self._spec(p), self._data(), 17), "cols=17")
 
     def test_receives_segment_block_on_stdin(self):
         p = write_script(self.dir, "p",
@@ -196,24 +202,25 @@ class TestRunExternal(unittest.TestCase):
                          'import sys, json\n'
                          'd = json.load(sys.stdin)\n'
                          'print(d["segment"]["avail_cols"], d["segment"]["id"])\n')
-        self.assertEqual(sl.core_run_external(self._spec(p), self._data(), 9), "9 t")
+        self.assertEqual(common_render.core_run_external(self._spec(p), self._data(), 9), "9 t")
 
     def test_runs_in_workspace_dir(self):
         p = write_script(self.dir, "p", "#!/bin/sh\npwd\n")
-        out = sl.core_run_external(self._spec(p), self._data(), 200)
+        out = common_render.core_run_external(self._spec(p), self._data(), 200)
         self.assertEqual(os.path.realpath(out), os.path.realpath(self.dir))
 
     def test_nonzero_exit_returns_none(self):
         p = write_script(self.dir, "p", "#!/bin/sh\necho x\nexit 1\n")
-        self.assertIsNone(sl.core_run_external(self._spec(p), self._data(), 40))
+        self.assertIsNone(common_render.core_run_external(self._spec(p), self._data(), 40))
 
     def test_timeout_returns_none(self):
         p = write_script(self.dir, "p", "#!/bin/sh\nsleep 5\n")
-        self.assertIsNone(sl.core_run_external(self._spec(p, timeout=0.3), self._data(), 40))
+        self.assertIsNone(
+            common_render.core_run_external(self._spec(p, timeout=0.3), self._data(), 40))
 
     def test_empty_output_returns_none(self):
         p = write_script(self.dir, "p", "#!/bin/sh\nexit 0\n")
-        self.assertIsNone(sl.core_run_external(self._spec(p), self._data(), 40))
+        self.assertIsNone(common_render.core_run_external(self._spec(p), self._data(), 40))
 
     def test_caches_within_ttl(self):
         # writes a counter file each run; second call within ttl must not re-run
@@ -221,8 +228,8 @@ class TestRunExternal(unittest.TestCase):
         p = write_script(self.dir, "p",
                          f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
         spec = self._spec(p, ttl=100)
-        self.assertEqual(sl.core_run_external(spec, self._data(), 40), "hi")
-        self.assertEqual(sl.core_run_external(spec, self._data(), 40), "hi")
+        self.assertEqual(common_render.core_run_external(spec, self._data(), 40), "hi")
+        self.assertEqual(common_render.core_run_external(spec, self._data(), 40), "hi")
         with open(counter) as f:
             self.assertEqual(f.read(), "x")        # ran exactly once
 
@@ -231,8 +238,8 @@ class TestRunExternal(unittest.TestCase):
         p = write_script(self.dir, "p",
                          f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
         spec = self._spec(p, ttl=0)
-        sl.core_run_external(spec, self._data(), 40)
-        sl.core_run_external(spec, self._data(), 40)
+        common_render.core_run_external(spec, self._data(), 40)
+        common_render.core_run_external(spec, self._data(), 40)
         with open(counter) as f:
             self.assertEqual(f.read(), "xx")       # ran twice
 
@@ -243,10 +250,12 @@ class TestRunExternal(unittest.TestCase):
         p = write_script(self.dir, "p",
                          f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
         spec = self._spec(p, ttl=30)
-        self.assertEqual(sl.core_run_external(spec, self._data(), 40), "hi")  # run 1, writes cache
+        self.assertEqual(
+            common_render.core_run_external(spec, self._data(), 40), "hi")  # run 1, writes cache
         old = time.time() - 31                                          # > ttl in the past
         os.utime(spec.cache_path, (old, old))
-        self.assertEqual(sl.core_run_external(spec, self._data(), 40), "hi")  # cache stale -> run 2
+        self.assertEqual(
+            common_render.core_run_external(spec, self._data(), 40), "hi")  # cache stale -> run 2
         with open(counter) as f:
             self.assertEqual(f.read(), "xx")       # ran twice
 
@@ -264,8 +273,8 @@ class TestRunExternal(unittest.TestCase):
         spec = common_types.ExtSpec(id="t", path=p, line=1, position=("end", ""),
                           timeout=2.0, ttl=100,
                           cache_path=os.path.join(ro, "sub", "t"))   # makedirs will fail
-        self.assertEqual(sl.core_run_external(spec, self._data(), 40), "hi")
-        self.assertEqual(sl.core_run_external(spec, self._data(), 40), "hi")
+        self.assertEqual(common_render.core_run_external(spec, self._data(), 40), "hi")
+        self.assertEqual(common_render.core_run_external(spec, self._data(), 40), "hi")
         self.assertFalse(os.path.exists(spec.cache_path))   # nothing cached
         with open(counter) as f:
             self.assertEqual(f.read(), "xx")       # ran twice (never cached)
@@ -273,7 +282,7 @@ class TestRunExternal(unittest.TestCase):
 
 class TestResolveExternal(unittest.TestCase):
     def test_config_has_external_default_none(self):
-        cfg = sl.cfg_default_config()
+        cfg = common_config.cfg_default_config()
         self.assertIsNone(cfg.external)
 
     def test_defaults(self):
@@ -385,7 +394,7 @@ class TestLoadConfigExternal(unittest.TestCase):
     def test_discovered_provider_enabled_by_default_and_placed(self):
         write_script(self.segs, "system_memory",
                      "#!/bin/sh\n# ai-kit-segment: line=1 end\necho hi\n")
-        cfg = sl.cfg_load_config(self._env())
+        cfg = common_config.cfg_load_config(self._env())
         self.assertTrue(cfg.segments.get("system_memory"))            # default-on
         self.assertIn("system_memory", cfg.layout[0].segments)        # placed on row 1
         self.assertEqual([s.id for s in cfg.external.providers], ["system_memory"])
@@ -394,16 +403,16 @@ class TestLoadConfigExternal(unittest.TestCase):
         write_script(self.segs, "system_memory", "#!/bin/sh\necho hi\n")
         with open(self.cfg, "w") as f:
             f.write("[segments]\nsystem_memory = false\n")
-        cfg = sl.cfg_load_config(self._env())
+        cfg = common_config.cfg_load_config(self._env())
         self.assertFalse(cfg.segments["system_memory"])
 
     def test_env_toggle_disables_external(self):
         write_script(self.segs, "system_memory", "#!/bin/sh\necho hi\n")
-        cfg = sl.cfg_load_config(self._env(CC_AI_KIT_SEGMENT_SYSTEM_MEMORY="0"))
+        cfg = common_config.cfg_load_config(self._env(CC_AI_KIT_SEGMENT_SYSTEM_MEMORY="0"))
         self.assertFalse(cfg.segments["system_memory"])
 
     def test_no_providers_keeps_external_empty(self):
-        cfg = sl.cfg_load_config(self._env())
+        cfg = common_config.cfg_load_config(self._env())
         self.assertIsNotNone(cfg.external)
         self.assertEqual(cfg.external.providers, [])
 
@@ -420,14 +429,14 @@ class TestRenderIntegration(unittest.TestCase):
                     "XDG_CACHE_HOME": os.path.join(self.dir, "cache"), "HOME": self.dir}
 
     def _render(self, cols=200, lines=40):
-        cfg = sl.cfg_load_config(self.env)
-        theme = sl.core_build_theme(cfg)
+        cfg = common_config.cfg_load_config(self.env)
+        theme = common_render.core_build_theme(cfg)
         raw = {"workspace": {"current_dir": self.dir},
                "context_window": {"used_percentage": 10, "context_window_size": 200000},
                "session_id": "x", "transcript_path": "", "rate_limits": {}}
         env = {**self.env, "STATUSLINE_COLS": str(cols), "STATUSLINE_LINES": str(lines)}
         data, _c, _l = _ctx_from_env(raw, env, cfg)
-        return "\n".join(sl.core_render(data, cfg, theme))
+        return "\n".join(claude_host.core_render(data, cfg, theme))
 
     def test_external_segment_appears_in_render(self):
         write_script(self.segs, "ping",
@@ -469,7 +478,7 @@ class TestCliSurface(unittest.TestCase):
     def test_print_config_lists_external(self):
         write_script(self.segs, "system_memory",
                      "#!/bin/sh\n# ai-kit-segment: line=1 end\necho hi\n")
-        cfg = sl.cfg_load_config(self.env)
+        cfg = common_config.cfg_load_config(self.env)
         blob = json.loads(doctor.cmd_print_config(cfg, self.env))
         self.assertEqual(blob["external"]["providers"][0]["id"], "system_memory")
         self.assertIn("ttl", blob["external"])
@@ -509,19 +518,19 @@ class TestSampleProvider(unittest.TestCase):
                           position=("after", "context"), timeout=3.0, ttl=0,
                           cache_path=os.path.join(tempfile.mkdtemp(), "system_memory"))
         data = types.SimpleNamespace(raw={}, work_dir=".")
-        out = sl.core_run_external(spec, data, 40)
+        out = common_render.core_run_external(spec, data, 40)
         # Renders on Linux/macOS; on an unsupported platform it cleanly drops (None).
         if out is not None:
             self.assertEqual(out.count("\n"), 0)
-            self.assertLessEqual(sl.util_visible_width(out), 40)
+            self.assertLessEqual(common_types.util_visible_width(out), 40)
 
     def test_short_budget_tiers_down_or_drops(self):
         spec = common_types.ExtSpec(id="system_memory", path=os.path.abspath(self.PATH), line=1,
                           position=("end", ""), timeout=3.0, ttl=0,
                           cache_path=os.path.join(tempfile.mkdtemp(), "system_memory"))
-        out = sl.core_run_external(spec, types.SimpleNamespace(raw={}, work_dir="."), 4)
+        out = common_render.core_run_external(spec, types.SimpleNamespace(raw={}, work_dir="."), 4)
         if out is not None:
-            self.assertLessEqual(sl.util_visible_width(out), 4)
+            self.assertLessEqual(common_types.util_visible_width(out), 4)
 
 
 class TestRecipe(unittest.TestCase):
