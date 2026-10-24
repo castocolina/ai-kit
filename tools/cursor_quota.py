@@ -1,18 +1,20 @@
 """Pure Cursor quota normalization and state logic.
 
-This module is the only module that will touch the network or a credential (in later
-increments); networking imports belong inside functions only.
+Networking and credential imports are intentionally lazy so rendering stays cheap.
 """
 # pyright: strict
 
+import importlib
 import math
-from typing import NamedTuple, cast
+from collections.abc import Callable
+from typing import Any, NamedTuple, cast
 
 # ═══ 1. DEFAULTS — cache and Dashboard constants ═══
 FRESH_TTL_S = 120
 NEGATIVE_TTL_S = 600
 UNLIMITED_HARD_LIMIT = 2147483647
 WEEK_MS = 7 * 86400 * 1000
+DEFAULT_CALL_TIMEOUT_S = 8.0
 
 
 class QuotaResult(NamedTuple):
@@ -28,6 +30,21 @@ class QuotaResult(NamedTuple):
     od_kind: str
     od_used_usd: float | None
     od_ceiling_usd: float | None
+
+
+class FetchResult(NamedTuple):
+    usage: dict[str, object] | None
+    hard_limit: dict[str, object] | None
+    plan_info: dict[str, object] | None
+    error_kind: str | None
+
+
+class FetchContext(NamedTuple):
+    base: str
+    token: str
+    opener: Any
+    deadline: float
+    timeout_s: float
 
 
 # ═══ 2. UTIL — pure parsing helpers ═══
@@ -175,7 +192,8 @@ def core_quota_state(cache: object, now: float) -> QuotaResult:
     last_attempt = util_number(value.get("last_attempt_at"))
     error_kind = value.get("last_error_kind")
     if data is None:
-        state = str(error_kind) if error_kind in {"auth_expired", "auth_unsupported"} else (
+        hidden_errors = {"auth_expired", "auth_unsupported", "auth_missing"}
+        state = str(error_kind) if error_kind in hidden_errors else (
             "network_error" if error_kind == "network_error" else "absent")
         return QuotaResult(state, "inferred", str(value.get("last_error") or ""), None,
                            None, None, None, None, None, "unavailable", None, None)
@@ -183,7 +201,7 @@ def core_quota_state(cache: object, now: float) -> QuotaResult:
     end = data.get("cycle_end_ms")
     if isinstance(end, int) and now * 1000 >= end:
         state = "cycle_ended"
-    elif error_kind in {"auth_expired", "auth_unsupported"} and (
+    elif error_kind in {"auth_expired", "auth_unsupported", "auth_missing"} and (
             last_attempt is not None and (fetched is None or last_attempt > fetched)):
         state = str(error_kind)
     elif error_kind == "network_error":
@@ -228,3 +246,161 @@ def core_synthetic_cache(now: float) -> dict[str, object]:
     }
     return {"data": data, "data_fetched_at": now, "last_attempt_at": now,
             "last_error": None, "last_error_kind": None}
+
+
+# ═══ 4. PROBE — credentials and Dashboard transport ═══
+def util_validate_endpoint(url: str) -> str | None:
+    """Return a canonical approved Dashboard base URL, or None."""
+    urlsplit = importlib.import_module("urllib.parse").urlsplit
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname
+        valid_scheme = parsed.scheme.lower() == "https"
+        valid_host = bool(host) and (host.lower() == "cursor.sh" or
+                                     host.lower().endswith(".cursor.sh"))
+        valid_credentials = parsed.username is None and parsed.password is None
+        valid_port = parsed.port in (None, 443)
+        valid_suffix = parsed.path in ("", "/") and not parsed.query and not parsed.fragment
+        if not (valid_scheme and valid_host and valid_credentials and valid_port and valid_suffix):
+            return None
+        return f"https://{host.lower()}"
+    except ValueError:
+        return None
+
+
+def probe_auth_path(env: dict[str, str], platform: str = "") -> str:
+    """Resolve the CLI's read-only auth path without consulting CURSOR_CONFIG_DIR."""
+    os = importlib.import_module("os")
+    sys = importlib.import_module("sys")
+    system = platform or sys.platform
+    if system == "darwin":
+        return os.path.join(env.get("HOME", os.path.expanduser("~")), ".cursor", "auth.json")
+    config = env.get("XDG_CONFIG_HOME") or os.path.join(
+        env.get("HOME", os.path.expanduser("~")), ".config")
+    return os.path.join(config, "cursor", "auth.json")
+
+
+def probe_access_token(env: dict[str, str]) -> tuple[str | None, str | None]:
+    """Read only accessToken from auth.json; never expose parse or OS errors."""
+    json = importlib.import_module("json")
+    try:
+        with open(probe_auth_path(env), encoding="utf-8") as handle:
+            value = json.load(handle)
+    except FileNotFoundError:
+        return None, "auth_missing"
+    except (OSError, ValueError):
+        return None, "network_error"
+    token = cast(dict[str, object], value).get("accessToken") if isinstance(value, dict) else None
+    if not isinstance(token, str) or not token:
+        return None, "auth_unsupported"
+    return token, None
+
+
+def probe_build_opener() -> Any:
+    """Build a default-TLS opener which refuses every redirect."""
+    request_module = importlib.import_module("urllib.request")
+
+    class NoRedirect(request_module.HTTPRedirectHandler):
+        def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+    return request_module.build_opener(NoRedirect)
+
+
+def probe_fetch_all(base: str, token: str, opener: Any, timeout_s: float) -> FetchResult:
+    """Fetch three Dashboard methods concurrently within one body-inclusive deadline."""
+    runtime = importlib.import_module
+    futures_module = runtime("concurrent.futures")
+    context = FetchContext(base, token, opener, runtime("time").monotonic() + timeout_s,
+                          timeout_s)
+
+    def call(method: str) -> tuple[dict[str, object] | None, str | None]:
+        return probe_dashboard_call(context, method)
+
+    methods = ("GetCurrentPeriodUsage", "GetHardLimit", "GetPlanInfo")
+    by_method = probe_submit_calls(futures_module, call, methods, context.deadline)
+    if by_method is None:
+        return FetchResult(None, None, None, "network_error")
+    usage, usage_error = by_method[methods[0]]
+    hard, _ = by_method[methods[1]]
+    plan, _ = by_method[methods[2]]
+    if usage_error:
+        return FetchResult(None, None, None, usage_error)
+    return FetchResult(usage, hard, plan, None)
+
+def probe_submit_calls(
+    futures_module: Any,
+    call: Callable[[str], tuple[dict[str, object] | None, str | None]],
+    methods: tuple[str, ...], deadline: float
+) -> dict[str, tuple[dict[str, object] | None, str | None]] | None:
+    """Run method calls concurrently and bound executor wait by the shared deadline."""
+    executor = futures_module.ThreadPoolExecutor(max_workers=len(methods))
+    futures = {method: executor.submit(call, method) for method in methods}
+    _, pending = futures_module.wait(
+        futures.values(), timeout=max(0.0, deadline - importlib.import_module("time").monotonic()),
+        return_when=futures_module.ALL_COMPLETED)
+    if pending:
+        for future in pending:
+            future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        return None
+    results = {method: future.result() for method, future in futures.items()}
+    executor.shutdown(wait=True)
+    return results
+
+
+def probe_dashboard_call(
+    context: FetchContext, method: str
+) -> tuple[dict[str, object] | None, str | None]:
+    """Issue one Dashboard POST and parse a JSON-object body before the deadline."""
+    runtime = importlib.import_module
+    json = runtime("json")
+    time = runtime("time")
+    http_error = runtime("urllib.error").HTTPError
+    request_module = runtime("urllib.request")
+    remaining = context.deadline - time.monotonic()
+    if remaining <= 0:
+        return None, "network_error"
+    request = request_module.Request(
+        f"{context.base}/aiserver.v1.DashboardService/{method}", data=b"{}", method="POST",
+        headers={"Authorization": f"Bearer {context.token}", "Content-Type": "application/json",
+                 "Connect-Protocol-Version": "1"})
+    try:
+        with context.opener.open(request, timeout=min(context.timeout_s, remaining)) as response:
+            sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+            chunks: list[bytes] = []
+            while True:
+                remaining = context.deadline - time.monotonic()
+                if remaining <= 0:
+                    return None, "network_error"
+                if sock is not None and sock.fileno() >= 0:
+                    sock.settimeout(remaining)
+                chunk = response.read(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            value = json.loads(b"".join(chunks))
+            return (cast(dict[str, object], value), None) if isinstance(value, dict) else (
+                None, "network_error")
+    except http_error as exc:
+        return None, "auth_expired" if exc.code in (401, 403) else "network_error"
+    except (OSError, ValueError, json.JSONDecodeError, TimeoutError):
+        return None, "network_error"
+
+
+def probe_fetch_quota(
+    env: dict[str, str], opener: Any = None,
+    fetch: Callable[[str, str, Any, float], FetchResult] = probe_fetch_all
+) -> tuple[dict[str, object] | None, str | None, str]:
+    """Validate before reading the token, fetch, and return only normalized data."""
+    endpoint = util_validate_endpoint(env.get("CURSOR_API_ENDPOINT", "https://api2.cursor.sh"))
+    if endpoint is None:
+        return None, "network_error", "Dashboard endpoint rejected"
+    token, error = probe_access_token(env)
+    if error:
+        return None, error, "Cursor authentication unavailable"
+    result = fetch(endpoint, cast(str, token), opener or probe_build_opener(),
+                   DEFAULT_CALL_TIMEOUT_S)
+    if result.error_kind:
+        return None, result.error_kind, "Cursor Dashboard request failed"
+    return core_normalize(result.usage, result.hard_limit, result.plan_info), None, ""
