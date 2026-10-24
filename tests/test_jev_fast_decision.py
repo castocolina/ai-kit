@@ -1109,7 +1109,8 @@ class TestGate(_ClientCase):
         self.assertEqual(self.backend_entry(report, "typesafe")["usable"], False)
         self.assertEqual(self.backend_entry(report, "typesafe")["reason"],
                          "consent_required_for_remote")
-        self.assertEqual(self.backend_entry(report, "typesafe")["key_source"], "env")
+        self.assertEqual(self.backend_entry(report, "typesafe")["key_source"],
+                         "env:TYPESAFE_API_KEY")
         self.assertEqual(self.backend_entry(report, "typesafe")["remote"], True)
         self.assertEqual(stub.requests, [])
 
@@ -1170,7 +1171,7 @@ class TestKeys(_ClientCase):
     def test_keys_typesafe_env_vs_file(self):
         self.typesafe_file()
         os.environ["TYPESAFE_API_KEY"] = self.SENTINEL
-        self.assertEqual(JR._typesafe_key(), (self.SENTINEL, "env"))
+        self.assertEqual(JR._typesafe_key(), (self.SENTINEL, "env:TYPESAFE_API_KEY"))
 
     def test_typesafe_key_order_d07(self):
         # D-07: TYPESAFE_API_KEY, JEV_API_KEY, JEV_API_KEY_FILE, secrets.env, then the state file.
@@ -1184,29 +1185,29 @@ class TestKeys(_ClientCase):
         os.chmod(key_file, 0o600)
         os.environ.update({"TYPESAFE_API_KEY": "from-ts-env", "JEV_API_KEY": "from-jev-env",
                            "JEV_API_KEY_FILE": str(key_file)})
-        expected = [("TYPESAFE_API_KEY", ("from-ts-env", "env")),
-                    ("JEV_API_KEY", ("from-jev-env", "env")),
-                    ("JEV_API_KEY_FILE", ("from-key-file", "file")),
-                    (None, ("from-secrets", "file"))]
+        expected = [("TYPESAFE_API_KEY", ("from-ts-env", "env:TYPESAFE_API_KEY")),
+                    ("JEV_API_KEY", ("from-jev-env", "env:JEV_API_KEY")),
+                    ("JEV_API_KEY_FILE", ("from-key-file", "file:JEV_API_KEY_FILE")),
+                    (None, ("from-secrets", "file:secrets.env"))]
         for drop, want in expected:
             self.assertEqual(JR._typesafe_key(), want)
             if drop:
                 os.environ.pop(drop)
         secrets.write_text("TYPESAFE_API_KEY=ts-secret\nJEV_API_KEY=jev-secret\n",
                            encoding="utf-8")
-        self.assertEqual(JR._typesafe_key(), ("ts-secret", "file"))
+        self.assertEqual(JR._typesafe_key(), ("ts-secret", "file:secrets.env"))
         os.chmod(secrets, 0o644)  # refused, so the state file answers
-        self.assertEqual(JR._typesafe_key(), ("from-state", "file"))
+        self.assertEqual(JR._typesafe_key(), ("from-state", "state"))
         os.chmod(key_file, 0o644)
         os.environ["JEV_API_KEY_FILE"] = str(key_file)
-        self.assertEqual(JR._typesafe_key(), ("from-state", "file"))
+        self.assertEqual(JR._typesafe_key(), ("from-state", "state"))
         Path(os.environ["XDG_STATE_HOME"], "typesafe", "api_key").unlink()
         self.assertEqual(JR._typesafe_key(), (None, "world_readable"))
 
     def test_typesafe_file_key_when_no_env(self):
         os.environ.pop("TYPESAFE_API_KEY", None)
         self.typesafe_file()
-        self.assertEqual(JR._typesafe_key(), ("ssn-from-file", "file"))
+        self.assertEqual(JR._typesafe_key(), ("ssn-from-file", "state"))
 
     def test_typesafe_0644_file_is_refused_as_world_readable(self):
         os.environ.pop("TYPESAFE_API_KEY", None)
@@ -1235,14 +1236,14 @@ class TestKeys(_ClientCase):
     def test_zen_key_reads_the_opencode_zen_entry(self):
         os.environ.pop("OPENCODE_ZEN_API_KEY", None)
         self.zen_file(json.dumps({"opencode-zen": {"key": self.SENTINEL}}))
-        self.assertEqual(JR._opencode_key(), (self.SENTINEL, "file"))
+        self.assertEqual(JR._opencode_key(), (self.SENTINEL, "file:keys.json"))
 
     def test_zen_key_file_honors_pi_dir_and_0600(self):
         os.environ.pop("OPENCODE_ZEN_API_KEY", None)
         agent = self.tmp / "pi-agent"
         os.environ["PI_CODING_AGENT_DIR"] = str(agent)
         self.zen_file(json.dumps({"opencode-zen": {"key": "zen-from-pi-dir"}}), agent=agent)
-        self.assertEqual(JR._opencode_key(), ("zen-from-pi-dir", "file"))
+        self.assertEqual(JR._opencode_key(), ("zen-from-pi-dir", "file:keys.json"))
         os.chmod(agent / "keys.json", 0o644)
         self.assertEqual(JR._opencode_key(), (None, "world_readable"))
 
@@ -1266,8 +1267,62 @@ class TestKeys(_ClientCase):
         self.assertNotIn(self.SENTINEL, text)
         report = json.loads(text)
         self.assertEqual(self.backend_entry(report, "laya")["key_source"], "env")
-        self.assertEqual(self.backend_entry(report, "typesafe")["key_source"], "file")
+        self.assertEqual(self.backend_entry(report, "typesafe")["key_source"], "state")
         self.assertEqual(self.backend_entry(report, "opencode")["key_source"], "missing_file")
+
+    def mycreds(self, text, mode=0o600):
+        """A synthetic ~/.mycreds in the scratch HOME — never the real one."""
+        path = Path(os.environ["HOME"]) / ".mycreds"
+        path.write_text(text, encoding="utf-8")
+        os.chmod(path, mode)
+        return path
+
+    def test_mycreds_fallback_feeds_the_authorization_header(self):
+        os.environ.pop("TYPESAFE_API_KEY", None)
+        self.mycreds("# owner creds\nexport TYPESAFE_API_KEY=\"my-creds-key\"\n")
+        with JevStub(model="jev-1.13.0") as stub:
+            self.point_remote("typesafe", stub)
+            os.environ["JEV_ALLOW_REMOTE"] = "1"
+            self.enable("typesafe")
+            result = self.run_screen(payload(noul_item("a")))
+        self.assertEqual(result["status"], "ok")
+        post = next(r for r in stub.requests if r["method"] == "POST")
+        self.assertEqual(post["headers"].get("Authorization"), "Bearer my-creds-key")
+
+    def test_mycreds_parse_quoted_export_and_comment_forms(self):
+        os.environ.pop("TYPESAFE_API_KEY", None)
+        self.mycreds("# creds\nexport TYPESAFE_API_KEY=\"from-quotes\"\n")
+        self.assertEqual(JR._typesafe_key(), ("from-quotes", "file:~/.mycreds"))
+        self.mycreds("   export JEV_API_KEY='from-jev-name'\n")
+        self.assertEqual(JR._typesafe_key(), ("from-jev-name", "file:~/.mycreds"))
+        self.mycreds("\n   \n")
+        self.assertEqual(JR._typesafe_key(), (None, "missing_file"))
+
+    def test_mycreds_0644_is_refused_with_a_reason(self):
+        os.environ.pop("TYPESAFE_API_KEY", None)
+        self.mycreds("TYPESAFE_API_KEY=world-readable\n", mode=0o644)
+        self.assertEqual(JR._typesafe_key(), (None, "world_readable"))
+
+    def test_mycreds_never_shadows_the_env(self):
+        os.environ["TYPESAFE_API_KEY"] = "env-wins"
+        self.mycreds("TYPESAFE_API_KEY=NEVER-PRINT-ME\n")
+        self.assertEqual(JR._typesafe_key(), ("env-wins", "env:TYPESAFE_API_KEY"))
+
+    def test_probe_reports_mycreds_fallback_and_expected_sources(self):
+        os.environ.pop("TYPESAFE_API_KEY", None)
+        os.environ["JEV_ALLOW_REMOTE"] = "1"
+        self.mycreds("TYPESAFE_API_KEY=NEVER-PRINT-ME\n")
+        with JevStub(model="jev-1.13.0") as stub:
+            self.point_remote("typesafe", stub)
+            code, text = self.run_probe_text()
+        self.assertEqual(code, 0)
+        self.assertNotIn("NEVER-PRINT-ME", text)
+        self.assert_no_posts(stub)
+        entry = self.backend_entry(json.loads(text), "typesafe")
+        self.assertEqual(entry["key_source"], "file:~/.mycreds")
+        self.assertEqual(entry["key_expected"],
+                         ["env:TYPESAFE_API_KEY", "env:JEV_API_KEY", "file:secrets.env",
+                          "file:~/.mycreds", "state"])
 
     def test_screen_never_prints_a_key_value(self):
         os.environ["LAYA_API_KEY"] = self.SENTINEL

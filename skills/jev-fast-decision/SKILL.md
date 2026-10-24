@@ -14,7 +14,7 @@ From this skill's directory, run `python3 -B scripts/jev_review.py --probe` befo
 | Backend | When chosen | Batching | Consent needed |
 |---|---|---|---|
 | `laya` | local, probed first | one call per item (state-bleed measured) | no |
-| `typesafe` | direct API; needs `TYPESAFE_API_KEY` | one batch | yes |
+| `typesafe` | direct API; needs `TYPESAFE_API_KEY` from the environment (restart the terminal after changing it so agents inherit it) | one batch | yes |
 | `opencode` | OpenCode Zen (`jev-1.13-free`→`jev-1.13`) | one call per item | yes |
 
 `JEV_BACKEND=<name>` overrides auto, never falls back. Remotes need consent: a recorded `consent grant <backend>` (once per user, after the user said yes) or session `JEV_ALLOW_REMOTE=<approved backends>` (`1` opens every remote), exported only after a yes. Without it, auto uses laya only. `typesafe` and `opencode` are different routes: "use TypeSafe" is not "use Zen"; a missing key makes `typesafe` unavailable, and switching is the user's call.

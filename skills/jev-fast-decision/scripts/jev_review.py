@@ -697,21 +697,63 @@ def _secrets_env_value(path, name):
 def _first_key(env_names, files):
     """(value, label) from the first env name set, else the first usable file source.
 
-    `files` is a list of zero-argument callables returning (value, reason). With no key the
-    reason is the first present-but-unusable file's own (`world_readable`, `empty_file`), so
-    the user knows what to fix, else `missing_file`."""
+    `files` is a list of (label, source) pairs: the label names the source in `--probe`'s
+    `key_source` (never a value), either a string or a zero-argument callable returning the
+    label — or None when the source is not configured this run (skipped). `source` returns
+    (value, reason). With no key the reason is the first present-but-unusable file's own
+    (`world_readable`, `empty_file`), so the user knows what to fix, else `missing_file`."""
     for name in env_names:
-        value, label = _env_key(name)
+        value, _label = _env_key(name)
         if value:
-            return value, label
+            return value, f"env:{name}"
     reason = None
-    for source in files:
+    for label, source in files:
+        resolved = label() if callable(label) else label
+        if resolved is None:
+            continue
         value, why = source()
         if value:
-            return value, "file"
+            return value, resolved
         if why != "missing_file" and reason is None:
             reason = why
     return None, reason or "missing_file"
+
+
+def _mycreds_value(path, names):
+    """(value, reason): the first assignment line for any of `names` in a shell-credentials
+    file — optional `export ` prefix, optional single/double quotes, `#` comments. Parsed,
+    never `source`d, and the value never enters any child process env; the same 0600 rule as
+    `secrets.env` applies (group/other bits → refuse before the value is read).
+
+    Transitional D-07 fallback: the key normally comes from the environment (`TYPESAFE_API_KEY`,
+    which the owner's shell gets by sourcing this file); running agents only fall back to the
+    file until they inherit the env. Remove once the env is the only path again."""
+    try:
+        if os.stat(path).st_mode & _WORLD_READABLE:
+            return None, "world_readable"
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except (OSError, UnicodeError):
+        return None, "missing_file"
+    for line in lines:
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        text = text.removeprefix("export ").strip()
+        key, sep, value = text.partition("=")
+        if sep and key.strip() in names:
+            value = value.strip().strip("'\"")
+            return (value, None) if value else (None, "empty_file")
+    return None, "missing_file"
+
+
+def _typesafe_key_sources():
+    """The ordered source labels `--probe` reports as `key_expected` (D-07 order, env first)."""
+    expected = ["env:TYPESAFE_API_KEY", "env:JEV_API_KEY"]
+    if os.environ.get("JEV_API_KEY_FILE", "").strip():
+        expected.append("file:JEV_API_KEY_FILE")
+    expected += ["file:secrets.env", "file:~/.mycreds", "state"]
+    return expected
 
 
 def _typesafe_url():
@@ -726,16 +768,23 @@ def _typesafe_url():
 
 def _typesafe_key():
     """D-07's order: `TYPESAFE_API_KEY`, `JEV_API_KEY`, `JEV_API_KEY_FILE`,
-    `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, then the
-    `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` state file. Every file is 0600."""
+    `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, the
+    `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key` state file, and last
+    `~/.mycreds` — a transitional fallback (shortcut: remove once running agents inherit
+    `TYPESAFE_API_KEY` from their shell; the env stays the documented path). Every file is
+    0600; `~/.mycreds` is parsed, never sourced."""
     key_file = os.path.expanduser(os.environ.get("JEV_API_KEY_FILE", "").strip())
     state = os.environ.get("XDG_STATE_HOME", "").strip() or os.path.expanduser("~/.local/state")
     secrets = os.path.join(_config_dir(), "secrets.env")
+    mycreds = os.path.expanduser("~/.mycreds")
     return _first_key(("TYPESAFE_API_KEY", "JEV_API_KEY"), [
-        lambda: _read_key(key_file) if key_file else (None, "missing_file"),
-        lambda: _secrets_env_value(secrets, "TYPESAFE_API_KEY"),
-        lambda: _secrets_env_value(secrets, "JEV_API_KEY"),
-        lambda: _read_key(os.path.join(state, "typesafe", "api_key")),
+        (lambda: "file:JEV_API_KEY_FILE" if key_file else None,
+         lambda: _read_key(key_file) if key_file else (None, "missing_file")),
+        ("file:secrets.env", lambda: _secrets_env_value(secrets, "TYPESAFE_API_KEY")),
+        ("file:secrets.env", lambda: _secrets_env_value(secrets, "JEV_API_KEY")),
+        ("state", lambda: _read_key(os.path.join(state, "typesafe", "api_key"))),
+        ("file:~/.mycreds", lambda: _mycreds_value(mycreds, ("TYPESAFE_API_KEY",
+                                                             "JEV_API_KEY"))),
     ])
 
 
@@ -801,7 +850,7 @@ def _opencode_key_file():
 def _opencode_key():
     """`OPENCODE_ZEN_API_KEY` wins over `${PI_CODING_AGENT_DIR:-~/.pi/agent}/keys.json`'s
     `opencode-zen.key` (D-11)."""
-    return _first_key(("OPENCODE_ZEN_API_KEY",), [_opencode_key_file])
+    return _first_key(("OPENCODE_ZEN_API_KEY",), [(f"file:{ZEN_KEY_FILE}", _opencode_key_file)])
 
 
 def _opencode_probe(row, timeout, deadline=None):
@@ -882,6 +931,7 @@ TABLE: tuple[Row, ...] = (
         "state_chars_limit": 8000,
         "url": _typesafe_url,
         "key": _typesafe_key,
+        "key_sources": _typesafe_key_sources,
         "probe": _typesafe_probe,
         "key_check": "documented",  # its GET /v1/models needs the key (docs.typesafe.ai)
         "classify": _typesafe_classify,
@@ -1246,6 +1296,8 @@ def _backend_entry(row, reason):
         entry["consent"] = record_consent(row)
     if row.get("key_check"):
         entry["key_check"] = row["key_check"]
+    if row.get("key_sources"):
+        entry["key_expected"] = row["key_sources"]()
     if reason:
         entry["reason"] = reason
     return entry

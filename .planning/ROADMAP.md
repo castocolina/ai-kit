@@ -998,3 +998,76 @@ or consent was available to verify the shapes live.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.9: jev-fast-decision backend detection and selection by host (BACKLOG)
+
+**Goal:** [Captured for future planning; rewritten 2026-10-24 from "drop the OpenCode Zen backend"
+after the owner's follow-up] The client picks a backend through explicit, host-aware detection
+instead of a fixed Laya -> TypeSafe -> Zen ladder:
+1. **Laya first:** the default Laya URL lives in ai-kit's config `.toml` as a knob (default
+   `http://127.0.0.1:8010`). The client probes `/health` there. The first time no Laya answers, it
+   asks the user once whether a Laya instance exists (and where) and stores the answer in the knob.
+2. **TypeSafe second:** the key is resolved from the environment (`TYPESAFE_API_KEY`). If it is
+   missing, the client tells the user it must be in the env, or that the user can pass it or save
+   it in ai-kit's `.toml` (owner option). The transitional file fallback is backlog 999.10.
+3. **OpenCode Zen third, only where it is legitimate:**
+   - The free `jev-*-free` model is used only when the host harness IS opencode and an OpenCode
+     Zen provider is configured. It never runs under OpenCode Go or any other host.
+   - Under pi, Zen (non-free) may be used through the owner's linked subscription.
+   - Under Claude Code or Cursor, Zen is used only with an explicit token and URL.
+   - Otherwise the Zen rung is skipped with a reason.
+Owner note (2026-10-24): undecided whether to keep Zen at all, which is why it is gated, not
+deleted. **Current state (verified 2026-10-24, before this work):** the Laya URL is hard-coded
+with env overrides (no `.toml` knob, no first-run question). The Zen rung exists with free-tier
+first and has no host/provider gating. `consent grant opencode` exists. Success criteria when
+promoted: (1) detection table per host (claude, cursor, pi, opencode) with tests on synthetic
+configs; (2) the free model is never selected outside opencode-with-Zen; (3) the `.toml` knob and
+first-run question are covered by tests in a scratch HOME; (4) the skill-judge gate passes with
+the owner's judge set.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.10: TypeSafe key sources, the transitional ~/.mycreds fallback and env inheritance (BACKLOG)
+
+**Goal:** [Captured for future planning; updated 2026-10-24] The TypeSafe key normally comes from
+the environment (`TYPESAFE_API_KEY`, sourced by the owner's shell from `~/.mycreds`, 0600).
+**Done on the v1.3 branch (9d9c181, not yet merged to main at capture time):**
+- the client reads `~/.mycreds` as a transitional fallback (line parse, no `source`, no export to
+  children, 0600 enforced);
+- `--probe` reports `key_source` and an ordered `key_expected` list without values.
+**Still open:**
+- (a) make `~/.mycreds` strictly the last source (it currently sits before `state`);
+- (b) document env inheritance: a long-lived terminal multiplexer server (herdr, observed
+  2026-10-24) keeps the environment it started with, so panes it spawns lack a newly sourced
+  variable until that server restarts, while a new Konsole/Kitty tab has it — no machine reboot
+  needed;
+- (c) remove the fallback once agents inherit the env;
+- (d) the `.toml` storage option from 999.9 step 2, if the owner keeps it.
+Success criteria when promoted: (a)-(c) done with tests on synthetic files; the probe names the
+missing source and the inheritance hint without printing any value.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.11: ai-kit-gsd-spec-discuss polish after the Phase 24 close-out (BACKLOG)
+
+**Goal:** [Captured for future planning] Resolve the Important findings left at the Phase 24
+skill-judge r3 PASS (`24-SKILL-JUDGE.md`, digest 7fc3f03ffb2fb714): a forced local answer that
+matches no decision-table row; "one commit per phase" vs the spec workflow's own commit; analyzer
+start while the same phase's CONTEXT is written; `state.record-session` on an early stop; trigger
+keywords late in the description; the agent's action on `no_client`/`incompatible_client`.
+Success criteria when promoted: each fixed with a pinned doc-contract test, and the owner's judge
+set (native Opus + my-referee-one + my-referee-two) scores no Important.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
