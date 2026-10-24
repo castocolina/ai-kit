@@ -316,6 +316,52 @@ doctor also reports the quota fetch status, always labeled
 refresh — save-time validation and previews never fetch. Requires Python 3.11+
 for the TOML file; on older Python the file is ignored and only env toggles apply.
 
+### Cursor CLI status line
+
+ai-kit renders a second, separate status line for the **Cursor CLI** (the
+`cursor-agent` host) — its own entry, config and quota source, sharing only the
+segment-layout and colour machinery with the Claude line. `tools/setup.py install`
+and `install.sh` wire it next to the Claude one (`--with-statusline=cursor` picks
+it alone; see [Headless install](#headless-install-ci--containers--no-tty)).
+
+- **What it renders:** working path, git branch + dirty count, model, context
+  remaining, and the quota group — included spend, API spend, on-demand/extra and
+  the reset time. Layout and colours come from
+  `~/.config/ai-kit/cursor-statusline.toml` (override the path with
+  `AI_KIT_CURSOR_CONFIG_FILE`, toggle a segment with `AI_KIT_CURSOR_SEGMENT_<KEY>`);
+  layout alternates (worktree path, render time, slowest segment, terminal size)
+  are off by default. Nothing is copied there by `install`: with no file the Cursor
+  line renders ai-kit's defaults, and `tools/cursor-statusline.toml.sample` is the
+  starter to copy by hand (the wizard writes it in a later phase). See that sample
+  and `python3 tools/statusline-doctor.py --host cursor --help` for the full key
+  and env list.
+- **Quota is an inference, always marked as one.** Cursor documents no quota API
+  for its CLI; the numbers come from ai-kit's own cache of the undocumented Cursor
+  **Dashboard** usage endpoint, refreshed by a detached helper — the render path
+  only reads that cache and never waits on the network. Every figure therefore
+  prints with a leading `≈` and the doctor reports it as
+  `inferred — undocumented Cursor API`. `≈*` means the cache is stale: the last
+  refresh failed or never ran, so the number shown is the old one.
+- **Where its config file lives:** `cli-config.json` under the first Cursor
+  directory that applies — a non-blank `CURSOR_CONFIG_DIR`, then
+  `$XDG_CONFIG_HOME/cursor`, then `~/.cursor`; a blank or whitespace-only override
+  falls through exactly like a missing one. Wiring writes the `statusLine` key and
+  nothing else: unrelated keys and other top-level entries stay exactly as they
+  are, and the fields Cursor owns (`padding`, `updateIntervalMs`, `timeoutMs`) are
+  preserved when ai-kit's own entry is refreshed. An existing foreign `statusLine`
+  is shown and confirmed away interactively (default No) and refused headless — it
+  is never replaced silently, and a concurrent change to the entry between the read
+  and the write aborts the write. **Known gap:** a `cli-config.json` that carries JSONC
+  *comments* is left completely untouched (a warning names the file and the run
+  exits 1) — ai-kit's writer emits plain JSON and would delete those comments, and
+  Cursor itself writes plain JSON, so this stays unread rather than rewritten
+  lossy. Detection does read through comments, so the reported state is still
+  accurate.
+- **Unwiring is per host:** `uninstall` removes ai-kit's entry from
+  `~/.claude/settings.json` and from `cli-config.json` independently, matching the
+  exact script argument rather than a substring, leaving the other host's file and
+  both config TOMLs untouched.
+
 ### External drop-in segments
 
 Add a status-line segment without editing `claude-status-line.py`: drop an executable
@@ -398,8 +444,13 @@ install.sh --branch <name>      # fetch a specific branch  (or --branch=<name>; 
 install.sh reconfigure          # re-open the wizard pre-loaded with your current selection + layout
 ```
 
-`--uninstall` exits 1, naming the file, when a Claude Code or Cursor settings file could not be
-read or rewritten, so ai-kit may still be wired there; fix the file and re-run it.
+`--uninstall` unwires each status-line host separately — it removes ai-kit's
+`statusLine` from `~/.claude/settings.json` and from the Cursor `cli-config.json`
+only when that entry is ai-kit's own (exact script argument, not a substring),
+never a foreign one, and never touches the other host's file while doing it. Both
+config TOMLs stay in place. It exits 1, naming the file, when a Claude Code or
+Cursor settings file could not be read or rewritten, so ai-kit may still be wired
+there; fix the file and re-run it.
 
 **Try a branch without merging it.** `--branch <name>` (or `--branch=<name>`, or the
 `AI_KIT_BRANCH` env var) is consumed by the bootstrapper (not passed to the wizard) and overrides
@@ -469,10 +520,19 @@ nothing is touched unless explicitly requested:
   `${XDG_STATE_HOME:-~/.local/state}/ai-kit/backups/<claude|pi>/<name>.bak-<timestamp>/`
   (outside every scanned skills dir) and link the repo copy in its place.
   Without this flag such content is left alone with a warning and the run exits 1.
-- `--with-statusline` — wire the ai-kit status line into `settings.json`. If the
-  Claude Code config dir does not exist, this is skipped with a message and
-  nothing is created — ai-kit never conjures a `~/.claude/` on a machine that
-  has no Claude Code.
+- `--with-statusline` — wire the ai-kit status line on **every detected host**,
+  Claude first and then Cursor (`--with-statusline=claude,cursor` selects hosts
+  explicitly). A host is "detected" by its config directory: `~/.claude` (or
+  `CLAUDE_CONFIG_DIR`) and the Cursor config dir below. With neither directory
+  present the run says there is nothing to wire and still exits 0; ai-kit never
+  conjures a `~/.claude/` or a Cursor config dir on a machine that has no such
+  host. `--with-statusline=<hosts>` fails before **any** write happens — no
+  migration, no backup, no link, no hook, no example, no config file: an unknown
+  name (`--with-statusline=bogus`) is a usage error (`2`), a valid name whose
+  host isn't installed (`--with-statusline=cursor` with no Cursor dir) prints one
+  message and exits `1`. A foreign `statusLine` is never replaced headless — that
+  needs the interactive wizard's explicit yes — so such a run exits `1` and leaves
+  the file untouched.
 - `--with-hooks` — bare form wires every default-on hook knob, including the
   two per-call advisors; this is a behavior change from the briefing-only
   default. Defaults: `session-briefing`, `tool-advisor` and `tool-reminder` on;
@@ -497,6 +557,7 @@ nothing is touched unless explicitly requested:
   identically here, with or without `--headless`.
 
 Example: `python3 tools/setup.py install --headless --skills all --with-statusline --with-hooks --examples all`
+(same thing host-by-host: `--with-statusline=claude,cursor`)
 
 Exit codes: `0` success (including "nothing requested" and "that host isn't
 installed here"), `1` something you asked for did not happen — a config file
@@ -528,7 +589,8 @@ controls which example segments are copied (identically whether or not
 `--skills`/`--with-statusline`/`--with-hooks` (headless-only) control
 everything else the wizard would otherwise ask about interactively.
 
-Environment overrides: `AI_KIT_DIR`, `AI_KIT_REPO`, `AI_KIT_BRANCH`, `CLAUDE_CONFIG_DIR`.
+Environment overrides: `AI_KIT_DIR`, `AI_KIT_REPO`, `AI_KIT_BRANCH`, `CLAUDE_CONFIG_DIR`,
+`CURSOR_CONFIG_DIR`.
 
 ## Updating
 

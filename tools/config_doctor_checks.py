@@ -61,21 +61,41 @@ class ReadContext(NamedTuple):
     runner: object
 
 
+def _first_nonblank(env, keys):
+    """The first env value that is set and holds something other than whitespace.
+
+    A blank/whitespace-only override is treated as unset, matching the Cursor
+    CLI's own resolver (`CURSOR_CONFIG_DIR` "if non-blank"), so an exported but
+    empty variable falls through to the next source instead of resolving a
+    path of spaces.
+    """
+    for key in keys:
+        value = env.get(key)
+        if value and value.strip():
+            return value
+    return None
+
+
 def resolve_runtime_config_paths(env):
     """Absolute config-file paths for the four known runtimes.
 
     Precedence is each runtime's own, not ai-kit's installer paths:
     claude honors CLAUDE_CONFIG_DIR; cursor honors Cursor CLI's three-step
-    layout (CURSOR_CONFIG_DIR, then XDG_CONFIG_HOME/cursor, then ~/.cursor)
-    for cli-config.json; opencode honors OPENCODE_CONFIG_DIR > XDG_CONFIG_HOME
-    > ~/.config; codex honors CODEX_HOME.
+    layout (non-blank CURSOR_CONFIG_DIR, then non-blank XDG_CONFIG_HOME/cursor,
+    then ~/.cursor — no platform gate) for cli-config.json; opencode honors
+    OPENCODE_CONFIG_DIR > XDG_CONFIG_HOME > ~/.config; codex honors CODEX_HOME.
+
+    This is the ONLY Cursor config-path resolver in the bundle: setup.py's
+    `Paths.cursor_config_dir`/`cursor_cli_config` read it from here (D-21).
     """
     home = env.get("HOME", "")
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-    if env.get("CURSOR_CONFIG_DIR"):
-        cursor_dir = env["CURSOR_CONFIG_DIR"]
-    elif env.get("XDG_CONFIG_HOME"):
-        cursor_dir = os.path.join(env["XDG_CONFIG_HOME"], "cursor")
+    cursor_override = _first_nonblank(env, ("CURSOR_CONFIG_DIR",))
+    xdg_config = _first_nonblank(env, ("XDG_CONFIG_HOME",))
+    if cursor_override:
+        cursor_dir = cursor_override
+    elif xdg_config:
+        cursor_dir = os.path.join(xdg_config, "cursor")
     else:
         cursor_dir = os.path.join(home, ".cursor")
     opencode_dir = env.get("OPENCODE_CONFIG_DIR")

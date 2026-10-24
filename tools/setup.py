@@ -11,8 +11,8 @@
 Invoked by tools/install.sh after it has guaranteed the repo and python3 are on
 disk. Subcommands: install (default), reconfigure, uninstall, doctor, check.
 Flags: --dry-run, --examples=all|none|<ids>, --config-doctor, and the headless
-set --headless / --skills=all|name1,name2 / --with-statusline / --with-hooks
-(the last three require --headless).
+set --headless / --skills=all|name1,name2 / --with-statusline[=claude,cursor] /
+--with-hooks (the last three require --headless).
 
 Env overrides (mirrors install.sh):
   AI_KIT_DIR        install location (default: ${XDG_DATA_HOME:-~/.local/share}/ai-kit)
@@ -46,6 +46,16 @@ CATEGORIES = ("agents", "commands", "skills")
 # selection. Phase 22 widens this set.
 PI_SKILLS = frozenset({"jev-fast-decision"})
 _LEGACY_ENTRY = "status-line.py"
+_CLAUDE_ENTRY = "claude-status-line.py"
+_CURSOR_ENTRY = "cursor-status-line.py"
+
+# The status-line hosts, in the order a headless run wires them (SPEC R11 ordering edge).
+STATUSLINE_HOSTS = ("claude", "cursor")
+
+# Cursor's own `statusLine` schema (bundle zod: type/command plus three optional
+# integer knobs). Anything outside this key set is not a shape ai-kit may write.
+_CURSOR_STATUSLINE_KEYS = frozenset(
+    {"type", "command", "padding", "updateIntervalMs", "timeoutMs"})
 
 
 def _command_ownership():
@@ -57,20 +67,57 @@ def _command_ownership():
     import command_ownership  # pylint: disable=import-outside-toplevel
 
     return command_ownership
+
+
+def _jsonc_reader():
+    """The sibling JSONC scanner, on the same lazy footing as _command_ownership.
+
+    setup.py is loaded through importlib by tests and hooks with no guarantee that
+    tools/ sits on sys.path, and this plan forbids module-level sibling imports
+    here, so the comment-tolerant Cursor read reaches its scanner the same way."""
+    tools_dir = os.path.dirname(os.path.abspath(__file__))
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import config_doctor_readers  # pylint: disable=import-outside-toplevel
+
+    return config_doctor_readers
+
+
 _LEGACY_TOML = "statusline.toml"
 
 Paths = namedtuple(
     "Paths",
     "install_dir claude_dir pi_dir backups_dir settings config_dir config_toml "
     "sample status_line statusline_doctor segments_dir cursor_dir "
-    "cursor_hooks opencode_dir",
+    "cursor_hooks opencode_dir cursor_config_dir cursor_cli_config "
+    "cursor_status_line cursor_config_toml cursor_sample",
 )
+
+
+def _config_doctor_checks():
+    """The shared runtime-config resolver, imported lazily whatever the caller's
+    sys.path (same pattern as _command_ownership: setup.py imports no host module
+    at module level, and tests load this file through importlib)."""
+    tools_dir = os.path.dirname(os.path.abspath(__file__))
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import config_doctor_checks  # pylint: disable=import-outside-toplevel
+
+    return config_doctor_checks
 
 
 def resolve_paths(env):
     """Resolve every path the installer touches, mirroring install.sh's env
     precedence: AI_KIT_DIR > XDG_DATA_HOME/ai-kit; CLAUDE_CONFIG_DIR > ~/.claude;
-    CURSOR_CONFIG_DIR > ~/.cursor; XDG_CONFIG_HOME/ai-kit > ~/.config/ai-kit."""
+    CURSOR_CONFIG_DIR > ~/.cursor; XDG_CONFIG_HOME/ai-kit > ~/.config/ai-kit.
+
+    The Cursor *config* pair (`cursor_config_dir`/`cursor_cli_config`, D-21) is the
+    CLI's own layout — non-blank CURSOR_CONFIG_DIR, then non-blank
+    $XDG_CONFIG_HOME/cursor, then ~/.cursor — resolved ONLY through
+    `config_doctor_checks.resolve_runtime_config_paths()`, never duplicated here.
+    `cursor_dir` stays the hooks' separate, older two-step rule (backlog 999.2),
+    so the two can legitimately disagree when XDG_CONFIG_HOME is set without
+    CURSOR_CONFIG_DIR."""
     home = env.get("HOME", "")
     install_dir = env.get("AI_KIT_DIR") or os.path.join(
         env.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share"), "ai-kit"
@@ -84,6 +131,8 @@ def resolve_paths(env):
     opencode_dir = (env.get("OPENCODE_CONFIG_DIR") or
                     os.path.join(config_base, "opencode"))
     config_dir = os.path.join(config_base, "ai-kit")
+    cursor_cli_config = _config_doctor_checks().resolve_runtime_config_paths(env)["cursor"]
+    cursor_config_dir = os.path.dirname(cursor_cli_config)
     return Paths(
         install_dir=install_dir,
         claude_dir=claude_dir,
@@ -93,12 +142,17 @@ def resolve_paths(env):
         config_dir=config_dir,
         config_toml=os.path.join(config_dir, "claude-statusline.toml"),
         sample=os.path.join(install_dir, "tools", "claude-statusline.toml.sample"),
-        status_line=os.path.join(install_dir, "tools", "claude-status-line.py"),
+        status_line=os.path.join(install_dir, "tools", _CLAUDE_ENTRY),
         statusline_doctor=os.path.join(install_dir, "tools", "statusline-doctor.py"),
         segments_dir=os.path.join(config_dir, "segments"),
         cursor_dir=cursor_dir,
         cursor_hooks=os.path.join(cursor_dir, "hooks.json"),
         opencode_dir=opencode_dir,
+        cursor_config_dir=cursor_config_dir,
+        cursor_cli_config=cursor_cli_config,
+        cursor_status_line=os.path.join(install_dir, "tools", _CURSOR_ENTRY),
+        cursor_config_toml=os.path.join(config_dir, "cursor-statusline.toml"),
+        cursor_sample=os.path.join(install_dir, "tools", "cursor-statusline.toml.sample"),
     )
 
 
@@ -1913,6 +1967,33 @@ def _statusline_command(value):
     return None
 
 
+def _command_is_ours(command, entry):
+    """Whether a status-line command really RUNS `entry` (D-23, shared parser).
+
+    Asks the one command-ownership parser (`command_ownership.rewrite_owned_command`)
+    to rewrite the command onto itself: a non-None result means argv[0] is a
+    supported Python interpreter and the script argument is EXACTLY `entry`.
+    There is no substring match anywhere, so the counterexamples stay foreign on
+    both hosts — a script with a `.backup`/`.bak` suffix, a foreign script that
+    merely receives our path as an argument, and any shell form
+    (`bash -c '...'`, `cd x && python3 ...`). Unrecognized shell forms stay
+    foreign rather than being guessed at."""
+    return _command_ownership().rewrite_owned_command(command, entry, entry) is not None
+
+
+def _statusline_display(value):
+    """Short, honest text for a statusLine value ai-kit cannot classify.
+
+    Used only in prompts/warnings so a human can recognize the entry being
+    protected: the bare string, an object's string command, else the JSON text
+    of whatever shape it is (never a Python repr of a partially parsed blob)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and isinstance(value.get("command"), str):
+        return value["command"]
+    return json.dumps(value)
+
+
 def _statusline_state(settings):
     """Read settings.json for wire_statusline: returns (data, cur_cmd), or
     (None, None) after printing one warning when the file exists but is not a
@@ -1964,6 +2045,11 @@ def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
     human already approved replacing a command we showed them, and we cannot
     show them a shape we don't understand.
 
+    Ownership is the shared exact-argv test (_command_is_ours), not a substring:
+    a `.backup`/`.bak` copy of our script, a foreign script that receives our
+    path as an argument, and any shell form are foreign here exactly as they are
+    in migration, detection and uninstall (D-23).
+
     Returns True when statusLine now points at ai-kit, False when left
     untouched (foreign command declined/refused headless, unsupported
     statusLine shape, unreadable settings.json, or a write failure)."""
@@ -1971,7 +2057,7 @@ def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
     data, cur_cmd = _statusline_state(settings)
     if data is None:
         return False
-    if cur_cmd and status_line not in cur_cmd and not assume_overwrite:
+    if cur_cmd and not _command_is_ours(cur_cmd, status_line) and not assume_overwrite:
         # a foreign status line (dict or bare-string form) — guard it
         if not is_interactive(tty):
             print(f"warn: settings.json has a foreign statusLine ({cur_cmd}) — not wiring "
@@ -1997,9 +2083,10 @@ def detect_statusline(paths):
     """Read-only: classify settings.json's statusLine for the adoption gate.
 
     Returns {"state": "unset"|"ours"|"foreign", "current_command": str|None}.
-      - "ours"    iff the command invokes the resolved paths.status_line
-                  (XDG-aware substring match — NOT a hard-coded string).
-      - "foreign" iff a statusLine is configured but does not reference our script.
+      - "ours"    iff the command's argv runs the resolved paths.status_line
+                  EXACTLY (the shared _command_is_ours parser — no substring,
+                  XDG-aware path, never a hard-coded string).
+      - "foreign" iff a statusLine is configured but does not run our script.
       - "unset"   iff absent, empty, file is missing/malformed, or the statusLine
                   holds an UNSUPPORTED shape (a list/number/bool, or an object
                   whose "command" is not a string). The unsupported case used to
@@ -2020,9 +2107,277 @@ def detect_statusline(paths):
     cur_cmd = _statusline_command(data.get("statusLine"))
     if not cur_cmd:
         return {"state": "unset", "current_command": None}
-    if paths.status_line in cur_cmd:
+    if _command_is_ours(cur_cmd, paths.status_line):
         return {"state": "ours", "current_command": cur_cmd}
     return {"state": "foreign", "current_command": cur_cmd}
+
+
+# ── Cursor status line: schema, detection, wiring (D-21/D-23) ───────────────
+
+def _int_field_ok(value, minimum):
+    """Whether an optional integer knob is absent, or an int at/above `minimum`.
+
+    JSON `true`/`false` parse to Python bools, which ARE ints by subclassing, so
+    the bool exclusion is load-bearing: `{"padding": true}` must not pass as `{"padding": 1}`."""
+    if value is None:
+        return True
+    return (not isinstance(value, bool) and isinstance(value, int)
+            and value >= minimum)
+
+
+def _cursor_statusline_command(value):
+    """The command string of a schema-valid Cursor statusLine, else None.
+
+    Cursor's own schema (its bundle's zod object) is `type == "command"` plus a
+    non-empty string `command`, with only `padding` (>= 0), `updateIntervalMs`
+    and `timeoutMs` (positive ints) as optional siblings. A bare STRING command —
+    the second shape Claude's settings.json allows — is a schema error HERE, and
+    so is any unknown key or malformed sibling: this returns None and the caller
+    treats it as foreign/refuses it rather than guessing (D-23).
+    """
+    if not isinstance(value, dict):
+        return None
+    if set(value) - _CURSOR_STATUSLINE_KEYS or value.get("type") != "command":
+        return None
+    command = value.get("command")
+    if not isinstance(command, str) or not command:
+        return None
+    if not (_int_field_ok(value.get("padding"), 0)
+            and _int_field_ok(value.get("updateIntervalMs"), 1)
+            and _int_field_ok(value.get("timeoutMs"), 1)):
+        return None
+    return command
+
+
+def _cursor_write_state(data, entry):
+    """Classify a parsed cli-config dict as ('unset'|'ours'|'foreign', text).
+
+    Shared by detect_statusline_cursor and wire_statusline_cursor so the reader
+    and the writer can never disagree about what is ai-kit's — including in the
+    re-read immediately before the atomic replace.
+    """
+    value = data.get("statusLine")
+    if value is None:
+        return "unset", None
+    command = _cursor_statusline_command(value)
+    if command is None:
+        return "foreign", _statusline_display(value)
+    if _command_is_ours(command, entry):
+        return "ours", command
+    return "foreign", command
+
+
+def _cursor_config_read(cli_config):
+    """(state, parsed-dict) for cli-config.json — state in json | jsonc | absent | bad.
+
+    `json` is a strict JSON object (what the Cursor CLI itself writes); `jsonc` is
+    an object that only parses once comments are stripped by the existing
+    stdlib-only scanner; `bad` is unreadable, not-an-object, or not JSON at all.
+    Reading tolerantly is what lets DETECTION report the real state of a commented
+    file instead of claiming there is nothing to protect; the writer acts on that
+    distinction separately.
+    """
+    if not os.path.isfile(cli_config):
+        return "absent", {}
+    try:
+        with open(cli_config, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        return "bad", None
+    try:
+        data = json.loads(text)
+        return ("json", data) if isinstance(data, dict) else ("bad", None)
+    except ValueError:
+        pass
+    try:
+        data = json.loads(_jsonc_reader().strip_jsonc_comments(text))
+    except ValueError:
+        return "bad", None
+    return ("jsonc", data) if isinstance(data, dict) else ("bad", None)
+
+
+def detect_statusline_cursor(paths):
+    """Read-only: classify cli-config.json's statusLine for the Cursor host.
+
+    Returns {"state": "unset"|"ours"|"foreign", "current_command": str|None} on
+    the same three-state contract as detect_statusline, decided by the same
+    shared ownership parser. An absent file or one that is not JSON at all is
+    "unset" (nothing to protect, and the writer still refuses to materialize a
+    missing dir); a present entry that is not ai-kit's — including every shape the
+    CLI's schema rejects — is "foreign". A commented (JSONC) file IS classified,
+    not reported as unset, because reading is comment-tolerant. Writes nothing.
+    """
+    state, data = _cursor_config_read(paths.cursor_cli_config)
+    if state in ("absent", "bad"):
+        return {"state": "unset", "current_command": None}
+    kind, text = _cursor_write_state(data, paths.cursor_status_line)
+    return {"state": kind, "current_command": text}
+
+
+def _cursor_config_for_write(cli_config):
+    """The parsed cli-config.json to edit, or None after one warning.
+
+    Absent -> {} (the caller has already checked the parent dir exists, so this
+    is SPEC R11's adjacency edge: a dir with no config file yet gets a new one).
+    Strict JSON object -> the parsed dict. `bad` -> None, never rewritten: ai-kit
+    will not replace a file the Cursor CLI itself is unable to read. `jsonc` ->
+    also None: ai-kit's writer emits plain JSON, so rewriting a file that only
+    parses once comments are stripped would silently delete those comments — the
+    file stays byte-for-byte untouched and the warning says exactly why. Cursor
+    writes its own config as plain JSON, so this is the rare path, not the normal
+    one (documented as a known gap in README rather than degraded silently).
+    """
+    state, data = _cursor_config_read(cli_config)
+    if state == "bad":
+        print(f"warn: {cli_config}: cannot parse as a JSON object — ai-kit will not "
+              "overwrite a config file it cannot parse", file=sys.stderr)
+        return None
+    if state == "jsonc":
+        print(f"warn: {cli_config}: holds JSONC comments, which ai-kit's plain-JSON "
+              "writer would drop — leaving the file untouched", file=sys.stderr)
+        return None
+    if state == "absent":
+        return {}
+    return data
+
+
+def _cursor_apply_statusline(data, ours, desired):
+    """Set or refresh ai-kit's statusLine on `data` in place.
+
+    An "ours" refresh changes ONLY `command`: the sibling `padding`/
+    `updateIntervalMs`/`timeoutMs` the user configured stay exactly as they are.
+    A NEW entry holds only `type` and `command` — ai-kit never writes a
+    non-default knob it has not been asked for (D-23).
+    """
+    current = data.get("statusLine")
+    if ours and isinstance(current, dict):
+        current["command"] = desired
+        return
+    data["statusLine"] = {"type": "command", "command": desired}
+
+
+def _cursor_confirm_overwrite(cli_config, command, tty, assume_overwrite):
+    """Whether ai-kit may replace a foreign Cursor statusLine (never headless).
+
+    Same FR-5.5 double-confirm as the Claude side: show the exact entry, require
+    an explicit 'y', refuse silently on a headless run.
+    """
+    if assume_overwrite:
+        return True
+    if not is_interactive(tty):
+        print(f"warn: {cli_config} has a foreign statusLine ({command}) — not wiring "
+              "the ai-kit status line (headless)", file=sys.stderr)
+        return False
+    _tty_write(tty, f"\n{cli_config} already sets a status line:\n  {command}\n")
+    if not ask_yes_no(tty, "overwrite it with the ai-kit status line?", default=False):
+        print("statusLine left untouched (declined).", file=sys.stderr)
+        return False
+    return True
+
+
+def _cursor_commit_statusline(cli_config, entry, desired, seen):
+    """Re-read, re-classify, apply onto the FRESH content and replace atomically.
+
+    The Cursor CLI rewrites its own cli-config.json during use, so the writer
+    does not trust the read it classified a moment ago (D-23 write ordering): it
+    reads and classifies again immediately before `_atomic_write_json` and
+    applies its change to that content. `seen` is the entry text the caller
+    classified (and, when foreign, showed the human): the write goes ahead only
+    while the file still holds exactly that entry. Anything else — our command
+    replaced by someone else's, an unset key that became foreign, a file that no
+    longer parses — aborts the write instead of overwriting what appeared in
+    between. Replacing the SAME foreign entry a human just approved is not a
+    change, so that one proceeds.
+    """
+    fresh = _cursor_config_for_write(cli_config)
+    if fresh is None:
+        return False
+    kind, command = _cursor_write_state(fresh, entry)
+    if command != seen:
+        _warn_hook_config(cli_config, f"statusLine is now {command!r} but {seen!r} "
+                                      "was read — write aborted")
+        return False
+    _cursor_apply_statusline(fresh, kind == "ours", desired)
+    try:
+        _atomic_write_json(cli_config, fresh)
+    except OSError as exc:
+        print(f"warn: failed to write {cli_config}: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
+def wire_statusline_cursor(cli_config, entry, tty, dry, assume_overwrite=False):
+    """Point cli-config.json's statusLine at the bundled cursor-status-line.py.
+
+    The command is `python3 -S <entry>`, the entry path quoted when it holds
+    whitespace: the CLI argv-splits the string with no shell, so shell forms
+    and unquoted spaces are both wrong here. Claude's writer keeps its own
+    (unquoted) form untouched — only this host is quoted.
+
+    Returns True when statusLine now points at ai-kit, False when left
+    untouched: the parent directory does not exist (never materialized, mirroring
+    wire_hook_cursor), the file cannot be parsed, the entry is foreign and this
+    is headless or the human declined, the entry became foreign before the
+    replace, or the write failed.
+    """
+    if not os.path.isdir(os.path.dirname(cli_config) or "."):
+        print("skipped ai-kit status line — no cursor dir")
+        return False
+    data = _cursor_config_for_write(cli_config)
+    if data is None:
+        return False
+    kind, command = _cursor_write_state(data, entry)
+    if kind == "foreign" and not _cursor_confirm_overwrite(
+            cli_config, command, tty, assume_overwrite):
+        return False
+    desired = "python3 -S " + shlex.quote(entry)
+    if dry:
+        print(f"would set Cursor statusLine -> {desired}")
+        return True
+    return _cursor_commit_statusline(cli_config, entry, desired, command)
+
+
+def statusline_host_present(paths, host):
+    """Whether a status-line host's config directory already exists (never create it)."""
+    return os.path.isdir({"claude": paths.claude_dir,
+                          "cursor": paths.cursor_config_dir}[host])
+
+
+def statusline_hosts_detected(paths):
+    """The status-line hosts present on this machine, Claude first (SPEC R11)."""
+    return [host for host in STATUSLINE_HOSTS if statusline_host_present(paths, host)]
+
+
+class UndetectedStatuslineHost(ValueError):
+    """A named status-line host is a valid name but is not installed here.
+
+    A ValueError subclass so argparse-style callers can treat it as a usage
+    error, while main() maps it to exit 1 ("not installed") instead of the
+    exit 2 it gives an unknown name.
+    """
+
+
+def parse_statusline_hosts(value, detected):
+    """Resolve a `--with-statusline=claude,cursor` value against `detected`.
+
+    Returns the selection in detection order (so Claude is always wired before
+    Cursor, whichever way the flag was typed) and de-duplicated. Raises
+    ValueError naming the unknown host(s) — a usage error, exit 2 — or
+    UndetectedStatuslineHost naming valid-but-undetected ones, exit 1. Pure: no
+    filesystem access, so every row of the selection table is testable without a
+    scratch tree.
+    """
+    names = [token.lower() for token in re.split(r"[,\s]+", value.strip()) if token]
+    unknown = sorted({name for name in names if name not in STATUSLINE_HOSTS})
+    if unknown:
+        raise ValueError(f"unknown status-line host(s) {', '.join(unknown)} "
+                         f"(known: {', '.join(STATUSLINE_HOSTS)})")
+    missing = sorted({name for name in names if name not in detected})
+    if missing:
+        raise UndetectedStatuslineHost(
+            f"status-line host(s) {', '.join(missing)} not detected — no such "
+            "config directory on this machine")
+    return [host for host in detected if host in set(names)]
 
 
 def create_if_absent(dest, data):
@@ -2137,8 +2492,32 @@ def copy_recipe_if_absent(sample, config_toml, dry):
         print(f"warn: failed to copy {sample} -> {config_toml}: {exc}", file=sys.stderr)
 
 
+def _claude_owned_entries(install_dir):
+    """The Claude status-line entry paths ai-kit owns in an install: the current
+    entry and the pre-rename legacy one, so a machine that was never
+    re-installed still gets unwired."""
+    tools = os.path.join(install_dir, "tools")
+    return (os.path.join(tools, _CLAUDE_ENTRY), os.path.join(tools, _LEGACY_ENTRY))
+
+
+def _claude_statusline_is_ours(value, install_dir):
+    """Whether a settings.json statusLine runs one of ai-kit's own entries.
+
+    Reads both shapes Claude allows (a bare string, an object with "command")
+    through _statusline_command, then decides with the shared exact-argv parser
+    — never a substring of the install dir, so a `.backup`/`.bak` copy of our
+    script and a foreign script that merely receives our path as an argument
+    stay foreign here too (D-23).
+    """
+    command = _statusline_command(value)
+    if not command:
+        return False
+    return any(_command_is_ours(command, entry)
+               for entry in _claude_owned_entries(install_dir))
+
+
 def unwire_statusline(settings, install_dir, dry):
-    """Uninstall: remove the statusLine ONLY if it points into install_dir (never
+    """Uninstall: remove the statusLine ONLY if it runs ai-kit's own entry (never
     clobber a foreign one). Preserves all other settings keys.
 
     Reads through `_read_json_checked` and writes through `_atomic_write_json`
@@ -2152,12 +2531,38 @@ def unwire_statusline(settings, install_dir, dry):
         return False
     if state != JSON_STATE_OK or data is None:
         return True
-    cur = data.get("statusLine")
-    cur_cmd = cur.get("command", "") if isinstance(cur, dict) else ""
-    if not (cur_cmd and _is_inside_str(install_dir, cur_cmd)):
+    if not _claude_statusline_is_ours(data.get("statusLine"), install_dir):
         return True
     data.pop("statusLine", None)
     return _commit_unwire(settings, data, dry, "would clear ai-kit statusLine")
+
+
+def unwire_statusline_cursor(cli_config, entry, dry):
+    """Uninstall the Cursor host: remove ai-kit's statusLine and nothing else.
+
+    The same three-state classification and the same atomic primitives as the
+    Claude side: an absent file writes nothing, an unparseable or JSONC-commented
+    file is skipped with a warning naming the reason (uninstall exits 1 for it),
+    and a foreign or schema-invalid entry is left byte-identical. When the entry
+    IS ours, `statusLine` is dropped whole — the optional `padding`/
+    `updateIntervalMs`/`timeoutMs` siblings belong to it — while every other key
+    of cli-config.json keeps its parsed value and order. Never materializes a
+    missing config dir; TOML configs are untouched.
+    """
+    state, data = _cursor_config_read(cli_config)
+    if state == "bad":
+        _warn_hook_config(cli_config, "cannot parse as a JSON object; statusLine left as is")
+        return False
+    if state == "jsonc":
+        print(f"warn: {cli_config}: holds JSONC comments that uninstall's plain-JSON "
+              "writer would drop — leaving the file untouched", file=sys.stderr)
+        return False
+    if state != "json" or not isinstance(data, dict):
+        return True                                # absent: nothing of ours to remove
+    if _cursor_write_state(data, entry)[0] != "ours":
+        return True
+    data.pop("statusLine", None)
+    return _commit_unwire(cli_config, data, dry, "would clear ai-kit Cursor statusLine")
 
 
 def _entry_is_ours_nested(entry, marker):
@@ -2321,12 +2726,6 @@ def unwire_hook_cursor(cursor_hooks, dry):
     hooks[CURSOR_HOOK_EVENT] = kept
     return _commit_unwire(
         cursor_hooks, data, dry, "would remove ai-kit sessionStart hook")
-
-
-def _is_inside_str(install_dir, command):
-    """True when the install dir appears in the command string (the loose test
-    install.sh uses for uninstall: `idir in str(command)`)."""
-    return install_dir in command
 
 
 def _segment_changes_vs_recipe(path, segments):
@@ -3477,23 +3876,67 @@ def _headless_sync_pi(  # pylint: disable=too-many-arguments
     return True
 
 
-def _headless_wire_statusline(paths, dry):
-    """Wire the ai-kit status line, but only if the Claude Code config dir is
-    actually there. wire_statusline has no host-presence guard of its own and
-    _atomic_write_json would os.makedirs the parent, so calling it blind would
-    CREATE ~/.claude/settings.json on a machine with no Claude Code installed.
-    registry hook writers already refuse to do that; this gives
-    --with-statusline the same guarantee
-    without touching wire_statusline's interactive contract.
+def _headless_wire_statusline(paths, hosts, dry):
+    """Wire the ai-kit status line on every selected host, Claude before Cursor.
 
-    An absent host dir is a benign skip -> True (exit 0), exactly like the hook
-    wirers' 'no claude dir' case. Budget: 2 args + 0 locals = 2 of 15;
-    2 branches of 12; 2 returns of 6."""
-    if not os.path.isdir(paths.claude_dir):
-        print("skipped ai-kit status line — no claude dir")
-        return True
-    return wire_statusline(paths.settings, paths.status_line, None, dry,
-                           assume_overwrite=False)
+    Only hosts whose config directory is actually there are wired: like the hook
+    writers, headless setup never CREATEs ~/.claude or the Cursor config dir
+    (wire_statusline has no host-presence guard of its own and
+    _atomic_write_json would os.makedirs the parent). An absent dir is a benign
+    skip -> exit 0; naming such a host explicitly is refused earlier, at command
+    entry, so the guard here is the backstop for a dir that disappears between
+    validation and write.
+
+    `hosts` is empty only when nothing was asked for or nothing was detected:
+    the run reports that there is nothing to wire and still succeeds (SPEC R11
+    empty edge). Budget: 2 args + 4 locals (ok, wired, host, result) = 6 of 15;
+    5 branches of 12; 1 return of 6."""
+    ok = True
+    wired = 0
+    for host in STATUSLINE_HOSTS:
+        if host not in hosts:
+            continue
+        if not statusline_host_present(paths, host):
+            print(f"skipped ai-kit status line — no {host} dir")
+            continue
+        wired += 1
+        result = (wire_statusline(paths.settings, paths.status_line, None, dry)
+                  if host == "claude" else
+                  wire_statusline_cursor(paths.cursor_cli_config,
+                                         paths.cursor_status_line, None, dry))
+        ok = ok and result
+    if not wired:
+        print("headless: no status-line host detected — nothing to wire")
+    return ok
+
+
+def _statusline_selection(raw, detected):
+    """Resolve `--with-statusline` to its host list at command entry (D-23).
+
+    The bare form names every host, so the wiring step can report each one whose
+    config directory is absent as a benign skip (the --with-hooks precedent)
+    instead of silently ignoring it. The `=<hosts>` form is parsed against what
+    was detected: ordered Claude-first, de-duplicated, and never containing an
+    unknown or undetected name by the time this returns.
+    """
+    if not isinstance(raw, str):
+        return list(STATUSLINE_HOSTS)
+    return parse_statusline_hosts(raw, detected)
+
+
+def _statusline_request(with_statusline):
+    """The host list a headless run should wire, or None when the flag was absent.
+
+    main() resolves `--with-statusline=<hosts>` at command entry; a bare flag
+    (True) reaching here means a caller bypassed main(), so it gets the same
+    all-hosts meaning: every name is then filtered by the dir-presence guard in
+    _headless_wire_statusline rather than rejected.
+    """
+    if with_statusline is False:
+        return None
+    if isinstance(with_statusline, (list, tuple)):
+        return list(with_statusline)
+    return list(STATUSLINE_HOSTS)
 
 
 def hook_host_present(paths, host):
@@ -3656,8 +4099,11 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     tty-safe primitives (wire_statusline is now itself headless-safe -- see
     Task 1 -- and registry hook writers already were); both wiring
     flags treat an absent host config dir as a benign skip and create nothing
-    (_headless_wire_statusline supplies that guard for the status line).
-    --examples
+    (_headless_wire_statusline supplies that guard for the status line). In this
+    entry point `with_statusline` is the host list main() resolved at command
+    entry — bare form every host, `=<hosts>` the validated selection — so Claude
+    is always wired before Cursor and an unknown/undetected name never reaches
+    a write. --examples
     composes unchanged with the existing discover_example_segments/
     select_examples/install_example_segments primitives cmd_install already
     uses for its own --examples override.
@@ -3678,8 +4124,9 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     Six arguments, one over pylint's max-args/max-positional-arguments: the
     localized disable above matches this file's existing practice for CLI-shaped
     entry points (render_preview, prune_stale, persist_statusline,
-    launch_wizard). Body budget: 6 args + 7 locals (paths, entries, counts, ok,
-    chosen, requested, only_invalid_skills) = 13 of 15 max-locals;
+    launch_wizard). Body budget: 6 args + 8 locals (paths, entries, counts, ok,
+    chosen, requested, replaced, only_invalid_skills) = 14 of 15 max-locals
+    (`with_statusline` is re-normalized in place, never a second local);
     6 branches of 12; 3 returns of 6."""
     paths, entries = _headless_paths_and_entries(env)
     if paths is None:
@@ -3689,8 +4136,13 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     # See the plan's "Out of scope" section -- their behavior contradicts
     # "nothing touched unless asked." A future --prune-stale flag plugs in here.
 
-    requested = (skills_flag is not None or with_statusline or with_hooks
-                 or examples_flag is not None)
+    # Re-normalized in place (not a new local): main() already resolved
+    # `--with-statusline=<hosts>` at command entry, so this is the host list to
+    # wire; True only when a caller bypassed main() (same meaning as the bare
+    # form), None when the flag was absent.
+    with_statusline = _statusline_request(with_statusline)
+    requested = (skills_flag is not None or with_statusline is not None
+                 or with_hooks or examples_flag is not None)
     if requested:
         migrate_statusline(paths, dry)
     counts = new_counts()
@@ -3705,7 +4157,8 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
                                                     counts, chosen,
                                                     replaced=frozenset(replaced or ())):
         ok = False
-    if with_statusline and not _headless_wire_statusline(paths, dry):
+    if with_statusline is not None and not _headless_wire_statusline(
+            paths, with_statusline, dry):
         ok = False
     if with_hooks is True:
         if not _headless_wire_default_hooks(paths, dry, counts):
@@ -3717,7 +4170,7 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
         ok = False
 
     only_invalid_skills = (skills_flag is not None and not chosen
-                           and not with_statusline and not with_hooks
+                           and with_statusline is None and not with_hooks
                            and examples_flag is None)
     print(_headless_summary(requested, only_invalid_skills, counts))
     if dry:
@@ -3730,11 +4183,14 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
 
 
 def cmd_uninstall(env, dry, hooks=None):
-    """Remove every ai-kit symlink under ~/.claude, the ai-kit statusLine (only
-    if it points into install_dir), and ai-kit's own session-start hook entries
-    from both Claude Code and Cursor. Foreign hook entries are never touched.
-    Leaves install_dir, foreign links, and the config TOML in place. Exits 1 when
-    a settings file could not be read or rewritten, so ai-kit may still be wired."""
+    """Remove every ai-kit symlink under ~/.claude, ai-kit's own statusLine on EACH
+    status-line host (Claude's settings.json first, then Cursor's cli-config.json —
+    only when that entry is ai-kit's), and ai-kit's own session-start hook entries
+    from both Claude Code and Cursor. Foreign hook entries and foreign statusLines
+    are never touched, and one host's file is never modified while unwiring the
+    other. Leaves install_dir, foreign links, and both config TOMLs in place.
+    Exits 1 when a settings file could not be read or rewritten, so ai-kit may
+    still be wired."""
     paths = resolve_paths(env)
     counts = new_counts()
     if hooks is None:
@@ -3752,7 +4208,12 @@ def cmd_uninstall(env, dry, hooks=None):
         hook_ok = unwire_hook_rows(paths, selected_rows, dry, counts)
         print(f"removed {counts['unlinked']} ai-kit symlink(s). "
               f"install dir left in place: {paths.install_dir}")
-        unwired = [unwire_statusline(paths.settings, paths.install_dir, dry), hook_ok]
+        # Per host and independent: an unparseable or foreign Cursor config
+        # never stops Claude's entry from being removed, or the other way round.
+        unwired = [unwire_statusline(paths.settings, paths.install_dir, dry),
+                   unwire_statusline_cursor(paths.cursor_cli_config,
+                                            paths.cursor_status_line, dry),
+                   hook_ok]
     else:
         hook_ok = unwire_hook_rows(paths, hook_rows(hooks), dry, counts)
         print(f"removed hook entries for: {', '.join(dict.fromkeys(i for i, _h in hooks))}")
@@ -3956,8 +4417,12 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
     parser.add_argument("--skills", default=None, metavar="all|name1,name2",
                          help="(--headless only) skills to link additively — "
                               "never unlinks anything not named.")
-    parser.add_argument("--with-statusline", action="store_true",
-                         help="(--headless only) wire the ai-kit status line.")
+    parser.add_argument("--with-statusline", nargs="?", const=True, default=False,
+                        metavar="<claude,cursor>",
+                        help="(--headless only) bare wires every detected host, "
+                             "Claude before Cursor; =<claude,cursor> wires exactly "
+                             "those hosts (unknown name: usage error, valid but not "
+                             "installed: error before any write).")
     parser.add_argument("--with-hooks", nargs="?", const=True, default=False,
                         metavar="<id[:host],...>",
                         help="(--headless only) bare wires rows marked on below; "
@@ -4007,6 +4472,19 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
     if args.headless and args.config_doctor:
         parser.error("--headless and --config-doctor cannot be combined")
     env = os.environ
+    if args.with_statusline is not False:
+        # Host selection is validated at command entry: nothing — no migration,
+        # no replacement, no link, no hook, no example, no config write — has
+        # happened yet, so an unknown or undetected host cannot leave a partial
+        # install behind (SPEC R11/D-23).
+        detected = statusline_hosts_detected(resolve_paths(env))
+        try:
+            args.with_statusline = _statusline_selection(args.with_statusline, detected)
+        except UndetectedStatuslineHost as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        except ValueError as exc:
+            parser.error(str(exc))
     dry = args.dry_run
     if args.config_doctor:
         ensure_rich_runtime(env)

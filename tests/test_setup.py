@@ -3,11 +3,13 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -16,6 +18,8 @@ if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
 import claude_host
 import common_config
+import config_doctor_checks
+import cursor_quota
 
 
 def load_module():
@@ -5088,6 +5092,940 @@ class TestComponentMetaInContext(unittest.TestCase):
         for name, desc in ctx.component_meta.items():
             self.assertIsInstance(desc, str,
                                   f"component_meta[{name!r}] must be str, got {type(desc)}")
+
+
+CURSOR_PAYLOAD = os.path.join(FIXTURE_DIR, "cursor", "payload_synthetic.json")
+
+
+class TestCursorConfigPathResolver(unittest.TestCase):
+    """D-21: one shared Cursor path resolver, non-blank precedence, no platform gate.
+
+    These rows pin the EXPECTED precedence (what the Cursor CLI itself does), not
+    parity between two implementations: `Paths.cursor_config_dir` comes from
+    `config_doctor_checks.resolve_runtime_config_paths()` and nothing else, while
+    the hooks' separate `cursor_dir` keeps its older two-step rule (backlog 999.2).
+    """
+
+    def test_shared_resolver_nonblank_precedence(self):
+        cases = [
+            ({"HOME": "/h", "CURSOR_CONFIG_DIR": "/cc"}, "/cc/cli-config.json"),
+            ({"HOME": "/h", "CURSOR_CONFIG_DIR": "", "XDG_CONFIG_HOME": "/xd"},
+             "/xd/cursor/cli-config.json"),
+            # a whitespace-only override is blank: it falls through, not "/cli-config.json"
+            ({"HOME": "/h", "CURSOR_CONFIG_DIR": "   ", "XDG_CONFIG_HOME": "/xd"},
+             "/xd/cursor/cli-config.json"),
+            ({"HOME": "/h", "CURSOR_CONFIG_DIR": "", "XDG_CONFIG_HOME": ""},
+             "/h/.cursor/cli-config.json"),
+            ({"HOME": "/h", "XDG_CONFIG_HOME": "  "}, "/h/.cursor/cli-config.json"),
+            ({"HOME": "/h"}, "/h/.cursor/cli-config.json"),
+        ]
+        for env, expected in cases:
+            with self.subTest(env=env):
+                self.assertEqual(
+                    config_doctor_checks.resolve_runtime_config_paths(env)["cursor"], expected)
+                self.assertEqual(setup.resolve_paths(env).cursor_cli_config, expected)
+
+    def test_paths_gains_the_five_cursor_fields(self):
+        paths = setup.resolve_paths({"HOME": "/h", "AI_KIT_DIR": "/kit",
+                                     "XDG_CONFIG_HOME": "/xd"})
+        self.assertEqual(paths.cursor_config_dir, "/xd/cursor")
+        self.assertEqual(paths.cursor_cli_config, "/xd/cursor/cli-config.json")
+        self.assertEqual(paths.cursor_status_line, "/kit/tools/cursor-status-line.py")
+        self.assertEqual(paths.cursor_config_toml, "/xd/ai-kit/cursor-statusline.toml")
+        self.assertEqual(paths.cursor_sample, "/kit/tools/cursor-statusline.toml.sample")
+
+    def test_hooks_cursor_dir_is_unchanged_by_xdg(self):
+        # The hooks path deliberately ignores XDG_CONFIG_HOME (backlog 999.2):
+        # changing it would move Phase 21's hook gate, so the two resolvers may
+        # legitimately disagree here.
+        paths = setup.resolve_paths({"HOME": "/h", "XDG_CONFIG_HOME": "/xd"})
+        self.assertEqual(paths.cursor_dir, "/h/.cursor")
+        self.assertEqual(paths.cursor_hooks, "/h/.cursor/hooks.json")
+        self.assertEqual(paths.cursor_config_dir, "/xd/cursor")
+        with_home = setup.resolve_paths({"HOME": "/h", "CURSOR_CONFIG_DIR": "/cc"})
+        self.assertEqual(with_home.cursor_dir, "/cc")
+        self.assertEqual(with_home.cursor_hooks, "/cc/hooks.json")
+
+
+class TestHeadlessCursorStatusline(unittest.TestCase):
+    """SPEC R11 Cursor side: a detected install gets ai-kit's status line, in the
+    CLI's own schema, written through the shared atomic primitives — from a
+    scratch HOME only."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install_dir = os.path.join(self.tmp, "install")
+        self.claude_dir = os.path.join(self.tmp, "claude")
+        self.cursor_dir = os.path.join(self.tmp, "cursor")
+        skill = os.path.join(self.install_dir, "skills", "alpha")
+        os.makedirs(skill)
+        open(os.path.join(skill, "SKILL.md"), "w", encoding="utf-8").close()
+        os.makedirs(os.path.join(self.install_dir, "tools"))
+        self.env = {"HOME": self.tmp, "AI_KIT_DIR": self.install_dir,
+                    "CLAUDE_CONFIG_DIR": self.claude_dir,
+                    "CURSOR_CONFIG_DIR": self.cursor_dir,
+                    "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config")}
+
+    def _paths(self, **extra):
+        return setup.resolve_paths({**self.env, **extra})
+
+    def _headless(self, hosts, **extra):
+        env = {**self.env, **extra}
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = setup.cmd_install_headless(env, False, None, list(hosts), False)
+        return rc, out.getvalue(), err.getvalue()
+
+    def _config(self):
+        with open(os.path.join(self.cursor_dir, "cli-config.json"), encoding="utf-8") as f:
+            return json.load(f)
+
+    def _raw(self):
+        with open(os.path.join(self.cursor_dir, "cli-config.json"), "rb") as f:
+            return f.read()
+
+    def test_detected_cursor_dir_gets_the_exact_two_key_entry(self):
+        os.makedirs(self.cursor_dir)
+        rc, _, _ = self._headless(["cursor"])
+        self.assertEqual(rc, 0)
+        entry = self._config()["statusLine"]
+        self.assertEqual(set(entry), {"type", "command"})
+        self.assertEqual(entry["type"], "command")
+        self.assertEqual(
+            entry["command"],
+            f"python3 -S {os.path.join(self.install_dir, 'tools', 'cursor-status-line.py')}")
+        # SPEC R11 encoding edge: re-serialized with 2-space indent.
+        self.assertEqual(self._raw(), json.dumps({"statusLine": entry}, indent=2).encode() + b"\n")
+
+    def test_adjacency_existing_dir_without_config_file_is_detected(self):
+        os.makedirs(self.cursor_dir)
+        with open(os.path.join(self.cursor_dir, "hooks.json"), "w", encoding="utf-8") as f:
+            f.write("{}\n")
+        self.assertFalse(os.path.exists(os.path.join(self.cursor_dir, "cli-config.json")))
+        detected = setup.statusline_hosts_detected(self._paths())
+        self.assertEqual(detected, ["cursor"])
+        rc, _, _ = self._headless(["cursor"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(os.path.isfile(os.path.join(self.cursor_dir, "cli-config.json")))
+        with open(os.path.join(self.cursor_dir, "hooks.json"), "rb") as f:
+            self.assertEqual(f.read(), b"{}\n")
+
+    def test_absent_cursor_dir_is_never_materialized(self):
+        # SPEC R11 adjacency edge, other half: no dir means no file, and the
+        # bare form reports the skip rather than silently creating ~/.cursor.
+        os.makedirs(self.claude_dir)
+        self.assertFalse(os.path.exists(self.cursor_dir))
+        rc, out, _ = self._headless(setup.STATUSLINE_HOSTS)
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(self.cursor_dir))
+        self.assertIn("skipped ai-kit status line — no cursor dir", out)
+        with open(os.path.join(self.claude_dir, "settings.json"), encoding="utf-8") as f:
+            self.assertIn("statusLine", json.load(f))
+
+    def test_no_host_detected_reports_nothing_to_wire_and_exits_zero(self):
+        # SPEC R11 empty edge.
+        rc, out, _ = self._headless(setup.STATUSLINE_HOSTS)
+        self.assertEqual(rc, 0)
+        self.assertIn("nothing to wire", out)
+        self.assertFalse(os.path.exists(self.cursor_dir))
+        self.assertFalse(os.path.exists(self.claude_dir))
+
+    def test_install_dir_with_space_quotes_the_entry_path(self):
+        spaced = os.path.join(self.tmp, "install dir with spaces")
+        os.makedirs(os.path.join(spaced, "skills", "alpha"))
+        os.makedirs(os.path.join(spaced, "tools"))
+        shutil.copy(os.path.join(self.install_dir, "skills", "alpha", "SKILL.md"),
+                    os.path.join(spaced, "skills", "alpha", "SKILL.md"))
+        os.makedirs(self.cursor_dir)
+        rc, _, _ = self._headless(["cursor"], AI_KIT_DIR=spaced)
+        self.assertEqual(rc, 0)
+        command = self._config()["statusLine"]["command"]
+        expected_entry = os.path.join(spaced, "tools", "cursor-status-line.py")
+        self.assertTrue(command.startswith("python3 -S '"), command)
+        self.assertEqual(command, f"python3 -S '{expected_entry}'")
+        # and the quoted form is still recognized as ai-kit's own
+        quoted_paths = self._paths(AI_KIT_DIR=spaced)
+        self.assertEqual(setup.detect_statusline_cursor(quoted_paths)["state"], "ours")
+
+    def test_wired_command_renders_a_line_from_the_synthetic_payload(self):
+        # The whole point of wiring: the command setup wrote actually runs. Uses
+        # the real checkout entry (AI_KIT_DIR) against a scratch HOME/cache — the
+        # same synthetic fixture and fresh cache tests/test_cursor_status_line.py uses.
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        os.makedirs(self.cursor_dir)
+        rc, _, err = self._headless(["cursor"], AI_KIT_DIR=repo)
+        self.assertEqual(rc, 0, err)
+        command = self._config()["statusLine"]["command"]
+        argv = shlex.split(command)
+        self.assertEqual(argv[0], "python3")
+        cache = os.path.join(self.tmp, "cache")
+        cache_path, _lock = cursor_quota.probe_cache_paths(os.path.join(cache, "ai-kit"))
+        self.assertTrue(cursor_quota.probe_write_cache(
+            cache_path, cursor_quota.core_synthetic_cache(time.time())))
+        with open(CURSOR_PAYLOAD, encoding="utf-8") as handle:
+            payload = handle.read()
+        proc = subprocess.run(
+            [sys.executable, *argv[1:]], input=payload, text=True,
+            capture_output=True, check=False, timeout=30,
+            env={"HOME": self.tmp, "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config"),
+                 "XDG_CACHE_HOME": cache, "CURSOR_CONFIG_DIR": self.cursor_dir,
+                 "PATH": os.defpath})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(proc.stdout.strip())
+
+    def test_unparseable_cli_config_is_refused_and_left_byte_identical(self):
+        os.makedirs(self.cursor_dir)
+        config = os.path.join(self.cursor_dir, "cli-config.json")
+        with open(config, "w", encoding="utf-8") as f:
+            f.write("{ not json KEEP-ME\n")
+        with open(config, "rb") as f:
+            before = f.read()
+        rc, _, err = self._headless(["cursor"])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot parse", err)
+        with open(config, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+    _JSONC = ('{\n  // Cursor keeps comments in some configs\n'
+              '  "padding": 2,\n  "statusLine": {"type": "command", "command": "/usr/bin/mybar"}'
+              '\n}\n')
+
+    def test_jsonc_commented_config_is_never_rewritten(self):
+        # A commented file is valid JSONC that Cursor itself can read, but ai-kit's
+        # writer emits plain JSON: rewriting would silently delete the comments, so
+        # the file stays byte-for-byte identical and the warning says why.
+        os.makedirs(self.cursor_dir)
+        config = os.path.join(self.cursor_dir, "cli-config.json")
+        with open(config, "w", encoding="utf-8") as f:
+            f.write(self._JSONC)
+        with open(config, "rb") as f:
+            before = f.read()
+        rc, _, err = self._headless(["cursor"])
+        self.assertEqual(rc, 1)
+        self.assertIn("JSONC", err)
+        self.assertIn("comments", err)
+        with open(config, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_detection_reads_through_comments_but_the_writer_still_refuses(self):
+        # Detection is comment-tolerant so it never reports "unset" for a file that
+        # holds a foreign entry; refusal happens at the WRITE, with the reason.
+        os.makedirs(self.cursor_dir)
+        config = os.path.join(self.cursor_dir, "cli-config.json")
+        with open(config, "w", encoding="utf-8") as f:
+            f.write(self._JSONC)
+        state = setup.detect_statusline_cursor(self._paths())
+        self.assertEqual(state["state"], "foreign")
+        self.assertEqual(state["current_command"], "/usr/bin/mybar")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            wired = setup.wire_statusline_cursor(config, "tools/cursor-status-line.py",
+                                                 io.StringIO("y\n"), False)
+        self.assertFalse(wired)
+        self.assertIn("JSONC", err.getvalue())
+        with open(config, "rb") as f:
+            self.assertEqual(f.read(), self._JSONC.encode())
+
+    def test_unwire_refuses_a_commented_config_naming_the_reason(self):
+        os.makedirs(self.cursor_dir)
+        config = os.path.join(self.cursor_dir, "cli-config.json")
+        entry = self._paths().cursor_status_line
+        ours = json.dumps({"type": "command", "command": f"python3 -S {entry}"})
+        with open(config, "w", encoding="utf-8") as f:
+            f.write(f'{{\n  // keep me\n  "statusLine": {ours}\n}}\n')
+        with open(config, "rb") as f:
+            before = f.read()
+        self.assertEqual(setup._cursor_config_read(config)[0], "jsonc")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertFalse(setup.unwire_statusline_cursor(config, entry, False))
+        self.assertIn("JSONC", err.getvalue())
+        with open(config, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+
+class TestStatuslineOwnershipCounterexamples(unittest.TestCase):
+    """D-23: the shared exact-argv parser, not a substring, decides ownership.
+
+    Every row is checked on both hosts where the host has the shape, across
+    migration, detection, refresh and uninstall: a `.backup`/`.bak` copy of our
+    own script, and a foreign script that merely receives our path as an
+    argument, must never be mistaken for ai-kit's entry.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.home = os.path.join(self.tmp, "home")
+        self.install = os.path.join(self.tmp, "install")
+        self.env = {"HOME": self.home, "AI_KIT_DIR": self.install,
+                    "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config")}
+        self.paths = setup.resolve_paths(self.env)
+        self.legacy = os.path.join(self.install, "tools", setup._LEGACY_ENTRY)
+        os.makedirs(self.paths.claude_dir, exist_ok=True)
+        os.makedirs(self.paths.cursor_config_dir, exist_ok=True)
+
+    def _claude(self, command):
+        with open(self.paths.settings, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": {"type": "command", "command": command}}, f)
+
+    def _cursor(self, command):
+        with open(self.paths.cursor_cli_config, "w", encoding="utf-8") as f:
+            json.dump({"statusLine": {"type": "command", "command": command}}, f)
+
+    def _counterexamples(self):
+        ours = self.paths.status_line
+        return [f"python3 -S {ours}.backup", f"python3 -S {ours}.bak",
+                f"python3 -S /usr/bin/other.py {ours}",
+                f"bash -c 'python3 -S {ours}'", f"cd /x && python3 -S {ours}"]
+
+    def test_counterexamples_are_foreign_on_both_hosts(self):
+        for command in self._counterexamples():
+            with self.subTest(command=command):
+                self._claude(command)
+                self.assertEqual(setup.detect_statusline(self.paths)["state"], "foreign")
+                self._cursor(command)
+                self.assertEqual(
+                    setup.detect_statusline_cursor(self.paths)["state"], "foreign")
+
+    def test_headless_refresh_refuses_and_leaves_both_files(self):
+        for command in self._counterexamples():
+            with self.subTest(command=command):
+                self._claude(command)
+                self._cursor(command)
+                with open(self.paths.settings, "rb") as f:
+                    claude_before = f.read()
+                with open(self.paths.cursor_cli_config, "rb") as f:
+                    cursor_before = f.read()
+                with contextlib.redirect_stderr(io.StringIO()):
+                    claude_ok = setup.wire_statusline(
+                        self.paths.settings, self.paths.status_line, None, False)
+                    cursor_ok = setup.wire_statusline_cursor(
+                        self.paths.cursor_cli_config, self.paths.cursor_status_line, None, False)
+                self.assertFalse(claude_ok)
+                self.assertFalse(cursor_ok)
+                with open(self.paths.settings, "rb") as f:
+                    self.assertEqual(f.read(), claude_before)
+                with open(self.paths.cursor_cli_config, "rb") as f:
+                    self.assertEqual(f.read(), cursor_before)
+
+    def test_uninstall_leaves_them_and_removes_the_real_entry(self):
+        for command in self._counterexamples():
+            with self.subTest(command=command):
+                self._claude(command)
+                self._cursor(command)
+                with open(self.paths.settings, "rb") as f:
+                    claude_before = f.read()
+                with contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    rc = setup.cmd_uninstall(self.env, dry=False)
+                self.assertEqual(rc, 0)
+                with open(self.paths.settings, "rb") as f:
+                    self.assertEqual(f.read(), claude_before)
+                with open(self.paths.cursor_cli_config, encoding="utf-8") as f:
+                    self.assertEqual(json.load(f)["statusLine"]["command"], command)
+        self._claude(f"python3 -S {self.paths.status_line}")
+        self._cursor(f"python3 -S {self.paths.cursor_status_line}")
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(setup.cmd_uninstall(self.env, dry=False), 0)
+        with open(self.paths.settings, encoding="utf-8") as f:
+            self.assertNotIn("statusLine", json.load(f))
+        with open(self.paths.cursor_cli_config, encoding="utf-8") as f:
+            self.assertNotIn("statusLine", json.load(f))
+
+    def test_migration_leaves_a_legacy_named_counterexample_alone(self):
+        # Migration is the fourth path the shared parser governs: only an argv
+        # whose script IS the legacy entry moves.
+        for command in (f"python3 -S {self.legacy}.backup",
+                        f"python3 -S /usr/bin/other.py {self.legacy}"):
+            with self.subTest(command=command):
+                self._claude(command)
+                with open(self.paths.settings, "rb") as f:
+                    before = f.read()
+                with contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertFalse(setup.migrate_statusline(self.paths, False))
+                with open(self.paths.settings, "rb") as f:
+                    self.assertEqual(f.read(), before)
+        self._claude(f"python3 -S {self.legacy}")
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertTrue(setup.migrate_statusline(self.paths, False))
+        self.assertEqual(setup.detect_statusline(self.paths)["state"], "ours")
+
+    def test_ownership_helper_is_the_parser_not_a_substring(self):
+        self.assertTrue(setup._command_is_ours(
+            f"python3 -S {self.paths.cursor_status_line}", self.paths.cursor_status_line))
+        self.assertTrue(setup._command_is_ours(
+            f"python3 -S '{self.paths.cursor_status_line}'", self.paths.cursor_status_line))
+        self.assertFalse(setup._command_is_ours(
+            f"python3 -S {self.paths.cursor_status_line}-extra", self.paths.cursor_status_line))
+        self.assertFalse(setup._command_is_ours(
+            f"python3 -S /x/{os.path.basename(self.paths.cursor_status_line)}",
+            self.paths.cursor_status_line))
+
+
+class TestStatuslineHostMatrix(unittest.TestCase):
+    """SPEC R11 acceptance: 2 hosts x 3 states x 3 modes, one table.
+
+    Claude's file is settings.json, Cursor's is cli-config.json; the states are
+    unset / ours / foreign; the modes are the two interactive answers and
+    headless (tty=None, exactly what _headless_wire_statusline passes). Every row
+    runs against a scratch HOME with CLAUDE_CONFIG_DIR/CURSOR_CONFIG_DIR inside
+    it, and every row checks the same two invariants: unrelated keys keep their
+    parsed values AND their order, and a foreign entry is only ever replaced by a
+    human 'y'.
+    """
+
+    HOSTS = ("claude", "cursor")
+    STATES = ("unset", "ours", "foreign")
+    MODES = ("interactive-yes", "interactive-no", "headless")
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.env = {"HOME": self.tmp, "AI_KIT_DIR": os.path.join(self.tmp, "install"),
+                    "CLAUDE_CONFIG_DIR": os.path.join(self.tmp, ".claude"),
+                    "CURSOR_CONFIG_DIR": os.path.join(self.tmp, ".cursor"),
+                    "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config")}
+        self.paths = setup.resolve_paths(self.env)
+        for directory in (self.paths.claude_dir, self.paths.cursor_config_dir):
+            os.makedirs(directory, exist_ok=True)
+
+    def _file(self, host):
+        return self.paths.settings if host == "claude" else self.paths.cursor_cli_config
+
+    def _entry(self, host):
+        return self.paths.status_line if host == "claude" else self.paths.cursor_status_line
+
+    def _command(self, host, entry=None):
+        entry = self._entry(host) if entry is None else entry
+        quoted = shlex.quote(entry) if host == "cursor" else entry
+        return f"python3 -S {quoted}"
+
+    def _ours(self, host):
+        """ai-kit's own entry, with the optional Cursor knobs the user set."""
+        if host == "claude":
+            return {"type": "command", "command": self._command(host)}
+        return {"type": "command", "command": self._command(host), "padding": 1,
+                "updateIntervalMs": 500, "timeoutMs": 3000}
+
+    def _seed(self, host, state):
+        data = {"theme": "dark", "unrelated": {"nested": [1, 2]}}
+        if state != "unset":
+            data["statusLine"] = (self._ours(host) if state == "ours"
+                                  else {"type": "command", "command": "/usr/bin/mybar"})
+        with open(self._file(host), "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2)
+            handle.write("\n")
+
+    def _wire(self, host, mode):
+        answer = "y\n" if mode == "interactive-yes" else "n\n"
+        tty = None if mode == "headless" else io.StringIO(answer)
+        if host == "claude":
+            return setup.wire_statusline(self._file(host), self._entry(host), tty, False)
+        return setup.wire_statusline_cursor(self._file(host), self._entry(host), tty, False)
+
+    def _load(self, host):
+        with open(self._file(host), encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def _raw(self, host):
+        with open(self._file(host), "rb") as handle:
+            return handle.read()
+
+    def test_matrix_two_hosts_three_states_three_modes(self):
+        rows = 0
+        for host in self.HOSTS:
+            for state in self.STATES:
+                for mode in self.MODES:
+                    with self.subTest(host=host, state=state, mode=mode):
+                        rows += 1
+                        self._seed(host, state)
+                        before = self._raw(host)
+                        out, err = io.StringIO(), io.StringIO()
+                        with contextlib.redirect_stdout(out), \
+                                contextlib.redirect_stderr(err):
+                            ok = self._wire(host, mode)
+                        replaced = state != "foreign" or mode == "interactive-yes"
+                        self.assertEqual(ok, replaced)
+                        data = self._load(host)
+                        if replaced:
+                            self.assertEqual(data["statusLine"]["command"], self._command(host))
+                        else:
+                            self.assertEqual(self._raw(host), before)
+                        self.assertEqual(data["theme"], "dark")
+                        self.assertEqual(data["unrelated"], {"nested": [1, 2]})
+                        self.assertEqual([k for k in data if k != "statusLine"],
+                                         ["theme", "unrelated"])
+                        if state != "unset":
+                            self.assertIn("statusLine", list(data))
+        self.assertGreaterEqual(rows, 18)
+
+    def test_matrix_foreign_headless_exits_one_on_both_hosts(self):
+        # T-23-46 at the command level: the prohibition is enforced end to end,
+        # the file stays byte-identical and the run fails loudly.
+        for host in self.HOSTS:
+            with self.subTest(host=host):
+                self._seed(host, "foreign")
+                with open(self._file(host), "rb") as handle:
+                    before = handle.read()
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    rc = setup.cmd_install_headless(self.env, False, None, True, False)
+                self.assertEqual(rc, 1)
+                self.assertIn("foreign", err.getvalue())
+                with open(self._file(host), "rb") as handle:
+                    self.assertEqual(handle.read(), before)
+
+    def test_cursor_ours_refresh_changes_only_command(self):
+        # A command the parser owns but renders differently (quoted path): the
+        # refresh normalizes `command` and touches nothing else in the object.
+        entry = self._entry("cursor")
+        seeded = f"python3 -S '{entry}'"
+        with open(self.paths.cursor_cli_config, "w", encoding="utf-8") as handle:
+            json.dump({"statusLine": {"type": "command", "command": seeded,
+                                      "padding": 1, "updateIntervalMs": 500,
+                                      "timeoutMs": 3000}}, handle)
+        before = self._load("cursor")["statusLine"]
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertTrue(setup.wire_statusline_cursor(
+                self.paths.cursor_cli_config, entry, None, False))
+        after = self._load("cursor")["statusLine"]
+        self.assertEqual(after["command"], self._command("cursor"))
+        self.assertNotEqual(after["command"], seeded)
+        self.assertEqual({k: v for k, v in after.items() if k != "command"},
+                         {k: v for k, v in before.items() if k != "command"})
+        self.assertEqual(set(after), {"type", "command", "padding",
+                                      "updateIntervalMs", "timeoutMs"})
+
+    def test_cursor_new_entry_writes_no_non_default_knob(self):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertTrue(setup.wire_statusline_cursor(
+                self.paths.cursor_cli_config, self._entry("cursor"), None, False))
+        self.assertEqual(set(self._load("cursor")["statusLine"]), {"type", "command"})
+
+    def test_cursor_invalid_shapes_refused_by_writer_and_foreign_by_detector(self):
+        cases = {
+            "bare string": "/usr/bin/mybar",
+            "shell type": {"type": "shell", "command": "python3 -S /x"},
+            "empty command": {"type": "command", "command": ""},
+            "unknown key": {"type": "command", "command": "/usr/bin/mybar", "color": "red"},
+            "bool padding": {"type": "command", "command": "/usr/bin/mybar", "padding": True},
+            "negative padding": {"type": "command", "command": "/usr/bin/mybar", "padding": -1},
+            "zero interval": {"type": "command", "command": "/usr/bin/mybar",
+                              "updateIntervalMs": 0},
+            "string timeout": {"type": "command", "command": "/usr/bin/mybar",
+                               "timeoutMs": "2000"},
+            "command not a string": {"type": "command", "command": 7},
+            "list shape": ["python3", "-S", "/x"],
+        }
+        for label, value in cases.items():
+            with self.subTest(case=label):
+                with open(self.paths.cursor_cli_config, "w", encoding="utf-8") as handle:
+                    json.dump({"theme": "dark", "statusLine": value}, handle)
+                with open(self.paths.cursor_cli_config, "rb") as handle:
+                    before = handle.read()
+                self.assertEqual(
+                    setup.detect_statusline_cursor(self.paths)["state"], "foreign", label)
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    ok = setup.wire_statusline_cursor(
+                        self.paths.cursor_cli_config, self._entry("cursor"), None, False)
+                self.assertFalse(ok, label)
+                with open(self.paths.cursor_cli_config, "rb") as handle:
+                    self.assertEqual(handle.read(), before, label)
+
+    def test_writer_refuses_when_the_entry_changed_before_the_write(self):
+        # T-23-47: the CLI rewrites its own file. The writer classifies one read,
+        # then re-reads and re-classifies immediately before _atomic_write_json,
+        # and aborts unless the file still holds exactly the entry it saw (the
+        # one a human may have just approved). The patch target is the Cursor
+        # host's own reader, so this proves the re-read ran and acted.
+        entry = self._entry("cursor")
+        config = self.paths.cursor_cli_config
+        ours = {"type": "command", "command": f"python3 -S {entry}"}
+        other = {"type": "command", "command": "/usr/bin/other"}
+        rows = [
+            ("unset became foreign", {"theme": "dark"}, {"theme": "dark", "statusLine": other},
+             "write aborted"),
+            ("ours became foreign", {"theme": "dark", "statusLine": ours},
+             {"theme": "dark", "statusLine": other}, "write aborted"),
+            ("ours became unreadable", {"theme": "dark", "statusLine": ours}, ("bad", None),
+             "cannot parse"),
+        ]
+        for label, first, second, expect in rows:
+            with self.subTest(case=label):
+                first_state, first_data = first if isinstance(first, tuple) else ("json", first)
+                second_state, second_data = (second if isinstance(second, tuple)
+                                             else ("json", second))
+                with open(config, "w", encoding="utf-8") as handle:
+                    json.dump(first_data, handle)
+                with open(config, "rb") as handle:
+                    before = handle.read()
+                with mock.patch.object(
+                        setup, "_cursor_config_read",
+                        side_effect=[(first_state, first_data),
+                                     (second_state, second_data)]) as reads, \
+                        contextlib.redirect_stderr(io.StringIO()) as err:
+                    ok = setup.wire_statusline_cursor(config, entry, None, False)
+                self.assertFalse(ok, label)
+                self.assertEqual(reads.call_count, 2, label)
+                self.assertIn(expect, err.getvalue(), label)
+                with open(config, "rb") as handle:
+                    self.assertEqual(handle.read(), before, label)
+
+    def test_unparseable_host_file_is_never_rewritten_by_wire(self):
+        # T-23-48: a file neither host can parse stays byte-identical on both
+        # hosts, headless and interactive-yes alike (a human 'y' approves
+        # replacing a foreign statusLine, not inventing a config from garbage).
+        for host in self.HOSTS:
+            self._seed(host, "unset")
+            path = self._file(host)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("{ this is not json KEEP-ME\n")
+            with open(path, "rb") as handle:
+                before = handle.read()
+            for mode in self.MODES:
+                with self.subTest(host=host, mode=mode):
+                    out, err = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(out), \
+                            contextlib.redirect_stderr(err):
+                        ok = self._wire(host, mode)
+                    self.assertFalse(ok)
+                    self.assertIn("parse", err.getvalue())
+                    with open(path, "rb") as handle:
+                        self.assertEqual(handle.read(), before)
+
+    def test_dry_run_writes_nothing_on_both_hosts(self):
+        for host in self.HOSTS:
+            with self.subTest(host=host):
+                self._seed(host, "unset")
+                before = self._raw(host)
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    if host == "claude":
+                        self.assertTrue(setup.wire_statusline(
+                            self._file(host), self._entry(host), None, True))
+                    else:
+                        self.assertTrue(setup.wire_statusline_cursor(
+                            self._file(host), self._entry(host), None, True))
+                self.assertIn("would set", out.getvalue())
+                with open(self._file(host), "rb") as handle:
+                    self.assertEqual(handle.read(), before)
+
+
+class TestStatuslineUninstallPerHost(unittest.TestCase):
+    """SPEC R11/D-23: `uninstall` unwires each host's statusLine independently."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install = os.path.join(self.tmp, "install")
+        self.env = {"HOME": self.tmp, "AI_KIT_DIR": self.install,
+                    "CLAUDE_CONFIG_DIR": os.path.join(self.tmp, ".claude"),
+                    "CURSOR_CONFIG_DIR": os.path.join(self.tmp, ".cursor"),
+                    "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config")}
+        self.paths = setup.resolve_paths(self.env)
+        for directory in (self.paths.claude_dir, self.paths.cursor_config_dir,
+                          self.paths.config_dir):
+            os.makedirs(directory, exist_ok=True)
+        for toml in (self.paths.config_toml, self.paths.cursor_config_toml):
+            with open(toml, "w", encoding="utf-8") as handle:
+                handle.write("# user edited recipe\n")
+
+    def _write(self, host, payload):
+        path = self.paths.settings if host == "claude" else self.paths.cursor_cli_config
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+        return path
+
+    def _ours(self, host):
+        entry = (self.paths.status_line if host == "claude"
+                 else self.paths.cursor_status_line)
+        return {"theme": "dark",
+                "statusLine": {"type": "command", "command": f"python3 -S {entry}"}}
+
+    def _foreign(self, host):
+        return {"theme": "dark", "statusLine": {"type": "command", "command": "/usr/bin/mybar"}}
+
+    def _uninstall(self):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = setup.cmd_uninstall(self.env, dry=False)
+        return rc, err.getvalue()
+
+    def test_removes_ai_kit_entry_on_both_hosts_and_keeps_tomls(self):
+        self._write("claude", self._ours("claude"))
+        self._write("cursor", self._ours("cursor"))
+        rc, _ = self._uninstall()
+        self.assertEqual(rc, 0)
+        for host in ("claude", "cursor"):
+            path = self.paths.settings if host == "claude" else self.paths.cursor_cli_config
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+            self.assertNotIn("statusLine", data)
+            self.assertEqual(data["theme"], "dark")
+        for toml in (self.paths.config_toml, self.paths.cursor_config_toml):
+            with open(toml, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "# user edited recipe\n")
+
+    def test_each_host_is_independent(self):
+        # A foreign (or unreadable) entry on one host never stops the other host
+        # from being unwired, and unwiring one never touches the other's bytes.
+        for ours_host, other_host in (("claude", "cursor"), ("cursor", "claude")):
+            with self.subTest(ours=ours_host):
+                self._write(ours_host, self._ours(ours_host))
+                self._write(other_host, self._foreign(other_host))
+                other_path = (self.paths.settings if other_host == "claude"
+                              else self.paths.cursor_cli_config)
+                with open(other_path, "rb") as handle:
+                    other_before = handle.read()
+                rc, _ = self._uninstall()
+                self.assertEqual(rc, 0)
+                with open(other_path, "rb") as handle:
+                    self.assertEqual(handle.read(), other_before)
+                ours_path = (self.paths.settings if ours_host == "claude"
+                             else self.paths.cursor_cli_config)
+                with open(ours_path, encoding="utf-8") as handle:
+                    self.assertNotIn("statusLine", json.load(handle))
+
+    def test_unparseable_host_file_is_skipped_with_a_warning_and_exit_one(self):
+        self._write("claude", self._ours("claude"))
+        cursor = self._write("cursor", {})
+        with open(cursor, "w", encoding="utf-8") as handle:
+            handle.write("{ not json KEEP-ME\n")
+        with open(cursor, "rb") as handle:
+            before = handle.read()
+        rc, err = self._uninstall()
+        self.assertEqual(rc, 1)
+        self.assertIn("statusLine left as is", err)
+        with open(cursor, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+        with open(self.paths.settings, encoding="utf-8") as handle:
+            self.assertNotIn("statusLine", json.load(handle))
+
+    def test_missing_host_file_is_skipped_and_never_materialized(self):
+        self._write("claude", self._ours("claude"))
+        self.assertFalse(os.path.exists(self.paths.cursor_cli_config))
+        rc, err = self._uninstall()
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(self.paths.cursor_cli_config))
+        self.assertEqual(err, "")
+
+    def test_wired_cursor_entry_survives_a_dry_run(self):
+        self._write("cursor", self._ours("cursor"))
+        with open(self.paths.cursor_cli_config, "rb") as handle:
+            before = handle.read()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(setup.cmd_uninstall(self.env, dry=True), 0)
+        self.assertIn("would clear ai-kit Cursor statusLine", out.getvalue())
+        with open(self.paths.cursor_cli_config, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+
+
+def _tree_snapshot(root):
+    """Every path under `root` with its content: bytes for a file, target for a
+    symlink, a marker for a directory. Used to prove a run wrote NOTHING at all
+    (a settings.json diff alone would miss a new link or an added directory).
+    Paths are relative to `root`, so the snapshot never holds a machine path."""
+    tree = {}
+    for current, dirs, files in os.walk(root):
+        for name in dirs:
+            path = os.path.join(current, name)
+            key = os.path.relpath(path, root)
+            tree[key] = "link:" + os.readlink(path) if os.path.islink(path) else "dir"
+        for name in files:
+            path = os.path.join(current, name)
+            key = os.path.relpath(path, root)
+            if os.path.islink(path):
+                tree[key] = "link:" + os.readlink(path)
+            else:
+                with open(path, "rb") as handle:
+                    tree[key] = "file:" + handle.read().hex()
+    return tree
+
+
+class TestStatuslineHostSelection(unittest.TestCase):
+    """SPEC R11/D-23: the bare form wires every detected host (Claude first),
+    `=<hosts>` selects, and a second run changes no byte."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install = os.path.join(self.tmp, "install")
+        self.claude_dir = os.path.join(self.tmp, ".claude")
+        self.cursor_dir = os.path.join(self.tmp, ".cursor")
+        skill = os.path.join(self.install, "skills", "alpha")
+        os.makedirs(skill)
+        open(os.path.join(skill, "SKILL.md"), "w", encoding="utf-8").close()
+        os.makedirs(os.path.join(self.install, "tools"))
+        self.env = {"HOME": self.tmp, "AI_KIT_DIR": self.install,
+                    "CLAUDE_CONFIG_DIR": self.claude_dir,
+                    "CURSOR_CONFIG_DIR": self.cursor_dir,
+                    "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config")}
+        self.paths = setup.resolve_paths(self.env)
+
+    def _run(self, with_statusline):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = setup.cmd_install_headless(self.env, False, None, with_statusline, False)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_parse_statusline_hosts_selection_table(self):
+        cases = [
+            ("claude", ["claude"], ["claude"]),
+            ("cursor", ["claude", "cursor"], ["cursor"]),
+            # detection order wins over the typed order: Claude stays first
+            ("cursor,claude", ["claude", "cursor"], ["claude", "cursor"]),
+            ("  Cursor , CLAUDE ", ["claude", "cursor"], ["claude", "cursor"]),
+            ("claude,claude", ["claude", "cursor"], ["claude"]),
+            ("claude cursor", ["claude", "cursor"], ["claude", "cursor"]),
+        ]
+        for value, detected, expected in cases:
+            with self.subTest(value=value):
+                self.assertEqual(setup.parse_statusline_hosts(value, detected), expected)
+
+    def test_parse_names_unknown_and_undetected_hosts(self):
+        with self.assertRaises(ValueError) as ctx:
+            setup.parse_statusline_hosts("bogus", ["claude"])
+        self.assertIn("bogus", str(ctx.exception))
+        self.assertNotIsInstance(ctx.exception, setup.UndetectedStatuslineHost)
+        with self.assertRaises(setup.UndetectedStatuslineHost) as ctx:
+            setup.parse_statusline_hosts("cursor", ["claude"])
+        self.assertIn("cursor", str(ctx.exception))
+        # an unknown name is the usage error even when a valid name is missing too
+        with self.assertRaises(ValueError) as ctx:
+            setup.parse_statusline_hosts("cursor,bogus", [])
+        self.assertNotIsInstance(ctx.exception, setup.UndetectedStatuslineHost)
+
+    def test_detection_is_claude_first_and_dir_only(self):
+        self.assertEqual(setup.statusline_hosts_detected(self.paths), [])
+        os.makedirs(self.cursor_dir)
+        self.assertEqual(setup.statusline_hosts_detected(self.paths), ["cursor"])
+        os.makedirs(self.claude_dir)
+        self.assertEqual(setup.statusline_hosts_detected(self.paths), ["claude", "cursor"])
+        # the Cursor dir was detected with NO cli-config.json in it (adjacency edge)
+        self.assertFalse(os.path.exists(self.paths.cursor_cli_config))
+
+    def test_bare_form_wires_claude_before_cursor(self):
+        order = []
+
+        def _record(name):
+            def _fake(*_args, **_kwargs):
+                order.append(name)
+                return True
+            return _fake
+
+        os.makedirs(self.claude_dir)
+        os.makedirs(self.cursor_dir)
+        with mock.patch.object(setup, "wire_statusline", side_effect=_record("claude")), \
+             mock.patch.object(setup, "wire_statusline_cursor", side_effect=_record("cursor")), \
+             contextlib.redirect_stdout(io.StringIO()), \
+             contextlib.redirect_stderr(io.StringIO()):
+            rc = setup.cmd_install_headless(self.env, False, None, True, False)
+        self.assertEqual(rc, 0)
+        self.assertEqual(order, ["claude", "cursor"])
+
+    def test_second_headless_run_changes_no_byte(self):
+        # SPEC R11 idempotency edge, over the WHOLE scratch tree.
+        os.makedirs(self.claude_dir)
+        os.makedirs(self.cursor_dir)
+        first, _, _ = self._run(True)
+        after_first = _tree_snapshot(self.tmp)
+        second, _, _ = self._run(True)
+        self.assertEqual((first, second), (0, 0))
+        self.assertEqual(after_first, _tree_snapshot(self.tmp))
+        entry = self.paths.cursor_status_line
+        with open(self.paths.cursor_cli_config, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["statusLine"]["command"], f"python3 -S {entry}")
+
+    def test_explicit_selection_wires_only_that_host(self):
+        os.makedirs(self.claude_dir)
+        os.makedirs(self.cursor_dir)
+        rc, _, _ = self._run(["cursor"])
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(self.paths.settings))
+        self.assertTrue(os.path.isfile(self.paths.cursor_cli_config))
+
+
+class TestStatuslineSelectionBeforeAnyWrite(unittest.TestCase):
+    """SPEC R11/D-23: host selection is validated at COMMAND ENTRY.
+
+    Each row combines an invalid or undetected selection with everything else the
+    same run would have done — a legacy owned command plus a legacy TOML that
+    `migrate_statusline` rewrites, a requested skill, requested hooks and a
+    requested example segment — and compares a full scratch-tree snapshot. Not a
+    byte of it may move: `--with-statusline=bogus` exits 2 (argparse usage) and an
+    undetected name exits 1, both before migration, replacement, linking, hooks,
+    examples or any config write.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.install = os.path.join(self.tmp, "install")
+        self.claude_dir = os.path.join(self.tmp, ".claude")
+        self.cursor_dir = os.path.join(self.tmp, ".cursor")  # deliberately not created
+        skill = os.path.join(self.install, "skills", "alpha")
+        os.makedirs(skill)
+        with open(os.path.join(skill, "SKILL.md"), "w", encoding="utf-8") as handle:
+            handle.write("---\nname: alpha\n---\n")
+        tools = os.path.join(self.install, "tools")
+        os.makedirs(tools)
+        os.makedirs(os.path.join(self.install, "examples", "segments"))
+        with open(os.path.join(self.install, "examples", "segments", "demo"),
+                  "w", encoding="utf-8") as handle:
+            handle.write('# ai-kit-segment: id=demo_seg name="Demo"\nprint("x")\n')
+        os.makedirs(self.claude_dir)
+        self.env = {"HOME": self.tmp, "AI_KIT_DIR": self.install,
+                    "CLAUDE_CONFIG_DIR": self.claude_dir,
+                    "CURSOR_CONFIG_DIR": self.cursor_dir,
+                    "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config"),
+                    "XDG_STATE_HOME": os.path.join(self.tmp, ".state"),
+                    "XDG_CACHE_HOME": os.path.join(self.tmp, ".cache")}
+        self.paths = setup.resolve_paths(self.env)
+        os.makedirs(self.paths.config_dir, exist_ok=True)
+        legacy = os.path.join(tools, setup._LEGACY_ENTRY)
+        with open(self.paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"theme": "dark",
+                       "statusLine": {"type": "command", "command": f"python3 -S {legacy}"}},
+                      handle)
+        with open(os.path.join(self.paths.config_dir, setup._LEGACY_TOML), "w",
+                  encoding="utf-8") as handle:
+            handle.write("# legacy recipe\n")
+
+    def _main(self, selection):
+        argv = ["install", "--headless", "--skills", "alpha", "--with-hooks",
+                "--examples", "all", f"--with-statusline={selection}"]
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            try:
+                return setup.main(argv)
+            except SystemExit as exc:
+                return exc.code
+
+    def test_invalid_or_undetected_host_snapshot_is_unchanged(self):
+        cases = [("bogus", 2), ("claude,bogus", 2), ("cursor", 1), ("cursor,claude", 1)]
+        for selection, expected in cases:
+            with self.subTest(selection=selection):
+                before = _tree_snapshot(self.tmp)
+                self.assertEqual(self._main(selection), expected)
+                self.assertEqual(_tree_snapshot(self.tmp), before,
+                                 f"--with-statusline={selection} wrote to the scratch tree")
+
+    def test_a_valid_selection_does_change_the_tree(self):
+        # Non-vacuity for the snapshot above: the same argv with a detected host
+        # must move it, or that equality check would prove nothing.
+        before = _tree_snapshot(self.tmp)
+        self.assertEqual(self._main("claude"), 0)
+        self.assertNotEqual(_tree_snapshot(self.tmp), before)
 
 
 if __name__ == "__main__":
