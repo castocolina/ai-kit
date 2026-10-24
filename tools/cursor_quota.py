@@ -96,7 +96,7 @@ def util_percent(value: object) -> float | None:
     return number if number is not None and number <= 100 else None
 
 
-# ═══ 3. CORE — normalization and cache state ═══
+# ═══ 3. UTIL — spend and cycle field helpers ═══
 def util_spend_fields(spend: dict[str, object]) -> tuple[float, float | None, float, float, bool]:
     raw_used = util_pick(spend, "individualUsed", "individual_used")
     used = util_spend(raw_used) if raw_used is not None else 0.0
@@ -161,6 +161,7 @@ def util_plan_window(plan: dict[str, object]) -> tuple[str | None, int | None]:
     return (period.lower() if isinstance(period, str) else None), resets
 
 
+# ═══ 4. CORE — normalization and cache state ═══
 def core_normalize(usage: object, hard_limit: object, plan_info: object) -> dict[str, object]:
     """Normalize Dashboard responses into token-free, derived quota data."""
     usage_obj = util_object(usage)
@@ -292,7 +293,7 @@ def core_synthetic_cache(now: float) -> dict[str, object]:
     }
 
 
-# ═══ 4. PROBE — private cache, lock and refresh lifecycle ═══
+# ═══ 5. PROBE — private cache, lock and refresh lifecycle ═══
 def probe_cache_paths(cache_base: str) -> tuple[str, str]:
     """Prepare the private Cursor cache directory; reject unsafe relative bases."""
     if not os.path.isabs(cache_base):
@@ -471,18 +472,6 @@ def probe_refresh(
         probe_release_lock(descriptor)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--refresh", action="store_true")
-    args = parser.parse_args()
-    if not args.refresh:
-        parser.error("--refresh is required")
-    common_config = importlib.import_module("common_config")
-    env = dict(os.environ)
-    return probe_refresh(common_config.cfg_cache_base(env), env)
-
-
-# ═══ 5. UTIL — endpoint and credential support ═══
 def probe_validate_endpoint(url: str) -> str | None:
     """Return a canonical approved Dashboard base URL, or None."""
     urlsplit = importlib.import_module("urllib.parse").urlsplit
@@ -656,6 +645,18 @@ def probe_fetch_quota(
     if result.error_kind:
         return None, result.error_kind, "Cursor Dashboard request failed"
     return core_normalize(result.usage, result.hard_limit, result.plan_info), None, ""
+
+
+# ═══ 6. SHELL — CLI entry ═══
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--refresh", action="store_true")
+    args = parser.parse_args()
+    if not args.refresh:
+        parser.error("--refresh is required")
+    common_config = importlib.import_module("common_config")
+    env = dict(os.environ)
+    return probe_refresh(common_config.cfg_cache_base(env), env)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ class PayloadFields(NamedTuple):
     context_max: int | None
 
 
+# ═══ 6. CORE — render machinery and host payload ═══════════════════════════
 def core_payload_fields(raw: dict[str, Any]) -> PayloadFields:
     """Coerce payload display values defensively before constructing Context."""
     model = raw.get("model")
@@ -51,9 +52,6 @@ def core_payload_fields(raw: dict[str, Any]) -> PayloadFields:
     maximum = window.get("context_window_size")
     context_max = maximum if isinstance(maximum, int) and not isinstance(maximum, bool) else None
     return PayloadFields(name, model_id, work_dir, context_pct, context_max)
-
-
-# ═══ 6. core_ — render machinery and host payload ════════════════════════════
 
 
 def core_cursor_data(ctx: Context) -> CursorData:

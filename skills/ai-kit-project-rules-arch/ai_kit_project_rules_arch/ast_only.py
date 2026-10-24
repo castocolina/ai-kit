@@ -290,8 +290,8 @@ def _normalize_module_token(token: str) -> str:
     """D-A8's ONE shared normalizer, called from both subject extractors.
     Take the last path component, strip a known source extension, take
     the last dotted component, casefold, fold `_` to `-`. So
-    `tools/status-line.py`, `status-line.py` and `status_line` all
-    normalize to `status-line`."""
+    `tools/claude-status-line.py`, `claude-status-line.py` and `claude_status_line` all
+    normalize to `claude-status-line`."""
     last_component = token.replace("\\", "/").rsplit("/", 1)[-1]
     for ext in _SOURCE_EXTENSIONS:
         if last_component.endswith(ext):
@@ -310,7 +310,7 @@ def _build_parser_helpers(
     """The fixed point: a function whose body directly contains a call to
     `ast.parse` (or the `from ast import parse` alias) is a parser helper;
     a function that calls a parser helper is itself one. This is what
-    makes `_parse("status-line.py")` count even though `ast.parse` is one
+    makes `_parse("claude-status-line.py")` count even though `ast.parse` is one
     level down inside `_parse`."""
     function_names = {
         n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))

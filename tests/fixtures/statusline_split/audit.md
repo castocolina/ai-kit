@@ -24,7 +24,7 @@ modules: common_types common_fmt common_config common_probe common_render common
 | 12 | _EXTERNAL_CACHE_TTL | assign | 144 | 06f3a4892cd6 | 1 | common_types | common_types | EXTERNAL_CACHE_TTL | y | reused | - | Host-neutral common_types _EXTERNAL_CACHE_TTL: uses generic inputs without host identity |
 | 13 | _GIT_DEFAULTS | assign | 147 | d7a7af90fe24 | 1 | common_types | common_types | GIT_DEFAULTS | y | reused | - | Host-neutral common_types _GIT_DEFAULTS: uses generic inputs without host identity |
 | 14 | _PALETTE_DEFAULTS | assign | 157 | 7ebf2b3b402f | 1 | common_types | common_types | PALETTE_DEFAULTS | y | reused | - | Host-neutral common_types _PALETTE_DEFAULTS: uses generic inputs without host identity |
-| 15 | _RAMP_DEFAULTS | assign | 168 | dda99a19e5ee | 1 | common_types | claude_host | RAMP_DEFAULTS | n | split | - | data-source: _RAMP_DEFAULTS encodes Claude-specific data or decisions in common_types |
+| 15 | _RAMP_DEFAULTS | assign | 168 | dda99a19e5ee | 1 | common_types | common_types | RAMP_DEFAULTS | n | split | - | data-source: _RAMP_DEFAULTS encodes Claude-specific data or decisions in common_types |
 | 16 | _EFFORT_DEFAULTS | assign | 189 | 7b4a6d7d0452 | 1 | claude_host | claude_host | EFFORT_DEFAULTS | n | reused | - | data-source: _EFFORT_DEFAULTS encodes Claude-specific data or decisions in common_types |
 | 17 | _EFFORT_GLYPHS | assign | 195 | 2aa0ba045289 | 1 | common_types | common_types | EFFORT_GLYPHS | y | reused | - | Host-neutral common_types _EFFORT_GLYPHS: uses generic inputs without host identity |
 | 18 | ExternalConf | class | 201 | f15b31c5265d | 1 | common_types | common_types | - | y | generalized | - | Host-neutral common_types ExternalConf: Resolved external-segment configuration for one render pass |

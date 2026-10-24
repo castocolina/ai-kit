@@ -26,9 +26,9 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   "Spanglish"). Translate quoted non-English input faithfully into English
   rather than leaving it verbatim. Conversing with uz in another language is
   fine — everything written to a file must be English.
-- Runtime code (`tools/status-line.py`, `tools/statusline-doctor.py`,
-  `tools/setup.py`'s non-wizard paths) stays **stdlib-only** — no
-  third-party imports, ever. `uv`/`textual`-class dependencies are dev- or
+- Runtime code (`tools/claude-status-line.py`, `tools/cursor-status-line.py`,
+  `tools/common_*`, `tools/claude_*`, `tools/cursor_*`, `tools/statusline-doctor.py`,
+  and `tools/setup.py`'s non-wizard paths) stays **stdlib-only** — no third-party imports, ever. `uv`/`textual`-class dependencies are dev- or
   wizard-only, reached only through the guard + re-exec + fail-closed
   pattern (`ensure_rich_runtime()`/`_textual_importable()` in
   `tools/setup.py`) — never a silent runtime import.
@@ -83,12 +83,11 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   values, pinned by regression tests); writers go through
   `model_catalog.split_catalog_meta`/`join_catalog_meta`, and `merge_catalog_entry` rejects
   `_meta` as a model id.
-- `tools/status-line.py` is organized into banner-delimited blocks
-  (`# ═══ N. <ROLE> — ...`) with a role-prefix convention on top-level
-  functions (`cfg_`/`probe_`/`fmt_`/`util_`/`core_`/`seg_`, plus the
-  unprefixed `main`/`safe_render` SHELL entrypoints). `tests/test_arch.py`
-  enforces these invariants via AST parsing — extend it, don't bypass it,
-  when adding top-level functions to that module.
+- Status-line role modules use banner-delimited blocks and role-prefixed top-level functions.
+  `tests/test_arch.py` enforces those conventions, dependency direction (common modules do not
+  import either host family; host families do not import one another), allowed host imports, and
+  the networking boundary in `cursor_quota.py` via AST checks. Extend those rules, don't bypass
+  them. The broader whole-tree layering suite remains backlog 999.3.
 - Skills under `skills/` follow the Agent Skills open standard so they work
   unmodified across hosts — don't write one against Claude-Code-specific
   behavior unless there's genuinely no portable equivalent; flag the gap
@@ -165,10 +164,9 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 - Kill/stop any ephemeral process or window spawned for e2e verification (a
   dev server, a spawned terminal, a background listener) once verification
   is done — never leave it orphaned after the task ends.
-- **Deferred**: a real architecture-layer test suite (dependency-direction
-  rules, layering boundaries across the whole `tools/`/`skills/` tree, not
-  just the single-file banner/role-prefix checks `test_arch.py` currently
-  does) is not built yet — see `.planning/ROADMAP.md` §Backlog, Phase 999.3.
+- **Deferred**: a whole-tree architecture-layer test suite across `tools/` and `skills/` remains
+  backlog 999.3. Status-line modules now have focused dependency-direction, host-import and
+  networking-boundary rules in `tests/test_arch.py`; these do not replace that broader suite.
 
 ## Code Exploration
 

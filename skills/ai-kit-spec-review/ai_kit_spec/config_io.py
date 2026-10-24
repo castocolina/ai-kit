@@ -310,7 +310,7 @@ def cfg_load_toml(path: str) -> dict:
     """Parse the TOML at path. A missing file is a valid empty config -> {} (a missing
     review-spec.toml is the normal no-config state, never an error). Any OTHER problem
     raises ConfigError (D-11/R13): an existing malformed or non-UTF-8 file, an unreadable
-    file, or tomllib missing on Python < 3.11. Unlike tools/status-line.py's never-raise
+    file, or tomllib missing on Python < 3.11. Unlike the renderer's never-raise
     loader, this module FAILS LOUDLY -- a silently-ignored broken review-spec.toml would
     switch cross-AI review off without the user ever knowing."""
     if tomllib is None:

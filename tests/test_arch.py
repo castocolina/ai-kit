@@ -425,6 +425,140 @@ def _enclosing_funcdef_names(tree, target):
     return [f.name for f in reversed(enclosing)]
 
 
+def _import_modules_from_node(node):
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    if isinstance(node, ast.ImportFrom) and node.module:
+        return [f"urllib.{alias.name}" if node.module == "urllib" else node.module
+                for alias in node.names]
+    return []
+
+
+def _imported_modules(tree):
+    """Yield imported module names from every scope in an AST."""
+    for node in ast.walk(tree):
+        yield from _import_modules_from_node(node)
+
+
+def _module_family(relpath):
+    basename = os.path.basename(relpath)
+    return next(
+        (family for family in ("common", "claude", "cursor")
+         if basename.startswith(f"{family}_") and basename.endswith(".py")),
+        None,
+    )
+
+
+def check_import_direction(relpath, tree):
+    """Enforce one-way shared-to-host dependency direction between module families."""
+    family = _module_family(relpath) or ""
+    forbidden = {
+        "common": ("claude_", "cursor_"),
+        "claude": ("cursor_",),
+        "cursor": ("claude_",),
+    }.get(family, ())
+    return [
+        f"{relpath}: forbidden import {module} from {family} family"
+        for module in _imported_modules(tree)
+        if module.startswith(forbidden)
+    ]
+
+
+_HOST_IMPORTERS = frozenset(
+    {
+        "tools/claude-status-line.py",
+        "tools/cursor-status-line.py",
+        "tools/setup.py",
+        "tools/statusline-doctor.py",
+    }
+)
+
+
+def check_host_importers(relpath, tree):
+    """Only entrypoints and setup/doctor may import a host assembly module."""
+    if relpath in _HOST_IMPORTERS:
+        return []
+    return [
+        f"{relpath}: host module import {module} outside allowed entrypoints"
+        for module in _imported_modules(tree)
+        if module in {"claude_host", "cursor_host"}
+    ]
+
+
+def check_segment_ids(common_tree, host_tree):
+    """Reject duplicate seg_* function names shared by common and one host."""
+    common = {node.name for node in _top_functions(common_tree) if node.name.startswith("seg_")}
+    host = {node.name for node in _top_functions(host_tree) if node.name.startswith("seg_")}
+    return [f"duplicate segment id {name}" for name in sorted(common & host)]
+
+
+def _inside_function(tree, target):
+    return any(
+        isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(child is target for child in ast.walk(parent))
+        for parent in ast.walk(tree)
+    )
+
+
+def check_networking_imports(relpath, tree):
+    """Keep networking imports inside Cursor quota functions only."""
+    networking = {"urllib.request", "http.client", "http.server", "socket", "ssl"}
+    violations = []
+    for node in ast.walk(tree):
+        modules = _import_modules_from_node(node)
+        if (
+            isinstance(node, ast.Call)
+            and node.args
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "import_module"
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            modules.append(node.args[0].value)
+        for module in modules:
+            if module in networking and not (
+                relpath == "tools/cursor_quota.py" and _inside_function(tree, node)
+            ):
+                violations.append(
+                    f"{relpath}:{getattr(node, 'lineno', 0)}: networking import {module}"
+                )
+    return violations
+
+
+def check_legacy_references(files):
+    """Find tracked references to retired entry/config names outside history."""
+    entry = "status-" + "line" + r"\.py"
+    config = "statusline" + r"\.toml"
+    pattern = re.compile(r"(?<![\w-])(" + entry + "|" + config + ")")
+    history = (
+        ".planning/", "docs/superpowers/", "docs/prds/", "docs/refactor/",
+        "docs/wizard-redesign/", "tests/fixtures/statusline_split/",
+    )
+    allow_line = re.compile(r"^_LEGACY_(ENTRY|TOML) = ")
+    hits = []
+    for relpath, text in files:
+        if relpath.startswith(history):
+            continue
+        for number, line in enumerate(text.splitlines(), 1):
+            if relpath == "tools/setup.py" and allow_line.match(line):
+                continue
+            if pattern.search(line):
+                hits.append(f"{relpath}:{number}: retired reference")
+    return hits
+
+
+def split_target_problems(rows=None):
+    """Rows live at their target, except the documented ramp-default split."""
+    if rows is None:
+        with open(_AUDIT_PATH, encoding="ascii") as handle:
+            _headers, rows = audit_rows(handle.read())
+    return [
+        f"{row.name}: module {row.module} differs from target {row.target}"
+        for row in rows
+        if row.module != row.target and row.name != "_RAMP_DEFAULTS"
+    ]
+
+
 def check_host_prefix_literals(relpath, tree):
     """Rule 1: host env-prefix code literals belong only in host modules."""
     if not relpath.startswith("tools/") or not relpath.endswith(".py"):
@@ -588,6 +722,14 @@ def check_role_prefix_integrity(tree, source):
                 )
             continue
         expected = _BLOCK_PREFIX.get(index)
+        # New split modules use role labels directly where their block numbering
+        # differs from the original renderer's fixed layout.
+        expected = {
+            "UTIL": "util_",
+            "CORE": "core_",
+            "PROBE": "probe_",
+            "DEFAULTS": None,
+        }.get(role, expected)
         if role == "SHELL":
             expected = None
         if expected is None:
@@ -792,6 +934,25 @@ class TestArchitecture(unittest.TestCase):
             self.assertEqual([], check_role_prefix_integrity(tree, source), name)
             self.assertEqual([], check_no_doctor_symbols(tree), name)
 
+    def test_dependency_direction(self):
+        violations = []
+        for name, tree, _source in present_split_modules():
+            violations.extend(check_import_direction(f"tools/{name}.py", tree))
+        self.assertEqual([], violations)
+
+    def test_host_importers(self):
+        violations = []
+        for filename in sorted(os.listdir(_TOOLS)):
+            if filename.endswith(".py"):
+                tree, _source = _parse(filename)
+                violations.extend(check_host_importers(f"tools/{filename}", tree))
+        self.assertEqual([], violations)
+        self.assertEqual(2, sum(
+            module.endswith("_host")
+            for filename in ("claude-status-line.py", "cursor-status-line.py")
+            for module in _imported_modules(_parse(filename)[0])
+        ))
+
     def test_entry_is_thin(self):
         entry_tree, _source = _parse("claude-status-line.py")
         self.assertEqual([], check_thin_entry(entry_tree))
@@ -949,6 +1110,10 @@ _SPLIT_MODULES = (
     "claude_payload",
     "claude_segments",
     "claude_host",
+    "cursor_payload",
+    "cursor_quota",
+    "cursor_segments",
+    "cursor_host",
 )
 
 
@@ -973,6 +1138,8 @@ def _split_sources():
     """Source of each split module that exists, plus the monolith."""
     sources = {}
     for name in _SPLIT_MODULES:
+        if name.startswith("cursor_"):
+            continue
         path = os.path.join(_TOOLS, f"{name}.py")
         if os.path.isfile(path):
             with open(path, encoding="utf-8") as handle:
@@ -1143,6 +1310,48 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertNotEqual([], split_hash_mismatches(False, [row], {"common_types": changed}))
         self.assertEqual([], split_hash_mismatches(False, [row], {"common_types": source}))
 
+    def test_common_importing_host_is_flagged_in_all_scopes(self):
+        for source in (
+            "import claude_host\n",
+            "def helper():\n    import cursor_host\n",
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import claude_payload\n",
+        ):
+            tree = ast.parse(source)
+            self.assertNotEqual([], check_import_direction("tools/common_render.py", tree))
+        clean = ast.parse("import os\n")
+        self.assertEqual([], check_import_direction("tools/common_render.py", clean))
+
+    def test_claude_importing_cursor_is_flagged(self):
+        self.assertNotEqual(
+            [], check_import_direction("tools/claude_host.py", ast.parse("import cursor_quota\n"))
+        )
+
+    def test_cursor_importing_claude_is_flagged(self):
+        self.assertNotEqual(
+            [], check_import_direction("tools/cursor_host.py", ast.parse("import claude_host\n"))
+        )
+
+    def test_foreign_host_importer_is_flagged(self):
+        tree = ast.parse("from cursor_host import HOST\n")
+        self.assertNotEqual([], check_host_importers("tools/common_render.py", tree))
+        self.assertEqual([], check_host_importers("tools/setup.py", tree))
+
+    def test_legacy_reference_checker_boundaries(self):
+        old_entry = "status-" + "line.py"
+        old_config = "statusline" + ".toml"
+        examples = [
+            ("docs/x.md", "mention " + old_entry),
+            ("tools/setup.py", "_LEGACY_ENTRY = " + repr(old_entry)),
+            ("tools/setup.py", "example = " + repr(old_entry)),
+            ("docs/ok.md", "claude-status-line.py and cursor-statusline.toml"),
+            (".planning/history.md", old_entry),
+            ("docs/refactor/history.md", old_config),
+        ]
+        hits = check_legacy_references(examples)
+        self.assertEqual(2, len(hits))
+        self.assertTrue(any("docs/x.md" in hit for hit in hits))
+        self.assertTrue(any("tools/setup.py" in hit for hit in hits))
+
     def test_thin_entry_flags_a_definition(self):
         tree = ast.parse('"entry"\ndef extra():\n    return None\n')
         self.assertNotEqual([], check_thin_entry(tree))
@@ -1198,6 +1407,62 @@ class TestArchNonVacuity(unittest.TestCase):
         untainted = row._replace(taint="-", neutral="n", reason="missing")
         self.assertTrue(check_audit_reasons([tainted]))
         self.assertTrue(check_audit_reasons([untainted]))
+
+    def test_segment_ids_are_unique_per_host(self):
+        common, _ = _parse("common_segments.py")
+        for host_name in ("claude_segments.py", "cursor_segments.py"):
+            host, _ = _parse(host_name)
+            self.assertEqual([], check_segment_ids(common, host), host_name)
+
+    def test_networking_imports_are_confined(self):
+        violations = []
+        for filename in sorted(os.listdir(_TOOLS)):
+            if filename.endswith(".py"):
+                tree, _source = _parse(filename)
+                violations.extend(check_networking_imports(f"tools/{filename}", tree))
+        self.assertEqual([], violations)
+        quota_tree, _ = _parse("cursor_quota.py")
+        self.assertTrue(any(
+            "urllib.request" in module and _inside_function(quota_tree, node)
+            for node in ast.walk(quota_tree)
+            for module in (
+                [node.args[0].value]
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "import_module"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                else _import_modules_from_node(node)
+            )
+        ))
+
+    def test_cursor_host_prefix_literals(self):
+        for name, tree, _source in present_split_modules():
+            if name.startswith("cursor_"):
+                self.assertEqual([], check_host_prefix_literals(f"tools/{name}.py", tree))
+        bad = ast.parse("value = 'AI_KIT_CURSOR_CONFIG_FILE'\n")
+        self.assertNotEqual([], check_host_prefix_literals("tools/cursor_segments.py", bad))
+
+    def test_audit_rows_are_at_their_target(self):
+        self.assertEqual([], split_target_problems())
+
+    def test_legacy_references_live_tree(self):
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=repo_root, check=True, capture_output=True, text=True
+        ).stdout.splitlines()
+        pairs = []
+        for relpath in tracked:
+            path = os.path.join(repo_root, relpath)
+            if not os.path.isfile(path) or os.path.islink(path):
+                continue
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    pairs.append((relpath, handle.read()))
+            except (OSError, UnicodeError):
+                continue
+        self.assertEqual([], check_legacy_references(pairs))
 
     def test_rule2_flags_subscript_on_typed_model(self):
         bad = ast.parse("x = ctx['model_name']\n")
