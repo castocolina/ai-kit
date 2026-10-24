@@ -20,12 +20,23 @@ from ai_kit_gsd_curated_config import (
     cli,
     critical_agents,
     cross_ai_build,
+    cross_ai_script,
     frontend_detect,
     gsd_catalog,
     model_detect,
     preference_match,
     workflow_defaults,
 )
+
+
+def _shipped_template_version() -> bytes:
+    """The version the shipped runner template header carries."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    template = os.path.join(
+        here, "..", "skills", "ai-kit-spec-review", "references", "cross-ai.mjs"
+    )
+    with open(template, "rb") as handle:
+        return str(cross_ai_script.template_version(handle.read())).encode()
 
 
 def make_fake_run(results):
@@ -896,7 +907,8 @@ class TestApplyExecutionCli(unittest.TestCase):
         )
         runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
         with open(runner, "rb") as handle:
-            self.assertIn(b"template=6", handle.read().split(b"\n", 2)[1])
+            header = handle.read().split(b"\n", 2)[1]
+            self.assertIn(b"template=" + _shipped_template_version(), header)
         self.assertEqual(summary["runner"], "add")
         self.assertEqual(summary["notes"], [])
         for key in ("cross_ai_execution_written", "cross_ai_command_written", "degraded_reason"):
@@ -908,7 +920,8 @@ class TestApplyExecutionCli(unittest.TestCase):
         runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
         with open(runner, "rb") as handle:
             current = handle.read()
-        edited = current.replace(b"template=6", b"template=2", 1) + b"\n"
+        shipped = b"template=" + _shipped_template_version()
+        edited = current.replace(shipped, b"template=2", 1) + b"\n"
         with open(runner, "wb") as handle:
             handle.write(edited)
         code, run, summary = self._apply(project, "codex", "m", [(0, "ok", "")])

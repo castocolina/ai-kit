@@ -11812,7 +11812,15 @@ class TestCrossAiTemplateText(unittest.TestCase):
         m = re.match(hdr, lines[1])
         self.assertIsNotNone(m)
         assert m is not None
-        self.assertEqual(m.group(1), "6")
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        version_src = os.path.join(
+            repo_root, "skills", "ai-kit-gsd-curated-config",
+            "ai_kit_gsd_curated_config", "cross_ai.py",
+        )
+        declared = re.search(r"TEMPLATE_VERSION = (\d+)", _read_bytes(version_src).decode())
+        self.assertIsNotNone(declared)
+        assert declared is not None
+        self.assertEqual(m.group(1), declared.group(1))
         start = text.index("// <config>\n") + len("// <config>\n")
         end = text.index("\n// </config>", start)
         block = text[start:end]
@@ -11820,14 +11828,16 @@ class TestCrossAiTemplateText(unittest.TestCase):
         cfg_text = block[len("const CONFIG = ") : -1]
         cfg = json.loads(cfg_text)
         expected = {
+            "attemptTimeoutS": 0,
             "backoffS": [30, 60],
+            "capS": 14400,
+            "cooldownS": 600,
             "effort": {},
             "extraArgs": {},
             "heartbeatS": 30,
             "models": {},
-            "outerTimeoutS": 1800,
-            "attemptTimeoutS": 0,
             "newSessionRetries": 3,
+            "outerTimeoutS": 1800,
             "prefer": ["pi", "cursor", "opencode"],
             "routerBacked": {},
             "sameSessionRetries": 3,

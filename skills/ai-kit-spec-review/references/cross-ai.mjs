@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=6 sha256=UNSTAMPED
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=7 sha256=UNSTAMPED
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v6).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v7).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
@@ -66,6 +66,8 @@ const CONFIG = {
     30,
     60
   ],
+  "capS": 14400,
+  "cooldownS": 600,
   "effort": {},
   "extraArgs": {},
   "heartbeatS": 30,
@@ -879,6 +881,16 @@ function log(text) {
   process.stderr.write(text.endsWith('\n') ? text : `${text}\n`);
 }
 
+// Every run that does not end ok reports once, immediately before its status line.
+function reportAndFinish(status, fields, stopped) {
+  const why = stopped || fields.stopped || 'class';
+  if (status !== 'ok' && !fields.reportDone) {
+    logReport(status, fields.cli ?? '-', fields.model ?? '-', fields.route, fields.attempts || 0,
+      fields.cycles || 0, fields.firstFailureMs || 0, fields.lastFailureMs || 0, why);
+  }
+  return finish(status, fields);
+}
+
 function finish(status, fields) {
   if (finished) return finishedExit;
   const row = STATUS_TABLE[status] || { exit: 1 };
@@ -888,9 +900,15 @@ function finish(status, fields) {
   const route = fields.route ?? 'unknown';
   const rule = fields.rule ?? '-';
   const pattern = fields.pattern ?? 'none';
-  const line = `AIKIT-XAI status=${status} cli=${fields.cli ?? '-'} model=${fields.model ?? '-'} ` +
+  const attempts = fields.attempts ?? 0;
+  const cycles = fields.cycles ?? 0;
+  let line = `AIKIT-XAI status=${status} cli=${fields.cli ?? '-'} model=${fields.model ?? '-'} ` +
     `exit=${exit} cli_rc=${fields.cli_rc ?? '-'} elapsed=${elapsed}s out=${fields.out ?? 0} ` +
-    `tree=${tree} action=stop route=${route} rule=${rule} pattern=${pattern}`;
+    `tree=${tree} action=stop route=${route} rule=${rule} pattern=${pattern}` +
+    ` attempts=${attempts} cycles=${cycles}`;
+  if (fields.retryAfterS !== undefined && fields.retryAfterS !== null) {
+    line += ` retry_after_s=${fields.retryAfterS} cycle=${fields.cycle ?? cycles}`;
+  }
   if (!stderrGone) process.stderr.write(`${line}\n`);
   finished = true;
   finishedExit = exit;
@@ -920,7 +938,9 @@ process.on('uncaughtException', (e) => {
   if (current) killGroup(current, 'SIGKILL');
   for (const dir of [...tempDirs]) dropTemp(dir);
   log(`cross-ai: internal error: ${e && e.stack || e}`);
-  exitFlushed(finish('crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' }));
+  exitFlushed(reportAndFinish(
+        'crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' },
+      ));
 });
 
 const RUNTIMES = {
@@ -1735,19 +1755,34 @@ function clampAttemptTimeout(value) {
   if (!Number.isFinite(n) || n <= 0) return 0;
   return Math.min(1800, Math.max(10, n));
 }
+// SPEC 4-hour prohibition: the cap never exceeds 14400 s, and the cooldown never exceeds it.
+function clampCapS(value) {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(14400, n);
+}
+function clampCooldownS(value, capS) {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(capS, n);
+}
 function ladderLimits(opts) {
+  const capS = clampCapS(opts.capS ?? CONFIG.capS);
   return {
     same: clampCount(opts.sameSessionRetries ?? CONFIG.sameSessionRetries),
     fresh: clampCount(opts.newSessionRetries ?? CONFIG.newSessionRetries),
+    capS,
+    cooldownS: clampCooldownS(opts.cooldownS ?? CONFIG.cooldownS, capS),
   };
 }
 
-// Pure step of the transient ladder. 25-06 adds the quota branch; this stays table-free.
-// `st = {same, fresh, canResume}`, `cls` is `transient` or `stop`, `lim` carries the clamps,
-// the deadline and the wait about to be spent. A step that would leave under 60 s of work
-// stops for the deadline.
+// Pure step of the transient and router-quota ladders. Table-free: the caller decides the
+// class. `st = {same, fresh, canResume, firstQuotaMs, cycle}`, `cls` is `transient`,
+// `quota` or `stop`. A quota rung also needs an hour of cap headroom; once the rungs are
+// spent a cycle is admitted only when the cooldown itself fits under the cap and 60 s of
+// deadline work remains. The call never sleeps the cooldown.
 function ladderNext(st, cls, nowMs, lim) {
-  if (cls !== 'transient') return { next: 'stop', why: 'class' };
+  if (cls !== 'transient' && cls !== 'quota') return { next: 'stop', why: 'class' };
   let next = 'stop';
   let why = 'rungs';
   if (st.canResume && st.fresh === 0 && st.same < lim.same) {
@@ -1757,10 +1792,21 @@ function ladderNext(st, cls, nowMs, lim) {
     next = 'new';
     why = 'new-session';
   }
-  if (next !== 'stop' && nowMs + (lim.waitMs || 0) + 60000 > lim.deadlineMs) {
-    return { next: 'stop', why: 'deadline' };
+  if (next !== 'stop') {
+    if (nowMs + (lim.waitMs || 0) + 60000 > lim.deadlineMs) {
+      return { next: 'stop', why: 'deadline' };
+    }
+    if (cls === 'quota' && nowMs + 60000 > (st.firstQuotaMs || 0) + lim.capMs) {
+      return { next: 'stop', why: 'cap' };
+    }
+    return { next, why };
   }
-  return { next, why };
+  if (cls !== 'quota') return { next, why };
+  const cooldownMs = lim.cooldownMs || 0;
+  const capEnd = (st.firstQuotaMs || 0) + lim.capMs;
+  if (nowMs + cooldownMs > capEnd) return { next: 'stop', why: 'cap' };
+  if (nowMs + cooldownMs + 60000 > lim.deadlineMs) return { next: 'stop', why: 'deadline' };
+  return { next: 'cooldown', why: 'cooldown' };
 }
 
 // Rung 1 continues the captured session. Null when no session can be continued: no id,
@@ -1778,6 +1824,64 @@ function newSessionArgv(name, rt, model, ctx, mode, prompt) {
   return { argv: withExtra(name, rt[mode](model, ctx)), input: prompt };
 }
 function readOr(p, dflt) { try { return fs.readFileSync(p, 'utf8'); } catch { return dflt; } }
+
+// Quota cycles span calls. The file is keyed by lane and model under the XDG state dir
+// (the home fallback is ~/.local/state, so a scratch HOME never reaches the real one).
+const STATE_DELETE = new Set(['ok', 'auth', 'billing', 'permission_blocked', 'bad_model']);
+const QUOTA_KEEP = new Set(['quota', 'transient', 'timeout']);
+
+function stateHome() {
+  const named = (process.env.XDG_STATE_HOME || '').trim();
+  if (named) return named;
+  return path.join(process.env.HOME || os.homedir(), '.local', 'state');
+}
+
+function sha16(text) {
+  return crypto.createHash('sha256').update(String(text)).digest('hex').slice(0, 16);
+}
+
+function taskDigest(prompt) {
+  const m = /<objective>([\s\S]*?)<\/objective>/.exec(String(prompt || ''));
+  return sha16(m ? m[1] : String(prompt || ''));
+}
+
+function cycleFilePath(cli, model, cwd = process.cwd(), home = stateHome()) {
+  let root = cwd;
+  try { root = fs.realpathSync(root); } catch { /* the cwd itself is the key */ }
+  const dir = path.join(home, 'ai-kit', 'spec', 'cycles', sha16(root));
+  return path.join(dir, `${cli}-${sha16(model)}.json`);
+}
+
+// A case's state file, resolved inside the case's own XDG state dir.
+function caseCycleFile(ctx, cli, model) {
+  const home = path.join(ctx.env.XDG_STATE_HOME);
+  return cycleFilePath(cli, model, ctx.repo, home);
+}
+
+function readCycleState(file) {
+  const parsed = parseJson(readOr(file, ''));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  if (typeof parsed.first_seen !== 'number' || typeof parsed.cycle !== 'number') return null;
+  return parsed;
+}
+
+function writeCycleState(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  try { fs.chmodSync(path.dirname(file), 0o700); } catch { /* best effort */ }
+  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.tmp`);
+  const fd = fs.openSync(tmp, 'wx', 0o600);
+  try {
+    fs.writeFileSync(fd, JSON.stringify(data));
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(tmp, file);
+  try { fs.chmodSync(file, 0o600); } catch { /* the create mode already is 0600 */ }
+}
+
+function deleteCycleState(file) {
+  try { fs.rmSync(file, { force: true }); } catch { /* already gone */ }
+}
 
 function stateSig(st) {
   if (!st) return null;
@@ -1904,7 +2008,6 @@ function runChild(bin, argv, opts = {}) {
     child.on('exit', (c, s) => { code = c; signal = s; finalize('exit'); });
   });
 }
-
 
 function parsePiListingIds(stdout) {
   if (typeof stdout !== 'string') return null;
@@ -2110,7 +2213,8 @@ for (const [sig, n] of [['SIGTERM', 15], ['SIGINT', 2], ['SIGHUP', 1]]) {
     backstop = setTimeout(() => {
       if (current) killGroup(current, 'SIGKILL');
       for (const dir of [...tempDirs]) dropTemp(dir);
-      exitFlushed(finish('signal', { ...liveFields, exit: 128 + n, tree: 'unknown' }));
+      const fields = { ...liveFields, exit: 128 + n, tree: 'unknown' };
+      exitFlushed(reportAndFinish('signal', fields, 'signal'));
     }, SIGNAL_BUDGET_MS + 200);
   });
 }
@@ -2181,9 +2285,10 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
     log(`cross-ai: ${label} running ${secs}s, stdout +${outBytes - lastBytes} bytes`);
     lastBytes = outBytes;
   }, CONFIG.heartbeatS * 1000);
+  const childLimit = opts.limit ?? runDeadline;
   const r = await runChild(bin, argv, {
-    cwd, env, input, capMs: budgetMs(opts.capMs ?? Number.POSITIVE_INFINITY, runDeadline),
-    limit: runDeadline,
+    cwd, env, input, capMs: budgetMs(opts.capMs ?? Number.POSITIVE_INFINITY, childLimit),
+    limit: childLimit,
     onStdout: (d) => {
       outBytes += d.length;
       watchChunk(cli, 'stdout', outRelay, state, decodeUtf8(d.toString('utf8')));
@@ -2213,10 +2318,16 @@ const sleep = (ms) => new Promise((resolve) => {
 
 // The child timer keeps 60 s in hand for the next rung when the deadline has it.
 // A deadline shorter than that still runs this attempt (the ladder then admits nothing).
-function attemptCapMs(opts, nowMs) {
+// A router-quota cycle also clamps the timer to the absolute cap minus the same reserve, so
+// an attempt admitted near the cap cannot run past it.
+function attemptCapMs(opts, nowMs, quotaEndMs = 0) {
   const remaining = Math.max(0, runDeadline - nowMs);
-  const room = remaining - 60000;
-  const budget = room > 0 ? room : remaining;
+  let budget = remaining - 60000 > 0 ? remaining - 60000 : remaining;
+  if (quotaEndMs > 0) {
+    // The cap itself is the hard stop: the reserve guards admission, not the child's length.
+    const capLeft = Math.max(0, quotaEndMs - nowMs);
+    budget = Math.min(budget, capLeft);
+  }
   const cap = clampAttemptTimeout(opts.attemptTimeoutS ?? CONFIG.attemptTimeoutS);
   if (cap > 0) return Math.min(cap * 1000, budget);
   return budget;
@@ -2241,6 +2352,31 @@ function ladderStop(step, timedOut, admitted, fallback) {
   return { status: 'transient', timedOut: false };
 }
 
+// One evidence line per failed attempt. Values are ids, labels and times only.
+function logAttempt(n, rung, cycle, sid, status, rule, pattern, startedMs) {
+  const took = Math.max(0, Math.round((Date.now() - startedMs) / 1000));
+  const at = new Date(startedMs).toISOString();
+  log(`cross-ai: attempt n=${n} rung=${rung} cycle=${cycle} session=${sid || '-'} ` +
+    `status=${status} rule=${rule || '-'} pattern=${pattern || '-'} at=${at} took=${took}s`);
+}
+
+// One report line before the status line of every run that does not end ok.
+function logReport(status, cli, model, route, attempts, cycles, firstMs, lastMs, stopped) {
+  const iso = (ms) => (ms ? new Date(ms).toISOString() : '-');
+  log(`cross-ai: report status=${status} lane=${cli}/${model} route=${route || 'unknown'} ` +
+    `attempts=${attempts} cycles=${cycles} first_failure=${iso(firstMs)} ` +
+    `last_failure=${iso(lastMs)} stopped=${stopped}`);
+}
+
+function stoppedWhy(step, dirty) {
+  if (dirty) return 'dirty-tree';
+  if (step && step.why === 'deadline') return 'deadline';
+  if (step && step.why === 'cap') return 'cap';
+  if (step && step.next === 'cooldown') return 'rungs';
+  if (step && step.why === 'rungs') return 'rungs';
+  return 'class';
+}
+
 async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const backoff = opts.backoffS || CONFIG.backoffS;
   const beforeSig = opts.beforeSig ?? null;
@@ -2255,15 +2391,100 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const env = childEnv(rt.env, process.env);
   let argv = withExtra(name, rt[mode](model, ctx));
   let input = prompt;
-  const ladder = { same: 0, fresh: 0, canResume: false };
+  const ladder = { same: 0, fresh: 0, canResume: false, firstQuotaMs: 0, cycle: 0 };
   let admitted = false;
+  const stateFile = cycleFilePath(name, model);
+  const digest = taskDigest(prompt);
+  const loaded = readCycleState(stateFile);
+  const now0 = Date.now();
+  const capMs = limits.capS * 1000;
+  let cycleCount = 0;
+  let priorAttempts = 0;
+  let persisted = null;
+  if (loaded && typeof loaded.last_attempt_at === 'number') {
+    if (now0 - loaded.last_attempt_at > capMs) {
+      deleteCycleState(stateFile);
+      log('cross-ai: stale-state-fresh-start');
+    } else if (now0 - loaded.first_seen > capMs) {
+      return {
+        ok: false, status: 'quota', code: 69, exit: 69, outBytes: 0, cli_rc: '-',
+        route: opts.route || 'unknown', rule: '-', pattern: 'none',
+        attempts: loaded.attempts || 0, cycles: loaded.cycle || 0, stopped: 'cap',
+        
+      };
+    } else if (typeof loaded.due_at === 'number' && now0 < loaded.due_at) {
+      const left = Math.max(0, Math.round((loaded.due_at - now0) / 1000));
+      return {
+        ok: false, status: 'quota', outBytes: 0, cli_rc: '-',
+        route: opts.route || 'unknown', rule: '-', pattern: 'none',
+        attempts: loaded.attempts || 0, cycles: loaded.cycle || 0,
+        retryAfterS: left, cycle: loaded.cycle || 0, stopped: 'rungs',
+      };
+    } else {
+      cycleCount = (loaded.cycle || 0) + 1;
+      priorAttempts = loaded.attempts || 0;
+      persisted = loaded;
+      ladder.firstQuotaMs = loaded.first_seen;
+      ladder.cycle = cycleCount;
+    }
+  }
+  let firstFailureMs = persisted ? persisted.first_seen : 0;
+  let lastFailureMs = 0;
+  let attempts = priorAttempts;
+  let quotaSeen = Boolean(persisted);
+  const rungOf = () => (ladder.fresh > 0 ? 'new' : ladder.same > 0 ? 'same' : 'first');
+  const quotaEnd = () => (ladder.firstQuotaMs ? ladder.firstQuotaMs + capMs : 0);
+  const counts = () => ({
+    attempts, cycles: ladder.cycle,
+    firstFailureMs, lastFailureMs,
+  });
+  const dropState = (status) => {
+    if (STATE_DELETE.has(status) || (status !== 'quota' && !QUOTA_KEEP.has(status))) {
+      deleteCycleState(stateFile);
+    }
+  };
+  const saveCycle = (sid, at) => {
+    const due = at + limits.cooldownS * 1000;
+    writeCycleState(stateFile, {
+      first_seen: ladder.firstQuotaMs, last_attempt_at: at, cycle: ladder.cycle,
+      attempts, last_sid: sid || null, task_digest: digest,
+      retry_after_s: limits.cooldownS, due_at: due,
+    });
+  };
+  const cycleStop = (r, evidence, stopped, sid) => {
+    const at = Date.now();
+    saveCycle(sid, at);
+    const capped = stopped === 'cap';
+    return {
+      ok: false, status: 'quota', outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+      ...counts(), retryAfterS: capped ? undefined : limits.cooldownS,
+      cycle: ladder.cycle, exit: capped ? 69 : 75, stopped,
+    };
+  };
   try {
+    if (persisted) {
+      const sameTask = persisted.task_digest === digest && persisted.last_sid;
+      if (sameTask) {
+        ctx.sid = persisted.last_sid;
+        const retry = sameSessionArgv(name, rt, model, ctx, persisted.last_sid, mode);
+        if (retry) {
+          argv = retry.argv;
+          input = retry.input;
+          ladder.canResume = true;
+        }
+      } else {
+        ladder.same = limits.same;
+      }
+    }
     for (let attempt = 0; ; attempt++) {
-      const capMs = attemptCapMs(opts, Date.now());
-      const left = Math.max(0, Math.round(capMs / 1000));
+      const startedMs = Date.now();
+      const childCap = attemptCapMs(opts, startedMs, quotaEnd());
+      const left = Math.max(0, Math.round(childCap / 1000));
       log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${left}s`);
       log(`cross-ai: argv=${JSON.stringify(argv)}`);
-      const r = await runOnce(binPath, argv, input, env, ctx.cwd, name, { capMs });
+      const childLimit = quotaEnd() ? Math.min(runDeadline, quotaEnd()) : runDeadline;
+      const r = await runOnce(binPath, argv, input, env, ctx.cwd, name,
+        { capMs: childCap, limit: childLimit });
       // A child can only stall the post-run git snapshot while it is alive.
       try { fs.rmSync(path.join(env.HOME || '', '.fake-git-hang')); } catch { /* not set */ }
       if (aborting) return { ok: false, code: 128 + aborting, outBytes: r.outBytes, cli_rc: r.code };
@@ -2276,7 +2497,10 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       };
       if (r.spawnErr) {
         const code = r.spawnErr.code === 'ENOENT' ? 127 : 126;
-        return { ok: false, code, error: String(r.spawnErr), outBytes: 0, cli_rc: null };
+        return {
+          ok: false, code, error: String(r.spawnErr), outBytes: 0, cli_rc: null,
+          ...counts(), stopped: 'class',
+        };
       }
       const p = rt.parse(r.stdout, ctx);
       // A live terminal signal is the attempt's class; no second pass (D-09).
@@ -2306,51 +2530,91 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         }
         const failed = r.code !== 0 || Boolean(p.error);
         if (!failed && p.text.trim()) {
+          attempts += 1;
+          deleteCycleState(stateFile);
           return {
             ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'),
-            cli_rc: 0,
+            cli_rc: 0, ...counts(),
           };
         }
-        if (hit && hit !== 'transient') {
+        if (hit && hit !== 'transient' && !(hit === 'quota' && lane)) {
+          attempts += 1;
+          logAttempt(attempts, rungOf(), ladder.cycle, p.sessionId, hit, evidence.rule,
+            evidence.pattern, startedMs);
+          dropState(hit);
           return {
             ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+            ...counts(), stopped: 'class',
           };
         }
-        if (!failed) return { ok: false, status: 'empty_answer', outBytes: r.outBytes, cli_rc: 0 };
+        if (!failed) {
+          return {
+            ok: false, status: 'empty_answer', outBytes: r.outBytes, cli_rc: 0,
+            ...counts(), stopped: 'class',
+          };
+        }
       }
-      if (hit && hit !== 'transient' && !r.timedOut) {
+      if (hit && hit !== 'transient' && !r.timedOut && !(hit === 'quota' && lane)) {
+        attempts += 1;
+        logAttempt(attempts, rungOf(), ladder.cycle, p.sessionId, hit, evidence.rule,
+          evidence.pattern, startedMs);
+        dropState(hit);
         return {
           ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+          ...counts(), stopped: 'class',
         };
       }
-      const cls = ladderClass(Boolean(r.timedOut), hit);
+      const cls0 = ladderClass(Boolean(r.timedOut), hit);
+      const quotaLane = cls0 === 'stop' && hit === 'quota' && lane;
+      const cls = quotaLane ? 'quota' : cls0;
+      attempts += 1;
+      lastFailureMs = Date.now();
+      if (!firstFailureMs) firstFailureMs = startedMs;
+      const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
+      logAttempt(attempts, rungOf(), ladder.cycle, sid, hit || (r.timedOut ? 'timeout' : 'crash'),
+        hit ? evidence.rule : '-', hit ? evidence.pattern : '-', startedMs);
+      if (cls === 'quota') {
+        quotaSeen = true;
+        if (!ladder.firstQuotaMs) ladder.firstQuotaMs = persisted
+          ? persisted.first_seen : Date.now();
+        saveCycle(sid, Date.now());
+      }
       const wait = (backoff[attempt] ?? backoff[backoff.length - 1]) * 1000;
       const sig = r.signal ? ' ' + r.signal : '';
       log(`cross-ai: ${name} failed (exit ${r.code}${sig}, rule=${hit ? evidence.rule : '-' })`);
-      const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
       ladder.canResume = Boolean(sameSessionArgv(name, rt, model, ctx, sid, mode));
       const step = ladderNext(ladder, cls, Date.now(), {
-        ...limits, deadlineMs: runDeadline, waitMs: wait,
+        ...limits, deadlineMs: runDeadline, waitMs: Math.min(wait, quotaEnd() || wait),
+        capMs, cooldownMs: limits.cooldownS * 1000,
       });
       log(`cross-ai: ladder ${name} next=${step.next} why=${step.why}`);
+      if (step.next === 'cooldown') return cycleStop(r, evidence, 'rungs', sid);
       if (step.next === 'stop') {
+        if (quotaSeen && (step.why === 'deadline' || step.why === 'cap' || step.why === 'rungs')) {
+          return cycleStop(r, evidence, step.why, sid);
+        }
         const stop = ladderStop(step, Boolean(r.timedOut), admitted, hit || 'crash');
+        dropState(stop.status);
         return {
           ok: false, status: stop.status, timedOut: stop.timedOut,
           code: stop.status === 'timeout' ? 124 : undefined,
           outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+          ...counts(), stopped: stoppedWhy(step, false),
         };
       }
       if (mode === 'review' && beforeSig !== null) {
         const mid = await treeState(ctx.cwd, runDeadline);
         if (mid === null) {
+          const status = gitFailStatus();
           return {
-            ok: false, status: gitFailStatus(), outBytes: r.outBytes, cli_rc: r.code ?? '-',
+            ok: false, status, outBytes: r.outBytes, cli_rc: r.code ?? '-',
+            ...counts(), stopped: 'class',
           };
         }
         if (stateSig(mid) !== beforeSig) {
           return {
             ok: false, status: 'contract_violation', outBytes: r.outBytes, cli_rc: r.code ?? '-',
+            ...counts(), stopped: 'class',
           };
         }
       }
@@ -2359,15 +2623,17 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         const gate = await rung2Gate(ctx.cwd, beforeSig, prompt);
         if (gate.stop) {
           log(`cross-ai: ladder ${name} stop why=dirty-tree`);
+          const stopped = quotaSeen ? 'quota' : gate.status;
           return {
-            ok: false, status: gate.status, outBytes: r.outBytes, cli_rc: r.code ?? '-',
-            ...evidence,
+            ok: false, status: stopped, outBytes: r.outBytes, cli_rc: r.code ?? '-',
+            ...evidence, ...counts(), stopped: 'dirty-tree',
           };
         }
         nextInput = gate.input;
       }
-      await sleep(budgetMs(wait, runDeadline));
-      if (aborting) return { ok: false, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
+      const waitBound = quotaEnd() ? Math.min(wait, Math.max(0, quotaEnd() - Date.now())) : wait;
+      await sleep(budgetMs(waitBound, runDeadline));
+      if (aborting) return { ok: false, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...counts() };
       admitted = true;
       if (step.next === 'same') {
         ladder.same += 1;
@@ -2504,27 +2770,27 @@ function runClassifyOnly(file) {
     raw = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
   } catch (e) {
     log(`cross-ai: --classify-only unreadable: ${e.message}`);
-    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   let cases;
   try { cases = JSON.parse(raw); } catch (e) {
     log(`cross-ai: --classify-only invalid JSON: ${e.message}`);
-    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   if (!Array.isArray(cases)) {
     log('cross-ai: --classify-only file must be a JSON array');
-    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   const lines = [];
   for (const entry of cases) {
     const cli = entry && entry.cli;
     if (!Object.hasOwn(RUNTIMES, cli)) {
       log(`cross-ai: --classify-only unknown cli: ${cli}`);
-      return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
     if (entry.route !== undefined && !ROUTE_VALUES.has(entry.route)) {
       log(`cross-ai: --classify-only bad route: ${entry.route}`);
-      return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
     const route = entry.route === 'router' || entry.route === 'unknown'
       ? entry.route : routeOf(cli, entry.model || '', {});
@@ -2537,7 +2803,7 @@ function runClassifyOnly(file) {
     }));
   }
   if (lines.length) process.stdout.write(`${lines.join('\n')}\n`);
-  return finish('ok', { ...liveFields, tree: 'clean', exit: 0, out: lines.length });
+  return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: lines.length });
 }
 
 function readStdin() {
@@ -2566,9 +2832,10 @@ function hermeticEnv(tmp, extra = {}) {
 function writeCopy(tmp, name, override) {
   const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
   const cfg = {
-    attemptTimeoutS: 0, backoffS: [0, 0], effort: {}, extraArgs: {}, heartbeatS: 30, models: {},
-    newSessionRetries: 3, outerTimeoutS: 1800, prefer: ['pi', 'cursor', 'opencode'],
-    routerBacked: {}, sameSessionRetries: 3, scrubEnv: [...CONFIG.scrubEnv],
+    attemptTimeoutS: 0, backoffS: [0, 0], capS: 14400, cooldownS: 0, effort: {}, extraArgs: {},
+    heartbeatS: 30, models: {}, newSessionRetries: 3, outerTimeoutS: 1800,
+    prefer: ['pi', 'cursor', 'opencode'], routerBacked: {}, sameSessionRetries: 3,
+    scrubEnv: [...CONFIG.scrubEnv],
     ...override,
   };
   const block = `// <config>\nconst CONFIG = ${JSON.stringify(cfg, null, 2)};\n// </config>`;
@@ -2622,7 +2889,8 @@ const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('
 const STICKY_FAKE = new Set([
   'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big', 'sentinelsplit',
   'limit-mid', 'limit-partial', 'limit-flood', 'limit-partial-flood',
-  'transient-hang', 'bare-429-hang', 'retry-notice', 'retry-notice-429',
+  'transient-hang', 'bare-429-hang', 'retry-notice', 'retry-notice-429', 'slowquota',
+  'capclamp',
 ]);
 let stdinBuf = '';
 const FAKE_MODES = {
@@ -2662,6 +2930,35 @@ const FAKE_MODES = {
   auth: () => { process.stderr.write('401 unauthorized\n'); process.exit(1); },
   perm: () => { process.stderr.write('permission denied\n'); process.exit(1); },
   quota: () => { process.stderr.write('quota exceeded\n'); process.exit(1); },
+  'quota-until-8': () => {
+    const home = process.env.HOME || '';
+    const ctr = home + '/.fake-quota8-count';
+    let n = 0;
+    try { n = Number(fs.readFileSync(ctr, 'utf8')) || 0; } catch { /* first call */ }
+    fs.writeFileSync(ctr, String(n + 1));
+    if (n < 7) { process.stderr.write('quota exceeded\n'); process.exit(1); }
+    fs.writeFileSync('prompt.seen', stdinBuf);
+    fs.appendFileSync('a.txt', 'ok-line\n');
+    process.stdout.write('# Summary\nok');
+  },
+  slowquota: () => {
+    process.stderr.write('429 Too Many Requests\n');
+    setInterval(() => {}, 1 << 30);
+  },
+  capclamp: () => {
+    const ctr = 'capclamp.count';
+    let n = 0;
+    try { n = Number(fs.readFileSync(ctr, 'utf8')) || 0; } catch { /* first */ }
+    fs.writeFileSync(ctr, String(n + 1));
+    if (n < 1) { process.stderr.write('429 Too Many Requests\n'); process.exit(1); }
+    setInterval(() => {}, 1 << 30);
+  },
+  'router-env-quota': () => { process.stderr.write('429 too many requests\n'); process.exit(1); },
+  sentinelrouter: () => {
+    const key = process.env.AIKIT_XAI_CASE_SENTINEL || '';
+    process.stderr.write('402 requires an opencode API key: ' + key + '\n');
+    process.exit(1);
+  },
   dirtycrash: () => { fs.appendFileSync('a.txt', 'd\n'); process.stderr.write('boom\n'); process.exit(7); },
   dirtyquota: () => { fs.appendFileSync('a.txt', 'dq\n'); process.stderr.write('quota exceeded\n'); process.exit(1); },
   dirtybilling: () => { fs.appendFileSync('a.txt', 'db\n'); process.stderr.write('402 payment required\n'); process.exit(1); },
@@ -3015,7 +3312,10 @@ process.stdin.on('data', () => {}).on('end', () => {
 `);
 }
 
-const STATUS_HEAD_RE = /^(.* action=stop)(?: (route=\S+ rule=\S+ pattern=\S+))?$/;
+const STATUS_HEAD_RE = new RegExp(
+  '^(.* action=stop)(?: (route=\\S+ rule=\\S+ pattern=\\S+))?' +
+  '(?: (attempts=\\S+ cycles=\\S+))?(?: (retry_after_s=\\S+ cycle=\\S+))?$',
+);
 
 function statusLineOk(stderr, pattern) {
   const lines = stderr.split('\n').filter((l) => l.trim());
@@ -3032,8 +3332,13 @@ function statusTail(stderr) {
   const line = stderr.split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
   const parts = STATUS_HEAD_RE.exec(line);
   if (!parts || !parts[2]) return null;
-  const tok = Object.fromEntries(parts[2].split(' ').map((t) => t.split('=')));
-  return { route: tok.route, rule: tok.rule, pattern: tok.pattern };
+  const tail = [parts[2], parts[3], parts[4]].filter(Boolean).join(' ');
+  const tok = Object.fromEntries(tail.split(' ').map((t) => t.split('=')));
+  return {
+    route: tok.route, rule: tok.rule, pattern: tok.pattern,
+    attempts: tok.attempts, cycles: tok.cycles,
+    retry_after_s: tok.retry_after_s, cycle: tok.cycle,
+  };
 }
 
 function pidAlive(pid) {
@@ -3147,7 +3452,32 @@ function runCaseProcess(spec, c) {
   });
 }
 
+// A second invocation of the same copy, sharing the case's XDG state dir and HOME.
+async function runTwice(spec, c, second) {
+  const first = await runCaseProcess({ ...spec, args: c.args || spec.args }, c);
+  if (first.reason) return { reason: `first: ${first.reason}` };
+  if (first.status !== spec.exit) return { reason: `first exit ${first.status}` };
+  const calls1 = fs.existsSync(c.calls)
+    ? fs.readFileSync(c.calls, 'utf8').trim().split('\n').filter(Boolean) : [];
+  fs.writeFileSync(c.calls, '');
+  const again = await runCaseProcess({
+    ...spec, args: c.args || spec.args, stdin: second.stdin ?? spec.stdin, exit: second.exit,
+  }, c);
+  if (again.reason) return { reason: `second: ${again.reason}` };
+  if (again.status !== second.exit) return { reason: `second exit ${again.status}` };
+  const calls2 = fs.existsSync(c.calls)
+    ? fs.readFileSync(c.calls, 'utf8').trim().split('\n').filter(Boolean) : [];
+  return { first, again, calls1, calls2 };
+}
+
 async function checkCase(spec, c) {
+  if (spec.second) {
+    const both = await runTwice(spec, c, spec.second);
+    if (both.reason) return both.reason;
+    const err = statusLineOk(both.again.stderr || '', spec.second.status);
+    if (err) return `second: ${err}`;
+    return spec.check ? spec.check(both, { ...c, calls: both.calls2 }) : null;
+  }
   const r = await runCaseProcess({ ...spec, args: c.args || spec.args }, c);
   if (r.reason) return r.reason;
   if (r.status !== spec.exit) return `exit ${r.status} expected ${spec.exit}`;
@@ -3224,7 +3554,9 @@ async function runSelfTestCase(tmp, spec) {
   const pidFile = path.join(tmp, `pids-${spec.name}.log`);
   const copy = writeCopy(tmp, spec.name, spec.config || {});
   const env = hermeticEnv(tmp, {
-    HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), FAKE_CALLS: calls, FAKE_PIDS: pidFile,
+    HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'),
+    XDG_STATE_HOME: path.join(home, '.local', 'state', spec.name),
+    FAKE_CALLS: calls, FAKE_PIDS: pidFile,
     FAKE_SIDS: path.join(tmp, `sids-${spec.name}.log`),
     AIKIT_XAI_SENTINEL: 'sk-aikit-SENTINEL-' + process.pid,
     AIKIT_XAI_BEARER: 'brtok-' + process.pid,
@@ -3510,17 +3842,283 @@ async function blackBoxSelfTest() {
         },
       },
       {
+        // One cycle of a confirmed router lane: 7 calls, exit 75, cycle 0 persisted.
+        name: 'router-quota-one-cycle',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=quota cli=pi model=fake/quota-until-8 ' +
+          'exit=75 .* tree=clean action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi quota-until-8').length;
+          if (n !== 7) return `calls=${n}`;
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '0' || tail.cycle !== '0') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          if (tail.attempts !== '7' || tail.cycles !== '0') {
+            return `counts=${tail.attempts}/${tail.cycles}`;
+          }
+          const file = caseCycleFile(ctx, 'pi', 'fake/quota-until-8');
+          const saved = readCycleState(file);
+          return saved && saved.cycle === 0 ? null : 'state file missing cycle 0';
+        },
+      },
+      {
+        // The second invocation resumes the same session and the fake answers on call 8.
+        name: 'router-quota-second-cycle',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8'],
+        config: { routerBacked: { pi: true }, capS: 3600 },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        second: {
+          exit: 0,
+          status: new RegExp('^AIKIT-XAI status=ok cli=pi model=fake/quota-until-8 ' +
+            'exit=0 .* action=stop$'),
+        },
+        check: (both, ctx) => {
+          const runs = (rows) => rows.filter((l) => l === 'pi quota-until-8');
+          if (runs(both.calls1).length !== 7) return `first calls=${runs(both.calls1).length}`;
+          if (runs(both.calls2).length !== 1) return `second calls=${runs(both.calls2).length}`;
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length !== 8) return `sids=${rows.length}`;
+          if (rows[7][0] !== rows[6][0]) return 'second cycle did not resume the session';
+          if (rows[7][1] !== 'resume') return `call 8 input ${rows[7][1]}`;
+          const tail = statusTail(both.again.stderr || '');
+          if (!tail || tail.attempts !== '8' || tail.cycles !== '1') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          const file = caseCycleFile(ctx, 'pi', 'fake/quota-until-8');
+          return readCycleState(file) ? 'state file survived an ok run' : null;
+        },
+      },
+      {
+        // A different prompt never joins the previous task's session.
+        name: 'router-quota-second-cycle-new-task',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8', '--no-preamble'],
+        config: { routerBacked: { pi: true }, capS: 3600 },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        second: {
+          exit: 0,
+          stdin: '<objective>a different task</objective>\n',
+          status: /^AIKIT-XAI status=ok .* action=stop$/,
+        },
+        check: (both, ctx) => {
+          const runs2 = both.calls2.filter((l) => l === 'pi quota-until-8');
+          if (runs2.length !== 1) return `second calls=${runs2.length}`;
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length !== 8) return `sids=${rows.length}`;
+          if (rows[7][0] === rows[0][0]) return 'new task resumed the old session';
+          if (rows[7][1] !== 'prompt') return `call 8 input ${rows[7][1]}`;
+          const seen = readOr(path.join(ctx.repo, 'prompt.seen'), '');
+          return seen.includes('a different task') ? null : 'new prompt was not sent';
+        },
+      },
+      {
+        // The only cooldown override: a re-entry inside it spawns nothing.
+        name: 'router-quota-early-reentry',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
+        config: { routerBacked: { pi: true }, cooldownS: 600, capS: 3600 },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        second: { exit: 75, status: /^AIKIT-XAI status=quota .* action=stop$/ },
+        check: (both) => {
+          const all = [...both.calls1, ...both.calls2].filter((l) => l === 'pi quota');
+          if (all.length !== 7) return `calls=${all.length}`;
+          const tail = statusTail(both.again.stderr || '');
+          if (!tail || tail.retry_after_s !== '600' || tail.cycle !== '0') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          const spawned = both.calls2.filter((l) => l !== 'pi rpc');
+          return spawned.length === 0 ? null : 're-entry spawned a child';
+        },
+      },
+      {
+        // Both timestamps past the cap: the file is stale and a fresh cycle starts.
+        name: 'stale-state-fresh-start',
+        setup: (c) => {
+          const file = caseCycleFile(c, 'pi', 'fake/quota');
+          const old = Date.now() - 5 * 3600 * 1000;
+          writeCycleState(file, {
+            first_seen: old, last_attempt_at: old, cycle: 3, attempts: 21,
+            last_sid: 'old', task_digest: 'old', retry_after_s: 0, due_at: old,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('stale-state-fresh-start')) return 'missing stale note';
+          const n = ctx.calls.filter((l) => l === 'pi quota').length;
+          if (n !== 7) return `calls=${n}`;
+          const tail = statusTail(r.stderr || '');
+          return tail && tail.cycle === '0' ? null : `cycle=${tail && tail.cycle}`;
+        },
+      },
+      {
+        // An active episode past the cap stops before any child.
+        name: 'expired-state-cap-stop',
+        setup: (c) => {
+          const file = caseCycleFile(c, 'pi', 'fake/quota');
+          writeCycleState(file, {
+            first_seen: Date.now() - 5 * 3600 * 1000, last_attempt_at: Date.now(),
+            cycle: 2, attempts: 14, last_sid: 'old', task_digest: 'old',
+            retry_after_s: 0, due_at: 0,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
+        config: { routerBacked: { pi: true } },
+        exit: 69,
+        status: /^AIKIT-XAI status=quota .* exit=69 .* action=stop$/,
+        check: (r, ctx) => {
+          const runs = ctx.calls.filter((l) => l !== 'pi rpc');
+          if (runs.length) return `spawned: ${runs.join('|')}`;
+          return (r.stderr || '').includes('stopped=cap') ? null : 'missing stopped=cap';
+        },
+      },
+      {
+        // A quota-class deadline stop still starts the cycle accounting.
+        name: 'quota-deadline-cycle',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/slowquota', '--timeout', '4'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* exit=75 .* action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('stopped=deadline')) return 'missing stopped=deadline';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.cycle !== '0') return `cycle=${tail && tail.cycle}`;
+          const file = caseCycleFile(ctx, 'pi', 'fake/slowquota');
+          return readCycleState(file) ? null : 'deadline stop wrote no state';
+        },
+      },
+      {
+        // About 90 s of cap left: the admitted child is stopped at the cap.
+        name: 'quota-cap-clamp-child',
+        stdin: 'clamp-probe\n',
+        setup: (c) => {
+          const file = caseCycleFile(c, 'pi', 'fake/capclamp');
+          const first = Date.now() - (3600 * 1000 - 8000);
+          writeCycleState(file, {
+            first_seen: first, last_attempt_at: Date.now() - 1000, cycle: 0, attempts: 7,
+            last_sid: '00000000-0000-4000-8000-000000000001',
+            task_digest: taskDigest('clamp-probe\n'), retry_after_s: 0, due_at: 0,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/capclamp', '--outer-timeout', '200',
+          '--no-preamble'],
+        config: { routerBacked: { pi: true }, capS: 3600 },
+        exit: 69,
+        status: /^AIKIT-XAI status=quota .* exit=69 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.elapsedMs >= 80000) return `elapsed ${ctx.elapsedMs}`;
+          if (!(r.stderr || '').includes('stopped=cap')) return 'missing stopped=cap';
+          return deadCheck(ctx, ['pi']);
+        },
+      },
+      {
+        // Off a router lane a quota stops after one call and writes no state.
+        name: 'plain-quota-no-retry',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* exit=75 .* action=stop$/,
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi quota').length;
+          if (n !== 1) return `calls=${n}`;
+          const file = caseCycleFile(ctx, 'pi', 'fake/quota');
+          return readCycleState(file) ? 'off-router quota wrote a state file' : null;
+        },
+      },
+      {
+        // An inferred lane keeps the base billing class and never cycles.
+        name: 'inferred-quota-no-cycle',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router-env-billing'],
+        config: { routerBacked: {} },
+        exit: 69,
+        status: new RegExp('^AIKIT-XAI status=billing cli=pi ' +
+          'model=fake/router-env-billing exit=69 .* action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi router-env-billing').length;
+          if (n !== 1) return `calls=${n}`;
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.route !== 'router-inferred') return `route=${tail && tail.route}`;
+          return tail.cycle !== undefined ? 'inferred lane printed a cycle token' : null;
+        },
+      },
+      {
+        // An inferred route's own quota text stops at once with no cycle state.
+        name: 'inferred-quota-stop',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router-env-quota'],
+        config: { routerBacked: {} },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=quota cli=pi ' +
+          'model=fake/router-env-quota exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi router-env-quota').length;
+          if (n !== 1) return `calls=${n}`;
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.route !== 'router-inferred') return `route=${tail && tail.route}`;
+          if (tail.cycle !== undefined) return 'inferred quota printed a cycle token';
+          const file = caseCycleFile(ctx, 'pi', 'fake/router-env-quota');
+          return readCycleState(file) ? 'inferred quota wrote a state file' : null;
+        },
+      },
+      {
+        // The key is built here and handed to the fake: the fake's pid is not this one.
+        name: 'sentinel-evidence',
+        setup: (c) => {
+          c.env.AIKIT_XAI_CASE_SENTINEL = 'sk-aikit-SENTINEL-' + process.pid;
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/sentinelrouter'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        check: (r, ctx) => {
+          const key = 'sk-aikit-SENTINEL-' + process.pid;
+          const logText = `${r.stderr || ''}\n${r.stdout || ''}`;
+          if (logText.includes(key)) return 'sentinel key leaked into the log';
+          const attempts = (r.stderr || '').split('\n')
+            .filter((l) => l.startsWith('cross-ai: attempt '));
+          if (attempts.length !== 7) return `attempt lines=${attempts.length}`;
+          const reports = (r.stderr || '').split('\n')
+            .filter((l) => l.startsWith('cross-ai: report '));
+          if (reports.length !== 1) return `report lines=${reports.length}`;
+          if (!reports[0].includes('stopped=rungs')) return `report=${reports[0]}`;
+          const runs = ctx.calls.filter((l) => l === 'pi sentinelrouter');
+          return runs.length === 7 ? null : `calls=${runs.length}`;
+        },
+      },
+      {
+        // Off a router lane a quota over edits stops after the one call.
         name: 'dirty-quota',
         args: ['--prefer', 'pi', '--model-pi', 'fake/dirtyquota'],
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/dirtyquota exit=75 cli_rc=1 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          const runs = ctx.calls.filter((l) => l === 'pi dirtyquota');
+          if (runs.length !== 1) return `calls=${runs.length}`;
+          return (r.stderr || '').includes('stopped=class') ? null : 'missing stopped=class';
+        },
       },
       {
+        // A router quota over edits finishes rung 1, then the dirty tree stops rung 2.
         name: 'dirty-billing-router',
         args: ['--prefer', 'pi', '--model-pi', 'fake/dirtybilling'],
         config: { routerBacked: { pi: true } },
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/dirtybilling exit=75 cli_rc=1 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          const runs = ctx.calls.filter((l) => l === 'pi dirtybilling');
+          if (runs.length !== 4) return `calls=${runs.length}`;
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (new Set(rows.map((row) => row[0])).size !== 1) return 'rung 1 switched session';
+          return (r.stderr || '').includes('stopped=dirty-tree') ? null : 'missing dirty-tree';
+        },
       },
       {
         name: 'sentinel-failed-line',
@@ -4351,6 +4949,86 @@ async function blackBoxSelfTest() {
           const early = ladderStop({ why: 'deadline' }, true, false, 'crash');
           if (early.status !== 'timeout' || !early.timedOut) return `deadline stop ${early.status}`;
           return null;
+        },
+      },
+      {
+        // A router quota walks the same rungs, then asks the caller for a cooldown.
+        name: 'pure-ladder-quota-cycle',
+        pure: () => {
+          const lim = {
+            same: 3, fresh: 3, deadlineMs: 100000000, waitMs: 0,
+            capMs: 14400000, cooldownMs: 600000,
+          };
+          const st = { same: 0, fresh: 0, canResume: true, firstQuotaMs: 0, cycle: 0 };
+          const got = [];
+          for (let i = 0; i < 7; i++) {
+            const step = ladderNext(st, 'quota', 0, lim);
+            got.push(`${step.next}/${step.why}`);
+            if (step.next === 'same') st.same += 1;
+            else if (step.next === 'new') st.fresh += 1;
+          }
+          const want = [
+            'same/same-session', 'same/same-session', 'same/same-session',
+            'new/new-session', 'new/new-session', 'new/new-session', 'cooldown/cooldown',
+          ];
+          return JSON.stringify(got) === JSON.stringify(want) ? null : `steps=${got.join(',')}`;
+        },
+      },
+      {
+        // Exactly at the cap is inside; one cooldown later is past it.
+        name: 'pure-ladder-cap-boundary',
+        pure: () => {
+          const st = { same: 3, fresh: 3, canResume: true, firstQuotaMs: 0, cycle: 0 };
+          const lim = { same: 3, fresh: 3, capMs: 14400000, cooldownMs: 600000 };
+          const inside = ladderNext(st, 'quota', 13800000, { ...lim, deadlineMs: 100000000 });
+          if (inside.next !== 'cooldown') return `inside=${inside.next}/${inside.why}`;
+          const past = ladderNext(st, 'quota', 13860000, { ...lim, deadlineMs: 100000000 });
+          return past.next === 'stop' && past.why === 'cap'
+            ? null : `past=${past.next}/${past.why}`;
+        },
+      },
+      {
+        // The cycle fits the cap, but under 60 s of deadline work remains.
+        name: 'pure-ladder-cooldown-deadline',
+        pure: () => {
+          const st = { same: 3, fresh: 3, canResume: true, firstQuotaMs: 0, cycle: 0 };
+          const now = 13800000;
+          const step = ladderNext(st, 'quota', now, {
+            same: 3, fresh: 3, capMs: 14400000, cooldownMs: 600000,
+            deadlineMs: now + 30000, waitMs: 0,
+          });
+          return step.next === 'stop' && step.why === 'deadline'
+            ? null : `got=${step.next}/${step.why}`;
+        },
+      },
+      {
+        name: 'pure-ladder-cap-clamp',
+        pure: () => {
+          const got = ladderLimits({ capS: 99999, cooldownS: -5 });
+          if (got.capS !== 14400) return `capS=${got.capS}`;
+          return got.cooldownS === 0 ? null : `cooldownS=${got.cooldownS}`;
+        },
+      },
+      {
+        // An off-router quota and an inferred route never start a cycle.
+        name: 'pure-ladder-plain-quota',
+        pure: () => {
+          const step = ladderNext(
+            { same: 0, fresh: 0, canResume: true, firstQuotaMs: 0, cycle: 0 }, 'stop', 0,
+            { same: 3, fresh: 3, deadlineMs: 100000000, capMs: 14400000, cooldownMs: 0 },
+          );
+          return step.next === 'stop' && step.why === 'class'
+            ? null : `got=${step.next}/${step.why}`;
+        },
+      },
+      {
+        name: 'pure-ladder-inferred-no-cycle',
+        pure: () => {
+          const step = ladderNext(
+            { same: 0, fresh: 0, canResume: true, firstQuotaMs: 0, cycle: 0 }, 'stop', 0,
+            { same: 3, fresh: 3, deadlineMs: 100000000, capMs: 14400000, cooldownMs: 600000 },
+          );
+          return step.next === 'cooldown' ? 'inferred route cycled' : null;
         },
       },
       {
@@ -5270,7 +5948,7 @@ async function main(argv) {
   let o;
   try { o = parseArgs(argv); } catch (e) {
     log(`cross-ai: ${e.message}`);
-    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   if (o.selfTest) return blackBoxSelfTest();
   if (o.classifyOnly !== null) return runClassifyOnly(o.classifyOnly);
@@ -5291,13 +5969,13 @@ async function main(argv) {
   const first = cands[0];
   if (o.mode === 'exec' && first && !first.rt.exec) {
     log(`cross-ai: ${first.name} is review-only (no exec formula)`);
-    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
 
   const dl = logDeadline(process.cwd(), process.env, o);
   if (dl.error) {
     log(dl.error);
-    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   if (o.codexSandbox && o.mode !== 'exec') {
     log('cross-ai: --codex-sandbox applies to exec mode only; review already runs read-only');
@@ -5322,12 +6000,12 @@ async function main(argv) {
       }
     }
     if (first) log(`cross-ai: a run uses ${first.name} only`);
-    return finish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
+    return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
   }
   const raw = readStdin();
   if (!raw || !raw.trim()) {
     log('cross-ai: pipe the prompt on stdin');
-    return finish('empty_stdin', { ...liveFields, tree: 'clean', exit: 2 });
+    return reportAndFinish('empty_stdin', { ...liveFields, tree: 'clean', exit: 2 });
   }
   let body = raw;
   if (o.prependFile) {
@@ -5336,7 +6014,7 @@ async function main(argv) {
       prepended = fs.readFileSync(path.resolve(process.cwd(), o.prependFile), 'utf8');
     } catch {
       log(`cross-ai: --prepend-file unreadable: ${o.prependFile}`);
-      return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
     // The guidance file's stamp lines are bookkeeping for a human editor, not prompt text.
     body = `${prepended.replace(/^(?:<!--[^\n]*-->\r?\n)+/, '')}\n\n${raw}`;
@@ -5367,25 +6045,31 @@ async function main(argv) {
   }
   if (!c) {
     log('cross-ai: no CLI named');
-    return finish('not_installed', { ...liveFields, tree: 'clean', exit: 127 });
+    return reportAndFinish('not_installed', { ...liveFields, tree: 'clean', exit: 127 });
   }
   if (!c.bin) {
     log(`cross-ai: ${c.name} not installed; no other CLI runs (no automatic fallback)`);
-    return finish('not_installed', {
+    return reportAndFinish('not_installed', {
       ...liveFields, cli: c.name, model: c.model || '-', tree: 'clean', exit: 127,
     });
   }
   if (!c.model) {
     log(`cross-ai: no model configured for ${c.name} (--model-${c.name})`);
-    return finish('no_model', {
+    return reportAndFinish('no_model', {
       ...liveFields, cli: c.name, model: '-', tree: 'clean', exit: 2,
     });
   }
-  if (aborting) return finish('signal', { ...liveFields, exit: 128 + aborting });
+  if (aborting) {
+    return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
+  }
   const before = noTree ? null : await treeState(process.cwd(), runDeadline);
-  if (aborting) return finish('signal', { ...liveFields, exit: 128 + aborting });
+  if (aborting) {
+    return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
+  }
   if (!noTree && before === null) {
-    return finish(gitFailStatus(), { ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1 });
+    return reportAndFinish(gitFailStatus(), {
+      ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1,
+    });
   }
   const listEnv = childEnv(c.rt.env, process.env);
   const listing = await listModels(c.rt, c.bin, listEnv, runDeadline);
@@ -5396,14 +6080,16 @@ async function main(argv) {
     }
     if (!listing.ids.includes(listed)) {
       log(`cross-ai: ${c.name} bad_model (${c.model} not in model list)`);
-      return finish('bad_model', {
+      return reportAndFinish('bad_model', {
         ...liveFields, cli: c.name, model: c.model, tree: 'clean', cli_rc: '-',
       });
     }
   } else if (listing.reason !== 'no listing') {
     log(`cross-ai: ${c.name} model list unavailable (${listing.reason}); not preflighted`);
   }
-  if (aborting) return finish('signal', { ...liveFields, exit: 128 + aborting });
+  if (aborting) {
+    return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
+  }
   // From here until the next snapshot nothing proves the tree clean (CR-03).
   liveFields.tree = 'unknown';
   const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, {
@@ -5414,6 +6100,12 @@ async function main(argv) {
   });
   liveFields.out = r.outBytes || 0;
   liveFields.cli_rc = r.cli_rc ?? '-';
+  const counted = {
+    attempts: r.attempts || 0, cycles: r.cycles || 0,
+    retryAfterS: r.retryAfterS, cycle: r.cycle, reportDone: r.reportDone,
+    firstFailureMs: r.firstFailureMs, lastFailureMs: r.lastFailureMs,
+  };
+  const why = r.stopped || (r.timedOut ? 'timeout' : 'class');
   // The snapshot reads against the finalize window, not the call deadline: an attempt may
   // legitimately run until the deadline (cycle-3 attempt cap), and the tree read comes after.
   let after = noTree ? null : await treeState(process.cwd(), finalizeBy);
@@ -5421,41 +6113,54 @@ async function main(argv) {
   if (!noTree && aborting && after === null) after = await treeState(process.cwd(), finalizeBy);
   const tree = noTree ? 'unknown' : treeLabel(before, after);
   liveFields.tree = tree;
-  if (aborting) return finish('signal', { ...liveFields, exit: 128 + aborting });
+  if (aborting) {
+    return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
+  }
   if (
     r.status === 'contract_violation' || r.status === 'git_error' || r.status === 'git_timeout'
   ) {
     const treeField = r.status === 'contract_violation' ? tree : 'unknown';
-    return finish(r.status, { ...liveFields, tree: treeField, cli_rc: r.cli_rc ?? '-', exit: 1 });
+    return reportAndFinish(r.status, {
+      ...liveFields, tree: treeField, cli_rc: r.cli_rc ?? '-', exit: 1, ...counted,
+    }, why);
   }
   // A classified status (live kill or post-hoc) wins over a bare timeout (cycle 3).
   if (r.timedOut && !r.status) {
-    return finish('timeout', { ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? '-' });
+    return reportAndFinish('timeout', {
+      ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? '-', ...counted,
+    }, 'timeout');
   }
   if (o.mode === 'review' && before && after && tree === 'dirty') {
-    return finish('contract_violation', { ...liveFields, tree, cli_rc: r.cli_rc ?? '-', exit: 1 });
+    return reportAndFinish('contract_violation', {
+      ...liveFields, tree, cli_rc: r.cli_rc ?? '-', exit: 1, ...counted,
+    }, 'class');
   }
   if (r.ok) {
     if (!noTree && (after === null || before === null)) {
-      return finish(gitFailStatus(), { ...liveFields, tree: 'unknown', cli_rc: 0, exit: 1 });
+      const status = gitFailStatus();
+      return reportAndFinish(status, { ...liveFields, tree: 'unknown', cli_rc: 0, exit: 1 });
     }
     if (o.mode === 'exec' && tree === 'clean') {
-      return finish('no_change', {
-        ...liveFields, cli: c.name, model: c.model, tree, cli_rc: 0,
+      return reportAndFinish('no_change', {
+        ...liveFields, cli: c.name, model: c.model, tree, cli_rc: 0, ...counted,
       });
     }
     process.stdout.write(r.text);
-    return finish('ok', { ...liveFields, tree, exit: 0, cli_rc: 0, out: r.outBytes || 0 });
+    return reportAndFinish('ok', {
+      ...liveFields, tree, exit: 0, cli_rc: 0, out: r.outBytes || 0, ...counted,
+    });
   }
-  if (!noTree && after === null) {
-    return finish(gitFailStatus(), {
+  if (!noTree && after === null && r.exit !== 69 && r.retryAfterS === undefined) {
+    const status = gitFailStatus();
+    return reportAndFinish(status, {
       ...liveFields, tree: 'unknown', cli_rc: r.cli_rc ?? '-', exit: 1,
     });
   }
-  return finish(r.status || 'crash', {
+  const finalStatus = r.status || 'crash';
+  return reportAndFinish(finalStatus, {
     ...liveFields, tree, cli_rc: r.cli_rc, cli: c.name, model: c.model,
-    route: r.route, rule: r.rule, pattern: r.pattern,
-  });
+    route: r.route, rule: r.rule, pattern: r.pattern, exit: r.exit, ...counted,
+  }, why);
 }
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -5463,7 +6168,9 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
     (code) => exitFlushed(code ?? 0),
     (e) => {
       log(`cross-ai: internal error: ${e && e.stack || e}`);
-      exitFlushed(finish('crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' }));
+      exitFlushed(reportAndFinish(
+        'crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' },
+      ));
     },
   );
 }
