@@ -12,13 +12,14 @@ import tempfile
 import threading
 import time
 import unittest
-from typing import cast
+from typing import Any, cast
 from unittest import mock
 
 from tests.cursor_fakes import FakeDashboard, load_dashboard_fixture, run_like_cursor
 from tools.cursor_quota import (
     FRESH_TTL_S,
     NEGATIVE_TTL_S,
+    PERIOD_ENUM,
     WEEK_MS,
     FetchContext,
     QuotaResult,
@@ -37,6 +38,7 @@ from tools.cursor_quota import (
     probe_read_quota,
     probe_refresh,
     probe_release_lock,
+    probe_spawn_refresher,
     probe_try_lock,
     probe_validate_endpoint,
     probe_write_cache,
@@ -515,6 +517,44 @@ class TestCursorQuota(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
 
+    def test_trickling_headers_subprocess_refresher_exits_within_the_bound(self):
+        # T-23-30: with headers trickling one byte every 0.5 s, every blocking
+        # recv succeeds and the per-socket timeout cannot end open(); the
+        # absolute-deadline watchdog must close the transport so the real
+        # refresher flow exits within the deadline plus a small margin.
+        driver = (
+            "import sys, time; sys.path.insert(0, sys.argv[1]);"
+            "from cursor_quota import probe_fetch_all, probe_build_opener;"
+            "started = time.monotonic();"
+            "result = probe_fetch_all(sys.argv[2], 'synthetic',"
+            " probe_build_opener(), 1.0);"
+            "assert result.error_kind == 'network_error', result;"
+            "elapsed = time.monotonic() - started;"
+            "assert elapsed < 3.0, f'refresher outlived its deadline: {elapsed}';"
+        )
+        tools_dir = str(pathlib.Path(__file__).parents[1] / "tools")
+        with FakeDashboard() as dashboard:
+            for method in ("GetCurrentPeriodUsage", "GetHardLimit", "GetPlanInfo"):
+                dashboard.script(method, header_trickle_s=0.5, body={})
+            proc = subprocess.run(
+                [sys.executable, "-S", "-c", driver, tools_dir, dashboard.url],
+                capture_output=True, text=True, timeout=20, check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_trickling_headers_in_process_call_respects_absolute_deadline(self):
+        # Same stall, in-process: all three calls finish (as network_error)
+        # by the deadline plus a small margin instead of hanging open().
+        with FakeDashboard() as dashboard:
+            for method in ("GetCurrentPeriodUsage", "GetHardLimit", "GetPlanInfo"):
+                dashboard.script(method, header_trickle_s=0.5, body={})
+            started = time.monotonic()
+            fetched = probe_fetch_all(dashboard.url, "synthetic", probe_build_opener(), 1.0)
+            elapsed = time.monotonic() - started
+            self.assertEqual(fetched.error_kind, "network_error")
+            self.assertLess(elapsed, 1.0 + 2.0,
+                            f"header trickle kept the call alive {elapsed:.2f}s")
+
     def test_dummy_token_never_appears_in_outputs_or_stderr(self):
         with tempfile.TemporaryDirectory() as directory:
             env, token = self._auth_env(directory)
@@ -816,6 +856,47 @@ class TestCursorQuota(unittest.TestCase):
         )
         self.assertEqual(conflict_result["cycle_end_ms"], 123)
 
+    def test_normalized_strings_stay_inside_the_period_enum(self):
+        # T-23-24: normalized data is numbers-and-enums only. The raw
+        # server-controlled includedUsagePeriod string must be clamped to the
+        # closed PERIOD_ENUM set — a hostile 5,000-character value collapses
+        # to the "unknown" sentinel and never reaches the cache.
+        def string_values(value):
+            if isinstance(value, str):
+                yield value
+            elif isinstance(value, dict):
+                for item in value.values():
+                    yield from string_values(item)
+            elif isinstance(value, list):
+                for item in value:
+                    yield from string_values(item)
+
+        hostile = {"planInfo": {"includedUsagePeriod": "w" * 5000}}
+        normalized = core_normalize(load_dashboard_fixture("usage_pro"), None, hostile)
+        self.assertEqual(normalized["included_period"], "unknown")
+        # The data's full closed string vocabulary: the period enum plus the
+        # on-demand kind enum. Nothing else may appear, and nothing may be
+        # longer than the longest member.
+        allowed = PERIOD_ENUM | {"unavailable", "fixed", "disabled", "unlimited"}
+        longest = max(len(word) for word in allowed)
+        cache = core_synthetic_cache(10)
+        cache["data"] = normalized
+        for label, payload in (("normalized", normalized), ("cache", cache)):
+            for word in string_values(json.loads(json.dumps(payload))):
+                self.assertIn(word, allowed,
+                              f"{label} carries a string outside the enum: {word!r}")
+                self.assertLessEqual(len(word), longest,
+                                     f"{label} carries an over-long string")
+        # Recognition is case-insensitive; an absent period stays None.
+        cased = {"planInfo": {"includedUsagePeriod": "WEEKLY"}}
+        self.assertEqual(
+            core_normalize(load_dashboard_fixture("usage_pro"), None, cased)["included_period"],
+            "weekly",
+        )
+        self.assertIsNone(
+            core_normalize(load_dashboard_fixture("usage_pro"), None, None)["included_period"]
+        )
+
     def test_states_and_refresh_edges(self):
         data = core_normalize(load_dashboard_fixture("usage_pro"), None, None)
         for age, expected in ((FRESH_TTL_S, "ok"), (FRESH_TTL_S + 0.5, "stale")):
@@ -870,6 +951,89 @@ class TestCursorQuota(unittest.TestCase):
         self.assertTrue(core_needs_refresh(failed, 1000 + NEGATIVE_TTL_S + 1))
         synthetic = core_synthetic_cache(500)
         self.assertEqual(core_quota_state(synthetic, 500).state, "ok")
+
+
+
+    def test_refresher_argv_is_module_refresh_only_and_env_passes_through(self):
+        # T-23-34: the production spawn argv is exactly
+        # [sys.executable, "-S", realpath(cursor_quota.py), "--refresh"],
+        # running ai-kit's own module, and the env handed to the child is the
+        # render's own environment unchanged.
+        captured: dict[str, Any] = {}
+
+        def fake_popen(argv, **kwargs):
+            captured["argv"] = argv
+            captured["kwargs"] = kwargs
+            return mock.Mock()
+
+        env = {"SYNTHETIC_VAR": "1", "PATH": os.environ["PATH"]}
+        self.assertTrue(probe_spawn_refresher("/tmp/synthetic-cache", env, fake_popen))
+        expected_module = os.path.realpath(
+            str(pathlib.Path(__file__).parents[1] / "tools" / "cursor_quota.py")
+        )
+        self.assertEqual(
+            captured["argv"],
+            [sys.executable, "-S", expected_module, "--refresh"],
+        )
+        self.assertEqual(captured["kwargs"].get("env"), env)
+
+    def test_real_fetch_flow_carries_token_only_in_authorization_header(self):
+        # T-23-28: through the real fetch-and-normalize flow, the token
+        # appears exactly once — in each request's Authorization header — and
+        # never in the normalized data or the diagnostic.
+        with tempfile.TemporaryDirectory() as directory:
+            env, token = self._auth_env(directory)
+            env["CURSOR_API_ENDPOINT"] = "https://api2.cursor.sh"
+            parts = (
+                load_dashboard_fixture("usage_pro"),
+                load_dashboard_fixture("hard_limit_fixed"),
+                load_dashboard_fixture("plan_info_monthly"),
+            )
+            def fetch(_base, fetched_token, opener, _timeout_s):
+                return probe_fetch_all(dashboard.url, fetched_token, opener, 2.0)
+
+            with FakeDashboard() as dashboard:
+                for method, payload in zip(
+                    ("GetCurrentPeriodUsage", "GetHardLimit", "GetPlanInfo"),
+                    parts,
+                    strict=True,
+                ):
+                    dashboard.script(method, body=payload)
+                data, error, diagnostic = probe_fetch_quota(env, fetch=fetch)
+            self.assertIsNone(error)
+            self.assertEqual(diagnostic, "")
+            self.assertEqual(len(dashboard.requests), 3)
+            for request in dashboard.requests:
+                self.assertEqual(request["authorization"], "Bearer " + token)
+                self.assertNotIn(token, str(request["path"]))
+            serialized = json.dumps(data, default=repr)
+            self.assertNotIn(token, serialized)
+            self.assertNotIn(token, diagnostic)
+
+    def test_no_cache_file_under_the_cache_base_contains_the_token(self):
+        # T-23-31: after a real refresh writes its cache, every file under
+        # the cache base (data and lock) is free of the token.
+        with tempfile.TemporaryDirectory() as directory:
+            env, token = self._auth_env(directory)
+            cache_base = str(pathlib.Path(directory) / "cache")
+            data = core_normalize(
+                load_dashboard_fixture("usage_pro"),
+                load_dashboard_fixture("hard_limit_fixed"),
+                load_dashboard_fixture("plan_info_monthly"),
+            )
+
+            def fetch_quota(_env):
+                return data, None, ""
+
+            self.assertEqual(probe_refresh(cache_base, env, lambda: 1000, fetch_quota), 0)
+            walked = 0
+            for root, _dirs, files in os.walk(cache_base):
+                for name in files:
+                    walked += 1
+                    content = (pathlib.Path(root) / name).read_bytes()
+                    self.assertNotIn(token.encode(), content, name)
+            self.assertGreaterEqual(walked, 1)
+
 
 
 if __name__ == "__main__":

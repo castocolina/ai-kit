@@ -334,6 +334,12 @@ class WizardApp(App):
         gate_done = host.status_line().get("state") == "ours"
         if gate_done:
             state["adopt"] = True
+            # U1/WR-06: an already-ours host skips the interactive gate, so
+            # pin the exact wiring value the pane shows here too. The commit
+            # re-reads the host's wiring and refuses to publish when it no
+            # longer matches, so a foreign command written while the wizard
+            # session is open can never be replaced unseen.
+            state["adopt_command"] = host.status_line().get("current_command")
         for ext in host.external_segments:
             state["segments"].setdefault(ext["id"], False)
         home_line = {k: min(max(int(m.get("line", 0)), 0), 2)

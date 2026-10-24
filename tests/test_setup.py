@@ -3601,6 +3601,34 @@ class TestExternalSegmentToggle(unittest.TestCase):
         self.assertFalse(os.path.exists(paths.config_toml),
                          "a refused approval must not publish the host's config either")
 
+    def test_wizard_commit_auto_adopted_host_refuses_foreign_command(self):
+        # U1: a host already ai-kit's when the wizard opens is adopted with no
+        # interactive gate; the pane pins the shown command (as the gate does)
+        # and the commit must therefore refuse a foreign statusLine written
+        # while the wizard session is open.
+        paths = self._paths_for_wizard_commit()
+        os.makedirs(paths.claude_dir, exist_ok=True)
+        shown = "/usr/bin/mybar-a"
+        with open(paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"statusLine": {"type": "command", "command": shown}}, handle)
+        state = self._adopt_state(paths)
+        # Exactly the state _host_pane builds for an already-ours host: adopt
+        # with the shown command pinned, no gate answer involved.
+        state["adopt_command"] = shown
+        entries = {cat: [] for cat in setup.CATEGORIES}
+        commit = setup._make_wizard_commit(paths, entries, dry=False,
+                                           counts=setup.new_counts())
+        # A foreign process swaps the command while the wizard session is open.
+        with open(paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"statusLine": {"type": "command",
+                                      "command": "/usr/bin/foreign"}}, handle)
+        result = commit(setup.Selection([]), {"claude": state})
+        self.assertFalse(result["ok"])
+        self.assertIn("changed after approval", result["hosts"]["claude"]["log"])
+        with open(paths.settings, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["statusLine"]["command"],
+                             "/usr/bin/foreign")
+
     def test_wizard_commit_publishes_the_approved_wiring_value(self):
         paths = self._paths_for_wizard_commit()
         os.makedirs(paths.claude_dir, exist_ok=True)

@@ -7,6 +7,7 @@ import math
 import pathlib
 import re
 import sys
+import tempfile
 
 TOKEN_PATTERNS = (re.compile(r"eyJ[A-Za-z0-9_-]{12,}"), re.compile(r"Bearer\s+\S+"),
                   re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}"),
@@ -80,7 +81,31 @@ def self_test() -> None:
     assert percentile([1, 2, 3, 4, 5], 0.95) == 5
     assert decision(1921, 40, 300) == "refresher"
     assert decision(10, 20, 100) == "inline"
+    # U2: --promote must actually work — exercise the promote path from a
+    # synthetic bundle into a temp dir (never the real fixtures dir).
+    token = "eyJ" + "syntheticpayloadvalue" + "." + "payload" + ".signature"
+    with tempfile.TemporaryDirectory() as tmp:
+        bundle = pathlib.Path(tmp) / "bundle"
+        (bundle / "responses").mkdir(parents=True)
+        (bundle / "responses" / "usage.json").write_text(
+            json.dumps({"token": token, "email": "owner@example.test", "used": 3}),
+            encoding="utf-8")
+        out = pathlib.Path(tmp) / "fixtures" / "dashboard_real"
+        promote_bundle(bundle, out)
+        promoted = json.loads((out / "usage.json").read_text(encoding="utf-8"))
+        assert promoted["used"] == 3
+        assert token not in (out / "usage.json").read_text(encoding="utf-8")
+        assert "owner@example.test" not in (out / "usage.json").read_text(encoding="utf-8")
     print("self-test ok")
+
+
+def promote_bundle(source: pathlib.Path, destination: pathlib.Path) -> None:
+    """Copy a checked bundle's recorded responses, redacted, into destination."""
+    destination.mkdir(parents=True, exist_ok=True)
+    for path in (source / "responses").glob("*.json"):
+        body = json.loads(path.read_text(encoding="utf-8"))
+        (destination / path.name).write_text(
+            json.dumps(redact(body), indent=2) + "\n", encoding="utf-8")
 
 
 def main(argv=None) -> int:
@@ -106,12 +131,8 @@ def main(argv=None) -> int:
             print("\n".join(problems), file=sys.stderr)
             return 1
         destination = pathlib.Path(__file__).resolve().parents[4]
-        destination /= "tests" / "fixtures" / "cursor" / "dashboard_real"
-        destination.mkdir(parents=True, exist_ok=True)
-        for source in (args.promote / "responses").glob("*.json"):
-            body = json.loads(source.read_text(encoding="utf-8"))
-            (destination / source.name).write_text(
-                json.dumps(redact(body), indent=2) + "\\n", encoding="utf-8")
+        destination /= pathlib.Path("tests") / "fixtures" / "cursor" / "dashboard_real"
+        promote_bundle(args.promote, destination)
         return 0
     if args.path:
         problems = check_bundle(args.path)

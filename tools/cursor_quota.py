@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from typing import Any, NamedTuple, cast
@@ -159,10 +160,25 @@ def util_included(plan_usage: dict[str, object]) -> tuple[float | None, float | 
     return included_pct, api_pct
 
 
+PERIOD_ENUM = frozenset({"weekly", "monthly", "unknown"})
+PERIOD_UNKNOWN = "unknown"
+
+
 def util_plan_window(plan: dict[str, object]) -> tuple[str | None, int | None]:
+    """Map the plan window to a closed enum set (T-23-24).
+
+    The server-controlled ``includedUsagePeriod`` string is clamped to the
+    ``PERIOD_ENUM`` set — anything unrecognized becomes the fixed sentinel
+    ``"unknown"`` — so normalized/cached data stays numbers-and-enums only and
+    an arbitrarily long hostile string never survives normalization."""
     period = util_pick(plan, "includedUsagePeriod", "included_usage_period")
     resets = util_epoch_ms(util_pick(plan, "includedUsageResetsAt", "included_usage_resets_at"))
-    return (period.lower() if isinstance(period, str) else None), resets
+    if isinstance(period, str):
+        lowered = period.lower()
+        window = lowered if lowered in PERIOD_ENUM else PERIOD_UNKNOWN
+    else:
+        window = None
+    return window, resets
 
 
 # ═══ 4. CORE — normalization and cache state ═══
@@ -506,15 +522,72 @@ def probe_access_token(env: dict[str, str]) -> tuple[str | None, str | None]:
     return token, None
 
 
+# ═══ T-23-30 — absolute-deadline watchdog registry ═══
+# urllib's per-socket timeout cannot bound the HEADER phase: a server that
+# trickles one header byte per interval keeps every individual recv succeeding
+# while open() blocks indefinitely past the deadline. probe_build_opener
+# therefore installs connection classes that register their socket here, and
+# probe_dashboard_call arms a watchdog Timer that force-closes them at the
+# absolute deadline, turning a trickling-header stall into an immediate
+# network_error.
+_deadline_lock = threading.Lock()
+_deadline_sockets: dict[int, list[Any]] = {}
+_current_deadline_entry = threading.local()
+
+
+def _register_deadline_socket(sock: Any) -> None:
+    entry = getattr(_current_deadline_entry, "entry", None)
+    if entry is not None:
+        with _deadline_lock:
+            _deadline_sockets.setdefault(id(entry), []).append(sock)
+
+
+def _deadline_watchdog(entry: list[Any]) -> None:
+    with _deadline_lock:
+        sockets = _deadline_sockets.pop(id(entry), [])
+    socket_module = importlib.import_module("socket")
+    suppress = importlib.import_module("contextlib").suppress
+    for sock in sockets:
+        # close() alone does NOT wake a sibling thread blocked in recv() on
+        # Linux; shutdown(SHUT_RDWR) does, turning the stall into an OSError.
+        with suppress(OSError):
+            sock.shutdown(socket_module.SHUT_RDWR)
+        with suppress(OSError):
+            sock.close()
+
+
 def probe_build_opener() -> Any:
-    """Build a default-TLS opener which refuses every redirect."""
-    request_module = importlib.import_module("urllib.request")
+    """Build a default-TLS opener which refuses every redirect and registers
+    each connection's socket with the deadline watchdog (T-23-30)."""
+    runtime = importlib.import_module
+    request_module = runtime("urllib.request")
+    http_client = runtime("http.client")
 
     class NoRedirect(request_module.HTTPRedirectHandler):
         def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
             return None
 
-    return request_module.build_opener(NoRedirect)
+    class WatchedHTTPConnection(http_client.HTTPConnection):
+        def connect(self) -> None:
+            super().connect()  # pyright: ignore[reportUnknownMemberType]
+            _register_deadline_socket(self.sock)
+
+    class WatchedHTTPSConnection(http_client.HTTPSConnection):
+        def connect(self) -> None:
+            super().connect()  # pyright: ignore[reportUnknownMemberType]
+            _register_deadline_socket(self.sock)
+
+    class WatchedHTTPHandler(request_module.HTTPHandler):
+        def http_open(self, request: Any) -> Any:
+            return self.do_open(WatchedHTTPConnection, request)
+
+    class WatchedHTTPSHandler(request_module.HTTPSHandler):
+        def https_open(self, request: Any) -> Any:
+            return self.do_open(WatchedHTTPSConnection, request)
+
+    return request_module.build_opener(
+        NoRedirect(), WatchedHTTPHandler(), WatchedHTTPSHandler()
+    )
 
 
 def probe_fetch_all(base: str, token: str, opener: Any, timeout_s: float) -> FetchResult:
@@ -578,10 +651,9 @@ def probe_dashboard_call(
     context: FetchContext, method: str
 ) -> tuple[dict[str, object] | None, str | None]:
     """Issue one Dashboard POST and parse a JSON-object body before the deadline."""
-    runtime = importlib.import_module
-    json = runtime("json")
-    http_error = runtime("urllib.error").HTTPError
-    request_module = runtime("urllib.request")
+    # Kept as a direct import_module call: tests/test_arch.py's networking-
+    # confinement vacuity check matches this exact call shape.
+    request_module = importlib.import_module("urllib.request")
     remaining = context.deadline - time.monotonic()
     if remaining <= 0:
         return None, "network_error"
@@ -595,8 +667,35 @@ def probe_dashboard_call(
             "Connect-Protocol-Version": "1",
         },
     )
+    # T-23-30: the opener's connection classes register their socket so this
+    # watchdog can force-close the transport at the absolute deadline —
+    # bounding the header phase too, where per-read socket timeouts cannot
+    # help because every trickled byte keeps the blocking recv succeeding.
+    entry: list[Any] = [context.deadline]
+    with _deadline_lock:
+        _deadline_sockets[id(entry)] = []
+    _current_deadline_entry.entry = entry
+    watchdog = threading.Timer(remaining, _deadline_watchdog, args=(entry,))
+    watchdog.daemon = True
+    watchdog.start()
     try:
-        with context.opener.open(request, timeout=min(context.timeout_s, remaining)) as response:
+        return _probe_dashboard_body(context, request)
+    finally:
+        watchdog.cancel()
+        with _deadline_lock:
+            _deadline_sockets.pop(id(entry), None)
+        _current_deadline_entry.entry = None
+
+
+def _probe_dashboard_body(
+    context: FetchContext, request: Any
+) -> tuple[dict[str, object] | None, str | None]:
+    runtime = importlib.import_module
+    json = runtime("json")
+    http_error = runtime("urllib.error").HTTPError
+    try:
+        with context.opener.open(request, timeout=max(0.0, context.deadline
+                                                      - time.monotonic())) as response:
             sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
             chunks: list[bytes] = []
             while True:

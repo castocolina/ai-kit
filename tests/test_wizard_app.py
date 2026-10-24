@@ -212,6 +212,19 @@ class TestAdoptionGate(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(app.flow.gate_done)
         self.assertIs(app.model.state["adopt"], True)
 
+    async def test_ours_at_open_pins_the_shown_command_for_adoption(self):
+        # U1: a host already ai-kit's when the wizard opens is adopted without
+        # a gate; the exact wiring value the pane shows must be pinned so the
+        # commit refuses a foreign command written while the session is open.
+        ctx = make_ctx(sl_state="ours")
+        host = ctx.hosts[0]._replace(
+            status_line=lambda: {"state": "ours",
+                                 "current_command": "/usr/bin/mybar-a"})
+        ctx = ctx._replace(hosts=(host,))
+        app = wa.WizardApp(ctx)
+        self.assertIs(app.model.state["adopt"], True)
+        self.assertEqual(app.model.state["adopt_command"], "/usr/bin/mybar-a")
+
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestArrangeMoves(unittest.IsolatedAsyncioTestCase):

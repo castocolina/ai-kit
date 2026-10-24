@@ -45,6 +45,7 @@ class _Response(NamedTuple):
     delay_s: float
     location: str | None
     trickle_s: float
+    header_trickle_s: float
 
 
 class _DaemonThreadingHTTPServer(ThreadingHTTPServer):
@@ -75,8 +76,23 @@ class FakeDashboard:
                 })
                 method = self.path.rsplit("/", 1)[-1]
                 queue = owner._scripts.get(method, [])
-                response = queue.pop(0) if queue else _Response(404, {}, 0, None, 0.0)
+                response = queue.pop(0) if queue else _Response(404, {}, 0, None, 0.0, 0.0)
                 time.sleep(response.delay_s)
+                if response.header_trickle_s > 0:
+                    # T-23-30: dribble only the status line and headers, one
+                    # byte per interval, forever — every individual recv
+                    # succeeds, so a per-socket timeout alone never ends
+                    # open(); only absolute-deadline enforcement can break
+                    # the stall.
+                    self.wfile.write(b"HTTP/1.1 200 OK\r\n")
+                    self.wfile.flush()
+                    header = b"X-Trickle: 0123456789abcdef\r\n"
+                    index = 0
+                    while True:
+                        self.wfile.write(header[index:index + 1])
+                        self.wfile.flush()
+                        index = (index + 1) % len(header)
+                        time.sleep(response.header_trickle_s)
                 self.send_response(response.status)
                 if response.location:
                     self.send_header("Location", response.location)
@@ -113,8 +129,10 @@ class FakeDashboard:
         return f"http://127.0.0.1:{self._server.server_port}"
 
     def script(self, method: str, status: int = 200, body=None, delay_s: float = 0.0,
-               location: str | None = None, trickle_s: float = 0.0) -> None:
-        response = _Response(status, body or {}, delay_s, location, trickle_s)
+               location: str | None = None, trickle_s: float = 0.0,
+               header_trickle_s: float = 0.0) -> None:
+        response = _Response(status, body or {}, delay_s, location, trickle_s,
+                             header_trickle_s)
         self._scripts.setdefault(method, []).append(response)
 
     def __enter__(self):
