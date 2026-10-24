@@ -39,6 +39,21 @@ import unittest
 
 _HERE = os.path.dirname(__file__)
 _REPO = os.path.abspath(os.path.join(_HERE, ".."))
+
+
+def _child_env(parent, home, install):
+    env = {key: value for key, value in parent.items() if key not in {
+        "CURSOR_CONFIG_DIR", "PI_CODING_AGENT_DIR", "OPENCODE_CONFIG_DIR",
+        "CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME"}}
+    env.update({"HOME": home, "AI_KIT_DIR": install,
+                "CLAUDE_CONFIG_DIR": os.path.join(home, ".claude"),
+                "CURSOR_CONFIG_DIR": os.path.join(home, ".cursor"),
+                "PI_CODING_AGENT_DIR": os.path.join(home, ".pi"),
+                "OPENCODE_CONFIG_DIR": os.path.join(home, ".config", "opencode"),
+                "CODEX_HOME": os.path.join(home, ".codex"),
+                "XDG_CONFIG_HOME": os.path.join(home, ".config"),
+                "XDG_CACHE_HOME": os.path.join(home, ".cache")})
+    return env
 _ANSI = re.compile(r"\033\[[0-9;]*m")
 # The wizard is a full-screen Textual TUI: every redraw is full of cursor-
 # positioning CSI sequences (e.g. `\033[4;3H`), not just SGR color codes.
@@ -225,16 +240,10 @@ class TestSystemMemoryInstallE2E(unittest.TestCase):
                     os.path.join(cls.inst, "tests", "fixtures", "sample-input.json"))
         cls.setup_py = os.path.join(cls.inst, "tools", "setup.py")
         cls.status_line = os.path.join(cls.inst, "tools", "status-line.py")
-        cls.env = {
-            **os.environ,
-            "HOME": cls.home,
-            "AI_KIT_DIR": cls.inst,
-            "CLAUDE_CONFIG_DIR": os.path.join(cls.home, ".claude"),
-            "XDG_CACHE_HOME": os.path.join(cls.home, ".cache"),
-        }
-        # Drop XDG_CONFIG_HOME so config lands at ~/.config/ai-kit — the path the
-        # done-definition names and that status-line.py's default segments dir uses.
-        cls.env.pop("XDG_CONFIG_HOME", None)
+        inherited = {key: os.path.join(cls.tmp, "sentinel", key) for key in (
+            "CURSOR_CONFIG_DIR", "PI_CODING_AGENT_DIR", "OPENCODE_CONFIG_DIR",
+            "CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME")}
+        cls.env = _child_env({**os.environ, **inherited}, cls.home, cls.inst)
         # The wizard is fail-closed on tty (open_tty/require_tty in tools/setup.py)
         # since the wizard redesign — there is no headless install path any more.
         # Drive the REAL wizard through a real pty so open_tty() sees a genuine
@@ -249,6 +258,11 @@ class TestSystemMemoryInstallE2E(unittest.TestCase):
 
     def _seg(self):
         return os.path.join(self.home, ".config", "ai-kit", "segments", "system_memory")
+
+    def test_inherited_host_roots_are_isolated(self):
+        sentinel = os.path.join(self.tmp, "sentinel")
+        self.assertEqual(self.proc.returncode, 0, self.proc.stderr)
+        self.assertFalse(os.path.exists(sentinel))
 
     def test_install_succeeded(self):
         self.assertEqual(self.proc.returncode, 0, self.proc.stderr)

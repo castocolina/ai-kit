@@ -1,0 +1,23 @@
+{
+  "stdin": "{\"model\": {\"id\": \"entry-model\", \"display_name\": \"Entry Model\"}, \"workspace\": {\"current_dir\": \"<TMP>/home/proj\"}, \"transcript_path\": \"<TMP>/home/t.jsonl\", \"session_id\": \"strict-probe\", \"segment\": {\"id\": \"strict_probe\", \"avail_cols\": 57, \"line\": 3, \"position\": \"after:chat_size\"}}",
+  "env_keys": [
+    "AI_KIT_SEGMENT_COLS",
+    "AI_KIT_SEGMENT_ID",
+    "AI_KIT_SEGMENT_LINE",
+    "AI_KIT_SEGMENT_POSITION",
+    "CC_AI_KIT_CONFIG_FILE",
+    "GIT_CEILING_DIRECTORIES",
+    "HOME",
+    "LANG",
+    "PATH",
+    "STATUSLINE_COLS",
+    "STATUSLINE_LINES",
+    "STRICT_PROBE_OUT",
+    "TZ",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME"
+  ],
+  "cwd_is_workspace": true,
+  "cache_relpath": "ai-kit/segments/strict_probe",
+  "cache_text": "probe"
+}

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -2799,6 +2800,210 @@ class TestGoldenOutput(unittest.TestCase):
                 f.write(actual)
         with open(expected_path, encoding="utf-8") as f:
             self.assertEqual(actual, f.read())
+
+def entry_env(root):
+    """Return the complete, isolated environment for an entry subprocess."""
+    return {"HOME": os.path.join(root, "home"), "PATH": os.environ.get("PATH", ""),
+            "XDG_CONFIG_HOME": os.path.join(root, "home", ".config"),
+            "XDG_CACHE_HOME": os.path.join(root, "home", ".cache"), "TZ": "UTC",
+            "LANG": "C.UTF-8", "GIT_CEILING_DIRECTORIES": root,
+            "STATUSLINE_COLS": "120", "STATUSLINE_LINES": "40",
+            "CC_AI_KIT_CONFIG_FILE": os.path.join(root, "entry.toml")}
+
+
+def run_entry(root, payload_text, extra_env=None):
+    script = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tools",
+                                         "status-line.py"))
+    result = subprocess.run([sys.executable, "-S", script], input=payload_text,
+                            capture_output=True, text=True, cwd=root,
+                            env={**entry_env(root), **(extra_env or {})}, timeout=20)
+    if result.returncode:
+        raise AssertionError(result.stderr)
+    return result.stdout
+
+
+def render_full_cases():
+    """Render the six full-segment oracle cases with raw ANSI preserved."""
+    golden = os.path.join(os.path.dirname(__file__), "fixtures", "golden")
+    with open(os.path.join(golden, "inputs_full.json"), encoding="utf-8") as source:
+        cases = json.load(source)
+    fd, transcript = tempfile.mkstemp(prefix="statusline-oracle-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write('{"type":"user","message":{"content":"hello"}}\n')
+            stream.write('{"type":"system","subtype":"compact_boundary"}\n')
+        os.utime(transcript, (NOW - 300, NOW - 300))
+        cfg = sl.cfg_default_config()
+        for key in cfg.segments:
+            cfg.segments[key] = key not in {"render_time", "slowest"}
+        theme = sl.core_build_theme(cfg)
+        blocks = []
+        with (mock.patch.object(sl.time, "strftime", return_value="14:30"),
+              mock.patch.object(sl.time, "time", return_value=NOW),
+              mock.patch.object(sl, "probe_rss_bytes", return_value=448_790_528)):
+            for case in cases:
+                git = sl.GitSnapshot(**case["git"])
+                todo = ("in_progress", "Write the oracle") if case["raw"] else (None, None)
+                raw = json.loads(json.dumps(case["raw"]).replace("<TRANSCRIPT>", transcript))
+                env = {"HOME": "/home/dev", "TZ": "UTC", "LANG": "C.UTF-8",
+                       "STATUSLINE_COLS": str(case["cols"]),
+                       "STATUSLINE_LINES": str(case["lines"])}
+                old_cwd = os.getcwd()
+                cwd = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tmp",
+                                                   "p23", "01", "oracle-cwd"))
+                os.makedirs(cwd, exist_ok=True)
+                with (mock.patch.object(sl, "probe_git_snapshot", return_value=git),
+                      mock.patch.object(sl, "probe_current_todo", return_value=todo),
+                      mock.patch.object(sl, "probe_effort_setting_is_auto",
+                                        return_value=case["effort_auto"])):
+                    try:
+                        os.chdir(cwd)
+                        ctx, _, _ = _ctx_from_env(raw, env, cfg, t_start=None)
+                        output = sl.core_render(ctx, cfg, theme)
+                    finally:
+                        os.chdir(old_cwd)
+                blocks.append(f"### {case['name']}\n" + "\n".join(output))
+        return "\n\n".join(blocks) + "\n"
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(transcript)
+
+
+class TestFullGoldenAnsi(unittest.TestCase):
+    def test_matches_raw_ansi_golden_deterministically(self):
+        golden = os.path.join(os.path.dirname(__file__), "fixtures", "golden",
+                              "expected_full_ansi.txt")
+        first = render_full_cases()
+        self.assertEqual(first, render_full_cases())
+        with open(golden, encoding="utf-8") as source:
+            self.assertEqual(first, source.read())
+
+
+class TestEntryRender(unittest.TestCase):
+    def test_entry_output_matches_fixture(self):
+        with tempfile.TemporaryDirectory(prefix="entry-render-") as root:
+            home = os.path.join(root, "home")
+            os.makedirs(os.path.join(home, "proj"))
+            transcript = os.path.join(home, "t.jsonl")
+            with open(transcript, "w", encoding="utf-8") as stream:
+                stream.write(json.dumps({"type": "assistant", "message": {"content": [
+                    {"type": "tool_use", "name": "TodoWrite", "input": {"todos": [
+                        {"content": "Write oracle", "activeForm": "Writing oracle",
+                         "status": "in_progress"}]}}]}}) + "\n")
+                stream.write('{"type":"system","subtype":"compact_boundary"}\n')
+            config = """[segments]
+path=true
+git_branch=false
+git_dirty=false
+alt_git_worktree=false
+model=true
+effort=true
+context=true
+todo=true
+lines=true
+alt_cost=true
+alt_time_session=true
+alt_time_api=true
+chat_size=true
+alt_h_rate_limit=true
+alt_w_rate_limit=true
+alt_term_dimensions=true
+render_time=false
+slowest=false
+alt_time_clock=false
+alt_time_ago=false
+alt_process_memory=false
+"""
+            with open(os.path.join(root, "entry.toml"), "w", encoding="utf-8") as stream:
+                stream.write(config)
+            with open(os.path.join(os.path.dirname(__file__), "fixtures", "golden",
+                                   "entry_payload.json"), encoding="utf-8") as stream:
+                payload = stream.read().replace("<ROOT>", root)
+            actual = run_entry(root, payload)
+            golden = os.path.join(os.path.dirname(__file__), "fixtures", "golden",
+                                  "entry_render.txt")
+            with open(golden, encoding="utf-8") as stream:
+                self.assertEqual(actual, stream.read())
+
+
+class TestStrictProviderCapture(unittest.TestCase):
+    def test_provider_input_environment_and_cache_match_fixture(self):
+        with tempfile.TemporaryDirectory(prefix="provider-capture-") as root:
+            home = os.path.join(root, "home")
+            workspace = os.path.join(home, "proj")
+            os.makedirs(workspace)
+            os.makedirs(os.path.join(home, ".config", "ai-kit", "segments"))
+            transcript = os.path.join(home, "t.jsonl")
+            with open(transcript, "w", encoding="utf-8") as stream:
+                stream.write('{"type":"system","subtype":"compact_boundary"}\n')
+            config = """[segments]
+path=true
+git_branch=false
+git_dirty=false
+alt_git_worktree=false
+model=true
+effort=true
+context=true
+todo=true
+lines=true
+alt_cost=true
+alt_time_session=true
+alt_time_api=true
+chat_size=true
+alt_h_rate_limit=true
+alt_w_rate_limit=true
+alt_term_dimensions=false
+render_time=false
+slowest=false
+alt_time_clock=false
+alt_time_ago=false
+alt_process_memory=false
+"""
+            config_path = os.path.join(root, "entry.toml")
+            with open(config_path, "w", encoding="utf-8") as stream:
+                stream.write(config)
+            provider = os.path.join(home, ".config", "ai-kit", "segments", "strict_probe")
+            script = (f"#!{sys.executable}\n"
+                      "# ai-kit-segment: line=3 after=chat_size id=strict_probe ttl=0\n"
+                      "import json, os, sys\n"
+                      "text = sys.stdin.read()\n"
+                      "record = {'stdin': text, 'env_keys': sorted(os.environ), "
+                      "'cwd_is_workspace': os.path.realpath(os.getcwd()) == "
+                      "os.path.realpath(json.loads(text)['workspace']['current_dir'])}\n"
+                      "json.dump(record, open(os.environ['STRICT_PROBE_OUT'], 'w'))\n"
+                      "print('probe')\n")
+            with open(provider, "w", encoding="utf-8") as stream:
+                stream.write(script)
+            os.chmod(provider, 0o755)
+            payload = {"model": {"id": "entry-model", "display_name": "Entry Model"},
+                       "workspace": {"current_dir": workspace},
+                       "transcript_path": transcript, "session_id": "strict-probe"}
+            payload_text = json.dumps(payload)
+            record_path = os.path.join(root, "probe.json")
+            env = {**entry_env(root), "CC_AI_KIT_CONFIG_FILE": config_path,
+                   "STRICT_PROBE_OUT": record_path}
+            script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
+                                                       "tools", "status-line.py"))
+            result = subprocess.run([sys.executable, "-S", script_path], input=payload_text,
+                                    capture_output=True, text=True, cwd=root, env=env, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("probe", result.stdout)
+            with open(record_path, encoding="utf-8") as stream:
+                record = json.load(stream)
+            cache_file = os.path.join(home, ".cache", "ai-kit", "segments", "strict_probe")
+            with open(cache_file, encoding="utf-8") as stream:
+                cache_text = stream.read()
+            capture = {"stdin": record["stdin"].replace(root, "<TMP>"),
+                       "env_keys": record["env_keys"],
+                       "cwd_is_workspace": record["cwd_is_workspace"],
+                       "cache_relpath": os.path.relpath(cache_file,
+                                                       os.path.join(home, ".cache")),
+                       "cache_text": cache_text}
+            expected = os.path.join(os.path.dirname(__file__), "fixtures", "golden",
+                                    "strict_provider_capture.json")
+            with open(expected, encoding="utf-8") as stream:
+                self.assertEqual(capture, json.load(stream))
+
 
 class TestThinContext(unittest.TestCase):
     def test_root_has_claude_json_and_line_conf(self):
