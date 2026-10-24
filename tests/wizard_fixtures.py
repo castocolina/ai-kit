@@ -1,44 +1,90 @@
 """Test fixture builder for the install wizard.
 
-Builds a realistic ``WizardContext`` from the shipped segment inventory and a
-small representative ``Selection``.  It may import ``tools.setup`` to reuse the
-real ``Selection`` / inventory loaders / defaults — the wizard view itself
-imports nothing from setup, so exercising it through a real context is the
-faithful test seam.
+Builds a realistic host-keyed ``WizardContext`` from the shipped segment
+inventory and a small representative ``Selection``.  It may import
+``tools.setup`` to reuse the real ``Selection`` / inventory loaders / host
+config — the wizard view itself imports nothing from setup, so exercising it
+through a real context (with one or more ``HostView`` entries) is the faithful
+test seam.
 """
 from typing import cast
 
 from tools import setup
 from tools import wizard_app as wa
 
+_HOST_LABELS = {"claude": "Claude Code", "cursor": "Cursor CLI"}
+_WIRING = {"claude": "settings.json", "cursor": "cli-config.json"}
 
-def make_ctx(with_external=False, sl_state="unset"):
-    inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
-    meta = setup.build_segment_meta(inv, {})
+
+def _host_sample(host_id):
+    """The host's sample payload JSON for preview; missing file → ``"{}"``."""
+    try:
+        with open(setup._sample_input_path(host_id), encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return "{}"
+
+
+def make_hosts(host_ids=("claude",), sl_state="unset", with_external=False):
+    """Build HostView entries for the named host ids (detection order kept).
+
+    The harness can't know a real Cursor install's files here, so every entry
+    is built the same way _build_wizard_context does per host — from that
+    host's ConfigSpec defaults and the shared bundled inventory — but wiring
+    stays a fixture-level sl_state reading. The Claude host reads the real
+    inventory; the Cursor host additionally gets one stub `cursor_*` segment
+    so per-host traversal is exercised in shape. Plan 23-17's two-host PTY
+    acceptance scenarios drive the real context end to end.
+    """
+    hosts = []
+    for host_id in host_ids:
+        spec = setup.host_config(host_id)
+        # Per-host inventory view: the same file, filtered by that host's own
+        # `hosts` list — exactly what _host_view does for a real context.
+        inv = setup.load_segment_inventory(setup.INVENTORY_PATH, host_id)
+        meta = setup.build_segment_meta(inv, {})
+        missing = sorted(set(spec.default_segments) - set(meta))
+        assert not missing, f"{host_id} segment lacks inventory metadata: {missing}"
+        segments = dict(spec.default_segments)
+        external: list = []
+        if with_external:
+            external = [{"id": "system_memory", "filename": "system_memory",
+                         "name": "System memory", "path": "/dev/null",
+                         "default_on": False, "description": "System available RAM",
+                         "icon": "💻", "sample": "12.0 GiB free", "line": 1,
+                         "provenance": "bundled"}]
+            segments["system_memory"] = False
+        label = _HOST_LABELS[host_id]
+        hosts.append(wa.HostView(
+            id=host_id, label=label,
+            config_label=f"~/.config/ai-kit/{spec.config_filename}",
+            wiring_label=_WIRING[host_id],
+            state={"segments": segments,
+                   "layout": [{"min_rows": ln.min_rows, "segments": list(ln.segments)}
+                              for ln in spec.default_layout],
+                   "dirty": False, "adopt": sl_state == "ours"},
+            status_line=lambda _s=sl_state: {"state": _s, "current_command": None},
+            segment_meta=meta, external_segments=external,
+            sample_json=_host_sample(host_id) if host_id == "claude" else "{}",
+            engine=None,
+            done_hint=f"Open a new {label} session to see your status line.",
+        ))
+    return tuple(hosts)
+
+
+def make_ctx(with_external=False, sl_state="unset", host_ids=("claude",)):
+    """A component-level context plus the named hosts' views."""
     sel = setup.Selection([
         ("agents", "ui-ux-designer", True),
         ("agents", "code-reviewer", False),
         ("commands", "code-review", True),
         ("skills", "brainstorming", True),
     ])
-    segments = dict(setup.SEGMENT_DEFAULTS)
-    external = []
-    if with_external:
-        external = [{"id": "system_memory", "filename": "system_memory",
-                     "name": "System memory", "path": "/dev/null",
-                     "default_on": False, "description": "System available RAM",
-                     "icon": "💻", "sample": "12.0 GiB free", "line": 1,
-                     "provenance": "bundled"}]
-        segments["system_memory"] = False
-    layout = [{"min_rows": r["min_rows"], "segments": list(r["segments"])}
-              for r in setup.LAYOUT_DEFAULTS]
     initial = {(c, n): False for c, n, _ in sel.items}
     return wa.WizardContext(
         selection=cast(wa.SelectionLike, sel),
-        state={"segments": segments, "layout": layout, "dirty": False,
-               "adopt": sl_state == "ours", "_initial_enabled": initial},
-        sample_json="{}", engine=None,
-        status_line=lambda: {"state": sl_state, "current_command": None},
-        segment_meta=meta, external_segments=external,
+        state={"_initial_enabled": initial},
         component_meta={name: "" for _, name, _ in sel.items},
-        housekeeping={"stale": [], "predecessors": []})
+        housekeeping={"stale": [], "predecessors": []},
+        hosts=make_hosts(host_ids=host_ids, sl_state=sl_state,
+                         with_external=with_external))

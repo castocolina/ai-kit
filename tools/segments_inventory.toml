@@ -9,123 +9,182 @@ description = "Working directory, ~-relative"
 sample = "~/proj"
 icon = ""
 line = 0
+hosts = ["claude", "cursor"]
 
 [git_branch]
 description = "Current git branch"
 sample = "main"
 icon = "🌿"
 line = 0
+hosts = ["claude", "cursor"]
 
 [git_dirty]
 description = "Working-tree dirty marker"
 sample = "~"
 icon = ""
 line = 0
+hosts = ["claude", "cursor"]
 
 [alt_git_worktree]
 description = "Active linked-worktree name"
 sample = "wt-feature"
 icon = "⎇"
 line = 0
+hosts = ["claude", "cursor"]
 
 [todo]
 description = "Current TODO (in-progress / pending)"
 sample = "write tests"
 icon = "📝"
 line = 1
+hosts = ["claude"]
 
 [model]
 description = "Active model name"
 sample = "Opus"
 icon = ""
 line = 1
+hosts = ["claude", "cursor"]
 
 [alt_time_ago]
 description = "Time since the session's first message"
 sample = "12m ago"
 icon = ""
 line = 2
+hosts = ["claude"]
 
 [alt_time_clock]
 description = "Current wall-clock time"
 sample = "14:30"
 icon = "⏰"
 line = 2
+hosts = ["claude", "cursor"]
 
 [effort]
 description = "Reasoning-effort ladder + level"
 sample = "high"
 icon = "🧠"
 line = 1
+hosts = ["claude"]
 
 [lines]
 description = "Lines added / removed this session"
 sample = "+12 -3"
 icon = "📃"
 line = 2
+hosts = ["claude"]
 
 [alt_cost]
 description = "Session cost in USD"
 sample = "$0.50"
 icon = "🪙"
 line = 2
+hosts = ["claude"]
 
 [alt_time_session]
 description = "Total session duration"
 sample = "1h 04m"
 icon = "💬"
 line = 2
+hosts = ["claude"]
 
 [alt_time_api]
 description = "Cumulative API response time"
 sample = "42s"
 icon = "📡"
 line = 2
+hosts = ["claude"]
 
 [render_time]
 description = "Status line's own render time"
 sample = "18ms"
 icon = "⏱"
 line = 2
+hosts = ["claude", "cursor"]
 
 [slowest]
 description = "Slowest single segment this render"
 sample = "git 9ms"
 icon = "🐌"
 line = 2
+hosts = ["claude", "cursor"]
 
 [alt_term_dimensions]
 description = "Terminal size (cols×lines)"
 sample = "120×40"
 icon = ""
 line = 2
+hosts = ["claude", "cursor"]
 
 [context]
 description = "Context-window % used (and max)"
 sample = "32%"
 icon = "📊"
 line = 1
+hosts = ["claude", "cursor"]
 
 [chat_size]
 description = "Bytes since last compaction/total on disk (+ compaction count)"
 sample = "313KB/4.1MB (3x)"
 icon = "💾"
 line = 2
+hosts = ["claude"]
 
 [alt_process_memory]
 description = "Agent process memory (RSS)"
 sample = "428M"
 icon = "🧮"
 line = 2
+hosts = ["claude"]
 
 [alt_h_rate_limit]
 description = "5-hour rate-limit bucket (time-only reset)"
 sample = "5h: 42%"
 icon = "⚡"
 line = 2
+hosts = ["claude"]
 
 [alt_w_rate_limit]
 description = "7-day rate-limit bucket (weekday reset)"
 sample = "7d: 13%"
 icon = "⚡"
 line = 2
+hosts = ["claude"]
+
+# ── Cursor-only built-ins (D-04/D23-C4) ────────────────────────────────────
+# These entries list hosts = ["cursor"] and carry cursor_line (the Cursor
+# host's own layout row). Claude-shaped segments above list hosts =
+# ["claude"]; shared segments will gain ["claude","cursor"] only after the
+# Cursor oracle records them, never by inference.
+
+[cursor_included]
+description = "Cursor included-quota use, this cycle"
+sample = "inc 42%"
+icon = ""
+line = 1
+hosts = ["cursor"]
+cursor_line = 1
+
+[cursor_api]
+description = "Cursor API-rate use, this cycle"
+sample = "api 18%"
+icon = ""
+line = 1
+hosts = ["cursor"]
+cursor_line = 1
+
+[cursor_extra]
+description = "Cursor on-demand spend against its cap"
+sample = "extra $2.50/$20.00"
+icon = ""
+line = 1
+hosts = ["cursor"]
+cursor_line = 1
+
+[cursor_reset]
+description = "Cursor cycle reset moment"
+sample = "↺ Nov 20"
+icon = ""
+line = 1
+hosts = ["cursor"]
+cursor_line = 1

@@ -71,8 +71,22 @@ def tearDownModule():
     _CACHE_ENV.stop()
     _CACHE_HOME.cleanup()
 SAMPLE_INPUT = os.path.join(FIXTURE_DIR, "sample-input.json")
+SAMPLE_INPUT_CURSOR = os.path.join(FIXTURE_DIR, "sample-input-cursor.json")
 SAMPLE_RECIPE = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "tools", "claude-statusline.toml.sample")
+
+
+def _claude_segments():
+    """The Claude host's built-in segment defaults, sourced from
+    ``claude_host.HOST.config`` — setup.py keeps no copied defaults table
+    (ruling Q2), so tests read the same lazily-resolved spec the wizard uses."""
+    return dict(claude_host.HOST.config.default_segments)
+
+
+def _claude_layout():
+    """The Claude host's default layout in setup's line-dict shape."""
+    return [{"min_rows": ln.min_rows, "segments": list(ln.segments)}
+            for ln in claude_host.HOST.config.default_layout]
 EDITED_RECIPE = os.path.join(FIXTURE_DIR, "statusline-edited.toml")
 
 
@@ -103,7 +117,7 @@ class TestTomlRead(unittest.TestCase):
         self.assertTrue(seg["path"])
         self.assertFalse(seg["alt_cost"])             # alt_cost OFF by default
         self.assertFalse(seg["alt_term_dimensions"])  # dimensions OFF by default
-        self.assertEqual(set(seg), set(setup.SEGMENT_DEFAULTS))
+        self.assertEqual(set(seg), set(_claude_segments()))
 
     def test_current_segments_merges_file_override(self):
         with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
@@ -127,20 +141,14 @@ class TestTomlRead(unittest.TestCase):
                            "alt_h_rate_limit", "alt_w_rate_limit"]])
 
     def test_layout_defaults_match_status_line(self):
-        # Drift guard: setup.LAYOUT_DEFAULTS must mirror the canonical default
-        # LAYOUT in tools/claude-status-line.py (the renderer's source of truth), so the
-        # wizard's default layout can never silently diverge — e.g. dropping the
-        # worktree segment from the identity row (the T4.2 regression).
-        sl_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                               "tools", "claude-status-line.py")
-        spec = importlib.util.spec_from_file_location("status_line_drift", sl_path)
-        assert spec is not None and spec.loader is not None
-        sl = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = sl       # register so @dataclass can resolve cls.__module__
-        spec.loader.exec_module(sl)
+        # Drift guard: setup's resolved default layout (what the wizard starts
+        # from on a no-op recipe) must mirror the canonical LAYOUT in
+        # tools/claude_host.py (the renderer's source of truth), so the
+        # wizard's default layout can never silently diverge — e.g. dropping
+        # the worktree segment from the identity row (the T4.2 regression).
         expected = [{"min_rows": ln.min_rows, "segments": list(ln.segments)}
                     for ln in claude_host.LAYOUT]
-        self.assertEqual(setup.LAYOUT_DEFAULTS, expected)
+        self.assertEqual(setup.current_layout(SAMPLE_RECIPE), expected)
 
     def test_current_layout_file_replaces_all(self):
         with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
@@ -152,8 +160,9 @@ class TestTomlRead(unittest.TestCase):
 
     def test_segment_defaults_match_recipe_drift(self):
         # Drift guard: every [segments] key commented in the recipe must exist in
-        # SEGMENT_DEFAULTS with the same default bool.
+        # the host's default segment table with the same default bool.
         import re as _re
+        defaults = _claude_segments()
         with open(SAMPLE_RECIPE) as f:
             text = f.read()
         in_seg = False
@@ -166,8 +175,8 @@ class TestTomlRead(unittest.TestCase):
             m = _re.match(r"#\s*(\w+)\s*=\s*(true|false)\b", line)
             if in_seg and m:
                 key, val = m.group(1), m.group(2) == "true"
-                self.assertIn(key, setup.SEGMENT_DEFAULTS)
-                self.assertEqual(setup.SEGMENT_DEFAULTS[key], val,
+                self.assertIn(key, defaults)
+                self.assertEqual(defaults[key], val,
                                  f"{key} default drifted from recipe")
 
 
@@ -177,7 +186,7 @@ class TestRenderPreview(unittest.TestCase):
             os.path.dirname(os.path.dirname(__file__)), "tools", "claude-status-line.py")
 
     def test_preview_renders_and_reflects_toggle_off(self):
-        seg = dict(setup.SEGMENT_DEFAULTS)
+        seg = dict(_claude_segments())
         with open(SAMPLE_INPUT) as f:
             sample_json = f.read()
         on = setup.render_preview(self._status_line(), seg, sample_json, {})
@@ -188,7 +197,7 @@ class TestRenderPreview(unittest.TestCase):
 
     def test_preview_passes_env_overrides_for_every_segment(self):
         # alt_cost is OFF by default; turning it on must surface the 🪙 marker.
-        seg = dict(setup.SEGMENT_DEFAULTS)
+        seg = dict(_claude_segments())
         seg["alt_cost"] = True
         with open(SAMPLE_INPUT) as f:
             sample_json = f.read()
@@ -198,12 +207,12 @@ class TestRenderPreview(unittest.TestCase):
     def test_preview_never_raises_on_renderer_error(self):
         # A bogus interpreter/path must degrade to an empty string, not crash.
         out = setup.render_preview("/no/such/claude-status-line.py",
-                                   dict(setup.SEGMENT_DEFAULTS), "{}", {})
+                                   dict(_claude_segments()), "{}", {})
         self.assertEqual(out, "")
 
     def test_preview_layout_produces_different_output_no_leak(self):
         """render_preview with a reordered layout yields different output; no temp files leaked."""
-        seg = dict(setup.SEGMENT_DEFAULTS)
+        seg = dict(_claude_segments())
         with open(SAMPLE_INPUT) as f:
             sample_json = f.read()
         with open(SAMPLE_RECIPE, encoding="utf-8") as f:
@@ -243,7 +252,7 @@ class TestPreviewFixture(unittest.TestCase):
     def test_fixture_drives_renderer_without_unavailable(self):
         """sample-input.json must produce a real render (not empty / unavailable)."""
         with open(
-            setup._sample_input_path(), encoding="utf-8") as f:  # pylint: disable=protected-access
+            setup._sample_input_path("claude"), encoding="utf-8") as f:  # pylint: disable=protected-access
             sample = f.read()
         out = setup.render_preview(
             self._STATUS_LINE,
@@ -541,7 +550,7 @@ class TestDiscoverExampleSegments(unittest.TestCase):
         self.assertEqual(e["name"], "bare")          # id-as-name
         self.assertEqual(e["description"], "")       # blank
         self.assertEqual(e["icon"], setup.DEFAULT_SEGMENT_ICON)
-        self.assertEqual(e["line"], len(setup.LAYOUT_DEFAULTS) - 1)  # last line
+        self.assertEqual(e["line"], len(_claude_layout()) - 1)  # last line
 
     def test_parse_quoted_values(self):
         """T0.1: quoted values with spaces parse to the full phrase."""
@@ -786,7 +795,7 @@ class TestSelectExamples(unittest.TestCase):
 
 class TestWizardLoop(unittest.TestCase):
     def _state(self):
-        return {"segments": dict(setup.SEGMENT_DEFAULTS),
+        return {"segments": dict(_claude_segments()),
                 "layout": [{"min_rows": 0,
                             "segments": ["path", "git_branch", "git_dirty"]},
                            {"min_rows": 20, "segments": ["model", "alt_time_clock"]}],
@@ -819,8 +828,9 @@ class TestWizardLoop(unittest.TestCase):
 
     def test_worktree_is_a_normal_segment(self):
         # worktree migrated from the [git] knob to a regular segment toggle: it
-        # appears in SEGMENT_DEFAULTS (OFF by default — opt-in) and flips like any other segment.
-        self.assertFalse(setup.SEGMENT_DEFAULTS.get("alt_git_worktree"))
+        # appears in the host's default segment table (OFF by default — opt-in)
+        # and flips like any other segment.
+        self.assertFalse(_claude_segments().get("alt_git_worktree"))
         st = self._state()
         order = setup._wizard_order(st)
         idx = order.index("alt_git_worktree") + 1
@@ -2316,8 +2326,8 @@ class TestCmdInstall(unittest.TestCase):
             del examples_flag
             default = setup._default_selection(entries, installed)
             setup.apply_selection(default, entries, paths.claude_dir, dry, counts)
-            state = {"segments": dict(setup.SEGMENT_DEFAULTS),
-                     "layout": [dict(l) for l in setup.LAYOUT_DEFAULTS],
+            state = {"segments": dict(_claude_segments()),
+                     "layout": [dict(r) for r in _claude_layout()],
                      "dirty": False, "adopt": True}
             setup.persist_statusline(paths, state, adopt=True, dry=dry, tty=tty)
 
@@ -3297,6 +3307,8 @@ class TestRecoverIncompatibleConfig(unittest.TestCase):
         return _types.SimpleNamespace(
             config_toml=cfg,
             sample=os.path.join(self._REPO, "tools", "claude-statusline.toml.sample"),
+            status_line=os.path.join(self._REPO, "tools", "claude-status-line.py"),
+            settings=os.path.join(os.path.dirname(cfg), "settings.json"),
             statusline_doctor=os.path.join(self._REPO, "tools", "statusline-doctor.py"),
         )
 
@@ -3387,10 +3399,14 @@ class TestExternalSegmentToggle(unittest.TestCase):
         wa = _import_wizard_app()
         paths = self._paths_with_user_ext()
         entries = setup.enumerate_entries(paths.install_dir)
+        # hosts=("claude",) keeps the test hermetic — detection would otherwise
+        # depend on claude being on the test machine's PATH.
         ctx = setup._build_wizard_context(
-            paths, entries, {c: set() for c in setup.CATEGORIES}, "{}", wa)
-        by_id = {e["id"]: (e["provenance"], ctx.state["segments"][e["id"]])
-                 for e in ctx.external_segments}
+            paths, entries, {c: set() for c in setup.CATEGORIES}, wa,
+            hosts=("claude",))
+        host_view = ctx.hosts[0]
+        by_id = {e["id"]: (e["provenance"], host_view.state["segments"][e["id"]])
+                 for e in host_view.external_segments}
         self.assertEqual(by_id.get("weather"), ("user", True))   # on disk → ON
         if "system_memory" in by_id:                              # bundled offer → OFF
             self.assertEqual(by_id["system_memory"][1], False)
@@ -3455,7 +3471,7 @@ class TestExternalSegmentToggle(unittest.TestCase):
         with mock.patch.object(setup, "apply_hook_selection", return_value=False), \
                 mock.patch.dict(os.environ,
                                 {"CC_AI_KIT_EXTERNAL_DIR": paths.segments_dir}):
-            outcome = commit(setup.Selection([]), state)
+            outcome = commit(setup.Selection([]), {"claude": state})
         self.assertIs(outcome["ok"], False)
 
     def test_wizard_commit_declined_example_installed_but_explicitly_off(self):
@@ -3483,7 +3499,7 @@ class TestExternalSegmentToggle(unittest.TestCase):
         # test-isolation leak ce62d63 fixed for test_wizard_pty.py).
         with mock.patch.dict(os.environ,
                              {"CC_AI_KIT_EXTERNAL_DIR": paths.segments_dir}):
-            result = commit(setup.Selection([]), state)
+            result = commit(setup.Selection([]), {"claude": state})
         self.assertTrue(result["ok"], result["log"])
 
         installed_path = os.path.join(paths.segments_dir, "system_memory")
@@ -3514,7 +3530,7 @@ class TestExternalSegmentToggle(unittest.TestCase):
                                            counts=setup.new_counts())
         with mock.patch.dict(os.environ,
                              {"CC_AI_KIT_EXTERNAL_DIR": paths.segments_dir}):
-            result = commit(setup.Selection([]), state)
+            result = commit(setup.Selection([]), {"claude": state})
         self.assertTrue(result["ok"], result["log"])
 
         installed_path = os.path.join(paths.segments_dir, "system_memory")
@@ -3541,8 +3557,12 @@ class TestPersistRoundTrip(unittest.TestCase):
         import types as _types
         return _types.SimpleNamespace(
             config_toml=cfg_path,
+            sample=self._sample_recipe(),
+            status_line=os.path.join(self._REPO, "tools", "claude-status-line.py"),
+            settings=os.path.join(os.path.dirname(cfg_path), "settings.json"),
             statusline_doctor=self._statusline_doctor(),
-            # _persist_layout scans this for on-disk externals; empty sibling dir.
+            config_dir=os.path.dirname(cfg_path),
+            # _persist_layout scans config_dir/segments for on-disk externals.
             segments_dir=os.path.join(os.path.dirname(cfg_path), "segments"),
         )
 
@@ -3753,7 +3773,7 @@ class TestLaunchWizardCrash(unittest.TestCase):
                     "CLAUDE_CONFIG_DIR": self.claude,
                     "XDG_CONFIG_HOME": os.path.join(self.tmp, ".config")}
         self._orig_sample_path = setup._sample_input_path  # type: ignore[attr-defined]
-        setup._sample_input_path = lambda: sample           # type: ignore[assignment]
+        setup._sample_input_path = lambda host="claude": sample           # type: ignore[assignment]
 
     def tearDown(self):
         setup._sample_input_path = self._orig_sample_path  # type: ignore[assignment]
@@ -3797,7 +3817,10 @@ class TestLaunchWizardCrash(unittest.TestCase):
     def test_hook_only_failure_terminal_warning(self):
         fake_mod = self._make_fake_wizard_module()
         result = mock.MagicMock()
-        result.state = {"_commit_ok": False, "_commit_log": "refused hooks.PreToolUse"}
+        # Per-host outcome keys land under each host's serialized state; the
+        # refused-hook log is what launch_wizard surfaces after the run.
+        result.state = {"claude": {"_commit_ok": False,
+                                   "_commit_log": "refused hooks.PreToolUse"}}
         fake_mod.run_wizard = lambda _ctx: result
         sys.modules["wizard_app"] = fake_mod
         paths = self._make_paths()
@@ -4022,8 +4045,8 @@ class TestConditionalPersistence(unittest.TestCase):
         return paths, repo
 
     def _state(self):
-        return {"segments": dict(setup.SEGMENT_DEFAULTS),
-                "layout": [dict(l) for l in setup.LAYOUT_DEFAULTS], "dirty": False}
+        return {"segments": dict(_claude_segments()),
+                "layout": [dict(r) for r in _claude_layout()], "dirty": False}
 
     def test_skip_writes_nothing(self):
         paths, _ = self._paths()
@@ -4137,33 +4160,37 @@ class TestWizardContextPopulation(unittest.TestCase):
 
         import contextlib
         with mock.patch.object(wa, "run_wizard", _fake_run), \
+             mock.patch.object(setup, "_statusline_hosts_present",
+                               return_value=("claude",)), \
              mock.patch.object(setup, "stdin_on_tty",
                                return_value=contextlib.nullcontext()):
             setup.launch_wizard(paths, entries, installed, _FakeTty(), True,
                                 setup.new_counts())
 
         ctx = captured["ctx"]
-        # status_line is now a live callable, not a frozen dict
-        sl_state = ctx.status_line()
+        self.assertEqual([h.id for h in ctx.hosts], ["claude"])
+        host_view = ctx.hosts[0]
+        # status_line is now a live callable on the host view, not a frozen dict
+        sl_state = host_view.status_line()
         self.assertIn("state", sl_state)
         self.assertIn("current_command", sl_state)
         self.assertEqual(sl_state["state"], "unset")
         # adopt derived from detection (unset -> False)
-        self.assertFalse(ctx.state["adopt"])
+        self.assertFalse(host_view.state["adopt"])
         # segment_meta carries built-in inventory keys
-        self.assertIn("context", ctx.segment_meta)
-        self.assertEqual(set(ctx.segment_meta["context"]),
+        self.assertIn("context", host_view.segment_meta)
+        self.assertEqual(set(host_view.segment_meta["context"]),
                          {"description", "sample", "icon", "line"})
         # external discovered with provenance
-        ids = {e["id"]: e for e in ctx.external_segments}
+        ids = {e["id"]: e for e in host_view.external_segments}
         self.assertIn("freshseg", ids)
         self.assertEqual(ids["freshseg"]["provenance"], "user")
         # A user drop-in present in the segments dir renders by default, so the
         # wizard shows it ON (mirroring the renderer) unless claude-statusline.toml
         # disables it. (Bundled-but-not-installed examples stay OFF — they are
         # offers.)
-        self.assertIn("freshseg", ctx.state["segments"])
-        self.assertTrue(ctx.state["segments"]["freshseg"])
+        self.assertIn("freshseg", host_view.state["segments"])
+        self.assertTrue(host_view.state["segments"]["freshseg"])
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
@@ -4855,11 +4882,14 @@ class TestCmdInstallExternalReconcile(unittest.TestCase):
 
     def _fake_result(self, seg_state):
         """Build a minimal WizardResult-shaped object (NamedTuple) with the
-        given segments state dict."""
+        given segments state under the Claude host's id (WizardResult.state
+        is host-keyed since 23-16); adopt=True so the post-wizard example
+        pass runs for that host."""
         import types
         return types.SimpleNamespace(
             selection=None,
-            state={"segments": seg_state, "layout": [], "dirty": False, "adopt": False}
+            state={"claude": {"segments": seg_state, "layout": [],
+                              "dirty": False, "adopt": True}}
         )
 
     @mock.patch.object(setup, "install_example_segments", return_value=["system_memory"])
@@ -5074,7 +5104,8 @@ class TestComponentMetaInContext(unittest.TestCase):
         paths = setup.resolve_paths(env)
         entries = setup.enumerate_entries(paths.install_dir)
         installed = {cat: set() for cat in setup.CATEGORIES}
-        return setup._build_wizard_context(paths, entries, installed, "{}", wa)
+        return setup._build_wizard_context(paths, entries, installed, wa,
+                                           hosts=("claude",))
 
     def test_component_meta_is_dict(self):
         ctx = self._ctx()
@@ -6026,6 +6057,377 @@ class TestStatuslineSelectionBeforeAnyWrite(unittest.TestCase):
         before = _tree_snapshot(self.tmp)
         self.assertEqual(self._main("claude"), 0)
         self.assertNotEqual(_tree_snapshot(self.tmp), before)
+
+
+class TestWizardCommitPerHost(unittest.TestCase):
+    """23-16 Task 3: the wizard's per-host COMMIT. Cursor gets its OWN TOML and its
+    OWN cli-config.json wiring, each candidate validated OFFLINE before publication
+    (the host's structural doctor check plus an offline dry render against a
+    synthetic quota cache), one independent outcome per host so a rejected Cursor
+    write never blocks Claude (T-23-53), a declined host left byte-identical, and a
+    failed publish leaving no partial file (D-19/D-22/D-24).
+
+    The real primitives run on purpose — the doctor and both entries as children
+    against a scratch HOME — so what is verified is the actual save path, not a
+    mock of it. Nothing here reads or writes a real user config directory."""
+
+    _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self._children = []
+        self.addCleanup(self._reap_children)
+        self.env = {
+            "HOME": self.tmp,
+            "AI_KIT_DIR": self._REPO,
+            "CLAUDE_CONFIG_DIR": os.path.join(self.tmp, ".claude"),
+            "CURSOR_CONFIG_DIR": os.path.join(self.tmp, ".cursor"),
+            "XDG_CONFIG_HOME": os.path.join(self.tmp, "config"),
+            "XDG_CACHE_HOME": os.path.join(self.tmp, "cache"),
+            "XDG_STATE_HOME": os.path.join(self.tmp, "state"),
+        }
+        # Both host dirs exist: each writer refuses to materialize an absent one,
+        # so a missing dir would turn a real write into a silent skip.
+        for key in ("CLAUDE_CONFIG_DIR", "CURSOR_CONFIG_DIR"):
+            os.makedirs(self.env[key], exist_ok=True)
+        self.paths = setup.resolve_paths(self.env)
+        # Children inherit the PROCESS env: pin it to the scratch tree so no
+        # doctor or render pass can resolve a real HOME, cache or auth path.
+        patcher = mock.patch.dict(os.environ, self.env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _cfg(self, host):
+        return setup._statusline_paths(self.paths, host)[0]
+
+    def _state(self, host, adopt=True, **over):
+        """What one HostPane serializes: that host's live segments with `over`
+        applied, its live layout, and its own adopt decision."""
+        segments = setup.current_segments(self._cfg(host), host)
+        segments.update(over)
+        return {"segments": segments,
+                "layout": setup.current_layout(self._cfg(host), host),
+                "dirty": True, "adopt": adopt}
+
+    def _commit(self, states):
+        commit = setup._make_wizard_commit(self.paths,
+                                           {cat: [] for cat in setup.CATEGORIES},
+                                           dry=False, counts=setup.new_counts())
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            return commit(setup.Selection([]), states)
+
+    @staticmethod
+    def _text(path):
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+
+    def _json(self, path):
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def _watch_children(self):
+        """Watch every process the save/preview paths spawn: record (argv, child
+        env) plus the file list of each Cursor render child's private cache dir,
+        and flag any detached spawn (start_new_session, the shape
+        `probe_spawn_detached` uses). Callers own the returned patchers."""
+        calls, detached, child_caches = [], [], []
+        real_run, real_popen = subprocess.run, subprocess.Popen
+
+        def _run(argv, *args, **kwargs):
+            argv_s = [str(a) for a in argv]
+            child_env = dict(kwargs.get("env") or {})
+            result = real_run(argv, *args, **kwargs)
+            calls.append((argv_s, child_env))
+            if any(a.endswith("cursor-status-line.py") for a in argv_s):
+                seed = child_env.get("XDG_CACHE_HOME", "")
+                # Read while the render child's private cache dir still exists
+                # (its caller removes it the moment this call returns).
+                child_caches.append((argv_s, [
+                    name for _c, _d, files in os.walk(seed) for name in files]))
+            return result
+
+        def _popen(args, *rest, **kwargs):
+            if kwargs.get("start_new_session"):
+                detached.append([str(a) for a in (args or [])])
+            proc = real_popen(args, *rest, **kwargs)
+            self._children.append(proc)
+            return proc
+
+        patchers = [mock.patch.object(subprocess, "run", side_effect=_run),
+                    mock.patch.object(subprocess, "Popen", side_effect=_popen)]
+        return calls, detached, child_caches, patchers
+
+    def _scratch_procs(self):
+        """Every live process whose environment names this test's scratch tree —
+        i.e. a child this test spawned, detached or not. The leak check the plan
+        asks for: a Cursor render child that ever decided to schedule its own
+        refresher would outlive the commit and show up here. /proc is Linux-only;
+        returns [] where it is absent."""
+        out = []
+        if not os.path.isdir("/proc"):
+            return out
+        marker = self.tmp.encode()
+        for pid in [p for p in os.listdir("/proc") if p.isdigit()]:
+            try:
+                with open(f"/proc/{pid}/environ", "rb") as handle:
+                    blob = handle.read()
+            except OSError:
+                continue
+            if marker not in blob:
+                continue
+            with contextlib.suppress(OSError):
+                with open(f"/proc/{pid}/cmdline", "rb") as handle:
+                    cmdline = handle.read().replace(b"\0", b" ").decode("utf-8", "replace")
+                out.append((pid, " ".join(cmdline.split())))
+        return out
+
+    def _reap_children(self):
+        """Kill + reap anything this test left running, so a failed assertion can
+        never orphan a child onto the machine."""
+        for proc in self._children:
+            if proc.poll() is None:
+                proc.kill()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    proc.wait(timeout=5)
+
+    def test_adopting_cursor_writes_its_own_toml_and_wires_cli_config(self):
+        result = self._commit({"cursor": self._state("cursor", cursor_api=True)})
+        self.assertTrue(result["hosts"]["cursor"]["ok"])
+        self.assertIn("cursor_api = true", self._text(self.paths.cursor_config_toml))
+        wired = self._json(self.paths.cursor_cli_config)["statusLine"]["command"]
+        self.assertEqual(wired, f"python3 -S {self.paths.cursor_status_line}")
+        # Claude was not part of this commit, so Claude saw nothing at all: no
+        # Claude TOML, no settings.json, and no Claude-only host outcome invented.
+        self.assertNotIn("claude", result["hosts"])
+        self.assertFalse(os.path.exists(self.paths.config_toml))
+        self.assertFalse(os.path.exists(self.paths.settings))
+        self.assertNotIn(self.paths.status_line, wired)
+
+    def test_save_and_preview_never_fetch_or_spawn_detached(self):
+        calls, detached, child_caches, patchers = self._watch_children()
+        with contextlib.ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            self._commit({"cursor": self._state("cursor", cursor_api=True)})
+            setup.render_preview(self.paths.cursor_status_line,
+                                 setup.current_segments(self._cfg("cursor"), "cursor"),
+                                 setup._read_sample_json("cursor"), {}, host="cursor")
+        doctor = [(argv, env) for argv, env in calls
+                  if any("statusline-doctor.py" in a for a in argv)]
+        renders = [(argv, env) for argv, env in calls
+                   if any(a.endswith("cursor-status-line.py") for a in argv)]
+        self.assertTrue(doctor and renders,
+                        f"the save path ran no offline check/render: {calls}")
+        for argv, _env in doctor + renders:
+            self.assertNotIn("--doctor", argv, f"a fetch-capable run: {argv}")
+            self.assertNotIn("--refresh", argv, f"a fetch request: {argv}")
+        self.assertIn("--check", doctor[0][0], "the structural step ran no --check")
+        self.assertEqual(detached, [], "a save/preview path spawned something detached")
+        # Every Cursor render child was inspected while its private cache dir was
+        # still on disk: usage.json proves the synthetic seed was really there (so
+        # the lock check is not an empty-directory pass) and usage.lock proves no
+        # detached refresher was ever scheduled.
+        self.assertTrue(child_caches,
+                        "no Cursor render child was inspected for a refresher lock")
+        seen = [name for _argv, listing in child_caches for name in listing]
+        self.assertIn("usage.json", seen)
+        self.assertNotIn("usage.lock", seen)
+        for _argv, env in renders:
+            # D-24: the child never saw this tree's (or a real) config/cache — an
+            # auth path cannot resolve inside the private seed dir.
+            for var in ("XDG_CACHE_HOME", "XDG_CONFIG_HOME"):
+                self.assertTrue(env.get(var, "").startswith(tempfile.gettempdir()),
+                                f"{var} was not redirected: {env.get(var)}")
+
+    def _assert_rejection_isolated(self, target, label, side_effect):
+        """One host's OFFLINE rejection must not touch the other host: Cursor stays
+        at its untouched recipe copy while Claude's own write still lands."""
+        with mock.patch.object(setup, target, side_effect=side_effect):
+            result = self._commit({"claude": self._state("claude", alt_cost=True),
+                                   "cursor": self._state("cursor", cursor_api=True)})
+        self.assertTrue(result["hosts"]["claude"]["ok"], f"{label}: Claude was blocked")
+        self.assertFalse(result["hosts"]["cursor"]["ok"], label)
+        self.assertFalse(result["ok"], label)
+        self.assertIn(label, result["hosts"]["cursor"]["log"],
+                      f"{label}: the reason never reached the log")
+        # Unpublished: still byte-equal to the recipe, and the wiring was never
+        # attempted — a rejected candidate never reaches Cursor's cli-config.json.
+        self.assertEqual(self._text(self.paths.cursor_config_toml),
+                         self._text(self.paths.cursor_sample))
+        self.assertFalse(os.path.exists(self.paths.cursor_cli_config))
+        # Non-vacuity: the same commit wrote Claude's OWN two files.
+        self.assertIn("alt_cost = true", self._text(self.paths.config_toml))
+        self.assertIn(self.paths.status_line,
+                      self._json(self.paths.settings)["statusLine"]["command"])
+
+    def test_offline_dry_render_rejection_leaves_cursor_unpublished(self):
+        def refuse(*args):
+            return args[-1] != "cursor"
+
+        self._assert_rejection_isolated("_offline_dry_render",
+                                        "dry render rejected", refuse)
+
+    def test_offline_structural_rejection_leaves_cursor_unpublished(self):
+        def refuse(*args):
+            host = args[-1]
+            return (True, "") if host != "cursor" else (
+                False, "unknown segment key: cursor_api")
+
+        self._assert_rejection_isolated("_doctor_structural_ok",
+                                        "doctor rejected", refuse)
+
+    def test_declining_a_host_leaves_its_files_byte_identical(self):
+        os.makedirs(self.paths.config_dir, exist_ok=True)
+        for path, text in ((self.paths.cursor_config_toml, "[segments]\ncursor_api = true\n"),
+                           (self.paths.config_toml, "[segments]\ncost = true\n")):
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        for path in (self.paths.cursor_cli_config, self.paths.settings):
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"statusLine": {"type": "command", "command": "echo mine"}},
+                          handle)
+        before = _tree_snapshot(self.tmp)
+        result = self._commit({"claude": self._state("claude", alt_cost=True),
+                               "cursor": self._state("cursor", adopt=False)})
+        self.assertTrue(result["hosts"]["cursor"]["ok"], "a decline is not a failure")
+        self.assertFalse(result["hosts"]["cursor"]["adopt"])
+        self.assertTrue(result["hosts"]["claude"]["ok"])
+        after = _tree_snapshot(self.tmp)
+        for key in (os.path.relpath(self.paths.cursor_config_toml, self.tmp),
+                    os.path.relpath(self.paths.cursor_cli_config, self.tmp)):
+            self.assertEqual(before[key], after[key],
+                             f"a declined Cursor path changed: {key}")
+        # Not even Cursor's provider dir is materialized for a declined host.
+        self.assertFalse(os.path.exists(
+            os.path.join(self.paths.config_dir, "segments-cursor")))
+        self.assertIn("alt_cost = true", self._text(self.paths.config_toml))
+        self.assertIn(self.paths.status_line,
+                      self._json(self.paths.settings)["statusLine"]["command"])
+
+    def test_declining_claude_leaves_its_files_byte_identical(self):
+        # The mirror case: Cursor adopts, Claude declines.
+        os.makedirs(self.paths.config_dir, exist_ok=True)
+        with open(self.paths.config_toml, "w", encoding="utf-8") as handle:
+            handle.write("[segments]\ncost = true\n")
+        with open(self.paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"statusLine": {"type": "command", "command": "echo mine"}}, handle)
+        before = _tree_snapshot(self.tmp)
+        result = self._commit({"claude": self._state("claude", adopt=False),
+                               "cursor": self._state("cursor", cursor_api=True)})
+        self.assertTrue(result["hosts"]["cursor"]["ok"])
+        self.assertIn("cursor_api = true", self._text(self.paths.cursor_config_toml))
+        after = _tree_snapshot(self.tmp)
+        for key in (os.path.relpath(self.paths.config_toml, self.tmp),
+                    os.path.relpath(self.paths.settings, self.tmp)):
+            self.assertEqual(before[key], after[key],
+                             f"a declined Claude path changed: {key}")
+
+    def test_publish_failure_leaves_no_partial_cursor_file(self):
+        os.makedirs(self.paths.config_dir, exist_ok=True)
+        real_replace = os.replace
+
+        def refuse(src, dst):
+            if str(src).endswith(".candidate"):
+                raise OSError("injected: publish failed")
+            return real_replace(src, dst)
+
+        with mock.patch.object(setup.os, "replace", side_effect=refuse):
+            result = self._commit({"cursor": self._state("cursor", cursor_api=True)})
+        self.assertFalse(result["hosts"]["cursor"]["ok"])
+        self.assertTrue(result["hosts"]["cursor"]["adopt"], "the host really was adopted")
+        self.assertIn("could not publish", result["hosts"]["cursor"]["log"])
+        self.assertIn("injected: publish failed", result["hosts"]["cursor"]["log"])
+        # The live file is the untouched recipe copy — never half a candidate —
+        # and the candidate temp is cleaned up instead of left beside it.
+        self.assertEqual(self._text(self.paths.cursor_config_toml),
+                         self._text(self.paths.cursor_sample))
+        self.assertEqual([name for name in os.listdir(self.paths.config_dir)
+                          if name.endswith(".candidate") or name.startswith(".ai-kit-")],
+                         [])
+        self.assertFalse(os.path.exists(self.paths.cursor_cli_config))
+
+    def test_no_child_of_the_save_path_outlives_it(self):
+        """The leak check: every process the Cursor save/preview path spawns is a
+        synchronous, already-reaped one — none detached, none still alive."""
+        _calls, detached, _caches, patchers = self._watch_children()
+        with contextlib.ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            self._commit({"cursor": self._state("cursor", cursor_api=True)})
+            setup.render_preview(self.paths.cursor_status_line,
+                                 setup.current_segments(self._cfg("cursor"), "cursor"),
+                                 setup._read_sample_json("cursor"), {}, host="cursor")
+        survivors = self._scratch_procs()
+        self.assertEqual(detached, [])
+        self.assertEqual(survivors, [], f"orphans outlived the save path: {survivors}")
+        self.assertEqual([p for p in self._children if p.poll() is None], [],
+                         "a spawned child was never reaped")
+
+    def test_survivor_scan_and_detached_watch_are_not_vacuous(self):
+        """Non-vacuity for both halves of the check above: a real detached child
+        carrying this scratch env must be seen by the scan and by the watcher, and
+        the reap must actually clear it."""
+        _calls, detached, _caches, patchers = self._watch_children()
+        with contextlib.ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                    start_new_session=True, env=dict(os.environ))
+            deadline = time.time() + 5
+            seen = []
+            while time.time() < deadline and not seen:
+                seen = [pid for pid, _cmd in self._scratch_procs() if pid == str(proc.pid)]
+        argv = [sys.executable, "-c", "import time; time.sleep(30)"]
+        self.assertEqual(seen, [str(proc.pid)], "the survivor scan saw nothing")
+        self.assertEqual(detached, [argv],
+                         "the detached watch never flagged a start_new_session spawn")
+        proc.kill()
+        proc.wait(timeout=5)
+        self.assertEqual([pid for pid, _c in self._scratch_procs()
+                          if pid == str(proc.pid)], [], "the reap left the child alive")
+
+    def test_write_toml_preserving_validates_for_the_named_host(self):
+        os.makedirs(self.paths.config_dir, exist_ok=True)
+        claude_only = "[segments]\nalt_cost = true\n"    # a key only Claude owns
+        calls, _detached, _caches, patchers = self._watch_children()
+        err = io.StringIO()
+        with contextlib.ExitStack() as stack, contextlib.redirect_stderr(err):
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            rejected = setup.write_toml_preserving(
+                self.paths.cursor_config_toml, claude_only,
+                (self.paths.statusline_doctor, self.paths.cursor_status_line),
+                host="cursor")
+            accepted = setup.write_toml_preserving(
+                self.paths.config_toml, claude_only,
+                (self.paths.statusline_doctor, self.paths.status_line), host="claude")
+        self.assertFalse(rejected, "the Cursor check accepted a Claude-only segment key")
+        self.assertTrue(accepted)
+        self.assertFalse(os.path.exists(self.paths.cursor_config_toml))
+        self.assertIn("alt_cost = true", self._text(self.paths.config_toml))
+        self.assertIn("alt_cost", err.getvalue(), "the rejection reason was swallowed")
+        prefixes = {key for _argv, env in calls for key in env
+                    if key.endswith("CONFIG_FILE")}
+        self.assertEqual(prefixes, {"AI_KIT_CURSOR_CONFIG_FILE", "CC_AI_KIT_CONFIG_FILE"},
+                         "a host's validation ran without its own config-file variable")
+
+    def test_incompatible_config_recovery_is_host_threaded(self):
+        os.makedirs(self.paths.config_dir, exist_ok=True)
+        stale = "[segments]\ncost = true\n"          # Claude keys in Cursor's file
+        with open(self.paths.cursor_config_toml, "w", encoding="utf-8") as handle:
+            handle.write(stale)
+        result = self._commit({"cursor": self._state("cursor", cursor_api=True)})
+        self.assertTrue(result["hosts"]["cursor"]["ok"])
+        self.assertIn("cursor status-line config was incompatible",
+                      result["hosts"]["cursor"]["log"])
+        self.assertEqual(self._text(self.paths.cursor_config_toml + ".bak"), stale)
+        # Regenerated from THIS host's recipe, then patched with this host's edit:
+        # the Claude-only key is gone and Cursor's own change is in.
+        published = self._text(self.paths.cursor_config_toml)
+        self.assertIn("cursor_api = true", published)
+        self.assertNotIn("cost = true", published)
 
 
 if __name__ == "__main__":

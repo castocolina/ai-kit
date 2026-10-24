@@ -156,29 +156,18 @@ def resolve_paths(env):
     )
 
 
-# ── Status-line config defaults (mirrors claude_host.HOST.config) ───────
-# These copied tables are not Q2; plan 23-16 owns the wizard final flow and
-# reads defaults lazily from HOST.config.
-SEGMENT_DEFAULTS = {
-    "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": False,
-    "model": True, "effort": True, "context": True, "todo": True,
-    "alt_time_ago": False, "alt_time_clock": False,
-    "alt_cost": False, "alt_time_session": False, "alt_time_api": False,
-    "render_time": True, "slowest": True, "alt_term_dimensions": False,
-    "lines": False,
-    "chat_size": True, "alt_process_memory": False,
-    "alt_h_rate_limit": False, "alt_w_rate_limit": False,
+# ── Status-line host configuration (lazily resolved from each HOST's module) ─
+# Q2 ruling: setup resolves a host's defaults/config filename/provider
+# namespaces by importing claude_host/cursor_host LAZILY — on the preview and
+# wire paths only. NO copied defaults or host-settings table is kept here.
+# These tuples name `Paths` attributes per host (paths indirection, not data).
+_STATUSLINE_PATH_FIELDS = {
+    "claude": ("config_toml", "sample", "status_line", "settings"),
+    "cursor": ("cursor_config_toml", "cursor_sample", "cursor_status_line",
+               "cursor_cli_config"),
 }
-LAYOUT_DEFAULTS = [
-    {"min_rows": 0,
-     "segments": ["path", "git_branch", "alt_git_worktree", "git_dirty"]},
-    {"min_rows": 20, "segments": ["model", "effort", "context", "todo"]},
-    {"min_rows": 30, "segments": ["render_time", "slowest", "alt_term_dimensions",
-                                  "alt_time_ago", "alt_time_clock", "lines",
-                                  "alt_cost", "alt_time_session", "alt_time_api",
-                                  "chat_size", "alt_process_memory",
-                                  "alt_h_rate_limit", "alt_w_rate_limit"]},
-]
+_HOST_LABELS = {"claude": "Claude Code", "cursor": "Cursor CLI"}
+_WIRING_LABELS = {"claude": "settings.json", "cursor": "cli-config.json"}
 
 # Fallback UI glyph for an external segment whose header omits `icon=`.
 DEFAULT_SEGMENT_ICON = "●"
@@ -188,22 +177,46 @@ INVENTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               "segments_inventory.toml")
 
 
-def load_segment_inventory(path):
-    """Load the built-in segment UI inventory (description/sample/icon/line) keyed
-    by segment name. Installer/wizard-only metadata; never read by the render path.
-    Returns {key: {"description": str, "sample": str, "icon": str, "line": int}}.
-    A missing/malformed file yields {} (fail-closed coverage is asserted by the
-    arch test, not here)."""
+def host_config(host):
+    """The host's status-line ConfigSpec (env prefix, config filename, segment/
+    layout defaults, provider namespaces). Imports the host module LAZILY —
+    only the wizard's preview/wire paths call this (uninstall imports no
+    renderer module), so a broken renderer import can never block uninstalling."""
+    module_id = {"claude": "claude_host", "cursor": "cursor_host"}[host]
+    tools_dir = os.path.dirname(os.path.abspath(__file__))
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    host_module = importlib.import_module(module_id)
+    return host_module.HOST.config
+
+
+def load_segment_inventory(path, host="claude"):
+    """Load the built-in segment UI inventory for ONE host (description/sample/
+    icon/line) keyed by segment name. Per-host dimension (D-04): each entry
+    may list `hosts = ["claude"]` (the default when absent), `hosts =
+    ["cursor"]` or both, and a cursor-listing entry may carry `cursor_line`
+    (used as that host's line). Installer/wizard-only metadata; never read by
+    the render path. Returns {key: {description, sample, icon, line}} for
+    entries that list `host`. A missing/malformed file yields {} (fail-closed
+    coverage is asserted by the arch test, not here)."""
     data = read_toml(path)
     inv = {}
     for key, val in data.items():
         if not isinstance(val, dict):
             continue
+        entry_hosts = val.get("hosts")
+        if entry_hosts is None:
+            entry_hosts = ["claude"]
+        if host not in entry_hosts:
+            continue
+        line = int(val.get("line", 0))
+        if host == "cursor":
+            line = int(val.get("cursor_line", line))
         inv[key] = {
             "description": str(val.get("description", "")),
             "sample": str(val.get("sample", "")),
             "icon": str(val.get("icon", "")),
-            "line": int(val.get("line", 0)),
+            "line": line,
         }
     return inv
 
@@ -223,6 +236,14 @@ def build_segment_meta(inventory, overrides):
             "line": int(ov["line"]) if "line" in ov else entry["line"],
         }
     return meta
+
+
+def _statusline_paths(paths, host):
+    """Resolve `(config_toml, sample, entry, wiring)` for one status-line host
+    from the single already-resolved `Paths` object. Every wizard/persist path
+    for a host comes through here — no call site picks paths from a second
+    table, and a Cursor call never reuses a Claude-only name (D-20/C-D23-1)."""
+    return tuple(getattr(paths, attr) for attr in _STATUSLINE_PATH_FIELDS[host])
 
 
 def _statusline_icon_line_overrides(config_toml):
@@ -278,25 +299,27 @@ def read_toml(path):
         return {}
 
 
-def current_segments(path):
-    """Resolved {key: bool}: SEGMENT_DEFAULTS merged with the file's [segments].
-    Unknown keys and non-bool values in the file are ignored (defaults win), the
-    same lenient policy the renderer applies."""
-    seg = dict(SEGMENT_DEFAULTS)
+def current_segments(path, host="claude"):
+    """Resolved {key: bool} for one host: that host's SEGMENTS defaults (lazily
+    from its HOST.config) merged with the file's [segments]. Unknown keys and
+    non-bool values in the file are ignored (defaults win), the same lenient
+    policy the renderer applies."""
+    seg = dict(host_config(host).default_segments)
     for k, v in (read_toml(path).get("segments") or {}).items():
         if k in seg and isinstance(v, bool):
             seg[k] = v
     return seg
 
 
-def current_layout(path):
-    """Resolved layout as a list of {"min_rows": int, "segments": [str]} dicts.
-    Any [[line]] block in the file REPLACES the whole layout (all-or-nothing,
-    matching the renderer); otherwise the default 3-row layout (deep-copied)."""
+def current_layout(path, host="claude"):
+    """Resolved layout for one host as a list of {"min_rows": int,
+    "segments": [str]} dicts. Any [[line]] block in the file REPLACES the whole
+    layout (all-or-nothing, matching the renderer); otherwise the host's own
+    default layout (deep-copied from its HOST.config)."""
     raw = read_toml(path).get("line")
     if not raw:
-        return [{"min_rows": r["min_rows"], "segments": list(r["segments"])}
-                for r in LAYOUT_DEFAULTS]
+        return [{"min_rows": ln.min_rows, "segments": list(ln.segments)}
+                for ln in host_config(host).default_layout]
     return [{"min_rows": int(item.get("min_rows", 0)),
              "segments": list(item.get("segments", []))} for item in raw]
 
@@ -305,44 +328,77 @@ def _bool_env(value):
     return "1" if value else "0"
 
 
-def render_preview(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    status_line, segments, sample_json, env, layout=None, base_config=None,
-):
-    """Render the status line with the given segment toggles, for the live preview.
-
-    Shells out to `python3 claude-status-line.py` feeding `sample_json` on stdin and the
-    toggles as CC_AI_KIT_SEGMENT_<KEY> env overrides (so it reflects in-memory
-    edits before they are written). `env` carries only the keys to override
-    (e.g. forced terminal size); it is merged ON TOP OF os.environ so the
-    subprocess inherits PATH, HOME, and PYTHONPATH.
-
-    When `layout` is provided (list of {"min_rows": int, "segments": [str]} dicts),
-    a throwaway temp config is written with the patched layout and the subprocess
-    reads it via CC_AI_KIT_CONFIG_FILE.  The temp file is deleted in a try/finally
-    so it is never leaked, even on error.
-
-    Returns the rendered text ("" on any failure — the preview is best-effort
-    and must never crash the wizard)."""
+def _preview_child_env(host, env, segments):
+    """The preview subprocess environment: the full ``os.environ`` plus the
+    caller's overrides plus one ``<PREFIX>SEGMENT_<KEY>`` toggle per segment.
+    The prefix comes from the host's lazily-resolved ``HOST.config`` (D-20), so
+    a Cursor preview never receives Claude's ``CC_AI_KIT_*`` names — and the
+    terminal is forced wide/tall so every row renders regardless of the
+    wizard's own window size."""
+    prefix = host_config(host).env_prefix
     child = {**os.environ, **env}   # inherit full env; overrides layer on top
-    # Force a wide, tall terminal so all rows/segments render in the preview
-    # regardless of the wizard's own window size.
     child.setdefault("STATUSLINE_COLS", "200")
     child.setdefault("STATUSLINE_LINES", "40")
     for key, on in segments.items():
-        child[f"CC_AI_KIT_SEGMENT_{key.upper()}"] = _bool_env(on)
+        child[f"{prefix}SEGMENT_{key.upper()}"] = _bool_env(on)
+    return child
+
+
+def _preview_layout_file(layout, base_config, child, host):
+    """Write the patched layout to a throwaway temp config and point the host's
+    own ``CONFIG_FILE`` variable at it. Returns the temp path (the caller
+    deletes it) or None when the write failed and the preview must be skipped."""
+    patched = patch_layout(base_config or "", layout)
+    fd, tmp_path = tempfile.mkstemp(suffix=".toml", prefix="ai_kit_preview_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(patched)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        return None
+    child[host_config(host).env_prefix + "CONFIG_FILE"] = tmp_path
+    return tmp_path
+
+
+def render_preview(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    status_line, segments, sample_json, env, layout=None, base_config=None,
+    host="claude",
+):
+    """Render the status line with the given segment toggles, for the live preview.
+
+    Shells out to the HOST's real status-line entry (`python3 -S <entry>`)
+    feeding `sample_json` on stdin and the toggles as the host's
+    <PREFIX>SEGMENT_<KEY> env overrides (so it reflects in-memory edits before
+    they are written). The prefix and the config-file variable come from the
+    host's lazily-resolved `HOST.config` (D-20) — never a copied table, never a
+    hardcoded Claude variable on a Cursor call. `env` carries only the keys to
+    override (e.g. forced terminal size); it is merged ON TOP OF os.environ so
+    the subprocess inherits PATH, HOME, and PYTHONPATH.
+
+    When `layout` is provided (list of {"min_rows": int, "segments": [str]}
+    dicts), a throwaway temp config is written with the patched layout and the
+    subprocess reads it via the host's CONFIG_FILE variable. The temp file is
+    deleted in a finally so it is never leaked, even on error.
+
+    For Cursor the payload is the SAME shape plus a private synthetic cache
+    under a temporary XDG_CACHE_HOME (D-24) — never a real `~/.cursor/auth.json`
+    or `~/.cursor/cli-config.json` read, never a network reach: the synthetic
+    cache is fresh, so no detached refresher is ever spawned.
+
+    Returns the rendered text ("" on any failure — the preview is best-effort
+    and must never crash the wizard)."""
+    child = _preview_child_env(host, env, segments)
     tmp_path = None
+    cache_dir = None
     try:
         if layout is not None:
-            patched = patch_layout(base_config or "", layout)
-            fd, tmp_path = tempfile.mkstemp(suffix=".toml", prefix="ai_kit_preview_")
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                    fh.write(patched)
-            except OSError:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp_path)
+            tmp_path = _preview_layout_file(layout, base_config, child, host)
+            if tmp_path is None:
                 return ""
-            child["CC_AI_KIT_CONFIG_FILE"] = tmp_path
+        if host == "cursor":
+            cache_dir = tempfile.mkdtemp(prefix="ai_kit_cursor_preview_")
+            _seed_cursor_synthetic_cache(cache_dir, child)
         try:
             proc = subprocess.run(
                 [sys.executable, "-S", status_line],
@@ -357,6 +413,30 @@ def render_preview(  # pylint: disable=too-many-arguments,too-many-positional-ar
         if tmp_path is not None:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
+        if cache_dir is not None:
+            shutil.rmtree(cache_dir, ignore_errors=True)
+
+
+def _seed_cursor_synthetic_cache(cache_dir, child):
+    """D-24: give the Cursor preview a PRIVATE, token-free cache so the real
+    Cursor entry renders its Cursor-only segments (showing `≈` on the
+    mid-cycle synthetic values) without ever reading a credential or reaching
+    the network. The cache schema comes from ``cursor_quota`` itself —
+    imported lazily, on this preview path only — with ``core_synthetic_cache``
+    shaping the data and ``probe_write_cache`` publishing it through the
+    renderer's own atomic write into the temp dir's ai-kit cache root.
+    ``XDG_CACHE_HOME`` is repointed at the temp dir and ``XDG_CONFIG_HOME``
+    at an empty sibling, so the child's auth path resolves into nothing: even
+    a stale cache could only end in ``auth_missing`` (no token → no fetch),
+    the fresh cache never spawns the refresher, and afterwards the temp cache
+    dir holds no ``usage.lock``."""
+    cursor_quota = importlib.import_module("cursor_quota")
+    cache_path, _lock = cursor_quota.probe_cache_paths(
+        os.path.join(cache_dir, "ai-kit"))
+    cursor_quota.probe_write_cache(
+        cache_path, cursor_quota.core_synthetic_cache(time.time()))
+    child["XDG_CACHE_HOME"] = cache_dir
+    child["XDG_CONFIG_HOME"] = os.path.join(cache_dir, "xdg-config")
 
 
 # One-line doc notes carried when a managed key is appended (keeps the recipe
@@ -526,62 +606,138 @@ def patch_layout(text, lines):
     return "".join(out)
 
 
-def write_toml_preserving(path, text, statusline_doctor):
-    """Atomically write `text` to `path`, then self-validate via the doctor.
+def _offline_dry_render(entry, candidate, sample_json, host):
+    """Render the CANDIDATE once, fully offline (D-19/D-24), before it is
+    published: the host's real entry with that host's CONFIG_FILE variable
+    pointed at the candidate file.
 
-    Writes to a sibling temp file and os.replace()s it into place (atomic). Then
-    runs `statusline-doctor.py --doctor` against the result
-    (CC_AI_KIT_CONFIG_FILE=path); if the doctor reports problems, the previous file
-    content is restored and False is returned — the wizard must never leave a broken
-    config (§5.1). Returns True on success."""
-    prev = None
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            prev = f.read()
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
+    For Cursor the child gets a fresh synthetic quota cache under a temporary
+    ``XDG_CACHE_HOME`` and an empty ``XDG_CONFIG_HOME`` (same seeding as the
+    preview), so the render can neither fetch nor schedule the detached
+    refresher — a fresh cache never needs a refresh and no auth path resolves.
+    Returns True when the entry exits 0; any spawn failure counts as a
+    rejection (fail closed: an unrenderable candidate is never published).
+    """
+    child = dict(os.environ)
+    child[host_config(host).env_prefix + "CONFIG_FILE"] = candidate
+    child.setdefault("STATUSLINE_COLS", "200")
+    child.setdefault("STATUSLINE_LINES", "40")
+    cache_dir = None
+    try:
+        if host == "cursor":
+            cache_dir = tempfile.mkdtemp(prefix="ai_kit_cursor_render_")
+            _seed_cursor_synthetic_cache(cache_dir, child)
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-S", entry], input=sample_json,
+                capture_output=True, text=True, env=child,
+                timeout=10, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return proc.returncode == 0
+    finally:
+        if cache_dir is not None:
+            shutil.rmtree(cache_dir, ignore_errors=True)
+
+
+def _candidate_file(path, text):
+    """Write the candidate TOML to a sibling temp file in the target's own
+directory (same filesystem, so the later ``os.replace`` is atomic). Returns the
+temp path, or None when the candidate could not be written at all."""
+    dirname = os.path.dirname(path) or "."
+    os.makedirs(dirname, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=dirname, suffix=".candidate")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
-        os.replace(tmp, path)
     except OSError:
-        if os.path.exists(tmp):
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        return False
+        return None
+    return tmp
+
+
+def _doctor_structural_ok(candidate, statusline_doctor, host):
+    """The OFFLINE structural step of a publish: this host's doctor in
+``--host <host> --check <candidate>`` mode with that host's own config-file env
+variable pointed at the candidate bytes, so even the doctor's resolution step
+runs against exactly what is about to be published. Never ``--doctor`` (that is
+the fetch-capable path). Returns ``(ok, reason)``."""
     env = dict(os.environ)
-    env["CC_AI_KIT_CONFIG_FILE"] = path
-    reason = ""
+    env[host_config(host).env_prefix + "CONFIG_FILE"] = candidate
     try:
-        proc = subprocess.run([sys.executable, "-S", statusline_doctor, "--doctor"],
-                              capture_output=True, text=True, env=env, timeout=10,
-                              check=False)
-        ok = proc.returncode == 0
-        if not ok:
-            reason = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        proc = subprocess.run([sys.executable, "-S", statusline_doctor,
+                               "--host", host, "--check", candidate],
+                              capture_output=True, text=True, env=env,
+                              timeout=10, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    if proc.returncode == 0:
+        return True, ""
+    return False, ((proc.stdout or "") + (proc.stderr or "")).strip()
+
+
+def _report_rejected_candidate(reason, render_rejected):
+    """Say OUT LOUD why a candidate was not published (a swallowed reason left
+the user and the install summary with no clue what to fix)."""
+    label = "dry render rejected" if render_rejected else "doctor rejected"
+    print(f"{label} the status-line config:", file=sys.stderr)
+    for line in reason.splitlines():
+        print(f"  {line}", file=sys.stderr)
+
+
+def write_toml_preserving(path, text, statusline_doctor, host="claude"):
+    """Publish `text` to `path` OFFLINE (D-23 / D23-C3 / D-19): validate a
+    candidate FIRST, then publish it atomically — the live file is never briefly
+    invalid.
+
+    1. write the candidate to a sibling temp file in the same directory;
+    2. validate it OFFLINE by the doctor's structural check with this host's own
+       config-file env var pointed at the candidate (`--host <host>
+       --check <candidate>`), so even the doctor's resolution step is exercised
+       against the exact bytes about to be published;
+    3. when the caller also hands over the host's entry (the `(doctor, entry)`
+       shape), dry-render that candidate OFFLINE with the host's sample payload
+       — for Cursor against a fresh synthetic quota cache, so the render
+       triggers no fetch and no detached refresher (the network-active
+       `--doctor` is never used on a save path);
+    4. only on success publish it with `os.replace()` and return True. A
+       rejected candidate is deleted, the LIVE file is left byte-untouched, the
+       reason is printed (a swallowed reason left the user and the install
+       summary with no clue what to fix), and False is returned — the wizard
+       must never leave a broken config (§5.1).
+
+    `statusline_doctor` may be a path or a (doctor, entry) tuple; with a plain
+    path only the structural step runs (the legacy/headless call shapes)."""
+    entry = None
+    if isinstance(statusline_doctor, tuple):
+        statusline_doctor, entry = statusline_doctor
+    tmp = _candidate_file(path, text)
+    if tmp is None:
+        return False
+    ok, reason = _doctor_structural_ok(tmp, statusline_doctor, host)
+    render_rejected = False
+    if ok and entry is not None and not _offline_dry_render(
+            entry, tmp, _read_sample_json(host), host):
+        # Step 3: the offline synthetic-quota dry render rejected these bytes.
         ok = False
-        reason = str(exc)
+        render_rejected = True
     if not ok:
-        if reason:
-            # Surface WHY the doctor rejected it — a swallowed reason left the
-            # user (and the install summary) with no clue what to fix.
-            print("doctor rejected the status-line config:", file=sys.stderr)
-            for line in reason.splitlines():
-                print(f"  {line}", file=sys.stderr)
-        if prev is None:
-            os.unlink(path)
-        else:
-            # Restore the prior (already-valid) content atomically too, so an
-            # interrupted revert can't leave a truncated config behind.
-            rfd, rtmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
-                                         suffix=".tmp")
-            try:
-                with os.fdopen(rfd, "w", encoding="utf-8") as f:
-                    f.write(prev)
-                os.replace(rtmp, path)
-            except OSError:
-                if os.path.exists(rtmp):
-                    os.unlink(rtmp)
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        if reason or render_rejected:
+            _report_rejected_candidate(reason, render_rejected)
+        return False
+    try:
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except OSError as exc:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        # A rejected candidate has its own message above; a FAILED publish needs
+        # one too, or the install summary reports a host as unwritable with no
+        # reason at all. The live file is still byte-untouched here.
+        print(f"warn: could not publish {path}: {exc}", file=sys.stderr)
         return False
     return True
 
@@ -764,9 +920,10 @@ def _external_entry(fields, filename, path, provenance):
     destination); `name` is the UI display label (header `name=` or id fallback).
     `provenance` is "bundled" or "user"."""
     try:
-        line = int(fields["line"]) if "line" in fields else len(LAYOUT_DEFAULTS) - 1
+        line = int(fields["line"]) if "line" in fields else \
+            len(host_config("claude").default_layout) - 1
     except (TypeError, ValueError):
-        line = len(LAYOUT_DEFAULTS) - 1
+        line = len(host_config("claude").default_layout) - 1
     seg_id = fields["id"]
     return {
         "id": seg_id,
@@ -807,10 +964,13 @@ def _discover_user_segments(segments_dir):
     return out
 
 
-def discover_external_segments(paths, examples_dir):
-    """Merge bundled (examples/segments/) and user (paths.segments_dir) external
-    segments. Each entry carries {id, filename, name, path, default_on,
-    description, icon, sample, line, provenance} where provenance is
+def discover_external_segments(paths, examples_dir, host="claude"):
+    """Merge bundled (examples/segments/) and user (this host's provider dir)
+    external segments. Bundled examples are host-neutral drop-ins; the user
+    dimension is read from `_provider_dir(paths, host)` so a Cursor host never
+    sees Claude's user segments and vice versa (D-22). Each entry carries
+    {id, filename, name, path, default_on, description, icon, sample, line,
+    provenance} where provenance is
     "bundled" | "user". On an id collision the USER entry wins (it shadows
     the bundled copy the user customized). All entries default OFF in the wizard
     unless claude-statusline.toml enables them. `filename` is preserved from the
@@ -819,7 +979,7 @@ def discover_external_segments(paths, examples_dir):
     merged = {}
     for e in discover_example_segments(examples_dir):
         merged[e["id"]] = e
-    for e in _discover_user_segments(paths.segments_dir):
+    for e in _discover_user_segments(_provider_dir(paths, host)):
         merged[e["id"]] = e        # user overrides bundled
     return sorted(merged.values(), key=lambda e: e["id"])
 
@@ -841,10 +1001,13 @@ def _atomic_write_executable(dst, data):
         raise
 
 
-def install_example_segments(examples, config_dir, seg_state=None):
+def install_example_segments(examples, config_dir, seg_state=None,
+                            provider_dir="segments"):
     """Install each chosen example external segment: copy it into the XDG-aware
-    segments dir (`config_dir/segments` — `config_dir` comes from resolve_paths,
-    so XDG_CONFIG_HOME is already honored), make it executable, and enable its
+    provider dir (`config_dir/<provider_dir>` — `config_dir` comes from
+    resolve_paths, so XDG_CONFIG_HOME is already honored; `provider_dir` comes
+    from the host's own ConfigSpec so a Cursor example lands in
+    `segments-cursor`, never Claude's dir), make it executable, and enable its
     `segments.<id>` toggle (set `seg_state[id] = True` when a state dict is
     given). Idempotent: a destination already holding the same bytes is left
     untouched and a re-run never duplicates (one fixed dest path per name); a
@@ -852,7 +1015,7 @@ def install_example_segments(examples, config_dir, seg_state=None):
     A provider whose source can't be read or whose destination is bad/blocked
     (name already a directory, unwritable dir) is SKIPPED with a warning rather
     than aborting the whole install. Returns the installed ids in input order."""
-    seg_dir = os.path.join(config_dir, "segments")
+    seg_dir = os.path.join(config_dir, provider_dir)
     os.makedirs(seg_dir, exist_ok=True)
     ids = []
     for ex in examples:
@@ -2728,32 +2891,34 @@ def unwire_hook_cursor(cursor_hooks, dry):
         cursor_hooks, data, dry, "would remove ai-kit sessionStart hook")
 
 
-def _segment_changes_vs_recipe(path, segments):
+def _segment_changes_vs_recipe(path, segments, host="claude"):
     """The {key: bool} subset of `segments` that DIFFERS from what `path` currently
-    resolves to — the minimal set of segment keys to patch (key granularity).
+    resolves to for `host` — the minimal set of segment keys to patch (key
+    granularity).
 
-    Only BUILT-IN segment keys (those present in the recipe) are considered:
-    external/drop-in segments (e.g. ``system_memory``) are persisted as their own
-    files, never as ``[segments]`` entries, and the doctor rejects an unknown key
-    in that table. ``state["segments"]`` carries external on/off state for the
-    examples installer, so it is filtered HERE rather than upstream."""
-    current = current_segments(path)
+    Only BUILT-IN segment keys (those present in that host's resolved config) are
+    considered: external/drop-in segments (e.g. ``system_memory``) are persisted
+    as their own files, never as ``[segments]`` entries, and the doctor rejects an
+    unknown key in that table. ``state["segments"]`` carries external on/off state
+    for the examples installer, so it is filtered HERE rather than upstream."""
+    current = current_segments(path, host)
     return {k: v for k, v in segments.items()
             if k in current and current.get(k) != v}
 
 
-def save_statusline_config(path, seg_changes, layout, statusline_doctor):
+def save_statusline_config(path, seg_changes, layout, statusline_doctor,
+                           host="claude"):
     """Apply the managed edits to the file at `path` via surgical text patches,
-    then atomically write + doctor-validate. `seg_changes` is the minimal changed
-    {key: bool}; `layout` is None (unchanged) or the full list of line dicts.
-    Returns True on success."""
+    then validate-offline + atomically publish. `seg_changes` is the minimal
+    changed {key: bool}; `layout` is None (unchanged) or the full list of line
+    dicts. Returns True on success."""
     with open(path, encoding="utf-8") as f:
         text = f.read()
     if seg_changes:
         text = patch_segments(text, seg_changes)
     if layout is not None:
         text = patch_layout(text, layout)
-    return write_toml_preserving(path, text, statusline_doctor)
+    return write_toml_preserving(path, text, statusline_doctor, host=host)
 
 
 def _find_line(layout, seg):
@@ -3034,10 +3199,19 @@ def _term_dimensions(env):
 
 
 
-def _persist_layout(paths, state, dry, known_ext_ids=None):
-    """Compute the minimal seg_changes + layout diff vs disk, then delegate to
-    ``save_statusline_config`` for the atomic write + doctor validation + auto-
-    revert (FR-W.5).  Returns True on success (including no-op and dry-run).
+def _provider_dir(paths, host):
+    """The host's own external-segment provider directory, resolved from that
+    host's lazily-read ConfigSpec (D-22) — `~/.config/ai-kit/segments` for
+    Claude, `~/.config/ai-kit/segments-cursor` for Cursor. Same path the host's
+    renderer reads when its AI_KIT_<HOST>_EXTERNAL_DIR override is unset."""
+    return os.path.join(paths.config_dir, host_config(host).provider_dir)
+
+
+def _persist_layout(paths, state, dry, known_ext_ids=None, host="claude"):
+    """Compute the host's minimal seg_changes + layout diff vs that host's own
+    config, then delegate to ``save_statusline_config`` for the offline
+    validation + atomic publish (FR-W.5 / D-23).  Returns True on success
+    (including no-op and dry-run).
 
     ``known_ext_ids``, when given, is the set of external segment ids to treat
     as "already installed" for the boolean-toggle special-case below. An id
@@ -3059,11 +3233,12 @@ def _persist_layout(paths, state, dry, known_ext_ids=None):
     which of the two applies — this function only honors whatever set it is
     given. ``None`` (the default, used by every other caller) falls back to a
     live disk scan exactly as before."""
+    cfg = _statusline_paths(paths, host)[0]
     if dry:
-        print("[dry-run] would write status-line config — no changes made",
+        print(f"[dry-run] would write {host}'s status-line config — no changes made",
               file=sys.stderr)
         return True
-    seg_changes = _segment_changes_vs_recipe(paths.config_toml, state["segments"])
+    seg_changes = _segment_changes_vs_recipe(cfg, state["segments"], host)
     # External toggles: only providers PRESENT in the segments dir are known to the
     # doctor (it rejects unknown [segments] keys), so only those may be written.
     # A not-yet-installed bundled example is handled by install_example_segments
@@ -3073,37 +3248,45 @@ def _persist_layout(paths, state, dry, known_ext_ids=None):
     if known_ext_ids is not None:
         ext_ids_for_write = known_ext_ids
     else:
-        ext_ids_for_write = {e["id"] for e in _discover_user_segments(paths.segments_dir)}
+        ext_ids_for_write = {e["id"]
+                             for e in _discover_user_segments(_provider_dir(paths, host))}
     for ext_id in ext_ids_for_write:
         if ext_id not in state["segments"]:
             continue
         desired = bool(state["segments"][ext_id])
-        if desired != _external_enabled_in_toml(paths.config_toml, ext_id, default_on=True):
+        if desired != _external_enabled_in_toml(cfg, ext_id, default_on=True):
             seg_changes[ext_id] = desired
-    layout = state["layout"] if state["layout"] != current_layout(paths.config_toml) \
+    layout = state["layout"] if state["layout"] != current_layout(cfg, host) \
         else None
     if not (seg_changes or layout is not None):
         return True   # nothing to write — already up-to-date
-    return save_statusline_config(paths.config_toml, seg_changes, layout,
-                                  paths.statusline_doctor)
+    # D-19: hand the publish primitive this host's entry too, so validation is
+    # structural check PLUS an offline dry render of the candidate (synthetic
+    # quota for Cursor) — never the fetch-capable `--doctor`.
+    _cfg, _sample, entry, _wiring = _statusline_paths(paths, host)
+    return save_statusline_config(cfg, seg_changes, layout,
+                                  (paths.statusline_doctor, entry), host=host)
 
 
-def _recover_incompatible_config(paths, dry):
-    """If an existing claude-statusline.toml is rejected by the doctor (e.g. it carries
-    stale segment keys from a pre-rename ai-kit), back it up to ``<file>.bak`` and
-    regenerate a fresh one from the recipe so the wizard's choices apply on a
-    valid base. Returns True when a recovery happened.
+def _recover_incompatible_config(paths, dry, host="claude"):
+    """If an existing HOST config is rejected by the doctor (e.g. it carries
+    stale segment keys from a pre-rename ai-kit), back it up to ``<file>.bak``
+    and regenerate a fresh one from that host's own recipe so the wizard's
+    choices apply on a valid base. Returns True when a recovery happened.
 
-    Uses the doctor's structural ``--check`` (not ``--doctor``) so an
-    environment-specific render failure never triggers a reset — only an
+    Uses the doctor's structural ``--host <host> --check`` (not ``--doctor``) so
+    an environment-specific render failure never triggers a reset — only an
     actually-incompatible file does."""
-    cfg = paths.config_toml
-    if not os.path.isfile(cfg) or not os.path.isfile(paths.sample):
+    cfg, sample = _statusline_paths(paths, host)[:2]
+    if not os.path.isfile(cfg) or not os.path.isfile(sample):
         return False
+    env = dict(os.environ)
+    env[host_config(host).env_prefix + "CONFIG_FILE"] = cfg
     try:
         proc = subprocess.run(
-            [sys.executable, "-S", paths.statusline_doctor, "--check", cfg],
-            capture_output=True, text=True, timeout=10, check=False)
+            [sys.executable, "-S", paths.statusline_doctor,
+             "--host", host, "--check", cfg],
+            capture_output=True, text=True, env=env, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return False
     if proc.returncode == 0:
@@ -3115,29 +3298,35 @@ def _recover_incompatible_config(paths, dry):
         return True
     try:
         shutil.copyfile(cfg, bak)
-        shutil.copyfile(paths.sample, cfg)
+        shutil.copyfile(sample, cfg)
     except OSError as exc:
         print(f"warn: could not reset incompatible config ({exc})", file=sys.stderr)
         return False
-    print("note: your status-line config was incompatible with this ai-kit "
-          "version and has been reset to defaults.\n"
+    print(f"note: your {host} status-line config was incompatible with this "
+          "ai-kit version and has been reset to defaults.\n"
           f"      your previous file is preserved at {bak}", file=sys.stderr)
     return True
 
 
 def persist_statusline(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     paths, state, adopt, dry, tty=None, assume_overwrite=False, known_ext_ids=None,
+    host="claude",
 ):
-    """Conditionally persist the status-line config + wire settings.json.
+    """Conditionally persist ONE host's status-line config + that host's wiring.
 
-    adopt is False  -> NO-OP: write neither claude-statusline.toml nor settings.json's
-                       statusLine; an existing status line is left untouched.
-    adopt is True   -> ensure the recipe exists (copy-if-absent), write
-                       claude-statusline.toml (doctor-validated, auto-revert) via
-                       _persist_layout, then set settings.json statusLine to
-                       `python3 -S <status_line>` UNLESS it already points at ours
-                       (reconfigure leaves a correct, possibly hand-edited command
-                       in place). Returns True on success.
+    adopt is False  -> NO-OP: write neither <host>.toml nor the host's wiring;
+                       an existing status line is left untouched.
+    adopt is True   -> ensure that host's OWN recipe exists (copy-if-absent),
+                       write that host's config (offline-validated, published
+                       atomically) via _persist_layout, then set that host's
+                       wiring to `python3 -S <that host's entry>` UNLESS it
+                       already points at ours (reconfigure leaves a correct,
+                       possibly hand-edited command in place). Returns True on
+                       success. Every path/entry/wiring target comes from the
+                       single `_statusline_paths()` resolver over `Paths` plus
+                       the host's lazily-read ConfigSpec — no call site chooses
+                       paths from a second table, and no Claude-only name is
+                       reused for a Cursor call (D-20/D-22/C-D23-1).
 
     ``known_ext_ids`` is forwarded to ``_persist_layout`` unchanged — see its
     own docstring; ``None`` (the default) preserves the original live-disk-scan
@@ -3148,53 +3337,77 @@ def persist_statusline(  # pylint: disable=too-many-arguments,too-many-positiona
     True, so no status-line file is read or written)."""
     if not adopt:
         return True
+    cfg, sample, entry, wiring = _statusline_paths(paths, host)
     # Adopting: the config TOML must exist before _persist_layout patches it.
     # copy-if-absent is gated here (NOT pre-wizard) so a non-adopting run never
-    # materializes a claude-statusline.toml (Task 10 constraint 1).
-    copy_recipe_if_absent(paths.sample, paths.config_toml, dry)
+    # materializes a status-line config (Task 10 constraint 1).
+    copy_recipe_if_absent(sample, cfg, dry)
     # An existing config from an incompatible (e.g. pre-rename) ai-kit would be
     # rejected by the doctor and block the whole persist; recover it first.
-    _recover_incompatible_config(paths, dry)
-    if not _persist_layout(paths, state, dry, known_ext_ids=known_ext_ids):
+    _recover_incompatible_config(paths, dry, host=host)
+    if not _persist_layout(paths, state, dry, known_ext_ids=known_ext_ids,
+                           host=host):
         return False
-    if detect_statusline(paths)["state"] == "ours":
+    detect = (detect_statusline if host == "claude" else detect_statusline_cursor)(paths)
+    if detect["state"] == "ours":
         return True
-    # Propagate wire_statusline's return (Task 9 left it discarded): True when
-    # statusLine now points at ai-kit, False when left untouched (declined /
-    # headless-foreign). The config write already succeeded, so a declined wire
-    # is not a hard failure — but the caller can see what happened.
-    return wire_statusline(paths.settings, paths.status_line, tty, dry,
-                           assume_overwrite=assume_overwrite)
+    # Propagate the wire helper's return: True when the wiring now points at
+    # ai-kit, False when left untouched (declined / headless-foreign). The
+    # config write already succeeded, so a declined wire is not a hard
+    # failure — but the caller can see what happened.
+    if host == "claude":
+        return wire_statusline(wiring, entry, tty, dry,
+                               assume_overwrite=assume_overwrite)
+    return wire_statusline_cursor(wiring, entry, tty, dry,
+                                  assume_overwrite=assume_overwrite)
 
 
-def _sample_input_path():
+def _sample_input_path(host="claude"):
+    """The preview payload for one host. Claude reads tests/fixtures/
+    sample-input.json; Cursor reads tests/fixtures/sample-input-cursor.json —
+    a Claude-shaped payload extended with the cursor:* fields. Missing file
+    returns the path anyway; callers degrade to ``"{}"``."""
+    name = ("sample-input-cursor.json" if host == "cursor"
+            else "sample-input.json")
     return os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "..", "tests", "fixtures", "sample-input.json")
+                        "..", "tests", "fixtures", name)
 
 
-def _engine_ns(paths, sample_json):
-    """Bundle the engine callables as a SimpleNamespace for injection into
-    WizardContext.  wizard_app calls these at runtime; they all live here so
-    wizard_app imports nothing from setup.py.
+def _read_sample_json(host):
+    try:
+        with open(_sample_input_path(host), encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return "{}"
+
+
+def _engine_ns(paths, host, sample_json):
+    """Bundle the engine callables for ONE host as a SimpleNamespace for
+    injection into that host's HostView.  wizard_app calls these at runtime;
+    they all live here so wizard_app imports nothing from setup.py.
 
     ``sample_json`` is captured by the ``_render_preview`` closure so the
-    render call is self-contained (no shared mutable state)."""
+    render call is self-contained (no shared mutable state). The closure passes
+    the HOST's own entry, base config and host id — a Cursor preview never
+    calls the Claude entry with Claude-only env names (D-20)."""
     # `types` is stdlib; the import is here (not top-level) because this helper
     # is only called from the wizard path (after uv re-exec), not from the
     # stdlib-only status-line render path.
     import types as _types  # pylint: disable=import-outside-toplevel
 
+    cfg, sample, entry, _wiring = _statusline_paths(paths, host)
+
     def _render_preview(segments, layout=None):
         base_config = None
         if layout is not None:
-            cfg = paths.config_toml if os.path.isfile(paths.config_toml) else paths.sample
+            cfg_src = cfg if os.path.isfile(cfg) else sample
             try:
-                with open(cfg, encoding="utf-8") as fh:
+                with open(cfg_src, encoding="utf-8") as fh:
                     base_config = fh.read()
             except OSError:
                 base_config = ""
-        return render_preview(paths.status_line, segments, sample_json, {},
-                              layout=layout, base_config=base_config)
+        return render_preview(entry, segments, sample_json, {},
+                              layout=layout, base_config=base_config, host=host)
 
     return _types.SimpleNamespace(
         render_preview=_render_preview,
@@ -3222,22 +3435,114 @@ def _hook_selection_items(paths):
     return items, initial
 
 
+def _examples_segments_dir():
+    """The repo's bundled example-segments directory — offered to EVERY
+    detected host (D-18), unlike a host's own provider dir."""
+    return os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "examples", "segments")
+
+
+def _host_view_state(paths, cfg, host, external):
+    """One host's wizard state dict: that host's OWN segment state, layout and
+    adoption answer.
+
+    Segment state = the host's built-in defaults/config plus every discovered
+    external keyed by id. A provenance-"user" external lives in that host's
+    provider dir and renders by default (ON unless the host's own config
+    disables it); a "bundled" example is only in examples/ and is not yet
+    installed, so it stays an OFF offer until chosen (D-18)."""
+    segments = current_segments(cfg, host)
+    for ext in external:
+        segments[ext["id"]] = _external_enabled_in_toml(
+            cfg, ext["id"], default_on=ext["provenance"] == "user")
+    return {"segments": segments,
+            "layout": current_layout(cfg, host), "dirty": False,
+            "adopt": _detect_for(paths, host)["state"] == "ours"}
+
+
+def _host_done_hint(host, label):
+    """The one-sentence next action for that host's own CLI."""
+    if host == "claude":
+        return f"Open a new {label} session to see your status line."
+    return (f"Open a new {label} session (agent --resume) to see your "
+            "status line.")
+
+
+def _host_view(wizard_app_mod, paths, host, inventory=None):
+    """Assemble one host's HostView: the host's OWN segment state, external
+    segments, lazily-read ConfigSpec-derived metadata, per-host engine closure,
+    live status-line callable, sample payload and gate/Done wording.
+
+    Every path comes from `_statusline_paths()` over the already-resolved
+    `Paths`; every default/filename/prefix from `host_config(host)` (lazy host
+    module import). No second settings table and no copied defaults exist here
+    (D-20/D-22)."""
+    cfg, _sample, _entry, _wiring = _statusline_paths(paths, host)
+    spec = host_config(host)
+    if inventory is None:
+        inventory = load_segment_inventory(INVENTORY_PATH, host)
+    segment_meta = build_segment_meta(inventory,
+                                      _statusline_icon_line_overrides(cfg))
+    external = discover_external_segments(paths, _examples_segments_dir(), host=host)
+    label = _HOST_LABELS.get(host, host)
+    sample_json = _read_sample_json(host)
+    return wizard_app_mod.HostView(
+        id=host, label=label,
+        config_label=f"~/.config/ai-kit/{spec.config_filename}",
+        wiring_label=_WIRING_LABELS.get(host, "host settings"),
+        state=_host_view_state(paths, cfg, host, external),
+        # Live callable, not a frozen dict — re-read fresh every time the
+        # wizard's gate needs it, mirroring the renderer's own re-probing.
+        status_line=lambda: _detect_for(paths, host),
+        segment_meta=segment_meta,
+        external_segments=external,
+        sample_json=sample_json,
+        engine=_engine_ns(paths, host, sample_json),
+        done_hint=_host_done_hint(host, label),
+    )
+
+
+def _detect_for(paths, host):
+    """The host's live status-line adoption reading (claude/cursor share the
+    `state` shape; the detection helpers differ only in wiring target)."""
+    return (detect_statusline if host == "claude"
+            else detect_statusline_cursor)(paths)
+
+
+def _statusline_hosts_present(paths):
+    """Status-line hosts to offer a host view for, Claude first.
+
+    A host counts when its OWN config directory already exists — `~/.claude`
+    (or CLAUDE_CONFIG_DIR) for Claude Code, the resolved Cursor config dir for
+    Cursor CLI — never created by detection and never keyed on a binary on
+    PATH. This is the SAME `statusline_host_present` rule the headless
+    `--with-statusline` path uses (SPEC R11 / C-D12-2), so the wizard and the
+    headless installer can never disagree about what is installed, and an
+    absent dir means the wizard simply never offers that host instead of
+    fabricating state for it."""
+    return tuple(statusline_hosts_detected(paths))
+
+
 def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
-    paths, entries, installed, sample_json, wizard_app_mod,
+    paths, entries, installed, wizard_app_mod, hosts=None,
     stale=None, predecessor_cands=None, pi_predecessor_cands=(), pi_stale=(),
     replace_cands=(),
 ):
-    """Construct WizardContext for launch_wizard (extracted for testability).
+    """Construct the host-keyed WizardContext for launch_wizard (extracted for
+    testability): the component selection/meta/housekeeping plus one HostView
+    per status-line host (D-10/D-22).
 
     ``wizard_app_mod`` is the already-imported wizard_app module, passed
     explicitly so tests can supply ``tools.wizard_app`` without module-identity
-    issues (the bare ``import wizard_app`` in launch_wizard is a different object
-    than ``from tools import wizard_app``).
+    issues.
+
+    ``hosts`` overrides detection (tests/stubbing); ``None`` resolves it from
+    this machine: Claude when the `claude` binary is on PATH, Cursor when
+    `~/.cursor/cli-config.json` exists.
 
     ``stale``/``predecessor_cands`` are launch_wizard's pre-computed detection
     results (Task 3): supplying them here only shapes ``ctx.housekeeping``'s
-    display strings — defaulting to empty when omitted (existing callers that
-    don't care about housekeeping keep working unmodified).
+    display strings — defaulting to empty when omitted.
 
     ``_initial_enabled`` is keyed by the INSTALLED state, not the wizard's
     visual pre-selection.  On a first run the wizard pre-checks everything, but
@@ -3262,24 +3567,14 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
     sel.items.extend([list(item) for item in hook_items])
     initial_enabled.update(hook_initial)
 
-    sl_state = detect_statusline(paths)
-    inventory = load_segment_inventory(INVENTORY_PATH)
-    overrides = _statusline_icon_line_overrides(paths.config_toml)
-    segment_meta = build_segment_meta(inventory, overrides)
-    examples_dir = os.path.join(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))), "examples", "segments")
-    external = discover_external_segments(paths, examples_dir)
-
-    # Wizard segment state = built-in defaults/recipe, plus every discovered
-    # external keyed by id. A discovered external's default mirrors the renderer:
-    # provenance "user" means it lives in the segments dir and renders by default
-    # (default ON, unless claude-statusline.toml disables it); a "bundled" example is only
-    # in examples/ and not yet installed, so it is an OFF offer until chosen.
-    segments = current_segments(paths.config_toml)
-    for e in external:
-        on_by_default = e["provenance"] == "user"   # "user" = present in segments dir
-        segments[e["id"]] = _external_enabled_in_toml(
-            paths.config_toml, e["id"], default_on=on_by_default)
+    if hosts is None:
+        hosts = _statusline_hosts_present(paths)
+    inventory_claude = load_segment_inventory(INVENTORY_PATH, "claude")
+    host_views = tuple(
+        _host_view(wizard_app_mod, paths, host,
+                   inventory=(inventory_claude if host == "claude" else None))
+        for host in hosts
+    )
 
     component_meta = {
         name: _read_component_desc(abspath)
@@ -3300,19 +3595,10 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
 
     return wizard_app_mod.WizardContext(
         selection=sel,
-        state={"segments": segments,
-               "layout": current_layout(paths.config_toml), "dirty": False,
-               "adopt": sl_state["state"] == "ours",
-               "_initial_enabled": initial_enabled},
-        sample_json=sample_json,
-        engine=_engine_ns(paths, sample_json),
-        # Live callable, not a frozen dict — re-read fresh every time the
-        # wizard's gate needs it, mirroring claude-status-line.py's own re-probing.
-        status_line=lambda: detect_statusline(paths),
-        segment_meta=segment_meta,
-        external_segments=external,
+        state={"_initial_enabled": initial_enabled},
         component_meta=component_meta,
         housekeeping=housekeeping,
+        hosts=host_views,
     )
 
 
@@ -3350,133 +3636,127 @@ def apply_hook_selection(paths, checked, dry, counts):
     return ok
 
 
+def _commit_known_ext_ids(paths, host, state, examples_flag, dry):
+    """Per-host version of the example-segment pre-install the commit needs.
+
+    A discovered bundled example (e.g. system_memory) must exist under THIS
+    host's provider dir before ``persist_statusline`` self-validates, otherwise
+    the doctor rejects it as an unknown ``[[line]]`` segment — every discovered
+    example is installed unconditionally (the Arrange board places every
+    discovered segment somewhere, and the doctor validates every id present
+    anywhere in ``[[line]]``, enabled or not).
+
+    The pre-install disk snapshot is passed to ``_persist_layout`` as
+    ``known_ext_ids``: without it, an off-by-default example installed moments
+    ago would get an explicit ``segments.<id> = false`` written for it, masking
+    a later ``--examples=all`` caller. An id whose DESIRED state is explicitly
+    OFF is folded back into the set so an explicit ``false`` IS written instead
+    of the present-on-disk ON default silently overriding a declined segment.
+
+    "Desired" has two sources: an explicit ``--examples`` flag is AUTHORITATIVE
+    (it wins over the wizard's toggles, mirroring ``resolve_example_selection``)
+    while no flag falls back to the host's own ``state["segments"]`` toggles.
+
+    Returns the ``known_ext_ids`` set to persist with (empty when nothing was
+    discovered)."""
+    known = {e["id"] for e in _discover_user_segments(_provider_dir(paths, host))}
+    examples_dir = os.path.join(paths.install_dir, "examples", "segments")
+    examples = discover_example_segments(examples_dir)
+    if examples and not dry:
+        install_example_segments(examples, paths.config_dir,
+                                provider_dir=host_config(host).provider_dir)
+    if not examples:
+        return known
+    if examples_flag is not None:
+        desired_ids = {e["id"] for e in resolve_example_selection(examples_flag, examples)}
+    else:
+        desired_ids = {
+            e["id"] for e in examples if (state.get("segments") or {}).get(e["id"], False)
+        }
+    newly_installed_desired_off = {
+        e["id"] for e in examples
+        if e["id"] not in known and e["id"] not in desired_ids
+    }
+    return known | newly_installed_desired_off
+
+
+def _commit_components(paths, entries, selection, dry, counts):
+    """The component half of the wizard commit: the selected symlinks, the pi
+    mirror and the hook rows. Runs once for the whole install (never per host).
+
+    Returns ``(log, hooks_ok)`` with every diagnostic captured — this runs on a
+    Textual worker thread, so it must not touch the real stdout/stderr."""
+    sel = cast(Selection, selection)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        sel_sets = sel.category_sets(CATEGORIES)
+        all_sets = sel.category_sets((*CATEGORIES, "hooks"))
+        apply_selection(sel_sets, entries, paths.claude_dir, dry, counts)
+        # The pi root mirrors the same selection (D-14): a deselected
+        # PI_SKILLS entry is unlinked there too, through sync_pi_links'
+        # mirror branch.
+        sync_pi_links(paths, entries, dry, counts,
+                      names=sel_sets["skills"], mirror=True)
+        hooks_ok = apply_hook_selection(paths, all_sets.get("hooks", set()), dry, counts)
+    return buf.getvalue(), hooks_ok
+
+
+def _commit_host_statusline(paths, host, host_state, dry, examples_flag):
+    """ONE host's status-line commit: its own offline-validated config write and
+    its own wiring, with its diagnostics captured into its OWN log string
+    (T-23-53: a rejected Cursor candidate never blocks Claude and a declined
+    host is never written at all). Returns ``{"ok", "adopt", "log"}``."""
+    host_state = host_state or {}
+    adopt = bool(host_state.get("adopt"))
+    hbuf = io.StringIO()
+    host_ok = True
+    if adopt:
+        with contextlib.redirect_stdout(hbuf), contextlib.redirect_stderr(hbuf):
+            known_ext_ids = _commit_known_ext_ids(
+                paths, host, host_state, examples_flag, dry)
+            host_ok = persist_statusline(
+                paths, host_state, adopt, dry, tty=None,
+                assume_overwrite=True, known_ext_ids=known_ext_ids,
+                host=host)
+    return {"ok": bool(host_ok), "adopt": adopt, "log": hbuf.getvalue()}
+
+
 def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
     """Build the ``commit`` callable the wizard runs IN-UI on Review-confirm.
 
-    It performs the real install — component symlinks, then (if the user adopted
-    the status line at the gate) the doctor-validated config write + settings.json
-    wiring — honoring the adopt decision already made in the UI (``assume_overwrite``
-    so a foreign command isn't re-prompted on the terminal).
+    It performs the real install — component symlinks, then, per host the user
+    adopted at that host's gate, that host's offline-validated config write plus
+    that host's wiring — honoring the adopt decision already made in the UI
+    (``assume_overwrite`` so a foreign command isn't re-prompted on the
+    terminal). Hosts are committed in detection order (Claude first) and one
+    host's failure never skips the others (D-11).
 
-    ``examples_flag`` is the CLI ``--examples`` value (``None``/``"all"``/``"none"``/
-    an id list), forwarded from ``cmd_install``. It is the AUTHORITATIVE desired
-    state for every discovered bundled example when given (mirrors
-    ``resolve_example_selection``'s own "flag wins" semantics), overriding the
-    wizard's own toggle. ``None`` (no flag on the command line) falls back to the
-    wizard's own ``state["segments"]`` toggle — see the in-body comment below for
-    why this distinction is load-bearing.
+    ``examples_flag`` is the CLI ``--examples`` value (``None``/``"all"``/
+    ``"none"``/an id list). It is the AUTHORITATIVE desired state for every
+    discovered bundled example when given, overriding each host's own toggle —
+    see ``_commit_known_ext_ids`` for why the distinction is load-bearing.
 
-    The callable is invoked from a Textual worker thread, so it must NOT print to
-    stdout/stderr (that would corrupt the alternate screen). All diagnostics the
-    inner functions emit (doctor rejection reason, incompatible-config reset note,
-    …) are captured into the returned ``log`` string; the caller prints it AFTER
-    the app exits. Returns an outcome dict the Done screen renders:
-    ``{"ok": bool, "adopt": bool, "log": str}``."""
-    def commit(selection, state):
-        sel = cast(Selection, selection)
-        adopt = bool(state.get("adopt"))
-        buf = io.StringIO()
-        ok = True
-        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            sel_sets = sel.category_sets(CATEGORIES)
-            all_sets = sel.category_sets((*CATEGORIES, "hooks"))
-            apply_selection(sel_sets, entries,
-                            paths.claude_dir, dry, counts)
-            # The pi root mirrors the same selection (D-14): a deselected
-            # PI_SKILLS entry is unlinked there too, through sync_pi_links'
-            # mirror branch.
-            sync_pi_links(paths, entries, dry, counts,
-                          names=sel_sets["skills"], mirror=True)
-            hooks_ok = apply_hook_selection(
-                paths, all_sets.get("hooks", set()), dry, counts)
-            statusline_ok = True
-            if adopt:
-                # A discovered bundled example segment (e.g. system_memory) must
-                # actually exist under paths.segments_dir before persist_statusline's
-                # self-validating doctor call runs below — otherwise the doctor
-                # rejects it as an unknown [[line]] segment, since cmd_install's own
-                # example-segment install step (install_example_segments) would
-                # otherwise only run AFTER the wizard returns. This applies
-                # regardless of the segment's enabled/disabled toggle: the Arrange
-                # board's state["layout"] places EVERY discovered segment somewhere
-                # (a disabled one lands in the tray line, not omitted from the
-                # layout array), and the doctor validates every id present anywhere
-                # in [[line]] segments, not just the enabled ones — so filtering to
-                # only toggled-on ids here would still leave a disabled-but-present
-                # example unvalidatable.
-                #
-                # Snapshot which external ids were ALREADY on disk before this
-                # install, then pass that snapshot as known_ext_ids to
-                # persist_statusline: without it, _persist_layout would see the
-                # example we're about to install as "already present" and write
-                # an explicit `segments.<id> = false` for an off-by-default
-                # example — masking it even for a caller (e.g. `--examples=all`,
-                # applied later in cmd_install) that intends it visible. Passing
-                # the pre-install snapshot preserves the original "not yet
-                # installed -> no explicit boolean, renderer shows it by default"
-                # outcome for a first-time install, while still letting the file
-                # physically exist in time for the doctor's structural check.
-                # install_example_segments is idempotent (skips unchanged
-                # content) and does not itself enable a segment, so installing
-                # every discovered example unconditionally here, and again,
-                # redundantly, from cmd_install after the wizard returns, is
-                # safe for the ON case — but the OFF case needs one more step:
-                # a newly-installed example whose desired state is OFF must NOT
-                # be left out of known_ext_ids, or _persist_layout's
-                # boolean-toggle loop below can never see it and an explicit
-                # `false` never gets written, so it renders ON by the same
-                # present-on-disk default (tools/claude-status-line.py:
-                # seg_defaults.setdefault(id, True)) — silently overriding a
-                # user who declined it in the Arrange board, or a fresh
-                # `--examples=none` install. So: fold back in any
-                # newly-installed id whose desired state is explicitly OFF,
-                # forcing an explicit `false` write for it, while every
-                # ON/untouched id keeps the original "not yet installed" -
-                # renderer-default treatment.
-                #
-                # "Desired state" itself has two different sources depending
-                # on how this install was driven, and getting this wrong
-                # reintroduces the same bug from the other direction:
-                #   - an explicit `--examples` flag on the command line
-                #     (examples_flag is not None) is AUTHORITATIVE — it wins
-                #     over the wizard's own toggles (cmd_install's post-wizard
-                #     step already documents this "flag wins" contract), so
-                #     `--examples=all` must render every discovered example
-                #     ON even though the wizard's own default toggle for an
-                #     un-installed bundled example starts OFF; `--examples=
-                #     none`/an explicit id list must be honored exactly.
-                #   - no flag ⇒ fall back to the wizard's own toggle
-                #     (state["segments"]), so a user who never touches the
-                #     Arrange board's example toggle (it defaults OFF for a
-                #     not-yet-installed bundled example — see
-                #     _build_wizard_context) gets the OFF outcome CR-01
-                #     describes, and a user who explicitly turns it on gets ON.
-                known_ext_ids = {e["id"] for e in _discover_user_segments(paths.segments_dir)}
-                examples_dir = os.path.join(paths.install_dir, "examples", "segments")
-                examples = discover_example_segments(examples_dir)
-                if examples and not dry:
-                    install_example_segments(examples, paths.config_dir)
-                if examples_flag is not None:
-                    desired_ids = {
-                        e["id"] for e in resolve_example_selection(examples_flag, examples)
-                    }
-                else:
-                    desired_ids = {
-                        e["id"] for e in examples if state["segments"].get(e["id"], False)
-                    }
-                newly_installed_desired_off = {
-                    e["id"] for e in examples
-                    if e["id"] not in known_ext_ids and e["id"] not in desired_ids
-                }
-                statusline_ok = persist_statusline(
-                    paths, state, adopt, dry, tty=None,
-                    assume_overwrite=True,
-                    known_ext_ids=known_ext_ids | newly_installed_desired_off,
-                )
-                if statusline_ok is False:
-                    ok = False
-            ok = bool(hooks_ok) and bool(statusline_ok) and ok
-        return {"ok": ok, "adopt": adopt, "log": buf.getvalue()}
+    The callable is invoked from a Textual worker thread, so it must NOT print
+    to stdout/stderr (that would corrupt the alternate screen). All diagnostics
+    the inner functions emit (doctor rejection reason, incompatible-config reset
+    note, …) are captured per host into the returned outcome's ``log`` string;
+    the caller prints it AFTER the app exits. Returns
+    ``{"ok": bool, "adopt": bool, "log": str, "hosts": {host: {"ok", "adopt",
+    "log"}}}`` — the component-level keys keep the single-host shape, ``hosts``
+    carries the per-host outcome the Done screen and ``cmd_install`` consume."""
+    def commit(selection, states):
+        component_log, hooks_ok = _commit_components(
+            paths, entries, selection, dry, counts)
+        hosts_out = {}
+        for host, host_state in (states or {}).items():
+            hosts_out[host] = _commit_host_statusline(
+                paths, host, host_state, dry, examples_flag)
+        adopt_any = any(o["adopt"] for o in hosts_out.values())
+        ok = bool(hooks_ok) and all(o["ok"] for o in hosts_out.values())
+        host_log = "\n".join(o["log"] for o in hosts_out.values() if o["log"])
+        return {"ok": ok, "adopt": adopt_any,
+                "log": component_log + (host_log + "\n" if host_log else ""),
+                "hosts": hosts_out}
     return commit
 
 
@@ -3604,8 +3884,6 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
 
     import wizard_app  # pylint: disable=import-outside-toplevel
 
-    with open(_sample_input_path(), encoding="utf-8") as f:
-        sample_json = f.read()
     present = {cat: {n for n, _ in entries[cat]} for cat in CATEGORIES}
     stale = stale_link_candidates(paths.claude_dir, paths.install_dir, present)
     predecessor_cands = predecessor_candidates(paths.claude_dir, paths.install_dir, entries)
@@ -3631,8 +3909,12 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
     replace_cands = [cand for cand in replace_candidates(
         paths, entries, [name for name, _ in entries["skills"]])
         if cand[1] not in pred_paths]
-    ctx = _build_wizard_context(paths, entries, installed, sample_json, wizard_app,
-                                stale, predecessor_cands,
+    # One host view per detected status-line host, built inside the context
+    # assembly — never a copied Claude-only dict (D-22). A status-line host with
+    # no state here is not offered at all: an empty hosts tuple means the flow
+    # simply never reaches Arrange, not a new UI state.
+    ctx = _build_wizard_context(paths, entries, installed, wizard_app,
+                                stale=stale, predecessor_cands=predecessor_cands,
                                 pi_predecessor_cands=pi_predecessor_cands,
                                 pi_stale=pi_stale, replace_cands=replace_cands)
     # The real install (component symlinks + doctor-validated status-line write +
@@ -3669,10 +3951,16 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
     # callback (their counts mutations are reflected in `counts`). Surface the
     # captured diagnostics now that the alternate screen is gone, and warn on a
     # settings write (status line or hook) that was refused or failed.
-    log = (result.state.get("_commit_log") or "").strip()
+    # The per-host logs ride on each host's serialized state; concatenate in
+    # host order so a two-host run prints both outcomes (never one merged blob).
+    log = "\n".join(
+        (st or {}).get("_commit_log", "").strip()
+        for st in result.state.values() if isinstance(st, dict)
+    ).strip()
     if log:
         print(log, file=sys.stderr)
-    if result.state.get("_commit_ok") is False:
+    if any((st or {}).get("_commit_ok") is False
+           for st in result.state.values() if isinstance(st, dict)):
         print(
             "warning: some settings could not be written — see the log above "
             "(component selections were still applied).",
@@ -3709,19 +3997,26 @@ def cmd_install(env, tty, dry, examples_flag=None):
         examples = discover_example_segments(
             os.path.join(paths.install_dir, "examples", "segments"))
         if examples:
-            if examples_flag is not None:
-                # Explicit --examples override wins over the wizard's toggles
-                # (resolves the flag without prompting — flag is set).
-                chosen = select_examples(examples, examples_flag, tty)
-            else:
-                # Drive install from the wizard's external-segment toggles
-                # captured in result.state["segments"].
-                seg_state = result.state["segments"]
-                chosen = [e for e in examples if seg_state.get(e["id"], False)]
-            if chosen and not dry:
-                ids = install_example_segments(chosen, paths.config_dir)
-                print(f"examples: installed {len(ids)} external segment(s): "
-                      f"{', '.join(ids)}")
+            # One pass per host the wizard actually showed: each host's own
+            # segment toggles drive its own provider dir, an explicit
+            # --examples flag still wins (the same "flag wins" contract the
+            # in-UI commit uses), and one host's install never skips another's.
+            for host, host_state in result.state.items():
+                if not isinstance(host_state, dict):
+                    continue          # only host-keyed states, never a stray key
+                seg_state = host_state.get("segments") or {}
+                if not host_state.get("adopt"):
+                    continue          # a declined host wrote nothing, install nothing
+                if examples_flag is not None:
+                    chosen = select_examples(examples, examples_flag, tty)
+                else:
+                    chosen = [e for e in examples if seg_state.get(e["id"], False)]
+                if chosen and not dry:
+                    ids = install_example_segments(
+                        chosen, paths.config_dir,
+                        provider_dir=host_config(host).provider_dir)
+                    print(f"examples ({host}): installed {len(ids)} external "
+                          f"segment(s): {', '.join(ids)}")
 
     print(f"summary: {counts['linked']} linked, {counts['relinked']} relinked, "
           f"{counts['unlinked']} unlinked, {counts['pruned']} pruned, "

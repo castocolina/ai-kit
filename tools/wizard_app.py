@@ -110,32 +110,49 @@ ApplyHousekeepingFn = Callable[..., dict]
 # Public data types (the seam — consumed/produced across setup.py)
 # ---------------------------------------------------------------------------
 
+class HostView(NamedTuple):
+    """Everything the wizard needs about ONE detected status-line host.
+    Built by setup.py's _host_view: ``state`` is that host's {"segments",
+    "layout", "dirty", "adopt"}; ``status_line`` re-reads the host's wiring
+    state live; segment_meta/external_segments/sample_json/engine are
+    host-scoped; ``done_hint`` is the one-sentence next action (open a new
+    session of that CLI)."""
+    id: str
+    label: str
+    config_label: str
+    wiring_label: str
+    state: dict
+    status_line: StatusLineFn
+    segment_meta: dict
+    external_segments: list
+    sample_json: str
+    engine: object
+    done_hint: str
+
+
 class WizardResult(NamedTuple):
-    """Returned by run_wizard on confirm; None on abort."""
+    """Returned by run_wizard on confirm; None on abort. ``state`` is keyed by
+    host id: {"claude": {"segments", …}, "cursor": {…}, …}."""
     selection: SelectionLike
     state: dict
 
 
 class WizardContext(NamedTuple):
     """All data and behaviour the wizard needs, injected by setup.py at
-    call-time.  wizard_app imports nothing from setup.py; this is the seam."""
+    call-time.  wizard_app imports nothing from setup.py; this is the seam.
+    ``state`` is component-level only ({"_initial_enabled", …}); every
+    status-line field lives on a per-host ``HostView`` in ``hosts``."""
     selection: SelectionLike
-    state: dict                 # {"segments": {key: bool}, "layout": [...],
-                                #  "dirty": bool, "adopt": bool}
-    sample_json: str            # rendered sample input JSON for preview
-    engine: object                   # callables: render_preview, apply_command, groups, order
-    # New Plan-A fields (Task 10) — always populated by setup.py.launch_wizard.
-    status_line: StatusLineFn     # () -> {"state": str, "current_command": str|None}
-    segment_meta: dict          # {key: {description, sample, icon, line}}
-    external_segments: list     # [{id, name, path, default_on, description,
-                                #   icon, sample, line, provenance}, …]
+    state: dict                 # {"_initial_enabled": {(cat, name): bool}}
     component_meta: dict          # {name: description} across all CATEGORIES
     housekeeping: dict = {}  # noqa: RUF012 -- copied on read (__init__), never mutated
                                 # {"stale": [...], "predecessors": [...]} — "cat/name"
                                 #  display strings; empty = nothing pending, gate skipped.
-    # Injected by launch_wizard: commit(selection, state) -> {"ok", "adopt", "log"}.
-    # Runs the real install (symlinks + doctor-validated status-line write) IN-UI on
-    # Review-confirm. None in unit fixtures → the view falls back to a no-op commit.
+    hosts: tuple[HostView, ...] = ()  # detected hosts, Claude then Cursor
+    # Injected by launch_wizard: commit(selection, states) -> {"ok", "adopt",
+    # "log", "hosts": {host_id: {"ok", "adopt", "log"}}}; ``states`` is the
+    # host-keyed WizardResult.state. Runs the real install (symlinks + each adopted
+    # host's doctor-validated status-line write) IN-UI on Review-confirm.
     commit: CommitFn | None = None
     # Injected by launch_wizard: apply_housekeeping(prune, repoint) ->
     # {"selection", "initial_enabled"}. Runs IN-UI once the housekeeping gate is
@@ -160,6 +177,16 @@ class LayoutBoard:
     min_rows: list[int]
     initial_lines: list[list[str]]
     initial_tray: list[str]
+
+
+@dataclass
+class HostPane:
+    """ONE host's Arrange state: its model/board pair and whether that host's
+    adoption gate has been answered. Grouped so the app keeps one active pane
+    instead of mirroring a model/board pair as separate attributes."""
+    model: WizardModel
+    board: LayoutBoard
+    answered: bool
 
 
 @dataclass
@@ -251,34 +278,21 @@ class WizardApp(App):
     """
 
     def __init__(self, ctx: WizardContext) -> None:
-        state = dict(ctx.state)
-        gate_done = ctx.status_line().get("state") == "ours"
-        if gate_done:
-            state["adopt"] = True
+        self.ctx = ctx
+        self.host_i = 0          # the host whose board is on the Arrange step
         hk_data = dict(ctx.housekeeping) if ctx.housekeeping else {}
         hk_pending = [k for k in ("stale", "predecessors", "replace") if hk_data.get(k)]
-        home_line = {k: min(max(int(m.get("line", 0)), 0), 2)
-                     for k, m in ctx.segment_meta.items()}
-        for ext in ctx.external_segments:
-            home_line[ext["id"]] = 2
-        rows = [r.get("min_rows", 0) for r in state["layout"]]
-        self.ctx = ctx
-        self.model = WizardModel(
-            sel=ctx.selection,
-            state=state,
-            meta=ctx.segment_meta,
-            ext_by_id={e["id"]: e for e in ctx.external_segments},
-            home_line=home_line,
-        )
-        self.board = LayoutBoard(
-            lines=[[], [], []],
-            tray=[],
-            focus_zp=(0, 0),
-            min_rows=[*rows, 0, 20, 30][:3],
-            initial_lines=[[], [], []],
-            initial_tray=[],
-        )
-        self.flow = FlowState(gate_done=gate_done)
+        self.views = {host.id: self._host_pane(host) for host in ctx.hosts}
+        # Zero detected hosts: the flow never arranges the status line, but
+        # Choose/Review/Done still render off a component-only pane, so there is
+        # always SOME pane — never an index into a nonexistent first host.
+        self.pane = (self.views[ctx.hosts[0].id] if ctx.hosts
+                     else self._component_pane())
+        # A host already wired to ours has effectively answered its own gate;
+        # with zero hosts there is no gate at all. Otherwise the gate is re-asked
+        # on the first Arrange entry.
+        self.flow = FlowState(gate_done=not ctx.hosts or
+                              all(p.answered for p in self.views.values()))
         self.commit = CommitState()
         self.hk = HousekeepingState(
             data=hk_data,
@@ -286,39 +300,115 @@ class WizardApp(App):
             done=not hk_pending,
         )
         super().__init__()
-        self._build_lists_from_state()
-        self.board.initial_lines = [list(x) for x in self.board.lines]
-        self.board.initial_tray = list(self.board.tray)
+
+    # ---- the active pane (derived reads, never a mirrored attribute) ------
+    @property
+    def hosts(self) -> tuple[HostView, ...]:
+        """The detected hosts, in detection order (Claude Code, then Cursor)."""
+        return self.ctx.hosts
+
+    @property
+    def model(self) -> WizardModel:
+        """The segment model of the pane currently on the Arrange step."""
+        return self.pane.model
+
+    @property
+    def board(self) -> LayoutBoard:
+        """The layout board of the pane currently on the Arrange step."""
+        return self.pane.board
+
+    def _component_pane(self) -> HostPane:
+        """The zero-host pane: an empty board the component-only flow renders
+        Choose/Review/Done from, with no segment to arrange and no gate to ask."""
+        model = WizardModel(sel=self.ctx.selection, state={}, meta={},
+                            ext_by_id={}, home_line={})
+        board = LayoutBoard(lines=[[], [], []], tray=[], focus_zp=(0, 0),
+                            min_rows=[0, 20, 30],
+                            initial_lines=[[], [], []], initial_tray=[])
+        return HostPane(model=model, board=board, answered=True)
+
+    def _host_pane(self, host: HostView) -> HostPane:
+        """One host's Arrange-state snapshot: the serialized model/board pair,
+        shared selection, and the gate's live adoption state."""
+        state = dict(host.state)
+        gate_done = host.status_line().get("state") == "ours"
+        if gate_done:
+            state["adopt"] = True
+        for ext in host.external_segments:
+            state["segments"].setdefault(ext["id"], False)
+        home_line = {k: min(max(int(m.get("line", 0)), 0), 2)
+                     for k, m in host.segment_meta.items()}
+        for ext in host.external_segments:
+            home_line[ext["id"]] = 2
+        model = WizardModel(
+            sel=self.ctx.selection,
+            state=state,
+            meta=host.segment_meta,
+            ext_by_id={e["id"]: e for e in host.external_segments},
+            home_line=home_line,
+        )
+        board = LayoutBoard(
+            lines=[[], [], []],
+            tray=[],
+            focus_zp=(0, 0),
+            min_rows=[*(r.get("min_rows", 0) for r in state["layout"][:3]), 0,
+                      20, 30][:3],
+            initial_lines=[[], [], []],
+            initial_tray=[],
+        )
+        self._build_lists_from_state(model, board)
+        board.initial_lines = [list(x) for x in board.lines]
+        board.initial_tray = list(board.tray)
+        return HostPane(model=model, board=board, answered=gate_done)
+
+    def _pane(self, index=None) -> HostPane:
+        """The Arrange pane for host ``index`` (default: the active one). With
+        zero detected hosts there is no host to index, so the component-only
+        pane stands in — the flow never asks for more than that."""
+        if not self.hosts:
+            return self.pane
+        i = self.host_i if index is None else index
+        return self.views[self.hosts[i].id]
+
+    def _enter_host_arrange(self, index):
+        """Put host ``index``'s pane on the Arrange step and settle its gate:
+        the gate is re-asked only when the host is not already adopted/ours."""
+        self.host_i = index
+        self.pane = self._pane(index)
+        self.flow.gate_done = self.pane.answered
+        self.flow.step = STEP_ARRANGE
 
     # ---- model -----------------------------------------------------------
-    def _build_lists_from_state(self) -> None:
-        segs = self.model.state["segments"]
-        self.board.lines = [[], [], []]
+    def _build_lists_from_state(self, model: WizardModel, board: LayoutBoard) -> None:
+        segs = model.state["segments"]
+        board.lines = [[], [], []]
         placed = set()
-        for i, row in enumerate(self.model.state["layout"][:3]):
+        for i, row in enumerate(model.state["layout"][:3]):
             for seg in row["segments"]:
                 if segs.get(seg) and seg not in placed:
-                    self.board.lines[i].append(seg)
+                    board.lines[i].append(seg)
                     placed.add(seg)
         # ON segments not in any layout row (e.g. an enabled external): home line
         for seg, on in segs.items():
             if on and seg not in placed:
-                self.board.lines[self.model.home_line.get(seg, 2)].append(seg)
+                board.lines[model.home_line.get(seg, 2)].append(seg)
                 placed.add(seg)
         # tray = every OFF segment, in stable state-key order (built-ins then externals)
-        self.board.tray = [seg for seg in segs if not segs.get(seg)]
-        self.board.focus_zp = (0, 0)
+        board.tray = [seg for seg in segs if not segs.get(seg)]
+        board.focus_zp = (0, 0)
 
     # ---- metadata accessors ---------------------------------------------
-    def _icon(self, seg: str) -> str:
-        if seg in self.model.ext_by_id:
-            return self.model.ext_by_id[seg].get("icon") or "●"
-        return self.model.meta.get(seg, {}).get("icon", "")
+    def _icon(self, seg: str, model: WizardModel | None = None) -> str:
+        model = model or self.model
+        if seg in model.ext_by_id:
+            return model.ext_by_id[seg].get("icon") or "●"
+        return model.meta.get(seg, {}).get("icon", "")
 
-    def _sample(self, seg: str) -> str:
-        if seg in self.model.ext_by_id:
-            return self.model.ext_by_id[seg].get("sample", "")
-        return self.model.meta.get(seg, {}).get("sample", "")
+    def _sample(self, seg: str, model: WizardModel | None = None) -> str:
+        model = model or self.model
+        if seg in model.ext_by_id:
+            return model.ext_by_id[seg].get("sample", "")
+        return model.meta.get(seg, {}).get("sample", "")
 
     def _desc(self, seg: str) -> str:
         if seg in self.model.ext_by_id:
@@ -346,13 +436,19 @@ class WizardApp(App):
         zone = self._zones()[z]
         self.board.focus_zp = (z, max(0, min(len(zone) - 1, p)) if zone else 0)
 
-    def _preview(self):
+    def _preview_lines(self, pane: HostPane) -> list[str]:
+        """Sample-preview markup built from ONE host's board — review may show
+        hosts other than the Arrange pane's, so icons/samples are per-model."""
+        model, board = pane.model, pane.board
         out = []
-        for ln in self.board.lines:
-            parts = [f"{self._icon(s)} {self._sample(s)}" for s in ln]
+        for ln in board.lines:
+            parts = [f"{self._icon(s, model)} {self._sample(s, model)}" for s in ln]
             if parts:
                 out.append(f" [{LINE}]|[/] ".join(parts))
         return out or [f"[{DIM}](all segments off)[/]"]
+
+    def _preview(self):
+        return self._preview_lines(self._pane())
 
     # ---- compose ---------------------------------------------------------
     def _compose_header(self) -> ComposeResult:
@@ -384,7 +480,9 @@ class WizardApp(App):
             tray.border_title = "OFF — disabled  (Space activates → its home line)"
             yield tray
             pv = Static("", id="preview")
-            pv.border_title = "live preview  (full width — like the real status line)"
+            pv.border_title = ("live preview — " + (self.hosts[self.host_i].label
+                               if self.hosts else "no host")
+                               + "  (full width, like the real status line)")
             yield pv
 
     def _compose_review(self) -> ComposeResult:
@@ -450,18 +548,32 @@ class WizardApp(App):
             return GREEN, TITLES[self.flow.step]
         return "#f0f6fc", TITLES[self.flow.step]
 
+    def _adopted_views(self) -> list[HostView]:
+        """The hosts whose status line the user is adopting, in detection order."""
+        return [h for h in self.hosts if (self.views[h.id].model.state or {}).get("adopt")]
+
     def _render_done_subtitle(self, sub_w: Static, done_failed: bool) -> None:
         ncomp = sum(1 for _c, _n, on in self.model.sel.items if on)
+        adopted = self._adopted_views()
         if self.commit.committing:
             sub_w.update(f"[{DIM}]writing your selection…[/]")
         elif done_failed:
             sub_w.update(f"[{WARN}]components installed · some settings "
                          "could not be written[/]")
-        elif self.model.state.get("adopt", False):
-            nseg = sum(len(line) for line in self.board.lines)
-            nlines = sum(1 for line in self.board.lines if line)
-            sub_w.update(f"[{DIM}]{ncomp} components · {nseg} segments · "
-                         f"{nlines} lines — your status line is ready[/]")
+        elif adopted:
+            parts = []
+            for h in adopted:
+                board = self.views[h.id].board
+                nseg = sum(len(line) for line in board.lines)
+                nlines = sum(1 for line in board.lines if line)
+                if len(self.hosts) > 1:
+                    parts.append(f"{h.label}: {nseg} segments · {nlines} lines")
+                else:
+                    parts.append(f"{nseg} segments · {nlines} lines")
+            lines_word = "status line" if len(adopted) == 1 else "status lines"
+            sub_w.update(f"[{DIM}]{ncomp} components · " + " · ".join(parts) +
+                         f" — your {lines_word} {'is' if len(adopted) == 1 else 'are'} "
+                         "ready[/]")
         else:
             sub_w.update(f"[{DIM}]{ncomp} components installed · "
                          "status line left unchanged[/]")
@@ -479,6 +591,8 @@ class WizardApp(App):
         done_failed = (self.commit.outcome is not None
                        and not self.commit.outcome.get("ok", True))
         title_color, done_title = self._done_title_parts(done_failed)
+        if self.flow.step == STEP_ARRANGE and len(self.hosts) > 1:
+            done_title = f"{done_title} — {self.hosts[self.host_i].label}"
         title_w.update(f"[{title_color}]{done_title}[/]")
         if self.flow.step == STEP_DONE:
             self._render_done_subtitle(sub_w, done_failed)
@@ -610,24 +724,24 @@ class WizardApp(App):
         col = CYAN if is_ext else (DIM if parked else FG)
         return f"[{col} on #0d1117] {label} [/]"
 
-    def _adoption_gate_markup(self) -> str:
-        sl = self.ctx.status_line()
+    def _adoption_gate_markup(self, host: HostView) -> str:
+        sl = host.status_line()
         if sl.get("state") == "foreign":
             cmd = sl.get("current_command") or "(unknown)"
-            return (f"[b {WARN}]⚠  Existing status line detected[/]\n"
+            return (f"[b {WARN}]⚠  Existing {host.label} status line detected[/]\n"
                     f"[{DIM}]Current:[/] {cmd}\n\n"
                     f"[#0d1117 on {WARN}] Replace it with ai-kit?  "
                     f"y = replace · N / Enter = keep mine [/]")
-        return ("[b #f0f6fc]Wire your status line?[/]\n"
+        return (f"[b #f0f6fc]Wire {host.label}'s status line?[/]\n"
                 f"[{DIM}]ai-kit can render git/model/diagnostics in your "
-                "status line.[/]\n\n"
+                f"{host.label} status line.[/]\n\n"
                 f"[#0d1117 on {ACCENT}] Y / Enter = set it up · "
                 "n = skip (leave it unset) [/]")
 
     def _render_adoption_gate(self, lane0: Static) -> None:
         lane0.add_class("gate-attention")
-        lane0.border_title = "⚠ status line — action needed"
-        lane0.update(self._adoption_gate_markup())
+        lane0.border_title = f"⚠ status line ({self.hosts[self.host_i].label}) — action needed"
+        lane0.update(self._adoption_gate_markup(self.hosts[self.host_i]))
         for wid in ("#lane1", "#lane2", "#focchip", "#tray", "#preview"):
             self.query_one(wid, Static).update("")
 
@@ -640,8 +754,11 @@ class WizardApp(App):
             return
         seg = zone[fp]
         state = "off · in tray" if fz == 3 else f"on · Line {fz + 1}"
-        prov = (f"  [{CYAN}]external · {self.model.ext_by_id[seg].get('provenance', '')}[/]"
-                if seg in self.model.ext_by_id else "")
+        host = self.hosts[self.host_i]
+        prov = (f"  [{CYAN}]external · {host.label} · "
+                f"{self.model.ext_by_id[seg].get('provenance', '')}[/]"
+                if seg in self.model.ext_by_id else
+                f"  [{DIM}]built-in segment · {host.label} · inventory[/]")
         focchip.update(
             f"[#f0f6fc]{self._icon(seg)} [bold]{seg}[/][/]{prov}\n"
             f"[{DIM}]{self._desc(seg)}[/]\n[{DIM}]{state}[/]")
@@ -674,44 +791,105 @@ class WizardApp(App):
         lane0.border_title = "Line 1"
         self._render_arrange_board()
 
-    def _render_review(self) -> None:
-        items = self.model.sel.items
+    def _review_component_rows(self) -> tuple[list[str], int]:
+        """Review's per-category component lines plus the non-hook count — the
+        number of components Confirm actually symlinks."""
         cats: list[str] = []
         by_cat: dict[str, list[str]] = {}
-        for c, name, on in items:
-            if c not in by_cat:
-                cats.append(c)
-                by_cat[c] = []
+        for cat, name, on in self.model.sel.items:
+            if cat not in by_cat:
+                cats.append(cat)
+                by_cat[cat] = []
             if on:
-                by_cat[c].append(name)
-        rows = [f"[{CYAN}]{c}[/]: "
-                + (", ".join(by_cat[c]) if by_cat[c] else f"[{DIM}](none)[/]")
-                for c in cats]
-        self.query_one("#rev-components", Static).update("\n".join(rows))
-        ncomp = sum(1 for category, _n, on in items if on and category != "hooks")
-        nseg = sum(len(line) for line in self.board.lines)
-        adopt = self.model.state.get("adopt", False)
-        # Status-line preview panel: only shown when adopting — declining skips
-        # the whole status-line section.
-        rp = self.query_one("#rev-preview", Static)
-        rp.display = adopt
-        if adopt:
-            rp.update("\n".join(f"[#d6dee8]{p}[/]" for p in self._preview()))
-        if adopt:
-            what = (f"[{DIM}]•[/] Symlink [bold]{ncomp}[/] components into "
-                    f"~/.claude/(agents|commands|skills)/\n"
-                    f"[{DIM}]•[/] Write ~/.config/ai-kit/claude-statusline.toml + "
-                    f"wire settings.json\n"
-                    f"[{DIM}]•[/] Validate with statusline-doctor before saving")
+                by_cat[cat].append(name)
+        rows = [f"[{CYAN}]{cat}[/]: "
+                + (", ".join(by_cat[cat]) if by_cat[cat] else f"[{DIM}](none)[/]")
+                for cat in cats]
+        ncomp = sum(1 for cat, _n, on in self.model.sel.items
+                    if on and cat != "hooks")
+        return rows, ncomp
+
+    def _review_status_blocks(self, adopted: list[HostView]) -> tuple[int, list[str]]:
+        """(on-line segment count, preview blocks) over the ADOPTED hosts only —
+        a declined host skips the whole status-line section. A multi-host Review
+        labels each host's first block so two panes can never read as one line."""
+        nseg = 0
+        shown: list[str] = []
+        for host in adopted:
+            pane = self.views[host.id]
+            nseg += sum(len(line) for line in pane.board.lines)
+            block = self._preview_lines(pane)
+            if len(self.hosts) > 1 and block:
+                block = [f"[{DIM}]{host.label} —[/]" + block[0], *block[1:]]
+            shown.extend(block)
+        return nseg, shown
+
+    def _review_what_lines(self, ncomp: int, adopted: list[HostView]) -> list[str]:
+        """What happens on Confirm: the components, then EACH adopted host's own
+        config + wiring file, or the honest "left unchanged" line when every
+        detected host declined, or the "no host detected" line when none did."""
+        what = [f"[{DIM}]•[/] Symlink [bold]{ncomp}[/] components into "
+                f"~/.claude/(agents|commands|skills)/"]
+        if adopted:
+            for host in adopted:
+                what.append(f"[{DIM}]•[/] {host.label}: write {host.config_label} "
+                            f"+ wire {host.wiring_label}")
+            what.append(f"[{DIM}]•[/] Validate with the status line doctor "
+                        "before saving")
+        elif self.hosts:
+            what.append(f"[{DIM}]•[/] Status line left unchanged (components only)")
         else:
-            what = (f"[{DIM}]•[/] Symlink [bold]{ncomp}[/] components into "
-                    f"~/.claude/(agents|commands|skills)/\n"
-                    f"[{DIM}]•[/] Status line left unchanged (components only)")
-        self.query_one("#rev-what", Static).update(what)
-        seg_note = f" · {nseg} segments" if adopt else ""
+            what.append(f"[{DIM}]•[/] No status-line host detected — nothing "
+                        "will be written for one")
+        return what
+
+    def _render_review(self) -> None:
+        rows, ncomp = self._review_component_rows()
+        self.query_one("#rev-components", Static).update("\n".join(rows))
+        adopted = self._adopted_views()
+        rp = self.query_one("#rev-preview", Static)
+        rp.display = bool(adopted)
+        nseg, shown = self._review_status_blocks(adopted)
+        if adopted:
+            rp.update("\n".join(f"[#d6dee8]{p}[/]" for p in shown))
+        self.query_one("#rev-what", Static).update(
+            "\n".join(self._review_what_lines(ncomp, adopted)))
+        seg_note = f" · {nseg} segments" if adopted else ""
         self.query_one("#cta", Static).update(
             f"▸ [bold #7ee2a0]Install ai-kit[/]  [{DIM}]{ncomp} components"
             f"{seg_note}[/]   [#d6ffe4 on #10421f] Enter [/]")
+
+    def _done_failure_lines(self, outcome: dict) -> list[str]:
+        """Done-screen failure text, ONE LINE PER HOST: a failing host names
+        itself and its own captured reason, while every host that did write
+        stays visible on its own line. A component-only failure (no per-host
+        outcomes) keeps the single generic reason."""
+        hosts = outcome.get("hosts")
+        per = hosts if isinstance(hosts, dict) else {}
+        lines = [f"[{WARN}]Components were installed, but some settings could "
+                 "not be written:[/]"]
+        failed, written = [], []
+        for h in self.hosts:
+            entry = per.get(h.id)
+            if not isinstance(entry, dict):    # a missing host row is not a failure
+                entry = {}
+            if entry.get("ok") is False:
+                failed.append(h)
+                reason = escape((entry.get("log") or "").strip()) \
+                    or "a settings write was refused or failed."
+                lines.append(f"[{DIM}]{h.label}:[/] {reason}")
+            elif entry.get("ok") is True and entry.get("adopt"):
+                written.append(h)
+        if not failed:                       # component-only failure (hooks, links)
+            reason = escape((outcome.get("log") or "").strip()) \
+                or "a settings write was refused or failed."
+            lines.append(f"[{DIM}]{reason}[/]")
+        if written:
+            names = ", ".join(h.label for h in written)
+            lines.append(f"[{GREEN}]written OK:[/] {names}")
+        lines.append("")
+        lines.append(f"[{DIM}]Re-run  uv run tools/setup.py  to try again.[/]")
+        return lines
 
     def _render_done(self) -> None:
         art = self.query_one("#done-art", Static)
@@ -724,27 +902,21 @@ class WizardApp(App):
         outcome = self.commit.outcome
         if outcome is not None and not outcome.get("ok", True):
             art.update(f"[{WARN}]⚠  install incomplete[/]")
-            reason = escape((outcome.get("log") or "").strip()) \
-                or "a settings write was refused or failed."
-            nxt_w.update(
-                f"[{WARN}]Components were installed, but some settings could "
-                f"not be written:[/]\n[{DIM}]{reason}[/]\n\n"
-                f"[{DIM}]Re-run  uv run tools/setup.py  to try again.[/]")
+            nxt_w.update("\n".join(self._done_failure_lines(outcome)))
             return
         art.update(f"[{GREEN}]┌─┐ ┬[/]\n[{GREEN}]├─┤ │[/]\n[{GREEN}]┴ ┴ ┴[/] ─kit")
-        if self.model.state.get("adopt", False):
-            nxt = (f"[{DIM}]•[/] Open a new Claude Code session to see your "
-                   f"status line.\n"
-                   f"[{DIM}]•[/] Re-run  uv run tools/setup.py  any time to "
-                   f"change picks.\n"
-                   f"[{DIM}]•[/] Tweak segments later in  "
-                   f"~/.config/ai-kit/claude-statusline.toml.")
+        adopted = self._adopted_views()
+        nxt = [f"[{DIM}]•[/] Re-run  uv run tools/setup.py  any time to "
+               f"change picks."]
+        if adopted:
+            for h in adopted:
+                nxt.insert(0, f"[{DIM}]•[/] Tweak segments later in  "
+                              f"{h.config_label}.")
+                nxt.insert(0, f"[{DIM}]•[/] {h.done_hint}")
         else:
-            nxt = (f"[{DIM}]•[/] Re-run  uv run tools/setup.py  any time to "
-                   f"change picks.\n"
-                   f"[{DIM}]•[/] Want a status line? Run it again and choose "
-                   f"Yes at the status-line gate.")
-        nxt_w.update(nxt)
+            nxt.append(f"[{DIM}]•[/] Want a status line? Run it again and "
+                       "choose Yes at the status-line gate.")
+        nxt_w.update("\n".join(nxt))
 
     # ---- input -----------------------------------------------------------
     def on_key(self, event: events.Key) -> None:
@@ -775,13 +947,25 @@ class WizardApp(App):
         return True
 
     def _enter_arrange(self) -> bool:
-        # Entering the status-line step from Choose. Re-ask the adoption gate
-        # unless the user already opted in (adopt True) or the status line is
-        # already ours — so a prior "decline" never lands on a stale board.
-        if not self.model.state.get("adopt"):
-            self.flow.gate_done = self.ctx.status_line().get("state") == "ours"
-        self.flow.step = STEP_ARRANGE
+        # Entering the status-line step from Choose walks the detected hosts
+        # (Claude then Cursor); WITH ZERO detected hosts there is nothing to
+        # arrange or wire — Choose goes straight to Review, and Review → Done
+        # writes nothing for the status line.
+        if not self.hosts:
+            self.flow.step = STEP_REVIEW
+            return True
+        self._enter_host_arrange(0)
         return True
+
+    def _advance_host(self) -> None:
+        """Host traversal contract (the seam plan 23-17 walks): after the
+        current host's gate decision or board Enter, move to the NEXT host's
+        gate, or to Review once every detected host's pane has been visited."""
+        nxt = self.host_i + 1
+        if nxt < len(self.hosts):
+            self._enter_host_arrange(nxt)
+        else:
+            self.flow.step = STEP_REVIEW
 
     def _key_choose(self, event: events.Key) -> bool:
         if not self.hk.done:
@@ -849,9 +1033,11 @@ class WizardApp(App):
             outcome = {}
             self.hk.error = f"housekeeping failed: {exc}"
         if outcome.get("selection") is not None:
+            for pane in self.views.values():
+                pane.model.sel = outcome["selection"]
             self.model.sel = outcome["selection"]
-        self.model.state["_initial_enabled"] = outcome.get(
-            "initial_enabled", self.model.state.get("_initial_enabled", {}))
+        self.ctx.state["_initial_enabled"] = outcome.get(
+            "initial_enabled", self.ctx.state.get("_initial_enabled", {}))
         self.hk.done = True
         self.hk.applying = False
         if self.hk.error:
@@ -864,6 +1050,7 @@ class WizardApp(App):
 
     def _key_arrange_gate(self, event: events.Key) -> bool:
         ch, k = event.character, event.key
+        host = self.hosts[self.host_i]
         if k == "escape":
             self.flow.step = STEP_CHOOSE        # back out without answering
             return True
@@ -872,14 +1059,15 @@ class WizardApp(App):
         elif ch == "n":
             self.model.state["adopt"] = False
         elif k == "enter":                 # follow the shown default
-            self.model.state["adopt"] = self.ctx.status_line().get("state") != "foreign"
+            self.model.state["adopt"] = host.status_line().get("state") != "foreign"
         else:
             return False
         self.flow.gate_done = True
+        self.pane.answered = True
         if not self.model.state["adopt"]:
-            # Declined: nothing to arrange and settings.json is left
-            # untouched, so skip the segment board straight to Review.
-            self.flow.step = STEP_REVIEW
+            # Declined: nothing to arrange and the host's config files are left
+            # untouched, so skip the segment board straight to the next host.
+            self._advance_host()
         return True
 
     def _arrange_swap_horizontal(self, direction: int) -> bool:
@@ -902,7 +1090,7 @@ class WizardApp(App):
             "space": self._toggle_chip,
             "tab": lambda: self._cycle_focus(+1),
             "shift+tab": lambda: self._cycle_focus(-1),
-            "enter": lambda: setattr(self.flow, "step", STEP_REVIEW),
+            "enter": self._advance_host,
             "escape": lambda: setattr(self.flow, "step", STEP_CHOOSE),
         }
         if k == "left" and self._arrange_swap_horizontal(-1):
@@ -921,6 +1109,11 @@ class WizardApp(App):
         if not self.flow.gate_done:
             return self._key_arrange_gate(event)
         return self._key_arrange_board(event)
+
+    def _review_from_board(self) -> None:
+        """Board Enter: walk to the NEXT host's gate, or Review only once every
+        detected host has answered its own gate (23-16's host traversal)."""
+        self._advance_host()
 
     def _move_chip_v(self, direction: str) -> None:
         z, p = self.board.focus_zp
@@ -963,6 +1156,12 @@ class WizardApp(App):
                 self.board.focus_zp = (nz, 0 if direction > 0 else len(tgt) - 1)
                 return
 
+    def _all_hosts_gate_done(self) -> bool:
+        """Host traversal invariant behind Review: every detected host answered
+        its own gate. False on a direct-to-Review fixture jump, so a key handler
+        can never bypass a host's gate (the two-host PTY scenario pins this)."""
+        return all(self.views[h.id].answered for h in self.hosts)
+
     def _key_review(self, event: events.Key) -> bool:
         if event.key == "enter":
             if not self._has_net_change():
@@ -972,40 +1171,64 @@ class WizardApp(App):
                 # call _render_review and overwrite this #cta message with the
                 # install CTA. Step stays REVIEW; the warning persists.
                 return False
-            state = self._serialize_state()
+            states = self._states()
             if self.ctx.commit is None:
                 # No commit injected (unit fixtures): keep the legacy behavior —
                 # stash the result and show the Done screen without installing.
-                self.flow.result = WizardResult(self.model.sel, state)
+                self.flow.result = WizardResult(self.model.sel, states)
                 self.flow.step = STEP_DONE
                 return True
             # Full in-UI commit: advance to Done in a "committing" state and run
             # the real install in a worker thread (it touches files + a doctor
             # subprocess; doing it on the event loop would freeze the UI).
-            self.commit.commit_state = state
+            self.commit.commit_state = states
             self.commit.committing = True
             self.commit.outcome = None
             self.flow.step = STEP_DONE
             self._run_commit()
             return True
         if event.key == "escape":
-            # Declining skipped Arrange, so step back to Choose rather than a
-            # screen the user never saw.
-            self.flow.step = STEP_ARRANGE if self.model.state.get("adopt") else STEP_CHOOSE
+            # Back to the last host whose BOARD the user actually arranged (an
+            # adopted host). A declined host skipped its board, so Review Esc
+            # steps to Choose instead of dropping the user onto a board they
+            # never saw.
+            adopted = [i for i, h in enumerate(self.hosts)
+                       if self.views[h.id].model.state.get("adopt")]
+            if adopted:
+                self._enter_host_arrange(adopted[-1])
+            else:
+                self.flow.step = STEP_CHOOSE
             return True
         return False
 
     def _has_net_change(self) -> bool:
-        initial = self.model.state.get("_initial_enabled", {})
+        # `_initial_enabled` is component-level state (ctx.state), not per-host:
+        # a host's own state dict carries segments/layout/adopt only.
+        initial = self.ctx.state.get("_initial_enabled", {})
         current = {(c, n): on for c, n, on in self.model.sel.items}
         return current != initial or self.model.state.get("adopt", False)
 
-    def _serialize_state(self) -> dict:
-        st = dict(self.model.state)
+    def _states(self) -> dict:
+        """Every host's Arrange-state serialized for the commit and the result,
+        keyed by host id in detection order. A host the user declined still
+        carries its untouched state (`adopt` False); the commit writes nothing
+        for it. With zero hosts this is an empty dict — not a Claude-shaped
+        fallback."""
+        if not self.hosts:
+            return {}
+        return {h.id: self._serialize_state(h.id) for h in self.hosts}
+
+    def _serialize_state(self, host_id=None) -> dict:
+        """Board -> {segments, layout} for one host (default: the active pane).
+        Off segments stay addressable: they ride in their home line's row so an
+        explicit `<id> = false` can be written when the user declined one."""
+        pane = self.views[host_id] if host_id else self._pane()
+        model, board = pane.model, pane.board
+        st = dict(model.state)
         on = set()
-        for ln in self.board.lines:
+        for ln in board.lines:
             on.update(ln)
-        segs = {k: (k in on) for k in self.model.state["segments"]}
+        segs = {k: (k in on) for k in model.state["segments"]}
         st["segments"] = segs
         # Both built-ins AND externals go into the written layout: the whole
         # point of letting the user drag an external segment's chip onto a
@@ -1015,11 +1238,11 @@ class WizardApp(App):
         # absent from every row) — an arrangement the user made here must win.
         layout = []
         for i in range(3):
-            on_row = list(self.board.lines[i])
-            off_home = [s for s in self.board.tray if self.model.home_line.get(s, 2) == i]
-            layout.append({"min_rows": self.board.min_rows[i], "segments": on_row + off_home})
+            on_row = list(board.lines[i])
+            off_home = [s for s in board.tray if model.home_line.get(s, 2) == i]
+            layout.append({"min_rows": board.min_rows[i], "segments": on_row + off_home})
         st["layout"] = layout
-        st["adopt"] = self.model.state.get("adopt", False)
+        st["adopt"] = bool(model.state.get("adopt"))
         st["dirty"] = True
         return st
 
@@ -1027,7 +1250,10 @@ class WizardApp(App):
     def _run_commit(self) -> None:
         """Worker: run the injected commit (real install) off the event loop, then
         update the Done screen with the outcome. Any failure is captured so the UI
-        never hangs in the 'Installing…' state."""
+        never hangs in the 'Installing…' state. The commit receives the host-keyed
+        states and returns the component outcome plus per-host {ok, adopt, log}
+        — the per-host log/ok land on WizardResult.state as `_commit_log` and
+        `_commit_ok` under each host's id so cmd_install can surface them."""
         commit_fn = self.ctx.commit
         commit_state = self.commit.commit_state if self.commit.commit_state is not None else {}
         try:
@@ -1036,12 +1262,21 @@ class WizardApp(App):
             outcome = commit_fn(self.model.sel, commit_state)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             outcome = {"ok": False,
-                       "adopt": bool((self.commit.commit_state or {}).get("adopt")),
+                       "adopt": any(bool((st or {}).get("adopt"))
+                                    for st in (commit_state or {}).values()),
                        "log": f"commit failed: {exc}"}
-        state = dict(self.commit.commit_state or {})
-        state["_commit_log"] = outcome.get("log", "")
-        state["_commit_ok"] = outcome.get("ok", True)
-        self.flow.result = WizardResult(self.model.sel, state)
+        host_out = ((outcome or {}).get("hosts") if isinstance(outcome, dict) else None) or {}
+        result_state: dict = {}
+        for hid, st in (commit_state or {}).items():
+            merged = dict(st or {})
+            per = dict(host_out.get(hid)
+                       or {"ok": outcome.get("ok", True),
+                          "adopt": outcome.get("adopt", False),
+                          "log": outcome.get("log", "")})
+            merged["_commit_log"] = per.get("log", "")
+            merged["_commit_ok"] = per.get("ok", True)
+            result_state[hid] = merged
+        self.flow.result = WizardResult(self.model.sel, result_state)
         self.commit.outcome = outcome
         self.commit.committing = False
         self.call_from_thread(self._render)

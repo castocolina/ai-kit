@@ -374,7 +374,7 @@ class TestWiring(unittest.TestCase):
             paths, {cat: [] for cat in setup.CATEGORIES}, False, setup.new_counts())
         selected = setup.Selection([("hooks", "tool-advisor", True)])
         with mock.patch.object(setup, "persist_statusline", return_value=True) as persist:
-            result = commit(selected, {"adopt": True})
+            result = commit(selected, {"claude": {"adopt": True}})
         self.assertFalse(result["ok"])
         persist.assert_called_once()
         self.assertIn("PreToolUse", result["log"])
@@ -382,7 +382,7 @@ class TestWiring(unittest.TestCase):
         with open(paths.settings, "w", encoding="utf-8") as handle:
             json.dump({"hooks": {}}, handle)
         with mock.patch.object(setup, "persist_statusline", return_value=False):
-            result = commit(selected, {"adopt": True})
+            result = commit(selected, {"claude": {"adopt": True}})
         self.assertFalse(result["ok"])
         self.assertTrue(os.path.isfile(paths.settings))
 
@@ -397,11 +397,14 @@ class TestWiring(unittest.TestCase):
         commit = setup._make_wizard_commit(
             paths, entries, dry=False, counts=setup.new_counts())
         result = commit(setup.Selection([("hooks", "session-briefing", True)]),
-                        {"adopt": False})
+                        {"claude": {"adopt": False}})
         self.assertIn("ok", result)
         self.assertIn("adopt", result)
         self.assertIn("log", result)
-        self.assertEqual(set(result), {"ok", "adopt", "log"})
+        # 23-16's per-host commit: the component outcome PLUS one outcome per
+        # host, so one host's rejection never hides the other's result.
+        self.assertEqual(set(result), {"ok", "adopt", "log", "hosts"})
+        self.assertEqual(set(result["hosts"]["claude"]), {"ok", "adopt", "log"})
         with open(paths.settings, encoding="utf-8") as handle:
             data = json.load(handle)
         ours = [
@@ -654,8 +657,9 @@ class TestCursorWiring(unittest.TestCase):
         commit = setup._make_wizard_commit(
             paths, entries, dry=False, counts=setup.new_counts())
         result = commit(setup.Selection([("hooks", "session-briefing", True)]),
-                        {"adopt": False})
-        self.assertEqual(set(result), {"ok", "adopt", "log"})
+                        {"cursor": {"adopt": False}})
+        self.assertEqual(set(result), {"ok", "adopt", "log", "hosts"})
+        self.assertIs(result["hosts"]["cursor"]["adopt"], False)
         with open(paths.cursor_hooks, encoding="utf-8") as handle:
             stored = json.load(handle)
         self.assertEqual(stored["hooks"]["sessionStart"][0], original)

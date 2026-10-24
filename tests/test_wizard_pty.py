@@ -522,7 +522,7 @@ class TestPhase2E2E(unittest.TestCase):
             # From here the existing pick test's key sequence:
             # Enter (Choose -> Arrange, adoption gate) -> y (board) ->
             # Enter (Arrange -> Review) -> Enter (commit -> Done) -> Enter (exit).
-            press_until(b"\r", b"Wire your status line?",
+            press_until(b"\r", b"Wire Claude Code's status line?",
                         time.time() + _STEP_DEADLINE)
             _drain(master_fd, time.time() + 1.0)
             press_until(b"y", b"git_branch", time.time() + _STEP_DEADLINE)
@@ -618,7 +618,7 @@ class TestPhase2E2E(unittest.TestCase):
 
         # Markers chosen from static text the re-ported app DEFINITELY renders:
         #   Choose screen → ◉ (UTF-8 bytes) — the glyph prepended to every enabled pick
-        #   Arrange gate  → "Wire your status line?" — the unset-state gate prompt
+        #   Arrange gate  → "Wire Claude Code's status line?" — the unset-state gate prompt
         #   Arrange board → "git_branch" — a default-ON segment chip in Line 1
         #   Review screen → "Review & confirm" — the step title
         #   Done screen   → "ai-kit is installed" — the step title
@@ -646,7 +646,7 @@ class TestPhase2E2E(unittest.TestCase):
             # ── Step 2b: wait for the adoption gate prompt ───────────────────
             drive_until(
                 master_fd,
-                b"Wire your status line?",
+                b"Wire Claude Code's status line?",
                 time.time() + _SUMMARY_DEADLINE,
                 captured=captured,
             )
@@ -790,7 +790,7 @@ class TestPhase3E2E(unittest.TestCase):
          CLAUDE_CONFIG_DIR (symlinks land there) and XDG_CONFIG_HOME (config_toml
          lands at ``$XDG_CONFIG_HOME/ai-kit/claude-statusline.toml``).
       2. Drive: Choose screen (◉ marker) → Enter (advance to Arrange) → gate
-         "Wire your status line?" appears (state=unset) → press n (adopt=False)
+         "Wire Claude Code's status line?" appears (state=unset) → press n (adopt=False)
          → the segment board is SKIPPED and Review shows directly
          ("Review & confirm") → Enter (Review→Done) → "ai-kit is installed" →
          Enter (Done exits).
@@ -904,10 +904,10 @@ class TestPhase3E2E(unittest.TestCase):
                 os.write(master_fd, b"\r")
 
             # ── Step 2b: wait for the adoption gate prompt ───────────────────
-            # State is "unset" on a fresh install → "Wire your status line? [Y/n]".
+            # State is "unset" on a fresh install → "Wire Claude Code's status line? [Y/n]".
             drive_until(
                 master_fd,
-                b"Wire your status line?",
+                b"Wire Claude Code's status line?",
                 time.time() + self._BOARD_DEADLINE,
                 captured=captured,
             )
@@ -1052,10 +1052,10 @@ class TestPhase3E2E(unittest.TestCase):
 
             # ── Step 2b: wait for the adoption gate prompt ───────────────────
             # State is "unset" here (no statusLine command in settings.json),
-            # so the gate shows "Wire your status line? [Y/n]".
+            # so the gate shows "Wire Claude Code's status line? [Y/n]".
             drive_until(
                 master_fd,
-                b"Wire your status line?",
+                b"Wire Claude Code's status line?",
                 time.time() + self._BOARD_DEADLINE,
                 captured=captured,
             )

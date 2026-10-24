@@ -39,6 +39,7 @@ _TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
 if os.path.abspath(_TOOLS) not in sys.path:
     sys.path.insert(0, os.path.abspath(_TOOLS))
 import claude_host
+import cursor_host
 
 _AUDIT_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "statusline_split", "audit.md")
 _AUDIT_VOCABULARY = re.compile(
@@ -1649,33 +1650,66 @@ class TestSegmentInventory(unittest.TestCase):
     # Icon single-sourcing into the inventory is DEFERRED per the PRD; until then
     # the inventory icon is hand-mirrored and this test pins it to the reviewed map.
 
-    def _sl(self):
-        return claude_host
+    # Cursor-only built-ins reviewed against the Cursor oracle vocabulary (D-04).
+    EXPECTED_CURSOR_ICONS = {
+        "cursor_included": "",
+        "cursor_api": "",
+        "cursor_extra": "",
+        "cursor_reset": "",
+    }
 
-    def _line_index(self, sl, key):
-        for i, ln in enumerate(claude_host.LAYOUT):
+    def _line_index(self, layout, key):
+        for i, ln in enumerate(layout):
             if key in ln.segments:
                 return i
         raise AssertionError(f"{key} not in LAYOUT")
 
     def test_coverage_every_segment_has_entry(self):
-        self._sl()
-        inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
+        inv = setup.load_segment_inventory(setup.INVENTORY_PATH, "claude")
         for key in claude_host.SEGMENTS:
             self.assertIn(key, inv, f"SEGMENTS key {key} missing from inventory")
 
     def test_line_mirror(self):
-        sl = self._sl()
-        inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
+        inv = setup.load_segment_inventory(setup.INVENTORY_PATH, "claude")
         for key in claude_host.SEGMENTS:
             self.assertEqual(
-                inv[key]["line"], self._line_index(sl, key), f"{key} inventory line != LAYOUT line"
-            )
+                inv[key]["line"], self._line_index(claude_host.LAYOUT, key),
+                f"{key} inventory line != LAYOUT line")
 
     def test_icon_mirror(self):
-        inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
+        inv = setup.load_segment_inventory(setup.INVENTORY_PATH, "claude")
         for key, icon in self.EXPECTED_ICONS.items():
             self.assertEqual(inv[key]["icon"], icon, f"{key} inventory icon != reviewed glyph")
+
+    def test_cursor_coverage_every_segment_has_entry(self):
+        # D-04: the per-host inventory dimension — every Cursor SEGMENTS key
+        # must have an entry listing hosts = ["cursor"] (or both hosts).
+        inv = setup.load_segment_inventory(setup.INVENTORY_PATH, "cursor")
+        for key in cursor_host.SEGMENTS:
+            self.assertIn(key, inv, f"cursor SEGMENTS key {key} missing from inventory")
+
+    def test_cursor_line_mirror(self):
+        # Each Cursor entry's `line` must be the Cursor layout row (from
+        # `cursor_line`, or the shared `line` when both hosts list the entry).
+        inv = setup.load_segment_inventory(setup.INVENTORY_PATH, "cursor")
+        for key in cursor_host.SEGMENTS:
+            self.assertEqual(
+                inv[key]["line"], self._line_index(cursor_host.LAYOUT, key),
+                f"{key} cursor inventory line != cursor LAYOUT line")
+
+    def test_cursor_icon_mirror(self):
+        inv = setup.load_segment_inventory(setup.INVENTORY_PATH, "cursor")
+        for key, icon in self.EXPECTED_CURSOR_ICONS.items():
+            self.assertEqual(inv[key]["icon"], icon,
+                             f"{key} cursor inventory icon != reviewed glyph")
+
+    def test_hosts_dimension_filters_entries(self):
+        # A Claude-only entry never leaks into the Cursor view and vice versa.
+        claude_inv = setup.load_segment_inventory(setup.INVENTORY_PATH, "claude")
+        cursor_inv = setup.load_segment_inventory(setup.INVENTORY_PATH, "cursor")
+        self.assertNotIn("todo", cursor_inv)   # claude-only
+        for key in self.EXPECTED_CURSOR_ICONS:
+            self.assertNotIn(key, claude_inv)  # cursor-only
 
 
 if __name__ == "__main__":

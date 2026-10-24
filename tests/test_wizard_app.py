@@ -366,7 +366,7 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
             result = app.flow.result
             self.assertIsInstance(result, wa.WizardResult)
             assert result is not None
-            self.assertIs(result.state["adopt"], True)
+            self.assertIs(result.state["claude"]["adopt"], True)
 
     async def test_q_before_confirm_leaves_no_result(self):
         app = wa.WizardApp(make_ctx(sl_state="ours"))
@@ -405,7 +405,7 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.flow.step, wa.STEP_DONE)
             result = app.flow.result
             assert result is not None
-            self.assertIs(result.state["adopt"], False)
+            self.assertIs(result.state["claude"]["adopt"], False)
             sub = str(_query_static(app, "#step-sub").content)
             self.assertNotIn("status line is ready", sub)
             self.assertNotIn("segments", sub)
@@ -469,32 +469,43 @@ class TestInUICommit(unittest.IsolatedAsyncioTestCase):
                 "sub": str(_query_static(app, "#step-sub").content),
             }
 
-    async def test_commit_invoked_with_selection_and_state(self):
+    async def test_commit_invoked_with_host_keyed_states(self):
+        """The commit payload is the host-keyed WizardResult.state: each host's
+        own segments/layout/adopt, with the component-level outcome shape
+        ({"ok", "adopt", "log"}) kept for the single-host caller."""
         seen = {}
 
-        def commit(selection, state):
+        def commit(selection, states):
             seen["selection"] = selection
-            seen["adopt"] = state.get("adopt")
-            return {"ok": True, "adopt": state.get("adopt"), "log": ""}
+            seen["states"] = states
+            return {"ok": True, "adopt": states["claude"]["adopt"], "log": ""}
 
         snap = await self._confirm(commit, accept=True)
         self.assertIs(seen["selection"], snap["sel"])
-        self.assertIs(seen["adopt"], True)              # accepted at the gate
+        self.assertEqual(list(seen["states"]), ["claude"])   # one host, keyed by id
+        self.assertIs(seen["states"]["claude"]["adopt"], True)     # accepted at gate
+        self.assertIn("segments", seen["states"]["claude"])
+        self.assertIn("layout", seen["states"]["claude"])
         self.assertEqual(snap["step"], wa.STEP_DONE)
         self.assertFalse(snap["committing"])
 
     async def test_success_outcome_shows_success_done(self):
         snap = await self._confirm(
-            lambda s, st: {"ok": True, "adopt": True, "log": ""}, accept=True)
-        self.assertIs(snap["result"].state["_commit_ok"], True)
+            lambda s, st: {"ok": True, "adopt": True, "log": "",
+                           "hosts": {"claude": {"ok": True, "adopt": True,
+                                                "log": ""}}}, accept=True)
+        self.assertIs(snap["result"].state["claude"]["_commit_ok"], True)
         self.assertIn("─kit", snap["art"])              # success art, not "Installing…"
         self.assertIn("your status line is ready", snap["sub"])
 
     async def test_failure_outcome_shows_failure_done_with_reason(self):
         snap = await self._confirm(
             lambda s, st: {"ok": False, "adopt": True,
-                           "log": "unknown [git] key: worktree"}, accept=True)
-        self.assertIs(snap["result"].state["_commit_ok"], False)
+                           "log": "unknown [git] key: worktree",
+                           "hosts": {"claude": {"ok": False, "adopt": True,
+                                                "log": "unknown [git] key: worktree"}}},
+            accept=True)
+        self.assertIs(snap["result"].state["claude"]["_commit_ok"], False)
         self.assertIn("incomplete", snap["title"])
         self.assertIn("some settings could not be written", snap["next"])
         self.assertIn("worktree", snap["next"])         # the doctor reason, escaped
@@ -510,14 +521,14 @@ class TestInUICommit(unittest.IsolatedAsyncioTestCase):
     async def test_decline_still_commits_in_ui(self):
         seen = {}
 
-        def commit(selection, state):
-            seen["adopt"] = state.get("adopt")
-            return {"ok": True, "adopt": state.get("adopt"), "log": ""}
+        def commit(selection, states):
+            seen["adopt"] = states["claude"]["adopt"]
+            return {"ok": True, "adopt": states["claude"]["adopt"], "log": ""}
 
         snap = await self._confirm(commit, accept=False, sl_state="foreign")
         self.assertIs(seen["adopt"], False)             # declined at the gate
         self.assertEqual(snap["step"], wa.STEP_DONE)
-        self.assertIs(snap["result"].state["_commit_ok"], True)
+        self.assertIs(snap["result"].state["claude"]["_commit_ok"], True)
 
     async def test_no_commit_injected_falls_back_to_legacy(self):
         # make_ctx leaves commit=None → old behavior: result set, Done shown,
@@ -747,6 +758,162 @@ class TestHousekeepingGate(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
         self.assertTrue(app.hk.done)
         self.assertEqual(seen["calls"], 1)
+
+
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
+    """Task 1's seam contract: the flow walks detected hosts, one gate each,
+    and serializes every host's state before any commit (plan 23-16)."""
+
+    TWO = ("claude", "cursor")
+
+    async def _walk(self, app, pilot, answers=("y", "y")):
+        await pilot.pause()
+        await pilot.press("enter")                  # choose → first host gate
+        for i, ans in enumerate(answers):
+            await pilot.press(ans)                  # this host's gate
+            if app.flow.step == wa.STEP_ARRANGE:    # accepted → arrange the board
+                await pilot.press("enter")          # board → next host / review
+            del i
+        return app.flow.step
+
+    async def test_two_hosts_walk_gate_gate_review(self):
+        app = wa.WizardApp(make_ctx(host_ids=self.TWO, sl_state="unset"))
+        async with app.run_test() as pilot:
+            step = await self._walk(app, pilot, ("y", "y"))
+            self.assertEqual(step, wa.STEP_REVIEW)
+            self.assertEqual([h.id for h in app.hosts], ["claude", "cursor"])
+            # Both hosts answered their OWN gate.
+            self.assertTrue(all(app.views[h.id].answered for h in app.hosts))
+
+    async def test_decline_first_host_still_shows_second_gate(self):
+        app = wa.WizardApp(make_ctx(host_ids=self.TWO, sl_state="unset"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")              # claude gate
+            await pilot.press("n")                  # decline claude → cursor gate
+            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
+            self.assertFalse(app.flow.gate_done)    # the SECOND host must be asked
+            self.assertEqual(app.host_i, 1)
+            lane0 = str(_query_static(app, "#lane0").content)
+            self.assertIn("Cursor", lane0)          # cursor's wording, not Claude's
+
+    async def test_review_serializes_both_hosts(self):
+        seen = {}
+
+        def commit(selection, states):
+            seen["states"] = states
+            return {"ok": True, "adopt": True, "log": "",
+                    "hosts": {h: {"ok": True, "adopt": True, "log": ""}
+                              for h in states}}
+
+        ctx = make_ctx(host_ids=self.TWO, sl_state="unset")._replace(commit=commit)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await self._walk(app, pilot, ("y", "y"))
+            await pilot.press("enter")              # review → commit
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertEqual(sorted(seen["states"]), ["claude", "cursor"])
+        for host_id, st in seen["states"].items():
+            self.assertIs(st["adopt"], True, host_id)
+            self.assertEqual(len(st["layout"]), 3, host_id)
+            self.assertTrue(st["segments"], host_id)
+        result = app.flow.result
+        assert result is not None            # narrowing for the typed seam below
+        self.assertEqual(sorted(result.state), ["claude", "cursor"])
+
+    async def test_review_escape_returns_to_last_adopted_host_board(self):
+        app = wa.WizardApp(make_ctx(host_ids=self.TWO, sl_state="unset"))
+        async with app.run_test() as pilot:
+            await self._walk(app, pilot, ("y", "y"))
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+            await pilot.press("escape")
+            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
+            self.assertEqual(app.host_i, 1)              # the LAST adopted host
+            self.assertTrue(app.flow.gate_done)          # its board, not its gate
+
+    async def test_reedit_second_host_then_confirm_keeps_both(self):
+        seen = {}
+
+        def commit(selection, states):
+            seen["states"] = states
+            return {"ok": True, "adopt": True, "log": "",
+                    "hosts": {h: {"ok": True, "adopt": True, "log": ""}
+                              for h in states}}
+
+        ctx = make_ctx(host_ids=self.TWO, sl_state="unset")._replace(commit=commit)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await self._walk(app, pilot, ("y", "y"))
+            await pilot.press("escape")             # back to Cursor's board
+            first = app.board.lines[0][0]
+            app.board.focus_zp = (0, 0)
+            await pilot.press("space")              # move it off → tray
+            await pilot.press("enter")              # cursor board → review
+            await pilot.press("enter")              # confirm
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        claude = seen["states"]["claude"]
+        self.assertIs(claude["adopt"], True)
+        self.assertIs(claude["segments"][first], True)     # untouched by the re-edit
+        cursor = seen["states"]["cursor"]
+        self.assertIs(cursor["segments"][first], False)    # turned off here only
+        # An OFF segment still rides its home row (so `<id> = false` is written),
+        # which is why on/off — not placement — is what differs per host.
+        self.assertIn(first, [x for row in cursor["layout"] for x in row["segments"]])
+
+    async def test_one_host_failure_shows_its_own_text_only(self):
+        def commit(selection, states):
+            return {"ok": False, "adopt": True, "log": "claude broke\ncursor fine",
+                    "hosts": {"claude": {"ok": False, "adopt": True,
+                                         "log": "claude broke"},
+                              "cursor": {"ok": True, "adopt": True, "log": ""}}}
+
+        ctx = make_ctx(host_ids=self.TWO, sl_state="unset")._replace(commit=commit)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await self._walk(app, pilot, ("y", "y"))
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            nxt = str(_query_static(app, "#done-next").content)
+            title = str(_query_static(app, "#step-title").content)
+            sub = str(_query_static(app, "#step-sub").content)
+        self.assertIn("incomplete", title)
+        self.assertIn("claude broke", nxt)          # the failing host's own reason
+        # The healthy host's outcome stays visible and its per-host ok holds.
+        result = app.flow.result
+        assert result is not None            # narrowing for the typed seam below
+        self.assertIs(result.state["cursor"]["_commit_ok"], True)
+        self.assertIs(result.state["claude"]["_commit_ok"], False)
+        self.assertIn("cursor", (nxt + sub).lower())
+        self.assertIn("Cursor CLI", nxt + sub)
+
+    async def test_zero_hosts_skips_arrange_entirely(self):
+        seen = {}
+
+        def commit(selection, states):
+            seen["states"] = states
+            return {"ok": True, "adopt": False, "log": "", "hosts": {}}
+
+        ctx = make_ctx(host_ids=())._replace(commit=commit)
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")              # choose → review (no arrange)
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+            self.assertFalse(_query_static(app, "#rev-preview").display)
+            what = str(_query_static(app, "#rev-what").content)
+            self.assertIn("No status-line host detected", what)
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+        self.assertEqual(seen["states"], {})        # empty dict, no Claude fallback
+        result = app.flow.result
+        assert result is not None            # narrowing for the typed seam below
+        self.assertEqual(result.state, {})
 
 
 if __name__ == "__main__":  # pragma: no cover
