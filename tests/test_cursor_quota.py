@@ -1,14 +1,18 @@
 """Synthetic-fixture tests for Cursor quota normalization and state."""
 
 import json
+import os
 import pathlib
+import stat
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from typing import cast
 from unittest import mock
 
-from tests.cursor_fakes import FakeDashboard, load_dashboard_fixture
+from tests.cursor_fakes import FakeDashboard, load_dashboard_fixture, run_like_cursor
 from tools.cursor_quota import (
     FRESH_TTL_S,
     NEGATIVE_TTL_S,
@@ -22,11 +26,17 @@ from tools.cursor_quota import (
     probe_access_token,
     probe_auth_path,
     probe_build_opener,
+    probe_cache_paths,
     probe_dashboard_call,
     probe_fetch_all,
     probe_fetch_quota,
+    probe_read_cache,
+    probe_read_quota,
+    probe_refresh,
+    probe_try_lock,
+    probe_validate_endpoint,
+    probe_write_cache,
     util_number,
-    util_validate_endpoint,
 )
 
 
@@ -39,6 +49,278 @@ class TestCursorQuota(unittest.TestCase):
         token = "synthetic-" + "cursor-" + "token"
         auth.write_text(json.dumps({"accessToken": token}), encoding="utf-8")
         return {"HOME": str(home), "XDG_CONFIG_HOME": str(config)}, token
+
+    def test_cache_write_refresh_and_cache_only_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache_base = str(pathlib.Path(directory) / "cache")
+            cache_path, lock_path = probe_cache_paths(cache_base)
+            self.assertEqual(stat.S_IMODE(os.stat(pathlib.Path(cache_base) / "cursor").st_mode),
+                             0o700)
+            token = "synthetic-cursor-token"
+            data = core_synthetic_cache(1000)["data"]
+            def fetch(_env):
+                return cast(dict[str, object], data), None, token
+            self.assertEqual(probe_refresh(cache_base, {}, lambda: 1000, fetch), 0)
+            cache = cast(dict[str, object], probe_read_cache(cache_path))
+            self.assertEqual(cache["data"], data)
+            self.assertEqual(stat.S_IMODE(os.stat(cache_path).st_mode), 0o600)
+            self.assertTrue(os.path.exists(lock_path))
+            self.assertFalse(token.encode() in pathlib.Path(cache_path).read_bytes())
+            spawned = []
+            result = probe_read_quota(cache_base, {}, 1001,
+                                      lambda base, env: spawned.append((base, env)) or True)
+            self.assertEqual(result.state, "ok")
+            self.assertEqual(spawned, [])
+
+    def test_cache_atomic_failure_preserves_previous_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path, _lock = probe_cache_paths(directory)
+            self.assertTrue(probe_write_cache(path, {"data": None}))
+            prior = pathlib.Path(path).read_bytes()
+            with mock.patch("tools.cursor_quota.os.replace", side_effect=OSError("blocked")):
+                self.assertFalse(probe_write_cache(path, {"data": {"changed": True}}))
+            self.assertEqual(pathlib.Path(path).read_bytes(), prior)
+            self.assertEqual(list(pathlib.Path(path).parent.glob(".usage-*")), [])
+
+    def test_symlink_cache_directory_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            target = root / "target"
+            target.mkdir()
+            (root / "cursor").symlink_to(target, target_is_directory=True)
+            self.assertFalse(probe_write_cache(str(root / "cursor" / "usage.json"), {"x": 1}))
+            self.assertEqual(list(target.iterdir()), [])
+
+    def test_cli_records_auth_missing_without_network(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache_base = str(pathlib.Path(directory) / "cache" / "ai-kit")
+            home = pathlib.Path(directory) / "home"
+            config = pathlib.Path(directory) / "config"
+            env = {
+                "PATH": os.environ["PATH"], "HOME": str(home),
+                "XDG_CONFIG_HOME": str(config),
+                "XDG_CACHE_HOME": str(pathlib.Path(directory) / "cache"),
+            }
+            proc = subprocess.run(
+                [sys.executable, "-S", str(pathlib.Path(__file__).parents[1] / "tools" /
+                 "cursor_quota.py"), "--refresh", "--cache-base", cache_base],
+                env=env, capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            cache_path = pathlib.Path(cache_base) / "cursor" / "usage.json"
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+            self.assertEqual(cache["last_error_kind"], "auth_missing")
+            self.assertIsNone(cache["data"])
+            self.assertEqual(stat.S_IMODE(cache_path.stat().st_mode), 0o600)
+
+    def test_negative_cache_retains_data_until_ttl(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = str(pathlib.Path(directory) / "cache")
+            path, _lock = probe_cache_paths(base)
+            previous = core_synthetic_cache(0)
+            self.assertTrue(probe_write_cache(path, previous))
+            calls = []
+            def failed(_env):
+                calls.append(1)
+                return None, "network_error", "synthetic failure"
+            self.assertEqual(probe_refresh(base, {}, lambda: 1200, failed), 0)
+            saved = cast(dict[str, object], probe_read_cache(path))
+            self.assertEqual(saved["data"], previous["data"])
+            self.assertEqual(core_quota_state(saved, 1201).state, "stale")
+            self.assertFalse(core_needs_refresh(saved, 1201))
+            self.assertTrue(core_needs_refresh(saved, 1801))
+            self.assertEqual(len(calls), 1)
+
+    def test_flock_contention_and_sigkill_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _path, lock_path = probe_cache_paths(directory)
+            script = ("import fcntl, os, sys, time; fd=os.open(sys.argv[1], os.O_CREAT|os.O_RDWR, "
+                      "0o600); fcntl.flock(fd, fcntl.LOCK_EX); print('held', flush=True); "
+                      "time.sleep(30)")
+            holder = subprocess.Popen([sys.executable, "-c", script, lock_path],
+                                      stdout=subprocess.PIPE, text=True)
+            try:
+                assert holder.stdout is not None
+                self.assertEqual(holder.stdout.readline().strip(), "held")
+                self.assertIsNone(probe_try_lock(lock_path))
+                holder.kill()  # SIGKILL releases the kernel advisory lock.
+                holder.wait(timeout=5)
+                descriptor = probe_try_lock(lock_path)
+                self.assertIsNotNone(descriptor)
+                from tools.cursor_quota import probe_release_lock
+                probe_release_lock(cast(int, descriptor))
+            finally:
+                if holder.poll() is None:
+                    holder.kill()
+                    holder.wait(timeout=5)
+
+    def test_competing_refreshers_only_one_fetches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = str(pathlib.Path(directory) / "cache")
+            _path, lock_path = probe_cache_paths(base)
+            held = probe_try_lock(lock_path)
+            self.assertIsNotNone(held)
+            fetched = []
+            try:
+                def not_fetched(_env):
+                    fetched.append(1)
+                    return None, "network_error", "unexpected fetch"
+
+                self.assertEqual(probe_refresh(base, {}, lambda: 5000, not_fetched), 0)
+                self.assertEqual(fetched, [])
+            finally:
+                from tools.cursor_quota import probe_release_lock
+                probe_release_lock(cast(int, held))
+            data = core_synthetic_cache(5000)["data"]
+            self.assertEqual(
+                probe_refresh(base, {}, lambda: 5000,
+                              lambda _env: (cast(dict[str, object], data), None, "")), 0)
+            saved = probe_read_cache(_path)
+            assert saved is not None
+            self.assertEqual(saved["data"], data)
+
+    def test_production_read_spawns_detached_refresher(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            cache_base = root / "cache"
+            home = root / "home"
+            config = root / "config"
+            pid_file = root / "child.pid"
+            script = root / "render.py"
+            tools = pathlib.Path(__file__).resolve().parents[1] / "tools"
+            script.write_text(
+                "import os, subprocess, sys\n"
+                f"sys.path.insert(0, {str(tools)!r})\n"
+                "from cursor_quota import probe_read_quota\n"
+                f"base={str(cache_base)!r}; pidfile={str(pid_file)!r}\n"
+                "def spawn(base, env):\n"
+                "    proc = subprocess.Popen([sys.executable, '-S', "
+                "os.path.join(sys.path[0], 'cursor_quota.py'), '--refresh', "
+                "'--cache-base', base], env=env, stdin=subprocess.DEVNULL, "
+                "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, "
+                "close_fds=True, start_new_session=True)\n"
+                "    open(pidfile, 'w').write(str(proc.pid))\n"
+                "    return True\n"
+                "probe_read_quota(base, os.environ.copy(), 1000, spawn)\n"
+                "import time; time.sleep(2)\n",
+                encoding="utf-8")
+            env = {
+                "PATH": os.environ["PATH"], "PYTHONPATH": str(tools),
+                "HOME": str(home), "XDG_CONFIG_HOME": str(config),
+                "XDG_CACHE_HOME": str(root / "xdg-cache"),
+            }
+            result = run_like_cursor([sys.executable, str(script)], {}, cwd=str(root),
+                                     env=env, kill_after_ms=50, timeout_s=2)
+            self.assertTrue(result.killed, result)
+            self.assertFalse(result.blocked)
+            child_pid = int(pid_file.read_text(encoding="utf-8"))
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                cache_path = cache_base / "cursor" / "usage.json"
+                if cache_path.exists():
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("detached refresher did not publish auth_missing cache")
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+            self.assertEqual(cache["last_error_kind"], "auth_missing")
+            self.assertIsNone(cache["data"])
+            self.assertTrue((cache_path.parent / "usage.lock").exists())
+            self.assertEqual(probe_read_quota(str(cache_base), env, time.time()).state,
+                             "auth_missing")
+            self.assertNotIn("token", cache_path.read_text(encoding="utf-8"))
+            self.assertGreater(child_pid, 0)
+
+    def test_killed_refresher_releases_lock_and_replacement_publishes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory) / "cache"
+            cache_path, lock_path = probe_cache_paths(str(base))
+            worker = pathlib.Path(directory) / "holder.py"
+            worker.write_text(
+                "import fcntl, os, sys, time\n"
+                f"fd=os.open({str(lock_path)!r}, os.O_CREAT|os.O_RDWR, 0o600)\n"
+                "fcntl.flock(fd, fcntl.LOCK_EX|fcntl.LOCK_NB)\n"
+                f"open({str(pathlib.Path(directory) / 'locked')!r}, 'w').close()\n"
+                "time.sleep(30)\n",
+                encoding="utf-8")
+            holder = subprocess.Popen([sys.executable, "-S", str(worker)],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                marker = pathlib.Path(directory) / "locked"
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and not marker.exists():
+                    time.sleep(0.02)
+                self.assertTrue(marker.exists(), "worker did not acquire its flock")
+                descriptor = probe_try_lock(lock_path)
+                self.assertIsNone(descriptor, "worker flock was not exclusive")
+                holder.kill()  # SIGKILL releases the real refresher's child-owned flock.
+                holder.wait(timeout=5)
+                acquired = probe_try_lock(lock_path)
+                self.assertIsNotNone(acquired)
+                from tools.cursor_quota import probe_release_lock
+                probe_release_lock(cast(int, acquired))
+                replacement_data = cast(dict[str, object], core_synthetic_cache(7000)["data"])
+                calls = []
+                def replacement(_env):
+                    calls.append(1)
+                    return replacement_data, None, ""
+                self.assertEqual(probe_refresh(str(base), {}, lambda: 7000, replacement), 0)
+                self.assertEqual(calls, [1])
+                saved = probe_read_cache(str(cache_path))
+                assert saved is not None
+                self.assertEqual(saved["data"], replacement_data)
+            finally:
+                if holder.poll() is None:
+                    holder.kill()
+                    holder.wait(timeout=5)
+
+    def test_synchronized_reader_rechecks_cache_after_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = str(pathlib.Path(directory) / "cache")
+            cache_path, lock_path = probe_cache_paths(base)
+            stale = core_synthetic_cache(0)
+            self.assertTrue(probe_write_cache(cache_path, stale))
+            lock = probe_try_lock(lock_path)
+            self.assertIsNotNone(lock)
+            entered = __import__("threading").Event()
+            release = __import__("threading").Event()
+            results = []
+            def reader():
+                observed = probe_read_cache(cache_path)
+                entered.set()
+                release.wait(timeout=5)
+                results.append(observed)
+            thread = __import__("threading").Thread(target=reader)
+            thread.start()
+            self.assertTrue(entered.wait(timeout=5))
+            fresh = core_synthetic_cache(500)
+            self.assertTrue(probe_write_cache(cache_path, fresh))
+            release.set()
+            thread.join(timeout=5)
+            from tools.cursor_quota import probe_release_lock
+            probe_release_lock(cast(int, lock))
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(probe_read_cache(cache_path), fresh)
+            self.assertEqual(results, [stale])
+            fetched = []
+            def not_fetched(_env):
+                fetched.append(1)
+                return None, "network_error", "unexpected fetch"
+
+            self.assertEqual(probe_refresh(base, {}, lambda: 501, not_fetched), 0)
+            self.assertEqual(fetched, [])
+
+    def test_401_refresh_hides_older_quota(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = str(pathlib.Path(directory) / "cache")
+            path, _lock = probe_cache_paths(base)
+            good = core_synthetic_cache(0)
+            self.assertTrue(probe_write_cache(path, good))
+            ticks = iter((700, 701))
+            self.assertEqual(probe_refresh(base, {}, lambda: next(ticks),
+                                           lambda _env: (None, "auth_expired", "unauthorized")), 0)
+            cache = cast(dict[str, object], probe_read_cache(path))
+            self.assertEqual(cache["last_error_kind"], "auth_expired")
+            self.assertEqual(core_quota_state(cache, 702).state, "auth_expired")
 
     def test_auth_to_concurrent_transport_and_normalization(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -98,10 +380,10 @@ class TestCursorQuota(unittest.TestCase):
         )
         for endpoint in accepted:
             with self.subTest(endpoint=endpoint):
-                self.assertIsNotNone(util_validate_endpoint(endpoint))
+                self.assertIsNotNone(probe_validate_endpoint(endpoint))
         for endpoint in rejected:
             with self.subTest(endpoint=endpoint):
-                self.assertIsNone(util_validate_endpoint(endpoint))
+                self.assertIsNone(probe_validate_endpoint(endpoint))
         with mock.patch("tools.cursor_quota.probe_access_token") as reader:
             data, error, _ = probe_fetch_quota({"CURSOR_API_ENDPOINT": "http://api2.cursor.sh"})
         self.assertIsNone(data)

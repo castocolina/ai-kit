@@ -4,8 +4,16 @@ Networking and credential imports are intentionally lazy so rendering stays chea
 """
 # pyright: strict
 
+import argparse
+import contextlib
 import importlib
 import math
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+import time
 from collections.abc import Callable
 from typing import Any, NamedTuple, cast
 
@@ -248,8 +256,172 @@ def core_synthetic_cache(now: float) -> dict[str, object]:
             "last_error": None, "last_error_kind": None}
 
 
-# ═══ 4. PROBE — credentials and Dashboard transport ═══
-def util_validate_endpoint(url: str) -> str | None:
+# ═══ 4. PROBE — private cache, lock and refresh lifecycle ═══
+def probe_cache_paths(cache_base: str) -> tuple[str, str]:
+    """Prepare the private cursor cache directory and return cache/lock paths."""
+    directory = os.path.join(cache_base, "cursor")
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    info = os.lstat(directory)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise OSError("unsafe Cursor cache directory")
+    if info.st_uid != os.getuid():
+        raise OSError("Cursor cache directory has a different owner")
+    os.chmod(directory, 0o700)
+    return os.path.join(directory, "usage.json"), os.path.join(directory, "usage.lock")
+
+
+def probe_read_cache(path: str) -> dict[str, object] | None:
+    """Tolerantly read a cache object; malformed and inaccessible files are misses."""
+    json = importlib.import_module("json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+        return cast(dict[str, object], value) if isinstance(value, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def probe_write_cache(path: str, cache: dict[str, object]) -> bool:
+    """Atomically publish token-free cache JSON as a private file."""
+    json = importlib.import_module("json")
+    directory = os.path.dirname(path)
+    temporary = None
+    try:
+        expected, _lock = probe_cache_paths(os.path.dirname(directory))
+        if expected != path:
+            return False
+        fd, temporary = tempfile.mkstemp(prefix=".usage-", dir=directory)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(cache, handle, separators=(",", ":"), sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        temporary = None
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+    finally:
+        if temporary is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary)
+
+
+def probe_try_lock(lock_path: str) -> int | None:
+    """Open sibling lock and acquire a non-blocking exclusive flock, if supported."""
+    try:
+        fcntl = importlib.import_module("fcntl")
+    except ImportError:
+        return None
+    fd = -1
+    try:
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(lock_path, flags, 0o600)
+        os.fchmod(fd, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except (OSError, BlockingIOError):
+        if fd >= 0:
+            os.close(fd)
+        return None
+
+
+def probe_release_lock(fd: int) -> None:
+    """Unlock and close a lock descriptor after publication."""
+    try:
+        fcntl = importlib.import_module("fcntl")
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except (ImportError, OSError):
+        pass
+    finally:
+        os.close(fd)
+
+
+def probe_spawn_detached(
+    argv: list[str], env: dict[str, str], popen: Callable[..., Any] = subprocess.Popen
+) -> bool:
+    """Start a stdio-independent background child in its own session."""
+    try:
+        popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+              stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True, env=env)
+        return True
+    except OSError:
+        return False
+
+
+def probe_spawn_refresher(
+    cache_base: str, env: dict[str, str], popen: Callable[..., Any] = subprocess.Popen
+) -> bool:
+    argv = [sys.executable, "-S", os.path.realpath(__file__), "--refresh",
+            "--cache-base", cache_base]
+    return probe_spawn_detached(argv, env, popen)
+
+
+def probe_read_quota(
+    cache_base: str, env: dict[str, str], now: float,
+    spawn: Callable[[str, dict[str, str]], bool] | None = None
+) -> QuotaResult:
+    """Return cache state immediately and schedule refresh without a network wait."""
+    try:
+        cache_path, lock_path = probe_cache_paths(cache_base)
+        cache = probe_read_cache(cache_path) or {}
+        if core_needs_refresh(cache, now):
+            descriptor = probe_try_lock(lock_path)
+            if descriptor is not None:
+                probe_release_lock(descriptor)
+                (spawn or probe_spawn_refresher)(cache_base, env)
+        return core_quota_state(cache, now)
+    except OSError as exc:
+        return QuotaResult("absent", "inferred", str(exc), None, None, None, None, None,
+                           None, "unavailable", None, None)
+
+
+def probe_refresh(
+    cache_base: str, env: dict[str, str], now_fn: Callable[[], float] = time.time,
+    fetch_quota: Callable[
+        [dict[str, str]], tuple[dict[str, object] | None, str | None, str]
+    ] | None = None
+) -> int:
+    """Acquire child-owned single-flight lock and publish refresh outcome."""
+    try:
+        cache_path, lock_path = probe_cache_paths(cache_base)
+        descriptor = probe_try_lock(lock_path)
+    except OSError:
+        return 1
+    if descriptor is None:
+        return 0
+    try:
+        previous = probe_read_cache(cache_path) or {}
+        now = now_fn()
+        if not core_needs_refresh(previous, now):
+            return 0
+        fetch = fetch_quota or probe_fetch_quota
+        data, error_kind, diagnostic = fetch(env)
+        attempted = now_fn()
+        updated: dict[str, object] = {
+            "data": data if data is not None else previous.get("data"),
+            "data_fetched_at": attempted if data is not None else previous.get("data_fetched_at"),
+            "last_attempt_at": attempted,
+            "last_error": diagnostic or None if error_kind else None,
+            "last_error_kind": error_kind,
+        }
+        return 0 if probe_write_cache(cache_path, updated) else 1
+    finally:
+        probe_release_lock(descriptor)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--refresh", action="store_true")
+    parser.add_argument("--cache-base", required=True)
+    args = parser.parse_args()
+    if not args.refresh:
+        parser.error("--refresh is required")
+    return probe_refresh(args.cache_base, dict(os.environ))
+
+
+# ═══ 5. UTIL — endpoint and credential support ═══
+def probe_validate_endpoint(url: str) -> str | None:
     """Return a canonical approved Dashboard base URL, or None."""
     urlsplit = importlib.import_module("urllib.parse").urlsplit
     try:
@@ -270,14 +442,15 @@ def util_validate_endpoint(url: str) -> str | None:
 
 def probe_auth_path(env: dict[str, str], platform: str = "") -> str:
     """Resolve the CLI's read-only auth path without consulting CURSOR_CONFIG_DIR."""
-    os = importlib.import_module("os")
-    sys = importlib.import_module("sys")
-    system = platform or sys.platform
+    os_module = importlib.import_module("os")
+    sys_module = importlib.import_module("sys")
+    system = platform or sys_module.platform
     if system == "darwin":
-        return os.path.join(env.get("HOME", os.path.expanduser("~")), ".cursor", "auth.json")
-    config = env.get("XDG_CONFIG_HOME") or os.path.join(
-        env.get("HOME", os.path.expanduser("~")), ".config")
-    return os.path.join(config, "cursor", "auth.json")
+        return os_module.path.join(env.get("HOME", os_module.path.expanduser("~")),
+                                   ".cursor", "auth.json")
+    config = env.get("XDG_CONFIG_HOME") or os_module.path.join(
+        env.get("HOME", os_module.path.expanduser("~")), ".config")
+    return os_module.path.join(config, "cursor", "auth.json")
 
 
 def probe_access_token(env: dict[str, str]) -> tuple[str | None, str | None]:
@@ -355,10 +528,10 @@ def probe_dashboard_call(
     """Issue one Dashboard POST and parse a JSON-object body before the deadline."""
     runtime = importlib.import_module
     json = runtime("json")
-    time = runtime("time")
+    clock = runtime("time")
     http_error = runtime("urllib.error").HTTPError
     request_module = runtime("urllib.request")
-    remaining = context.deadline - time.monotonic()
+    remaining = context.deadline - clock.monotonic()
     if remaining <= 0:
         return None, "network_error"
     request = request_module.Request(
@@ -370,7 +543,7 @@ def probe_dashboard_call(
             sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
             chunks: list[bytes] = []
             while True:
-                remaining = context.deadline - time.monotonic()
+                remaining = context.deadline - clock.monotonic()
                 if remaining <= 0:
                     return None, "network_error"
                 if sock is not None and sock.fileno() >= 0:
@@ -393,7 +566,7 @@ def probe_fetch_quota(
     fetch: Callable[[str, str, Any, float], FetchResult] = probe_fetch_all
 ) -> tuple[dict[str, object] | None, str | None, str]:
     """Validate before reading the token, fetch, and return only normalized data."""
-    endpoint = util_validate_endpoint(env.get("CURSOR_API_ENDPOINT", "https://api2.cursor.sh"))
+    endpoint = probe_validate_endpoint(env.get("CURSOR_API_ENDPOINT", "https://api2.cursor.sh"))
     if endpoint is None:
         return None, "network_error", "Dashboard endpoint rejected"
     token, error = probe_access_token(env)
@@ -404,3 +577,7 @@ def probe_fetch_quota(
     if result.error_kind:
         return None, result.error_kind, "Cursor Dashboard request failed"
     return core_normalize(result.usage, result.hard_limit, result.plan_info), None, ""
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

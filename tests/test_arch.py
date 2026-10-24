@@ -695,6 +695,8 @@ _START_NEW_SESSION_ALLOWED = frozenset(
         "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py",
         "skills/ai-kit-spec-review/ai_kit_spec/detection.py",
         "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/catalog_adapter.py",
+        # Detached quota refresher; not a supervisor (D-13).
+        "tools/cursor_quota.py",
     }
 )
 _SUPERVISOR_OWNER = "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py"
