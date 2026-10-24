@@ -39,3 +39,18 @@ def cfg_env_segment_keys(env: Env, prefix: str) -> list[str]:
     """Lower-cased segment keys present under the supplied host prefix in env."""
     pre = prefix + "SEGMENT_"
     return [k[len(pre) :].lower() for k in env if k.startswith(pre)]
+
+
+# ═══ 5. util_ — pure non-format helpers (window gauge) ═══════════════════════
+
+
+def util_window_gap(
+    pct: float, start: float | None, end: float | None, now: float
+) -> float | None:
+    """Compare usage with elapsed window time, or None when the window is invalid."""
+    if start is None or end is None or end <= start:
+        return None
+    remaining = (end - now) * 100.0 / (end - start)
+    if remaining < 0.0 or remaining > 100.0:
+        return None
+    return pct - (100.0 - remaining)

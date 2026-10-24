@@ -3,7 +3,7 @@
 
 import os
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from common_render import Context
 
@@ -27,7 +27,25 @@ def cfg_resolve_effort(raw: dict[str, Any]) -> str:
     return "" if level == "auto" else level
 
 
+class ClaudeData(NamedTuple):
+    effort: str
+    added: int
+    removed: int
+    cost: float
+    total_ms: int
+    api_ms: int
+    rate_limits: dict[str, Any]
+    transcript: str
+    session: str
+    claude_dir: str
+
+
 # ═══ 6. core_ — render machinery: Context, Theme, registry, packer, render ════
+
+
+def core_claude_data(ctx: Context) -> ClaudeData:
+    """Return the host-specific Claude payload carried by this context."""
+    return cast(ClaudeData, ctx.host)
 
 
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -70,24 +88,24 @@ def core_build_context(
         t_start=t_start,
         model_name=str(model.get("display_name") or ""),
         model_id=str(model.get("id") or "unknown"),
-        effort=effort,
         work_dir=work_dir,
         home=home,
         clock=time.strftime("%H:%M"),
-        # `or 0` (not get's default) so a PRESENT-but-null field — what a fresh
-        # /clear session sends before any tokens/cost accrue — coalesces to 0
-        # instead of raising on int()/math and blanking the whole bar.
-        added=int(cost.get("total_lines_added") or 0),
-        removed=int(cost.get("total_lines_removed") or 0),
-        cost=float(cost.get("total_cost_usd") or 0),
-        total_ms=int(cost.get("total_duration_ms") or 0),
-        api_ms=int(cost.get("total_api_duration_ms") or 0),
+        # `or 0` preserves Claude's current-session behavior for present-but-null fields.
         context_pct=int(ctx_win.get("used_percentage") or 0),
         context_max=int(ctx_win.get("context_window_size") or 0),
-        rate_limits=cast(dict[str, Any], raw.get("rate_limits") or {}),
-        transcript=transcript,
-        session=session,
-        claude_dir=claude_dir,
+        host=ClaudeData(
+            effort=effort,
+            added=int(cost.get("total_lines_added") or 0),
+            removed=int(cost.get("total_lines_removed") or 0),
+            cost=float(cost.get("total_cost_usd") or 0),
+            total_ms=int(cost.get("total_duration_ms") or 0),
+            api_ms=int(cost.get("total_api_duration_ms") or 0),
+            rate_limits=cast(dict[str, Any], raw.get("rate_limits") or {}),
+            transcript=transcript,
+            session=session,
+            claude_dir=claude_dir,
+        ),
     )
 
 

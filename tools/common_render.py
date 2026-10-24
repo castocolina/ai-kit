@@ -83,22 +83,12 @@ class Context:  # pylint: disable=too-many-instance-attributes  # per-render bag
     # cheap eager fields (were build_data's `base`)
     model_name: str
     model_id: str
-    effort: str
     work_dir: str
     home: str
     clock: str
-    added: int
-    removed: int
-    cost: float
-    total_ms: int
-    api_ms: int
-    context_pct: int
-    context_max: int
-    rate_limits: dict[str, Any]
-    # probe inputs (locate materialized todo/task state; feed the memoized probes)
-    transcript: str
-    session: str
-    claude_dir: str
+    context_pct: int | None
+    context_max: int | None
+    host: object
     # render bookkeeping (D1) — mutated during the render
     failed: set[str] = field(default_factory=core_str_set)
     slowest: tuple[str, int] | None = None

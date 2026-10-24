@@ -123,6 +123,8 @@ def seg_alt_term_dimensions(ctx: "Context", avail: int, theme: "Theme") -> str |
 
 
 def seg_context(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    if ctx.context_pct is None:
+        return None
     pct = int(ctx.context_pct)
     color = util_pick_color(pct, theme.ramps["context"])
     pct_only = util_icon("📊", f"{color}{pct}%{RESET}")
@@ -133,5 +135,9 @@ def seg_context(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     bar_e = "░" * (CONTEXT_BAR_CELLS - full_n - half)
     bar = f"{color}{bar_f}{theme.c('GREY')}{bar_e}{RESET}"
     mid = util_icon("📊", f"{bar} {color}{pct}%{RESET}")
-    full = util_icon("📊", f"{bar} {color}{pct}% of {fmt_tokens(ctx.context_max)}{RESET}")
+    full = (
+        util_icon("📊", f"{bar} {color}{pct}% of {fmt_tokens(ctx.context_max)}{RESET}")
+        if ctx.context_max is not None
+        else None
+    )
     return util_first_fitting([full, mid, pct_only], avail) or pct_only  # floor

@@ -87,25 +87,15 @@ def _data(**over):
     eager = {
         "model_name": "Opus 4.8",
         "model_id": "claude-opus-4-8",
-        "effort": "high",
         "work_dir": "/home/u/proj",
         "home": "/home/u",
         "clock": "14:30",
-        "added": 12,
-        "removed": 3,
-        "cost": 0.5,
-        "total_ms": 65000,
-        "api_ms": 4200,
         "context_pct": 12,
         "context_max": 1_000_000,
-        "rate_limits": {},
         "cols": 200,
         "lines": 50,
         "dim_assumed": False,
         "t_start": None,
-        "transcript": "",
-        "session": "",
-        "claude_dir": "/home/u/.claude",
         "slowest": None,
     }
     probe_defaults = {
@@ -126,11 +116,25 @@ def _data(**over):
         "chat_compactions": 0,
     }
     # Route overrides: eager fields go to the constructor, probes go to probe_cache
+    claude_fields = {
+        "effort": "high",
+        "added": 12,
+        "removed": 3,
+        "cost": 0.5,
+        "total_ms": 65000,
+        "api_ms": 4200,
+        "rate_limits": {},
+        "transcript": "",
+        "session": "",
+        "claude_dir": "/home/u/.claude",
+    }
+    host = {key: over.pop(key, value) for key, value in claude_fields.items()}
     eager_over = {k: over.pop(k) for k in list(over) if k in eager}
     probe_over = {**probe_defaults, **over}
     eager.update(eager_over)
     ctx = common_render.Context(
-        raw={}, line_conf=common_config.cfg_default_config(claude_host.SPEC), theme=THEME, **eager
+        raw={}, line_conf=common_config.cfg_default_config(claude_host.SPEC), theme=THEME,
+        host=claude_payload.ClaudeData(**host), **eager
     )
     # Seed probe_cache directly so probes never fire during tests
     ctx.probe_cache["git"] = common_types.GitSnapshot(
@@ -294,6 +298,46 @@ class TestWindowSeconds(unittest.TestCase):
         # Mirror case: "five" IS a valid _NUM_WORDS key; "fortnight" is NOT in
         # _UNIT_SECONDS.
         self.assertIsNone(claude_segments.util_rate_window_seconds("five_fortnight"))
+
+
+class TestWindowGap(unittest.TestCase):
+    def test_window_gap_bounds_and_empty_window(self):
+        self.assertEqual(common_fmt.util_window_gap(50, 0, 100, 40), 10.0)
+        self.assertIsNone(common_fmt.util_window_gap(50, 100, 100, 100))
+        self.assertIsNone(common_fmt.util_window_gap(50, 0, 100, -1))
+        self.assertIsNone(common_fmt.util_window_gap(50, 0, 100, 101))
+        self.assertIsNone(common_fmt.util_window_gap(50, None, 100, 1))
+        self.assertIsNone(common_fmt.util_window_gap(50, 0, None, 1))
+
+    def test_rate_adapter_matches_original_arithmetic_exactly(self):
+        import random
+
+        rng = random.Random(2307)
+        keys = ("five_hour", "seven_day", "thirty_day", "nonsense_unit")
+        for _ in range(200):
+            pct = rng.uniform(0, 100)
+            key = rng.choice(keys)
+            window = claude_segments.util_rate_window_seconds(key)
+            reset = rng.randint(NOW - 1000, NOW + 40_000_000)
+            now = rng.uniform(NOW - 1000, NOW + 1000)
+            expected = None
+            if window is not None:
+                remaining = (reset - now) * 100.0 / window
+                if 0.0 <= remaining <= 100.0:
+                    expected = pct - (100.0 - remaining)
+            self.assertEqual(claude_segments.util_rate_gap(pct, key, reset, now), expected)
+
+    def test_gap_colors_pin_adjacent_spec_edges(self):
+        cases = [(5.0, "GREEN"), (10.99, "YELLOW"), (11.0, "ORANGE"),
+                 (15.0, "ORANGE"), (15.01, "RED")]
+        for gap, color in cases:
+            self.assertEqual(common_types.util_gap_color(gap, THEME), THEME.c(color), gap)
+
+    def test_raw_gap_sign_is_glued_to_rounded_percentage(self):
+        with mock.patch.object(time, "time", return_value=NOW):
+            rl = {"five_hour": {"used_percentage": 50.49, "resets_at": NOW + 9000}}
+            out = claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME)
+        self.assertIn("-50%", strip(out))
 
 
 class TestRateGap(unittest.TestCase):
@@ -676,6 +720,14 @@ class TestCooperativeBuilders(unittest.TestCase):
             strip(common_segments.seg_context(_data(context_pct=12), 8, THEME)), "📊 12%"
         )
         self.assertIsNotNone(common_segments.seg_context(_data(context_pct=12), 2, THEME))  # floor
+
+    def test_context_hides_when_percent_is_missing(self):
+        self.assertIsNone(common_segments.seg_context(_data(context_pct=None), 200, THEME))
+
+    def test_context_omits_max_when_missing(self):
+        out = strip(common_segments.seg_context(_data(context_max=None), 200, THEME))
+        self.assertIn("12%", out)
+        self.assertNotIn(" of ", out)
 
     def test_context_low_pct_half_bar_and_zero_empty(self):
         self.assertIn("▌", strip(common_segments.seg_context(_data(context_pct=5), 200, THEME)))
@@ -1340,6 +1392,37 @@ class TestProcAndGit(unittest.TestCase):
         self.assertIn(snap.dirty, ("clean", "untracked", "modified"))
         self.assertIsInstance(snap.is_worktree, bool)
         self.assertIsInstance(snap.wt_name, str)
+
+    def test_slow_git_times_out_to_empty_snapshot(self):
+        with tempfile.TemporaryDirectory() as root:
+            bindir = os.path.join(root, "bin")
+            os.mkdir(bindir)
+            git = os.path.join(bindir, "git")
+            with open(git, "w", encoding="utf-8") as script:
+                script.write("#!/bin/sh\nsleep 5\n")
+            os.chmod(git, 0o755)
+            with (
+                mock.patch.dict(os.environ, {"PATH": bindir + os.pathsep + os.defpath}),
+                mock.patch.object(common_probe, "GIT_TIMEOUT_S", 0.2),
+            ):
+                started = time.monotonic()
+                snapshot = common_probe.probe_git_snapshot(root)
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertFalse(snapshot.in_repo)
+            self.assertEqual(snapshot.branch, "")
+
+    def test_entry_render_survives_slow_git(self):
+        with tempfile.TemporaryDirectory(prefix="slow-git-entry-") as root:
+            bindir = os.path.join(root, "bin")
+            os.mkdir(bindir)
+            git = os.path.join(bindir, "git")
+            with open(git, "w", encoding="utf-8") as script:
+                script.write("#!/bin/sh\nsleep 5\n")
+            os.chmod(git, 0o755)
+            started = time.monotonic()
+            output = run_entry(root, "{}", {"PATH": bindir + os.pathsep + os.defpath})
+            self.assertLess(time.monotonic() - started, 6)
+            self.assertIn("slow-git-entry-", output)
 
     def test_branch_from_porcelain_header(self):
         self.assertEqual(common_types.util_branch_from_porcelain("## main"), "main")
@@ -3303,11 +3386,12 @@ class TestRendererRobustness(unittest.TestCase):
         )
         self.assertEqual(data.context_pct, 0)
         self.assertEqual(data.context_max, 0)
-        self.assertEqual(data.added, 0)
-        self.assertEqual(data.removed, 0)
-        self.assertEqual(data.cost, 0)
-        self.assertEqual(data.total_ms, 0)
-        self.assertEqual(data.api_ms, 0)
+        claude_data = claude_payload.core_claude_data(data)
+        self.assertEqual(claude_data.added, 0)
+        self.assertEqual(claude_data.removed, 0)
+        self.assertEqual(claude_data.cost, 0)
+        self.assertEqual(claude_data.total_ms, 0)
+        self.assertEqual(claude_data.api_ms, 0)
 
     def test_render_new_session_no_error_no_warn(self):
         out = common_render.safe_render(

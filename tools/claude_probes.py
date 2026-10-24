@@ -7,6 +7,7 @@ import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, cast
 
+from claude_payload import core_claude_data
 from common_probe import (
     probe_comm_via_proc,
     probe_comm_via_ps,
@@ -241,7 +242,7 @@ def probe_current_todo(path: str | None, session: str | None = None,
 def probe_ago(ctx: "Context") -> str:
     """Memoized human-readable age of the transcript file, or ''."""
     def _compute() -> str:
-        t = ctx.transcript
+        t = core_claude_data(ctx).transcript
         if t and os.path.isfile(t):
             return fmt_ago(int(time.time()) - int(os.path.getmtime(t)))
         return ""
@@ -256,13 +257,16 @@ def probe_effort_auto(ctx: "Context") -> bool:
 
 def probe_todo(ctx: "Context") -> tuple[str | None, str | None]:
     """Memoized (state, text) pair for the active TODO, or (None, None)."""
+    data = core_claude_data(ctx)
     return probe_memo(ctx, "todo",
-                 lambda: probe_current_todo(ctx.transcript, ctx.session, ctx.claude_dir))
+                 lambda: probe_current_todo(data.transcript, data.session, data.claude_dir))
 
 
 def probe_chat_size(ctx: "Context") -> int | None:
     """Memoized transcript file size in bytes, or None."""
-    return probe_memo(ctx, "chat_size", lambda: probe_transcript_bytes(ctx.transcript))
+    return probe_memo(
+        ctx, "chat_size", lambda: probe_transcript_bytes(core_claude_data(ctx).transcript)
+    )
 
 
 def probe_chat_compaction(ctx: "Context") -> tuple[int, int] | None:
@@ -271,8 +275,9 @@ def probe_chat_compaction(ctx: "Context") -> tuple[int, int] | None:
     total = probe_chat_size(ctx)
     if total is None:
         return None
+    transcript = core_claude_data(ctx).transcript
     return probe_memo(ctx, "chat_compaction",
-                 lambda: probe_transcript_compaction(ctx.transcript, total))
+                 lambda: probe_transcript_compaction(transcript, total))
 
 
 def probe_rss(ctx: "Context") -> int | None:

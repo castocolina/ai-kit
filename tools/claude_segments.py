@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
+from claude_payload import core_claude_data
 from claude_probes import (
     probe_ago,
     probe_chat_compaction,
@@ -13,6 +14,7 @@ from claude_probes import (
     probe_rss,
     probe_todo,
 )
+from common_fmt import util_window_gap
 from common_types import (
     BG_LIGHTGRAY,
     RESET,
@@ -88,10 +90,7 @@ def util_rate_gap(pct: float, key: str, reset: int | None, now: float) -> float 
     window_seconds = util_rate_window_seconds(key)
     if window_seconds is None or reset is None:
         return None
-    remaining_pct = (reset - now) * 100.0 / window_seconds
-    if remaining_pct < 0.0 or remaining_pct > 100.0:
-        return None
-    return pct - (100.0 - remaining_pct)
+    return util_window_gap(pct, reset - window_seconds, reset, now)
 
 
 def _rate_bucket_hourly(key: str) -> bool:
@@ -184,7 +183,7 @@ def seg_alt_time_ago(ctx: "Context", avail: int, theme: "Theme") -> str | None:
 
 
 def seg_effort(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    level = ctx.effort
+    level = core_claude_data(ctx).effort
     if not level:
         return None
     # Unknown level (stale/future): no color on the word, all-grey ladder — a safe
@@ -205,21 +204,22 @@ def seg_effort(ctx: "Context", avail: int, theme: "Theme") -> str | None:
 
 
 def seg_lines(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    body = (f"{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(ctx.added)}{RESET}"
-            f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(ctx.removed)}{RESET}")
+    data = core_claude_data(ctx)
+    body = (f"{BG_LIGHTGRAY}{theme.c('GREEN')}+{fmt_number(data.added)}{RESET}"
+            f"/{BG_LIGHTGRAY}{theme.c('RED')}-{fmt_number(data.removed)}{RESET}")
     return util_first_fitting([util_icon("📃", body)], avail)
 
 
 def seg_alt_cost(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    return util_first_fitting([util_icon("🪙", f"${float(ctx.cost):.3f}")], avail)
+    return util_first_fitting([util_icon("🪙", f"${float(core_claude_data(ctx).cost):.3f}")], avail)
 
 
 def seg_alt_time_session(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    return util_first_fitting([util_icon("💬", fmt_time_ms(ctx.total_ms))], avail)
+    return util_first_fitting([util_icon("💬", fmt_time_ms(core_claude_data(ctx).total_ms))], avail)
 
 
 def seg_alt_time_api(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    return util_first_fitting([util_icon("📡", fmt_time_ms(ctx.api_ms))], avail)
+    return util_first_fitting([util_icon("📡", fmt_time_ms(core_claude_data(ctx).api_ms))], avail)
 
 
 def seg_chat_size(ctx: "Context", avail: int, theme: "Theme") -> str | None:
@@ -247,7 +247,7 @@ def seg_alt_process_memory(ctx: "Context", avail: int, theme: "Theme") -> str | 
 
 
 def seg_alt_h_rate_limit(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    rl = ctx.rate_limits
+    rl = core_claude_data(ctx).rate_limits
     if not rl:
         return None
     return util_first_fitting(
@@ -256,7 +256,7 @@ def seg_alt_h_rate_limit(ctx: "Context", avail: int, theme: "Theme") -> str | No
 
 
 def seg_alt_w_rate_limit(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    rl = ctx.rate_limits
+    rl = core_claude_data(ctx).rate_limits
     if not rl:
         return None
     return util_first_fitting(

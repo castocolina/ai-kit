@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from common_types import (
     GIT_CACHE_TTL,
+    GIT_TIMEOUT_S,
     Env,
     GitSnapshot,
     util_branch_from_porcelain,
@@ -89,10 +90,13 @@ def probe_git_worktree_info(work_dir: str) -> tuple[bool, bool, str, str, str]:
     so this dirname()/basename() math is correct regardless of the caller's
     cwd, and so root_path is always a usable absolute path. Outside any repo
     -> (False, False, "", "", "")."""
-    out = subprocess.run(
-        ["git", "-C", work_dir, "rev-parse", "--path-format=absolute",
-         "--git-dir", "--git-common-dir", "--show-toplevel"],
-        capture_output=True, text=True, check=False).stdout
+    try:
+        out = subprocess.run(
+            ["git", "-C", work_dir, "rev-parse", "--path-format=absolute",
+             "--git-dir", "--git-common-dir", "--show-toplevel"],
+            capture_output=True, text=True, timeout=GIT_TIMEOUT_S, check=False).stdout
+    except subprocess.TimeoutExpired:
+        return False, False, "", "", ""
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
     if len(lines) < 2:
         return False, False, "", "", ""                 # not a git repo
@@ -158,9 +162,13 @@ def probe_git_snapshot(work_dir: str, config: Optional["Config"] = None) -> "Git
     field, so a disabled git segment never triggers the probe at all)."""
     ttl = (config.git or {}).get("cache_ttl", GIT_CACHE_TTL) if config else GIT_CACHE_TTL
     cache_base = config.cache_base if config else ""
-    out = subprocess.run(["git", "-C", work_dir, "status", "--porcelain", "--branch"],
-                         capture_output=True, text=True,
-                         check=False).stdout.splitlines()
+    try:
+        out = subprocess.run(
+            ["git", "-C", work_dir, "status", "--porcelain", "--branch"],
+            capture_output=True, text=True, timeout=GIT_TIMEOUT_S, check=False
+        ).stdout.splitlines()
+    except subprocess.TimeoutExpired:
+        out = []
     branch = util_branch_from_porcelain(out[0] if out else "")
     changes = out[1:]   # change lines follow the `## <branch>` header
     if any(ln.startswith(("??", "A", "D")) or ln.startswith(" D") for ln in changes):

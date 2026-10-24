@@ -67,6 +67,7 @@ SLOWEST_META = frozenset({"slowest", "render_time"})
 # `cache_ttl` (seconds) — how long the shared probe_git_snapshot worktree probe is
 # cached. Precedence: this default < TOML `[git] cache_ttl` < the host's env override.
 GIT_CACHE_TTL = 5  # default seconds the worktree probe is cached
+GIT_TIMEOUT_S = 2  # maximum duration of each git subprocess call
 
 
 EXTERNAL_CACHE_TTL = 10  # default seconds an external provider's output is cached
