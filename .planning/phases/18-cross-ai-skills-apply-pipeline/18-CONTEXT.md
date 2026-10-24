@@ -322,6 +322,7 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
   proposed.
   - Own reasoning; both models were low and split (Laya per_skill_dir 0.50 fb, TypeSafe
     prefer_project_path 0.53 fb). Provisional, so it is on the ledger.
+  *(amended 2026-10-24, quick 261024-ryk, owner decision)* No per-skill-dir roots are proposed: the one proposed root is the skills dir of the ai-kit install a wired skill links to (machine-specific, still a `needs_choice`), and an escaping skill outside such an install is not wired. Declining the root (D-41) is refused while `agent_skills` entries still hold the skills it covers.
 - **D-35: Ponytail on non-Claude hosts:** the six names are checked in each host's
   `skills-root`. On this machine none is visible outside the Claude plugin cache, so non-Claude
   hosts get no ponytail entries, and SKILL.md records a dated result. Other hosts' own plugin

@@ -9,6 +9,8 @@ performs no I/O itself (REC-01).
 import json
 import os
 import posixpath
+import re
+import shlex
 
 from . import cross_ai, gsd_catalog, host, presets, roles, skill_scan
 from . import skills as skills_mod
@@ -121,13 +123,25 @@ def _skill_entry_problem(entry, index: int) -> str | None:
     return _skill_value_problem(entry, f"key skills[{index}]")
 
 
+def _skill_home_paths_problem(entry: dict, where: str) -> str | None:
+    home_rel = entry.get("real_dir_home")
+    if home_rel is not None and not (isinstance(home_rel, str) and home_rel.startswith("~/")):
+        return f"{where}.real_dir_home: expected null or a ~/ path"
+    ai_kit_dir = entry.get("ai_kit_skills_dir")
+    if ai_kit_dir is not None and not (
+        isinstance(ai_kit_dir, str) and home_relative_root(ai_kit_dir)
+    ):
+        return f"{where}.ai_kit_skills_dir: expected null or a ~/ path inside $HOME"
+    return None
+
+
 def _skill_value_problem(entry: dict, where: str) -> str | None:
     """Values recommend and apply consume verbatim: trusted-root candidates, skill refs (C-W10)."""
     if entry["root_kind"] not in _ROOT_KINDS:
         return f"{where}.root_kind: expected one of {', '.join(_ROOT_KINDS)}"
-    home_rel = entry.get("real_dir_home")
-    if home_rel is not None and not (isinstance(home_rel, str) and home_rel.startswith("~/")):
-        return f"{where}.real_dir_home: expected null or a ~/ path"
+    problem = _skill_home_paths_problem(entry, where)
+    if problem:
+        return problem
     plugin = entry.get("plugin")
     if plugin is not None and not isinstance(plugin, str):
         return f"{where}.plugin: expected str or null"
@@ -553,6 +567,89 @@ def entry_effective_value(entry: dict | None):
     if op == "keep":
         return entry.get("existing")
     return None
+
+
+_TRUSTED_ROOTS_KEY = "agent_skills_security.trusted_global_roots"
+
+
+def effective_trusted_roots(plan: dict, inv: dict) -> list[str]:
+    """The roots gsd-core would see after apply; an open choice counts as its first
+    candidate (apply refuses an open choice anyway)."""
+    entry = _plan_entry(plan, _TRUSTED_ROOTS_KEY)
+    if entry is None:
+        return skills_mod.existing_roots(inv)
+    value = entry_effective_value(entry)
+    if entry.get("status") == "needs_choice":
+        candidates = entry.get("candidates")
+        first = candidates[0] if isinstance(candidates, list) and candidates else None
+        value = first.get("value") if isinstance(first, dict) else skills_mod.existing_roots(inv)
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+def _skipped_items(entry: dict, inv: dict, roots: list[str]) -> list[tuple[str, str]]:
+    """(bare name, cause) for each item gsd-core would skip; not-installed names are apply's
+    own refusal."""
+    value = entry_effective_value(entry)
+    items = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    found: list[tuple[str, str]] = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        if entry.get("op") == "set":
+            name, cause = item, skills_mod.skip_reason(item, inv, roots)
+        elif entry.get("op") == "keep" and item.startswith("global:") and item.count(":") == 1:
+            name = item[len("global:"):]
+            cause = skills_mod.global_ref_skip_reason(name, inv, roots)
+        else:
+            continue
+        if cause and cause != skills_mod.NOT_INSTALLED:
+            found.append((name, cause))
+    return found
+
+
+def _plan_set_command(key: str, value: list[str]) -> str:
+    return f"plan-set {key} {shlex.quote(json.dumps(value, separators=(',', ':')))}"
+
+
+def _skip_message(entry: dict, inv: dict, roots: list[str]) -> str | None:
+    skipped = _skipped_items(entry, inv, roots)
+    if not skipped:
+        return None
+    key = entry["key"]
+    names = [name for name, _cause in skipped]
+    fixes = []
+    needed = sorted({r for n in names if (r := skills_mod.needed_root(n, inv)) and r not in roots})
+    if needed:
+        fixes.append(_plan_set_command(_TRUSTED_ROOTS_KEY, roots + needed))
+    value = entry_effective_value(entry)
+    items = [value] if isinstance(value, str) else value or []
+    keep = [
+        n for n in (re.split(r"[:/]", i)[-1] for i in items if isinstance(i, str))
+        if n not in names
+    ]
+    fixes.append(_plan_set_command(key, keep))
+    causes = "; ".join(cause for _name, cause in skipped)
+    return (
+        f"{key}: gsd-core would skip {', '.join(names)} ({causes}); fix: "
+        + " or ".join(fixes)
+    )
+
+
+def skipped_skill_problem(plan: dict, inv: dict, keys: set[str] | None = None) -> str | None:
+    """A decided agent_skills entry gsd-core would skip, with cause and fix; None when none.
+    Plan edits and apply both call this; it is not reachable through ``--force``."""
+    roots = effective_trusted_roots(plan, inv)
+    messages: list[str] = []
+    for entry in plan.get("entries") or []:
+        key = entry.get("key")
+        if not (isinstance(key, str) and key.startswith("agent_skills.")):
+            continue
+        if entry.get("status") == "needs_choice" or (keys is not None and key not in keys):
+            continue
+        message = _skip_message(entry, inv, roots)
+        if message:
+            messages.append(message)
+    return "; ".join(messages) or None
 
 
 def execution_effective_on(plan: dict) -> bool:

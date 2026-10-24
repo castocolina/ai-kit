@@ -45,7 +45,7 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 
 - [x] **SKL-01**: Skill inventory covers host skill dirs, project `skills/`, and Claude plugin skills (Claude host only)
 - [x] **SKL-02**: `skill_affinity.json` maps skill families to agents gated by project facts (TDD mode, frontend, db), capped per rigor (≈ MVP 2 / Standard 3 / Rigorous 5, file order), shown to the user as bare names and written as `agent_skills.<agent>` in gsd-core's required form (`global:<name>` / project path / `global:<plugin>:<skill>` on claude) (Phase 18 D-02/D-04)
-- [x] **SKL-03**: A recommended-but-missing skill is silently omitted — never mentioned, offered or installed (Phase 18 D-03); unknown installed skills get host-agent-proposed mappings the user confirms; a `trusted_global_roots` entry is proposed for symlinked skills escaping the global root
+- [x] **SKL-03**: A recommended-but-missing skill is silently omitted — never mentioned, offered or installed (Phase 18 D-03); unknown installed skills get host-agent-proposed mappings the user confirms; a `trusted_global_roots` entry is proposed for symlinked skills escaping the global root *(amended 2026-10-24, quick 261024-ryk, owner decision)* Recommend wires only references gsd-core resolves; the proposed `trusted_global_roots` entry is the machine-specific skills dir of an ai-kit install, and any other escaping global skill is not wired (a `skill_unwired` note names the cause and fix).
 - [x] **SKL-04**: When a System One backend is detected, `jev-fast-decision` is recommended in `agent_skills` for `gsd-advisor-researcher` and `gsd-assumptions-analyzer`; never when no backend is present
 
 ### Plan and Apply

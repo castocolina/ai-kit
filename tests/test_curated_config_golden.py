@@ -156,10 +156,17 @@ def build_golden_inventory(
         agents_skills = os.path.join(home, ".agents", "skills")
         os.makedirs(agents_skills, exist_ok=True)
         add_skill(agents_skills, "react-dev", "React patterns")
+        # The claude link points into an ai-kit install tree (two marker skills), so the
+        # escaping react-dev gets a machine-specific trusted-root approval.
+        ai_kit_skills = os.path.join(home, ".local", "share", "ai-kit", "skills")
+        os.makedirs(ai_kit_skills, exist_ok=True)
+        add_skill(ai_kit_skills, "react-dev", "React patterns")
+        add_skill(ai_kit_skills, "ai-kit-gsd-curated-config")
+        add_skill(ai_kit_skills, "ai-kit-spec-review")
         claude_skills = os.path.join(home, ".claude", "skills")
         os.makedirs(claude_skills, exist_ok=True)
         os.symlink(
-            os.path.join(agents_skills, "react-dev"),
+            os.path.join(ai_kit_skills, "react-dev"),
             os.path.join(claude_skills, "react-dev"),
         )
         os.makedirs(os.path.join(project, ".planning"), exist_ok=True)

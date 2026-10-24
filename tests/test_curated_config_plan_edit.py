@@ -5,6 +5,7 @@ import copy
 import io
 import json
 import os
+import re
 import shlex
 import sys
 import tempfile
@@ -486,12 +487,13 @@ class TestPlanSetRefusals(unittest.TestCase):
             # --force passes the candidate gate but never the ~/ shape rule (validate_plan).
             inv_path, plan_path, _inv, _plan = _write_pair(tmp)
             raw = _read_bytes(plan_path)
-            for bad in ('["/abs/path"]', '["~/../.."]', '["~/a/../../b"]', '["~/"]'):
+            for bad in ('"/abs/path"', '"~/../.."', '"~/a/../../b"', '"~/"'):
+                # Keep the needed ai-kit root so only the ~/ shape rule can refuse.
                 code, _, err = _run_plan_set(
                     plan_path,
                     inv_path,
                     "agent_skills_security.trusted_global_roots",
-                    bad,
+                    f'[{bad},"~/.local/share/ai-kit/skills"]',
                     force=True,
                 )
                 self.assertEqual(code, 2, bad)
@@ -504,12 +506,12 @@ class TestPlanSetRefusals(unittest.TestCase):
             inv_path, plan_path, _inv, _plan = _write_pair(tmp)
             key = "agent_skills_security.trusted_global_roots"
             code, _, err = _run_plan_set(
-                plan_path, inv_path, key, '["~/.agents/skills/react-dev"]'
+                plan_path, inv_path, key, '["~/.local/share/ai-kit/skills"]'
             )
             self.assertEqual(code, 0, err)
             raw = _read_bytes(plan_path)
             code, _, err = _run_plan_set(
-                plan_path, inv_path, key, '["~/.agents/skills/react-dev","~/../.."]'
+                plan_path, inv_path, key, '["~/.local/share/ai-kit/skills","~/../.."]'
             )
             self.assertEqual(code, 2)
             self.assertIn("~/-relative", err)
@@ -1066,32 +1068,55 @@ class TestPlanUnset(unittest.TestCase):
             keys = [e["key"] for e in reloaded["entries"]]
             self.assertEqual(keys, sorted(keys))
 
-    def test_decline_trusted_roots(self):
+    def test_decline_trusted_roots_refused_until_dependents_dropped(self):
+        key = "agent_skills_security.trusted_global_roots"
         with tempfile.TemporaryDirectory() as tmp:
             inv_path, plan_path, _inv, plan = _write_pair(tmp)
-            entry = next(
-                e
-                for e in plan["entries"]
-                if e["key"] == "agent_skills_security.trusted_global_roots"
-            )
-            existing = entry.get("existing")
-            code, _, err = _run_plan_unset(
-                plan_path,
-                inv_path,
-                "agent_skills_security.trusted_global_roots",
-            )
+            raw = _read_bytes(plan_path)
+            holders = [
+                e["key"] for e in plan["entries"]
+                if e["key"].startswith("agent_skills.") and "react-dev" in (e["value"] or [])
+            ]
+            self.assertTrue(holders)
+            code, _, err = _run_plan_unset(plan_path, inv_path, key)
+            self.assertEqual(code, 2, err)
+            self.assertEqual(_read_bytes(plan_path), raw)
+            for holder in holders:
+                self.assertIn(holder, err)
+            commands = re.findall(r"plan-set (agent_skills\.[\w-]+) ('\[[^']*\]')", err)
+            self.assertEqual({k for k, _ in commands}, set(holders))
+            for holder, payload in commands:
+                code, _, err = _run_plan_set(
+                    plan_path, inv_path, holder, shlex.split(payload)[0]
+                )
+                self.assertEqual(code, 0, err)
+            code, _, err = _run_plan_unset(plan_path, inv_path, key)
             self.assertEqual(code, 0, err)
             reloaded, _ = plan_io.load_plan(plan_path)
             assert reloaded is not None
-            row = next(
-                e
-                for e in reloaded["entries"]
-                if e["key"] == "agent_skills_security.trusted_global_roots"
-            )
+            row = next(e for e in reloaded["entries"] if e["key"] == key)
             self.assertEqual(row["op"], "keep")
-            self.assertEqual(row["value"], existing)
+            self.assertEqual(row["value"], row.get("existing"))
             self.assertEqual(row["source"], "user")
             self.assertNotIn("status", row)
+
+    def test_unset_agent_skills_holding_skipped_global_ref_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _inv_path, _plan_path, inv, plan = _write_pair(tmp)
+            plan["entries"] = [
+                e for e in plan["entries"]
+                if e["key"] != "agent_skills_security.trusted_global_roots"
+            ]
+            entry = next(e for e in plan["entries"] if e["key"] == "agent_skills.gsd-executor")
+            for ref in ("global:react-dev", "global:nothing-here"):
+                with self.subTest(ref=ref):
+                    entry["op"], entry["existing"] = "set", [ref, "skills/keepme"]
+                    call = plan_edit.EditCall(plan, inv, False, _strict_encode())
+                    with self.assertRaisesRegex(
+                        plan_edit.PlanEditError, r"plan-set agent_skills\.gsd-executor"
+                    ) as ctx:
+                        plan_edit.plan_unset(call, "agent_skills.gsd-executor")
+                    self.assertIn(ref.split(":")[1], str(ctx.exception))
 
     def test_unset_timeout_while_execution_on(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1209,6 +1234,53 @@ class TestExecutionToggle(unittest.TestCase):
             self.assertEqual(_read_bytes(plan_path), raw)
 
 
+class TestSkippedSkillRefusals(unittest.TestCase):
+    def test_trusted_roots_without_needed_root_refused_even_forced(self):
+        key = "agent_skills_security.trusted_global_roots"
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, inv, plan = _write_pair(tmp)
+            vault = os.path.join(tmp, "vault")
+            for entry in plan["entries"]:
+                if entry["key"] == key:
+                    entry["existing"] = [vault]
+            inv["existing_config"]["values"].setdefault(
+                "agent_skills_security", {}
+            )["trusted_global_roots"] = [vault]
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(inv))
+            _save_plan(plan_path, inv, plan)
+            raw = _read_bytes(plan_path)
+            for force in (False, True):
+                code, _, err = _run_plan_set(plan_path, inv_path, key, json.dumps([vault]),
+                                             force=force)
+                self.assertEqual(code, 2, err)
+                self.assertEqual(_read_bytes(plan_path), raw)
+            code, _, err = _run_plan_set(plan_path, inv_path, key, json.dumps([vault]),
+                                         force=True)
+            self.assertIn("react-dev", err)
+            self.assertIn("~/.local/share/ai-kit/skills", err)
+
+    def test_agent_skills_with_declined_root_names_the_trusted_roots_fix(self):
+        key = "agent_skills_security.trusted_global_roots"
+        with tempfile.TemporaryDirectory() as tmp:
+            _inv_path, _plan_path, inv, plan = _write_pair(tmp)
+            for entry in plan["entries"]:
+                if entry["key"] == key:
+                    entry.update(op="keep", value=[], existing=[])
+                    entry.pop("status", None)
+                    entry.pop("candidates", None)
+                elif entry["key"].startswith("agent_skills."):
+                    entry["value"] = [n for n in entry["value"] if n != "react-dev"]
+            call = plan_edit.EditCall(plan, inv, True, _strict_encode())
+            with self.assertRaises(plan_edit.PlanEditError) as ctx:
+                plan_edit.plan_set(call, "agent_skills.gsd-executor", '["react-dev"]')
+            self.assertIn(
+                "plan-set agent_skills_security.trusted_global_roots "
+                "'[\"~/.local/share/ai-kit/skills\"]'",
+                str(ctx.exception),
+            )
+
+
 class TestPlanSetExtra(unittest.TestCase):
     def test_trusted_roots_approval(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1217,7 +1289,7 @@ class TestPlanSetExtra(unittest.TestCase):
                 plan_path,
                 inv_path,
                 "agent_skills_security.trusted_global_roots",
-                '["~/.agents/skills/react-dev"]',
+                '["~/.local/share/ai-kit/skills"]',
             )
             self.assertEqual(code, 0, err)
             plan, _ = plan_io.load_plan(plan_path)
@@ -1279,7 +1351,7 @@ class TestPlanSetExtra(unittest.TestCase):
             key = "agent_skills_security.trusted_global_roots"
             raw = _read_bytes(plan_path)
             code, _, err = _run_plan_set(
-                plan_path, inv_path, key, '["~/.agents/skills/react-dev"]'
+                plan_path, inv_path, key, '["~/.local/share/ai-kit/skills"]'
             )
             self.assertEqual(code, 2)
             self.assertIn("drops already-configured root(s)", err)
@@ -1288,9 +1360,9 @@ class TestPlanSetExtra(unittest.TestCase):
             suggested = err.split("keep them with ", 1)[1].split(", or pass", 1)[0]
             argv = shlex.split(suggested)
             self.assertEqual(argv[:2], ["plan-set", key])
-            self.assertEqual(json.loads(argv[2]), [vault, "~/.agents/skills/react-dev"])
+            self.assertEqual(json.loads(argv[2]), [vault, "~/.local/share/ai-kit/skills"])
             code, _, err = _run_plan_set(
-                plan_path, inv_path, key, '["~/.agents/skills/react-dev"]', force=True
+                plan_path, inv_path, key, '["~/.local/share/ai-kit/skills"]', force=True
             )
             self.assertEqual(code, 0, err)
             self.assertIn("--force drops", err)
@@ -1317,7 +1389,7 @@ class TestPlanSetExtra(unittest.TestCase):
             plan["inventory_digest"] = plan_schema.inventory_digest(inv)
             with open(plan_path, "w", encoding="utf-8") as handle:
                 handle.write(plan_io.canonical_json(plan))
-            payload = json.dumps([vault, "~/.agents/skills/react-dev"])
+            payload = json.dumps([vault, "~/.local/share/ai-kit/skills"])
             code, _, err = _run_plan_set(
                 plan_path,
                 inv_path,

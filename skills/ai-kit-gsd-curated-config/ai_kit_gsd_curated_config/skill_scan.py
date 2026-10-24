@@ -1,7 +1,9 @@
 """Read-only skill location scan for inventory (D-31, D-32, D-35, D-36).
 
 Reads plugin skills only under ``<installPath>/skills/``; never reads secret values into
-output. ``enabledPlugins`` layering (user, project, local; last wins) is assumed per key
+output. An escaping global row also carries ``ai_kit_skills_dir``: the ``~/`` skills dir of
+the ai-kit install or checkout it links into (detected by two marker skills), or None.
+``enabledPlugins`` layering (user, project, local; last wins) is assumed per key
 (unverified).
 """
 from __future__ import annotations
@@ -32,6 +34,8 @@ URL_NOTE = "reachable, not verified as System One"
 # YAML block scalar header: style, then optional chomping and indent indicators in either order.
 _BLOCK_INDICATOR = re.compile(r"[>|](?:[-+]?[1-9]?|[1-9][-+])")
 _ROOT_KIND_ORDER = {"global": 0, "plugin": 1, "project": 2}
+# Both ship in every full ai-kit tree (the curl|bash install and a checkout alike).
+_AI_KIT_MARKERS = ("ai-kit-gsd-curated-config", "ai-kit-spec-review")
 
 
 def _read_json(path: str) -> dict:
@@ -64,6 +68,15 @@ def _home_rel(real_dir: str, home: str) -> str | None:
         return None
     rel = os.path.relpath(real_dir, home_real)
     return "~/" + rel.replace(os.sep, "/")
+
+
+def _ai_kit_skills_dir(real_dir: str, home: str) -> str | None:
+    """``~/`` form of the skills dir holding ``real_dir`` when it is an ai-kit skills tree."""
+    parent = os.path.dirname(real_dir)
+    if not all(os.path.isfile(os.path.join(parent, m, "SKILL.md")) for m in _AI_KIT_MARKERS):
+        return None
+    rel = _home_rel(parent, home)
+    return None if rel in (None, "~/.") else rel
 
 
 def _parse_description(text: str) -> str:
@@ -157,6 +170,7 @@ def scan_root(
             continue
         addr_name = bool(SKILL_NAME_RE.fullmatch(name))
         addr_plugin = plugin is None or bool(SKILL_NAME_RE.fullmatch(plugin))
+        escapes = _escapes_root(skill_dir, root)
         out.append(
             {
                 "name": name,
@@ -165,7 +179,12 @@ def scan_root(
                 "plugin": plugin,
                 "real_dir": resolved,
                 "real_dir_home": _home_rel(resolved, home),
-                "escapes_root": _escapes_root(skill_dir, root),
+                "escapes_root": escapes,
+                "ai_kit_skills_dir": (
+                    _ai_kit_skills_dir(resolved, home)
+                    if root_kind == "global" and escapes
+                    else None
+                ),
                 "addressable": addr_name and addr_plugin,
                 "description": _read_description(skill_md),
             }

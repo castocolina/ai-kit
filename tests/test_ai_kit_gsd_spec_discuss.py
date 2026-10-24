@@ -1068,6 +1068,21 @@ class TestSkillContract(unittest.TestCase):
         self.assertIn("never** pass `--assumptions`", skill)
         self.assertIn("state.record-session", skill)
 
+    def test_setup_checks_agent_skills_wiring_and_never_edits_config(self):
+        skill = " ".join(self.read("SKILL.md").split())
+        for needle in ("query agent-skills", "gsd-assumptions-analyzer",
+                       "gsd-advisor-researcher", "[agent-skills] WARNING",
+                       "ai-kit-gsd-curated-config", "never edits config"):
+            self.assertIn(needle, skill)
+
+    def test_analyzer_never_calls_jev_even_when_the_skill_is_wired(self):
+        skill = " ".join(self.read("SKILL.md").split())
+        brief = " ".join(self.read("references/analyzer-brief.md").split())
+        self.assertIn("never calls jev, even when `jev-fast-decision` is wired into it", skill)
+        self.assertIn("never call jev even when `jev-fast-decision` is among your agent skills",
+                      brief)
+        self.assertIn("the ladder, consent and the log belong to the orchestrator", brief)
+
     def test_codegraph_block_is_gated_on_the_binary_and_an_index(self):
         brief = self.read("references/analyzer-brief.md")
         self.assertIn("<CODEGRAPH BLOCK", brief)

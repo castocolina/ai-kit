@@ -15,10 +15,10 @@ last_activity: 2026-10-23
 last_activity_desc: Phase 23 execution started
 state_head: a73bcd3bf7353e6366d215e4b04970a716a88908
 stopped_at: Completed 25-06-PLAN.md
-last_updated: "2026-10-24T23:22:45.483Z"
+last_updated: "2026-10-24T23:43:21.772Z"
 last_activity: 2026-10-23
 last_activity_desc: Phase 23 execution started
-state_head: 8f8e6200a33f0fbfe385e83d8bd2c541fbeb6924
+state_head: ce6984e7c4c95df4507b10b434a0ef2031dc8232
 progress:
   total_phases: 17
   completed_phases: 1
@@ -41,7 +41,7 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 Phase: 23 — EXECUTING
 Plan: 1 of ?
 Status: Executing Phase 23
-Last activity: 2026-10-23 — Phase 23 execution started
+Last activity: 2026-10-24 - Completed quick task 261024-ryk: agent_skills references gsd-core resolves
 
 Progress: [█░░░░░░░░░] 6%
 
@@ -514,6 +514,12 @@ opencode) depends on Phase 19's completed, evaluated rewrite. Phases 21
 (cursor) and 22 (pi) each depend only on Phase 19 — they are mutually
 independent of each other and of Phase 20, and may be planned/executed in
 any order, or deferred, without blocking anything else in this milestone.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 261024-ryk | Fix agent_skills references gsd-core skips (symlink escape) in config, curated-config and spec-discuss | 2026-10-24 | ce6984e | [261024-ryk-fix-agent-skills-references-gsd-core-ski](./quick/261024-ryk-fix-agent-skills-references-gsd-core-ski/) |
 
 ### Roadmap Evolution
 

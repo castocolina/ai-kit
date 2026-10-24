@@ -678,6 +678,39 @@ class TestApplyRefusals(unittest.TestCase):
             self.assertEqual(_tree_snapshot(project), before)
             _assert_no_writes(project, fake)
 
+    def test_hand_edited_skipped_skill_refused_before_any_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+            inv["skills"].append({
+                "name": "vaulted", "root_kind": "global", "root": "~/.agents/skills",
+                "plugin": None, "real_dir": "/x/vault/vaulted",
+                "real_dir_home": "~/vault/vaulted", "escapes_root": True,
+                "ai_kit_skills_dir": None, "addressable": True, "description": "",
+            })
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(inv))
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            plan["inventory_digest"] = plan_schema.inventory_digest(inv)
+            plan["entries"].append({
+                "key": "agent_skills.gsd-planner", "op": "set", "value": ["vaulted"],
+                "source": "user", "why": "hand edit",
+            })
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            fake.argv_log.clear()
+            before = _tree_snapshot(project)
+            for dry_run in (True, False):
+                with self.subTest(dry_run=dry_run):
+                    code, _report, out, err = _run_apply(
+                        plan_path, inv_path, project, env, fake, dry_run=dry_run
+                    )
+                    self.assertEqual(code, 2)
+                    self.assertIn("apply refused", err + out)
+                    self.assertIn("vaulted", err + out)
+                    self.assertEqual(_tree_snapshot(project), before)
+                    _assert_no_writes(project, fake)
+
     def test_needs_choice_artifact_named(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)

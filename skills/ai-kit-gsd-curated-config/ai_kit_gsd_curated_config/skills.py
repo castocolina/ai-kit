@@ -15,9 +15,16 @@ from . import presets
 _KIND_ORDER = ("project", "global", "plugin")
 PROPOSAL_CAP = 10
 
+NOT_INSTALLED = "not installed"
 _TRUSTED_ROOTS_WHY_TAIL = (
-    "or keep the current value with plan-unset; a declined root leaves the skill wired "
-    "and gsd-core skips it (apply reports the warning)"
+    "; the root is machine-specific (it is where ai-kit lives on this machine, and gsd-core "
+    "drops it where the path does not exist); declining it with plan-unset is refused while "
+    "agent_skills entries still hold the skills it covers, so first run the plan-set "
+    "commands the refusal prints"
+)
+_FIX = (
+    "fix: add a project skills/{name} copy, put the real dir in the host's global skills "
+    "dir, or add a trusted root that covers it, then re-run inventory and recommend"
 )
 
 
@@ -126,13 +133,6 @@ def _addressable_rows(name: str, inv: dict) -> list[dict]:
     ]
 
 
-def _has_usable_project_copy(name: str, inv: dict) -> bool:
-    return any(
-        row.get("root_kind") == "project" and not row.get("escapes_root")
-        for row in _addressable_rows(name, inv)
-    )
-
-
 def locate(name: str, inv: dict) -> dict | None:
     """Best installed, addressable inventory row for ``name`` (project, global, plugin)."""
     matches = _addressable_rows(name, inv)
@@ -208,6 +208,50 @@ def _record_unwired(ctx: _ResolveCtx, skill: str, text: str) -> None:
     ctx.notes.append({"kind": "skill_unwired", "key": skill, "text": text})
 
 
+def _global_skip(name: str, row: dict, roots: list[str]) -> str | None:
+    """Why gsd-core skips ``global:<name>`` for this row under ``roots``; None when it resolves."""
+    if not row.get("escapes_root"):
+        return None
+    home_rel = row.get("real_dir_home")
+    home_rel = home_rel if isinstance(home_rel, str) else ""
+    real_dir = row.get("real_dir")
+    real_dir = real_dir if isinstance(real_dir, str) else ""
+    if covered(home_rel, real_dir, roots):
+        return None
+    if not home_rel:
+        return f"{name} resolves outside the home directory and no trusted root covers it"
+    return f"{name} resolves to {home_rel}, which no trusted root covers"
+
+
+def skip_reason(name: str, inv: dict, roots: list[str]) -> str | None:
+    """None when the reference recommend writes for ``name`` resolves in gsd-core under
+    ``roots``; else the cause."""
+    row = locate(name, inv)
+    if row is None:
+        # locate() skips only escaping project copies, so any addressable row left is one.
+        if _addressable_rows(name, inv):
+            return f"{name}: its project copy resolves outside the project"
+        return NOT_INSTALLED
+    return _global_skip(name, row, roots) if row.get("root_kind") == "global" else None
+
+
+def needed_root(name: str, inv: dict) -> str | None:
+    """The ai-kit install skills dir (``~/`` form) an escaping global ``name`` links into."""
+    row = locate(name, inv)
+    if row is None or row.get("root_kind") != "global" or not row.get("escapes_root"):
+        return None
+    root = row.get("ai_kit_skills_dir")
+    return root if isinstance(root, str) and root else None
+
+
+def global_ref_skip_reason(name: str, inv: dict, roots: list[str]) -> str | None:
+    """Why an existing ``global:<name>`` config value is skipped under ``roots``."""
+    rows = [r for r in _addressable_rows(name, inv) if r.get("root_kind") == "global"]
+    if not rows:
+        return f"{name} has no skill in the host's global skills dir"
+    return _global_skip(name, rows[0], roots)
+
+
 def unwired_reason(name: str, inv: dict) -> str | None:
     """``None`` when ``name`` can be wired; else the note text (``""``: not installed, silent)."""
     row = locate(name, inv)
@@ -216,15 +260,11 @@ def unwired_reason(name: str, inv: dict) -> str | None:
         if _addressable_rows(name, inv):
             return f"not wired: {name} (its project copy resolves outside the project)"
         return ""
-    if (
-        row.get("root_kind") == "global"
-        and row.get("escapes_root")
-        and not _has_usable_project_copy(name, inv)
-        and not row.get("real_dir_home")
-        and not covered("", row.get("real_dir") or "", existing_roots(inv))
-    ):
-        return f"not wired: {name} resolves outside the home directory"
-    return None
+    is_global = row.get("root_kind") == "global"
+    cause = _global_skip(name, row, existing_roots(inv)) if is_global else None
+    if cause is None or needed_root(name, inv) is not None:
+        return None
+    return f"not wired: {cause}, so gsd-core would skip global:{name}; " + _FIX.format(name=name)
 
 
 def _can_wire(name: str, ctx: _ResolveCtx) -> bool:
@@ -312,33 +352,23 @@ def wired_skills(resolved: dict[str, list[str]], inv: dict) -> dict[str, dict]:
 
 
 def trusted_roots(wired: dict, inv: dict) -> list[dict]:
-    """``needs_choice`` candidates for escaping global skills (18 D-34, D-41)."""
+    """``needs_choice`` candidates: one ai-kit install skills dir per group of wired escaping
+    global skills that link into it and that no configured root covers (18 D-34, amended)."""
     roots = existing_roots(inv)
-    raw: list[dict] = []
-    for skill, row in sorted(wired.items()):
-        if row.get("root_kind") != "global" or not row.get("escapes_root"):
-            continue
-        if _has_usable_project_copy(skill, inv):
-            continue
-        home_rel = row.get("real_dir_home")
-        if not isinstance(home_rel, str) or not home_rel:
-            continue
-        real_dir = row.get("real_dir") if isinstance(row.get("real_dir"), str) else ""
-        if covered(home_rel, real_dir, roots):
-            continue
-        raw.append({
-            "value": home_rel,
-            "skill": skill,
-            "why": f"global skill {skill} resolves outside the configured root",
-        })
-    seen: set[str] = set()
-    candidates: list[dict] = []
-    for item in sorted(raw, key=lambda entry: entry["value"]):
-        if item["value"] in seen:
-            continue
-        seen.add(item["value"])
-        candidates.append(item)
-    return candidates
+    by_root: dict[str, set[str]] = {}
+    for skill in wired:
+        root = needed_root(skill, inv)
+        if root is not None and skip_reason(skill, inv, roots) is not None:
+            by_root.setdefault(root, set()).add(skill)
+    return [
+        {
+            "value": root,
+            "skills": sorted(names),
+            "why": f"{', '.join(sorted(names))} link into the ai-kit install at {root} "
+            "(machine-specific path)",
+        }
+        for root, names in sorted(by_root.items())
+    ]
 
 
 def trusted_roots_candidate(candidates: list[dict], inv: dict) -> dict:
@@ -346,8 +376,10 @@ def trusted_roots_candidate(candidates: list[dict], inv: dict) -> dict:
     the candidate never drops a root the user already trusts."""
     return {
         "value": existing_roots(inv) + [item["value"] for item in candidates],
-        "skills": sorted({item["skill"] for item in candidates}),
-        "why": "configured roots kept; adds the real directory of each escaping global skill",
+        "skills": sorted({name for item in candidates for name in item["skills"]}),
+        "why": "configured roots kept; adds the skills dir of the ai-kit install the wired "
+        "skills link to (machine-specific: it is where ai-kit lives on this machine, and "
+        "gsd-core drops it where the path does not exist)",
     }
 
 
@@ -355,7 +387,7 @@ def merged_trusted_roots_why(candidates: list[dict], inv: dict) -> str:
     merged = trusted_roots_candidate(candidates, inv)["value"]
     payload = json.dumps(merged, separators=(",", ":"))
     return (
-        f"approve with plan-set agent_skills_security.trusted_global_roots {shlex.quote(payload)} "
+        f"approve with plan-set agent_skills_security.trusted_global_roots {shlex.quote(payload)}"
         f"{_TRUSTED_ROOTS_WHY_TAIL}"
     )
 

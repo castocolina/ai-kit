@@ -904,6 +904,9 @@ def prepare(
         return None, None, "apply refused while needs_choice remains: " + ", ".join(
             open_choices
         )
+    skipped = plan_io.skipped_skill_problem(inputs.plan, inputs.inv)
+    if skipped:
+        return None, None, "apply refused: " + skipped
     target, error = resolve_target(inputs, deps)
     if target is None:
         return None, None, error

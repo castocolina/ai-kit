@@ -121,7 +121,9 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
      project's pi session; with no candidate, decline it with `plan-unset`.
    - **Trusted roots** (`agent_skills_security.trusted_global_roots`): the one candidate's
      `value` is the whole list — already-configured roots first, then the new `~/` roots.
-     Approve it with that list, or decline with `plan-unset`. A list that drops an
+     Approve it with that list, or decline with `plan-unset` (refused while agents still hold
+     the skills it covers; see Skills). The new root is the machine-specific skills dir of the
+     ai-kit install. A list that drops an
      already-configured root is refused; the refusal prints the merged list — re-run
      `plan-set` with it (entrypoint and `--plan` included).
    - `workflow.cross_ai_command` and the runner artifact stay open until every runner in
@@ -236,10 +238,23 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
 
 - **Bare names** in the plan; apply writes `skills/<name>`, `global:<name>` or
   `global:<plugin>:<name>`. Plan, notes and report never name an uninstalled skill.
-- **Not wired, with a note:** a project copy whose directory resolves outside the project,
-  and a global skill outside the home directory that no configured trusted root covers.
-- **Trusted-root approval** is one `needs_choice`. If the user **declined**, the skill stays
-  wired and gsd-core skips it with a reported warning.
+- **Wired only through a reference gsd-core resolves:** a contained project copy
+  (`skills/<name>`); a global skill inside the host's global skills dir; a global skill an
+  already-configured trusted root covers; or a global skill linked from an ai-kit install or
+  checkout (detected by two marker skills), paired with one `needs_choice` trusted root for
+  that install's skills dir in `~/` form. Every other escaping global skill is **not wired**
+  and gets a `skill_unwired` note naming the cause and the fix (a project `skills/<name>`
+  copy, a real dir in the host's global skills dir, or a configured trusted root, then re-run
+  inventory and recommend).
+- **The install root is machine-specific:** it widens gsd-core's trust to every skill in that
+  dir, so it stays an explicit approval, and the path is wherever ai-kit is installed
+  (gsd-core drops it where it does not exist). A **declined** root (`plan-unset`) is refused
+  while `agent_skills` entries still hold the skills it covers; the refusal prints the
+  `plan-set agent_skills.<agent>` commands that drop them first.
+- **No edit or apply keeps a skipped reference:** `plan-set` and `plan-unset` refuse an
+  `agent_skills` entry gsd-core would skip, `apply` and `apply --dry-run` refuse such a plan
+  (hand-edited included) before any write, and `--force` does not bypass it. Configured roots
+  are still never dropped without `--force`.
 - Unknown installed skills get capped proposals (one per name, wireable only) — never
   auto-install or auto-wire them.
 - **Jev session gate:** inventory detects the jev (System One) backend, `system_one_backend`, by a TCP

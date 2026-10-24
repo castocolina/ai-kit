@@ -163,9 +163,9 @@
             "react-dev"
           ],
           "value": [
-            "~/.agents/skills/react-dev"
+            "~/.local/share/ai-kit/skills"
           ],
-          "why": "configured roots kept; adds the real directory of each escaping global skill"
+          "why": "configured roots kept; adds the skills dir of the ai-kit install the wired skills link to (machine-specific: it is where ai-kit lives on this machine, and gsd-core drops it where the path does not exist)"
         }
       ],
       "existing": null,
@@ -174,7 +174,7 @@
       "source": "affinity",
       "status": "needs_choice",
       "value": null,
-      "why": "approve with plan-set agent_skills_security.trusted_global_roots '[\"~/.agents/skills/react-dev\"]' or keep the current value with plan-unset; a declined root leaves the skill wired and gsd-core skips it (apply reports the warning)"
+      "why": "approve with plan-set agent_skills_security.trusted_global_roots '[\"~/.local/share/ai-kit/skills\"]'; the root is machine-specific (it is where ai-kit lives on this machine, and gsd-core drops it where the path does not exist); declining it with plan-unset is refused while agent_skills entries still hold the skills it covers, so first run the plan-set commands the refusal prints"
     },
     {
       "existing": null,

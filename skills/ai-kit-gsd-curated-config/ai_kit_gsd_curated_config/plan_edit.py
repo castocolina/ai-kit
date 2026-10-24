@@ -134,6 +134,7 @@ def plan_unset(call: EditCall, key: str) -> tuple[dict, list[str]]:
     entry.pop("candidates", None)
     entry.pop("forced", None)
     plan["entries"] = sorted(plan.get("entries") or [], key=lambda row: row["key"])
+    _skipped_skills_refusal(call, plan, key)
     return plan, []
 
 
@@ -174,7 +175,21 @@ def plan_set(call: EditCall, key: str, raw: str) -> tuple[dict, list[str]]:
     if key == "workflow.cross_ai_timeout":
         _sync_artifact_timeout(plan, parsed)
     plan["entries"] = sorted(plan["entries"], key=lambda row: row["key"])
+    _skipped_skills_refusal(call, plan, key)
     return plan, warnings
+
+
+def _skipped_skills_refusal(call: EditCall, plan: dict, key: str) -> None:
+    """No edit leaves an agent_skills entry gsd-core would skip; force-immune (like apply)."""
+    if key == "agent_skills_security.trusted_global_roots":
+        keys = None
+    elif key.startswith("agent_skills."):
+        keys = {key}
+    else:
+        return
+    problem = plan_io.skipped_skill_problem(plan, call.inv, keys)
+    if problem:
+        raise PlanEditError(problem)
 
 
 def _is_script_pseudo_key(key: str) -> bool:

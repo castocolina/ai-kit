@@ -43,6 +43,20 @@ decided provisionally and shown at the end.
    found) or `incompatible_client` (the client beside the skill predates the shared one)
    means own reasoning only, until the owner runs `python3 tools/setup.py install --headless
    --skills jev-fast-decision --replace-existing` from the ai-kit checkout.
+   Then check the agents' skill wiring, one portable loop (gsd-core exits 0 and only drops a
+   skipped entry from that agent's prompt, so report every line verbatim with its cause):
+   ```bash
+   for a in gsd-assumptions-analyzer gsd-advisor-researcher; do
+     gsd_run query agent-skills "$a" 2>&1 >/dev/null | grep -F '[agent-skills] WARNING'
+   done
+   ```
+   - "failed path check (symlink escape?)": the skill's real path is outside the host's global
+     skills dir and no `agent_skills_security.trusted_global_roots` entry covers it;
+   - "not found": nothing is at that path.
+
+   The fix is to re-run `ai-kit-gsd-curated-config`, which wires only references gsd-core
+   resolves (a project copy such as `skills/<name>`, or a trusted ai-kit install). This skill
+   never edits config itself; the run continues without that skill.
 4. **Pick the range.** Explicit `--from N --to M` or a list wins and is passed through to
    `phase_range.py` (`--from N --to M`, or `--list a,b`). Otherwise:
    `gsd_run query roadmap analyze > <tmp>.json` then
@@ -135,8 +149,9 @@ value — omit `model` when that is `inherit` or empty. No subagent support → 
 inline and say so in the DISCUSSION-LOG.
 
 **MANDATORY — read `references/analyzer-brief.md` before spawning; fill every placeholder.**
-The analyzer returns "Jev question" lines; it never calls jev itself (consent, the ladder
-and the answer log belong to the shared client). In the interactive path the analyzer runs
+The analyzer returns "Jev question" lines; it never calls jev, even when `jev-fast-decision`
+is wired into it (SKL-04). The ladder, consent and the answer log belong to the orchestrator
+(this skill), through the shared client. In the interactive path the analyzer runs
 only when the user asks for it; otherwise its prompts come straight from the user.
 
 After the range: `gsd_run query state.record-session --stopped-at "..."

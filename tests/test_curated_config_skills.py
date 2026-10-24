@@ -276,6 +276,32 @@ class TestScanSkills(unittest.TestCase):
         self.assertTrue(rows["link-out"]["escapes_root"])
         self.assertFalse(rows["in"]["escapes_root"])
 
+    def test_ai_kit_skills_dir_detection(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        home = make_home(os.path.join(root, "home"))
+        gdir = os.path.join(home, ".claude", "skills")
+        install = os.path.join(home, ".local", "share", "ai-kit", "skills")
+        bare = os.path.join(home, "other", "skills")
+        outside = os.path.join(root, "outside", "skills")
+        for tree, markers in ((install, True), (bare, False), (outside, True)):
+            add_skill(tree, "linked")
+            if markers:
+                add_skill(tree, "ai-kit-gsd-curated-config")
+                add_skill(tree, "ai-kit-spec-review")
+        os.makedirs(gdir, exist_ok=True)
+        os.symlink(os.path.join(install, "linked"), os.path.join(gdir, "from-install"))
+        os.symlink(os.path.join(bare, "linked"), os.path.join(gdir, "from-bare"))
+        os.symlink(os.path.join(outside, "linked"), os.path.join(gdir, "from-outside"))
+        add_skill(gdir, "plain")
+        rows = {r["name"]: r for r in skill_scan.scan_root(gdir, "global", gdir, home)}
+        self.assertEqual(rows["from-install"]["ai_kit_skills_dir"], "~/.local/share/ai-kit/skills")
+        self.assertIsNone(rows["from-bare"]["ai_kit_skills_dir"])
+        self.assertIsNone(rows["from-outside"]["ai_kit_skills_dir"])
+        self.assertIsNone(rows["plain"]["ai_kit_skills_dir"])
+        proj = skill_scan.scan_root(install, "project", "skills", home)
+        self.assertTrue(all(r["ai_kit_skills_dir"] is None for r in proj))
+
     def test_skill_md_symlink_outside_root(self):
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
@@ -666,6 +692,7 @@ def _skill_row(
     escapes_root: bool = False,
     real_dir_home: str | None = None,
     real_dir: str | None = None,
+    ai_kit_skills_dir: str | None = None,
     description: str = "",
 ) -> dict:
     label = root or ("skills" if root_kind == "project" else "~/.claude/skills")
@@ -682,6 +709,8 @@ def _skill_row(
         row["real_dir_home"] = real_dir_home
     if real_dir is not None:
         row["real_dir"] = real_dir
+    if ai_kit_skills_dir is not None:
+        row["ai_kit_skills_dir"] = ai_kit_skills_dir
     return row
 
 
@@ -698,6 +727,7 @@ def _escaping_global(
     home_rel: str,
     *,
     real_dir: str | None = None,
+    ai_kit_skills_dir: str | None = None,
 ) -> dict:
     return _skill_row(
         name,
@@ -705,7 +735,16 @@ def _escaping_global(
         escapes_root=True,
         real_dir_home=home_rel,
         real_dir=real_dir or home_rel.replace("~/", "home/user/"),
+        ai_kit_skills_dir=ai_kit_skills_dir,
     )
+
+
+AI_KIT_DIR = "~/.local/share/ai-kit/skills"
+
+
+def _ai_kit_row(name: str) -> dict:
+    """An escaping global skill linked into an ai-kit install's skills dir."""
+    return _escaping_global(name, f"{AI_KIT_DIR}/{name}", ai_kit_skills_dir=AI_KIT_DIR)
 
 
 def _shipped_affinity() -> dict:
@@ -1029,102 +1068,89 @@ class TestAffinityResolve(unittest.TestCase):
 
 
 class TestTrustedRoots(unittest.TestCase):
-    def test_two_escaping_skills_sorted_candidates(self):
-        wired = {
-            "z-skill": _escaping_global("z-skill", "~/.vault/z-skill"),
-            "a-skill": _escaping_global("a-skill", "~/.vault/a-skill"),
-        }
-        candidates = skills.trusted_roots(wired, _inv())
-        self.assertEqual(
-            [item["value"] for item in candidates],
-            ["~/.vault/a-skill", "~/.vault/z-skill"],
-        )
+    def _candidates(self, names, inv=None):
+        inv = inv or _inv(skills=[_ai_kit_row(n) for n in names])
+        wired = {n: skills.locate(n, inv) for n in names}
+        return skills.trusted_roots(wired, inv), inv
 
-    def test_same_real_dir_deduped(self):
-        wired = {
-            "one": _escaping_global("one", "~/.vault/shared"),
-            "two": _escaping_global("two", "~/.vault/shared"),
-        }
-        candidates = skills.trusted_roots(wired, _inv())
+    def test_two_skills_one_install_one_root(self):
+        candidates, _ = self._candidates(["z-skill", "a-skill"])
         self.assertEqual(len(candidates), 1)
-        self.assertEqual(candidates[0]["value"], "~/.vault/shared")
+        self.assertEqual(candidates[0]["value"], AI_KIT_DIR)
+        self.assertEqual(candidates[0]["skills"], ["a-skill", "z-skill"])
+        self.assertIn("machine-specific", candidates[0]["why"])
+
+    def test_per_skill_dir_is_not_proposed(self):
+        """An escaping skill outside an ai-kit install is not wired and gets no root."""
+        row = _escaping_global("vaulted", "~/.vault/vaulted")
+        inv = _inv(skills=[row])
+        self.assertEqual(skills.trusted_roots({"vaulted": row}, inv), [])
+        reason = skills.unwired_reason("vaulted", inv)
+        assert reason
+        self.assertIn("no trusted root covers", reason)
+        self.assertIn("skills/vaulted", reason)
+        self.assertIn("re-run inventory and recommend", reason)
 
     def test_usable_project_copy_suppresses_candidate(self):
-        wired = {
-            "react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev"),
-        }
-        inv = _inv(skills=[
-            _skill_row("react-dev", "project"),
-            _escaping_global("react-dev", "~/.agents/skills/react-dev"),
-        ])
-        candidates = skills.trusted_roots(wired, inv)
-        self.assertEqual(candidates, [])
+        inv = _inv(skills=[_skill_row("react-dev", "project"), _ai_kit_row("react-dev")])
+        wired = {"react-dev": skills.locate("react-dev", inv)}
+        self.assertEqual(skills.trusted_roots(wired, inv), [])
+        self.assertIsNone(skills.skip_reason("react-dev", inv, []))
 
     def test_existing_roots_cover_all_proposed(self):
-        wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
-        inv = _inv_existing_roots(["~/.agents/skills/react-dev"])
-        candidates = skills.trusted_roots(wired, inv)
-        self.assertEqual(candidates, [])
+        for root in (AI_KIT_DIR, "~/.local/share"):
+            with self.subTest(root=root):
+                inv = _inv_existing_roots([root], skills=[_ai_kit_row("react-dev")])
+                wired = {"react-dev": skills.locate("react-dev", inv)}
+                self.assertEqual(skills.trusted_roots(wired, inv), [])
+                self.assertIsNone(skills.unwired_reason("react-dev", inv))
+                self.assertIsNone(skills.skip_reason("react-dev", inv, [root]))
 
     def test_partial_existing_trust_merged_why(self):
-        wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
-        inv = _inv_existing_roots(["~/vault"])
-        candidates = skills.trusted_roots(wired, inv)
-        self.assertEqual(candidates[0]["value"], "~/.agents/skills/react-dev")
+        inv = _inv_existing_roots(["~/vault"], skills=[_ai_kit_row("react-dev")])
+        candidates, _ = self._candidates(["react-dev"], inv)
+        self.assertEqual(candidates[0]["value"], AI_KIT_DIR)
         why = skills.merged_trusted_roots_why(candidates, inv)
-        self.assertIn('["~/vault","~/.agents/skills/react-dev"]', why)
+        self.assertIn(f'["~/vault","{AI_KIT_DIR}"]', why)
+        self.assertIn("machine-specific", why)
+        self.assertIn("plan-unset", why)
 
     def test_absolute_existing_root_kept_in_merged_why(self):
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         vault = os.path.join(root, "vault")
-        wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
-        inv = _inv_existing_roots([vault])
-        candidates = skills.trusted_roots(wired, inv)
+        inv = _inv_existing_roots([vault], skills=[_ai_kit_row("react-dev")])
+        candidates, _ = self._candidates(["react-dev"], inv)
         why = skills.merged_trusted_roots_why(candidates, inv)
         self.assertTrue(why.startswith("approve with plan-set"))
         self.assertIn(vault, why)
-        self.assertIn("~/.agents/skills/react-dev", why)
+        self.assertIn(AI_KIT_DIR, why)
 
     def test_merged_why_command_is_shell_quoted(self):
         """C-W9: a root holding a quote still yields one runnable plan-set argument."""
-        wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
-        inv = _inv_existing_roots(["~/Bob's skills/x"])
-        candidates = skills.trusted_roots(wired, inv)
+        inv = _inv_existing_roots(["~/Bob's skills/x"], skills=[_ai_kit_row("react-dev")])
+        candidates, _ = self._candidates(["react-dev"], inv)
         why = skills.merged_trusted_roots_why(candidates, inv)
-        command = why.split(" or keep the current value", 1)[0]
+        command = why.split("; the root is machine-specific", 1)[0]
         argv = shlex.split(command.removeprefix("approve with "))
         self.assertEqual(argv[:2], ["plan-set", "agent_skills_security.trusted_global_roots"])
-        self.assertEqual(
-            json.loads(argv[2]), ["~/Bob's skills/x", "~/.agents/skills/react-dev"]
-        )
-
-    def test_ancestor_home_root_covers(self):
-        wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
-        inv = _inv_existing_roots(["~/.agents/skills"])
-        candidates = skills.trusted_roots(wired, inv)
-        self.assertEqual(candidates, [])
+        self.assertEqual(json.loads(argv[2]), ["~/Bob's skills/x", AI_KIT_DIR])
 
     def test_absolute_ancestor_covers(self):
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
-        parent = os.path.join(root, "agents", "skills")
-        real = os.path.join(parent, "react-dev")
-        wired = {
-            "react-dev": _escaping_global(
-                "react-dev",
-                "~/.agents/skills/react-dev",
-                real_dir=real,
-            ),
-        }
-        inv = _inv_existing_roots([parent])
-        candidates = skills.trusted_roots(wired, inv)
-        self.assertEqual(candidates, [])
+        parent = os.path.join(root, "ai-kit", "skills")
+        row = _escaping_global(
+            "react-dev", f"{AI_KIT_DIR}/react-dev",
+            real_dir=os.path.join(parent, "react-dev"), ai_kit_skills_dir=AI_KIT_DIR,
+        )
+        inv = _inv_existing_roots([parent], skills=[row])
+        self.assertEqual(skills.trusted_roots({"react-dev": row}, inv), [])
 
     def test_similar_prefix_does_not_cover(self):
-        wired = {"react-dev": _escaping_global("react-dev", "~/.agents/skills/react-dev")}
-        inv = _inv_existing_roots(["~/.agents/skills-other"])
-        candidates = skills.trusted_roots(wired, inv)
+        inv = _inv_existing_roots(["~/.local/share/ai-kit/skills-other"],
+                                  skills=[_ai_kit_row("react-dev")])
+        candidates, _ = self._candidates(["react-dev"], inv)
         self.assertEqual(len(candidates), 1)
 
     def test_too_broad_roots_never_cover(self):
@@ -1366,7 +1392,7 @@ class TestSkillNotes(unittest.TestCase):
     def test_trusted_root_entry_on_escaping_global(self):
         inv = _inv(
             project={"frontend": True, "intel_index_present": False, "db": False},
-            skills=[_escaping_global("react-dev", "~/.agents/skills/react-dev")],
+            skills=[_ai_kit_row("react-dev")],
         )
         plan = _plan_with_affinity(inv)
         em = entry_map(plan)
@@ -1374,7 +1400,34 @@ class TestSkillNotes(unittest.TestCase):
         self.assertEqual(entry["status"], "needs_choice")
         self.assertIsNone(entry["value"])
         self.assertIn("plan-unset", entry["why"])
-        self.assertIn("skips", entry["why"])
+        self.assertIn("machine-specific", entry["why"])
+        self.assertIn("react-dev", em["agent_skills.gsd-ui-researcher"]["value"])
+
+    def test_escaping_global_without_ai_kit_dir_not_wired(self):
+        inv = _inv(
+            project={"frontend": True, "intel_index_present": False, "db": False},
+            skills=[_escaping_global("react-dev", "~/.vault/react-dev")],
+        )
+        plan = _plan_with_affinity(inv)
+        em = entry_map(plan)
+        self.assertNotIn("agent_skills_security.trusted_global_roots", em)
+        for key, entry in em.items():
+            if key.startswith("agent_skills."):
+                self.assertNotIn("react-dev", entry["value"])
+        notes = [n for n in plan["notes"] if n["kind"] == "skill_unwired"]
+        self.assertEqual([n["key"] for n in notes], ["react-dev"])
+        self.assertIn("no trusted root covers", notes[0]["text"])
+        self.assertIn("project skills/react-dev copy", notes[0]["text"])
+
+    def test_escaping_global_covered_by_configured_root_wired_without_entry(self):
+        inv = _inv_existing_roots(
+            ["~/.vault"],
+            project={"frontend": True, "intel_index_present": False, "db": False},
+            skills=[_escaping_global("react-dev", "~/.vault/react-dev")],
+        )
+        em = entry_map(_plan_with_affinity(inv))
+        self.assertNotIn("agent_skills_security.trusted_global_roots", em)
+        self.assertIn("react-dev", em["agent_skills.gsd-ui-researcher"]["value"])
 
 
 class TestTrustedRootCandidate(unittest.TestCase):
@@ -1383,13 +1436,14 @@ class TestTrustedRootCandidate(unittest.TestCase):
         inv = _inv_existing_roots(
             ["~/vault"],
             project={"frontend": True, "intel_index_present": False, "db": False},
-            skills=[_escaping_global("react-dev", "~/.agents/skills/react-dev")],
+            skills=[_ai_kit_row("react-dev")],
         )
         entry = entry_map(_plan_with_affinity(inv))["agent_skills_security.trusted_global_roots"]
         self.assertEqual(len(entry["candidates"]), 1)
         candidate = entry["candidates"][0]
-        self.assertEqual(candidate["value"], ["~/vault", "~/.agents/skills/react-dev"])
+        self.assertEqual(candidate["value"], ["~/vault", AI_KIT_DIR])
         self.assertEqual(candidate["skills"], ["react-dev"])
+        self.assertIn("machine-specific", candidate["why"])
 
 
 class TestSkillsLayer(unittest.TestCase):
