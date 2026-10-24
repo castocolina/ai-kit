@@ -83,3 +83,34 @@ real-response fixture clause and STL-04.
 Confirm all seven results are recorded, verify `spike_check.py --record` exits 0 and its decision
 matches the computed rule, inspect promoted fixtures for secrets, and run the phase gates. Keep
 this record pending until the owner has performed every step.
+
+## Phase status
+
+Automated part complete (2026-10-24):
+
+- Gates on the phase tip, all exit 0: `uv run ruff check tools skills tests`, `uv run pyright`
+  (0 errors), `uv run vulture`, `make test`, `make validate`, and the clean-room
+  `make e2e-docker`. In the container (no `.git` by design), the git-history audit and
+  legacy-reference tests and the node-dependent tracer tests skip with a reason; they run in
+  `make test`.
+- Final audit conformance: `split_hash_mismatches()` and `split_location_problems()` return `[]`.
+  The D-05 oracle fixtures are unchanged since the oracle commit b3fc4fd.
+- `live/spike_check.py --record 23-SPIKE.md` exits 1 with exactly S1-S7, each `not run (owner)`.
+  Secret-scan over this file and `tests/fixtures/cursor/` is clean.
+- Live check from the branch in a scratch HOME (2026-10-24): the Claude and Cursor entries
+  render. With a synthetic fresh cache the Cursor quota segments show the gauge and `≈`; with
+  no cache the refresher writes only under the XDG cache dir (`auth_missing`), never the CWD.
+  `setup.py install --headless --with-statusline=claude,cursor` migrates the legacy Claude
+  `statusLine.command` (other keys untouched), wires Cursor's `cli-config.json`, and is stable
+  on rerun. Both doctors pass. The dry run's contradictory "foreign" warning for the pre-rename
+  entry was fixed in 9b0e632.
+- No SKILL.md changed in this phase, so no skill-judge run.
+- D-12 (deleting the POC's credential-bearing `.bak` copy) is **not done by the run**: an
+  irreversible delete of a credential file is left to the owner's explicit confirmation.
+
+The phase is `human_needed` until the owner runs S1-S7 (`23-SPIKE.md` kit). STL-01, STL-02 and
+STL-05 are ready for `/gsd-verify-work 23`. STL-03 is ready except its real-response fixture
+clause, and STL-04 stays Pending. The D-13 presumption (cache-only render plus detached
+refresher) stays in force until the checker's decision line says otherwise. Next orchestrator
+steps: `/gsd-secure-phase 23`; after the merge to local main, `python3 tools/setup.py install`
+migrates the machine's Claude line (run rule 6); then `/gsd-verify-work 23`.
