@@ -816,6 +816,8 @@ const STATUS_TABLE = {
 
 const FINALIZE_CAP_MS = 10000;
 const KILL_GRACE_MS = 2000;
+// A child that prints a terminal limit and keeps running is stopped this long after the line.
+const LIMIT_GRACE_MS = 1500;
 const PIPE_DRAIN_MS = 2000;
 // gsd-tools run-with-timeout SIGKILLs the runner 3 s after forwarding a signal, and the CLI
 // runs in its own group, so the whole signal path (grace, kill, drain, tree) fits in 2.5 s.
@@ -1077,10 +1079,17 @@ function redactSecrets(line) {
   return out;
 }
 
-// One bounded line splitter per stream (25-04's watcher hooks this same buffer).
-function makeLineRelay() {
+// One bounded line splitter per stream. The live watcher hooks this same buffer: one cap,
+// one flush. `onLine` sees each complete line; `onPartial` sees the buffer before a trim,
+// so an unterminated terminal line is recorded before a newline-free flood drops its head.
+function makeLineRelay(hooks = {}) {
   let pending = '';
-  const emit = (line) => { log(redactSecrets(line)); };
+  const onLine = hooks.onLine || (() => {});
+  const onPartial = hooks.onPartial || (() => {});
+  const emit = (line) => {
+    onLine(line);
+    log(redactSecrets(line));
+  };
   return {
     push(chunk) {
       pending += chunk;
@@ -1091,6 +1100,7 @@ function makeLineRelay() {
         nl = pending.indexOf('\n');
       }
       if (pending.length > INPUT_CAP) {
+        onPartial(pending);
         emit(pending.slice(0, INPUT_CAP));
         pending = '';
       }
@@ -1100,6 +1110,7 @@ function makeLineRelay() {
       emit(pending);
       pending = '';
     },
+    partial() { return pending; },
   };
 }
 
@@ -1195,17 +1206,36 @@ function resultEventString(out) {
   return typeof ev.result === 'string' && ev.result ? [ev.result] : [];
 }
 
-function extractEvents(cli, stdout) {
+function eventIsTerminal(cli, ev) {
+  if (cli === 'opencode') return ev.type === 'error';
+  if (cli === 'codex') return ev.type === 'turn.failed';
+  if (cli === 'cursor' || cli === 'claude') return ev.type === 'result' && Boolean(ev.is_error);
+  return false;
+}
+
+// terminalOnly (25-04): live watching keeps only terminal events. A bare codex `error` is
+// recorded after the fact, never a live kill (ruling Q1); only `turn.failed` kills.
+function extractEvents(cli, stdout, terminalOnly = false) {
   const out = [];
   const text = typeof stdout === 'string' ? stdout : '';
   if (cli === 'opencode') {
     for (const ev of jsonLines(text)) {
-      if (ev.type === 'error') out.push(...opencodeEventStrings(ev));
+      if (ev.type !== 'error') continue;
+      if (terminalOnly && !eventIsTerminal(cli, ev)) continue;
+      out.push(...opencodeEventStrings(ev));
     }
   } else if (cli === 'codex') {
-    for (const ev of jsonLines(text)) out.push(...codexEventStrings(ev));
+    for (const ev of jsonLines(text)) {
+      if (terminalOnly && !eventIsTerminal(cli, ev)) continue;
+      out.push(...codexEventStrings(ev));
+    }
   } else if (cli === 'cursor' || cli === 'claude') {
-    out.push(...resultEventString(text));
+    if (terminalOnly) {
+      const ev = lastJson(text, (j) => j.type === 'result');
+      if (ev && eventIsTerminal(cli, ev)) out.push(...resultEventString(text));
+    } else {
+      out.push(...resultEventString(text));
+    }
   }
   return out;
 }
@@ -1762,6 +1792,7 @@ function runChild(bin, argv, opts = {}) {
     let child = null;
     let timer = null;
     let timedOut = false;
+    let limited = false;
     let spawnErr = null;
     let code = null;
     let signal = null;
@@ -1776,6 +1807,7 @@ function runChild(bin, argv, opts = {}) {
       if (currentFinalize === finalize) currentFinalize = null;
       if (child) {
         killGroup(child, 'SIGTERM');
+        if (reason === 'limit') limited = true;
         if (child.exitCode === null && reason !== 'exit') {
           await waitForExit(child, budgetMs(aborting ? SIGNAL_GRACE_MS : KILL_GRACE_MS, finalizeBy));
         }
@@ -1791,7 +1823,7 @@ function runChild(bin, argv, opts = {}) {
       }
       if (current === child) current = null;
       resolve({
-        code, signal, timedOut, spawnErr,
+        code, signal, timedOut, limited, spawnErr,
         stdout: Buffer.concat(outChunks).toString('utf8'),
         stderr: Buffer.concat(errChunks).toString('utf8'),
       });
@@ -2039,12 +2071,67 @@ for (const [sig, n] of [['SIGTERM', 15], ['SIGINT', 2], ['SIGHUP', 1]]) {
   });
 }
 
+// Live rows: a kill needs a row marked terminal. A structured event additionally skips
+// transient and capacity rows (D-09), so a retry notice or a bare code never kills.
+function terminalTable() {
+  return PATTERNS.filter((row) => row.terminal);
+}
+
+function eventTable() {
+  return terminalTable().filter((row) => row.class !== 'transient' && row.class !== 'capacity');
+}
+
+function liveMatch(cli, source, text) {
+  const table = source === 'stderr' ? terminalTable() : eventTable();
+  const events = source === 'event' ? [text] : [];
+  const stderr = source === 'stderr' ? text : '';
+  // Lane is applied later: the record keeps the row, and the confirmed route decides the status.
+  const cls = classifyStop({ cli, routerLane: false, stderr, events }, table);
+  return cls.status === 'crash' ? null : cls;
+}
+
+function hitForLane(hit, lane) {
+  if (!hit || !lane) return hit;
+  const row = PATTERNS.find((r) => r.id === hit.rule);
+  if (!row || row.routerClass !== 'quota') return hit;
+  return { ...hit, status: 'quota' };
+}
+
+function armLimit(state, cls) {
+  if (state.liveHit || !cls) return;
+  state.liveHit = { status: cls.status, rule: cls.rule, label: cls.label };
+  const child = current;
+  state.limitTimer = setTimeout(() => {
+    if (current === child && currentFinalize) currentFinalize('limit');
+  }, LIMIT_GRACE_MS);
+}
+
+function watchChunk(cli, source, relay, state, chunk) {
+  relay.push(chunk);
+}
+
 async function runOnce(bin, argv, input, env, cwd, label) {
   let outBytes = 0;
   let lastBytes = 0;
   const started = Date.now();
   let errTail = '';
-  const relay = makeLineRelay();
+  const state = { liveHit: null, limitTimer: null };
+  const cli = label;
+  const noteLine = (source) => (line) => {
+    if (source === 'stderr') {
+      armLimit(state, liveMatch(cli, 'stderr', line));
+      return;
+    }
+    for (const text of extractEvents(cli, line, true)) {
+      armLimit(state, liveMatch(cli, 'event', text));
+    }
+  };
+  const notePartial = (source) => (buf) => {
+    if (source !== 'stderr' || state.liveHit) return;
+    armLimit(state, liveMatch(cli, 'stderr', buf));
+  };
+  const outRelay = makeLineRelay({ onLine: noteLine('stdout'), onPartial: notePartial('stdout') });
+  const errRelay = makeLineRelay({ onLine: noteLine('stderr'), onPartial: notePartial('stderr') });
   const hb = setInterval(() => {
     const secs = Math.round((Date.now() - started) / 1000);
     log(`cross-ai: ${label} running ${secs}s, stdout +${outBytes - lastBytes} bytes`);
@@ -2052,16 +2139,24 @@ async function runOnce(bin, argv, input, env, cwd, label) {
   }, CONFIG.heartbeatS * 1000);
   const r = await runChild(bin, argv, {
     cwd, env, input, capMs: budgetMs(Number.POSITIVE_INFINITY, runDeadline), limit: runDeadline,
-    onStdout: (d) => { outBytes += d.length; },
+    onStdout: (d) => {
+      outBytes += d.length;
+      watchChunk(cli, 'stdout', outRelay, state, decodeUtf8(d.toString('utf8')));
+    },
     onStderr: (d) => {
-      const text = d.toString('utf8');
-      relay.push(text);
+      const text = decodeUtf8(d.toString('utf8'));
+      watchChunk(cli, 'stderr', errRelay, state, text);
       errTail = (errTail + text).slice(-INPUT_CAP);
     },
   });
   clearInterval(hb);
-  relay.flush();
-  return { ...r, stderr: errTail || r.stderr, outBytes };
+  if (state.limitTimer) clearTimeout(state.limitTimer);
+  outRelay.flush();
+  errRelay.flush();
+  return {
+    ...r, stderr: errTail || r.stderr, outBytes, liveHit: state.liveHit,
+    partialOut: outRelay.partial(), partialErr: errRelay.partial(),
+  };
 }
 
 // A signal wakes every sleeper so the backoff never outlives the signal budget.
@@ -2090,15 +2185,45 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       log(`cross-ai: argv=${JSON.stringify(argv)}`);
       const r = await runOnce(binPath, argv, input, env, ctx.cwd, name);
       if (aborting) return { ok: false, code: 128 + aborting, outBytes: r.outBytes, cli_rc: r.code };
-      if (r.timedOut) return { ok: false, code: 124, timedOut: true, outBytes: r.outBytes, cli_rc: r.code };
+      const route = opts.route || 'unknown';
+      const lane = confirmedRoute(route);
+      const evidenceOf = (cls) => {
+        const rule = cls && cls.rule ? cls.rule : '-';
+        const pattern = cls && cls.label ? cls.label : 'none';
+        return { route, rule, pattern };
+      };
+      // A live terminal signal is the attempt's class; no second pass (D-09).
+      if (r.liveHit) {
+        const hit = hitForLane(r.liveHit, lane);
+        return {
+          ok: false, status: hit.status, outBytes: r.outBytes, cli_rc: r.code ?? '-',
+          timedOut: Boolean(r.timedOut), ...evidenceOf(hit),
+        };
+      }
+      // Post-hoc: a timed-out attempt is classified over everything it printed, terminal and
+      // non-terminal rows alike. Quota or rate-limit re-labels the timeout; transient, capacity
+      // or no match keeps timeout so the Python tier ladder still advances.
+      if (r.timedOut) {
+        const captured = [r.stderr || '', r.partialErr || '', r.partialOut || ''].join('\n');
+        const events = extractEvents(name, r.stdout);
+        const cls = classifyStop({ cli: name, routerLane: lane, stderr: captured, events });
+        const soft = cls.status === 'transient' || cls.status === 'capacity';
+        const keep = cls.status === 'crash' || soft;
+        if (!keep) {
+          return {
+            ok: false, status: cls.status, code: 124, timedOut: true, outBytes: r.outBytes,
+            cli_rc: r.code ?? '-', ...evidenceOf(cls),
+          };
+        }
+        return { ok: false, code: 124, timedOut: true, outBytes: r.outBytes, cli_rc: r.code };
+      }
       if (r.spawnErr) {
         const code = r.spawnErr.code === 'ENOENT' ? 127 : 126;
         return { ok: false, code, error: String(r.spawnErr), outBytes: 0, cli_rc: null };
       }
       const p = rt.parse(r.stdout, ctx);
-      const route = opts.route || 'unknown';
       const cls = classifyStop({
-        cli: name, routerLane: confirmedRoute(route),
+        cli: name, routerLane: lane,
         stderr: r.stderr, events: extractEvents(name, r.stdout),
       });
       const hit = cls.status === 'crash' ? null : cls.status;
@@ -2343,7 +2468,11 @@ const args = process.argv;
 const model = argOf('--model');
 const fakeMode = model.startsWith('fake/') ? model.slice(5).replace(/:[a-z]+$/, '') : '';
 const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('gc', pid); };
-const STICKY_FAKE = new Set(['hang', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big', 'sentinelsplit']);
+const STICKY_FAKE = new Set([
+  'hang', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big', 'sentinelsplit',
+  'limit-mid', 'limit-partial', 'limit-flood', 'limit-partial-flood',
+  'transient-hang', 'bare-429-hang', 'retry-notice', 'retry-notice-429',
+]);
 let stdinBuf = '';
 const FAKE_MODES = {
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
@@ -2404,6 +2533,53 @@ const FAKE_MODES = {
   hang: () => {
     const gc = spawn(process.execPath, ['-e', 'while(true){}'], { stdio: 'ignore' });
     recordGc(gc.pid);
+    setInterval(() => {}, 1 << 30);
+  },
+  'limit-mid': () => {
+    process.stderr.write("You've hit your usage limit\n");
+    setInterval(() => {}, 1 << 30);
+  },
+  'limit-partial': () => {
+    process.stderr.write('quota exceeded');
+    setInterval(() => {}, 1 << 30);
+  },
+  'answer-only-limit': () => {
+    fs.appendFileSync('a.txt', 'a\n');
+    process.stdout.write('# Summary\n' + "You've hit your usage limit, quoted from the task");
+  },
+  'retry-notice': () => {
+    process.stderr.write('Retrying in 1s: 503 Service Unavailable\n');
+    setTimeout(() => {
+      fs.appendFileSync('a.txt', 'a\n');
+      process.stdout.write('# Summary\nok');
+      process.exit(0);
+    }, 800);
+  },
+  'retry-notice-429': () => {
+    process.stderr.write('Retrying in 1s: 429 Too Many Requests\n');
+    setTimeout(() => {
+      fs.appendFileSync('a.txt', 'a\n');
+      process.stdout.write('# Summary\nok');
+      process.exit(0);
+    }, 800);
+  },
+  'limit-flood': () => {
+    process.stderr.write('quota exceeded\n');
+    const line = 'x'.repeat(200) + '\n';
+    for (let i = 0; i < 512; i++) process.stderr.write(line);
+    setInterval(() => {}, 1 << 30);
+  },
+  'transient-hang': () => {
+    process.stderr.write('[400]: event: error\n');
+    setInterval(() => {}, 1 << 30);
+  },
+  'limit-partial-flood': () => {
+    process.stderr.write('quota exceeded');
+    process.stderr.write('x'.repeat(100 * 1024));
+    setInterval(() => {}, 1 << 30);
+  },
+  'bare-429-hang': () => {
+    process.stderr.write('429 Too Many Requests\n');
     setInterval(() => {}, 1 << 30);
   },
   gcpipe: () => {
@@ -2601,7 +2777,11 @@ function writeFakeCodex(binDir) {
 const sub = process.argv.slice(2);
 if (sub[0] === 'debug' && sub[1] === 'models') {
   log('codex models');
-  console.log(JSON.stringify({ models: ['fake-ok-codex', 'fake-retry-codex'].map((slug) => ({ slug, visibility: 'list' })) }));
+  const listed = [
+    'fake-ok-codex', 'fake-retry-codex', 'fake-limit-codex',
+    'fake-error-then-ok-codex', 'fake-bare-error-hang-codex',
+  ];
+  console.log(JSON.stringify({ models: listed.map((slug) => ({ slug, visibility: 'list' })) }));
   process.exit(0);
 }
 const outFile = argOf('-o');
@@ -2610,9 +2790,28 @@ process.stdin.on('data', () => {}).on('end', () => {
   fs.appendFileSync('a.txt', 'cx\n');
   if (outFile) fs.writeFileSync(outFile, '## Summary\nok');
   console.log(JSON.stringify({ type: 'thread.started', thread_id: 't1' }));
-  if (argOf('-m') === 'fake-retry-codex') {
+  const model = argOf('-m');
+  const limitText = 'You\u2019ve hit your usage limit. Upgrade to Pro, or try again later.';
+  if (model === 'fake-retry-codex') {
     console.log(JSON.stringify({ type: 'error', message: 'stream disconnected; retrying 1/5' }));
     console.log(JSON.stringify({ type: 'turn.completed' }));
+  } else if (model === 'fake-limit-codex') {
+    console.log(JSON.stringify({ type: 'error', message: limitText }));
+    console.log(JSON.stringify({ type: 'turn.failed', error: { message: limitText } }));
+    setInterval(() => {}, 1 << 30);
+    return;
+  } else if (model === 'fake-error-then-ok-codex') {
+    console.log(JSON.stringify({ type: 'error', message: limitText }));
+    setTimeout(() => {
+      if (outFile) fs.writeFileSync(outFile, '## Summary\nok');
+      console.log(JSON.stringify({ type: 'turn.completed' }));
+      process.exit(0);
+    }, 500);
+    return;
+  } else if (model === 'fake-bare-error-hang-codex') {
+    console.log(JSON.stringify({ type: 'error', message: limitText }));
+    setInterval(() => {}, 1 << 30);
+    return;
   }
 });
 `);
@@ -2754,6 +2953,7 @@ async function checkCase(spec, c) {
   const r = await runCaseProcess({ ...spec, args: c.args || spec.args }, c);
   if (r.reason) return r.reason;
   if (r.status !== spec.exit) return `exit ${r.status} expected ${spec.exit}`;
+
   if (!spec.closeStderr) {
     const err = statusLineOk(r.stderr || '', spec.status);
     if (err) return err;
@@ -3228,6 +3428,135 @@ async function blackBoxSelfTest() {
         exit: 124,
         status: /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 cli_rc=.* elapsed=\d+s out=\d+ tree=.* action=stop$/,
         check: (_r, ctx) => deadCheck(ctx, ['gc']),
+      },
+      {
+        // SPEC R4: a terminal usage-limit line, then the child stays alive. Stopped at the grace.
+        name: 'live-limit-kill',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/limit-mid', '--timeout', '60'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/limit-mid exit=75 .* action=stop$/,
+        check: (_r, ctx) => (
+          ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['pi'])
+        ),
+      },
+      {
+        // An unterminated `quota exceeded` matches the terminal rows before the buffer trim,
+        // so the grace stops the child well inside the deadline (a live kill, not post-hoc).
+        name: 'live-partial-kill',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/limit-partial', '--timeout', '3'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/limit-partial exit=75 .* action=stop$/,
+        check: (_r, ctx) => (
+          ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['pi'])
+        ),
+      },
+      {
+        // A limit phrase in the answer alone is ignored (SPEC R4 precision).
+        name: 'answer-only-ok',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/answer-only-limit'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/answer-only-limit exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
+          return runs.length === 1 ? null : `pi calls ${ctx.calls.join('|')}`;
+
+        },
+      },
+      {
+        // A 503 retry notice is not a terminal signal.
+        name: 'retry-notice-no-kill',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/retry-notice', '--timeout', '60'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/retry-notice exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
+          return runs.length === 1 ? null : `pi calls ${ctx.calls.join('|')}`;
+        },
+      },
+      {
+        // A 429 inside a retry notice never kills: the bare-code rows are not terminal.
+        name: 'retry-notice-429-no-kill',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/retry-notice-429', '--timeout', '60'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/retry-notice-429 exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
+          return runs.length === 1 ? null : `pi calls ${ctx.calls.join('|')}`;
+        },
+      },
+      {
+        // A completed transient line is recorded live but never re-labels a timeout.
+        name: 'post-hoc-timeout-transient-stays',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/transient-hang', '--timeout', '3'],
+        exit: 124,
+        status: new RegExp('^AIKIT-XAI status=timeout cli=pi model=fake/transient-hang ' +
+          'exit=124 .* action=stop$'),
+        check: (_r, ctx) => deadCheck(ctx, ['pi']),
+      },
+      {
+        // An unterminated quota line plus a newline-free flood: the pre-trim match kills live.
+        name: 'live-partial-flood',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/limit-partial-flood', '--timeout', '3'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=quota cli=pi model=fake/limit-partial-flood ' +
+          'exit=75 .* action=stop$'),
+        check: (_r, ctx) => (
+          ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['pi'])
+        ),
+      },
+      {
+        // A complete non-terminal 429 line never kills live; the post-hoc pass still labels quota.
+        name: 'post-hoc-timeout-429',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/bare-429-hang', '--timeout', '3'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/bare-429-hang exit=75 .* action=stop$/,
+        check: (_r, ctx) => {
+          if (ctx.elapsedMs < 2500) return `elapsed ${ctx.elapsedMs} (killed live)`;
+          return deadCheck(ctx, ['pi']);
+        },
+      },
+      {
+        // A flood after a terminal line cannot hide the signal recorded at first sight.
+        name: 'live-limit-flood',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/limit-flood', '--timeout', '60'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/limit-flood exit=75 .* action=stop$/,
+        check: (_r, ctx) => deadCheck(ctx, ['pi']),
+      },
+      {
+        // turn.failed carrying limit text is terminal; the grace stops the child.
+        name: 'live-codex-turn-failed',
+        args: ['--prefer', 'codex', '--model-codex', 'fake-limit-codex', '--timeout', '60'],
+        config: { prefer: ['codex'] },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=codex model=fake-limit-codex exit=75 .* action=stop$/,
+        check: (_r, ctx) => (
+          ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['codex'])
+        ),
+      },
+      {
+        // Ruling Q1: a bare codex error event is recorded, never a kill.
+        name: 'live-codex-bare-error-no-kill',
+        args: ['--prefer', 'codex', '--model-codex', 'fake-error-then-ok-codex', '--timeout', '60'],
+        config: { prefer: ['codex'] },
+        exit: 0,
+        status: new RegExp('^AIKIT-XAI status=ok cli=codex model=fake-error-then-ok-codex ' +
+          'exit=0 .* action=stop$'),
+      },
+      {
+        // A bare codex error is never terminal, so the deadline passes and post-hoc labels quota.
+        name: 'post-hoc-timeout-codex-error',
+        args: [
+          '--prefer', 'codex', '--model-codex', 'fake-bare-error-hang-codex', '--timeout', '3',
+        ],
+        config: { prefer: ['codex'] },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=quota cli=codex ' +
+          'model=fake-bare-error-hang-codex exit=75 .* action=stop$'),
+        check: (_r, ctx) => {
+          if (ctx.elapsedMs < 2500) return `elapsed ${ctx.elapsedMs} (killed live)`;
+          return deadCheck(ctx, ['codex']);
+        },
       },
       {
         name: 'not-installed-codex',
@@ -4609,7 +4938,8 @@ async function main(argv) {
     const treeField = r.status === 'contract_violation' ? tree : 'unknown';
     return finish(r.status, { ...liveFields, tree: treeField, cli_rc: r.cli_rc ?? '-', exit: 1 });
   }
-  if (r.timedOut) {
+  // A classified status (live kill or post-hoc) wins over a bare timeout (cycle 3).
+  if (r.timedOut && !r.status) {
     return finish('timeout', { ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? '-' });
   }
   if (o.mode === 'review' && before && after && tree === 'dirty') {
