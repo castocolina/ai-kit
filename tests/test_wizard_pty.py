@@ -68,6 +68,12 @@ def _tmp_config_dir():
     return tempfile.mkdtemp(prefix="ai-kit-test-")
 
 
+# This module's children copy os.environ. An unattended executor sets
+# AI_KIT_REFUSE_REAL_HOME=1, and several of these spawns keep the real HOME while
+# redirecting every host root. The guard would return before the tty behavior
+# under test. Drop it in this process only (the runner uses one process per module).
+os.environ.pop("AI_KIT_REFUSE_REAL_HOME", None)
+
 # The five host roots every PTY env must point at scratch paths (T-21.1-15):
 # without them a wizard commit inheriting the real HOME would rewrite the
 # real ~/.cursor/hooks.json (the commit always calls wire_hook_cursor) and

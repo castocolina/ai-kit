@@ -785,7 +785,9 @@ class TestSelectExamples(unittest.TestCase):
     def test_main_parses_examples_flag(self):
         # --examples is accepted by the CLI and reaches cmd_install.
         fake_tty = io.StringIO()
-        with mock.patch.object(setup, "ensure_rich_runtime"), \
+        # The ambient real-home guard returns before cmd_install; this test is the flag.
+        with mock.patch.dict(os.environ, {"AI_KIT_REFUSE_REAL_HOME": "0"}), \
+             mock.patch.object(setup, "ensure_rich_runtime"), \
              mock.patch.object(setup, "cmd_install", return_value=0) as ci, \
              mock.patch.object(setup, "open_tty", return_value=fake_tty), \
              mock.patch.object(fake_tty, "close", return_value=None):
@@ -2581,7 +2583,9 @@ class TestStdinOnTty(unittest.TestCase):
 
 class TestFailClosed(unittest.TestCase):
     def test_install_exits_nonzero_when_no_tty(self):
-        with mock.patch.object(setup, "ensure_rich_runtime"), \
+        # The ambient real-home guard returns 2 before the tty check this test owns.
+        with mock.patch.dict(os.environ, {"AI_KIT_REFUSE_REAL_HOME": "0"}), \
+             mock.patch.object(setup, "ensure_rich_runtime"), \
              mock.patch.object(setup, "open_tty", return_value=None), \
              mock.patch.object(setup.sys, "stderr", new_callable=io.StringIO) as err:
             with self.assertRaises(SystemExit) as cm:
@@ -2590,7 +2594,8 @@ class TestFailClosed(unittest.TestCase):
             self.assertIn("terminal", err.getvalue().lower())
 
     def test_reconfigure_exits_nonzero_when_no_tty(self):
-        with mock.patch.object(setup, "ensure_rich_runtime"), \
+        with mock.patch.dict(os.environ, {"AI_KIT_REFUSE_REAL_HOME": "0"}), \
+             mock.patch.object(setup, "ensure_rich_runtime"), \
              mock.patch.object(setup, "open_tty", return_value=None), \
              mock.patch.object(setup.sys, "stderr", new_callable=io.StringIO) as err:
             with self.assertRaises(SystemExit) as cm:
@@ -2973,6 +2978,27 @@ class TestHeadlessMainDispatch(unittest.TestCase):
             clear=True)
         self.env_patch.start()
         self.addCleanup(self.env_patch.stop)
+
+    def test_refuse_real_home_guard_blocks_writes_only_on_the_real_home(self):
+        real = os.path.join(self.tmp, "realhome")
+        os.makedirs(real)
+        fake_pw = mock.MagicMock(pw_dir=real)
+        with mock.patch("pwd.getpwuid", return_value=fake_pw), \
+             mock.patch.object(setup, "cmd_install_headless", return_value=0) as run:
+            with mock.patch.dict(os.environ, {"AI_KIT_REFUSE_REAL_HOME": "1", "HOME": real}), \
+                 contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(setup.main(["install", "--headless", "--skills", "all"]), 2)
+            self.assertIn("AI_KIT_REFUSE_REAL_HOME", err.getvalue())
+            run.assert_not_called()
+            # A dry run, a scratch HOME, or the guard unset still proceed.
+            with mock.patch.dict(os.environ, {"AI_KIT_REFUSE_REAL_HOME": "1", "HOME": real}):
+                self.assertEqual(setup.main(["install", "--headless", "--skills", "all",
+                                             "--dry-run"]), 0)
+            with mock.patch.dict(os.environ, {"AI_KIT_REFUSE_REAL_HOME": "1"}):
+                self.assertEqual(setup.main(["install", "--headless", "--skills", "all"]), 0)
+            with mock.patch.dict(os.environ, {"HOME": real}):
+                self.assertEqual(setup.main(["install", "--headless", "--skills", "all"]), 0)
+        self.assertEqual(run.call_count, 3)
 
     def test_headless_install_skips_ensure_rich_runtime_and_tty(self):
         with mock.patch.object(setup, "ensure_rich_runtime") as ensure_rt, \

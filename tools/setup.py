@@ -4699,6 +4699,21 @@ def ensure_rich_runtime(env):
     _reexec_under_uv(uv_path)               # normally never returns
 
 
+def _refuses_real_home(env):
+    """Unattended-executor guard: with AI_KIT_REFUSE_REAL_HOME=1 a run whose HOME is the
+    account's real home writes nothing (a cross-AI executor once ran a real install from a
+    worktree, 2026-10-24). Scratch-HOME tests and the owner's own runs are unaffected."""
+    if env.get("AI_KIT_REFUSE_REAL_HOME") != "1":
+        return False
+    import pwd  # pylint: disable=import-outside-toplevel
+    try:
+        real = pwd.getpwuid(os.getuid()).pw_dir
+    except (KeyError, OSError):
+        return True  # cannot tell: refuse, the guard exists to fail closed
+    home = env.get("HOME") or real
+    return os.path.realpath(home) == os.path.realpath(real)
+
+
 def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-branches,too-many-statements
     """Parse the subcommand and dispatch. Default subcommand is install."""
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -4796,6 +4811,10 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
         except ValueError as exc:
             parser.error(str(exc))
     dry = args.dry_run
+    if not dry and _refuses_real_home(env):
+        print("error: AI_KIT_REFUSE_REAL_HOME is set and HOME is the real user home; refusing "
+              "to write (use a scratch HOME, or --dry-run)", file=sys.stderr)
+        return 2
     if args.config_doctor:
         ensure_rich_runtime(env)
         tty = cast("_StdTty", require_tty(open_tty()))
