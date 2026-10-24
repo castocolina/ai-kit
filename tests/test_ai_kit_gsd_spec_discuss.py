@@ -619,6 +619,21 @@ class TestLadderCli(_TmpHome):
         self.assertNotIn("Traceback", nested.stderr)
         self.assertEqual(self.run_cli(["ladder"], '{"items": []}').returncode, 2)
 
+    def test_typesafe_consent_does_not_open_opencode(self):
+        # A recorded TypeSafe grant is host-bound to TypeSafe; opencode stays closed.
+        with JevStub(tops={"low1": 0.5}) as laya, JevStub(model="jev-1.13.0") as typesafe, \
+                JevStub() as opencode:
+            extra = {"JEV_LAYA_URL": laya.url,
+                     "JEV_TYPESAFE_URL": f"http://127.0.0.1:{typesafe.port}",
+                     "TYPESAFE_API_KEY": SENTINEL,
+                     "JEV_OPENCODE_URL": f"http://127.0.0.1:{opencode.port}",
+                     "OPENCODE_API_KEY": SENTINEL}
+            self.assertTrue(self.grant_typesafe(**extra)["ok"])
+            self.ladder([choice_item("low1")], **extra)
+            typesafe_posts, opencode_posts = typesafe.posts, opencode.posts
+        self.assertTrue(typesafe_posts, "the consented remote must be reached (positive control)")
+        self.assertEqual(opencode_posts, [], "typesafe consent must not open opencode")
+
 
 class TestRealClientSmoke(_TmpHome):
     def test_real_client_answers_disabled_shape_without_backends(self):
@@ -674,6 +689,15 @@ class TestPhaseRange(_TmpHome):
     def test_decimal_order(self):
         self.assertLess(phase_range.phase_key("16.1"), phase_range.phase_key("16.10"))
         self.assertLess(phase_range.phase_key("9"), phase_range.phase_key("16"))
+
+    def test_nothing_left_to_discuss_proposes_nothing(self):
+        self.roadmap = {"phases": [{"number": "16.1", "disk_status": "discussed"}]}
+        self.assertEqual(self.propose(_args()), {"proposed": [], "skipped": []})
+
+    def test_equal_timestamps_count_as_discussed(self):
+        # SPEC and CONTEXT from one commit share a timestamp: discussed, not proposed.
+        self.assertIsNone(phase_range.undiscussed_reason(str(self.root / "16.1-b"),
+                                                         self.times.get))
 
 
 # ─── edge_floor.py ────────────────────────────────────────────────────────────
@@ -773,6 +797,52 @@ class TestEdgeFloor(unittest.TestCase):
             env = {"HOME": str(Path(tmp) / "home"), "RUNTIME_DIR": str(Path(tmp) / "proj"),
                    "PATH": str(launcher.parent)}
             self.assertEqual(edge_floor.find_engine(env, tmp, None), engine)
+
+
+class TestSkillContract(unittest.TestCase):
+    """Prose contracts the scripts cannot enforce: the SKILL.md and reference text the spec
+    names as acceptance. Stdlib text checks, so a dropped rule fails the suite."""
+
+    ROOT = Path(__file__).resolve().parent.parent / "skills" / "ai-kit-gsd-spec-discuss"
+
+    def read(self, rel):
+        return (self.ROOT / rel).read_text(encoding="utf-8")
+
+    def test_frontmatter_names_the_skill_and_triggers_on_use_when(self):
+        head = self.read("SKILL.md").split("---", 2)[1]
+        self.assertIn("name: ai-kit-gsd-spec-discuss", head)
+        self.assertIn("Use when", head)
+        self.assertIn("Not for plan-phase or execute-phase", head)
+
+    def test_quality_rule_reads_mode_and_states_both_branches(self):
+        skill = self.read("SKILL.md")
+        for needle in ("phase.mvp-mode", "workflow.mvp_mode", "--default false",
+                       "`mvp-mode` inactive", "`mvp-mode` active"):
+            self.assertIn(needle, skill)
+        self.assertIn("Quality rule:", self.read("references/analyzer-brief.md"))
+
+    def test_discuss_uses_assumptions_workflow_and_records_session(self):
+        skill = " ".join(self.read("SKILL.md").split())  # the prose wraps across lines
+        self.assertIn("discuss-phase-assumptions.md", skill)
+        self.assertIn("never** pass `--assumptions`", skill)
+        self.assertIn("state.record-session", skill)
+
+    def test_codegraph_block_is_gated_on_the_binary_and_an_index(self):
+        brief = self.read("references/analyzer-brief.md")
+        self.assertIn("<CODEGRAPH BLOCK", brief)
+        self.assertIn("command -v codegraph", brief)
+        self.assertIn("codegraph sync", brief)
+        self.assertIn("codegraph_explore", brief)
+
+    def test_decision_table_covers_blocking_by_confidence(self):
+        table = self.read("references/decision-table.md")
+        for cell in ("Non-blocking, high", "Non-blocking, low", "Blocking, high",
+                     "Blocking, low"):
+            self.assertIn(cell, table)
+
+    def test_readme_registers_the_skill(self):
+        readme = (self.ROOT.parent.parent / "README.md").read_text(encoding="utf-8")
+        self.assertIn("skills/ai-kit-gsd-spec-discuss/SKILL.md", readme)
 
 
 if __name__ == "__main__":
