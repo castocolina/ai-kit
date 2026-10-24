@@ -401,6 +401,10 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [2026-10-13] [agents] Add Cursor subagents pinned to non-fast composer-2.5 and grok — [todo file](.planning/todos/pending/2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md)
 - [2026-10-14] [tooling] AGENTS.md quota-schedule rules and one-shot goal-prompt skill — [todo file](.planning/todos/pending/2026-10-14-agents-md-quota-schedule-rules-and-goal-prompt-skill.md)
 - [2026-10-14] [skills] Wire jev-fast-decision cross-host discovery scaffolding — [todo file](.planning/todos/pending/2026-10-14-wire-jev-fast-decision-cross-host-discovery-scaffolding.md)
+- [2026-10-18] [skills] Atomic, reusable decision-system skills on Jev — [todo file](.planning/todos/pending/2026-10-18-atomic-reusable-decision-system-skills.md)
+- [2026-10-18] [tooling] PreCompact hook pre-summarizes transcript chunks via the decision system — [todo file](.planning/todos/pending/2026-10-18-precompact-hook-pre-summarizes-chunks-via-decision-system.md)
+- [2026-10-18] [tooling] Visible tool-advisory hooks (SessionStart, PreToolUse, PostToolUse) as setup knobs — [todo file](.planning/todos/pending/2026-10-18-visible-tool-advisory-hooks-pre-and-post-tool-use.md)
+- [2026-10-24] [tooling] Make the ai-kit session hooks dynamic (worktree indexing advice, install-relative docs, compact metr… — [todo file](.planning/todos/pending/2026-10-24-make-the-ai-kit-session-hooks-dynamic-worktree-indexing-advi.md)
 
 ### Blockers/Concerns
 
