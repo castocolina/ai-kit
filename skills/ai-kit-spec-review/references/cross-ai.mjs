@@ -22,6 +22,9 @@
  * Flags:
  *   --prefer pi,cursor,opencode,codex   first entry runs; rest is a menu
  *   --model-<cli> <id>                       model per CLI, e.g. --model-cursor auto
+ *   --route-<cli> router|unknown             confirmed route of that CLI (wins over CONFIG)
+ *   --classify-only <path>                   classify a JSON case file and exit (no spawn,
+ *                                            no write, stdin ignored; path relative to cwd)
  *   --mode exec|review                       exec = full permissions (default); review = read-only
  *   --timeout <s>                            inner deadline (lowers default; never above derived inner)
  *   --outer-timeout <s>                      outer deadline (replaces the GSD lookup and the
@@ -110,6 +113,11 @@ Read-only review. Do not modify files, do not commit, do not run commands that c
 const RESUME_MSG = 'You were interrupted by a transient provider error. Continue the same task from where you stopped: ' +
   'first inspect git status, git diff and git log, do not redo finished steps, finish the remaining steps ' +
   '(verify commands and commits included), then reply with the final report as originally asked.';
+
+// Mirrors model_heuristics._ROUTER_NAME_HINTS; a Python test pins this line.
+// A hint match is advisory only (route=router-inferred): it never enables the router-quota
+// cycles, which need the flag or a confirmed CONFIG.routerBacked[cli] boolean.
+const ROUTER_HINTS = ["router", "-env", "local-llm"];
 
 // Pinned table order (vendor codes, then quota text, then auth, then capacity, then
 // opencode type hints, then bare codes): pure-classify-order-mutation proves a reversal
@@ -1540,6 +1548,23 @@ const CLASSIFY_CASES = [
   },
 ];
 
+// Flag, then an explicit CONFIG boolean, then the name heuristic, else unknown (D-05).
+// Only `router` is a confirmed lane: an inferred route stays advisory.
+function routeOf(cli, model, routes) {
+  const flagged = routes && Object.hasOwn(routes, cli) ? routes[cli] : undefined;
+  if (flagged === 'router' || flagged === 'unknown') return flagged;
+  const baked = CONFIG.routerBacked[cli];
+  if (baked === true) return 'router';
+  if (baked === false) return 'unknown';
+  const id = String(model || '').toLowerCase();
+  if (ROUTER_HINTS.some((hint) => id.includes(hint))) return 'router-inferred';
+  return 'unknown';
+}
+
+function confirmedRoute(route) {
+  return route === 'router';
+}
+
 function classifyOne(entry, table) {
   return classifyStop({
     cli: entry.cli,
@@ -2071,13 +2096,14 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         return { ok: false, code, error: String(r.spawnErr), outBytes: 0, cli_rc: null };
       }
       const p = rt.parse(r.stdout, ctx);
-      const routerLane = Boolean(CONFIG.routerBacked[name]);
+      const route = opts.route || 'unknown';
       const cls = classifyStop({
-        cli: name, routerLane, stderr: r.stderr, events: extractEvents(name, r.stdout),
+        cli: name, routerLane: confirmedRoute(route),
+        stderr: r.stderr, events: extractEvents(name, r.stdout),
       });
       const hit = cls.status === 'crash' ? null : cls.status;
       const evidence = {
-        route: routerLane ? 'router' : 'unknown',
+        route,
         rule: hit ? cls.rule : '-',
         pattern: hit ? cls.label : 'none',
       };
@@ -2141,10 +2167,13 @@ const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/;
 // Cursor only: one trailing [k=v,...] bracket (D-18). No space, quote, `$` or `;`.
 const CURSOR_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\[[A-Za-z0-9._=,-]+\])?$/;
 
+const ROUTE_VALUES = new Set(['router', 'unknown']);
+
 function parseArgs(argv) {
   const o = {
-    prefer: null, models: {}, mode: 'exec', timeout: null, outerTimeout: null, printArgv: false,
-    preamble: true, selfTest: false, codexEffort: null, codexServiceTier: null, cursorMode: null,
+    prefer: null, models: {}, routes: {}, mode: 'exec', timeout: null, outerTimeout: null,
+    printArgv: false, preamble: true, selfTest: false, classifyOnly: null,
+    codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -2155,7 +2184,11 @@ function parseArgs(argv) {
       const modelRe = a === '--model-cursor' ? CURSOR_MODEL_ID : MODEL_ID;
       if (!modelRe.test(id)) throw new Error(`${a} must match ${modelRe.source}`);
       o.models[a.slice(8)] = id;
-    }
+    } else if (a.startsWith('--route-')) {
+      const route = v();
+      if (!ROUTE_VALUES.has(route)) throw new Error(`${a} must be router or unknown`);
+      o.routes[a.slice(8)] = route;
+    } else if (a === '--classify-only') o.classifyOnly = v();
     else if (a === '--mode') { o.mode = v(); if (!['exec', 'review'].includes(o.mode)) throw new Error('--mode must be exec or review'); }
     else if (a === '--timeout') { o.timeout = Number(v()); if (!(o.timeout > 0)) throw new Error('--timeout must be > 0'); }
     else if (a === '--outer-timeout') {
@@ -2183,8 +2216,53 @@ function parseArgs(argv) {
     else throw new Error(`unknown argument: ${a}`);
   }
   if (o.mode === 'exec' && o.cursorMode) throw new Error('--cursor-mode is review-only');
-  for (const n of [...(o.prefer || []), ...Object.keys(o.models)]) if (!Object.hasOwn(RUNTIMES, n)) throw new Error(`unknown cli: ${n} (known: ${Object.keys(RUNTIMES).join(', ')})`);
+  for (const n of [...(o.prefer || []), ...Object.keys(o.models), ...Object.keys(o.routes)]) {
+    if (!Object.hasOwn(RUNTIMES, n)) throw new Error(`unknown cli: ${n} (known: ${Object.keys(RUNTIMES).join(', ')})`);
+  }
   return o;
+}
+
+// Pure: one JSON line per case, then the status line. No spawn, no write, stdin unread.
+function runClassifyOnly(file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+  } catch (e) {
+    log(`cross-ai: --classify-only unreadable: ${e.message}`);
+    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  let cases;
+  try { cases = JSON.parse(raw); } catch (e) {
+    log(`cross-ai: --classify-only invalid JSON: ${e.message}`);
+    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  if (!Array.isArray(cases)) {
+    log('cross-ai: --classify-only file must be a JSON array');
+    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  const lines = [];
+  for (const entry of cases) {
+    const cli = entry && entry.cli;
+    if (!Object.hasOwn(RUNTIMES, cli)) {
+      log(`cross-ai: --classify-only unknown cli: ${cli}`);
+      return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
+    if (entry.route !== undefined && !ROUTE_VALUES.has(entry.route)) {
+      log(`cross-ai: --classify-only bad route: ${entry.route}`);
+      return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
+    const route = entry.route === 'router' || entry.route === 'unknown'
+      ? entry.route : routeOf(cli, entry.model || '', {});
+    const cls = classifyStop({
+      cli, routerLane: confirmedRoute(route), stderr: entry.stderr || '',
+      events: extractEvents(cli, entry.stdout || ''),
+    });
+    lines.push(JSON.stringify({
+      name: entry.name, status: cls.status, rule: cls.rule, pattern: cls.label, route,
+    }));
+  }
+  if (lines.length) process.stdout.write(`${lines.join('\n')}\n`);
+  return finish('ok', { ...liveFields, tree: 'clean', exit: 0, out: lines.length });
 }
 
 function readStdin() {
@@ -2298,6 +2376,7 @@ const FAKE_MODES = {
     process.stdout.write('429 rate limit and billing noted.\n# Summary\nok');
   },
   billing: () => { process.stderr.write('402 payment required\n'); process.exit(1); },
+  'router-env-billing': () => { process.stderr.write('402 payment required\n'); process.exit(1); },
   spend403: () => { process.stderr.write('Error 403: spending limit reached for this team\n'); process.exit(1); },
   freetier: () => { process.stderr.write('403: {"type":"FreeTierError"}\n'); process.exit(1); },
   auth: () => { process.stderr.write('401 unauthorized\n'); process.exit(1); },
@@ -4244,6 +4323,102 @@ async function blackBoxSelfTest() {
         },
       },
       ...classifyCases(),
+      {
+        name: 'classify-only-fixtures',
+        setup: (c) => {
+          const rows = CLASSIFY_CASES.map((entry) => {
+            const row = { name: entry.name, cli: entry.cli };
+            if (entry.route !== undefined) row.route = entry.route;
+            if (entry.model !== undefined) row.model = entry.model;
+            if (entry.stderr !== undefined) row.stderr = entry.stderr;
+            if (entry.stdout !== undefined) row.stdout = entry.stdout;
+            return row;
+          });
+          fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify(rows));
+          return null;
+        },
+        args: ['--classify-only', 'fixtures.json'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const lines = (r.stdout || '').split('\n').filter(Boolean);
+          if (lines.length !== CLASSIFY_CASES.length) {
+            return `fixture lines ${lines.length} expected ${CLASSIFY_CASES.length}`;
+          }
+          for (let i = 0; i < lines.length; i++) {
+            const got = JSON.parse(lines[i]);
+            const want = CLASSIFY_CASES[i];
+            if (got.status !== want.expect.status) {
+              return `${want.name} status ${got.status} expected ${want.expect.status}`;
+            }
+            if (got.pattern !== want.expect.pattern) {
+              return `${want.name} pattern ${got.pattern} expected ${want.expect.pattern}`;
+            }
+            if (want.expect.rule !== undefined && got.rule !== want.expect.rule) {
+              return `${want.name} rule ${got.rule} expected ${want.expect.rule}`;
+            }
+          }
+          return null;
+        },
+      },
+      {
+        name: 'classify-only-no-spawn',
+        setup: (c) => {
+          fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify([
+            { name: 'x', cli: 'pi', stderr: '402 payment required' },
+          ]));
+          return null;
+        },
+        args: ['--classify-only', 'fixtures.json'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (_r, ctx) => (ctx.calls.length ? `spawned: ${ctx.calls.join('|')}` : null),
+      },
+      {
+        name: 'classify-only-bad-file',
+        args: ['--classify-only', 'missing.json'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* action=stop$/,
+      },
+      {
+        name: 'route-config',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/billing exit=75 cli_rc=1 .* tree=clean action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail && tail.route === 'router' ? null : `route=${tail && tail.route}`;
+        },
+      },
+      {
+        name: 'route-flag-wins',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/billing', '--route-pi', 'unknown'],
+        config: { routerBacked: { pi: true } },
+        exit: 69,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=69 cli_rc=1 .* tree=clean action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail && tail.route === 'unknown' ? null : `route=${tail && tail.route}`;
+        },
+      },
+      {
+        name: 'route-heuristic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router-env-billing'],
+        config: { routerBacked: {} },
+        exit: 69,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/router-env-billing exit=69 cli_rc=1 .* tree=clean action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail && tail.route === 'router-inferred' ? null : `route=${tail && tail.route}`;
+        },
+      },
+      {
+        name: 'route-flag-bad',
+        args: ['--prefer', 'pi', '--route-pi', 'maybe'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* action=stop$/,
+      },
 
     ];
 
@@ -4284,6 +4459,7 @@ async function main(argv) {
     return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   if (o.selfTest) return blackBoxSelfTest();
+  if (o.classifyOnly !== null) return runClassifyOnly(o.classifyOnly);
   childPgidFile = o.childPgidFile;
   childPgidBroken = false;
   const order = o.prefer || CONFIG.prefer;
@@ -4357,6 +4533,7 @@ async function main(argv) {
   const c = first;
   liveFields.cli = c?.name ?? '-';
   liveFields.model = c?.model ?? '-';
+  if (c) liveFields.route = routeOf(c.name, c.model || '', o.routes);
   if (cands.length > 1) {
     const rest = cands.slice(1).map((x) => x.name).join(', ');
     log(`cross-ai: only ${c.name} runs; ${rest} is the owner's menu ` +
@@ -4416,6 +4593,7 @@ async function main(argv) {
     beforeSig: noTree ? null : stateSig(before), codexEffort: knobs.codexEffort,
     piThinking: knobs.piThinking, codexServiceTier: o.codexServiceTier,
     cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
+    route: liveFields.route,
   });
   liveFields.out = r.outBytes || 0;
   liveFields.cli_rc = r.cli_rc ?? '-';

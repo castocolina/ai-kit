@@ -559,6 +559,89 @@ class TestExecStatusesE2E(unittest.TestCase):
             self.assertEqual(pids_with_cwd_under(tmp), [])
 
 
+def _codex_pair(message: str) -> str:
+    return "\n".join((
+        json.dumps({"type": "error", "message": message}),
+        json.dumps({"type": "turn.failed", "error": {"message": message}}),
+    ))
+
+
+def _oc_error(error: dict) -> str:
+    return json.dumps({"type": "error", "sessionID": "ses_1", "error": error})
+
+
+class TestClassifyOnly(unittest.TestCase):
+    """The shipped runner's --classify-only prints one JSON line per captured case."""
+
+    def setUp(self):
+        if _real_node_executable() is None:
+            self.skipTest("node not on PATH: classify-only e2e skipped")
+
+    def test_seven_cases_match_pinned_fields(self):
+        node_bin = _real_node_executable()
+        assert node_bin is not None
+        curly = "You\u2019ve hit your usage limit. Try again later."
+        cases = [
+            {"name": "codex-curly", "cli": "codex", "stdout": _codex_pair(curly)},
+            {
+                "name": "oc-monthly-unknown", "cli": "opencode", "route": "unknown",
+                "stdout": _oc_error({
+                    "type": "provider.auth", "status": 401,
+                    "response": {"body": json.dumps({"type": "MonthlyLimitError"})},
+                }),
+            },
+            {
+                "name": "oc-monthly-router", "cli": "opencode", "route": "router",
+                "stdout": _oc_error({
+                    "type": "provider.auth", "status": 401,
+                    "response": {"body": json.dumps({"type": "MonthlyLimitError"})},
+                }),
+            },
+            {
+                "name": "pi-answer-only", "cli": "pi",
+                "stdout": "You have hit your usage limit according to the model.",
+            },
+            {"name": "pi-4021", "cli": "pi", "stderr": "used 4021 tokens"},
+            {
+                "name": "cursor-usage", "cli": "cursor",
+                "stderr": "ActionRequiredError: You've hit your usage limit",
+            },
+            {"name": "inferred", "cli": "pi", "model": "router-env/my-coding"},
+        ]
+        want = [
+            {"status": "quota", "pattern": "verified"},
+            {"status": "billing"},
+            {"status": "quota"},
+            {"status": "crash", "pattern": "none", "rule": "-"},
+            {"status": "crash", "pattern": "none", "rule": "-"},
+            {"status": "quota", "pattern": "unverified"},
+            {"route": "router-inferred"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "cases.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(cases, handle)
+            proc = run_group(
+                [node_bin, TEMPLATE, "--classify-only", path],
+                60, cwd=tmp, env=runner_env(tmp),
+            )
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        lines = [line for line in proc.stdout.splitlines() if line.strip()]
+        self.assertEqual(len(lines), 7, msg=proc.stdout)
+        parsed = [json.loads(line) for line in lines]
+        unknown = parsed[1]
+        router = parsed[2]
+        self.assertEqual(unknown["status"], "billing")
+        self.assertEqual(router["status"], "quota")
+        self.assertEqual(unknown["rule"], router["rule"])
+        for got, pinned in zip(parsed, want, strict=True):
+            for key, value in pinned.items():
+                self.assertEqual(got[key], value, msg=got)
+        err_lines = [line for line in proc.stderr.splitlines() if line.strip()]
+        self.assertTrue(err_lines, msg=proc.stderr)
+        self.assertTrue(err_lines[-1].startswith("AIKIT-XAI status=ok"), msg=err_lines[-1])
+
+
 class TestGsdHookE2E(unittest.TestCase):
     """The hook string, run through GSD's own run-with-timeout, drives the project runner."""
 

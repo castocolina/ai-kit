@@ -16,7 +16,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
-from ai_kit_spec import commands, detection, execute_dispatch
+from ai_kit_spec import commands, detection, execute_dispatch, model_heuristics
 from ai_kit_spec.cli import main
 from ai_kit_spec.detection import normalize_runtime_keys, runtime_id
 from ai_kit_spec.error_classifier import REASONS, STATUS_TO_REASON, reason_for_status
@@ -705,6 +705,30 @@ class TestBinaryAndListingParity(unittest.TestCase):
                 doctored = text.replace(old, new, 1)
                 self.assertNotEqual(doctored, text)
                 self.assertIn(name, binary_and_listing_mismatches(doctored))
+
+
+def template_router_hints(text):
+    """The JSON array on the template's `const ROUTER_HINTS = [...];` line."""
+    match = re.search(r"^const ROUTER_HINTS = (\[.*\]);$", text, re.M)
+    if match is None:
+        raise AssertionError("ROUTER_HINTS line missing")
+    return json.loads(match.group(1))
+
+
+class TestRouterHintParity(unittest.TestCase):
+    def test_hints_match_python(self):
+        self.assertEqual(
+            template_router_hints(_runner_template_text()),
+            list(model_heuristics._ROUTER_NAME_HINTS),
+        )
+
+    def test_doctored_hints_are_a_mismatch(self):
+        text = _runner_template_text()
+        doctored = text.replace('"local-llm"', '"local-dropped"', 1)
+        self.assertNotEqual(doctored, text)
+        self.assertNotEqual(
+            template_router_hints(doctored), list(model_heuristics._ROUTER_NAME_HINTS),
+        )
 
 
 def template_status_keys(text):
