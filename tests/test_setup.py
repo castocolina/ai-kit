@@ -13,8 +13,8 @@ from unittest import mock
 _TOOLS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tools"))
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
+import claude_host
 import common_config
-import common_types
 
 
 def load_module():
@@ -134,7 +134,7 @@ class TestTomlRead(unittest.TestCase):
         sys.modules[spec.name] = sl       # register so @dataclass can resolve cls.__module__
         spec.loader.exec_module(sl)
         expected = [{"min_rows": ln.min_rows, "segments": list(ln.segments)}
-                    for ln in common_types.LAYOUT]
+                    for ln in claude_host.LAYOUT]
         self.assertEqual(setup.LAYOUT_DEFAULTS, expected)
 
     def test_current_layout_file_replaces_all(self):

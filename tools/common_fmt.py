@@ -29,13 +29,13 @@ def cfg_coerce_env_bool(raw: str) -> tuple[Any, bool]:
     return None, False
 
 
-def cfg_env_label(path: tuple[str, ...]) -> str:
+def cfg_env_label(path: tuple[str, ...], prefix: str) -> str:
     """Message subject for an env field = the projected env var name."""
     head = "SEGMENT" if path[0] == "segments" else path[0].upper()
-    return "CC_AI_KIT_" + "_".join([head, *(p.upper() for p in path[1:])])
+    return prefix + "_".join([head, *(p.upper() for p in path[1:])])
 
 
-def cfg_env_segment_keys(env: Env) -> list[str]:
-    """Lower-cased segment keys present as CC_AI_KIT_SEGMENT_* in env."""
-    pre = "CC_AI_KIT_SEGMENT_"
-    return [k[len(pre):].lower() for k in env if k.startswith(pre)]
+def cfg_env_segment_keys(env: Env, prefix: str) -> list[str]:
+    """Lower-cased segment keys present under the supplied host prefix in env."""
+    pre = prefix + "SEGMENT_"
+    return [k[len(pre) :].lower() for k in env if k.startswith(pre)]

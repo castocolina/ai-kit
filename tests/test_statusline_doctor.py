@@ -4,6 +4,7 @@ The doctor script imports the render core (status-line.py) one-way via its own
 importlib shim; this test module loads the doctor script the same way and exercises
 parse_args / cmd_print_config / cmd_check / cmd_doctor / validate_config_file.
 """
+
 import importlib.util
 import os
 import shutil
@@ -50,8 +51,13 @@ class TestCLI(unittest.TestCase):
 
     def test_print_config_emits_resolved_json(self):
         import json
-        cfg = common_types.Config(segments={"path": True}, layout=[common_types.Line(0, ["path"])],
-                        palette={"BLUE": "1;34"}, ramps={})
+
+        cfg = common_types.Config(
+            segments={"path": True},
+            layout=[common_types.Line(0, ["path"])],
+            palette={"BLUE": "1;34"},
+            ramps={},
+        )
         out = doctor.cmd_print_config(cfg, {})
         parsed = json.loads(out)
         self.assertEqual(parsed["segments"], {"path": True})
@@ -59,11 +65,11 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(parsed["palette"], {"BLUE": "1;34"})
 
     def test_check_valid_returns_zero(self):
-        path = self._write('[segments]\nalt_cost = true\n')
+        path = self._write("[segments]\nalt_cost = true\n")
         self.assertEqual(doctor.cmd_check(path, {"HOME": "/h"}), 0)
 
     def test_check_unknown_segment_returns_one(self):
-        path = self._write('[segments]\nbogus = true\n')
+        path = self._write("[segments]\nbogus = true\n")
         self.assertEqual(doctor.cmd_check(path, {"HOME": "/h"}), 1)
 
     def test_check_bad_layout_ref_returns_one(self):
@@ -71,7 +77,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(doctor.cmd_check(path, {"HOME": "/h"}), 1)
 
     def test_check_malformed_returns_one(self):
-        path = self._write('= = not toml')
+        path = self._write("= = not toml")
         self.assertEqual(doctor.cmd_check(path, {"HOME": "/h"}), 1)
 
     def test_check_bad_palette_hex_returns_one(self):
@@ -91,14 +97,16 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(doctor.cmd_check(path, {"HOME": "/h"}), 1)
 
     def test_check_valid_palette_and_ramp_returns_zero(self):
-        path = self._write('[palette]\nBLUE = "#3399ff"\n'
-                           '[ramp.rate]\n50 = "GREEN"\ninf = "RED+bold"\n')
+        path = self._write(
+            '[palette]\nBLUE = "#3399ff"\n[ramp.rate]\n50 = "GREEN"\ninf = "RED+bold"\n'
+        )
         self.assertEqual(doctor.cmd_check(path, {"HOME": "/h"}), 0)
 
     def test_doctor_reports_env_problems_byte_identical(self):
         """cmd_check surfaces env-side bind errors byte-identical to cfg_warn output."""
         import io
         from contextlib import redirect_stderr
+
         env = {"CC_AI_KIT_GIT_CACHE_TTL": "not-an-int"}
         buf = io.StringIO()
         with redirect_stderr(buf):
@@ -123,8 +131,10 @@ class TestDoctor(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         # Resolve config to a path that does NOT exist → defaults, which are valid.
-        self.env = {"HOME": self.tmp,
-                    "CC_AI_KIT_CONFIG_FILE": os.path.join(self.tmp, "absent.toml")}
+        self.env = {
+            "HOME": self.tmp,
+            "CC_AI_KIT_CONFIG_FILE": os.path.join(self.tmp, "absent.toml"),
+        }
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -137,6 +147,7 @@ class TestDoctor(unittest.TestCase):
         def boom(data, avail, theme):
             del avail
             raise RuntimeError("x")
+
         with mock.patch.dict(claude_host.BUILDERS, {"path": boom}):
             rc = doctor.cmd_doctor(self.env)
         self.assertEqual(rc, 1)
@@ -144,10 +155,12 @@ class TestDoctor(unittest.TestCase):
     def test_doctor_flags_a_raising_disabled_builder(self):
         # A builder that is DISABLED by default (`alt_cost`) must still be
         # dry-rendered: the doctor catches a builder that would crash once enabled.
-        self.assertFalse(common_config.cfg_default_config().segments.get("alt_cost"))
+        self.assertFalse(common_config.cfg_default_config(claude_host.SPEC).segments.get("alt_cost"))
+
         def boom(data, avail, theme):
             del avail
             raise RuntimeError("x")
+
         with mock.patch.dict(claude_host.BUILDERS, {"alt_cost": boom}):
             rc = doctor.cmd_doctor(self.env)
         self.assertEqual(rc, 1)
@@ -163,7 +176,7 @@ class TestDoctor(unittest.TestCase):
     def test_check_flag_still_works(self):
         # Back-compat: --check path is untouched.
         rc = doctor.cmd_check(os.path.join(self.tmp, "absent.toml"), self.env)
-        self.assertEqual(rc, 1)   # absent file → cmd_check reports it (existing behavior)
+        self.assertEqual(rc, 1)  # absent file → cmd_check reports it (existing behavior)
 
 
 if __name__ == "__main__":

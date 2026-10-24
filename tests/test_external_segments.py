@@ -1,3 +1,4 @@
+import importlib
 import importlib.util
 import json
 import os
@@ -7,17 +8,20 @@ import tempfile
 import time
 import types
 import unittest
+from typing import Any
 
 _HERE = os.path.dirname(__file__)
 _TOOLS_DIR = os.path.abspath(os.path.join(_HERE, "..", "tools"))
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
-import claude_host
-import claude_payload
-import common_config
-import common_probe
-import common_render
-import common_types
+claude_host: Any = importlib.import_module("claude_host")  # pre-split parity
+claude_payload: Any = importlib.import_module("claude_payload")  # pre-split parity
+common_config: Any = importlib.import_module("common_config")  # pre-split parity
+common_fmt: Any = importlib.import_module("common_fmt")  # pre-split parity
+common_probe: Any = importlib.import_module("common_probe")  # pre-split parity
+common_render: Any = importlib.import_module("common_render")  # pre-split parity
+common_segments: Any = importlib.import_module("common_segments")  # pre-split parity
+common_types: Any = importlib.import_module("common_types")  # pre-split parity
 
 _MODULE_PATH = os.path.join(_HERE, "..", "tools", "status-line.py")
 _DOCTOR_PATH = os.path.join(_HERE, "..", "tools", "statusline-doctor.py")
@@ -27,7 +31,7 @@ def load_module():
     spec = importlib.util.spec_from_file_location("status_line", _MODULE_PATH)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod          # register so @dataclass can resolve cls.__module__
+    sys.modules[spec.name] = mod  # register so @dataclass can resolve cls.__module__
     spec.loader.exec_module(mod)
     return mod
 
@@ -42,7 +46,7 @@ def load_doctor():
 
 
 sl = load_module()
-doctor = load_doctor()   # introspection (--print-config / --check) lives here (Phase 4)
+doctor = load_doctor()  # introspection (--print-config / --check) lives here (Phase 4)
 
 
 def _ctx_from_env(raw, env, cfg, t_start=None):
@@ -53,9 +57,17 @@ def _ctx_from_env(raw, env, cfg, t_start=None):
     home = env.get("HOME", "")
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
     ctx = claude_payload.core_build_context(
-        raw, cfg, common_render.core_default_theme(), cols, lines, assumed, t_start,
-                           effort=claude_payload.cfg_resolve_effort(
-                               raw), home=home, claude_dir=claude_dir)
+        raw,
+        cfg,
+        common_render.core_default_theme(claude_host.HOST),
+        cols,
+        lines,
+        assumed,
+        t_start,
+        effort=claude_payload.cfg_resolve_effort(raw),
+        home=home,
+        claude_dir=claude_dir,
+    )
     return ctx, cols, lines
 
 
@@ -71,9 +83,11 @@ def write_script(directory, name, body, executable=True):
 
 class TestParseHeader(unittest.TestCase):
     def test_full_header(self):
-        lines = ["#!/bin/sh\n",
-                 "# ai-kit-segment: line=2 after=clock id=aws timeout=3 ttl=30\n",
-                 "echo hi\n"]
+        lines = [
+            "#!/bin/sh\n",
+            "# ai-kit-segment: line=2 after=clock id=aws timeout=3 ttl=30\n",
+            "echo hi\n",
+        ]
         fields = common_config.core_parse_segment_header(lines)
         self.assertEqual(fields["position"], ("after", "clock"))
         self.assertEqual(fields["line"], "2")
@@ -84,10 +98,12 @@ class TestParseHeader(unittest.TestCase):
     def test_bare_start_end(self):
         self.assertEqual(
             common_config.core_parse_segment_header(["# ai-kit-segment: start\n"])["position"],
-                         ("start", ""))
+            ("start", ""),
+        )
         self.assertEqual(
             common_config.core_parse_segment_header(["# ai-kit-segment: end\n"])["position"],
-                         ("end", ""))
+            ("end", ""),
+        )
 
     def test_no_header_returns_none(self):
         self.assertIsNone(common_config.core_parse_segment_header(["#!/bin/sh\n", "echo hi\n"]))
@@ -104,10 +120,14 @@ class TestDiscover(unittest.TestCase):
         self.cache_dir = os.path.join(self.dir, "cache", "ai-kit", "segments")
 
     def test_executable_with_header_is_discovered(self):
-        write_script(self.dir, "aws.sh",
-                     "#!/bin/sh\n# ai-kit-segment: line=2 after=clock id=aws ttl=30\necho hi\n")
+        write_script(
+            self.dir,
+            "aws.sh",
+            "#!/bin/sh\n# ai-kit-segment: line=2 after=clock id=aws ttl=30\necho hi\n",
+        )
         specs = common_config.core_discover_external(
-            self.dir, default_ttl=10, cache_dir=self.cache_dir)
+            self.dir, default_ttl=10, cache_dir=self.cache_dir
+        )
         self.assertEqual(len(specs), 1)
         s = specs[0]
         self.assertEqual(s.id, "aws")
@@ -120,10 +140,11 @@ class TestDiscover(unittest.TestCase):
     def test_no_header_uses_defaults_and_stem_id(self):
         write_script(self.dir, "clockx", "#!/bin/sh\necho hi\n")
         specs = common_config.core_discover_external(
-            self.dir, default_ttl=7, cache_dir=self.cache_dir)
+            self.dir, default_ttl=7, cache_dir=self.cache_dir
+        )
         self.assertEqual(specs[0].id, "clockx")
         self.assertEqual(specs[0].position, ("end", ""))
-        self.assertEqual(specs[0].line, 0)        # 0 => "last row", resolved at placement
+        self.assertEqual(specs[0].line, 0)  # 0 => "last row", resolved at placement
         self.assertEqual(specs[0].ttl, 7)
 
     def test_non_executable_skipped(self):
@@ -134,17 +155,19 @@ class TestDiscover(unittest.TestCase):
         write_script(self.dir, "b.sh", "#!/bin/sh\n# ai-kit-segment: id=zeta\necho\n")
         write_script(self.dir, "a.sh", "#!/bin/sh\n# ai-kit-segment: id=omega\necho\n")
         ids = [s.id for s in common_config.core_discover_external(self.dir, 10, self.cache_dir)]
-        self.assertEqual(ids, ["omega", "zeta"])   # a.sh before b.sh
+        self.assertEqual(ids, ["omega", "zeta"])  # a.sh before b.sh
 
     def test_missing_dir_returns_empty(self):
         self.assertEqual(
-            common_config.core_discover_external("/no/such/dir", 10, self.cache_dir), [])
+            common_config.core_discover_external("/no/such/dir", 10, self.cache_dir), []
+        )
 
 
 class TestSanitize(unittest.TestCase):
     def test_first_non_empty_line(self):
         self.assertEqual(
-            common_types.util_sanitize_external("\n\n  hello \n second\n", 40), "  hello")
+            common_types.util_sanitize_external("\n\n  hello \n second\n", 40), "  hello"
+        )
 
     def test_keeps_sgr_strips_other_csi(self):
         # \033[33m kept (SGR), \033[2J (clear) and cursor move \033[1A stripped
@@ -173,35 +196,50 @@ class TestRunExternal(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.cache = tempfile.mkdtemp()
         import shutil
+
         self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
         self.addCleanup(lambda: shutil.rmtree(self.cache, ignore_errors=True))
 
     def _spec(self, path, ttl=10, timeout=2.0):
-        return common_types.ExtSpec(id="t", path=path, line=1, position=("end", ""),
-                          timeout=timeout, ttl=ttl,
-                          cache_path=os.path.join(self.cache, "t"))
+        return common_types.ExtSpec(
+            id="t",
+            path=path,
+            line=1,
+            position=("end", ""),
+            timeout=timeout,
+            ttl=ttl,
+            cache_path=os.path.join(self.cache, "t"),
+        )
 
     def _data(self):
+        cfg = common_config.cfg_default_config(claude_host.SPEC)._replace(
+            external=common_types.ExternalConf(self.dir, 10, [], claude_host.SPEC.provider_env)
+        )
         return types.SimpleNamespace(
-            raw={"workspace": {"current_dir": self.dir}}, work_dir=self.dir
+            raw={"workspace": {"current_dir": self.dir}}, work_dir=self.dir, line_conf=cfg
         )
 
     def test_runs_and_returns_first_line(self):
         p = write_script(self.dir, "p", "#!/bin/sh\necho '\033[33mhi\033[0m'\n")
-        self.assertEqual(common_render.core_run_external(self._spec(p), self._data(), 40),
-                         "\033[33mhi\033[0m")
+        self.assertEqual(
+            common_render.core_run_external(self._spec(p), self._data(), 40), "\033[33mhi\033[0m"
+        )
 
     def test_receives_cols_via_env(self):
         p = write_script(self.dir, "p", '#!/bin/sh\necho "cols=$AI_KIT_SEGMENT_COLS"\n')
         self.assertEqual(
-            common_render.core_run_external(self._spec(p), self._data(), 17), "cols=17")
+            common_render.core_run_external(self._spec(p), self._data(), 17), "cols=17"
+        )
 
     def test_receives_segment_block_on_stdin(self):
-        p = write_script(self.dir, "p",
-                         '#!/usr/bin/env python3\n'
-                         'import sys, json\n'
-                         'd = json.load(sys.stdin)\n'
-                         'print(d["segment"]["avail_cols"], d["segment"]["id"])\n')
+        p = write_script(
+            self.dir,
+            "p",
+            "#!/usr/bin/env python3\n"
+            "import sys, json\n"
+            "d = json.load(sys.stdin)\n"
+            'print(d["segment"]["avail_cols"], d["segment"]["id"])\n',
+        )
         self.assertEqual(common_render.core_run_external(self._spec(p), self._data(), 9), "9 t")
 
     def test_runs_in_workspace_dir(self):
@@ -216,7 +254,8 @@ class TestRunExternal(unittest.TestCase):
     def test_timeout_returns_none(self):
         p = write_script(self.dir, "p", "#!/bin/sh\nsleep 5\n")
         self.assertIsNone(
-            common_render.core_run_external(self._spec(p, timeout=0.3), self._data(), 40))
+            common_render.core_run_external(self._spec(p, timeout=0.3), self._data(), 40)
+        )
 
     def test_empty_output_returns_none(self):
         p = write_script(self.dir, "p", "#!/bin/sh\nexit 0\n")
@@ -225,160 +264,186 @@ class TestRunExternal(unittest.TestCase):
     def test_caches_within_ttl(self):
         # writes a counter file each run; second call within ttl must not re-run
         counter = os.path.join(self.dir, "n")
-        p = write_script(self.dir, "p",
-                         f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
+        p = write_script(self.dir, "p", f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
         spec = self._spec(p, ttl=100)
         self.assertEqual(common_render.core_run_external(spec, self._data(), 40), "hi")
         self.assertEqual(common_render.core_run_external(spec, self._data(), 40), "hi")
         with open(counter) as f:
-            self.assertEqual(f.read(), "x")        # ran exactly once
+            self.assertEqual(f.read(), "x")  # ran exactly once
 
     def test_ttl_zero_always_reruns(self):
         counter = os.path.join(self.dir, "n")
-        p = write_script(self.dir, "p",
-                         f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
+        p = write_script(self.dir, "p", f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
         spec = self._spec(p, ttl=0)
         common_render.core_run_external(spec, self._data(), 40)
         common_render.core_run_external(spec, self._data(), 40)
         with open(counter) as f:
-            self.assertEqual(f.read(), "xx")       # ran twice
+            self.assertEqual(f.read(), "xx")  # ran twice
 
     def test_ttl_expiry_reruns(self):
         # A cache older than ttl must miss and re-invoke the provider. Age the
         # cache file via os.utime instead of sleeping.
         counter = os.path.join(self.dir, "n")
-        p = write_script(self.dir, "p",
-                         f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
+        p = write_script(self.dir, "p", f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
         spec = self._spec(p, ttl=30)
         self.assertEqual(
-            common_render.core_run_external(spec, self._data(), 40), "hi")  # run 1, writes cache
-        old = time.time() - 31                                          # > ttl in the past
+            common_render.core_run_external(spec, self._data(), 40), "hi"
+        )  # run 1, writes cache
+        old = time.time() - 31  # > ttl in the past
         os.utime(spec.cache_path, (old, old))
         self.assertEqual(
-            common_render.core_run_external(spec, self._data(), 40), "hi")  # cache stale -> run 2
+            common_render.core_run_external(spec, self._data(), 40), "hi"
+        )  # cache stale -> run 2
         with open(counter) as f:
-            self.assertEqual(f.read(), "xx")       # ran twice
+            self.assertEqual(f.read(), "xx")  # ran twice
 
     def test_unwritable_cache_dir_runs_uncached(self):
         # An unwritable cache dir must NOT break rendering: the provider still
         # runs and returns output, and (cache write having failed) every render
         # re-runs it rather than serving a stale value.
         counter = os.path.join(self.dir, "n")
-        p = write_script(self.dir, "p",
-                         f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
+        p = write_script(self.dir, "p", f'#!/bin/sh\nprintf x >> "{counter}"\necho hi\n')
         ro = os.path.join(self.cache, "ro")
         os.makedirs(ro)
-        os.chmod(ro, 0o500)                        # read+exec, no write
-        self.addCleanup(lambda: os.chmod(ro, 0o700))   # so cleanup can rmtree
-        spec = common_types.ExtSpec(id="t", path=p, line=1, position=("end", ""),
-                          timeout=2.0, ttl=100,
-                          cache_path=os.path.join(ro, "sub", "t"))   # makedirs will fail
+        os.chmod(ro, 0o500)  # read+exec, no write
+        self.addCleanup(lambda: os.chmod(ro, 0o700))  # so cleanup can rmtree
+        spec = common_types.ExtSpec(
+            id="t",
+            path=p,
+            line=1,
+            position=("end", ""),
+            timeout=2.0,
+            ttl=100,
+            cache_path=os.path.join(ro, "sub", "t"),
+        )  # makedirs will fail
         self.assertEqual(common_render.core_run_external(spec, self._data(), 40), "hi")
         self.assertEqual(common_render.core_run_external(spec, self._data(), 40), "hi")
-        self.assertFalse(os.path.exists(spec.cache_path))   # nothing cached
+        self.assertFalse(os.path.exists(spec.cache_path))  # nothing cached
         with open(counter) as f:
-            self.assertEqual(f.read(), "xx")       # ran twice (never cached)
+            self.assertEqual(f.read(), "xx")  # ran twice (never cached)
 
 
 class TestResolveExternal(unittest.TestCase):
     def test_config_has_external_default_none(self):
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         self.assertIsNone(cfg.external)
 
     def test_defaults(self):
-        d, ttl = common_config.cfg_resolve_external({}, {})
+        d, ttl = common_config.cfg_resolve_external({}, {}, claude_host.SPEC.provider_dir)
         self.assertEqual(ttl, 10)
         self.assertTrue(d.endswith(os.path.join("ai-kit", "segments")))
 
     def test_file_overrides(self):
         raw = {"external": {"ttl": 25, "dir": "/tmp/segs"}}
-        d, ttl = common_config.cfg_resolve_external(raw, {})
+        d, ttl = common_config.cfg_resolve_external(raw, {}, claude_host.SPEC.provider_dir)
         self.assertEqual((d, ttl), ("/tmp/segs", 25))
 
     def test_env_wins(self):
         # FR-2: env overrides applied by cfg_bind_scalars; canonical names only.
         raw = {"external": {"ttl": 25, "dir": "/tmp/segs"}}
         env = {"CC_AI_KIT_EXTERNAL_DIR": "/env/segs", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "3"}
-        d, ttl = common_config.cfg_resolve_external(raw, env)
+        d, ttl = common_config.cfg_resolve_external(raw, env, claude_host.SPEC.provider_dir)
         _, d, ttl, _ = common_config.cfg_bind_scalars(
-            raw, env, dict(common_types.GIT_DEFAULTS), d, ttl)
+            raw, env, dict(common_types.GIT_DEFAULTS), d, ttl, claude_host.SPEC.env_prefix
+        )
         self.assertEqual((d, ttl), ("/env/segs", 3))
 
     def test_bad_env_ttl_falls_back_to_file(self):
         # FR-2: bad env TTL now handled by cfg_bind_scalars (collects problem, ignores).
         raw = {"external": {"ttl": 25}}
         env = {"CC_AI_KIT_EXTERNAL_CACHE_TTL": "notanint"}
-        d, ttl = common_config.cfg_resolve_external(raw, env)
+        d, ttl = common_config.cfg_resolve_external(raw, env, claude_host.SPEC.provider_dir)
         _, _d, ttl, _ = common_config.cfg_bind_scalars(
-            raw, env, dict(common_types.GIT_DEFAULTS), d, ttl)
+            raw, env, dict(common_types.GIT_DEFAULTS), d, ttl, claude_host.SPEC.env_prefix
+        )
         self.assertEqual(ttl, 25)
 
 
 class TestPlace(unittest.TestCase):
     def _layout(self):
-        return [common_types.Line(0, ["path", "branch"]),
-                common_types.Line(20, ["model", "clock"]),
-                common_types.Line(30, ["context", "memory"])]
+        return [
+            common_types.Line(0, ["path", "branch"]),
+            common_types.Line(20, ["model", "clock"]),
+            common_types.Line(30, ["context", "memory"]),
+        ]
 
     def _spec(self, sid, line, position):
-        return common_types.ExtSpec(id=sid, path=f"/x/{sid}", line=line, position=position,
-                          timeout=2.0, ttl=10, cache_path=f"/c/{sid}")
+        return common_types.ExtSpec(
+            id=sid,
+            path=f"/x/{sid}",
+            line=line,
+            position=position,
+            timeout=2.0,
+            ttl=10,
+            cache_path=f"/c/{sid}",
+        )
 
     def test_after_key(self):
-        layout, final, _ = common_config.cfg_place_external(self._layout(),
-                                              [self._spec("aws", 2, ("after", "clock"))])
+        layout, final, _ = common_config.cfg_place_external(
+            self._layout(), [self._spec("aws", 2, ("after", "clock"))]
+        )
         self.assertEqual(layout[1].segments, ["model", "clock", "aws"])
         self.assertEqual(final[0].line, 2)
 
     def test_before_key(self):
-        layout, _, _ = common_config.cfg_place_external(self._layout(),
-                                          [self._spec("x", 2, ("before", "clock"))])
+        layout, _, _ = common_config.cfg_place_external(
+            self._layout(), [self._spec("x", 2, ("before", "clock"))]
+        )
         self.assertEqual(layout[1].segments, ["model", "x", "clock"])
 
     def test_start_and_end(self):
-        layout, _, _ = common_config.cfg_place_external(self._layout(), [
-            self._spec("s", 1, ("start", "")), self._spec("e", 1, ("end", ""))])
+        layout, _, _ = common_config.cfg_place_external(
+            self._layout(), [self._spec("s", 1, ("start", "")), self._spec("e", 1, ("end", ""))]
+        )
         self.assertEqual(layout[0].segments, ["s", "path", "branch", "e"])
 
     def test_line_zero_means_last_row(self):
-        layout, final, _ = common_config.cfg_place_external(self._layout(),
-                                              [self._spec("z", 0, ("end", ""))])
+        layout, final, _ = common_config.cfg_place_external(
+            self._layout(), [self._spec("z", 0, ("end", ""))]
+        )
         self.assertEqual(layout[2].segments, ["context", "memory", "z"])
-        self.assertEqual(final[0].line, 3)         # resolved to the last row
+        self.assertEqual(final[0].line, 3)  # resolved to the last row
 
     def test_out_of_range_clamps_to_last(self):
-        layout, final, _ = common_config.cfg_place_external(self._layout(),
-                                              [self._spec("z", 9, ("end", ""))])
+        layout, final, _ = common_config.cfg_place_external(
+            self._layout(), [self._spec("z", 9, ("end", ""))]
+        )
         self.assertEqual(layout[2].segments[-1], "z")
         self.assertEqual(final[0].line, 3)
 
     def test_missing_ref_appends(self):
-        layout, _, _ = common_config.cfg_place_external(self._layout(),
-                                          [self._spec("z", 2, ("after", "nope"))])
+        layout, _, _ = common_config.cfg_place_external(
+            self._layout(), [self._spec("z", 2, ("after", "nope"))]
+        )
         self.assertEqual(layout[1].segments, ["model", "clock", "z"])
 
     def test_min_rows_preserved(self):
-        layout, _, _ = common_config.cfg_place_external(self._layout(),
-                                          [self._spec("z", 2, ("end", ""))])
+        layout, _, _ = common_config.cfg_place_external(
+            self._layout(), [self._spec("z", 2, ("end", ""))]
+        )
         self.assertEqual([ln.min_rows for ln in layout], [0, 20, 30])
 
     def test_toml_placement_overrides_header_fallback(self):
         # The user's statusline.toml already lists "temp" on row 0 via an
         # explicit [[line]] override — the header's line=3/after=memory is a
         # fallback only, and must NOT also insert a second copy on row 2.
-        layout = [common_types.Line(0, ["path", "branch", "temp"]),
-                  common_types.Line(20, ["model", "clock"]),
-                  common_types.Line(30, ["context", "memory"])]
+        layout = [
+            common_types.Line(0, ["path", "branch", "temp"]),
+            common_types.Line(20, ["model", "clock"]),
+            common_types.Line(30, ["context", "memory"]),
+        ]
         new_layout, final, _ = common_config.cfg_place_external(
-            layout, [self._spec("temp", 3, ("after", "memory"))])
+            layout, [self._spec("temp", 3, ("after", "memory"))]
+        )
         self.assertEqual(new_layout[0].segments, ["path", "branch", "temp"])
         self.assertEqual(new_layout[2].segments, ["context", "memory"])
-        self.assertEqual(final[0].line, 1)         # reported at its actual (toml) row
+        self.assertEqual(final[0].line, 1)  # reported at its actual (toml) row
 
 
 class TestLoadConfigExternal(unittest.TestCase):
     def setUp(self):
         import shutil
+
         self.dir = tempfile.mkdtemp()
         self.segs = os.path.join(self.dir, "segs")
         os.makedirs(self.segs)
@@ -386,33 +451,40 @@ class TestLoadConfigExternal(unittest.TestCase):
         self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
 
     def _env(self, **extra):
-        env = {"CC_AI_KIT_CONFIG_FILE": self.cfg, "CC_AI_KIT_EXTERNAL_DIR": self.segs,
-               "XDG_CACHE_HOME": os.path.join(self.dir, "cache"), "HOME": self.dir}
+        env = {
+            "CC_AI_KIT_CONFIG_FILE": self.cfg,
+            "CC_AI_KIT_EXTERNAL_DIR": self.segs,
+            "XDG_CACHE_HOME": os.path.join(self.dir, "cache"),
+            "HOME": self.dir,
+        }
         env.update(extra)
         return env
 
     def test_discovered_provider_enabled_by_default_and_placed(self):
-        write_script(self.segs, "system_memory",
-                     "#!/bin/sh\n# ai-kit-segment: line=1 end\necho hi\n")
-        cfg = common_config.cfg_load_config(self._env())
-        self.assertTrue(cfg.segments.get("system_memory"))            # default-on
-        self.assertIn("system_memory", cfg.layout[0].segments)        # placed on row 1
+        write_script(
+            self.segs, "system_memory", "#!/bin/sh\n# ai-kit-segment: line=1 end\necho hi\n"
+        )
+        cfg = common_config.cfg_load_config(self._env(), claude_host.SPEC)
+        self.assertTrue(cfg.segments.get("system_memory"))  # default-on
+        self.assertIn("system_memory", cfg.layout[0].segments)  # placed on row 1
         self.assertEqual([s.id for s in cfg.external.providers], ["system_memory"])
 
     def test_explicit_disable_in_toml_is_honored(self):
         write_script(self.segs, "system_memory", "#!/bin/sh\necho hi\n")
         with open(self.cfg, "w") as f:
             f.write("[segments]\nsystem_memory = false\n")
-        cfg = common_config.cfg_load_config(self._env())
+        cfg = common_config.cfg_load_config(self._env(), claude_host.SPEC)
         self.assertFalse(cfg.segments["system_memory"])
 
     def test_env_toggle_disables_external(self):
         write_script(self.segs, "system_memory", "#!/bin/sh\necho hi\n")
-        cfg = common_config.cfg_load_config(self._env(CC_AI_KIT_SEGMENT_SYSTEM_MEMORY="0"))
+        cfg = common_config.cfg_load_config(
+            self._env(CC_AI_KIT_SEGMENT_SYSTEM_MEMORY="0"), claude_host.SPEC
+        )
         self.assertFalse(cfg.segments["system_memory"])
 
     def test_no_providers_keeps_external_empty(self):
-        cfg = common_config.cfg_load_config(self._env())
+        cfg = common_config.cfg_load_config(self._env(), claude_host.SPEC)
         self.assertIsNotNone(cfg.external)
         self.assertEqual(cfg.external.providers, [])
 
@@ -420,27 +492,35 @@ class TestLoadConfigExternal(unittest.TestCase):
 class TestRenderIntegration(unittest.TestCase):
     def setUp(self):
         import shutil
+
         self.dir = tempfile.mkdtemp()
         self.segs = os.path.join(self.dir, "segs")
         os.makedirs(self.segs)
         self.cfg = os.path.join(self.dir, "statusline.toml")
         self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
-        self.env = {"CC_AI_KIT_CONFIG_FILE": self.cfg, "CC_AI_KIT_EXTERNAL_DIR": self.segs,
-                    "XDG_CACHE_HOME": os.path.join(self.dir, "cache"), "HOME": self.dir}
+        self.env = {
+            "CC_AI_KIT_CONFIG_FILE": self.cfg,
+            "CC_AI_KIT_EXTERNAL_DIR": self.segs,
+            "XDG_CACHE_HOME": os.path.join(self.dir, "cache"),
+            "HOME": self.dir,
+        }
 
     def _render(self, cols=200, lines=40):
-        cfg = common_config.cfg_load_config(self.env)
-        theme = common_render.core_build_theme(cfg)
-        raw = {"workspace": {"current_dir": self.dir},
-               "context_window": {"used_percentage": 10, "context_window_size": 200000},
-               "session_id": "x", "transcript_path": "", "rate_limits": {}}
+        cfg = common_config.cfg_load_config(self.env, claude_host.SPEC)
+        theme = common_render.core_build_theme(cfg, claude_host.HOST)
+        raw = {
+            "workspace": {"current_dir": self.dir},
+            "context_window": {"used_percentage": 10, "context_window_size": 200000},
+            "session_id": "x",
+            "transcript_path": "",
+            "rate_limits": {},
+        }
         env = {**self.env, "STATUSLINE_COLS": str(cols), "STATUSLINE_LINES": str(lines)}
         data, _c, _l = _ctx_from_env(raw, env, cfg)
-        return "\n".join(claude_host.core_render(data, cfg, theme))
+        return "\n".join(common_render.core_render(data, claude_host.HOST, cfg, theme))
 
     def test_external_segment_appears_in_render(self):
-        write_script(self.segs, "ping",
-                     "#!/bin/sh\n# ai-kit-segment: line=1 end\necho PONG\n")
+        write_script(self.segs, "ping", "#!/bin/sh\n# ai-kit-segment: line=1 end\necho PONG\n")
         self.assertIn("PONG", self._render())
 
     def test_disabled_external_absent(self):
@@ -450,35 +530,43 @@ class TestRenderIntegration(unittest.TestCase):
         self.assertNotIn("PONG", self._render())
 
     def test_failing_provider_never_breaks_line(self):
-        write_script(self.segs, "boom",
-                     "#!/bin/sh\n# ai-kit-segment: line=1 end\nexit 3\n")
+        write_script(self.segs, "boom", "#!/bin/sh\n# ai-kit-segment: line=1 end\nexit 3\n")
         out = self._render()
-        self.assertNotIn("boom", out)              # omitted, no crash marker
-        self.assertTrue(out)                        # line still renders
+        self.assertNotIn("boom", out)  # omitted, no crash marker
+        self.assertTrue(out)  # line still renders
 
     def test_external_self_tiers_on_cols(self):
-        write_script(self.segs, "t",
-                     '#!/bin/sh\n# ai-kit-segment: line=1 end\n'
-                     'if [ "$AI_KIT_SEGMENT_COLS" -ge 10 ]; then echo LONGFORM; '
-                     'else echo S; fi\n')
+        write_script(
+            self.segs,
+            "t",
+            "#!/bin/sh\n# ai-kit-segment: line=1 end\n"
+            'if [ "$AI_KIT_SEGMENT_COLS" -ge 10 ]; then echo LONGFORM; '
+            "else echo S; fi\n",
+        )
         self.assertIn("LONGFORM", self._render(cols=200))
 
 
 class TestCliSurface(unittest.TestCase):
     def setUp(self):
         import shutil
+
         self.dir = tempfile.mkdtemp()
         self.segs = os.path.join(self.dir, "segs")
         os.makedirs(self.segs)
         self.cfg = os.path.join(self.dir, "statusline.toml")
         self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
-        self.env = {"CC_AI_KIT_CONFIG_FILE": self.cfg, "CC_AI_KIT_EXTERNAL_DIR": self.segs,
-                    "XDG_CACHE_HOME": os.path.join(self.dir, "cache"), "HOME": self.dir}
+        self.env = {
+            "CC_AI_KIT_CONFIG_FILE": self.cfg,
+            "CC_AI_KIT_EXTERNAL_DIR": self.segs,
+            "XDG_CACHE_HOME": os.path.join(self.dir, "cache"),
+            "HOME": self.dir,
+        }
 
     def test_print_config_lists_external(self):
-        write_script(self.segs, "system_memory",
-                     "#!/bin/sh\n# ai-kit-segment: line=1 end\necho hi\n")
-        cfg = common_config.cfg_load_config(self.env)
+        write_script(
+            self.segs, "system_memory", "#!/bin/sh\n# ai-kit-segment: line=1 end\necho hi\n"
+        )
+        cfg = common_config.cfg_load_config(self.env, claude_host.SPEC)
         blob = json.loads(doctor.cmd_print_config(cfg, self.env))
         self.assertEqual(blob["external"]["providers"][0]["id"], "system_memory")
         self.assertIn("ttl", blob["external"])
@@ -514,9 +602,15 @@ class TestSampleProvider(unittest.TestCase):
         self.assertIsNotNone(common_config.core_parse_segment_header(head))
 
     def test_runs_and_emits_one_sgr_line(self):
-        spec = common_types.ExtSpec(id="system_memory", path=os.path.abspath(self.PATH), line=1,
-                          position=("after", "context"), timeout=3.0, ttl=0,
-                          cache_path=os.path.join(tempfile.mkdtemp(), "system_memory"))
+        spec = common_types.ExtSpec(
+            id="system_memory",
+            path=os.path.abspath(self.PATH),
+            line=1,
+            position=("after", "context"),
+            timeout=3.0,
+            ttl=0,
+            cache_path=os.path.join(tempfile.mkdtemp(), "system_memory"),
+        )
         data = types.SimpleNamespace(raw={}, work_dir=".")
         out = common_render.core_run_external(spec, data, 40)
         # Renders on Linux/macOS; on an unsupported platform it cleanly drops (None).
@@ -525,9 +619,15 @@ class TestSampleProvider(unittest.TestCase):
             self.assertLessEqual(common_types.util_visible_width(out), 40)
 
     def test_short_budget_tiers_down_or_drops(self):
-        spec = common_types.ExtSpec(id="system_memory", path=os.path.abspath(self.PATH), line=1,
-                          position=("end", ""), timeout=3.0, ttl=0,
-                          cache_path=os.path.join(tempfile.mkdtemp(), "system_memory"))
+        spec = common_types.ExtSpec(
+            id="system_memory",
+            path=os.path.abspath(self.PATH),
+            line=1,
+            position=("end", ""),
+            timeout=3.0,
+            ttl=0,
+            cache_path=os.path.join(tempfile.mkdtemp(), "system_memory"),
+        )
         out = common_render.core_run_external(spec, types.SimpleNamespace(raw={}, work_dir="."), 4)
         if out is not None:
             self.assertLessEqual(common_types.util_visible_width(out), 4)
@@ -543,8 +643,9 @@ class TestRecipe(unittest.TestCase):
         self.assertIn("CC_AI_KIT_EXTERNAL_DIR", text)
         # Block ships fully commented (NO-OP): no live (uncommented) [external].
         for line in text.splitlines():
-            self.assertNotEqual(line.strip(), "[external]",
-                                "the [external] block must ship commented out")
+            self.assertNotEqual(
+                line.strip(), "[external]", "the [external] block must ship commented out"
+            )
 
 
 if __name__ == "__main__":

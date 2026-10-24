@@ -7,8 +7,9 @@ import sys
 
 try:
     import tomllib as _tomllib_impl
+
     tomllib = _tomllib_impl
-except ModuleNotFoundError:        # Python < 3.11 — degrade to env-only config.
+except ModuleNotFoundError:  # Python < 3.11 — degrade to env-only config.
     tomllib = None  # type: ignore[assignment]  # stdlib boundary: optional module absent on <3.11
 from typing import Any, cast
 
@@ -17,12 +18,10 @@ from common_types import (
     DIM,
     EXTERNAL_CACHE_TTL,
     GIT_DEFAULTS,
-    LAYOUT,
     PALETTE_DEFAULTS,
-    RAMP_DEFAULTS,
     RESET,
-    SEGMENTS,
     Config,
+    ConfigSpec,
     Env,
     ExternalConf,
     ExtSpec,
@@ -30,8 +29,6 @@ from common_types import (
 )
 
 # ═══ 2. cfg_ — config loading & resolution (the only block that reads config env)
-
-
 
 
 def cfg_git_key_problem(k: str, v: Any) -> str | None:
@@ -82,14 +79,13 @@ def cfg_coerce(raw: Any, kind: str, source: str, label: str) -> tuple[Any, str |
     return (raw, None) if isinstance(raw, int) and not isinstance(raw, bool) else (None, bad)
 
 
-def cfg_source_get(source: str, raw_toml: dict[str, Any], env: Env,
-                   path: tuple[str, ...]) -> Any | None:
-    """Raw value for `path` from `source`, or None if absent. Env name is the
-    mechanical projection CC_AI_KIT_<PATH> (the ('segments', KEY) path projects to
-    CC_AI_KIT_SEGMENT_<KEY>); TOML is a nested-dict lookup."""
+def cfg_source_get(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    source: str, raw_toml: dict[str, Any], env: Env, path: tuple[str, ...], prefix: str
+) -> Any | None:
+    """Get a raw source value using the supplied host prefix and path."""
     if source == "env":
         head = "SEGMENT" if path[0] == "segments" else path[0].upper()
-        name = "CC_AI_KIT_" + "_".join([head, *(p.upper() for p in path[1:])])
+        name = prefix + "_".join([head, *(p.upper() for p in path[1:])])
         return env.get(name)
     cur: dict[str, Any] = raw_toml
     for i, part in enumerate(path):
@@ -105,13 +101,17 @@ def cfg_source_get(source: str, raw_toml: dict[str, Any], env: Env,
     return None
 
 
-def cfg_bind_scalars(
-    raw_toml: dict[str, Any], env: Env, git: dict[str, Any],
-    ext_dir: str, ext_ttl: int,
+def cfg_bind_scalars(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    raw_toml: dict[str, Any],
+    env: Env,
+    git: dict[str, Any],
+    ext_dir: str,
+    ext_ttl: int,
+    prefix: str,
 ) -> tuple[dict[str, Any], str, int, list[str]]:
     """Bind the scalar line_conf groups (git, external) from env on top of the
     already-resolved default<TOML values. Runs BEFORE external-provider discovery
-    because CC_AI_KIT_EXTERNAL_DIR changes which directory is scanned. Phase 2
+    because the host's external directory override changes which directory is scanned. Phase 2
     binds ENV only (TOML stays in the git loop / cfg_resolve_external and folds
     into this walk in a later phase, when their warnings migrate to the problem
     channel). Collects problems instead of printing; the caller decides. Returns
@@ -120,10 +120,10 @@ def cfg_bind_scalars(
     problems: list[str] = []
 
     def bind_int(path: tuple[str, ...], cur: int) -> int:
-        raw = cfg_source_get("env", raw_toml, env, path)
+        raw = cfg_source_get("env", raw_toml, env, path, prefix)
         if raw is None:
             return cur
-        value, prob = cfg_coerce(raw, "int", "env", cfg_env_label(path))
+        value, prob = cfg_coerce(raw, "int", "env", cfg_env_label(path, prefix))
         if prob:
             problems.append(prob)
             return cur
@@ -131,14 +131,17 @@ def cfg_bind_scalars(
 
     g["cache_ttl"] = bind_int(("git", "cache_ttl"), g["cache_ttl"])
     t = bind_int(("external", "cache_ttl"), t)
-    raw_dir = cfg_source_get("env", raw_toml, env, ("external", "dir"))
+    raw_dir = cfg_source_get("env", raw_toml, env, ("external", "dir"), prefix)
     if raw_dir:
         d = os.path.expanduser(cast(str, raw_dir))
     return g, d, t, problems
 
 
 def cfg_bind_segments(
-    raw_toml: dict[str, Any], env: Env, segments: dict[str, bool],
+    raw_toml: dict[str, Any],
+    env: Env,
+    segments: dict[str, bool],
+    prefix: str,
 ) -> tuple[dict[str, bool], list[str]]:
     """Bind the segment toggle map from env on top of the already-resolved
     default<TOML map (cfg_resolve_segments). Runs AFTER external-provider
@@ -147,11 +150,11 @@ def cfg_bind_segments(
     instead of printing. Returns (segments, problems)."""
     seg = dict(segments)
     problems: list[str] = []
-    for key in cfg_env_segment_keys(env):
+    for key in cfg_env_segment_keys(env, prefix):
         if key not in seg:
             continue
-        raw = cfg_source_get("env", raw_toml, env, ("segments", key))
-        value, prob = cfg_coerce(raw, "bool", "env", cfg_env_label(("segments", key)))
+        raw = cfg_source_get("env", raw_toml, env, ("segments", key), prefix)
+        value, prob = cfg_coerce(raw, "bool", "env", cfg_env_label(("segments", key), prefix))
         if prob:
             problems.append(prob)
         elif value is not None:
@@ -159,26 +162,31 @@ def cfg_bind_segments(
     return seg, problems
 
 
-def cfg_default_config() -> "Config":
+def cfg_default_config(spec: ConfigSpec) -> "Config":
     """A Config snapshotting the current module-global defaults (SEGMENTS/LAYOUT,
     no palette/ramp overrides). Copies are returned so callers cannot mutate
     globals."""
-    return Config(segments=dict(SEGMENTS), layout=list(LAYOUT), palette={}, ramps={},
-                  git=dict(GIT_DEFAULTS))
+    return Config(
+        segments=dict(spec.default_segments),
+        layout=list(spec.default_layout),
+        palette={},
+        ramps={},
+        git=dict(GIT_DEFAULTS),
+    )
 
 
-def cfg_config_path(env: Env) -> str:
-    """Resolved TOML path: CC_AI_KIT_CONFIG_FILE, else
-    ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/statusline.toml.
+def cfg_config_path(env: Env, spec: ConfigSpec) -> str:
+    """Resolved TOML path: the host's CONFIG_FILE override, else
+    ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit/<host's TOML>.
 
     FR-1.7: this is the bootstrap exception — it reads env directly before any
     TOML is loaded (chicken-and-egg), so it is the one explicit hardcoded env read
     outside the cfg_bind_scalars/cfg_bind_segments layer."""
-    explicit = env.get("CC_AI_KIT_CONFIG_FILE")
+    explicit = env.get(spec.env_prefix + "CONFIG_FILE")
     if explicit:
         return os.path.expanduser(explicit)
     base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
-    return os.path.join(base, "ai-kit", "statusline.toml")
+    return os.path.join(base, "ai-kit", spec.config_filename)
 
 
 def cfg_load_toml(path: str) -> dict[str, Any]:
@@ -212,9 +220,7 @@ def cfg_resolve_segments(
         if k not in seg:
             problems.append(f"unknown segment '{k}' in config")
         elif not isinstance(v, bool):
-            problems.append(
-                f"segment '{k}' must be true/false, got {v!r} — ignored"
-            )
+            problems.append(f"segment '{k}' must be true/false, got {v!r} — ignored")
         else:
             seg[k] = v
     return seg, problems
@@ -226,11 +232,12 @@ def cfg_resolve_layout(default_layout: list[Line], raw_lines: Any) -> list[Line]
     keep the default. Each block: min_rows (default 0) + segments list."""
     if not raw_lines:
         return list(default_layout)
-    return [Line(int(item.get("min_rows", 0)), list(item.get("segments", [])))
-            for item in raw_lines]
+    return [
+        Line(int(item.get("min_rows", 0)), list(item.get("segments", []))) for item in raw_lines
+    ]
 
 
-def cfg_resolve_external(raw: dict[str, Any], env: Env) -> tuple[str, int]:
+def cfg_resolve_external(raw: dict[str, Any], env: Env, provider_dir: str) -> tuple[str, int]:
     """Resolve (dir, default_ttl) from defaults < [external] file.
     Env overrides are applied later by cfg_bind_scalars (FR-2)."""
     file_ext: dict[str, Any] = cast(dict[str, Any], raw.get("external") or {})
@@ -238,7 +245,7 @@ def cfg_resolve_external(raw: dict[str, Any], env: Env) -> tuple[str, int]:
     fv: Any = file_ext.get("ttl")
     if isinstance(fv, int) and not isinstance(fv, bool):
         ttl = fv
-    return cfg_segments_dir(file_ext, env), ttl
+    return cfg_segments_dir(file_ext, env, provider_dir), ttl
 
 
 def cfg_place_external(
@@ -246,7 +253,7 @@ def cfg_place_external(
 ) -> tuple[list[Line], list["ExtSpec"], list[str]]:
     """Insert each spec's id into the resolved layout at its row/position and
     return (new_layout, finalized_specs, problems). The header's `line=`/
-    `after=`/`before=` is only a FALLBACK default: if the user's statusline.toml
+    `after=`/`before=` is only a FALLBACK default: if the host's TOML
     already names this id in some row's `segments` list (an explicit `[[line]]`
     override), that placement wins and the header's preference is ignored —
     otherwise the spec would render twice. Resolves line=0 to the last row and
@@ -266,7 +273,7 @@ def cfg_place_external(
         if placed_idx is not None:
             final.append(spec._replace(line=placed_idx + 1))
             continue
-        want = spec.line or nrows                      # 0 => last row
+        want = spec.line or nrows  # 0 => last row
         idx = want - 1
         if idx < 0 or idx >= nrows:
             problems.append(
@@ -281,7 +288,7 @@ def cfg_place_external(
             segs.insert(segs.index(ref) + 1, spec.id)
         elif kind == "before" and ref in segs:
             segs.insert(segs.index(ref), spec.id)
-        else:                                          # end, or after/before missing ref
+        else:  # end, or after/before missing ref
             segs.append(spec.id)
         final.append(spec._replace(line=idx + 1))
     new_layout = [Line(layout[i].min_rows, rows[i]) for i in range(nrows)]
@@ -290,6 +297,7 @@ def cfg_place_external(
 
 def cfg_load_config_verbose(  # pylint: disable=too-many-locals,too-many-branches
     env: Env,
+    spec: ConfigSpec,
 ) -> "tuple[Config, list[str]]":
     """Resolve the full Config: internal defaults < TOML file < env.
 
@@ -301,21 +309,20 @@ def cfg_load_config_verbose(  # pylint: disable=too-many-locals,too-many-branche
     Config.external (an ExternalConf whose `.providers` holds the finalized
     ExtSpec list, `.dir` the providers directory, `.cache_ttl` the default TTL).
 
-    All CC_AI_KIT_* config env reads funnel through cfg_bind_scalars /
-    cfg_bind_segments (FR-2/FR-3 access/convert/bind layer). The bootstrap
-    CC_AI_KIT_CONFIG_FILE read is the sole exception (FR-1.7).
+    All host config env reads funnel through cfg_bind_scalars /
+    cfg_bind_segments. The bootstrap CONFIG_FILE read is the sole exception.
 
     Returns (Config, problems) where problems is a list of raw message strings
     (no ANSI, no 'status-line: ' prefix) describing every skipped/clamped value.
     Emits NOTHING to stderr — callers decide what to do with problems."""
-    base = cfg_default_config()
-    raw = cfg_load_toml(cfg_config_path(env))
+    base = cfg_default_config(spec)
+    raw = cfg_load_toml(cfg_config_path(env, spec))
     problems: list[str] = []
 
     # External providers first: their ids must be known segment keys before
     # cfg_resolve_segments runs, so `[segments] <id> = false` is honored (not warned)
     # and they default to enabled. TOML-based dir/ttl resolved here; env overrides applied below.
-    ext_dir, ext_ttl = cfg_resolve_external(raw, env)
+    ext_dir, ext_ttl = cfg_resolve_external(raw, env, spec.provider_dir)
     cache_base = cfg_cache_base(env)
 
     # git: resolve from TOML first, then env overrides via single reader below.
@@ -325,20 +332,20 @@ def cfg_load_config_verbose(  # pylint: disable=too-many-locals,too-many-branche
         if problem == "unknown":
             problems.append(f"unknown [git] key '{k}'")
         elif problem == "bad_ttl":
-            problems.append(
-                f"[git] cache_ttl must be an integer, got {v!r} — ignored"
-            )
+            problems.append(f"[git] cache_ttl must be an integer, got {v!r} — ignored")
         else:
             git[k] = v
 
     # FR-2/FR-3: env binds via the access/convert layer. Scalars bind BEFORE
     # discovery so the env-bound external dir is the one scanned; segments bind
     # AFTER discovery so provider ids are known segment keys.
-    git, ext_dir, ext_ttl, prob_scalars = cfg_bind_scalars(raw, env, git, ext_dir, ext_ttl)
+    git, ext_dir, ext_ttl, prob_scalars = cfg_bind_scalars(
+        raw, env, git, ext_dir, ext_ttl, spec.env_prefix
+    )
     problems.extend(prob_scalars)
 
     # Discover external providers using the final resolved dir/ttl (env wins over TOML).
-    specs = core_discover_external(ext_dir, ext_ttl, os.path.join(cache_base, "segments"))
+    specs = core_discover_external(ext_dir, ext_ttl, os.path.join(cache_base, spec.provider_cache))
 
     # segments resolved exactly once: defaults + external ids < [segments] TOML < env.
     # External provider ids are known segment keys (default enabled, disable via
@@ -348,7 +355,9 @@ def cfg_load_config_verbose(  # pylint: disable=too-many-locals,too-many-branche
         seg_defaults.setdefault(s.id, True)
     segments, prob_seg_file = cfg_resolve_segments(seg_defaults, raw.get("segments"))
     problems.extend(prob_seg_file)
-    segments, prob_segs = cfg_bind_segments(raw, env, segments)          # env pass + problems
+    segments, prob_segs = cfg_bind_segments(
+        raw, env, segments, spec.env_prefix
+    )  # env pass + problems
     problems.extend(prob_segs)
 
     layout = cfg_resolve_layout(base.layout, raw.get("line"))
@@ -362,26 +371,33 @@ def cfg_load_config_verbose(  # pylint: disable=too-many-locals,too-many-branche
             problems.append(f"unknown palette key '{k}'")
     ramps: dict[str, dict[str, str]] = {}
     for band, table in cast(dict[str, Any], raw.get("ramp") or {}).items():
-        if band not in RAMP_DEFAULTS:
+        if band not in spec.ramp_defaults:
             problems.append(f"unknown ramp '{band}'")
             continue
         if not isinstance(table, dict):
             problems.append(f"ramp '{band}' must be a table — ignored")
             continue
         ramps[band] = {str(k): str(v) for k, v in cast(dict[Any, Any], table).items()}
-    cfg = Config(segments=segments, layout=layout, palette=palette, ramps=ramps,
-                 git=git,
-                 external=ExternalConf(dir=ext_dir, cache_ttl=ext_ttl, providers=external),
-                 cache_base=cache_base)
+    cfg = Config(
+        segments=segments,
+        layout=layout,
+        palette=palette,
+        ramps=ramps,
+        git=git,
+        external=ExternalConf(
+            dir=ext_dir, cache_ttl=ext_ttl, providers=external, env_prefix=spec.provider_env
+        ),
+        cache_base=cache_base,
+    )
     return cfg, problems
 
 
-def cfg_load_config(env: Env) -> "Config":
+def cfg_load_config(env: Env, spec: ConfigSpec) -> "Config":
     """Silent wrapper around cfg_load_config_verbose — discards all problems.
 
     The render path calls this so it emits nothing to stderr. Use
     cfg_load_config_verbose when you need the problem list (e.g. the doctor)."""
-    cfg, _ = cfg_load_config_verbose(env)
+    cfg, _ = cfg_load_config_verbose(env, spec)
     return cfg
 
 
@@ -391,16 +407,17 @@ def cfg_cache_base(env: Env) -> str:
     return os.path.join(base, "ai-kit")
 
 
-def cfg_segments_dir(file_external: Any, env: Env) -> str:
+def cfg_segments_dir(file_external: Any, env: Env, provider_dir: str) -> str:
     """Resolve the providers directory from [external].dir (TOML) or the XDG default.
-    Env override (CC_AI_KIT_EXTERNAL_DIR) is applied later by cfg_bind_scalars
+    Env override is applied later by cfg_bind_scalars
     (FR-2); this function is TOML + XDG only."""
     ext_block: dict[str, Any] = cast(dict[str, Any], file_external or {})
     d: str | None = ext_block.get("dir")
     if d:
         return os.path.expanduser(d)
     base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", ""), ".config")
-    return os.path.join(base, "ai-kit", "segments")
+    return os.path.join(base, "ai-kit", provider_dir)
+
 
 # ═══ 6. core_ — render machinery: Context, Theme, registry, packer, render ════
 
@@ -446,8 +463,10 @@ def core_discover_external(directory: str, default_ttl: int, cache_dir: str) -> 
         if not os.path.isfile(path):
             continue
         if not os.access(path, os.X_OK):
-            print(f"{DIM}status-line: segment '{name}' not executable — skipped{RESET}",
-                  file=sys.stderr)
+            print(
+                f"{DIM}status-line: segment '{name}' not executable — skipped{RESET}",
+                file=sys.stderr,
+            )
             continue
         try:
             with open(path, encoding="utf-8", errors="replace") as f:
@@ -468,10 +487,16 @@ def core_discover_external(directory: str, default_ttl: int, cache_dir: str) -> 
             line = int(fields["line"]) if "line" in fields else 0
         except (TypeError, ValueError):
             line = 0
-        specs.append(ExtSpec(
-            id=sid, path=path, line=line,
-            position=fields.get("position", ("end", "")),
-            timeout=timeout, ttl=ttl,
-            cache_path=os.path.join(cache_dir, sid)))
+        specs.append(
+            ExtSpec(
+                id=sid,
+                path=path,
+                line=line,
+                position=fields.get("position", ("end", "")),
+                timeout=timeout,
+                ttl=ttl,
+                cache_path=os.path.join(cache_dir, sid),
+            )
+        )
     specs.sort(key=lambda s: (os.path.basename(s.path), s.id))
     return specs

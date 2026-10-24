@@ -1,4 +1,5 @@
 import contextlib
+import importlib
 import importlib.util
 import io
 import json
@@ -11,6 +12,7 @@ import tempfile
 import time
 import tomllib
 import unittest
+from typing import Any
 from unittest import mock
 
 _HERE = os.path.dirname(__file__)
@@ -19,15 +21,16 @@ if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
 import datetime
 
-import claude_host
-import claude_payload
-import claude_probes
-import claude_segments
-import common_config
-import common_probe
-import common_render
-import common_segments
-import common_types
+claude_host: Any = importlib.import_module("claude_host")  # pre-split parity
+claude_payload: Any = importlib.import_module("claude_payload")  # pre-split parity
+claude_probes: Any = importlib.import_module("claude_probes")  # pre-split parity
+claude_segments: Any = importlib.import_module("claude_segments")  # pre-split parity
+common_config: Any = importlib.import_module("common_config")  # pre-split parity
+common_fmt: Any = importlib.import_module("common_fmt")  # pre-split parity
+common_probe: Any = importlib.import_module("common_probe")  # pre-split parity
+common_render: Any = importlib.import_module("common_render")  # pre-split parity
+common_segments: Any = importlib.import_module("common_segments")  # pre-split parity
+common_types: Any = importlib.import_module("common_types")  # pre-split parity
 
 _MODULE_PATH = os.path.join(_HERE, "..", "tools", "status-line.py")
 
@@ -36,14 +39,14 @@ def load_module():
     spec = importlib.util.spec_from_file_location("status_line", _MODULE_PATH)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod          # register so @dataclass can resolve cls.__module__
+    sys.modules[spec.name] = mod  # register so @dataclass can resolve cls.__module__
     spec.loader.exec_module(mod)
     return mod
 
 
 sl = load_module()
 
-THEME = common_render.core_default_theme()
+THEME = common_render.core_default_theme(claude_host.HOST)
 
 ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 
@@ -63,9 +66,17 @@ def _ctx_from_env(raw, env, cfg, t_start=None):
     home = env.get("HOME", "")
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
     ctx = claude_payload.core_build_context(
-        raw, cfg, common_render.core_default_theme(), cols, lines, assumed, t_start,
-                           effort=claude_payload.cfg_resolve_effort(
-                               raw), home=home, claude_dir=claude_dir)
+        raw,
+        cfg,
+        common_render.core_default_theme(claude_host.HOST),
+        cols,
+        lines,
+        assumed,
+        t_start,
+        effort=claude_payload.cfg_resolve_effort(raw),
+        home=home,
+        claude_dir=claude_dir,
+    )
     return ctx, cols, lines
 
 
@@ -74,35 +85,63 @@ def _data(**over):
     constructor kwargs; expensive probe results are injected into probe_cache
     to bypass computation entirely (no filesystem/git/process calls)."""
     eager = {
-        "model_name": "Opus 4.8", "model_id": "claude-opus-4-8",
-        "effort": "high", "work_dir": "/home/u/proj", "home": "/home/u",
-        "clock": "14:30", "added": 12, "removed": 3, "cost": 0.5,
-        "total_ms": 65000, "api_ms": 4200, "context_pct": 12,
-        "context_max": 1_000_000, "rate_limits": {},
-        "cols": 200, "lines": 50, "dim_assumed": False, "t_start": None,
-        "transcript": "", "session": "", "claude_dir": "/home/u/.claude",
+        "model_name": "Opus 4.8",
+        "model_id": "claude-opus-4-8",
+        "effort": "high",
+        "work_dir": "/home/u/proj",
+        "home": "/home/u",
+        "clock": "14:30",
+        "added": 12,
+        "removed": 3,
+        "cost": 0.5,
+        "total_ms": 65000,
+        "api_ms": 4200,
+        "context_pct": 12,
+        "context_max": 1_000_000,
+        "rate_limits": {},
+        "cols": 200,
+        "lines": 50,
+        "dim_assumed": False,
+        "t_start": None,
+        "transcript": "",
+        "session": "",
+        "claude_dir": "/home/u/.claude",
         "slowest": None,
     }
     probe_defaults = {
-        "branch": "main", "dirty": "modified", "is_worktree": False,
-        "in_repo": False, "wt_name": "", "root_name": "", "root_path": "",
-        "ago": "5m 0s ago", "effort_auto": False,
-        "todo_state": None, "todo_text": None,
-        "chat_bytes": 305000, "mem_bytes": 448_790_528,
-        "chat_since": None, "chat_compactions": 0,
+        "branch": "main",
+        "dirty": "modified",
+        "is_worktree": False,
+        "in_repo": False,
+        "wt_name": "",
+        "root_name": "",
+        "root_path": "",
+        "ago": "5m 0s ago",
+        "effort_auto": False,
+        "todo_state": None,
+        "todo_text": None,
+        "chat_bytes": 305000,
+        "mem_bytes": 448_790_528,
+        "chat_since": None,
+        "chat_compactions": 0,
     }
     # Route overrides: eager fields go to the constructor, probes go to probe_cache
     eager_over = {k: over.pop(k) for k in list(over) if k in eager}
     probe_over = {**probe_defaults, **over}
     eager.update(eager_over)
     ctx = common_render.Context(
-        raw={}, line_conf=common_config.cfg_default_config(), theme=THEME, **eager)
+        raw={}, line_conf=common_config.cfg_default_config(claude_host.SPEC), theme=THEME, **eager
+    )
     # Seed probe_cache directly so probes never fire during tests
     ctx.probe_cache["git"] = common_types.GitSnapshot(
-        in_repo=probe_over["in_repo"], branch=probe_over["branch"],
-        dirty=probe_over["dirty"], is_worktree=probe_over["is_worktree"],
-        wt_name=probe_over["wt_name"], root_name=probe_over["root_name"],
-        root_path=probe_over["root_path"])
+        in_repo=probe_over["in_repo"],
+        branch=probe_over["branch"],
+        dirty=probe_over["dirty"],
+        is_worktree=probe_over["is_worktree"],
+        wt_name=probe_over["wt_name"],
+        root_name=probe_over["root_name"],
+        root_path=probe_over["root_path"],
+    )
     ctx.probe_cache["todo"] = (probe_over["todo_state"], probe_over["todo_text"])
     ctx.probe_cache["ago"] = probe_over["ago"]
     ctx.probe_cache["effort_auto"] = probe_over["effort_auto"]
@@ -110,11 +149,14 @@ def _data(**over):
     if probe_over["chat_bytes"] is None:
         ctx.probe_cache["chat_compaction"] = None
     else:
-        since = (probe_over["chat_bytes"] if probe_over["chat_since"] is None
-                  else probe_over["chat_since"])
+        since = (
+            probe_over["chat_bytes"]
+            if probe_over["chat_since"] is None
+            else probe_over["chat_since"]
+        )
         ctx.probe_cache["chat_compaction"] = (since, probe_over["chat_compactions"])
     ctx.probe_cache["rss"] = probe_over["mem_bytes"]
-    if "failed" in over:                 # render-bookkeeping override (else fresh set)
+    if "failed" in over:  # render-bookkeeping override (else fresh set)
         ctx.failed = over["failed"]
     return ctx
 
@@ -126,16 +168,22 @@ def _pack(keys, ctx, cols, cfg=None, theme=None, builders=None):
     `core_assemble_line` structure so per-line packing assertions stay focused."""
     cfg = cfg or ctx.line_conf
     theme = theme or ctx.theme
-    builders = builders if builders is not None else claude_host.core_builders_for(cfg)
-    budget = cols - common_types.RIGHT_MARGIN
+    builders = (
+        builders if builders is not None else common_render.core_builders_for(cfg, claude_host.HOST)
+    )
+    budget = cols - claude_host.RIGHT_MARGIN
     sep_w = common_types.util_visible_width(common_types.SEP)
     cfg = cfg._replace(layout=[common_types.Line(min_rows=0, segments=list(keys))])
-    built = claude_host.core_measure_all(ctx, cfg, budget, sep_w, theme, builders)
-    meta_built = claude_host.core_build_meta(ctx, cfg, budget, theme, builders)
+    built = common_render.core_measure_all(
+        ctx, cfg, budget, sep_w, theme, builders, claude_host.HOST.pinned
+    )
+    meta_built = common_render.core_build_meta(ctx, cfg, budget, theme, builders)
     enabled = [k for k in keys if cfg.segments.get(k, False)]
     line_built = {k: v for (_i, k), v in built.items()}
     line_built.update(meta_built)
-    return common_render.core_assemble_line(enabled, line_built, budget, sep_w)
+    return common_render.core_assemble_line(
+        enabled, line_built, budget, sep_w, claude_host.HOST.pinned
+    )
 
 
 def _load_cfg_with_toml(toml_text, **env_extra):
@@ -147,7 +195,7 @@ def _load_cfg_with_toml(toml_text, **env_extra):
         path = f.name
     env = {"HOME": "/h", "CC_AI_KIT_CONFIG_FILE": path, **env_extra}
     try:
-        return common_config.cfg_load_config(env)
+        return common_config.cfg_load_config(env, claude_host.SPEC)
     finally:
         with contextlib.suppress(OSError):
             os.unlink(path)
@@ -156,14 +204,22 @@ def _load_cfg_with_toml(toml_text, **env_extra):
 class TestPickColor(unittest.TestCase):
     def test_context_ramp_bands(self):
         cases = [
-            (5, THEME.c("WHITE")), (9, THEME.c("WHITE")),
-            (10, THEME.c("CYAN")), (14, THEME.c("CYAN")),
-            (15, THEME.c("BLUE")), (19, THEME.c("BLUE")),
-            (20, THEME.c("GREEN")), (24, THEME.c("GREEN")),
-            (25, THEME.c("YELLOW")), (29, THEME.c("YELLOW")),
-            (30, THEME.c("ORANGE+bold")), (39, THEME.c("ORANGE+bold")),
-            (40, THEME.c("RED+bold")), (49, THEME.c("RED+bold")),
-            (50, THEME.c("MAGENTA_DARK+bold")), (99, THEME.c("MAGENTA_DARK+bold")),
+            (5, THEME.c("WHITE")),
+            (9, THEME.c("WHITE")),
+            (10, THEME.c("CYAN")),
+            (14, THEME.c("CYAN")),
+            (15, THEME.c("BLUE")),
+            (19, THEME.c("BLUE")),
+            (20, THEME.c("GREEN")),
+            (24, THEME.c("GREEN")),
+            (25, THEME.c("YELLOW")),
+            (29, THEME.c("YELLOW")),
+            (30, THEME.c("ORANGE+bold")),
+            (39, THEME.c("ORANGE+bold")),
+            (40, THEME.c("RED+bold")),
+            (49, THEME.c("RED+bold")),
+            (50, THEME.c("MAGENTA_DARK+bold")),
+            (99, THEME.c("MAGENTA_DARK+bold")),
         ]
         for pct, want in cases:
             self.assertEqual(common_types.util_pick_color(pct, THEME.ramps["context"]), want, pct)
@@ -175,8 +231,11 @@ class TestPickColor(unittest.TestCase):
         # without the pace-era color helper (this refactoring deletes it).
         self.assertEqual(
             [(ceil, c) for ceil, c in THEME.ramps["rate"]],
-            [(50.0, THEME.c("GREEN")), (80.0, THEME.c("YELLOW")),
-             (float("inf"), THEME.c("RED+bold"))],
+            [
+                (50.0, THEME.c("GREEN")),
+                (80.0, THEME.c("YELLOW")),
+                (float("inf"), THEME.c("RED+bold")),
+            ],
         )
 
     def test_slowest_ramp_bands(self):
@@ -185,23 +244,29 @@ class TestPickColor(unittest.TestCase):
         # nanoseconds (matching data["slowest"]'s perf_counter_ns value).
         ms = 1_000_000
         cases = [
-            (10 * ms, THEME.c("GREEN")), (14 * ms, THEME.c("GREEN")),
-            (15 * ms, THEME.c("YELLOW")), (39 * ms, THEME.c("YELLOW")),
-            (40 * ms, THEME.c("RED+bold")), (200 * ms, THEME.c("RED+bold")),
+            (10 * ms, THEME.c("GREEN")),
+            (14 * ms, THEME.c("GREEN")),
+            (15 * ms, THEME.c("YELLOW")),
+            (39 * ms, THEME.c("YELLOW")),
+            (40 * ms, THEME.c("RED+bold")),
+            (200 * ms, THEME.c("RED+bold")),
         ]
         for ns, want in cases:
             self.assertEqual(common_types.util_pick_color(ns, THEME.ramps["slowest"]), want, ns)
 
     def test_slowest_ramp_override_replaces_band(self):
         # [ramp.slowest] in config REPLACES the default band wholesale.
-        cfg = common_config.cfg_default_config(
-            )._replace(ramps={"slowest": {"100ms": "CYAN", "inf": "WHITE"}})
-        theme = common_render.core_build_theme(cfg)
+        cfg = common_config.cfg_default_config(claude_host.SPEC)._replace(
+            ramps={"slowest": {"100ms": "CYAN", "inf": "WHITE"}}
+        )
+        theme = common_render.core_build_theme(cfg, claude_host.HOST)
         ms = 1_000_000
         self.assertEqual(
-            common_types.util_pick_color(50 * ms, theme.ramps["slowest"]), theme.c("CYAN"))
+            common_types.util_pick_color(50 * ms, theme.ramps["slowest"]), theme.c("CYAN")
+        )
         self.assertEqual(
-            common_types.util_pick_color(200 * ms, theme.ramps["slowest"]), theme.c("WHITE"))
+            common_types.util_pick_color(200 * ms, theme.ramps["slowest"]), theme.c("WHITE")
+        )
 
 
 class TestWindowSeconds(unittest.TestCase):
@@ -243,11 +308,18 @@ class TestRateGap(unittest.TestCase):
         # 50% used is 5 points AHEAD (+5); 40% used is 5 points BEHIND (-5).
         self.assertAlmostEqual(claude_segments.util_rate_gap(50, "five_hour", NOW + 9900, NOW), 5.0)
         self.assertAlmostEqual(
-            claude_segments.util_rate_gap(40, "five_hour", NOW + 9900, NOW), -5.0)
+            claude_segments.util_rate_gap(40, "five_hour", NOW + 9900, NOW), -5.0
+        )
 
     def test_gap_color_bands_inclusive_bounds(self):
-        cases = [(5.0, "GREEN"), (5.001, "YELLOW"), (10.999, "YELLOW"),
-                 (11.0, "ORANGE"), (15.0, "ORANGE"), (15.001, "RED")]
+        cases = [
+            (5.0, "GREEN"),
+            (5.001, "YELLOW"),
+            (10.999, "YELLOW"),
+            (11.0, "ORANGE"),
+            (15.0, "ORANGE"),
+            (15.001, "RED"),
+        ]
         for delta, want in cases:
             self.assertEqual(common_types.util_gap_color(delta, THEME), THEME.c(want), delta)
 
@@ -346,7 +418,8 @@ class TestVisibleWidth(unittest.TestCase):
 
     def test_ansi_is_zero_width(self):
         self.assertEqual(
-            common_types.util_visible_width(f'{THEME.c("RED")}hi{common_types.RESET}'), 2)
+            common_types.util_visible_width(f"{THEME.c('RED')}hi{common_types.RESET}"), 2
+        )
 
     def test_smp_emoji_is_two_cells(self):
         for ch in "📊📝🧠💬📡💾🧮🌿🌳📃":
@@ -418,7 +491,7 @@ class TestTwoStateCap(unittest.TestCase):
 
 class TestIconHelper(unittest.TestCase):
     def test_wide_emoji_gets_single_space(self):
-        self.assertEqual(common_types.util_icon("\U0001F4C3", "x"), "\U0001F4C3 x")  # 📃 x
+        self.assertEqual(common_types.util_icon("\U0001f4c3", "x"), "\U0001f4c3 x")  # 📃 x
 
     def test_narrow_rendering_glyph_gets_vs16(self):
         # ⏱ ⏸ ⚡ are modeled wide but render narrow bare -> force emoji presentation.
@@ -431,33 +504,39 @@ class TestIconHelper(unittest.TestCase):
 
     def test_icon_width_is_two_plus_space_plus_text(self):
         self.assertEqual(
-            common_types.util_visible_width(common_types.util_icon("⏸", "12:00")), 8)  # 2+1+5
+            common_types.util_visible_width(common_types.util_icon("⏸", "12:00")), 8
+        )  # 2+1+5
 
 
 class TestNoCollapsedIcons(unittest.TestCase):
     # The five segments that previously glued the glyph to the value.
     def test_collapsers_have_a_space_after_the_icon(self):
         cases = {
-            "⏰": common_segments.seg_alt_time_clock(_data(), 80, THEME),                 # ⏰
-            "\U0001F4C3": claude_segments.seg_lines(_data(), 80, THEME),            # 📃
-            "\U0001FA99": claude_segments.seg_alt_cost(_data(cost=0.5), 80, THEME),     # 🪙
-            "\U0001F4AC": claude_segments.seg_alt_time_session(_data(), 80, THEME),       # 💬
-            "\U0001F4E1": claude_segments.seg_alt_time_api(_data(), 80, THEME),         # 📡
+            "⏰": common_segments.seg_alt_time_clock(_data(), 80, THEME),  # ⏰
+            "\U0001f4c3": claude_segments.seg_lines(_data(), 80, THEME),  # 📃
+            "\U0001fa99": claude_segments.seg_alt_cost(_data(cost=0.5), 80, THEME),  # 🪙
+            "\U0001f4ac": claude_segments.seg_alt_time_session(_data(), 80, THEME),  # 💬
+            "\U0001f4e1": claude_segments.seg_alt_time_api(_data(), 80, THEME),  # 📡
         }
         for glyph, out in cases.items():
             plain = strip(out)
             self.assertTrue(plain.startswith(glyph), plain)
-            after = plain[len(glyph):]
+            after = plain[len(glyph) :]
             self.assertTrue(after.startswith(" "), f"icon collapsed: {plain!r}")
 
     def test_no_segment_emits_glyph_then_nonspace(self):
         # Property check across the iconed builders at a wide budget.
-        builders = [common_segments.seg_alt_time_clock, claude_segments.seg_lines,
-                    lambda d, a, t: claude_segments.seg_alt_cost(_data(cost=0.5), a, t),
-                    claude_segments.seg_alt_time_session, \
-                        claude_segments.seg_alt_time_api, common_segments.seg_render_time,
-                    lambda d, a, t: common_segments.seg_context(_data(), a, t),
-                    claude_segments.seg_chat_size, claude_segments.seg_alt_process_memory]
+        builders = [
+            common_segments.seg_alt_time_clock,
+            claude_segments.seg_lines,
+            lambda d, a, t: claude_segments.seg_alt_cost(_data(cost=0.5), a, t),
+            claude_segments.seg_alt_time_session,
+            claude_segments.seg_alt_time_api,
+            common_segments.seg_render_time,
+            lambda d, a, t: common_segments.seg_context(_data(), a, t),
+            claude_segments.seg_chat_size,
+            claude_segments.seg_alt_process_memory,
+        ]
         for b in builders:
             out = b(_data(t_start=time.perf_counter_ns()), 120, THEME)
             if not out:
@@ -474,8 +553,11 @@ class TestNoCollapsedIcons(unittest.TestCase):
 class TestEffortTable(unittest.TestCase):
     def test_effort_colors(self):
         want = {
-            "low": THEME.c("CYAN"), "medium": THEME.c("BLUE"),
-            "high": THEME.c("YELLOW"), "xhigh": THEME.c("ORANGE"), "max": THEME.c("RED"),
+            "low": THEME.c("CYAN"),
+            "medium": THEME.c("BLUE"),
+            "high": THEME.c("YELLOW"),
+            "xhigh": THEME.c("ORANGE"),
+            "max": THEME.c("RED"),
         }
         for level, color in want.items():
             self.assertEqual(THEME.effort[level][0], color, level)
@@ -491,10 +573,8 @@ class TestEffortTable(unittest.TestCase):
 class TestCooperativeBuilders(unittest.TestCase):
     def test_branch_content_then_self_hide(self):
         self.assertIn("main", common_segments.seg_git_branch(_data(branch="main"), 50, THEME))
-        self.assertIsNone(
-            common_segments.seg_git_branch(_data(branch="main"), 5, THEME))    # no room
-        self.assertIsNone(
-            common_segments.seg_git_branch(_data(branch=""), 200, THEME))      # no data
+        self.assertIsNone(common_segments.seg_git_branch(_data(branch="main"), 5, THEME))  # no room
+        self.assertIsNone(common_segments.seg_git_branch(_data(branch=""), 200, THEME))  # no data
 
     def test_branch_has_static_icon_not_worktree_state(self):
         # branch carries its own STATIC 🌿 icon, but it must NOT encode worktree
@@ -504,22 +584,22 @@ class TestCooperativeBuilders(unittest.TestCase):
         for wt in (True, False):
             out = common_segments.seg_git_branch(_data(branch="main", is_worktree=wt), 100, THEME)
             self.assertIn("main", out)
-            self.assertIn("🌿", out)        # own branch icon restored
-            self.assertNotIn("🌳", out)     # never the worktree-tree glyph
-            self.assertNotIn("⎇", out)      # ⎇ belongs to the worktree segment
+            self.assertIn("🌿", out)  # own branch icon restored
+            self.assertNotIn("🌳", out)  # never the worktree-tree glyph
+            self.assertNotIn("⎇", out)  # ⎇ belongs to the worktree segment
             outs.append(out)
         self.assertEqual(outs[0], outs[1])  # identical regardless of worktree state
 
     def test_branch_full_up_to_30_cols(self):
-        branch = "feature/" + "x" * 20   # 28 cols, under the 30 cap
+        branch = "feature/" + "x" * 20  # 28 cols, under the 30 cap
         out = common_segments.seg_git_branch(_data(branch=branch), 100, THEME)
         self.assertIn(branch, strip(out))
         self.assertNotIn("…", out)
 
     def test_branch_over_30_truncates_to_20(self):
-        branch = "feature/" + "x" * 50   # 58 cols, over the 30 cap
+        branch = "feature/" + "x" * 50  # 58 cols, over the 30 cap
         out = common_segments.seg_git_branch(_data(branch=branch), 100, THEME)
-        expected = "feature/" + "x" * 11 + "…"   # util_trunc_cols(branch, 20)
+        expected = "feature/" + "x" * 11 + "…"  # util_trunc_cols(branch, 20)
         self.assertIn(expected, strip(out))
         self.assertEqual(common_types.util_visible_width(expected), 20)
 
@@ -529,17 +609,19 @@ class TestCooperativeBuilders(unittest.TestCase):
 
     def test_worktree_active_shows_name_cyan(self):
         out = common_segments.seg_alt_git_worktree(
-            _data(in_repo=True, is_worktree=True, wt_name="feat-x"), 100, THEME)
+            _data(in_repo=True, is_worktree=True, wt_name="feat-x"), 100, THEME
+        )
         self.assertIn("⎇ feat-x", strip(out))
-        self.assertIn(THEME.c("CYAN"), out)        # active form is cyan
-        self.assertNotIn("\033[9m", out)           # NOT struck
+        self.assertIn(THEME.c("CYAN"), out)  # active form is cyan
+        self.assertNotIn("\033[9m", out)  # NOT struck
 
     def test_worktree_main_checkout_struck_placeholder(self):
         out = common_segments.seg_alt_git_worktree(
-            _data(in_repo=True, is_worktree=False), 100, THEME)
+            _data(in_repo=True, is_worktree=False), 100, THEME
+        )
         self.assertIn("⎇ wt", strip(out))
-        self.assertIn("\033[9m", out)              # strikethrough SGR
-        self.assertIn(THEME.c("GREY"), out)        # dimmed/grey, distinct from cyan
+        self.assertIn("\033[9m", out)  # strikethrough SGR
+        self.assertIn(THEME.c("GREY"), out)  # dimmed/grey, distinct from cyan
 
     def test_worktree_hidden_outside_repo(self):
         self.assertIsNone(common_segments.seg_alt_git_worktree(_data(in_repo=False), 100, THEME))
@@ -547,22 +629,27 @@ class TestCooperativeBuilders(unittest.TestCase):
     def test_worktree_name_full_up_to_30_cols(self):
         name = "a" * 28
         out = common_segments.seg_alt_git_worktree(
-            _data(in_repo=True, is_worktree=True, wt_name=name), 100, THEME)
+            _data(in_repo=True, is_worktree=True, wt_name=name), 100, THEME
+        )
         self.assertIn(name, strip(out))
         self.assertNotIn("…", out)
 
     def test_worktree_name_over_30_truncates_to_20(self):
         name = "a" * 60
         out = common_segments.seg_alt_git_worktree(
-            _data(in_repo=True, is_worktree=True, wt_name=name), 100, THEME)
-        expected = "a" * 19 + "…"   # util_trunc_cols(name, 20)
+            _data(in_repo=True, is_worktree=True, wt_name=name), 100, THEME
+        )
+        expected = "a" * 19 + "…"  # util_trunc_cols(name, 20)
         self.assertIn(expected, strip(out))
         self.assertEqual(common_types.util_visible_width(expected), 20)
 
     def test_worktree_name_hides_when_even_20col_form_does_not_fit_avail(self):
         name = "a" * 60
-        self.assertIsNone(common_segments.seg_alt_git_worktree(
-            _data(in_repo=True, is_worktree=True, wt_name=name), 5, THEME))
+        self.assertIsNone(
+            common_segments.seg_alt_git_worktree(
+                _data(in_repo=True, is_worktree=True, wt_name=name), 5, THEME
+            )
+        )
 
     def test_effort_full_then_compact_then_hide(self):
         self.assertIn("high", strip(claude_segments.seg_effort(_data(effort="high"), 30, THEME)))
@@ -580,12 +667,14 @@ class TestCooperativeBuilders(unittest.TestCase):
 
     def test_context_three_tiers_never_none(self):
         self.assertIn(
-            "of 1M", strip(common_segments.seg_context(_data(context_pct=12), 200, THEME)))
+            "of 1M", strip(common_segments.seg_context(_data(context_pct=12), 200, THEME))
+        )
         mid = strip(common_segments.seg_context(_data(context_pct=12), 18, THEME))
         self.assertNotIn("of 1M", mid)
         self.assertIn("█", mid)
         self.assertEqual(
-            strip(common_segments.seg_context(_data(context_pct=12), 8, THEME)), "📊 12%")
+            strip(common_segments.seg_context(_data(context_pct=12), 8, THEME)), "📊 12%"
+        )
         self.assertIsNotNone(common_segments.seg_context(_data(context_pct=12), 2, THEME))  # floor
 
     def test_context_low_pct_half_bar_and_zero_empty(self):
@@ -597,13 +686,14 @@ class TestCooperativeBuilders(unittest.TestCase):
     def test_render_time_times_self_then_self_hide(self):
         d = _data(t_start=time.perf_counter_ns())
         out = common_segments.seg_render_time(d, 200, THEME)
-        self.assertIn(THEME.c("GREEN"), out)            # fast run -> SLO green band
+        self.assertIn(THEME.c("GREEN"), out)  # fast run -> SLO green band
         out_s = strip(out)
-        self.assertTrue(out_s.startswith("⏱"))          # stopwatch mark
+        self.assertTrue(out_s.startswith("⏱"))  # stopwatch mark
         self.assertRegex(out_s, r"\d+(\.\d+)?(ns|µs|ms|s)$")  # a formatted duration
         self.assertIsNone(
-            common_segments.seg_render_time(_data(), 200, THEME))  # no t_start -> omit
-        self.assertIsNone(common_segments.seg_render_time(d, 1, THEME))         # no room -> hide
+            common_segments.seg_render_time(_data(), 200, THEME)
+        )  # no t_start -> omit
+        self.assertIsNone(common_segments.seg_render_time(d, 1, THEME))  # no room -> hide
 
     def test_render_time_colors_by_slo_sla_ramp(self):
         # a slow run (200ms ago) lands in the red+bold band (beyond the SLA)
@@ -613,9 +703,11 @@ class TestCooperativeBuilders(unittest.TestCase):
     def test_dimensions_content_then_self_hide(self):
         self.assertEqual(
             strip(common_segments.seg_alt_term_dimensions(_data(cols=120, lines=40), 200, THEME)),
-                         "120×40")
+            "120×40",
+        )
         self.assertIsNone(
-            common_segments.seg_alt_term_dimensions(_data(cols=120, lines=40), 3, THEME))
+            common_segments.seg_alt_term_dimensions(_data(cols=120, lines=40), 3, THEME)
+        )
 
     def test_chat_memory_self_hide_when_cramped(self):
         self.assertIsNotNone(claude_segments.seg_chat_size(_data(), 200, THEME))
@@ -641,8 +733,10 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertIsNone(claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
 
     def test_h_rate_limit_ignores_weekly_bucket(self):
-        rl = {"five_hour": {"used_percentage": 42, "resets_at": NOW + 3600},
-              "seven_day": {"used_percentage": 13, "resets_at": NOW + 86400}}
+        rl = {
+            "five_hour": {"used_percentage": 42, "resets_at": NOW + 3600},
+            "seven_day": {"used_percentage": 13, "resets_at": NOW + 86400},
+        }
         out = strip(claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl), 200, THEME))
         self.assertIn("5h:", out)
         self.assertNotIn("7d:", out)
@@ -667,11 +761,13 @@ class TestCooperativeBuilders(unittest.TestCase):
         rl_h = {"five_hour": {"used_percentage": 30}}
         self.assertEqual(
             strip(claude_segments.seg_alt_h_rate_limit(_data(rate_limits=rl_h), 200, THEME)),
-                         "⚡️ 5h: 30%")
+            "⚡️ 5h: 30%",
+        )
         rl_w = {"seven_day": {"used_percentage": 30}}
         self.assertEqual(
             strip(claude_segments.seg_alt_w_rate_limit(_data(rate_limits=rl_w), 200, THEME)),
-                         "⚡️ 7d: 30%")
+            "⚡️ 7d: 30%",
+        )
 
     def test_h_rate_limit_shows_bucket_even_with_past_reset(self):
         rl = {"five_hour": {"used_percentage": 50, "resets_at": NOW - 1}}
@@ -773,8 +869,9 @@ class TestCooperativeBuilders(unittest.TestCase):
         ctx = _data(rate_limits=rl)
         keys = ["alt_h_rate_limit", "alt_w_rate_limit"]
         cfg = ctx.line_conf
-        cfg = cfg._replace(segments={**cfg.segments, "alt_h_rate_limit": True,
-                                      "alt_w_rate_limit": True})
+        cfg = cfg._replace(
+            segments={**cfg.segments, "alt_h_rate_limit": True, "alt_w_rate_limit": True}
+        )
 
         tight = strip(_pack(keys, ctx, 19, cfg=cfg))  # budget = 19 - 4 = 15
         self.assertIn("5h: 42%", tight)
@@ -789,20 +886,43 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertEqual(strip(common_segments.seg_alt_time_clock(_data(), 200, THEME)), "⏰ 14:30")
 
     def test_todo_truncates_and_hides(self):
-        self.assertIn("hello", strip(claude_segments.seg_todo(
-            _data(todo_state="in_progress", todo_text="hello"), 200, THEME)))
-        self.assertIsNone(claude_segments.seg_todo(
-            _data(todo_state="in_progress", todo_text="hello"), 8, THEME))
+        self.assertIn(
+            "hello",
+            strip(
+                claude_segments.seg_todo(
+                    _data(todo_state="in_progress", todo_text="hello"), 200, THEME
+                )
+            ),
+        )
+        self.assertIsNone(
+            claude_segments.seg_todo(_data(todo_state="in_progress", todo_text="hello"), 8, THEME)
+        )
 
     def test_path_never_none(self):
         self.assertIsNotNone(common_segments.seg_path(_data(), 1, THEME))
 
     def test_builders_registry_complete(self):
-        for key in ("path", "git_branch", "git_dirty", "todo", "model",
-                    "alt_time_ago", "alt_time_clock", "effort", "lines", "alt_cost",
-                    "alt_time_session", "alt_time_api", "render_time",
-                    "alt_term_dimensions", "context", "chat_size",
-                    "alt_process_memory", "alt_h_rate_limit", "alt_w_rate_limit"):
+        for key in (
+            "path",
+            "git_branch",
+            "git_dirty",
+            "todo",
+            "model",
+            "alt_time_ago",
+            "alt_time_clock",
+            "effort",
+            "lines",
+            "alt_cost",
+            "alt_time_session",
+            "alt_time_api",
+            "render_time",
+            "alt_term_dimensions",
+            "context",
+            "chat_size",
+            "alt_process_memory",
+            "alt_h_rate_limit",
+            "alt_w_rate_limit",
+        ):
             self.assertIn(key, claude_host.BUILDERS, key)
             self.assertTrue(callable(claude_host.BUILDERS[key]))
 
@@ -810,7 +930,7 @@ class TestCooperativeBuilders(unittest.TestCase):
         # The registry is auto-discovered from the seg_* functions (FR-A.3, D7):
         # every SEGMENTS key has a discovered builder and discovery finds no stray
         # keys — guards the convention so adding a seg_x just works.
-        self.assertEqual(set(claude_host.BUILDERS), set(common_types.SEGMENTS))
+        self.assertEqual(set(claude_host.BUILDERS), set(claude_host.SEGMENTS))
         self.assertTrue(all(callable(fn) for fn in claude_host.BUILDERS.values()))
 
 
@@ -823,8 +943,10 @@ class TestDisplayDir(unittest.TestCase):
         # 56 cols, over the 50 structural cap -> falls to parent/name, which
         # is 43 cols, under the cap -> shown.
         work_dir = "/home/u/workspaces/very-long-organization-name-here/short-repo"
-        self.assertEqual(common_types.util_display_dir(work_dir, "/home/u"),
-                          "very-long-organization-name-here/short-repo")
+        self.assertEqual(
+            common_types.util_display_dir(work_dir, "/home/u"),
+            "very-long-organization-name-here/short-repo",
+        )
 
     def test_falls_to_basename_alone_when_both_structural_forms_too_long(self):
         # full is 73 cols and parent/name is 71 cols, both over the 50
@@ -839,10 +961,11 @@ class TestDisplayDir(unittest.TestCase):
         # structural cap; the basename alone ("another-very-long-repository-name",
         # 33 cols) exceeds the 30-col name-floor high threshold, so it's
         # clipped to 20 via util_two_state_cap.
-        work_dir = ("/home/u/workspaces/very-long-organization-name-here-extended"
-                    "/another-very-long-repository-name")
-        self.assertEqual(common_types.util_display_dir(work_dir, "/home/u"),
-                          "another-very-long-r…")
+        work_dir = (
+            "/home/u/workspaces/very-long-organization-name-here-extended"
+            "/another-very-long-repository-name"
+        )
+        self.assertEqual(common_types.util_display_dir(work_dir, "/home/u"), "another-very-long-r…")
 
     def test_no_ellipsis_when_a_variant_fits_whole(self):
         work_dir = "/home/u/workspaces/very-long-organization-name-here/short-repo"
@@ -851,23 +974,23 @@ class TestDisplayDir(unittest.TestCase):
 
 class TestPackLine(unittest.TestCase):
     def test_keeps_segments_that_fit(self):
-        common_types.SEGMENTS["alt_time_clock"] = True
+        claude_host.SEGMENTS["alt_time_clock"] = True
         try:
             out = _pack(["model", "alt_time_clock"], _data(), 200)
             self.assertIn("Opus 4.8", strip(out))
             self.assertIn("⏰ 14:30", strip(out))
             self.assertIn(" | ", out)
         finally:
-            common_types.SEGMENTS["alt_time_clock"] = False
+            claude_host.SEGMENTS["alt_time_clock"] = False
 
     def test_best_fit_skips_overflow_keeps_smaller(self):
-        common_types.SEGMENTS["alt_time_clock"] = True
+        claude_host.SEGMENTS["alt_time_clock"] = True
         try:
             out = strip(_pack(["model", "alt_time_clock"], _data(model_name="X" * 60), 30))
             self.assertIn("⏰ 14:30", out)
             self.assertNotIn("XXXX", out)
         finally:
-            common_types.SEGMENTS["alt_time_clock"] = False
+            claude_host.SEGMENTS["alt_time_clock"] = False
 
     def test_flag_off_segment_not_built(self):
         # alt_time_clock is already OFF by default; this test confirms the flag is honoured.
@@ -875,18 +998,20 @@ class TestPackLine(unittest.TestCase):
         self.assertNotIn("⏰", out)
 
     def test_pinned_path_present_even_when_too_narrow(self):
-        out = strip(_pack(["path", "git_branch"],
-                                 _data(work_dir="/home/u/proj", home="/home/u"), 5))
+        out = strip(
+            _pack(["path", "git_branch"], _data(work_dir="/home/u/proj", home="/home/u"), 5)
+        )
         self.assertIn("proj", out)
 
     def test_pinned_context_present_even_when_too_narrow(self):
-        out = strip(_pack(["alt_term_dimensions", "context"],
-                                 _data(cols=300, lines=80, context_pct=12), 8))
+        out = strip(
+            _pack(["alt_term_dimensions", "context"], _data(cols=300, lines=80, context_pct=12), 8)
+        )
         self.assertIn("12%", out)
 
     def test_respects_right_margin(self):
         out = _pack(["model", "alt_time_clock", "effort", "lines"], _data(), 60)
-        self.assertLessEqual(common_types.util_visible_width(out), 60 - common_types.RIGHT_MARGIN)
+        self.assertLessEqual(common_types.util_visible_width(out), 60 - claude_host.RIGHT_MARGIN)
 
 
 class TestMetaPositionIndependent(unittest.TestCase):
@@ -903,21 +1028,24 @@ class TestMetaPositionIndependent(unittest.TestCase):
     def _make_cfg_with_slowest_on_line(self, line_idx: int):
         """A two-line config: `slow_seg` always lives on line 1 (so it is the
         global slowest), while the `slowest` readout is placed on `line_idx`."""
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         segs = {k: False for k in cfg.segments}
         for k in ("path", "model", "slowest", "slow_seg"):
             segs[k] = True
-        lines = [common_types.Line(min_rows=1, segments=["path", "model"]),
-                 common_types.Line(min_rows=1, segments=["path", "slow_seg"])]
+        lines = [
+            common_types.Line(min_rows=1, segments=["path", "model"]),
+            common_types.Line(min_rows=1, segments=["path", "slow_seg"]),
+        ]
         lines[line_idx] = common_types.Line(
-            min_rows=1, segments=[*lines[line_idx].segments, "slowest"])
+            min_rows=1, segments=[*lines[line_idx].segments, "slowest"]
+        )
         return cfg._replace(layout=lines, segments=segs)
 
     def _render_slowest_on(self, line_idx: int) -> str:
         cfg = self._make_cfg_with_slowest_on_line(line_idx)
         ctx = _data()
         with mock.patch.dict(claude_host.BUILDERS, {"slow_seg": self._slow_seg}):
-            rendered = claude_host.core_render(ctx, cfg=cfg)
+            rendered = common_render.core_render(ctx, claude_host.HOST, cfg=cfg)
         # seg_slowest emits "🐌 <name> <dur>"; assert on the crowned NAME (the
         # position-dependent part), not the duration (real-time jitter would make
         # the exact ms flaky across two independent renders).
@@ -933,9 +1061,10 @@ class TestMetaPositionIndependent(unittest.TestCase):
         slowest1 = self._render_slowest_on(1)
         self.assertTrue(slowest0, "slowest segment not found in layout 0 output")
         self.assertTrue(slowest1, "slowest segment not found in layout 1 output")
-        self.assertEqual(slowest0, "slow_seg")   # the global slowest, not a fast same-line peer
-        self.assertEqual(slowest0, slowest1,
-                         f"slowest differs by position: {slowest0!r} vs {slowest1!r}")
+        self.assertEqual(slowest0, "slow_seg")  # the global slowest, not a fast same-line peer
+        self.assertEqual(
+            slowest0, slowest1, f"slowest differs by position: {slowest0!r} vs {slowest1!r}"
+        )
 
 
 class TestSlowestTiming(unittest.TestCase):
@@ -947,14 +1076,24 @@ class TestSlowestTiming(unittest.TestCase):
         # actually fired during the measure phase (not pre-seeded).
         def slow_git(*_a, **_k):
             time.sleep(0.005)
-            return common_types.GitSnapshot(in_repo=True, branch="main", dirty="clean",
-                                  is_worktree=False, wt_name="")
-        cfg = common_config.cfg_default_config()
+            return common_types.GitSnapshot(
+                in_repo=True, branch="main", dirty="clean", is_worktree=False, wt_name=""
+            )
+
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         cfg.segments.update({"slowest": True, "git_branch": True})
         ctx = claude_payload.core_build_context(
-            raw={"workspace": {"current_dir": "/tmp"}}, config=cfg, theme=THEME,
-            cols=200, lines=50, dim_assumed=False, t_start=time.perf_counter_ns(),
-            effort="high", home="/home/u", claude_dir="/home/u/.claude")
+            raw={"workspace": {"current_dir": "/tmp"}},
+            config=cfg,
+            theme=THEME,
+            cols=200,
+            lines=50,
+            dim_assumed=False,
+            t_start=time.perf_counter_ns(),
+            effort="high",
+            home="/home/u",
+            claude_dir="/home/u/.claude",
+        )
         with mock.patch.object(common_probe, "probe_git_snapshot", side_effect=slow_git):
             _pack(["git_branch"], ctx, 200, cfg=cfg)
         # The probe must have run during the measure phase (proves laziness via probe_cache):
@@ -964,7 +1103,7 @@ class TestSlowestTiming(unittest.TestCase):
         self.assertIsNotNone(cache.get("git"))
         name, ns = ctx.slowest
         self.assertEqual(name, "git_branch")
-        self.assertGreaterEqual(ns, 4_000_000)   # >= ~4ms: probe cost is inside the build
+        self.assertGreaterEqual(ns, 4_000_000)  # >= ~4ms: probe cost is inside the build
 
     @staticmethod
     def _slow(data, avail, theme):
@@ -981,7 +1120,7 @@ class TestSlowestTiming(unittest.TestCase):
         # With `slowest` enabled the packer times each builder and records the max
         # as ctx.slowest = (name, ns) — the exact attribute seg_slowest reads.
         builders = {"fast_seg": self._fast, "slow_seg": self._slow}
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         cfg.segments.update({"slowest": True, "fast_seg": True, "slow_seg": True})
         data = _data()
         _pack(["fast_seg", "slow_seg"], data, 200, cfg=cfg, builders=builders)
@@ -994,12 +1133,12 @@ class TestSlowestTiming(unittest.TestCase):
         # core_render() measures all layout lines against one ctx; the running max
         # must survive across measure passes (slow line first, fast line second).
         builders = {"fast_seg": self._fast, "slow_seg": self._slow}
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         cfg.segments.update({"slowest": True, "fast_seg": True, "slow_seg": True})
         data = _data()
         _pack(["slow_seg"], data, 200, cfg=cfg, builders=builders)
         _pack(["fast_seg"], data, 200, cfg=cfg, builders=builders)
-        self.assertEqual(data.slowest[0], "slow_seg")   # not overwritten by the fast line
+        self.assertEqual(data.slowest[0], "slow_seg")  # not overwritten by the fast line
 
     def test_failed_builder_not_recorded_as_slowest(self):
         # A segment that crashes never rendered, so its time must not crown it the
@@ -1007,8 +1146,9 @@ class TestSlowestTiming(unittest.TestCase):
         def boom(data, avail, theme):
             del avail
             raise RuntimeError("nope")
+
         builders = {"boom": boom, "fast_seg": self._fast}
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         cfg.segments.update({"slowest": True, "boom": True, "fast_seg": True})
         data = _data()
         _pack(["boom", "fast_seg"], data, 200, cfg=cfg, builders=builders)
@@ -1020,8 +1160,9 @@ class TestSlowestTiming(unittest.TestCase):
         def empty(data, avail, theme):
             del avail
             return None
+
         builders = {"empty_seg": empty, "fast_seg": self._fast}
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         cfg.segments.update({"slowest": True, "empty_seg": True, "fast_seg": True})
         data = _data()
         _pack(["empty_seg", "fast_seg"], data, 200, cfg=cfg, builders=builders)
@@ -1031,22 +1172,21 @@ class TestSlowestTiming(unittest.TestCase):
         # FR-R.3: every non-meta build is timed in Phase A (core_measure_all) before
         # any meta segment is built in Phase B (core_build_meta), so slowest no longer
         # has to be last on its line — it sits right after render_time.
-        line = next(l for l in common_types.LAYOUT if "slowest" in l.segments)
+        line = next(l for l in claude_host.LAYOUT if "slowest" in l.segments)
         self.assertNotEqual(line.segments[-1], "slowest")
-        self.assertEqual(line.segments.index("slowest"),
-                         line.segments.index("render_time") + 1)
+        self.assertEqual(line.segments.index("slowest"), line.segments.index("render_time") + 1)
 
     def test_later_segment_reported_even_when_slowest_precedes_it(self):
         # Phase A times a slow non-meta segment before Phase B builds meta, so
         # seg_slowest names it even when `slowest` is positioned BEFORE it in the key order.
         builders = dict(claude_host.BUILDERS)
         builders["slow_seg"] = self._slow
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         cfg.segments.update({"slowest": True, "slow_seg": True})
         data = _data()
         out = _pack(["slowest", "slow_seg"], data, 200, cfg=cfg, builders=builders)
         self.assertEqual(data.slowest[0], "slow_seg")
-        self.assertIn("slow_seg", strip(out))      # seg_slowest (built in Phase B) names it
+        self.assertIn("slow_seg", strip(out))  # seg_slowest (built in Phase B) names it
 
     def test_render_time_not_crowned_slowest(self):
         # M1: render_time is a meta-segment (reports the whole render); never a culprit.
@@ -1054,8 +1194,9 @@ class TestSlowestTiming(unittest.TestCase):
             del avail
             time.sleep(0.005)
             return "RT"
+
         builders = {"render_time": slow_rt, "fast_seg": self._fast}
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         cfg.segments.update({"slowest": True, "render_time": True, "fast_seg": True})
         data = _data()
         _pack(["render_time", "fast_seg"], data, 200, cfg=cfg, builders=builders)
@@ -1068,8 +1209,9 @@ class TestSlowestTiming(unittest.TestCase):
             del avail
             time.sleep(0.005)
             return "X" * 100
+
         builders = {"wide_seg": slow_wide, "fast_seg": self._fast}
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         cfg.segments.update({"slowest": True, "wide_seg": True, "fast_seg": True})
         data = _data()
         _pack(["fast_seg", "wide_seg"], data, 20, cfg=cfg, builders=builders)
@@ -1079,16 +1221,19 @@ class TestSlowestTiming(unittest.TestCase):
         # Builds are always timed now (negligible, and FR-R.1 drops the per-segment
         # special case) — but with `slowest` disabled its readout is gated off and
         # never renders. The internal max may be tracked; the user never sees it.
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         cfg.segments["slowest"] = False
-        theme = common_render.core_build_theme(cfg)
+        theme = common_render.core_build_theme(cfg, claude_host.HOST)
         env = {"HOME": "/h", "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50"}
-        with mock.patch.object(common_probe, "probe_git_snapshot",
-                               return_value=common_types.GitSnapshot(
-                                   True, "m", "clean", False, "")):
+        with mock.patch.object(
+            common_probe,
+            "probe_git_snapshot",
+            return_value=common_types.GitSnapshot(True, "m", "clean", False, ""),
+        ):
             data, _cols, _lines = _ctx_from_env(
-                {"workspace": {"current_dir": "."}, "transcript_path": ""}, env, cfg)
-            out = "\n".join(claude_host.core_render(data, cfg, theme))
+                {"workspace": {"current_dir": "."}, "transcript_path": ""}, env, cfg
+            )
+            out = "\n".join(common_render.core_render(data, claude_host.HOST, cfg, theme))
         self.assertNotIn("🐌", strip(out))
 
 
@@ -1096,59 +1241,89 @@ class TestSlowestSegment(unittest.TestCase):
     def test_renders_culprit_name_and_duration(self):
         out = common_segments.seg_slowest(_data(slowest=("git", 30_000_000)), 200, THEME)
         self.assertIn("🐌", out)
-        self.assertIn("git", strip(out))       # names the culprit segment
-        self.assertIn("30ms", strip(out))      # and its duration
+        self.assertIn("git", strip(out))  # names the culprit segment
+        self.assertIn("30ms", strip(out))  # and its duration
 
     def test_colored_by_single_slowest_ramp(self):
         # 30ms -> YELLOW band, 100ms -> RED+bold — the one shared slowest ramp.
-        self.assertIn(THEME.c("YELLOW"),
-                      common_segments.seg_slowest(_data(slowest=("git", 30_000_000)), 200, THEME))
-        self.assertIn(THEME.c("RED+bold"),
-                      common_segments.seg_slowest(_data(slowest=("ext", 100_000_000)), 200, THEME))
+        self.assertIn(
+            THEME.c("YELLOW"),
+            common_segments.seg_slowest(_data(slowest=("git", 30_000_000)), 200, THEME),
+        )
+        self.assertIn(
+            THEME.c("RED+bold"),
+            common_segments.seg_slowest(_data(slowest=("ext", 100_000_000)), 200, THEME),
+        )
 
     def test_omitted_when_no_timing(self):
-        self.assertIsNone(common_segments.seg_slowest(_data(), 200, THEME))   # no data["slowest"]
+        self.assertIsNone(common_segments.seg_slowest(_data(), 200, THEME))  # no data["slowest"]
 
     def test_on_by_default_and_registered(self):
-        self.assertTrue(common_types.SEGMENTS["slowest"])
+        self.assertTrue(claude_host.SEGMENTS["slowest"])
         self.assertIn("slowest", claude_host.BUILDERS)
 
 
 class TestRenderLayout(unittest.TestCase):
     def test_three_lines_when_tall_and_wide(self):
-        self.assertEqual(len(claude_host.core_render(_data())), 3)
+        self.assertEqual(len(common_render.core_render(_data(), claude_host.HOST)), 3)
 
     def test_line_gating_by_rows(self):
-        self.assertEqual(len(claude_host.core_render(_data(lines=10))), 1)   # identity only
-        self.assertEqual(len(claude_host.core_render(_data(lines=25))), 2)   # + model row
+        self.assertEqual(
+            len(common_render.core_render(_data(lines=10), claude_host.HOST)), 1
+        )  # identity only
+        self.assertEqual(
+            len(common_render.core_render(_data(lines=25), claude_host.HOST)), 2
+        )  # + model row
 
     def test_identity_line_never_empty(self):
-        out = claude_host.core_render(_data(branch="", dirty="clean", todo_text=None))
+        out = common_render.core_render(
+            _data(branch="", dirty="clean", todo_text=None), claude_host.HOST
+        )
         self.assertTrue(out[0].strip())
 
     def test_context_pinned(self):
-        self.assertIn("context", common_types.PINNED)
-        self.assertIn("path", common_types.PINNED)
+        self.assertIn("context", claude_host.PINNED)
+        self.assertIn("path", claude_host.PINNED)
 
 
 class TestDocumentation(unittest.TestCase):
     def _src(self):
-        with open(_MODULE_PATH) as f:
+        with open(os.path.join(_TOOLS_DIR, "claude_host.py"), encoding="utf-8") as f:
             return f.read()
 
     def test_module_lists_all_segments(self):
         src = self._src()
-        for key in ("path", "git_branch", "git_dirty", "todo", "model",
-                    "alt_time_ago", "alt_time_clock", "effort", "lines",
-                    "alt_time_session", "alt_time_api", "render_time",
-                    "alt_term_dimensions", "context", "chat_size",
-                    "alt_process_memory", "alt_h_rate_limit", "alt_w_rate_limit"):
+        for key in (
+            "path",
+            "git_branch",
+            "git_dirty",
+            "todo",
+            "model",
+            "alt_time_ago",
+            "alt_time_clock",
+            "effort",
+            "lines",
+            "alt_time_session",
+            "alt_time_api",
+            "render_time",
+            "alt_term_dimensions",
+            "context",
+            "chat_size",
+            "alt_process_memory",
+            "alt_h_rate_limit",
+            "alt_w_rate_limit",
+        ):
             self.assertIn(key, src, key)
 
     def test_has_customization_guide(self):
         src = self._src()
-        for phrase in ("HOW TO CUSTOMIZE", "Add a NEW segment",
-                       "Reorder", "Re-enable", "auto-deprioritize"):
+        for phrase in (
+            "HOW TO CUSTOMIZE",
+            "Add a NEW segment",
+            "Reorder",
+            "Re-enable",
+            "auto-deprioritize",
+        ):
             self.assertIn(phrase, src, phrase)
 
 
@@ -1158,8 +1333,9 @@ class TestProcAndGit(unittest.TestCase):
         self.assertTrue(rss is None or isinstance(rss, int))
         with tempfile.TemporaryDirectory() as home:
             env = {"HOME": home}
-            cfg = common_config.cfg_default_config(
-                )._replace(cache_base=common_config.cfg_cache_base(env))
+            cfg = common_config.cfg_default_config(claude_host.SPEC)._replace(
+                cache_base=common_config.cfg_cache_base(env)
+            )
             snap = common_probe.probe_git_snapshot(".", cfg)
         self.assertIn(snap.dirty, ("clean", "untracked", "modified"))
         self.assertIsInstance(snap.is_worktree, bool)
@@ -1169,15 +1345,17 @@ class TestProcAndGit(unittest.TestCase):
         self.assertEqual(common_types.util_branch_from_porcelain("## main"), "main")
         self.assertEqual(common_types.util_branch_from_porcelain("## main...origin/main"), "main")
         self.assertEqual(
-            common_types.util_branch_from_porcelain(
-                "## feat/x...origin/feat/x [ahead 18]"), "feat/x")
+            common_types.util_branch_from_porcelain("## feat/x...origin/feat/x [ahead 18]"),
+            "feat/x",
+        )
         self.assertEqual(
-            common_types.util_branch_from_porcelain("## HEAD (no branch)"), "")   # detached
+            common_types.util_branch_from_porcelain("## HEAD (no branch)"), ""
+        )  # detached
         self.assertEqual(
-            common_types.util_branch_from_porcelain("## No commits yet on main"), "main")
+            common_types.util_branch_from_porcelain("## No commits yet on main"), "main"
+        )
         self.assertEqual(common_types.util_branch_from_porcelain("## Initial commit on dev"), "dev")
-        self.assertEqual(
-            common_types.util_branch_from_porcelain(""), "")                      # not a repo
+        self.assertEqual(common_types.util_branch_from_porcelain(""), "")  # not a repo
 
     def _home_env(self):
         d = tempfile.mkdtemp()
@@ -1189,53 +1367,70 @@ class TestProcAndGit(unittest.TestCase):
         # mock subprocess so the test is independent of the live working tree.
         def fake_run(cmd, **kw):
             del kw
+
             class R:
                 returncode = 0
-                stdout = ("## main...origin/main [ahead 1]\n M tools/x.py\n?? new.py\n"
-                          if "status" in cmd else ".git\n.git\n/repo\n")
+                stdout = (
+                    "## main...origin/main [ahead 1]\n M tools/x.py\n?? new.py\n"
+                    if "status" in cmd
+                    else ".git\n.git\n/repo\n"
+                )
+
             return R()
+
         env = self._home_env()
-        cfg = common_config.cfg_default_config(
-            )._replace(cache_base=common_config.cfg_cache_base(env))
+        cfg = common_config.cfg_default_config(claude_host.SPEC)._replace(
+            cache_base=common_config.cfg_cache_base(env)
+        )
         with mock.patch.object(subprocess, "run", side_effect=fake_run):
             snap = common_probe.probe_git_snapshot(".", cfg)
             self.assertEqual(snap.branch, "main")
-            self.assertEqual(snap.dirty, "untracked")   # ?? present -> untracked
-            self.assertFalse(snap.is_worktree)          # git-dir == git-common-dir
+            self.assertEqual(snap.dirty, "untracked")  # ?? present -> untracked
+            self.assertFalse(snap.is_worktree)  # git-dir == git-common-dir
 
     def test_git_snapshot_always_does_full_untracked_walk(self):
         # The probe owns its policy: it ALWAYS does the full untracked walk (no
         # per-call gating knob). Laziness — not a flag — gates whether it runs.
         env = self._home_env()
-        cfg = common_config.cfg_default_config(
-            )._replace(cache_base=common_config.cfg_cache_base(env))
+        cfg = common_config.cfg_default_config(claude_host.SPEC)._replace(
+            cache_base=common_config.cfg_cache_base(env)
+        )
         seen = []
+
         def fake_run(cmd, *, _seen=seen, **kw):
             del kw
             _seen.append(cmd)
+
             class R:
                 returncode = 0
                 stdout = "## main\n"
+
             return R()
+
         with mock.patch.object(subprocess, "run", side_effect=fake_run):
             common_probe.probe_git_snapshot(".", cfg)
         status_cmd = next(c for c in seen if "status" in c)
-        self.assertNotIn("--untracked-files=no", status_cmd)   # always the full walk
+        self.assertNotIn("--untracked-files=no", status_cmd)  # always the full walk
 
     def test_git_snapshot_always_runs_worktree_probe(self):
         # The probe always runs the worktree rev-parse (no want_worktree knob);
         # laziness gates whether probe_git_snapshot is called at all, not this rev-parse.
         env = self._home_env()
-        cfg = common_config.cfg_default_config(
-            )._replace(cache_base=common_config.cfg_cache_base(env))
+        cfg = common_config.cfg_default_config(claude_host.SPEC)._replace(
+            cache_base=common_config.cfg_cache_base(env)
+        )
         seen = []
+
         def fake_run(cmd, *, _seen=seen, **kw):
             del kw
             _seen.append(cmd)
+
             class R:
                 returncode = 0
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
+
             return R()
+
         with mock.patch.object(subprocess, "run", side_effect=fake_run):
             common_probe.probe_git_snapshot(".", cfg)
         self.assertTrue(any("rev-parse" in c for c in seen))
@@ -1243,18 +1438,25 @@ class TestProcAndGit(unittest.TestCase):
     def test_git_snapshot_clean_and_worktree_name(self):
         def fake_run(cmd, **kw):
             del kw
+
             class R:
                 returncode = 0
-                stdout = ("## main\n" if "status" in cmd
-                          else "/wt/.git/worktrees/feat-x\n/main/.git\n/path/to/feat-x\n")
+                stdout = (
+                    "## main\n"
+                    if "status" in cmd
+                    else "/wt/.git/worktrees/feat-x\n/main/.git\n/path/to/feat-x\n"
+                )
+
             return R()
+
         env = self._home_env()
-        cfg = common_config.cfg_default_config(
-            )._replace(cache_base=common_config.cfg_cache_base(env))
+        cfg = common_config.cfg_default_config(claude_host.SPEC)._replace(
+            cache_base=common_config.cfg_cache_base(env)
+        )
         with mock.patch.object(subprocess, "run", side_effect=fake_run):
             snap = common_probe.probe_git_snapshot(".", cfg)
             self.assertEqual((snap.branch, snap.dirty), ("main", "clean"))
-            self.assertTrue(snap.is_worktree)        # git-dir != git-common-dir
+            self.assertTrue(snap.is_worktree)  # git-dir != git-common-dir
             self.assertTrue(snap.in_repo)
             self.assertEqual(snap.wt_name, "feat-x")  # basename of --show-toplevel
             self.assertEqual(snap.root_name, "main")  # dirname of --git-common-dir
@@ -1263,14 +1465,17 @@ class TestProcAndGit(unittest.TestCase):
     def test_git_snapshot_root_name_non_worktree(self):
         def fake_run(cmd, **kw):
             del kw
+
             class R:
                 returncode = 0
-                stdout = ("## main\n" if "status" in cmd
-                          else "/repo/.git\n/repo/.git\n/repo\n")
+                stdout = "## main\n" if "status" in cmd else "/repo/.git\n/repo/.git\n/repo\n"
+
             return R()
+
         env = self._home_env()
-        cfg = common_config.cfg_default_config(
-            )._replace(cache_base=common_config.cfg_cache_base(env))
+        cfg = common_config.cfg_default_config(claude_host.SPEC)._replace(
+            cache_base=common_config.cfg_cache_base(env)
+        )
         with mock.patch.object(subprocess, "run", side_effect=fake_run):
             snap = common_probe.probe_git_snapshot(".", cfg)
             self.assertFalse(snap.is_worktree)
@@ -1280,13 +1485,17 @@ class TestProcAndGit(unittest.TestCase):
     def test_probe_git_worktree_info_requests_absolute_paths(self):
         # --git-common-dir must be absolute or root_name's dirname() math breaks.
         seen = []
+
         def fake_run(cmd, **kw):
             del kw
             seen.append(cmd)
+
             class R:
                 returncode = 0
                 stdout = "/repo/.git\n/repo/.git\n/repo\n"
+
             return R()
+
         with mock.patch.object(subprocess, "run", side_effect=fake_run):
             common_probe.probe_git_worktree_info(".")
         self.assertIn("--path-format=absolute", seen[0])
@@ -1299,13 +1508,17 @@ class TestProcAndGit(unittest.TestCase):
         # far up (which would report the bare repo's PARENT dir as the name).
         def fake_run(cmd, **kw):
             del kw
+
             class R:
                 returncode = 0
                 stdout = "/srv/bare-repo\n/srv/bare-repo\n/srv/bare-repo\n"
+
             return R()
+
         with mock.patch.object(subprocess, "run", side_effect=fake_run):
-            in_repo, _is_worktree, _name, root_name, root_path = \
+            in_repo, _is_worktree, _name, root_name, root_path = (
                 common_probe.probe_git_worktree_info(".")
+            )
         self.assertTrue(in_repo)
         self.assertEqual(root_name, "bare-repo")
         self.assertEqual(root_path, "/srv/bare-repo")
@@ -1314,38 +1527,48 @@ class TestProcAndGit(unittest.TestCase):
         # Second call within the TTL must NOT re-run the rev-parse (cached on disk).
         env = self._home_env()
         cache_base = common_config.cfg_cache_base(env)
-        cfg = common_config.cfg_default_config(
-            )._replace(cache_base=cache_base, git={"cache_ttl": 100})
+        cfg = common_config.cfg_default_config(claude_host.SPEC)._replace(
+            cache_base=cache_base, git={"cache_ttl": 100}
+        )
         calls = []
+
         def fake_run(cmd, **kw):
             del kw
             calls.append(cmd)
+
             class R:
                 returncode = 0
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
+
             return R()
+
         with mock.patch.object(subprocess, "run", side_effect=fake_run):
             common_probe.probe_git_snapshot(".", cfg)
             common_probe.probe_git_snapshot(".", cfg)
-        self.assertEqual(sum("rev-parse" in c for c in calls), 1)   # only once
+        self.assertEqual(sum("rev-parse" in c for c in calls), 1)  # only once
 
     def test_worktree_cache_bypassed_when_ttl_zero(self):
         env = self._home_env()
         cache_base = common_config.cfg_cache_base(env)
-        cfg = common_config.cfg_default_config(
-            )._replace(cache_base=cache_base, git={"cache_ttl": 0})
+        cfg = common_config.cfg_default_config(claude_host.SPEC)._replace(
+            cache_base=cache_base, git={"cache_ttl": 0}
+        )
         calls = []
+
         def fake_run(cmd, **kw):
             del kw
             calls.append(cmd)
+
             class R:
                 returncode = 0
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
+
             return R()
+
         with mock.patch.object(subprocess, "run", side_effect=fake_run):
             common_probe.probe_git_snapshot(".", cfg)
             common_probe.probe_git_snapshot(".", cfg)
-        self.assertEqual(sum("rev-parse" in c for c in calls), 2)   # ttl<=0 always runs
+        self.assertEqual(sum("rev-parse" in c for c in calls), 2)  # ttl<=0 always runs
 
     def test_worktree_cache_not_written_when_ttl_zero(self):
         # ttl<=0 forces a fresh probe every render, so the cache file is never
@@ -1353,14 +1576,19 @@ class TestProcAndGit(unittest.TestCase):
         # the hot render path).
         env = self._home_env()
         cache_base = common_config.cfg_cache_base(env)
-        cfg = common_config.cfg_default_config(
-            )._replace(cache_base=cache_base, git={"cache_ttl": 0})
+        cfg = common_config.cfg_default_config(claude_host.SPEC)._replace(
+            cache_base=cache_base, git={"cache_ttl": 0}
+        )
+
         def fake_run(cmd, **kw):
             del kw
+
             class R:
                 returncode = 0
                 stdout = "## main\n" if "status" in cmd else ".git\n.git\n/repo\n"
+
             return R()
+
         with mock.patch.object(subprocess, "run", side_effect=fake_run):
             common_probe.probe_git_snapshot(".", cfg)
         self.assertFalse(os.path.exists(common_types.util_git_cache_path(".", cache_base)))
@@ -1378,35 +1606,50 @@ class TestCurrentTodo(unittest.TestCase):
     def test_pick_helpers(self):
         self.assertEqual(
             claude_probes.util_pick_from_tasks(
-                [{"status": "in_progress", "activeForm": "Doing X", "subject": "X"}]),
-            ("in_progress", "Doing X"))
+                [{"status": "in_progress", "activeForm": "Doing X", "subject": "X"}]
+            ),
+            ("in_progress", "Doing X"),
+        )
         self.assertEqual(
             claude_probes.util_pick_from_tasks([{"status": "pending", "subject": "Y"}]),
-            ("pending", "Y"))
+            ("pending", "Y"),
+        )
         self.assertIsNone(
-            claude_probes.util_pick_from_tasks([{"status": "completed", "subject": "Z"}]))
+            claude_probes.util_pick_from_tasks([{"status": "completed", "subject": "Z"}])
+        )
         self.assertEqual(
             claude_probes.util_pick_from_todos([{"status": "in_progress", "activeForm": "Doing"}]),
-            ("in_progress", "Doing"))
+            ("in_progress", "Doing"),
+        )
 
     def test_reads_managed_tasks_dir(self):
         with tempfile.TemporaryDirectory() as cd:
             s = "sess1"
-            self._write(os.path.join(cd, "tasks", s, "1.json"),
-                        {"id": "1", "subject": "first", "activeForm": "Doing first",
-                         "status": "completed"})
-            self._write(os.path.join(cd, "tasks", s, "2.json"),
-                        {"id": "2", "subject": "second", "activeForm": "Doing second",
-                         "status": "in_progress"})
+            self._write(
+                os.path.join(cd, "tasks", s, "1.json"),
+                {"id": "1", "subject": "first", "activeForm": "Doing first", "status": "completed"},
+            )
+            self._write(
+                os.path.join(cd, "tasks", s, "2.json"),
+                {
+                    "id": "2",
+                    "subject": "second",
+                    "activeForm": "Doing second",
+                    "status": "in_progress",
+                },
+            )
             self.assertEqual(
-                claude_probes.probe_current_todo("", s, cd), ("in_progress", "Doing second"))
+                claude_probes.probe_current_todo("", s, cd), ("in_progress", "Doing second")
+            )
 
     def test_tasks_dir_all_done_is_authoritative(self):
         # Dir has files but none active -> (None, None); must NOT replay transcript.
         with tempfile.TemporaryDirectory() as cd:
             s = "sess2"
-            self._write(os.path.join(cd, "tasks", s, "1.json"),
-                        {"id": "1", "subject": "x", "activeForm": "X", "status": "completed"})
+            self._write(
+                os.path.join(cd, "tasks", s, "1.json"),
+                {"id": "1", "subject": "x", "activeForm": "X", "status": "completed"},
+            )
             with mock.patch.object(claude_probes, "probe_todo_from_transcript") as tr:
                 result = claude_probes.probe_current_todo("/some/transcript.jsonl", s, cd)
                 self.assertEqual(result, (None, None))
@@ -1415,35 +1658,72 @@ class TestCurrentTodo(unittest.TestCase):
     def test_reads_todos_dir_when_no_tasks(self):
         with tempfile.TemporaryDirectory() as cd:
             s = "sess3"
-            self._write(os.path.join(cd, "todos", f"{s}-agent-abc.json"),
-                        [{"status": "in_progress", "activeForm": "Todo active", "content": "c"}])
+            self._write(
+                os.path.join(cd, "todos", f"{s}-agent-abc.json"),
+                [{"status": "in_progress", "activeForm": "Todo active", "content": "c"}],
+            )
             self.assertEqual(
-                claude_probes.probe_current_todo("", s, cd), ("in_progress", "Todo active"))
+                claude_probes.probe_current_todo("", s, cd), ("in_progress", "Todo active")
+            )
 
     def test_falls_back_to_transcript(self):
         with tempfile.TemporaryDirectory() as cd:
             tp = os.path.join(cd, "t.jsonl")
             with open(tp, "w") as f:
-                f.write(json.dumps({"message": {"content": [
-                    {"type": "tool_use", "name": "TaskCreate",
-                     "input": {"subject": "A", "activeForm": "Doing A"}}]}}) + "\n")
-                f.write(json.dumps({"message": {"content": [
-                    {"type": "tool_use", "name": "TaskUpdate",
-                     "input": {"taskId": 1, "status": "in_progress"}}]}}) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "name": "TaskCreate",
+                                        "input": {"subject": "A", "activeForm": "Doing A"},
+                                    }
+                                ]
+                            }
+                        }
+                    )
+                    + "\n"
+                )
+                f.write(
+                    json.dumps(
+                        {
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "name": "TaskUpdate",
+                                        "input": {"taskId": 1, "status": "in_progress"},
+                                    }
+                                ]
+                            }
+                        }
+                    )
+                    + "\n"
+                )
             # session has no materialized dirs under cd -> transcript replay
             self.assertEqual(
-                claude_probes.probe_current_todo(tp, "nosession", cd), ("in_progress", "Doing A"))
+                claude_probes.probe_current_todo(tp, "nosession", cd), ("in_progress", "Doing A")
+            )
 
     def test_tasks_dir_preferred_over_transcript(self):
         with tempfile.TemporaryDirectory() as cd:
             s = "sess4"
-            self._write(os.path.join(cd, "tasks", s, "1.json"),
-                        {"id": "1", "subject": "win", "activeForm": "From tasks dir",
-                         "status": "in_progress"})
+            self._write(
+                os.path.join(cd, "tasks", s, "1.json"),
+                {
+                    "id": "1",
+                    "subject": "win",
+                    "activeForm": "From tasks dir",
+                    "status": "in_progress",
+                },
+            )
             with mock.patch.object(claude_probes, "probe_todo_from_transcript") as tr:
                 self.assertEqual(
-                    claude_probes.probe_current_todo(
-                        "/x.jsonl", s, cd), ("in_progress", "From tasks dir"))
+                    claude_probes.probe_current_todo("/x.jsonl", s, cd),
+                    ("in_progress", "From tasks dir"),
+                )
                 tr.assert_not_called()
 
     def test_safe_session_rejects_traversal(self):
@@ -1455,12 +1735,14 @@ class TestCurrentTodo(unittest.TestCase):
         # A crafted session id with ../ must not read .json outside the tasks dir;
         # the materialized tiers bail and we fall through to the transcript.
         with tempfile.TemporaryDirectory() as cd:
-            self._write(os.path.join(cd, "secret.json"),
-                        [{"status": "in_progress", "activeForm": "LEAK"}])
-            with mock.patch.object(claude_probes, "probe_todo_from_transcript",
-                                   return_value=(None, None)) as tr:
+            self._write(
+                os.path.join(cd, "secret.json"), [{"status": "in_progress", "activeForm": "LEAK"}]
+            )
+            with mock.patch.object(
+                claude_probes, "probe_todo_from_transcript", return_value=(None, None)
+            ) as tr:
                 self.assertEqual(claude_probes.probe_current_todo("", "../", cd), (None, None))
-                tr.assert_called_once()   # fell through, did not traverse
+                tr.assert_called_once()  # fell through, did not traverse
 
     def test_no_session_goes_straight_to_transcript(self):
         patch_target = "probe_todo_from_transcript"
@@ -1476,13 +1758,17 @@ class TestEndToEnd(unittest.TestCase):
             "effort": {"level": "high"},
             "workspace": {"current_dir": os.getcwd()},
             "context_window": {"used_percentage": 47, "context_window_size": 1_000_000},
-            "cost": {"total_lines_added": 12, "total_lines_removed": 3,
-                     "total_duration_ms": 65000, "total_api_duration_ms": 4200},
+            "cost": {
+                "total_lines_added": 12,
+                "total_lines_removed": 3,
+                "total_duration_ms": 65000,
+                "total_api_duration_ms": 4200,
+            },
         }
         env = {"STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50", "HOME": "/home/u"}
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         data, _cols, _lines = _ctx_from_env(raw, env, cfg)
-        out = claude_host.core_render(data)
+        out = common_render.core_render(data, claude_host.HOST)
         self.assertEqual(len(out), 3)
         self.assertIn("Opus 4.8", strip(out[1]))
         self.assertIn("47%", strip(out[1]))
@@ -1493,80 +1779,96 @@ class TestLazyCompute(unittest.TestCase):
     runs it exactly once, inside its measured build (FR-R.2 option A). Probes no
     longer run in build_data — they are deferred to the segment that reads them,
     so these drive the full build_data + render path."""
+
     RAW = {"workspace": {"current_dir": "."}, "transcript_path": ""}
-    EFFORT_RAW = {"workspace": {"current_dir": "."}, "transcript_path": "",
-                  "effort": {"level": "high"}}
+    EFFORT_RAW = {
+        "workspace": {"current_dir": "."},
+        "transcript_path": "",
+        "effort": {"level": "high"},
+    }
     ENV = {"STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50", "HOME": "/home/u"}
 
     def _build_and_render(self, segs, raw=None, cfg=None):
         if cfg is None:
-            cfg = common_config.cfg_default_config()
-        cfg.segments.clear()                       # cfg is a namedtuple; mutate the dict
-        cfg.segments.update(dict.fromkeys(common_types.SEGMENTS, False))
+            cfg = common_config.cfg_default_config(claude_host.SPEC)
+        cfg.segments.clear()  # cfg is a namedtuple; mutate the dict
+        cfg.segments.update(dict.fromkeys(claude_host.SEGMENTS, False))
         cfg.segments.update(segs)
-        theme = common_render.core_build_theme(cfg)
+        theme = common_render.core_build_theme(cfg, claude_host.HOST)
         # build_data is segment-agnostic; cfg.segments gates probes via render().
         data, _cols, _lines = _ctx_from_env(raw or self.RAW, self.ENV, cfg)
-        claude_host.core_render(data, cfg, theme)
+        common_render.core_render(data, claude_host.HOST, cfg, theme)
         return data
 
     def test_disabled_segments_skip_their_probes(self):
-        with mock.patch.object(common_probe, "probe_git_snapshot") as gi,\
-             mock.patch.object(claude_probes, "probe_current_todo") as ct,\
-             mock.patch.object(claude_probes, "probe_rss_bytes") as rss,\
-             mock.patch.object(claude_probes, "probe_effort_setting_is_auto") as ea:
-            self._build_and_render(dict.fromkeys(common_types.SEGMENTS, False))
+        with (
+            mock.patch.object(common_probe, "probe_git_snapshot") as gi,
+            mock.patch.object(claude_probes, "probe_current_todo") as ct,
+            mock.patch.object(claude_probes, "probe_rss_bytes") as rss,
+            mock.patch.object(claude_probes, "probe_effort_setting_is_auto") as ea,
+        ):
+            self._build_and_render(dict.fromkeys(claude_host.SEGMENTS, False))
             gi.assert_not_called()
             ct.assert_not_called()
             rss.assert_not_called()
             ea.assert_not_called()
 
     def test_enabled_segments_run_their_probes(self):
-        segs = {"git_branch": True, "todo": True, "alt_process_memory": True,
-                "effort": True}
-        with mock.patch.object(common_probe, "probe_git_snapshot",
-                               return_value=common_types.GitSnapshot(
-                                   True, "m", "clean", False, "")) as gi,\
-             mock.patch.object(
-                 claude_probes, "probe_current_todo", return_value=(None, None)) as ct,\
-             mock.patch.object(claude_probes, "probe_rss_bytes", return_value=1) as rss,\
-             mock.patch.object(
-                 claude_probes, "probe_effort_setting_is_auto", return_value=True) as ea:
+        segs = {"git_branch": True, "todo": True, "alt_process_memory": True, "effort": True}
+        with (
+            mock.patch.object(
+                common_probe,
+                "probe_git_snapshot",
+                return_value=common_types.GitSnapshot(True, "m", "clean", False, ""),
+            ) as gi,
+            mock.patch.object(claude_probes, "probe_current_todo", return_value=(None, None)) as ct,
+            mock.patch.object(claude_probes, "probe_rss_bytes", return_value=1) as rss,
+            mock.patch.object(
+                claude_probes, "probe_effort_setting_is_auto", return_value=True
+            ) as ea,
+        ):
             self._build_and_render(segs, raw=self.EFFORT_RAW)
-            gi.assert_called_once()      # branch built -> git probe runs
-            ct.assert_called_once()      # todo built  -> transcript parse runs
-            rss.assert_called_once()     # memory built
-            ea.assert_called_once()      # effort built (level present -> auto checked)
+            gi.assert_called_once()  # branch built -> git probe runs
+            ct.assert_called_once()  # todo built  -> transcript parse runs
+            rss.assert_called_once()  # memory built
+            ea.assert_called_once()  # effort built (level present -> auto checked)
 
     def test_dirty_alone_still_triggers_git(self):
         # git_branch + git_dirty share one probe_git_snapshot call; either triggers it.
-        with mock.patch.object(common_probe, "probe_git_snapshot",
-                               return_value=common_types.GitSnapshot(
-                                   True, "", "modified", False, "")) as gi:
+        with mock.patch.object(
+            common_probe,
+            "probe_git_snapshot",
+            return_value=common_types.GitSnapshot(True, "", "modified", False, ""),
+        ) as gi:
             self._build_and_render({"git_dirty": True})
             gi.assert_called_once()
 
     def test_none_segments_computes_everything(self):
         # build_data is segment-agnostic: it never gates by flag. Rendering an
         # all-on config fires the probes (here the todo parse).
-        cfg = common_config.cfg_default_config()
-        theme = common_render.core_build_theme(cfg)
-        with mock.patch.object(
-            claude_probes, "probe_current_todo", return_value=(None, None)) as ct,\
-             mock.patch.object(common_probe, "probe_git_snapshot",
-                               return_value=common_types.GitSnapshot(
-                                   True, "m", "clean", False, "")):
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
+        theme = common_render.core_build_theme(cfg, claude_host.HOST)
+        with (
+            mock.patch.object(claude_probes, "probe_current_todo", return_value=(None, None)) as ct,
+            mock.patch.object(
+                common_probe,
+                "probe_git_snapshot",
+                return_value=common_types.GitSnapshot(True, "m", "clean", False, ""),
+            ),
+        ):
             data, _cols, _lines = _ctx_from_env(self.RAW, self.ENV, cfg)
-            claude_host.core_render(data, cfg, theme)
+            common_render.core_render(data, claude_host.HOST, cfg, theme)
             ct.assert_called_once()
 
     def test_git_ttl_threaded_to_snapshot(self):
         # The resolved [git] cache_ttl flows through build_data into probe_git_snapshot
         # via the Config object (D8 — consumers read cache_ttl off the object).
-        cfg = common_config.cfg_default_config()._replace(git={"cache_ttl": 42})
-        with mock.patch.object(common_probe, "probe_git_snapshot",
-                               return_value=common_types.GitSnapshot(
-                                   True, "m", "clean", False, "")) as gs:
+        cfg = common_config.cfg_default_config(claude_host.SPEC)._replace(git={"cache_ttl": 42})
+        with mock.patch.object(
+            common_probe,
+            "probe_git_snapshot",
+            return_value=common_types.GitSnapshot(True, "m", "clean", False, ""),
+        ) as gs:
             self._build_and_render({"alt_git_worktree": True}, cfg=cfg)
             # probe_git_snapshot receives the config; the ttl is read off it.
             args = gs.call_args
@@ -1579,27 +1881,34 @@ class TestLazyCompute(unittest.TestCase):
         # git_branch/git_dirty/alt_git_worktree is built — in full (no per-segment
         # untracked/want_worktree flags threaded in) — and not at all when none are.
         for branch_on, dirty_on, wt_on in (
-            (True, False, True), (True, False, False),
-            (False, True, False), (False, False, True),
+            (True, False, True),
+            (True, False, False),
+            (False, True, False),
+            (False, False, True),
             (True, True, True),
         ):
             with mock.patch.object(
-                    common_probe, "probe_git_snapshot",
-                    return_value=common_types.GitSnapshot(True, "m", "clean", False, "")) as gi:
+                common_probe,
+                "probe_git_snapshot",
+                return_value=common_types.GitSnapshot(True, "m", "clean", False, ""),
+            ) as gi:
                 self._build_and_render(
-                    {"git_branch": branch_on, "git_dirty": dirty_on,
-                     "alt_git_worktree": wt_on})
+                    {"git_branch": branch_on, "git_dirty": dirty_on, "alt_git_worktree": wt_on}
+                )
                 gi.assert_called_once()
                 # No segment-derived flags leak into the call (agnostic probe).
                 self.assertNotIn("untracked", gi.call_args.kwargs)
                 self.assertNotIn("want_worktree", gi.call_args.kwargs)
 
         with mock.patch.object(
-                common_probe, "probe_git_snapshot",
-                return_value=common_types.GitSnapshot(True, "m", "clean", False, "")) as gi:
+            common_probe,
+            "probe_git_snapshot",
+            return_value=common_types.GitSnapshot(True, "m", "clean", False, ""),
+        ) as gi:
             self._build_and_render(
-                {"git_branch": False, "git_dirty": False, "alt_git_worktree": False})
-            gi.assert_not_called()                  # no git segment built -> no probe
+                {"git_branch": False, "git_dirty": False, "alt_git_worktree": False}
+            )
+            gi.assert_not_called()  # no git segment built -> no probe
 
 
 class TestBlueFix(unittest.TestCase):
@@ -1618,15 +1927,17 @@ class TestBlueFix(unittest.TestCase):
 
 class TestSegPathProjectRoot(unittest.TestCase):
     def test_shows_root_name_inside_a_repo(self):
-        ctx = _data(in_repo=True, root_name="ai-kit",
-                    work_dir="/home/u/proj/.claude/worktrees/feat-x")
+        ctx = _data(
+            in_repo=True, root_name="ai-kit", work_dir="/home/u/proj/.claude/worktrees/feat-x"
+        )
         out = common_segments.seg_path(ctx, 80, THEME)
         self.assertIn("ai-kit", out)
         self.assertNotIn("feat-x", out)
 
     def test_ignores_cwd_depth_inside_a_repo(self):
-        ctx = _data(in_repo=True, root_name="ai-kit",
-                    work_dir="/home/u/proj/very/deeply/nested/subdir")
+        ctx = _data(
+            in_repo=True, root_name="ai-kit", work_dir="/home/u/proj/very/deeply/nested/subdir"
+        )
         out = common_segments.seg_path(ctx, 80, THEME)
         self.assertIn("ai-kit", out)
 
@@ -1688,10 +1999,16 @@ class TestSegPathProjectRoot(unittest.TestCase):
         # structural cap; root_name alone ("another-very-long-repository-name",
         # 33 cols) exceeds the 30-col name-floor high threshold, so it's
         # clipped to 20.
-        root_path = ("/home/u/workspaces/very-long-organization-name-here-extended"
-                     "/another-very-long-repository-name")
-        ctx = _data(in_repo=True, root_name="another-very-long-repository-name",
-                    root_path=root_path, home="/home/u")
+        root_path = (
+            "/home/u/workspaces/very-long-organization-name-here-extended"
+            "/another-very-long-repository-name"
+        )
+        ctx = _data(
+            in_repo=True,
+            root_name="another-very-long-repository-name",
+            root_path=root_path,
+            home="/home/u",
+        )
         out = common_segments.seg_path(ctx, 80, THEME)
         self.assertIn("another-very-long-r…", strip(out))
         self.assertNotIn("very-long-organization-name-here-extended/", strip(out))
@@ -1711,8 +2028,13 @@ class TestSegPathProjectRoot(unittest.TestCase):
         # snap.root_name:` guard (pre-existing, unchanged by this plan) -> the
         # non-repo util_display_dir branch runs instead, exactly as it did
         # before this plan touched seg_path.
-        ctx = _data(in_repo=True, root_name="", root_path="/home/u/proj",
-                    work_dir="/home/u/proj", home="/home/u")
+        ctx = _data(
+            in_repo=True,
+            root_name="",
+            root_path="/home/u/proj",
+            work_dir="/home/u/proj",
+            home="/home/u",
+        )
         out = common_segments.seg_path(ctx, 80, THEME)
         self.assertEqual(strip(out), common_types.util_display_dir("/home/u/proj", "/home/u"))
 
@@ -1735,10 +2057,14 @@ class TestProbeTranscriptCompaction(unittest.TestCase):
         return path
 
     def test_no_boundary_since_equals_total(self):
-        path = self._write([
-            json.dumps({"type": "user", "message": {"role": "user", "content": "hi"}}),
-            json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "hey"}}),
-        ])
+        path = self._write(
+            [
+                json.dumps({"type": "user", "message": {"role": "user", "content": "hi"}}),
+                json.dumps(
+                    {"type": "assistant", "message": {"role": "assistant", "content": "hey"}}
+                ),
+            ]
+        )
         total = os.path.getsize(path)
         since, count = claude_probes.probe_transcript_compaction(path, total)
         self.assertEqual(count, 0)
@@ -1746,9 +2072,13 @@ class TestProbeTranscriptCompaction(unittest.TestCase):
 
     def test_one_boundary_since_is_tail_only(self):
         pre = json.dumps({"type": "user", "message": {"role": "user", "content": "long history"}})
-        boundary = json.dumps({"type": "system", "subtype": "compact_boundary",
-                                "compactMetadata": {"trigger": "manual",
-                                                     "preTokens": 100000, "postTokens": 500}})
+        boundary = json.dumps(
+            {
+                "type": "system",
+                "subtype": "compact_boundary",
+                "compactMetadata": {"trigger": "manual", "preTokens": 100000, "postTokens": 500},
+            }
+        )
         post = json.dumps({"type": "user", "message": {"role": "user", "content": "new turn"}})
         path = self._write([pre, boundary, post])
         total = os.path.getsize(path)
@@ -1760,8 +2090,13 @@ class TestProbeTranscriptCompaction(unittest.TestCase):
         self.assertLess(since, total)
 
     def test_three_boundaries_counted(self):
-        boundary = json.dumps({"type": "system", "subtype": "compact_boundary",
-                                "compactMetadata": {"trigger": "auto"}})
+        boundary = json.dumps(
+            {
+                "type": "system",
+                "subtype": "compact_boundary",
+                "compactMetadata": {"trigger": "auto"},
+            }
+        )
         path = self._write([boundary, "x", boundary, "y", boundary, "z"])
         total = os.path.getsize(path)
         since, count = claude_probes.probe_transcript_compaction(path, total)
@@ -1781,7 +2116,8 @@ class TestProbeTranscriptCompaction(unittest.TestCase):
 
     def test_missing_file_returns_total_zero(self):
         since, count = claude_probes.probe_transcript_compaction(
-            os.path.join(self.tmp, "nonexistent.jsonl"), 12345)
+            os.path.join(self.tmp, "nonexistent.jsonl"), 12345
+        )
         self.assertEqual((since, count), (12345, 0))
 
 
@@ -1792,13 +2128,19 @@ class TestChatSizeRamp(unittest.TestCase):
     def test_ramp_bands(self):
         KB, MB = self.KB, self.MB
         cases = [
-            (400 * KB, THEME.c("WHITE")), (512 * KB, THEME.c("CYAN")),
+            (400 * KB, THEME.c("WHITE")),
+            (512 * KB, THEME.c("CYAN")),
             (900 * KB, THEME.c("CYAN")),
-            (1 * MB, THEME.c("LIGHTBLUE")), (1 * MB + 1, THEME.c("LIGHTBLUE")),
-            (2 * MB, THEME.c("GREEN")), (3 * MB, THEME.c("YELLOW")), (4 * MB, THEME.c("ORANGE")),
-            (5 * MB, THEME.c("RED+bold")), (5 * MB + 1, THEME.c("RED+bold")),
+            (1 * MB, THEME.c("LIGHTBLUE")),
+            (1 * MB + 1, THEME.c("LIGHTBLUE")),
+            (2 * MB, THEME.c("GREEN")),
+            (3 * MB, THEME.c("YELLOW")),
+            (4 * MB, THEME.c("ORANGE")),
+            (5 * MB, THEME.c("RED+bold")),
+            (5 * MB + 1, THEME.c("RED+bold")),
             (9 * MB, THEME.c("RED+bold")),
-            (10 * MB, THEME.c("MAGENTA")), (20 * MB, THEME.c("MAGENTA")),
+            (10 * MB, THEME.c("MAGENTA")),
+            (20 * MB, THEME.c("MAGENTA")),
         ]
         for n, want in cases:
             self.assertEqual(common_types.util_pick_color(n, THEME.ramps["chat_size"]), want, n)
@@ -1806,7 +2148,7 @@ class TestChatSizeRamp(unittest.TestCase):
     def test_seg_chat_size_colors_the_size(self):
         out = claude_segments.seg_chat_size(_data(chat_bytes=6 * self.MB), 40, THEME)
         self.assertIn("💾", out)
-        self.assertIn(THEME.c("RED+bold"), out)       # 6 MB -> red band
+        self.assertIn(THEME.c("RED+bold"), out)  # 6 MB -> red band
 
     def test_seg_chat_size_none_when_no_bytes(self):
         self.assertIsNone(claude_segments.seg_chat_size(_data(chat_bytes=None), 40, THEME))
@@ -1820,20 +2162,28 @@ class TestChatSizeRamp(unittest.TestCase):
         self.assertNotIn("x)", out_wide)
 
     def test_compacted_shows_since_over_total_with_count_when_room(self):
-        out = strip(claude_segments.seg_chat_size(
-            _data(chat_bytes=4_200_000, chat_since=320_000, chat_compactions=3), 200, THEME))
+        out = strip(
+            claude_segments.seg_chat_size(
+                _data(chat_bytes=4_200_000, chat_since=320_000, chat_compactions=3), 200, THEME
+            )
+        )
         self.assertIn(
-            f"{common_types.fmt_bytes(320_000)}/{common_types.fmt_bytes(4_200_000)} (3x)", out)
+            f"{common_types.fmt_bytes(320_000)}/{common_types.fmt_bytes(4_200_000)} (3x)", out
+        )
 
     def test_compacted_drops_to_since_only_when_narrow(self):
-        out = strip(claude_segments.seg_chat_size(
-            _data(chat_bytes=4_200_000, chat_since=320_000, chat_compactions=3), 12, THEME))
+        out = strip(
+            claude_segments.seg_chat_size(
+                _data(chat_bytes=4_200_000, chat_since=320_000, chat_compactions=3), 12, THEME
+            )
+        )
         self.assertEqual(out, f"💾 {common_types.fmt_bytes(320_000)}")
 
     def test_ramp_color_driven_by_since_not_total(self):
         # 6 MB total but only 900 KB since last compaction -> CYAN band, not RED
         out = claude_segments.seg_chat_size(
-            _data(chat_bytes=6 * self.MB, chat_since=900 * self.KB, chat_compactions=1), 200, THEME)
+            _data(chat_bytes=6 * self.MB, chat_since=900 * self.KB, chat_compactions=1), 200, THEME
+        )
         self.assertIn(THEME.c("CYAN"), out)
         self.assertNotIn(THEME.c("RED+bold"), out)
 
@@ -1846,7 +2196,7 @@ class TestEffortAutoSetting(unittest.TestCase):
 
     def test_resolved_level_keeps_its_color_in_auto(self):
         out = claude_segments.seg_effort(_data(effort="high", effort_auto=True), 40, THEME)
-        self.assertIn(f'{THEME.c("YELLOW")}high', out)   # level keeps its fixed color
+        self.assertIn(f"{THEME.c('YELLOW')}high", out)  # level keeps its fixed color
 
     def test_auto_compacts_to_asterisk_when_tight(self):
         out = strip(claude_segments.seg_effort(_data(effort="medium", effort_auto=True), 18, THEME))
@@ -1926,22 +2276,29 @@ class TestProcRssLinux(unittest.TestCase):
         # the wezterm bug: walk finds no `claude`, must return None (not a stray RSS)
         comm = {10: "zsh", 11: "wezterm-gui", 1: "systemd"}
         ppid = {10: 11, 11: 1, 1: 0}
-        with mock.patch.object(os.path, "isdir", return_value=True),\
-             mock.patch.object(os, "getppid", return_value=10),\
-             mock.patch.object(claude_probes, "probe_comm_via_proc", side_effect=comm.get),\
-             mock.patch.object(claude_probes, "probe_ppid_via_proc", side_effect=ppid.get),\
-             mock.patch.object(claude_probes, "probe_rss_kb_via_proc", side_effect=lambda p: 5000):
+        with (
+            mock.patch.object(os.path, "isdir", return_value=True),
+            mock.patch.object(os, "getppid", return_value=10),
+            mock.patch.object(claude_probes, "probe_comm_via_proc", side_effect=comm.get),
+            mock.patch.object(claude_probes, "probe_ppid_via_proc", side_effect=ppid.get),
+            mock.patch.object(claude_probes, "probe_rss_kb_via_proc", side_effect=lambda p: 5000),
+        ):
             self.assertIsNone(claude_probes.probe_rss_bytes())
 
     def test_returns_rss_when_claude_found(self):
         comm = {10: "zsh", 11: "claude", 1: "systemd"}
         ppid = {10: 11, 11: 1, 1: 0}
-        with mock.patch.object(os.path, "isdir", return_value=True),\
-             mock.patch.object(os, "getppid", return_value=10),\
-             mock.patch.object(claude_probes, "probe_comm_via_proc", side_effect=comm.get),\
-             mock.patch.object(claude_probes, "probe_ppid_via_proc", side_effect=ppid.get),\
-             mock.patch.object(claude_probes, "probe_rss_kb_via_proc",
-                               side_effect=lambda p: 204800 if p == 11 else 5000):
+        with (
+            mock.patch.object(os.path, "isdir", return_value=True),
+            mock.patch.object(os, "getppid", return_value=10),
+            mock.patch.object(claude_probes, "probe_comm_via_proc", side_effect=comm.get),
+            mock.patch.object(claude_probes, "probe_ppid_via_proc", side_effect=ppid.get),
+            mock.patch.object(
+                claude_probes,
+                "probe_rss_kb_via_proc",
+                side_effect=lambda p: 204800 if p == 11 else 5000,
+            ),
+        ):
             self.assertEqual(claude_probes.probe_rss_bytes(), 204800 * 1024)
 
 
@@ -1950,16 +2307,19 @@ class TestProcRssMacOS(unittest.TestCase):
         comm = {10: "login", 11: "claude", 1: "launchd"}
         ppid = {10: 11, 11: 1, 1: 0}
         rss = {11: 307200, 10: 100}
-        with mock.patch.object(os.path, "isdir", return_value=False),\
-             mock.patch.object(os, "getppid", return_value=10),\
-             mock.patch.object(claude_probes, "probe_comm_via_ps", side_effect=comm.get),\
-             mock.patch.object(claude_probes, "probe_ppid_via_ps", side_effect=ppid.get),\
-             mock.patch.object(claude_probes, "probe_rss_kb_via_ps", side_effect=rss.get):
+        with (
+            mock.patch.object(os.path, "isdir", return_value=False),
+            mock.patch.object(os, "getppid", return_value=10),
+            mock.patch.object(claude_probes, "probe_comm_via_ps", side_effect=comm.get),
+            mock.patch.object(claude_probes, "probe_ppid_via_ps", side_effect=ppid.get),
+            mock.patch.object(claude_probes, "probe_rss_kb_via_ps", side_effect=rss.get),
+        ):
             self.assertEqual(claude_probes.probe_rss_bytes(), 307200 * 1024)
 
     def test_ps_field_parses_one_value(self):
         class R:
             stdout = "  12345\n"
+
         with mock.patch.object(subprocess, "run", return_value=R()):
             self.assertEqual(common_probe.probe_ps_field(99, "rss"), "12345")
 
@@ -1968,18 +2328,23 @@ class TestTputFallback(unittest.TestCase):
     def test_tput_used_when_stty_yields_nothing(self):
         def fake_run(cmd, **kw):
             del kw
+
             class R:
                 stdout = ""
+
             r = R()
             if cmd[:1] == ["stty"]:
-                r.stdout = ""               # stty size unavailable
+                r.stdout = ""  # stty size unavailable
             elif cmd == ["tput", "cols"]:
                 r.stdout = "123\n"
             elif cmd == ["tput", "lines"]:
                 r.stdout = "44\n"
             return r
-        with mock.patch.object(subprocess, "run", side_effect=fake_run),\
-             mock.patch("builtins.open", mock.mock_open(read_data="")):
+
+        with (
+            mock.patch.object(subprocess, "run", side_effect=fake_run),
+            mock.patch("builtins.open", mock.mock_open(read_data="")),
+        ):
             cols, lines, assumed = common_probe.probe_terminal_size({})
         self.assertEqual((cols, lines), (123, 44))
         self.assertFalse(assumed)
@@ -1987,16 +2352,17 @@ class TestTputFallback(unittest.TestCase):
 
 class TestConfigScaffold(unittest.TestCase):
     def test_default_config_matches_globals(self):
-        cfg = common_config.cfg_default_config()
-        self.assertEqual(cfg.segments, dict(common_types.SEGMENTS))
-        self.assertEqual(cfg.layout, list(common_types.LAYOUT))
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
+        self.assertEqual(cfg.segments, dict(claude_host.SEGMENTS))
+        self.assertEqual(cfg.layout, list(claude_host.LAYOUT))
         self.assertEqual(cfg.palette, {})
 
     def test_default_config_is_a_snapshot(self):
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         cfg.segments["alt_time_clock"] = not cfg.segments["alt_time_clock"]
-        self.assertNotEqual(cfg.segments["alt_time_clock"],
-                            common_types.SEGMENTS["alt_time_clock"])  # snapshot, not alias
+        self.assertNotEqual(
+            cfg.segments["alt_time_clock"], claude_host.SEGMENTS["alt_time_clock"]
+        )  # snapshot, not alias
 
 
 class TestEnvBool(unittest.TestCase):
@@ -2011,6 +2377,7 @@ class TestEnvBool(unittest.TestCase):
     def test_cfg_warn_format(self):
         """cfg_warn wraps a core message in the fixed dim render-format on stderr."""
         from contextlib import redirect_stderr
+
         buf = io.StringIO()
         with redirect_stderr(buf):
             common_config.cfg_warn("segment 'x' must be true/false, got 'maybe' — ignored")
@@ -2031,14 +2398,16 @@ class TestCfgCoerce(unittest.TestCase):
 
     def test_cfg_coerce_env_int(self):
         self.assertEqual(
-            common_config.cfg_coerce("10", "int", "env", "CC_AI_KIT_GIT_CACHE_TTL"), (10, None))
+            common_config.cfg_coerce("10", "int", "env", "CC_AI_KIT_GIT_CACHE_TTL"), (10, None)
+        )
         v, prob = common_config.cfg_coerce("x", "int", "env", "CC_AI_KIT_GIT_CACHE_TTL")
         self.assertIsNone(v)
         self.assertEqual(prob, "CC_AI_KIT_GIT_CACHE_TTL must be an integer, got 'x' — ignored")
 
     def test_cfg_coerce_toml_bool(self):
         self.assertEqual(
-            common_config.cfg_coerce(True, "bool", "toml", "segment 'alt_cost'"), (True, None))
+            common_config.cfg_coerce(True, "bool", "toml", "segment 'alt_cost'"), (True, None)
+        )
         # a TOML STRING for a bool key is rejected (strict) — NOT parsed like env:
         v, prob = common_config.cfg_coerce("true", "bool", "toml", "segment 'alt_cost'")
         self.assertIsNone(v)
@@ -2055,16 +2424,43 @@ class TestCfgCoerce(unittest.TestCase):
 class TestCfgSourceGet(unittest.TestCase):
     def test_cfg_source_get_env_projection(self):
         env = {"CC_AI_KIT_GIT_CACHE_TTL": "9", "CC_AI_KIT_SEGMENT_ALT_COST": "1"}
-        self.assertEqual(common_config.cfg_source_get("env", {}, env, ("git", "cache_ttl")), "9")
         self.assertEqual(
-            common_config.cfg_source_get("env", {}, env, ("segments", "alt_cost")), "1")
-        self.assertIsNone(common_config.cfg_source_get("env", {}, env, ("git", "missing")))
+            common_config.cfg_source_get(
+                "env", {}, env, ("git", "cache_ttl"), claude_host.SPEC.env_prefix
+            ),
+            "9",
+        )
+        self.assertEqual(
+            common_config.cfg_source_get(
+                "env", {}, env, ("segments", "alt_cost"), claude_host.SPEC.env_prefix
+            ),
+            "1",
+        )
+        self.assertIsNone(
+            common_config.cfg_source_get(
+                "env", {}, env, ("git", "missing"), claude_host.SPEC.env_prefix
+            )
+        )
 
     def test_cfg_source_get_toml_nested(self):
         raw = {"git": {"cache_ttl": 7}, "segments": {"alt_cost": True}}
-        self.assertEqual(common_config.cfg_source_get("toml", raw, {}, ("git", "cache_ttl")), 7)
-        self.assertIs(common_config.cfg_source_get("toml", raw, {}, ("segments", "alt_cost")), True)
-        self.assertIsNone(common_config.cfg_source_get("toml", raw, {}, ("git", "missing")))
+        self.assertEqual(
+            common_config.cfg_source_get(
+                "toml", raw, {}, ("git", "cache_ttl"), claude_host.SPEC.env_prefix
+            ),
+            7,
+        )
+        self.assertIs(
+            common_config.cfg_source_get(
+                "toml", raw, {}, ("segments", "alt_cost"), claude_host.SPEC.env_prefix
+            ),
+            True,
+        )
+        self.assertIsNone(
+            common_config.cfg_source_get(
+                "toml", raw, {}, ("git", "missing"), claude_host.SPEC.env_prefix
+            )
+        )
 
 
 class TestCfgBind(unittest.TestCase):
@@ -2073,8 +2469,18 @@ class TestCfgBind(unittest.TestCase):
         with NO env-reader edits — cfg_source_get projects the name, cfg_coerce types it."""
         raw = {"newgroup": {"flag": True}}
         env = {"CC_AI_KIT_NEWGROUP_FLAG": "off"}
-        self.assertEqual(common_config.cfg_source_get("toml", raw, env, ("newgroup", "flag")), True)
-        self.assertEqual(common_config.cfg_source_get("env", raw, env, ("newgroup", "flag")), "off")
+        self.assertEqual(
+            common_config.cfg_source_get(
+                "toml", raw, env, ("newgroup", "flag"), claude_host.SPEC.env_prefix
+            ),
+            True,
+        )
+        self.assertEqual(
+            common_config.cfg_source_get(
+                "env", raw, env, ("newgroup", "flag"), claude_host.SPEC.env_prefix
+            ),
+            "off",
+        )
         self.assertEqual(common_config.cfg_coerce("off", "bool", "env", "X"), (False, None))
 
     def test_cfg_bind_scalars_precedence_and_problems(self):
@@ -2082,52 +2488,106 @@ class TestCfgBind(unittest.TestCase):
         # env overrides git cache_ttl; default is 5, TOML(8) already applied by caller,
         # env(12) wins here.
         git, ext_dir, ext_ttl, probs = common_config.cfg_bind_scalars(
-            raw, {"CC_AI_KIT_GIT_CACHE_TTL": "12"}, {"cache_ttl": 8}, "/d", 10)
+            raw,
+            {"CC_AI_KIT_GIT_CACHE_TTL": "12"},
+            {"cache_ttl": 8},
+            "/d",
+            10,
+            claude_host.SPEC.env_prefix,
+        )
         self.assertEqual(git["cache_ttl"], 12)
         self.assertEqual((ext_dir, ext_ttl), ("/d", 10))
         self.assertEqual(probs, [])
         # env external dir + ttl override
         _git2, ext_dir2, ext_ttl2, probs2 = common_config.cfg_bind_scalars(
-            raw, {"CC_AI_KIT_EXTERNAL_DIR": "/x", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "20"},
-            {"cache_ttl": 8}, "/d", 10)
+            raw,
+            {"CC_AI_KIT_EXTERNAL_DIR": "/x", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "20"},
+            {"cache_ttl": 8},
+            "/d",
+            10,
+            claude_host.SPEC.env_prefix,
+        )
         self.assertEqual((ext_dir2, ext_ttl2), ("/x", 20))
         self.assertEqual(probs2, [])
         # invalid env int -> falls back AND records a problem
         _, _, _, probs3 = common_config.cfg_bind_scalars(
-            raw, {"CC_AI_KIT_GIT_CACHE_TTL": "x"}, {"cache_ttl": 8}, "/d", 10)
+            raw,
+            {"CC_AI_KIT_GIT_CACHE_TTL": "x"},
+            {"cache_ttl": 8},
+            "/d",
+            10,
+            claude_host.SPEC.env_prefix,
+        )
         self.assertIn("CC_AI_KIT_GIT_CACHE_TTL must be an integer, got 'x' — ignored", probs3)
 
     def test_cfg_bind_segments_env_override(self):
         segs, probs = common_config.cfg_bind_segments(
-            {}, {"CC_AI_KIT_SEGMENT_ALT_COST": "0"}, {"alt_cost": True, "path": True})
-        self.assertIs(segs["alt_cost"], False)        # env override applied
-        self.assertIs(segs["path"], True)             # untouched
+            {},
+            {"CC_AI_KIT_SEGMENT_ALT_COST": "0"},
+            {"alt_cost": True, "path": True},
+            claude_host.SPEC.env_prefix,
+        )
+        self.assertIs(segs["alt_cost"], False)  # env override applied
+        self.assertIs(segs["path"], True)  # untouched
         self.assertEqual(probs, [])
         # unknown segment env key -> silently skipped (not a known key)
         segs2, probs2 = common_config.cfg_bind_segments(
-            {}, {"CC_AI_KIT_SEGMENT_BOGUS": "1"}, {"alt_cost": True})
+            {}, {"CC_AI_KIT_SEGMENT_BOGUS": "1"}, {"alt_cost": True}, claude_host.SPEC.env_prefix
+        )
         self.assertNotIn("bogus", segs2)
         self.assertEqual(probs2, [])
         # env bad-bool stays silent (tri-state): unrecognized string -> no override, no problem
         segs3, probs3 = common_config.cfg_bind_segments(
-            {}, {"CC_AI_KIT_SEGMENT_ALT_COST": "maybe"}, {"alt_cost": True})
+            {},
+            {"CC_AI_KIT_SEGMENT_ALT_COST": "maybe"},
+            {"alt_cost": True},
+            claude_host.SPEC.env_prefix,
+        )
         self.assertIs(segs3["alt_cost"], True)
         self.assertEqual(probs3, [])
 
 
 class TestConfigPathAndLoad(unittest.TestCase):
+    def test_alternate_host_prefix_selects_config_and_segment(self):
+        spec = common_types.ConfigSpec(
+            "XX_",
+            "other.toml",
+            claude_host.SEGMENTS,
+            claude_host.LAYOUT,
+            claude_host.RAMP_DEFAULTS_CLAUDE,
+            "segments",
+            "segments",
+            "XX_SEGMENT_",
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as handle:
+            handle.write("[segments]\\npath = true\\n")
+            path = handle.name
+        self.addCleanup(os.unlink, path)
+        env = {
+            "XX_CONFIG_FILE": path,
+            "XX_SEGMENT_PATH": "0",
+            "CC_AI_KIT_SEGMENT_PATH": "1",
+            "HOME": "/h",
+        }
+        self.assertEqual(common_config.cfg_config_path(env, spec), path)
+        self.assertFalse(common_config.cfg_load_config(env, spec).segments["path"])
+
     def test_explicit_path_wins(self):
         env = {"CC_AI_KIT_CONFIG_FILE": "/tmp/x.toml", "HOME": "/home/u"}
-        self.assertEqual(common_config.cfg_config_path(env), "/tmp/x.toml")
+        self.assertEqual(common_config.cfg_config_path(env, claude_host.SPEC), "/tmp/x.toml")
 
     def test_xdg_path(self):
         env = {"XDG_CONFIG_HOME": "/cfg", "HOME": "/home/u"}
-        self.assertEqual(common_config.cfg_config_path(env), "/cfg/ai-kit/statusline.toml")
+        self.assertEqual(
+            common_config.cfg_config_path(env, claude_host.SPEC), "/cfg/ai-kit/statusline.toml"
+        )
 
     def test_home_default_path(self):
         env = {"HOME": "/home/u"}
         self.assertEqual(
-            common_config.cfg_config_path(env), "/home/u/.config/ai-kit/statusline.toml")
+            common_config.cfg_config_path(env, claude_host.SPEC),
+            "/home/u/.config/ai-kit/statusline.toml",
+        )
 
     def test_missing_file_is_empty(self):
         self.assertEqual(common_config.cfg_load_toml("/no/such/file.toml"), {})
@@ -2160,51 +2620,57 @@ class TestResolveSegments(unittest.TestCase):
 
     def test_defaults_when_no_file_no_env(self):
         env = {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"}
-        cfg = common_config.cfg_load_config(env)
-        self.assertEqual(cfg.segments, dict(common_types.SEGMENTS))
-        self.assertEqual(cfg.layout, list(common_types.LAYOUT))
+        cfg = common_config.cfg_load_config(env, claude_host.SPEC)
+        self.assertEqual(cfg.segments, dict(claude_host.SEGMENTS))
+        self.assertEqual(cfg.layout, list(claude_host.LAYOUT))
         self.assertEqual(cfg.palette, {})
 
     def test_file_overrides_default(self):
         path = self._write("[segments]\nalt_cost = true\nalt_process_memory = false\n")
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
-        self.assertTrue(cfg.segments["alt_cost"])              # default False -> True
-        self.assertFalse(cfg.segments["alt_process_memory"])   # default False, still False
-        self.assertTrue(cfg.segments["model"])                # untouched default (non-alt)
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
+        self.assertTrue(cfg.segments["alt_cost"])  # default False -> True
+        self.assertFalse(cfg.segments["alt_process_memory"])  # default False, still False
+        self.assertTrue(cfg.segments["model"])  # untouched default (non-alt)
 
     def test_env_overrides_file(self):
         path = self._write("[segments]\nalt_cost = true\n")
         env = {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h", "CC_AI_KIT_SEGMENT_ALT_COST": "0"}
-        cfg = common_config.cfg_load_config(env)
+        cfg = common_config.cfg_load_config(env, claude_host.SPEC)
         self.assertFalse(cfg.segments["alt_cost"])  # env beats file
 
     def test_unknown_segment_key_ignored(self):
         path = self._write("[segments]\nbogus = true\n")
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
         self.assertNotIn("bogus", cfg.segments)
 
     def test_wrong_type_value_ignored(self):
         # `alt_cost = "true"` (string, not bool) is a known key but a bad value:
         # it must be dropped (keeping the default), not silently coerced.
         path = self._write('[segments]\nalt_cost = "true"\n')
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
-        self.assertEqual(
-            cfg.segments["alt_cost"], common_types.SEGMENTS["alt_cost"])  # default kept
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
+        self.assertEqual(cfg.segments["alt_cost"], claude_host.SEGMENTS["alt_cost"])  # default kept
 
     def test_render_silent_on_broken_config(self):
         """cfg_load_config emits NOTHING to stderr even when env/TOML has bad values."""
         from contextlib import redirect_stderr
+
         env = {"CC_AI_KIT_GIT_CACHE_TTL": "not-an-int", "CC_AI_KIT_SEGMENT_NOPE": "1"}
         buf = io.StringIO()
         with redirect_stderr(buf):
-            cfg = common_config.cfg_load_config(env)
+            cfg = common_config.cfg_load_config(env, claude_host.SPEC)
         self.assertEqual(buf.getvalue(), "")
         self.assertEqual(cfg.git["cache_ttl"], common_types.GIT_CACHE_TTL)
 
     def test_verbose_reports_problems(self):
         """cfg_load_config_verbose returns problems without printing."""
         env = {"CC_AI_KIT_GIT_CACHE_TTL": "not-an-int"}
-        _, problems = common_config.cfg_load_config_verbose(env)
+        _, problems = common_config.cfg_load_config_verbose(env, claude_host.SPEC)
         self.assertIn(
             "CC_AI_KIT_GIT_CACHE_TTL must be an integer, got 'not-an-int' — ignored",
             problems,
@@ -2221,40 +2687,53 @@ class TestGitConfig(unittest.TestCase):
     def test_cache_ttl_default_5(self):
         # Default [git] config carries cache_ttl=5 and nothing else.
         cfg = common_config.cfg_load_config(
-            {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
+            {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"}, claude_host.SPEC
+        )
         self.assertEqual(cfg.git, {"cache_ttl": 5})
 
     def test_cache_ttl_from_toml(self):
         path = self._write("[git]\ncache_ttl = 20\n")
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
         self.assertEqual(cfg.git["cache_ttl"], 20)
 
     def test_cache_ttl_env_overrides_toml(self):
         # Precedence: default 5 < TOML [git] cache_ttl < env CC_AI_KIT_GIT_CACHE_TTL.
         path = self._write("[git]\ncache_ttl = 20\n")
         env = {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h", "CC_AI_KIT_GIT_CACHE_TTL": "99"}
-        self.assertEqual(common_config.cfg_load_config(env).git["cache_ttl"], 99)
+        self.assertEqual(common_config.cfg_load_config(env, claude_host.SPEC).git["cache_ttl"], 99)
 
     def test_cache_ttl_env_over_default(self):
-        env = {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h",
-               "CC_AI_KIT_GIT_CACHE_TTL": "0"}
-        self.assertEqual(common_config.cfg_load_config(env).git["cache_ttl"], 0)
+        env = {
+            "CC_AI_KIT_CONFIG_FILE": "/no/such.toml",
+            "HOME": "/h",
+            "CC_AI_KIT_GIT_CACHE_TTL": "0",
+        }
+        self.assertEqual(common_config.cfg_load_config(env, claude_host.SPEC).git["cache_ttl"], 0)
 
     def test_cache_ttl_bad_toml_type_ignored(self):
-        path = self._write('[git]\ncache_ttl = "soon"\n')   # string, not int
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
-        self.assertEqual(cfg.git["cache_ttl"], 5)            # default kept; render is silent
+        path = self._write('[git]\ncache_ttl = "soon"\n')  # string, not int
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
+        self.assertEqual(cfg.git["cache_ttl"], 5)  # default kept; render is silent
 
     def test_worktree_env_no_longer_read(self):
         # CC_AI_KIT_GIT_WORKTREE is retired — setting it does not affect cfg.git.
-        env = {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h",
-               "CC_AI_KIT_GIT_WORKTREE": "1"}
-        self.assertEqual(common_config.cfg_load_config(env).git, {"cache_ttl": 5})
+        env = {
+            "CC_AI_KIT_CONFIG_FILE": "/no/such.toml",
+            "HOME": "/h",
+            "CC_AI_KIT_GIT_WORKTREE": "1",
+        }
+        self.assertEqual(common_config.cfg_load_config(env, claude_host.SPEC).git, {"cache_ttl": 5})
 
     def test_unknown_git_key_ignored_silently(self):
         path = self._write("[git]\nbogus = true\n")
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
-        self.assertNotIn("bogus", cfg.git)             # bogus dropped; render is silent
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
+        self.assertNotIn("bogus", cfg.git)  # bogus dropped; render is silent
 
 
 class TestWorktreeSegmentToggle(unittest.TestCase):
@@ -2268,61 +2747,88 @@ class TestWorktreeSegmentToggle(unittest.TestCase):
 
     def test_worktree_segment_off_by_default(self):
         # alt_git_worktree is opt-in (OFF by default) since the alt_* default flip.
-        self.assertIs(common_types.SEGMENTS.get("alt_git_worktree"), False)
+        self.assertIs(claude_host.SEGMENTS.get("alt_git_worktree"), False)
         cfg = common_config.cfg_load_config(
-            {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
+            {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"}, claude_host.SPEC
+        )
         self.assertFalse(cfg.segments["alt_git_worktree"])
 
     def test_worktree_segment_disable_via_toml(self):
         path = self._write("[segments]\nalt_git_worktree = false\n")
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
         self.assertFalse(cfg.segments["alt_git_worktree"])
 
     def test_worktree_segment_disable_via_env(self):
-        env = {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h",
-               "CC_AI_KIT_SEGMENT_ALT_GIT_WORKTREE": "0"}
-        self.assertFalse(common_config.cfg_load_config(env).segments["alt_git_worktree"])
+        env = {
+            "CC_AI_KIT_CONFIG_FILE": "/no/such.toml",
+            "HOME": "/h",
+            "CC_AI_KIT_SEGMENT_ALT_GIT_WORKTREE": "0",
+        }
+        self.assertFalse(
+            common_config.cfg_load_config(env, claude_host.SPEC).segments["alt_git_worktree"]
+        )
 
 
 class TestRenderWithConfig(unittest.TestCase):
     def test_pack_line_honors_cfg_segments(self):
-        cfg = common_types.Config(segments={**common_types.SEGMENTS, "alt_time_clock": False},
-                        layout=list(common_types.LAYOUT), palette={}, ramps={})
+        cfg = common_types.Config(
+            segments={**claude_host.SEGMENTS, "alt_time_clock": False},
+            layout=list(claude_host.LAYOUT),
+            palette={},
+            ramps={},
+        )
         out = strip(_pack(["model", "alt_time_clock"], _data(), 200, cfg))
         self.assertNotIn("⏰", out)
         self.assertIn("Opus 4.8", out)
 
     def test_render_honors_cfg_layout(self):
-        cfg = common_types.Config(segments=dict(common_types.SEGMENTS),
-                        layout=[common_types.Line(0, ["model"])], palette={}, ramps={})
-        lines = claude_host.core_render(_data(), cfg)
+        cfg = common_types.Config(
+            segments=dict(claude_host.SEGMENTS),
+            layout=[common_types.Line(0, ["model"])],
+            palette={},
+            ramps={},
+        )
+        lines = common_render.core_render(_data(), claude_host.HOST, cfg)
         self.assertEqual(len(lines), 1)
         self.assertIn("Opus 4.8", strip(lines[0]))
 
     def test_render_default_cfg_unchanged(self):
         # No cfg arg -> same as today (three rows when tall+wide).
-        self.assertEqual(len(claude_host.core_render(_data())), 3)
+        self.assertEqual(len(common_render.core_render(_data(), claude_host.HOST)), 3)
 
 
 class TestMainUsesConfig(unittest.TestCase):
     def _run_main(self, raw, env):
         from contextlib import redirect_stdout
+
         buf = io.StringIO()
-        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))),\
-             mock.patch.object(sys, "argv", ["status-line.py"]),\
-             mock.patch.dict(os.environ, env, clear=True),\
-             redirect_stdout(buf):
-            claude_host.main()
+        with (
+            mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))),
+            mock.patch.object(sys, "argv", ["status-line.py"]),
+            mock.patch.dict(os.environ, env, clear=True),
+            redirect_stdout(buf),
+        ):
+            common_render.main(claude_host.HOST)
         return buf.getvalue()
 
     def test_segment_hidden_via_env(self):
-        raw = {"workspace": {"current_dir": "/tmp"}, "model": {"display_name": "Opus"},
-               "context_window": {"used_percentage": 10}}
+        raw = {
+            "workspace": {"current_dir": "/tmp"},
+            "model": {"display_name": "Opus"},
+            "context_window": {"used_percentage": 10},
+        }
         # PATH is preserved: build_data shells out to `git` (unguarded), and
         # clear=True would otherwise strip it and crash main().
-        env = {"HOME": "/tmp", "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50",
-               "PATH": os.environ.get("PATH", ""),
-               "CC_AI_KIT_SEGMENT_ALT_TIME_CLOCK": "0", "CC_AI_KIT_CONFIG_FILE": "/no/such.toml"}
+        env = {
+            "HOME": "/tmp",
+            "STATUSLINE_COLS": "200",
+            "STATUSLINE_LINES": "50",
+            "PATH": os.environ.get("PATH", ""),
+            "CC_AI_KIT_SEGMENT_ALT_TIME_CLOCK": "0",
+            "CC_AI_KIT_CONFIG_FILE": "/no/such.toml",
+        }
         out = strip(self._run_main(raw, env))
         self.assertNotIn("⏰", out)
         self.assertIn("Opus", out)
@@ -2337,21 +2843,28 @@ class TestResolveLayout(unittest.TestCase):
 
     def test_no_line_keeps_default_layout(self):
         cfg = common_config.cfg_load_config(
-            {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
-        self.assertEqual(cfg.layout, list(common_types.LAYOUT))
+            {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"}, claude_host.SPEC
+        )
+        self.assertEqual(cfg.layout, list(claude_host.LAYOUT))
 
     def test_line_replaces_layout(self):
         path = self._write(
             '[[line]]\nmin_rows = 0\nsegments = ["path", "model"]\n'
-            '[[line]]\nmin_rows = 25\nsegments = ["context"]\n')
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
-        self.assertEqual(cfg.layout,
-                         [common_types.Line(
-                             0, ["path", "model"]), common_types.Line(25, ["context"])])
+            '[[line]]\nmin_rows = 25\nsegments = ["context"]\n'
+        )
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
+        self.assertEqual(
+            cfg.layout,
+            [common_types.Line(0, ["path", "model"]), common_types.Line(25, ["context"])],
+        )
 
     def test_line_missing_min_rows_defaults_zero(self):
         path = self._write('[[line]]\nsegments = ["path"]\n')
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
         self.assertEqual(cfg.layout, [common_types.Line(0, ["path"])])
 
 
@@ -2364,27 +2877,42 @@ class TestPaletteFromConfig(unittest.TestCase):
 
     def test_palette_parsed_into_config(self):
         path = self._write('[palette]\nBLUE = "1;34"\n')
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
         self.assertEqual(cfg.palette, {"BLUE": "1;34"})
 
     def test_unknown_palette_key_dropped(self):
         path = self._write('[palette]\nNOTACOLOR = "1;34"\n')
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
         self.assertEqual(cfg.palette, {})
 
     def test_main_applies_palette(self):
         from contextlib import redirect_stdout
+
         path = self._write('[palette]\nBLUE = "1;34"\n')
-        raw = {"workspace": {"current_dir": "/tmp"}, "model": {"display_name": "Opus"},
-               "context_window": {"used_percentage": 10}}
-        env = {"HOME": "/tmp", "STATUSLINE_COLS": "200", "STATUSLINE_LINES": "50",
-               "PATH": os.environ.get("PATH", ""),  # keep PATH so git in build_data resolves
-               "CC_AI_KIT_CONFIG_FILE": path}
+        raw = {
+            "workspace": {"current_dir": "/tmp"},
+            "model": {"display_name": "Opus"},
+            "context_window": {"used_percentage": 10},
+        }
+        env = {
+            "HOME": "/tmp",
+            "STATUSLINE_COLS": "200",
+            "STATUSLINE_LINES": "50",
+            "PATH": os.environ.get("PATH", ""),  # keep PATH so git in build_data resolves
+            "CC_AI_KIT_CONFIG_FILE": path,
+        }
         buf = io.StringIO()
-        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))),\
-             mock.patch.object(sys, "argv", ["status-line.py"]),\
-             mock.patch.dict(os.environ, env, clear=True), redirect_stdout(buf):
-            claude_host.main()
+        with (
+            mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))),
+            mock.patch.object(sys, "argv", ["status-line.py"]),
+            mock.patch.dict(os.environ, env, clear=True),
+            redirect_stdout(buf),
+        ):
+            common_render.main(claude_host.HOST)
         # path segment is BLUE; overridden blue (1;34) must appear in the raw output.
         self.assertIn("\033[1;34m", buf.getvalue())
 
@@ -2413,8 +2941,8 @@ class TestSampleRecipe(unittest.TestCase):
     def test_uncommented_matches_internal_defaults(self):
         parsed = tomllib.loads(self._uncomment())
         self.assertEqual(parsed.get("version"), 1)
-        self.assertEqual(parsed.get("segments"), dict(common_types.SEGMENTS))
-        want = [{"min_rows": ln.min_rows, "segments": ln.segments} for ln in common_types.LAYOUT]
+        self.assertEqual(parsed.get("segments"), dict(claude_host.SEGMENTS))
+        want = [{"min_rows": ln.min_rows, "segments": ln.segments} for ln in claude_host.LAYOUT]
         self.assertEqual(parsed.get("line"), want)
         # The [palette] block documents every overridable color with its real
         # default; assert it so the recipe can't silently drift from the code.
@@ -2422,7 +2950,7 @@ class TestSampleRecipe(unittest.TestCase):
         # [ramp.*] blocks document the real default tables.
         want_ramps = {
             band: {str(thr): spec for thr, spec in pairs}
-            for band, pairs in common_types.RAMP_DEFAULTS.items()
+            for band, pairs in claude_host.RAMP_DEFAULTS_CLAUDE.items()
         }
         self.assertEqual(parsed.get("ramp"), want_ramps)
         # [git] knobs document their real defaults too.
@@ -2458,11 +2986,14 @@ class TestParseColor(unittest.TestCase):
     def test_modifiers_canonical_order(self):
         # underline(4)+bold(1) -> ascending 1;4 regardless of input order
         self.assertEqual(
-            common_types.util_parse_color("RED+underline+bold", self.PAL), "\033[1;4;31m")
+            common_types.util_parse_color("RED+underline+bold", self.PAL), "\033[1;4;31m"
+        )
 
     def test_all_modifiers(self):
-        self.assertEqual(common_types.util_parse_color("RED+bold+dim+italic+underline", self.PAL),
-                         "\033[1;2;3;4;31m")
+        self.assertEqual(
+            common_types.util_parse_color("RED+bold+dim+italic+underline", self.PAL),
+            "\033[1;2;3;4;31m",
+        )
 
     def test_unknown_name_is_none(self):
         self.assertIsNone(common_types.util_parse_color("NOTACOLOR", self.PAL))
@@ -2475,7 +3006,7 @@ class TestParseColor(unittest.TestCase):
 
     def test_bad_hex_is_none(self):
         self.assertIsNone(common_types.util_parse_color("#zzz"))
-        self.assertIsNone(common_types.util_parse_color("#12345"))   # 5 nibbles, not 3/6/8
+        self.assertIsNone(common_types.util_parse_color("#12345"))  # 5 nibbles, not 3/6/8
 
     def test_empty_is_none(self):
         self.assertIsNone(common_types.util_parse_color(""))
@@ -2494,7 +3025,7 @@ class TestParseThreshold(unittest.TestCase):
     def test_byte_suffixes(self):
         self.assertEqual(common_types.util_parse_threshold("512k"), 512 * 1024)
         self.assertEqual(common_types.util_parse_threshold("5M"), 5 * 1024 * 1024)
-        self.assertEqual(common_types.util_parse_threshold("1G"), 1024 ** 3)
+        self.assertEqual(common_types.util_parse_threshold("1G"), 1024**3)
 
     def test_time_suffixes(self):
         # render_time thresholds resolve to nanoseconds
@@ -2508,68 +3039,78 @@ class TestParseThreshold(unittest.TestCase):
         with self.assertRaises(ValueError):
             common_types.util_parse_threshold("nonsense")
         with self.assertRaises(ValueError):
-            common_types.util_parse_threshold("5MB")   # only single-letter k/M/G suffix
+            common_types.util_parse_threshold("5MB")  # only single-letter k/M/G suffix
 
 
 class TestTheme(unittest.TestCase):
     def test_c_resolves_and_memoizes(self):
-        t = common_render.core_default_theme()
+        t = common_render.core_default_theme(claude_host.HOST)
         first = t.c("RED")
         self.assertTrue(first.startswith("\033["))
-        self.assertEqual(t.c("RED"), first)          # same object/value, cached
+        self.assertEqual(t.c("RED"), first)  # same object/value, cached
         self.assertIn("RED", t._cache)
 
     def test_c_modifier(self):
-        t = common_render.core_default_theme()
+        t = common_render.core_default_theme(claude_host.HOST)
         self.assertEqual(t.c("RED+bold"), common_types.util_parse_color("RED+bold", t.palette))
 
     def test_c_invalid_is_empty_string(self):
-        t = common_render.core_default_theme()
-        self.assertEqual(t.c("NOTACOLOR"), "")        # never raises, no color
+        t = common_render.core_default_theme(claude_host.HOST)
+        self.assertEqual(t.c("NOTACOLOR"), "")  # never raises, no color
 
 
 class TestBuildTheme(unittest.TestCase):
     def _cfg(self, palette=None, ramps=None):
         return common_types.Config(
-            segments=dict(common_types.SEGMENTS), layout=list(common_types.LAYOUT),
-                         palette=palette or {}, ramps=ramps or {})
+            segments=dict(claude_host.SEGMENTS),
+            layout=list(claude_host.LAYOUT),
+            palette=palette or {},
+            ramps=ramps or {},
+        )
 
     def test_palette_merges_over_defaults(self):
-        t = common_render.core_build_theme(self._cfg(palette={"BLUE": "1;34"}))
+        t = common_render.core_build_theme(self._cfg(palette={"BLUE": "1;34"}), claude_host.HOST)
         self.assertEqual(t.palette["BLUE"], "1;34")
         self.assertEqual(t.palette["RED"], common_types.PALETTE_DEFAULTS["RED"])  # untouched
 
     def test_palette_hex_override_resolved_to_params(self):
-        t = common_render.core_build_theme(self._cfg(palette={"BLUE": "#3399ff"}))
+        t = common_render.core_build_theme(self._cfg(palette={"BLUE": "#3399ff"}), claude_host.HOST)
         self.assertEqual(t.palette["BLUE"], "38;2;51;153;255")
 
     def test_bad_palette_value_keeps_default(self):
-        t = common_render.core_build_theme(self._cfg(palette={"BLUE": "#zzz"}))
+        t = common_render.core_build_theme(self._cfg(palette={"BLUE": "#zzz"}), claude_host.HOST)
         self.assertEqual(t.palette["BLUE"], common_types.PALETTE_DEFAULTS["BLUE"])
 
     def test_ramp_replaced_whole(self):
-        t = common_render.core_build_theme(self._cfg(ramps={"rate": {"50": "GREEN", "inf": "RED"}}))
-        self.assertEqual([c for _, c in t.ramps["rate"]],
-                         [t.c("GREEN"), t.c("RED")])
+        t = common_render.core_build_theme(
+            self._cfg(ramps={"rate": {"50": "GREEN", "inf": "RED"}}), claude_host.HOST
+        )
+        self.assertEqual([c for _, c in t.ramps["rate"]], [t.c("GREEN"), t.c("RED")])
         self.assertEqual([ceil for ceil, _ in t.ramps["rate"]], [50, float("inf")])
 
     def test_unspecified_ramp_keeps_default(self):
-        t = common_render.core_build_theme(self._cfg(ramps={"rate": {"inf": "RED"}}))
-        self.assertEqual(len(t.ramps["context"]), len(common_types.RAMP_DEFAULTS["context"]))
+        t = common_render.core_build_theme(
+            self._cfg(ramps={"rate": {"inf": "RED"}}), claude_host.HOST
+        )
+        self.assertEqual(len(t.ramps["context"]), len(claude_host.RAMP_DEFAULTS_CLAUDE["context"]))
 
     def test_bad_band_color_falls_back_to_default_band(self):
         # context default band at ceil 10 is WHITE; a bad override color for that
         # band falls back to the default band's resolved color.
         bad = {"10": "NOPE", "inf": "RED"}
-        t = common_render.core_build_theme(self._cfg(ramps={"context": bad}))
+        t = common_render.core_build_theme(self._cfg(ramps={"context": bad}), claude_host.HOST)
         self.assertEqual(t.ramps["context"][0], (10, t.c("WHITE")))
 
     def test_bad_threshold_keeps_whole_default_ramp(self):
-        t = common_render.core_build_theme(self._cfg(ramps={"context": {"oops": "RED"}}))
-        self.assertEqual(t.ramps["context"], common_render.core_default_theme().ramps["context"])
+        t = common_render.core_build_theme(
+            self._cfg(ramps={"context": {"oops": "RED"}}), claude_host.HOST
+        )
+        self.assertEqual(
+            t.ramps["context"], common_render.core_default_theme(claude_host.HOST).ramps["context"]
+        )
 
     def test_effort_derives_from_palette(self):
-        t = common_render.core_default_theme()
+        t = common_render.core_default_theme(claude_host.HOST)
         self.assertEqual(t.effort["low"][0], t.c("CYAN"))
         self.assertEqual(t.effort["max"][0], t.c("RED"))
         self.assertEqual(t.effort["low"][1].count("▁"), 1)
@@ -2586,23 +3127,28 @@ class TestRampFromConfig(unittest.TestCase):
 
     def test_ramp_parsed_into_config(self):
         path = self._write('[ramp.rate]\n50 = "GREEN"\ninf = "RED+bold"\n')
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
         self.assertEqual(cfg.ramps, {"rate": {"50": "GREEN", "inf": "RED+bold"}})
 
     def test_unknown_ramp_dropped(self):
         path = self._write('[ramp.bogus]\n10 = "RED"\n')
-        cfg = common_config.cfg_load_config({"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"})
+        cfg = common_config.cfg_load_config(
+            {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
+        )
         self.assertEqual(cfg.ramps, {})
 
     def test_no_ramp_block_is_empty(self):
         cfg = common_config.cfg_load_config(
-            {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"})
+            {"CC_AI_KIT_CONFIG_FILE": "/no/such.toml", "HOME": "/h"}, claude_host.SPEC
+        )
         self.assertEqual(cfg.ramps, {})
 
 
 class TestRendererRobustness(unittest.TestCase):
     def test_doctor_cmd_is_concrete(self):
-        cmd = common_render.core_doctor_cmd()
+        cmd = common_render.core_doctor_cmd("--doctor")
         # A copy-pasteable command, not a bare flag: ends with --doctor, names a
         # python executable, and references the sibling doctor script (introspection
         # moved out of the render module in Phase 4).
@@ -2618,9 +3164,10 @@ class TestRendererRobustness(unittest.TestCase):
         def good(data, avail, theme):
             del avail
             return "HELLO"
+
         ctx = _data()
         with mock.patch.dict(claude_host.BUILDERS, {"path": good}):
-            out = claude_host.core_safe_build("path", ctx, 40, THEME)
+            out = common_render.core_safe_build("path", ctx, 40, THEME, claude_host.BUILDERS)
         self.assertEqual(out, "HELLO")
         self.assertEqual(ctx.failed, set())
 
@@ -2628,22 +3175,24 @@ class TestRendererRobustness(unittest.TestCase):
         def boom(data, avail, theme):
             del avail
             raise RuntimeError("kaboom")
+
         ctx = _data()
         with mock.patch.dict(claude_host.BUILDERS, {"path": boom}):
-            out = claude_host.core_safe_build("path", ctx, 40, THEME)
+            out = common_render.core_safe_build("path", ctx, 40, THEME, claude_host.BUILDERS)
         self.assertIn("path", ctx.failed)
-        self.assertIn("path", strip(out))          # name shown when width allows
+        self.assertIn("path", strip(out))  # name shown when width allows
         self.assertLessEqual(common_types.util_visible_width(out), 40)
 
     def test_safe_build_bare_marker_when_no_room_for_name(self):
         def boom(data, avail, theme):
             del avail
             raise RuntimeError("x")
+
         ctx = _data()
         with mock.patch.dict(claude_host.BUILDERS, {"context": boom}):
-            out = claude_host.core_safe_build("context", ctx, 1, THEME)
+            out = common_render.core_safe_build("context", ctx, 1, THEME, claude_host.BUILDERS)
         self.assertIn("context", ctx.failed)
-        self.assertNotIn("context", strip(out))    # name dropped, icon kept
+        self.assertNotIn("context", strip(out))  # name dropped, icon kept
 
     def test_pack_line_survives_a_raising_pinned_builder(self):
         # "path" is PINNED — even when its builder raises, the line still renders
@@ -2651,56 +3200,82 @@ class TestRendererRobustness(unittest.TestCase):
         def boom(data, avail, theme):
             del avail
             raise ValueError("nope")
-        cfg = common_config.cfg_default_config()
+
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
+
         def ok(data, avail, theme):
             del avail
             return "CTX"
+
         ctx = _data()
         with mock.patch.dict(claude_host.BUILDERS, {"path": boom, "context": ok}):
             line = _pack(["path", "context"], ctx, 80, cfg, THEME)
         self.assertIn("path", ctx.failed)
-        self.assertIn("CTX", strip(line))          # the healthy segment still shows
+        self.assertIn("CTX", strip(line))  # the healthy segment still shows
 
     def test_diagnostic_line_none_when_no_failures(self):
-        self.assertIsNone(common_render.core_diagnostic_line(set()))
+        self.assertIsNone(
+            common_render.core_diagnostic_line(set(), common_render.core_doctor_cmd("--doctor"))
+        )
 
     def test_diagnostic_line_lists_failures_and_doctor(self):
-        line = strip(common_render.core_diagnostic_line({"git", "context"}))
+        line = strip(
+            common_render.core_diagnostic_line(
+                {"git", "context"}, common_render.core_doctor_cmd("--doctor")
+            )
+        )
         self.assertIn("2 segments failed", line)
-        self.assertIn("context, git", line)         # sorted
+        self.assertIn("context, git", line)  # sorted
         self.assertIn("--doctor", line)
 
     def test_render_appends_diagnostic_on_builder_crash(self):
         def boom(data, avail, theme):
             del avail
             raise RuntimeError("x")
-        cfg = common_config.cfg_default_config()
+
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         layout = [common_types.Line(0, ["path"])]
         cfg = cfg._replace(layout=layout)
         with mock.patch.dict(claude_host.BUILDERS, {"path": boom}):
-            out = claude_host.core_render(_data(cols=80, lines=40), cfg, THEME)
+            out = common_render.core_render(_data(cols=80, lines=40), claude_host.HOST, cfg, THEME)
         self.assertTrue(any("--doctor" in strip(l) for l in out))
         self.assertTrue(any("path" in strip(l) for l in out))
 
     def test_render_no_diagnostic_when_healthy(self):
-        cfg = common_config.cfg_default_config()
-        out = claude_host.core_render(_data(cols=80, lines=40), cfg, THEME)
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
+        out = common_render.core_render(_data(cols=80, lines=40), claude_host.HOST, cfg, THEME)
         self.assertFalse(any("--doctor" in strip(l) for l in out))
 
+    def test_registry_rejects_duplicate_segment_id(self):
+        first = type("First", (), {"seg_x": staticmethod(lambda *_args: "a")})
+        second = type("Second", (), {"seg_x": staticmethod(lambda *_args: "b")})
+        with self.assertRaisesRegex(ValueError, "seg_x|duplicate segment id: x"):
+            common_render.core_discover_builders(first, second)
+
     def test_safe_render_returns_diagnostic_on_catastrophic_failure(self):
-        cfg = common_config.cfg_default_config()
-        theme = THEME
-        with mock.patch.object(claude_host, "core_build_context", side_effect=RuntimeError("boom")):
-            out = claude_host.safe_render({}, os.environ, cfg, theme, 0)
+        with mock.patch.object(
+            claude_payload, "core_build_context", side_effect=RuntimeError("boom")
+        ) as adapter:
+            out = common_render.safe_render(claude_host.HOST, {}, os.environ, 0)
+        adapter.assert_called_once()
         self.assertEqual(len(out), 1)
         self.assertIn("status-line error", strip(out[0]))
         self.assertIn("--doctor", strip(out[0]))
 
     def test_safe_render_normal_path(self):
-        cfg = common_config.cfg_default_config()
-        out = claude_host.safe_render({}, os.environ, cfg, THEME, 0)
+        out = common_render.safe_render(claude_host.HOST, {}, os.environ, 0)
         self.assertIsInstance(out, list)
         self.assertFalse(any("status-line error" in strip(l) for l in out))
+
+    def test_entry_bad_layout_renders_error_line(self):
+        with tempfile.TemporaryDirectory(prefix="bad-layout-") as root:
+            os.makedirs(os.path.join(root, "home"))
+            with open(os.path.join(root, "entry.toml"), "w", encoding="utf-8") as stream:
+                stream.write('[[line]]\nmin_rows = "x"\nsegments = ["path"]\n')
+            output = run_entry(root, "{}")
+        plain = strip(output).strip()
+        self.assertTrue(plain.startswith("⚠ status-line error"), plain)
+        self.assertEqual(len(output.splitlines()), 1)
 
     # A fresh /clear session sends context_window/cost PRESENT but with null inner
     # fields (no tokens/cost accrued yet). dict.get(k, default) returns None for a
@@ -2711,14 +3286,21 @@ class TestRendererRobustness(unittest.TestCase):
         "workspace": {"current_dir": "."},
         "transcript_path": "",
         "context_window": {"used_percentage": None, "context_window_size": None},
-        "cost": {"total_lines_added": None, "total_lines_removed": None,
-                 "total_cost_usd": None, "total_duration_ms": None,
-                 "total_api_duration_ms": None},
+        "cost": {
+            "total_lines_added": None,
+            "total_lines_removed": None,
+            "total_cost_usd": None,
+            "total_duration_ms": None,
+            "total_api_duration_ms": None,
+        },
     }
 
     def test_build_data_tolerates_present_but_null_fields(self):
         data, _cols, _lines = _ctx_from_env(
-            dict(self._NEW_SESSION_RAW), os.environ, common_config.cfg_default_config())
+            dict(self._NEW_SESSION_RAW),
+            os.environ,
+            common_config.cfg_default_config(claude_host.SPEC),
+        )
         self.assertEqual(data.context_pct, 0)
         self.assertEqual(data.context_max, 0)
         self.assertEqual(data.added, 0)
@@ -2728,12 +3310,13 @@ class TestRendererRobustness(unittest.TestCase):
         self.assertEqual(data.api_ms, 0)
 
     def test_render_new_session_no_error_no_warn(self):
-        cfg = common_config.cfg_default_config()
-        out = claude_host.safe_render(dict(self._NEW_SESSION_RAW), os.environ, cfg, THEME, 0)
+        out = common_render.safe_render(
+            claude_host.HOST, dict(self._NEW_SESSION_RAW), os.environ, 0
+        )
         text = "\n".join(strip(l) for l in out)
         self.assertNotIn("status-line error", text)
-        self.assertNotIn("⚠", text)        # no per-segment crashes either
-        self.assertTrue(text.strip())       # and the bar is not blank
+        self.assertNotIn("⚠", text)  # no per-segment crashes either
+        self.assertTrue(text.strip())  # and the bar is not blank
 
 
 class TestRenderDataLazy(unittest.TestCase):
@@ -2744,27 +3327,27 @@ class TestRenderDataLazy(unittest.TestCase):
     def test_git_probe_deferred_to_render_and_runs_once(self):
         snap = common_types.GitSnapshot(True, "main", "modified", False, "")
         raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s"}
-        cfg = common_config.cfg_default_config()
-        theme = common_render.core_build_theme(cfg)
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
+        theme = common_render.core_build_theme(cfg, claude_host.HOST)
         with mock.patch.object(common_probe, "probe_git_snapshot", return_value=snap) as gs:
             data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
             self.assertEqual(gs.call_count, 0, "git probe must NOT run during build_data")
-            claude_host.core_render(data, cfg, theme)
+            common_render.core_render(data, claude_host.HOST, cfg, theme)
             self.assertEqual(gs.call_count, 1, "git probe runs exactly once during render")
 
     def test_disabled_git_segments_skip_the_probe(self):
         raw = {"workspace": {"current_dir": "/repo"}}
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         # path is now also a git consumer (renders the project-root name), so
         # zero git probes requires disabling it too, not just the git_* segments.
         cfg.segments["path"] = False
         cfg.segments["git_branch"] = False
         cfg.segments["git_dirty"] = False
         cfg.segments["alt_git_worktree"] = False
-        theme = common_render.core_build_theme(cfg)
+        theme = common_render.core_build_theme(cfg, claude_host.HOST)
         with mock.patch.object(common_probe, "probe_git_snapshot") as gs:
             data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
-            claude_host.core_render(data, cfg, theme)
+            common_render.core_render(data, claude_host.HOST, cfg, theme)
             self.assertEqual(gs.call_count, 0, "no git-consuming segment enabled => no git probe")
 
 
@@ -2774,21 +3357,21 @@ class TestSlowestTruthful(unittest.TestCase):
 
     def test_slowest_captures_probe_cost_not_microseconds(self):
         raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s"}
-        cfg = common_config.cfg_default_config()
-        theme = common_render.core_build_theme(cfg)
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
+        theme = common_render.core_build_theme(cfg, claude_host.HOST)
 
-        def slow_git(*_a, **_k):                 # a 20ms git status
+        def slow_git(*_a, **_k):  # a 20ms git status
             time.sleep(0.02)
             return common_types.GitSnapshot(True, "main", "modified", False, "")
 
         with mock.patch.object(common_probe, "probe_git_snapshot", side_effect=slow_git):
             data, _cols, _lines = _ctx_from_env(raw, {"HOME": "/h"}, cfg)
-            claude_host.core_render(data, cfg, theme)
+            common_render.core_render(data, claude_host.HOST, cfg, theme)
         name, ns = data.slowest
         # path renders first in line order and is now also a git consumer, so
         # it — not git_branch — is the one that actually pays the probe cost.
         self.assertIn(name, ("path", "git_branch", "git_dirty", "alt_git_worktree"))
-        self.assertGreater(ns, 1_000_000)                     # >1ms, not µs
+        self.assertGreater(ns, 1_000_000)  # >1ms, not µs
 
 
 class TestTwoPassLayout(unittest.TestCase):
@@ -2797,29 +3380,32 @@ class TestTwoPassLayout(unittest.TestCase):
     last on its line and sits adjacent to render_time by default."""
 
     def _diag_line(self):
-        raw = {"workspace": {"current_dir": "/repo"}, "session_id": "s",
-               "cost": {"total_cost_usd": 0.5}}
-        cfg = common_config.cfg_default_config()
-        theme = common_render.core_build_theme(cfg)
-        with mock.patch.object(common_probe, "probe_git_snapshot",
-                               return_value=common_types.GitSnapshot(
-                                   True, "main", "modified", False, "")):
-            data, _c, _l = _ctx_from_env(raw, {"HOME": "/h"}, cfg,
-                                         t_start=time.perf_counter_ns())
-            out = claude_host.core_render(data, cfg, theme)
+        raw = {
+            "workspace": {"current_dir": "/repo"},
+            "session_id": "s",
+            "cost": {"total_cost_usd": 0.5},
+        }
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
+        theme = common_render.core_build_theme(cfg, claude_host.HOST)
+        with mock.patch.object(
+            common_probe,
+            "probe_git_snapshot",
+            return_value=common_types.GitSnapshot(True, "main", "modified", False, ""),
+        ):
+            data, _c, _l = _ctx_from_env(raw, {"HOME": "/h"}, cfg, t_start=time.perf_counter_ns())
+            out = common_render.core_render(data, claude_host.HOST, cfg, theme)
         return next(strip(l) for l in out if "⏱" in strip(l))
 
     def test_slowest_adjacent_to_render_time(self):
         diag = self._diag_line()
         i, j = diag.index("⏱"), diag.index("🐌")
-        self.assertGreater(j, i)              # slowest comes after render_time
-        self.assertNotIn("📊", diag[i:j])     # context not wedged between them
+        self.assertGreater(j, i)  # slowest comes after render_time
+        self.assertNotIn("📊", diag[i:j])  # context not wedged between them
 
     def test_slowest_not_forced_last_in_layout(self):
-        line = next(l for l in common_types.LAYOUT if "slowest" in l.segments)
+        line = next(l for l in claude_host.LAYOUT if "slowest" in l.segments)
         self.assertNotEqual(line.segments[-1], "slowest")
-        self.assertEqual(line.segments.index("slowest"),
-                         line.segments.index("render_time") + 1)
+        self.assertEqual(line.segments.index("slowest"), line.segments.index("render_time") + 1)
 
 
 class TestGoldenOutput(unittest.TestCase):
@@ -2835,36 +3421,41 @@ class TestGoldenOutput(unittest.TestCase):
 
     @contextlib.contextmanager
     def _deterministic(self):
-        snap = common_types.GitSnapshot(in_repo=True, branch="main", dirty="modified",
-                              is_worktree=False, wt_name="")
-        with mock.patch.object(time, "strftime", return_value="14:30"),\
-             mock.patch.object(time, "time", return_value=NOW),\
-             mock.patch.object(common_probe, "probe_git_snapshot", return_value=snap),\
-             mock.patch.object(claude_probes, "probe_rss_bytes", return_value=448_790_528),\
-             mock.patch.object(claude_probes, "probe_transcript_bytes", return_value=305_000),\
-             mock.patch.object(claude_probes, "probe_current_todo", return_value=(None, None)),\
-             mock.patch.object(claude_probes, "probe_effort_setting_is_auto", return_value=False):
+        snap = common_types.GitSnapshot(
+            in_repo=True, branch="main", dirty="modified", is_worktree=False, wt_name=""
+        )
+        with (
+            mock.patch.object(time, "strftime", return_value="14:30"),
+            mock.patch.object(time, "time", return_value=NOW),
+            mock.patch.object(common_probe, "probe_git_snapshot", return_value=snap),
+            mock.patch.object(claude_probes, "probe_rss_bytes", return_value=448_790_528),
+            mock.patch.object(claude_probes, "probe_transcript_bytes", return_value=305_000),
+            mock.patch.object(claude_probes, "probe_current_todo", return_value=(None, None)),
+            mock.patch.object(claude_probes, "probe_effort_setting_is_auto", return_value=False),
+        ):
             yield
 
     def _render_all(self):
         with open(os.path.join(self.GOLDEN, "inputs.json"), encoding="utf-8") as f:
             cases = json.load(f)
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         # The meta segments report the render itself and are inherently
         # non-deterministic (render_time / slowest durations) and are exactly what
         # the restructure changes — exclude them so the golden guards only the
         # non-meta segment output it is meant to protect.
         cfg.segments["render_time"] = False
         cfg.segments["slowest"] = False
-        theme = common_render.core_build_theme(cfg)
+        theme = common_render.core_build_theme(cfg, claude_host.HOST)
         blocks = []
         with self._deterministic():
             for c in cases:
-                env = {**self.ENV,
-                       "STATUSLINE_COLS": str(c["cols"]),
-                       "STATUSLINE_LINES": str(c["lines"])}
+                env = {
+                    **self.ENV,
+                    "STATUSLINE_COLS": str(c["cols"]),
+                    "STATUSLINE_LINES": str(c["lines"]),
+                }
                 data, _cols, _lines = _ctx_from_env(c["raw"], env, cfg, t_start=None)
-                out = claude_host.core_render(data, cfg, theme)
+                out = common_render.core_render(data, claude_host.HOST, cfg, theme)
                 blocks.append(f"### {c['name']}\n" + "\n".join(strip(l) for l in out))
         return "\n\n".join(blocks) + "\n"
 
@@ -2877,22 +3468,36 @@ class TestGoldenOutput(unittest.TestCase):
         with open(expected_path, encoding="utf-8") as f:
             self.assertEqual(actual, f.read())
 
+
 def entry_env(root):
     """Return the complete, isolated environment for an entry subprocess."""
-    return {"HOME": os.path.join(root, "home"), "PATH": os.environ.get("PATH", ""),
-            "XDG_CONFIG_HOME": os.path.join(root, "home", ".config"),
-            "XDG_CACHE_HOME": os.path.join(root, "home", ".cache"), "TZ": "UTC",
-            "LANG": "C.UTF-8", "GIT_CEILING_DIRECTORIES": root,
-            "STATUSLINE_COLS": "120", "STATUSLINE_LINES": "40",
-            "CC_AI_KIT_CONFIG_FILE": os.path.join(root, "entry.toml")}
+    return {
+        "HOME": os.path.join(root, "home"),
+        "PATH": os.environ.get("PATH", ""),
+        "XDG_CONFIG_HOME": os.path.join(root, "home", ".config"),
+        "XDG_CACHE_HOME": os.path.join(root, "home", ".cache"),
+        "TZ": "UTC",
+        "LANG": "C.UTF-8",
+        "GIT_CEILING_DIRECTORIES": root,
+        "STATUSLINE_COLS": "120",
+        "STATUSLINE_LINES": "40",
+        "CC_AI_KIT_CONFIG_FILE": os.path.join(root, "entry.toml"),
+    }
 
 
 def run_entry(root, payload_text, extra_env=None):
-    script = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tools",
-                                         "status-line.py"))
-    result = subprocess.run([sys.executable, "-S", script], input=payload_text,
-                            capture_output=True, text=True, cwd=root,
-                            env={**entry_env(root), **(extra_env or {})}, timeout=20)
+    script = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "tools", "status-line.py")
+    )
+    result = subprocess.run(
+        [sys.executable, "-S", script],
+        input=payload_text,
+        capture_output=True,
+        text=True,
+        cwd=root,
+        env={**entry_env(root), **(extra_env or {})},
+        timeout=20,
+    )
     if result.returncode:
         raise AssertionError(result.stderr)
     return result.stdout
@@ -2909,33 +3514,45 @@ def render_full_cases():
             stream.write('{"type":"user","message":{"content":"hello"}}\n')
             stream.write('{"type":"system","subtype":"compact_boundary"}\n')
         os.utime(transcript, (NOW - 300, NOW - 300))
-        cfg = common_config.cfg_default_config()
+        cfg = common_config.cfg_default_config(claude_host.SPEC)
         for key in cfg.segments:
             cfg.segments[key] = key not in {"render_time", "slowest"}
-        theme = common_render.core_build_theme(cfg)
+        theme = common_render.core_build_theme(cfg, claude_host.HOST)
         blocks = []
-        with (mock.patch.object(time, "strftime", return_value="14:30"),
-              mock.patch.object(time, "time", return_value=NOW),
-              mock.patch.object(claude_probes, "probe_rss_bytes", return_value=448_790_528)):
+        with (
+            mock.patch.object(time, "strftime", return_value="14:30"),
+            mock.patch.object(time, "time", return_value=NOW),
+            mock.patch.object(claude_probes, "probe_rss_bytes", return_value=448_790_528),
+        ):
             for case in cases:
                 git = common_types.GitSnapshot(**case["git"])
                 todo = ("in_progress", "Write the oracle") if case["raw"] else (None, None)
                 raw = json.loads(json.dumps(case["raw"]).replace("<TRANSCRIPT>", transcript))
-                env = {"HOME": "/home/dev", "TZ": "UTC", "LANG": "C.UTF-8",
-                       "STATUSLINE_COLS": str(case["cols"]),
-                       "STATUSLINE_LINES": str(case["lines"])}
+                env = {
+                    "HOME": "/home/dev",
+                    "TZ": "UTC",
+                    "LANG": "C.UTF-8",
+                    "STATUSLINE_COLS": str(case["cols"]),
+                    "STATUSLINE_LINES": str(case["lines"]),
+                }
                 old_cwd = os.getcwd()
-                cwd = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tmp",
-                                                   "p23", "01", "oracle-cwd"))
+                cwd = os.path.abspath(
+                    os.path.join(os.path.dirname(__file__), "..", "tmp", "p23", "01", "oracle-cwd")
+                )
                 os.makedirs(cwd, exist_ok=True)
-                with (mock.patch.object(common_probe, "probe_git_snapshot", return_value=git),
-                      mock.patch.object(claude_probes, "probe_current_todo", return_value=todo),
-                      mock.patch.object(claude_probes, "probe_effort_setting_is_auto",
-                                        return_value=case["effort_auto"])):
+                with (
+                    mock.patch.object(common_probe, "probe_git_snapshot", return_value=git),
+                    mock.patch.object(claude_probes, "probe_current_todo", return_value=todo),
+                    mock.patch.object(
+                        claude_probes,
+                        "probe_effort_setting_is_auto",
+                        return_value=case["effort_auto"],
+                    ),
+                ):
                     try:
                         os.chdir(cwd)
                         ctx, _, _ = _ctx_from_env(raw, env, cfg, t_start=None)
-                        output = claude_host.core_render(ctx, cfg, theme)
+                        output = common_render.core_render(ctx, claude_host.HOST, cfg, theme)
                     finally:
                         os.chdir(old_cwd)
                 blocks.append(f"### {case['name']}\n" + "\n".join(output))
@@ -2947,8 +3564,9 @@ def render_full_cases():
 
 class TestFullGoldenAnsi(unittest.TestCase):
     def test_matches_raw_ansi_golden_deterministically(self):
-        golden = os.path.join(os.path.dirname(__file__), "fixtures", "golden",
-                              "expected_full_ansi.txt")
+        golden = os.path.join(
+            os.path.dirname(__file__), "fixtures", "golden", "expected_full_ansi.txt"
+        )
         first = render_full_cases()
         self.assertEqual(first, render_full_cases())
         with open(golden, encoding="utf-8") as source:
@@ -2962,10 +3580,31 @@ class TestEntryRender(unittest.TestCase):
             os.makedirs(os.path.join(home, "proj"))
             transcript = os.path.join(home, "t.jsonl")
             with open(transcript, "w", encoding="utf-8") as stream:
-                stream.write(json.dumps({"type": "assistant", "message": {"content": [
-                    {"type": "tool_use", "name": "TodoWrite", "input": {"todos": [
-                        {"content": "Write oracle", "activeForm": "Writing oracle",
-                         "status": "in_progress"}]}}]}}) + "\n")
+                stream.write(
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "name": "TodoWrite",
+                                        "input": {
+                                            "todos": [
+                                                {
+                                                    "content": "Write oracle",
+                                                    "activeForm": "Writing oracle",
+                                                    "status": "in_progress",
+                                                }
+                                            ]
+                                        },
+                                    }
+                                ]
+                            },
+                        }
+                    )
+                    + "\n"
+                )
                 stream.write('{"type":"system","subtype":"compact_boundary"}\n')
             config = """[segments]
 path=true
@@ -2992,12 +3631,15 @@ alt_process_memory=false
 """
             with open(os.path.join(root, "entry.toml"), "w", encoding="utf-8") as stream:
                 stream.write(config)
-            with open(os.path.join(os.path.dirname(__file__), "fixtures", "golden",
-                                   "entry_payload.json"), encoding="utf-8") as stream:
+            with open(
+                os.path.join(os.path.dirname(__file__), "fixtures", "golden", "entry_payload.json"),
+                encoding="utf-8",
+            ) as stream:
                 payload = stream.read().replace("<ROOT>", root)
             actual = run_entry(root, payload)
-            golden = os.path.join(os.path.dirname(__file__), "fixtures", "golden",
-                                  "entry_render.txt")
+            golden = os.path.join(
+                os.path.dirname(__file__), "fixtures", "golden", "entry_render.txt"
+            )
             with open(golden, encoding="utf-8") as stream:
                 self.assertEqual(actual, stream.read())
 
@@ -3039,29 +3681,45 @@ alt_process_memory=false
             with open(config_path, "w", encoding="utf-8") as stream:
                 stream.write(config)
             provider = os.path.join(home, ".config", "ai-kit", "segments", "strict_probe")
-            script = (f"#!{sys.executable}\n"
-                      "# ai-kit-segment: line=3 after=chat_size id=strict_probe ttl=0\n"
-                      "import json, os, sys\n"
-                      "text = sys.stdin.read()\n"
-                      "record = {'stdin': text, 'env_keys': sorted(os.environ), "
-                      "'cwd_is_workspace': os.path.realpath(os.getcwd()) == "
-                      "os.path.realpath(json.loads(text)['workspace']['current_dir'])}\n"
-                      "json.dump(record, open(os.environ['STRICT_PROBE_OUT'], 'w'))\n"
-                      "print('probe')\n")
+            script = (
+                f"#!{sys.executable}\n"
+                "# ai-kit-segment: line=3 after=chat_size id=strict_probe ttl=0\n"
+                "import json, os, sys\n"
+                "text = sys.stdin.read()\n"
+                "record = {'stdin': text, 'env_keys': sorted(os.environ), "
+                "'cwd_is_workspace': os.path.realpath(os.getcwd()) == "
+                "os.path.realpath(json.loads(text)['workspace']['current_dir'])}\n"
+                "json.dump(record, open(os.environ['STRICT_PROBE_OUT'], 'w'))\n"
+                "print('probe')\n"
+            )
             with open(provider, "w", encoding="utf-8") as stream:
                 stream.write(script)
             os.chmod(provider, 0o755)
-            payload = {"model": {"id": "entry-model", "display_name": "Entry Model"},
-                       "workspace": {"current_dir": workspace},
-                       "transcript_path": transcript, "session_id": "strict-probe"}
+            payload = {
+                "model": {"id": "entry-model", "display_name": "Entry Model"},
+                "workspace": {"current_dir": workspace},
+                "transcript_path": transcript,
+                "session_id": "strict-probe",
+            }
             payload_text = json.dumps(payload)
             record_path = os.path.join(root, "probe.json")
-            env = {**entry_env(root), "CC_AI_KIT_CONFIG_FILE": config_path,
-                   "STRICT_PROBE_OUT": record_path}
-            script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
-                                                       "tools", "status-line.py"))
-            result = subprocess.run([sys.executable, "-S", script_path], input=payload_text,
-                                    capture_output=True, text=True, cwd=root, env=env, timeout=20)
+            env = {
+                **entry_env(root),
+                "CC_AI_KIT_CONFIG_FILE": config_path,
+                "STRICT_PROBE_OUT": record_path,
+            }
+            script_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "tools", "status-line.py")
+            )
+            result = subprocess.run(
+                [sys.executable, "-S", script_path],
+                input=payload_text,
+                capture_output=True,
+                text=True,
+                cwd=root,
+                env=env,
+                timeout=20,
+            )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("probe", result.stdout)
             with open(record_path, encoding="utf-8") as stream:
@@ -3069,14 +3727,16 @@ alt_process_memory=false
             cache_file = os.path.join(home, ".cache", "ai-kit", "segments", "strict_probe")
             with open(cache_file, encoding="utf-8") as stream:
                 cache_text = stream.read()
-            capture = {"stdin": record["stdin"].replace(root, "<TMP>"),
-                       "env_keys": record["env_keys"],
-                       "cwd_is_workspace": record["cwd_is_workspace"],
-                       "cache_relpath": os.path.relpath(cache_file,
-                                                       os.path.join(home, ".cache")),
-                       "cache_text": cache_text}
-            expected = os.path.join(os.path.dirname(__file__), "fixtures", "golden",
-                                    "strict_provider_capture.json")
+            capture = {
+                "stdin": record["stdin"].replace(root, "<TMP>"),
+                "env_keys": record["env_keys"],
+                "cwd_is_workspace": record["cwd_is_workspace"],
+                "cache_relpath": os.path.relpath(cache_file, os.path.join(home, ".cache")),
+                "cache_text": cache_text,
+            }
+            expected = os.path.join(
+                os.path.dirname(__file__), "fixtures", "golden", "strict_provider_capture.json"
+            )
             with open(expected, encoding="utf-8") as stream:
                 self.assertEqual(capture, json.load(stream))
 
@@ -3091,26 +3751,44 @@ class TestThinContext(unittest.TestCase):
 
     def test_no_single_consumer_probe_fields(self):
         ctx = _data()
-        for gone in ("ago", "effort_auto", "chat_bytes", "mem_bytes",
-                     "branch", "dirty", "is_worktree", "wt_name",
-                     "todo_state", "todo_text"):
-            self.assertNotIn(gone, type(ctx).__dict__,
-                             f"{gone} must no longer be a ctx member")
+        for gone in (
+            "ago",
+            "effort_auto",
+            "chat_bytes",
+            "mem_bytes",
+            "branch",
+            "dirty",
+            "is_worktree",
+            "wt_name",
+            "todo_state",
+            "todo_text",
+        ):
+            self.assertNotIn(gone, type(ctx).__dict__, f"{gone} must no longer be a ctx member")
 
 
 class TestGitProbeMemoized(unittest.TestCase):
     def test_probe_git_for_runs_once_per_render(self):
         calls = []
+
         def fake(work_dir, _conf):
             calls.append(work_dir)
-            return common_types.GitSnapshot(in_repo=True, branch="main", dirty="clean",
-                                  is_worktree=False, wt_name="")
+            return common_types.GitSnapshot(
+                in_repo=True, branch="main", dirty="clean", is_worktree=False, wt_name=""
+            )
+
         # Use a fresh context without pre-seeded probe_cache so the probe fires.
         ctx = claude_payload.core_build_context(
             raw={"workspace": {"current_dir": "/tmp"}},
-            config=common_config.cfg_default_config(), theme=THEME,
-            cols=200, lines=50, dim_assumed=False, t_start=None,
-            effort="high", home="/home/u", claude_dir="/home/u/.claude")
+            config=common_config.cfg_default_config(claude_host.SPEC),
+            theme=THEME,
+            cols=200,
+            lines=50,
+            dim_assumed=False,
+            t_start=None,
+            effort="high",
+            home="/home/u",
+            claude_dir="/home/u/.claude",
+        )
         with mock.patch.object(common_probe, "probe_git_snapshot", side_effect=fake):
             snap1 = common_probe.probe_git_for(ctx)
             snap2 = common_probe.probe_git_for(ctx)
@@ -3123,47 +3801,54 @@ class TestEnvConvention(unittest.TestCase):
     """FR-1.6/1.7/1.8: all config env reading funnels through one structure-aware reader."""
 
     def test_git_cache_ttl_via_convention(self):
-        cfg = common_config.cfg_load_config({"HOME": "/h", "CC_AI_KIT_GIT_CACHE_TTL": "42"})
+        cfg = common_config.cfg_load_config(
+            {"HOME": "/h", "CC_AI_KIT_GIT_CACHE_TTL": "42"}, claude_host.SPEC
+        )
         self.assertEqual(cfg.git["cache_ttl"], 42)
 
     def test_segment_toggle_via_convention(self):
-        cfg = common_config.cfg_load_config({"HOME": "/h", "CC_AI_KIT_SEGMENT_GIT_BRANCH": "false"})
+        cfg = common_config.cfg_load_config(
+            {"HOME": "/h", "CC_AI_KIT_SEGMENT_GIT_BRANCH": "false"}, claude_host.SPEC
+        )
         self.assertFalse(cfg.segments["git_branch"])
 
     def test_external_dir_via_convention(self):
-        cfg = common_config.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_DIR": "/x/seg"})
+        cfg = common_config.cfg_load_config(
+            {"HOME": "/h", "CC_AI_KIT_EXTERNAL_DIR": "/x/seg"}, claude_host.SPEC
+        )
         # cfg.external is an ExternalConf; FR-1.6 routes EXTERNAL_DIR -> external.dir
         self.assertEqual(cfg.external.dir, "/x/seg")
 
     def test_external_cache_ttl_via_convention(self):
-        cfg = common_config.cfg_load_config({"HOME": "/h", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "30"})
+        cfg = common_config.cfg_load_config(
+            {"HOME": "/h", "CC_AI_KIT_EXTERNAL_CACHE_TTL": "30"}, claude_host.SPEC
+        )
         self.assertEqual(cfg.external.cache_ttl, 30)
+
 
 class TestAltSegmentsDefaultOff(unittest.TestCase):
     def test_every_alt_segment_defaults_off(self):
-        for key, val in common_types.SEGMENTS.items():
+        for key, val in claude_host.SEGMENTS.items():
             if key.startswith("alt_"):
                 self.assertFalse(val, f"{key} must default OFF (alt_* are opt-in)")
 
 
 class TestProcessMemoryRename(unittest.TestCase):
     def test_renamed_key_present_old_absent(self):
-        self.assertIn("alt_process_memory", common_types.SEGMENTS)
-        self.assertNotIn("alt_system_memory", common_types.SEGMENTS)
+        self.assertIn("alt_process_memory", claude_host.SEGMENTS)
+        self.assertNotIn("alt_system_memory", claude_host.SEGMENTS)
         self.assertTrue(hasattr(claude_segments, "seg_alt_process_memory"))
         self.assertFalse(hasattr(claude_segments, "seg_alt_system_memory"))
 
 
 class TestRendererHeaderIgnoresUIKeys(unittest.TestCase):
     def test_core_parser_ignores_name_description_icon_sample(self):
-        head = ["# ai-kit-segment: id=x line=1 icon=💻 name=N "
-                "description=D sample=S\n"]
+        head = ["# ai-kit-segment: id=x line=1 icon=💻 name=N description=D sample=S\n"]
         fields = common_config.core_parse_segment_header(head)
         self.assertEqual(fields.get("id"), "x")
         self.assertEqual(fields.get("line"), "1")
         for ui_key in ("name", "description", "icon", "sample"):
-            self.assertNotIn(ui_key, fields,
-                             f"renderer parser must ignore UI key {ui_key}")
+            self.assertNotIn(ui_key, fields, f"renderer parser must ignore UI key {ui_key}")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ Conventions parsed from the source:
   SHELL entrypoints ``main`` and ``safe_render`` (the SHELL block is now last,
   after ``seg_``) which are unprefixed by design.
 """
+
 import ast
 import hashlib
 import importlib.util
@@ -37,7 +38,7 @@ from typing import NamedTuple
 _TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
 if os.path.abspath(_TOOLS) not in sys.path:
     sys.path.insert(0, os.path.abspath(_TOOLS))
-import common_types
+import claude_host
 
 _AUDIT_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "statusline_split", "audit.md")
 _AUDIT_VOCABULARY = re.compile(
@@ -69,9 +70,11 @@ def audit_rows(text):
         if line.startswith("| ") and not line.startswith("| # |") and not line.startswith("|---"):
             cells = [cell.strip() for cell in line.strip("|").split("|")]
             if len(cells) == 13:
-                rows.append(AuditRow(
-                    int(cells[0]), cells[1], cells[2], int(cells[3]), cells[4], *cells[5:13]
-                ))
+                rows.append(
+                    AuditRow(
+                        int(cells[0]), cells[1], cells[2], int(cells[3]), cells[4], *cells[5:13]
+                    )
+                )
         elif ": " in line and not line.startswith("#"):
             key, value = line.split(": ", 1)
             headers[key] = value
@@ -86,88 +89,91 @@ def base_definitions(source):
             definitions.append((node.name, "function", node.lineno, node))
         elif isinstance(node, ast.ClassDef):
             definitions.append((node.name, "class", node.lineno, node))
-        elif isinstance(node, ast.Assign) and len(node.targets) == 1 \
-                and isinstance(node.targets[0], ast.Name):
+        elif (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
             definitions.append((node.targets[0].id, "assign", node.lineno, node))
     return definitions
 
 
 NONE = {
-    'AnnAssign': {'value'},
-    'Assert': {'msg'},
-    'Assign': {'type_comment'},
-    'AsyncFor': {'type_comment'},
-    'AsyncFunctionDef': {'returns', 'type_comment'},
-    'AsyncWith': {'type_comment'},
-    'Constant': {'kind'},
-    'ExceptHandler': {'name', 'type'},
-    'For': {'type_comment'},
-    'FormattedValue': {'format_spec'},
-    'FunctionDef': {'returns', 'type_comment'},
-    'ImportFrom': {'level', 'module'},
-    'Interpolation': {'format_spec'},
-    'MatchAs': {'name', 'pattern'},
-    'MatchMapping': {'rest'},
-    'MatchStar': {'name'},
-    'ParamSpec': {'default_value'},
-    'Raise': {'cause', 'exc'},
-    'Return': {'value'},
-    'Slice': {'step', 'lower', 'upper'},
-    'TypeVar': {'default_value', 'bound'},
-    'TypeVarTuple': {'default_value'},
-    'With': {'type_comment'},
-    'Yield': {'value'},
-    'alias': {'asname'},
-    'arg': {'annotation', 'type_comment'},
-    'arguments': {'kwarg', 'vararg'},
-    'keyword': {'arg'},
-    'match_case': {'guard'},
-    'withitem': {'optional_vars'},
+    "AnnAssign": {"value"},
+    "Assert": {"msg"},
+    "Assign": {"type_comment"},
+    "AsyncFor": {"type_comment"},
+    "AsyncFunctionDef": {"returns", "type_comment"},
+    "AsyncWith": {"type_comment"},
+    "Constant": {"kind"},
+    "ExceptHandler": {"name", "type"},
+    "For": {"type_comment"},
+    "FormattedValue": {"format_spec"},
+    "FunctionDef": {"returns", "type_comment"},
+    "ImportFrom": {"level", "module"},
+    "Interpolation": {"format_spec"},
+    "MatchAs": {"name", "pattern"},
+    "MatchMapping": {"rest"},
+    "MatchStar": {"name"},
+    "ParamSpec": {"default_value"},
+    "Raise": {"cause", "exc"},
+    "Return": {"value"},
+    "Slice": {"step", "lower", "upper"},
+    "TypeVar": {"default_value", "bound"},
+    "TypeVarTuple": {"default_value"},
+    "With": {"type_comment"},
+    "Yield": {"value"},
+    "alias": {"asname"},
+    "arg": {"annotation", "type_comment"},
+    "arguments": {"kwarg", "vararg"},
+    "keyword": {"arg"},
+    "match_case": {"guard"},
+    "withitem": {"optional_vars"},
 }
 LISTS = {
-    'Assign': {'targets'},
-    'AsyncFor': {'body', 'orelse'},
-    'AsyncFunctionDef': {'body', 'decorator_list', 'type_params'},
-    'AsyncWith': {'body', 'items'},
-    'BoolOp': {'values'},
-    'Call': {'args', 'keywords'},
-    'ClassDef': {'body', 'decorator_list', 'bases', 'keywords', 'type_params'},
-    'Compare': {'comparators', 'ops'},
-    'Delete': {'targets'},
-    'Dict': {'keys', 'values'},
-    'DictComp': {'generators'},
-    'ExceptHandler': {'body'},
-    'For': {'body', 'orelse'},
-    'FunctionDef': {'body', 'decorator_list', 'type_params'},
-    'FunctionType': {'argtypes'},
-    'GeneratorExp': {'generators'},
-    'Global': {'names'},
-    'If': {'body', 'orelse'},
-    'Import': {'names'},
-    'ImportFrom': {'names'},
-    'Interactive': {'body'},
-    'JoinedStr': {'values'},
-    'List': {'elts'},
-    'ListComp': {'generators'},
-    'Match': {'cases'},
-    'MatchClass': {'kwd_attrs', 'patterns', 'kwd_patterns'},
-    'MatchMapping': {'keys', 'patterns'},
-    'MatchOr': {'patterns'},
-    'MatchSequence': {'patterns'},
-    'Module': {'body', 'type_ignores'},
-    'Nonlocal': {'names'},
-    'Set': {'elts'},
-    'SetComp': {'generators'},
-    'TemplateStr': {'values'},
-    'Try': {'body', 'finalbody', 'handlers', 'orelse'},
-    'TryStar': {'body', 'finalbody', 'handlers', 'orelse'},
-    'Tuple': {'elts'},
-    'TypeAlias': {'type_params'},
-    'While': {'body', 'orelse'},
-    'With': {'body', 'items'},
-    'arguments': {'kw_defaults', 'posonlyargs', 'kwonlyargs', 'args', 'defaults'},
-    'comprehension': {'ifs'},
-    'match_case': {'body'},
+    "Assign": {"targets"},
+    "AsyncFor": {"body", "orelse"},
+    "AsyncFunctionDef": {"body", "decorator_list", "type_params"},
+    "AsyncWith": {"body", "items"},
+    "BoolOp": {"values"},
+    "Call": {"args", "keywords"},
+    "ClassDef": {"body", "decorator_list", "bases", "keywords", "type_params"},
+    "Compare": {"comparators", "ops"},
+    "Delete": {"targets"},
+    "Dict": {"keys", "values"},
+    "DictComp": {"generators"},
+    "ExceptHandler": {"body"},
+    "For": {"body", "orelse"},
+    "FunctionDef": {"body", "decorator_list", "type_params"},
+    "FunctionType": {"argtypes"},
+    "GeneratorExp": {"generators"},
+    "Global": {"names"},
+    "If": {"body", "orelse"},
+    "Import": {"names"},
+    "ImportFrom": {"names"},
+    "Interactive": {"body"},
+    "JoinedStr": {"values"},
+    "List": {"elts"},
+    "ListComp": {"generators"},
+    "Match": {"cases"},
+    "MatchClass": {"kwd_attrs", "patterns", "kwd_patterns"},
+    "MatchMapping": {"keys", "patterns"},
+    "MatchOr": {"patterns"},
+    "MatchSequence": {"patterns"},
+    "Module": {"body", "type_ignores"},
+    "Nonlocal": {"names"},
+    "Set": {"elts"},
+    "SetComp": {"generators"},
+    "TemplateStr": {"values"},
+    "Try": {"body", "finalbody", "handlers", "orelse"},
+    "TryStar": {"body", "finalbody", "handlers", "orelse"},
+    "Tuple": {"elts"},
+    "TypeAlias": {"type_params"},
+    "While": {"body", "orelse"},
+    "With": {"body", "items"},
+    "arguments": {"kw_defaults", "posonlyargs", "kwonlyargs", "args", "defaults"},
+    "comprehension": {"ifs"},
+    "match_case": {"body"},
 }
 
 
@@ -177,6 +183,7 @@ def _dump_hide_empty(node):
     The audit hashes were taken on Python 3.14, whose dump omits None defaults
     and empty lists. The uv test runner is 3.12 and has no show_empty flag.
     """
+
     def _format(node):
         if isinstance(node, ast.AST):
             cls = type(node).__name__
@@ -206,8 +213,6 @@ def ast_hash(node):
     return hashlib.sha256(dumped.encode()).hexdigest()[:12]
 
 
-
-
 def taint_map(source):
     """Compute pinned-vocabulary taint and name-reference propagation."""
     definitions = base_definitions(source)
@@ -235,7 +240,10 @@ def check_audit_against_base(rows, definitions):
     for position, (row, definition) in enumerate(zip(rows, definitions, strict=False), 1):
         name, kind, line, node = definition
         if row.number != position or (row.name, row.kind, row.base_line, row.base_ast) != (
-            name, kind, line, ast_hash(node)
+            name,
+            kind,
+            line,
+            ast_hash(node),
         ):
             violations.append(f"row {position} differs from base definition {name}")
     return violations
@@ -244,8 +252,11 @@ def check_audit_against_base(rows, definitions):
 def check_audit_reasons(rows):
     violations = []
     for row in rows:
-        if row.taint in {"seed", "prop"} and row.neutral == "y" \
-                and "taint-override:" not in row.reason:
+        if (
+            row.taint in {"seed", "prop"}
+            and row.neutral == "y"
+            and "taint-override:" not in row.reason
+        ):
             violations.append(f"row {row.number} needs a taint override")
         if row.taint == "-" and row.neutral == "n" and "data-source:" not in row.reason:
             violations.append(f"row {row.number} needs a data-source reason")
@@ -256,19 +267,22 @@ def check_audit_reasons(rows):
 
 def check_audit_columns(rows, modules):
     violations = []
-    valid_targets = set(modules) | {"common_types+claude_host"}
+    valid_targets = set(modules)
     for row in rows:
-        if row.stage not in {"1", "2", "3"} or row.module not in modules \
-                or row.target not in valid_targets or row.neutral not in {"y", "n"} \
-                or row.fate not in {"reused", "generalized", "split", "deleted"} \
-                or row.taint not in {"seed", "prop", "-"}:
+        if (
+            row.stage not in {"1", "2", "3"}
+            or row.module not in modules
+            or row.target not in valid_targets
+            or row.neutral not in {"y", "n"}
+            or row.fate not in {"reused", "generalized", "split", "deleted"}
+            or row.taint not in {"seed", "prop", "-"}
+        ):
             violations.append(f"row {row.number} has an invalid classification column")
     return violations
 
+
 # Load setup module for inventory tests.
-_SETUP_SPEC = importlib.util.spec_from_file_location(
-    "setup", os.path.join(_TOOLS, "setup.py")
-)
+_SETUP_SPEC = importlib.util.spec_from_file_location("setup", os.path.join(_TOOLS, "setup.py"))
 assert _SETUP_SPEC is not None and _SETUP_SPEC.loader is not None
 _SETUP_MOD = importlib.util.module_from_spec(_SETUP_SPEC)
 _SETUP_SPEC.loader.exec_module(_SETUP_MOD)
@@ -276,9 +290,6 @@ setup = _SETUP_MOD
 
 # Banner marker: "# ═══ N. ROLE — ..." — capture the block index and the role token.
 _BANNER_RE = re.compile(r"^#\s*═══\s*(\d+)\.\s*([A-Za-z_]+)")
-
-# Config env keys carry this prefix; only these are "config env" for rule 1.
-_CONFIG_ENV_PREFIX = "CC_AI_KIT_"
 
 # Block-index → expected role prefix for a top-level FunctionDef (rule 6).
 # Blocks 1 (DEFAULTS, data-only) and 9 (trailing doc) define no role functions;
@@ -297,8 +308,14 @@ _SHELL_ENTRYPOINTS = {"main", "safe_render"}
 
 # Doctor / introspection symbols that must NOT live in the render module (FR-7).
 _DOCTOR_SYMBOLS = {
-    "cmd_doctor", "cmd_check", "cmd_print_config", "validate_config_file",
-    "_DOCTOR_SAMPLE", "parse_args", "_dry_render_failures", "_ENV_HELP",
+    "cmd_doctor",
+    "cmd_check",
+    "cmd_print_config",
+    "validate_config_file",
+    "_DOCTOR_SAMPLE",
+    "parse_args",
+    "_dry_render_failures",
+    "_ENV_HELP",
     "_NO_CHECK",
 }
 
@@ -408,55 +425,20 @@ def _enclosing_funcdef_names(tree, target):
     return [f.name for f in reversed(enclosing)]
 
 
-def _config_env_literals(tree):
-    """Yield ``(node, key)`` for every string literal beginning with the config
-    env prefix that is read as an env lookup — either a ``Subscript`` key on a
-    Name/Attribute, or a string argument to a ``.get(...)`` call. These are the
-    config-env reads guarded by rule 1."""
-    for node in ast.walk(tree):
-        # env.get("CC_AI_KIT_...") / os.environ.get("CC_AI_KIT_...")
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
-                and node.func.attr == "get" and node.args:
-            arg = node.args[0]
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str) \
-                    and arg.value.startswith(_CONFIG_ENV_PREFIX):
-                yield node, arg.value
-        # env["CC_AI_KIT_..."] / os.environ["CC_AI_KIT_..."]
-        if isinstance(node, ast.Subscript):
-            key = node.slice
-            if isinstance(key, ast.Constant) and isinstance(key.value, str) \
-                    and key.value.startswith(_CONFIG_ENV_PREFIX):
-                yield node, key.value
-
-
-def check_config_env_in_cfg(tree):
-    """Rule 1 (reduced): the env reader is now STRUCTURAL. cfg_source_get projects
-    each typed path to its ``CC_AI_KIT_<...>`` name DYNAMICALLY (string built, then
-    ``env.get(name)``), so no function reads a *literal* config-env name — except the
-    bootstrap ``cfg_config_path``, which reads ``CC_AI_KIT_CONFIG_FILE`` before any
-    TOML loads (chicken-and-egg). This rule now guards only that exception: every
-    literal ``CC_AI_KIT_*`` read must live in ``cfg_config_path``, and the only such
-    literal is ``CC_AI_KIT_CONFIG_FILE``.
-
-    Runtime/third-party reads (``HOME``, ``XDG_*``, ``STATUSLINE_*``, ``COLUMNS``/
-    ``LINES``, ``CLAUDE_CONFIG_DIR``) carry no ``CC_AI_KIT_`` prefix and are never
-    matched (FR-1.8 whitelist).
-    """
-    bootstrap_names = {"CC_AI_KIT_CONFIG_FILE"}
+def check_host_prefix_literals(relpath, tree):
+    """Rule 1: host env-prefix code literals belong only in host modules."""
+    if not relpath.startswith("tools/") or not relpath.endswith(".py"):
+        return []
+    host_module = relpath.endswith("_host.py")
     violations = []
-    for node, key in _config_env_literals(tree):
-        owners = _enclosing_funcdef_names(tree, node)
-        if "cfg_config_path" not in owners:
-            where = owners[0] if owners else "<module level>"
-            violations.append(
-                f"config env {key!r} read at line {node.lineno} in {where} "
-                f"(only the cfg_config_path bootstrap may read a literal config-env name)"
-            )
-        elif key not in bootstrap_names:
-            violations.append(
-                f"unexpected literal config-env read {key!r} at line {node.lineno} "
-                f"(only {sorted(bootstrap_names)} is a recognized bootstrap name)"
-            )
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            continue
+        if (
+            node.value.startswith(("CC_AI_KIT_", "AI_KIT_CURSOR_", "AI_KIT_SEGMENT_"))
+            and not host_module
+        ):
+            violations.append(f"{relpath}:{node.lineno}: host prefix literal outside host module")
     return violations
 
 
@@ -495,8 +477,11 @@ def check_bookkeeping_readers(tree):
                 violations.append(
                     f"{func.name} reads bookkeeping .{node.attr} at line {node.lineno}"
                 )
-            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) \
-                    and node.id in _BOOKKEEPING_ATTRS:
+            elif (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Load)
+                and node.id in _BOOKKEEPING_ATTRS
+            ):
                 violations.append(
                     f"{func.name} reads bookkeeping Name {node.id} at line {node.lineno}"
                 )
@@ -540,8 +525,9 @@ def check_defaults_data_only(tree, source):
         )
 
     for func in _top_functions(tree):
-        if defaults_start <= func.lineno <= defaults_end \
-                and func.name.startswith(("cfg_", "probe_")):
+        if defaults_start <= func.lineno <= defaults_end and func.name.startswith(
+            ("cfg_", "probe_")
+        ):
             violations.append(
                 f"DEFAULTS block contains non-data def {func.name} at line {func.lineno}"
             )
@@ -602,14 +588,12 @@ def check_role_prefix_integrity(tree, source):
                 )
             continue
         expected = _BLOCK_PREFIX.get(index)
+        if role == "SHELL":
+            expected = None
         if expected is None:
-            violations.append(
-                f"{func.name} lives in non-function block {index}.{role}"
-            )
+            violations.append(f"{func.name} lives in non-function block {index}.{role}")
         elif not func.name.startswith(expected):
-            violations.append(
-                f"{func.name} (block {index}.{role}) lacks prefix {expected!r}"
-            )
+            violations.append(f"{func.name} (block {index}.{role}) lacks prefix {expected!r}")
     return violations
 
 
@@ -641,16 +625,18 @@ def check_no_shell_true(tree):
 # backstop that keeps one failure from blanking the status line or killing a TUI, or
 # (curated-config apply) from crashing a committed apply, where SPEC R13 says only warn.
 _CURATED_APPLY = "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/apply.py"
-_BROAD_EXCEPT_BACKSTOPS = frozenset({
-    (_CURATED_APPLY, "_cleanup_committed"),
-    (_CURATED_APPLY, "_execute_apply"),
-    ("tools/wizard_app.py", "_apply_housekeeping"),
-    ("tools/wizard_app.py", "_run_commit"),
-    ("tools/claude_host.py", "core_safe_build"),
-    ("tools/claude_host.py", "safe_render"),
-    ("tools/statusline-doctor.py", "cmd_doctor"),
-    ("tools/config_doctor_checks.py", "apply_row"),
-})
+_BROAD_EXCEPT_BACKSTOPS = frozenset(
+    {
+        (_CURATED_APPLY, "_cleanup_committed"),
+        (_CURATED_APPLY, "_execute_apply"),
+        ("tools/wizard_app.py", "_apply_housekeeping"),
+        ("tools/wizard_app.py", "_run_commit"),
+        ("tools/common_render.py", "core_safe_build"),
+        ("tools/common_render.py", "safe_render"),
+        ("tools/statusline-doctor.py", "cmd_doctor"),
+        ("tools/config_doctor_checks.py", "apply_row"),
+    }
+)
 
 
 def broad_except_sites(src):
@@ -704,11 +690,13 @@ def check_retired_literals(relpath, tree):
 # Rule 11: one supervision core. A new process session is how a supervisor owns a
 # killable group, so it may appear only in the runner and the two probes that are not
 # supervisors (the opencode server probe, and the curated-config catalog probe).
-_START_NEW_SESSION_ALLOWED = frozenset({
-    "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py",
-    "skills/ai-kit-spec-review/ai_kit_spec/detection.py",
-    "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/catalog_adapter.py",
-})
+_START_NEW_SESSION_ALLOWED = frozenset(
+    {
+        "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py",
+        "skills/ai-kit-spec-review/ai_kit_spec/detection.py",
+        "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/catalog_adapter.py",
+    }
+)
 _SUPERVISOR_OWNER = "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py"
 
 
@@ -738,7 +726,8 @@ def _is_main_guard(node):
     test = node.test if isinstance(node, ast.If) else None
     return (
         isinstance(test, ast.Compare)
-        and isinstance(test.left, ast.Name) and test.left.id == "__name__"
+        and isinstance(test.left, ast.Name)
+        and test.left.id == "__name__"
         and len(test.comparators) == 1
         and isinstance(test.comparators[0], ast.Constant)
         and test.comparators[0].value == "__main__"
@@ -751,8 +740,11 @@ def check_thin_entry(tree):
         f"unexpected top-level {type(node).__name__} at line {node.lineno}"
         for node in tree.body
         if not isinstance(node, (ast.Import, ast.ImportFrom, ast.If))
-        and not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
-                 and isinstance(node.value.value, str))
+        and not (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        )
     ]
 
 
@@ -761,7 +753,8 @@ def check_main_guard_last(relpath, tree):
     as a script never calls `unittest.main()` before the classes below it exist."""
     return [
         f"{relpath}:{node.lineno}: __main__ guard is not the last statement"
-        for node in tree.body[:-1] if _is_main_guard(node)
+        for node in tree.body[:-1]
+        if _is_main_guard(node)
     ]
 
 
@@ -778,21 +771,22 @@ class TestArchitecture(unittest.TestCase):
         cls.render_tree, cls.render_src = _parse("common_config.py")
         cls.doctor_tree, cls.doctor_src = _parse("statusline-doctor.py")
 
-    def test_rule1_config_env_only_in_bootstrap(self):
-        config_tree, _src = _parse("common_config.py")
-        self.assertEqual([], check_config_env_in_cfg(config_tree))
-        # non-vacuity: the bootstrap literal actually exists in the config module
-        literals = {key for _, key in _config_env_literals(config_tree)}
-        self.assertIn("CC_AI_KIT_CONFIG_FILE", literals)
+    def test_rule1_host_prefix_literals_stay_in_host(self):
+        violations = []
+        for name, tree, _source in present_split_modules():
+            violations.extend(check_host_prefix_literals(f"tools/{name}", tree))
+        self.assertEqual([], violations)
+        host_tree, _ = _parse("claude_host.py")
+        self.assertEqual([], check_host_prefix_literals("tools/claude_host.py", host_tree))
+        source_tree = ast.parse("value = 'CC_AI_KIT_CONFIG_FILE'")
+        self.assertNotEqual([], check_host_prefix_literals("tools/common_config.py", source_tree))
 
     def test_rule2_to_7_on_each_split_module(self):
         for name, tree, source in present_split_modules():
             self.assertEqual([], check_no_typed_model_subscript(tree), name)
             self.assertEqual([], check_bookkeeping_readers(tree), name)
             self.assertEqual([], check_seg_signature(tree), name)
-            self.assertEqual(
-                [], check_defaults_where_present(tree, source), name
-            )
+            self.assertEqual([], check_defaults_where_present(tree, source), name)
             self.assertEqual([], check_role_prefix_integrity(tree, source), name)
             self.assertEqual([], check_no_doctor_symbols(tree), name)
 
@@ -832,11 +826,16 @@ class TestArchitecture(unittest.TestCase):
                     with open(path, encoding="utf-8") as handle:
                         tree = ast.parse(handle.read(), filename=path)
                     violations.extend(check_retired_literals(relpath, tree))
-                    strings = {node.value for node in ast.walk(tree)
-                               if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+                    strings = {
+                        node.value
+                        for node in ast.walk(tree)
+                        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                    }
                     # An allowlist entry counts only while its file still holds the literal.
-                    if any(relpath in allowed and literal in strings
-                           for literal, allowed in _RETIRED_LITERALS.items()):
+                    if any(
+                        relpath in allowed and literal in strings
+                        for literal, allowed in _RETIRED_LITERALS.items()
+                    ):
                         seen_allowlist.add(relpath)
         self.assertEqual([], violations)
         expected = set().union(*_RETIRED_LITERALS.values())
@@ -899,7 +898,8 @@ class TestArchitecture(unittest.TestCase):
         defined = _defined_names(self.doctor_tree)
         missing = sorted(_DOCTOR_SYMBOLS - defined)
         self.assertEqual(
-            [], missing,
+            [],
+            missing,
             f"doctor symbols absent from statusline-doctor.py: {missing}",
         )
 
@@ -907,8 +907,10 @@ class TestArchitecture(unittest.TestCase):
         """Sanity: the segment-signature rule actually inspected segments (guards
         against a future rename silently emptying the seg_ population)."""
         seg_funcs = [
-            func for module in ("common_segments.py", "claude_segments.py")
-            for func in _top_functions(_parse(module)[0]) if func.name.startswith("seg_")
+            func
+            for module in ("common_segments.py", "claude_segments.py")
+            for func in _top_functions(_parse(module)[0])
+            if func.name.startswith("seg_")
         ]
         self.assertGreater(len(seg_funcs), 5)
 
@@ -925,7 +927,9 @@ def _load_audit_fixture():
         headers, rows = audit_rows(handle.read())
     proc = subprocess.run(
         ["git", "show", f"{headers['base']}:{headers['base_path']}"],
-        check=False, capture_output=True, text=True,
+        check=False,
+        capture_output=True,
+        text=True,
     )
     if proc.returncode:
         raise AssertionError(f"git show failed: {proc.stderr}")
@@ -973,6 +977,9 @@ def _split_sources():
                 sources[name] = handle.read()
     with open(os.path.join(_TOOLS, "status-line.py"), encoding="utf-8") as handle:
         sources["status-line"] = handle.read()
+    host_path = os.path.join(_TOOLS, "claude_host.py")
+    with open(host_path, encoding="utf-8") as handle:
+        sources["claude_host"] = handle.read()
     return sources
 
 
@@ -998,8 +1005,7 @@ def split_hash_mismatches(include_generalized=False, rows=None, modules=None):
     fates = {"reused", "generalized", "split"} if include_generalized else {"reused"}
     rename = {row.new_name: row.name for row in rows if row.new_name != "-"}
     restored = {
-        name: _defs_by_name(_rename_names(source, rename))
-        for name, source in modules.items()
+        name: _defs_by_name(_rename_names(source, rename)) for name, source in modules.items()
     }
     problems = []
     for row in rows:
@@ -1026,9 +1032,7 @@ def split_location_problems(rows=None, modules=None):
     problems = []
     for row in rows:
         names = {row.name, _public_name(row)}
-        hits = sorted(
-            module for module, have in defined.items() if names & have
-        )
+        hits = sorted(module for module, have in defined.items() if names & have)
         expected = [row.module]
         if hits != expected:
             problems.append(f"{row.name} found in {hits}, expected {expected}")
@@ -1056,7 +1060,9 @@ class TestSplitAudit(unittest.TestCase):
         cls.headers, cls.rows = audit_rows(cls.audit_text)
         proc = subprocess.run(
             ["git", "show", f"{cls.headers['base']}:{cls.headers['base_path']}"],
-            check=False, capture_output=True, text=True,
+            check=False,
+            capture_output=True,
+            text=True,
         )
         if proc.returncode:
             raise AssertionError(f"git show failed: {proc.stderr}")
@@ -1117,16 +1123,23 @@ class TestArchNonVacuity(unittest.TestCase):
         source = "def kept():\n    return 1\n"
         node = base_definitions(source)[0][3]
         row = AuditRow(
-            1, "kept", "function", 1, ast_hash(node), "1", "common_types",
-            "common_types", "-", "y", "reused", "-", "snippet row for the hash twin",
+            1,
+            "kept",
+            "function",
+            1,
+            ast_hash(node),
+            "1",
+            "common_types",
+            "common_types",
+            "-",
+            "y",
+            "reused",
+            "-",
+            "snippet row for the hash twin",
         )
         changed = "def kept():\n    return 2\n"
-        self.assertNotEqual(
-            [], split_hash_mismatches(False, [row], {"common_types": changed})
-        )
-        self.assertEqual(
-            [], split_hash_mismatches(False, [row], {"common_types": source})
-        )
+        self.assertNotEqual([], split_hash_mismatches(False, [row], {"common_types": changed}))
+        self.assertEqual([], split_hash_mismatches(False, [row], {"common_types": source}))
 
     def test_thin_entry_flags_a_definition(self):
         tree = ast.parse('"entry"\ndef extra():\n    return None\n')
@@ -1134,8 +1147,19 @@ class TestArchNonVacuity(unittest.TestCase):
 
     def test_split_location_flags_the_wrong_module(self):
         row = AuditRow(
-            1, "kept", "function", 1, "unused-hash", "1", "common_types",
-            "common_types", "-", "y", "reused", "-", "snippet row for the location twin",
+            1,
+            "kept",
+            "function",
+            1,
+            "unused-hash",
+            "1",
+            "common_types",
+            "common_types",
+            "-",
+            "y",
+            "reused",
+            "-",
+            "snippet row for the location twin",
         )
         wrong = {"common_fmt": "def kept():\n    return 1\n"}
         self.assertNotEqual([], split_location_problems([row], wrong))
@@ -1162,8 +1186,9 @@ class TestArchNonVacuity(unittest.TestCase):
 
     def test_audit_keeps_same_named_definitions_adjacent(self):
         definitions = base_definitions("def x(): pass\nclass x: pass\n")
-        self.assertEqual([("x", "function"), ("x", "class")],
-                         [(name, kind) for name, kind, _, _ in definitions])
+        self.assertEqual(
+            [("x", "function"), ("x", "class")], [(name, kind) for name, kind, _, _ in definitions]
+        )
 
     def test_audit_checks_disagreement_prefixes(self):
         row = _load_audit_fixture()[0][0]
@@ -1171,47 +1196,6 @@ class TestArchNonVacuity(unittest.TestCase):
         untainted = row._replace(taint="-", neutral="n", reason="missing")
         self.assertTrue(check_audit_reasons([tainted]))
         self.assertTrue(check_audit_reasons([untainted]))
-
-    def test_rule1_flags_config_env_outside_cfg(self):
-        bad = ast.parse(
-            "def seg_oops(ctx, avail, theme):\n"
-            "    return env.get('CC_AI_KIT_CONFIG_FILE')\n"
-        )
-        good = ast.parse(
-            "def cfg_config_path(env):\n"
-            "    return env.get('CC_AI_KIT_CONFIG_FILE')\n"
-        )
-        runtime_ok = ast.parse(
-            "def seg_term(ctx, avail, theme):\n"
-            "    return env.get('STATUSLINE_COLS')\n"  # not CC_AI_KIT_* → exempt
-        )
-        also_bad = ast.parse(
-            "def cfg_config_path(env):\n"
-            "    return env.get('CC_AI_KIT_GIT_CACHE_TTL')\n"  # right place, non-bootstrap name
-        )
-        self.assertNotEqual([], check_config_env_in_cfg(bad))
-        self.assertEqual([], check_config_env_in_cfg(good))
-        self.assertEqual([], check_config_env_in_cfg(runtime_ok))
-        self.assertNotEqual([], check_config_env_in_cfg(also_bad))
-
-    def test_rule1_walks_enclosing_chain(self):
-        """A CC_AI_KIT_CONFIG_FILE read in a closure nested inside cfg_config_path
-        PASSES (the cfg_config_path ancestor counts), while the same read nested
-        inside a non-bootstrap function is FLAGGED."""
-        nested_ok = ast.parse(
-            "def cfg_config_path(env):\n"
-            "    def inner():\n"
-            "        return env.get('CC_AI_KIT_CONFIG_FILE')\n"
-            "    return inner\n"
-        )
-        nested_bad = ast.parse(
-            "def util_helper(env):\n"
-            "    def inner():\n"
-            "        return env.get('CC_AI_KIT_CONFIG_FILE')\n"
-            "    return inner\n"
-        )
-        self.assertEqual([], check_config_env_in_cfg(nested_ok))
-        self.assertNotEqual([], check_config_env_in_cfg(nested_bad))
 
     def test_rule2_flags_subscript_on_typed_model(self):
         bad = ast.parse("x = ctx['model_name']\n")
@@ -1222,10 +1206,7 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertEqual([], check_no_typed_model_subscript(good))
 
     def test_rule3_flags_bookkeeping_read_in_other_segment(self):
-        bad = ast.parse(
-            "def seg_path(ctx, avail, theme):\n"
-            "    return ctx.slowest\n"
-        )
+        bad = ast.parse("def seg_path(ctx, avail, theme):\n    return ctx.slowest\n")
         bad_bare_name = ast.parse(
             "def seg_path(ctx, avail, theme):\n"
             "    return t_start\n"  # bare Name read — the .attr-less branch
@@ -1247,11 +1228,7 @@ class TestArchNonVacuity(unittest.TestCase):
     def test_rule5_where_present_ignores_a_module_without_a_banner(self):
         src = "def cfg_real(env):\n    return env\n"
         self.assertEqual([], check_defaults_where_present(ast.parse(src), src))
-        banner = (
-            "# ═══ 1. DEFAULTS — data ═══\n"
-            "def probe_sneaky():\n"
-            "    return 1\n"
-        )
+        banner = "# ═══ 1. DEFAULTS — data ═══\ndef probe_sneaky():\n    return 1\n"
         self.assertNotEqual([], check_defaults_where_present(ast.parse(banner), banner))
 
     def test_rule5_flags_cfg_def_inside_defaults(self):
@@ -1283,14 +1260,8 @@ class TestArchNonVacuity(unittest.TestCase):
         )
         bad = ast.parse(src)
         self.assertNotEqual([], check_role_prefix_integrity(bad, src))
-        good_src = (
-            "# ═══ 4. fmt_ — formatters ═══\n"
-            "def fmt_ok(x):\n"
-            "    return x\n"
-        )
-        self.assertEqual(
-            [], check_role_prefix_integrity(ast.parse(good_src), good_src)
-        )
+        good_src = "# ═══ 4. fmt_ — formatters ═══\ndef fmt_ok(x):\n    return x\n"
+        self.assertEqual([], check_role_prefix_integrity(ast.parse(good_src), good_src))
 
     def test_rule6_flags_unknown_shell_entrypoint(self):
         """SHELL block (1) permits only main/safe_render; any other (non-``_``)
@@ -1301,14 +1272,8 @@ class TestArchNonVacuity(unittest.TestCase):
             "    return 0\n"
         )
         self.assertNotEqual([], check_role_prefix_integrity(ast.parse(src), src))
-        good_src = (
-            "# ═══ 1. SHELL — entrypoints ═══\n"
-            "def main():\n"
-            "    return 0\n"
-        )
-        self.assertEqual(
-            [], check_role_prefix_integrity(ast.parse(good_src), good_src)
-        )
+        good_src = "# ═══ 1. SHELL — entrypoints ═══\ndef main():\n    return 0\n"
+        self.assertEqual([], check_role_prefix_integrity(ast.parse(good_src), good_src))
 
     def test_rule6_flags_def_in_non_function_block(self):
         """A role-prefixed def landing in a non-function block (DEFAULTS=1 or the
@@ -1319,17 +1284,9 @@ class TestArchNonVacuity(unittest.TestCase):
             "def cfg_stray(env):\n"  # any def at all is wrong here
             "    return env\n"
         )
-        doc_src = (
-            "# ═══ 9. DOCS — trailing ═══\n"
-            "def seg_stray(ctx, avail, theme):\n"
-            "    return ''\n"
-        )
-        self.assertNotEqual(
-            [], check_role_prefix_integrity(ast.parse(defaults_src), defaults_src)
-        )
-        self.assertNotEqual(
-            [], check_role_prefix_integrity(ast.parse(doc_src), doc_src)
-        )
+        doc_src = "# ═══ 9. DOCS — trailing ═══\ndef seg_stray(ctx, avail, theme):\n    return ''\n"
+        self.assertNotEqual([], check_role_prefix_integrity(ast.parse(defaults_src), defaults_src))
+        self.assertNotEqual([], check_role_prefix_integrity(ast.parse(doc_src), doc_src))
 
     def test_rule7_flags_doctor_symbol_in_render(self):
         bad = ast.parse("def cmd_doctor():\n    return 0\n")
@@ -1347,7 +1304,6 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertEqual(1, len(check_no_shell_true(bad_var)))
         self.assertEqual([], check_no_shell_true(good))
 
-
     def test_rule10_flags_retired_literal(self):
         bad = ast.parse(f'x = "{_RETIRED_CURSOR}"')
         binary = ast.parse(f'x = "{_RETIRED_CURSOR} -p"')
@@ -1360,8 +1316,9 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertEqual(1, len(check_retired_literals("skills/other.py", retired)))
         self.assertEqual([], check_retired_literals(config_io, retired))
         mode = ast.parse(f'x = "{_RETIRED_MODE}"')
-        dispatch = ("skills/ai-kit-spec-execute-superpowers/"
-                    "ai_kit_spec_superpowers/dispatch_injection.py")
+        dispatch = (
+            "skills/ai-kit-spec-execute-superpowers/ai_kit_spec_superpowers/dispatch_injection.py"
+        )
         self.assertEqual(1, len(check_retired_literals(dispatch, mode)))
         self.assertEqual(1, len(check_retired_literals("skills/other.py", mode)))
 
@@ -1370,13 +1327,11 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertEqual(1, len(check_one_supervisor("skills/other.py", bad)))
         self.assertEqual([], check_one_supervisor(_SUPERVISOR_OWNER, bad))
         self.assertEqual(0, supervisor_spawn_count(ast.parse("x = 1\n")))
-        variable = ast.parse("subprocess.Popen([\"x\"], start_new_session=flag)\n")
+        variable = ast.parse('subprocess.Popen(["x"], start_new_session=flag)\n')
         self.assertEqual([], check_one_supervisor("skills/other.py", variable))
 
     def test_rule12_flags_an_early_main_guard(self):
-        early = ast.parse(
-            'if __name__ == "__main__":\n    main()\n\nclass TestLate:\n    pass\n'
-        )
+        early = ast.parse('if __name__ == "__main__":\n    main()\n\nclass TestLate:\n    pass\n')
         last = ast.parse('class TestA:\n    pass\n\nif __name__ == "__main__":\n    main()\n')
         self.assertEqual(1, len(check_main_guard_last("tests/test_x.py", early)))
         self.assertEqual([], check_main_guard_last("tests/test_x.py", last))
@@ -1402,21 +1357,36 @@ class TestSegmentInventory(unittest.TestCase):
 
     # Reviewed mirror of the seg_* inline glyphs; "" means no static icon.
     EXPECTED_ICONS = {
-        "path": "", "git_branch": "🌿", "git_dirty": "", "alt_git_worktree": "⎇",
-        "todo": "📝", "model": "", "alt_time_ago": "", "alt_time_clock": "⏰",
-        "effort": "🧠", "lines": "📃", "alt_cost": "🪙", "alt_time_session": "💬",
-        "alt_time_api": "📡", "render_time": "⏱", "slowest": "🐌",
-        "alt_term_dimensions": "", "context": "📊", "chat_size": "💾",
-        "alt_process_memory": "🧮", "alt_h_rate_limit": "⚡", "alt_w_rate_limit": "⚡",
+        "path": "",
+        "git_branch": "🌿",
+        "git_dirty": "",
+        "alt_git_worktree": "⎇",
+        "todo": "📝",
+        "model": "",
+        "alt_time_ago": "",
+        "alt_time_clock": "⏰",
+        "effort": "🧠",
+        "lines": "📃",
+        "alt_cost": "🪙",
+        "alt_time_session": "💬",
+        "alt_time_api": "📡",
+        "render_time": "⏱",
+        "slowest": "🐌",
+        "alt_term_dimensions": "",
+        "context": "📊",
+        "chat_size": "💾",
+        "alt_process_memory": "🧮",
+        "alt_h_rate_limit": "⚡",
+        "alt_w_rate_limit": "⚡",
     }
     # Icon single-sourcing into the inventory is DEFERRED per the PRD; until then
     # the inventory icon is hand-mirrored and this test pins it to the reviewed map.
 
     def _sl(self):
-        return common_types
+        return claude_host
 
     def _line_index(self, sl, key):
-        for i, ln in enumerate(common_types.LAYOUT):
+        for i, ln in enumerate(claude_host.LAYOUT):
             if key in ln.segments:
                 return i
         raise AssertionError(f"{key} not in LAYOUT")
@@ -1424,21 +1394,21 @@ class TestSegmentInventory(unittest.TestCase):
     def test_coverage_every_segment_has_entry(self):
         self._sl()
         inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
-        for key in common_types.SEGMENTS:
+        for key in claude_host.SEGMENTS:
             self.assertIn(key, inv, f"SEGMENTS key {key} missing from inventory")
 
     def test_line_mirror(self):
         sl = self._sl()
         inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
-        for key in common_types.SEGMENTS:
-            self.assertEqual(inv[key]["line"], self._line_index(sl, key),
-                             f"{key} inventory line != LAYOUT line")
+        for key in claude_host.SEGMENTS:
+            self.assertEqual(
+                inv[key]["line"], self._line_index(sl, key), f"{key} inventory line != LAYOUT line"
+            )
 
     def test_icon_mirror(self):
         inv = setup.load_segment_inventory(setup.INVENTORY_PATH)
         for key, icon in self.EXPECTED_ICONS.items():
-            self.assertEqual(inv[key]["icon"], icon,
-                             f"{key} inventory icon != reviewed glyph")
+            self.assertEqual(inv[key]["icon"], icon, f"{key} inventory icon != reviewed glyph")
 
 
 if __name__ == "__main__":

@@ -26,12 +26,24 @@ def cfg_resolve_effort(raw: dict[str, Any]) -> str:
     level: str = str(effort_block.get("level") or "").strip().lower()
     return "" if level == "auto" else level
 
+
 # ═══ 6. core_ — render machinery: Context, Theme, registry, packer, render ════
 
 
-def core_build_context(raw: dict[str, Any], config: "Config", theme: "Theme",  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-                  cols: int, lines: int, dim_assumed: bool, t_start: int | None,
-                  effort: str, home: str, claude_dir: str) -> "Context":
+# pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+# Context construction intentionally maps the complete payload into one immutable render object.
+def core_build_context(
+    raw: dict[str, Any],
+    config: "Config",
+    theme: "Theme",  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    cols: int,
+    lines: int,
+    dim_assumed: bool,
+    t_start: int | None,
+    effort: str,
+    home: str,
+    claude_dir: str,
+) -> "Context":
     """Assemble the per-render Context from the parsed status JSON and the
     already-resolved per-render inputs. Segment-agnostic and env-free: every
     env read happened in the CONFIG block; the SHELL hands the resolved values
@@ -44,14 +56,23 @@ def core_build_context(raw: dict[str, Any], config: "Config", theme: "Theme",  #
     transcript: str = str(raw.get("transcript_path") or "")
     # session_id locates the materialized task/todo state probe_current_todo prefers
     # over replaying the transcript; it also equals the transcript file basename.
-    session: str = str(raw.get("session_id") or (
-        os.path.splitext(os.path.basename(transcript))[0] if transcript else ""))
+    session: str = str(
+        raw.get("session_id")
+        or (os.path.splitext(os.path.basename(transcript))[0] if transcript else "")
+    )
     return Context(
-        raw=raw, line_conf=config, theme=theme,
-        cols=cols, lines=lines, dim_assumed=dim_assumed, t_start=t_start,
+        raw=raw,
+        line_conf=config,
+        theme=theme,
+        cols=cols,
+        lines=lines,
+        dim_assumed=dim_assumed,
+        t_start=t_start,
         model_name=str(model.get("display_name") or ""),
         model_id=str(model.get("id") or "unknown"),
-        effort=effort, work_dir=work_dir, home=home,
+        effort=effort,
+        work_dir=work_dir,
+        home=home,
         clock=time.strftime("%H:%M"),
         # `or 0` (not get's default) so a PRESENT-but-null field — what a fresh
         # /clear session sends before any tokens/cost accrue — coalesces to 0
@@ -64,5 +85,30 @@ def core_build_context(raw: dict[str, Any], config: "Config", theme: "Theme",  #
         context_pct=int(ctx_win.get("used_percentage") or 0),
         context_max=int(ctx_win.get("context_window_size") or 0),
         rate_limits=cast(dict[str, Any], raw.get("rate_limits") or {}),
-        transcript=transcript, session=session, claude_dir=claude_dir,
+        transcript=transcript,
+        session=session,
+        claude_dir=claude_dir,
+    )
+
+
+def core_claude_context(
+    raw: dict[str, Any], config: "Config", theme: "Theme", env: Any, t_start: int | None
+) -> "Context":
+    """Build Claude's context from its payload and host environment."""
+    from common_probe import probe_terminal_size  # pylint: disable=import-outside-toplevel
+
+    cols, lines, assumed = probe_terminal_size(env)
+    home = env.get("HOME", "")
+    claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+    return core_build_context(
+        raw,
+        config,
+        theme,
+        cols,
+        lines,
+        assumed,
+        t_start,
+        effort=cfg_resolve_effort(raw),
+        home=home,
+        claude_dir=claude_dir,
     )

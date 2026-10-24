@@ -23,16 +23,15 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 import claude_host
-import claude_payload
 import common_config
 import common_render
 import common_types
-from common_probe import probe_terminal_size
 
 try:
     import tomllib as _tomllib_impl
+
     tomllib = _tomllib_impl
-except ModuleNotFoundError:        # Python < 3.11 — config validation degrades.
+except ModuleNotFoundError:  # Python < 3.11 — config validation degrades.
     tomllib = None  # type: ignore[assignment]  # stdlib boundary: optional module absent on <3.11
 
 # Environment dict: a snapshot of os.environ. Mapping[str, str] covers both a
@@ -42,10 +41,10 @@ Env = Mapping[str, str]
 # Public default tables are read directly from common_types.
 _EXTERNAL_CACHE_TTL = common_types.EXTERNAL_CACHE_TTL
 _PALETTE_DEFAULTS = common_types.PALETTE_DEFAULTS
-_RAMP_DEFAULTS = common_types.RAMP_DEFAULTS
+_RAMP_DEFAULTS = claude_host.RAMP_DEFAULTS_CLAUDE
 
 
-_NO_CHECK = object()   # sentinel: --check flag absent (vs. present with no FILE)
+_NO_CHECK = object()  # sentinel: --check flag absent (vs. present with no FILE)
 
 
 _ENV_HELP = """\
@@ -68,20 +67,29 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="statusline-doctor.py",
         description="Claude Code status-line doctor — validate the config and "
-                    "dry-render every segment. Renders nothing on stdin.",
+        "dry-render every segment. Renders nothing on stdin.",
         epilog=_ENV_HELP,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--print-config", action="store_true",
-                   help="resolve config (defaults < file < env), print it as "
-                        "JSON, and exit")
-    p.add_argument("--check", nargs="?", const=None, default=_NO_CHECK,
-                   metavar="FILE",
-                   help="validate a config file (default: the resolved path) "
-                        "and exit non-zero if invalid")
-    p.add_argument("--doctor", action="store_true",
-                   help="validate the config AND dry-render every segment to "
-                        "surface a builder that raises; exit non-zero if unhealthy")
+    p.add_argument(
+        "--print-config",
+        action="store_true",
+        help="resolve config (defaults < file < env), print it as JSON, and exit",
+    )
+    p.add_argument(
+        "--check",
+        nargs="?",
+        const=None,
+        default=_NO_CHECK,
+        metavar="FILE",
+        help="validate a config file (default: the resolved path) and exit non-zero if invalid",
+    )
+    p.add_argument(
+        "--doctor",
+        action="store_true",
+        help="validate the config AND dry-render every segment to "
+        "surface a builder that raises; exit non-zero if unhealthy",
+    )
     return p.parse_args(argv)
 
 
@@ -98,28 +106,36 @@ def cmd_print_config(cfg: Any, env: Env) -> str:
     ext_dir: Any = cfg.external.dir if cfg.external else ""
     ext_ttl: Any = cfg.external.cache_ttl if cfg.external else _EXTERNAL_CACHE_TTL
     providers: list[dict[str, Any]] = [
-        {"id": s.id, "path": s.path, "line": s.line,
-         "position": common_types.util_position_str(s.position),
-         "timeout": s.timeout, "ttl": s.ttl}
+        {
+            "id": s.id,
+            "path": s.path,
+            "line": s.line,
+            "position": common_types.util_position_str(s.position),
+            "timeout": s.timeout,
+            "ttl": s.ttl,
+        }
         for s in cast("list[Any]", ext_providers)
     ]
-    return json.dumps({
-        "segments": cfg.segments,
-        "layout": [{"min_rows": ln.min_rows, "segments": ln.segments}
-                   for ln in cfg.layout],
-        "palette": cfg.palette,
-        "ramps": cfg.ramps,
-        "git": cfg.git or {},
-        "external": {
-            "ttl": ext_ttl,
-            "dir": ext_dir,
-            "providers": providers,
+    return json.dumps(
+        {
+            "segments": cfg.segments,
+            "layout": [{"min_rows": ln.min_rows, "segments": ln.segments} for ln in cfg.layout],
+            "palette": cfg.palette,
+            "ramps": cfg.ramps,
+            "git": cfg.git or {},
+            "external": {
+                "ttl": ext_ttl,
+                "dir": ext_dir,
+                "providers": providers,
+            },
         },
-    }, indent=2)
+        indent=2,
+    )
 
 
 def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements,too-many-branches
-    path: str, env: Env,
+    path: str,
+    env: Env,
 ) -> list[str]:
     """Return a list of human-readable error strings for the config at path
     (empty list = valid). Checks: parseability, unknown segment keys, unknown
@@ -135,12 +151,18 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
     except (OSError, tomllib.TOMLDecodeError) as e:
         return [f"{path}: {e}"]
     errors: list[str] = []
-    ext_dir, ext_ttl = common_config.cfg_resolve_external(raw, env)
+    ext_dir, ext_ttl = common_config.cfg_resolve_external(raw, env, claude_host.SPEC.provider_dir)
     _, ext_dir, ext_ttl, _ = common_config.cfg_bind_scalars(
-        raw, env, common_config.cfg_default_config().git or {}, ext_dir, ext_ttl)
-    seg_cache = os.path.join(common_config.cfg_cache_base(env), "segments")
+        raw,
+        env,
+        common_config.cfg_default_config(claude_host.SPEC).git or {},
+        ext_dir,
+        ext_ttl,
+        claude_host.SPEC.env_prefix,
+    )
+    seg_cache = os.path.join(common_config.cfg_cache_base(env), claude_host.SPEC.provider_cache)
     ext_ids = {s.id for s in common_config.core_discover_external(ext_dir, ext_ttl, seg_cache)}
-    known_segments = set(common_config.cfg_default_config().segments) | ext_ids
+    known_segments = set(common_config.cfg_default_config(claude_host.SPEC).segments) | ext_ids
     for k in cast(dict[str, Any], raw.get("segments") or {}):
         if k not in known_segments:
             errors.append(f"unknown segment key: {k}")
@@ -148,8 +170,10 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
         if k not in _PALETTE_DEFAULTS:
             errors.append(f"unknown palette key: {k}")
     for name, value in cast(dict[str, Any], raw.get("palette") or {}).items():
-        if name in _PALETTE_DEFAULTS and common_types.util_parse_color(
-            str(value), palette=None) is None:
+        if (
+            name in _PALETTE_DEFAULTS
+            and common_types.util_parse_color(str(value), palette=None) is None
+        ):
             errors.append(f"bad palette color: {name} = {value!r}")
     for i, line in enumerate(cast(list[Any], raw.get("line") or [])):
         line_dict = cast(dict[str, Any], line) if isinstance(line, dict) else {}
@@ -157,8 +181,12 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
             if seg not in claude_host.BUILDERS and seg not in ext_ids:
                 errors.append(f"line[{i}] references unknown segment: {seg}")
     resolved_palette = common_render.core_resolve_palette(
-        {str(k): str(v) for k, v in cast(dict[str, Any], raw.get("palette") or {}).items()
-         if k in _PALETTE_DEFAULTS})
+        {
+            str(k): str(v)
+            for k, v in cast(dict[str, Any], raw.get("palette") or {}).items()
+            if k in _PALETTE_DEFAULTS
+        }
+    )
     for band, table in cast(dict[str, Any], raw.get("ramp") or {}).items():
         if band not in _RAMP_DEFAULTS:
             errors.append(f"unknown ramp: {band}")
@@ -200,9 +228,13 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
 # fixture file): exercises every default builder so one that raises is surfaced.
 _DOCTOR_SAMPLE = {
     "model": {"display_name": "Opus 4.8", "id": "claude-opus-4-8"},
-    "cost": {"total_lines_added": 12, "total_lines_removed": 3,
-             "total_cost_usd": 0.0123, "total_duration_ms": 45000,
-             "total_api_duration_ms": 12000},
+    "cost": {
+        "total_lines_added": 12,
+        "total_lines_removed": 3,
+        "total_cost_usd": 0.0123,
+        "total_duration_ms": 45000,
+        "total_api_duration_ms": 12000,
+    },
     "context_window": {"used_percentage": 42, "context_window_size": 200000},
     "workspace": {"current_dir": "."},
     "transcript_path": "",
@@ -223,15 +255,11 @@ def _dry_render_failures(cfg: Any, theme: Any, env: Env) -> set[str]:
 
     Note: this catches builders that crash on *valid* input. A builder that only
     raises on a missing/malformed key won't be surfaced by this happy-path sample."""
-    cols, lines, assumed = probe_terminal_size(env)
-    home = env.get("HOME", "")
-    claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-    ctx = claude_payload.core_build_context(dict(_DOCTOR_SAMPLE), cfg, theme, cols, lines, assumed,
-                                time.perf_counter_ns(),
-                                effort=claude_payload.cfg_resolve_effort(_DOCTOR_SAMPLE),
-                                home=home, claude_dir=claude_dir)
-    for key in claude_host.BUILDERS:
-        claude_host.core_safe_build(key, ctx, 200, theme)
+    ctx = claude_host.HOST.build_context(
+        dict(_DOCTOR_SAMPLE), cfg, theme, env, time.perf_counter_ns()
+    )
+    for key in claude_host.HOST.builders:
+        common_render.core_safe_build(key, ctx, 200, theme, claude_host.HOST.builders)
     return ctx.failed
 
 
@@ -242,7 +270,7 @@ def _env_problems(env: Env) -> list[str]:
     CC_AI_KIT_* env vars (identified by the 'CC_AI_KIT_' prefix in the message).
     Each returned string is a raw problem message (no ANSI, no 'status-line: '
     prefix); pass through common_config.cfg_warn to emit it as a dim warning."""
-    _, problems = common_config.cfg_load_config_verbose(env)
+    _, problems = common_config.cfg_load_config_verbose(env, claude_host.SPEC)
     return [p for p in problems if "CC_AI_KIT_" in p]
 
 
@@ -250,15 +278,16 @@ def cmd_doctor(env: Env) -> int:
     """Validate the resolved config AND dry-render every segment builder (not just
     the enabled ones). Prints a report; returns process exit code (0 healthy, 1 if
     any problem)."""
-    path = common_config.cfg_config_path(env)
+    path = common_config.cfg_config_path(env, claude_host.SPEC)
     errors: list[str] = []
     if os.path.exists(path):
         errors = [f"{path}: {e}" for e in validate_config_file(path, env)]
     failed: set[str] = set()
     cfg = common_config.cfg_load_config(
-        env)                      # never raises (degrades to defaults)
+        env, claude_host.SPEC
+    )  # never raises (degrades to defaults)
     try:
-        theme = common_render.core_build_theme(cfg)
+        theme = common_render.core_build_theme(cfg, claude_host.HOST)
         failed = _dry_render_failures(cfg, theme, env)
     except Exception as e:  # pylint: disable=broad-exception-caught  # diagnostic backstop reports any crash
         errors.append(f"render pipeline crashed: {e!r}")
@@ -270,7 +299,8 @@ def cmd_doctor(env: Env) -> int:
     for p in env_probs:
         common_config.cfg_warn(p)
     if errors or failed or env_probs:
-        print(f"after fixing, re-run: {common_render.core_doctor_cmd()}", file=sys.stderr)
+        doctor_cmd = common_render.core_doctor_cmd(claude_host.HOST.doctor_suffix)
+        print(f"after fixing, re-run: {doctor_cmd}", file=sys.stderr)
         return 1
     print(f"{path}: OK — config valid, all {len(claude_host.BUILDERS)} segments render cleanly")
     return 0
@@ -278,7 +308,7 @@ def cmd_doctor(env: Env) -> int:
 
 def cmd_check(path: str, env: Env) -> int:
     """Validate a config file; print result. Return process exit code (0/1)."""
-    path = path or common_config.cfg_config_path(env)
+    path = path or common_config.cfg_config_path(env, claude_host.SPEC)
     errors = validate_config_file(path, env)
     env_probs = _env_problems(env)
     if errors:
@@ -304,7 +334,7 @@ def main() -> None:
     if args.doctor:
         sys.exit(cmd_doctor(env))
     if args.print_config:
-        cfg = common_config.cfg_load_config(env)
+        cfg = common_config.cfg_load_config(env, claude_host.SPEC)
         print(cmd_print_config(cfg, env))
         return
     parse_args(["--help"])

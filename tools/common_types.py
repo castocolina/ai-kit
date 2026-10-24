@@ -16,40 +16,14 @@ if TYPE_CHECKING:
 # Mapping[str, str] covers both plain dict and os.environ (_Environ[str]).
 Env = Mapping[str, str]
 
-# ═══ 1. DEFAULTS — data-only: segment/layout/palette/ramp tables + type decls ═
-
-
-
-
-# Per-segment on/off. Set False to hide a segment entirely: its builder is never
-# called, so its data is never read and the matching lazy probe (git/transcript/
-# RSS/etc.) never runs — a disabled segment costs nothing. Invariant: keep "path"
-# True so the identity line always emits.
-SEGMENTS = {
-    # identity line
-    "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": False,
-    # model row (kept lean by design — todo alone can eat the row's width, so
-    # every optional alt_ variant prefers the diagnostics row instead)
-    "model": True, "effort": True, "context": True, "todo": True,
-    "alt_time_ago": False, "alt_time_clock": False,
-    "alt_cost": False, "alt_time_session": False, "alt_time_api": False,
-    # diagnostics row (alt_term_dimensions is a debug aid — off by default)
-    "render_time": True, "slowest": True, "alt_term_dimensions": False,
-    "lines": False,
-    "chat_size": True, "alt_process_memory": False,
-    "alt_h_rate_limit": False, "alt_w_rate_limit": False,
-}
+# ═══ 1. DEFAULTS — data-only: host-neutral types and ramp bands ═
 
 
 # Identity-line tuning.
-PATH_MAX_LEN = 50      # fixed budget for path's two structural variants (full path, parent/name)
+PATH_MAX_LEN = 50  # fixed budget for path's two structural variants (full path, parent/name)
 
 
 CONTEXT_BAR_CELLS = 10  # context bar width; ▌ half-cells give 5% resolution
-
-
-# Packing: reserve a few cols so emoji-width miscounts don't wrap the line.
-RIGHT_MARGIN = 4
 
 
 SEP = " | "
@@ -66,17 +40,15 @@ class Line(NamedTuple):
     segments: list[str]
 
 
-LAYOUT = [
-    Line(0,  ["path", "git_branch", "alt_git_worktree", "git_dirty"]),
-    Line(20, ["model", "effort", "context", "todo"]),
-    Line(30, ["render_time", "slowest", "alt_term_dimensions",
-              "alt_time_ago", "alt_time_clock", "lines", "alt_cost",
-              "alt_time_session", "alt_time_api",
-              "chat_size", "alt_process_memory", "alt_h_rate_limit", "alt_w_rate_limit"]),
-]
-
-
-PINNED = {"path", "context"}   # always rendered even if they overflow the budget
+class ConfigSpec(NamedTuple):
+    env_prefix: str
+    config_filename: str
+    default_segments: dict[str, bool]
+    default_layout: list[Line]
+    ramp_defaults: dict[str, list[tuple[Any, str]]]
+    provider_dir: str
+    provider_cache: str
+    provider_env: str
 
 
 # Meta-segments: they report the whole render, not a single builder, so the
@@ -93,16 +65,14 @@ SLOWEST_META = frozenset({"slowest", "render_time"})
 # Scalar behaviour knobs that aren't segments/colors. The worktree feature
 # migrated to the `segments.alt_git_worktree` toggle (see SEGMENTS); `[git]` now carries
 # `cache_ttl` (seconds) — how long the shared probe_git_snapshot worktree probe is
-# cached. Precedence: this default < TOML `[git] cache_ttl` < env CC_AI_KIT_GIT_CACHE_TTL.
-GIT_CACHE_TTL = 5                  # default seconds the worktree probe is cached
+# cached. Precedence: this default < TOML `[git] cache_ttl` < the host's env override.
+GIT_CACHE_TTL = 5  # default seconds the worktree probe is cached
 
 
-EXTERNAL_CACHE_TTL = 10            # default seconds an external provider's output is cached
+EXTERNAL_CACHE_TTL = 10  # default seconds an external provider's output is cached
 
 
 GIT_DEFAULTS = {"cache_ttl": GIT_CACHE_TTL}
-
-
 
 
 # ── Color & effort defaults (the override baselines) ─────────────────────────
@@ -110,25 +80,35 @@ GIT_DEFAULTS = {"cache_ttl": GIT_CACHE_TTL}
 # Values are pure hues — no baked-in bold. Emphasis is expressed on the ramp
 # bands via "+modifiers" (e.g. "RED+bold"); see _RAMP_DEFAULTS. A [palette]
 # override replaces a value here; core_build_theme resolves these into a Theme.
-PALETTE_DEFAULTS = {            # pure hues — no baked-in bold
-    "GREY": "90", "WHITE": "97", "CYAN": "36", "GREEN": "32", "RED": "31",
-    "YELLOW": "33", "MAGENTA": "35", "ORANGE": "38;5;208",
-    "BLUE": "38;5;39",           # lightened (was 38;5;33); shade reviewed on-terminal
-    "LIGHTBLUE": "38;5;75", "MAGENTA_DARK": "38;5;90",
-}   # ORANGE_BOLD / MAGENTA_DARK_BOLD removed — bold now lives on the ramp band
+PALETTE_DEFAULTS = {  # pure hues — no baked-in bold
+    "GREY": "90",
+    "WHITE": "97",
+    "CYAN": "36",
+    "GREEN": "32",
+    "RED": "31",
+    "YELLOW": "33",
+    "MAGENTA": "35",
+    "ORANGE": "38;5;208",
+    "BLUE": "38;5;39",  # lightened (was 38;5;33); shade reviewed on-terminal
+    "LIGHTBLUE": "38;5;75",
+    "MAGENTA_DARK": "38;5;90",
+}  # ORANGE_BOLD / MAGENTA_DARK_BOLD removed — bold now lives on the ramp band
 
 
 # Ramps as data: band -> [(threshold, colorspec)]. Threshold keys go through
 # util_parse_threshold (percent / byte-suffix / inf); colorspecs through util_parse_color
 # against the resolved palette. [ramp.X] in config REPLACES a band wholesale.
 RAMP_DEFAULTS = {
-    "context": [(10, "WHITE"), (15, "CYAN"), (20, "BLUE"), (25, "GREEN"),
-                (30, "YELLOW"), (40, "ORANGE+bold"), (50, "RED+bold"),
-                ("inf", "MAGENTA_DARK+bold")],
-    "rate": [(50, "GREEN"), (80, "YELLOW"), ("inf", "RED+bold")],
-    "chat_size": [("512k", "WHITE"), ("1M", "CYAN"), ("2M", "LIGHTBLUE"),
-                  ("3M", "GREEN"), ("4M", "YELLOW"), ("5M", "ORANGE"),
-                  ("10M", "RED+bold"), ("inf", "MAGENTA")],
+    "context": [
+        (10, "WHITE"),
+        (15, "CYAN"),
+        (20, "BLUE"),
+        (25, "GREEN"),
+        (30, "YELLOW"),
+        (40, "ORANGE+bold"),
+        (50, "RED+bold"),
+        ("inf", "MAGENTA_DARK+bold"),
+    ],
     # render_time: the status line's own run time (SLO/SLA). Thresholds are time
     # units (ns/µs/ms/s); green under the SLO, yellow under the SLA, red beyond.
     "render_time": [("50ms", "GREEN"), ("150ms", "YELLOW"), ("inf", "RED+bold")],
@@ -142,12 +122,6 @@ RAMP_DEFAULTS = {
 # Effort ladder: level -> (palette name, fill count 1..5). Palette-derived but
 # NOT user-configurable. `auto` is a setting and `ultracode` reports as xhigh —
 # neither is a level here.
-EFFORT_DEFAULTS = {
-    "low": ("CYAN", 1), "medium": ("BLUE", 2), "high": ("YELLOW", 3),
-    "xhigh": ("ORANGE", 4), "max": ("RED", 5),
-}
-
-
 EFFORT_GLYPHS = "▁▃▄▆█"
 
 
@@ -157,9 +131,10 @@ EFFORT_GLYPHS = "▁▃▄▆█"
 class ExternalConf(NamedTuple):
     """Resolved external-segment configuration for one render pass."""
 
-    dir: str               # providers directory (was Config.segments_dir)
-    cache_ttl: int         # default cache TTL in seconds
-    providers: list[Any]   # finalized ExtSpec list (was Config.external)
+    dir: str  # providers directory (was Config.segments_dir)
+    cache_ttl: int  # default cache TTL in seconds
+    providers: list[Any]  # finalized ExtSpec list (was Config.external)
+    env_prefix: str = ""
 
 
 class Config(NamedTuple):
@@ -181,10 +156,10 @@ RESET = "\033[0m"
 BG_LIGHTGRAY = "\033[47m"
 
 
-DIM = "\033[90m"             # fixed dim grey for stderr warnings (palette-independent)
+DIM = "\033[90m"  # fixed dim grey for stderr warnings (palette-independent)
 
 
-WARN = "\033[33m"            # fixed yellow for failure markers (palette-independent)
+WARN = "\033[33m"  # fixed yellow for failure markers (palette-independent)
 
 
 INF = float("inf")
@@ -202,8 +177,8 @@ class GitSnapshot(NamedTuple):
     dirty: str
     is_worktree: bool
     wt_name: str
-    root_name: str = ""    # main checkout's dir basename; same across every worktree
-    root_path: str = ""    # main checkout's absolute dir path; root_name is its basename
+    root_name: str = ""  # main checkout's dir basename; same across every worktree
+    root_path: str = ""  # main checkout's absolute dir path; root_name is its basename
 
 
 # ── External drop-in segments (E4c) ──────────────────────────────────────────
@@ -224,6 +199,7 @@ class ExtSpec(NamedTuple):
     timeout: float
     ttl: int
     cache_path: str
+
 
 # ═══ 4. fmt_ — pure formatters (number / tokens / duration / bytes / ago) ═════
 
@@ -301,6 +277,7 @@ def fmt_duration(ns: int | float) -> str:
             return f"{v:.1f}{suffix}" if v < 10 else f"{v:.0f}{suffix}"
     return f"{ns}ns"
 
+
 # ═══ 5. util_ — pure non-format helpers (color / width / truncate / fit / parse)
 
 
@@ -311,7 +288,7 @@ def fmt_duration(ns: int | float) -> str:
 # caller census is regenerable on demand via AST — not kept here.
 
 
-_SGR_SEQ = re.compile(r"\x1b\[[0-9;]*m")            # an SGR color/style escape
+_SGR_SEQ = re.compile(r"\x1b\[[0-9;]*m")  # an SGR color/style escape
 
 
 _CSI_SEQ = re.compile(r"\x1b\[[0-9;?]*([A-Za-z])")  # any CSI; group = final byte
@@ -320,7 +297,7 @@ _CSI_SEQ = re.compile(r"\x1b\[[0-9;?]*([A-Za-z])")  # any CSI; group = final byt
 _OSC_SEQ = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 
 
-_STRAY_ESC = re.compile(r"\x1b(?!\[[0-9;]*m)")      # ESC not starting an SGR
+_STRAY_ESC = re.compile(r"\x1b(?!\[[0-9;]*m)")  # ESC not starting an SGR
 
 
 _C0_CTRL = re.compile(r"[\x00-\x09\x0b-\x1a\x1c-\x1f\x7f]")  # controls (incl. TAB) except NL/ESC
@@ -374,9 +351,9 @@ def util_char_width(ch: str) -> int:
     if unicodedata.combining(ch):
         return 0
     o = ord(ch)
-    if 0xFE00 <= o <= 0xFE0F:                         # variation selectors render in-place
+    if 0xFE00 <= o <= 0xFE0F:  # variation selectors render in-place
         return 0
-    if o >= 0x1F300:                                  # emoji / pictographs (SMP)
+    if o >= 0x1F300:  # emoji / pictographs (SMP)
         return 2
     if o in _WIDE_BMP:
         return 2
@@ -435,9 +412,9 @@ def util_hex_to_sgr(spec: str) -> str | None:
     """'#rgb' / '#rgba' / '#rrggbb' / '#rrggbbaa' -> '38;2;r;g;b' (alpha
     dropped). None if not valid hex of a supported length."""
     h = spec[1:]
-    if len(h) in (3, 4):                 # short form: expand each nibble, drop alpha
+    if len(h) in (3, 4):  # short form: expand each nibble, drop alpha
         h = "".join(c * 2 for c in h[:3])
-    elif len(h) == 8:                    # long form with alpha: drop the alpha byte
+    elif len(h) == 8:  # long form with alpha: drop the alpha byte
         h = h[:6]
     if len(h) != 6 or re.fullmatch(r"[0-9a-fA-F]{6}", h) is None:
         return None
@@ -473,7 +450,7 @@ def util_parse_color(spec: Any, palette: dict[str, str] | None = None) -> str | 
     return "\033[" + ";".join([*ordered, params]) + "m"
 
 
-_THRESHOLD_MULT = {"k": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
+_THRESHOLD_MULT = {"k": 1024, "M": 1024**2, "G": 1024**3}
 
 
 # Time thresholds (render_time ramp) resolve to NANOSECONDS, matching what the
@@ -498,7 +475,7 @@ def util_parse_threshold(key: str | int | float) -> float:
     m = re.fullmatch(r"(\d+)(ns|µs|us|ms|s)", s)
     if m:
         return int(m.group(1)) * _TIME_MULT_NS[m.group(2)]
-    return int(s)   # ValueError on garbage
+    return int(s)  # ValueError on garbage
 
 
 def util_gap_color(delta: float, theme: "Theme") -> str:
@@ -532,12 +509,12 @@ def util_branch_from_porcelain(header: str) -> str:
     if not header.startswith("## "):
         return ""
     rest = header[3:]
-    if rest.startswith("HEAD (no branch)"):                       # detached
+    if rest.startswith("HEAD (no branch)"):  # detached
         return ""
-    for prefix in ("No commits yet on ", "Initial commit on "):   # unborn branch
+    for prefix in ("No commits yet on ", "Initial commit on "):  # unborn branch
         if rest.startswith(prefix):
-            return rest[len(prefix):].strip()
-    return rest.split("...", 1)[0].strip()                        # branch[...upstream]
+            return rest[len(prefix) :].strip()
+    return rest.split("...", 1)[0].strip()  # branch[...upstream]
 
 
 def util_git_cache_path(work_dir: str, cache_base: str) -> str:
@@ -559,7 +536,7 @@ def util_display_dir(work_dir: str, home: str) -> str:
     first); if neither fits, fall to the basename alone via
     util_two_state_cap(name, 30, 20)."""
     stripped = work_dir.rstrip("/")
-    full = ("~" + work_dir[len(home):]) if (home and work_dir.startswith(home)) else work_dir
+    full = ("~" + work_dir[len(home) :]) if (home and work_dir.startswith(home)) else work_dir
     parent = os.path.basename(os.path.dirname(stripped))
     name = os.path.basename(stripped) or work_dir
     structural = util_first_fitting([full, f"{parent}/{name}"], PATH_MAX_LEN)
@@ -584,7 +561,7 @@ def util_trunc_cols(s: str, limit: int) -> str:
     width = 0
     for c in s:
         cw = util_char_width(c)
-        if width + cw > limit - 1:          # reserve one column for the ellipsis
+        if width + cw > limit - 1:  # reserve one column for the ellipsis
             break
         out.append(c)
         width += cw
