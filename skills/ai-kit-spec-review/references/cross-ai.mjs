@@ -20,7 +20,7 @@
  * generator will then refuse to overwrite this file silently (sha256 header above).
  *
  * Flags:
- *   --prefer pi,cursor,opencode,codex   order to try (default CONFIG.prefer)
+ *   --prefer pi,cursor,opencode,codex   first entry runs; rest is a menu
  *   --model-<cli> <id>                       model per CLI, e.g. --model-cursor auto
  *   --mode exec|review                       exec = full permissions (default); review = read-only
  *   --timeout <s>                            inner deadline (lowers default; never above derived inner)
@@ -126,25 +126,25 @@ const PATTERNS = {
 // </patterns>
 
 const STATUS_TABLE = {
-  ok: { exit: 0, action: 'stop' },
-  no_change: { exit: 1, action: 'fallback' },
-  empty_answer: { exit: 1, action: 'fallback' },
-  crash: { exit: 1, action: 'fallback' },
-  contract_violation: { exit: 1, action: 'stop' },
-  usage: { exit: 2, action: 'stop' },
-  no_model: { exit: 2, action: 'stop' },
-  empty_stdin: { exit: 2, action: 'stop' },
-  permission_blocked: { exit: 69, action: 'fallback' },
-  bad_model: { exit: 69, action: 'fallback' },
-  auth: { exit: 69, action: 'fallback' },
-  billing: { exit: 69, action: 'fallback' },
-  quota: { exit: 75, action: 'retry-later' },
-  capacity: { exit: 75, action: 'retry-later' },
-  timeout: { exit: 124, action: 'stop' },
-  not_installed: { exit: 127, action: 'fallback' },
-  signal: { exit: 128, action: 'stop' },
-  git_error: { exit: 1, action: 'stop' },
-  git_timeout: { exit: 1, action: 'stop' },
+  ok: { exit: 0 },
+  no_change: { exit: 1 },
+  empty_answer: { exit: 1 },
+  crash: { exit: 1 },
+  contract_violation: { exit: 1 },
+  usage: { exit: 2 },
+  no_model: { exit: 2 },
+  empty_stdin: { exit: 2 },
+  permission_blocked: { exit: 69 },
+  bad_model: { exit: 69 },
+  auth: { exit: 69 },
+  billing: { exit: 69 },
+  quota: { exit: 75 },
+  capacity: { exit: 75 },
+  timeout: { exit: 124 },
+  not_installed: { exit: 127 },
+  signal: { exit: 128 },
+  git_error: { exit: 1 },
+  git_timeout: { exit: 1 },
 };
 
 const FINALIZE_CAP_MS = 10000;
@@ -207,20 +207,16 @@ function log(text) {
 
 function finish(status, fields) {
   if (finished) return finishedExit;
-  const row = STATUS_TABLE[status] || { exit: 1, action: 'stop' };
-  let action = fields.action ?? row.action;
+  const row = STATUS_TABLE[status] || { exit: 1 };
   const tree = fields.tree ?? 'unknown';
   let exit = fields.exit ?? row.exit;
   if (status === 'billing' && fields.cli && CONFIG.routerBacked[fields.cli]) {
-    action = 'retry-later';
     exit = 75;
   }
-  // Neither another CLI nor a later retry may run over edits this run left (or may have left).
-  if ((action === 'fallback' || action === 'retry-later') && tree !== 'clean') action = 'stop';
   const elapsed = fields.elapsed ?? Math.max(0, Math.round((Date.now() - runStartedMs) / 1000));
   const line = `AIKIT-XAI status=${status} cli=${fields.cli ?? '-'} model=${fields.model ?? '-'} ` +
     `exit=${exit} cli_rc=${fields.cli_rc ?? '-'} elapsed=${elapsed}s out=${fields.out ?? 0} ` +
-    `tree=${tree} action=${action}`;
+    `tree=${tree} action=stop`;
   if (!stderrGone) process.stderr.write(`${line}\n`);
   finished = true;
   finishedExit = exit;
@@ -395,10 +391,6 @@ function classify(stderrText, structuredError) {
     }
   }
   return null;
-}
-
-function tryNextCli(status, tree) {
-  return (STATUS_TABLE[status] || STATUS_TABLE.crash).action === 'fallback' && tree === 'clean';
 }
 
 function which(bin, envPath = process.env.PATH || '') {
@@ -1721,51 +1713,51 @@ async function blackBoxSelfTest() {
         name: 'empty-auth',
         args: ['--prefer', 'pi', '--model-pi', 'fake/emptyauth'],
         exit: 69,
-        status: /^AIKIT-XAI status=auth cli=pi model=fake\/emptyauth exit=69 cli_rc=0 .* tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=auth cli=pi model=fake\/emptyauth exit=69 cli_rc=0 .* tree=clean action=stop$/,
       },
       {
         name: 'billing',
         args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
         exit: 69,
-        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'billing-router',
         args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
         config: { routerBacked: { pi: true } },
         exit: 75,
-        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=retry-later$/,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'billing-403-router',
         args: ['--prefer', 'pi', '--model-pi', 'fake/spend403'],
         config: { routerBacked: { pi: true } },
         exit: 75,
-        status: /^AIKIT-XAI status=billing cli=pi model=fake\/spend403 exit=75 cli_rc=1 .* tree=clean action=retry-later$/,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/spend403 exit=75 cli_rc=1 .* tree=clean action=stop$/,
       },
       {
         name: 'billing-free-tier',
         args: ['--prefer', 'pi', '--model-pi', 'fake/freetier'],
         exit: 69,
-        status: /^AIKIT-XAI status=billing cli=pi model=fake\/freetier exit=69 cli_rc=1 .* tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/freetier exit=69 cli_rc=1 .* tree=clean action=stop$/,
       },
       {
         name: 'auth',
         args: ['--prefer', 'pi', '--model-pi', 'fake/auth'],
         exit: 69,
-        status: /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'perm',
         args: ['--prefer', 'pi', '--model-pi', 'fake/perm'],
         exit: 69,
-        status: /^AIKIT-XAI status=permission_blocked cli=pi model=fake\/perm exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=permission_blocked cli=pi model=fake\/perm exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'quota',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
         exit: 75,
-        status: /^AIKIT-XAI status=quota cli=pi model=fake\/quota exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=retry-later$/,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/quota exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'dirty-quota',
@@ -1792,25 +1784,25 @@ async function blackBoxSelfTest() {
         name: 'crash',
         args: ['--prefer', 'pi', '--model-pi', 'fake/crash'],
         exit: 1,
-        status: /^AIKIT-XAI status=crash cli=pi model=fake\/crash exit=1 cli_rc=7 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/crash exit=1 cli_rc=7 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'nochange',
         args: ['--prefer', 'pi', '--model-pi', 'fake/nochange'],
         exit: 1,
-        status: /^AIKIT-XAI status=no_change cli=pi model=fake\/nochange exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=no_change cli=pi model=fake\/nochange exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'empty',
         args: ['--prefer', 'pi', '--model-pi', 'fake/empty'],
         exit: 1,
-        status: /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'cursor-error',
         args: ['--prefer', 'cursor', '--model-cursor', 'fake-err-cursor'],
         exit: 69,
-        status: /^AIKIT-XAI status=auth cli=cursor model=fake-err-cursor exit=69 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=auth cli=cursor model=fake-err-cursor exit=69 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
         check: (_r, ctx) => {
           const mi = ctx.calls.indexOf('cursor-agent models');
           const ri = ctx.calls.indexOf('cursor-agent fake-err-cursor');
@@ -1826,16 +1818,11 @@ async function blackBoxSelfTest() {
         check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran after dirty crash' : null),
       },
       {
-        name: 'fallback',
+        name: 'no-change-no-fallback',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/nochange', '--model-cursor', 'fake-ok-cursor'],
-        exit: 0,
-        status: /^AIKIT-XAI status=ok cli=cursor model=fake-ok-cursor exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
-        check: (_r, ctx) => {
-          const piIdx = ctx.calls.findIndex((l) => l.startsWith('pi '));
-          const curIdx = ctx.calls.findIndex((l) => l.startsWith('cursor-agent'));
-          if (piIdx < 0 || curIdx < 0 || piIdx > curIdx) return `call order: ${ctx.calls.join('|')}`;
-          return null;
-        },
+        exit: 1,
+        status: /^AIKIT-XAI status=no_change cli=pi model=fake\/nochange exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
+        check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null),
       },
       {
         name: 'reedit',
@@ -1856,7 +1843,7 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'codex', '--model-codex', 'x'],
         env: { PATH: `${path.join(tmp, 'bin-nocodex')}` },
         exit: 127,
-        status: /^AIKIT-XAI status=not_installed .* exit=127 .* action=fallback$/,
+        status: /^AIKIT-XAI status=not_installed .* exit=127 .* action=stop$/,
       },
       {
         name: 'sigterm-hang',
@@ -2072,12 +2059,13 @@ async function blackBoxSelfTest() {
       {
         name: 'bad-model',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/missing', '--model-cursor', 'fake-ok-cursor'],
-        exit: 0,
-        status: /^AIKIT-XAI status=ok cli=cursor model=fake-ok-cursor exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        exit: 69,
+        status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing exit=69 .* tree=clean action=stop$/,
         check: (r, ctx) => {
           if (!(r.stderr || '').includes('bad_model')) return 'stderr missing bad_model';
           if (!ctx.calls.includes('pi rpc')) return 'missing pi rpc';
           if (ctx.calls.some((l) => l === 'pi missing')) return 'pi run should not happen';
+          if (ctx.calls.some((l) => l.startsWith('cursor-agent'))) return 'cursor ran';
           return null;
         },
       },
@@ -2098,13 +2086,13 @@ async function blackBoxSelfTest() {
         name: 'model-suffix-bad-base',
         args: ['--prefer', 'pi', '--model-pi', 'fake/missing:high'],
         exit: 69,
-        status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing:high exit=69 .* action=fallback$/,
+        status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing:high exit=69 .* action=stop$/,
       },
       {
         name: 'bad-model-only',
         args: ['--prefer', 'pi', '--model-pi', 'fake/missing'],
         exit: 69,
-        status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing exit=69 .* action=fallback$/,
+        status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing exit=69 .* action=stop$/,
       },
       {
         name: 'list-broken',
@@ -2176,7 +2164,7 @@ async function blackBoxSelfTest() {
         name: 'overloaded',
         args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded'],
         exit: 75,
-        status: /^AIKIT-XAI status=capacity cli=pi model=fake\/overloaded exit=75 .* action=retry-later$/,
+        status: /^AIKIT-XAI status=capacity cli=pi model=fake\/overloaded exit=75 .* action=stop$/,
         check: (_r, ctx) => {
           const n = ctx.calls.filter((l) => l === 'pi overloaded').length;
           return n === 3 ? null : `overloaded calls=${n}`;
@@ -2187,7 +2175,7 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded', '--timeout', '3'],
         config: { backoffS: [30, 60] },
         exit: 75,
-        status: /^AIKIT-XAI status=capacity cli=pi model=fake\/overloaded exit=75 cli_rc=1 .* tree=clean action=retry-later$/,
+        status: /^AIKIT-XAI status=capacity cli=pi model=fake\/overloaded exit=75 cli_rc=1 .* tree=clean action=stop$/,
         check: (_r, ctx) => (ctx.elapsedMs < 5000 ? null : `elapsed ${ctx.elapsedMs}ms`),
       },
       {
@@ -2249,12 +2237,16 @@ async function blackBoxSelfTest() {
         check: (r) => ((r.stderr || '').includes('claude is review-only') ? null : 'missing review-only line'),
       },
       {
-        // IN-09: a review-only CLI anywhere in an exec prefer list is refused before any run.
-        name: 'claude-exec-late-usage',
+        // Menu selection: a later review-only entry never rejects an exec first choice.
+        name: 'review-only-later-menu-ok',
         args: ['--prefer', 'pi,claude', '--mode', 'exec', '--model-pi', 'fake/ok', '--model-claude', 'fake-ok'],
-        exit: 2,
-        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
-        check: (_r, ctx) => (ctx.calls.length ? `calls=${ctx.calls.join(',')}` : null),
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          if ((r.stderr || '').includes('is review-only')) return 'review-only refusal';
+          if (ctx.calls.some((l) => l.startsWith('claude '))) return 'claude ran';
+          return ctx.calls.some((l) => l.startsWith('pi ')) ? null : 'pi did not run';
+        },
       },
       {
         name: 'prefer-proto-key',
@@ -2813,6 +2805,114 @@ async function blackBoxSelfTest() {
           return tail[0] === '--skill' && tail[1] === 'skills/x/SKILL.md' ? null : `tail=${JSON.stringify(tail)}`;
         },
       },
+      ...[
+        { mode: 'crash', exit: 1, status: 'crash', tree: 'clean' },
+        { mode: 'quota', exit: 75, status: 'quota', tree: 'clean' },
+        { mode: 'billing', exit: 69, status: 'billing', tree: 'clean' },
+        { mode: 'auth', exit: 69, status: 'auth', tree: 'clean' },
+        { mode: 'perm', exit: 69, status: 'permission_blocked', tree: 'clean' },
+        { mode: 'empty', exit: 1, status: 'empty_answer', tree: 'clean' },
+        { mode: 'nochange', exit: 1, status: 'no_change', tree: 'clean' },
+        {
+          mode: 'hang', exit: 124, status: 'timeout', tree: '.*',
+          extra: ['--timeout', '2'], dead: ['pi', 'gc'],
+        },
+        { mode: 'missing', exit: 69, status: 'bad_model', tree: 'clean' },
+      ].map((row) => ({
+        name: `no-second-cli-${row.mode}`,
+        args: [
+          '--prefer', 'pi,cursor,opencode', '--model-pi', `fake/${row.mode}`,
+          '--model-cursor', 'fake-ok-cursor', '--model-opencode', 'fake/ok',
+          ...(row.extra || []),
+        ],
+        exit: row.exit,
+        status: new RegExp(`^AIKIT-XAI status=${row.status} cli=pi model=fake/${row.mode} ` +
+          `exit=${row.exit} .* tree=${row.tree} action=stop$`),
+        check: (_r, ctx) => {
+          const other = ctx.calls.find((l) => (
+            l.startsWith('cursor-agent') || l.startsWith('opencode')
+          ));
+          if (other) return `second cli: ${other}`;
+          return row.dead ? deadCheck(ctx, row.dead) : null;
+        },
+      })),
+      {
+        name: 'no-second-cli-review-edit',
+        args: [
+          '--mode', 'review', '--prefer', 'pi,cursor,opencode', '--model-pi', 'fake/review-edit',
+          '--model-cursor', 'fake-ok-cursor', '--model-opencode', 'fake/ok',
+        ],
+        exit: 1,
+        status: new RegExp('^AIKIT-XAI status=contract_violation cli=pi ' +
+          'model=fake/review-edit exit=1 .* action=stop$'),
+        check: (_r, ctx) => {
+          const other = ctx.calls.find((l) => (
+            l.startsWith('cursor-agent') || l.startsWith('opencode')
+          ));
+          return other ? `second cli: ${other}` : null;
+        },
+      },
+      {
+        name: 'config-prefer-first-only',
+        config: {
+          prefer: ['pi', 'cursor', 'opencode'],
+          models: { pi: 'fake/crash', cursor: 'fake-ok-cursor', opencode: 'fake/ok' },
+        },
+        args: [],
+        exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/crash exit=1 .* action=stop$/,
+        check: (_r, ctx) => {
+          const other = ctx.calls.find((l) => (
+            l.startsWith('cursor-agent') || l.startsWith('opencode')
+          ));
+          return other ? `second cli: ${other}` : null;
+        },
+      },
+      {
+        name: 'not-installed-first',
+        setup: (c) => {
+          const dir = path.join(c.tmp, `bin-nopi-${c.repo.split('/').pop()}`);
+          fs.mkdirSync(dir);
+          for (const name of fs.readdirSync(path.join(c.tmp, 'bin'))) {
+            if (name === 'pi') continue;
+            fs.symlinkSync(path.join(c.tmp, 'bin', name), path.join(dir, name));
+          }
+          c.env.PATH = dir;
+          return null;
+        },
+        args: [
+          '--prefer', 'pi,cursor', '--model-pi', 'fake/ok', '--model-cursor', 'fake-ok-cursor',
+        ],
+        exit: 127,
+        status: /^AIKIT-XAI status=not_installed cli=pi .* exit=127 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.length) return `calls=${ctx.calls.join('|')}`;
+          const line = 'pi not installed; no other CLI runs';
+          return (r.stderr || '').includes(line) ? null : 'missing line';
+        },
+      },
+      {
+        name: 'no-model-first',
+        args: ['--prefer', 'pi,cursor', '--model-cursor', 'fake-ok-cursor'],
+        exit: 2,
+        status: /^AIKIT-XAI status=no_model cli=pi .* exit=2 .* action=stop$/,
+        check: (_r, ctx) => (ctx.calls.length ? `calls=${ctx.calls.join('|')}` : null),
+      },
+      {
+        name: 'review-only-first-refused',
+        args: [
+          '--mode', 'exec', '--prefer', 'claude,pi', '--model-claude', 'fake-ok',
+          '--model-pi', 'fake/ok',
+        ],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('claude is review-only')) {
+            return 'missing review-only line';
+          }
+          return ctx.calls.some((l) => l.startsWith('pi ')) ? 'pi ran' : null;
+        },
+      },
       {
         name: 'outer-race',
         config: { outerTimeoutS: 10 },
@@ -2882,9 +2982,9 @@ async function main(argv) {
     codexEffort: o.codexEffort ?? (CODEX_EFFORTS.has(effort.codex) ? effort.codex : null),
     piThinking: PI_THINKING.has(effort.pi) ? effort.pi : null,
   };
-  const reviewOnly = o.mode === 'exec' ? cands.find((c) => !c.rt.exec) : null;
-  if (reviewOnly) {
-    log(`cross-ai: ${reviewOnly.name} is review-only (no exec formula)`);
+  const first = cands[0];
+  if (o.mode === 'exec' && first && !first.rt.exec) {
+    log(`cross-ai: ${first.name} is review-only (no exec formula)`);
     return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
 
@@ -2903,13 +3003,16 @@ async function main(argv) {
       piThinking: knobs.piThinking, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
     };
     for (const c of cands) {
-      const argvOut = c.model ? withExtra(c.name, c.rt[o.mode](c.model, ctx)) : null;
+      const formula = c.rt[o.mode];
+      const argvOut = (c.model && typeof formula === 'function')
+        ? withExtra(c.name, formula(c.model, ctx)) : null;
       process.stdout.write(`${c.name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(argvOut) : 'NO MODEL'}\n`);
       if (c.model && argvOut) {
         const retry = retryArgv(c.name, c.rt, c.model, ctx, '<sid>', o.mode, '<prompt>');
         log(`cross-ai: retry ${c.name} argv=${JSON.stringify(retry.argv)}`);
       }
     }
+    if (first) log(`cross-ai: a run uses ${first.name} only`);
     return finish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
   }
   const raw = readStdin();
@@ -2935,117 +3038,108 @@ async function main(argv) {
   const marginMs = (outer - innerDefault) * 1000;
   finalizeBy = runDeadline + Math.min(FINALIZE_CAP_MS, Math.floor(marginMs / 2));
 
-  let last = null;
-  let sawModel = false;
+  const c = first;
+  liveFields.cli = c?.name ?? '-';
+  liveFields.model = c?.model ?? '-';
+  if (cands.length > 1) {
+    const rest = cands.slice(1).map((x) => x.name).join(', ');
+    log(`cross-ai: only ${c.name} runs; ${rest} is the owner's menu ` +
+      '(no automatic fallback)');
+  }
   // Decided once: a directory with no .git ancestor still dispatches (D-34).
   const noTree = !inGitTree(process.cwd());
   if (noTree) {
     log(`cross-ai: ${process.cwd()} is not inside a git work tree; running without the tree ` +
-      'check (tree=unknown); no other CLI runs after one has run');
+      'check (tree=unknown)');
     if (o.mode === 'review') {
       log('cross-ai: review mode cannot verify the read-only contract outside a git work tree');
     }
   }
-  for (const c of cands) {
-    if (aborting) break;
-    if (!c.bin) { log(`cross-ai: ${c.name} not installed, skipping`); continue; }
-    if (!c.model) {
-      log(`cross-ai: no model configured for ${c.name} (--model-${c.name}), skipping`);
-      last = last || { kind: 'no_model' };
-      continue;
-    }
-    sawModel = true;
-    liveFields.cli = c.name;
-    liveFields.model = c.model;
-    const before = noTree ? null : await treeState(process.cwd(), runDeadline);
-    if (aborting) break;
-    if (!noTree && before === null) {
-      return finish(gitFailStatus(), { ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1 });
-    }
-    const listEnv = childEnv(c.rt.env, process.env);
-    const listing = await listModels(c.rt, c.bin, listEnv, runDeadline);
-    if (listing.ok) {
-      const listed = c.rt.modelSuffix ? c.model.replace(c.rt.modelSuffix, '') : c.model;
-      if (listed !== c.model) {
-        log(`cross-ai: ${c.name} preflight checks ${listed}; the suffix ${c.model.slice(listed.length)} is not validated`);
-      }
-      if (!listing.ids.includes(listed)) {
-        log(`cross-ai: ${c.name} bad_model (${c.model} not in model list)`);
-        // bad_model falls back and nothing ran, so the next CLI may always try.
-        last = { status: 'bad_model', cli: c.name, model: c.model, tree: 'clean', cli_rc: '-' };
-        log(`cross-ai: ${c.name} bad_model, trying the next CLI`);
-        continue;
-      }
-    } else if (listing.reason !== 'no listing') {
-      log(`cross-ai: ${c.name} model list unavailable (${listing.reason}); not preflighted`);
-    }
-    if (aborting) break;
-    // From here until the next snapshot nothing proves the tree clean (CR-03).
-    liveFields.tree = 'unknown';
-    const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, {
-      beforeSig: noTree ? null : stateSig(before), codexEffort: knobs.codexEffort,
-      piThinking: knobs.piThinking, codexServiceTier: o.codexServiceTier,
-      cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
-    });
-    liveFields.out = r.outBytes || 0;
-    liveFields.cli_rc = r.cli_rc ?? '-';
-    let after = noTree ? null : await treeState(process.cwd(), finalizeBy);
-    // A signal during this snapshot killed its git child: read once more on the signal budget.
-    if (!noTree && aborting && after === null) after = await treeState(process.cwd(), finalizeBy);
-    const tree = noTree ? 'unknown' : treeLabel(before, after);
-    liveFields.tree = tree;
-    if (aborting) break;
-    if (
-      r.status === 'contract_violation' || r.status === 'git_error' || r.status === 'git_timeout'
-    ) {
-      const treeField = r.status === 'contract_violation' ? tree : 'unknown';
-      return finish(r.status, { ...liveFields, tree: treeField, cli_rc: r.cli_rc ?? '-', exit: 1 });
-    }
-    if (r.timedOut) {
-      return finish('timeout', { ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? '-' });
-    }
-    if (o.mode === 'review' && before && after && tree === 'dirty') {
-      return finish('contract_violation', { ...liveFields, tree, cli_rc: r.cli_rc ?? '-', exit: 1 });
-    }
-    if (r.ok) {
-      if (!noTree && (after === null || before === null)) {
-        return finish(gitFailStatus(), { ...liveFields, tree: 'unknown', cli_rc: 0, exit: 1 });
-      }
-      if (o.mode === 'exec' && tree === 'clean') {
-        last = { status: 'no_change', cli: c.name, model: c.model, tree, cli_rc: 0 };
-        log(`cross-ai: ${c.name} answered without repo change, trying the next CLI`);
-        continue;
-      }
-      process.stdout.write(r.text);
-      return finish('ok', { ...liveFields, tree, exit: 0, cli_rc: 0, out: r.outBytes || 0 });
-    }
-    if (!noTree && after === null) {
-      return finish(gitFailStatus(), {
-        ...liveFields, tree: 'unknown', cli_rc: r.cli_rc ?? '-', exit: 1,
-      });
-    }
-    const status = r.status || 'crash';
-    last = { status, cli: c.name, model: c.model, tree, cli_rc: r.cli_rc };
-    if (tryNextCli(status, tree)) {
-      log(`cross-ai: ${c.name} ${status}, trying the next CLI`);
-      continue;
-    }
-    return finish(status, { ...liveFields, tree, cli_rc: r.cli_rc, cli: c.name, model: c.model });
-  }
-  if (aborting) return finish('signal', { ...liveFields, exit: 128 + aborting });
-  if (!sawModel && last && last.kind === 'no_model') {
-    return finish('no_model', { ...liveFields, tree: 'clean', exit: 2 });
-  }
-  if (!last) {
-    log(`cross-ai: none of [${order.join(', ')}] is installed`);
+  if (!c) {
+    log('cross-ai: no CLI named');
     return finish('not_installed', { ...liveFields, tree: 'clean', exit: 127 });
   }
-  if (last.status === 'no_change') {
-    return finish('no_change', { ...liveFields, cli: last.cli, model: last.model, tree: last.tree, cli_rc: 0 });
+  if (!c.bin) {
+    log(`cross-ai: ${c.name} not installed; no other CLI runs (no automatic fallback)`);
+    return finish('not_installed', {
+      ...liveFields, cli: c.name, model: c.model || '-', tree: 'clean', exit: 127,
+    });
   }
-  return finish(last.status || 'crash', {
-    ...liveFields, cli: last.cli || '-', model: last.model || '-', tree: last.tree || 'unknown',
-    cli_rc: last.cli_rc ?? '-',
+  if (!c.model) {
+    log(`cross-ai: no model configured for ${c.name} (--model-${c.name})`);
+    return finish('no_model', {
+      ...liveFields, cli: c.name, model: '-', tree: 'clean', exit: 2,
+    });
+  }
+  if (aborting) return finish('signal', { ...liveFields, exit: 128 + aborting });
+  const before = noTree ? null : await treeState(process.cwd(), runDeadline);
+  if (aborting) return finish('signal', { ...liveFields, exit: 128 + aborting });
+  if (!noTree && before === null) {
+    return finish(gitFailStatus(), { ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1 });
+  }
+  const listEnv = childEnv(c.rt.env, process.env);
+  const listing = await listModels(c.rt, c.bin, listEnv, runDeadline);
+  if (listing.ok) {
+    const listed = c.rt.modelSuffix ? c.model.replace(c.rt.modelSuffix, '') : c.model;
+    if (listed !== c.model) {
+      log(`cross-ai: ${c.name} preflight checks ${listed}; the suffix ${c.model.slice(listed.length)} is not validated`);
+    }
+    if (!listing.ids.includes(listed)) {
+      log(`cross-ai: ${c.name} bad_model (${c.model} not in model list)`);
+      return finish('bad_model', {
+        ...liveFields, cli: c.name, model: c.model, tree: 'clean', cli_rc: '-',
+      });
+    }
+  } else if (listing.reason !== 'no listing') {
+    log(`cross-ai: ${c.name} model list unavailable (${listing.reason}); not preflighted`);
+  }
+  if (aborting) return finish('signal', { ...liveFields, exit: 128 + aborting });
+  // From here until the next snapshot nothing proves the tree clean (CR-03).
+  liveFields.tree = 'unknown';
+  const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, {
+    beforeSig: noTree ? null : stateSig(before), codexEffort: knobs.codexEffort,
+    piThinking: knobs.piThinking, codexServiceTier: o.codexServiceTier,
+    cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
+  });
+  liveFields.out = r.outBytes || 0;
+  liveFields.cli_rc = r.cli_rc ?? '-';
+  let after = noTree ? null : await treeState(process.cwd(), finalizeBy);
+  // A signal during this snapshot killed its git child: read once more on the signal budget.
+  if (!noTree && aborting && after === null) after = await treeState(process.cwd(), finalizeBy);
+  const tree = noTree ? 'unknown' : treeLabel(before, after);
+  liveFields.tree = tree;
+  if (aborting) return finish('signal', { ...liveFields, exit: 128 + aborting });
+  if (
+    r.status === 'contract_violation' || r.status === 'git_error' || r.status === 'git_timeout'
+  ) {
+    const treeField = r.status === 'contract_violation' ? tree : 'unknown';
+    return finish(r.status, { ...liveFields, tree: treeField, cli_rc: r.cli_rc ?? '-', exit: 1 });
+  }
+  if (r.timedOut) {
+    return finish('timeout', { ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? '-' });
+  }
+  if (o.mode === 'review' && before && after && tree === 'dirty') {
+    return finish('contract_violation', { ...liveFields, tree, cli_rc: r.cli_rc ?? '-', exit: 1 });
+  }
+  if (r.ok) {
+    if (!noTree && (after === null || before === null)) {
+      return finish(gitFailStatus(), { ...liveFields, tree: 'unknown', cli_rc: 0, exit: 1 });
+    }
+    if (o.mode === 'exec' && tree === 'clean') {
+      return finish('no_change', {
+        ...liveFields, cli: c.name, model: c.model, tree, cli_rc: 0,
+      });
+    }
+    process.stdout.write(r.text);
+    return finish('ok', { ...liveFields, tree, exit: 0, cli_rc: 0, out: r.outBytes || 0 });
+  }
+  if (!noTree && after === null) {
+    return finish(gitFailStatus(), {
+      ...liveFields, tree: 'unknown', cli_rc: r.cli_rc ?? '-', exit: 1,
+    });
+  }
+  return finish(r.status || 'crash', {
+    ...liveFields, tree, cli_rc: r.cli_rc, cli: c.name, model: c.model,
   });
 }
 

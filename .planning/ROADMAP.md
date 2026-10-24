@@ -831,8 +831,8 @@ before the runner is planned.
   5. The runner has no automatic fallback to another CLI and never switches harness, provider or
      model on its own; the same policy runs in `ai-kit-spec-review` / `ai-kit-spec-execute*`, and
      the skill, README and runner self-tests document and pin it.
-**Plans**: 11 plans
-- [ ] 25-01-PLAN.md
+**Plans**: 1/11 plans executed
+- [x] 25-01-PLAN.md
 - [ ] 25-02-PLAN.md
 - [ ] 25-03-PLAN.md
 - [ ] 25-04-PLAN.md
@@ -1028,6 +1028,7 @@ instead of a fixed Laya -> TypeSafe -> Zen ladder:
    - Under pi, Zen (non-free) may be used through the owner's linked subscription.
    - Under Claude Code or Cursor, Zen is used only with an explicit token and URL.
    - Otherwise the Zen rung is skipped with a reason.
+
 Owner note (2026-10-24): undecided whether to keep Zen at all, which is why it is gated, not
 deleted. **Current state (verified 2026-10-24, before this work):** the Laya URL is hard-coded
 with env overrides (no `.toml` knob, no first-run question). The Zen rung exists with free-tier
@@ -1051,6 +1052,7 @@ the environment (`TYPESAFE_API_KEY`, sourced by the owner's shell from `~/.mycre
 - the client reads `~/.mycreds` as a transitional fallback (line parse, no `source`, no export to
   children, 0600 enforced);
 - `--probe` reports `key_source` and an ordered `key_expected` list without values.
+
 **Still open:**
 - (a) make `~/.mycreds` strictly the last source (it currently sits before `state`);
 - (b) document env inheritance: a long-lived terminal multiplexer server (herdr, observed
@@ -1059,6 +1061,7 @@ the environment (`TYPESAFE_API_KEY`, sourced by the owner's shell from `~/.mycre
   needed;
 - (c) remove the fallback once agents inherit the env;
 - (d) the `.toml` storage option from 999.9 step 2, if the owner keeps it.
+
 Success criteria when promoted: (a)-(c) done with tests on synthetic files; the probe names the
 missing source and the inheritance hint without printing any value.
 **Requirements:** (none yet)
