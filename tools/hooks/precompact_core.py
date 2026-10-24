@@ -13,7 +13,7 @@ written file.
 Stdlib only, runnable as ``python3 -S``. The core itself never decides host
 policy: a caller that cannot produce a summary gets ``None`` and every host
 adapter stays fail-open. ``last_boundary`` is a verbatim copy of
-``tools/status-line.py``'s ``probe_transcript_compaction`` boundary rule, pinned
+``tools/claude_probes.py``'s ``probe_transcript_compaction`` boundary rule, pinned
 by a parity test; the transcript format is undocumented and read defensively.
 """
 

@@ -1,4 +1,4 @@
-# Dev-only project metadata. The ai-kit RUNTIME (tools/status-line.py) is
+# Dev-only project metadata. The ai-kit RUNTIME (tools/claude-status-line.py) is
 # stdlib-only and runs under the user's own python3 — it has NO dependencies.
 # This file exists solely to give `uv` a reproducible dev/lint environment
 # (ruff + pylint + pyright + vulture + pre-commit) and to hold their config.

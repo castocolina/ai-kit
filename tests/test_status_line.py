@@ -32,7 +32,7 @@ common_render: Any = importlib.import_module("common_render")  # pre-split parit
 common_segments: Any = importlib.import_module("common_segments")  # pre-split parity
 common_types: Any = importlib.import_module("common_types")  # pre-split parity
 
-_MODULE_PATH = os.path.join(_HERE, "..", "tools", "status-line.py")
+_MODULE_PATH = os.path.join(_HERE, "..", "tools", "claude-status-line.py")
 
 
 def load_module():
@@ -2662,14 +2662,15 @@ class TestConfigPathAndLoad(unittest.TestCase):
     def test_xdg_path(self):
         env = {"XDG_CONFIG_HOME": "/cfg", "HOME": "/home/u"}
         self.assertEqual(
-            common_config.cfg_config_path(env, claude_host.SPEC), "/cfg/ai-kit/statusline.toml"
+            common_config.cfg_config_path(env, claude_host.SPEC),
+            "/cfg/ai-kit/claude-statusline.toml"
         )
 
     def test_home_default_path(self):
         env = {"HOME": "/home/u"}
         self.assertEqual(
             common_config.cfg_config_path(env, claude_host.SPEC),
-            "/home/u/.config/ai-kit/statusline.toml",
+            "/home/u/.config/ai-kit/claude-statusline.toml",
         )
 
     def test_missing_file_is_empty(self):
@@ -2889,7 +2890,7 @@ class TestMainUsesConfig(unittest.TestCase):
         buf = io.StringIO()
         with (
             mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))),
-            mock.patch.object(sys, "argv", ["status-line.py"]),
+            mock.patch.object(sys, "argv", ["claude-status-line.py"]),
             mock.patch.dict(os.environ, env, clear=True),
             redirect_stdout(buf),
         ):
@@ -2991,7 +2992,7 @@ class TestPaletteFromConfig(unittest.TestCase):
         buf = io.StringIO()
         with (
             mock.patch.object(sys, "stdin", io.StringIO(json.dumps(raw))),
-            mock.patch.object(sys, "argv", ["status-line.py"]),
+            mock.patch.object(sys, "argv", ["claude-status-line.py"]),
             mock.patch.dict(os.environ, env, clear=True),
             redirect_stdout(buf),
         ):
@@ -3001,7 +3002,7 @@ class TestPaletteFromConfig(unittest.TestCase):
 
 
 class TestSampleRecipe(unittest.TestCase):
-    SAMPLE = os.path.join(_HERE, "..", "tools", "statusline.toml.sample")
+    SAMPLE = os.path.join(_HERE, "..", "tools", "claude-statusline.toml.sample")
 
     def _uncomment(self):
         # Data lines are "# " prefixed; prose is "## " prefixed. Reconstruct the
@@ -3571,7 +3572,7 @@ def entry_env(root):
 
 def run_entry(root, payload_text, extra_env=None):
     script = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "tools", "status-line.py")
+        os.path.join(os.path.dirname(__file__), "..", "tools", "claude-status-line.py")
     )
     result = subprocess.run(
         [sys.executable, "-S", script],
@@ -3793,7 +3794,7 @@ alt_process_memory=false
                 "STRICT_PROBE_OUT": record_path,
             }
             script_path = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..", "tools", "status-line.py")
+                os.path.join(os.path.dirname(__file__), "..", "tools", "claude-status-line.py")
             )
             result = subprocess.run(
                 [sys.executable, "-S", script_path],

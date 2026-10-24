@@ -1,4 +1,4 @@
-"""AST architecture-fitness test for tools/status-line.py (FR-8).
+"""AST architecture-fitness test for tools/claude-status-line.py (FR-8).
 
 This module enforces the seven structural invariants of FR-8.1 by parsing the
 render module (and the extracted doctor module) with the stdlib ``ast`` module
@@ -793,7 +793,7 @@ class TestArchitecture(unittest.TestCase):
             self.assertEqual([], check_no_doctor_symbols(tree), name)
 
     def test_entry_is_thin(self):
-        entry_tree, _source = _parse("status-line.py")
+        entry_tree, _source = _parse("claude-status-line.py")
         self.assertEqual([], check_thin_entry(entry_tree))
 
     def test_rule8_no_shell_true_in_spec_family(self):
@@ -977,7 +977,7 @@ def _split_sources():
         if os.path.isfile(path):
             with open(path, encoding="utf-8") as handle:
                 sources[name] = handle.read()
-    with open(os.path.join(_TOOLS, "status-line.py"), encoding="utf-8") as handle:
+    with open(os.path.join(_TOOLS, "claude-status-line.py"), encoding="utf-8") as handle:
         sources["status-line"] = handle.read()
     host_path = os.path.join(_TOOLS, "claude_host.py")
     with open(host_path, encoding="utf-8") as handle:

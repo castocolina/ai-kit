@@ -788,13 +788,13 @@ class TestPhase3E2E(unittest.TestCase):
     Scenario 1 — not-adopted + confirm (Choose→Arrange via gate→Review→Done):
       1. Spawn ``setup.py install`` under a PTY with temp dirs for both
          CLAUDE_CONFIG_DIR (symlinks land there) and XDG_CONFIG_HOME (config_toml
-         lands at ``$XDG_CONFIG_HOME/ai-kit/statusline.toml``).
+         lands at ``$XDG_CONFIG_HOME/ai-kit/claude-statusline.toml``).
       2. Drive: Choose screen (◉ marker) → Enter (advance to Arrange) → gate
          "Wire your status line?" appears (state=unset) → press n (adopt=False)
          → the segment board is SKIPPED and Review shows directly
          ("Review & confirm") → Enter (Review→Done) → "ai-kit is installed" →
          Enter (Done exits).
-      3. Assert NO statusline.toml written (adopt=False skips status-line persist)
+      3. Assert NO claude-statusline.toml written (adopt=False skips status-line persist)
          and settings.json has NO statusLine key; component symlinks ARE created.
 
     Scenario 2 — reconfigure pre-loads saved arrangement:
@@ -844,9 +844,9 @@ class TestPhase3E2E(unittest.TestCase):
     def _config_toml_path(self, xdg_config_home: str) -> str:
         """Compute the config_toml path given XDG_CONFIG_HOME.
 
-        Mirrors ``resolve_paths``: config_toml = XDG_CONFIG_HOME/ai-kit/statusline.toml.
+        Mirrors ``resolve_paths``: config_toml = XDG_CONFIG_HOME/ai-kit/claude-statusline.toml.
         """
-        return os.path.join(xdg_config_home, "ai-kit", "statusline.toml")
+        return os.path.join(xdg_config_home, "ai-kit", "claude-statusline.toml")
 
     def _seed_config_toml(self, config_toml: str, content: str) -> None:
         """Write ``content`` to ``config_toml``, creating parent dirs."""
@@ -875,7 +875,7 @@ class TestPhase3E2E(unittest.TestCase):
         The install flow routes status-line writes through persist_statusline
         gated on the wizard's ``adopt`` decision. Declining the adoption gate
         (``n``) sets adopt False, skips the segment board entirely, and confirms
-        WITHOUT adopting: NO statusline.toml is written and settings.json's
+        WITHOUT adopting: NO claude-statusline.toml is written and settings.json's
         statusLine is left untouched — proving the non-adopting path's wiring
         through a real PTY (component symlinks are still created independently)."""
         uv = _uv_cmd()
@@ -955,7 +955,7 @@ class TestPhase3E2E(unittest.TestCase):
 
         all_output = b"".join(captured).decode("utf-8", errors="replace")
 
-        # ── Assert 1: NO statusline.toml was written (adopt=False no-op) ──────
+        # ── Assert 1: NO claude-statusline.toml was written (adopt=False no-op) ──────
         self.assertFalse(
             os.path.isfile(config_toml),
             msg=(

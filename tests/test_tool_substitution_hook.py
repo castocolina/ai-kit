@@ -421,9 +421,9 @@ class TestWiring(unittest.TestCase):
         with open(os.path.join(install, "skills", "alpha", "SKILL.md"),
                   "w", encoding="utf-8") as handle:
             handle.write("---\nname: alpha\n---\n")
-        open(os.path.join(install, "tools", "status-line.py"), "w",
+        open(os.path.join(install, "tools", "claude-status-line.py"), "w",
              encoding="utf-8").close()
-        with open(os.path.join(install, "tools", "statusline.toml.sample"),
+        with open(os.path.join(install, "tools", "claude-statusline.toml.sample"),
                   "w", encoding="utf-8") as handle:
             handle.write("# recipe\n")
         env = {

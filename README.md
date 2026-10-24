@@ -19,7 +19,7 @@ wget -qO- https://raw.githubusercontent.com/castocolina/ai-kit/main/tools/instal
 
 The installer clones the repo into `~/.local/share/ai-kit`, symlinks every skill,
 command, and agent into `~/.claude/`, and points your status line at the bundled
-`status-line.py`. It is **idempotent** — re-run it any time to update.
+`tools/claude-status-line.py`. It is **idempotent** — re-run it any time to update.
 
 ## Contents
 
@@ -54,7 +54,7 @@ The repo is the source of truth. `tools/install.sh`:
 2. **verify** — enumerates `skills/`, `commands/`, and `agents/` and validates each entry's shape (skills need a `SKILL.md`; commands/agents need Markdown with frontmatter). Malformed entries are skipped with a warning.
 3. **link** — symlinks each valid entry into `~/.claude/<category>/`. Existing real files and symlinks that point outside ai-kit are never touched. The `jev-fast-decision` skill is additionally linked into `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` for pi, derived from the same selection (opencode reads `~/.claude/skills`; nothing is ever linked under `~/.agents/skills`; codex and cursor have no link — see the skill's reference for their status). A missing pi agent dir is skipped with a message, never created.
 4. **prune** — removes broken symlinks under `~/.claude/` that point into the install dir, so deleting a skill from the repo and re-running cleans up after itself.
-5. **statusline** — sets `statusLine` in `~/.claude/settings.json` to the bundled `tools/status-line.py` (a backup is written to `settings.json.bak`).
+5. **statusline** — sets `statusLine` in `~/.claude/settings.json` to the bundled `tools/claude-status-line.py` (a backup is written to `settings.json.bak`).
 
 Adding or removing skills/commands/agents needs no change to the script — entries are discovered dynamically. The interactive wizard asks before it touches real content at a link path: if a skill path holds a real directory or a foreign symlink, a confirmation gate (default No) offers to back it up into the same XDG-state backups dir and link the repo copy — the same move the headless `--replace-existing` flag makes, and the backup destination is printed after the wizard exits.
 
@@ -78,7 +78,7 @@ make install                        # same as install.sh — launches the wizard
 before you make changes.
 
 **`uv` and `textual` are wizard-only.** The status-line render path
-(`tools/status-line.py`) stays plain `python3 -S` with zero dependencies —
+(`tools/claude-status-line.py`) stays plain `python3 -S` with zero dependencies —
 `uv`/`textual` are never required at render time and are never installed into
 your system Python. On first launch, if `uv` is missing, the wizard asks
 consent and installs it via the official [astral installer](https://astral.sh/uv);
@@ -136,7 +136,7 @@ re-activates it onto line 1.
 
 #### Summary screen
 
-`enter` / `y` confirms and writes `~/.config/ai-kit/statusline.toml`
+`enter` / `y` confirms and writes `~/.config/ai-kit/claude-statusline.toml`
 (doctor-validated; auto-reverts a bad write). `q` / `esc` aborts. An empty
 selection triggers a confirm modal ("install nothing?") defaulting to No
 (`y` to proceed, `n` / `esc` / `q` to go back).
@@ -154,7 +154,7 @@ wizard writes standard TOML that you can continue to edit by hand.
 ### Status-line configuration
 
 The status line works with zero config. To customize it, edit
-`~/.config/ai-kit/statusline.toml` (the installer drops a fully-commented
+`~/.config/ai-kit/claude-statusline.toml` (the installer drops a fully-commented
 starter there if you don't have one — as shipped it changes nothing). Settings
 resolve **built-in defaults < this file < environment variables**.
 
@@ -177,7 +177,7 @@ the `CC_AI_KIT_SEGMENT_<KEY>` env form.
 
 **Diagnostic segments:**
 
-- `render_time` (⏱, **on by default**) — how long `status-line.py` itself took to run, from
+- `render_time` (⏱, **on by default**) — how long `claude-status-line.py` itself took to run, from
   process start to render (the cost of its `git`/process/file probes), shown adaptively as
   `ns`/`µs`/`ms`/`s`. This is the *status line's own* wall-clock — distinct from `alt_time_session`
   (💬) and `alt_time_api` (📡), which report Claude's session and API durations from the input JSON.
@@ -293,9 +293,9 @@ for the final catch-all band:
 inf = "MAGENTA_DARK+bold"
 ```
 
-See `tools/statusline.toml.sample` for the full default palette and ramps.
+See `tools/claude-statusline.toml.sample` for the full default palette and ramps.
 
-**Inspect & validate:** the render module `status-line.py` is intentionally silent
+**Inspect & validate:** the render module `claude-status-line.py` is intentionally silent
 — it never writes to stderr. All validation (bad config values, unknown keys,
 bad env overrides) is surfaced by `tools/statusline-doctor.py`:
 
@@ -312,7 +312,7 @@ TOML file; on older Python the file is ignored and only env toggles apply.
 
 ### External drop-in segments
 
-Add a status-line segment without editing `status-line.py`: drop an executable
+Add a status-line segment without editing `claude-status-line.py`: drop an executable
 into `~/.config/ai-kit/segments/` (override with `CC_AI_KIT_EXTERNAL_DIR` or
 `[external] dir`). It is discovered on the next render, **enabled by default**,
 and placed via a header in its first 10 lines:
@@ -529,6 +529,15 @@ Environment overrides: `AI_KIT_DIR`, `AI_KIT_REPO`, `AI_KIT_BRANCH`, `CLAUDE_CON
 Re-run the install command (or `git -C ~/.local/share/ai-kit pull`). New entries
 are linked, removed ones are pruned, and skills re-read on next invocation.
 
+#### Upgrading from the single status-line script
+
+The entry and sample were hard-renamed, with no compatibility shim. After fetching an update
+and before setup runs, an existing status line may be blank. Re-run setup or the installer:
+the migration rewrites only a recognized Python interpreter command whose exact script argument
+is ai-kit's old entry; data arguments, backup suffixes, other scripts and shell commands remain
+untouched. It moves the old TOML only when the new TOML is absent. If both TOMLs exist, neither is
+changed; merge them by hand.
+
 ## Other tools
 
 Skill discovery follows the [Agent Skills](https://agentskills.io/specification)
@@ -567,14 +576,14 @@ ai-kit/
 ├── commands/                    # one Markdown file per slash command
 ├── tools/
 │   ├── install.sh               # the installer above
-│   ├── status-line.py           # responsive Claude Code status line
+│   ├── claude-status-line.py           # responsive Claude Code status line
 │   └── hooks/                   # session-start substitution briefing
 └── tests/                       # test_install.sh, test_status_line.py
 ```
 
 ## Development
 
-The shipped tools stay **stdlib-only** — `tools/status-line.py` runs under the
+The shipped tools stay **stdlib-only** — `tools/claude-status-line.py` runs under the
 user's own `python3` with no dependencies. The lint/type toolchain below is
 **dev-only** and never required at runtime.
 

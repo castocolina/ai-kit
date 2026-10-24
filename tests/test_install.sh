@@ -44,7 +44,7 @@ CLONE="$WORK/clone"; mkdir -p "$CLONE/tools"
 cp "$INSTALL_SH" "$CLONE/tools/install.sh"
 # The marker echoes argv AND the AI_KIT_DIR it received, so one assertion covers
 # both INSTALL_DIR resolution and the export that lets setup.py find
-# status-line.py / the sample under the same checkout.
+# claude-status-line.py / the sample under the same checkout.
 cat > "$CLONE/tools/setup.py" <<'PY'
 import os, sys
 print("CLONE_SETUP " + " ".join(sys.argv[1:]) + " | " + os.environ.get("AI_KIT_DIR", ""))

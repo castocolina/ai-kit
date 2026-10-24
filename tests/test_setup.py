@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -67,7 +68,7 @@ def tearDownModule():
     _CACHE_HOME.cleanup()
 SAMPLE_INPUT = os.path.join(FIXTURE_DIR, "sample-input.json")
 SAMPLE_RECIPE = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "tools", "statusline.toml.sample")
+    os.path.dirname(os.path.dirname(__file__)), "tools", "claude-statusline.toml.sample")
 EDITED_RECIPE = os.path.join(FIXTURE_DIR, "statusline-edited.toml")
 
 
@@ -123,11 +124,11 @@ class TestTomlRead(unittest.TestCase):
 
     def test_layout_defaults_match_status_line(self):
         # Drift guard: setup.LAYOUT_DEFAULTS must mirror the canonical default
-        # LAYOUT in tools/status-line.py (the renderer's source of truth), so the
+        # LAYOUT in tools/claude-status-line.py (the renderer's source of truth), so the
         # wizard's default layout can never silently diverge — e.g. dropping the
         # worktree segment from the identity row (the T4.2 regression).
         sl_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                               "tools", "status-line.py")
+                               "tools", "claude-status-line.py")
         spec = importlib.util.spec_from_file_location("status_line_drift", sl_path)
         assert spec is not None and spec.loader is not None
         sl = importlib.util.module_from_spec(spec)
@@ -169,7 +170,7 @@ class TestTomlRead(unittest.TestCase):
 class TestRenderPreview(unittest.TestCase):
     def _status_line(self):
         return os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "tools", "status-line.py")
+            os.path.dirname(os.path.dirname(__file__)), "tools", "claude-status-line.py")
 
     def test_preview_renders_and_reflects_toggle_off(self):
         seg = dict(setup.SEGMENT_DEFAULTS)
@@ -192,7 +193,7 @@ class TestRenderPreview(unittest.TestCase):
 
     def test_preview_never_raises_on_renderer_error(self):
         # A bogus interpreter/path must degrade to an empty string, not crash.
-        out = setup.render_preview("/no/such/status-line.py",
+        out = setup.render_preview("/no/such/claude-status-line.py",
                                    dict(setup.SEGMENT_DEFAULTS), "{}", {})
         self.assertEqual(out, "")
 
@@ -231,9 +232,9 @@ class TestPreviewFixture(unittest.TestCase):
     """
 
     _STATUS_LINE = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "tools", "status-line.py")
+        os.path.dirname(os.path.dirname(__file__)), "tools", "claude-status-line.py")
     _RECIPE = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "tools", "statusline.toml.sample")
+        os.path.dirname(os.path.dirname(__file__)), "tools", "claude-statusline.toml.sample")
 
     def test_fixture_drives_renderer_without_unavailable(self):
         """sample-input.json must produce a real render (not empty / unavailable)."""
@@ -353,7 +354,7 @@ class TestWritePreserving(unittest.TestCase):
 
     def test_writes_valid_toml_and_validates(self):
         with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "statusline.toml")
+            path = os.path.join(d, "claude-statusline.toml")
             ok = setup.write_toml_preserving(
                 path, "[segments]\nalt_cost = true\n", self._statusline_doctor())
             self.assertTrue(ok)
@@ -362,7 +363,7 @@ class TestWritePreserving(unittest.TestCase):
 
     def test_rejects_broken_output_and_reverts(self):
         with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "statusline.toml")
+            path = os.path.join(d, "claude-statusline.toml")
             with open(path, "w") as f:
                 f.write("# good original\n")
             # An unknown segment key fails the doctor.
@@ -378,7 +379,7 @@ class TestWritePreserving(unittest.TestCase):
         import contextlib
         import io
         with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "statusline.toml")
+            path = os.path.join(d, "claude-statusline.toml")
             with open(path, "w") as f:
                 f.write("# good original\n")
             err = io.StringIO()
@@ -470,7 +471,7 @@ class TestDiscoverExampleSegments(unittest.TestCase):
         # T5.5 (G5 M1): must accept EXACTLY the forms the renderer's _SEG_HEADER_RE
         # (^#\s*ai-kit-segment:\s*(.*?)\s*$) accepts — extra spaces after '#', no
         # space at all, and extra spaces after the colon — so setup and
-        # status-line.py never disagree on which files are valid providers.
+        # claude-status-line.py never disagree on which files are valid providers.
         for hdr in ("#  ai-kit-segment: id=x ttl=5\n",
                     "#ai-kit-segment: id=x\n",
                     "# ai-kit-segment:   id=x\n"):
@@ -482,13 +483,13 @@ class TestDiscoverExampleSegments(unittest.TestCase):
         self.assertIsNone(setup._parse_segment_header("   # ai-kit-segment: id=x\n"))
 
     def test_seg_header_regex_literal_matches_renderer(self):
-        # C3a (C3 review M1): drift guard — setup and status-line.py cannot import
+        # C3a (C3 review M1): drift guard — setup and claude-status-line.py cannot import
         # each other (hyphenated filename), so the `# ai-kit-segment:` matcher is
         # duplicated. Pin the two compiled-pattern LITERALS byte-identical so a
         # future edit to one regex can't silently diverge installer from renderer
         # (the behavioral test above only checks fixed example strings).
         sl_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                               "tools", "status-line.py")
+                               "tools", "claude-status-line.py")
         spec = importlib.util.spec_from_file_location("status_line_hdr_drift", sl_path)
         assert spec is not None and spec.loader is not None
         sl = importlib.util.module_from_spec(spec)
@@ -841,7 +842,7 @@ class TestWizardLoop(unittest.TestCase):
         # Integration: a save against the shipped recipe writes a valid file that
         # toggles alt_cost on and preserves the palette section.
         with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "statusline.toml")
+            path = os.path.join(d, "claude-statusline.toml")
             with open(SAMPLE_RECIPE) as f:
                 original = f.read()
             with open(path, "w") as f:
@@ -867,9 +868,10 @@ class TestResolvePaths(unittest.TestCase):
         self.assertEqual(p.claude_dir, "/home/u/.claude")
         self.assertEqual(p.settings, "/home/u/.claude/settings.json")
         self.assertEqual(p.config_dir, "/home/u/.config/ai-kit")
-        self.assertEqual(p.config_toml, "/home/u/.config/ai-kit/statusline.toml")
-        self.assertEqual(p.sample, "/home/u/.local/share/ai-kit/tools/statusline.toml.sample")
-        self.assertEqual(p.status_line, "/home/u/.local/share/ai-kit/tools/status-line.py")
+        self.assertEqual(p.config_toml, "/home/u/.config/ai-kit/claude-statusline.toml")
+        self.assertEqual(
+            p.sample, "/home/u/.local/share/ai-kit/tools/claude-statusline.toml.sample")
+        self.assertEqual(p.status_line, "/home/u/.local/share/ai-kit/tools/claude-status-line.py")
         self.assertEqual(p.statusline_doctor,
                          "/home/u/.local/share/ai-kit/tools/statusline-doctor.py")
 
@@ -1955,7 +1957,7 @@ class TestWireStatusline(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.settings = os.path.join(self.tmp, "settings.json")
-        self.sl = os.path.join(self.tmp, "ai-kit", "tools", "status-line.py")
+        self.sl = os.path.join(self.tmp, "ai-kit", "tools", "claude-status-line.py")
         os.makedirs(os.path.dirname(self.sl))
         open(self.sl, "w").close()
 
@@ -2175,7 +2177,7 @@ class TestRecipeAndUnwire(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.sample = os.path.join(self.tmp, "sample.toml")
-        self.cfg = os.path.join(self.tmp, "ai-kit", "statusline.toml")
+        self.cfg = os.path.join(self.tmp, "ai-kit", "claude-statusline.toml")
         with open(self.sample, "w") as f:
             f.write("# recipe\nrender_time = true\n")
 
@@ -2201,7 +2203,7 @@ class TestRecipeAndUnwire(unittest.TestCase):
         with open(settings, "w") as f:
             json.dump({"statusLine": {"type": "command",
                                       "command": "python3 -S " + install_dir
-                                      + "/tools/status-line.py"},
+                                      + "/tools/claude-status-line.py"},
                        "theme": "dark"}, f)
         setup.unwire_statusline(settings, install_dir, dry=False)
         with open(settings) as f:
@@ -2224,7 +2226,7 @@ class TestRecipeAndUnwire(unittest.TestCase):
     def _ai_kit_settings(self, settings, install_dir, extra=None):
         data = {"statusLine": {"type": "command",
                                "command": "python3 -S " + install_dir
-                                          + "/tools/status-line.py"}}
+                                          + "/tools/claude-status-line.py"}}
         if extra:
             data.update(extra)
         with open(settings, "w", encoding="utf-8") as f:
@@ -2291,8 +2293,8 @@ class TestCmdInstall(unittest.TestCase):
         os.makedirs(os.path.join(self.install, "tools"))
         with open(os.path.join(self.install, "skills", "alpha", "SKILL.md"), "w") as f:
             f.write("---\nname: alpha\n---\n")
-        open(os.path.join(self.install, "tools", "status-line.py"), "w").close()
-        with open(os.path.join(self.install, "tools", "statusline.toml.sample"), "w") as f:
+        open(os.path.join(self.install, "tools", "claude-status-line.py"), "w").close()
+        with open(os.path.join(self.install, "tools", "claude-statusline.toml.sample"), "w") as f:
             f.write("# recipe\n")
         self.env = {"HOME": self.tmp, "AI_KIT_DIR": self.install,
                     "CLAUDE_CONFIG_DIR": self.claude,
@@ -2320,11 +2322,11 @@ class TestCmdInstall(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue(os.path.islink(os.path.join(self.claude, "skills", "alpha")))
         with open(os.path.join(self.claude, "settings.json")) as f:
-            self.assertIn("status-line.py", f.read())
+            self.assertIn("claude-status-line.py", f.read())
 
     def test_components_only_run_does_not_wire_statusline(self):
         # Task 10 constraint 1: a wizard run that does NOT adopt (components-only)
-        # must write no statusline.toml and never touch settings.json statusLine —
+        # must write no claude-statusline.toml and never touch settings.json statusLine —
         # because cmd_install no longer wires the status line pre-wizard.
         def _components_only(paths, entries, installed, tty, dry, counts, examples_flag=None):
             del examples_flag
@@ -2337,7 +2339,7 @@ class TestCmdInstall(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue(os.path.islink(os.path.join(self.claude, "skills", "alpha")))
         self.assertFalse(os.path.isfile(
-            os.path.join(self.tmp, ".config", "ai-kit", "statusline.toml")))
+            os.path.join(self.tmp, ".config", "ai-kit", "claude-statusline.toml")))
         settings = os.path.join(self.claude, "settings.json")
         if os.path.isfile(settings):
             with open(settings) as f:
@@ -2401,8 +2403,8 @@ class TestCmdUninstall(unittest.TestCase):
         self.assertIn(settings, err.getvalue())
         self.assertIn("statusLine left as is", err.getvalue())
         with open(settings, "w", encoding="utf-8") as f:
-            json.dump({"statusLine": {"type": "command", "command":
-                                      "python3 " + self.install + "/tools/status-line.py"}}, f)
+            command = "python3 " + self.install + "/tools/claude-status-line.py"
+            json.dump({"statusLine": {"type": "command", "command": command}}, f)
         err = io.StringIO()
         with mock.patch.object(setup.os, "replace", side_effect=OSError("boom")), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
@@ -2600,7 +2602,7 @@ class TestHeadlessInstall(unittest.TestCase):
         os.makedirs(pi_hooks, exist_ok=True)
         for hook in ("ai-kit-tool-advisor.ts", "ai-kit-tool-reminder.ts"):
             open(os.path.join(pi_hooks, hook), "w", encoding="utf-8").close()
-        open(os.path.join(self.install_dir, "tools", "status-line.py"),
+        open(os.path.join(self.install_dir, "tools", "claude-status-line.py"),
              "w", encoding="utf-8").close()
         self.env = {"HOME": self.tmp, "AI_KIT_DIR": self.install_dir,
                     "CLAUDE_CONFIG_DIR": self.claude_dir,
@@ -2672,13 +2674,26 @@ class TestHeadlessInstall(unittest.TestCase):
         rc = setup.cmd_install_headless(self.env, False, "alpha", False, False)
         self.assertEqual(rc, 0)
 
-    def test_headless_with_statusline_wires_it(self):
+    def test_headless_with_statusline_wires_and_renders_new_entry(self):
         os.makedirs(self.claude_dir, exist_ok=True)
-        rc = setup.cmd_install_headless(self.env, False, None, True, False)
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        render_env = {**self.env, "AI_KIT_DIR": repo}
+        rc = setup.cmd_install_headless(render_env, False, None, True, False)
         self.assertEqual(rc, 0)
         with open(os.path.join(self.claude_dir, "settings.json"), encoding="utf-8") as f:
             data = json.load(f)
-        self.assertIn("status-line.py", data["statusLine"]["command"])
+        command = data["statusLine"]["command"]
+        self.assertIn("claude-status-line.py", command)
+        with open(SAMPLE_INPUT, encoding="utf-8") as handle:
+            payload = handle.read()
+        proc = subprocess.run(
+            [sys.executable, "-S", setup.resolve_paths(render_env).status_line],
+            input=payload, text=True, capture_output=True,
+            env={**os.environ, "HOME": self.tmp,
+                 "XDG_CACHE_HOME": os.path.join(self.tmp, ".cache")}, check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(proc.stdout.strip())
 
     def test_headless_statusline_absent_claude_dir_skips_and_creates_nothing(self):
         # self.claude_dir is NOT created: Claude Code is not installed here, so
@@ -3277,14 +3292,14 @@ class TestRecoverIncompatibleConfig(unittest.TestCase):
         import types as _types
         return _types.SimpleNamespace(
             config_toml=cfg,
-            sample=os.path.join(self._REPO, "tools", "statusline.toml.sample"),
+            sample=os.path.join(self._REPO, "tools", "claude-statusline.toml.sample"),
             statusline_doctor=os.path.join(self._REPO, "tools", "statusline-doctor.py"),
         )
 
     def _tmp_cfg(self):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
-        return os.path.join(d, "statusline.toml")
+        return os.path.join(d, "claude-statusline.toml")
 
     @staticmethod
     def _read(path):
@@ -3410,7 +3425,7 @@ class TestExternalSegmentToggle(unittest.TestCase):
     def _paths_for_wizard_commit(self):
         """A fresh, empty install/config tree pointed at this repo's real
         examples/segments dir (so `system_memory` is discoverable), with no
-        pre-existing user segments and no pre-existing statusline.toml."""
+        pre-existing user segments and no pre-existing claude-statusline.toml."""
         home = tempfile.mkdtemp()
         xdg = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, home, ignore_errors=True)
@@ -3515,7 +3530,7 @@ class TestPersistRoundTrip(unittest.TestCase):
         return os.path.join(self._REPO, "tools", "statusline-doctor.py")
 
     def _sample_recipe(self):
-        return os.path.join(self._REPO, "tools", "statusline.toml.sample")
+        return os.path.join(self._REPO, "tools", "claude-statusline.toml.sample")
 
     def _paths(self, cfg_path):
         """Minimal Paths-like namespace pointing at the temp config."""
@@ -3528,7 +3543,7 @@ class TestPersistRoundTrip(unittest.TestCase):
         )
 
     def _seed_recipe(self):
-        """Copy statusline.toml.sample to a tempfile; return its path."""
+        """Copy claude-statusline.toml.sample to a tempfile; return its path."""
         with tempfile.NamedTemporaryFile(
             "w", suffix=".toml", delete=False, dir=tempfile.gettempdir()
         ) as tmp:
@@ -3998,7 +4013,7 @@ class TestConditionalPersistence(unittest.TestCase):
         paths = setup.resolve_paths({"HOME": home})
         os.makedirs(paths.config_dir, exist_ok=True)
         os.makedirs(os.path.dirname(paths.settings), exist_ok=True)
-        # seed a real status-line.py + doctor + recipe so writes can doctor-validate
+        # seed a real claude-status-line.py + doctor + recipe so writes can doctor-validate
         repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         return paths, repo
 
@@ -4017,9 +4032,9 @@ class TestConditionalPersistence(unittest.TestCase):
         paths, repo = self._paths()
         # point resolved status_line/doctor at the real repo tools so the doctor runs
         paths = paths._replace(
-            status_line=os.path.join(repo, "tools", "status-line.py"),
+            status_line=os.path.join(repo, "tools", "claude-status-line.py"),
             statusline_doctor=os.path.join(repo, "tools", "statusline-doctor.py"),
-            sample=os.path.join(repo, "tools", "statusline.toml.sample"))
+            sample=os.path.join(repo, "tools", "claude-statusline.toml.sample"))
         # seed the recipe so save_statusline_config has a base file
         import shutil as _sh
         _sh.copy(paths.sample, paths.config_toml)
@@ -4033,9 +4048,9 @@ class TestConditionalPersistence(unittest.TestCase):
     def test_reconfigure_leaves_existing_ours_statusline(self):
         paths, repo = self._paths()
         paths = paths._replace(
-            status_line=os.path.join(repo, "tools", "status-line.py"),
+            status_line=os.path.join(repo, "tools", "claude-status-line.py"),
             statusline_doctor=os.path.join(repo, "tools", "statusline-doctor.py"),
-            sample=os.path.join(repo, "tools", "statusline.toml.sample"))
+            sample=os.path.join(repo, "tools", "claude-statusline.toml.sample"))
         import shutil as _sh
         _sh.copy(paths.sample, paths.config_toml)
         ours_cmd = "python3 -S " + paths.status_line   # already ours, possibly hand-edited
@@ -4083,7 +4098,7 @@ class TestBuildSegmentMeta(unittest.TestCase):
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestWizardContextPopulation(unittest.TestCase):
     """Task 10: launch_wizard builds a context whose new fields have the right
-    shapes, and a freshly-discovered external NOT in statusline.toml is OFF
+    shapes, and a freshly-discovered external NOT in claude-statusline.toml is OFF
     (externals default OFF — never pre-checked via default_on)."""
 
     def _env(self):
@@ -4096,7 +4111,7 @@ class TestWizardContextPopulation(unittest.TestCase):
     def test_context_shape_and_user_external_on_by_default(self):
         _env, paths = self._env()
         os.makedirs(paths.segments_dir, exist_ok=True)
-        # a fresh user external segment NOT mentioned in statusline.toml
+        # a fresh user external segment NOT mentioned in claude-statusline.toml
         with open(os.path.join(paths.segments_dir, "freshseg"), "w",
                   encoding="utf-8") as f:
             f.write("#!/bin/sh\n# ai-kit-segment: id=freshseg name=Fresh\necho hi\n")
@@ -4140,7 +4155,7 @@ class TestWizardContextPopulation(unittest.TestCase):
         self.assertIn("freshseg", ids)
         self.assertEqual(ids["freshseg"]["provenance"], "user")
         # A user drop-in present in the segments dir renders by default, so the
-        # wizard shows it ON (mirroring the renderer) unless statusline.toml
+        # wizard shows it ON (mirroring the renderer) unless claude-statusline.toml
         # disables it. (Bundled-but-not-installed examples stay OFF — they are
         # offers.)
         self.assertIn("freshseg", ctx.state["segments"])
@@ -4172,8 +4187,8 @@ class TestWizardHousekeeping(unittest.TestCase):
         os.makedirs(jev_dir)
         with open(os.path.join(jev_dir, "SKILL.md"), "w") as f:
             f.write("---\nname: jev-fast-decision\n---\n")
-        open(os.path.join(self.install, "tools", "status-line.py"), "w").close()
-        with open(os.path.join(self.install, "tools", "statusline.toml.sample"), "w") as f:
+        open(os.path.join(self.install, "tools", "claude-status-line.py"), "w").close()
+        with open(os.path.join(self.install, "tools", "claude-statusline.toml.sample"), "w") as f:
             f.write("# recipe\n")
         for cat in setup.CATEGORIES:
             os.makedirs(os.path.join(self.claude, cat), exist_ok=True)
@@ -4589,7 +4604,7 @@ class TestWizardHousekeeping(unittest.TestCase):
 class TestCmdInstallSkipNoStatusline(unittest.TestCase):
     """Task 10 constraint 1: the REAL install flow routes status-line persistence
     through persist_statusline gated on the wizard's adopt decision. A wizard run
-    that does NOT adopt must write no statusline.toml and leave settings.json's
+    that does NOT adopt must write no claude-statusline.toml and leave settings.json's
     statusLine untouched — proving the production wiring, not just a unit."""
 
     def test_no_adopt_writes_no_statusline_and_no_settings(self):
@@ -4622,12 +4637,213 @@ class TestCmdInstallSkipNoStatusline(unittest.TestCase):
                                 setup.new_counts())
 
         self.assertFalse(os.path.exists(paths.config_toml),
-                         "components-only run must not write statusline.toml")
+                         "components-only run must not write claude-statusline.toml")
         # settings.json statusLine must be untouched (file may not even exist)
         if os.path.exists(paths.settings):
             with open(paths.settings, encoding="utf-8") as fh:
                 data = json.load(fh)
             self.assertNotIn("statusLine", data)
+
+
+class TestStatuslineMigration(unittest.TestCase):
+    def test_command_ownership_is_exact_and_shell_free(self):
+        old = "/tmp/install with spaces/tools/" + setup._LEGACY_ENTRY
+        new = "/tmp/install with spaces/tools/claude-status-line.py"
+        rewrite = setup._command_ownership().rewrite_owned_command
+        self.assertEqual(rewrite(f'python3 -S "{old}"', old, new),
+                         f'python3 -S "{new}"')
+        for command in (f"python3 {old}.backup", f"python3 {old}.bak",
+                        f"python3 -c 'print({old})'", f"bash -c '{old}'",
+                        f"python3 /other/script.py {old}"):
+            self.assertIsNone(rewrite(command, old, new), command)
+
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.paths = setup.resolve_paths({"HOME": self.temp.name,
+                                         "AI_KIT_DIR": os.path.join(self.temp.name, "kit"),
+                                         "XDG_CONFIG_HOME": os.path.join(self.temp.name, "config")})
+        os.makedirs(self.paths.config_dir)
+        os.makedirs(self.paths.claude_dir)
+        os.makedirs(os.path.join(self.paths.install_dir, "tools"))
+
+    def test_rewrites_owned_command_and_moves_config_idempotently(self):
+        old = os.path.join(self.paths.install_dir, "tools", setup._LEGACY_ENTRY)
+        with open(self.paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"other": 4, "statusLine": {"type": "command",
+                      "command": f'python3 -S "{old}"'}}, handle)
+        source = os.path.join(self.paths.config_dir, setup._LEGACY_TOML)
+        with open(source, "wb") as handle:
+            handle.write(b"# legacy config\n")
+        self.assertTrue(setup.migrate_statusline(self.paths, False))
+        self.assertEqual(setup.detect_statusline(self.paths)["state"], "ours")
+        with open(self.paths.config_toml, "rb") as handle:
+            self.assertEqual(handle.read(), b"# legacy config\n")
+        with open(self.paths.settings, "rb") as handle:
+            state = handle.read()
+        with open(self.paths.config_toml, "rb") as handle:
+            config = handle.read()
+        self.assertFalse(setup.migrate_statusline(self.paths, False))
+        with open(self.paths.settings, "rb") as handle:
+            self.assertEqual(handle.read(), state)
+        with open(self.paths.config_toml, "rb") as handle:
+            self.assertEqual(handle.read(), config)
+
+    def test_foreign_command_and_both_configs_are_untouched(self):
+        old = os.path.join(self.paths.install_dir, "tools", setup._LEGACY_ENTRY)
+        with open(self.paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"statusLine": {"command": f"bash -c '{old}'"}}, handle)
+        source = os.path.join(self.paths.config_dir, setup._LEGACY_TOML)
+        with open(source, "wb") as handle:
+            handle.write(b"old")
+        with open(self.paths.config_toml, "wb") as handle:
+            handle.write(b"new")
+        with open(self.paths.settings, "rb") as handle:
+            before = handle.read()
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            setup.migrate_statusline(self.paths, False)
+        with open(self.paths.settings, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+        with open(source, "rb") as handle:
+            self.assertEqual(handle.read(), b"old")
+        with open(self.paths.config_toml, "rb") as handle:
+            self.assertEqual(handle.read(), b"new")
+        self.assertIn(source, warning.getvalue())
+        self.assertIn(self.paths.config_toml, warning.getvalue())
+
+    def test_unreadable_settings_warns_and_still_moves_config(self):
+        old_config = os.path.join(self.paths.config_dir, setup._LEGACY_TOML)
+        with open(self.paths.settings, "wb") as handle:
+            handle.write(b"not json\n")
+        with open(old_config, "wb") as handle:
+            handle.write(b"legacy\n")
+        with open(self.paths.settings, "rb") as handle:
+            settings_before = handle.read()
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            self.assertTrue(setup.migrate_statusline(self.paths, False))
+        with open(self.paths.settings, "rb") as handle:
+            self.assertEqual(handle.read(), settings_before)
+        self.assertFalse(os.path.exists(old_config))
+        with open(self.paths.config_toml, "rb") as handle:
+            self.assertEqual(handle.read(), b"legacy\n")
+        self.assertIn("cannot parse", warning.getvalue())
+
+    def test_dry_run_reports_both_actions_without_mutation(self):
+        old = os.path.join(self.paths.install_dir, "tools", setup._LEGACY_ENTRY)
+        with open(self.paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"statusLine": f"python3 {old}"}, handle)
+        old_config = os.path.join(self.paths.config_dir, setup._LEGACY_TOML)
+        with open(old_config, "wb") as handle:
+            handle.write(b"legacy\n")
+        with open(self.paths.settings, "rb") as handle:
+            settings_before = handle.read()
+        warning = io.StringIO()
+        with contextlib.redirect_stdout(warning):
+            self.assertTrue(setup.migrate_statusline(self.paths, True))
+        with open(self.paths.settings, "rb") as handle:
+            self.assertEqual(handle.read(), settings_before)
+        with open(old_config, "rb") as handle:
+            self.assertEqual(handle.read(), b"legacy\n")
+        self.assertFalse(os.path.exists(self.paths.config_toml))
+        self.assertIn("would migrate statusLine", warning.getvalue())
+        self.assertIn(old_config, warning.getvalue())
+
+    def test_publication_failure_keeps_source_and_command_write_precedes_it(self):
+        old = os.path.join(self.paths.install_dir, "tools", setup._LEGACY_ENTRY)
+        with open(self.paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"statusLine": {"command": f"python3 {old}", "keep": 1}}, handle)
+        old_config = os.path.join(self.paths.config_dir, setup._LEGACY_TOML)
+        with open(old_config, "wb") as handle:
+            handle.write(b"legacy\n")
+        with open(self.paths.settings, "rb") as handle:
+            settings_before = handle.read()
+        with mock.patch.object(setup, "create_if_absent", side_effect=OSError("publish failed")):
+            warning = io.StringIO()
+            with contextlib.redirect_stderr(warning):
+                self.assertTrue(setup.migrate_statusline(self.paths, False))
+        with open(self.paths.settings, encoding="utf-8") as handle:
+            rewritten = json.load(handle)
+        self.assertIn(self.paths.status_line, rewritten["statusLine"]["command"])
+        self.assertEqual(rewritten["statusLine"]["keep"], 1)
+        with open(self.paths.settings, "rb") as handle:
+            self.assertNotEqual(handle.read(), settings_before)
+        with open(old_config, "rb") as handle:
+            self.assertEqual(handle.read(), b"legacy\n")
+        self.assertFalse(os.path.exists(self.paths.config_toml))
+        self.assertIn("publish failed", warning.getvalue())
+
+    def test_lost_publication_race_preserves_source_and_winner(self):
+        old_config = os.path.join(self.paths.config_dir, setup._LEGACY_TOML)
+        with open(old_config, "wb") as handle:
+            handle.write(b"legacy\n")
+        def publish_race(dest, data):
+            with open(dest, "xb") as winner:
+                winner.write(b"winner\n")
+            return False
+        with mock.patch.object(setup, "create_if_absent", side_effect=publish_race):
+            warning = io.StringIO()
+            with contextlib.redirect_stderr(warning):
+                self.assertFalse(setup.migrate_statusline(self.paths, False))
+        with open(old_config, "rb") as handle:
+            self.assertEqual(handle.read(), b"legacy\n")
+        with open(self.paths.config_toml, "rb") as handle:
+            self.assertEqual(handle.read(), b"winner\n")
+        self.assertIn(old_config, warning.getvalue())
+        self.assertIn(self.paths.config_toml, warning.getvalue())
+
+
+class TestCreateIfAbsent(unittest.TestCase):
+    def test_sixteen_processes_publish_one_file_without_temps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dest = os.path.join(directory, "shared")
+            tools = _TOOLS_DIR
+            code = ("import sys; sys.path.insert(0, sys.argv[1]); import setup; "
+                    "print(setup.create_if_absent(sys.argv[2], b'data'))")
+            pid_path = os.path.join(os.getcwd(), "tmp", "p23", "08", "children.pids")
+            os.makedirs(os.path.dirname(pid_path), exist_ok=True)
+            children = []
+            with open(pid_path, "a", encoding="utf-8") as handle:
+                for _ in range(16):
+                    child = subprocess.Popen([sys.executable, "-c", code, tools, dest],
+                                             stdout=subprocess.PIPE, text=True)
+                    children.append(child)
+                    handle.write(f"{child.pid}\n")
+                    handle.flush()
+            winners = [child.communicate(timeout=20)[0].strip() for child in children]
+            self.assertEqual(winners.count("True"), 1)
+            with open(dest, "rb") as handle:
+                self.assertEqual(handle.read(), b"data")
+            self.assertEqual(os.listdir(directory), ["shared"])
+
+    def test_existing_destination_wins_and_temp_is_removed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dest = os.path.join(directory, "config")
+            self.assertTrue(setup.create_if_absent(dest, b"first"))
+            self.assertFalse(setup.create_if_absent(dest, b"second"))
+            with open(dest, "rb") as handle:
+                self.assertEqual(handle.read(), b"first")
+            self.assertEqual(os.listdir(directory), ["config"])
+
+    def test_link_permission_failure_falls_back_to_exclusive_create(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dest = os.path.join(directory, "config")
+            with mock.patch.object(setup.os, "link", side_effect=PermissionError):
+                self.assertTrue(setup.create_if_absent(dest, b"published"))
+            with open(dest, "rb") as handle:
+                self.assertEqual(handle.read(), b"published")
+            self.assertEqual(os.listdir(directory), ["config"])
+
+    def test_fsync_failure_leaves_no_destination_or_temp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dest = os.path.join(directory, "config")
+            with mock.patch.object(setup.os, "fsync", side_effect=OSError("sync failed")), \
+                    self.assertRaisesRegex(OSError, "sync failed"):
+                setup.create_if_absent(dest, b"partial")
+            self.assertFalse(os.path.exists(dest))
+            self.assertEqual(os.listdir(directory), [])
 
 
 class TestCmdInstallExternalReconcile(unittest.TestCase):

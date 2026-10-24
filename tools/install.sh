@@ -285,7 +285,7 @@ main() {
   [ -f "$INSTALL_DIR/tools/setup.py" ] || die "tools/setup.py missing under $INSTALL_DIR"
   ensure_python
   # Hand the resolved location to setup.py so its resolve_paths() finds
-  # status-line.py / the sample under the SAME checkout we just resolved —
+  # claude-status-line.py / the sample under the SAME checkout we just resolved —
   # critical for a LOCAL clone, where INSTALL_DIR isn't the ~/.local/share default.
   export AI_KIT_DIR="$INSTALL_DIR"
   exec python3 "$INSTALL_DIR/tools/setup.py" ${ARGS[@]+"${ARGS[@]}"}

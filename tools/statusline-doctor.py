@@ -8,7 +8,7 @@ to surface a builder that raises. CLI:
   --check [FILE]   validate a config file (default: the resolved path)
   --print-config   print the resolved config as JSON
 
-The render module (status-line.py) intentionally no longer accepts these flags:
+The render module (claude-status-line.py) intentionally no longer accepts these flags:
 it renders only. All introspection lives here.
 """
 # pyright: strict

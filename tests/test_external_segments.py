@@ -23,7 +23,7 @@ common_render: Any = importlib.import_module("common_render")  # pre-split parit
 common_segments: Any = importlib.import_module("common_segments")  # pre-split parity
 common_types: Any = importlib.import_module("common_types")  # pre-split parity
 
-_MODULE_PATH = os.path.join(_HERE, "..", "tools", "status-line.py")
+_MODULE_PATH = os.path.join(_HERE, "..", "tools", "claude-status-line.py")
 _DOCTOR_PATH = os.path.join(_HERE, "..", "tools", "statusline-doctor.py")
 
 
@@ -424,7 +424,7 @@ class TestPlace(unittest.TestCase):
         self.assertEqual([ln.min_rows for ln in layout], [0, 20, 30])
 
     def test_toml_placement_overrides_header_fallback(self):
-        # The user's statusline.toml already lists "temp" on row 0 via an
+        # The user's claude-statusline.toml already lists "temp" on row 0 via an
         # explicit [[line]] override — the header's line=3/after=memory is a
         # fallback only, and must NOT also insert a second copy on row 2.
         layout = [
@@ -447,7 +447,7 @@ class TestLoadConfigExternal(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.segs = os.path.join(self.dir, "segs")
         os.makedirs(self.segs)
-        self.cfg = os.path.join(self.dir, "statusline.toml")
+        self.cfg = os.path.join(self.dir, "claude-statusline.toml")
         self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
 
     def _env(self, **extra):
@@ -496,7 +496,7 @@ class TestRenderIntegration(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.segs = os.path.join(self.dir, "segs")
         os.makedirs(self.segs)
-        self.cfg = os.path.join(self.dir, "statusline.toml")
+        self.cfg = os.path.join(self.dir, "claude-statusline.toml")
         self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
         self.env = {
             "CC_AI_KIT_CONFIG_FILE": self.cfg,
@@ -553,7 +553,7 @@ class TestCliSurface(unittest.TestCase):
         self.dir = tempfile.mkdtemp()
         self.segs = os.path.join(self.dir, "segs")
         os.makedirs(self.segs)
-        self.cfg = os.path.join(self.dir, "statusline.toml")
+        self.cfg = os.path.join(self.dir, "claude-statusline.toml")
         self.addCleanup(lambda: shutil.rmtree(self.dir, ignore_errors=True))
         self.env = {
             "CC_AI_KIT_CONFIG_FILE": self.cfg,
@@ -634,7 +634,7 @@ class TestSampleProvider(unittest.TestCase):
 
 
 class TestRecipe(unittest.TestCase):
-    PATH = os.path.join(_HERE, "..", "tools", "statusline.toml.sample")
+    PATH = os.path.join(_HERE, "..", "tools", "claude-statusline.toml.sample")
 
     def test_recipe_has_commented_external_block(self):
         with open(self.PATH, encoding="utf-8") as f:

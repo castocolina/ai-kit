@@ -1,7 +1,7 @@
 """T2.6 — End-to-end worktree display with REAL git worktrees.
 
 Hermetic: every path lives under one self-contained tmpdir, so the suite never
-touches the live workspace. Renders the real status-line.py as a subprocess with
+touches the live workspace. Renders the real claude-status-line.py as a subprocess with
 its `workspace.current_dir` pointed at each location, and asserts the `worktree`
 segment for all four cases:
 
@@ -22,7 +22,7 @@ import tempfile
 import unittest
 
 _HERE = os.path.dirname(__file__)
-_STATUS_LINE = os.path.abspath(os.path.join(_HERE, "..", "tools", "status-line.py"))
+_STATUS_LINE = os.path.abspath(os.path.join(_HERE, "..", "tools", "claude-status-line.py"))
 _ANSI = re.compile(r"\033\[[0-9;]*m")
 
 
@@ -62,7 +62,7 @@ class TestWorktreeDisplayE2E(unittest.TestCase):
 
         # `alt_git_worktree` defaults OFF (since edfe690's "lean baseline" change), so
         # explicitly opt it in via a real config file: [segments] alt_git_worktree =
-        # true (cfg_resolve_segments in tools/status-line.py reads segment toggles
+        # true (cfg_resolve_segments in tools/claude-status-line.py reads segment toggles
         # from the [segments] table, keyed by segment id).
         cls.config_file = os.path.join(cls.tmp, "cc-ai-kit.toml")
         with open(cls.config_file, "w") as f:

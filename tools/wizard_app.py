@@ -700,7 +700,7 @@ class WizardApp(App):
         if adopt:
             what = (f"[{DIM}]•[/] Symlink [bold]{ncomp}[/] components into "
                     f"~/.claude/(agents|commands|skills)/\n"
-                    f"[{DIM}]•[/] Write ~/.config/ai-kit/statusline.toml + "
+                    f"[{DIM}]•[/] Write ~/.config/ai-kit/claude-statusline.toml + "
                     f"wire settings.json\n"
                     f"[{DIM}]•[/] Validate with statusline-doctor before saving")
         else:
@@ -738,7 +738,7 @@ class WizardApp(App):
                    f"[{DIM}]•[/] Re-run  uv run tools/setup.py  any time to "
                    f"change picks.\n"
                    f"[{DIM}]•[/] Tweak segments later in  "
-                   f"~/.config/ai-kit/statusline.toml.")
+                   f"~/.config/ai-kit/claude-statusline.toml.")
         else:
             nxt = (f"[{DIM}]•[/] Re-run  uv run tools/setup.py  any time to "
                    f"change picks.\n"

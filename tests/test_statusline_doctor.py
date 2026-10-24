@@ -1,6 +1,6 @@
 """Tests for tools/statusline-doctor.py — the extracted introspection CLI.
 
-The doctor script imports the render core (status-line.py) one-way via its own
+The doctor script imports the render core (claude-status-line.py) one-way via its own
 importlib shim; this test module loads the doctor script the same way and exercises
 parse_args / cmd_print_config / cmd_check / cmd_doctor / validate_config_file.
 """

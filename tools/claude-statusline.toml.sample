@@ -1,8 +1,8 @@
 ## ═══════════════════════════════════════════════════════════════════════════
 ## ai-kit status line — configuration recipe
 ## ═══════════════════════════════════════════════════════════════════════════
-## Location: ~/.config/ai-kit/statusline.toml
-##   (or $XDG_CONFIG_HOME/ai-kit/statusline.toml when XDG_CONFIG_HOME is set;
+## Location: ~/.config/ai-kit/claude-statusline.toml
+##   (or $XDG_CONFIG_HOME/ai-kit/claude-statusline.toml when XDG_CONFIG_HOME is set;
 ##    or any path you point $CC_AI_KIT_CONFIG_FILE at).
 ## The installer drops this file there if you don't already have one, and never
 ## overwrites an existing one.
@@ -83,7 +83,7 @@
 #                      # fresh). Precedence: default 5 < this < env CC_AI_KIT_GIT_CACHE_TTL.
 
 ## ─── [external] — drop-in segment providers ──────────────────────────────────
-## Add a new status-line segment WITHOUT editing status-line.py: drop an
+## Add a new status-line segment WITHOUT editing claude-status-line.py: drop an
 ## executable into the segments directory below. Each provider:
 ##   * carries a header in its first 10 lines:
 ##       # ai-kit-segment: line=<N> (after=<key>|before=<key>|start|end) [id=<slug>] [timeout=<s>] [ttl=<s>]
@@ -188,7 +188,7 @@
 
 ## ─── Environment overrides (set in your shell, not this file) ─────────────────
 ## These win over everything in this file — handy for per-session tweaks:
-##   CC_AI_KIT_CONFIG_FILE=/path/to/statusline.toml  # use a config file elsewhere
+##   CC_AI_KIT_CONFIG_FILE=/path/to/claude-statusline.toml  # use a config file elsewhere
 ##   CC_AI_KIT_SEGMENT_<KEY>=<bool>                  # toggle one segment; KEY is the
 ##                                                     upper-cased segment name, e.g.
 ##                                                     CC_AI_KIT_SEGMENT_ALT_COST=1
@@ -197,7 +197,7 @@
 ##   CC_AI_KIT_EXTERNAL_CACHE_TTL=10                  # external-segment cache TTL (s)
 ##   CC_AI_KIT_GIT_CACHE_TTL=5                        # git probe cache TTL (s)
 ##
-## Inspect & validate the resolved config (the render module status-line.py is
+## Inspect & validate the resolved config (the render module claude-status-line.py is
 ## intentionally silent — all validation lives in the doctor script):
 ##   python3 tools/statusline-doctor.py --print-config   # resolved config as JSON
 ##   python3 tools/statusline-doctor.py --check          # validate this file + env overrides

@@ -12,7 +12,7 @@ default "adopt everything, confirm" path (Choose -> Arrange -> gate -> Review ->
 commit -> Done -> exit), exactly the sequence `tests/test_wizard_app.py`'s
 `TestReviewDone.test_review_enter_commits_and_done` exercises in-process. This
 then asserts the system_memory provider lands executable under
-~/.config/ai-kit/segments/, and renders the REAL status-line.py to assert the
+~/.config/ai-kit/segments/, and renders the REAL claude-status-line.py to assert the
 system_memory segment shows up in the output line.
 
 The render assertion needs a platform whose available memory the provider can
@@ -57,7 +57,7 @@ def _child_env(parent, home, install):
 _ANSI = re.compile(r"\033\[[0-9;]*m")
 # The wizard is a full-screen Textual TUI: every redraw is full of cursor-
 # positioning CSI sequences (e.g. `\033[4;3H`), not just SGR color codes.
-# Stripping only `...m` (as `_ANSI` does, correct for status-line.py's
+# Stripping only `...m` (as `_ANSI` does, correct for claude-status-line.py's
 # single-line, color-only output) leaves those `...H`/etc. sequences in
 # place and can fragment a word like "Review" mid-string — matching against
 # that half-stripped text can time out even though the wizard rendered the
@@ -239,7 +239,7 @@ class TestSystemMemoryInstallE2E(unittest.TestCase):
         shutil.copy(os.path.join(_REPO, "tests", "fixtures", "sample-input.json"),
                     os.path.join(cls.inst, "tests", "fixtures", "sample-input.json"))
         cls.setup_py = os.path.join(cls.inst, "tools", "setup.py")
-        cls.status_line = os.path.join(cls.inst, "tools", "status-line.py")
+        cls.status_line = os.path.join(cls.inst, "tools", "claude-status-line.py")
         inherited = {key: os.path.join(cls.tmp, "sentinel", key) for key in (
             "CURSOR_CONFIG_DIR", "PI_CODING_AGENT_DIR", "OPENCODE_CONFIG_DIR",
             "CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME")}

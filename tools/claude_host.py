@@ -88,7 +88,7 @@ RAMP_DEFAULTS_CLAUDE = {
 
 SPEC = ConfigSpec(
     "CC_AI_KIT_",
-    "statusline.toml",
+    "claude-statusline.toml",
     SEGMENTS,
     LAYOUT,
     RAMP_DEFAULTS_CLAUDE,

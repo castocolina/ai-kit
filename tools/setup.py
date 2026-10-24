@@ -6,7 +6,7 @@
 # ^ Consumed by `uv run tools/setup.py` to resolve textual into an ephemeral env
 #   for the wizard ONLY. Plain `python3 tools/setup.py` ignores this comment; the
 #   status-line render path never uses uv/textual (see plan Global Constraints).
-"""ai-kit setup wizard + install engine (stdlib-only, like status-line.py).
+"""ai-kit setup wizard + install engine (stdlib-only, like claude-status-line.py).
 
 Invoked by tools/install.sh after it has guaranteed the repo and python3 are on
 disk. Subcommands: install (default), reconfigure, uninstall, doctor, check.
@@ -45,6 +45,19 @@ CATEGORIES = ("agents", "commands", "skills")
 # D-14: skills also linked into <pi_dir>/skills, derived from the claude
 # selection. Phase 22 widens this set.
 PI_SKILLS = frozenset({"jev-fast-decision"})
+_LEGACY_ENTRY = "status-line.py"
+
+
+def _command_ownership():
+    """The sibling command-ownership parser, importable whatever the caller's sys.path
+    (tests load this file through importlib; same pattern as the wizard import)."""
+    tools_dir = os.path.dirname(os.path.abspath(__file__))
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import command_ownership  # pylint: disable=import-outside-toplevel
+
+    return command_ownership
+_LEGACY_TOML = "statusline.toml"
 
 Paths = namedtuple(
     "Paths",
@@ -78,9 +91,9 @@ def resolve_paths(env):
         backups_dir=backups_dir,
         settings=os.path.join(claude_dir, "settings.json"),
         config_dir=config_dir,
-        config_toml=os.path.join(config_dir, "statusline.toml"),
-        sample=os.path.join(install_dir, "tools", "statusline.toml.sample"),
-        status_line=os.path.join(install_dir, "tools", "status-line.py"),
+        config_toml=os.path.join(config_dir, "claude-statusline.toml"),
+        sample=os.path.join(install_dir, "tools", "claude-statusline.toml.sample"),
+        status_line=os.path.join(install_dir, "tools", "claude-status-line.py"),
         statusline_doctor=os.path.join(install_dir, "tools", "statusline-doctor.py"),
         segments_dir=os.path.join(config_dir, "segments"),
         cursor_dir=cursor_dir,
@@ -89,10 +102,9 @@ def resolve_paths(env):
     )
 
 
-# ── Status-line config defaults (mirrors status-line.py SEGMENTS/LAYOUT) ───────
-# Duplicated here, not imported: status-line.py's hyphenated filename isn't an
-# importable module, and the wizard must run even while the renderer is mid-edit.
-# TestTomlRead.test_segment_defaults_match_recipe_drift pins these to the recipe.
+# ── Status-line config defaults (mirrors claude_host.HOST.config) ───────
+# These copied tables are not Q2; plan 23-16 owns the wizard final flow and
+# reads defaults lazily from HOST.config.
 SEGMENT_DEFAULTS = {
     "path": True, "git_branch": True, "git_dirty": True, "alt_git_worktree": False,
     "model": True, "effort": True, "context": True, "todo": True,
@@ -144,7 +156,7 @@ def load_segment_inventory(path):
 
 def build_segment_meta(inventory, overrides):
     """Merge the built-in inventory (description/sample/icon/line) with per-key
-    icon+line overrides from the user's statusline.toml. `overrides` is
+    icon+line overrides from the user's claude-statusline.toml. `overrides` is
     {key: {"icon"?: str, "line"?: int}}. description/sample are inventory-only
     (never overridable). Returns {key: {description, sample, icon, line}}."""
     meta = {}
@@ -160,7 +172,7 @@ def build_segment_meta(inventory, overrides):
 
 
 def _statusline_icon_line_overrides(config_toml):
-    """Read per-segment icon+line overrides from the user's statusline.toml, if
+    """Read per-segment icon+line overrides from the user's claude-statusline.toml, if
     present. Returns {key: {"icon"?: str, "line"?: int}}. The renderer ignores
     these wizard-side override keys; this is installer/wizard metadata only."""
     data = read_toml(config_toml)
@@ -181,7 +193,7 @@ def _statusline_icon_line_overrides(config_toml):
 
 
 def _external_enabled_in_toml(config_toml, ext_id, default_on=False):
-    """Whether the user's statusline.toml enables external segment `ext_id`.
+    """Whether the user's claude-statusline.toml enables external segment `ext_id`.
 
     `default_on` is the value when the file says nothing about this id — it should
     mirror the RENDERER's default: a provider present in the segments dir renders
@@ -244,7 +256,7 @@ def render_preview(  # pylint: disable=too-many-arguments,too-many-positional-ar
 ):
     """Render the status line with the given segment toggles, for the live preview.
 
-    Shells out to `python3 status-line.py` feeding `sample_json` on stdin and the
+    Shells out to `python3 claude-status-line.py` feeding `sample_json` on stdin and the
     toggles as CC_AI_KIT_SEGMENT_<KEY> env overrides (so it reflects in-memory
     edits before they are written). `env` carries only the keys to override
     (e.g. forced terminal size); it is merged ON TOP OF os.environ so the
@@ -294,7 +306,7 @@ def render_preview(  # pylint: disable=too-many-arguments,too-many-positional-ar
 
 
 # One-line doc notes carried when a managed key is appended (keeps the recipe
-# self-documenting). Lifted verbatim from tools/statusline.toml.sample comments.
+# self-documenting). Lifted verbatim from tools/claude-statusline.toml.sample comments.
 _SEGMENT_NOTES = {
     "path": "📂 working directory, ~-relative   (pinned)",
     "git_branch": "git branch name",
@@ -623,11 +635,11 @@ def enumerate_entries(install_dir):
     return out
 
 
-# Mirror status-line.py's canonical `_SEG_HEADER_RE` EXACTLY (whitespace-flexible
+# Mirror claude-status-line.py's canonical `_SEG_HEADER_RE` EXACTLY (whitespace-flexible
 # after `#` and after the colon; NO leading indent — the marker sits at column 0)
 # so the installer and the renderer never disagree on which files are providers
 # (the two files can't import each other — hyphenated filename, see L64 — so the
-# pattern is duplicated; keep it byte-identical to status-line.py's).
+# pattern is duplicated; keep it byte-identical to claude-status-line.py's).
 _SEG_HEADER_RE = re.compile(r"^#\s*ai-kit-segment:\s*(.*?)\s*$")
 
 
@@ -640,7 +652,7 @@ def _parse_segment_header(text):
     head of the file; returns None when no marker line is present. Bare tokens
     (no `=`) are ignored. Values may be double-quoted to hold spaces/punctuation
     (e.g. `description="System available RAM"`); quoting is wizard-side only —
-    the renderer's parser (`core_parse_segment_header` in status-line.py) does
+    the renderer's parser (`core_parse_segment_header` in claude-status-line.py) does
     not need it since it never reads the UI keys. This is the single source of
     truth for the `id` that drives the `segments.<id>` toggle."""
     for line in text.splitlines():
@@ -747,7 +759,7 @@ def discover_external_segments(paths, examples_dir):
     description, icon, sample, line, provenance} where provenance is
     "bundled" | "user". On an id collision the USER entry wins (it shadows
     the bundled copy the user customized). All entries default OFF in the wizard
-    unless statusline.toml enables them. `filename` is preserved from the
+    unless claude-statusline.toml enables them. `filename` is preserved from the
     winning entry and drives the install-destination in install_example_segments.
     Returned list is id-sorted."""
     merged = {}
@@ -1923,7 +1935,7 @@ def _statusline_state(settings):
 
 
 def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
-    """Point settings.json's statusLine.command at the bundled status-line.py
+    """Point settings.json's statusLine.command at the bundled claude-status-line.py
     (with `python3 -S`), preserving all other keys. FR-5.5 double-confirm:
       - absent / already ai-kit  → set/refresh silently
       - a DIFFERENT command      → show it and require an explicit 'y'; on a
@@ -2013,20 +2025,116 @@ def detect_statusline(paths):
     return {"state": "foreign", "current_command": cur_cmd}
 
 
+def create_if_absent(dest, data):
+    """Publish bytes without replacing a destination created by a concurrent writer."""
+    directory = os.path.dirname(dest) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(dir=directory, prefix=".ai-kit-create-")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temp_path, dest)
+        except FileExistsError:
+            return False
+        except OSError:
+            try:
+                fallback_fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                return False
+            try:
+                with os.fdopen(fallback_fd, "wb") as handle:
+                    handle.write(data)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except OSError:
+                with contextlib.suppress(OSError):
+                    os.unlink(dest)
+                raise
+        return True
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(temp_path)
+
+
+def _migrate_statusline_command(paths, dry):
+    """Rewrite the old owned command through the checked atomic JSON path."""
+    state, data = _read_json_checked(paths.settings)
+    if state == JSON_STATE_UNREADABLE:
+        print(f"warn: {paths.settings}: cannot parse as a JSON object; migration skipped",
+              file=sys.stderr)
+        return False
+    if state != JSON_STATE_OK or data is None:
+        return False
+    status = data.get("statusLine")
+    old_script = os.path.join(paths.install_dir, "tools", _LEGACY_ENTRY)
+    replacement = _command_ownership().rewrite_owned_command(
+        _statusline_command(status), old_script, paths.status_line)
+    if replacement is None:
+        return False
+    if isinstance(status, dict):
+        status["command"] = replacement
+    else:
+        data["statusLine"] = replacement
+    if dry:
+        print(f"would migrate statusLine command in {paths.settings}")
+        return True
+    try:
+        _atomic_write_json(paths.settings, data)
+    except OSError as exc:
+        print(f"warn: failed to migrate {paths.settings}: {exc}", file=sys.stderr)
+        return False
+    return True
+
+
+def _migrate_statusline_toml(paths, dry):
+    """Publish the renamed TOML only when the destination is absent."""
+    old_toml = os.path.join(paths.config_dir, _LEGACY_TOML)
+    if os.path.exists(old_toml) and os.path.exists(paths.config_toml):
+        print(f"warn: both {old_toml} and {paths.config_toml} exist; merge by hand",
+              file=sys.stderr)
+        return False
+    if not os.path.isfile(old_toml):
+        return False
+    if dry:
+        print(f"would migrate {old_toml} -> {paths.config_toml}")
+        return True
+    try:
+        with open(old_toml, "rb") as handle:
+            published = create_if_absent(paths.config_toml, handle.read())
+        if not published:
+            print(f"warn: could not publish {paths.config_toml}; kept {old_toml}",
+                  file=sys.stderr)
+            return False
+        os.unlink(old_toml)
+    except OSError as exc:
+        print(f"warn: could not migrate {old_toml} -> {paths.config_toml}: {exc}",
+              file=sys.stderr)
+        return False
+    return True
+
+
+def migrate_statusline(paths, dry):
+    """Migrate only owned legacy wiring and publish its config without replacement."""
+    command_changed = _migrate_statusline_command(paths, dry)
+    toml_changed = _migrate_statusline_toml(paths, dry)
+    return command_changed or toml_changed
+
+
 def copy_recipe_if_absent(sample, config_toml, dry):
-    """Copy the recipe to config_toml ONLY if absent (E4a behavior). On a re-run
-    it is never overwritten — the TOML is the user's persisted status-line config."""
-    if not os.path.isfile(sample):
-        return
-    if os.path.isfile(config_toml):
+    """Copy the recipe atomically only if absent, never replacing a user's config."""
+    if not os.path.isfile(sample) or os.path.exists(config_toml):
         return
     if dry:
         print(f"would copy {sample} -> {config_toml}")
         return
-    os.makedirs(os.path.dirname(config_toml), exist_ok=True)
-    with open(sample, encoding="utf-8") as src, \
-         open(config_toml, "w", encoding="utf-8") as dst:
-        dst.write(src.read())
+    try:
+        with open(sample, "rb") as handle:
+            create_if_absent(config_toml, handle.read())
+    except OSError as exc:
+        print(f"warn: failed to copy {sample} -> {config_toml}: {exc}", file=sys.stderr)
 
 
 def unwire_statusline(settings, install_dir, dry):
@@ -2582,7 +2690,7 @@ def _persist_layout(paths, state, dry, known_ext_ids=None):
 
 
 def _recover_incompatible_config(paths, dry):
-    """If an existing statusline.toml is rejected by the doctor (e.g. it carries
+    """If an existing claude-statusline.toml is rejected by the doctor (e.g. it carries
     stale segment keys from a pre-rename ai-kit), back it up to ``<file>.bak`` and
     regenerate a fresh one from the recipe so the wizard's choices apply on a
     valid base. Returns True when a recovery happened.
@@ -2623,10 +2731,10 @@ def persist_statusline(  # pylint: disable=too-many-arguments,too-many-positiona
 ):
     """Conditionally persist the status-line config + wire settings.json.
 
-    adopt is False  -> NO-OP: write neither statusline.toml nor settings.json's
+    adopt is False  -> NO-OP: write neither claude-statusline.toml nor settings.json's
                        statusLine; an existing status line is left untouched.
     adopt is True   -> ensure the recipe exists (copy-if-absent), write
-                       statusline.toml (doctor-validated, auto-revert) via
+                       claude-statusline.toml (doctor-validated, auto-revert) via
                        _persist_layout, then set settings.json statusLine to
                        `python3 -S <status_line>` UNLESS it already points at ours
                        (reconfigure leaves a correct, possibly hand-edited command
@@ -2643,7 +2751,7 @@ def persist_statusline(  # pylint: disable=too-many-arguments,too-many-positiona
         return True
     # Adopting: the config TOML must exist before _persist_layout patches it.
     # copy-if-absent is gated here (NOT pre-wizard) so a non-adopting run never
-    # materializes a statusline.toml (Task 10 constraint 1).
+    # materializes a claude-statusline.toml (Task 10 constraint 1).
     copy_recipe_if_absent(paths.sample, paths.config_toml, dry)
     # An existing config from an incompatible (e.g. pre-rename) ai-kit would be
     # rejected by the doctor and block the whole persist; recover it first.
@@ -2766,7 +2874,7 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
     # Wizard segment state = built-in defaults/recipe, plus every discovered
     # external keyed by id. A discovered external's default mirrors the renderer:
     # provenance "user" means it lives in the segments dir and renders by default
-    # (default ON, unless statusline.toml disables it); a "bundled" example is only
+    # (default ON, unless claude-statusline.toml disables it); a "bundled" example is only
     # in examples/ and not yet installed, so it is an OFF offer until chosen.
     segments = current_segments(paths.config_toml)
     for e in external:
@@ -2800,7 +2908,7 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
         sample_json=sample_json,
         engine=_engine_ns(paths, sample_json),
         # Live callable, not a frozen dict — re-read fresh every time the
-        # wizard's gate needs it, mirroring status-line.py's own re-probing.
+        # wizard's gate needs it, mirroring claude-status-line.py's own re-probing.
         status_line=lambda: detect_statusline(paths),
         segment_meta=segment_meta,
         external_segments=external,
@@ -2918,7 +3026,7 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
                 # be left out of known_ext_ids, or _persist_layout's
                 # boolean-toggle loop below can never see it and an explicit
                 # `false` never gets written, so it renders ON by the same
-                # present-on-disk default (tools/status-line.py:
+                # present-on-disk default (tools/claude-status-line.py:
                 # seg_defaults.setdefault(id, True)) — silently overriding a
                 # user who declined it in the Arrange board, or a fresh
                 # `--examples=none` install. So: fold back in any
@@ -3181,6 +3289,7 @@ def cmd_install(env, tty, dry, examples_flag=None):
     is install without first-run defaults — when anything is already linked,
     _first_run() is False, so the selection keeps existing state."""
     paths = resolve_paths(env)
+    migrate_statusline(paths, dry)
     entries = enumerate_entries(paths.install_dir)
     counts = new_counts()
     installed = installed_links(paths.claude_dir, paths.install_dir)
@@ -3580,6 +3689,10 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     # See the plan's "Out of scope" section -- their behavior contradicts
     # "nothing touched unless asked." A future --prune-stale flag plugs in here.
 
+    requested = (skills_flag is not None or with_statusline or with_hooks
+                 or examples_flag is not None)
+    if requested:
+        migrate_statusline(paths, dry)
     counts = new_counts()
     replaced = (_headless_replace(paths, entries, skills_flag, dry, counts)
                 if replace_existing else set())
@@ -3603,8 +3716,6 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
             paths, examples_flag, dry):
         ok = False
 
-    requested = (skills_flag is not None or with_statusline or with_hooks
-                 or examples_flag is not None)
     only_invalid_skills = (skills_flag is not None and not chosen
                            and not with_statusline and not with_hooks
                            and examples_flag is None)
