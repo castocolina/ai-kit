@@ -111,18 +111,677 @@ const RESUME_MSG = 'You were interrupted by a transient provider error. Continue
   'first inspect git status, git diff and git log, do not redo finished steps, finish the remaining steps ' +
   '(verify commands and commits included), then reply with the final report as originally asked.';
 
-// First matching key wins: billing and quota come before auth so a 403 spending-limit or
-// free-tier error is not read as an auth failure.
+// Pinned table order (vendor codes, then quota text, then auth, then capacity, then
+// opencode type hints, then bare codes): pure-classify-order-mutation proves a reversal
+// changes the class of a message that carries both billing and quota wording.
 // <patterns>
-const PATTERNS = {
-  "permission_blocked": "permission denied|requires approval|approval required|workspace trust required|pre-dispatch filters",
-  "billing": "spending limit|billing|payment required|\\b402\\b|free ?tier",
-  "quota": "quota exceeded|insufficient_quota|usage limit",
-  "auth": "\\b40[13]\\b|unauthori[sz]ed|token_expired|invalid_refresh_token|could not be refreshed|not logged in|log ?in required|please (?:log|sign) ?in|invalid api key|requires an opencode API key|credential gate",
-  "bad_model": "model not found|unknown model|invalid model",
-  "capacity": "overloaded|at capacity|service unavailable|\\b503\\b",
-  "transient": "temporarily unavailable|cooling down|is locked|rate.?limit|too many requests|\\b429\\b|\\b50[24]\\b|ECONNRESET|ETIMEDOUT|socket hang up|stream (?:closed|disconnected)"
-};
+const PATTERNS = [
+  {
+    "id": "vendor-usage-limit-reached",
+    "cli": "*",
+    "input": "any",
+    "match": "usage_limit_reached",
+    "class": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe"
+  },
+  {
+    "id": "vendor-insufficient-quota",
+    "cli": "*",
+    "input": "any",
+    "match": "insufficient_quota",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe"
+  },
+  {
+    "id": "text-billing",
+    "cli": "*",
+    "input": "any",
+    "match": "\\bbilling\\b",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe"
+  },
+  {
+    "id": "vendor-monthly-limit",
+    "cli": "*",
+    "input": "any",
+    "match": "MonthlyLimitError",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.2 CONTEXT, wrapper reproduced"
+  },
+  {
+    "id": "text-spending-limit",
+    "cli": "*",
+    "input": "any",
+    "match": "spending[ -]limit",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded hyphen"
+  },
+  {
+    "id": "text-payment-required",
+    "cli": "*",
+    "input": "any",
+    "match": "payment required",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe format"
+  },
+  {
+    "id": "text-free-tier",
+    "cli": "*",
+    "input": "any",
+    "match": "free ?tier",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.3 recorded"
+  },
+  {
+    "id": "text-insufficient-funds",
+    "cli": "*",
+    "input": "any",
+    "match": "insufficient (?:account )?funds",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.2 Go wording"
+  },
+  {
+    "id": "text-run-out-credits",
+    "cli": "*",
+    "input": "any",
+    "match": "run out of credits",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-model-access-disabled",
+    "cli": "*",
+    "input": "any",
+    "match": "model access is disabled",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.2 Zen wording"
+  },
+  {
+    "id": "text-named-models",
+    "cli": "cursor",
+    "input": "any",
+    "match": "named models unavailable",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.4"
+  },
+  {
+    "id": "text-free-plan-auto",
+    "cli": "cursor",
+    "input": "any",
+    "match": "free plans can only use auto",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.4"
+  },
+  {
+    "id": "vendor-free-usage",
+    "cli": "*",
+    "input": "any",
+    "match": "FreeUsageLimitError",
+    "class": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe"
+  },
+  {
+    "id": "vendor-go-usage",
+    "cli": "*",
+    "input": "any",
+    "match": "GoUsageLimitError",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.3 cited list"
+  },
+  {
+    "id": "cursor-action-usage-limit",
+    "cli": "cursor",
+    "input": "any",
+    "match": "actionrequirederror.*usage limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.4 channel unverified"
+  },
+  {
+    "id": "pi-chatgpt-usage-limit",
+    "cli": "pi",
+    "input": "any",
+    "match": "chatgpt usage limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.3 cited bundle"
+  },
+  {
+    "id": "claude-hit-your-limit",
+    "cli": "claude",
+    "input": "any",
+    "match": "hit your limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.5 cited binary"
+  },
+  {
+    "id": "text-usage-limit",
+    "cli": "*",
+    "input": "any",
+    "match": "usage limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe"
+  },
+  {
+    "id": "text-hit-your-limit",
+    "cli": "*",
+    "input": "any",
+    "match": "hit your (?:\\w+ )?limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.4 cursor wording"
+  },
+  {
+    "id": "text-quota-exceeded",
+    "cli": "*",
+    "input": "any",
+    "match": "quota exceeded",
+    "class": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe"
+  },
+  {
+    "id": "text-rate-limit",
+    "cli": "*",
+    "input": "any",
+    "match": "rate.?limit",
+    "class": "quota",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
+  },
+  {
+    "id": "text-too-many-requests",
+    "cli": "*",
+    "input": "any",
+    "match": "too many requests",
+    "class": "quota",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.3 pi retries; not terminal (25-04)"
+  },
+  {
+    "id": "text-requires-opencode-key",
+    "cli": "*",
+    "input": "any",
+    "match": "requires an opencode api key",
+    "class": "auth",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe"
+  },
+  {
+    "id": "text-credential-gate",
+    "cli": "*",
+    "input": "any",
+    "match": "credential gate",
+    "class": "auth",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-pre-dispatch",
+    "cli": "*",
+    "input": "any",
+    "match": "pre-dispatch filters",
+    "class": "permission_blocked",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-unauthorized",
+    "cli": "*",
+    "input": "any",
+    "match": "unauthori[sz]ed",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe"
+  },
+  {
+    "id": "text-token-expired",
+    "cli": "*",
+    "input": "any",
+    "match": "token_expired",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-invalid-refresh",
+    "cli": "*",
+    "input": "any",
+    "match": "invalid_refresh_token",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-refresh-reused",
+    "cli": "*",
+    "input": "any",
+    "match": "refresh.token.(?:was already used|reused)",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-could-not-refresh",
+    "cli": "*",
+    "input": "any",
+    "match": "could not be refreshed",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-not-logged-in",
+    "cli": "*",
+    "input": "any",
+    "match": "not logged in",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-login-required",
+    "cli": "*",
+    "input": "any",
+    "match": "log ?in required",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-please-sign-in",
+    "cli": "*",
+    "input": "any",
+    "match": "please (?:log|sign) ?in",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-invalid-api-key",
+    "cli": "*",
+    "input": "any",
+    "match": "invalid api key",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.4 live"
+  },
+  {
+    "id": "text-incorrect-api-key",
+    "cli": "*",
+    "input": "any",
+    "match": "incorrect api key",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe"
+  },
+  {
+    "id": "text-api-key-invalid",
+    "cli": "*",
+    "input": "any",
+    "match": "api key is invalid",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.4 live"
+  },
+  {
+    "id": "text-permission-denied",
+    "cli": "*",
+    "input": "any",
+    "match": "permission denied",
+    "class": "permission_blocked",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-requires-approval",
+    "cli": "*",
+    "input": "any",
+    "match": "requires approval",
+    "class": "permission_blocked",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-approval-required",
+    "cli": "*",
+    "input": "any",
+    "match": "approval required",
+    "class": "permission_blocked",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-workspace-trust",
+    "cli": "*",
+    "input": "any",
+    "match": "workspace trust required",
+    "class": "permission_blocked",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-model-not-found",
+    "cli": "*",
+    "input": "any",
+    "match": "model not found",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe item"
+  },
+  {
+    "id": "text-unknown-model",
+    "cli": "*",
+    "input": "any",
+    "match": "unknown model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe item"
+  },
+  {
+    "id": "text-invalid-model",
+    "cli": "*",
+    "input": "any",
+    "match": "invalid model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe item"
+  },
+  {
+    "id": "text-cannot-use-model",
+    "cli": "*",
+    "input": "any",
+    "match": "cannot use this model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.4 live"
+  },
+  {
+    "id": "claude-overloaded",
+    "cli": "claude",
+    "input": "any",
+    "match": "overloaded",
+    "class": "capacity",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.5 CONTEXT"
+  },
+  {
+    "id": "text-overloaded",
+    "cli": "*",
+    "input": "any",
+    "match": "overloaded",
+    "class": "capacity",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe"
+  },
+  {
+    "id": "text-at-capacity",
+    "cli": "*",
+    "input": "any",
+    "match": "at capacity",
+    "class": "capacity",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-service-unavailable",
+    "cli": "*",
+    "input": "any",
+    "match": "service (?:temporarily )?unavailable",
+    "class": "capacity",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-resource-pressure",
+    "cli": "*",
+    "input": "any",
+    "match": "resource pressure",
+    "class": "capacity",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-admission-capacity",
+    "cli": "*",
+    "input": "any",
+    "match": "admission capacity",
+    "class": "capacity",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-event-400",
+    "cli": "*",
+    "input": "any",
+    "match": "\\[400\\]: event: error",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-CONTEXT transient upstream 400"
+  },
+  {
+    "id": "text-temporarily-unavailable",
+    "cli": "*",
+    "input": "any",
+    "match": "temporarily unavailable",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-cooling-down",
+    "cli": "*",
+    "input": "any",
+    "match": "cooling down",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "prior table"
+  },
+  {
+    "id": "text-is-locked",
+    "cli": "*",
+    "input": "any",
+    "match": "is locked",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "prior table"
+  },
+  {
+    "id": "text-econnreset",
+    "cli": "*",
+    "input": "any",
+    "match": "ECONNRESET",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "prior table"
+  },
+  {
+    "id": "text-etimedout",
+    "cli": "*",
+    "input": "any",
+    "match": "ETIMEDOUT",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "prior table"
+  },
+  {
+    "id": "text-socket-hangup",
+    "cli": "*",
+    "input": "any",
+    "match": "socket hang up",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "prior table"
+  },
+  {
+    "id": "text-stream-cut",
+    "cli": "*",
+    "input": "any",
+    "match": "stream (?:closed|disconnected)",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recovered stream"
+  },
+  {
+    "id": "opencode-type-quota",
+    "cli": "opencode",
+    "input": "event",
+    "match": "opencode-type:provider\\.(?:quota|rate-limit)",
+    "class": "quota",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe"
+  },
+  {
+    "id": "opencode-type-auth",
+    "cli": "opencode",
+    "input": "event",
+    "match": "opencode-type:provider\\.auth",
+    "class": "auth",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe, weak hint"
+  },
+  {
+    "id": "code-402",
+    "cli": "*",
+    "input": "any",
+    "match": "\\b402\\b",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe; not terminal (25-04)"
+  },
+  {
+    "id": "code-401-403",
+    "cli": "*",
+    "input": "any",
+    "match": "\\b40[13]\\b",
+    "class": "auth",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
+  },
+  {
+    "id": "code-429",
+    "cli": "*",
+    "input": "any",
+    "match": "\\b429\\b",
+    "class": "quota",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-CONTEXT kimi 429; not terminal (25-04)"
+  },
+  {
+    "id": "code-5xx",
+    "cli": "*",
+    "input": "any",
+    "match": "\\b50[0234]\\b",
+    "class": "capacity",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
+  },
+  {
+    "id": "code-529",
+    "cli": "*",
+    "input": "any",
+    "match": "\\b529\\b",
+    "class": "capacity",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
+  }
+];
 // </patterns>
 
 const STATUS_TABLE = {
@@ -166,7 +825,10 @@ const PI_RPC_REQUEST = '{"id":"1","type":"get_available_models"}\n';
 let childPgidFile = null;
 let childPgidBroken = false;
 let runStartedMs = Date.now();
-let liveFields = { cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean' };
+let liveFields = {
+  cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean',
+  route: 'unknown', rule: '-', pattern: 'none',
+};
 let finished = false;
 let finishedExit = 1;
 let runDeadline = 0;
@@ -209,14 +871,14 @@ function finish(status, fields) {
   if (finished) return finishedExit;
   const row = STATUS_TABLE[status] || { exit: 1 };
   const tree = fields.tree ?? 'unknown';
-  let exit = fields.exit ?? row.exit;
-  if (status === 'billing' && fields.cli && CONFIG.routerBacked[fields.cli]) {
-    exit = 75;
-  }
+  const exit = fields.exit ?? row.exit;
   const elapsed = fields.elapsed ?? Math.max(0, Math.round((Date.now() - runStartedMs) / 1000));
+  const route = fields.route ?? 'unknown';
+  const rule = fields.rule ?? '-';
+  const pattern = fields.pattern ?? 'none';
   const line = `AIKIT-XAI status=${status} cli=${fields.cli ?? '-'} model=${fields.model ?? '-'} ` +
     `exit=${exit} cli_rc=${fields.cli_rc ?? '-'} elapsed=${elapsed}s out=${fields.out ?? 0} ` +
-    `tree=${tree} action=stop`;
+    `tree=${tree} action=stop route=${route} rule=${rule} pattern=${pattern}`;
   if (!stderrGone) process.stderr.write(`${line}\n`);
   finished = true;
   finishedExit = exit;
@@ -382,15 +1044,550 @@ function normalize(text) {
   return text.replace(/\x1B\[[0-9;?]*[A-Za-z]/g, '').replace(/([.!?:])(#{1,6} \S)/g, '$1\n\n$2').trim() + '\n';
 }
 
-function classify(stderrText, structuredError) {
-  const inputs = [stderrText || '', structuredError || ''];
-  for (const [key, src] of Object.entries(PATTERNS)) {
-    const re = new RegExp(src, 'i');
-    for (const text of inputs) {
-      if (re.test(text)) return key;
+const INPUT_CAP = 65536;
+const ANSI_RE = /\x1B\[[0-9;?]*[A-Za-z]/g;
+// Child text can echo a key. These three shapes are replaced before any line is logged.
+const SECRET_RES = [
+  /(sk|rk)-[A-Za-z0-9_-]{8,}/gi,
+  /Bearer [A-Za-z0-9._-]{8,}/gi,
+  /(api[_-]?key|token|secret)['"]?\s*[:=]\s*\S+/gi,
+];
+
+function decodeUtf8(text) {
+  if (typeof text !== 'string') return '';
+  return Buffer.from(text, 'utf8').toString('utf8');
+}
+
+function normalizeInput(text) {
+  const decoded = decodeUtf8(text).replace(ANSI_RE, '').replace(/\u2019/g, "'");
+  return decoded.length > INPUT_CAP ? decoded.slice(-INPUT_CAP) : decoded;
+}
+
+function redactSecrets(line) {
+  let out = String(line);
+  for (const re of SECRET_RES) out = out.replace(re, '<redacted>');
+  return out;
+}
+
+// One bounded line splitter per stream (25-04's watcher hooks this same buffer).
+function makeLineRelay() {
+  let pending = '';
+  const emit = (line) => { log(redactSecrets(line)); };
+  return {
+    push(chunk) {
+      pending += chunk;
+      let nl = pending.indexOf('\n');
+      while (nl >= 0) {
+        emit(pending.slice(0, nl));
+        pending = pending.slice(nl + 1);
+        nl = pending.indexOf('\n');
+      }
+      if (pending.length > INPUT_CAP) {
+        emit(pending.slice(0, INPUT_CAP));
+        pending = '';
+      }
+    },
+    flush() {
+      if (!pending) return;
+      emit(pending);
+      pending = '';
+    },
+  };
+}
+
+const NO_MATCH = { status: 'crash', rule: '-', label: 'none' };
+const compiledRows = new Map();
+
+function rowRegex(row) {
+  let re = compiledRows.get(row);
+  if (!re) {
+    re = new RegExp(row.match, 'i');
+    compiledRows.set(row, re);
+  }
+  return re;
+}
+
+function rowAdmits(row, source) {
+  if (row.input === 'any') return true;
+  return row.input === source;
+}
+
+function classifyStop({ cli, routerLane, stderr, events }, table = PATTERNS) {
+  const sources = [
+    ['stderr', normalizeInput(stderr || '')],
+    ...((events || []).map((ev) => ['event', normalizeInput(ev || '')])),
+  ];
+  for (const row of table) {
+    if (row.cli !== '*' && row.cli !== cli) continue;
+    const re = rowRegex(row);
+    for (const [source, text] of sources) {
+      if (!text || !rowAdmits(row, source)) continue;
+      re.lastIndex = 0;
+      if (!re.test(text)) continue;
+      const status = routerLane && row.routerClass === 'quota' ? 'quota' : row.class;
+      return { status, rule: row.id, label: row.label };
     }
   }
+  return { ...NO_MATCH };
+}
+
+function pushStr(out, value) {
+  if (typeof value === 'string' && value) out.push(value);
+  else if (typeof value === 'number') out.push(String(value));
+}
+
+function nestedBodyFields(raw) {
+  const out = [];
+  if (typeof raw !== 'string' || !raw) return out;
+  out.push(raw);
+  const body = parseJson(raw);
+  if (!body || typeof body !== 'object') return out;
+  const inner = body.error && typeof body.error === 'object' ? body.error : null;
+  for (const obj of [inner, body]) {
+    if (!obj) continue;
+    pushStr(out, obj.type);
+    pushStr(out, obj.code);
+    pushStr(out, obj.message);
+  }
+  return out;
+}
+
+function opencodeEventStrings(ev) {
+  const out = [];
+  const err = ev.error && typeof ev.error === 'object' ? ev.error : {};
+  pushStr(out, err.message);
+  if (err.status !== undefined && err.status !== null) out.push(`status ${err.status}`);
+  if (typeof err.type === 'string' && err.type) out.push(`opencode-type:${err.type}`);
+  const response = err.response && typeof err.response === 'object' ? err.response : null;
+  if (response) out.push(...nestedBodyFields(response.body));
+  pushStr(out, err.name);
+  const data = err.data && typeof err.data === 'object' ? err.data : null;
+  if (data) {
+    pushStr(out, data.message);
+    if (data.statusCode !== undefined && data.statusCode !== null) {
+      out.push(`status ${data.statusCode}`);
+    }
+  }
+  return out;
+}
+
+function codexEventStrings(ev) {
+  const out = [];
+  if (ev.type === 'error') pushStr(out, ev.message);
+  if (ev.type === 'turn.failed') {
+    const err = ev.error && typeof ev.error === 'object' ? ev.error : null;
+    pushStr(out, err ? err.message : null);
+  }
+  return out;
+}
+
+function resultEventString(out) {
+  const ev = lastJson(out, (j) => j.type === 'result');
+  if (!ev || !ev.is_error) return [];
+  return typeof ev.result === 'string' && ev.result ? [ev.result] : [];
+}
+
+function extractEvents(cli, stdout) {
+  const out = [];
+  const text = typeof stdout === 'string' ? stdout : '';
+  if (cli === 'opencode') {
+    for (const ev of jsonLines(text)) {
+      if (ev.type === 'error') out.push(...opencodeEventStrings(ev));
+    }
+  } else if (cli === 'codex') {
+    for (const ev of jsonLines(text)) out.push(...codexEventStrings(ev));
+  } else if (cli === 'cursor' || cli === 'claude') {
+    out.push(...resultEventString(text));
+  }
+  return out;
+}
+
+function codexPair(message) {
+  return [
+    JSON.stringify({ type: 'error', message }),
+    JSON.stringify({ type: 'turn.failed', error: { message } }),
+  ].join('\n');
+}
+
+function ocError(error) {
+  return JSON.stringify({ type: 'error', sessionID: 'ses_1', error });
+}
+
+const CLASSIFY_CASES = [
+  {
+    name: 'codex-usage-limit-clock', cli: 'codex',
+    stdout: codexPair(
+      'You’ve hit your usage limit. Upgrade to Pro ' +
+      '(https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage ' +
+      'to purchase more credits or try again at 2:24 PM.',
+    ),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'codex-usage-limit-later', cli: 'codex',
+    stdout: codexPair(
+      'You’ve hit your usage limit. Upgrade to Pro, or try again later.',
+    ),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'codex-usage-limit-dated', cli: 'codex',
+    stdout: codexPair(
+      'You’ve hit your usage limit. Try again at Dec 31st, 2099 9:00 PM.',
+    ),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'codex-insufficient-quota', cli: 'codex',
+    stdout: codexPair('Quota exceeded. Check your plan and billing details.'),
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'codex-insufficient-quota-router', cli: 'codex', route: 'router',
+    stdout: codexPair('Quota exceeded. Check your plan and billing details.'),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'codex-402-format', cli: 'codex',
+    stdout: codexPair('unexpected status 402 Payment Required: {}, url: http://127.0.0.1/x'),
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'codex-refresh-reused', cli: 'codex',
+    stderr: 'Failed to refresh token: refresh token was already used (refresh_token_reused)',
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'codex-item-error-ignored', cli: 'codex',
+    stdout: JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'error', message: 'Model metadata for x not found' },
+    }),
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'opencode-usage-limit', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.quota', message: 'The usage limit has been reached', status: 429,
+      response: { body: JSON.stringify({ code: 'usage_limit_reached', resets_at: 1 }) },
+    }),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-insufficient-quota', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.quota', status: 429,
+      message: 'You exceeded your current quota, please check your plan and billing details.',
+      response: { body: JSON.stringify({ code: 'insufficient_quota' }) },
+    }),
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-free-usage', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.quota', status: 429, message: 'Rate limit exceeded. Please try again later.',
+      response: { body: JSON.stringify({ type: 'FreeUsageLimitError' }) },
+    }),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-requires-key', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.quota', status: 402, message: 'requires an opencode API key',
+    }),
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-requires-key-router', cli: 'opencode', route: 'router',
+    stdout: ocError({
+      type: 'provider.quota', status: 402, message: 'requires an opencode API key',
+    }),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-monthly-limit', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.auth', status: 401,
+      message: 'Your workspace has reached its monthly spending limit',
+      response: { body: JSON.stringify({ type: 'MonthlyLimitError' }) },
+    }),
+    expect: { status: 'billing', pattern: 'unverified' },
+  },
+  {
+    name: 'opencode-monthly-limit-router', cli: 'opencode', route: 'router',
+    stdout: ocError({
+      type: 'provider.auth', status: 401,
+      message: 'Your workspace has reached its monthly spending limit',
+      response: { body: JSON.stringify({ type: 'MonthlyLimitError' }) },
+    }),
+    expect: { status: 'quota', pattern: 'unverified' },
+  },
+  {
+    name: 'opencode-spend-403', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.auth', status: 403,
+      message: 'Error 403: spending limit reached for this team',
+    }),
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-model-disabled', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.auth', status: 403, message: 'Model access is disabled',
+      response: { body: JSON.stringify({ type: 'ModelDisabledError' }) },
+    }),
+    expect: { status: 'billing', pattern: 'unverified' },
+  },
+  {
+    name: 'opencode-model-disabled-router', cli: 'opencode', route: 'router',
+    stdout: ocError({
+      type: 'provider.auth', status: 403, message: 'Model access is disabled',
+    }),
+    expect: { status: 'quota', pattern: 'unverified' },
+  },
+  {
+    name: 'opencode-bad-key', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.auth', status: 401, message: 'Incorrect API key provided',
+    }),
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-bad-key-router', cli: 'opencode', route: 'router',
+    stdout: ocError({
+      type: 'provider.auth', status: 401, message: 'Incorrect API key provided',
+    }),
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-rate-limit', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.rate-limit', status: 429,
+      message: 'rate_limit_exceeded',
+      response: { body: JSON.stringify({ code: 'rate_limit_exceeded' }) },
+    }),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-legacy-shape', cli: 'opencode',
+    stdout: ocError({
+      name: 'APIError', data: { message: 'The usage limit has been reached', statusCode: 429 },
+    }),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-text-mode', cli: 'opencode',
+    stderr: 'Error: The usage limit has been reached',
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'router-resource-pressure', cli: 'opencode',
+    stderr: 'Error: Service temporarily unavailable due to resource pressure. Retry shortly.',
+    expect: { status: 'capacity', pattern: 'verified' },
+  },
+  {
+    name: 'router-admission', cli: 'opencode',
+    stderr: 'Chat admission capacity is temporarily unavailable',
+    expect: { status: 'capacity', pattern: 'verified' },
+  },
+  {
+    name: 'router-prefilter', cli: 'opencode',
+    stderr: 'all targets were skipped by pre-dispatch filters',
+    expect: { status: 'permission_blocked', pattern: 'verified' },
+  },
+  {
+    name: 'router-prefilter-router', cli: 'opencode', route: 'router',
+    stderr: 'all targets were skipped by pre-dispatch filters',
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'router-credential-gate', cli: 'opencode',
+    stderr: 'Credential gate blocked opencode-zen/model',
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'router-credential-gate-router', cli: 'opencode', route: 'router',
+    stderr: 'Credential gate blocked opencode-zen/model',
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'xai-spending-hyphen', cli: 'opencode',
+    stderr: 'personal-team-blocked:spending-limit',
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'pi-insufficient-quota', cli: 'pi',
+    stderr: '429: {"type":"insufficient_quota","code":"insufficient_quota",' +
+      '"message":"You exceeded your current quota, please check your plan and billing details."}',
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'pi-402-format', cli: 'pi',
+    stderr: '402: {"type":"monthly","message":"x"}',
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'pi-free-tier', cli: 'pi',
+    stderr: '403: {"type":"FreeTierError"}',
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'pi-event-400', cli: 'pi',
+    stderr: '[400]: event: error',
+    expect: { status: 'transient', pattern: 'verified' },
+  },
+  {
+    name: 'pi-session-warning', cli: 'pi',
+    stderr: 'Warning: No project session found with id abc; creating a new session with that id.',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'pi-chatgpt-relative', cli: 'pi',
+    stderr: 'You have hit your ChatGPT usage limit (plus plan). Try again in ~5 min.',
+    expect: { status: 'quota', pattern: 'unverified' },
+  },
+  {
+    name: 'kimi-429-router', cli: 'opencode', route: 'router',
+    stderr: '429 monthly quota exhausted',
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'cursor-usage-limit', cli: 'cursor',
+    stderr: "ActionRequiredError: You've hit your usage limit",
+    expect: { status: 'quota', pattern: 'unverified' },
+  },
+  {
+    name: 'cursor-named-models', cli: 'cursor',
+    stderr: 'ActionRequiredError: Named models unavailable',
+    expect: { status: 'billing', pattern: 'unverified' },
+  },
+  {
+    name: 'cursor-free-plan-auto', cli: 'cursor',
+    stderr: 'Free plans can only use Auto',
+    expect: { status: 'billing', pattern: 'unverified' },
+  },
+  {
+    name: 'cursor-action-required-alone', cli: 'cursor',
+    stderr: 'ActionRequiredError: something else happened',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'cursor-bad-model', cli: 'cursor',
+    stderr: 'Cannot use this model: example',
+    expect: { status: 'bad_model', pattern: 'verified' },
+  },
+  {
+    name: 'cursor-bad-key', cli: 'cursor',
+    stderr: 'Warning: The provided API key is invalid',
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'cursor-result-error', cli: 'cursor',
+    stdout: JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized' }),
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'claude-overloaded', cli: 'claude',
+    stderr: 'Overloaded. try again in a moment',
+    expect: { status: 'capacity', pattern: 'unverified' },
+  },
+  {
+    name: 'claude-resets', cli: 'claude',
+    stderr: "You've hit your limit \u00b7 resets 9:30pm (America/Santiago)",
+    expect: { status: 'quota', pattern: 'unverified' },
+  },
+  {
+    name: 'edge-4021-tokens', cli: 'pi',
+    stderr: 'used 4021 tokens',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'edge-empty', cli: 'pi',
+    stderr: '',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'edge-answer-only-pi', cli: 'pi',
+    stdout: 'You have hit your usage limit according to the model.',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'edge-answer-only-opencode', cli: 'opencode',
+    stdout: JSON.stringify({
+      type: 'text', sessionID: 'ses_1',
+      part: { type: 'text', text: 'The usage limit has been reached, says the model.' },
+    }),
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'edge-ansi', cli: 'pi',
+    stderr: '\u001b[31m402 payment required\u001b[0m',
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'edge-billing-and-quota', cli: 'pi',
+    stderr: 'quota exceeded, check billing',
+    expect: { status: 'billing', pattern: 'verified', rule: 'text-billing' },
+  },
+  {
+    name: 'edge-vendor-code-beats-bare', cli: 'opencode',
+    stderr: 'noise 401 from the transport',
+    stdout: ocError({
+      type: 'provider.auth', status: 401, message: 'wrapped',
+      response: { body: JSON.stringify({ code: 'usage_limit_reached' }) },
+    }),
+    expect: { status: 'quota', pattern: 'verified', rule: 'vendor-usage-limit-reached' },
+  },
+];
+
+function classifyOne(entry, table) {
+  return classifyStop({
+    cli: entry.cli,
+    routerLane: entry.route === 'router',
+    stderr: entry.stderr || '',
+    events: extractEvents(entry.cli, entry.stdout || ''),
+  }, table);
+}
+
+function pureClassify(entry) {
+  const got = classifyOne(entry);
+  const want = entry.expect;
+  if (got.status !== want.status) return `status ${got.status} expected ${want.status}`;
+  if (got.label !== want.pattern) return `pattern ${got.label} expected ${want.pattern}`;
+  if (want.rule !== undefined && got.rule !== want.rule) {
+    return `rule ${got.rule} expected ${want.rule}`;
+  }
   return null;
+}
+
+function classifyCases() {
+  const generated = CLASSIFY_CASES.map((entry) => ({
+    name: `pure-classify-${entry.name}`,
+    pure: () => pureClassify(entry),
+  }));
+  const pinned = CLASSIFY_CASES.find((entry) => entry.name === 'edge-billing-and-quota');
+  const twice = CLASSIFY_CASES.find((entry) => entry.name === 'opencode-monthly-limit-router');
+  return [
+    ...generated,
+    {
+      name: 'pure-classify-order-mutation',
+      pure: () => {
+        const forward = classifyOne(pinned);
+        const reversed = classifyOne(pinned, [...PATTERNS].reverse());
+        if (reversed.status === forward.status) return `reversal kept status ${forward.status}`;
+        return null;
+      },
+    },
+    {
+      name: 'pure-classify-idempotent',
+      pure: () => {
+        const first = classifyOne(twice);
+        const second = classifyOne(twice);
+        if (JSON.stringify(first) !== JSON.stringify(second)) return 'classifyStop is not stable';
+        return null;
+      },
+    },
+  ];
 }
 
 function which(bin, envPath = process.env.PATH || '') {
@@ -822,16 +2019,23 @@ async function runOnce(bin, argv, input, env, cwd, label) {
   let lastBytes = 0;
   const started = Date.now();
   let errTail = '';
+  const relay = makeLineRelay();
   const hb = setInterval(() => {
-    log(`cross-ai: ${label} running ${Math.round((Date.now() - started) / 1000)}s, stdout +${outBytes - lastBytes} bytes`);
+    const secs = Math.round((Date.now() - started) / 1000);
+    log(`cross-ai: ${label} running ${secs}s, stdout +${outBytes - lastBytes} bytes`);
     lastBytes = outBytes;
   }, CONFIG.heartbeatS * 1000);
   const r = await runChild(bin, argv, {
     cwd, env, input, capMs: budgetMs(Number.POSITIVE_INFINITY, runDeadline), limit: runDeadline,
     onStdout: (d) => { outBytes += d.length; },
-    onStderr: (d) => { log(d.toString('utf8')); errTail = (errTail + d.toString('utf8')).slice(-65536); },
+    onStderr: (d) => {
+      const text = d.toString('utf8');
+      relay.push(text);
+      errTail = (errTail + text).slice(-INPUT_CAP);
+    },
   });
   clearInterval(hb);
+  relay.flush();
   return { ...r, stderr: errTail || r.stderr, outBytes };
 }
 
@@ -848,39 +2052,61 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const tmp = makeTemp('cross-ai-');
   const ctx = {
     cwd: process.cwd(), sid: crypto.randomUUID(), outFile: path.join(tmp, 'last-message.md'),
-    codexEffort: opts.codexEffort, codexServiceTier: opts.codexServiceTier, cursorMode: opts.cursorMode,
+    codexEffort: opts.codexEffort, codexServiceTier: opts.codexServiceTier,
+    cursorMode: opts.cursorMode,
     piThinking: opts.piThinking, codexSandbox: opts.codexSandbox,
   };
   const env = childEnv(rt.env, process.env);
   let argv = withExtra(name, rt[mode](model, ctx)); let input = prompt;
   try {
     for (let attempt = 0; ; attempt++) {
-      log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${Math.round(budgetMs(Number.POSITIVE_INFINITY, runDeadline) / 1000)}s`);
+      const left = Math.round(budgetMs(Number.POSITIVE_INFINITY, runDeadline) / 1000);
+      log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${left}s`);
       log(`cross-ai: argv=${JSON.stringify(argv)}`);
       const r = await runOnce(binPath, argv, input, env, ctx.cwd, name);
       if (aborting) return { ok: false, code: 128 + aborting, outBytes: r.outBytes, cli_rc: r.code };
       if (r.timedOut) return { ok: false, code: 124, timedOut: true, outBytes: r.outBytes, cli_rc: r.code };
-      if (r.spawnErr) return { ok: false, code: r.spawnErr.code === 'ENOENT' ? 127 : 126, error: String(r.spawnErr), outBytes: 0, cli_rc: null };
+      if (r.spawnErr) {
+        const code = r.spawnErr.code === 'ENOENT' ? 127 : 126;
+        return { ok: false, code, error: String(r.spawnErr), outBytes: 0, cli_rc: null };
+      }
       const p = rt.parse(r.stdout, ctx);
-      const hit = classify(r.stderr, p.error);
+      const routerLane = Boolean(CONFIG.routerBacked[name]);
+      const cls = classifyStop({
+        cli: name, routerLane, stderr: r.stderr, events: extractEvents(name, r.stdout),
+      });
+      const hit = cls.status === 'crash' ? null : cls.status;
+      const evidence = {
+        route: routerLane ? 'router' : 'unknown',
+        rule: hit ? cls.rule : '-',
+        pattern: hit ? cls.label : 'none',
+      };
       // stderr noise never overrules a clean exit with an answer; it only names a failure.
       const failed = r.code !== 0 || Boolean(p.error);
       if (!failed && p.text.trim()) {
-        return { ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'), cli_rc: 0 };
+        return {
+          ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'), cli_rc: 0,
+        };
       }
       if (hit && hit !== 'transient') {
-        return { ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
+        return {
+          ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+        };
       }
       if (!failed) return { ok: false, status: 'empty_answer', outBytes: r.outBytes, cli_rc: 0 };
       const wait = (backoff[attempt] ?? backoff[backoff.length - 1]) * 1000;
-      log(`cross-ai: ${name} failed (exit ${r.code}${r.signal ? ' ' + r.signal : ''}, ${hit || 'crash'}${p.error ? ': ' + p.error.slice(0, 200) : ''})`);
+      const why = hit || 'crash';
+      const sig = r.signal ? ' ' + r.signal : '';
+      log(`cross-ai: ${name} failed (exit ${r.code}${sig}, rule=${hit ? cls.rule : '-' })`);
       // Retry only with the wait plus a minute of work left before the deadline.
       const exhausted = hit === 'transient' && (
         attempt >= (opts.retries ?? CONFIG.retries) || runDeadline - Date.now() < wait + 60000
       );
       if (hit !== 'transient' || exhausted) {
         const st = exhausted ? 'capacity' : 'crash';
-        return { ok: false, status: st, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
+        return {
+          ok: false, status: st, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+        };
       }
       if (mode === 'review' && beforeSig !== null) {
         const mid = await treeState(ctx.cwd, runDeadline);
@@ -890,7 +2116,9 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
           };
         }
         if (stateSig(mid) !== beforeSig) {
-          return { ok: false, status: 'contract_violation', outBytes: r.outBytes, cli_rc: r.code ?? '-' };
+          return {
+            ok: false, status: 'contract_violation', outBytes: r.outBytes, cli_rc: r.code ?? '-',
+          };
         }
       }
       await sleep(budgetMs(wait, runDeadline));
@@ -1037,7 +2265,7 @@ const args = process.argv;
 const model = argOf('--model');
 const fakeMode = model.startsWith('fake/') ? model.slice(5).replace(/:[a-z]+$/, '') : '';
 const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('gc', pid); };
-const STICKY_FAKE = new Set(['hang', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big']);
+const STICKY_FAKE = new Set(['hang', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big', 'sentinelsplit']);
 let stdinBuf = '';
 const FAKE_MODES = {
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
@@ -1129,14 +2357,34 @@ const FAKE_MODES = {
     try { n = Number(fs.readFileSync(ctr, 'utf8')) || 0; } catch { /* first call */ }
     if (n < 1) {
       fs.writeFileSync(ctr, '1');
-      process.stderr.write('429 Too Many Requests\n');
+      process.stderr.write('[400]: event: error\n');
       process.exit(1);
     }
     fs.appendFileSync('a.txt', 'ok-line\n');
     process.stdout.write('# Summary\nok');
   },
   overloaded: () => {
-    process.stderr.write('429 Too Many Requests\n');
+    process.stderr.write('[400]: event: error\n');
+    process.exit(1);
+  },
+  sentinelquota: () => {
+    const key = process.env.AIKIT_XAI_SENTINEL || '';
+    process.stderr.write('quota exceeded for key ' + key + '\n');
+    process.exit(1);
+  },
+  sentinelsplit: () => {
+    const key = process.env.AIKIT_XAI_SENTINEL || '';
+    const bearer = process.env.AIKIT_XAI_BEARER || '';
+    const mid = Math.floor(key.length / 2);
+    process.stderr.write(key.slice(0, mid));
+    setTimeout(() => {
+      process.stderr.write(key.slice(mid) + '\nBearer ' + bearer + '\n');
+      process.exit(1);
+    }, 50);
+  },
+  sentineloverlong: () => {
+    const key = process.env.AIKIT_XAI_SENTINEL || '';
+    process.stderr.write(key + 'x'.repeat(70000));
     process.exit(1);
   },
   'review-ok': () => { process.stdout.write('# Review\nok'); },
@@ -1166,7 +2414,7 @@ const FAKE_MODES = {
     if (n < 1) {
       fs.writeFileSync(ctr, '1');
       fs.appendFileSync('a.txt', 'flaky-edit\n');
-      process.stderr.write('429 Too Many Requests\n');
+      process.stderr.write('[400]: event: error\n');
       process.exit(1);
     }
     process.stdout.write('# Review\nok');
@@ -1291,13 +2539,25 @@ process.stdin.on('data', () => {}).on('end', () => {
 `);
 }
 
+const STATUS_HEAD_RE = /^(.* action=stop)(?: (route=\S+ rule=\S+ pattern=\S+))?$/;
+
 function statusLineOk(stderr, pattern) {
   const lines = stderr.split('\n').filter((l) => l.trim());
   const hits = lines.filter((l) => l.startsWith('AIKIT-XAI '));
   if (hits.length !== 1) return `expected one AIKIT-XAI line, got ${hits.length}`;
   if (hits[0] !== lines[lines.length - 1]) return 'AIKIT-XAI line is not last stderr line';
-  if (!pattern.test(hits[0])) return `status line mismatch: ${hits[0]}`;
+  const parts = STATUS_HEAD_RE.exec(hits[0]);
+  if (!parts) return `status line mismatch: ${hits[0]}`;
+  if (!pattern.test(parts[1])) return `status line mismatch: ${hits[0]}`;
   return null;
+}
+
+function statusTail(stderr) {
+  const line = stderr.split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
+  const parts = STATUS_HEAD_RE.exec(line);
+  if (!parts || !parts[2]) return null;
+  const tok = Object.fromEntries(parts[2].split(' ').map((t) => t.split('=')));
+  return { route: tok.route, rule: tok.rule, pattern: tok.pattern };
 }
 
 function pidAlive(pid) {
@@ -1460,6 +2720,7 @@ function deadCheck(ctx, names) {
 }
 
 async function runSelfTestCase(tmp, spec) {
+  if (typeof spec.pure === 'function') return spec.pure();
   const repo = path.join(tmp, `r-${spec.name}`);
   fs.mkdirSync(repo, { recursive: true });
   const gitEnv = hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') });
@@ -1486,7 +2747,10 @@ async function runSelfTestCase(tmp, spec) {
   const pidFile = path.join(tmp, `pids-${spec.name}.log`);
   const copy = writeCopy(tmp, spec.name, spec.config || {});
   const env = hermeticEnv(tmp, {
-    HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), FAKE_CALLS: calls, FAKE_PIDS: pidFile, ...(spec.env || {}),
+    HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), FAKE_CALLS: calls, FAKE_PIDS: pidFile,
+    AIKIT_XAI_SENTINEL: 'sk-aikit-SENTINEL-' + process.pid,
+    AIKIT_XAI_BEARER: 'brtok-' + process.pid,
+    ...(spec.env || {}),
   });
   const c = { tmp, repo, home, calls, pidFile, copy, env };
   let reason;
@@ -1726,14 +2990,14 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
         config: { routerBacked: { pi: true } },
         exit: 75,
-        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/billing exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'billing-403-router',
         args: ['--prefer', 'pi', '--model-pi', 'fake/spend403'],
         config: { routerBacked: { pi: true } },
         exit: 75,
-        status: /^AIKIT-XAI status=billing cli=pi model=fake\/spend403 exit=75 cli_rc=1 .* tree=clean action=stop$/,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/spend403 exit=75 cli_rc=1 .* tree=clean action=stop$/,
       },
       {
         name: 'billing-free-tier',
@@ -1758,6 +3022,14 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/quota exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          if (!tail) return 'status line has no evidence tail';
+          if (tail.route !== 'unknown') return `route=${tail.route}`;
+          if (!/^\S+$/.test(tail.rule) || tail.rule === '-') return `rule=${tail.rule}`;
+          if (tail.pattern !== 'verified' && tail.pattern !== 'unverified') return `pattern=${tail.pattern}`;
+          return null;
+        },
       },
       {
         name: 'dirty-quota',
@@ -1770,7 +3042,47 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/dirtybilling'],
         config: { routerBacked: { pi: true } },
         exit: 75,
-        status: /^AIKIT-XAI status=billing cli=pi model=fake\/dirtybilling exit=75 cli_rc=1 .* tree=dirty action=stop$/,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/dirtybilling exit=75 cli_rc=1 .* tree=dirty action=stop$/,
+      },
+      {
+        name: 'sentinel-failed-line',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/sentinelquota'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/sentinelquota exit=75 .* action=stop$/,
+        check: (r) => {
+          const key = 'sk-aikit-SENTINEL-' + process.pid;
+          if ((r.stderr || '').includes(key)) return 'sentinel key leaked into the log';
+          if (!(r.stderr || '').includes('<redacted>')) return 'stderr relay was not redacted';
+          return null;
+        },
+      },
+      {
+        name: 'sentinelsplit',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/sentinelsplit'],
+        exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/sentinelsplit exit=1 .* action=stop$/,
+        check: (r) => {
+          const key = 'sk-aikit-SENTINEL-' + process.pid;
+          const bearer = 'brtok-' + process.pid;
+          const logText = r.stderr || '';
+          if (logText.includes(key)) return 'split sentinel key leaked into the log';
+          if (logText.includes(bearer)) return 'bearer sentinel leaked into the log';
+          if (!logText.includes('<redacted>')) return 'split stderr was not redacted';
+          return null;
+        },
+      },
+      {
+        name: 'sentinel-overlong',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/sentineloverlong'],
+        exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/sentineloverlong exit=1 .* action=stop$/,
+        check: (r) => {
+          const key = 'sk-aikit-SENTINEL-' + process.pid;
+          const logText = r.stderr || '';
+          if (logText.includes(key)) return 'overlong sentinel key leaked into the log';
+          if (logText.includes('x'.repeat(66000))) return 'overlong line was not truncated';
+          return null;
+        },
       },
       {
         name: 'git-after-quota',
@@ -2931,6 +4243,7 @@ async function blackBoxSelfTest() {
           return deadCheck(ctx, ['gc']);
         },
       },
+      ...classifyCases(),
 
     ];
 
@@ -2961,7 +4274,10 @@ async function blackBoxSelfTest() {
 async function main(argv) {
   runStartedMs = Date.now();
   finished = false;
-  liveFields = { cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean' };
+  liveFields = {
+    cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean',
+    route: 'unknown', rule: '-', pattern: 'none',
+  };
   let o;
   try { o = parseArgs(argv); } catch (e) {
     log(`cross-ai: ${e.message}`);
@@ -3140,6 +4456,7 @@ async function main(argv) {
   }
   return finish(r.status || 'crash', {
     ...liveFields, tree, cli_rc: r.cli_rc, cli: c.name, model: c.model,
+    route: r.route, rule: r.rule, pattern: r.pattern,
   });
 }
 

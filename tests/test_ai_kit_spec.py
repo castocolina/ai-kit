@@ -11869,19 +11869,20 @@ class TestCrossAiTemplateText(unittest.TestCase):
         block = text[start:end]
         self.assertTrue(block.startswith("const PATTERNS = "))
         pat_text = block[len("const PATTERNS = ") : -1]
-        patterns = json.loads(pat_text)
-        expected_keys = [
-            "permission_blocked",
-            "billing",
-            "quota",
-            "auth",
-            "bad_model",
-            "capacity",
-            "transient",
-        ]
-        self.assertEqual(list(patterns.keys()), expected_keys)
-        for value in patterns.values():
-            re.compile(value, re.I)
+        rows = json.loads(pat_text)
+        self.assertIsInstance(rows, list)
+        fields = {
+            "id", "cli", "input", "match", "class", "terminal", "label", "evidence",
+        }
+        ids = []
+        for row in rows:
+            self.assertTrue(fields <= set(row), msg=row.get("id"))
+            self.assertIn(row["label"], ("verified", "unverified"))
+            self.assertIn(row["input"], ("stderr", "event", "any"))
+            self.assertIsInstance(row["terminal"], bool)
+            ids.append(row["id"])
+            re.compile(row["match"], re.I)
+        self.assertEqual(len(ids), len(set(ids)))
 
 
 if __name__ == "__main__":
