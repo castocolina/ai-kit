@@ -243,6 +243,41 @@ class TestRunExternal(unittest.TestCase):
         )
         self.assertEqual(common_render.core_run_external(self._spec(p), self._data(), 9), "9 t")
 
+    def test_claude_provider_wire_contract_is_byte_identical(self):
+        # STL-02 req 10: a Claude provider's stdin payload and AI_KIT_SEGMENT_* env
+        # must stay exactly as the pre-split wire format, byte for byte.
+        out_path = os.path.join(self.dir, "wire.json")
+        p = write_script(
+            self.dir,
+            "p",
+            "#!/usr/bin/env python3\n"
+            "import json, os, sys\n"
+            "raw = sys.stdin.buffer.read()\n"
+            "keys = sorted(k for k in os.environ if k.startswith('AI_KIT_SEGMENT_'))\n"
+            "env = {k: os.environ[k] for k in keys}\n"
+            f"open({out_path!r}, 'wb').write(json.dumps([raw.decode(), env]).encode())\n"
+            "print('ok')\n",
+        )
+        self.assertEqual(common_render.core_run_external(self._spec(p), self._data(), 9), "ok")
+        with open(out_path, "rb") as fh:
+            stdin_text, env = json.loads(fh.read())
+        expected_stdin = json.dumps(
+            {
+                "workspace": {"current_dir": self.dir},
+                "segment": {"id": "t", "avail_cols": 9, "line": 1, "position": "end"},
+            }
+        )
+        self.assertEqual(stdin_text.encode(), expected_stdin.encode())
+        self.assertEqual(
+            env,
+            {
+                "AI_KIT_SEGMENT_COLS": "9",
+                "AI_KIT_SEGMENT_ID": "t",
+                "AI_KIT_SEGMENT_LINE": "1",
+                "AI_KIT_SEGMENT_POSITION": "end",
+            },
+        )
+
     def test_runs_in_workspace_dir(self):
         p = write_script(self.dir, "p", "#!/bin/sh\npwd\n")
         out = common_render.core_run_external(self._spec(p), self._data(), 200)
@@ -643,8 +678,13 @@ class TestSampleProvider(unittest.TestCase):
         payload = json.dumps({"segment": {"id": "system_memory", "avail_cols": 9}})
         env = {"PATH": os.environ.get("PATH", "")}
         proc = subprocess.run(
-            [sys.executable, self.PATH], input=payload,
-            capture_output=True, text=True, timeout=10, env=env, check=False,
+            [sys.executable, self.PATH],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=env,
+            check=False,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = proc.stdout.strip()
