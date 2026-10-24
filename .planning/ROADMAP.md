@@ -806,31 +806,43 @@ Plans:
 
 ### Phase 25: Quota-aware cross-AI subprocess supervision
 
-**Goal**: When a cross-AI child (pi, opencode, cursor, codex) stops on a usage limit, the
-orchestrator tells a limit that recovers by waiting from one that never will, waits and resumes
-only the unfinished work for the first, and stops and reports for the second, instead of
-failing or retrying blindly. Source: todo
-`2026-10-14-agents-md-quota-schedule-rules-and-goal-prompt-skill.md` (part 1, mechanism B).
+**Goal** *(amended 2026-10-24, owner decision)*: When a cross-AI child (pi, opencode, cursor, codex)
+fails, the runner classifies the failure from its output and follows one owner-defined ladder:
+transient errors retry in the same session, then in a new session on the same lane; quota,
+rate-limit and auth stops are never retried on the same model and stop and report with evidence.
+It never switches harness, provider or model on its own and never falls back to another CLI.
+Source: todo `2026-10-14-agents-md-quota-schedule-rules-and-goal-prompt-skill.md` (part 1,
+mechanism B), re-scoped by the owner's External Agent Runs rule.
 **Depends on**: Phase 18.1 (one runner, closed status table); amends 18 D-27's exit classes
 before the runner is planned.
 **Requirements**: QTA-01, QTA-02, QTA-03
-**Success Criteria** (what must be TRUE):
+**Success Criteria** (what must be TRUE) *(amended 2026-10-24)*:
 
-  1. A per-CLI table of quota, limit and billing message patterns is built from observed child
-     output, each pattern labelled verified or unverified.
-  2. Classification is route-aware. On a router-backed route (`infer_fallback_quota`, e.g.
-     `router-env/*`), a billing or limit error can come from the last paid model of a fallback
-     chain whose subscription tiers recover within minutes or hours, so it is wait-recoverable.
-     On a direct third-party provider route (OpenCode Zen, Cursor API models) a billing or
-     access error is not recoverable by waiting: report it and move to the next candidate.
-  3. Limits are detected both live (stdout/stderr while the child runs) and after the fact (a
+  1. A per-CLI table of quota, limit, billing, auth and transient message patterns is built from
+     observed child output, each pattern labelled verified or unverified.
+  2. Failures are classified as transient, quota/rate-limit, auth/billing or other, route-aware
+     only for the evidence it reports (a router lane names the combo and member when known).
+  3. Failures are detected both live (stdout/stderr while the child runs) and after the fact (a
      timeout or an exit with partial work).
-  4. A wait-recoverable limit is re-checked every 10 minutes for at most 4 hours. Before resuming,
-     the working tree is checked and only the unfinished work is re-dispatched (the runner's
-     per-CLI `resume`). After 4 hours it stops and reports; it never loops forever.
-  5. The same policy runs in the runner and in `ai-kit-spec-review` / `ai-kit-spec-execute*`,
-     replacing their hourly `CronCreate` wake.
-**Plans**: TBD
+  4. A transient failure retries up to 3 times in the same session, then up to 3 times in a new
+     session on the same lane. A router quota or rate-limit error retries the lane up to 3 times,
+     then switches session up to 3 times, then reports status, lane, model and times and waits a
+     cooldown before the next cycle, never past 4 hours. An auth error stops and reports.
+  5. The runner has no automatic fallback to another CLI and never switches harness, provider or
+     model on its own; the same policy runs in `ai-kit-spec-review` / `ai-kit-spec-execute*`, and
+     the skill, README and runner self-tests document and pin it.
+**Plans**: 11 plans
+- [ ] 25-01-PLAN.md
+- [ ] 25-02-PLAN.md
+- [ ] 25-03-PLAN.md
+- [ ] 25-04-PLAN.md
+- [ ] 25-05-PLAN.md
+- [ ] 25-06-PLAN.md
+- [ ] 25-07-PLAN.md
+- [ ] 25-08-PLAN.md
+- [ ] 25-09-PLAN.md
+- [ ] 25-10-PLAN.md
+- [ ] 25-11-PLAN.md
 
 ### Phase 26: Session self-resume and OpenGSD quota rules
 

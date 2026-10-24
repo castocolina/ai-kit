@@ -237,3 +237,138 @@ built (D-20). Code that 18.1 R7 deletes is never patched.
   - How long do router-env tiers take to recover? (uz's estimate is the only source.)
   - Does any limit message carry a reset time other than codex's and claude's?
 </deferred>
+
+## Orchestrator rulings on 25-RESEARCH.md (2026-10-24)
+
+Routed through the jev ladder (Laya local) where a design choice was open; factual questions that
+need a live vendor run stay unverified rows or owner items. Binding for planning.
+
+- **Drift accepted:** the runner is template 6 at `skills/ai-kit-spec-review/references/cross-ai.mjs`
+  (bump to 7, re-render the dogfood copy). The `error_classifier` classes already exist; extend them.
+- **D-03 amended:** opencode's own `error.type` is a weak hint only (`provider.auth` wraps billing
+  errors). Vendor codes and message text rank above it.
+- **D-04 amended:** the opencode matcher accepts both shapes: `error.type`/`error.status`/
+  `error.response.body` (2.0.31, probed) and the older `error.name`/`error.data.*`.
+- **D-05 amended:** a per-CLI `--route-<cli>` flag carries router-backed status into the Python
+  review/execute paths (the unrendered template has no `routerBacked`).
+- **D-14 amended:** the first dispatch stores a digest of the plan's `<objective>`; re-entry compares
+  it instead of re-parsing PLAN.md.
+- **D-19 amended:** "unfinished work" is measured with `git diff-tree` between the stored write-tree
+  id and a fresh snapshot (covers untracked files, which `git diff --stat` misses).
+- **Q1 codex terminal signal:** only `turn.failed` carrying limit text is terminal; bare `error` /
+  `item.completed` error items are recorded, not terminal. Laya A (fallback 0.68); own reasoning
+  from the mock probes.
+- **Q5 probe timeout:** counts as still limited, one attempt consumed, keep waiting. Laya A (0.84,
+  decided).
+- **Dirty tree vs R6:** a quota-class stop keeps `retry-later` with a dirty tree when every dirty
+  path is inside the plan's `files_modified`; any other class, or a path outside the plan, demotes
+  to `stop` as today. The two self-test cases pinning the old demotion are updated with that
+  rule. Laya A (fallback 0.70); own reasoning (R6 resumes unfinished work).
+- **Q2, Q3, Q4, Q8, Q9 (live-only facts):** cursor's limit channel, exit code and session id; real
+  `resets_at` presence; pi's weekly-limit text; router-env recovery times; the cursor `direct`
+  prefixes. Each ships as an `unverified` pattern row, or empty for Q9. A missing `resets_at`
+  falls back to the locked 10-minute / 4-hour schedule. The owner confirms them in a live kit.
+- **Q7 self-wake:** the orchestrating session uses a one-shot `CronCreate` at the reset time
+  (documented as supported), not `ScheduleWakeup` (`/loop` only).
+- **Transient upstream 400 (added 2026-10-24, evidence from the router owner's logs):** a router
+  response whose body is only `event: error` (surfaced by pi as `[400]: event: error`, in=0 out=0,
+  seen twice at 13:32 and 13:33 -03 on combo `my-coding` -> `opencode-go/qwen3.8-flash`, then 200s
+  again) is a `transient` class: the runner retries the same CLI once (same session id) before
+  moving to the next CLI. It is not quota and never waits. Context: the combo pins a session to
+  one member (`context_cache_protection=true`), so the router itself does not fall back.
+- **Verified pattern (router logs, 2026-10-24):** `kimi-coding` monthly quota exhaustion returns
+  HTTP 429 (12:00 and 12:32 -03). A monthly limit never recovers by waiting inside the 4-hour
+  window, so the route-aware classifier maps it to stop-and-report unless the route is
+  router-backed with other members.
+
+
+## Owner decision (2026-10-24): External Agent Runs ladder — supersedes the wait-and-resume design
+
+Relayed from the owner (also in llm-env AGENTS.md "External Agent Runs"); binding over every
+earlier requirement, decision and ruling in this phase that conflicts with it:
+1. Transient (`[400]: event: error`, 5xx, cut stream, timeout): retry up to 3 times in the SAME
+   session.
+2. Still failing: a NEW session on the same lane (a router pins each session to one combo member;
+   a new session lets the combo choose again), up to 3 more attempts.
+3. Quota / rate limit / auth (429 monthly limit, 401/403): never retry the same model; stop and
+   report.
+4. Out of rungs: stop and report with evidence (status, lane/combo, model, times) for the owner.
+The harness catalog (cursor, codex, claude, pi, opencode...) is a menu used only when the owner
+names one: the runner never switches harness, provider or model on its own, and the automatic
+fallback to another CLI is removed. Superseded here: the 10-minute / 4-hour wait-and-resume, any
+"move to the next candidate" step, and the earlier ruling's single-retry transient rule (now 3+3).
+Kept: the per-CLI pattern table, live and after-the-fact detection, the typed reason, session-id
+continuation per CLI (used by rung 1), and the dirty-tree rule (a quota-class stop now ends in
+stop-and-report, so the rule only matters for the transient rungs).
+
+**Placement (owner correction, 2026-10-24):** the full ladder lives in the runner template
+(`cross-ai.mjs`), implemented and pinned by its self-tests, and travels in every rendered copy
+(`ai-kit-gsd-curated-config` `apply-execution` / `ensure-runner` and the `ai-kit-spec-execute*`
+skills). Anything a skill writes into a project's AGENTS.md / CLAUDE[.local].md is a concise 3-4
+line summary that points at the runner, never the detailed rule (Phase 26's rules emitter
+follows this).
+
+**Rule adjustment (owner, 2026-10-24, replaces step 3 "quota = stop without retrying"):** on a
+quota or rate-limit error from a router lane, the orchestrator manages the session: it retries the
+same lane up to 3 times, then switches session (the combo picks a member again) up to 3 times.
+Only if the error persists after those 3 session switches does it report with evidence (status,
+combo, model, times) and wait several minutes before trying again or reporting again. It still
+never switches harness, provider or model on its own (the CLI catalog is used only when the owner
+names one). Orchestrator interpretation, to confirm with the owner: auth errors (401/403) are not
+covered by the adjustment and keep stop-and-report. The "several minutes" cooldown defaults to 10
+minutes between full cycles and is bounded by this phase's existing 4-hour cap, so a cycle never
+loops forever. Detail and tests live in `cross-ai.mjs`; instruction files keep the short pointer.
+
+## Orchestrator rulings on plan-review cycle 1 (2026-10-24)
+
+- **Quota cycles span runner calls (resolves the 4-hour vs call-deadline HIGHs):** inside one call
+  the runner runs only the bounded rungs: 3 same-session retries, then 3 new sessions, with short
+  injectable backoff. When a router quota or rate limit persists, it prints the evidence report and
+  exits 75 with `retry_after_s=600` and `cycle=<n>`. The caller waits (the orchestrator's one-shot
+  wake or the execute skill's loop) and re-invokes. A small state file keyed by lane and model,
+  under the XDG state dir with 0600 and atomic writes, stores `first_seen` and the cycle count. A
+  re-invocation past 4 hours stops for good: it reports and exits 69. No real sleep exceeds the
+  remaining call budget.
+- **Timeouts are transient rungs:** a timed-out attempt with no quota match enters the transient
+  ladder. A timeout that printed a quota or rate-limit signal is classified as that signal and is
+  never also treated as a plain timeout.
+- **Only a confirmed route gets router-quota cycles:** confirmation comes from `--route-<cli>
+  router` or the catalog's user-confirmed `fallback_quota`. A name-only heuristic is advisory
+  only: it is reported in the evidence and gets no cycles, so it stops and reports like a direct
+  route.
+- **Evidence never carries a secret:** the runner stops relaying raw child stderr verbatim. Every
+  relayed line passes the secret redactor. The sentinel tests build their keys at run time (no
+  literal in plans or tests) and scan the full log, not only the prefixed lines.
+- **Existing pins:** plans update `tests/test_ai_kit_spec.py`'s `test_patterns_block` and
+  `test_header_and_config_contract`, and the version pins, in the same commit as the change that
+  breaks them.
+- **Judge set (25-11):** native Opus plus opencode `router-env/my-referee-one` and
+  `router-env/my-referee-two`, per the owner's 2026-10-24 change.
+- **Menu selection (25-01):** the first installed entry of `--prefer`/`CONFIG.prefer` that suits
+  the mode is chosen once. The runner never evaluates later entries after a failure, and a later
+  review-only entry never rejects an exec request.
+
+## Cycle-3 rulings (2026-10-24, at the review cap)
+
+- **Attempt timeout:** an exec attempt's timeout is the call's remaining deadline (minus the
+  existing reserve), never a short fixed default. A real plan run must not be killed by a
+  per-attempt cap. Review mode may keep a shorter attempt cap. Tests use injected short deadlines.
+- **Timeout reclassification:** when an attempt ends by timeout, its captured output is
+  classified with every row, terminal and non-terminal. A `429` / rate-limit text makes it a
+  rate-limit stop, not a transient timeout.
+- **Cap headroom:** each child attempt's timeout is
+  `min(attempt timeout, quota-cap remaining - reserve)`, so no attempt can run past the 4-hour cap.
+- **State reset:** the state file holds `first_seen` and `last_attempt_at`. If `last_attempt_at`
+  is older than the 4-hour cap, the file is stale: it is replaced with a fresh episode, the call
+  proceeds, and the evidence notes `stale-state-fresh-start`. If the episode is still active and
+  past the cap, the call exits 69 before spawning. One rule, one outcome per case.
+- **Session resume scope:** the quota budget stays keyed by lane and model. The session id to
+  resume is stored per task key (the plan id or the prompt's objective digest) and never reused
+  for a different task on the same lane.
+- **Confirmed route everywhere:** every producer of a rendered runner command, including
+  curated-config `plan_edit` and `apply-execution`, passes `--route-<cli>` only from the
+  user-confirmed catalog field. Inferred stays advisory.
+- **Mechanical fixes:** anchors use `$`, not `[$]`. The 25-09 gate checks forbid the removed
+  wording only where it was removed, and the prescribed sentence and its test agree. Ladder test
+  timings use injected clocks with consistent deadline arithmetic (each case's numbers are
+  checked by hand in the plan).

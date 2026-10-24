@@ -216,3 +216,41 @@ moves on. It never fails blindly and never loops forever.
 *Phase: 25-quota-aware-cross-ai-subprocess-supervision*
 *Spec created: 2026-10-14*
 *Next step: /gsd-discuss-phase 25 — implementation decisions (how to build what's specified above)*
+
+
+## Owner decision (2026-10-24): External Agent Runs ladder — supersedes the wait-and-resume design
+
+Relayed from the owner (also in llm-env AGENTS.md "External Agent Runs"); binding over every
+earlier requirement, decision and ruling in this phase that conflicts with it:
+1. Transient (`[400]: event: error`, 5xx, cut stream, timeout): retry up to 3 times in the SAME
+   session.
+2. Still failing: a NEW session on the same lane (a router pins each session to one combo member;
+   a new session lets the combo choose again), up to 3 more attempts.
+3. Quota / rate limit / auth (429 monthly limit, 401/403): never retry the same model; stop and
+   report.
+4. Out of rungs: stop and report with evidence (status, lane/combo, model, times) for the owner.
+The harness catalog (cursor, codex, claude, pi, opencode...) is a menu used only when the owner
+names one: the runner never switches harness, provider or model on its own, and the automatic
+fallback to another CLI is removed. Superseded here: the 10-minute / 4-hour wait-and-resume, any
+"move to the next candidate" step, and the earlier ruling's single-retry transient rule (now 3+3).
+Kept: the per-CLI pattern table, live and after-the-fact detection, the typed reason, session-id
+continuation per CLI (used by rung 1), and the dirty-tree rule (a quota-class stop now ends in
+stop-and-report, so the rule only matters for the transient rungs).
+
+**Placement (owner correction, 2026-10-24):** the full ladder lives in the runner template
+(`cross-ai.mjs`), implemented and pinned by its self-tests, and travels in every rendered copy
+(`ai-kit-gsd-curated-config` `apply-execution` / `ensure-runner` and the `ai-kit-spec-execute*`
+skills). Anything a skill writes into a project's AGENTS.md / CLAUDE[.local].md is a concise 3-4
+line summary that points at the runner, never the detailed rule (Phase 26's rules emitter
+follows this).
+
+**Rule adjustment (owner, 2026-10-24, replaces step 3 "quota = stop without retrying"):** on a
+quota or rate-limit error from a router lane, the orchestrator manages the session: it retries the
+same lane up to 3 times, then switches session (the combo picks a member again) up to 3 times.
+Only if the error persists after those 3 session switches does it report with evidence (status,
+combo, model, times) and wait several minutes before trying again or reporting again. It still
+never switches harness, provider or model on its own (the CLI catalog is used only when the owner
+names one). Orchestrator interpretation, to confirm with the owner: auth errors (401/403) are not
+covered by the adjustment and keep stop-and-report. The "several minutes" cooldown defaults to 10
+minutes between full cycles and is bounded by this phase's existing 4-hour cap, so a cycle never
+loops forever. Detail and tests live in `cross-ai.mjs`; instruction files keep the short pointer.
