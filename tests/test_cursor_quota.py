@@ -269,7 +269,7 @@ class TestCursorQuota(unittest.TestCase):
                 {},
                 cwd=str(root),
                 env=env,
-                kill_after_ms=50,
+                kill_after_ms=500,
                 timeout_s=2,
             )
             self.assertTrue(result.killed, result)

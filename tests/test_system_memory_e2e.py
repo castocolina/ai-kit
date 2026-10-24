@@ -226,6 +226,9 @@ class TestSystemMemoryInstallE2E(unittest.TestCase):
         cls.home = os.path.join(cls.tmp, "home")
         cls.inst = os.path.join(cls.tmp, "share", "ai-kit")
         os.makedirs(cls.home)
+        # Exercise the detected-Claude Arrange flow while keeping the host root
+        # strictly inside this scratch HOME.
+        os.makedirs(os.path.join(cls.home, ".claude"))
         os.makedirs(os.path.join(cls.inst, "examples", "segments"))
         shutil.copy(os.path.join(_REPO, "examples", "segments", "system_memory"),
                     os.path.join(cls.inst, "examples", "segments", "system_memory"))

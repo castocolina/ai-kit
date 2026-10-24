@@ -27,6 +27,7 @@ import select
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import termios
 import time
@@ -859,7 +860,7 @@ class TestPhase3E2E(unittest.TestCase):
         """Run ``statusline-doctor.py --check <FILE>`` and return the exit code."""
         doctor = os.path.join(_REPO_ROOT, "tools", "statusline-doctor.py")
         result = subprocess.run(
-            ["python3", "-S", doctor, "--check", config_toml],
+            [sys.executable, "-S", doctor, "--check", config_toml],
             capture_output=True,
             timeout=20,
         )

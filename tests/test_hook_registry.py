@@ -586,7 +586,8 @@ class TestWizardHookRouting(unittest.TestCase):
         entries = setup.enumerate_entries(self.paths.install_dir)
         installed = {cat: set() for cat in setup.CATEGORIES}
         return setup._build_wizard_context(
-            self.paths, entries, installed, "{}", self._wizard_app())
+            self.paths, entries, installed, self._wizard_app(),
+            hosts=("claude",))
 
     def test_wizard_commit_routes_hooks(self):
         ctx = self._context()

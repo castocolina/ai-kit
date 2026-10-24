@@ -2220,7 +2220,12 @@ def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
     data, cur_cmd = _statusline_state(settings)
     if data is None:
         return False
-    if cur_cmd and not _command_is_ours(cur_cmd, status_line) and not assume_overwrite:
+    # The pre-rename entry of this same install is ours too: a dry run reads it before the
+    # migration has rewritten it, and a failed migration is still ours to replace.
+    legacy = os.path.join(os.path.dirname(status_line), _LEGACY_ENTRY)
+    owned = cur_cmd and (_command_is_ours(cur_cmd, status_line)
+                         or _command_is_ours(cur_cmd, legacy))
+    if cur_cmd and not owned and not assume_overwrite:
         # a foreign status line (dict or bare-string form) — guard it
         if not is_interactive(tty):
             print(f"warn: settings.json has a foreign statusLine ({cur_cmd}) — not wiring "

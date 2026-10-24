@@ -3610,20 +3610,26 @@ def render_full_cases():
             mock.patch.object(claude_probes, "probe_rss_bytes", return_value=448_790_528),
         ):
             for case in cases:
-                git = common_types.GitSnapshot(**case["git"])
+                oracle_root = os.path.join(tempfile.gettempdir(), "ai-kit-statusline-golden")
+                home = os.path.join(oracle_root, "home")
+                os.makedirs(home, exist_ok=True)
+                if case["raw"]:
+                    case["raw"]["workspace"]["current_dir"] = os.path.join(home, "project")
+                git_values = dict(case["git"])
+                git_values["root_path"] = os.path.join(home, "project")
+                git = common_types.GitSnapshot(**git_values)
                 todo = ("in_progress", "Write the oracle") if case["raw"] else (None, None)
                 raw = json.loads(json.dumps(case["raw"]).replace("<TRANSCRIPT>", transcript))
                 env = {
-                    "HOME": "/home/dev",
+                    "HOME": home,
                     "TZ": "UTC",
                     "LANG": "C.UTF-8",
                     "STATUSLINE_COLS": str(case["cols"]),
                     "STATUSLINE_LINES": str(case["lines"]),
                 }
                 old_cwd = os.getcwd()
-                cwd = os.path.abspath(
-                    os.path.join(os.path.dirname(__file__), "..", "tmp", "p23", "01", "oracle-cwd")
-                )
+                cwd = (os.path.join(oracle_root, "a" * 80, "01", "oracle-cwd")
+                       if not case["raw"] else os.path.join(home, "project"))
                 os.makedirs(cwd, exist_ok=True)
                 with (
                     mock.patch.object(common_probe, "probe_git_snapshot", return_value=git),
@@ -3636,8 +3642,20 @@ def render_full_cases():
                 ):
                     try:
                         os.chdir(cwd)
-                        ctx, _, _ = _ctx_from_env(raw, env, cfg, t_start=None)
-                        output = common_render.core_render(ctx, claude_host.HOST, cfg, theme)
+                        def hermetic_expanduser(path, _home=home):
+                            if path.startswith("~/"):
+                                return os.path.join(_home, path[2:])
+                            if path == "~":
+                                return _home
+                            if path.startswith(_home + os.sep):
+                                return "~" + path[len(_home):]
+                            return path
+
+                        with mock.patch.object(
+                            os.path, "expanduser", side_effect=hermetic_expanduser
+                        ):
+                            ctx, _, _ = _ctx_from_env(raw, env, cfg, t_start=None)
+                            output = common_render.core_render(ctx, claude_host.HOST, cfg, theme)
                     finally:
                         os.chdir(old_cwd)
                 blocks.append(f"### {case['name']}\n" + "\n".join(output))

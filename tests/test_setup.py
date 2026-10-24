@@ -1982,6 +1982,27 @@ class TestWireStatusline(unittest.TestCase):
         with open(self.settings) as f:
             return json.load(f)
 
+    def test_legacy_entry_of_this_install_is_ours_in_a_dry_run(self):
+        # A dry run reads settings before the migration rewrote them: the pre-rename
+        # entry must not be reported as foreign (live check, 2026-10-24).
+        legacy = os.path.join(os.path.dirname(self.sl), "status-line.py")
+        with open(self.settings, "w") as f:
+            json.dump({"statusLine": {"type": "command", "command": f"python3 -S {legacy}"}}, f)
+        err, out = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+            ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=True)
+        self.assertTrue(ok)
+        self.assertNotIn("foreign", err.getvalue())
+        self.assertIn("would set statusLine", out.getvalue())
+        self.assertIn(legacy, self.read()["statusLine"]["command"])  # dry run wrote nothing
+
+    def test_legacy_suffix_copy_stays_foreign(self):
+        backup = os.path.join(os.path.dirname(self.sl), "status-line.py.bak")
+        with open(self.settings, "w") as f:
+            json.dump({"statusLine": {"type": "command", "command": f"python3 -S {backup}"}}, f)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertFalse(setup.wire_statusline(self.settings, self.sl, tty=None, dry=True))
+
     def test_absent_sets_silently(self):
         ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
         self.assertTrue(ok)

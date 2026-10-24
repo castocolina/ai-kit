@@ -643,7 +643,7 @@ class TestRealClientContract(CoreEnvMixin, unittest.TestCase):
         self.assertEqual([name for name in os.listdir(directory)
                           if name.endswith("-compact.md")], [])
         hook_path = REPO / "tools" / "hooks" / "claude_precompact.py"
-        proc = subprocess.run(["python3", "-S", str(hook_path)], input=json.dumps(payload),
+        proc = subprocess.run([sys.executable, "-S", str(hook_path)], input=json.dumps(payload),
                               capture_output=True, text=True, check=False, env=env,
                               timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)

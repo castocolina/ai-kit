@@ -576,6 +576,7 @@ class TestToolAdvisorShims(ShimHarnessMixin, unittest.TestCase):
         self.assertEqual(json.loads(proc.stdout)["structuredContent"], {"k": 1})
 
 
+@unittest.skipUnless(_node_ready(), "node with type stripping is not available")
 class TestPiTracer(ShimHarnessMixin, unittest.TestCase):
     """Task 1 tracer: a recorded pi preparation through the repo shim."""
 
@@ -612,6 +613,7 @@ class TestPiTracer(ShimHarnessMixin, unittest.TestCase):
         self.assertEqual(leftovers, [])
 
 
+@unittest.skipUnless(_node_ready(), "node with type stripping is not available")
 class TestOpencodeTracer(ShimHarnessMixin, unittest.TestCase):
     """Task 2 tracer: a recorded opencode session through the repo plugin."""
 

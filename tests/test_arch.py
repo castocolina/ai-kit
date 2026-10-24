@@ -1086,6 +1086,17 @@ class TestArchitecture(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 
 
+def _git_history_available():
+    """Whether the checkout includes usable git history (not the clean-room container)."""
+    proc = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
+                          capture_output=True, text=True, check=False)
+    return proc.returncode == 0 and proc.stdout.strip() == "true"
+
+
+GIT_HISTORY_AVAILABLE = _git_history_available()
+CLEAN_ROOM_GIT_SKIP = "requires git history; unavailable in the clean-room container"
+
+
 def _load_audit_fixture():
     with open(_AUDIT_PATH, encoding="ascii") as handle:
         headers, rows = audit_rows(handle.read())
@@ -1220,6 +1231,7 @@ def present_split_modules():
     return found
 
 
+@unittest.skipUnless(GIT_HISTORY_AVAILABLE, CLEAN_ROOM_GIT_SKIP)
 class TestSplitAudit(unittest.TestCase):
     """Keep the reviewed move map complete against its pinned source blob."""
 
@@ -1382,15 +1394,18 @@ class TestArchNonVacuity(unittest.TestCase):
         tree = ast.parse("def cmd_doctor():\n    return 1\n")
         self.assertNotEqual([], check_no_doctor_symbols(tree))
 
+    @unittest.skipUnless(GIT_HISTORY_AVAILABLE, CLEAN_ROOM_GIT_SKIP)
     def test_audit_detects_removed_row(self):
         rows, definitions = _load_audit_fixture()
         self.assertTrue(check_audit_against_base(rows[:-1], definitions))
 
+    @unittest.skipUnless(GIT_HISTORY_AVAILABLE, CLEAN_ROOM_GIT_SKIP)
     def test_audit_detects_wrong_hash(self):
         rows, definitions = _load_audit_fixture()
         rows[0] = rows[0]._replace(base_ast="000000000000")
         self.assertTrue(check_audit_against_base(rows, definitions))
 
+    @unittest.skipUnless(GIT_HISTORY_AVAILABLE, CLEAN_ROOM_GIT_SKIP)
     def test_audit_detects_swapped_order(self):
         rows, definitions = _load_audit_fixture()
         rows[0], rows[1] = rows[1], rows[0]
@@ -1402,6 +1417,7 @@ class TestArchNonVacuity(unittest.TestCase):
             [("x", "function"), ("x", "class")], [(name, kind) for name, kind, _, _ in definitions]
         )
 
+    @unittest.skipUnless(GIT_HISTORY_AVAILABLE, CLEAN_ROOM_GIT_SKIP)
     def test_audit_checks_disagreement_prefixes(self):
         row = _load_audit_fixture()[0][0]
         tainted = row._replace(taint="seed", neutral="y", reason="missing")
@@ -1448,6 +1464,7 @@ class TestArchNonVacuity(unittest.TestCase):
     def test_audit_rows_are_at_their_target(self):
         self.assertEqual([], split_target_problems())
 
+    @unittest.skipUnless(GIT_HISTORY_AVAILABLE, CLEAN_ROOM_GIT_SKIP)
     def test_legacy_references_live_tree(self):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         tracked = subprocess.run(
