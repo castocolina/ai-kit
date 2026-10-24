@@ -61,12 +61,12 @@
     {
       "number": "22",
       "name": "Pi Live Validation",
-      "status": "in_progress"
+      "status": "pending"
     },
     {
       "number": "23",
       "name": "Host-split status line for Claude Code and Cursor CLI",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "number": "24",
@@ -91,8 +91,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (verify)",
-    "reason": "Phase 12 of 17 · 6% · ready to verify"
+    "label": "Advance to the next step",
+    "reason": "Phase 13 of 17 · 6% · executing"
   },
-  "updated_at": "2026-10-23T20:23:29.277Z"
+  "updated_at": "2026-10-23T20:23:54.730Z"
 }

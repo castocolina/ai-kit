@@ -267,3 +267,55 @@ design's open findings R3-1..R3-6.
 
 *Phase: 23-host-split-status-line-for-claude-code-and-cursor-cli*
 *Context gathered: 2026-10-14*
+
+## Orchestrator rulings on 23-RESEARCH.md open questions (2026-10-23)
+
+Routed through the jev ladder (Laya local; TypeSafe not configured), then checked against the
+code and the run rails. Binding for planning.
+
+- **Q1 env-prefix collision (amends D-18):** the Cursor provider mirror uses
+  `AI_KIT_CURSOR_PROVIDER_*`; toggles keep `AI_KIT_CURSOR_SEGMENT_<KEY>`. Laya A (fallback,
+  0.67); own reasoning: ids `cols`/`id`/`line`/`position` would collide.
+- **Q2 setup defaults:** lazy import of the host modules on the preview and wire paths only, plus
+  a drift test. Uninstall keeps no renderer import. Laya A (0.77, decided).
+- **Q3 reference allowlist:** `docs/refactor/**` and `docs/wizard-redesign/**` join the history
+  allowlist (they record past states). Laya A (fallback); own reasoning.
+- **Q4 auth.json without accessToken:** a new `auth_unsupported` state hides quota; only the
+  `accessToken` key is read, never `apiKey` or `bedrockCredentials`. Laya A (fallback); own
+  reasoning (no unverified credential use).
+- **Q5 spike gating (overrides Laya A):** plan Parts A, B and C in this run. Part B is built on
+  the bundle contract, the POC shapes and a loopback Connect-JSON fake Dashboard server, with
+  D-13's cache-only render plus detached refresher (safe whatever the latency). The live spike
+  (real login, quota, real responses, cadence) is an owner runbook plus a checker. Quota stays
+  marked inferred (`≈`). Any inline-fetch choice waits for the owner's spike record. Own
+  reasoning: the run never pauses (rails), the POC already exercised the live API, and the
+  owner asked for usable features rather than deferred ones.
+- **Q6 spike record:** `23-SPIKE.md`, with a one-line SPEC R5 amendment. Laya A (fallback).
+- **Q7 oracle scope:** `render_time` and `slowest` are excluded from byte identity
+  (time-dependent); every other segment is in the raw-ANSI all-segments oracle.
+- **Q8 token refresh during reads:** tolerated as a torn read (transient `network_error`); the
+  owner's runbook records whether the CLI rewrites `auth.json` while the refresher reads.
+- **Research drift accepted:** the `setup.py` line citations are off by about 370 lines (use
+  symbols, not line numbers). D-01's taint numbers are re-derived with a pinned seed vocabulary
+  recorded in the audit script. D-19's helper does not cover `_recover_incompatible_config`,
+  which keeps its backup-then-overwrite path.
+- **D-16 amended (2026-10-23, plan review cycle 2):** the refresher's single-flight lock is
+  `fcntl.flock(LOCK_EX | LOCK_NB)` on a sibling `usage.lock` file (0600), held for the whole
+  refresh and released by the kernel when the process exits or dies. The `O_EXCL` pid/start-time
+  file with expiry is dropped: two review cycles showed every expiry-reclaim variant admits a
+  successor takeover. A platform without `fcntl` skips the detached refresh and renders from the
+  cache only (a `shortcut:` comment). Own reasoning, verified against the stdlib docs.
+- **Cycle-3 rulings (2026-10-23, at the review cap):**
+  - D-10 is literal. A failed or absent `GetHardLimit` makes the team quota `unavailable`,
+    whatever `pooled_limit` says, and `usage_team` without a hard limit is a test of exactly that.
+    No plan may turn absent hard-limit evidence into `fixed`.
+  - Lock handoff: no descriptor is passed. The render path may probe the lock (`LOCK_EX|LOCK_NB`,
+    then release immediately) only as a cheap gate before spawning. The detached child acquires
+    the flock itself with `LOCK_NB` and exits at once when it is held. Single-flight is therefore
+    enforced in the child; two renders racing past the gate cost one extra short-lived child,
+    never two refreshes. No `pass_fds`, no fd in argv or env.
+  - Unsafe inherited fixture: before the first full-suite barrier, 23-01 hardens
+    `tests/test_system_memory_e2e.py` so its child env drops (or points into the scratch HOME)
+    `CURSOR_CONFIG_DIR`, `PI_CODING_AGENT_DIR`, `OPENCODE_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
+    `CODEX_HOME` and `XDG_CONFIG_HOME`. A regression test sets those vars to a sentinel dir and
+    proves nothing is written there.

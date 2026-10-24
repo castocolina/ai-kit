@@ -708,7 +708,7 @@ downstream depends on it)
 - [x] 22-04-PLAN.md
 - [x] 22-05-PLAN.md
 - [x] 22-06-PLAN.md
-- [ ] 22-07-PLAN.md
+- [x] 22-07-PLAN.md
 
 ### Phase 23: Host-split status line for Claude Code and Cursor CLI
 
@@ -749,7 +749,25 @@ are already on this branch; mark the gap spec accepted and amend PROJECT.md (bur
 **Linked assets:** spec + REVIEW on `spec/host-split-statusline`; POC branch
 `poc/cursor-statusline` (reference only, never promoted or merged; inventory what works first);
 research notes 13 and 13b; todo `2026-10-12-promote-cursor-statusline-poc-into-999-4.md` on main.
-**Plans**: TBD
+**Plans**: 18 plans
+- [ ] 23-01-PLAN.md
+- [ ] 23-02-PLAN.md
+- [ ] 23-03-PLAN.md
+- [ ] 23-04-PLAN.md
+- [ ] 23-05-PLAN.md
+- [ ] 23-06-PLAN.md
+- [ ] 23-07-PLAN.md
+- [ ] 23-08-PLAN.md
+- [ ] 23-09-PLAN.md
+- [ ] 23-10-PLAN.md
+- [ ] 23-11-PLAN.md
+- [ ] 23-12-PLAN.md
+- [ ] 23-13-PLAN.md
+- [ ] 23-14-PLAN.md
+- [ ] 23-15-PLAN.md
+- [ ] 23-16-PLAN.md
+- [ ] 23-17-PLAN.md
+- [ ] 23-18-PLAN.md
 
 ### Phase 24: Spec-and-discuss chain skill
 
