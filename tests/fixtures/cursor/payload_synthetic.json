@@ -1,0 +1,36 @@
+{
+  "session_id": "synthetic-session",
+  "transcript_path": "/work/project/transcript.jsonl",
+  "render_width_chars": 116,
+  "cwd": "/work/project",
+  "autorun": false,
+  "model": {
+    "id": "synthetic-model",
+    "display_name": "Synthetic Model",
+    "param_summary": "high",
+    "max_mode": false
+  },
+  "workspace": {
+    "current_dir": "/work/project",
+    "project_dir": "/work/project",
+    "added_dirs": []
+  },
+  "version": "synthetic-cli-version",
+  "output_style": {"name": "default"},
+  "context_window": {
+    "total_input_tokens": 1200,
+    "total_output_tokens": 240,
+    "context_window_size": 200000,
+    "used_percentage": 42.5,
+    "remaining_percentage": 57.5,
+    "current_usage": {
+      "input_tokens": 1000,
+      "output_tokens": 200,
+      "cache_creation_input_tokens": 50,
+      "cache_read_input_tokens": 100
+    }
+  },
+  "session_name": "synthetic session",
+  "vim": {"mode": "normal"},
+  "worktree": {"name": "synthetic", "path": "/work/project"}
+}

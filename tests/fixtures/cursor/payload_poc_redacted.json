@@ -1,0 +1,34 @@
+{
+  "session_id": "<redacted>",
+  "transcript_path": "<redacted>",
+  "render_width_chars": 153,
+  "cwd": "<redacted>",
+  "autorun": true,
+  "model": {
+    "id": "default",
+    "display_name": "Auto"
+  },
+  "workspace": {
+    "current_dir": "<redacted>",
+    "project_dir": "<redacted>",
+    "added_dirs": []
+  },
+  "version": "2026.10.01-e373342",
+  "output_style": {
+    "name": "compact"
+  },
+  "context_window": {
+    "total_input_tokens": 226304,
+    "total_output_tokens": 62517,
+    "context_window_size": 256000,
+    "used_percentage": 88.4,
+    "remaining_percentage": 11.6,
+    "current_usage": {
+      "input_tokens": 218896,
+      "output_tokens": 32943,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 5133696
+    }
+  },
+  "session_name": "<redacted>"
+}

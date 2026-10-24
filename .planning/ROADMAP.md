@@ -749,10 +749,10 @@ are already on this branch; mark the gap spec accepted and amend PROJECT.md (bur
 **Linked assets:** spec + REVIEW on `spec/host-split-statusline`; POC branch
 `poc/cursor-statusline` (reference only, never promoted or merged; inventory what works first);
 research notes 13 and 13b; todo `2026-10-12-promote-cursor-statusline-poc-into-999-4.md` on main.
-**Plans**: 2/18 plans executed
+**Plans**: 3/18 plans executed
 - [x] 23-01-PLAN.md
 - [x] 23-02-PLAN.md
-- [ ] 23-03-PLAN.md
+- [x] 23-03-PLAN.md
 - [ ] 23-04-PLAN.md
 - [ ] 23-05-PLAN.md
 - [ ] 23-06-PLAN.md

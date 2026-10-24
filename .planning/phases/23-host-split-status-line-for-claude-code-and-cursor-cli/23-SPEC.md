@@ -86,7 +86,7 @@ The phase delivers three parts in order:
      - Call the three Dashboard methods from a throwaway script under `./tmp/` and record units and on-demand classification.
      - Measure call latency (p50/p95) and the real update cadence, including a kill by the next update.
      - Choose an inline fetch with a cache, or a background refresher, from the data.
-   - Acceptance: the phase RESEARCH records the payload shape (redacted), units, latencies, cadence, the kill test and the chosen design with its reason. Any fact that differs from the design spec amends it.
+   - Acceptance: the phase record `23-SPIKE.md` records the payload shape (redacted), units, latencies, cadence, the kill test and the chosen design with its reason. Any fact that differs from the design spec amends it. *(Amended 2026-10-23, ruling Q6: the record is 23-SPIKE.md.)*
 
 6. **Cursor line** (STL-02).
    - Current: none.
