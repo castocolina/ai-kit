@@ -3560,6 +3560,122 @@ class TestExternalSegmentToggle(unittest.TestCase):
                          "accepted-by-default example must not get an explicit "
                          "boolean write — it renders on via the disk-present default")
 
+    # ------------------------------------------------------------------
+    # WR-06/WR-07/WR-08 regression: the wizard commit re-validates the exact
+    # wiring value approved at the adoption gate, one host's filesystem
+    # failure never aborts the other hosts' commits, and the offline dry
+    # render refuses a candidate whose RENDER reports failures (the normal
+    # renderer deliberately exits 0 even while printing its error line).
+    # ------------------------------------------------------------------
+
+    def _adopt_state(self, paths, host="claude"):
+        sample = paths.sample if host == "claude" else paths.cursor_sample
+        return {
+            "adopt": True,
+            "segments": dict(setup.current_segments(sample, host)),
+            "layout": setup.current_layout(sample, host),
+            "dirty": True,
+        }
+
+    def test_wizard_commit_refuses_wiring_changed_after_gate_approval(self):
+        paths = self._paths_for_wizard_commit()
+        os.makedirs(paths.claude_dir, exist_ok=True)
+        approved = "/usr/bin/mybar-a"
+        with open(paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"statusLine": {"type": "command", "command": approved}}, handle)
+        state = self._adopt_state(paths)
+        state["adopt_command"] = approved
+        entries = {cat: [] for cat in setup.CATEGORIES}
+        commit = setup._make_wizard_commit(paths, entries, dry=False,
+                                           counts=setup.new_counts())
+        # Another process swaps the command between the gate answer and the
+        # commit: the stored approval covers command A only.
+        with open(paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"statusLine": {"type": "command", "command": "/usr/bin/mybar-b"}},
+                      handle)
+        result = commit(setup.Selection([]), {"claude": state})
+        self.assertFalse(result["ok"])
+        self.assertIn("changed after approval", result["hosts"]["claude"]["log"])
+        with open(paths.settings, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["statusLine"]["command"], "/usr/bin/mybar-b")
+        self.assertFalse(os.path.exists(paths.config_toml),
+                         "a refused approval must not publish the host's config either")
+
+    def test_wizard_commit_publishes_the_approved_wiring_value(self):
+        paths = self._paths_for_wizard_commit()
+        os.makedirs(paths.claude_dir, exist_ok=True)
+        approved = "/usr/bin/mybar-a"
+        with open(paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"statusLine": {"type": "command", "command": approved}}, handle)
+        state = self._adopt_state(paths)
+        state["adopt_command"] = approved
+        entries = {cat: [] for cat in setup.CATEGORIES}
+        commit = setup._make_wizard_commit(paths, entries, dry=False,
+                                           counts=setup.new_counts())
+        with mock.patch.dict(os.environ,
+                             {"CC_AI_KIT_EXTERNAL_DIR": paths.segments_dir}):
+            result = commit(setup.Selection([]), {"claude": state})
+        self.assertTrue(result["ok"], result["log"])
+        with open(paths.settings, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["statusLine"]["command"],
+                             "python3 -S " + paths.status_line)
+
+    def test_wizard_commit_first_host_filesystem_failure_still_commits_second(self):
+        paths = self._paths_for_wizard_commit()
+        os.makedirs(os.path.dirname(paths.cursor_cli_config), exist_ok=True)
+        entries = {cat: [] for cat in setup.CATEGORIES}
+        commit = setup._make_wizard_commit(paths, entries, dry=False,
+                                           counts=setup.new_counts())
+        real_candidate = setup._candidate_file
+
+        def _flaky_candidate(path, text):
+            if os.path.normpath(path) == os.path.normpath(paths.config_toml):
+                # _candidate_file's makedirs/mkstemp failure mode: an existing
+                # but unwritable target directory for the FIRST host only.
+                raise OSError("simulated unwritable claude config directory")
+            return real_candidate(path, text)
+
+        with mock.patch.object(setup, "_candidate_file", side_effect=_flaky_candidate), \
+                mock.patch.dict(os.environ,
+                                {"CC_AI_KIT_EXTERNAL_DIR": paths.segments_dir}):
+            claude_state = self._adopt_state(paths, "claude")
+            claude_state["segments"]["alt_git_worktree"] = True  # force a config write
+            result = commit(setup.Selection([]),
+                            {"claude": claude_state,
+                             "cursor": self._adopt_state(paths, "cursor")})
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["hosts"]["claude"]["ok"])
+        self.assertIn("commit failed", result["hosts"]["claude"]["log"])
+        self.assertTrue(result["hosts"]["cursor"]["ok"], result["hosts"]["cursor"]["log"])
+        with open(paths.cursor_cli_config, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["statusLine"]["command"],
+                             "python3 -S " + paths.cursor_status_line)
+
+    def test_offline_dry_render_rejects_renderer_reported_failures(self):
+        paths = self._paths_for_wizard_commit()
+        with open(paths.sample, encoding="utf-8") as handle:
+            base_text = handle.read()
+        # A [[line]] block with a non-integer min_rows parses as TOML but makes
+        # the render pipeline raise; the renderer deliberately catches it,
+        # prints its "run the doctor" error line and STILL exits 0.
+        candidate_text = '[[line]]\nmin_rows = "x"\nsegments = ["path"]\n'
+        healthy = setup._candidate_file(paths.config_toml, base_text)
+        broken = setup._candidate_file(paths.config_toml, candidate_text)
+        try:
+            sample_json = setup._read_sample_json("claude")
+            self.assertTrue(setup._offline_dry_render(
+                paths.status_line, healthy, sample_json, "claude"))
+            # Check mode must surface the renderer-reported failure as a
+            # rejection instead of accepting the exit-code-0 render (WR-08).
+            self.assertFalse(setup._offline_dry_render(
+                paths.status_line, broken, sample_json, "claude"))
+        finally:
+            for tmp in (healthy, broken):
+                if tmp is not None:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp)
+
+
 
 class TestPersistRoundTrip(unittest.TestCase):
     """T3.4: _persist_layout writes the minimal diff through save_statusline_config
@@ -4702,11 +4818,30 @@ class TestStatuslineMigration(unittest.TestCase):
         old = "/tmp/install with spaces/tools/" + setup._LEGACY_ENTRY
         new = "/tmp/install with spaces/tools/claude-status-line.py"
         rewrite = setup._command_ownership().rewrite_owned_command
-        self.assertEqual(rewrite(f'python3 -S "{old}"', old, new),
-                         f'python3 -S "{new}"')
+        # The rewrite must round-trip through the shell untouched: parse the
+        # RESULT (never assert on quote style) and compare parsed argv.
+        self.assertEqual(shlex.split(rewrite(f'python3 -S "{old}"', old, new)),
+                         ["python3", "-S", new])
+        # Literal `$` and `$(...)` directory names are data, not substitutions:
+        # shlex.join's single quotes keep them literal on re-execution.
+        for marker in ("$", "$(id)"):
+            old_lit = f"/data/{marker} kit/tools/" + setup._LEGACY_ENTRY
+            new_lit = f"/data/{marker} kit/tools/claude-status-line.py"
+            with self.subTest(marker=marker):
+                rewritten = rewrite(f"python3 -S {shlex.quote(old_lit)}", old_lit, new_lit)
+                self.assertEqual(shlex.split(rewritten), ["python3", "-S", new_lit])
+                self.assertNotIn('"', rewritten)
         for command in (f"python3 {old}.backup", f"python3 {old}.bak",
                         f"python3 -c 'print({old})'", f"bash -c '{old}'",
-                        f"python3 /other/script.py {old}"):
+                        f"python3 /other/script.py {old}",
+                        # Option values are not the script: -X/-W consume the
+                        # next token, -c/-m run no file at all, and any option
+                        # outside the no-argument allowlist is foreign.
+                        f"python3 -X {old} -c 'print(123)'",
+                        f"python3 -W ignore {old}",
+                        f"python3 -m mod {old}", f"python3 --check {old}",
+                        f"python3 -v {old}", f"python3 - {old}",
+                        "python3 -S"):
             self.assertIsNone(rewrite(command, old, new), command)
 
 
@@ -5430,7 +5565,12 @@ class TestStatuslineOwnershipCounterexamples(unittest.TestCase):
         ours = self.paths.status_line
         return [f"python3 -S {ours}.backup", f"python3 -S {ours}.bak",
                 f"python3 -S /usr/bin/other.py {ours}",
-                f"bash -c 'python3 -S {ours}'", f"cd /x && python3 -S {ours}"]
+                f"bash -c 'python3 -S {ours}'", f"cd /x && python3 -S {ours}",
+                # Interpreter-option forms the ownership parser must reject on
+                # BOTH hosts: an option value is not the script argument.
+                f"python3 -X {ours} -c 'print(123)'", f"python3 -W ignore {ours}",
+                f"python3 -m mod {ours}", f"python3 --check {ours}",
+                f"python3 -v {ours}"]
 
     def test_counterexamples_are_foreign_on_both_hosts(self):
         for command in self._counterexamples():

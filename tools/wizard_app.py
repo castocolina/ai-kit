@@ -1079,6 +1079,13 @@ class WizardApp(App):
             return False
         self.flow.gate_done = True
         self.pane.answered = True
+        if self.model.state["adopt"]:
+            # Pin the exact wiring value the user approved at this gate. The
+            # commit re-reads the host's wiring and refuses to publish when it
+            # no longer matches, so an approval never authorizes replacing a
+            # command the user never saw (None = the host was unset at
+            # approval time).
+            self.model.state["adopt_command"] = host.status_line().get("current_command")
         if not self.model.state["adopt"]:
             # Declined: nothing to arrange and the host's config files are left
             # untouched, so skip the segment board straight to the next host.
@@ -1231,10 +1238,13 @@ class WizardApp(App):
 
     def _has_net_change(self) -> bool:
         # `_initial_enabled` is component-level state (ctx.state), not per-host:
-        # a host's own state dict carries segments/layout/adopt only.
+        # a host's own state dict carries segments/layout/adopt only. A net
+        # change is component differences OR ANY adopted host pane — the active
+        # pane may be a host the user declined (e.g. the last host visited),
+        # which must not block committing an earlier adopted host (D-22).
         initial = self.ctx.state.get("_initial_enabled", {})
         current = {(c, n): on for c, n, on in self.model.sel.items}
-        return current != initial or self.model.state.get("adopt", False)
+        return current != initial or bool(self._adopted_views())
 
     def _states(self) -> dict:
         """Every host's Arrange-state serialized for the commit and the result,

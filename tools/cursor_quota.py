@@ -26,18 +26,21 @@ DEFAULT_CALL_TIMEOUT_S = 8.0
 
 
 class QuotaResult(NamedTuple):
+    """One quota read. Only `state` is required: the trailing defaults give a
+    hidden result (no usable data) as `QuotaResult(state, diagnostic=...)`."""
+
     state: str
-    confidence: str
-    diagnostic: str
-    fetched_at: float | None
-    cycle_start_ms: int | None
-    cycle_end_ms: int | None
-    included_pct: float | None
-    api_pct: float | None
-    included_window: tuple[int, int] | None
-    od_kind: str
-    od_used_usd: float | None
-    od_ceiling_usd: float | None
+    confidence: str = "inferred"
+    diagnostic: str = ""
+    fetched_at: float | None = None
+    cycle_start_ms: int | None = None
+    cycle_end_ms: int | None = None
+    included_pct: float | None = None
+    api_pct: float | None = None
+    included_window: tuple[int, int] | None = None
+    od_kind: str = "unavailable"
+    od_used_usd: float | None = None
+    od_ceiling_usd: float | None = None
 
 
 class FetchResult(NamedTuple):
@@ -101,9 +104,10 @@ def util_spend_fields(spend: dict[str, object]) -> tuple[float, float | None, fl
     raw_used = util_pick(spend, "individualUsed", "individual_used")
     used = util_spend(raw_used) if raw_used is not None else 0.0
     raw_limit = util_pick(spend, "individualLimit", "individual_limit")
-    individual = util_spend(raw_limit)
-    if raw_limit is None:
-        individual = 0.0
+    # Absence is NOT evidence of zero: preserve None so util_on_demand can tell
+    # "no individual limit field" apart from an explicit individualLimit = 0
+    # (which alone means the extra-spend toggle is disabled).
+    individual = util_spend(raw_limit) if raw_limit is not None else None
     pooled_raw = util_pick(spend, "pooledUsed", "pooled_used")
     pooled = util_spend(pooled_raw) if pooled_raw is not None else 0.0
     pooled_raw_limit = util_pick(spend, "pooledLimit", "pooled_limit")
@@ -120,7 +124,7 @@ def util_on_demand(
     hard = util_object(evidence)
     hard_value = util_number(util_pick(hard, "hardLimit", "hard_limit"))
     disabled = util_pick(hard, "noUsageBasedAllowed", "no_usage_based_allowed") is True
-    kind, ceiling, selected_used = "unavailable", None, None
+    kind, ceiling, selected_used = "unavailable", None, (used if spend else None)
     if individual is not None and individual > 0:
         kind, ceiling, selected_used = "fixed", individual, used
     elif not team and individual == 0:
@@ -204,26 +208,12 @@ def core_quota_state(cache: object, now: float) -> QuotaResult:
     last_attempt = util_number(value.get("last_attempt_at"))
     error_kind = value.get("last_error_kind")
     if data is None:
-        hidden_errors = {"auth_expired", "auth_unsupported", "auth_missing"}
         state = (
-            str(error_kind)
-            if error_kind in hidden_errors
-            else ("network_error" if error_kind == "network_error" else "absent")
+            str(error_kind) if error_kind in {"auth_expired", "auth_unsupported",
+                                              "auth_missing", "network_error"}
+            else "absent"
         )
-        return QuotaResult(
-            state,
-            "inferred",
-            str(value.get("last_error") or ""),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "unavailable",
-            None,
-            None,
-        )
+        return QuotaResult(state, diagnostic=str(value.get("last_error") or ""))
     start = data.get("cycle_start_ms")
     end = data.get("cycle_end_ms")
     if isinstance(end, int) and now * 1000 >= end:
@@ -266,7 +256,15 @@ def core_needs_refresh(cache: object, now: float) -> bool:
     if fetched is not None and now - fetched <= FRESH_TTL_S:
         return False
     attempted = util_number(value.get("last_attempt_at"))
-    return attempted is None or now - attempted >= NEGATIVE_TTL_S
+    if attempted is None:
+        return True
+    # Failure-only negative caching: a refresh that POPULATED the cache must be
+    # repeatable as soon as the data is stale (FRESH_TTL_S above); the
+    # NEGATIVE_TTL_S backoff applies only to failed attempts, so a healthy
+    # cache is never held stale for the backoff window.
+    if value.get("last_error_kind"):
+        return now - attempted >= NEGATIVE_TTL_S
+    return True
 
 
 def core_synthetic_cache(now: float) -> dict[str, object]:
@@ -421,20 +419,7 @@ def probe_read_quota(
                 (spawn or probe_spawn_refresher)(cache_base, env)
         return core_quota_state(cache, now)
     except OSError as exc:
-        return QuotaResult(
-            "absent",
-            "inferred",
-            str(exc),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            "unavailable",
-            None,
-            None,
-        )
+        return QuotaResult("absent", diagnostic=str(exc))
 
 
 def probe_refresh(
@@ -494,17 +479,15 @@ def probe_validate_endpoint(url: str) -> str | None:
 
 def probe_auth_path(env: dict[str, str], platform: str = "") -> str:
     """Resolve the CLI's read-only auth path without consulting CURSOR_CONFIG_DIR."""
-    os_module = importlib.import_module("os")
-    sys_module = importlib.import_module("sys")
-    system = platform or sys_module.platform
+    system = platform or sys.platform
     if system == "darwin":
-        return os_module.path.join(
-            env.get("HOME", os_module.path.expanduser("~")), ".cursor", "auth.json"
+        return os.path.join(
+            env.get("HOME", os.path.expanduser("~")), ".cursor", "auth.json"
         )
-    config = env.get("XDG_CONFIG_HOME") or os_module.path.join(
-        env.get("HOME", os_module.path.expanduser("~")), ".config"
+    config = env.get("XDG_CONFIG_HOME") or os.path.join(
+        env.get("HOME", os.path.expanduser("~")), ".config"
     )
-    return os_module.path.join(config, "cursor", "auth.json")
+    return os.path.join(config, "cursor", "auth.json")
 
 
 def probe_access_token(env: dict[str, str]) -> tuple[str | None, str | None]:
@@ -538,15 +521,13 @@ def probe_fetch_all(base: str, token: str, opener: Any, timeout_s: float) -> Fet
     """Fetch three Dashboard methods concurrently within one body-inclusive deadline."""
     runtime = importlib.import_module
     futures_module = runtime("concurrent.futures")
-    context = FetchContext(base, token, opener, runtime("time").monotonic() + timeout_s, timeout_s)
+    context = FetchContext(base, token, opener, time.monotonic() + timeout_s, timeout_s)
 
     def call(method: str) -> tuple[dict[str, object] | None, str | None]:
         return probe_dashboard_call(context, method)
 
     methods = ("GetCurrentPeriodUsage", "GetHardLimit", "GetPlanInfo")
     by_method = probe_submit_calls(futures_module, call, methods, context.deadline)
-    if by_method is None:
-        return FetchResult(None, None, None, "network_error")
     usage, usage_error = by_method[methods[0]]
     hard, _ = by_method[methods[1]]
     plan, _ = by_method[methods[2]]
@@ -560,22 +541,36 @@ def probe_submit_calls(
     call: Callable[[str], tuple[dict[str, object] | None, str | None]],
     methods: tuple[str, ...],
     deadline: float,
-) -> dict[str, tuple[dict[str, object] | None, str | None]] | None:
-    """Run method calls concurrently and bound executor wait by the shared deadline."""
+) -> dict[str, tuple[dict[str, object] | None, str | None]]:
+    """Run method calls concurrently, bounded by the shared deadline.
+
+    Completed calls KEEP their results even when a sibling method exceeds the
+    deadline: an unfinished method is reported as its own per-method failure,
+    so an optional call's timeout degrades only its dependent data and only
+    the required usage method failing (or staying unfinished) fails the fetch.
+    Outstanding transport workers are cancelled and drained before returning —
+    each worker's socket timeout is already clipped to the deadline, so the
+    wait is bounded — so a detached refresher never exits (still holding the
+    single-flight lock) while its executor threads linger for interpreter
+    shutdown to join."""
     executor = futures_module.ThreadPoolExecutor(max_workers=len(methods))
     futures = {method: executor.submit(call, method) for method in methods}
     _, pending = futures_module.wait(
         futures.values(),
-        timeout=max(0.0, deadline - importlib.import_module("time").monotonic()),
+        timeout=max(0.0, deadline - time.monotonic()),
         return_when=futures_module.ALL_COMPLETED,
     )
-    if pending:
-        for future in pending:
+    results: dict[str, tuple[dict[str, object] | None, str | None]] = {}
+    for method, future in futures.items():
+        if future in pending:
             future.cancel()
-        executor.shutdown(wait=False, cancel_futures=True)
-        return None
-    results = {method: future.result() for method, future in futures.items()}
-    executor.shutdown(wait=True)
+            results[method] = (None, "network_error")
+        else:
+            results[method] = future.result()
+    if pending:
+        executor.shutdown(wait=True, cancel_futures=True)
+    else:
+        executor.shutdown(wait=True)
     return results
 
 
@@ -585,10 +580,9 @@ def probe_dashboard_call(
     """Issue one Dashboard POST and parse a JSON-object body before the deadline."""
     runtime = importlib.import_module
     json = runtime("json")
-    clock = runtime("time")
     http_error = runtime("urllib.error").HTTPError
     request_module = runtime("urllib.request")
-    remaining = context.deadline - clock.monotonic()
+    remaining = context.deadline - time.monotonic()
     if remaining <= 0:
         return None, "network_error"
     request = request_module.Request(
@@ -606,12 +600,16 @@ def probe_dashboard_call(
             sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
             chunks: list[bytes] = []
             while True:
-                remaining = context.deadline - clock.monotonic()
+                remaining = context.deadline - time.monotonic()
                 if remaining <= 0:
                     return None, "network_error"
                 if sock is not None and sock.fileno() >= 0:
                     sock.settimeout(remaining)
-                chunk = response.read(65536)
+                # read1 (at most one underlying read, returning whatever is
+                # available) keeps a trickling body incremental: the absolute
+                # deadline is re-checked between reads, and no single call can
+                # outlive the time-to-deadline socket timeout set above.
+                chunk = response.read1(65536)
                 if not chunk:
                     break
                 chunks.append(chunk)

@@ -70,7 +70,8 @@ def core_cursor_context(
     else:
         cols, lines, assumed = probe_terminal_size(env)
     home = env.get("HOME", "")
-    quota = probe_read_quota(common_config.cfg_cache_base(dict(env)), dict(env), time.time())
+    child = dict(env)
+    quota = probe_read_quota(common_config.cfg_cache_base(child), child, time.time())
     return Context(
         raw=raw,
         line_conf=config,

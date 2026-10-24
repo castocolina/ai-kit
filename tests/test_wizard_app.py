@@ -389,6 +389,30 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Nothing to write",
                           str(_query_static(app, "#cta").content))
 
+    async def test_adopted_first_host_commits_even_when_last_host_declined(self):
+        # Components exactly equal to _initial_enabled; Claude adopted at its
+        # gate, Cursor declined at its gate (Cursor stays the active pane).
+        # The earlier adoption is a net change on its own and must commit —
+        # the declined active pane must not strand it (D-22).
+        commits = []
+        ctx = make_ctx(host_ids=("claude", "cursor"))._replace(
+            commit=lambda selection, states: commits.append(states)
+            or {"ok": True, "adopt": True, "log": "", "hosts": {}})
+        app = wa.WizardApp(ctx)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("N")              # components == _initial_enabled
+            await pilot.press("enter")          # choose → claude gate
+            await pilot.press("y")              # adopt Claude
+            await pilot.press("enter")          # claude arrange → cursor gate
+            await pilot.press("n")              # decline Cursor → Review
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+            await pilot.press("enter")          # review → must commit, not block
+            self.assertEqual(app.flow.step, wa.STEP_DONE)
+            self.assertEqual(len(commits), 1)
+            self.assertIs(commits[0]["claude"]["adopt"], True)
+            self.assertIs(commits[0]["cursor"]["adopt"], False)
+
     async def test_decline_omits_status_line_on_review_and_done(self):
         app = wa.WizardApp(make_ctx(sl_state="foreign"))
         async with app.run_test() as pilot:

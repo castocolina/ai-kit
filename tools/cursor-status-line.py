@@ -3,8 +3,11 @@
 # pyright: strict
 # pylint: disable=invalid-name  # installed script name is hyphenated
 
+import sys
+
 import common_render
 import cursor_host
 
 if __name__ == "__main__":
-    common_render.main(cursor_host.HOST)
+    raise SystemExit(common_render.main(cursor_host.HOST,
+                                        "--check-render" in sys.argv))

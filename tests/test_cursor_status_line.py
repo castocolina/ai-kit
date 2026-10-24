@@ -229,19 +229,15 @@ class TestCursorStatusLine(unittest.TestCase):
         neutral = cursor_segments.seg_cursor_included(neutral_ctx, 40, neutral_theme)
         self.assertIn(neutral_theme.c("WHITE"), cast(str, neutral))
 
-    def test_api_default_toggle_and_all_extra_kinds(self):
+    def test_api_renders_whatever_the_toggle_packer_gates(self):
+        # WR-04: the builder no longer re-checks its own enablement — the
+        # packer already filters disabled keys, and double-gating kept the
+        # doctor's every-builder dry render from exercising the default-off
+        # cursor_api gauge. The builder renders whenever it has quota data;
+        # enablement is the layout's concern.
         self.assertFalse(cursor_host.SEGMENTS["cursor_api"])
         context, theme = self._context(self._quota())
-        context.line_conf = context.line_conf._replace(
-            segments={**context.line_conf.segments, "cursor_api": False}
-        )
-        self.assertIsNone(cursor_segments.seg_cursor_api(context, 100, theme))
-        enabled_config = context.line_conf._replace(
-            segments={**context.line_conf.segments, "cursor_api": True}
-        )
-        context.line_conf = enabled_config
-        enabled_context = context
-        api = cursor_segments.seg_cursor_api(enabled_context, 100, theme)
+        api = cursor_segments.seg_cursor_api(context, 100, theme)
         self.assertIn("api ", cast(str, api))
         fixed = cursor_segments.seg_cursor_extra(context, 100, theme)
         self.assertIn("$5.20/$20.00", cast(str, fixed))

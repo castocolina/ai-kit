@@ -84,9 +84,7 @@ def cfg_source_get(  # pylint: disable=too-many-arguments,too-many-positional-ar
 ) -> Any | None:
     """Get a raw source value using the supplied host prefix and path."""
     if source == "env":
-        head = "SEGMENT" if path[0] == "segments" else path[0].upper()
-        name = prefix + "_".join([head, *(p.upper() for p in path[1:])])
-        return env.get(name)
+        return env.get(cfg_env_label(path, prefix))
     cur: dict[str, Any] = raw_toml
     for i, part in enumerate(path):
         if part not in cur:

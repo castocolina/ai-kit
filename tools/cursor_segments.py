@@ -47,9 +47,9 @@ def _colored(gauge: Gauge, theme: "Theme") -> str:
 
 
 def _included(ctx: "Context", avail: int, theme: "Theme", api: bool) -> str | None:
-    key = "cursor_api" if api else "cursor_included"
-    if not ctx.line_conf.segments.get(key, False):
-        return None
+    # No self-enablement check: the packer already filters disabled segment keys
+    # (common_render), and double-gating here only defeated the doctor's
+    # every-builder dry render of the default-off cursor_api segment.
     quota = _quota(ctx)
     pct = quota.api_pct if api else quota.included_pct
     if quota.state not in ("ok", "stale") or pct is None:

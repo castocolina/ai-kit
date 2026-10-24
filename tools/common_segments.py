@@ -2,14 +2,12 @@
 # pyright: strict
 
 import math
-import os
 import time
 from typing import TYPE_CHECKING
 
 from common_probe import probe_git_for
 from common_types import (
     CONTEXT_BAR_CELLS,
-    PATH_MAX_LEN,
     RESET,
     fmt_duration,
     fmt_tokens,
@@ -33,17 +31,12 @@ if TYPE_CHECKING:
 def seg_path(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     snap = probe_git_for(ctx)
     if snap.in_repo and snap.root_name:
-        if snap.root_path:
-            root = snap.root_path.rstrip("/")
-            in_home = ctx.home and root.startswith(ctx.home)
-            full = ("~" + root[len(ctx.home):]) if in_home else root
-            parent = os.path.basename(os.path.dirname(root))
-            structural = util_first_fitting([full, f"{parent}/{snap.root_name}"], PATH_MAX_LEN)
-            shown = (structural if structural is not None
-                     else util_two_state_cap(snap.root_name, 30, 20))
-        else:
-            # root_path unknown -> name-only floor
-            shown = util_two_state_cap(snap.root_name, 30, 20)
+        # Inside a repo, tier on the repo ROOT (not the cwd) through the same
+        # shared helper: full ~-relative → parent/name → name cap. basename of
+        # the stripped root IS root_name, so this is byte-identical to the
+        # inlined ladder it replaces (D-05: no second copy of the tiering).
+        shown = (util_display_dir(snap.root_path, ctx.home) if snap.root_path
+                 else util_two_state_cap(snap.root_name, 30, 20))
     else:
         shown = util_display_dir(ctx.work_dir, ctx.home)
     return f"{theme.c('BLUE')}{shown}{RESET}"  # floor

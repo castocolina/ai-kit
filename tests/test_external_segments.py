@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -631,6 +632,26 @@ class TestSampleProvider(unittest.TestCase):
         out = common_render.core_run_external(spec, types.SimpleNamespace(raw={}, work_dir="."), 4)
         if out is not None:
             self.assertLessEqual(common_types.util_visible_width(out), 4)
+
+    def test_narrow_cursor_stdin_budget_tiers_down_without_provider_env(self):
+        # WR-10: Cursor supplies its width budget ONLY through the host-neutral
+        # stdin field (its provider env namespace is AI_KIT_CURSOR_PROVIDER_COLS
+        # and it never sets AI_KIT_SEGMENT_COLS). Running the shared example as
+        # Cursor does — payload on stdin, no provider env — must tier on
+        # segment.avail_cols instead of defaulting to 80 and emitting the long
+        # "GiB free" variant for the renderer to truncate.
+        payload = json.dumps({"segment": {"id": "system_memory", "avail_cols": 9}})
+        env = {"PATH": os.environ.get("PATH", "")}
+        proc = subprocess.run(
+            [sys.executable, self.PATH], input=payload,
+            capture_output=True, text=True, timeout=10, env=env, check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = proc.stdout.strip()
+        if not out:
+            return  # unsupported platform: the provider cleanly drops
+        self.assertNotIn("GiB free", out)
+        self.assertLessEqual(common_types.util_visible_width(out), 9)
 
 
 class TestRecipe(unittest.TestCase):

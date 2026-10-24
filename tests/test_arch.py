@@ -42,6 +42,7 @@ import claude_host
 import cursor_host
 
 _AUDIT_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "statusline_split", "audit.md")
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _AUDIT_VOCABULARY = re.compile(
     r"claude|CC_AI_KIT|rate_limits|settings\.json|\.claude", re.IGNORECASE
 )
@@ -536,12 +537,19 @@ def check_legacy_references(files):
         "docs/wizard-redesign/", "tests/fixtures/statusline_split/",
     )
     allow_line = re.compile(r"^_LEGACY_(ENTRY|TOML) = ")
+    # A TEST constructing a legacy-named fixture (migration/pre-rename
+    # coverage) names the retired entry on the same line as its 'legacy'
+    #/'bak'/'backup' marker — that fixture is the point of the test, not a
+    # stray retired reference.
+    legacy_fixture = re.compile(r"legacy|\.bak|\.backup", re.IGNORECASE)
     hits = []
     for relpath, text in files:
         if relpath.startswith(history):
             continue
         for number, line in enumerate(text.splitlines(), 1):
             if relpath == "tools/setup.py" and allow_line.match(line):
+                continue
+            if relpath.startswith("tests/") and legacy_fixture.search(line):
                 continue
             if pattern.search(line):
                 hits.append(f"{relpath}:{number}: retired reference")
@@ -775,7 +783,7 @@ _BROAD_EXCEPT_BACKSTOPS = frozenset(
         ("tools/wizard_app.py", "_apply_housekeeping"),
         ("tools/wizard_app.py", "_run_commit"),
         ("tools/common_render.py", "core_safe_build"),
-        ("tools/common_render.py", "safe_render"),
+        ("tools/common_render.py", "core_render_checked"),
         ("tools/statusline-doctor.py", "cmd_doctor"),
         ("tools/config_doctor_checks.py", "apply_row"),
     }
@@ -1086,15 +1094,50 @@ class TestArchitecture(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 
 
-def _git_history_available():
-    """Whether the checkout includes usable git history (not the clean-room container)."""
+def _git_binary_available():
+    """Whether a git executable is runnable at all (clean-room containers lack one)."""
+    try:
+        proc = subprocess.run(["git", "--version"], capture_output=True, text=True,
+                              check=False, cwd=_REPO_ROOT)
+    except OSError:
+        return False
+    return proc.returncode == 0
+
+
+def _pinned_blob_available():
+    """Whether the audit's pinned historical base blob is reachable from the
+    repository root. An installer shallow clone (`git clone --depth 1`) is a
+    perfectly good work tree but cannot `git show` old blobs — history-dependent
+    checks must skip there while current-tree checks stay active."""
     proc = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
-                          capture_output=True, text=True, check=False)
+                          capture_output=True, text=True, check=False, cwd=_REPO_ROOT)
+    if proc.returncode != 0 or proc.stdout.strip() != "true":
+        return False
+    try:
+        with open(_AUDIT_PATH, encoding="ascii") as handle:
+            headers, _rows = audit_rows(handle.read())
+    except (OSError, UnicodeError, ValueError):
+        return False
+    probe = subprocess.run(
+        ["git", "cat-file", "-e", f"{headers['base']}:{headers['base_path']}"],
+        capture_output=True, text=True, check=False, cwd=_REPO_ROOT,
+    )
+    return probe.returncode == 0
+
+
+def _inside_work_tree():
+    """Whether the repo root is a git work tree (the clean-room container copies the tree
+    without `.git`, so the binary alone is not enough for `git ls-files`)."""
+    proc = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"],
+                          capture_output=True, text=True, check=False, cwd=_REPO_ROOT)
     return proc.returncode == 0 and proc.stdout.strip() == "true"
 
 
-GIT_HISTORY_AVAILABLE = _git_history_available()
+GIT_BINARY_AVAILABLE = _git_binary_available()
+GIT_WORK_TREE_AVAILABLE = GIT_BINARY_AVAILABLE and _inside_work_tree()
+GIT_HISTORY_AVAILABLE = GIT_WORK_TREE_AVAILABLE and _pinned_blob_available()
 CLEAN_ROOM_GIT_SKIP = "requires git history; unavailable in the clean-room container"
+GIT_WORK_TREE_SKIP = "requires a git work tree; the clean-room container has no .git"
 
 
 def _load_audit_fixture():
@@ -1105,6 +1148,7 @@ def _load_audit_fixture():
         check=False,
         capture_output=True,
         text=True,
+        cwd=_REPO_ROOT,
     )
     if proc.returncode:
         raise AssertionError(f"git show failed: {proc.stderr}")
@@ -1365,6 +1409,21 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertTrue(any("docs/x.md" in hit for hit in hits))
         self.assertTrue(any("tools/setup.py" in hit for hit in hits))
 
+    def test_legacy_fixture_lines_in_tests_are_allowed_but_not_unmarked_ones(self):
+        # The allowance must have teeth BOTH ways: a test line that names the
+        # retired entry AS a legacy/.bak fixture is the point of the test,
+        # while a bare retired reference in a test is still flagged.
+        old_entry = "status-" + "line.py"
+        allowed = check_legacy_references([
+            ("tests/test_setup.py", f'legacy = join(dir, "{old_entry}")'),
+            ("tests/test_setup.py", f'backup = join(dir, "{old_entry}.bak")'),
+        ])
+        self.assertEqual([], allowed)
+        flagged = check_legacy_references([
+            ("tests/test_setup.py", f'path = "{old_entry}"'),
+        ])
+        self.assertEqual(1, len(flagged))
+
     def test_thin_entry_flags_a_definition(self):
         tree = ast.parse('"entry"\ndef extra():\n    return None\n')
         self.assertNotEqual([], check_thin_entry(tree))
@@ -1464,9 +1523,9 @@ class TestArchNonVacuity(unittest.TestCase):
     def test_audit_rows_are_at_their_target(self):
         self.assertEqual([], split_target_problems())
 
-    @unittest.skipUnless(GIT_HISTORY_AVAILABLE, CLEAN_ROOM_GIT_SKIP)
+    @unittest.skipUnless(GIT_WORK_TREE_AVAILABLE, GIT_WORK_TREE_SKIP)
     def test_legacy_references_live_tree(self):
-        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        repo_root = _REPO_ROOT
         tracked = subprocess.run(
             ["git", "ls-files"], cwd=repo_root, check=True, capture_output=True, text=True
         ).stdout.splitlines()

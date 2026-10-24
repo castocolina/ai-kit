@@ -504,29 +504,52 @@ def core_render(
     return out
 
 
+def core_render_checked(
+    host: Host, raw: dict[str, Any], env: Env, t_start: int | None
+) -> tuple[list[str], bool]:
+    """Like safe_render, but also report whether the render was fully clean.
+
+    Returns (lines, ok): ok is False when the pipeline raised OR any segment
+    builder crashed (``ctx.failed`` nonempty). Output is never blank either
+    way — the same never-blank diagnostic lines are reused, so enabling the
+    check changes only the exit status, never what a user would see."""
+    try:
+        cfg = cfg_load_config(env, host.config)
+        theme = core_build_theme(cfg, host)
+        ctx = host.build_context(raw, cfg, theme, env, t_start)
+        lines = core_render(ctx, host)
+        return lines, not ctx.failed
+    except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
+        return [
+            f"{WARN}⚠ status-line error — run the doctor: "
+            f"{core_doctor_cmd(host.doctor_suffix)}{RESET}"
+        ], False
+
+
 # ═══ 8. SHELL — side effects only: env capture, stdin, print, render entrypoint ═
 
 
 def safe_render(host: Host, raw: dict[str, Any], env: Env, t_start: int | None) -> list[str]:
     """Build context and render; failures produce one diagnostic line."""
-    try:
-        cfg = cfg_load_config(env, host.config)
-        theme = core_build_theme(cfg, host)
-        ctx = host.build_context(raw, cfg, theme, env, t_start)
-        return core_render(ctx, host)
-    except Exception:  # pylint: disable=broad-exception-caught  # never-blank isolation
-        return [
-            f"{WARN}⚠ status-line error — run the doctor: "
-            f"{core_doctor_cmd(host.doctor_suffix)}{RESET}"
-        ]
+    lines, _ok = core_render_checked(host, raw, env, t_start)
+    return lines
 
 
-def main(host: Host) -> None:
-    """CLI entrypoint: render the status line from stdin."""
+def main(host: Host, check: bool = False) -> int:
+    """CLI entrypoint: render the status line from stdin.
+
+    With ``check`` (the entry's ``--check-render`` flag, used by offline save
+    validation) the exit status is 1 when the pipeline raised or any builder
+    failed; normal renders always exit 0 regardless of segment failures."""
     t_start = time.perf_counter_ns()
     try:
         raw: dict[str, Any] = json.load(sys.stdin)
     except (ValueError, OSError):
         raw = {}
     env = os.environ
+    if check:
+        lines, ok = core_render_checked(host, raw, env, t_start)
+        print("\n".join(lines))
+        return 0 if ok else 1
     print("\n".join(safe_render(host, raw, env, t_start)))
+    return 0

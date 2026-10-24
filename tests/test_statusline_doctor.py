@@ -105,7 +105,7 @@ class TestCLI(unittest.TestCase):
 
     def test_check_valid_palette_and_ramp_returns_zero(self):
         path = self._write(
-            '[palette]\nBLUE = "#3399ff"\n[ramp.rate]\n50 = "GREEN"\ninf = "RED+bold"\n'
+            '[palette]\nBLUE = "#3399ff"\n[ramp.context]\n50 = "GREEN"\ninf = "RED+bold"\n'
         )
         self.assertEqual(doctor.cmd_check(path, {"HOME": "/h"}), 0)
 
@@ -186,6 +186,36 @@ class TestDoctor(unittest.TestCase):
         # Back-compat: --check path is untouched.
         rc = doctor.cmd_check(os.path.join(self.tmp, "absent.toml"), self.env)
         self.assertEqual(rc, 1)  # absent file → cmd_check reports it (existing behavior)
+
+    def test_bad_toml_value_is_diagnosed_not_a_traceback_both_hosts(self):
+        # D-17 exact input: [[line]] with min_rows = "x" parses as TOML and
+        # passes naive structural checks, but raises inside the render
+        # pipeline's layout resolution — the renderer exits 0 pointing at this
+        # doctor, so --check and --doctor ARE the recovery path and must
+        # return an actionable nonzero diagnostic for BOTH hosts, never a
+        # traceback.
+        body = '[[line]]\nmin_rows = "x"\nsegments = ["path"]\n'
+        for host_name in ("claude", "cursor"):
+            host = doctor.HOSTS[host_name]
+            with self.subTest(host=host_name):
+                bad = os.path.join(self.tmp, f"bad-{host_name}.toml")
+                with open(bad, "w", encoding="utf-8") as handle:
+                    handle.write(body)
+                env = {"HOME": self.tmp,
+                       "PATH": os.environ.get("PATH", ""),
+                       "CC_AI_KIT_CONFIG_FILE": bad,
+                       "AI_KIT_CURSOR_CONFIG_FILE": bad}
+                out, err = io.StringIO(), io.StringIO()
+                with redirect_stdout(out), redirect_stderr(err):
+                    rc = doctor.cmd_check(bad, env, host=host)
+                self.assertEqual(rc, 1)
+                self.assertIn("min_rows", err.getvalue())
+                out, err = io.StringIO(), io.StringIO()
+                fetch = lambda _env: (None, "auth_missing", "")
+                with redirect_stdout(out), redirect_stderr(err):
+                    rc = doctor.cmd_doctor(env, host, fetch_quota=fetch)
+                self.assertEqual(rc, 1)
+                self.assertIn("min_rows", err.getvalue())
 
 
 class TestHostSwitch(unittest.TestCase):

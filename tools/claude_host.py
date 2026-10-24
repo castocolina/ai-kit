@@ -69,7 +69,6 @@ EFFORT_DEFAULTS = {
 }
 RAMP_DEFAULTS_CLAUDE = {
     "context": RAMP_BANDS["context"],
-    "rate": [(50, "GREEN"), (80, "YELLOW"), ("inf", "RED+bold")],
     "chat_size": [
         ("512k", "WHITE"),
         ("1M", "CYAN"),

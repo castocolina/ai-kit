@@ -1,5 +1,7 @@
 """Synthetic-fixture tests for Cursor quota normalization and state."""
 
+import contextlib
+import io
 import json
 import os
 import pathlib
@@ -7,6 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from typing import cast
@@ -33,6 +36,7 @@ from tools.cursor_quota import (
     probe_read_cache,
     probe_read_quota,
     probe_refresh,
+    probe_release_lock,
     probe_try_lock,
     probe_validate_endpoint,
     probe_write_cache,
@@ -193,8 +197,6 @@ class TestCursorQuota(unittest.TestCase):
                 holder.wait(timeout=5)
                 descriptor = probe_try_lock(lock_path)
                 self.assertIsNotNone(descriptor)
-                from tools.cursor_quota import probe_release_lock
-
                 probe_release_lock(cast(int, descriptor))
             finally:
                 if holder.poll() is None:
@@ -217,8 +219,6 @@ class TestCursorQuota(unittest.TestCase):
                 self.assertEqual(probe_refresh(base, {}, lambda: 5000, not_fetched), 0)
                 self.assertEqual(fetched, [])
             finally:
-                from tools.cursor_quota import probe_release_lock
-
                 probe_release_lock(cast(int, held))
             data = core_synthetic_cache(5000)["data"]
             self.assertEqual(
@@ -323,8 +323,6 @@ class TestCursorQuota(unittest.TestCase):
                 holder.wait(timeout=5)
                 acquired = probe_try_lock(lock_path)
                 self.assertIsNotNone(acquired)
-                from tools.cursor_quota import probe_release_lock
-
                 probe_release_lock(cast(int, acquired))
                 replacement_data = cast(dict[str, object], core_synthetic_cache(7000)["data"])
                 calls = []
@@ -351,8 +349,8 @@ class TestCursorQuota(unittest.TestCase):
             self.assertTrue(probe_write_cache(cache_path, stale))
             lock = probe_try_lock(lock_path)
             self.assertIsNotNone(lock)
-            entered = __import__("threading").Event()
-            release = __import__("threading").Event()
+            entered = threading.Event()
+            release = threading.Event()
             results = []
 
             def reader():
@@ -361,15 +359,13 @@ class TestCursorQuota(unittest.TestCase):
                 release.wait(timeout=5)
                 results.append(observed)
 
-            thread = __import__("threading").Thread(target=reader)
+            thread = threading.Thread(target=reader)
             thread.start()
             self.assertTrue(entered.wait(timeout=5))
             fresh = core_synthetic_cache(500)
             self.assertTrue(probe_write_cache(cache_path, fresh))
             release.set()
             thread.join(timeout=5)
-            from tools.cursor_quota import probe_release_lock
-
             probe_release_lock(cast(int, lock))
             self.assertFalse(thread.is_alive())
             self.assertEqual(probe_read_cache(cache_path), fresh)
@@ -438,6 +434,87 @@ class TestCursorQuota(unittest.TestCase):
             self.assertIsNone(error)
             self.assertEqual(normalized, expected)
 
+    def test_optional_timeout_preserves_successful_usage(self):
+        # An optional method exceeding the deadline degrades only its own data:
+        # the successful required usage response is kept, not discarded with a
+        # total network-failure classification.
+        usage = load_dashboard_fixture("usage_pro")
+        with FakeDashboard() as dashboard:
+            dashboard.script("GetCurrentPeriodUsage", body=usage)
+            dashboard.script("GetHardLimit", delay_s=2.0,
+                             body=load_dashboard_fixture("hard_limit_fixed"))
+            dashboard.script("GetPlanInfo", delay_s=2.0,
+                             body=load_dashboard_fixture("plan_info_monthly"))
+            started = time.monotonic()
+            fetched = probe_fetch_all(dashboard.url, "synthetic", probe_build_opener(), 0.4)
+            self.assertLessEqual(time.monotonic() - started, 2.0)
+            self.assertIsNone(fetched.error_kind)
+            self.assertEqual(fetched.usage, usage)
+            self.assertIsNone(fetched.hard_limit)
+            self.assertIsNone(fetched.plan_info)
+        kept = core_normalize(fetched.usage, fetched.hard_limit, fetched.plan_info)
+        self.assertEqual(kept["included_pct"],
+                         core_normalize(usage, None, None)["included_pct"])
+        # The required usage method staying unfinished still fails the fetch.
+        with FakeDashboard() as dashboard:
+            dashboard.script("GetCurrentPeriodUsage", delay_s=2.0, body=usage)
+            dashboard.script("GetHardLimit", body=load_dashboard_fixture("hard_limit_fixed"))
+            dashboard.script("GetPlanInfo", body=load_dashboard_fixture("plan_info_monthly"))
+            fetched = probe_fetch_all(dashboard.url, "synthetic", probe_build_opener(), 0.4)
+            self.assertEqual(fetched.error_kind, "network_error")
+            self.assertIsNone(fetched.usage)
+
+    def test_trickling_body_is_bounded_and_leaves_no_transport_threads(self):
+        # A server sending one byte just before each read timeout keeps a
+        # read(65536)-style call alive past the deadline; the production
+        # refresher must still exit within the bound, with no transport worker
+        # left for interpreter shutdown to join (which would hold the lock).
+        scripts = (
+            ("GetCurrentPeriodUsage", load_dashboard_fixture("usage_pro")),
+            ("GetHardLimit", load_dashboard_fixture("hard_limit_fixed")),
+            ("GetPlanInfo", load_dashboard_fixture("plan_info_monthly")),
+        )
+        with FakeDashboard() as dashboard:
+            for method, body in scripts:
+                dashboard.script(method, trickle_s=0.02, body=body)
+            baseline = {thread.name for thread in threading.enumerate()}
+            started = time.monotonic()
+            fetched = probe_fetch_all(dashboard.url, "synthetic", probe_build_opener(), 0.5)
+            elapsed = time.monotonic() - started
+            self.assertEqual(fetched.error_kind, "network_error")
+            self.assertLessEqual(elapsed, 0.5 + 1.0)
+            leftovers = [thread.name for thread in threading.enumerate()
+                         if thread.name not in baseline
+                         and thread.name.startswith("ThreadPoolExecutor")]
+            self.assertEqual(leftovers, [])
+
+    def test_trickling_body_subprocess_refresher_exits_within_the_bound(self):
+        # The real refresher code path (probe_fetch_all, exactly what
+        # probe_refresh invokes) in its own process: it must exit well within
+        # the deadline bound instead of lingering to interpreter shutdown.
+        driver = (
+            "import sys, time; sys.path.insert(0, sys.argv[1]);"
+            "from cursor_quota import probe_fetch_all, probe_build_opener;"
+            "started = time.monotonic();"
+            "result = probe_fetch_all(sys.argv[2], 'synthetic',"
+            " probe_build_opener(), 0.5);"
+            "assert result.error_kind == 'network_error', result;"
+            "assert time.monotonic() - started < 5, 'refresher outlived its deadline';"
+        )
+        tools_dir = str(pathlib.Path(__file__).parents[1] / "tools")
+        with FakeDashboard() as dashboard:
+            for method, body in (
+                ("GetCurrentPeriodUsage", load_dashboard_fixture("usage_pro")),
+                ("GetHardLimit", load_dashboard_fixture("hard_limit_fixed")),
+                ("GetPlanInfo", load_dashboard_fixture("plan_info_monthly")),
+            ):
+                dashboard.script(method, trickle_s=0.02, body=body)
+            proc = subprocess.run(
+                [sys.executable, "-S", "-c", driver, tools_dir, dashboard.url],
+                capture_output=True, text=True, timeout=20, check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
     def test_dummy_token_never_appears_in_outputs_or_stderr(self):
         with tempfile.TemporaryDirectory() as directory:
             env, token = self._auth_env(directory)
@@ -445,11 +522,8 @@ class TestCursorQuota(unittest.TestCase):
             with mock.patch(
                 "tools.cursor_quota.probe_access_token", return_value=(token, None)
             ) as reader:
-                capture = __import__("contextlib").redirect_stderr
-                import io
-
                 stderr = io.StringIO()
-                with capture(stderr):
+                with contextlib.redirect_stderr(stderr):
                     data, error, diagnostic = probe_fetch_quota(env)
             reader.assert_not_called()
             combined = repr((data, error, diagnostic, stderr.getvalue()))
@@ -690,6 +764,29 @@ class TestCursorQuota(unittest.TestCase):
         result = core_normalize(personal, load_dashboard_fixture("hard_limit_unlimited"), None)
         self.assertEqual(result["od_kind"], "disabled")
 
+    def test_absent_individual_limit_uses_hard_limit_evidence(self):
+        # Absence of individualLimit is not evidence of zero: only an EXPLICIT
+        # zero is the disabled toggle; an absent limit falls through to the
+        # hard-limit evidence (fixed / unlimited / unavailable).
+        usage = load_dashboard_fixture("usage_pro")
+        usage["spendLimitUsage"].pop("individualLimit")
+        cases = (
+            ("hard_limit_fixed", "fixed", 20.0),
+            ("hard_limit_unlimited", "unlimited", None),
+            (None, "unavailable", None),
+        )
+        for fixture, kind, ceiling in cases:
+            with self.subTest(fixture=fixture):
+                evidence = load_dashboard_fixture(fixture) if fixture else None
+                data = core_normalize(usage, evidence, None)
+                self.assertEqual(data["od_kind"], kind)
+                self.assertEqual(data["od_ceiling_usd"], ceiling)
+        usage["spendLimitUsage"]["individualLimit"] = 0
+        for fixture in ("hard_limit_fixed", "hard_limit_unlimited", None):
+            with self.subTest(explicit_zero=fixture):
+                evidence = load_dashboard_fixture(fixture) if fixture else None
+                self.assertEqual(core_normalize(usage, evidence, None)["od_kind"], "disabled")
+
     def test_windows_and_billing_cycle_fallback(self):
         usage = load_dashboard_fixture("usage_pro")
         weekly = core_normalize(usage, None, load_dashboard_fixture("plan_info_weekly"))
@@ -751,12 +848,26 @@ class TestCursorQuota(unittest.TestCase):
         self.assertEqual(core_quota_state({}, 102).state, "absent")
         self.assertTrue(core_needs_refresh({}, 102))
         self.assertFalse(core_needs_refresh({"data_fetched_at": 100}, 100))
-        self.assertFalse(core_needs_refresh({"data_fetched_at": 1, "last_attempt_at": 100}, 400))
-        self.assertTrue(
-            core_needs_refresh(
-                {"data_fetched_at": 1, "last_attempt_at": 100}, 100 + NEGATIVE_TTL_S + 1
-            )
-        )
+        # The negative TTL is failure-only: a cache populated by a SUCCESSFUL
+        # attempt is refreshable the moment its data is stale, while a failed
+        # attempt is backed off for NEGATIVE_TTL_S (probe_refresh's full shape).
+        data = core_normalize(load_dashboard_fixture("usage_pro"), None, None)
+
+        def _cache(fetched: float, attempted: float, error: str | None) -> dict[str, object]:
+            return {
+                "data": data,
+                "data_fetched_at": fetched,
+                "last_attempt_at": attempted,
+                "last_error": "synthetic failure" if error else None,
+                "last_error_kind": error,
+            }
+
+        healthy = _cache(1000, 1000, None)
+        self.assertFalse(core_needs_refresh(healthy, 1000 + FRESH_TTL_S))
+        self.assertTrue(core_needs_refresh(healthy, 1000 + FRESH_TTL_S + 1))
+        failed = _cache(1000, 1000, "network_error")
+        self.assertFalse(core_needs_refresh(failed, 1300))
+        self.assertTrue(core_needs_refresh(failed, 1000 + NEGATIVE_TTL_S + 1))
         synthetic = core_synthetic_cache(500)
         self.assertEqual(core_quota_state(synthetic, 500).state, "ok")
 

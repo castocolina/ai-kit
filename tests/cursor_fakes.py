@@ -44,6 +44,14 @@ class _Response(NamedTuple):
     body: object
     delay_s: float
     location: str | None
+    trickle_s: float
+
+
+class _DaemonThreadingHTTPServer(ThreadingHTTPServer):
+    """Handler threads never outlive the test process (a trickling response
+    handler intentionally runs forever; the client gives up at its deadline)."""
+
+    daemon_threads = True
 
 
 class FakeDashboard:
@@ -67,12 +75,25 @@ class FakeDashboard:
                 })
                 method = self.path.rsplit("/", 1)[-1]
                 queue = owner._scripts.get(method, [])
-                response = queue.pop(0) if queue else _Response(404, {}, 0, None)
+                response = queue.pop(0) if queue else _Response(404, {}, 0, None, 0.0)
                 time.sleep(response.delay_s)
                 self.send_response(response.status)
                 if response.location:
                     self.send_header("Location", response.location)
                 payload = json.dumps(response.body).encode()
+                if response.trickle_s > 0:
+                    # Dribble the body one byte per interval, forever: a client
+                    # that reads incrementally sees bytes keep arriving just
+                    # before every read — a read that loops internally for a
+                    # full 64 KiB would then outlive any deadline.
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    index = 0
+                    while True:
+                        self.wfile.write(payload[index:index + 1])
+                        self.wfile.flush()
+                        index = (index + 1) % len(payload)
+                        time.sleep(response.trickle_s)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
@@ -84,7 +105,7 @@ class FakeDashboard:
             def log_message(self, _format, *_args):
                 return
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._server = _DaemonThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
     @property
@@ -92,8 +113,8 @@ class FakeDashboard:
         return f"http://127.0.0.1:{self._server.server_port}"
 
     def script(self, method: str, status: int = 200, body=None, delay_s: float = 0.0,
-               location: str | None = None) -> None:
-        response = _Response(status, body or {}, delay_s, location)
+               location: str | None = None, trickle_s: float = 0.0) -> None:
+        response = _Response(status, body or {}, delay_s, location, trickle_s)
         self._scripts.setdefault(method, []).append(response)
 
     def __enter__(self):

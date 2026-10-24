@@ -222,9 +222,9 @@ the weekly segment adds a weekday + time stamp (`7d: 13% (↺ Sun 14:10)`). Colo
 pace gap: |used% − elapsed%| in percentage points — ≤5 green, under 11 yellow, ≤15 orange, more
 red. In the rich tier the percentage carries a pace sign: `+` when usage is at or behind the
 window clock (under pace — `5h: +0%` early in a window), `-` when it burns faster than the clock
-(`5h: -60%` with 60% used and only 45% of the clock gone). The legacy `[ramp.rate]` config block
-is kept only for parse compat and no longer
-colors these segments. An unreliable window (missing/past `resets_at`, clock skew) paints the
+(`5h: -60%` with 60% used and only 45% of the clock gone). The dead `[ramp.rate]` band was
+removed: nothing read it, and a leftover `[ramp.rate]` block now reports an unknown-ramp
+warning. An unreliable window (missing/past `resets_at`, clock skew) paints the
 percentage white with no pace sign. In the diagnostics row,
 `alt_h_rate_limit` sits to the left of `alt_w_rate_limit`, so the weekly segment is always the
 first of the two dropped under column pressure.

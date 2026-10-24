@@ -58,29 +58,27 @@ _CURSOR_STATUSLINE_KEYS = frozenset(
     {"type", "command", "padding", "updateIntervalMs", "timeoutMs"})
 
 
-def _command_ownership():
-    """The sibling command-ownership parser, importable whatever the caller's sys.path
-    (tests load this file through importlib; same pattern as the wizard import)."""
+def _sibling(name):
+    """A tools/ sibling module, importable whatever the caller's sys.path.
+
+    setup.py is loaded through importlib by tests and hooks with no guarantee
+    that tools/ sits on sys.path, and runtime code imports no sibling at module
+    level (a broken renderer import must never block uninstalling) — every
+    lazy sibling read goes through this one helper."""
     tools_dir = os.path.dirname(os.path.abspath(__file__))
     if tools_dir not in sys.path:
         sys.path.insert(0, tools_dir)
-    import command_ownership  # pylint: disable=import-outside-toplevel
+    return importlib.import_module(name)
 
-    return command_ownership
+
+def _command_ownership():
+    """The sibling command-ownership parser (see _sibling for the lazy pattern)."""
+    return _sibling("command_ownership")
 
 
 def _jsonc_reader():
-    """The sibling JSONC scanner, on the same lazy footing as _command_ownership.
-
-    setup.py is loaded through importlib by tests and hooks with no guarantee that
-    tools/ sits on sys.path, and this plan forbids module-level sibling imports
-    here, so the comment-tolerant Cursor read reaches its scanner the same way."""
-    tools_dir = os.path.dirname(os.path.abspath(__file__))
-    if tools_dir not in sys.path:
-        sys.path.insert(0, tools_dir)
-    import config_doctor_readers  # pylint: disable=import-outside-toplevel
-
-    return config_doctor_readers
+    """The sibling JSONC scanner, on the same lazy footing (see _sibling)."""
+    return _sibling("config_doctor_readers")
 
 
 _LEGACY_TOML = "statusline.toml"
@@ -95,15 +93,8 @@ Paths = namedtuple(
 
 
 def _config_doctor_checks():
-    """The shared runtime-config resolver, imported lazily whatever the caller's
-    sys.path (same pattern as _command_ownership: setup.py imports no host module
-    at module level, and tests load this file through importlib)."""
-    tools_dir = os.path.dirname(os.path.abspath(__file__))
-    if tools_dir not in sys.path:
-        sys.path.insert(0, tools_dir)
-    import config_doctor_checks  # pylint: disable=import-outside-toplevel
-
-    return config_doctor_checks
+    """The shared runtime-config resolver, lazily (see _sibling)."""
+    return _sibling("config_doctor_checks")
 
 
 def resolve_paths(env):
@@ -183,11 +174,7 @@ def host_config(host):
     only the wizard's preview/wire paths call this (uninstall imports no
     renderer module), so a broken renderer import can never block uninstalling."""
     module_id = {"claude": "claude_host", "cursor": "cursor_host"}[host]
-    tools_dir = os.path.dirname(os.path.abspath(__file__))
-    if tools_dir not in sys.path:
-        sys.path.insert(0, tools_dir)
-    host_module = importlib.import_module(module_id)
-    return host_module.HOST.config
+    return _sibling(module_id).HOST.config
 
 
 def load_segment_inventory(path, host="claude"):
@@ -615,6 +602,11 @@ def _offline_dry_render(entry, candidate, sample_json, host):
     ``XDG_CACHE_HOME`` and an empty ``XDG_CONFIG_HOME`` (same seeding as the
     preview), so the render can neither fetch nor schedule the detached
     refresher — a fresh cache never needs a refresh and no auth path resolves.
+    The child runs with the entry's ``--check-render`` flag: the renderer stays
+    never-blank in normal use, but in check mode it exits nonzero when the
+    pipeline raised or any segment builder failed — renderer-reported failures
+    must reject the candidate, not sail through on the exit-code-0 the normal
+    renderer guarantees even while printing its error line.
     Returns True when the entry exits 0; any spawn failure counts as a
     rejection (fail closed: an unrenderable candidate is never published).
     """
@@ -629,7 +621,7 @@ def _offline_dry_render(entry, candidate, sample_json, host):
             _seed_cursor_synthetic_cache(cache_dir, child)
         try:
             proc = subprocess.run(
-                [sys.executable, "-S", entry], input=sample_json,
+                [sys.executable, "-S", entry, "--check-render"], input=sample_json,
                 capture_output=True, text=True, env=child,
                 timeout=10, check=False)
         except (OSError, subprocess.SubprocessError):
@@ -645,8 +637,14 @@ def _candidate_file(path, text):
 directory (same filesystem, so the later ``os.replace`` is atomic). Returns the
 temp path, or None when the candidate could not be written at all."""
     dirname = os.path.dirname(path) or "."
-    os.makedirs(dirname, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=dirname, suffix=".candidate")
+    try:
+        os.makedirs(dirname, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=dirname, suffix=".candidate")
+    except OSError:
+        # makedirs/mkstemp run outside the fdopen handler above: an
+        # unwritable target directory must degrade to "no candidate" (the
+        # caller rejects the publish) instead of raising out of the commit.
+        return None
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
@@ -3716,13 +3714,33 @@ def _commit_host_statusline(paths, host, host_state, dry, examples_flag):
     hbuf = io.StringIO()
     host_ok = True
     if adopt:
-        with contextlib.redirect_stdout(hbuf), contextlib.redirect_stderr(hbuf):
-            known_ext_ids = _commit_known_ext_ids(
-                paths, host, host_state, examples_flag, dry)
-            host_ok = persist_statusline(
-                paths, host_state, adopt, dry, tty=None,
-                assume_overwrite=True, known_ext_ids=known_ext_ids,
-                host=host)
+        if not dry and "adopt_command" in host_state:
+            # The gate approved ONE exact wiring value; publish only while the
+            # host's live wiring still IS that value. A mismatch means another
+            # process changed the command after approval — adoption is not
+            # blanket overwrite permission for a command the user never saw.
+            approved = host_state.get("adopt_command")
+            fresh = _detect_for(paths, host).get("current_command")
+            if fresh != approved:
+                hbuf.write(
+                    f"error: {host} status-line command changed after approval "
+                    f"(approved {approved!r}, found {fresh!r}) — not replacing a "
+                    "command you never approved; re-run the wizard to review it\n")
+                return {"ok": False, "adopt": adopt, "log": hbuf.getvalue()}
+        try:
+            with contextlib.redirect_stdout(hbuf), contextlib.redirect_stderr(hbuf):
+                known_ext_ids = _commit_known_ext_ids(
+                    paths, host, host_state, examples_flag, dry)
+                host_ok = persist_statusline(
+                    paths, host_state, adopt, dry, tty=None,
+                    assume_overwrite=True, known_ext_ids=known_ext_ids,
+                    host=host)
+        except OSError as exc:
+            # A filesystem failure on THIS host (unwritable config directory,
+            # failed candidate temp file, …) records that host's failed outcome
+            # and must not abort the loop — the other hosts still commit (D-22).
+            host_ok = False
+            hbuf.write(f"error: {host} status-line commit failed: {exc}\n")
     return {"ok": bool(host_ok), "adopt": adopt, "log": hbuf.getvalue()}
 
 
@@ -3883,11 +3901,7 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
 
     # Ensure tools/ is on sys.path so `import wizard_app` resolves regardless
     # of the caller's CWD (repo root in tests; tools/ when run directly).
-    _tools_dir = os.path.dirname(os.path.abspath(__file__))
-    if _tools_dir not in sys.path:
-        sys.path.insert(0, _tools_dir)
-
-    import wizard_app  # pylint: disable=import-outside-toplevel
+    wizard_app = _sibling("wizard_app")
 
     present = {cat: {n for n, _ in entries[cat]} for cat in CATEGORIES}
     stale = stale_link_candidates(paths.claude_dir, paths.install_dir, present)
@@ -4563,12 +4577,8 @@ def cmd_config_doctor(env, tty, dry):
         )
         sys.exit(2)
 
-    _tools_dir = os.path.dirname(os.path.abspath(__file__))
-    if _tools_dir not in sys.path:
-        sys.path.insert(0, _tools_dir)
-
-    import config_doctor_app  # pylint: disable=import-outside-toplevel
-    import config_doctor_checks  # pylint: disable=import-outside-toplevel
+    config_doctor_app = _sibling("config_doctor_app")
+    config_doctor_checks = _sibling("config_doctor_checks")
 
     catalog = config_doctor_checks.build_catalog(env)
     apply_ctx = config_doctor_checks.ReadContext(data=None, env=env, runner=None)

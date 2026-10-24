@@ -239,7 +239,20 @@ def validate_config_file(  # pylint: disable=too-many-locals,too-many-statements
             errors.append(f"bad palette color: {name} = {value!r}")
     for i, line in enumerate(cast(list[Any], raw.get("line") or [])):
         line_dict = cast(dict[str, Any], line) if isinstance(line, dict) else {}
-        for seg in cast(list[Any], line_dict.get("segments") or []):
+        if not isinstance(line, dict):
+            errors.append(f"line[{i}] must be a table, got {type(line).__name__}")
+            continue
+        min_rows: Any = line_dict.get("min_rows", 0)
+        if not isinstance(min_rows, int) or isinstance(min_rows, bool):
+            # A type-broken value here raises inside the render pipeline's
+            # layout resolution (the renderer exits 0 pointing at this
+            # doctor); the doctor is the recovery path and must catch it.
+            errors.append(f"line[{i}] min_rows must be an integer, got {min_rows!r}")
+        segments: Any = line_dict.get("segments", [])
+        if not isinstance(segments, list):
+            errors.append(f"line[{i}] segments must be a list, got {segments!r}")
+            continue
+        for seg in cast(list[Any], segments):
             if seg not in host.builders and seg not in ext_ids:
                 errors.append(f"line[{i}] references unknown segment: {seg}")
     resolved_palette = common_render.core_resolve_palette(
@@ -371,9 +384,22 @@ def _env_problems(env: Env, host: common_render.Host = claude_host.HOST) -> list
     message). Each returned string is a raw problem message (no ANSI, no
     'status-line: ' prefix); pass through common_config.cfg_warn to emit it as
     a dim warning."""
-    _, problems = common_config.cfg_load_config_verbose(env, host.config)
+    _, problems = _load_config_verbose_guarded(env, host)
     prefix = host.config.env_prefix
     return [p for p in problems if prefix in p]
+
+
+def _load_config_verbose_guarded(env: Env, host: common_render.Host) -> tuple[Any, list[str]]:
+    """cfg_load_config_verbose with the type-broken-config crash contained.
+
+    A structurally invalid value (e.g. `min_rows = "x"`) raises inside layout
+    resolution; the structural validation already reports that value, so the
+    env-binding read degrades to (defaults, no problems) instead of crashing
+    the diagnostic."""
+    try:
+        return common_config.cfg_load_config_verbose(env, host.config)
+    except ValueError:
+        return common_config.cfg_default_config(host.config), []
 
 
 _QUOTA_LABEL = " (inferred — undocumented Cursor API)"
@@ -462,12 +488,18 @@ def cmd_doctor(
     if os.path.exists(path):
         errors = [f"{path}: {e}" for e in validate_config_file(path, env, host)]
     failed: set[str] = set()
-    cfg = common_config.cfg_load_config(env, spec)  # never raises (degrades to defaults)
     try:
-        theme = common_render.core_build_theme(cfg, host)
-        failed = _dry_render_failures(cfg, theme, env, host)
-    except Exception as e:  # pylint: disable=broad-exception-caught  # diagnostic backstop reports any crash
-        errors.append(f"render pipeline crashed: {e!r}")
+        cfg = common_config.cfg_load_config(env, spec)
+    except ValueError as exc:
+        # A type-broken config value is exactly what this command diagnoses:
+        # report it and keep the command alive, never a traceback.
+        errors.append(f"{path}: {exc}")
+    else:
+        try:
+            theme = common_render.core_build_theme(cfg, host)
+            failed = _dry_render_failures(cfg, theme, env, host)
+        except Exception as e:  # pylint: disable=broad-exception-caught  # diagnostic backstop reports any crash
+            errors.append(f"render pipeline crashed: {e!r}")
     code = _report_health(path, errors, failed, _env_problems(env, host), host)
     if quota_lines:
         print(quota_lines)

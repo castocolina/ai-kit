@@ -3,6 +3,13 @@
 import os
 import shlex
 
+# Interpreter flags that take NO value and therefore may precede the script
+# argument. Anything else (-c, -m, -X, -W, long options, unknown shorts) makes
+# the command foreign: it either consumes the would-be script token as its own
+# value or runs no script file at all, so the first bare token cannot be
+# trusted as a script path ai-kit may rewrite or uninstall.
+_NO_ARG_FLAGS = frozenset({"-B", "-E", "-I", "-O", "-OO", "-P", "-S", "-q", "-s", "-u"})
+
 
 def _interpreter_command(argv):
     """Whether argv begins with a supported Python interpreter and script."""
@@ -14,13 +21,31 @@ def _interpreter_command(argv):
 
 
 def _script_index(argv):
-    """Return the first positional script argument after Python flags."""
-    return next((index for index, arg in enumerate(argv[1:], 1)
-                 if not arg.startswith("-")), None)
+    """Return the script-argument index, or None for any unsupported form.
+
+    Only allowlisted no-argument flags may precede the script. Any other option
+    (-c/-m run no file; -X/-W and every other option consume the next token as
+    their value) makes the command foreign rather than letting an option value
+    be mistaken for the script path."""
+    index = 1
+    while index < len(argv):
+        arg = argv[index]
+        if arg in _NO_ARG_FLAGS:
+            index += 1
+            continue
+        if arg.startswith("-"):
+            return None
+        return index
+    return None
 
 
 def rewrite_owned_command(command, old_entry, new_entry):
-    """Replace an exact script argv in a supported Python command; otherwise None."""
+    """Replace an exact script argv in a supported Python command; otherwise None.
+
+    The rewritten command is `shlex.join(argv)` verbatim: re-quoting (e.g.
+    swapping shlex's single quotes for double quotes) would change shell
+    semantics for literal `$`/`$(...)` directory names, turning a safely
+    quoted path into an active substitution."""
     if not isinstance(command, str):
         return None
     try:
@@ -35,6 +60,5 @@ def rewrite_owned_command(command, old_entry, new_entry):
         script = os.path.abspath(script)
     if script_index is not None and os.path.normpath(script) == os.path.normpath(old_entry):
         argv[script_index] = new_entry
-        rendered = shlex.join(argv)
-        return rendered.replace("'", '"') if "'" in rendered and '"' not in rendered else rendered
+        return shlex.join(argv)
     return None

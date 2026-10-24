@@ -6,14 +6,16 @@ This is a copy-and-edit reference provider. It reports the machine's available
 RAM (distinct from the built-in `memory` segment, which is the status-line
 process RSS). It demonstrates the external-segment contract:
 
-  * read the column budget from the AI_KIT_SEGMENT_COLS env var (mirrored from
-    the `segment.avail_cols` field in the status JSON on stdin);
+  * read the column budget from the host-neutral `segment.avail_cols` field
+    in the status JSON on stdin (the AI_KIT_SEGMENT_COLS env var is only a
+    fallback for direct/manual runs);
   * pick a long / medium / short rendering that fits, or print nothing to drop;
   * emit a single line, optionally with SGR color (kept) — any other control
     sequence is stripped by the core.
 
 Drop it in ~/.config/ai-kit/segments/ and make it executable. Disable it with
 `[segments] system_memory = false` (or CC_AI_KIT_SEGMENT_SYSTEM_MEMORY=0)."""
+import json
 import os
 import sys
 
@@ -61,7 +63,9 @@ def main():
     # Absolute GiB thresholds (not %-of-total): tune these to your machine — on a
     # large workstation 4 GiB free is already tight, on a small VM it is plenty.
     color = GREEN if gib >= 4 else YELLOW if gib >= 1 else RED
-    cols = int(os.environ.get("AI_KIT_SEGMENT_COLS", "80") or "80")
+    cols = stdin_cols()
+    if cols is None:
+        cols = int(os.environ.get("AI_KIT_SEGMENT_COLS", "80") or "80")
     # 💻 (the machine's RAM) — distinct from the built-in `memory` segment's 🧮
     # (process RSS) and the model-memory sparkline's 🧠, so the three never collide.
     if cols >= 14:
@@ -74,6 +78,24 @@ def main():
         return 0                       # no room -> drop
     sys.stdout.write(f"{color}{text}{RESET}\n")
     return 0
+
+
+def stdin_cols():
+    """Column budget from the host-neutral stdin field, or None.
+
+    The core pipes `segment.avail_cols` on stdin to every provider, on every
+    host — Cursor supplies its width budget ONLY this way (its provider env
+    namespace is AI_KIT_CURSOR_PROVIDER_COLS, never AI_KIT_SEGMENT_COLS), so
+    the env var below is just a fallback for direct/manual runs."""
+    try:
+        payload = json.load(sys.stdin)
+    except (ValueError, OSError):
+        return None
+    block = payload.get("segment") if isinstance(payload, dict) else None
+    cols = block.get("avail_cols") if isinstance(block, dict) else None
+    if isinstance(cols, bool) or not isinstance(cols, (int, float)):
+        return None
+    return int(cols)
 
 
 if __name__ == "__main__":

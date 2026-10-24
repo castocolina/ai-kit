@@ -228,20 +228,6 @@ class TestPickColor(unittest.TestCase):
         for pct, want in cases:
             self.assertEqual(common_types.util_pick_color(pct, THEME.ramps["context"]), want, pct)
 
-    def test_rate_ramp_bands(self):
-        # [ramp.rate] still resolves into theme.ramps["rate"] (config parse
-        # compat, kept so existing overrides don't error) but quota coloring
-        # no longer reads it -- assert the resolved structure directly,
-        # without the pace-era color helper (this refactoring deletes it).
-        self.assertEqual(
-            [(ceil, c) for ceil, c in THEME.ramps["rate"]],
-            [
-                (50.0, THEME.c("GREEN")),
-                (80.0, THEME.c("YELLOW")),
-                (float("inf"), THEME.c("RED+bold")),
-            ],
-        )
-
     def test_slowest_ramp_bands(self):
         # The single shared SLO/SLA ramp for the slowest segment: green under the
         # SLO (15ms), yellow under the SLA (40ms), red+bold beyond. Thresholds are
@@ -3167,14 +3153,14 @@ class TestBuildTheme(unittest.TestCase):
 
     def test_ramp_replaced_whole(self):
         t = common_render.core_build_theme(
-            self._cfg(ramps={"rate": {"50": "GREEN", "inf": "RED"}}), claude_host.HOST
+            self._cfg(ramps={"context": {"50": "GREEN", "inf": "RED"}}), claude_host.HOST
         )
-        self.assertEqual([c for _, c in t.ramps["rate"]], [t.c("GREEN"), t.c("RED")])
-        self.assertEqual([ceil for ceil, _ in t.ramps["rate"]], [50, float("inf")])
+        self.assertEqual([c for _, c in t.ramps["context"]], [t.c("GREEN"), t.c("RED")])
+        self.assertEqual([ceil for ceil, _ in t.ramps["context"]], [50, float("inf")])
 
     def test_unspecified_ramp_keeps_default(self):
         t = common_render.core_build_theme(
-            self._cfg(ramps={"rate": {"inf": "RED"}}), claude_host.HOST
+            self._cfg(ramps={"render_time": {"inf": "RED"}}), claude_host.HOST
         )
         self.assertEqual(len(t.ramps["context"]), len(claude_host.RAMP_DEFAULTS_CLAUDE["context"]))
 
@@ -3210,11 +3196,11 @@ class TestRampFromConfig(unittest.TestCase):
         return f.name
 
     def test_ramp_parsed_into_config(self):
-        path = self._write('[ramp.rate]\n50 = "GREEN"\ninf = "RED+bold"\n')
+        path = self._write('[ramp.context]\n50 = "GREEN"\ninf = "RED+bold"\n')
         cfg = common_config.cfg_load_config(
             {"CC_AI_KIT_CONFIG_FILE": path, "HOME": "/h"}, claude_host.SPEC
         )
-        self.assertEqual(cfg.ramps, {"rate": {"50": "GREEN", "inf": "RED+bold"}})
+        self.assertEqual(cfg.ramps, {"context": {"50": "GREEN", "inf": "RED+bold"}})
 
     def test_unknown_ramp_dropped(self):
         path = self._write('[ramp.bogus]\n10 = "RED"\n')
