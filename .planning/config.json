@@ -50,28 +50,31 @@
   },
   "review": {
     "reviewer_instances": {
-      "opencode-plan-review": {
+      "referee-one": {
         "cli": "opencode",
-        "model": "router-env/my-plan-review"
+        "model": "router-env/my-referee-one"
       },
-      "opencode-glm": {
+      "referee-two": {
         "cli": "opencode",
-        "model": "zai-coding-plan/glm-5.3"
+        "model": "router-env/my-referee-two"
       },
-      "opencode-sol": {
-        "cli": "opencode",
-        "model": "openai/gpt-6.1-sol"
+      "claude-opus": {
+        "cli": "claude",
+        "model": "opus"
       }
     },
     "default_reviewers": [
-      "opencode-plan-review"
+      "referee-one",
+      "referee-two",
+      "claude-opus"
     ],
     "timeouts": {
       "opencode": 1800
     },
     "effort": {
       "opencode": "inherit"
-    }
+    },
+    "parallel_lanes": true
   },
   "ship": {
     "pr_body_sections": []
