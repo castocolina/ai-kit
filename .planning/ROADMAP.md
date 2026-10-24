@@ -786,8 +786,8 @@ run of 2026-10-13/14 and this milestone's own Phases 16.1–23.
   1. Given a phase range (`--from N --to M`, or a list), the skill runs spec then discuss for each
      phase in order with the learned behavior (24 D-01). With no range it reads the roadmap, proposes the
      not-yet-discussed range, and asks the user once.
-  2. Decision models are optional and detected, never assumed: Laya through TCP reachability of a
-     configured local URL, TypeSafe through a key present by name, jev-fast-decision through its
+  2. Decision models are optional and detected, never assumed: Laya through the shared jev client's
+     `/health` probe (amended 2026-10-24 after 21.1; was TCP reachability of a configured local URL), TypeSafe through a key present by name, jev-fast-decision through its
      install (amended 2026-10-14, 18 D-36 / 24 D-08, D-09). With none
      present, every decision falls to the main model's reasoning, and the chain still completes.
      Remote backends need the user's standing consent, and only summaries are sent.

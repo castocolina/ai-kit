@@ -45,7 +45,7 @@ This SPEC encodes what was learned in the tools-installer run of 2026-10-13/14 (
 - **Existing CONTEXT files** from an earlier interactive discuss keep the user's locked
   decisions; only what new facts change is amended, dated.
 - **CodeGraph.** In a git worktree, codegraph may resolve to the main checkout's index. Run
-  `codegraph sync <worktree>` (or `codegraph init` when `.codegraph/` is missing) first, or treat
+  `codegraph sync <worktree>` first when `.codegraph/` exists (never `codegraph init`: indexing is the owner's decision, amended 2026-10-24), or treat
   results as hints.
 - **Backends:**
   - Laya (local): `JEV_API_URL=http://127.0.0.1:8010/v1/systemone`, `JEV_MODEL=jev-1`,
@@ -97,6 +97,7 @@ This SPEC encodes what was learned in the tools-installer run of 2026-10-13/14 (
      - it detects the backends: Laya by a TCP reachability check of a configured local URL (an env variable; no default URL is probed, because the jev skill has no health endpoint and its built-in default is remote Zen; 18 D-36); TypeSafe by a key present by name (`JEV_API_KEY`, or a key file named by an env variable or ai-kit's secrets file); the jev skill by its install;
      - it validates every item (non-empty `instructions`, `context`, 2+ criteria);
      - it sends one item per call to Laya, and batches `needs_fallback` or errored items to TypeSafe;
+     *(amended 2026-10-24 after Phase 21.1: Laya is probed through its `/health` endpoint by the shared jev client, and the ladder is one shared-client call that returns a per-item trail mapped to per-backend columns; the client also adds an OpenCode Zen rung, score items, size caps and per-session consent.)*
      - a `--second-opinion` mode sends chosen items to TypeSafe directly;
      - it calls the installed jev client script and never copies its protocol;
      - it prints one JSON result with each backend's choice, top probability and fallback flag.
@@ -135,7 +136,7 @@ This SPEC encodes what was learned in the tools-installer run of 2026-10-13/14 (
 10. **CodeGraph in every brief**.
     - Current: manual.
     - Target: every spawned subagent prompt says it can use CodeGraph:
-      - `codegraph sync <path>`, or `codegraph init <path>` when `.codegraph/` is missing;
+      - `codegraph sync <path>` only when `.codegraph/` exists (never `codegraph init`, amended 2026-10-24);
       - then `codegraph explore` or the `codegraph_explore` MCP tool;
       - in a worktree, index the worktree first or treat results as hints.
 

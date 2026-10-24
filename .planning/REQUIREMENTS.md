@@ -87,7 +87,7 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 ### Spec-and-Discuss Chain Skill
 
 - [ ] **SDC-01**: An installable ai-kit skill runs `/gsd-spec-phase N --auto` then `/gsd-discuss-phase --analyze --all --batch --assumptions N` for each phase of a given range, or proposes the not-yet-discussed range and asks once
-- [ ] **SDC-02**: Decision models are optional and detected (Laya health, a TypeSafe key present by name with no hardcoded path, jev-fast-decision install; amended 2026-10-14); the ladder is Laya (one item per call) → TypeSafe direct on `needs_fallback` → the main model's reasoning; with no backend the chain still completes; remote calls need standing consent and carry summaries only
+- [ ] **SDC-02**: Decision models are optional and detected (Laya health, a TypeSafe key present by name with no hardcoded path, jev-fast-decision install; amended 2026-10-14); the ladder is Laya → TypeSafe direct on `needs_fallback` → the main model's reasoning, run as one shared jev-client call with a per-item trail (amended 2026-10-24 after 21.1; was one Laya item per call); with no backend the chain still completes; remote calls need standing consent and carry summaries only
 - [ ] **SDC-03**: Each decision is logged with one column per backend and the locked decision with its reason; doc-contradicting model answers are overridden and logged; the chain stops only on a critical, contradictory question
 - [ ] **SDC-04**: The best design wins over the smallest diff, except under `workflow.mvp_mode` (simpler design, without lowering what reaches the product's user); the skill is registered in setup and README and passes `/skill-judge`
 

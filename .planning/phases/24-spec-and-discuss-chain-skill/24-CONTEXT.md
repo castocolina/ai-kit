@@ -129,6 +129,7 @@ locked in `24-SPEC.md` (R1–R13, amended 2026-10-14). This file locks the HOW.
   for Phase 24: `{"active":false,"source":"none",...}`. **Own reasoning** (Laya engine_resolver
   0.63 fb, TypeSafe 0.56 fb): the engine's resolver is what the planner itself uses. Ledger.
 - **D-17: The CodeGraph paragraph is a marked block in the brief template,** included only when
+  - *Amended 2026-10-24 (Phase 24 close-out, matching SPEC R10 and `references/analyzer-brief.md`): never run `codegraph init`; indexing is the owner's decision. With `.codegraph/` present, run `codegraph sync`; without it, skip CodeGraph.*
   `command -v codegraph` succeeds: `codegraph sync <path>` (or `codegraph init <path>` when
   `.codegraph/` is missing), then `codegraph explore` / `codegraph_explore`; in a worktree,
   index the worktree first or treat results as hints. Laya 0.59 (fb), TypeSafe marked_block
