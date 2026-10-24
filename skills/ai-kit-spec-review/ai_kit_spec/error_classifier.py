@@ -35,6 +35,8 @@ STATUS_TO_REASON: dict[str, str | None] = {
     "billing": "billing_or_access",
     "billing_or_access": "billing_or_access",
     "capacity": "capacity",
+    # Template 7 name of the exhausted transient ladder; `capacity` stays for template-6 runners.
+    "transient": "capacity",
     "timeout": "timeout",
     "idle_stall": "timeout",
     "bad_model": "configuration",

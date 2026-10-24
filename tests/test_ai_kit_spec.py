@@ -11826,9 +11826,11 @@ class TestCrossAiTemplateText(unittest.TestCase):
             "heartbeatS": 30,
             "models": {},
             "outerTimeoutS": 1800,
+            "attemptTimeoutS": 0,
+            "newSessionRetries": 3,
             "prefer": ["pi", "cursor", "opencode"],
-            "retries": 2,
             "routerBacked": {},
+            "sameSessionRetries": 3,
             "scrubEnv": self._SCRUB_DEFAULT,
         }
         self.assertEqual(cfg, expected)

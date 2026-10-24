@@ -222,7 +222,7 @@ class TestRunnerTemplate(unittest.TestCase):
         assert node_bin is not None
         with tempfile.TemporaryDirectory() as tmp:
             proc = run_group(
-                [node_bin, TEMPLATE, "--self-test"], 180, cwd=REPO_ROOT, env=runner_env(tmp)
+                [node_bin, TEMPLATE, "--self-test"], 300, cwd=REPO_ROOT, env=runner_env(tmp)
             )
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         self.assertIn("self-test ok", proc.stdout)
@@ -313,7 +313,7 @@ class TestRenderedRunner(unittest.TestCase):
                 written = f.read()
             self.assertEqual(cross_ai_script.script_state(written), "pristine")
             proc = run_group(
-                [node_bin, script_path, "--self-test"], 180, cwd=tmp, env=runner_env(tmp)
+                [node_bin, script_path, "--self-test"], 300, cwd=tmp, env=runner_env(tmp)
             )
             self.assertEqual(proc.returncode, 0, msg=proc.stderr)
 
@@ -422,7 +422,7 @@ _REVIEW_STATUSES = (
     ("fake/quota", "quota", "quota", [600]),
     ("fake/auth", "auth", "auth", [600]),
     ("fake/billing", "billing_or_access", "billing", [600]),
-    ("fake/capacity", "capacity", "capacity", [600]),
+    ("fake/capacity", "capacity", "transient", [30]),
     ("fake/crash", "real_error", "crash", [600]),
     ("fake/hang", "timeout", "timeout", [3]),
     ("fake/missing", "configuration", "bad_model", [600]),
@@ -515,7 +515,7 @@ class TestExecStatusesE2E(unittest.TestCase):
             ("fake/quota", "quota", "quota", 30),
             ("fake/auth", "auth", "auth", 30),
             ("fake/billing", "billing_or_access", "billing", 30),
-            ("fake/capacity", "capacity", "capacity", 30),
+            ("fake/capacity", "capacity", "transient", 30),
             ("fake/crash", "real_error", "crash", 30),
             ("fake/hang", "timeout", "timeout", 3),
             ("fake/missing", "configuration", "bad_model", 30),

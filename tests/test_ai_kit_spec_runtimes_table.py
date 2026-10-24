@@ -773,6 +773,7 @@ class TestStatusMapDrift(unittest.TestCase):
             ("quota_wait", None, "quota"),
             ("billing", None, "billing_or_access"),
             ("capacity", None, "capacity"),
+            ("transient", None, "capacity"),
             ("git_timeout", None, "git_timeout"),
             ("git_error", None, "real_error"),
             ("empty_answer", None, "real_error"),

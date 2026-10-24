@@ -312,6 +312,7 @@ class TestRunRunnerFake(unittest.TestCase):
         cases = {
             "billing": "billing_or_access",
             "capacity": "capacity",
+            "transient": "capacity",
             "git_timeout": "git_timeout",
             "git_error": "real_error",
         }

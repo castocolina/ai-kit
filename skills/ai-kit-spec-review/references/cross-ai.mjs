@@ -61,6 +61,7 @@ import { fileURLToPath } from 'node:url';
 
 // <config>
 const CONFIG = {
+  "attemptTimeoutS": 0,
   "backoffS": [
     30,
     60
@@ -69,14 +70,15 @@ const CONFIG = {
   "extraArgs": {},
   "heartbeatS": 30,
   "models": {},
+  "newSessionRetries": 3,
   "outerTimeoutS": 1800,
   "prefer": [
     "pi",
     "cursor",
     "opencode"
   ],
-  "retries": 2,
   "routerBacked": {},
+  "sameSessionRetries": 3,
   "scrubEnv": [
     "AI_AGENT",
     "CLAUDECODE",
@@ -110,8 +112,8 @@ const REVIEW_PREAMBLE = `
 Read-only review. Do not modify files, do not commit, do not run commands that change state. Reply with the review only.
 </reviewer_rules>
 `;
-const RESUME_MSG = 'You were interrupted by a transient provider error. Continue the same task from where you stopped: ' +
-  'first inspect git status, git diff and git log, do not redo finished steps, finish the remaining steps ' +
+const RESUME_MSG = 'You were interrupted by a provider error. Continue the same task from where you ' +
+  'stopped: first inspect git status, git diff and git log, do not redo finished steps, finish the remaining ' +
   '(verify commands and commits included), then reply with the final report as originally asked.';
 
 // Mirrors model_heuristics._ROUTER_NAME_HINTS; a Python test pins this line.
@@ -583,7 +585,7 @@ const PATTERNS = [
     "cli": "claude",
     "input": "any",
     "match": "overloaded",
-    "class": "capacity",
+    "class": "transient",
     "terminal": false,
     "label": "unverified",
     "evidence": "25-RESEARCH 2.5 CONTEXT"
@@ -593,7 +595,7 @@ const PATTERNS = [
     "cli": "*",
     "input": "any",
     "match": "overloaded",
-    "class": "capacity",
+    "class": "transient",
     "terminal": false,
     "label": "verified",
     "evidence": "25-RESEARCH 2.2 probe"
@@ -603,7 +605,7 @@ const PATTERNS = [
     "cli": "*",
     "input": "any",
     "match": "at capacity",
-    "class": "capacity",
+    "class": "transient",
     "terminal": false,
     "label": "verified",
     "evidence": "25-RESEARCH 2.2 recorded"
@@ -613,7 +615,7 @@ const PATTERNS = [
     "cli": "*",
     "input": "any",
     "match": "service (?:temporarily )?unavailable",
-    "class": "capacity",
+    "class": "transient",
     "terminal": false,
     "label": "verified",
     "evidence": "25-RESEARCH 2.2 recorded"
@@ -623,7 +625,7 @@ const PATTERNS = [
     "cli": "*",
     "input": "any",
     "match": "resource pressure",
-    "class": "capacity",
+    "class": "transient",
     "terminal": false,
     "label": "verified",
     "evidence": "25-RESEARCH 2.2 recorded"
@@ -633,7 +635,7 @@ const PATTERNS = [
     "cli": "*",
     "input": "any",
     "match": "admission capacity",
-    "class": "capacity",
+    "class": "transient",
     "terminal": false,
     "label": "verified",
     "evidence": "25-RESEARCH 2.2 recorded"
@@ -774,7 +776,7 @@ const PATTERNS = [
     "cli": "*",
     "input": "any",
     "match": "\\b50[0234]\\b",
-    "class": "capacity",
+    "class": "transient",
     "terminal": false,
     "label": "verified",
     "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
@@ -784,7 +786,7 @@ const PATTERNS = [
     "cli": "*",
     "input": "any",
     "match": "\\b529\\b",
-    "class": "capacity",
+    "class": "transient",
     "terminal": false,
     "label": "verified",
     "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
@@ -806,7 +808,7 @@ const STATUS_TABLE = {
   auth: { exit: 69 },
   billing: { exit: 69 },
   quota: { exit: 75 },
-  capacity: { exit: 75 },
+  transient: { exit: 75 },
   timeout: { exit: 124 },
   not_installed: { exit: 127 },
   signal: { exit: 128 },
@@ -1421,12 +1423,12 @@ const CLASSIFY_CASES = [
   {
     name: 'router-resource-pressure', cli: 'opencode',
     stderr: 'Error: Service temporarily unavailable due to resource pressure. Retry shortly.',
-    expect: { status: 'capacity', pattern: 'verified' },
+    expect: { status: 'transient', pattern: 'verified' },
   },
   {
     name: 'router-admission', cli: 'opencode',
     stderr: 'Chat admission capacity is temporarily unavailable',
-    expect: { status: 'capacity', pattern: 'verified' },
+    expect: { status: 'transient', pattern: 'verified' },
   },
   {
     name: 'router-prefilter', cli: 'opencode',
@@ -1527,7 +1529,7 @@ const CLASSIFY_CASES = [
   {
     name: 'claude-overloaded', cli: 'claude',
     stderr: 'Overloaded. try again in a moment',
-    expect: { status: 'capacity', pattern: 'unverified' },
+    expect: { status: 'transient', pattern: 'unverified' },
   },
   {
     name: 'claude-resets', cli: 'claude',
@@ -1721,17 +1723,59 @@ function logDeadline(cwd, env, o) {
   log(`cross-ai: deadline ${d.inner}s (outer ${d.outer}s)`);
   return d;
 }
-function retryArgv(name, rt, model, ctx, sid, mode, prompt) {
-  if (mode === 'review') {
-    // A fresh run: pi would reopen (resume) an existing --session-id.
-    ctx.sid = crypto.randomUUID();
-    return { argv: withExtra(name, rt.review(model, ctx)), input: prompt };
+
+// Counts stay in 0..3; a per-attempt cap is 0 (none) or 10..1800 s.
+function clampCount(value) {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(3, n);
+}
+function clampAttemptTimeout(value) {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(1800, Math.max(10, n));
+}
+function ladderLimits(opts) {
+  return {
+    same: clampCount(opts.sameSessionRetries ?? CONFIG.sameSessionRetries),
+    fresh: clampCount(opts.newSessionRetries ?? CONFIG.newSessionRetries),
+  };
+}
+
+// Pure step of the transient ladder. 25-06 adds the quota branch; this stays table-free.
+// `st = {same, fresh, canResume}`, `cls` is `transient` or `stop`, `lim` carries the clamps,
+// the deadline and the wait about to be spent. A step that would leave under 60 s of work
+// stops for the deadline.
+function ladderNext(st, cls, nowMs, lim) {
+  if (cls !== 'transient') return { next: 'stop', why: 'class' };
+  let next = 'stop';
+  let why = 'rungs';
+  if (st.canResume && st.fresh === 0 && st.same < lim.same) {
+    next = 'same';
+    why = 'same-session';
+  } else if (st.fresh < lim.fresh) {
+    next = 'new';
+    why = 'new-session';
   }
-  // A sandboxed exec retry is a fresh run: resume's sandbox flag is not verified.
-  if (sid && rt.resume && !(mode === 'exec' && ctx.codexSandbox)) {
-    return { argv: withExtra(name, rt.resume(model, ctx, sid, mode)), input: RESUME_MSG };
+  if (next !== 'stop' && nowMs + (lim.waitMs || 0) + 60000 > lim.deadlineMs) {
+    return { next: 'stop', why: 'deadline' };
   }
-  return { argv: withExtra(name, rt[mode](model, ctx)), input: `${RESUME_MSG}\n\n${prompt}` };
+  return { next, why };
+}
+
+// Rung 1 continues the captured session. Null when no session can be continued: no id,
+// no resume formula, a sandboxed codex exec, or codex review (its resume argv has no
+// read-only sandbox).
+function sameSessionArgv(name, rt, model, ctx, sid, mode) {
+  if (!sid || !rt.resume) return null;
+  if (name === 'codex' && (mode === 'review' || ctx.codexSandbox)) return null;
+  return { argv: withExtra(name, rt.resume(model, ctx, sid, mode)), input: RESUME_MSG };
+}
+
+// Rung 2 is a fresh argv on the same CLI and model. Pi gets a new session id.
+function newSessionArgv(name, rt, model, ctx, mode, prompt) {
+  if (name === 'pi') ctx.sid = crypto.randomUUID();
+  return { argv: withExtra(name, rt[mode](model, ctx)), input: prompt };
 }
 function readOr(p, dflt) { try { return fs.readFileSync(p, 'utf8'); } catch { return dflt; } }
 
@@ -2072,13 +2116,13 @@ for (const [sig, n] of [['SIGTERM', 15], ['SIGINT', 2], ['SIGHUP', 1]]) {
 }
 
 // Live rows: a kill needs a row marked terminal. A structured event additionally skips
-// transient and capacity rows (D-09), so a retry notice or a bare code never kills.
+// transient rows (D-09), so a retry notice or a bare code never kills.
 function terminalTable() {
   return PATTERNS.filter((row) => row.terminal);
 }
 
 function eventTable() {
-  return terminalTable().filter((row) => row.class !== 'transient' && row.class !== 'capacity');
+  return terminalTable().filter((row) => row.class !== 'transient');
 }
 
 function liveMatch(cli, source, text) {
@@ -2110,7 +2154,7 @@ function watchChunk(cli, source, relay, state, chunk) {
   relay.push(chunk);
 }
 
-async function runOnce(bin, argv, input, env, cwd, label) {
+async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
   let outBytes = 0;
   let lastBytes = 0;
   const started = Date.now();
@@ -2138,7 +2182,8 @@ async function runOnce(bin, argv, input, env, cwd, label) {
     lastBytes = outBytes;
   }, CONFIG.heartbeatS * 1000);
   const r = await runChild(bin, argv, {
-    cwd, env, input, capMs: budgetMs(Number.POSITIVE_INFINITY, runDeadline), limit: runDeadline,
+    cwd, env, input, capMs: budgetMs(opts.capMs ?? Number.POSITIVE_INFINITY, runDeadline),
+    limit: runDeadline,
     onStdout: (d) => {
       outBytes += d.length;
       watchChunk(cli, 'stdout', outRelay, state, decodeUtf8(d.toString('utf8')));
@@ -2166,9 +2211,40 @@ const sleep = (ms) => new Promise((resolve) => {
   sleepers.add(wake);
 });
 
+// The child timer keeps 60 s in hand for the next rung when the deadline has it.
+// A deadline shorter than that still runs this attempt (the ladder then admits nothing).
+function attemptCapMs(opts, nowMs) {
+  const remaining = Math.max(0, runDeadline - nowMs);
+  const room = remaining - 60000;
+  const budget = room > 0 ? room : remaining;
+  const cap = clampAttemptTimeout(opts.attemptTimeoutS ?? CONFIG.attemptTimeoutS);
+  if (cap > 0) return Math.min(cap * 1000, budget);
+  return budget;
+}
+
+// A quota or rate-limit match wins over a plain timeout; anything else on a timed-out
+// attempt is a transient rung (owner list), and a real failure class is itself.
+function ladderClass(timedOut, hit) {
+  if (!timedOut) return hit === 'transient' ? 'transient' : 'stop';
+  if (hit && hit !== 'transient') return 'stop';
+  return 'transient';
+}
+
+// A rungs stop that started as a timeout still reports transient (owner rung 4): Python
+// re-runs a timeout status once per tier. timeout/124 is only the no-budget stop before any
+// rung was admitted. A transient failure that cannot start a rung stays transient.
+function ladderStop(step, timedOut, admitted, fallback) {
+  if (step.why === 'class') return { status: fallback, timedOut: false };
+  if (step.why === 'deadline' && !admitted && timedOut) {
+    return { status: 'timeout', timedOut: true };
+  }
+  return { status: 'transient', timedOut: false };
+}
+
 async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const backoff = opts.backoffS || CONFIG.backoffS;
   const beforeSig = opts.beforeSig ?? null;
+  const limits = ladderLimits(opts);
   const tmp = makeTemp('cross-ai-');
   const ctx = {
     cwd: process.cwd(), sid: crypto.randomUUID(), outFile: path.join(tmp, 'last-message.md'),
@@ -2177,13 +2253,19 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     piThinking: opts.piThinking, codexSandbox: opts.codexSandbox,
   };
   const env = childEnv(rt.env, process.env);
-  let argv = withExtra(name, rt[mode](model, ctx)); let input = prompt;
+  let argv = withExtra(name, rt[mode](model, ctx));
+  let input = prompt;
+  const ladder = { same: 0, fresh: 0, canResume: false };
+  let admitted = false;
   try {
     for (let attempt = 0; ; attempt++) {
-      const left = Math.round(budgetMs(Number.POSITIVE_INFINITY, runDeadline) / 1000);
+      const capMs = attemptCapMs(opts, Date.now());
+      const left = Math.max(0, Math.round(capMs / 1000));
       log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${left}s`);
       log(`cross-ai: argv=${JSON.stringify(argv)}`);
-      const r = await runOnce(binPath, argv, input, env, ctx.cwd, name);
+      const r = await runOnce(binPath, argv, input, env, ctx.cwd, name, { capMs });
+      // A child can only stall the post-run git snapshot while it is alive.
+      try { fs.rmSync(path.join(env.HOME || '', '.fake-git-hang')); } catch { /* not set */ }
       if (aborting) return { ok: false, code: 128 + aborting, outBytes: r.outBytes, cli_rc: r.code };
       const route = opts.route || 'unknown';
       const lane = confirmedRoute(route);
@@ -2192,71 +2274,71 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         const pattern = cls && cls.label ? cls.label : 'none';
         return { route, rule, pattern };
       };
-      // A live terminal signal is the attempt's class; no second pass (D-09).
-      if (r.liveHit) {
-        const hit = hitForLane(r.liveHit, lane);
-        return {
-          ok: false, status: hit.status, outBytes: r.outBytes, cli_rc: r.code ?? '-',
-          timedOut: Boolean(r.timedOut), ...evidenceOf(hit),
-        };
-      }
-      // Post-hoc: a timed-out attempt is classified over everything it printed, terminal and
-      // non-terminal rows alike. Quota or rate-limit re-labels the timeout; transient, capacity
-      // or no match keeps timeout so the Python tier ladder still advances.
-      if (r.timedOut) {
-        const captured = [r.stderr || '', r.partialErr || '', r.partialOut || ''].join('\n');
-        const events = extractEvents(name, r.stdout);
-        const cls = classifyStop({ cli: name, routerLane: lane, stderr: captured, events });
-        const soft = cls.status === 'transient' || cls.status === 'capacity';
-        const keep = cls.status === 'crash' || soft;
-        if (!keep) {
-          return {
-            ok: false, status: cls.status, code: 124, timedOut: true, outBytes: r.outBytes,
-            cli_rc: r.code ?? '-', ...evidenceOf(cls),
-          };
-        }
-        return { ok: false, code: 124, timedOut: true, outBytes: r.outBytes, cli_rc: r.code };
-      }
       if (r.spawnErr) {
         const code = r.spawnErr.code === 'ENOENT' ? 127 : 126;
         return { ok: false, code, error: String(r.spawnErr), outBytes: 0, cli_rc: null };
       }
       const p = rt.parse(r.stdout, ctx);
-      const cls = classifyStop({
-        cli: name, routerLane: lane,
-        stderr: r.stderr, events: extractEvents(name, r.stdout),
-      });
-      const hit = cls.status === 'crash' ? null : cls.status;
-      const evidence = {
-        route,
-        rule: hit ? cls.rule : '-',
-        pattern: hit ? cls.label : 'none',
-      };
-      // stderr noise never overrules a clean exit with an answer; it only names a failure.
-      const failed = r.code !== 0 || Boolean(p.error);
-      if (!failed && p.text.trim()) {
-        return {
-          ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'), cli_rc: 0,
-        };
+      // A live terminal signal is the attempt's class; no second pass (D-09).
+      let hit = null;
+      let evidence = evidenceOf(null);
+      if (r.liveHit) {
+        const live = hitForLane(r.liveHit, lane);
+        hit = live.status;
+        evidence = evidenceOf(live);
+      } else if (r.timedOut) {
+        // Post-hoc over everything it printed, terminal and non-terminal rows alike.
+        const captured = [r.stderr || '', r.partialErr || '', r.partialOut || ''].join('\n');
+        const events = extractEvents(name, r.stdout);
+        const cls = classifyStop({ cli: name, routerLane: lane, stderr: captured, events });
+        if (cls.status !== 'crash') {
+          hit = cls.status;
+          evidence = evidenceOf(cls);
+        }
+      } else {
+        const cls = classifyStop({
+          cli: name, routerLane: lane,
+          stderr: r.stderr, events: extractEvents(name, r.stdout),
+        });
+        if (cls.status !== 'crash') {
+          hit = cls.status;
+          evidence = evidenceOf(cls);
+        }
+        const failed = r.code !== 0 || Boolean(p.error);
+        if (!failed && p.text.trim()) {
+          return {
+            ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'),
+            cli_rc: 0,
+          };
+        }
+        if (hit && hit !== 'transient') {
+          return {
+            ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+          };
+        }
+        if (!failed) return { ok: false, status: 'empty_answer', outBytes: r.outBytes, cli_rc: 0 };
       }
-      if (hit && hit !== 'transient') {
+      if (hit && hit !== 'transient' && !r.timedOut) {
         return {
           ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
         };
       }
-      if (!failed) return { ok: false, status: 'empty_answer', outBytes: r.outBytes, cli_rc: 0 };
+      const cls = ladderClass(Boolean(r.timedOut), hit);
       const wait = (backoff[attempt] ?? backoff[backoff.length - 1]) * 1000;
-      const why = hit || 'crash';
       const sig = r.signal ? ' ' + r.signal : '';
-      log(`cross-ai: ${name} failed (exit ${r.code}${sig}, rule=${hit ? cls.rule : '-' })`);
-      // Retry only with the wait plus a minute of work left before the deadline.
-      const exhausted = hit === 'transient' && (
-        attempt >= (opts.retries ?? CONFIG.retries) || runDeadline - Date.now() < wait + 60000
-      );
-      if (hit !== 'transient' || exhausted) {
-        const st = exhausted ? 'capacity' : 'crash';
+      log(`cross-ai: ${name} failed (exit ${r.code}${sig}, rule=${hit ? evidence.rule : '-' })`);
+      const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
+      ladder.canResume = Boolean(sameSessionArgv(name, rt, model, ctx, sid, mode));
+      const step = ladderNext(ladder, cls, Date.now(), {
+        ...limits, deadlineMs: runDeadline, waitMs: wait,
+      });
+      log(`cross-ai: ladder ${name} next=${step.next} why=${step.why}`);
+      if (step.next === 'stop') {
+        const stop = ladderStop(step, Boolean(r.timedOut), admitted, hit || 'crash');
         return {
-          ok: false, status: st, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+          ok: false, status: stop.status, timedOut: stop.timedOut,
+          code: stop.status === 'timeout' ? 124 : undefined,
+          outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
         };
       }
       if (mode === 'review' && beforeSig !== null) {
@@ -2272,16 +2354,84 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
           };
         }
       }
+      let nextInput = prompt;
+      if (step.next === 'new' && mode === 'exec') {
+        const gate = await rung2Gate(ctx.cwd, beforeSig, prompt);
+        if (gate.stop) {
+          log(`cross-ai: ladder ${name} stop why=dirty-tree`);
+          return {
+            ok: false, status: gate.status, outBytes: r.outBytes, cli_rc: r.code ?? '-',
+            ...evidence,
+          };
+        }
+        nextInput = gate.input;
+      }
       await sleep(budgetMs(wait, runDeadline));
       if (aborting) return { ok: false, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
-      const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
-      const retry = retryArgv(name, rt, model, ctx, sid, mode, prompt);
-      argv = retry.argv;
-      input = retry.input;
+      admitted = true;
+      if (step.next === 'same') {
+        ladder.same += 1;
+        const retry = sameSessionArgv(name, rt, model, ctx, sid, mode);
+        argv = retry.argv;
+        input = retry.input;
+      } else {
+        ladder.fresh += 1;
+        const retry = newSessionArgv(name, rt, model, ctx, mode, nextInput);
+        argv = retry.argv;
+        input = retry.input;
+      }
     }
   } finally {
     dropTemp(tmp);
   }
+}
+
+// Every <files> body in the prompt, split on commas. Backticks, quotes and a leading `./`
+// are presentation, not part of the path. The union of every block is the plan's own scope
+// (assumption A6: the GSD prompt carries the whole plan).
+function promptFiles(prompt) {
+  const out = new Set();
+  const re = /<files>([\s\S]*?)<\/files>/g;
+  let m;
+  while ((m = re.exec(String(prompt || '')))) {
+    for (let raw of m[1].split(',')) {
+      raw = raw.trim().replace(/^[`'"]+|[`'"]+$/g, '').replace(/^\.\//, '').trim();
+      if (raw) out.add(raw);
+    }
+  }
+  return out;
+}
+
+// Null when the ignored or nested parts differ, or git fails: those changes have no path to
+// account for. Otherwise the sorted paths that differ between the two write-tree ids.
+async function changedPaths(before, mid, cwd) {
+  const beforeParts = String(before || '').split('\t');
+  const midParts = String(mid || '').split('\t');
+  if (beforeParts.slice(1).join('\t') !== midParts.slice(1).join('\t')) return null;
+  const git = which('git', process.env.PATH || '');
+  if (!git || !beforeParts[0] || !midParts[0]) return null;
+  const diff = await runChild(
+    git, ['diff-tree', '-r', '--name-only', '-z', beforeParts[0], midParts[0]],
+    { cwd, capMs: GIT_CAP_MS, limit: runDeadline },
+  );
+  if (diff.timedOut || diff.spawnErr || diff.code !== 0) return null;
+  return diff.stdout.split('\0').filter(Boolean).sort();
+}
+
+// Rung 2 runs over an unchanged tree with the original prompt, or over a changed tree only
+// when every changed path is one the prompt lists (the resume message goes before it then).
+// A non-git cwd, a git failure or any other change stops the ladder.
+async function rung2Gate(cwd, beforeSig, prompt) {
+  const stop = (status) => ({ stop: true, status });
+  if (!inGitTree(cwd) || beforeSig === null) return stop('transient');
+  const beforeTree = String(beforeSig).split('\t').slice(1).join('\t');
+  const mid = await treeState(cwd, runDeadline);
+  if (mid === null) return stop(gitFailStatus());
+  if (stateSig(mid) === beforeSig) return { stop: false, input: prompt };
+  const changed = await changedPaths(beforeTree, mid.tree, cwd);
+  const allowed = promptFiles(prompt);
+  if (!changed || !changed.length || changed.some((p) => !allowed.has(p))) return stop('transient');
+  return { stop: false, input: `${RESUME_MSG}\n\n${prompt}` };
 }
 
 const CODEX_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
@@ -2416,8 +2566,9 @@ function hermeticEnv(tmp, extra = {}) {
 function writeCopy(tmp, name, override) {
   const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
   const cfg = {
-    backoffS: [0, 0], effort: {}, extraArgs: {}, heartbeatS: 30, models: {}, outerTimeoutS: 1800,
-    prefer: ['pi', 'cursor', 'opencode'], retries: 2, routerBacked: {}, scrubEnv: [...CONFIG.scrubEnv],
+    attemptTimeoutS: 0, backoffS: [0, 0], effort: {}, extraArgs: {}, heartbeatS: 30, models: {},
+    newSessionRetries: 3, outerTimeoutS: 1800, prefer: ['pi', 'cursor', 'opencode'],
+    routerBacked: {}, sameSessionRetries: 3, scrubEnv: [...CONFIG.scrubEnv],
     ...override,
   };
   const block = `// <config>\nconst CONFIG = ${JSON.stringify(cfg, null, 2)};\n// </config>`;
@@ -2469,7 +2620,7 @@ const model = argOf('--model');
 const fakeMode = model.startsWith('fake/') ? model.slice(5).replace(/:[a-z]+$/, '') : '';
 const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('gc', pid); };
 const STICKY_FAKE = new Set([
-  'hang', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big', 'sentinelsplit',
+  'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big', 'sentinelsplit',
   'limit-mid', 'limit-partial', 'limit-flood', 'limit-partial-flood',
   'transient-hang', 'bare-429-hang', 'retry-notice', 'retry-notice-429',
 ]);
@@ -2605,6 +2756,26 @@ const FAKE_MODES = {
     fs.writeFileSync((process.env.HOME || '') + '/.fake-git-fail', '1');
     process.stdout.write('# Summary\nok');
   },
+  event400: () => {
+    process.stderr.write('[400]: event: error\n');
+    process.exit(1);
+  },
+  dirtyevent400: () => {
+    fs.appendFileSync('a.txt', 'dirty\n');
+    process.stderr.write('[400]: event: error\n');
+    process.exit(1);
+  },
+  hangonce: () => {
+    const home = process.env.HOME || '';
+    const ctr = home + '/.fake-hangonce-count';
+    let n = 0;
+    try { n = Number(fs.readFileSync(ctr, 'utf8')) || 0; } catch { /* first call */ }
+    fs.writeFileSync(ctr, String(n + 1));
+    if (n < 1) { setInterval(() => {}, 1 << 30); return; }
+    fs.appendFileSync('a.txt', 'ok-line\n');
+    process.stdout.write('# Summary\nok');
+    process.exit(0);
+  },
   flaky: () => {
     const home = process.env.HOME || '';
     const ctr = home + '/.fake-flaky-count';
@@ -2661,6 +2832,10 @@ const FAKE_MODES = {
     fs.writeFileSync((process.env.HOME || '') + '/.fake-git-fail', '1');
     process.stdout.write('# Review\nok');
   },
+  'review-event400': () => {
+    process.stderr.write('[400]: event: error\n');
+    process.exit(1);
+  },
   'review-flaky-edit': () => {
     const home = process.env.HOME || '';
     const ctr = home + '/.fake-review-flaky-count';
@@ -2703,6 +2878,16 @@ log('pi ' + (fakeMode || model));
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (d) => { stdinBuf += d; });
 process.stdin.on('end', () => {
+  if (process.env.FAKE_SIDS) {
+    const sid = argOf('--session-id');
+    const head = 'You were interrupted by a provider error.';
+    let kind = 'other';
+    if (stdinBuf.startsWith(head)) {
+      kind = stdinBuf.includes('\n\n') ? 'resume-plus' : 'resume';
+    }
+    else if (stdinBuf.length) kind = 'prompt';
+    fs.appendFileSync(process.env.FAKE_SIDS, sid + ' ' + kind + '\n');
+  }
   const fn = FAKE_MODES[fakeMode];
   if (!fn) process.exit(1);
   fn();
@@ -2723,7 +2908,9 @@ if (sub[0] === 'models') {
     console.log('\x1b[1mauto\x1b[0m (current, default)');
     console.log('composer-2.5 - Composer 2.5');
   } else if (process.env.FAKE_CURSOR_LIST !== 'empty') {
-    for (const id of ['fake-ok-cursor', 'fake-err-cursor', 'composer-2.5']) console.log(id + ' - label');
+    for (const id of [
+      'fake-ok-cursor', 'fake-err-cursor', 'fake-event400-cursor', 'composer-2.5',
+    ]) console.log(id + ' - label');
   }
   process.exit(0);
 }
@@ -2733,6 +2920,10 @@ process.stdin.on('data', () => {}).on('end', () => {
   if (model === 'fake-err-cursor') {
     console.log(JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized', session_id: 'c2' }));
     process.exit(0);
+  }
+  if (model === 'fake-event400-cursor') {
+    process.stderr.write('[400]: event: error\n');
+    process.exit(1);
   }
   fs.appendFileSync('a.txt', 'cursor\n');
   console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '## Summary\nok', session_id: 'c1' }));
@@ -2779,18 +2970,19 @@ if (sub[0] === 'debug' && sub[1] === 'models') {
   log('codex models');
   const listed = [
     'fake-ok-codex', 'fake-retry-codex', 'fake-limit-codex',
-    'fake-error-then-ok-codex', 'fake-bare-error-hang-codex',
+    'fake-error-then-ok-codex', 'fake-bare-error-hang-codex', 'fake-event400-codex',
   ];
   console.log(JSON.stringify({ models: listed.map((slug) => ({ slug, visibility: 'list' })) }));
   process.exit(0);
 }
 const outFile = argOf('-o');
+if (sub[0] === 'exec' && sub[1] === 'resume') log('codex-resume ' + argOf('-m'));
 log('codex ' + argOf('-m'));
 process.stdin.on('data', () => {}).on('end', () => {
-  fs.appendFileSync('a.txt', 'cx\n');
+  const model = argOf('-m');
+  if (model !== 'fake-event400-codex') fs.appendFileSync('a.txt', 'cx\n');
   if (outFile) fs.writeFileSync(outFile, '## Summary\nok');
   console.log(JSON.stringify({ type: 'thread.started', thread_id: 't1' }));
-  const model = argOf('-m');
   const limitText = 'You\u2019ve hit your usage limit. Upgrade to Pro, or try again later.';
   if (model === 'fake-retry-codex') {
     console.log(JSON.stringify({ type: 'error', message: 'stream disconnected; retrying 1/5' }));
@@ -2811,6 +3003,12 @@ process.stdin.on('data', () => {}).on('end', () => {
   } else if (model === 'fake-bare-error-hang-codex') {
     console.log(JSON.stringify({ type: 'error', message: limitText }));
     setInterval(() => {}, 1 << 30);
+    return;
+  } else if (model === 'fake-event400-codex') {
+    console.log(JSON.stringify({
+      type: 'turn.failed', error: { message: 'stream disconnected before completion' },
+    }));
+    setTimeout(() => process.exit(1), 50);
     return;
   }
 });
@@ -3027,6 +3225,7 @@ async function runSelfTestCase(tmp, spec) {
   const copy = writeCopy(tmp, spec.name, spec.config || {});
   const env = hermeticEnv(tmp, {
     HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), FAKE_CALLS: calls, FAKE_PIDS: pidFile,
+    FAKE_SIDS: path.join(tmp, `sids-${spec.name}.log`),
     AIKIT_XAI_SENTINEL: 'sk-aikit-SENTINEL-' + process.pid,
     AIKIT_XAI_BEARER: 'brtok-' + process.pid,
     ...(spec.env || {}),
@@ -3485,9 +3684,11 @@ async function blackBoxSelfTest() {
         },
       },
       {
-        // A completed transient line is recorded live but never re-labels a timeout.
+        // A completed transient line on a timed-out attempt is a transient rung, and a
+        // deadline this short cannot admit one, so the run stops before any rung.
         name: 'post-hoc-timeout-transient-stays',
         args: ['--prefer', 'pi', '--model-pi', 'fake/transient-hang', '--timeout', '3'],
+        config: { backoffS: [30, 60] },
         exit: 124,
         status: new RegExp('^AIKIT-XAI status=timeout cli=pi model=fake/transient-hang ' +
           'exit=124 .* action=stop$'),
@@ -3874,6 +4075,11 @@ async function blackBoxSelfTest() {
           const flaky = ctx.calls.filter((l) => l === 'pi flaky');
           if (flaky.length !== 2) return `flaky calls=${flaky.length}`;
           if (!/attempt=1 timeout=2\d\ds/.test(r.stderr)) return 'attempt line lacks the time left'; // IN-01
+          const sids = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n');
+          if (sids.length !== 2) return `sids=${sids.join('|')}`;
+          const [a, b] = sids.map((l) => l.split(' '));
+          if (a[0] !== b[0]) return 'flaky switched session';
+          if (b[1] !== 'resume') return `second input ${b[1]}`;
           const st = spawnSync('git', ['status', '--porcelain'], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
           const lines = (st.stdout || '').trim().split('\n').filter(Boolean);
           if (lines.length !== 1 || !lines[0].endsWith(' a.txt')) return `porcelain=${lines.join('|')}`;
@@ -3884,10 +4090,10 @@ async function blackBoxSelfTest() {
         name: 'overloaded',
         args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded'],
         exit: 75,
-        status: /^AIKIT-XAI status=capacity cli=pi model=fake\/overloaded exit=75 .* action=stop$/,
+        status: /^AIKIT-XAI status=transient cli=pi model=fake\/overloaded exit=75 .* action=stop$/,
         check: (_r, ctx) => {
           const n = ctx.calls.filter((l) => l === 'pi overloaded').length;
-          return n === 3 ? null : `overloaded calls=${n}`;
+          return n === 7 ? null : `overloaded calls=${n}`;
         },
       },
       {
@@ -3895,8 +4101,268 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded', '--timeout', '3'],
         config: { backoffS: [30, 60] },
         exit: 75,
-        status: /^AIKIT-XAI status=capacity cli=pi model=fake\/overloaded exit=75 cli_rc=1 .* tree=clean action=stop$/,
-        check: (_r, ctx) => (ctx.elapsedMs < 5000 ? null : `elapsed ${ctx.elapsedMs}ms`),
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/overloaded ' +
+          'exit=75 cli_rc=1 .* tree=clean action=stop$'),
+        check: (_r, ctx) => {
+          if (ctx.elapsedMs >= 5000) return `elapsed ${ctx.elapsedMs}ms`;
+          const n = ctx.calls.filter((l) => l === 'pi overloaded').length;
+          return n === 1 ? null : `calls=${n}`;
+        },
+      },
+      {
+        // A quota-free timeout is a transient rung when the deadline still admits one.
+        name: 'ladder-timeout-then-ok',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/hangonce', '--timeout', '120'],
+        config: { attemptTimeoutS: 10, backoffS: [0, 0] },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/hangonce exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi hangonce').length;
+          if (n !== 2) return `hangonce calls=${n}`;
+          return deadCheck(ctx, ['pi']);
+        },
+      },
+      {
+        // After the attempt fewer than 60 s remain, so no rung is admitted.
+        name: 'ladder-timeout-no-budget',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '15'],
+        config: { attemptTimeoutS: 8 },
+        exit: 124,
+        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 .* action=stop$/,
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi hang').length;
+          if (n !== 1) return `hang calls=${n}`;
+          return deadCheck(ctx, ['gc']);
+        },
+      },
+      {
+        // 3 same-session retries, then 3 new sessions, then stop. Same model every call.
+        name: 'ladder-transient-exhausted',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* tree=clean action=stop$'),
+        check: (_r, ctx) => {
+          const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
+          if (runs.length !== 7) return `calls=${runs.length}`;
+          if (runs.some((l) => l !== 'pi event400')) return `model changed: ${runs.join('|')}`;
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length !== 7) return `sids=${rows.length}`;
+          const ids = rows.map((r) => r[0]);
+          if (new Set(ids.slice(0, 4)).size !== 1) return 'rung 1 switched session';
+          const fresh = ids.slice(4);
+          if (new Set(fresh).size !== 3) return `fresh ids=${fresh.join(',')}`;
+          if (fresh.includes(ids[0])) return 'a new session reused the first id';
+          const kinds = rows.map((r) => r[1]);
+          if (kinds[0] !== 'prompt') return `call 1 input ${kinds[0]}`;
+          if (kinds.slice(1, 4).some((k) => k !== 'resume')) {
+            return `rung 1 input ${kinds.join(',')}`;
+          }
+          if (kinds.slice(4).some((k) => k !== 'prompt')) return `rung 2 input ${kinds.join(',')}`;
+          return null;
+        },
+      },
+      {
+        // Every changed path is named by the prompt, so rung 2 continues with the resume message.
+        name: 'ladder-dirty-inside',
+        stdin: '<tasks>\n<task>\n<files>a.txt</files>\n</task>\n</tasks>\n',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/dirtyevent400', '--no-preamble'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/dirtyevent400 ' +
+          'exit=75 .* tree=dirty action=stop$'),
+        check: (r, ctx) => {
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length !== 7) return `calls=${rows.length}`;
+          const fresh = rows.slice(4).map((r) => r[1]);
+          if (fresh.some((k) => k !== 'resume-plus')) return `rung 2 input ${fresh.join(',')}`;
+          return null;
+        },
+      },
+      {
+        // A change the prompt never names stops the ladder after rung 1.
+        name: 'ladder-dirty-outside',
+        stdin: 'prompt\n',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/dirtyevent400', '--no-preamble'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/dirtyevent400 ' +
+          'exit=75 .* tree=dirty action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi dirtyevent400').length;
+          if (n !== 4) return `calls=${n}`;
+          return (r.stderr || '').includes('why=dirty-tree') ? null : 'missing dirty-tree line';
+        },
+      },
+      {
+        // Outside a git work tree nothing can account for an edit, so rung 2 never starts.
+        name: 'ladder-non-git',
+        setup: (c) => {
+          fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true });
+          c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo);
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* tree=unknown action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi event400').length;
+          if (n !== 4) return `calls=${n}`;
+          return (r.stderr || '').includes('why=dirty-tree') ? null : 'missing dirty-tree line';
+        },
+      },
+      {
+        // Cursor never prints a session id, so rung 1 is skipped: one call plus three new ones.
+        name: 'ladder-no-session-cursor',
+        args: ['--prefer', 'cursor', '--model-cursor', 'fake-event400-cursor'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=cursor ' +
+          'model=fake-event400-cursor exit=75 .* action=stop$'),
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'cursor-agent fake-event400-cursor').length;
+          return n === 4 ? null : `cursor calls=${n}`;
+        },
+      },
+      {
+        // Codex review has no read-only resume, so every retry is a fresh review run.
+        name: 'ladder-codex-review-fresh',
+        args: ['--mode', 'review', '--prefer', 'codex', '--model-codex', 'fake-event400-codex'],
+        config: { prefer: ['codex'] },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=codex ' +
+          'model=fake-event400-codex exit=75 .* action=stop$'),
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'codex fake-event400-codex').length;
+          if (n !== 4) return `codex calls=${n}`;
+          if (ctx.calls.some((l) => l.startsWith('codex-resume'))) return 'review resumed';
+          return null;
+        },
+      },
+      {
+        // Codex exec captures thread.started, so calls 2-4 resume that session.
+        name: 'ladder-codex-exec-resume',
+        args: ['--prefer', 'codex', '--model-codex', 'fake-event400-codex'],
+        config: { prefer: ['codex'] },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=codex ' +
+          'model=fake-event400-codex exit=75 .* action=stop$'),
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'codex fake-event400-codex').length;
+          if (n !== 7) return `codex calls=${n}`;
+          const resumed = ctx.calls.filter((l) => l === 'codex-resume fake-event400-codex');
+          return resumed.length === 3 ? null : `resumes=${resumed.length}`;
+        },
+      },
+      {
+        // Review mode resumes pi with its read-only flags, then starts new sessions.
+        name: 'ladder-review-resume',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-event400'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi ' +
+          'model=fake/review-event400 exit=75 .* action=stop$'),
+        check: (_r, ctx) => {
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length !== 7) return `calls=${rows.length}`;
+          const ids = rows.map((r) => r[0]);
+          if (new Set(ids.slice(0, 4)).size !== 1) return 'rung 1 switched session';
+          if (new Set(ids.slice(4)).size !== 3) return 'rung 2 did not start new sessions';
+          return null;
+        },
+      },
+      {
+        // Seven transient failures with a resumable session: three same, three new, then stop.
+        name: 'pure-ladder-sequence',
+        pure: () => {
+          const lim = { same: 3, fresh: 3, deadlineMs: 1000000, waitMs: 0 };
+          const st = { same: 0, fresh: 0, canResume: true };
+          const got = [];
+          for (let i = 0; i < 7; i++) {
+            const step = ladderNext(st, 'transient', 0, lim);
+            got.push(`${step.next}/${step.why}`);
+            if (step.next === 'same') st.same += 1;
+            else if (step.next === 'new') st.fresh += 1;
+          }
+          const want = [
+            'same/same-session', 'same/same-session', 'same/same-session',
+            'new/new-session', 'new/new-session', 'new/new-session', 'stop/rungs',
+          ];
+          return JSON.stringify(got) === JSON.stringify(want) ? null : `steps=${got.join(',')}`;
+        },
+      },
+      {
+        // No session to continue: straight to the three new sessions, then stop.
+        name: 'pure-ladder-no-resume',
+        pure: () => {
+          const lim = { same: 3, fresh: 3, deadlineMs: 1000000, waitMs: 0 };
+          const st = { same: 0, fresh: 0, canResume: false };
+          const got = [];
+          for (let i = 0; i < 4; i++) {
+            const step = ladderNext(st, 'transient', 0, lim);
+            got.push(`${step.next}/${step.why}`);
+            if (step.next === 'new') st.fresh += 1;
+          }
+          const want = ['new/new-session', 'new/new-session', 'new/new-session', 'stop/rungs'];
+          return JSON.stringify(got) === JSON.stringify(want) ? null : `steps=${got.join(',')}`;
+        },
+      },
+      {
+        // Hand-checked boundary: nowMs + waitMs + 60000 passes the deadline at +59999 and is
+        // inside it at +60000 (waitMs 0).
+        name: 'pure-ladder-deadline',
+        pure: () => {
+          const st = { same: 0, fresh: 0, canResume: true };
+          const now = 1000000;
+          const early = ladderNext(st, 'transient', now, {
+            same: 3, fresh: 3, deadlineMs: now + 59999, waitMs: 0,
+          });
+          const on = ladderNext(st, 'transient', now, {
+            same: 3, fresh: 3, deadlineMs: now + 60000, waitMs: 0,
+          });
+          if (early.next !== 'stop' || early.why !== 'deadline') {
+            return `early=${early.next}/${early.why}`;
+          }
+          if (on.next !== 'same' || on.why !== 'same-session') {
+            return `boundary=${on.next}/${on.why}`;
+          }
+          return null;
+        },
+      },
+      {
+        name: 'pure-ladder-clamps',
+        pure: () => {
+          if (clampCount(9) !== 3) return `9 -> ${clampCount(9)}`;
+          if (clampCount(-1) !== 0) return `-1 -> ${clampCount(-1)}`;
+          if (clampAttemptTimeout(0) !== 0) return `0 -> ${clampAttemptTimeout(0)}`;
+          if (clampAttemptTimeout(5) !== 10) return `5 -> ${clampAttemptTimeout(5)}`;
+          if (clampAttemptTimeout(1801) !== 1800) return `1801 -> ${clampAttemptTimeout(1801)}`;
+          return null;
+        },
+      },
+      {
+        // A timeout class walks the same rungs; a rungs stop ends transient, a pre-rung
+        // deadline stop stays a timeout.
+        name: 'pure-ladder-timeout',
+        pure: () => {
+          const lim = { same: 3, fresh: 3, deadlineMs: 1000000, waitMs: 0 };
+          const st = { same: 0, fresh: 0, canResume: true };
+          const first = ladderNext(st, 'transient', 0, lim);
+          if (first.next !== 'same') return `timeout class did not walk: ${first.next}`;
+          const rungs = ladderStop({ why: 'rungs' }, true, true, 'crash');
+          if (rungs.status !== 'transient' || rungs.timedOut) return `rungs stop ${rungs.status}`;
+          const early = ladderStop({ why: 'deadline' }, true, false, 'crash');
+          if (early.status !== 'timeout' || !early.timedOut) return `deadline stop ${early.status}`;
+          return null;
+        },
+      },
+      {
+        name: 'pure-prompt-files',
+        pure: () => {
+          const text = '<files>`a.txt`, "./b.txt", c.txt</files>\n' +
+            '<files>d.txt, </files>\nnotes <files>e.txt</files>';
+          const got = [...promptFiles(text)].sort();
+          const want = ['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt'];
+          return JSON.stringify(got) === JSON.stringify(want)
+            ? null : `files=${got.join(',')}`;
+        },
       },
       {
         name: 'review-ok',
@@ -4011,11 +4477,12 @@ async function blackBoxSelfTest() {
           const stdoutLine = (r.stdout || '').split('\n').find((l) => l.startsWith('codex\t'));
           if (!stdoutLine) return 'missing codex stdout';
           const reviewArgv = stdoutLine.split('\t')[2];
-          const m = (r.stderr || '').match(/cross-ai: retry codex argv=(\S+)/);
-          if (!m) return 'missing retry line';
-          const retryArgv = m[1];
-          if (retryArgv !== reviewArgv) return 'retry argv mismatch';
-          const parsed = JSON.parse(retryArgv);
+          const err = r.stderr || '';
+          if (!err.includes('cross-ai: rung1 codex unavailable')) return 'rung 1 was available';
+          const m = err.match(/cross-ai: rung2 codex argv=(\S+)/);
+          if (!m) return 'missing rung2 line';
+          if (m[1] !== reviewArgv) return 'rung2 argv mismatch';
+          const parsed = JSON.parse(m[1]);
           if (!parsed.includes('--sandbox') || !parsed.includes('read-only')) return 'missing sandbox';
           if (parsed.some((t) => String(t).includes('resume'))) return 'has resume';
           return null;
@@ -4029,17 +4496,19 @@ async function blackBoxSelfTest() {
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
         check: (r) => {
-          const m = (r.stderr || '').match(/cross-ai: retry codex argv=(\S+)/);
-          if (!m) return 'missing retry line';
+          const m = (r.stderr || '').match(/cross-ai: rung1 codex argv=(\S+)/);
+          if (!m) return 'missing rung1 line';
           const parsed = JSON.parse(m[1]);
           if (!parsed.includes('resume')) return 'missing resume';
           if (!parsed.includes('--dangerously-bypass-approvals-and-sandbox')) return 'missing bypass';
-          for (const k of ['model_reasoning_effort=high', 'service_tier=flex']) if (!parsed.includes(k)) return `retry argv missing ${k}`;
+          for (const k of ['model_reasoning_effort=high', 'service_tier=flex']) {
+            if (!parsed.includes(k)) return `rung1 argv missing ${k}`;
+          }
           return null;
         },
       },
       {
-        // SPEC R5: a review retry is a fresh run, so pi gets a new session id.
+        // Rung 1 reopens the same pi session; rung 2 differs only by the session id.
         name: 'argv-retry-pi-review',
         args: ['--print-argv', '--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/ok'],
         exit: 0,
@@ -4047,13 +4516,19 @@ async function blackBoxSelfTest() {
         check: (r) => {
           const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
           const first = JSON.parse(line.split('\t')[2]);
-          const m = (r.stderr || '').match(/cross-ai: retry pi argv=(\S+)/);
-          if (!m) return 'missing retry line';
-          const retry = JSON.parse(m[1]);
+          const err = r.stderr || '';
+          const one = err.match(/cross-ai: rung1 pi argv=(\S+)/);
+          const two = err.match(/cross-ai: rung2 pi argv=(\S+)/);
+          if (!one || !two) return 'missing rung line';
+          const rung1 = JSON.parse(one[1]);
+          const rung2 = JSON.parse(two[1]);
+          if (JSON.stringify(rung1) !== JSON.stringify(first)) {
+            return 'rung1 differs from the first argv';
+          }
           const sid = (a) => a[a.indexOf('--session-id') + 1];
-          if (sid(retry) === sid(first)) return 'retry reuses the session id';
+          if (sid(rung2) === sid(first)) return 'rung2 reuses the session id';
           const same = (a) => JSON.stringify(a.filter((t) => t !== sid(a)));
-          return same(retry) === same(first) ? null : 'retry argv differs beyond the session id';
+          return same(rung2) === same(first) ? null : 'rung2 differs beyond the session id';
         },
       },
       {
@@ -4064,10 +4539,18 @@ async function blackBoxSelfTest() {
         check: (r) => {
           const stdoutLine = (r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
           if (!stdoutLine) return 'missing cursor stdout';
-          const reviewArgv = stdoutLine.split('\t')[2];
-          const m = (r.stderr || '').match(/cross-ai: retry cursor argv=(\S+)/);
-          if (!m || m[1] !== reviewArgv) return 'retry mismatch';
-          if (JSON.parse(m[1]).includes('--resume')) return 'has resume';
+          const review = JSON.parse(stdoutLine.split('\t')[2]);
+          const m = (r.stderr || '').match(/cross-ai: rung1 cursor argv=(\S+)/);
+          if (!m) return 'missing rung1 line';
+          const parsed = JSON.parse(m[1]);
+          if (!parsed.includes('--mode') || parsed[parsed.indexOf('--mode') + 1] !== 'ask') {
+            return 'lost --mode ask';
+          }
+          if (!parsed.includes('--resume')) return 'missing --resume';
+          const dropped = parsed.filter((t) => t !== '--resume' && t !== '<sid>');
+          if (JSON.stringify(dropped) !== JSON.stringify(review)) {
+            return 'rung1 differs beyond --resume';
+          }
           return null;
         },
       },
@@ -4440,10 +4923,12 @@ async function blackBoxSelfTest() {
           if (argv.includes('--dangerously-bypass-approvals-and-sandbox')) {
             return 'bypass still present';
           }
-          const retry = (r.stderr || '').split('\n').find((l) => l.includes('retry codex argv='));
-          if (!retry) return 'missing retry argv';
-          const retryArgv = JSON.parse(retry.slice(retry.indexOf('[')));
-          if (retryArgv.includes('resume')) return 'retry resumed';
+          const err = r.stderr || '';
+          if (!err.includes('cross-ai: rung1 codex unavailable')) return 'rung 1 was available';
+          const rung2 = err.split('\n').find((l) => l.includes('rung2 codex argv='));
+          if (!rung2) return 'missing rung2 argv';
+          const rung2Argv = JSON.parse(rung2.slice(rung2.indexOf('[')));
+          if (rung2Argv.includes('resume')) return 'rung 2 resumed';
           return null;
         },
       },
@@ -4635,12 +5120,12 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'outer-race',
-        config: { outerTimeoutS: 10 },
+        config: { outerTimeoutS: 40 },
         args: ['--prefer', 'pi', '--model-pi', 'fake/outer-race', '--timeout', '8'],
         exit: 124,
-        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/outer-race exit=124 .* tree=unknown action=stop$/,
+        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/outer-race exit=124 .* action=stop$/,
         check: (r, ctx) => {
-          if (ctx.elapsedMs >= 10000) return `elapsed ${ctx.elapsedMs}`;
+          if (ctx.elapsedMs >= 30000) return `elapsed ${ctx.elapsedMs}`;
           const lines = (r.stderr || '').split('\n');
           const statusIdx = lines.findIndex((l) => l.startsWith('AIKIT-XAI '));
           if (statusIdx < 0) return 'no status';
@@ -4829,8 +5314,11 @@ async function main(argv) {
         ? withExtra(c.name, formula(c.model, ctx)) : null;
       process.stdout.write(`${c.name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(argvOut) : 'NO MODEL'}\n`);
       if (c.model && argvOut) {
-        const retry = retryArgv(c.name, c.rt, c.model, ctx, '<sid>', o.mode, '<prompt>');
-        log(`cross-ai: retry ${c.name} argv=${JSON.stringify(retry.argv)}`);
+        const rung1 = sameSessionArgv(c.name, c.rt, c.model, ctx, '<sid>', o.mode);
+        if (rung1) log(`cross-ai: rung1 ${c.name} argv=${JSON.stringify(rung1.argv)}`);
+        else log(`cross-ai: rung1 ${c.name} unavailable`);
+        const rung2 = newSessionArgv(c.name, c.rt, c.model, ctx, o.mode, '<prompt>');
+        log(`cross-ai: rung2 ${c.name} argv=${JSON.stringify(rung2.argv)}`);
       }
     }
     if (first) log(`cross-ai: a run uses ${first.name} only`);
@@ -4926,6 +5414,8 @@ async function main(argv) {
   });
   liveFields.out = r.outBytes || 0;
   liveFields.cli_rc = r.cli_rc ?? '-';
+  // The snapshot reads against the finalize window, not the call deadline: an attempt may
+  // legitimately run until the deadline (cycle-3 attempt cap), and the tree read comes after.
   let after = noTree ? null : await treeState(process.cwd(), finalizeBy);
   // A signal during this snapshot killed its git child: read once more on the signal budget.
   if (!noTree && aborting && after === null) after = await treeState(process.cwd(), finalizeBy);
