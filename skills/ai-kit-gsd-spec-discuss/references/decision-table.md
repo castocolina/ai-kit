@@ -1,9 +1,10 @@
 # Decision table
 
 Read before the first ladder call. "High" means a column's `fallback` is false — the
-threshold of that backend's own row in the client's table (per-backend, not a fixed 0.7:
-today Laya 0.7, TypeSafe 0.8, OpenCode Zen 0.75). A `fallback: true` column whose `top` is at or
-above its backend's threshold was forced (size cap or a server truncation report), not low confidence.
+threshold of that backend's own row in the client's table (per-backend; the numbers are in
+`jev-fast-decision`'s `reference.md` and `backends/`). A `fallback: true` column whose `top`
+is at or above its backend's threshold was forced (size cap or a server truncation report),
+not low confidence.
 "Evidence" means what you verified live or what an earlier SPEC/CONTEXT locks — not what
 seems plausible.
 

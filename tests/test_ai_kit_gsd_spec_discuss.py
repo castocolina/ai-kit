@@ -9,6 +9,7 @@ Laya) and uses a temp HOME/XDG tree. Never reads the user's real config.
 
 import argparse
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -31,22 +32,40 @@ import edge_floor
 import phase_range
 
 SENTINEL = "SENTINEL-KEY-0123456789abcdef"
+BAD = SENTINEL  # the fake client's credential-shaped leak (same text, one name)
+SECRET_ID = "sk-" + "a" * 30  # a schema-valid id shaped like a key (CR-01)
 HEAD = "0" * 40
 _PUBLIC_BACKEND_KEYS = {"name", "remote", "batch", "host", "usable", "reason", "key_source",
                         "consent", "status", "key_check"}
 _PUBLIC_CONSENT_KEYS = {"ok", "backend", "host", "consent", "file", "note", "reason"}
 
-# Fake jev client carrying the protocol line decide.py requires: logs its calls, answers every
-# item from one rung named "fake", and leaks its whole env when FAKE_JEV_LEAK is set (24 D-13).
+# Fake jev client carrying the protocol line decide.py requires: logs every call with the exact
+# payload it received, answers every item from one rung named "fake", leaks its whole env when
+# FAKE_JEV_LEAK is set, and leaks a synthetic credential *through allowlisted field names* when
+# FAKE_JEV_FIELD_LEAK is set (24 D-13, WR-02).
 FAKE_CLIENT = textwrap.dedent('''
     import json, os, sys
 
     CLIENT_PROTOCOL = 2
 
+    BAD = "SENTINEL-KEY-0123456789abcdef"
+    FIELD_LEAK = os.environ.get("FAKE_JEV_FIELD_LEAK") == "1"
+
     argv = sys.argv[1:]
     if os.environ.get("FAKE_JEV_LOG"):
         with open(os.environ["FAKE_JEV_LOG"], "a") as fh:
             fh.write(json.dumps({"argv": argv}) + "\\n")
+
+    def log_payload(payload):
+        if os.environ.get("FAKE_JEV_LOG"):
+            with open(os.environ["FAKE_JEV_LOG"], "a") as fh:
+                fh.write(json.dumps({"argv": argv, "payload": payload}) + "\\n")
+
+    def leak(entry, **fields):
+        """Stamp a credential-shaped value into fields decide.py is allowed to print."""
+        if FIELD_LEAK:
+            entry.update(fields)
+        return entry
 
     def emit(out):
         if os.environ.get("FAKE_JEV_LEAK"):
@@ -56,38 +75,47 @@ FAKE_CLIENT = textwrap.dedent('''
 
     if argv == ["--probe"]:
         backends = [
-            {"name": "fake", "remote": False, "batch": False, "host": "127.0.0.1",
-             "usable": True, "key_source": None, "reason": None, "consent": None},
+            leak({"name": "fake", "remote": False, "batch": False, "host": "127.0.0.1",
+                  "usable": True, "key_source": None, "reason": None, "consent": None},
+                 host=BAD, key_source=BAD, reason=BAD, consent=BAD, key_check=BAD),
             {"name": "remote-one", "remote": True, "batch": True, "host": "example.test",
              "usable": False, "key_source": None, "reason": "no_key", "consent": None,
              "debug_env": dict(os.environ)},
         ]
-        emit({"status": "ok", "backends": backends})
+        emit(leak({"status": "ok", "backends": backends}, status=BAD))
         sys.exit(0)
     if len(argv) == 3 and argv[0] == "consent":
-        out = {"ok": True, "backend": argv[2], "host": "example.test",
-               "consent": "2026-10-18", "file": "/tmp/fake-consent.json",
-               "note": "fake note"}
+        out = leak({"ok": True, "backend": argv[2], "host": "example.test",
+                    "consent": "2026-10-18", "file": "/tmp/x/ai-kit/jev-consent.json",
+                    "note": "questions go to example.test; retention terms unverified"},
+                   backend=BAD, host=BAD, consent=BAD, file=BAD, note=BAD, reason=BAD)
         if os.environ.get("FAKE_JEV_LEAK"):
             out["debug_env"] = dict(os.environ)
         print(json.dumps(out))
         sys.exit(0)
 
     payload = json.load(sys.stdin)
+    log_payload(payload)
     answers, trail = {}, {}
     for item in payload["items"]:
         names = list(item.get("criteria") or {"yes": "y", "no": "n"})
         top = 0.9 if "sure" in item["id"] else 0.5
         rest = round((1 - top) / (len(names) - 1), 4)
-        entry = {"backend": "fake", "model": "fake-1", "choice": names[0],
-                 "probabilities": {name: (top if i == 0 else rest)
-                                   for i, name in enumerate(names)},
-                 "top": top, "needs_fallback": top < 0.7}
+        entry = leak({"backend": "fake", "model": "fake-1", "choice": names[0],
+                      "probabilities": {name: (top if i == 0 else rest)
+                                        for i, name in enumerate(names)},
+                      "top": top, "needs_fallback": top < 0.7}, model=BAD)
         answers[item["id"]] = entry
-        trail[item["id"]] = [entry]
+        rungs = [entry]
+        if FIELD_LEAK:
+            # an errored rung ahead of the answer: its error text is a credential, and an
+            # invalid rung must never be reported as the backend that decided the item
+            rungs = [leak({"backend": "fake"}, error=BAD)] + rungs
+        trail[item["id"]] = rungs
     emit({"status": "ok", "answers": answers, "trail": trail,
-          "backends": [{"name": "fake", "remote": False, "batch": False, "host": "127.0.0.1",
-                        "usable": True, "key_source": None, "reason": None, "consent": None}],
+          "backends": [leak({"name": "fake", "remote": False, "batch": False,
+                             "host": "127.0.0.1", "usable": True, "key_source": None,
+                             "reason": None, "consent": None}, model=BAD)],
           "consent_used": [{"backend": "remote-one", "granted": "2026-10-18",
                             "debug_env": "leaked"}],
           "remote_available": ["remote-one", 42]})
@@ -180,7 +208,15 @@ class TestItemError(unittest.TestCase):
             ("code_fence_context", choice_item("x", "```python\nprint(1)\n```")),
             ("secret_pattern_context", choice_item("x", "token sk-" + "a" * 30)),
             ("too_long_context", choice_item("x", "y" * (decide.MAX_FIELD_CHARS + 1))),
+            # CR-01: the id passes the same guard as every other field — the client keys its
+            # question state by id, quotes it in the instructions and logs it.
+            ("secret_pattern_id", choice_item("sk-" + "a" * 30)),
+            ("code_fence_id", choice_item("a```b")),
+            ("too_long_id", choice_item("z" * (decide.MAX_FIELD_CHARS + 1))),
             ("bad_type", {**choice_item("x"), "type": "box"}),
+            # WR-01: a JSON array or object is unhashable; it fails this item, it does not raise.
+            ("bad_type", {**choice_item("arr"), "type": []}),
+            ("bad_type", {**choice_item("obj"), "type": {}}),
             ("bad_criteria", score_item("s", ["only"])),
             ("bad_criteria", score_item("s", [f"l{i}" for i in range(11)])),
             ("bad_criteria", score_item("s", {"low": "high"})),
@@ -191,6 +227,27 @@ class TestItemError(unittest.TestCase):
         for reason, item in cases:
             with self.subTest(reason=reason, id=item["id"]):
                 self.assertEqual(decide.item_error(item), reason)
+
+
+class TestPartitionIds(unittest.TestCase):
+    """CR-01: a rejected id is keyed by its stdin index, never echoed as a result key."""
+
+    def test_unsafe_id_is_never_echoed_as_a_key(self):
+        valid, results, order = decide.partition([choice_item(SECRET_ID), choice_item("good")])
+        self.assertEqual([item["id"] for item in valid], ["good"])
+        self.assertEqual(order, ["#0", "good"])
+        self.assertEqual(set(results), {"#0", "good"})
+        self.assertEqual(results["#0"]["reason"], "secret_pattern_id")
+        self.assertNotIn(SECRET_ID, json.dumps(results))
+        self.assertNotIn(SECRET_ID, json.dumps(order))
+
+    def test_an_unsafe_id_never_repeats_as_a_sibling_key(self):
+        valid, results, order = decide.partition([choice_item(SECRET_ID),
+                                                  choice_item(SECRET_ID),
+                                                  choice_item("good")])
+        self.assertEqual([item["id"] for item in valid], ["good"])
+        self.assertEqual(order, ["#0", "#1", "good"])
+        self.assertNotIn(SECRET_ID, json.dumps(results))
 
 
 class TestTypedAnswer(unittest.TestCase):
@@ -243,6 +300,31 @@ class TestTypedAnswer(unittest.TestCase):
         self.assertEqual(decide.typed_answer("nope", self.NOUL), {"error": "invalid_response"})
         self.assertEqual(decide.typed_answer({"backend": "one", "model": "m-1"}, self.CHOICE),
                          {"error": "invalid_response"})
+
+    def test_invalid_confident_rung_does_not_decide(self):
+        # WR-03: decided_by is the last validated confident column. An unknown choice, a
+        # non-boolean fallback, or a non-finite / out-of-range probability is an error column.
+        results = {"c": {}}
+        got = {"backends": [{"name": "laya"}, {"name": "typesafe"}],
+               "trail": {"c": [
+                   {"backend": "laya", "choice": "nope", "top": 0.9,
+                    "needs_fallback": False, "model": "m-1"},
+                   {"backend": "typesafe", "choice": "a", "top": 0.4,
+                    "needs_fallback": True, "model": "m-1"},
+               ]}}
+        decide.fill_columns(got, results, [self.CHOICE])
+        self.assertEqual(results["c"]["laya"], {"error": "invalid_response"})
+        self.assertEqual(results["c"]["typesafe"]["choice"], "a")
+        self.assertEqual(results["c"]["decided_by"], "own_reasoning")
+        for bad_top in (float("nan"), float("inf"), float("-inf"), -0.1, 1.1, True, "0.9"):
+            with self.subTest(top=bad_top):
+                answer = decide.typed_answer({"choice": "a", "top": bad_top,
+                                              "needs_fallback": False, "model": "m-1"},
+                                             self.CHOICE)
+                self.assertEqual(answer, {"error": "invalid_response"})
+        self.assertEqual(decide.typed_answer({"choice": "a", "top": 0.9,
+                                              "needs_fallback": "false", "model": "m-1"},
+                                             self.CHOICE), {"error": "invalid_response"})
 
 
 class TestFindClient(_TmpHome):
@@ -299,6 +381,28 @@ class TestLadderCli(_TmpHome):
     @staticmethod
     def _client_calls(calls):
         return [call for call in calls if call[0][0][:2] == [sys.executable, "-B"]]
+
+    def test_unsafe_item_id_reaches_no_payload_no_output_and_no_answer_log(self):
+        # CR-01: the id is the one field that is both a result key and remote payload text, so
+        # it takes the same guard before the client is ever called: the request body, the
+        # client's persistent answer log and decide.py's own stdout must never see it.
+        with JevStub() as laya:
+            result, out = self.ladder([choice_item(SECRET_ID), choice_item("good")],
+                                      JEV_LAYA_URL=laya.url)
+            raw = b"".join(post["body"] for post in laya.posts)
+            questions = json.dumps([body["questions"] for body in laya.bodies])
+        answer_log = (Path(self.env["XDG_STATE_HOME"]) / "ai-kit" / "jev-answers.jsonl")
+        self.assertEqual(result["order"], ["#0", "good"])
+        self.assertEqual(result["items"]["#0"]["reason"], "secret_pattern_id")
+        self.assertEqual(result["items"]["good"]["decided_by"], "laya",
+                         "one unsafe id must not lose its valid sibling")
+        self.assertNotIn(SECRET_ID, out.stdout + out.stderr)
+        self.assertNotIn(SECRET_ID, json.dumps(result))
+        self.assertNotIn(SECRET_ID.encode(), raw, "the id reached a request body")
+        self.assertNotIn(SECRET_ID, questions, "the id reached a question key")
+        self.assertTrue(answer_log.is_file(), "the sibling's answer line is the positive control")
+        self.assertNotIn(SECRET_ID, answer_log.read_text(encoding="utf-8"),
+                         "the id reached the answer log")
 
     def test_ladder_laya_then_remote_batch(self):
         with (JevStub(tops={"low1": 0.5, "low2": 0.5}) as laya,
@@ -443,6 +547,28 @@ class TestLadderCli(_TmpHome):
         self.assertEqual(again["order"], ["#0", "good", "#2"])
         self.assertEqual(set(again["items"]), {"#0", "good", "#2"})
 
+    def test_unhashable_item_type_rejects_that_item_only(self):
+        # WR-01: one malformed type must not take the batch down with it (D-07).
+        items = [{**choice_item("bad_list"), "type": []}, choice_item("suregood"),
+                 {**choice_item("bad_obj"), "type": {}}]
+        result, out = self.ladder(items, client=self.fake)
+        self.assertNotIn("Traceback", out.stderr)
+        self.assertEqual(result["items"]["bad_list"]["reason"], "bad_type")
+        self.assertEqual(result["items"]["bad_obj"]["reason"], "bad_type")
+        self.assertEqual(result["items"]["suregood"]["decided_by"], "fake")
+
+    def test_allowlisted_field_values_cannot_carry_a_credential(self):
+        # WR-02: the sentinel rides in fields the allowlist is allowed to print.
+        result, out = self.ladder([choice_item("sure1")], client=self.fake,
+                                  FAKE_JEV_FIELD_LEAK="1")
+        self.assertNotIn(SENTINEL, out.stdout + out.stderr + json.dumps(result))
+        self.assertEqual(result["items"]["sure1"]["decided_by"], "fake")
+        self.assertIsNone(result["items"]["sure1"]["fake"]["model"])
+        for args in (["detect"], ["consent", "show", "typesafe"]):
+            with self.subTest(args=args):
+                shown = self.cli_json(args, client=self.fake, FAKE_JEV_FIELD_LEAK="1")
+                self.assertNotIn(SENTINEL, json.dumps(shown))
+
     def test_no_key_value_in_any_output_even_from_a_leaky_client(self):
         result, out = self.ladder([choice_item("sure1")], client=self.fake,
                                   JEV_API_KEY=SENTINEL, FAKE_JEV_LEAK="1")
@@ -457,26 +583,27 @@ class TestLadderCli(_TmpHome):
     def test_item_validation_matches_client(self):
         client = _load_client()
         edges = [
-            {**noul_item("n_true_false"), "criteria": {"true": "holds", "false": "fails"}},
-            {**noul_item("n_null"), "criteria": None},
-            {**noul_item("n_yes_no"), "criteria": {"yes": "y", "no": "n"}},
-            {**noul_item("n_one_key"), "criteria": {"true": "holds"}},
-            {**choice_item("c_one_key"), "criteria": {"a": "only"}},
-            {**choice_item("c_empty_key"), "criteria": {"": "empty", "b": "fine"}},
-            {**choice_item("c_space_key"), "criteria": {" ": "space", "b": "fine"}},
-            score_item("s_1", ["only"]),
-            score_item("s_11", [f"l{i}" for i in range(11)]),
-            score_item("s_dict", {"a": "b"}),
-            score_item("s_empty_level", ["low", " "]),
-            score_item("s_2", ["low", "high"]),
-            score_item("s_10", [f"l{i}" for i in range(10)]),
-            {**noul_item(" "), },
-            {**noul_item("empty_ctx"), "context": " "},
-            {**noul_item("extra_key"), "evidence": "raw"},
+            ({**noul_item("n_true_false"), "criteria": {"true": "holds", "false": "fails"}}, True),
+            ({**noul_item("n_null"), "criteria": None}, False),
+            ({**noul_item("n_yes_no"), "criteria": {"yes": "y", "no": "n"}}, False),
+            ({**noul_item("n_one_key"), "criteria": {"true": "holds"}}, False),
+            ({**choice_item("c_one_key"), "criteria": {"a": "only"}}, False),
+            ({**choice_item("c_empty_key"), "criteria": {"": "empty", "b": "fine"}}, False),
+            ({**choice_item("c_space_key"), "criteria": {" ": "space", "b": "fine"}}, False),
+            (score_item("s_1", ["only"]), False),
+            (score_item("s_11", [f"l{i}" for i in range(11)]), False),
+            (score_item("s_dict", {"a": "b"}), False),
+            (score_item("s_empty_level", ["low", " "]), False),
+            (score_item("s_2", ["low", "high"]), True),
+            (score_item("s_10", [f"l{i}" for i in range(10)]), True),
+            ({**noul_item(" "), }, False),
+            ({**noul_item("empty_ctx"), "context": " "}, False),
+            ({**noul_item("extra_key"), "evidence": "raw"}, False),
         ]
-        for item in edges:
+        for item, accepted in edges:
             with self.subTest(id=item["id"]):
-                if decide.item_error(item) is None:
+                self.assertEqual(decide.item_error(item) is None, accepted)
+                if accepted:
                     client.request_body({"reviewed_head": HEAD, "items": [item]}, "jev-1")
 
     def test_ladder_reports_consent_metadata(self):
@@ -635,14 +762,6 @@ class TestLadderCli(_TmpHome):
         self.assertEqual(opencode_posts, [], "typesafe consent must not open opencode")
 
 
-class TestRealClientSmoke(_TmpHome):
-    def test_real_client_answers_disabled_shape_without_backends(self):
-        out = subprocess.run([sys.executable, "-B", str(REPO_CLIENT)], input="{}",
-                             capture_output=True, text=True,
-                             env={"PATH": self.env["PATH"]}, check=False, timeout=30)
-        self.assertEqual(json.loads(out.stdout)["status"], "disabled")
-
-
 # ─── phase_range.py ───────────────────────────────────────────────────────────
 
 def _args(start=None, end=None, phases=None):
@@ -699,6 +818,73 @@ class TestPhaseRange(_TmpHome):
         self.assertIsNone(phase_range.undiscussed_reason(str(self.root / "16.1-b"),
                                                          self.times.get))
 
+    def _cli(self, text, *args):
+        return subprocess.run([sys.executable, str(SCRIPTS / "phase_range.py"),
+                               "--roadmap", "-", *args],
+                              input=text, capture_output=True, text=True, check=False,
+                              cwd=self.tmp, timeout=30)
+
+    def test_malformed_roadmap_exits_2(self):
+        # WR-06: an error object, a non-object, a bad entry or a bad selector is exit 2.
+        # An empty phases list is the real "nothing to do".
+        for text in ('{"error":"engine failed"}', "[]", '{"phases":[null]}',
+                     '{"phases":[{"number":"nope"}]}', "not json"):
+            with self.subTest(text=text):
+                out = self._cli(text)
+                self.assertEqual(out.returncode, 2, out.stderr)
+                self.assertNotIn("Traceback", out.stderr)
+                self.assertNotIn("proposed", out.stdout)
+        empty = self._cli('{"phases":[]}')
+        self.assertEqual(empty.returncode, 0, empty.stderr)
+        self.assertEqual(json.loads(empty.stdout)["proposed"], [])
+        roadmap = json.dumps(self.roadmap)
+        for args in (("--from", "18", "--to", "16"), ("--from", "abc",),
+                     ("--list", "16,nope")):
+            with self.subTest(args=args):
+                out = self._cli(roadmap, *args)
+                self.assertEqual(out.returncode, 2, out.stderr)
+                self.assertNotIn("Traceback", out.stderr)
+
+    def test_git_time_equal_later_spec_and_untracked_mtime(self):
+        # D-18: commit time, not a substituted clock. Equal stamps are discussed; a later SPEC
+        # commit is newer; an untracked SPEC falls back to mtime.
+        repo = self.tmp / "gitphase"
+        phase = repo / "09-x"
+        phase.mkdir(parents=True)
+        spec, context = phase / "09-SPEC.md", phase / "09-CONTEXT.md"
+        spec.write_text("spec")
+        context.write_text("context")
+        early, later = "1577836800", "1577923200"
+
+        def git(*args, stamp=early):
+            subprocess.run(["git", "-c", "user.email=t@example.com", "-c", "user.name=Test",
+                            *args], cwd=repo, check=True, capture_output=True,
+                           env={**os.environ, "GIT_AUTHOR_DATE": f"@{stamp}",
+                                "GIT_COMMITTER_DATE": f"@{stamp}"})
+
+        git("init")
+        git("add", ".")
+        git("commit", "-m", "both")
+        self.assertEqual(phase_range.git_time(str(spec)), float(early))
+        self.assertEqual(phase_range.git_time(str(context)), float(early))
+        self.assertIsNone(phase_range.undiscussed_reason(str(phase), phase_range.git_time))
+        spec.write_text("spec later")
+        git("add", "09-x/09-SPEC.md", stamp=later)
+        git("commit", "-m", "spec", stamp=later)
+        self.assertEqual(phase_range.undiscussed_reason(str(phase), phase_range.git_time),
+                         "SPEC newer than CONTEXT")
+        other = repo / "10-y"
+        other.mkdir()
+        (other / "10-CONTEXT.md").write_text("context")
+        git("add", "10-y/10-CONTEXT.md")
+        git("commit", "-m", "context only")
+        untracked = other / "10-SPEC.md"
+        untracked.write_text("spec")
+        os.utime(untracked, (int(later), int(later)))
+        self.assertEqual(phase_range.git_time(str(untracked)), float(later))
+        self.assertEqual(phase_range.undiscussed_reason(str(other), phase_range.git_time),
+                         "SPEC newer than CONTEXT")
+
 
 # ─── edge_floor.py ────────────────────────────────────────────────────────────
 
@@ -738,6 +924,55 @@ class TestEdgeFloor(unittest.TestCase):
         self.assertTrue(reqs[0]["text"].startswith("Parse rows. "))
         self.assertIn("Target: an empty list yields no rows", reqs[0]["text"])
         self.assertIn("Acceptance: tests.", reqs[0]["text"])
+
+    def test_partial_and_duplicate_requirements_fail_closed(self):
+        # WR-04: a numbered line without a bold title must not disappear into R1, and a
+        # repeated id must not be sent to the engine as two different requirements.
+        partial = SPEC.replace("2. **Write cache** (REQ-2).", "2. Write cache.")
+        duplicate = SPEC.replace("2. **Write cache**", "1. **Write cache**")
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = self._engine_at(Path(tmp))
+            for name, text in (("partial", partial), ("duplicate", duplicate)):
+                spec = Path(tmp) / f"{name}-SPEC.md"
+                spec.write_text(text)
+                with self.subTest(name=name):
+                    self.assertRaises(ValueError, edge_floor.requirements, text)
+                    err = io.StringIO()
+                    with unittest.mock.patch("sys.stderr", err):
+                        code = edge_floor.main(["check", str(spec), "--engine", engine],
+                                               env={"HOME": tmp, "PATH": ""})
+                    self.assertEqual(code, 2)
+                    self.assertNotIn("Traceback", err.getvalue())
+
+    def test_malformed_engine_row_exits_2_and_drift_exits_1(self):
+        # WR-05: a row the engine did not actually fill is fail-closed, not coverage drift.
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = Path(tmp) / "09-SPEC.md"
+            spec.write_text(SPEC)
+            engine = self._engine_at(Path(tmp))
+
+            def run_with(stdout):
+                def fake_run(cmd, **_kwargs):
+                    return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+
+                err = io.StringIO()
+                with unittest.mock.patch("edge_floor.shutil.which", return_value="node"), \
+                        unittest.mock.patch("edge_floor.subprocess.run", fake_run), \
+                        unittest.mock.patch("sys.stderr", err):
+                    code = edge_floor.main(["check", str(spec), "--engine", engine],
+                                           env={"HOME": tmp, "PATH": tmp})
+                return code, err.getvalue()
+
+            for payload in ('{"items":[{}]}', '{"items":[null]}',
+                            '{"items":[{"category":1,"requirement_id":"R1"}]}'):
+                with self.subTest(payload=payload):
+                    code, err = run_with(payload)
+                    self.assertEqual(code, 2)
+                    self.assertNotIn("Traceback", err)
+            code, err = run_with(
+                '{"items":[{"category":"missing","requirement_id":"R9"}]}')
+            self.assertEqual(code, 1, err)
+            self.assertNotIn("Traceback", err)
 
     def test_compare_flags_missing_unmarked_and_unclassified(self):
         floor = {"items": [{"category": "empty", "requirement_id": "R1"},
@@ -839,6 +1074,23 @@ class TestSkillContract(unittest.TestCase):
         for cell in ("Non-blocking, high", "Non-blocking, low", "Blocking, high",
                      "Blocking, low"):
             self.assertIn(cell, table)
+
+    def test_orchestrator_does_not_copy_client_limits(self):
+        # The key inventory, size caps and worked-example lessons live with the client and the
+        # decision table, not a second copy in the orchestrator.
+        skill = self.read("SKILL.md")
+        self.assertIn("reference.md", skill)
+        self.assertNotIn("8,000", skill)
+        self.assertNotIn("2,000", skill)
+        self.assertNotIn("0.75", self.read("references/decision-table.md"))
+        self.assertNotIn("Lesson:", self.read("references/worked-examples.md"))
+
+    def test_explicit_selection_still_runs_a_current_phase(self):
+        # WR-08: the skip applies to the automatic proposal. An explicit range or list wins.
+        skill = " ".join(self.read("SKILL.md").split())
+        self.assertIn("Explicit `--from N --to M` or a list wins", skill)
+        self.assertIn("automatic proposal skipped", skill)
+        self.assertIn("explicit range or list still runs that phase", skill)
 
     def test_readme_registers_the_skill(self):
         readme = (self.ROOT.parent.parent / "README.md").read_text(encoding="utf-8")

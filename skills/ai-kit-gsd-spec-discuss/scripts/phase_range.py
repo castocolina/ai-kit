@@ -16,6 +16,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -25,11 +26,15 @@ DONE_STATUSES = {"executed", "complete", "completed", "verified"}
 
 
 def phase_key(number: str) -> tuple[int, ...]:
-    """Numeric order for decimal phases: 16 < 16.1 < 16.2 < 17."""
-    try:
-        return tuple(int(part) for part in str(number).split("."))
-    except ValueError:
-        return (sys.maxsize,)
+    """Numeric order for decimal phases: 16 < 16.1 < 16.2 < 17.
+
+    Anything that is not a dotted integer list is an error. A shared maxsize sentinel used to
+    sort those in and made a bad selector look like an empty proposal (WR-06).
+    """
+    text = str(number)
+    if not re.fullmatch(r"\d+(?:\.\d+)*", text):
+        raise ValueError("invalid phase number")
+    return tuple(int(part) for part in text.split("."))
 
 
 def phase_dir(phases_root: str, number: str) -> str | None:
@@ -88,13 +93,43 @@ def in_range(number: str, args: argparse.Namespace) -> bool:
     return (low is None or key >= low) and (high is None or key <= high)
 
 
+def _phase_list(roadmap: Any) -> list[dict[str, Any]]:
+    """The phases array, or ValueError. An error object is not an empty roadmap (WR-06)."""
+    phases = roadmap.get("phases") if isinstance(roadmap, dict) else None
+    if not isinstance(phases, list):
+        raise ValueError("roadmap JSON must be an object with a phases list")
+    entries = []
+    for phase in phases:
+        if not isinstance(phase, dict):
+            raise ValueError("phase entry must be an object")
+        phase_key(phase.get("number", ""))
+        entries.append(phase)
+    return entries
+
+
+def _check_selectors(args: argparse.Namespace) -> None:
+    """Reject a selector that is not a phase number, and a range whose ends are reversed."""
+    if args.list:
+        for part in args.list.split(","):
+            if part.strip():
+                phase_key(part.strip())
+        return
+    if args.start:
+        phase_key(args.start)
+    if args.end:
+        phase_key(args.end)
+    if args.start and args.end and phase_key(args.start) > phase_key(args.end):
+        raise ValueError("reversed phase range")
+
+
 def propose(roadmap: dict[str, Any], phases_root: str, args: argparse.Namespace,
             timer: Callable[[str], float | None] = git_time) -> dict[str, list[dict[str, Any]]]:
     """Proposed and skipped phases in numeric order, each with its reason."""
     explicit = bool(args.list or args.start or args.end)
+    _check_selectors(args)
     proposed: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
-    phases = sorted(roadmap.get("phases") or [], key=lambda p: phase_key(p.get("number", "")))
+    phases = sorted(_phase_list(roadmap), key=lambda p: phase_key(p.get("number", "")))
     for phase in phases:
         number = str(phase.get("number", ""))
         if explicit and not in_range(number, args):
@@ -111,7 +146,7 @@ def propose(roadmap: dict[str, Any], phases_root: str, args: argparse.Namespace,
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Exit 2 when the roadmap JSON is unreadable."""
+    """Exit 2 when the roadmap JSON is unreadable or not a phases object."""
     parser = argparse.ArgumentParser(
         prog="phase_range.py", description=(__doc__ or "").split("\n", 1)[0])
     parser.add_argument("--roadmap", required=True, help="roadmap analyze JSON file, or -")
@@ -126,11 +161,15 @@ def main(argv: list[str] | None = None) -> int:
         else:
             with open(args.roadmap, encoding="utf-8") as handle:
                 roadmap = json.load(handle)
-    except (OSError, ValueError) as error:
+        report = propose(roadmap, args.phases_root, args)
+    except (OSError, json.JSONDecodeError) as error:
         print(json.dumps({"error": f"cannot read roadmap JSON: {error.__class__.__name__}"}),
               file=sys.stderr)
         return 2
-    print(json.dumps(propose(roadmap, args.phases_root, args), indent=1))
+    except (ValueError, TypeError, AttributeError):
+        print(json.dumps({"error": "invalid roadmap JSON"}), file=sys.stderr)
+        return 2
+    print(json.dumps(report, indent=1))
     return 0
 
 

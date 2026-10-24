@@ -31,16 +31,11 @@ decided provisionally and shown at the end.
    resolver's own install hint.
 3. **Detect backends:** `python3 "$S/decide.py" detect` — the shared `jev-fast-decision`
    client's probe table, one entry per table backend (`laya`, `typesafe`, `opencode`), labels
-   only (key *source*, never the key). Laya's URL comes from `JEV_LAYA_URL`, `AI_KIT_LAYA_URL`
-   or a loopback `JEV_API_URL`, default `http://127.0.0.1:8010`, probed via `/health` (not
-   bare TCP). Keys the client reads: TypeSafe `TYPESAFE_API_KEY`, `JEV_API_KEY`,
-   `JEV_API_KEY_FILE`, `${XDG_CONFIG_HOME:-~/.config}/ai-kit/secrets.env`, then
-   `${XDG_STATE_HOME:-~/.local/state}/typesafe/api_key`; OpenCode Zen `OPENCODE_ZEN_API_KEY` or
-   `opencode-zen.key` in `${PI_CODING_AGENT_DIR:-~/.pi/agent}/keys.json`. Key files must be
-   0600. A status `no_client` (no client found) or
-   `incompatible_client` (the client beside the skill predates the shared one) means own
-   reasoning only, until the owner runs `python3 tools/setup.py install --headless --skills
-   jev-fast-decision --replace-existing`.
+   only (key *source*, never the key). Key names, file modes and endpoint precedence are that
+   skill's `reference.md` (Environment) and `backends/`. A status `no_client` (no client
+   found) or `incompatible_client` (the client beside the skill predates the shared one)
+   means own reasoning only, until the owner runs `python3 tools/setup.py install --headless
+   --skills jev-fast-decision --replace-existing`.
 4. **Pick the range.** Explicit `--from N --to M` or a list wins. Otherwise:
    `gsd_run query roadmap analyze > <tmp>.json` then
    `python3 "$S/phase_range.py" --roadmap <tmp>.json` — proposes phases with no CONTEXT or a
@@ -132,14 +127,12 @@ alone (`invalid_input` + reason) — fix and resubmit. A repeated `id` is reject
 The ladder is **one client call per run**: decide.py validates the items and maps the
 client's per-item rung trail onto one column per table backend, each
 `{choice, top, fallback, model}`, `{error}` or null = not called, plus `decided_by` (the
-last confident rung, else `own_reasoning`); each column's `top` is its winning probability. The client
-runs the local backend one item per call; `fallback` follows each row's own threshold, and
-is also forced when one request's state exceeds the row's size cap (Laya 2,000 characters,
-TypeSafe and OpenCode Zen 8,000; TypeSafe sends every pending item in one request). Keep each
-item's text short, and split remote-bound items into several ladder calls whose combined state
-stays under 8,000 characters. `fallback: true` with a `top` at or above the threshold was forced
-(size cap or a server truncation report): shorten or split and re-ask instead of logging it as
-low confidence. A detect row with `key_check: unverified` is reachable, not a proven key.
+last confident rung, else `own_reasoning`); each column's `top` is its winning probability.
+`fallback` follows each row's own threshold. `fallback: true` with a `top` at or above the
+threshold was forced (size cap or a server truncation report): shorten or split and re-ask
+instead of logging it as low confidence. Current thresholds and size caps live in
+`jev-fast-decision`'s `reference.md` and `backends/`. A detect row with `key_check:
+unverified` is reachable, not a proven key.
 
 - Describe options **neutrally**. Labelling one "best" or "easy" just echoes your framing back.
 - A high local answer contradicting verified evidence or a locked decision gets
@@ -220,5 +213,5 @@ in sequence (flag that gap in the log).
 - `references/worked-examples.md` — only when a case is unclear: an override, a second
   opinion, a both-low item, an out-of-scope fix.
 
-Do NOT load the references for a phase whose SPEC and CONTEXT are already current
-(`phase_range.py` gives no reason for it) — skip the phase instead.
+Do NOT load the references for a phase the automatic proposal skipped because its SPEC
+and CONTEXT are already current. An explicit range or list still runs that phase.

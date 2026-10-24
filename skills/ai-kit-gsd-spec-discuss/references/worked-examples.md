@@ -13,9 +13,6 @@ Phase 17, K08: "Which model pairs form the price-ceiling sample?"
 - Logged: `| K08 ceiling sample | every_pair 0.91 | families 1.00 (second opinion) | **Laya
   overridden:** effort variants repeat one price and would skew the percentile (D-16) |`.
 
-Lesson: a high Laya number is not evidence. The override needs the second opinion *and* the
-reason written down.
-
 ## 2. A near-tie second opinion that still loses to the evidence
 
 Phase 18.1, T2: "Delete the Claude subprocess inventory?"
@@ -24,9 +21,6 @@ Phase 18.1, T2: "Delete the Claude subprocess inventory?"
   on codex/opencode hosts from that inventory.
 - Logged as **Laya overridden** with that reason. (Recorded at the time; under today's 0.8 TypeSafe threshold
   that 0.74 is `(fb)`, so the override rests on the evidence alone.)
-
-Lesson: when the models tie, do not average them — the evidence breaks the tie, and the log
-says which fact did.
 
 ## 3. Both low → own reasoning, ledgered, flagged for the user
 
@@ -37,9 +31,6 @@ Phase 24, C08: consent model for remote calls.
 - Decided provisionally (persistent per-user record, announced every run, revocable), flagged
   `needs confirmation`, ledgered — not a stop, because nothing else in the run depended on it.
 
-Lesson: a genuine policy conflict between documents is the user's call; record the provisional
-choice and keep going unless it blocks.
-
 ## 4. A confident out-of-scope recommendation
 
 Phase 23, B12: the status line needs Cursor's config dir; hooks use the same variable but the
@@ -49,15 +40,9 @@ CLI reads hooks from a fixed path.
   phase's requirements.
 - Decided: separate resolver now; the hooks mismatch filed as backlog `999.2` with a goal.
 
-Lesson: "fix it now" is checked for feasibility, not reflexively deferred — and a deferral gets
-a real backlog entry, not a note.
-
 ## 5. A live fact amends earlier phases
 
 Phase 19 (spec): `config-new-project` copies `~/.gsd/defaults.json`, including
 `resolve_model_ids: "omit"`; with it, `resolve-model` returns `model: ""` on claude.
 - No model was asked; it was a scratch-dir experiment.
 - Same commit amended 17-SPEC R5/R13, 18-SPEC R13 and added 17 D-21.
-
-Lesson: the ladder is for judgment calls. Facts come from experiments, and they flow backwards
-into every phase that stated the opposite.

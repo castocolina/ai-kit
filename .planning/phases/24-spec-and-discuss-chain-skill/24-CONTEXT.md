@@ -109,6 +109,8 @@ locked in `24-SPEC.md` (R1–R13, amended 2026-10-14). This file locks the HOW.
   synthetic `HOME`/`XDG_CONFIG_HOME`, a detection-combination table, a leaky fake client that
   echoes its env (no key sentinel reaches stdout/stderr), a zero-calls assertion without
   consent, and a real-client smoke skipped when jev is absent. Laya both_layers 0.93.
+  - *Amended 2026-10-24:* that smoke is the client's `test_screen_kill_switch_before_stdin`,
+    not a second copy in this suite.
 
 ### SKILL.md, brief and rules
 - **D-14: Layout:** `SKILL.md` (≤ ~300 lines: flow, a NEVER list with reasons, MANDATORY

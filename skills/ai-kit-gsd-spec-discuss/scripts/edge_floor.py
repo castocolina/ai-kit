@@ -34,12 +34,26 @@ def section(text: str, heading: str) -> str:
 
 
 def requirements(spec_text: str) -> list[dict[str, str]]:
-    """One rule, no truncation: the title plus every non-empty body line, bullets stripped."""
+    """One rule, no truncation: the title plus every non-empty body line, bullets stripped.
+
+    A numbered line that is not `N. **bold title**` is rejected, not folded into the previous
+    requirement, and a repeated id is rejected. Either one would shrink the floor (D-22, WR-04).
+    """
+    body = section(spec_text, "Requirements")
+    numbered = [line for line in body.splitlines() if re.match(r"^\d+\. ", line)]
+    matches = list(_REQ_RE.finditer(body))
+    if len(numbered) != len(matches):
+        raise ValueError("numbered requirement without a **bold** title")
     reqs = []
-    for match in _REQ_RE.finditer(section(spec_text, "Requirements")):
-        body = " ".join(line.strip().lstrip("-").strip()
+    seen: set[str] = set()
+    for match in matches:
+        ident = f"R{match.group(1)}"
+        if ident in seen:
+            raise ValueError(f"duplicate requirement id {ident}")
+        seen.add(ident)
+        text = " ".join(line.strip().lstrip("-").strip()
                         for line in match.group(3).splitlines() if line.strip())
-        reqs.append({"id": f"R{match.group(1)}", "text": f"{match.group(2)}. {body}".strip()})
+        reqs.append({"id": ident, "text": f"{match.group(2)}. {text}".strip()})
     return reqs
 
 
@@ -110,23 +124,35 @@ def find_engine(env: Mapping[str, str], start: str, override: str | None) -> str
     return None
 
 
+def _require_rows(result: Any) -> dict[str, Any]:
+    """The engine's items, each a row with string category and requirement_id (WR-05)."""
+    if not isinstance(result, dict) or not isinstance(result.get("items"), list):
+        raise RuntimeError("edge-probe returned no items")
+    for item in result["items"]:
+        category = item.get("category") if isinstance(item, dict) else None
+        requirement = item.get("requirement_id") if isinstance(item, dict) else None
+        if not isinstance(category, str) or not category.strip() \
+                or not isinstance(requirement, str) or not requirement.strip():
+            raise RuntimeError("edge-probe row missing category or requirement_id")
+    return result
+
+
 def run_engine(engine: str, reqs: list[dict[str, str]],
-               run: Callable[..., Any] = subprocess.run) -> dict[str, Any]:
+               run: Callable[..., Any] | None = None) -> dict[str, Any]:
     """Run the engine; raise RuntimeError on any failure (fail closed)."""
     node = shutil.which("node")
     if not node:
         raise RuntimeError("node not found")
+    runner = subprocess.run if run is None else run
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "requirements.json")
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(reqs, handle)
-        out = run([node, engine, path], capture_output=True, text=True, check=False, timeout=60)
+        out = runner([node, engine, path], capture_output=True, text=True, check=False,
+                     timeout=60)
     if out.returncode != 0:
         raise RuntimeError(f"edge-probe exited {out.returncode}")
-    result = json.loads(out.stdout)
-    if not isinstance(result, dict) or not isinstance(result.get("items"), list):
-        raise RuntimeError("edge-probe returned no items")
-    return result
+    return _require_rows(json.loads(out.stdout))
 
 
 def table_rows(spec_text: str) -> list[dict[str, str]]:
@@ -177,13 +203,15 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
             raise ValueError("no requirements extracted: expected numbered **bold** entries "
                              "under ## Requirements")
         floor = run_engine(engine, reqs)
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        result = compare(floor, table_rows(text)) if args.command == "check" else None
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError,
+            KeyError, TypeError) as error:
+        # Comparison of a malformed row is fail-closed (exit 2), not drift (exit 1) (WR-05).
         print(json.dumps({"error": str(error), "fail_closed": True}), file=sys.stderr)
         return 2
-    if args.command == "floor":
+    if result is None:
         print(json.dumps(floor, indent=1))
         return 0
-    result = compare(floor, table_rows(text))
     print(json.dumps(result, indent=1))
     return 0 if result["ok"] else 1
 
