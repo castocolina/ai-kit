@@ -1100,6 +1100,34 @@ class TestPlanUnset(unittest.TestCase):
             self.assertEqual(row["source"], "user")
             self.assertNotIn("status", row)
 
+    def test_unset_keeping_skipped_project_skill_refused(self):
+        """A kept skills/<name> that escapes the project, or whose SKILL.md is missing,
+        is refused before plan-unset writes."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, inv, plan = _write_pair(tmp)
+            project = os.path.join(tmp, "project")
+            os.makedirs(os.path.join(project, ".planning"))
+            inv["existing_config"]["path"] = os.path.join(project, ".planning", "config.json")
+            outside = os.path.join(tmp, "outside", "escape")
+            os.makedirs(outside)
+            with open(os.path.join(outside, "SKILL.md"), "w", encoding="utf-8") as handle:
+                handle.write("---\n---\n# skill\n")
+            link = os.path.join(project, "skills", "escape")
+            os.makedirs(os.path.dirname(link))
+            os.symlink(outside, link)
+            with open(inv_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(inv))
+            entry = next(e for e in plan["entries"] if e["key"] == "agent_skills.gsd-executor")
+            for ref in ("skills/escape", "skills/missing"):
+                with self.subTest(ref=ref):
+                    entry["op"], entry["existing"] = "set", [ref, "skills/keepme"]
+                    _save_plan(plan_path, inv, plan)
+                    raw = _read_bytes(plan_path)
+                    code, _, err = _run_plan_unset(plan_path, inv_path, entry["key"])
+                    self.assertEqual(code, 2, err)
+                    self.assertIn(ref.split("/")[1], err)
+                    self.assertEqual(_read_bytes(plan_path), raw)
+
     def test_unset_agent_skills_holding_skipped_global_ref_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             _inv_path, _plan_path, inv, plan = _write_pair(tmp)
@@ -1117,6 +1145,81 @@ class TestPlanUnset(unittest.TestCase):
                     ) as ctx:
                         plan_edit.plan_unset(call, "agent_skills.gsd-executor")
                     self.assertIn(ref.split(":")[1], str(ctx.exception))
+
+    def test_kept_namespaced_ref_not_reduced_to_a_bare_name(self):
+        """A kept global:<plugin>:<name> cannot round-trip through a bare name: the printed
+        plan-set keeps the healthy refs, and the note names the namespaced one for an explicit
+        decision instead of dropping it silently."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _inv_path, _plan_path, inv, plan = _write_pair(tmp)
+            plan["entries"] = [
+                e for e in plan["entries"]
+                if e["key"] != "agent_skills_security.trusted_global_roots"
+            ]
+            entry = next(e for e in plan["entries"] if e["key"] == "agent_skills.gsd-executor")
+            entry["op"] = "set"
+            entry["existing"] = ["global:react-dev", "global:ponytail:ponytail"]
+            call = plan_edit.EditCall(plan, inv, False, _strict_encode())
+            with self.assertRaises(plan_edit.PlanEditError) as ctx:
+                plan_edit.plan_unset(call, "agent_skills.gsd-executor")
+            message = str(ctx.exception)
+            self.assertIn("decide it explicitly", message)
+            self.assertIn("ponytail:ponytail", message)
+            matched = re.search(
+                r"plan-set agent_skills\.gsd-executor ('\[[^']*\]')", message
+            )
+            assert matched is not None
+            self.assertNotIn("ponytail", matched.group(1))
+
+    def test_kept_healthy_global_ref_survives_the_printed_fix(self):
+        """A healthy single-colon global:<name> reduces to its bare name in the printed
+        plan-set; a skipped global ref and a namespaced one do not ride along silently."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _inv_path, _plan_path, inv, plan = _write_pair(tmp)
+            plan["entries"] = [
+                e for e in plan["entries"]
+                if e["key"] != "agent_skills_security.trusted_global_roots"
+            ]
+            entry = next(e for e in plan["entries"] if e["key"] == "agent_skills.gsd-executor")
+            entry["op"] = "keep"
+            entry["existing"] = [
+                "global:a", "global:b", "global:p:c", "skills/d",
+            ]
+            skills_dir = os.path.join(tmp, "skills")
+            # a is a real dir inside the skills dir; b is linked from outside it (escapes)
+            for name, base in (("a", skills_dir), ("b", os.path.join(tmp, "elsewhere"))):
+                os.makedirs(os.path.join(base, name))
+                with open(os.path.join(base, name, "SKILL.md"), "w",
+                          encoding="utf-8") as handle:
+                    handle.write("---\n---\n# skill\n")
+            os.symlink(os.path.join(tmp, "elsewhere", "b"), os.path.join(skills_dir, "b"))
+            project = os.path.join(tmp, "project")
+            os.makedirs(os.path.join(project, "skills", "d"))
+            with open(os.path.join(project, "skills", "d", "SKILL.md"), "w",
+                      encoding="utf-8") as handle:
+                handle.write("---\n---\n# skill\n")
+            os.makedirs(os.path.join(project, ".planning"))
+            inv["existing_config"]["path"] = os.path.join(
+                project, ".planning", "config.json"
+            )
+            inv["gsd_core"]["skills_roots"] = {plan["host"]: skills_dir}
+            inv["skills"] = [
+                {"name": n, "root_kind": "global", "root": skills_dir, "plugin": None,
+                 "real_dir": os.path.join(skills_dir, n),
+                 "real_dir_home": "~/skills/" + n,
+                 "escapes_root": n == "b", "addressable": True, "description": ""}
+                for n in ("a", "b")
+            ]
+            message = plan_io.skipped_skill_problem(plan, inv)
+            assert message is not None
+            self.assertIn("b", message)
+            matched = re.search(
+                r"plan-set agent_skills\.gsd-executor ('\[[^']*\]')", message
+            )
+            assert matched is not None
+            self.assertEqual(json.loads(shlex.split(matched.group(1))[0]), ["a", "d"])
+            self.assertIn("p:c", message)
+            self.assertIn("decide it explicitly", message)
 
     def test_unset_timeout_while_execution_on(self):
         with tempfile.TemporaryDirectory() as tmp:

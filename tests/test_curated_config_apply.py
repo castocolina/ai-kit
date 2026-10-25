@@ -678,6 +678,42 @@ class TestApplyRefusals(unittest.TestCase):
             self.assertEqual(_tree_snapshot(project), before)
             _assert_no_writes(project, fake)
 
+    def test_kept_project_skill_refused_before_any_write(self) -> None:
+        """Keeping an escaping or a missing project skill is refused on dry-run and apply,
+        before any write."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _cfg, _inv, fake = _decided_plan(tmp)
+            outside = os.path.join(tmp, "outside", "escape")
+            os.makedirs(outside)
+            with open(os.path.join(outside, "SKILL.md"), "w", encoding="utf-8") as handle:
+                handle.write("---\n---\n# skill\n")
+            link = os.path.join(project, "skills", "escape")
+            os.makedirs(os.path.dirname(link))
+            os.symlink(outside, link)
+            plan, _ = plan_io.load_plan(plan_path)
+            assert plan is not None
+            kept = ["skills/escape", "skills/missing"]
+            plan["entries"].append({
+                "key": "agent_skills.gsd-planner", "op": "keep",
+                "existing": kept, "value": list(kept),
+                "source": "user", "why": "hand edit",
+            })
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            fake.argv_log.clear()
+            before = _tree_snapshot(project)
+            for dry_run in (True, False):
+                with self.subTest(dry_run=dry_run):
+                    code, _report, out, err = _run_apply(
+                        plan_path, inv_path, project, env, fake, dry_run=dry_run
+                    )
+                    self.assertEqual(code, 2)
+                    self.assertIn("apply refused", err + out)
+                    self.assertIn("escape", err + out)
+                    self.assertIn("missing", err + out)
+                    self.assertEqual(_tree_snapshot(project), before)
+                    _assert_no_writes(project, fake)
+
     def test_hand_edited_skipped_skill_refused_before_any_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
@@ -710,6 +746,67 @@ class TestApplyRefusals(unittest.TestCase):
                     self.assertIn("vaulted", err + out)
                     self.assertEqual(_tree_snapshot(project), before)
                     _assert_no_writes(project, fake)
+
+    def _kept_global_plan(self, tmp, name):
+        """A decided plan whose kept agent_skills holds one healthy global:<name>."""
+        project, env, inv_path, plan_path, _cfg, inv, fake = _decided_plan(tmp)
+        skills_dir = os.path.join(env["HOME"], ".agents", "skills")
+        add_skill(skills_dir, name, "A global skill")
+        plan, _ = plan_io.load_plan(plan_path)
+        assert plan is not None
+        kept = [f"global:{name}"]
+        plan["entries"].append({
+            "key": "agent_skills.gsd-planner", "op": "keep",
+            "existing": kept, "value": list(kept),
+            "source": "user", "why": "hand edit",
+        })
+        with open(plan_path, "w", encoding="utf-8") as handle:
+            handle.write(plan_io.canonical_json(plan))
+        return project, env, inv_path, plan_path, inv, fake, skills_dir
+
+    def test_global_skill_removed_after_inventory_refused(self) -> None:
+        """A global:<name> whose SKILL.md vanished after inventory is refused live, on
+        dry-run and apply, before any write."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _inv, fake, skills_dir = (
+                self._kept_global_plan(tmp, "gone")
+            )
+            shutil.rmtree(os.path.join(skills_dir, "gone"))
+            before = _tree_snapshot(project)
+            for dry_run in (True, False):
+                with self.subTest(dry_run=dry_run):
+                    code, _report, out, err = _run_apply(
+                        plan_path, inv_path, project, env, fake, dry_run=dry_run
+                    )
+                    self.assertEqual(code, 2)
+                    self.assertIn("apply refused", err + out)
+                    self.assertIn("gone", err + out)
+                    self.assertEqual(_tree_snapshot(project), before)
+                    _assert_no_writes(project, fake)
+
+    def test_global_skill_retargeted_after_inventory_refused(self) -> None:
+        """A global:<name> whose SKILL.md was retargeted outside the host skills dir and
+        every trusted root after inventory is refused live, before any write."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project, env, inv_path, plan_path, _inv, fake, skills_dir = (
+                self._kept_global_plan(tmp, "moved")
+            )
+            outside = os.path.join(tmp, "outside")
+            os.makedirs(outside)
+            with open(os.path.join(outside, "SKILL.md"), "w", encoding="utf-8") as handle:
+                handle.write("---\n---\n# skill\n")
+            link = os.path.join(skills_dir, "moved", "SKILL.md")
+            os.remove(link)
+            os.symlink(os.path.join(outside, "SKILL.md"), link)
+            before = _tree_snapshot(project)
+            code, _report, out, err = _run_apply(
+                plan_path, inv_path, project, env, fake, dry_run=True
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("apply refused", err + out)
+            self.assertIn("moved", err + out)
+            self.assertEqual(_tree_snapshot(project), before)
+            _assert_no_writes(project, fake)
 
     def test_needs_choice_artifact_named(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2580,6 +2677,122 @@ class TestWritePathDiscipline(unittest.TestCase):
                 self.assertEqual(len(hits), 1, hits)
         allowed = ast.parse("def _rollback():\n    restore_backup(c, b)\n")
         self.assertEqual(_apply_write_path_findings(allowed), [])
+
+
+class TestLiveRootCoverage(unittest.TestCase):
+    """The live re-check reads trusted roots the way gsd-core does (``~/`` expanded, the
+    home dir, the filesystem root and relative roots never trusted)."""
+
+    def _tree(self, tmp):
+        home = os.path.join(tmp, "home")
+        kit = os.path.join(home, "kit", "skills", "jev")
+        host = os.path.join(home, ".claude", "skills")
+        os.makedirs(kit)
+        os.makedirs(host)
+        with open(os.path.join(kit, "SKILL.md"), "w", encoding="utf-8") as handle:
+            handle.write("---\n---\n# skill\n")
+        os.symlink(kit, os.path.join(host, "jev"))
+        inv = {"host": "claude", "gsd_core": {"skills_roots": {"claude": host}}}
+        return home, host, inv
+
+    def test_home_relative_root_covers_a_linked_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home, host, inv = self._tree(tmp)
+            skill_md = os.path.join(host, "jev", "SKILL.md")
+            with mock.patch.dict(os.environ, {"HOME": home}):
+                self.assertTrue(plan_io._root_covers(skill_md, "~/kit/skills"))
+                self.assertIsNone(plan_io._live_global_problem("jev", inv, ["~/kit/skills"]))
+                self.assertIsNotNone(plan_io._live_global_problem("jev", inv, []))
+
+    def test_too_broad_or_relative_roots_never_cover(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home, host, _inv = self._tree(tmp)
+            skill_md = os.path.join(host, "jev", "SKILL.md")
+            with mock.patch.dict(os.environ, {"HOME": home}):
+                for root in ("~", "~/", home, os.sep, "kit/skills"):
+                    with self.subTest(root=root):
+                        self.assertFalse(plan_io._root_covers(skill_md, root))
+
+
+class TestLiveReferenceChecks(unittest.TestCase):
+    """Skill-judge round 3: every project path is checked like gsd-core does, a newly wired
+    reference is revalidated live, and the printed fix never switches or drops a healthy
+    reference."""
+
+    def _project(self, tmp, symlinked=False):
+        project = os.path.join(tmp, "project")
+        real_planning = os.path.join(tmp, "real-planning")
+        os.makedirs(project)
+        planning = os.path.join(project, ".planning")
+        if symlinked:
+            os.makedirs(real_planning)
+            os.symlink(real_planning, planning)
+        else:
+            os.makedirs(planning)
+        for rel in (".claude/skills/house", "skills/proj"):
+            os.makedirs(os.path.join(project, rel))
+            with open(os.path.join(project, rel, "SKILL.md"), "w", encoding="utf-8") as handle:
+                handle.write("---\n---\n# skill\n")
+        inv = {"existing_config": {"path": os.path.join(planning, "config.json")}}
+        return project, inv
+
+    def test_any_project_path_follows_gsd_cores_rule(self) -> None:
+        for symlinked in (False, True):
+            with self.subTest(symlinked=symlinked), tempfile.TemporaryDirectory() as tmp:
+                _project, inv = self._project(tmp, symlinked)
+                self.assertIsNone(plan_io._project_ref_skip_reason(".claude/skills/house", inv))
+                self.assertIsNone(plan_io._project_ref_skip_reason("skills/proj", inv))
+                self.assertIsNotNone(plan_io._project_ref_skip_reason("../outside/x", inv))
+                self.assertIsNotNone(plan_io._project_ref_skip_reason("skills/missing", inv))
+
+    def test_printed_fix_names_refs_that_cannot_round_trip(self) -> None:
+        inv = {"skills": [
+            {"name": "a", "addressable": True, "root_kind": "project", "escapes_root": False},
+            {"name": "a", "addressable": True, "root_kind": "global", "escapes_root": False},
+            {"name": "b", "addressable": True, "root_kind": "global", "escapes_root": False},
+        ]}
+        keep, note = plan_io._kept_names(
+            ["global:a", "global:b", "global:p:c", "skills/d", ".claude/skills/e", "global:x",
+             "global:unknown"],
+            ["x"], inv,
+        )
+        self.assertEqual(keep, ["b", "d"])
+        for kept in ("global:a", "global:p:c", ".claude/skills/e", "global:unknown"):
+            self.assertIn(kept, note)
+        self.assertNotIn("global:x", note)
+
+
+class TestRoundFiveReferenceChecks(unittest.TestCase):
+    """Skill-judge round 4: bare names survive the printed fix, kept globals are judged by
+    the live (symlink-resolving) check, and names and paths follow gsd-core's grammar."""
+
+    def test_bare_names_survive_the_printed_fix(self) -> None:
+        keep, note = plan_io._kept_names(["jev", "ponytail"], ["jev"], {"skills": []})
+        self.assertEqual(keep, ["ponytail"])
+        self.assertEqual(note, "")
+
+    def test_kept_global_covered_through_a_symlinked_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = os.path.join(tmp, "store", "skills", "foo")
+            os.makedirs(store)
+            with open(os.path.join(store, "SKILL.md"), "w", encoding="utf-8") as handle:
+                handle.write("---\n---\n# skill\n")
+            os.symlink(os.path.join(tmp, "store"), os.path.join(tmp, "link"))
+            host = os.path.join(tmp, "host-skills")
+            os.makedirs(host)
+            os.symlink(store, os.path.join(host, "foo"))
+            inv = {"host": "claude", "gsd_core": {"skills_roots": {"claude": host}},
+                   "skills": []}
+            root = os.path.join(tmp, "link", "skills")
+            self.assertIsNone(plan_io._kept_global_skip("global:foo", inv, [root]))
+            self.assertIsNotNone(plan_io._kept_global_skip("global:foo", inv, []))
+
+    def test_malformed_global_names_and_absolute_paths_are_skipped(self) -> None:
+        inv = {"host": "claude"}
+        for ref in ("global:plugin::skill", "global:plugin:bad.name", "global:a/b"):
+            with self.subTest(ref=ref):
+                self.assertIsNotNone(plan_io._kept_global_skip(ref, inv, []))
+        self.assertIsNotNone(plan_io._project_ref_skip_reason("/abs/skills/x", inv))
 
 
 if __name__ == "__main__":

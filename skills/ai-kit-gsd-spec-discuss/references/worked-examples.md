@@ -1,4 +1,4 @@
-# Worked examples (from the ai-kit v1.3 run, 2026-10-14)
+# Worked examples (1–5 from the ai-kit v1.3 run, 2026-10-14; 6 illustrative)
 
 Load only when a case is unclear. Each shows what the models said, what the evidence said, and
 what was logged.
@@ -52,3 +52,14 @@ Phase 19 (spec): `config-new-project` copies `~/.gsd/defaults.json`, including
 `resolve_model_ids: "omit"`; with it, `resolve-model` returns `model: ""` on claude.
 - No model was asked; it was a scratch-dir experiment.
 - Same commit amended 17-SPEC R5/R13, 18-SPEC R13 and added 17 D-21.
+
+## 6. A forced column (illustrative ids)
+
+The ids and options are illustrative, not from a real run.
+
+- **Forced local, high remote.** Item X01: Laya `option_a 0.91 (forced)`, TypeSafe
+  `option_b 0.94`. `decided_by` is TypeSafe, so row 4 applies: take `option_b` unless it
+  contradicts the evidence; Laya's forced answer is logged beside it as advisory.
+- **Forced local, no high remote.** Item X02: Laya `option_a 0.91 (forced)`, TypeSafe
+  `option_b 0.62 (fb)`. `decided_by` is `own_reasoning` (row 5): reason against the evidence;
+  the forced answer is one input, not the decision. Ledger it when it blocks nothing.

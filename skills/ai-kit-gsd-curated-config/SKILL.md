@@ -1,6 +1,6 @@
 ---
 name: ai-kit-gsd-curated-config
-description: Curated GSD `.planning/config.json` setup for a target project. v2 flow — inventory → recommend → plan edits → apply → follow-ups — picks models per tier, wires installed skills to GSD agents, and sets up a cross-AI execution runner (`.planning/scripts/cross-ai.mjs`) and cross-AI plan review; the kept v1 path asks only `model_profile`. Config keys are written only through gsd-tools `config-set`/`config-new-project`. Use when asked to "configure .planning/config.json", "set up GSD config fast", "wire skills to GSD agents" or "set up a cross-AI execution runner", without the full `gsd-settings`/`gsd-config` interrogation — a faster alternative, not a replacement.
+description: "Curated GSD `.planning/config.json` setup for a target project: picks models per tier, wires installed skills to GSD agents, and sets up a cross-AI execution runner and cross-AI plan review. v2 flow — inventory, recommend, plan edits, apply, follow-ups; the kept v1 path asks only `model_profile`. Use when asked to \"configure .planning/config.json\", \"set up GSD config fast\", \"wire skills to GSD agents\" or \"set up a cross-AI execution runner\", without the full `gsd-settings`/`gsd-config` interrogation — a faster alternative, not a replacement."
 ---
 
 # ai-kit-gsd-curated-config
@@ -12,7 +12,7 @@ This skill wraps `ai-kit-gsd-curated-config.py`. **Primary path:** the v2 pipeli
 **Secondary path:** the kept v1 flow (one `model_profile` question plus fixed presets) — read
 [`references/v1-path.md`](references/v1-path.md) only when running it.
 
-Config keys are written only through gsd-tools (`config-set` / `config-new-project`, via the
+Config keys are written only through gsd-tools `config-set`/`config-new-project` (via the
 shared `ai_kit_spec.gsd_tools` wrappers). Two writes are not config keys: the runner script
 and, when an apply fails, the backup bytes restored directly. The `ai-kit-spec-review`
 skill must be installed beside this one; `node` and a resolvable gsd-core are required.
@@ -32,7 +32,7 @@ only, never a request).
 | Exit | v1 subcommands | v2 subcommands |
 |---|---|---|
 | `0` | the call finished; for `apply-execution` read `cross_ai_command_written` and `degraded_reason` before calling it configured | success (read the JSON for warnings and `needs_choice`) |
-| `2` | install problem (sibling skill, `node` or `gsd-tools.cjs` missing) or, for `apply-execution`/`apply-review`, an unrecognized `--cli` before any write. Surface stderr verbatim; do not retry | a refusal you can fix: bad `--out`, inventory digest mismatch, open `needs_choice`, malformed inventory or plan, held apply marker, refused `plan-set` value — or the same install problems. Read the stderr line, fix the input, re-run (`inventory`/`recommend` first when it says so) |
+| `2` | install problem (sibling skill, `node` or `gsd-tools.cjs` missing) or, for `apply-execution`/`apply-review`, an unrecognized `--cli` before any write. Surface stderr verbatim; do not retry | a refusal you can fix: bad `--out`, inventory digest mismatch, open `needs_choice`, malformed inventory or plan, held apply marker, refused `plan-set` value, skipped `agent_skills` reference — or the same install problems. Read the stderr line, fix the input, re-run (`inventory`/`recommend` first when it says so) |
 | `1` | a gsd-tools read/write failed | `apply` write failed and rolled back (or `restore_error`); a follow-up command failed |
 
 ## Resolve the entrypoint
@@ -122,8 +122,8 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
    - **Trusted roots** (`agent_skills_security.trusted_global_roots`): the one candidate's
      `value` is the whole list — already-configured roots first, then the new `~/` roots.
      Approve it with that list, or decline with `plan-unset` (refused while agents still hold
-     the skills it covers; see Skills). The new root is the machine-specific skills dir of the
-     ai-kit install. A list that drops an
+     the skills it covers — the full rule is in Skills). The new root is the machine-specific
+     skills dir of the ai-kit install. A list that drops an
      already-configured root is refused; the refusal prints the merged list — re-run
      `plan-set` with it (entrypoint and `--plan` included).
    - `workflow.cross_ai_command` and the runner artifact stay open until every runner in
@@ -201,7 +201,7 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
 ## Cross-AI execution
 
 v2 `apply` sets `workflow.cross_ai_command` to the bare `node .planning/scripts/cross-ai.mjs` and
-renders the runner from the bundled template (template 6); the runner reads its prefer order and
+renders the runner from the current bundled template; the runner reads its prefer order and
 models from its own CONFIG. The hook names the runner, never a raw vendor CLI string.
 
 **Permissions depend on which flow wrote the hook — say which one applies:**
@@ -238,23 +238,46 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
 
 - **Bare names** in the plan; apply writes `skills/<name>`, `global:<name>` or
   `global:<plugin>:<name>`. Plan, notes and report never name an uninstalled skill.
-- **Wired only through a reference gsd-core resolves:** a contained project copy
-  (`skills/<name>`); a global skill inside the host's global skills dir; a global skill an
-  already-configured trusted root covers; or a global skill linked from an ai-kit install or
-  checkout (detected by two marker skills), paired with one `needs_choice` trusted root for
-  that install's skills dir in `~/` form. Every other escaping global skill is **not wired**
-  and gets a `skill_unwired` note naming the cause and the fix (a project `skills/<name>`
-  copy, a real dir in the host's global skills dir, or a configured trusted root, then re-run
-  inventory and recommend).
+- **Wired only through a reference gsd-core resolves**, one of:
+  - a contained project copy (`skills/<name>`);
+  - a global skill inside the host's global skills dir;
+  - a global skill an already-configured trusted root covers;
+  - a global skill linked from an ai-kit install or checkout (detected by two marker skills),
+    paired with one `needs_choice` trusted root for that install's skills dir in `~/` form.
+    An ai-kit install outside `$HOME` gets no such candidate: it gets the unwired note.
+    The route for its root is `gsd-settings`, or gsd-tools `config-set
+    agent_skills_security.trusted_global_roots` (the plan accepts only `~/` roots, and this
+    skill never hand-writes config); then re-run inventory and recommend.
+
+  Every other escaping global skill is **noted unwired**: a `skill_unwired` note naming the
+  cause and the fix (a project `skills/<name>` copy, a real dir in the host's global skills
+  dir, or a configured trusted root, then re-run inventory and recommend).
 - **The install root is machine-specific:** it widens gsd-core's trust to every skill in that
   dir, so it stays an explicit approval, and the path is wherever ai-kit is installed
-  (gsd-core drops it where it does not exist). A **declined** root (`plan-unset`) is refused
-  while `agent_skills` entries still hold the skills it covers; the refusal prints the
-  `plan-set agent_skills.<agent>` commands that drop them first.
-- **No edit or apply keeps a skipped reference:** `plan-set` and `plan-unset` refuse an
-  `agent_skills` entry gsd-core would skip, `apply` and `apply --dry-run` refuse such a plan
-  (hand-edited included) before any write, and `--force` does not bypass it. Configured roots
-  are still never dropped without `--force`.
+  (gsd-core drops it where it does not exist).
+- **Refusal → action** (each refusal prints its fix; re-run it with the entrypoint and
+  `--plan`):
+  - a **declined** root (`plan-unset`) while `agent_skills` entries still hold the skills it
+    covers → the refusal offers two fixes joined by "or"; declining means the second one,
+    `plan-set agent_skills.<agent> ...`, which drops those skills;
+  - a reference gsd-core would skip → the printed fix keeps every healthy reference whose
+    bare name re-resolves to it: a bare name (the form a fresh plan holds), a
+    `skills/<name>`, and a `global:<name>` the inventory still resolves to the global copy.
+    Any other healthy reference (a namespaced `global:<plugin>:<name>`, a project path
+    outside `skills/`, a `global:<name>` a project copy would shadow) is named for an
+    explicit decision, never dropped or switched.
+- **Refusals `--force` cannot bypass:** `plan-set` and `plan-unset` refuse an `agent_skills`
+  entry gsd-core would skip, and `apply` and `apply --dry-run` refuse such a plan
+  (hand-edited included) before any write. What is checked:
+  - a kept `global:<name>`: live, as gsd-core checks it (the host skills dir entry exists and
+    holds a SKILL.md whose realpath is inside the host skills dir or an effective trusted
+    root, `~/` expanded and symlinks resolved);
+  - a kept project path: relative, inside the project, with a SKILL.md;
+  - a kept `global:` name outside gsd-core's grammar, or a namespaced one on a non-claude
+    host: skipped;
+  - a newly wired entry: against the inventory snapshot only, where a configured root is
+    compared as written (a root reached through a symlink needs its real path). Re-run
+    `inventory` after skills move.
 - Unknown installed skills get capped proposals (one per name, wireable only) — never
   auto-install or auto-wire them.
 - **Jev session gate:** inventory detects the jev (System One) backend, `system_one_backend`, by a TCP
@@ -275,6 +298,7 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
 | cursor host | validated headless from a cursor-agent 2026.10.14-941492e session (`21-SMOKE-CURSOR.md`: local install, apply, resolve-model-only chain, 420-check matrix); the user's interactive confirmation (`21-INTERACTIVE-CURSOR.md`) is **pending** |
 | opencode providers | Providers defined only in a project's `opencode.json` are not candidates |
 | effort sync | Skipped for workstream configs; `--config-dir <project>/<host dir>` value **unverified** |
+| agent_skills runtime | gsd-core picks the skills dir and the namespaced-skill rule from the config `runtime` (default `claude`); this skill checks against the inventory `host`. On a host the plan writes no `runtime` for (cursor, pi), whether gsd-core resolves the same dir is **unverified** |
 | host as review lane | v2 never proposes it; v1 `detect-review-candidate` can pick it. A deliberate host-CLI lane with another provider is a manual `review.reviewer_instances` edit you own (20 D-11) |
 
 ## Subcommand reference
@@ -306,8 +330,7 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
   command (`workflow.cross_ai_command`, `plan_bounce_script`, `code_review_command`,
   `test_command`, `build_command`); use it only for a value the user explicitly chose.
 - **Never run v1 `apply-execution`/`apply-review` on a project v2 `apply` configured.**
-  `apply-execution` overwrites `workflow.cross_ai_command` with its own single-runtime
-  runner command, dropping the prefer order and models v2 chose.
+  Why, and what it drops, is in [`references/v1-path.md`](references/v1-path.md).
 - **Never delete an apply marker** without following the recovery text apply prints.
 - **Never treat `cross-ai.mjs.new` as active** before merging it and running `--print-argv`.
 

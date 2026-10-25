@@ -29,7 +29,7 @@ An `ok` result carries `status`, `backend` and `model` (the rung that gave every
 | `noul` | `noul` (0=no, 1=yes) — no `confidence` field |
 | `score` | `score` (0..levels−1, may fall between levels), `legend`, `level` (winning index), `probabilities`, `confidence` |
 
-Every answer also carries `model` (what answered it), `backend`, `top` (the winning probability — what `needs_fallback` compares), `needs_fallback`, and `request_sha256`. `needs_fallback` is true when the answer was forced (the server reported `usage.truncated`, or the state exceeded the row's size guard) or when `top` is below the row's `min_confidence`.
+Every answer also carries `model` (what answered it), `backend`, `top` (the winning probability — what `needs_fallback` compares), `needs_fallback`, `forced`, and `request_sha256`. `needs_fallback` is true when the answer was forced (the server reported `usage.truncated`, or the state exceeded the row's size guard) or when `top` is below the row's `min_confidence`; `forced` is true only in the first case, so a caller can tell a forced answer from a low one without knowing the thresholds.
 
 ## Interpreting answers
 

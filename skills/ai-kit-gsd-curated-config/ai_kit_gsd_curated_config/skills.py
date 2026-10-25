@@ -252,6 +252,14 @@ def global_ref_skip_reason(name: str, inv: dict, roots: list[str]) -> str | None
     return _global_skip(name, rows[0], roots)
 
 
+def host_skills_dir(inv: dict) -> str | None:
+    """The host's global skills dir recorded by inventory, or None when it recorded none."""
+    gsd_core = inv.get("gsd_core")
+    roots = gsd_core.get("skills_roots") if isinstance(gsd_core, dict) else None
+    recorded = roots.get(inv.get("host")) if isinstance(roots, dict) else None
+    return recorded if isinstance(recorded, str) and recorded else None
+
+
 def unwired_reason(name: str, inv: dict) -> str | None:
     """``None`` when ``name`` can be wired; else the note text (``""``: not installed, silent)."""
     row = locate(name, inv)

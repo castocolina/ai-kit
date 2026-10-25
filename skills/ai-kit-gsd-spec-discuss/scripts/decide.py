@@ -459,7 +459,9 @@ def closed_status(got: dict[str, Any]) -> str:
 # ─── trail mapping ────────────────────────────────────────────────────────────
 
 def typed_answer(entry: Any, item: Mapping[str, Any]) -> dict[str, Any]:
-    """One trail rung reduced to the caller's column: {choice, top, fallback, model} or {error}.
+    """One trail rung reduced to the caller's column: {choice, top, fallback, forced, model}
+    or {error}. `forced` is the client's own flag (a truncated or oversized request), false
+    when an older client does not send it.
 
     A score or choice pick is always one of `item`'s own criteria — the level text for a score,
     the key for a choice — never backend text, which could be unbounded or an injection. A
@@ -493,7 +495,9 @@ def typed_answer(entry: Any, item: Mapping[str, Any]) -> dict[str, Any]:
         choice = entry["choice"]
     if not isinstance(choice, str):
         return {"error": "invalid_response"}
-    return {"choice": choice, "top": round(top, 4), "fallback": fallback, "model": model}
+    forced = entry.get("forced") is True
+    return {"choice": choice, "top": round(top, 4), "fallback": fallback, "forced": forced,
+            "model": model}
 
 
 def fill_columns(got: dict[str, Any], results: dict[str, Any],

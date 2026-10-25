@@ -85,7 +85,7 @@ def undiscussed_reason(directory: str | None, timer: Callable[[str], float | Non
 def in_range(number: str, args: argparse.Namespace) -> bool:
     """Whether a phase is inside an explicit --list or --from/--to range."""
     if args.list:
-        wanted = {phase_key(n) for n in args.list.split(",") if n.strip()}
+        wanted = {phase_key(n.strip()) for n in args.list.split(",") if n.strip()}
         return phase_key(number) in wanted
     low = phase_key(args.start) if args.start else None
     high = phase_key(args.end) if args.end else None

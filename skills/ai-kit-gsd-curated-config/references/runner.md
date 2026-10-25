@@ -1,7 +1,8 @@
-# Runner details (template 6)
+# Runner details (the current bundled template)
 
 Read when a runner upgrade, a `.new` merge, `ensure-runner`, the template flags, the live
-timeout, or hand-edited CONFIG `extraArgs` comes up. SKILL.md's "Cross-AI execution" section
+timeout, or hand-edited CONFIG `extraArgs` comes up. Do NOT load for the stock v2 flow.
+SKILL.md's "Cross-AI execution" section
 keeps the permission facts; this file never weakens them.
 
 The hook's runtime id for Cursor is `cursor` (its binaries are `cursor-agent` and a bare `agent`

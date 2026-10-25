@@ -1575,6 +1575,7 @@ def _finalize(row, checked, run):
         answer["backend"] = row["name"]
         answer["top"] = top_of(answer)
         answer["needs_fallback"] = forced or answer["top"] < threshold
+        answer["forced"] = forced  # tells a forced (truncated, oversized) rung from a low one
         answers[identifier] = answer
     for token in run.usage:
         run.usage[token] += checked["usage"][token]

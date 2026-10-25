@@ -1,6 +1,7 @@
 # Decision table
 
-Read before the first ladder call. "High" means a column's `fallback` is false — the
+Read before the first ladder call. "High" means a column's `fallback` is false (a column with
+`forced: true` is neither high nor low: see Forced columns) — the
 threshold of that backend's own row in the client's table (per-backend; the numbers are in
 `jev-fast-decision`'s `reference.md` and `backends/`).
 "Evidence" means what you verified live or what an earlier SPEC/CONTEXT locks — not what
@@ -13,11 +14,11 @@ backend's column (today `laya`) and one column per remote backend, in the client
 order (today TypeSafe, then OpenCode Zen). A remote column is filled only when the local
 rung was low or errored, or under `--second-opinion`.
 
-**Forced columns:** a `fallback: true` column whose `top` is at or above its backend's
-threshold was forced (size cap or a server truncation report), not low confidence. It answers
-at face value: its `top` counts as high for rows 2–4 — a forced local answer still gets row
-3's evidence check, and a forced remote answer is a high remote answer. Only `fallback: true`
-with `top` below the threshold means low confidence.
+**Forced columns.** A column with `forced: true` came from a truncated or oversized request
+(the client's own flag, set whatever the probability). `decide.py` never names it in
+`decided_by`, so the rows below apply unchanged: a forced answer never settles an item on its
+own. It is advisory evidence for the row that decides, and it is logged `choice 0.NN
+(forced)`; `(fb)` is only for `fallback: true` with `forced: false` (low confidence).
 
 1. **The item would change or contradict a user-locked decision** (a decision from an earlier
    interactive CONTEXT or one the user stated): decide provisionally, flag `needs
@@ -34,10 +35,10 @@ with `top` below the threshold means low confidence.
    - No high remote answer (the remote that answered is low, every remote errored, or none is
      consented) → own reasoning, ledgered. A low remote answer is final: the next remote is
      called only for items the earlier one errored on.
-4. **The local rung is low, errored or not called (Laya down) and `decided_by` is a remote backend** (TypeSafe or
+4. **The local rung is low, forced, errored or not called (Laya down) and `decided_by` is a remote backend** (TypeSafe or
    OpenCode Zen) → take that answer, unless it contradicts the evidence; then re-check the
    evidence and, still contradicted, own reasoning, ledgered.
-5. **`decided_by` is `own_reasoning`** (every column that answered is low, every called
+5. **`decided_by` is `own_reasoning`** (every column that answered is low or forced, every called
    backend errored, a usable remote is not consented and is listed in `remote_available`, or
    there is no compatible client and `client_status` is set) → reason against the evidence
    yourself; ledger it when it blocks nothing.

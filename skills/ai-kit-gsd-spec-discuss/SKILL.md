@@ -1,6 +1,6 @@
 ---
 name: ai-kit-gsd-spec-discuss
-description: "Chains GSD /gsd-spec-phase then /gsd-discuss-phase over a range of phases (SPEC.md, then CONTEXT.md + DISCUSSION-LOG.md, one commit per phase), settling gray areas through the `jev-fast-decision` client's decision ladder with logged decisions, a deferred ledger, cross-phase amendments and a best-over-easy design rule. Two run modes, picked once: auto (spec `--auto`, discuss in assumptions mode) or interactive (discuss-phase with the user answering). Use when asked to spec and discuss several GSD phases unattended or in one run (\"spec/discuss phases 17-24\", \"run spec-phase and discuss-phase for every undiscussed phase\", \"--analyze --all --batch --assumptions\"), or to use jev / Laya / TypeSafe / System One for GSD planning decisions. Works with no decision backend installed. Not for plan-phase or execute-phase."
+description: "Chains GSD /gsd-spec-phase then /gsd-discuss-phase over a range of phases (SPEC.md, then CONTEXT.md + DISCUSSION-LOG.md), settling gray areas through the `jev-fast-decision` client's decision ladder with logged decisions, a deferred ledger, cross-phase amendments and a best-over-easy design rule. Two run modes, picked once: auto or interactive. Use when asked to spec and discuss several GSD phases unattended or in one run (\"spec/discuss phases 17-24\", \"run spec-phase and discuss-phase for every undiscussed phase\", \"--analyze --all --batch --assumptions\"), or to use jev / Laya / TypeSafe / System One for GSD planning decisions. Works with no decision backend installed. Not for plan-phase or execute-phase."
 ---
 
 # ai-kit-gsd-spec-discuss
@@ -29,13 +29,20 @@ decided provisionally and shown at the end.
        [ -f "$c/decide.py" ] && { printf '%s\n' "$c"; break 2; }; done; done
    ```
    If it prints nothing, **stop the run** (fail closed, like `edge_floor` exit 2).
-2. **Resolve `gsd_run`** with gsd-core's standard resolver (`references/gsd-run-resolver.md`
-   inside the gsd-core install; it finds the repo's own `.claude/gsd-core/bin/gsd-tools.cjs`
-   before any user-level install).
-   The workflows dir is `<dir of gsd-tools.cjs>/../workflows/`. No gsd-core → stop with the
-   resolver's own install hint. The `gsd_run` alias survives across shell calls only on hosts
-   with `CLAUDE_ENV_FILE`; elsewhere, print the resolved gsd-tools path here and use that
-   literal path in later calls, like `S`.
+2. **Resolve gsd-core** with its standard resolver (`references/gsd-run-resolver.md` inside
+   the gsd-core install; it finds the repo's own `.claude/gsd-core/bin/gsd-tools.cjs` before any
+   user-level install). The workflows dir is `<dir of gsd-tools.cjs>/../workflows/`. No
+   gsd-core → stop with the resolver's own install hint. Print the resolved command
+   (`node <path>/gsd-tools.cjs`, or the `gsd_run` executable itself on the resolver's PATH-shim
+   branch) and use that literal in every later call, like `S`: shell variables and the
+   `gsd_run` alias survive across calls only on hosts with `CLAUDE_ENV_FILE`. Later steps call
+   it "the resolved GSD command". When the user passes `--ws <name>`, append `--ws=<name>` to
+   every gsd-tools call (`query …` and `init …`), including the calls inside `spec-phase.md`
+   (it does not parse `--ws` itself), and pass `--ws <name>` to the discuss workflows. A
+   workstream can also be active without the flag (`GSD_WORKSTREAM` or the session pointer),
+   so take the paths from gsd-core, never from a fixed `.planning/`: the first phase's
+   `init.phase-op` gives `state_path` and `phase_dir`; pass the parent of `phase_dir` to
+   `phase_range.py --phases-root`, and commit the `state_path` file.
 3. **Detect backends:** `python3 "$S/decide.py" detect` — the shared `jev-fast-decision`
    client's probe table (one entry per backend: `laya`, `typesafe`, `opencode`), labels
    only (key *source*, never the key). Key names, file modes and endpoint precedence are in
@@ -43,28 +50,16 @@ decided provisionally and shown at the end.
    found) or `incompatible_client` (the client beside the skill predates the shared one)
    means own reasoning only, until the owner runs `python3 tools/setup.py install --headless
    --skills jev-fast-decision --replace-existing` from the ai-kit checkout.
-   Then check the agents' skill wiring, one portable loop (gsd-core exits 0 and only drops a
-   skipped entry from that agent's prompt, so report every line verbatim with its cause):
-   ```bash
-   for a in gsd-assumptions-analyzer gsd-advisor-researcher; do
-     gsd_run query agent-skills "$a" 2>&1 >/dev/null | grep -F '[agent-skills] WARNING'
-   done
-   ```
-   - "failed path check (symlink escape?)": the skill's real path is outside the host's global
-     skills dir and no `agent_skills_security.trusted_global_roots` entry covers it;
-   - "not found": nothing is at that path.
-
-   The fix is to re-run `ai-kit-gsd-curated-config`, which wires only references gsd-core
-   resolves (a project copy such as `skills/<name>`, or a trusted ai-kit install). This skill
-   never edits config itself; the run continues without that skill.
-4. **Pick the range.** Explicit `--from N --to M` or a list wins and is passed through to
-   `phase_range.py` (`--from N --to M`, or `--list a,b`). Otherwise:
-   `gsd_run query roadmap analyze > <tmp>.json` then
-   `python3 "$S/phase_range.py" --roadmap <tmp>.json` — proposes phases with no CONTEXT or a
-   SPEC newer than its CONTEXT (git commit time), each with its reason. A "SPEC newer" reason
-   can be a false positive: a later phase's dated cross-phase amendment also touches the SPEC.
-   Check `git log -1 -- <SPEC>`; if that commit only appended an amendment the CONTEXT already
-   reflects, drop the phase from the proposal and say why.
+4. **Pick the range.** Get the roadmap first, for every case: the resolved GSD command
+   `query roadmap analyze > <tmp>.json`. Explicit `--from N --to M` or a list wins:
+   `python3 "$S/phase_range.py" --roadmap <tmp>.json --from N --to M` (or `--list a,b`).
+   Otherwise `python3 "$S/phase_range.py" --roadmap <tmp>.json` proposes phases with no
+   CONTEXT or a SPEC newer than its CONTEXT (git commit time), each with its reason. A "SPEC
+   newer" reason can be a false positive: a later phase's dated cross-phase amendment also
+   touches the SPEC. Check `git log -1 -- <SPEC>`; if that commit only appended an amendment the CONTEXT already
+   reflects, drop the phase from the proposal and say why. A phase the script lists as
+   skipped (executed or complete) under an explicit request runs only after the user
+   confirms it.
 5. **Ask one question about the range**, only when needed (the run-mode ask in step 7 is
    separate): confirm or trim the proposed range, and —
    if a remote backend's `detect` entry has `status: consent_required_for_remote` (a keyed
@@ -72,21 +67,34 @@ decided provisionally and shown at the end.
    in the same question, naming each backend and its host, "summaries only, never code or
    secrets", and the revoke command (`python3 "$S/decide.py" consent revoke <backend>`). On
    yes: `python3 "$S/decide.py" consent grant <backend>`. Consent on file asks nothing. After
-   a ladder call, announce `consent_used` only for backends whose column is non-null
-   ("using <backend> (consent recorded <date>)").
-6. **Read MVP mode once, per phase:** `gsd_run query phase.mvp-mode <N>` (`active` true →
-   MVP branch). This one query is the single source for both the quality rule (§5) and the
-   run-mode recommendation in step 7 — do not read `workflow.mvp_mode` a second way. If the
-   per-phase query errors (an unresolvable phase), fall back to `gsd_run query config-get
-   workflow.mvp_mode --default false --raw`. Bare `config-get` exits "Key not found" when
-   the key is unset.
+   a ladder call, announce `consent_used` only for backends that answered at least one item
+   in the run ("using <backend> (consent recorded <date>)").
+6. **Read MVP mode once, per phase:** the resolved GSD command `query phase.mvp-mode <N>`
+   (`active` true → MVP branch). This one query is the single source for both the quality
+   rule (§5) and the run-mode recommendation in step 7 — do not read `workflow.mvp_mode` a
+   second way. If the per-phase query errors (an unresolvable phase), fall back to the
+   resolved GSD command `query config-get workflow.mvp_mode --default false --raw`. Bare
+   `config-get` exits "Key not found" when the key is unset.
 7. **Pick the run mode** (§1–§2). With the skill's `--auto` flag: auto path. Without it:
-   read the project mode — `gsd_run query config-get mode`; a "Key not found" exit means the
+   read the project mode — the resolved GSD command `query config-get mode`; a "Key not found"
+   exit means the
    default (`interactive`) — then **ask the user once**: recommend the **auto path** when
    `mode` is `yolo` or the phase's `mvp-mode` is active (step 6's value, first phase of the
    range), the **interactive path** otherwise (interactive = spec-phase without `--auto`,
    discuss-phase in its standard discuss mode with the user answering). Never flip config
    keys to pick a path.
+
+8. **Check the agents' skill wiring** (after step 7, which decides the agents that run):
+   - Run the resolved GSD command `query agent-skills gsd-assumptions-analyzer --json
+     2>"<tmp>-analyzer.err"`; on the interactive path also `gsd-advisor-researcher` (its own
+     `<tmp>-advisor.err`), only when `<gsd-core dir>/USER-PROFILE.md` exists (discuss-phase
+     spawns the advisor only then).
+   - Clean: the JSON reads `reason: resolved`, its `warnings` are empty, and the `.err` file
+     has no line starting `[agent-skills] WARNING` (a `NOTE … accepted via
+     trusted_global_roots` line and other stderr are not warnings).
+   - Not clean: report it with its cause and continue (gsd-core only drops a skipped entry
+     from that agent's prompt). This skill never edits config; the fix is re-running
+     `ai-kit-gsd-curated-config`. **Read `references/agent-skills-diagnostics.md` only then.**
 
 **MANDATORY — read `references/decision-table.md` before the first ladder call.**
 
@@ -109,7 +117,9 @@ file; do not delegate to another skill — skill-to-skill calls are unreliable o
   Amending a requirement's text later changes its floor: re-run `check` after every amendment.
   Exit 2 means node or the engine is missing — fail closed: stop the spec step for this
   phase, never write the table by hand.
-- The workflow commits the SPEC itself.
+- The workflow commits the SPEC itself. When `commit_docs` is false its commit returns
+  `skipped`: stop and say so — the discuss step needs a committed SPEC — and never change
+  `commit_docs` yourself.
 
 ## 2. Per phase: discuss
 
@@ -125,7 +135,7 @@ answering its prompts.
   settings.
 - One commit per phase: write CONTEXT + DISCUSSION-LOG (**MANDATORY — read
   `references/log-formats.md` first**), then
-  `gsd_run query commit "docs(NN): ..." --files <CONTEXT> <LOG> <every cross-phase amended
+  the resolved GSD command `query commit "docs(NN): ..." --files <CONTEXT> <LOG> <every cross-phase amended
   file>`. This commit **replaces** the workflow's `git_commit` step (skip it), and the single
   end-of-range `state.record-session` **replaces** its per-phase `update_state` step (skip per
   phase, like `auto_advance`) — never commit or update STATE.md twice per phase.
@@ -144,18 +154,27 @@ recommended defaults you offer the user):
 - assumptions → "Yes, proceed" only after every Unclear item went through the ladder.
 
 **Spawn the analyzer** (`gsd-assumptions-analyzer`) through the host's subagent mechanism when
-`init.phase-op` reports it installed; its output also carries the resolved analyzer model
-value — omit `model` when that is `inherit` or empty. No subagent support → run the brief
-inline and say so in the DISCUSSION-LOG.
+the workflow's init output (`init.discuss-phase-assumptions`, like `init.phase-op`) reports it
+installed. Resolve the analyzer model separately, the way
+`discuss-phase-assumptions.md` does — `init.phase-op` does not carry it:
+the resolved GSD command `query resolve-model gsd-assumptions-analyzer --raw`. Omit `model`
+when that value is `inherit` or empty. No subagent support → run the brief inline and say so
+in the DISCUSSION-LOG.
 
 **MANDATORY — read `references/analyzer-brief.md` before spawning; fill every placeholder.**
-The analyzer returns "Jev question" lines; it never calls jev, even when `jev-fast-decision`
-is wired into it (SKL-04). The ladder, consent and the answer log belong to the orchestrator
-(this skill), through the shared client. In the interactive path the analyzer runs
-only when the user asks for it; otherwise its prompts come straight from the user.
+The analyzer returns "Jev question" lines. `gsd-assumptions-analyzer` and
+`gsd-advisor-researcher` never call jev, even when `jev-fast-decision` is wired into them.
+The ladder, consent and the log belong to the orchestrator (this skill), through the shared
+client.
+In the interactive path, when discuss-phase spawns `gsd-advisor-researcher`, the orchestrator
+adds this one sentence to the advisor's spawn prompt: "Do NOT call jev or any of its backends
+(Laya, TypeSafe, OpenCode Zen) yourself, even when jev-fast-decision is among your agent
+skills." In the interactive path the analyzer runs only when the user asks for it; otherwise
+the user answers the workflow's prompts directly.
 
-After the range: `gsd_run query state.record-session --stopped-at "..."
---resume-file <last CONTEXT>` and a separate `docs(state)` commit of `.planning/STATE.md`.
+After the range: the resolved GSD command `query state.record-session --stopped-at "..."
+--resume-file <last CONTEXT>` and a separate `docs(state)` commit of the `state_path` file
+(§0 step 2).
 
 ## 3. The ladder
 
@@ -177,11 +196,13 @@ The ladder is **one client call per step that has open items** (spec and discuss
 separately, §1–§2), plus an optional `--second-opinion` run for contested items: decide.py
 validates the items and maps the
 client's per-item rung trail onto one column per table backend, each
-`{choice, top, fallback, model}`, `{error}` or null = not called, plus `decided_by` (the
-last confident rung, else `own_reasoning`); each column's `top` is its winning probability.
-What a forced `fallback: true` column does in "Which answer wins", and when a high local
-answer gets `--second-opinion`, is defined once in `references/decision-table.md` — follow it
-there.
+`{choice, top, fallback, forced, model}`, `{error}` or null = not called, plus `decided_by`
+(the last confident rung, else `own_reasoning`); each column's `top` is its winning
+probability. What a forced `fallback: true` column (`forced: true`) does in "Which answer
+wins", and when a high local answer gets `--second-opinion`, is defined once in
+`references/decision-table.md` — follow it there. A forced column never settles an item on its
+own: it is advisory evidence for the row that decides, logged `choice 0.NN (forced)`, never
+`(fb)`.
 A detect row with `key_check: unverified` is reachable, not a proven key.
 
 - Describe options **neutrally**. Labelling one "best" or "easy" just echoes your framing back.
@@ -189,8 +210,8 @@ A detect row with `key_check: unverified` is reachable, not a proven key.
   `--second-opinion` (decision-table row 3; worked cases in `references/worked-examples.md`).
 - Laya is not deterministic (one real run: the same item scored 0.74 then 0.67 (fb)); never
   treat a single Laya number as stable.
-- Every answering column low (`fallback: true`, the client's `needs_fallback`) or errored → **own reasoning** against the SPEC, earlier CONTEXT
-  files and the live facts. Log it, and ledger it when it blocks nothing.
+- No high column (each answering column is low, forced or errored) → **own reasoning**
+  against the SPEC, earlier CONTEXT files and the live facts. Log it, and ledger it when it blocks nothing.
 
 ## 4. Ledger and stop rule
 
@@ -265,6 +286,7 @@ strictly in sequence (flag that gap in the log).
 - `references/analyzer-brief.md` — before spawning (or running inline) the analyzer.
 - `references/log-formats.md` — before writing a SPEC Interview Log, CONTEXT, DISCUSSION-LOG,
   an amendment, or the ledger.
+- `references/agent-skills-diagnostics.md` — only when §0 step 8 finds an agent that is not clean.
 - `references/worked-examples.md` — only when a case is unclear: an override, a second
   opinion, a both-low item, an out-of-scope fix.
 

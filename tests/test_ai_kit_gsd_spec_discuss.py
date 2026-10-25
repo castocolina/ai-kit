@@ -259,7 +259,19 @@ class TestTypedAnswer(unittest.TestCase):
         got = decide.typed_answer({"backend": "one", "model": "m-1", "type": "choice",
                                    "choice": "a", "probabilities": {"a": 0.46, "b": 0.54},
                                    "top": 0.54, "needs_fallback": True}, self.CHOICE)
-        self.assertEqual(got, {"choice": "a", "top": 0.54, "fallback": True, "model": "m-1"})
+        self.assertEqual(got, {"choice": "a", "top": 0.54, "fallback": True, "forced": False,
+                               "model": "m-1"})
+
+    def test_forced_rung_carries_the_clients_flag(self):
+        got = decide.typed_answer({"backend": "one", "model": "m-1", "choice": "a",
+                                   "top": 0.91, "needs_fallback": True, "forced": True},
+                                  self.CHOICE)
+        self.assertTrue(got["forced"])
+        self.assertTrue(got["fallback"])
+        # an older client without the flag reads as not forced, never as an error
+        older = decide.typed_answer({"backend": "one", "model": "m-1", "choice": "a",
+                                     "top": 0.91, "needs_fallback": True}, self.CHOICE)
+        self.assertIs(older["forced"], False)
 
     def test_noul_rung_maps_to_yes_no(self):
         low = decide.typed_answer({"backend": "one", "noul": 0.2, "top": 0.8,
@@ -280,7 +292,7 @@ class TestTypedAnswer(unittest.TestCase):
                                                             "2": "high"},
                                    "top": 0.91, "needs_fallback": False}, self.SCORE)
         self.assertEqual(got, {"choice": "high", "top": 0.91, "fallback": False,
-                               "model": "m-1"})
+                               "forced": False, "model": "m-1"})
 
     def test_score_and_choice_never_echo_backend_text(self):
         # WR-06: the pick is the item's own criteria text; a backend legend or an unknown
@@ -804,6 +816,9 @@ class TestPhaseRange(_TmpHome):
                          ["16.1", "17", "18"])
         self.assertEqual([p["phase"] for p in self.propose(_args(phases="19,16.1"))["proposed"]],
                          ["16.1", "19"])
+        # a spaced list passes validation and selects the same phases (skill-judge round 3)
+        self.assertEqual([p["phase"] for p in self.propose(_args(phases="19, 16.1"))["proposed"]],
+                         ["16.1", "19"])
 
     def test_decimal_order(self):
         self.assertLess(phase_range.phase_key("16.1"), phase_range.phase_key("16.10"))
@@ -1070,18 +1085,45 @@ class TestSkillContract(unittest.TestCase):
 
     def test_setup_checks_agent_skills_wiring_and_never_edits_config(self):
         skill = " ".join(self.read("SKILL.md").split())
-        for needle in ("query agent-skills", "gsd-assumptions-analyzer",
-                       "gsd-advisor-researcher", "[agent-skills] WARNING",
-                       "ai-kit-gsd-curated-config", "never edits config"):
+        for needle in ("query agent-skills gsd-assumptions-analyzer --json "
+                       "2>\"<tmp>-analyzer.err\"",
+                       "pass the parent of `phase_dir` to `phase_range.py --phases-root`",
+                       "commit the `state_path` file",
+                       "it does not parse `--ws` itself",
+                       "gsd-advisor-researcher", "USER-PROFILE.md",
+                       "after step 7, which decides the agents that run",
+                       "the JSON reads `reason: resolved`, its `warnings` are empty",
+                       "no line starting `[agent-skills] WARNING`",
+                       "report it with its cause and continue", "ai-kit-gsd-curated-config",
+                       "never edits config", "references/agent-skills-diagnostics.md",
+                       "When the user passes `--ws <name>`, append `--ws=<name>`"):
             self.assertIn(needle, skill)
+        self.assertNotIn("gsd_run query agent-skills", skill)
+        self.assertNotIn("Continue only then", skill)
+        diag = " ".join(self.read("references/agent-skills-diagnostics.md").split())
+        for needle in ("[agent-skills] WARNING", "not_configured", "configured_empty",
+                       "configured_unresolved", "not confined to the project directory",
+                       "failed path check (symlink escape?)",
+                       "Re-running curated-config fixes only path and wiring causes",
+                       "The warnings decide", "acceptance trace, not a warning"):
+            self.assertIn(needle, diag)
 
     def test_analyzer_never_calls_jev_even_when_the_skill_is_wired(self):
         skill = " ".join(self.read("SKILL.md").split())
         brief = " ".join(self.read("references/analyzer-brief.md").split())
-        self.assertIn("never calls jev, even when `jev-fast-decision` is wired into it", skill)
+        self.assertIn("`gsd-assumptions-analyzer` and `gsd-advisor-researcher` never call jev, "
+                      "even when `jev-fast-decision` is wired into them", skill)
+        self.assertNotIn("SKL-04", skill)
+        self.assertIn('adds this one sentence to the advisor\'s spawn prompt: "Do NOT call '
+                      'jev or any of its backends (Laya, TypeSafe, OpenCode Zen) yourself, even '
+                      'when jev-fast-decision is among your agent skills."', skill)
         self.assertIn("never call jev even when `jev-fast-decision` is among your agent skills",
                       brief)
-        self.assertIn("the ladder, consent and the log belong to the orchestrator", brief)
+        self.assertIn("The ladder, consent and the log belong to the orchestrator", skill)
+        self.assertIn("never call jev even when `jev-fast-decision` is among your agent "
+                      "skills", brief)
+        self.assertNotIn("The same line goes in the `gsd-advisor-researcher` spawn prompt",
+                         brief)
 
     def test_codegraph_block_is_gated_on_the_binary_and_an_index(self):
         brief = self.read("references/analyzer-brief.md")
@@ -1171,21 +1213,30 @@ class TestSkillContract(unittest.TestCase):
         self.assertIn("**The item would change or contradict a user-locked decision**", table)
 
     def test_forced_fallback_rule_stated_once_in_decision_table(self):
-        # Item 1: no circular pointer — decision-table.md states the rule; the others point
-        # at it. And the definition appears exactly once in the table (round-3 minor).
+        # Skill-judge round 3: the client emits `forced`; a forced column never settles an
+        # item, the numbered rows apply unchanged, and the rule is defined once in the table.
         table = self.read("references/decision-table.md")
-        self.assertIn("**Forced columns:**", table)
-        self.assertEqual(table.count("was forced (size cap or a server truncation report)"), 1)
-        self.assertIn("counts as high for rows 2–4", table)
-        self.assertIn("Only `fallback: true`\nwith `top` below the threshold means low "
-                      "confidence", table)
+        head = table.split("## Blocking", 1)[0]
+        flat = " ".join(table.split())
+        self.assertIn("**Forced columns.**", head)
+        self.assertEqual(flat.count("came from a truncated or oversized request"), 1)
+        self.assertIn("so the rows below apply unchanged", flat)
+        self.assertIn("a forced answer never settles an item on its own", flat)
+        self.assertIn("(fb)` is only for `fallback: true` with `forced: false`", flat)
+        self.assertNotIn("replace rows 2–5", flat)
         skill = " ".join(self.read("SKILL.md").split())
-        self.assertIn("What a forced `fallback: true` column does in \"Which answer wins\"",
-                      skill)
+        self.assertIn("`{choice, top, fallback, forced, model}`", skill)
         self.assertIn("defined once in `references/decision-table.md`", skill)
+        self.assertIn("No high column (each answering column is low, forced or errored)", skill)
         logs = " ".join(self.read("references/log-formats.md").split())
         self.assertIn("decision-table.md, \"Forced columns\"", logs)
-        self.assertNotIn("see SKILL.md §3", logs)
+        self.assertIn("`choice 0.NN (forced)`", logs)
+        self.assertIn("0.NN[ (fb)| (forced)]", logs)
+        self.assertIn("It is not `(fb)`", logs)
+        section6 = self.read("references/worked-examples.md").split("## 6.", 1)[1]
+        self.assertIn("illustrative", section6)
+        self.assertIn("row 4 applies", section6)
+        self.assertIn("`own_reasoning` (row 5)", section6)
 
     def test_worked_example_two_owns_the_low_second_opinion(self):
         # Item 3: a 0.74 (fb) TypeSafe second opinion is no high remote answer — own
@@ -1205,9 +1256,14 @@ class TestSkillContract(unittest.TestCase):
         self.assertNotIn("one client call per phase", skill)
         self.assertNotIn("init phase-op", skill)
         self.assertIn("init.phase-op", skill)
-        self.assertIn("`--from N --to M`, or `--list a,b`", skill)
+        self.assertIn("--roadmap <tmp>.json --from N --to M` (or `--list a,b`)", skill)
+        self.assertIn("Get the roadmap first, for every case", skill)
         self.assertIn("CLAUDE_ENV_FILE", skill)
-        self.assertIn("print the resolved gsd-tools path", skill)
+        self.assertIn("Print the resolved command", skill)
+        self.assertIn("the `gsd_run` executable itself on the resolver's PATH-shim branch", skill)
+        self.assertIn("query resolve-model gsd-assumptions-analyzer --raw", skill)
+        self.assertNotIn("its output also carries the resolved analyzer model", skill)
+        self.assertIn("backends that answered at least one item", skill)
 
     def test_prose_minors_round_three(self):
         skill = " ".join(self.read("SKILL.md").split())

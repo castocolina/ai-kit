@@ -6,8 +6,9 @@ ledger. All artifacts in English.
 ## Cell format for a backend answer
 
 - `choice 0.NN` — winning probability `top`, high.
-- `choice 0.NN (fb)` — `fallback` true (below the threshold, or over the size cap: see
-  decision-table.md, "Forced columns").
+- `choice 0.NN (fb)` — `fallback` true and `forced` false: low confidence.
+- `choice 0.NN (forced)` — `forced` true (a truncated or oversized request). It is not
+  `(fb)`: see decision-table.md, "Forced columns" — advisory evidence only.
 - `choice 0.NN (second opinion)` — from `--second-opinion`.
 - `–` — not called (an earlier rung was high, or the backend was unavailable).
 - `error: <code>` — the call failed; say what you did instead.
@@ -41,7 +42,8 @@ in the intro line.
     second opinion scratch_config_dir 0.98.
 ```
 
-The attribution comes last: one `<backend> <choice> 0.NN[ (fb)]` per answering backend, or
+The attribution comes last: one `<backend> <choice> 0.NN[ (fb)| (forced)]` per answering
+backend, or
 `**Own reasoning** (<backend> … , <backend> …): <why>. Ledger.`
 
 ## Updating an existing CONTEXT (never regenerate)

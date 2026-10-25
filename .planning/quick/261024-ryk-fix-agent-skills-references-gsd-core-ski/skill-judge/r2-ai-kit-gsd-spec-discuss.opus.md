@@ -1,0 +1,9 @@
+Native Opus (clean context), ai-kit-gsd-spec-discuss, 2026-10-24 r2. 103/120. D1 17 D2 13 D3 14 D4 13 D5 13 D6 13 D7 9 D8 11.
+I1: SKILL.md:81-82 "Continue only then" contradicts :86 "the run continues without that skill"; not_configured is the normal case. Fix: anything else is reported with its cause and the run continues; not_configured is informational.
+I2: the interactive-only advisor check (step 3, :53-58) runs before the run mode is picked (step 7, :110-117); gsd-core spawns the advisor only when ADVISOR_MODE is on (USER-PROFILE.md exists, discuss-phase.md:33,158). Fix: move the advisor query after step 7, gated on interactive + USER-PROFILE.md.
+I3: forced branches applied "before the numbered rows" skip row 1 (user-locked decisions); worked-examples.md:56 says "before rows 2/4/5" (disagreement); no branch for forced local or forced remote contradicting the evidence. Fix: apply after row 1, in place of rows 2-5; forced local contradicting -> row 3 (--second-opinion); forced remote contradicting -> row 4's contradiction branch.
+I4: the block uses $GSD, which step 2 says will not survive across shell calls. Fix: <the resolved GSD command> query agent-skills ..., drop the shim sentence.
+Minors: non-claude hosts may report resolved with warnings (persona fallback) -> the warnings decide; "keep stderr" needs a command (--json 2>"<tmp>.err"); GSD_WS owner unclear -> "when the user passes --ws <name>, append --ws=<name>"; worked example 6 is invented and contradicts example 1 -> placeholder ids labelled illustrative; ambiguous "it" in decision-table.md:22-24; description lost output names (restore); setup step 3 is heavy -> move the reason/warning list to references/agent-skills-diagnostics.md behind a trigger.
+DIGEST 6d04a697fd72294b
+CURRENT 103/120
+CRITICAL 0 IMPORTANT 4

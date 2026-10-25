@@ -151,25 +151,53 @@ def _interactive_ok(text: str) -> bool:
     return re.search(r"(^|[ `(\"])/(home|var/home|Users)/", text, re.M) is None
 
 
-def _judge_gate(phase: Path, judge_text: str, *, check_digest: bool = True) -> bool:
-    """Apply the phase plan's per-judge baseline and quality rule."""
-    if (
-        check_digest
-        and "digests ok"
-        not in subprocess.run(
+def _git_work_tree() -> bool:
+    """Whether the repo root is a git work tree (the clean-room container has no .git)."""
+    try:
+        proc = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=ROOT,
+                              capture_output=True, text=True, check=False)
+    except OSError:
+        return False
+    return proc.returncode == 0 and proc.stdout.strip() == "true"
+
+
+def _digest_at_judged_commit(phase: Path, judge_text: str) -> bool:
+    """The evidence's live rows carry the digest of the skill as it was at JUDGED_COMMIT.
+
+    A closed phase's evidence is pinned to the commit it judged, not to HEAD: later phases may
+    change the skill (and re-judge it in their own evidence) without invalidating this one.
+    """
+    match = re.search(r"^JUDGED_COMMIT: ([0-9a-f]{7,40})", judge_text, re.M)
+    if match is None:
+        return False
+    with tempfile.TemporaryDirectory(prefix="pi-judged-") as tmp:
+        archive = subprocess.run(
+            ["git", "archive", match.group(1), "skills/ai-kit-gsd-curated-config"],
+            cwd=ROOT, capture_output=True, check=False,
+        )
+        if archive.returncode != 0:
+            return False
+        subprocess.run(["tar", "-x", "-C", tmp], input=archive.stdout, check=True)
+        return "digests ok" in subprocess.run(
             [
                 sys.executable,
                 str(ROOT / "tests" / "gsd_curated_eval.py"),
                 "digest",
                 "--check",
                 str(phase / "22-SKILL-JUDGE.md"),
+                "--skill-dir",
+                str(Path(tmp) / "skills" / "ai-kit-gsd-curated-config"),
             ],
             cwd=ROOT,
             capture_output=True,
             text=True,
             check=False,
         ).stdout
-    ):
+
+
+def _judge_gate(phase: Path, judge_text: str, *, check_digest: bool = True) -> bool:
+    """Apply the phase plan's per-judge baseline and quality rule."""
+    if check_digest and not _digest_at_judged_commit(phase, judge_text):
         return False
     if len(re.findall(r"^## Verdict: ", judge_text, re.M)) != 1 or not re.search(
         r"FIX_ITERATIONS_USED: [0-2] of 2", judge_text
@@ -286,7 +314,12 @@ class TestPhaseEvidenceGates(unittest.TestCase):
     def test_skill_judge_gate_uses_non_superseded_rows_and_digest_check(self):
         path = PHASE / "22-SKILL-JUDGE.md"
         text = path.read_text(encoding="utf-8")
-        self.assertTrue(_judge_gate(PHASE, text))
+        # The digest check needs git history; the clean-room container has no .git.
+        self.assertTrue(_judge_gate(PHASE, text, check_digest=_git_work_tree()))
+        if _git_work_tree():
+            # Non-vacuity: pointed at the pre-change commit (another digest), the check fails.
+            tampered = text.replace("JUDGED_COMMIT: 960eb90", "JUDGED_COMMIT: 0e17b22")
+            self.assertFalse(_digest_at_judged_commit(PHASE, tampered))
         # Skip the committed digest check for this synthetic score-regression copy.
         with tempfile.TemporaryDirectory(prefix="pi-judge-test-") as tmp:
             copy_phase = Path(tmp)
