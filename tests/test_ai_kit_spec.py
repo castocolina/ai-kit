@@ -11841,6 +11841,13 @@ class TestCrossAiTemplateText(unittest.TestCase):
             "newSessionRetries": 3,
             "outerTimeoutS": 1800,
             "prefer": ["pi", "cursor", "opencode"],
+            "retry": {
+                "base_s": 1,
+                "factor": 1.5,
+                "hard_waits_s": [600, 900, 1800],
+                "max_retries": 5,
+                "session_resets": 1,
+            },
             "routerBacked": {},
             "sameSessionRetries": 3,
             "scrubEnv": self._SCRUB_DEFAULT,

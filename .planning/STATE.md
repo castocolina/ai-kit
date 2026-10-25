@@ -5,17 +5,17 @@ milestone_name: GSD Curated Config v2
 current_phase: "25.1"
 current_phase_name: Configurable cross-AI retry ladder and upstream error propagation (INSERTED)
 status: executing
-stopped_at: Completed 25-11-PLAN.md
-last_updated: "2026-10-25T09:37:32.254Z"
+stopped_at: Completed 25.1-01-PLAN.md
+last_updated: "2026-10-25T12:11:29.621Z"
 last_activity: 2026-10-24
 last_activity_desc: Phase 23 execution started
-state_head: 2d2136120d6949cba138c74df5503b60213639c5
+state_head: a3b129eae0c779c79636c8d4516080a4025badcf
 progress:
   total_phases: 18
   completed_phases: 1
   total_plans: 186
-  completed_plans: 171
-  percent: 0
+  completed_plans: 172
+  percent: 6
 ---
 
 # Project State
@@ -34,7 +34,7 @@ Plan: 1 of ?
 Status: Ready to execute
 Last activity: 2026-10-24 - Completed quick task 261024-ryk: agent_skills references gsd-core resolves
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 6%
 
 ## Performance Metrics
 
@@ -287,6 +287,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 25 P09 | 309s | 3 tasks | 13 files |
 | Phase 25 P10 | 140s | 3 tasks | 8 files |
 | Phase 25 P11 | 5400s | 3 tasks | 30 files |
+| Phase 25.1 P01 | 700s | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -566,6 +567,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-25T01:51:13.703Z
-Stopped at: Completed 25-10-PLAN.md
+Last session: 2026-10-25T12:11:27.873Z
+Stopped at: Completed 25.1-01-PLAN.md
 Resume file: None

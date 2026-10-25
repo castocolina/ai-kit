@@ -79,6 +79,17 @@ const CONFIG = {
     "cursor",
     "opencode"
   ],
+  "retry": {
+    "base_s": 1,
+    "factor": 1.5,
+    "hard_waits_s": [
+      600,
+      900,
+      1800
+    ],
+    "max_retries": 5,
+    "session_resets": 1
+  },
   "routerBacked": {},
   "sameSessionRetries": 3,
   "scrubEnv": [
@@ -1720,28 +1731,67 @@ function resolveBin(rt, envPath) {
 }
 
 function ownTimeout(cfgPath) {
-  const cfg = parseJson(readOr(cfgPath, ''));
-  const wf = cfg && typeof cfg === 'object' && !Array.isArray(cfg) ? cfg.workflow : null;
-  if (!wf || typeof wf !== 'object' || Array.isArray(wf) || !Object.hasOwn(wf, 'cross_ai_timeout')) return undefined;
-  return wf.cross_ai_timeout;
+  // No root: the timeout read keeps following a symlinked config.json (gsd-tools config-get
+  // parity). A malformed file still reads as absent.
+  return workflowValue(cfgPath, 'cross_ai_timeout').value;
 }
 // Same ladder as gsd-core readScopedConfigValue (planning-workspace.cjs), which config-get
 // follows: the scoped config's own key, then the root key only under GSD_WORKSTREAM; a
 // GSD_PROJECT/GSD_WORKSTREAM with a path separator or `..` reads as absent.
 // shortcut: the stored active-workstream pointer is not read (only the env), upgrade when
 // GSD starts running cross_ai_command without exporting GSD_WORKSTREAM.
-function liveOuterTimeoutS(cwd, env) {
+function scopedConfigPaths(cwd, env) {
   const ws = (env.GSD_WORKSTREAM || '').trim();
   const project = (env.GSD_PROJECT || '').trim();
-  let t;
-  if (!/[/\\]|\.\./.test(ws) && !/[/\\]|\.\./.test(project)) {
-    const root = path.join(cwd, '.planning');
-    const scoped = path.join(root, project, ws ? path.join('workstreams', ws) : '');
-    t = ownTimeout(path.join(scoped, 'config.json'));
-    if (t === undefined && ws) t = ownTimeout(path.join(root, 'config.json'));
-  }
+  if (/[/\\]|\.\./.test(ws) || /[/\\]|\.\./.test(project)) return [];
+  const root = path.join(cwd, '.planning');
+  const scoped = path.join(root, project, ws ? path.join('workstreams', ws) : '');
+  const paths = [path.join(scoped, 'config.json')];
+  if (ws) paths.push(path.join(root, 'config.json'));
+  return paths;
+}
+function liveOuterTimeoutS(cwd, env) {
+  const paths = scopedConfigPaths(cwd, env);
+  let t = paths.length ? ownTimeout(paths[0]) : undefined;
+  if (t === undefined && paths.length > 1) t = ownTimeout(paths[1]);
   const n = Number(t);
   return t !== undefined && t !== null && Number.isFinite(n) && n > 0 ? n : GSD_DEFAULT_TIMEOUT_S;
+}
+// A missing file is silent and is tested before realpathSync, which throws ENOENT when
+// .planning itself is absent (the common case). With rootDir, the file's real path must stay
+// inside the root's real path: a stow-style symlink out of it is refused by name.
+function readJsonObject(file, rootDir = null) {
+  if (!fs.existsSync(file)) return { obj: null };
+  if (rootDir != null) {
+    let realFile;
+    let realRoot;
+    try {
+      realFile = fs.realpathSync(file);
+      realRoot = fs.realpathSync(rootDir);
+    } catch (e) {
+      return { error: `unreadable (${e.code || e.message})` };
+    }
+    const rel = path.relative(realRoot, realFile);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      return {
+        error: `resolves outside ${rootDir} (retry config reads are confined; a symlink out of ` +
+          'it is not followed)',
+      };
+    }
+  }
+  const parsed = parseJson(readOr(file, ''));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { error: 'not a JSON object' };
+  return { obj: parsed };
+}
+function workflowValue(cfgPath, key, rootDir = null) {
+  const read = readJsonObject(cfgPath, rootDir);
+  if (read.error) return { value: undefined, error: read.error };
+  const cfg = read.obj;
+  const wf = cfg && typeof cfg === 'object' && !Array.isArray(cfg) ? cfg.workflow : null;
+  if (!wf || typeof wf !== 'object' || Array.isArray(wf) || !Object.hasOwn(wf, key)) {
+    return { value: undefined };
+  }
+  return { value: wf[key] };
 }
 function innerTimeoutS(outer) {
   // D-29: inner deadline sits strictly below outer (margin floor at least 1s).
@@ -1780,6 +1830,114 @@ function clampCapS(value) {
   const n = Math.trunc(Number(value));
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.min(14400, n);
+}
+// Last source of the retry cascade. Never validated and never refused: a cap below a default
+// hard wait stops the hard tier first (25.1-03 hardWaitFor), it does not drop a key.
+const RETRY_DEFAULTS = Object.freeze({
+  base_s: 1, factor: 1.5, max_retries: 5, session_resets: 1,
+  hard_waits_s: Object.freeze([600, 900, 1800]),
+});
+const RETRY_KEYS = ['base_s', 'factor', 'max_retries', 'session_resets', 'hard_waits_s'];
+
+function validateRetryKey(key, value, capS) {
+  if (!RETRY_KEYS.includes(key)) return 'unknown key';
+  const finite = typeof value === 'number' && Number.isFinite(value);
+  if (key === 'base_s') {
+    if (!finite) return 'wrong type';
+    if (value < 0 || value > 60) return 'out of bounds (0..60)';
+    return null;
+  }
+  if (key === 'factor') {
+    if (!finite) return 'wrong type';
+    if (value < 1 || value > 3) return 'out of bounds (1.0..3.0)';
+    return null;
+  }
+  if (key === 'max_retries' || key === 'session_resets') {
+    const hi = key === 'max_retries' ? 10 : 3;
+    if (!Number.isInteger(value)) return typeof value === 'number' ? 'not an integer' : 'wrong type';
+    if (value < 0 || value > hi) return `out of bounds (0..${hi})`;
+    return null;
+  }
+  if (!Array.isArray(value)) return 'wrong type';
+  if (value.length < 1 || value.length > 6) return 'out of bounds (1..6 entries)';
+  for (const entry of value) {
+    if (!Number.isInteger(entry)) return 'non-integer entry';
+    if (entry < 0 || entry > capS) return `entry out of bounds (0..${capS})`;
+  }
+  return null;
+}
+
+// Read once per call. Nothing here writes a config file. Each key falls through the sources
+// on its own; a refusal names the key and the source and the next source fills it in.
+function resolveRetry(cwd, env) {
+  const rawCap = CONFIG.capS;
+  const capS = clampCapS(rawCap);
+  if (typeof rawCap === 'number' && rawCap > 14400) {
+    log(`cross-ai: config capS ${rawCap} refused (CONFIG): above 14400; using 14400`);
+  }
+  const sources = [];
+  for (const cfgPath of scopedConfigPaths(cwd, env)) {
+    const label = path.relative(cwd, cfgPath);
+    const got = workflowValue(cfgPath, 'cross_ai_retry', path.join(cwd, '.planning'));
+    if (got.error) {
+      log(`cross-ai: config ${label} ${got.error}; retry keys from the next source`);
+      continue;
+    }
+    if (got.value === undefined) continue;
+    sources.push({ label, value: got.value });
+  }
+  const configHome = env.XDG_CONFIG_HOME || path.join(env.HOME || '', '.config');
+  const userFile = path.join(configHome, 'ai-kit', 'cross-ai.json');
+  const userLabel = `user ${userFile}`;
+  const userRead = readJsonObject(userFile, path.join(configHome, 'ai-kit'));
+  if (userRead.error) {
+    log(`cross-ai: config ${userLabel} ${userRead.error}; retry keys from the next source`);
+  } else if (userRead.obj && Object.hasOwn(userRead.obj, 'cross_ai_retry')) {
+    sources.push({ label: userLabel, value: userRead.obj.cross_ai_retry });
+  }
+  sources.push({ label: 'CONFIG', value: CONFIG.retry, config: true });
+  const usable = [];
+  for (const src of sources) {
+    const named = src.config ? 'retry' : 'cross_ai_retry';
+    if (!src.value || typeof src.value !== 'object' || Array.isArray(src.value)) {
+      log(`cross-ai: config ${src.label} ${named} is not an object; retry keys from the next source`);
+      continue;
+    }
+    for (const extra of Object.keys(src.value)) {
+      if (!RETRY_KEYS.includes(extra)) {
+        log(`cross-ai: config ${named}.${extra} refused (${src.label}): unknown key`);
+      }
+    }
+    usable.push(src);
+  }
+  const retry = {};
+  for (const key of RETRY_KEYS) {
+    for (const src of usable) {
+      if (!Object.hasOwn(src.value, key)) continue;
+      const reason = validateRetryKey(key, src.value[key], capS);
+      if (reason) {
+        const named = src.config ? 'retry' : 'cross_ai_retry';
+        log(`cross-ai: config ${named}.${key} refused (${src.label}): ${reason}`);
+        continue;
+      }
+      retry[key] = src.value[key];
+      break;
+    }
+    if (!Object.hasOwn(retry, key)) retry[key] = RETRY_DEFAULTS[key];
+  }
+  const waits = retry.hard_waits_s.join(',');
+  log(`cross-ai: retry base_s=${retry.base_s} factor=${retry.factor} max_retries=${retry.max_retries} ` +
+    `session_resets=${retry.session_resets} hard_waits_s=${waits} cap_s=${capS}`);
+  return { retry, capS };
+}
+
+// Nominal wait k is base_s x factor^(k-1), in ms, jittered by at most +-10% and rounded to the
+// nearest millisecond. The floor only lifts a wait that jitter pushed more than 10% under its
+// predecessor, so jitter never makes wait k more than 10% shorter than wait k-1.
+function softWaitMs(retry, k, rand = Math.random, prevMs = 0) {
+  const nominal = retry.base_s * 1000 * retry.factor ** (k - 1);
+  const jittered = Math.round(nominal * (1 + (rand() * 2 - 1) * 0.1));
+  return Math.max(jittered, Math.ceil(0.9 * prevMs));
 }
 function clampCooldownS(value, capS) {
   const n = Math.trunc(Number(value));
@@ -2872,13 +3030,18 @@ function hermeticEnv(tmp, extra = {}) {
 
 function writeCopy(tmp, name, override) {
   const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  // base_s 0 and hard waits of 0 keep every existing case instant. A partial override.retry
+  // merges per key, so a case never falls back to the 1-second default by omission.
+  const { retry: retryOverride, ...rest } = override || {};
   const cfg = {
     attemptTimeoutS: 0, backoffS: [0, 0], capS: 14400, cooldownS: 0, effort: {}, extraArgs: {},
     heartbeatS: 30, models: {}, newSessionRetries: 3, outerTimeoutS: 1800,
     prefer: ['pi', 'cursor', 'opencode'], routerBacked: {}, sameSessionRetries: 3,
     scrubEnv: [...CONFIG.scrubEnv],
-    ...override,
+    retry: { base_s: 0, factor: 1.5, max_retries: 5, session_resets: 1, hard_waits_s: [0, 0, 0] },
+    ...rest,
   };
+  if (retryOverride) cfg.retry = { ...cfg.retry, ...retryOverride };
   const block = `// <config>\nconst CONFIG = ${JSON.stringify(cfg, null, 2)};\n// </config>`;
   const out = src.replace(/\/\/ <config>[\s\S]*?\/\/ <\/config>/, block);
   const p = path.join(tmp, `runner-${name}.mjs`);
@@ -3374,6 +3537,12 @@ function statusLineOk(stderr, pattern) {
   return null;
 }
 
+function retryLine(r, fragment) {
+  const lines = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: retry '));
+  if (lines.length !== 1) return `retry lines=${lines.length}`;
+  return lines[0].includes(fragment) ? null : lines[0];
+}
+
 function statusTail(stderr) {
   const line = stderr.split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
   const parts = STATUS_HEAD_RE.exec(line);
@@ -3513,7 +3682,7 @@ async function runTwice(spec, c, second) {
   if (again.status !== second.exit) return { reason: `second exit ${again.status}` };
   const calls2 = fs.existsSync(c.calls)
     ? fs.readFileSync(c.calls, 'utf8').trim().split('\n').filter(Boolean) : [];
-  return { first, again, calls1, calls2 };
+  return { first, again, calls1, calls2, ...c };
 }
 
 async function checkCase(spec, c) {
@@ -5349,6 +5518,346 @@ async function blackBoxSelfTest() {
         },
       },
       {
+        // Nominal series at the defaults, then the 10% ordering rule at factors near 1.
+        name: 'pure-soft-waits',
+        pure: () => {
+          const mid = { base_s: 1, factor: 1.5 };
+          const series = [1, 2, 3, 4, 5].map((k) => softWaitMs(mid, k, () => 0.5));
+          const want = [1000, 1500, 2250, 3375, 5063];
+          if (JSON.stringify(series) !== JSON.stringify(want)) return `mid=${series.join(',')}`;
+          for (let i = 1; i < series.length; i++) {
+            if (!(series[i] > series[i - 1])) return `not increasing at ${i}`;
+          }
+          for (const factor of [1.5, 1.01, 1.0]) {
+            const retry = { base_s: 1, factor };
+            // Alternating 1 then 0: the two jitter extremes, with the previous wait threaded.
+            let flip = 0;
+            const alt = () => { flip = 1 - flip; return flip; };
+            let prev = 0;
+            for (let k = 1; k <= 5; k++) {
+              const ms = softWaitMs(retry, k, alt, prev);
+              const nominal = 1000 * factor ** (k - 1);
+              if (ms < Math.ceil(0.9 * prev)) return `factor ${factor} k ${k} below 0.9 x ${prev}`;
+              // Half a millisecond: the +-10% is applied before rounding to the nearest ms.
+              if (Math.abs(ms - nominal) > nominal * 0.1 + 0.5) {
+                return `factor ${factor} k ${k} = ${ms} outside +-10% of ${nominal}`;
+              }
+              prev = ms;
+            }
+            if (factor > 1) {
+              let prevN = 0;
+              for (let k = 1; k <= 5; k++) {
+                const ms = softWaitMs(retry, k, () => 0.5);
+                if (k > 1 && !(ms > prevN)) return `nominal not increasing at factor ${factor} k ${k}`;
+                prevN = ms;
+              }
+            }
+          }
+          const edges = { base_s: 2, factor: 1.5 };
+          for (const rand of [() => 0, () => 0.999]) {
+            const ms = softWaitMs(edges, 2, rand);
+            const nominal = 3000;
+            if (Math.abs(ms - nominal) > nominal * 0.1 + 0.5) return `edge ${ms}`;
+          }
+          return null;
+        },
+      },
+      {
+        name: 'pure-retry-defaults',
+        pure: () => {
+          const want = { base_s: 1, factor: 1.5, max_retries: 5, session_resets: 1 };
+          for (const [k, v] of Object.entries(want)) {
+            if (RETRY_DEFAULTS[k] !== v) return `${k}=${RETRY_DEFAULTS[k]}`;
+          }
+          if (JSON.stringify([...RETRY_DEFAULTS.hard_waits_s]) !== JSON.stringify([600, 900, 1800])) {
+            return `hard_waits_s=${RETRY_DEFAULTS.hard_waits_s}`;
+          }
+          const secs = [1, 2, 3, 4, 5].map((k) => softWaitMs(RETRY_DEFAULTS, k, () => 0.5) / 1000);
+          // 1, 1.5 and 2.25 are exact; one decimal only after 2.25 (SPEC R7 precision).
+          const shown = secs.map((s) => (s === 1 || s === 1.5 || s === 2.25 ? s : Math.round(s * 10) / 10));
+          const expect = [1, 1.5, 2.25, 3.4, 5.1];
+          if (JSON.stringify(shown) !== JSON.stringify(expect)) return `secs=${shown.join(',')}`;
+          for (let i = 1; i < secs.length; i++) {
+            if (!(secs[i] > secs[i - 1])) return `defaults not increasing at ${i}`;
+          }
+          return null;
+        },
+      },
+      {
+        // Inclusive limits pass; one step outside, a wrong type and an unknown key are refused.
+        name: 'pure-retry-validate',
+        pure: () => {
+          const cap = 14400;
+          const ok = [
+            ['base_s', 0], ['base_s', 60], ['factor', 1], ['factor', 3],
+            ['max_retries', 0], ['max_retries', 10], ['session_resets', 0], ['session_resets', 3],
+            ['hard_waits_s', [0]], ['hard_waits_s', [0, 1, 2, 3, 4, cap]],
+          ];
+          for (const [key, value] of ok) {
+            const reason = validateRetryKey(key, value, cap);
+            if (reason) return `${key} ${JSON.stringify(value)} refused: ${reason}`;
+          }
+          const bad = [
+            ['base_s', -0.01], ['base_s', 60.01], ['factor', 0.99], ['factor', 3.01],
+            ['max_retries', -1], ['max_retries', 1.5], ['max_retries', 11], ['session_resets', 4],
+            ['hard_waits_s', []], ['hard_waits_s', [0, 1, 2, 3, 4, 5, 6]],
+            ['hard_waits_s', [cap + 1]], ['hard_waits_s', [1.5]],
+            ['base_s', true], ['factor', '1'], ['max_retries', NaN], ['cap_s', 1],
+          ];
+          for (const [key, value] of bad) {
+            if (validateRetryKey(key, value, cap) === null) {
+              return `${key} ${JSON.stringify(value)} accepted`;
+            }
+          }
+          if (validateRetryKey('hard_waits_s', [0], 0) !== null) return '[0] refused at capS 0';
+          if (validateRetryKey('hard_waits_s', [1], 0) === null) return '[1] accepted at capS 0';
+          return null;
+        },
+      },
+      {
+        name: 'retry-config-project',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1, session_resets: 0 } } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: retry '));
+          if (lines.length !== 1) return `retry lines=${lines.length}`;
+          const want = 'cross-ai: retry base_s=0 factor=1.5 max_retries=1 session_resets=0 ' +
+            'hard_waits_s=0,0,0 cap_s=14400';
+          return lines[0] === want ? null : lines[0];
+        },
+      },
+      {
+        name: 'retry-config-user',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai.json'), JSON.stringify({
+            cross_ai_retry: { max_retries: 2, session_resets: 0 },
+          }));
+          return null;
+        },
+        check: (r) => retryLine(r, 'max_retries=2 session_resets=0'),
+      },
+      {
+        // The project key wins where both set it; the user key fills a key the project lacks.
+        name: 'retry-config-per-key',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1 } } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai.json'), JSON.stringify({
+            cross_ai_retry: { max_retries: 3, session_resets: 0 },
+          }));
+          return null;
+        },
+        check: (r) => retryLine(r, 'max_retries=1 session_resets=0'),
+      },
+      {
+        name: 'retry-config-workstream',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        env: { GSD_WORKSTREAM: 'ws1' },
+        planningConfig: { workflow: { cross_ai_retry: { max_retries: 2 } } },
+        workstream: { ws: 'ws1', config: { workflow: { cross_ai_retry: { max_retries: 1 } } } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => retryLine(r, 'max_retries=1'),
+      },
+      {
+        // A scoped file without the key falls through to the root config.
+        name: 'retry-config-workstream-fallback',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        env: { GSD_WORKSTREAM: 'ws1' },
+        planningConfig: { workflow: { cross_ai_retry: { max_retries: 2 } } },
+        workstream: { ws: 'ws1', config: { workflow: {} } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => retryLine(r, 'max_retries=2'),
+      },
+      {
+        name: 'retry-config-refused',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        planningConfig: { workflow: { cross_ai_retry: { base_s: 61, max_retries: '1' } } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai.json'), JSON.stringify({
+            cross_ai_retry: { max_retries: 1, session_resets: 0 },
+          }));
+          return null;
+        },
+        check: (r) => {
+          const err = r.stderr || '';
+          for (const key of ['base_s', 'max_retries']) {
+            const line = `cross-ai: config cross_ai_retry.${key} refused (.planning/config.json):`;
+            if (!err.includes(line)) return `missing refusal ${key}`;
+          }
+          return retryLine(r, 'base_s=0') || retryLine(r, 'max_retries=1');
+        },
+      },
+      {
+        name: 'retry-config-malformed',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          fs.mkdirSync(path.join(c.repo, '.planning'), { recursive: true });
+          fs.writeFileSync(path.join(c.repo, '.planning', 'config.json'), '{');
+          return null;
+        },
+        check: (r) => {
+          const notice = 'cross-ai: config .planning/config.json not a JSON object; ' +
+            'retry keys from the next source';
+          if (!(r.stderr || '').includes(notice)) return 'missing malformed notice';
+          return retryLine(r, 'base_s=0 factor=1.5 max_retries=5 session_resets=1 hard_waits_s=0,0,0 cap_s=14400');
+        },
+      },
+      {
+        name: 'retry-config-unknown-key',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        planningConfig: { workflow: { cross_ai_retry: { cap_s: 99999 } } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const notice = 'cross-ai: config cross_ai_retry.cap_s refused (.planning/config.json): unknown key';
+          if (!(r.stderr || '').includes(notice)) return 'missing unknown-key notice';
+          return retryLine(r, 'cap_s=14400');
+        },
+      },
+      {
+        name: 'retry-config-caps-clamp',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        config: { capS: 99999 },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r) => {
+          const notice = 'cross-ai: config capS 99999 refused (CONFIG): above 14400; using 14400';
+          if (!(r.stderr || '').includes(notice)) return 'missing capS notice';
+          return retryLine(r, 'cap_s=14400');
+        },
+      },
+      {
+        name: 'retry-config-read-only',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1 } } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        second: {
+          args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+          stdin: 'do the thing\n',
+          exit: 0,
+          status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        },
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai.json'), JSON.stringify({
+            cross_ai_retry: { session_resets: 0 },
+          }));
+          const stamp = (p) => {
+            const st = fs.statSync(p);
+            return { bytes: fs.readFileSync(p), mtime: st.mtimeMs };
+          };
+          c.retryStamp = {
+            project: stamp(path.join(c.repo, '.planning', 'config.json')),
+            user: stamp(path.join(dir, 'cross-ai.json')),
+          };
+          return null;
+        },
+        check: (both) => {
+          const stamp = (p) => {
+            const st = fs.statSync(p);
+            return { bytes: fs.readFileSync(p), mtime: st.mtimeMs };
+          };
+          const dir = path.join(both.home, '.config', 'ai-kit');
+          const now = {
+            project: stamp(path.join(both.repo, '.planning', 'config.json')),
+            user: stamp(path.join(dir, 'cross-ai.json')),
+          };
+          for (const which of ['project', 'user']) {
+            const before = both.retryStamp[which];
+            if (!before.bytes.equals(now[which].bytes)) return `${which} bytes changed`;
+            if (before.mtime !== now[which].mtime) return `${which} mtime changed`;
+          }
+          const one = retryLine(both.first, 'max_retries=1 session_resets=0');
+          if (one) return one;
+          const a = (both.first.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: retry '));
+          const b = (both.again.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: retry '));
+          return a === b ? null : `lines differ: ${b}`;
+        },
+      },
+      {
+        // A CONFIG hard wait above capS is refused; the defaults stay whole as the last source.
+        name: 'retry-config-small-cap',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        config: { capS: 300, retry: { hard_waits_s: [600] } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        // An empty project file: no earlier source supplies hard_waits_s, so only CONFIG is refused.
+        setup: (c) => {
+          fs.mkdirSync(path.join(c.repo, '.planning'), { recursive: true });
+          fs.writeFileSync(path.join(c.repo, '.planning', 'config.json'), '{}');
+          return null;
+        },
+        check: (r) => {
+          const notice = 'cross-ai: config retry.hard_waits_s refused (CONFIG):';
+          if (!(r.stderr || '').includes(notice)) return 'missing hard_waits_s refusal';
+          return retryLine(r, 'hard_waits_s=600,900,1800 cap_s=300');
+        },
+      },
+      {
+        // The retry read refuses a symlink out of .planning; the timeout read still follows it.
+        name: 'retry-config-outside',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          const outside = path.join(c.tmp, 'outside-config.json');
+          fs.writeFileSync(outside, JSON.stringify({
+            workflow: { cross_ai_retry: { max_retries: 7 }, cross_ai_timeout: 600 },
+          }));
+          fs.mkdirSync(path.join(c.repo, '.planning'), { recursive: true });
+          fs.symlinkSync(outside, path.join(c.repo, '.planning', 'config.json'));
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai.json'), JSON.stringify({
+            cross_ai_retry: { max_retries: 2 },
+          }));
+          return null;
+        },
+        check: (r) => {
+          const err = r.stderr || '';
+          for (const word of ['resolves outside', 'confined', 'retry keys from the next source']) {
+            if (!err.includes(word)) return `missing ${word}`;
+          }
+          if (!err.includes('cross-ai: deadline 570s (outer 600s)')) return 'deadline did not follow the symlink';
+          const line = retryLine(r, 'max_retries=2');
+          if (line) return line;
+          return err.includes('max_retries=7') ? 'symlink value used' : null;
+        },
+      },
+      {
         name: 'deadline-default',
         args: ['--print-argv', '--model-pi', 'fake/ok'],
         exit: 0,
@@ -6093,6 +6602,9 @@ async function main(argv) {
     log(dl.error);
     return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
+  // Read once: an edit during the call has no effect until the next call. runCli reads these
+  // in 25.1-02; this call only resolves and logs them.
+  const resolved = resolveRetry(process.cwd(), process.env);
   if (o.codexSandbox && o.mode !== 'exec') {
     log('cross-ai: --codex-sandbox applies to exec mode only; review already runs read-only');
   }
@@ -6116,7 +6628,10 @@ async function main(argv) {
       }
     }
     if (first) log(`cross-ai: a run uses ${first.name} only`);
-    return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
+    return reportAndFinish('ok', {
+      ...liveFields, tree: 'clean', exit: 0, out: 0,
+      retry: resolved.retry, capS: resolved.capS,
+    });
   }
   const raw = readStdin();
   if (!raw || !raw.trim()) {
@@ -6212,7 +6727,7 @@ async function main(argv) {
     beforeSig: noTree ? null : stateSig(before), codexEffort: knobs.codexEffort,
     piThinking: knobs.piThinking, codexServiceTier: o.codexServiceTier,
     cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
-    route: liveFields.route,
+    route: liveFields.route, retry: resolved.retry, capS: resolved.capS,
   });
   liveFields.out = r.outBytes || 0;
   liveFields.cli_rc = r.cli_rc ?? '-';
