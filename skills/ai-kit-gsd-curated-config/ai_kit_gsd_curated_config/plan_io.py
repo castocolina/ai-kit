@@ -12,7 +12,7 @@ import posixpath
 import re
 import shlex
 
-from . import cross_ai, gsd_catalog, host, presets, roles, skill_scan
+from . import cross_ai, cross_ai_build, gsd_catalog, host, presets, roles, skill_scan
 from . import skills as skills_mod
 from .plan_schema import PLAN_SCHEMA_VERSION, canonical_json, inventory_digest
 
@@ -1044,9 +1044,8 @@ def _validate_artifact_doc(art, plan_host: str) -> str | None:
 def _validate_artifact_config(config, choices, status, plan_host: str) -> str | None:
     if not isinstance(config, dict):
         return "artifacts[0].config: expected object"
-    prefer = config.get("prefer")
-    problem = _validate_prefer(prefer, plan_host)
-    if problem or not isinstance(prefer, list):
+    problem = _validate_runtime(config.get("runtime"), plan_host)
+    if problem:
         return problem
     problem = _validate_outer_timeout(config.get("outer_timeout_s"))
     if problem:
@@ -1058,8 +1057,10 @@ def _validate_artifact_config(config, choices, status, plan_host: str) -> str | 
     if not isinstance(router, dict):
         return "artifacts[0].config.router_backed: expected object"
     choice_map = choices if isinstance(choices, dict) else {}
-    return _validate_effort(config.get("effort", {}), models) or _validate_artifact_targets(
-        prefer, models, router, choice_map, status
+    return (
+        _validate_effort(config.get("effort", {}), models)
+        or _host_menu_problem(models, router, plan_host)
+        or _validate_artifact_targets(config["runtime"], models, router, choice_map, status)
     )
 
 
@@ -1078,16 +1079,15 @@ def _validate_effort(effort, models: dict) -> str | None:
     return None
 
 
-def _validate_prefer(prefer, plan_host: str) -> str | None:
-    if not isinstance(prefer, list) or not prefer or not all(isinstance(x, str) for x in prefer):
-        return "artifacts[0].config.prefer: expected non-empty list of str"
-    if len(set(prefer)) != len(prefer):
-        return "artifacts[0].config.prefer: ids must be unique"
-    for runner_id in prefer:
-        if runner_id not in cross_ai.RUNNER_IDS:
-            return f"artifacts[0].config.prefer: unknown id {runner_id!r}"
-        if runner_id == plan_host:
-            return f"artifacts[0].config.prefer: must not include plan host {plan_host!r}"
+def _validate_runtime(runtime, plan_host: str) -> str | None:
+    """One runtime per call (25.1 D-14): a known runner id, never the plan host. A saved
+    ``prefer`` plan is schema 3, which the exact schema match already refuses."""
+    if not isinstance(runtime, str):
+        return "artifacts[0].config.runtime: expected str"
+    if runtime not in cross_ai.RUNNER_IDS:
+        return f"artifacts[0].config.runtime: unknown id {runtime!r}"
+    if runtime == plan_host:
+        return f"artifacts[0].config.runtime: must not be the plan host {plan_host!r}"
     return None
 
 
@@ -1095,41 +1095,50 @@ def _validate_outer_timeout(timeout) -> str | None:
     return timeout_problem("artifacts[0].config.outer_timeout_s", timeout)
 
 
-def _validate_artifact_targets(prefer, models, router, choices, status) -> str | None:
+def _host_menu_problem(models: dict, router: dict, plan_host: str) -> str | None:
+    """The menu never names the plan host, the exclusion the prefer list used to enforce."""
+    for label, mapping in (("models", models), ("router_backed", router)):
+        if plan_host in mapping:
+            return f"artifacts[0].config.{label}: must not include plan host {plan_host!r}"
+    return None
+
+
+def _validate_artifact_targets(runtime, models, router, choices, status) -> str | None:
     for runner_id, model in models.items():
-        problem = _model_row_problem(prefer, runner_id, model)
+        problem = _model_row_problem(runner_id, model)
         if problem:
             return problem
     for runner_id in choices:
-        problem = _choice_row_problem(prefer, runner_id, models, choices[runner_id])
+        problem = _choice_row_problem(runtime, runner_id, models, choices[runner_id])
         if problem:
             return problem
     for runner_id in router:
         if runner_id not in models:
             return f"artifacts[0].config.router_backed: id {runner_id!r} has no model"
-    for runner_id in prefer:
-        if (runner_id in models) == (runner_id in choices):
-            return (
-                f"artifacts[0]: prefer id {runner_id!r} must be in exactly one of "
-                "models and choices"
-            )
+    if (runtime in models) == (runtime in choices):
+        return (
+            f"artifacts[0]: runtime {runtime!r} must be in exactly one of models and choices"
+        )
     want_status = "needs_choice" if choices else "ok"
     if status != want_status:
         return f"artifacts[0].status: expected {want_status!r} (got {status!r})"
     return None
 
 
-def _model_row_problem(prefer, runner_id: str, model) -> str | None:
-    if runner_id not in prefer:
-        return f"artifacts[0].config.models: id {runner_id!r} not in prefer"
+def _model_row_problem(runner_id: str, model) -> str | None:
+    if runner_id not in cross_ai.RUNNER_IDS:
+        return f"artifacts[0].config.models: unknown id {runner_id!r}"
     if not isinstance(model, str) or not model:
         return f"artifacts[0].config.models.{runner_id}: expected non-empty str"
-    return cross_ai.model_id_problem(f"artifacts[0].config.models.{runner_id}", model)
+    label = f"artifacts[0].config.models.{runner_id}"
+    return cross_ai.model_id_problem(label, model) or cross_ai_build.runner_model_problem(
+        label, runner_id, model
+    )
 
 
-def _choice_row_problem(prefer, runner_id: str, models, row) -> str | None:
-    if runner_id not in prefer:
-        return f"artifacts[0].choices: id {runner_id!r} not in prefer"
+def _choice_row_problem(runtime, runner_id: str, models, row) -> str | None:
+    if runner_id != runtime:
+        return f"artifacts[0].choices: id {runner_id!r} is not the runtime"
     if runner_id in models:
         return f"artifacts[0]: id {runner_id!r} present in both models and choices"
     if not isinstance(row, dict) or not isinstance(row.get("candidates"), list):

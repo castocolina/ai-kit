@@ -1220,27 +1220,49 @@ def runner_config(run_dir) -> dict | None:
 
 
 def effective_exec(cmd: str, config: dict) -> tuple[list, dict] | None:
-    """The (prefer order, models) the runner's `main` uses for the hook `cmd`, or None.
+    """The (runtime order, models) the runner's `main` uses for the hook `cmd`, or None.
 
-    Mirrors `cross-ai.mjs` `parseArgs` and `main`: a later `--prefer` or `--model-<rt>` wins;
-    `o.prefer || CONFIG.prefer`; `{...CONFIG.models, ...o.models}`."""
+    Mirrors `cross-ai.mjs` `resolveRuntime` (25.1-06, D-13): `--runtime`, then the first
+    `--prefer` entry, then `CONFIG.runtime`, then `CONFIG.prefer[0]`. A list is never walked,
+    and `--model` wins over `--model-<rt>` for the selected runtime."""
     argv = _argv_of(cmd)
     if argv[:2] != ["node", ".planning/scripts/cross-ai.mjs"]:
         return None
-    prefer, models = None, {}
+    runtime, prefer, model, models = None, None, None, {}
     index = 2
     while index < len(argv):
         token = argv[index]
-        if token == "--prefer" and index + 1 < len(argv):
+        if token == "--runtime" and index + 1 < len(argv):
+            runtime = argv[index + 1]
+            index += 2
+        elif token == "--prefer" and index + 1 < len(argv):
             prefer = [part for part in argv[index + 1].split(",") if part]
+            index += 2
+        elif token == "--model" and index + 1 < len(argv):
+            model = argv[index + 1]
             index += 2
         elif token.startswith("--model-") and index + 1 < len(argv):
             models[token[len("--model-") :]] = argv[index + 1]
             index += 2
         else:
             index += 1
-    order = prefer or config.get("prefer") or []
-    return list(order), {**(config.get("models") or {}), **models}
+    config_prefer = [
+        part for part in (config.get("prefer") or []) if isinstance(part, str) and part
+    ]
+    if runtime:
+        name = runtime
+    elif prefer:
+        name = prefer[0]
+    elif isinstance(config.get("runtime"), str):
+        name = config["runtime"]
+    elif config_prefer:
+        name = config_prefer[0]
+    else:
+        name = None
+    merged = {**(config.get("models") or {}), **models}
+    if model is not None and name is not None:
+        merged[name] = model
+    return ([name] if name else []), merged
 
 
 def lane_vendor(model: str) -> str | None:
@@ -1957,8 +1979,8 @@ def _router_wins(ctx: _Ctx) -> Verdict:
     the router as any set value or any runner model did not prove the execution target)."""
     artifacts = (ctx.plan or {}).get("artifacts") or []
     config = (artifacts[0] or {}).get("config") or {} if artifacts else {}
-    prefer = config.get("prefer") or []
-    target = (config.get("models") or {}).get(prefer[0]) if prefer else None
+    runtime = config.get("runtime")
+    target = (config.get("models") or {}).get(runtime) if isinstance(runtime, str) else None
     ok = target == ROUTER_MODEL
     return Verdict(ok, f"execution keeps {ROUTER_MODEL}" if ok else "no execution router value")
 
@@ -2178,7 +2200,7 @@ def record_of(result: dict) -> dict:
     cmd = (ctx.config or {}).get("workflow.cross_ai_command")
     if isinstance(cmd, str) and ctx.runner is not None:
         pair = effective_exec(cmd, ctx.runner)
-        effective = None if pair is None else {"prefer": pair[0], "models": pair[1]}
+        effective = None if pair is None else {"runtime": pair[0], "models": pair[1]}
     record = {
         "scenario": result["scenario"],
         "cell": cell,

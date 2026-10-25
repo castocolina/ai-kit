@@ -102,8 +102,10 @@ def template_config(template: bytes) -> dict:
 def runner_config(template: bytes, artifact: dict, scrub_env) -> dict:
     base = dict(template_config(template))
     cfg = artifact.get("config") or {}
-    if "prefer" in cfg:
-        base["prefer"] = cfg["prefer"]
+    if "runtime" in cfg:
+        # One runtime per call (25.1 D-14): the rendered copy runs exactly that runtime.
+        base["runtime"] = cfg["runtime"]
+        base.pop("prefer", None)
     if "models" in cfg:
         base["models"] = cfg["models"]
     if "outer_timeout_s" in cfg:

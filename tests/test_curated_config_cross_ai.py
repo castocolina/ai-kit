@@ -72,7 +72,10 @@ class TestExecTargetsEndToEnd(unittest.TestCase):
         )
         self.assertEqual((code, err), (0, ""))
         assert plan is not None
-        self.assertEqual(plan["artifacts"][0]["config"]["prefer"], ["cursor", "opencode"])
+        self.assertEqual(plan["artifacts"][0]["config"]["runtime"], "cursor")
+        self.assertEqual(
+            sorted(plan["artifacts"][0]["config"]["models"]), ["cursor", "opencode"]
+        )
 
     def test_claude_without_pi_falls_to_cursor(self):
         inv = make_inventory(
@@ -86,7 +89,7 @@ class TestExecTargetsEndToEnd(unittest.TestCase):
         code, plan, _, err = run_recommend(inv, "--profile", "adaptive", "--rigor", "standard")
         self.assertEqual((code, err), (0, ""))
         assert plan is not None
-        self.assertEqual(plan["artifacts"][0]["config"]["prefer"][0], "cursor")
+        self.assertEqual(plan["artifacts"][0]["config"]["runtime"], "cursor")
         entry = entry_map(plan)["workflow.cross_ai_execution"]
         self.assertTrue(entry["value"])
         self.assertTrue(plan["cross_ai"]["exec"]["defaulted"])

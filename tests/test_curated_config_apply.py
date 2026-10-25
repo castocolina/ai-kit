@@ -2574,7 +2574,7 @@ class TestSkillDocCommands(unittest.TestCase):
             "inventory.json",
             ".planning/",
             "script:cross-ai.model.",
-            "script:cross-ai.prefer",
+            "script:cross-ai.runtime",
             "ponytail_visibility",
             "System One",
             "ensure-project",

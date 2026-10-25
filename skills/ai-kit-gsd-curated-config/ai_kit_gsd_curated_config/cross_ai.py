@@ -368,12 +368,17 @@ def select_lanes(
 
 
 def script_artifact(targets: list[Target], timeout: int) -> dict:
+    """One runtime per call (25.1 D-14): the first target in the menu order, with or
+    without a model. The per-CLI maps stay the owner's menu."""
+    if not targets:
+        raise ValueError("script_artifact needs at least one target")
+    runtime = targets[0].cli
     models = {t.cli: t.model for t in targets if t.model is not None}
-    choices = {t.cli: {"candidates": t.candidates} for t in targets if t.model is None}
+    choices = {runtime: {"candidates": targets[0].candidates}} if targets[0].model is None else {}
     status = "needs_choice" if choices else "ok"
     why_tail = "; ".join(f"{t.cli}: {t.why}" for t in targets)
     config = {
-        "prefer": [t.cli for t in targets],
+        "runtime": runtime,
         "models": models,
         "outer_timeout_s": timeout,
         "router_backed": {t.cli: t.router_backed for t in targets if t.model is not None},

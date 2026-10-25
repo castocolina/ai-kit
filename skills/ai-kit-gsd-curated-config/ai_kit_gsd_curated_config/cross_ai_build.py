@@ -30,11 +30,12 @@ execute_cli_error: Callable[[str], str | None] | None
 runtime_id: Callable[[str], str] | None
 project_runner_command: Callable[..., str | None] | None
 RunnerSpec: Callable[..., Any] | None
+model_id_ok: Callable[[str, str], bool] | None
 
 try:
     from ai_kit_spec.commands import execute_cli_error
     from ai_kit_spec.detection import runtime_id
-    from ai_kit_spec.runner_dispatch import RunnerSpec, project_runner_command
+    from ai_kit_spec.runner_dispatch import RunnerSpec, model_id_ok, project_runner_command
 except ImportError:
     # `ai_kit_spec` is optional at import time (module docstring above): if its skill
     # directory can't be resolved, or the sibling install is missing/broken, this module must
@@ -48,9 +49,23 @@ except ImportError:
     runtime_id = None
     project_runner_command = None
     RunnerSpec = None
+    model_id_ok = None
 
 # Closed reviewer slugs. Unknown names are rejected before any config write.
 REVIEWER_SLUGS = ("claude", "cursor", "opencode")
+
+
+def runner_model_problem(label: str, runner_id: str, model: str) -> str | None:
+    """The runner's own per-runtime grammar (25.1 D-14), or None when the sibling is absent.
+
+    Without the sibling the shared charset check still applies and the runner refuses the id at
+    run time."""
+    if model_id_ok is None or model_id_ok(runner_id, model):
+        return None
+    return (
+        f"{label}: {runner_id} model id {model!r} does not match the runner's "
+        f"{runner_id} grammar"
+    )
 
 
 def reviewer_slug(cli) -> str | None:

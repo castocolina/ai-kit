@@ -883,7 +883,9 @@ def _cross_ai_exec_entries(ctx: PlanCtx, answer: dict, targets: list) -> tuple[l
         )
         return entries, notes
     cmd_extra: dict = {}
-    if any(t.model is None for t in targets):
+    # Readiness follows the selected runtime only (25.1 D-14): a later menu target
+    # without a model never blocks the command.
+    if targets[0].model is None:
         cmd_extra = {"status": "needs_choice", "candidates": []}
     entries.append(
         make_entry(

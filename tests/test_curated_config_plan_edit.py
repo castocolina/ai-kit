@@ -76,14 +76,15 @@ def _strict_encode():
 
 
 def _partial_runner_plan(inv, plan):
-    """Artifact with pi model set and cursor still in choices."""
+    """Artifact whose runtime (cursor) has no model yet; pi stays in the menu."""
     plan = copy.deepcopy(plan)
     art = plan["artifacts"][0]
     config = art["config"]
     pi_model = config["models"].get("pi")
     if not pi_model:
         pi_model = next(iter(config["models"].values()))
-    config["prefer"] = ["pi", "cursor"]
+    config.pop("prefer", None)
+    config["runtime"] = "cursor"
     config["models"] = {"pi": pi_model}
     config["router_backed"] = {"pi": config["router_backed"].get("pi", False)}
     art["choices"] = {
@@ -173,6 +174,21 @@ class TestPlanSetTracer(unittest.TestCase):
             self.assertIn(".planning", err)
             with open(inside, "rb") as handle:
                 self.assertEqual(handle.read(), raw)
+
+    def test_schema_three_refused(self):
+        """D-14: a saved schema-3 plan keeps list semantics out; its bytes stay unchanged."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, plan = _write_pair(tmp)
+            plan["schema_version"] = 3
+            with open(plan_path, "w", encoding="utf-8") as handle:
+                handle.write(plan_io.canonical_json(plan))
+            raw = _read_bytes(plan_path)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "workflow.plan_review_convergence", "false"
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("schema_version 3 unsupported (expected 4)", err)
+            self.assertEqual(_read_bytes(plan_path), raw)
 
     def test_schema_one_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -290,7 +306,6 @@ class TestPlanSetRefusals(unittest.TestCase):
             "review.default_reviewers",
             "agent_skills.gsd-planner",
             "agent_skills_security.trusted_global_roots",
-            "script:cross-ai.prefer",
         ):
             with self.subTest(key=key), tempfile.TemporaryDirectory() as tmp:
                 self._assert_refusal(tmp, (key, "codex"), "expected a JSON list of strings")
@@ -720,13 +735,22 @@ class TestPlanValidator(unittest.TestCase):
         assert problem is not None
         self.assertIn("path", problem)
 
-    def test_prefer_host_id(self):
+    def test_runtime_host_id(self):
         plan = self._golden_plan()
-        plan["artifacts"][0]["config"]["prefer"] = ["claude"]
+        plan["artifacts"][0]["config"]["runtime"] = "claude"
         problem = plan_io.validate_plan(plan)
         self.assertIsNotNone(problem)
         assert problem is not None
-        self.assertIn("prefer", problem)
+        self.assertIn("runtime", problem)
+
+    def test_saved_pi_model_outside_the_runner_grammar_refused(self):
+        """D-14: a saved model id the runner would refuse is refused at plan time."""
+        plan = self._golden_plan()
+        plan["artifacts"][0]["config"]["models"]["pi"] = "glm"
+        problem = plan_io.validate_plan(plan)
+        self.assertIsNotNone(problem)
+        assert problem is not None
+        self.assertIn("pi grammar", problem)
 
     def test_trusted_root_abs_without_existing(self):
         plan = self._golden_plan()
@@ -828,7 +852,7 @@ class TestPlanValidator(unittest.TestCase):
     def test_artifact_empty_target_coverage(self):
         plan = self._golden_plan()
         art = plan["artifacts"][0]
-        art["config"]["prefer"] = ["pi"]
+        art["config"]["runtime"] = "pi"
         art["config"]["models"] = {}
         art["config"]["router_backed"] = {}
         art["choices"] = {}
@@ -910,8 +934,8 @@ class TestScriptPseudoKeys(unittest.TestCase):
         cases = [
             ("script:cross-ai.model.claude", "some-model"),
             ("script:cross-ai.model.claude", "other"),
-            ("script:cross-ai.prefer", '["grok"]'),
-            ("script:cross-ai.prefer", "[]"),
+            ("script:cross-ai.runtime", '["grok"]'),
+            ("script:cross-ai.runtime", "[]"),
         ]
         with tempfile.TemporaryDirectory() as tmp:
             inv_path, plan_path, _inv, _plan = self._setup_partial(tmp)
@@ -924,34 +948,111 @@ class TestScriptPseudoKeys(unittest.TestCase):
                     self.assertEqual(code, 2, (key, value, force))
                     self.assertEqual(_read_bytes(plan_path), raw)
 
-    def test_prefer_reorder_and_add(self):
+    def test_runtime_switch_to_a_runner_with_a_model_keeps_the_menu(self):
+        """D-14: switching to a modeled runner keeps both models and clears choices."""
         with tempfile.TemporaryDirectory() as tmp:
-            inv_path, plan_path, inv, plan = self._setup_partial(tmp)
+            inv_path, plan_path, inv, plan = _write_pair(tmp)
+            art = plan["artifacts"][0]
+            art["config"]["models"]["cursor"] = self.CURSOR_MODEL
+            art["config"]["router_backed"]["cursor"] = False
+            _save_plan(plan_path, inv, plan)
             code, _, err = _run_plan_set(
-                plan_path, inv_path, "script:cross-ai.prefer", '["cursor", "pi"]'
+                plan_path, inv_path, "script:cross-ai.runtime", "cursor"
             )
             self.assertEqual(code, 0, err)
             reloaded, _ = plan_io.load_plan(plan_path)
             assert reloaded is not None
-            self.assertEqual(reloaded["artifacts"][0]["config"]["prefer"], ["cursor", "pi"])
+            config = reloaded["artifacts"][0]["config"]
+            self.assertEqual(config["runtime"], "cursor")
+            self.assertIn("pi", config["models"])
+            self.assertEqual(config["models"]["cursor"], self.CURSOR_MODEL)
+            self.assertEqual(reloaded["artifacts"][0]["choices"], {})
+            self.assertEqual(reloaded["artifacts"][0]["status"], "ok")
 
-            partial = _partial_runner_plan(inv, plan)
-            _save_plan(plan_path, inv, partial)
+    def test_runtime_value_must_be_a_bare_runner_id(self):
+        """Unknown, the host, not installed, or a JSON list are all refused."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = self._setup_partial(tmp)
+            raw = _read_bytes(plan_path)
+            for value in ("grok", "claude", "not-installed-id", '["pi"]', "[]"):
+                code, _, err = _run_plan_set(
+                    plan_path, inv_path, "script:cross-ai.runtime", value
+                )
+                self.assertEqual(code, 2, (value, err))
+                if value.startswith("["):
+                    self.assertIn("script:cross-ai.runtime", err)
+                self.assertEqual(_read_bytes(plan_path), raw)
+
+    def test_runtime_switch_from_partial_plan(self):
+        """Switching the runtime keeps the menu and follows the new runtime's model."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, inv, plan = self._setup_partial(tmp)
             code, _, err = _run_plan_set(
-                plan_path, inv_path, "script:cross-ai.prefer", '["pi", "opencode"]'
+                plan_path, inv_path, "script:cross-ai.runtime", "pi"
             )
             self.assertEqual(code, 0, err)
             reloaded, _ = plan_io.load_plan(plan_path)
             assert reloaded is not None
             art = reloaded["artifacts"][0]
-            self.assertEqual(art["config"]["prefer"], ["pi", "opencode"])
-            self.assertNotIn("cursor", art["config"]["models"])
-            self.assertIn("opencode", art["choices"])
+            self.assertEqual(art["config"]["runtime"], "pi")
+            self.assertIn("pi", art["config"]["models"])
+            self.assertEqual(art["choices"], {})
+            self.assertEqual(art["status"], "ok")
+
+            partial = _partial_runner_plan(inv, plan)
+            _save_plan(plan_path, inv, partial)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "script:cross-ai.runtime", "opencode"
+            )
+            self.assertEqual(code, 0, err)
+            reloaded, _ = plan_io.load_plan(plan_path)
+            assert reloaded is not None
+            art = reloaded["artifacts"][0]
+            self.assertEqual(art["config"]["runtime"], "opencode")
+            self.assertIn("pi", art["config"]["models"])
+            self.assertEqual(set(art["choices"]), {"opencode"})
+            self.assertNotIn("cursor", art["choices"])
             self.assertEqual(art["status"], "needs_choice")
             cmd = next(
                 e for e in reloaded["entries"] if e["key"] == "workflow.cross_ai_command"
             )
             self.assertEqual(cmd.get("status"), "needs_choice")
+
+    def test_model_set_adds_any_installed_runner_and_checks_its_grammar(self):
+        """D-14: a menu entry needs no prefer membership, and the runner grammar applies."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = self._setup_partial(tmp)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "script:cross-ai.model.opencode", "openai/gpt-5.6-sol"
+            )
+            self.assertEqual(code, 0, err)
+            reloaded, _ = plan_io.load_plan(plan_path)
+            assert reloaded is not None
+            art = reloaded["artifacts"][0]
+            self.assertEqual(art["config"]["models"]["opencode"], "openai/gpt-5.6-sol")
+            self.assertNotIn("opencode", art["choices"])
+            raw = _read_bytes(plan_path)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "script:cross-ai.model.pi", "glm", force=True
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("pi grammar", err)
+            self.assertEqual(_read_bytes(plan_path), raw)
+
+    def test_old_prefer_key_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inv_path, plan_path, _inv, _plan = self._setup_partial(tmp)
+            raw = _read_bytes(plan_path)
+            code, _, err = _run_plan_set(
+                plan_path, inv_path, "script:cross-ai.prefer", '["cursor"]'
+            )
+            self.assertEqual(code, 2)
+            self.assertIn(
+                "script:cross-ai.prefer was replaced by script:cross-ai.runtime "
+                "(one runtime per call)",
+                err,
+            )
+            self.assertEqual(_read_bytes(plan_path), raw)
 
     def test_script_model_effort_follows_the_inventory_row(self):
         """WR-06: setting a pi model pins its effort; unsetting it drops the effort."""
@@ -976,9 +1077,11 @@ class TestScriptPseudoKeys(unittest.TestCase):
             call = plan_edit.EditCall(plan, inv, False, encode)
             edited, _warnings = plan_edit.plan_unset(call, "script:cross-ai.model.pi")
             art = edited["artifacts"][0]
-            self.assertIn("pi", art["config"]["prefer"])
+            self.assertEqual(art["config"]["runtime"], "cursor")
             self.assertNotIn("pi", art["config"]["models"])
-            self.assertIn("pi", art["choices"])
+            self.assertNotIn("pi", art["config"]["router_backed"])
+            self.assertNotIn("pi", art["choices"])
+            self.assertEqual(set(art["choices"]), {"cursor"})
             self.assertEqual(art["status"], "needs_choice")
 
 
@@ -1545,7 +1648,7 @@ class TestScriptRouterBacked(unittest.TestCase):
             "rigor": "standard",
             "entries": [],
             "artifacts": [{
-                "config": {"prefer": ["pi"], "models": {}, "router_backed": {}},
+                "config": {"runtime": "pi", "models": {}, "router_backed": {}},
                 "choices": {},
             }],
         }

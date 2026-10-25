@@ -7,7 +7,7 @@ import shlex
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from . import cross_ai, plan_io, presets, roles, skills
+from . import cross_ai, cross_ai_build, plan_io, presets, roles, skills
 
 _LIST_KEYS_PREFIXES = ("agent_skills.",)
 LIST_KEYS = (
@@ -23,10 +23,11 @@ _EXEC_STRIP_KEYS = (
     "manager.flags.execute",
 )
 SCRIPT_MODEL_PREFIX = "script:cross-ai.model."
-SCRIPT_PREFER_KEY = "script:cross-ai.prefer"
-_EMPTY_PREFER_MSG = (
-    "removing every target would leave no execution target; plan-set "
-    "workflow.cross_ai_execution false instead"
+SCRIPT_RUNTIME_KEY = "script:cross-ai.runtime"
+# The old list key is refused so a command-line input never silently keeps list semantics.
+_OLD_PREFER_KEY = "script:cross-ai.prefer"
+_OLD_PREFER_MSG = (
+    "script:cross-ai.prefer was replaced by script:cross-ai.runtime (one runtime per call)"
 )
 
 
@@ -193,12 +194,14 @@ def _skipped_skills_refusal(call: EditCall, plan: dict, key: str) -> None:
 
 
 def _is_script_pseudo_key(key: str) -> bool:
-    return key == SCRIPT_PREFER_KEY or key.startswith(SCRIPT_MODEL_PREFIX)
+    return key in (SCRIPT_RUNTIME_KEY, _OLD_PREFER_KEY) or key.startswith(SCRIPT_MODEL_PREFIX)
 
 
 def _plan_set_script(call: EditCall, key: str, raw: str) -> tuple[dict, list[str]]:
-    if key == SCRIPT_PREFER_KEY:
-        return _plan_set_script_prefer(call, raw)
+    if key == _OLD_PREFER_KEY:
+        raise PlanEditError(_OLD_PREFER_MSG)
+    if key == SCRIPT_RUNTIME_KEY:
+        return _plan_set_script_runtime(call, raw)
     runner_id = key[len(SCRIPT_MODEL_PREFIX) :]
     if not runner_id:
         raise PlanEditError(f"{key}: missing runner id")
@@ -225,15 +228,16 @@ def _plan_set_script_model(
 ) -> tuple[dict, list[str]]:
     _assert_runner_target(call, runner_id)
     model = raw
-    problem = cross_ai.model_id_problem(f"{SCRIPT_MODEL_PREFIX}{runner_id}", model)
+    label = f"{SCRIPT_MODEL_PREFIX}{runner_id}"
+    problem = cross_ai.model_id_problem(label, model)
     if problem:  # force-immune: the id lands in the runner's CLI argv
         raise PlanEditError(problem)
+    grammar = cross_ai_build.runner_model_problem(label, runner_id, model)
+    if grammar:  # force-immune: the runner would refuse the id at run time
+        raise PlanEditError(grammar)
     plan = copy.deepcopy(call.plan)
     artifact = _script_artifact(plan)
     config = artifact.setdefault("config", {})
-    prefer = config.get("prefer") or []
-    if runner_id not in prefer:
-        raise PlanEditError(f"script target {runner_id} is not in config.prefer")
     row = _find_inventory_model(call.inv, runner_id, model)
     if row is None and not call.force:
         raise PlanEditError(
@@ -253,34 +257,30 @@ def _plan_set_script_model(
     return plan, []
 
 
-def _plan_set_script_prefer(call: EditCall, raw: str) -> tuple[dict, list[str]]:
-    ids = _parse_string_list(SCRIPT_PREFER_KEY, raw)
-    if not ids:
-        raise PlanEditError(_EMPTY_PREFER_MSG)
-    for runner_id in ids:
-        _assert_runner_target(call, runner_id)
-    if len(set(ids)) != len(ids):
-        raise PlanEditError(f"{SCRIPT_PREFER_KEY}: ids must be unique")
+def _plan_set_script_runtime(call: EditCall, raw: str) -> tuple[dict, list[str]]:
+    """One runtime per call (25.1 D-14): a bare runner id, never a JSON list."""
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        parsed = raw
+    if not isinstance(parsed, str):
+        raise PlanEditError(f"{SCRIPT_RUNTIME_KEY}: expected a runner id (got {raw!r})")
+    runner_id = parsed
+    _assert_runner_target(call, runner_id)
     plan = copy.deepcopy(call.plan)
     artifact = _script_artifact(plan)
     config = artifact.setdefault("config", {})
-    old_prefer = list(config.get("prefer") or [])
-    config["prefer"] = ids
-    models = config.setdefault("models", {})
-    router_map = config.setdefault("router_backed", {})
+    previous = config.get("runtime")
+    config["runtime"] = runner_id
     choices = artifact.setdefault("choices", {})
-    for dropped in set(old_prefer) - set(ids):
-        models.pop(dropped, None)
-        router_map.pop(dropped, None)
-        choices.pop(dropped, None)
-        _set_effort(config, dropped, None)
-    for runner_id in ids:
-        if runner_id in models:
-            continue
-        if runner_id not in choices:
-            choices[runner_id] = {
-                "candidates": runtime_candidates(call.inv, runner_id, call.plan["rigor"]),
-            }
+    if isinstance(previous, str) and previous != runner_id:
+        choices.pop(previous, None)
+    if runner_id not in config.get("models", {}):
+        choices[runner_id] = {
+            "candidates": runtime_candidates(call.inv, runner_id, call.plan["rigor"]),
+        }
+    else:
+        choices.pop(runner_id, None)
     _finish_script_artifact(artifact)
     _sync_artifact_command(plan, artifact)
     plan["entries"] = sorted(plan.get("entries") or [], key=lambda row: row["key"])
@@ -294,15 +294,18 @@ def _plan_unset_script_model(call: EditCall, key: str) -> tuple[dict, list[str]]
     plan = copy.deepcopy(call.plan)
     artifact = _script_artifact(plan)
     config = artifact.setdefault("config", {})
-    prefer = config.get("prefer") or []
-    if runner_id not in prefer:
-        raise PlanEditError(f"script target {runner_id} is not in config.prefer")
-    config.setdefault("models", {}).pop(runner_id, None)
+    models = config.setdefault("models", {})
+    if runner_id not in models and runner_id != config.get("runtime"):
+        raise PlanEditError(f"script target {runner_id} is not in the menu")
+    models.pop(runner_id, None)
     config.setdefault("router_backed", {}).pop(runner_id, None)
     _set_effort(config, runner_id, None)
-    artifact.setdefault("choices", {})[runner_id] = {
-        "candidates": runtime_candidates(call.inv, runner_id, call.plan["rigor"]),
-    }
+    if runner_id == config.get("runtime"):
+        artifact.setdefault("choices", {})[runner_id] = {
+            "candidates": runtime_candidates(call.inv, runner_id, call.plan["rigor"]),
+        }
+    else:
+        artifact.setdefault("choices", {}).pop(runner_id, None)
     _finish_script_artifact(artifact)
     _sync_artifact_command(plan, artifact)
     plan["entries"] = sorted(plan.get("entries") or [], key=lambda row: row["key"])

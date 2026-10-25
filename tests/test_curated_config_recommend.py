@@ -1770,6 +1770,45 @@ class TestCrossAi(unittest.TestCase):
         self.assertEqual(reserved["candidates"], [])
         self.assertEqual(reserved["why"], cross_ai.NO_TARGET_TEXT)
 
+    def _exec_menu(self, pi_model, cursor_installed):
+        """pi first; cursor is the second menu target only when installed."""
+        cands = []
+        if pi_model:
+            cands.append(cand(pi_model, runtime="pi", is_host=False, price=1, score_axes=3,
+                              purpose_scores={**_SCORES, "execution": 8.0}))
+        if cursor_installed:
+            # Above the rigor ceiling, so cursor stays a menu target with no model.
+            cands.append(cand("composer-2.5", runtime="cursor", is_host=False, price=1000,
+                              score_axes=3, purpose_scores={**_SCORES, "execution": 8.0}))
+        inv = make_inventory(host="claude", candidates=cands)
+        inv["installed_runtimes"] = ["pi", "cursor"]
+        return build(inv, rigor="standard", cross_ai_exec="y")
+
+    def test_runtime_is_first_target_even_when_a_later_target_has_no_model(self):
+        """D-14: the runtime is targets[0]; an unselected menu target without a model never
+        blocks the command."""
+        plan = self._exec_menu("router-env/my-coding", True)
+        art = plan["artifacts"][0]
+        self.assertEqual(art["config"]["runtime"], "pi")
+        self.assertNotIn("prefer", art["config"])
+        self.assertEqual(art["status"], "ok")
+        self.assertEqual(art["choices"], {})
+        self.assertIn("cursor", art["config"]["models"])
+        command = entry_map(plan)["workflow.cross_ai_command"]
+        self.assertNotEqual(command.get("status"), "needs_choice")
+        self.assertEqual(command["value"], cross_ai.CROSS_AI_COMMAND)
+
+    def test_runtime_without_a_model_needs_choice(self):
+        """D-14: a first target without a model stays the runtime and needs a choice."""
+        plan = self._exec_menu(None, False)
+        art = plan["artifacts"][0]
+        self.assertEqual(art["config"]["runtime"], "pi")
+        self.assertNotIn("pi", art["config"]["models"])
+        self.assertEqual(set(art["choices"]), {"pi"})
+        self.assertEqual(art["status"], "needs_choice")
+        command = entry_map(plan)["workflow.cross_ai_command"]
+        self.assertEqual(command["status"], "needs_choice")
+
     def test_exec_no(self):
         plan = build(make_inventory(), rigor="standard", cross_ai_exec="n")
         self.assertFalse(entry_map(plan)["workflow.cross_ai_execution"]["value"])

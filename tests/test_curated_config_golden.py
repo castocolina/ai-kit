@@ -485,7 +485,9 @@ class TestGoldenProperties(unittest.TestCase):
                         self.assertIn(key, effort_keys, key)
 
     def test_exec_targets_never_host(self):
+        """D-14: the runtime and every menu id stay off the host and the forbidden set."""
         forbidden = {"grok", "claude"}
+        checked = 0
         for host_name, rigor, profile in ALL_GOLDEN_CASES:
             with self.subTest(host=host_name, rigor=rigor, profile=profile):
                 plan = self._load_golden(golden_basename(host_name, rigor, profile))
@@ -493,10 +495,16 @@ class TestGoldenProperties(unittest.TestCase):
                 for artifact in plan["artifacts"]:
                     if artifact.get("kind") != "cross-ai-script":
                         continue
-                    prefer = artifact.get("config", {}).get("prefer", [])
-                    for cli_id in prefer:
+                    config = artifact.get("config", {})
+                    ids = [config.get("runtime")]
+                    ids.extend((config.get("models") or {}).keys())
+                    ids.extend((artifact.get("choices") or {}).keys())
+                    self.assertTrue(ids and all(isinstance(i, str) for i in ids))
+                    for cli_id in ids:
                         self.assertNotIn(cli_id, forbidden, host_name)
                         self.assertNotEqual(cli_id, host_name, host_name)
+                    checked += 1
+        self.assertGreaterEqual(checked, 7)
 
 
 class TestConflictsEndToEnd(unittest.TestCase):

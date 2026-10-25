@@ -2065,7 +2065,7 @@ CONFIG_B = {
     "model_profile": "adaptive",
 }
 
-RUNNER_CONFIG = {"prefer": ["pi", "cursor"], "models": {"pi": "router-env/my-coding"}}
+RUNNER_CONFIG = {"runtime": "pi", "models": {"pi": "router-env/my-coding"}}
 
 
 def _runner_file(run: pathlib.Path, config: dict, extra: str = "") -> None:
@@ -2313,7 +2313,7 @@ class TestGrader(unittest.TestCase):
             )
         )
         cfg = dict(CONFIG_B, **{"workflow.cross_ai_command": hook})
-        run = _b_run(self.scratch, config=cfg, runner={"prefer": ["cursor"], "models": {}})
+        run = _b_run(self.scratch, config=cfg, runner={"runtime": "cursor", "models": {}})
         self.assertIs(self.row(self.grade_b(run), "pi_execution_router")["pass"], True)
 
     def test_v1_hook_model_override_negative(self) -> None:
@@ -2322,7 +2322,7 @@ class TestGrader(unittest.TestCase):
         hook = cross_ai_build.build_execution_command("pi", "other/model")
         cfg = dict(CONFIG_B, **{"workflow.cross_ai_command": hook})
         run = _b_run(
-            self.scratch, config=cfg, runner={"prefer": ["pi"], "models": {"pi": ev.ROUTER_MODEL}}
+            self.scratch, config=cfg, runner={"runtime": "pi", "models": {"pi": ev.ROUTER_MODEL}}
         )
         row = self.row(self.grade_b(run), "pi_execution_router")
         self.assertIs(row["pass"], False)
@@ -2334,7 +2334,7 @@ class TestGrader(unittest.TestCase):
         hook = cross_ai_build.build_execution_command("opencode", ev.ROUTER_MODEL)
         cfg = dict(CONFIG_B, **{"workflow.cross_ai_command": hook})
         run = _b_run(
-            self.scratch, config=cfg, runner={"prefer": ["pi"], "models": {"pi": ev.ROUTER_MODEL}}
+            self.scratch, config=cfg, runner={"runtime": "pi", "models": {"pi": ev.ROUTER_MODEL}}
         )
         row = self.row(self.grade_b(run), "pi_execution_router")
         self.assertIs(row["pass"], False)
@@ -2347,14 +2347,25 @@ class TestGrader(unittest.TestCase):
         self.assertIn("not the runner hook", row["evidence"])
 
     def test_effective_exec_mirrors_runner_merge(self) -> None:
-        config = {"prefer": ["c"], "models": {"pi": "z", "cursor": "w"}}
-        cmd = "node .planning/scripts/cross-ai.mjs --prefer a,b --model-pi x --model-pi y"
-        self.assertEqual(ev.effective_exec(cmd, config), (["a", "b"], {"pi": "y", "cursor": "w"}))
+        """D-13 order: --runtime, then the first --prefer entry, then CONFIG.runtime, then
+        CONFIG.prefer[0]; --model wins over --model-<rt> for the selected runtime."""
+        config = {"runtime": "c", "models": {"pi": "z", "cursor": "w"}}
+        cmd = (
+            "node .planning/scripts/cross-ai.mjs --runtime pi --prefer a,b "
+            "--model y --model-pi x"
+        )
+        self.assertEqual(ev.effective_exec(cmd, config), (["pi"], {"pi": "y", "cursor": "w"}))
+        prefer_only = "node .planning/scripts/cross-ai.mjs --prefer a,b --model-pi x"
+        self.assertEqual(
+            ev.effective_exec(prefer_only, config), (["a"], {"pi": "x", "cursor": "w"})
+        )
         bare = "node .planning/scripts/cross-ai.mjs"
         self.assertEqual(ev.effective_exec(bare, config), (["c"], {"pi": "z", "cursor": "w"}))
+        legacy = {"prefer": ["c", "pi"], "models": {"pi": "z"}}
+        self.assertEqual(ev.effective_exec(bare, legacy), (["c"], {"pi": "z"}))
 
     def test_pi_router_only_in_new_file_fails(self) -> None:
-        run = _b_run(self.scratch, runner={"prefer": ["cursor"], "models": {}})
+        run = _b_run(self.scratch, runner={"runtime": "cursor", "models": {}})
         scripts = run / "project" / ".planning" / "scripts"
         (scripts / "cross-ai.mjs.new").write_text(
             f'const CONFIG = {{"models": {{"pi": "{ev.ROUTER_MODEL}"}}}};', encoding="utf-8"
@@ -2365,7 +2376,7 @@ class TestGrader(unittest.TestCase):
     def test_router_string_in_comment_not_config_fails(self) -> None:
         cfg_run = _b_run(
             self.scratch,
-            runner={"prefer": ["cursor"], "models": {}},
+            runner={"runtime": "cursor", "models": {}},
             script_extra=f"// example {ev.ROUTER_MODEL}\n",
         )
         row = self.row(self.grade_b(cfg_run), "pi_execution_router")
@@ -2376,7 +2387,7 @@ class TestGrader(unittest.TestCase):
             self.grade_b(
                 _b_run(
                     self.scratch,
-                    runner={"prefer": ["cursor", "pi"], "models": {"pi": ev.ROUTER_MODEL}},
+                    runner={"runtime": "cursor", "models": {"pi": ev.ROUTER_MODEL}},
                 )
             ),
             "pi_execution_router",
@@ -4579,12 +4590,12 @@ class TestReviewFixes(unittest.TestCase):
     def test_router_must_be_the_first_runner_model(self) -> None:
         plan = {
             "artifacts": [
-                {"config": {"prefer": ["cursor", "pi"], "models": {"pi": ev.ROUTER_MODEL}}}
+                {"config": {"runtime": "cursor", "models": {"pi": ev.ROUTER_MODEL}}}
             ]
         }
         ctx = ev._Ctx([], pathlib.Path(self.tmp), None, None, plan, None, False, None, None)
         self.assertIs(ev._router_wins(ctx).passed, False)
-        plan["artifacts"][0]["config"]["prefer"] = ["pi", "cursor"]
+        plan["artifacts"][0]["config"]["runtime"] = "pi"
         self.assertIs(ev._router_wins(ctx).passed, True)
 
     # WR-08: history rows by their status cell only

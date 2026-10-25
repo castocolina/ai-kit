@@ -39,9 +39,12 @@ def _shipped_version() -> bytes:
 
 
 def _artifact(**overrides) -> dict:
-    base = cross_ai.script_artifact([], cross_ai.MIN_TIMEOUT_S)
+    base = cross_ai.script_artifact(
+        [cross_ai.Target("pi", "router-env/my-coding", "catalog", "test", True, [])],
+        cross_ai.MIN_TIMEOUT_S,
+    )
     base["config"] = {
-        "prefer": ["pi", "cursor"],
+        "runtime": "pi",
         "models": {"pi": "router-env/my-coding"},
         "outer_timeout_s": 1800,
         "router_backed": {"pi": True},
@@ -71,7 +74,8 @@ class TestRender(unittest.TestCase):
         art = _artifact()
         art["choices"] = {"codex": {"candidates": []}}
         cfg = cross_ai_script.runner_config(self.template, art, HOST_SIGNAL_ENV_VARS)
-        self.assertEqual(cfg["prefer"], ["pi", "cursor"])
+        self.assertEqual(cfg["runtime"], "pi")
+        self.assertNotIn("prefer", cfg)
         self.assertEqual(cfg["models"], {"pi": "router-env/my-coding"})
         self.assertEqual(cfg["outerTimeoutS"], 1800)
         self.assertEqual(cfg["routerBacked"], {"pi": True})
@@ -81,6 +85,18 @@ class TestRender(unittest.TestCase):
         art["config"]["effort"] = {"pi": "medium"}
         cfg = cross_ai_script.runner_config(self.template, art, HOST_SIGNAL_ENV_VARS)
         self.assertEqual(cfg["effort"], {"pi": "medium"})
+
+    def test_script_artifact_needs_a_target(self):
+        with self.assertRaisesRegex(ValueError, "script_artifact needs at least one target"):
+            cross_ai.script_artifact([], cross_ai.MIN_TIMEOUT_S)
+
+    def test_runner_config_drops_prefer_for_runtime(self):
+        """D-14: an artifact runtime renders as CONFIG runtime and the prefer list is gone."""
+        art = _artifact()
+        art["config"]["prefer"] = ["cursor", "opencode"]
+        cfg = cross_ai_script.runner_config(self.template, art, HOST_SIGNAL_ENV_VARS)
+        self.assertEqual(cfg["runtime"], "pi")
+        self.assertNotIn("prefer", cfg)
 
     def test_render_idempotent(self):
         art = _artifact()
@@ -325,10 +341,11 @@ class TestPlanScript(unittest.TestCase):
             self.assertEqual(int(match.group(1)), int(_shipped_version()) + 1)
 
 
-def _v2_pristine(template: bytes, prefer: list) -> bytes:
+def _v2_pristine(template: bytes, runtime: str) -> bytes:
     """A pristine script stamped template=2, body otherwise identical to a current render."""
     cfg = cross_ai_script.template_config(template)
-    cfg["prefer"] = prefer
+    cfg["runtime"] = runtime
+    cfg.pop("prefer", None)
     cfg["scrubEnv"] = sorted(HOST_SIGNAL_ENV_VARS)
     rendered = cross_ai_script.render(template, cfg)
     return re.sub(rb"template=\d+", b"template=2", rendered, count=1)
@@ -343,7 +360,7 @@ class TestEnsureRunner(unittest.TestCase):
         from ai_kit_spec.runner_dispatch import RunnerSpec, project_runner_command
 
         with tempfile.TemporaryDirectory() as tmp:
-            old = _v2_pristine(self.template, ["codex"])
+            old = _v2_pristine(self.template, "codex")
             target = os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "wb") as handle:
@@ -359,7 +376,7 @@ class TestEnsureRunner(unittest.TestCase):
                 upgraded = handle.read()
             self.assertIn(b"template=" + _shipped_version(), upgraded.split(b"\n", 2)[1])
             self.assertEqual(
-                cross_ai_script.template_config(upgraded)["prefer"], ["codex"]
+                cross_ai_script.template_config(upgraded)["runtime"], "codex"
             )
             guidance = os.path.join(tmp, ".planning", "scripts", "cross-ai-guidance.md")
             with open(guidance, "rb") as handle:
@@ -456,7 +473,7 @@ class TestEnsureRunnerStates(unittest.TestCase):
 
     def test_edited_template_2_writes_new_and_is_not_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
-            data = _v2_pristine(self.template, ["codex"]) + b"\n"
+            data = _v2_pristine(self.template, "codex") + b"\n"
             target = self._runner(tmp)
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "wb") as handle:

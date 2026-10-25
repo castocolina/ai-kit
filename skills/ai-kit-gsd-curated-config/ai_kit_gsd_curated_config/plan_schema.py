@@ -5,7 +5,8 @@ import hashlib
 import json
 
 # 18-04 adds top-level ``artifacts`` on plans.
-PLAN_SCHEMA_VERSION = 3
+# 25.1 D-14: artifacts[0].config.runtime replaces prefer.
+PLAN_SCHEMA_VERSION = 4
 
 
 def canonical_json(obj) -> str:

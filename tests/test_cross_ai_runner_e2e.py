@@ -288,7 +288,7 @@ class TestRenderedRunner(unittest.TestCase):
             "template": "cross-ai.mjs",
             "version": 3,
             "config": {
-                "prefer": ["pi", "cursor"],
+                "runtime": "pi",
                 "models": {"pi": "router-env/my-coding"},
                 "outer_timeout_s": 1800,
                 "router_backed": {"pi": True},

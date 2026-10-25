@@ -120,10 +120,9 @@ python3 "$ENTRYPOINT" plan-set script:cross-ai.model.<runner> <model id> --plan 
 python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
 ```
 
-   - **Runner models** are the pseudo-keys `script:cross-ai.model.<runner>` (pick from
-     `artifacts[0].choices.<runner>.candidates`) and `script:cross-ai.prefer` (a JSON list
-     of runner ids: only the first named runner runs, and the rest is the owner's menu; see
-     "Cross-AI execution").
+   - **Runner models** are the pseudo-keys `script:cross-ai.runtime` (the one runtime per
+     call) and `script:cross-ai.model.<runner>` (the menu of models; pick from
+     `artifacts[0].choices.<runner>.candidates`; see "Cross-AI execution").
      `plan-unset script:cross-ai.model.<runner>` reopens a choice.
      A pi or codex model with reasoning modes also pins its effort (`config.effort`, medium
      or the nearest mode); the runner passes it as pi `--thinking` / codex effort.
@@ -142,7 +141,7 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
      `plan-set` with it (entrypoint and `--plan` included).
    - `workflow.cross_ai_command` and the runner artifact stay open until every runner in
      `artifacts[0].choices` has a model (`plan-unset` is refused while execution is on).
-     To drop a runner, `plan-set script:cross-ai.prefer` without it; to drop execution,
+     To drop a menu runner, `plan-unset script:cross-ai.model.<id>`; to drop execution,
      `plan-set workflow.cross_ai_execution false`.
    - A refused value outside the candidates takes `--force` **only** when the user explicitly
      chose that value; say what it bypasses before using it.
@@ -227,7 +226,7 @@ dispatch, that re-entry is GSD's caller's (ai-kit-spec-execute-gsd); this skill 
 lines and `retry_after_s`, and schedules the one-shot only for a dispatch the user asked it to
 run. Another runner in `prefer` is the owner's menu: the owner re-invokes `node
 .planning/scripts/cross-ai.mjs --prefer <id>` with the same prompt on stdin (its model comes from
-CONFIG), or re-plans `script:cross-ai.prefer` and re-applies. Never hand-edit CONFIG `prefer`:
+CONFIG), or re-plans `script:cross-ai.runtime` and re-applies. Never hand-edit CONFIG `prefer`:
 an edited runner is pinned to `.new` upgrades.
 The hook names the runner, never a raw vendor CLI string.
 

@@ -9,16 +9,12 @@
           "pi": "router-env/my-coding"
         },
         "outer_timeout_s": 1800,
-        "prefer": [
-          "pi",
-          "cursor",
-          "opencode"
-        ],
         "router_backed": {
           "cursor": false,
           "opencode": true,
           "pi": true
-        }
+        },
+        "runtime": "pi"
       },
       "kind": "cross-ai-script",
       "path": ".planning/scripts/cross-ai.mjs",
@@ -366,7 +362,7 @@
   ],
   "profile": "adaptive",
   "rigor": "standard",
-  "schema_version": 3,
+  "schema_version": 4,
   "skill_affinity": {
     "as_of": "2026-10-15",
     "schema_version": 1
