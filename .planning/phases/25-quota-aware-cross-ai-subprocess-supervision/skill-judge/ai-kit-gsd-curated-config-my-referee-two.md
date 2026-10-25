@@ -1,66 +1,36 @@
 # ai-kit-gsd-curated-config — skill-judge report (opencode router-env/my-referee-two, read-only review mode)
 
-Round 5 (evidence round), skill digest `089d13c6a215b519`, judged at commit e2bb140. Rubric: the skill-judge skill (120 points).
+Round 6, skill digest `c3f432f44f2da7b7`, judged at commit 12083a7. Rubric: the skill-judge skill (120 points).
 
-## Round 5: BLOCKED (the runner stopped the lane; no score)
+Runner status: `AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=267s out=382002 tree=clean action=stop route=router rule=- pattern=none attempts=1 cycles=0`
 
-Runner evidence lines:
-
-```text
-cross-ai: report status=crash lane=opencode/router-env/my-referee-two route=router attempts=1 cycles=0 first_failure=2026-10-25T04:25:46.793Z last_failure=2026-10-25T04:25:47.904Z stopped=class
-AIKIT-XAI status=crash cli=opencode model=router-env/my-referee-two exit=1 cli_rc=1 elapsed=1s out=1148 tree=clean action=stop route=router rule=- pattern=none attempts=1 cycles=0
-```
-
-Upstream messages (OmniRoute, verbatim, trimmed):
-
-```text
-Combo has no executable targets
-```
-
-## Last completed report from this judge (round 2, an earlier digest; reference only, not this verdict's score)
-
-All evidence gathered and verified against the implementation. Here is the evaluation.
+Verification complete. I read the rubric, the full skill (SKILL.md, both references, the policy it points to), the Phase 25 diff, and cross-checked the docs against the shipped code (`cross_ai.py` TEMPLATE_VERSION=7, `cross_ai_script.py` _READY_TEMPLATE=7, `plan_edit.py` `_confirmed_router`, `apply.py`/`plan_io.py` refusal path, and the template's STATUS_TABLE in `ai-kit-spec-review/references/cross-ai.mjs`).
 
 # Skill Evaluation Report: ai-kit-gsd-curated-config
 
-## Summary
-- **Total Score**: 109/120 (90.8%) — Grade A
-- **Pattern**: Process/Tool hybrid (phased workflow + exact-command decision tables, low freedom)
-- **Knowledge Ratio**: E:A:R ≈ 85:15:0 — near-pure curated policy; no tutorial filler
-- **Verdict**: An exemplary contract-heavy operations skill whose Phase 25 runner policy is described accurately and verified against the template and code; two Important precision defects remain, both narrow-edge.
+**Pattern**: Process + Navigation hybrid (exit-code decision tables, phased pipeline, routed references). **Knowledge ratio**: ~E92:A8:R0 — near-pure expert content.
 
-**Phase 25 verification (all confirmed in code):** template 7 is current (`cross-ai.mjs:2`); one CLI per call, first `prefer` entry only, missing → `not_installed` exit 127 (`cross-ai.mjs:815`, policy §One CLI per call); `capS` 14400 clamp (`cross-ai.mjs:69,1762`); evidence line is the single last stderr line, `action=stop` on every status including clean exit 0 (`cross-ai.mjs:17,3322-3324`); `git_error`/`git_timeout` → exit 1, never a second CLI (`cross-ai.mjs:817-818`, old fallback wording correctly deleted in the diff); both pointers to `subprocess-quota-policy.md` resolve (SKILL.md:213, runner.md:42); SKILL.md does not restate the 4-hour cap — exactly what the policy file itself mandates ("A skill links here; it does not copy the rules"); the never-switch rule appears in body, NEVER list, and matches the policy verbatim in spirit. `router_backed` initial-set claim matches `recommend.py:544-555` / `cross_ai.py:106,109`.
-
-## Dimension Scores
+**Phase 25 verification (docs vs. code)**: exit-code table matches the template's STATUS_TABLE exactly (69 terminal / 75 quota+transient / 124 / 127 not_installed / 128+N); `router_backed` rule matches `_confirmed_router` (is_router + router_confirmed + purpose `execute`, recomputed on re-pick, name-only guess excluded); template-7 readiness floor matches `_READY_TEMPLATE`; the force-immune skipped-skill refusal is in `prepare()`, so it covers both `apply` and `--dry-run` before any write; the one-CLI/no-fallback rule, evidence lines (`cross-ai: report` only on non-ok, `action=stop` even on clean exit 0), the one sanctioned exit-75 re-entry, and the "never switch harness/provider/model" rule all match the policy; both relative policy links resolve. SKILL.md correctly links the ladder instead of restating rungs. **No misdescription found.**
 
 | Dimension | Score | Max | Notes |
 |---|---|---|---|
-| D1: Knowledge Delta | 19 | 20 | Exit-code semantics, refusal→action maps, trust model, per-flow permission facts — none of this is model knowledge |
-| D2: Mindset + Procedures | 14 | 15 | "Ask yourself: trusted checkout? v1-written? where does scratch live?" (SKILL.md:60-64) + exact one-Bash-call procedures |
-| D3: Anti-Pattern Quality | 15 | 15 | 8-item NEVER list each with an expert why ("inventory … executes that project's JavaScript"); mistakes table adds why+fix |
-| D4: Spec Compliance | 15 | 15 | Description (648 chars) has WHAT + WHEN ("Use when asked to…") + keywords incl. new `ensure-runner`, `cross-ai.mjs.new` triggers |
-| D5: Progressive Disclosure | 13 | 15 | Excellent "Read when…" / "Do NOT load" triggers; 386 lines and a 55-line in-body refusal matrix cost tokens |
-| D6: Freedom Calibration | 14 | 15 | Rigid exactly where writes are destructive (dry-run, end-the-turn, fingerprint); flexible only where user preference governs |
-| D7: Pattern Recognition | 8 | 10 | Clean Process+Tool hybrid; the Skills section's bulk is the main structural deviation |
-| D8: Practical Usability | 11 | 15 | Decision tables + recovery paths superb; two precision defects below |
+| D1: Knowledge Delta | 19 | 20 | ~92% expert content (trust model, router_backed semantics, gsd-core skill resolution, template/.new invariants, per-flow permission facts); small in-file repetition |
+| D2: Mindset + Procedures | 15 | 15 | "Ask yourself" pre-flight frame + non-obvious pipeline ordering, refusal→action trees, exact commands |
+| D3: Anti-Pattern Quality | 15 | 15 | 9 NEVERs each with reason (incl. adversarial "just apply it" case and the runner-stop switch ban) + 9-row mistakes table |
+| D4: Specification Compliance | 13 | 15 | Valid frontmatter; description has WHAT/WHEN/keywords for setup, render, ensure-runner, .new merge — but no trigger for the dispatch-stop scenario Phase 25 made load-bearing |
+| D5: Progressive Disclosure | 15 | 15 | Scenario-detected MANDATORY triggers with precise disambiguation ("action=stop alone says nothing") + "Do NOT load" in runner.md; links verified |
+| D6: Freedom Calibration | 15 | 15 | Low freedom where fragile (verbatim obligations, fingerprint-bound approval, JSON-vs-bare values), user judgment where appropriate |
+| D7: Pattern Recognition | 9 | 10 | Masterful Process/Navigation fit; 405 lines vs ~200 Process norm, justified but dense |
+| D8: Practical Usability | 14 | 15 | Verified consistent with code and policy; one re-entry-actor ambiguity |
+| **Total** | **115** | **120** | 95.8% — Grade A |
 
 ## Findings
 
-1. **Important — `router_backed` recompute rule overstated.** SKILL.md:104-106 says `plan-set script:cross-ai.model.<runner>` "recomputes it from **that same inventory rule**" recommend used. Recommend's rule includes `name_declared_purpose == "execute"` (`cross_ai.py:106`, `recommend.py:550`), but plan-set's recompute checks only `is_router` + `router_confirmed` (`plan_edit.py:208-218,241-245`), and the row-level `router_confirmed` folds in purpose ∈ {review, execute} (`catalog_adapter.py:34,384`). A user-confirmed **review**-purpose router re-picked as an execution model (present in the inventory, so no `--force` needed) therefore gets `router_backed: true` — quota-cycle authorization recommend would never grant. **Fix:** add one clause ("plan-set's recompute keeps the row's `is_router`+`router_confirmed` only; recommend additionally requires declared purpose `execute`") or align `_confirmed_router` to require purpose `execute`.
+1. **Important (D4)** — `skills/ai-kit-gsd-curated-config/SKILL.md:3` — the description's triggers cover setup/lifecycle ("configure", "render cross-ai.mjs", "ensure-runner", "merge a cross-ai.mjs.new") but never the dispatch-stop scenario the body now owns (the MANDATORY policy read at SKILL.md:221-226, the verbatim-evidence rule at 244-249, NEVER #9 at 378-380). An agent facing `AIKIT-XAI status=no_change` / exit 75 has no activation-time signal to load this skill. **Fix**: extend the description's use-when list with e.g. "or when a cross-ai.mjs dispatch stops (an `AIKIT-XAI status=` other than `ok`, exit 69/75/124/127)". (Sibling `ai-kit-spec-execute-gsd`'s description doesn't cover it either, so the gap is real.)
+2. **Minor (D8)** — `SKILL.md:224-226` vs `SKILL.md:244` — "The one sanctioned re-entry is the one-shot after an exit 75…" sits next to "This skill never dispatches a model call", leaving it ambiguous whether this skill may itself perform the one-shot re-invocation (a model call through the runner) or only the owner may. **Fix**: one clause stating the actor, e.g. "the one-shot re-entry is itself a live dispatch — perform it only when the user's ask covers it; this skill schedules nothing on its own."
+3. **Minor (D5)** — `references/runner.md:43-49` partially copies the policy's knob clamps and the `attemptTimeoutS` rung nuance (`subprocess-quota-policy.md:20-21, 71-81`) although the policy says "a skill links here; it does not copy the rules." Consistent today, but two copies drift. **Fix**: keep only the CONFIG knob names + curated-config-relevant notes (e.g. "only a set value leaves a timed-out attempt room for a retry rung" if you want the callout) and link the clamps.
+4. **Minor (D1)** — `SKILL.md:271-272`, `:354`, `:375-377` — the ".new is not active / check the active file's line-2 `template=` header" invariant is stated three times in SKILL.md (plus runner.md). It's safety-critical, so the NEVER entry should stay; the other two repeats could collapse into one. **Fix**: keep the NEVER entry as the recall layer, drop the duplicate sentence from the subcommand table or the Cross-AI section.
 
-2. **Important — runner exit codes absent from the exit-code table.** The table (SKILL.md:30-36) is the natural lookup and covers only 0/1/2 of the Python CLI; exit 127 appears only inline (SKILL.md:119-120, 211) and exits 75/69 only via the external policy file. An agent seeing exit 127 from a dispatch has shell's "command not found" as prior and nothing in the table to correct it. **Fix:** one footnote row: "runner (cross-ai.mjs) exits, not this CLI: 127 `not_installed`, 75 quota/transient (re-entry contract in the policy), 69 terminal stop, 1 `git_error`/`git_timeout`."
+No Critical findings: every Phase 25 claim I tested (one CLI per call, no fallback, ladder pointer, router_backed authorization, evidence-line rules, never-switch rule) matches the shipped code and the policy.
 
-3. **Minor — exit 127 placed in a plan-set bullet.** SKILL.md:117-121 documents a runner-dispatch outcome inside step 3, a Python-CLI step; a reader may expect `plan-set` itself to exit 127. **Fix:** move that sentence to "Cross-AI execution" (it already says it at line 211 — keep one).
-
-4. **Minor — `.new`/template-header rule stated four times.** SKILL.md:249-256, SKILL.md:356-358, runner.md:52-59, runner.md:79-86. Defensible for a destructive path, but it is pure token cost; one normative statement plus the NEVER pointer suffices.
-
-5. **Minor — Skills refusal matrix is reference-grade in-body content.** SKILL.md:258-312 (~55 lines of gsd-core reference-resolution rules) loads on every invocation though it matters only while resolving `agent_skills` choices. **Fix:** move to `references/skills-wiring.md` with a "Read when an `agent_skills` refusal or trusted-root choice comes up" trigger, matching the runner.md pattern.
-
-## Top 3 Improvements
-1. Reconcile the `router_backed` recompute wording with `plan_edit._confirmed_router` (Finding 1) — it is the Phase 25 authorization mechanism.
-2. Add runner exit codes to the exit table (Finding 2).
-3. Layer the Skills wiring matrix into `references/` (Finding 5) to bring SKILL.md under ~330 lines.
-
-DIGEST 569fa19915950c3b
-CURRENT 109/120
-CRITICAL 0 IMPORTANT 2
+Ponytail: skipped the evals/ files and v1 subcommand behavior (not pointed at by the Phase 25 diff); scores assume the sibling skills' own docs are accurate where this skill defers to them.

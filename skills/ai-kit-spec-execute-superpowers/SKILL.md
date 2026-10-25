@@ -318,7 +318,10 @@ STATUS="$(printf '%s\n' "$STATUS_LINE" | rg -o '\b(DONE_WITH_CONCERNS|NEEDS_CONT
 ```
 
   An empty `$STATUS` means the CLI emitted no status word: treat it as `BLOCKED`, and do not scan
-  `$REPORT_FILE` for one.
+  `$REPORT_FILE` for one. For a `BLOCKED` from an external CLI, follow that handler's
+  more-context, split and plan-defect routes on the same pair, but never its "more capable
+  model" route on your own: that is a model switch after an unusable run, so stop and report
+  for the owner's decision.
 - **`"quota"`** — this candidate ran out of quota mid-dispatch. Record it as a wave-tried key WITH
   the `"quota"` reason, never straight into `$EXCLUDED_KEYS_JSON` without one:
 
@@ -371,7 +374,8 @@ printf 'RETURNCODE=%s\nRETRY_AFTER_S=%s\nCYCLE=%s\n' "$RETURNCODE" "$RETRY_AFTER
      unverified, and the owner runs it. Never a repeated or fixed-interval job. A
      stop past the 4-hour cap exits 69; no other stop (auth, off-router billing, permission, bad model,
      `not_installed`, a bare exit 75) is scheduled either. For every unscheduled stop, report
-     `$RESUME_STATE_PATH`: an owner re-invoke re-enters Step 2.
+     `$RESUME_STATE_PATH`: an owner re-invoke re-dispatches the pinned injection, or re-enters Step 2
+     only with a replacement pair the owner names.
 
 ```text
 Quota wake for this one task. Do not resolve a candidate, do not read the plan and do not
@@ -398,9 +402,9 @@ re-enter Step 2. Load the ai-kit-spec-execute-superpowers skill, then:
   APPEND never overwrites the partial report.
 
   **Resume of that wake.** Restoring `$RESUME_STATE_PATH` for this re-invoke keeps `injection_json`
-  pinned and does not enter Step 2. Re-enter Step 2, which resolves a candidate again, only for an
-  owner-controlled resume. A stop on the re-dispatched run re-enters this same quota branch; it
-  does not pick another candidate.
+  pinned and does not enter Step 2. An owner's plain resume keeps it pinned too; Step 2 re-resolves
+  only when the owner names a replacement pair (`references/state-management.md`). A stop on the
+  re-dispatched run re-enters this same quota branch; it does not pick another candidate.
 - **`"real_error"`** — a failed external dispatch stops for the owner. Never answer it by
   resolving a stronger or any other candidate. Relay the runner's `cross-ai: report` and
   `AIKIT-XAI` lines from `$DISPATCH_BASE.err` first, then read `$DISPATCH_RESULT_JSON`'s

@@ -264,7 +264,9 @@ review lane is a confirmed router only when the model catalog confirms its `fall
    While a lane is pending, no fixer runs this iteration, even when the sibling's report is clean.
 2. **Merge the sibling now** as single mode (one report, not `double`), with a note naming the
    pending lane and its `iter<N>-<key>.err` path. The Step 5 router-quota row says the lane is
-   pending and unverified, with `retry_after_s` and that path.
+   pending and unverified, with `retry_after_s` and that path. When the sibling is pending too
+   (both lanes exited 75 with `retry_after_s=`), merge nothing: write both lanes' resume files and
+   schedule one re-invoke per lane; the last one to resolve merges (point 5).
 3. **Write the resume files** before scheduling, so a wake after a context reset or in a new
    session has every input on disk. Record the `dispatch-reviewer` argv you just ran as JSON data
    (never as a shell script: a substituted path could carry shell syntax), then the loop inputs:
@@ -298,17 +300,19 @@ Resume ai-kit-spec-review. Do not start a new run and do not create a new temp d
 the skill with this resume pointer: RUN_TMP_DIR=<RUN_TMP_DIR>, iteration <N>, reviewer <key>.
 ```
 
-5. **On the re-invoke** (SKILL.md's Resume entry): read `resume-<key>.json`, write `running` to
-   `iter<N>-<key>.exit`, then re-run the recorded argv with no shell (same prompt file, tiers and flags; same CLI and model), backgrounded:
+5. **On the re-invoke** (SKILL.md's Resume entry): read `resume-<key>.json`, remove
+   `iter<N>-<key>.exit`, write `iter<N>-<key>.running`, then re-run the recorded argv with no
+   shell (same prompt file, tiers and flags; same CLI and model), backgrounded:
    ```bash
    python3 -c 'import json,subprocess,sys; a=json.load(open(sys.argv[1])); rc=subprocess.call(a, stdout=open(sys.argv[2], "w"), stderr=open(sys.argv[3], "w")); open(sys.argv[4], "w").write(f"{rc}\n")' \
      "$RUN_TMP_DIR/iter<N>-<key>-argv.json" "$RUN_TMP_DIR/iter<N>-<key>.md" \
      "$RUN_TMP_DIR/iter<N>-<key>.err" "$RUN_TMP_DIR/iter<N>-<key>.exit"
    ```
-   Wait for `iter<N>-<key>.exit`, then branch on its contents and the last `AIKIT-XAI` line:
+   Wait for `iter<N>-<key>.exit` (its existence still means finished), remove the `.running`
+   marker, then branch on the exit code and the last `AIKIT-XAI` line:
    - exit 75 with `retry_after_s=` again: repeat points 3–4 (one one-shot per router exit 75);
-   - otherwise, when `sibling_key` names a lane still pending or running (its `.exit` reads
-     `running`, or 75 with `retry_after_s=`), record this result and end;
+   - otherwise, when `sibling_key` names a lane still pending or running (it has a `.running`
+     marker, or its `.exit` reads 75 with `retry_after_s=`), record this result and end;
    - otherwise take the merge lock, `mkdir "$RUN_TMP_DIR/iter<N>-merge.lock"`: only the lane whose
      `mkdir` succeeds merges, so two resumes never run the fixer twice;
    - exit 0: merge this lane with the sibling's report (double mode, or single mode with no

@@ -1,65 +1,41 @@
 # ai-kit-spec-execute-superpowers — skill-judge report (opencode router-env/my-referee-two, read-only review mode)
 
-Round 5 (evidence round), skill digest `beff20e2e6df85d9`, judged at commit e2bb140. Rubric: the skill-judge skill (120 points).
+Round 6, skill digest `9fa91a3b0024ebf5`, judged at commit 12083a7. Rubric: the skill-judge skill (120 points).
 
-## Round 5: BLOCKED (the runner stopped the lane; no score)
+Runner status: `AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=312s out=604357 tree=clean action=stop route=router rule=- pattern=none attempts=1 cycles=0`
 
-Runner evidence lines:
-
-```text
-cross-ai: report status=crash lane=opencode/router-env/my-referee-two route=router attempts=1 cycles=0 first_failure=2026-10-25T04:25:46.794Z last_failure=2026-10-25T04:25:47.819Z stopped=class
-AIKIT-XAI status=crash cli=opencode model=router-env/my-referee-two exit=1 cli_rc=1 elapsed=1s out=1148 tree=clean action=stop route=router rule=- pattern=none attempts=1 cycles=0
-```
-
-Upstream messages (OmniRoute, verbatim, trimmed):
-
-```text
-Combo has no executable targets
-```
-
-## Last completed report from this judge (round 2, an earlier digest; reference only, not this verdict's score)
+All verification done. Every load-bearing claim in the skill checked against the runner, the classifier, the CLI parsers, and the sibling policy file — and the working tree matches HEAD, so the diff I reviewed is what's on disk.
 
 # Skill Evaluation Report: ai-kit-spec-execute-superpowers
 
-## Summary
-- **Total Score**: 112/120 (93%) — Grade A
-- **Pattern**: Process (phased workflow) + Navigation (mandatory reference reads at decision points)
-- **Knowledge Ratio**: E:A:R ≈ 85:13:2 — near-pure expert delta
-- **Verdict**: A dense, verified adapter contract for a fragile multi-runtime dispatch; every Phase 25 claim cross-checks against the code and the sibling quota policy.
+**Pattern:** Process (phased Steps 0–4 with checkpoints/stop conditions) fused with Tool-style decision tables — appropriate for a stateful dispatch adapter. SKILL.md 461 lines + 386 lines of references.
+**Knowledge ratio E:A:R ≈ 80:17:3** — nearly everything is earned operational knowledge; the only repetition is the declared NEVER-index convention (SKILL.md:20).
 
-**Phase 25 verification** (the review's focus): SKILL.md:39–47 and 378–384 state the no-fallback/never-switch rule; `subprocess-quota-policy.md` exists at the exact path given (SKILL.md:55–58 → `../ai-kit-spec-review/references/subprocess-quota-policy.md`) and is pointed at, not restated. Exit codes verify against `cross-ai.mjs`: quota/transient → 75 (lines 812–813), auth/billing/permission/bad_model → 69 (808–811), capped cycle → 69 (2461: `capped ? 69 : 75`); `retry_after_s`/`cycle` live only in the parsed `AIKIT-XAI` status dict (`runner_dispatch.py:241,514`), matching SKILL.md:321–331; evidence-lines-first ordering (SKILL.md:315–320) mirrors policy §"What a skill does on a stop" verbatim. The reason vocabulary (SKILL.md:174–179) matches `error_classifier.py:23–55` exactly. The one-wake/one-CLI contract and the persisted-injection re-dispatch are internally consistent across SKILL.md, all three references, and `cli.py`.
-
-## Dimension Scores
+## Dimension table
 
 | Dimension | Score | Max | Notes |
-|-----------|-------|-----|-------|
-| D1: Knowledge Delta | 18 | 20 | Proprietary contract knowledge throughout; slight cost from repeating the owner-rule in five places |
-| D2: Mindset + Procedures | 14 | 15 | "Permanent or same-wave?" framing + exact ladder/state procedures Claude cannot know |
-| D3: Anti-Pattern Quality | 14 | 15 | 9-item NEVER index, each with its non-obvious failure mode (e.g. runtime-id-excludes-nothing) |
-| D4: Spec Compliance / Description | 15 | 15 | WHAT + WHEN + keywords + an explicit negative trigger (not for executing-plans) |
-| D5: Progressive Disclosure | 14 | 15 | MANDATORY reads embedded at each decision point; design-notes is opt-in; 422 lines is heavy but bash lives in references |
-| D6: Freedom Calibration | 14 | 15 | Low freedom where one wrong move burns quota or destroys report evidence; judgment left to the host harness |
-| D7: Pattern Recognition | 9 | 10 | Clean Process pattern with navigation triggers |
-| D8: Practical Usability | 14 | 15 | Every branch leaf covered and code-verified; one resume ambiguity, one doc-shape drift |
+|---|---|---|---|
+| D1: Knowledge Delta | 18 | 20 | Pure expert content: mode-before-key reads, permanent-vs-same-wave exclusion split, token location inside `status`, digest-over-`<objective>` session reuse, `<files>` dirty-tree gate. No filler. |
+| D2: Mindset + Procedures | 14 | 15 | Thinking frame at SKILL.md:109–111 ("is this exclusion permanent or same-wave only?") plus procedures Claude cannot know (resumable-state bash, wake protocol, `resume-exclusions`-only set arithmetic). |
+| D3: Anti-Pattern Quality | 14 | 15 | Nine NEVER items, each with a non-obvious WHY (SKILL.md:22–47); repeated at point of use by design. |
+| D4: Specification Compliance | 14 | 15 | Valid frontmatter; description has WHAT + WHEN + keywords (`docs/superpowers/plans/*.md`, subagent-driven-development) and a negative trigger (not for executing-plans). Dense but ~740 chars, valid YAML. |
+| D5: Progressive Disclosure | 15 | 15 | MANDATORY reads embedded at exact points of use (SKILL.md:116, 193, 449, 55–58); design-notes.md gated by "read only when a rule looks arbitrary"; policy file linked, not copied — matching its own "links here; does not copy" rule (subprocess-quota-policy.md:3–5). |
+| D6: Freedom Calibration | 14 | 15 | Fragile stateful protocol → low freedom: exact bash, fixed constants with justification, hard backgrounding rule. Judgment reserved for the delegated harness and the owner. |
+| D7: Pattern Recognition | 9 | 10 | Clean Process+Tool fusion, deliberate and consistent. |
+| D8: Practical Usability | 13 | 15 | Runnable commands, verified fallbacks (empty JSON → stop, no-JSON dispatch → relay stderr tail, empty STATUS → BLOCKED), edge cases covered. Gaps: findings 1–5 below. |
+
+**Phase 25 accuracy check (all verified against code):** one-CLI-per-call/no-fallback (policy:8–13 ↔ SKILL.md:39–40, 415–421); failure ladder rung 1 same-session → rung 2 new sessions (policy:29–34 ↔ "the runner already ran its ladder"); router cycles across calls, `retry_after_s`+`cycle`, 4-hour cap → exit 69 (policy:37–55, `capS 14400` at cross-ai.mjs:69 ↔ SKILL.md:360–374); evidence lines on every stop (policy:63–69 ↔ SKILL.md:295, 339–341, 405–406); tokens live only in the `status` dict (execute_dispatch.py:151); both 75 and 69 classify `"quota"` (dispatch_injection.py:412–416); confirmed lane = catalog-confirmed `fallback_quota` → `--route-<cli> router` (runner_dispatch.py:213–226, 578–579, 182–183 — the flag *is* passed even though `execute_dispatch.py:98–103` leaves `route=None`, because `run_runner` resolves it); 1800 s floor (ai-kit-gsd-curated-config cross_ai.py:47); reason taxonomy incl. `capacity`/`billing_or_access`/`git_timeout` (error_classifier.py:16–26); `cache-path --kind quota` and `trust-local --cwd --show` exist (ai_kit_spec/cli.py:142–143, 266–271); `fable` alias (detection.py:112); Node 24 floor sourced in phase 18.1 research.
 
 ## Findings
 
-**Important**
+1. **[Minor] Fold block precedes the order that gates it.** SKILL.md:325–334 presents the wave-fold bash, then SKILL.md:336–341 ("The evidence lines come before that fold … 1. Relay the evidence lines first … then run the fold block above") defines the true order. A linear executor writes state before relaying evidence — the exact inversion the text warns against. *Fix:* move the fold block under step 1, or prefix it with "(shown for reference; run it at step 1 below)".
+2. **[Minor] Stale reason taxonomy in the shipped package docstring.** `ai_kit_spec_superpowers/dispatch_injection.py:99–113` (`QuotaExhaustedError`) lists only quota/auth/timeout/configuration/dispatch_unavailable/real_error + route names, while SKILL.md:174–179 and `error_classifier.py:16–26` also classify `billing_or_access`, `capacity`, `git_timeout`, and cli.py:133 sets `no_usable_dispatch`. *Fix:* replace the enumerated list with a pointer to `ai_kit_spec.error_classifier.REASONS` so the package cannot drift again.
+3. **[Minor] Two scheduling constraints stated as fact without an in-repo source.** SKILL.md:368–369: "at least 60 s, rounded up to the next whole minute" and "the job lives only as long as the session" — neither CronCreate granularity claim appears in subprocess-quota-policy.md, while the skill does flag the no-scheduler printed row as unverified (SKILL.md:50–53). *Fix:* mark both as host-tool assumptions or cite CronCreate's minute granularity as their source.
+4. **[Minor] Empty/unknown anchor gate sits after the computation it should gate.** references/escalation.md:40–49 computes `$ESCALATION_EXCLUDE_JSON` (an empty anchor silently yields `['""']`); only lines 56–61 say "**An empty or unknown anchor never dispatches.**" *Fix:* move the gate paragraph above the bash, or add a guard line (`[ -n "$ESCALATION_ANCHOR_KEY" ] || stop`) before the block.
+5. **[Minor] "again before acting on a stop" is ambiguous for Step 2 stops.** SKILL.md:55–58 makes the policy read MANDATORY "before the first external dispatch, and again before acting on a stop", but Step 2's `quota_exhausted`/`no_candidate` stops (SKILL.md:169–197) can happen with no dispatch ever run, and "again" presumes a first read. *Fix:* "and again before acting on any stop, including a Step 2 resolution stop".
 
-1. **Terminal quota stop persists `injection_json`, creating a resume ambiguity.** The quota-branch state write (SKILL.md:333–337, state-management.md:111–135) runs for the whole `"quota"` classification — including exit-69 terminal stops where step 4 schedules nothing (SKILL.md:338–345). The resume rules then split by actor, not by file: state-management.md:51–59 (owner resume → re-enter Step 2) vs 61–64 ("When the state file holds `injection_json`, the wake re-dispatches that object unchanged … skips `resolve-injection`"). An agent resuming an exit-69 state sees `injection_json` in its restored file and two plausible readings; worst case it re-dispatches a capped lane instead of re-resolving. Fix: one clause in state-management.md's "Initial and resume values" — "`injection_json` in the file matters only to a one-shot wake; an owner-controlled resume re-enters Step 2 regardless (for a terminal stop it is inert)."
+Skipped/not checked: `task_classification.py` and `cross-ai.mjs`'s self-test were not read in full; nothing was executed (read-only judge). All claims verified statically against source — a live dispatch run could still surprise.
 
-**Minor**
-
-2. **Stale shape listing in design-notes.** design-notes.md:19–22 lists the `quota_exhausted` payload without `ladder_keys`, but the code emits it (`cli.py:147`) and escalation.md:51 depends on it ("every mode, `quota_exhausted` included"). Fix: add `ladder_keys` to that tuple.
-3. **`--heartbeat-interval` required-but-unused is documented, not fixed.** SKILL.md:274 admits it; `cli.py:420` requires it and `_cmd_dispatch_task` never reads it, so every caller passes a dummy. Fix in code (drop or default the flag) rather than documenting the wart.
-4. **Repetition cost of the owner rule.** "Never switch harness, provider or model" appears at SKILL.md:39–45, 313, 370–373, 378–384 and design-notes.md:116–133. Deliberate reinforcement of the one load-bearing rule, but the NEVER-index entry could shed its duplicated ladder-pointer text. Token cost only.
-5. **Native-dispatch failure handling is silent.** Classification and the failure ladder exist only for `external_cli` (SKILL.md:283–287); a native `Agent`-tool error is left to subagent-driven-development by implication (SKILL.md:205–214). One sentence stating that inheritance explicitly would close the gap.
-
-## Top 3 Improvements
-1. Disambiguate `injection_json` on owner resumes of terminal stops (Finding 1).
-2. Sync design-notes' payload shapes with the emitted JSON (Finding 2).
-3. State the native-failure fallback explicitly (Finding 5).
-
-DIGEST 41fbf0552697cc22
-CURRENT 112/120
-CRITICAL 0 IMPORTANT 1
+DIGEST 9fa91a3b0024ebf5
+CURRENT 111/120
+CRITICAL 0 IMPORTANT 0

@@ -1,50 +1,36 @@
 # ai-kit-spec-execute-superpowers — skill-judge report (opencode router-env/my-referee-one, read-only review mode)
 
-Round 5 (evidence round), skill digest `beff20e2e6df85d9`, judged at commit e2bb140. Rubric: the skill-judge skill (120 points).
+Round 6, skill digest `9fa91a3b0024ebf5`, judged at commit 12083a7. Rubric: the skill-judge skill (120 points).
 
-## Round 5: BLOCKED (the runner stopped the lane; no score)
+Runner status: `AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=272s out=824420 tree=clean action=stop route=router rule=- pattern=none attempts=1 cycles=0`
 
-Runner evidence lines:
+# Skill evaluation: `ai-kit-spec-execute-superpowers`
 
-```text
-cross-ai: report status=quota lane=opencode/router-env/my-referee-one route=router attempts=7 cycles=0 first_failure=2026-10-25T04:25:46.794Z last_failure=2026-10-25T04:41:49.507Z stopped=deadline
-AIKIT-XAI status=quota cli=opencode model=router-env/my-referee-one exit=75 cli_rc=1 elapsed=963s out=5192 tree=clean action=stop route=router rule=text-pre-dispatch pattern=verified attempts=7 cycles=0 retry_after_s=600 cycle=0
-```
-
-Upstream messages (OmniRoute, verbatim, trimmed):
-
-```text
-Service temporarily unavailable: all targets were skipped by pre-dispatch filters (Session (5h) 100% conn:dd6b6ba2; Session (5h) 100% conn:f48bcb3c)
-Service temporarily unavailable: all targets were skipped by pre-dispatch filters (Session (5h) 100% conn:f48bcb3c)
-```
-
-## Last completed report from this judge (round 4, an earlier digest; reference only, not this verdict's score)
-
-## Skill evaluation: `ai-kit-spec-execute-superpowers`
-
-**Score: 93/120 (C).** The skill captures substantial domain-specific knowledge and correctly points to the shared failure ladder. Its main weakness is that two execution paths do not fully honor or explain the Phase 25 stop contract.
+**84/120 (C).** The skill points to the Phase 25 subprocess policy and correctly describes the runner’s one-CLI-per-call ladder, router-only quota cycles, and evidence lines. Its remaining gaps are at the adapter boundary: a resume or an implementer status can still lead to a different model without an explicit owner choice.
 
 | Dimension | Score | Max | Assessment |
 |---|---:|---:|---|
-| D1 Knowledge delta | 16 | 20 | Strong quota, exclusion, and resume edge cases; some repeated procedure |
-| D2 Mindset and procedures | 12 | 15 | Explains why state and escalation choices matter |
-| D3 Anti-patterns | 13 | 15 | Specific NEVER rules with consequences |
-| D4 Specification and description | 14 | 15 | Valid, precise trigger description |
-| D5 Progressive disclosure | 11 | 15 | Mandatory reference triggers, but a long main workflow |
-| D6 Freedom calibration | 10 | 15 | Strict external-stop rule; less constrained native model choice |
-| D7 Pattern | 8 | 10 | Clear process skill |
-| D8 Practical usability | 9 | 15 | Good quota path; gaps in other stop and wake paths |
+| D1 Knowledge delta | 15 | 20 | Valuable failure and state rules; substantial repetition |
+| D2 Mindset and procedures | 11 | 15 | Strong distinction between dispatch failure and fix rounds |
+| D3 Anti-patterns | 12 | 15 | Specific, reasoned NEVER rules |
+| D4 Specification compliance | 14 | 15 | Valid, precise activation description |
+| D5 Progressive disclosure | 10 | 15 | References have triggers, but the 461-line body repeats policy |
+| D6 Freedom calibration | 8 | 15 | Fragile owner-choice boundary is insufficiently constrained |
+| D7 Pattern recognition | 8 | 10 | Clear process pattern |
+| D8 Practical usability | 6 | 15 | Resume and stop paths can contradict the stated rule |
 
-1. **Critical — Native fix rounds can change models without an owner choice.** `SKILL.md:205-212` leaves Claude Code’s round-4/5 model bump to the other skill’s “own judgment, with no ladder,” while `SKILL.md:405-410` says the owner decides and the skill never switches models on its own. **Fix:** require an explicit owner-approved model for that bump, or state and justify a narrowly defined exception to the no-autonomous-switch rule.
+## Findings
 
-2. **Important — The non-quota stop lacks a resumable-state instruction.** `SKILL.md:394-400` relays evidence and stops on `"real_error"` but never writes or reports a resume path; the shared policy calls for resumable state where the skill writes it (`skills/ai-kit-spec-review/references/subprocess-quota-policy.md:80-91`). **Fix:** specify what state is saved for this branch and how the owner resumes without silently selecting another candidate.
+1. **Critical — A post-failure resume can select another candidate.** `references/state-management.md:51-66` sends an owner-controlled resume back through Step 2; `SKILL.md:400-403` confirms that Step 2 resolves again. Re-invoking the task is not an explicit choice of a new harness, provider, or model, yet that resolution may pick one. **Fix:** keep the failed injection pinned on resume unless the owner explicitly names a replacement pair; distinguish that choice from a request merely to resume.
 
-3. **Important — The one-shot wake does not clearly rejoin task review.** The scheduled prompt ends at “Run Step 3 point 3 … and point 4” (`SKILL.md:369-382`). A successful dispatch says to continue with the implementer report (`SKILL.md:308-316`), but the wake also says not to read the plan. **Fix:** give the wake an explicit successful-completion handoff to the existing task-review controller, with the state needed to do it.
+2. **Critical — An unusable zero-exit run can enter automatic model escalation.** `SKILL.md:306-320` sends an `"ok"` dispatch with `BLOCKED` status to subagent-driven-development’s report handler. That handler permits re-dispatch on a more capable model (`subagent-driven-development/SKILL.md:294-302`), while this skill’s no-switch rule at `SKILL.md:415-420` covers failed or *unusable* runs. **Fix:** explicitly stop external-CLI `BLOCKED` outcomes for an owner decision before following the handler’s model-change route.
 
-4. **Minor — The scheduler-free instruction promises a command but supplies a prompt.** `SKILL.md:49-53` says to print a “re-invoke command”; `SKILL.md:360-382` supplies a prompt template instead. **Fix:** either provide an executable re-invoke command or consistently call it an owner-run prompt.
+3. **Important — The no-scheduler path promises a command it does not supply.** `SKILL.md:49-53` says to print a re-invoke command, but `SKILL.md:367-392` supplies a prose wake prompt and instructs hosts without `CronCreate` to print that prompt. **Fix:** provide a concrete, host-appropriate re-invoke command or state plainly that the owner must invoke the skill manually with the state path; do not label a prompt as a command.
 
-This was a read-only review; I did not run the skill or its tests. The wake-path assessment is based on its written instructions.
+4. **Minor — The no-JSON stop does not guarantee verbatim evidence relay.** `SKILL.md:284-288` says to relay stderr on refusal, but the displayed block only prints `dispatch-task exit …, no result`. **Fix:** make the stop instruction require printing the available `cross-ai: report` and `AIKIT-XAI` lines from `$DISPATCH_BASE.err` before the error summary.
 
-DIGEST 23f9b4fbd9cdb4a6
-CURRENT 93/120
-CRITICAL 1 IMPORTANT 2
+This was a read-only review; I did not run dispatches or tests, and I did not inspect credential files.
+
+DIGEST 9fa91a3b0024ebf5
+CURRENT 84/120
+CRITICAL 2 IMPORTANT 1

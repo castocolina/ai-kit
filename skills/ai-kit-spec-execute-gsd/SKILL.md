@@ -447,15 +447,15 @@ argument. This is a tool call the agent makes directly, not a shell command this
 as a `bash` fence. The job continues while GSD's cross-AI step runs: the rules below govern every
 answer to its retry/skip/abort prompt.
 
-The runner uses one CLI per call. It retries a transient or quota failure in the same session,
-then in new sessions, on that same CLI and model, and it never selects another lane itself. The
-ladder is `$REVIEW_SPEC_SKILL_DIR/references/subprocess-quota-policy.md` (Step 0 resolves
-`$REVIEW_SPEC_SKILL_DIR`; from this skill it is
-`../ai-kit-spec-review/references/subprocess-quota-policy.md`). **MANDATORY when a cross-AI run
-stops**: read that policy before acting.
+The runner uses one CLI per call. It retries a transient failure, and a quota failure only on a
+confirmed router lane, in the same session and then in new sessions, on that same CLI and model;
+it never selects another lane itself. The ladder is
+`../ai-kit-spec-review/references/subprocess-quota-policy.md` (`$(dirname "$TOOLS_PY")/references/`).
+**MANDATORY when a cross-AI run stops**: read that policy before acting.
 When GSD's cross-AI step fails, relay the runner's `cross-ai: report` and `AIKIT-XAI` lines
-verbatim before acting on them. Never answer GSD's `skip` (it falls back to the native executor)
-and never answer `retry` except the one ruled case below; the owner chooses every other stop.
+verbatim, then run the Step 1 `write-resumable-state` block with `RESUME_VIA=gsd-execute-phase`
+for every stop, so the owner has a durable record. Never answer GSD's `skip` (it falls back to the
+native executor) and never answer `retry` except the one ruled case below.
 
 A confirmed-router quota stop (exit 75 carrying `retry_after_s=` and `cycle=`) is the one delayed
 re-entry. The hook carries `--route-<cli> router` when the model catalog confirms this model's

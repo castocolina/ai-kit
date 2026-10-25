@@ -1,77 +1,62 @@
 # ai-kit-gsd-curated-config — skill-judge report (native Opus subagent, clean context)
 
-Round 5 (evidence round), skill digest `089d13c6a215b519`, judged at commit e2bb140. Rubric: the skill-judge skill (120 points).
+Round 6, skill digest `c3f432f44f2da7b7`, judged at commit 12083a7. Rubric: the skill-judge skill (120 points).
 
-# Skill-judge report: ai-kit-gsd-curated-config (read-only review)
+**Evaluation: ai-kit-gsd-curated-config, scored as a whole with focus on the Phase 25 changes**
 
-**Verdict:** 104/120, grade B. The skill follows a Process/Tool hybrid pattern. I estimate its knowledge mix at about 80% expert, 15% activation and 5% redundant. It describes the Phase 25 runner contract correctly: the claims I checked match the code. The main weaknesses are one unclear statement about live dispatches and text that repeats itself.
+The Phase 25 claims I checked hold against the code. That covers the one-CLI-per-call rule, the runner's exit table, `router_backed` derivation and recompute, the cap and early re-entry, `tree=unknown` on git errors, the readiness floor of 7, and the newer-template guard in `plan_runner_upgrade`. The checks were against `cross-ai.mjs` (STATUS_TABLE:798-819, routeOf:1621-1633, cycle preflight:2432-2455, the "only X runs" log:6150), `cross_ai.py:79-89` and `plan_edit.py:209-250` / `cross_ai_script.py:32,243-272`.
 
-I read SKILL.md (403 lines), `references/runner.md`, `references/v1-path.md`, `evals/`, the linked policy, the Phase 25 diff (`11ac3eb..HEAD`) and the code behind the key claims (`cross_ai.py`, `cross_ai_script.py`, `plan_edit.py`, `apply.py`, `catalog_adapter.py`, `recommend.py`, and the runner template `skills/ai-kit-spec-review/references/cross-ai.mjs`).
+Nothing in the skill tells the agent to switch harness, provider or model by itself. The policy is linked correctly from both files, with a MANDATORY trigger on any non-ok `AIKIT-XAI` status. Pattern is Process/Tool. SKILL.md is 405 lines.
 
-## Phase 25 claims checked against the code (all match)
-
-- **One CLI per call:** the runner starts only the first `prefer` entry and logs "no automatic fallback". A missing first CLI stops with `not_installed` (exit 127) (`cross-ai.mjs:6074-6100`).
-- **Exit map:** SKILL.md:38-42 matches `STATUS_TABLE` (`cross-ai.mjs:799-819`). The 4-hour cap stop exits 69 (`cross-ai.mjs:2413`).
-- **Status lines:** every status line carries `action=stop` (`cross-ai.mjs:905-910`). The `cross-ai: report` line is printed only when the status is not `ok` (`cross-ai.mjs:885-892`).
-- **Router lanes:** `routerBacked` true means `router`. A name-only match gives `router-inferred`, which gets no quota cycles (`cross-ai.mjs:1605-1617`).
-- **`router_backed` rule:** `recommend` and `plan-set` use the same rule: `is_router`, `router_confirmed` and the `execute` purpose (`cross_ai.py:78-89`, `plan_edit.py:208-243`).
-- **Readiness and upgrades:** `ensure-runner` treats template 7 as the minimum ready template (`cross_ai_script.py:32`, `:301-306`). A pristine runner takes a same-version fix (`cross_ai_script.py:255-262`). An upgrade keeps the old CONFIG, including an unused `retries` key (`_upgrade_config`).
-- **Policy links:** both relative links resolve. The skill points to the policy instead of copying it, which is what the policy asks for. It forbids switching harness, provider or model in three places (SKILL.md:225-228, 247-249, 376-378).
-
-## Dimension scores
-
-| Dimension | Score | Max | Notes |
+| Dimension | Score | Max | Note |
 |---|---|---|---|
-| D1 Knowledge Delta | 17 | 20 | Almost all project-specific expert facts. Repeated statements cost tokens (finding 2). |
-| D2 Mindset + Procedures | 13 | 15 | Has an "ask yourself" step before v2, a correct non-obvious order (dry run, end the turn, then apply) and a failure-state guide. |
-| D3 Anti-patterns | 14 | 15 | Specific NEVER list with reasons, plus a mistake / why / fix table. |
-| D4 Specification | 14 | 15 | Valid frontmatter. Description covers what it does, when to use it, and trigger words (`ensure-runner`, `cross-ai.mjs.new`). |
-| D5 Progressive Disclosure | 12 | 15 | Good loading triggers and a "Do NOT load" line. But SKILL.md is 403 lines (over the ~300 ideal), and the same `.new` and readiness text sits in both SKILL.md and runner.md. |
-| D6 Freedom Calibration | 14 | 15 | Exact commands for fragile writes; judgment left only for reporting. |
-| D7 Pattern | 8 | 10 | Clear Process/Tool hybrid, but over the target length. |
-| D8 Usability | 12 | 15 | Thorough on errors. Gaps around dispatch scope, the owner re-invoke, and the upgrade behaviour change. |
+| D1 Knowledge Delta | 17 | 20 | Nearly all of it is project-specific: exits, refusals, how `router_backed` authorizes cycles. Some internals (function names, `--force`-immune check details) the CLI already enforces. |
+| D2 Mindset + Procedures | 13 | 15 | Strong ordered procedure with a trust and v1-history pre-check; few "ask yourself" framings beyond that. |
+| D3 Anti-patterns | 13 | 15 | NEVER list and mistakes table, mostly with reasons; the runner-stop NEVER is clear. |
+| D4 Spec / Description | 14 | 15 | Valid frontmatter; WHAT, WHEN and keywords are present. |
+| D5 Progressive Disclosure | 12 | 15 | Good triggers and a "Do NOT load", but a non-ok dispatch loads both runner.md and the policy, which overlap; the body is over the 300-line ideal. |
+| D6 Freedom Calibration | 14 | 15 | Low freedom on config writes, exact commands, `--force` gated. |
+| D7 Pattern | 8 | 10 | Clear Process flow; the Cross-AI execution section is one dense block. |
+| D8 Usability | 12 | 15 | Thorough exit and refusal handling; gaps below (wrong field name, unclear owner of the re-entry, no eval for a runner stop). |
 
-## Findings
+**Findings**
 
-1. **Important: "verification runs" invites a live, full-permission dispatch the flow never needs.**
-   SKILL.md:244 says "After every external dispatch you run through the runner, verification runs included". No step in v2 or v1 runs a model call; the only check is `--print-argv` (runner.md:82-88). SKILL.md:233-236 says the v2 hook runs every target with full permissions, codex included. The current wording lets an agent "verify" the runner by sending a real task to an unsandboxed CLI on the target project.
-   *Fix:* add one line under "Cross-AI execution": "This skill never dispatches a model call. Check the runner with `--print-argv` only. A live dispatch runs with full permissions and only when the user asks for one." Then reword :244 to "When you see a dispatch's output (a GSD run or one the user asked for)…".
+1. **Important:** `script.active: false` is attributed to `ensure-runner`, but that command never emits it.
+   - Evidence: SKILL.md:354 (subcommand table) and references/runner.md:57-58. `ensure_runner` returns only `{ready, runner, guidance, notes[, error]}` (cross_ai_script.py:340-345). `active` exists only in the v2 `apply` report (apply.py:519-526).
+   - Fix: for `ensure-runner`, say "`runner: "new-as-.new"` and `ready: false`". Keep `script.active` for v2 `apply` only.
 
-2. **Minor: the same rules are written several times.**
-   - "Never answer a runner stop by reordering `prefer`…" appears almost word for word at SKILL.md:247-249 and :376-378.
-   - The template-7 readiness rule appears at SKILL.md:263-267, :352 and runner.md:62-69.
-   - "`.new` is not active" appears at SKILL.md:261-270, :373-375, and runner.md:54-60 and :81-84.
+2. **Important:** The skill doesn't say who performs the "one sanctioned re-entry".
+   - Evidence: SKILL.md:224-225 sanctions the one-shot after exit 75 with `retry_after_s=`. SKILL.md:244-245 says this skill never dispatches a model call, and live dispatches happen only on user request. Policy:89-96 asks for a `CronCreate`. An agent can't tell whether it should schedule the wake.
+   - Fix: add one sentence. When the dispatch came from GSD, the re-entry belongs to that caller. This skill only reports the `AIKIT-XAI` and report lines plus `retry_after_s`. It schedules the one-shot only for a dispatch the user explicitly asked it to run, same lane, never another runner.
 
-   *Fix:* keep each rule once, in "Cross-AI execution" or runner.md. Shorten the NEVER entry to its bold line. Cut the `ensure-runner` table cell at :352 to "prints `{ready, runner, guidance, notes}`; see runner.md". This brings SKILL.md toward 350 lines.
+3. **Important:** The mitigation for an active runner below template 7 reads as an action the agent takes.
+   - Evidence: SKILL.md:265-267 says "tell the user, and merge `.new` (runner.md) or set `workflow.cross_ai_execution false` before any dispatch". It doesn't say who decides, and gives no route for the config change. That brushes against "never move the work to the native session" and "never hand-write config".
+   - Fix: "tell the user. The owner chooses: merge `.new`, or `plan-set workflow.cross_ai_execution false` then dry-run and apply. Do neither unasked."
 
-3. **Minor: an upgraded runner keeps its old `prefer` list, but the list now means something different, and the user is not told.**
-   `_upgrade_config` keeps the old CONFIG (`cross_ai_script.py:228-236`). In a template 6 or earlier runner, `prefer` was a fallback chain. After the upgrade to template 7 only the first entry runs. runner.md:54-60 says the CONFIG is kept but not that its meaning changed.
-   *Fix (runner.md, "Runner upgrade"):* "After an upgrade from template 6 or earlier, tell the user that the runners after the first `prefer` entry no longer run automatically; they are now the owner's menu."
+4. **Minor:** runner.md copies the ladder knobs the policy says must not be copied.
+   - Evidence: references/runner.md:43-51 restates `sameSessionRetries`/`newSessionRetries`/`cooldownS`/`capS`/`attemptTimeoutS` clamps and the router-inferred rule. Policy:5 says "A skill links here; it does not copy the rules." Both files load on a non-ok dispatch, so the content is duplicated and can drift.
+   - Fix: cut that section to the pointer plus the facts specific to this skill: `router_backed` maps to CONFIG `routerBacked` for the pinned model, and upgrades keep an unused `retries` key.
 
-4. **Minor: the owner re-invoke at SKILL.md:226-227 is hard to carry out as written.**
-   It says to re-invoke "with the same prompt on stdin". But GSD builds that prompt and the owner usually doesn't have it. A manual run also bypasses GSD's capture of stdout into the SUMMARY. It also does not mention checking the tree first: the policy's dirty-tree rule (policy:32-33) can stop the ladder.
-   *Fix:* make the main route "re-plan `script:cross-ai.prefer`, re-apply, then retry from GSD". Keep the manual `--prefer <id>` command as a secondary option, with "check `git status` first; its output does not reach GSD's SUMMARY".
+5. **Minor:** The policy asks callers on other hosts to "print … the state path", but no path is given.
+   - Evidence: policy:95 asks for it. The runner logs the path only when the state file is unwritable (cross-ai.mjs:2488), and the policy says only "XDG state dir" (policy:43).
+   - Fix: document `$XDG_STATE_HOME(or ~/.local/state)/ai-kit/spec/cycles/<sha16(realpath cwd)>/<cli>-<sha16(model)>.json` (cross-ai.mjs:1866-1871), or have the runner log the path on an exit 75 with `retry_after_s`.
 
-5. **Minor: no fix is given for a router lane that is not yet confirmed.**
-   SKILL.md:106-112 says `router_backed` cannot be edited directly but does not say how to earn it. The code emits a `router_unconfirmed` note telling the user to confirm the router via `ai-kit-spec-config` (`recommend.py:447-466`).
-   *Fix:* add "for a `router_unconfirmed` note, confirm the router through `ai-kit-spec-config`, then re-run `inventory` and `recommend`; until then that lane gets no quota cycles".
+6. **Minor:** SKILL.md:106-112 tells the agent to review "the plan's `router_backed` value per runner" without saying where it is.
+   - Fix: name `artifacts[0].config.router_backed`.
 
-6. **Minor: runner.md lists the failure-ladder settings without saying how they are changed.**
-   runner.md:43-47 lists `sameSessionRetries`, `cooldownS` and the others. None of them are plan keys: `runner_config` fills them from the template (`cross_ai_script.py:101-114`). Changing one means hand-editing CONFIG, which pins the runner to `.new` upgrades (runner.md:78-79).
-   *Fix:* "These are not plan keys. Changing one is a hand edit of CONFIG, and the next apply writes `.new`."
+7. **Minor:** No eval tests the main Phase 25 rule under pressure.
+   - Evidence: evals/01-04 contain no scenario like "runner exited 75 / not_installed, just switch to opencode".
+   - Fix: add an evals/05 that gates on the verbatim `AIKIT-XAI` and report lines, no reordered `prefer`, no other CLI, and no native takeover.
 
-7. **Minor: runner.md is loaded for every non-ok dispatch, but holds nothing about what to do at a stop.**
-   Both SKILL.md:271-273 and runner.md:3-6 send the agent to runner.md for any non-ok status. Its failure-ladder section only lists settings and links to the policy, which SKILL.md:221-223 already makes mandatory reading.
-   *Fix:* drop the non-ok trigger from runner.md's header and from SKILL.md:273. The policy is the one document to read at a stop.
+8. **Minor:** The Cross-AI execution block packs about seven rules into one paragraph (SKILL.md:216-229): template, ladder link, MANDATORY trigger, re-entry, owner menu, CONFIG edit ban, hook naming.
+   - Fix: split it into bullets. Consider moving the runner exit list (SKILL.md:38-42) to runner.md to get the body toward 300 lines.
 
-8. **Minor: no eval covers the Phase 25 stop behaviour.**
-   `evals/01` to `04` test setup under time pressure only. None gives a runner stop together with pressure to "just use another CLI".
-   *Fix:* add `evals/05-runner-stop.md` (exit 75 off-router, with the user asking to retry on another CLI). It should pass only if the agent prints both lines verbatim, schedules nothing, and switches nothing.
+9. **Minor (code, not docs):** v2 `apply` has no guard against downgrading a newer runner.
+   - Evidence: `plan_script` (cross_ai_script.py:208-211, then `_plan_rendered`:191-205) would rewrite a pristine runner stamped by a newer ai-kit. `plan_runner_upgrade`:257-259, used by `ensure-runner`, refuses to.
+   - Fix: apply the same `newer` check in `plan_script`.
 
-9. **Minor: a few long lines that are hard to read in raw markdown.** SKILL.md:218, :226-227 and :377 run well past 100 characters. *Fix:* re-wrap them to about 100 characters.
+I didn't run the runner's `--self-test` or any CLI command, and I didn't recheck the non-Phase-25 Skills-section internals beyond a spot check. The main thing to know: finding 2 leaves it open whether an agent schedules a wake itself.
 
-I did not run the runner's `--self-test` or any test suite (the task was read-only), so the code checks above come from reading the source. I also did not compare against `ai-kit-spec-execute-gsd`'s hook, beyond what this skill says about it.
-
-DIGEST 089d13c6a215b519
-CURRENT 104/120
-CRITICAL 0 IMPORTANT 1
+DIGEST c3f432f44f2da7b7
+CURRENT 103/120
+CRITICAL 0 IMPORTANT 3

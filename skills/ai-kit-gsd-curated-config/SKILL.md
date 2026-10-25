@@ -222,10 +222,13 @@ and the runner follows the failure ladder
 `ok`; every line carries `action=stop`, including a clean exit 0, so `action=stop` alone says
 nothing): read that policy before acting. It is the caller contract. The one sanctioned
 re-entry is the one-shot after an exit 75 carrying `retry_after_s=` on a confirmed router
-(`route=router`, never `router-inferred`); every other stop ends here. Another runner in
-`prefer` is the owner's menu: the owner re-invokes `node .planning/scripts/cross-ai.mjs --prefer
-<id>` with the same prompt on stdin (its model comes from CONFIG), or re-plans `script:cross-ai.prefer` and re-applies. Never
-hand-edit CONFIG `prefer`: an edited runner is pinned to `.new` upgrades.
+(`route=router`, never `router-inferred`); every other stop ends here. When GSD made the
+dispatch, that re-entry is GSD's caller's (ai-kit-spec-execute-gsd); this skill only reports the
+lines and `retry_after_s`, and schedules the one-shot only for a dispatch the user asked it to
+run. Another runner in `prefer` is the owner's menu: the owner re-invokes `node
+.planning/scripts/cross-ai.mjs --prefer <id>` with the same prompt on stdin (its model comes from
+CONFIG), or re-plans `script:cross-ai.prefer` and re-applies. Never hand-edit CONFIG `prefer`:
+an edited runner is pinned to `.new` upgrades.
 The hook names the runner, never a raw vendor CLI string.
 
 **Permissions depend on which flow wrote the hook — say which one applies:**
@@ -263,8 +266,8 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
 **`.new` is not active:** a user-edited runner is never overwritten.
 - **v2 `apply`:** any edited runner gets `cross-ai.mjs.new` and reports `script.active: false`;
   the new CONFIG is not live. If the active runner's line-2 `template=` is below 7, it can still
-  fall back to another CLI: tell the user, and merge `.new` (runner.md) or set
-  `workflow.cross_ai_execution false` before any dispatch.
+  fall back to another CLI: tell the user. The owner chooses: merge `.new` (runner.md), or
+  `plan-set workflow.cross_ai_execution false`, then dry-run and apply. Do neither unasked.
 - **`ensure-runner`:** an edited current-template runner is kept and ready; an edited older one
   gets `.new` and is not ready below template 7 (the first with the failure ladder).
 
@@ -351,7 +354,7 @@ dispatch whose `AIKIT-XAI` line shows a `status=` other than `ok` comes up.
 | `plan-unset` | `key`, `--plan` (`--inventory` optional) | Decline / remove a plan entry |
 | `apply` | `--plan`, `--inventory`, `--project-dir` | Write config + runner (`--dry-run` previews) |
 | `followups` | `--plan`, `--inventory`, `--project-dir` | List, or `--approve` the listed commands |
-| `ensure-runner` | `--cwd` (`--guidance-file <path>` or `-` for stdin, optional) | Render or upgrade `.planning/scripts/cross-ai.mjs`; prints JSON `{ready, runner, guidance, notes}`, exit 0 ready, 1 not ready, 2 on error. Readiness is the `ready` field: an edited current-template runner is kept ready; an edited older one gets `.new`, reports `script.active: false`, and is not ready below template 7 (the first with the failure ladder); a foreign one is not ready. The active file's line-2 `template=` header is what runs |
+| `ensure-runner` | `--cwd` (`--guidance-file <path>` or `-` for stdin, optional) | Render or upgrade `.planning/scripts/cross-ai.mjs`; prints JSON `{ready, runner, guidance, notes}`, exit 0 ready, 1 not ready, 2 on error. Readiness is the `ready` field: an edited current-template runner is kept ready; an edited older one gets `.new` (`runner: "new-as-.new"`) and is not ready below template 7 (the first with the failure ladder); a foreign one is not ready. The active file's line-2 `template=` header is what runs |
 | v1 | `--project-dir`, except the two `detect-*-candidate` (no flags) | See `references/v1-path.md` |
 
 ## NEVER

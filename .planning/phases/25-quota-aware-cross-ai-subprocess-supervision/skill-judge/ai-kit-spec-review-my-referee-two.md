@@ -1,69 +1,49 @@
 # ai-kit-spec-review — skill-judge report (opencode router-env/my-referee-two, read-only review mode)
 
-Round 5 (evidence round), skill digest `458a2dd3c1b61497`, judged at commit e2bb140. Rubric: the skill-judge skill (120 points).
+Round 6, skill digest `e85ac2aec5c16f61`, judged at commit 12083a7. Rubric: the skill-judge skill (120 points).
 
-## Round 5: BLOCKED (the runner stopped the lane; no score)
+Runner status: `AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-two exit=0 cli_rc=0 elapsed=355s out=485900 tree=clean action=stop route=router rule=- pattern=none attempts=1 cycles=0`
 
-Runner evidence lines:
-
-```text
-cross-ai: report status=crash lane=opencode/router-env/my-referee-two route=router attempts=1 cycles=0 first_failure=2026-10-25T04:25:46.793Z last_failure=2026-10-25T04:25:47.914Z stopped=class
-AIKIT-XAI status=crash cli=opencode model=router-env/my-referee-two exit=1 cli_rc=1 elapsed=1s out=1148 tree=clean action=stop route=router rule=- pattern=none attempts=1 cycles=0
-```
-
-Upstream messages (OmniRoute, verbatim, trimmed):
-
-```text
-Combo has no executable targets
-```
-
-## Last completed report from this judge (round 2, an earlier digest; reference only, not this verdict's score)
+All checks are complete — I verified the docs against the implementation on every load-bearing claim (clamps, exit codes, state-file semantics, `STATUS_TO_REASON`/`_EXIT_FALLBACK` tables, review-only flag, aliases, probe-walk fallback, evidence-line formats, unverified capture ids, anchors). Report below.
 
 # Skill Evaluation Report: ai-kit-spec-review
 
-## Summary
-- **Total Score**: 110/120 (91.7%)
-- **Grade**: A — production-ready expert skill
-- **Pattern**: Process (phased orchestrator loop) with Navigation + Tool elements
-- **Knowledge Ratio**: E:A:R ≈ 85:13:2
-- **Verdict**: Near-pure expert knowledge, fail-closed at every seam; the Phase 25 policy (one CLI per call, failure ladder, router cycles under the 4-hour cap, evidence lines, never switch on its own) is described in SKILL.md and `subprocess-quota-policy.md` and matches the actual implementation in `cross-ai.mjs` / `ai_kit_spec/` everywhere I checked.
+- **Total**: 111/120 (92.5%) — **Grade A**
+- **Pattern**: Process (phased orchestration with checkpoints + navigation to references)
+- **Knowledge ratio**: ~E:90 / A:8 / R:2 — nearly pure expert operational knowledge
+- **Verdict**: A rigorous, implementation-verified orchestration spec; Phase 25 policy is described and pointed at correctly, with one real coverage gap in the new pending-lane flow.
 
-## Phase 25 verification (code ↔ docs)
-- **One CLI per call, no fallback**: `cross-ai.mjs:5957,6034,6048–6052` — first `prefer` entry only, missing → `not_installed` exit 127, "no other CLI runs (no automatic fallback)". Matches `subprocess-quota-policy.md:7–13`.
-- **Ladder**: `ladderNext` (`cross-ai.mjs:1784–1810`) — rung 1 same-session (≤3, only when resumable), rung 2 new sessions (≤3, same CLI+model), dirty-tree stop (`2625–2629`); defaults at `69–70,83`. Matches policy rungs §26–33.
-- **Router cycles + 4-h cap**: `cycleStop` (`2454–2462`) exits 75 with `retry_after_s=`/`cycle=` when not capped, 69 past cap; cap arithmetic `1799–1807`; XDG state file, task-digest-gated sid reuse (`2465–2477`), pre-due refusal without spawning (`2415–2422`), `stale-state-fresh-start` (`2404–2407`). Matches policy §35–52.
-- **Evidence on every stop**: `cross-ai: attempt` (`2356–2362`), `cross-ai: report …` (`2364–2369`), `AIKIT-XAI … action=stop route= rule= pattern= attempts= cycles=` with conditional `retry_after_s=` (`894–916`). SKILL.md:296–317 now redirects stderr to `.err` and orders those lines read — correct.
-- **Exit-code contract holds end-to-end**: STATUS_TABLE (`799–819`: quota/transient→75, auth/billing/bad_model→69); `dispatch-reviewer --stdout-only` propagates the runner's real returncode (`cli.py:976–978`); the Python tier loop re-runs **only** on timeout/124 (`runner_dispatch.py:596–608`), so a 75 is never swallowed. Off-router 75 carries no `retry_after_s` (pinned regex `3833–3834`), exactly as SKILL.md:317–321 branches.
-- **Never switch on its own**: stated at SKILL.md:328–333 and policy:12–13, and the runner structurally cannot comply otherwise. The probe walk (SKILL.md:157–165) is correctly bounded as owner-ladder pre-selection — matches `cli.py:675–685` + `quota.py:190–191,215–220`. Router confirmation only via `--route-<cli>`/`routerBacked` (`routeOf` 1603–1618; catalog-confirmed `resolve_route` in `runner_dispatch.py:194–226`).
-
-## Dimension Scores
+## Dimension table
 
 | Dimension | Score | Max | Notes |
 |---|---|---|---|
-| D1: Knowledge Delta | 18 | 20 | Worktree-derived roots, archetype ceilings, lifecycle scoping, pending-lane lifecycle — all genuinely expert; near-zero redundancy |
-| D2: Mindset + Procedures | 14 | 15 | "Ask yourself" prompts at Steps 0.5/0.7/3/5 + exact dispatch contract Claude couldn't invent |
-| D3: Anti-Pattern Quality | 14 | 15 | Hard-rules table with non-obvious whys (context contamination, phantom worktree findings); owner rule; "probe walk is not permission to switch" |
-| D4: Specification Compliance | 15 | 15 | Description has WHAT/WHEN/trigger keywords incl. named frameworks; valid frontmatter |
-| D5: Progressive Disclosure | 13 | 15 | Textbook MANDATORY-triggers + explicit "Do NOT load" (`cross-ai.mjs`, `cli-profiles/`); SKILL.md at 499 lines is at the ceiling and the per-run mandatory read set totals ~1,175 lines |
-| D6: Freedom Calibration | 14 | 15 | Verbatim bash and "never render the command yourself" for fragile dispatch; judgment freedom for detection/surfacing |
-| D7: Pattern Recognition | 9 | 10 | Masterful Process-pattern orchestrator |
-| D8: Practical Usability | 13 | 15 | Decision tables at every branch; code-verified; one resume-fidelity gap and one ambiguous enumeration (below) |
+| D1 Knowledge Delta | 19 | 20 | Exit-code contracts, ladder semantics, resume files, merge lock, worktree-root derivation — no "what is X" filler anywhere |
+| D2 Mindset + Procedures | 15 | 15 | "Ask yourself" frames at Steps 0.5/0.7/3/5 + genuinely non-guessable procedures (argv-as-JSON resume, CronCreate prompt text, fail-closed deletes) |
+| D3 Anti-Pattern Quality | 14 | 15 | Hard-rules table with reasons; "a switch hides the stop and reviews with a lane nobody chose" (SKILL.md:475) is expert-grade |
+| D4 Specification Compliance | 14 | 15 | Description has WHAT/WHEN/KEYWORDS + explicit trigger phrases; ~700 chars, long but every clause triggers |
+| D5 Progressive Disclosure | 14 | 15 | MANDATORY reads at exact workflow points; explicit "Do NOT load" for `cross-ai.mjs` and `cli-profiles/` (SKILL.md:153); SKILL.md at 490/500 lines |
+| D6 Freedom Calibration | 14 | 15 | Verbatim bash/prompts where fragile, ask-once judgment where not; unruled probe walk honestly flagged (SKILL.md:163-165) |
+| D7 Pattern Recognition | 9 | 10 | Masterful Process application with navigation elements |
+| D8 Practical Usability | 12 | 15 | Decision tables per status/exit code, working commands, host-capability fallbacks; deductions for findings 1, 3, 5 |
 
 ## Findings
 
-**Critical** — none.
+1. **[Important] Two-pending-lanes iteration has no defined branch.** `references/cross-ai-dispatch.md:265-267` says "Merge the sibling now as single mode" when a lane goes pending, but point 1 (`:263`) forbids merging a pending lane — if *both* lanes exit 75 with `retry_after_s=` (realistic: double mode, both entries on the same router-backed provider hitting quota together), the sibling is itself pending and has no report. SKILL.md:393's "no sibling" out is defined as "(one reviewer)", which doesn't cover a 2-reviewer run whose sibling is pending. The resume side handles it correctly (`cross-ai-dispatch.md:310-313` "sibling still pending → record and end" + merge lock), so only the initial invocation's merge/surface is undefined. **Fix**: one sentence in the pending-lane section: "If both lanes are pending, merge nothing — surface the router-quota row for both lanes and end this invocation after scheduling both one-shots."
 
-**Important**
+2. **[Minor] Policy file never acknowledges the pre-dispatch probe walk.** `references/subprocess-quota-policy.md:8-10` ("The rest of the list is the owner's menu, used only when the owner names one") reads as contradicting SKILL.md:157-165, where `probe-quota`+`resolve-reviewers` automatically move to the next configured entry (possibly another provider) before dispatch. Different layers (runner vs resolver — verified: the runner takes only `--prefer`'s first entry, `cross-ai.mjs:23`), but the caller contract should say so. **Fix**: add to "One CLI per call": "The resolver's pre-dispatch probe walk (SKILL.md Step 0.7) is selection, not the runner switching; it is the shipped behavior, owner not yet ruled."
 
-1. **The pending-lane CronCreate resume cannot reproduce "the identical command" it mandates.** The fenced cron prompt (SKILL.md:350–356) wakes a *fresh* session holding only `RUN_TMP_DIR`, iteration, and reviewer key, and orders it to "Re-run the identical dispatch-reviewer command … (same prompt file, timeout tiers and flags)". But the command's literal form is recorded only in the orchestrator's in-context working notes (cross-ai-dispatch.md:45–51) — never persisted to disk; `--tool-availability-json` (a fresh `detect-tools` output each run, cli.py:71) and the tier resolution are not recoverable byte-identically from `RUN_TMP_DIR`, and the optional `loop.log` (SKILL.md:183) is debug-only and doesn't capture the command. Non-Claude hosts get the literal command printed in the Step 5 row; the Claude Code cron path doesn't. **Fix**: when marking a lane pending (Step 1, point 3), write the exact dispatch command line to `$RUN_TMP_DIR/iter<N>-<key>-cmd.sh` and make the fenced cron prompt reference that file instead of "the identical command".
+3. **[Minor] Exit-75-without-`retry_after_s=` causes omit the unwritable-state case.** SKILL.md:328-330 and `cross-ai-dispatch.md:248-249` enumerate exactly two causes ("an off-router quota stop, or an exhausted transient ladder"). The runner also emits a bare 75 on a *confirmed router lane* when the cycle state file is unwritable (`cross-ai.mjs:2476-2477` comment, `:2499` `retryAfterS: capped || !stateWritable ? undefined : …`). Behavior is correctly fail-closed and logged (`cross-ai: cycle state unwritable`), but the contract doesn't list it. **Fix**: append "or an unwritable cycle state file on a router lane (see its `cross-ai:` line)" to either enumeration.
 
-**Minor**
+4. **[Minor] Re-invoke time diverges between the two docs.** `cross-ai-dispatch.md:289-290` schedules "at `retry_after_s` seconds (at least 60 s, rounded up to the next whole minute)"; `subprocess-quota-policy.md:100` says "exactly one one-shot `CronCreate` at `retry_after_s`" — and `cooldownS` clamps to `0..capS` (`cross-ai.mjs:1784-1787`), so `retry_after_s=0` is reachable. **Fix**: state the ≥60 s cron-granularity floor in the policy file (or cite it from the dispatch doc) so the declared source of truth and the lifecycle doc agree.
 
-2. **Self-overlapping enumeration in the pending-lane lifecycle.** SKILL.md:358–361: "Merge the lane only from … the exit 69 the cap turns it into. **Every other nonzero exit, exit 69, auth**, off-router …" — `exit 69` appears in both the merge-source and the delete lists, and "every other nonzero exit" already subsumes the enumerated items. The real discriminator (cap-69 = `AIKIT-XAI status=quota` vs auth/bad_model, which are *also* exit 69 — STATUS_TABLE `cross-ai.mjs:808–812`) is not named at the branch point; a reader keying on exit code alone cannot tell them apart. Both misparses converge on the same failure surface, so impact is low. **Fix**: "…or when its `AIKIT-XAI` line reads `status=quota exit=69` (the cap). Any other stop — auth, bad model, off-router 75 (no `retry_after_s=`), any other nonzero exit — deletes the report, merges as failed, schedules nothing."
-3. **"Single reviewer" is a modifier, not an outcome.** SKILL.md:461 lists it as a row among terminal outcomes (Approved/Cap/Failure…), but every single-reviewer run *also* ends in one of those rows; a reader emitting shapes from this table could double-shape the message. **Fix**: move it to a footnote ("in single mode, prefix the relevant row with the reviewer key and report path").
+5. **[Minor] Merge lock has no lifecycle.** `cross-ai-dispatch.md:312-313` creates `iter<N>-merge.lock` via `mkdir` but nothing ever removes it, and SKILL.md:484-490 (Cleanup) doesn't mention it. A crash between lock acquisition and merge leaves a stale lock that permanently blocks the merge for that `RUN_TMP_DIR`. **Fix**: one line — the lock is removed after the merge, and a resume that finds a lock older than its own dispatch may remove it.
 
-Not checked: the sibling `ai-kit-spec-review-checklist`/`-fixer` skills and framework seed profiles (outside this skill's directory), the ~5,900-line `cross-ai.mjs` self-test suite (constants and stop semantics sampled, not exhaustively read), and no live dispatch was executed — verification is by code reading only.
+6. **[Minor] Skill-level evals lag the Phase 25 machinery.** `evals/` holds 4 routing/detection scenarios; none exercises the pending-router-lane/resume path, the exit-75 branch table, or the evidence-line quoting rules. (The runner core itself is well covered by `--self-test` — e.g. `router-quota-early-reentry`, `stale-state-fresh-start`, clamps, `router-inferred`.) **Fix**: add `evals/05-router-quota-pending-lane.md`: exit 75 + `route=router` + `retry_after_s=` → sibling merged single-mode, resume files written, one one-shot scheduled, no fixer, router-quota Surface row quoting `iter<N>-<key>.err`.
 
-DIGEST 2a61dfd0ebfc024c
-CURRENT 110/120
+**Verified accurate (no finding)**: exit-code semantics (75 router-quota w/ `retry_after_s`+`cycle`, bare 75, 69 cap, 127, 124, 2) match `cross-ai.mjs:808-815` and `error_classifier.py`; clamps 0..3 / 10..1800 / 0..14400 / 0..capS match `mjs:1768-1788`; state file key = checkout+lane+model, mode 0600, atomic rename, task digest from `<objective>` (`mjs:1863-1901`); `router-inferred` gets no cycles (`mjs:122-123`); early re-entry refused pre-dispatch (`mjs:2443-2452`); `STATUS_TO_REASON`/`_EXIT_FALLBACK` tables identical to code; `claude` `review_only=True` and `fable` alias (`detection.py:112-113`); "never switch harness/provider/model" stated consistently in SKILL.md:341, 475 and policy; evidence-line quoting required on every stop (SKILL.md:323-325, 453-457); all markdown anchors resolve.
+
+Skipped: full line-by-line read of `cross-ai.mjs` (6292 lines — verified claims by targeted inspection + self-test names instead) and running `--self-test`; risk: a behavior mismatch invisible to the spots I checked could survive, though every sampled claim held.
+
+DIGEST e85ac2aec5c16f61
+CURRENT 111/120
 CRITICAL 0 IMPORTANT 1

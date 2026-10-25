@@ -55,7 +55,8 @@ keeps an unused `retries` key.
 `plan_runner_upgrade` upgrades a pristine older runner in place and keeps its CONFIG; a pristine
 current-template runner takes a same-version body fix the same way and is otherwise kept
 byte for byte; an edited runner is never replaced — a `.new` file is
-written for the owner to merge, and that edited older runner reports `script.active: false`.
+written for the owner to merge (`ensure-runner` reports `runner: "new-as-.new"` and `ready:
+false` below template 7; v2 `apply` reports `script.active: false`).
 So only a newly rendered or successfully upgraded active copy carries the ladder, and the way to
 see what a project actually runs is the active runner's line-2 `template=<n>` header, never the
 `.new` file.

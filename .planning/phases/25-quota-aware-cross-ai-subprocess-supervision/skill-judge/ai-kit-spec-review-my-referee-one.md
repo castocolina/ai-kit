@@ -1,58 +1,47 @@
 # ai-kit-spec-review — skill-judge report (opencode router-env/my-referee-one, read-only review mode)
 
-Round 5 (evidence round), skill digest `458a2dd3c1b61497`, judged at commit e2bb140. Rubric: the skill-judge skill (120 points).
+Round 6, skill digest `e85ac2aec5c16f61`, judged at commit 12083a7. Rubric: the skill-judge skill (120 points).
 
-## Round 5: BLOCKED (the runner stopped the lane; no score)
+Runner status: `AIKIT-XAI status=ok cli=opencode model=router-env/my-referee-one exit=0 cli_rc=0 elapsed=178s out=1395374 tree=clean action=stop route=router rule=- pattern=none attempts=1 cycles=0`
 
-Runner evidence lines:
+## Skill evaluation: `ai-kit-spec-review`
 
-```text
-cross-ai: report status=quota lane=opencode/router-env/my-referee-one route=router attempts=7 cycles=0 first_failure=2026-10-25T04:25:46.793Z last_failure=2026-10-25T04:41:06.679Z stopped=deadline
-AIKIT-XAI status=quota cli=opencode model=router-env/my-referee-one exit=75 cli_rc=1 elapsed=920s out=5192 tree=clean action=stop route=router rule=text-pre-dispatch pattern=verified attempts=7 cycles=0 retry_after_s=600 cycle=0
-```
+**104/120 — Grade B.** Strong **Process/Tool** skill with substantial project-specific knowledge (estimated E:A:R **80:15:5**). Reviewed the complete `SKILL.md`, all 14 reference files, and the requested Phase 25 diff; no `scripts/` files were present.
 
-Upstream messages (OmniRoute, verbatim, trimmed):
-
-```text
-Service temporarily unavailable: all targets were skipped by pre-dispatch filters (Session (5h) 100% conn:dd6b6ba2; Session (5h) 100% conn:f48bcb3c)
-Service temporarily unavailable: all targets were skipped by pre-dispatch filters (Session (5h) 100% conn:f48bcb3c)
-[429]: The usage limit has been reached (reset after 4h 15m 3s)
-```
-
-## Last completed report from this judge (round 4, an earlier digest; reference only, not this verdict's score)
-
-# Skill evaluation: `ai-kit-spec-review`
-
-**94/120 (C).** The skill provides strong framework-aware review guidance and links directly to the new subprocess policy. Its normal dispatch path selects one CLI per call and forbids post-failure switches of harness, provider, or model. The Phase 25 runner and resume path still have defects that prevent the policy from being reliable. This was a static, read-only review; I did not run the runner or its self-test.
+Phase 25’s runner correctly selects only the first CLI, keeps retries on the same CLI/model, persists confirmed-router quota cycles under the four-hour cap, and emits stop evidence. The skill mandates reading the policy and prohibits post-dispatch fallback. Two orchestration gaps remain.
 
 | Dimension | Score | Assessment |
 |---|---:|---|
-| D1 Knowledge Delta | 17/20 | Worktree grounding and framework routing add specific expertise. |
-| D2 Mindset + Procedures | 13/15 | Lifecycle ceilings and dispatch order guide decisions. |
-| D3 Anti-Patterns | 13/15 | Clear prohibitions with reasons. |
-| D4 Specification Compliance | 15/15 | Valid frontmatter; description states what, when, and triggers. |
-| D5 Progressive Disclosure | 11/15 | Explicit load triggers, but a 487-line body and mandatory 369-line reference are heavy. |
-| D6 Freedom Calibration | 10/15 | Fragile resume and runner operations need safer constraints. |
-| D7 Pattern Recognition | 8/10 | Recognizable process pattern. |
-| D8 Practical Usability | 7/15 | Resume, cap, and evidence defects affect real stops. |
-| **Total** | **94/120** | |
+| D1: Knowledge Delta | 18/20 | Valuable worktree, lifecycle, routing and recovery knowledge; some repeated rationale. |
+| D2: Mindset + Procedures | 14/15 | Good decision framing and concrete dispatch procedures; resume completion needs tightening. |
+| D3: Anti-Pattern Quality | 14/15 | Specific prohibitions with meaningful reasons; pre-dispatch exception weakens owner control. |
+| D4: Specification Compliance | 15/15 | Valid metadata; description clearly supplies capabilities, scenarios and trigger terms. |
+| D5: Progressive Disclosure | 12/15 | Strong mandatory/conditional loading guidance, but excessive unconditional reading. |
+| D6: Freedom Calibration | 12/15 | Appropriately constrained dispatch; autonomous preselection and ambiguous resume waiting remain. |
+| D7: Pattern Recognition | 9/10 | Clear Process/Tool structure, somewhat oversized. |
+| D8: Practical Usability | 10/15 | Common paths are actionable; resume signaling and evidence accounting need fixes. |
+| **Total** | **104/120** | **Good, but not fully aligned with the requested owner-controlled policy.** |
 
-1. **Critical — Resume converts a fixed dispatch into a shell script.** [`references/cross-ai-dispatch.md:268–295`](skills/ai-kit-spec-review/references/cross-ai-dispatch.md#L268-L295) tells the agent to substitute paths and arguments into `-cmd.sh`, then run it with `bash`. A quoted heredoc prevents expansion *while writing*, not when Bash later executes substituted text; a document path containing shell syntax can execute then. **Fix:** persist an argv array as data and resume with a no-shell subprocess call, preserving the selected CLI and model.
+### Findings
 
-2. **Critical — Review execution can delete a file in the caller’s home.** [`references/cross-ai.mjs:2488–2489`](skills/ai-kit-spec-review/references/cross-ai.mjs#L2488-L2489) unconditionally removes `$HOME/.fake-git-hang` after a child attempt, including in review mode. **Fix:** remove this test-marker cleanup from production execution and confine it to the self-test harness.
+1. **Important — Pre-dispatch probing still permits autonomous provider/model/native fallback.**  
+   **Evidence:** `skills/ai-kit-spec-review/SKILL.md:157–165` explicitly allows a failed probe—including timeout—to select another provider, ultimately the native session default, while admitting the owner has not ruled on this behavior. These are real subprocess calls: `skills/ai-kit-spec-review/ai_kit_spec/quota.py:268–283` executes the probe and marks any failure unavailable.  
+   **Fix:** On an unavailable probe, surface the reason and require owner selection before choosing another harness, provider, model or native reviewer. Preserve an explicit no-config session-default path, but do not treat failed configured probes as authorization to switch.
 
-3. **Important — A quota episode can request a cooldown beyond its four-hour cap.** [`references/cross-ai.mjs:1795–1808`](skills/ai-kit-spec-review/references/cross-ai.mjs#L1795-L1808) checks the call deadline before the episode cap; [`references/cross-ai.mjs:2454–2462`](skills/ai-kit-spec-review/references/cross-ai.mjs#L2454-L2462) can then emit exit 75 with a full cooldown for a deadline stop. That conflicts with [`references/subprocess-quota-policy.md:48–49`](skills/ai-kit-spec-review/references/subprocess-quota-policy.md#L48-L49). **Fix:** enforce the absolute cap before admitting any rung or cooldown, including inside `cycleStop`; test a near-cap, short-deadline call.
+2. **Important — Resume completion signaling contradicts the normal dispatch contract.**  
+   **Evidence:** `skills/ai-kit-spec-review/references/cross-ai-dispatch.md:301–308` creates `.exit` containing `running` before launching the background process, then says to wait for that file. However, `skills/ai-kit-spec-review/SKILL.md:319–322` defines file existence as completion. Applying that rule during resume can immediately reach the terminal branch at `cross-ai-dispatch.md:316–317`, deleting a report while its process remains active.  
+   **Fix:** Explicitly wait until `.exit` contains a completed numeric exit code, not `running`; update both contracts consistently. Alternatively, use a separate running marker and atomically publish the completion file.
 
-4. **Important — Unconfirmed routes can inherit router-cycle state.** [`references/cross-ai.mjs:2396–2428`](skills/ai-kit-spec-review/references/cross-ai.mjs#L2396-L2428) loads and applies saved state without first confirming the current route. A later `--route-<cli> unknown` call for the same CLI/model can receive a cooldown or stored session, contrary to [`references/subprocess-quota-policy.md:35–40`](skills/ai-kit-spec-review/references/subprocess-quota-policy.md#L35-L40). **Fix:** load router-cycle state only for confirmed router routes; test a router call followed by an explicitly unknown-route call.
+3. **Minor — An empty-answer stop undercounts attempts and omits the promised attempt evidence.**  
+   **Evidence:** `skills/ai-kit-spec-review/references/subprocess-quota-policy.md:65` promises one evidence line per failed attempt. In `skills/ai-kit-spec-review/references/cross-ai.mjs:2600–2604`, an empty answer returns before the increment and `logAttempt` at `2611–2616`. A first-call empty answer therefore reports zero attempts despite having run a CLI.  
+   **Fix:** Count and log the empty-answer attempt before returning; add a focused assertion for its attempt line and trailer count.
 
-5. **Important — Stop evidence is incomplete for some failures.** Immediate classified stops increment attempts but return before setting failure timestamps, and an empty-answer stop increments neither attempts nor the per-failure log ([`references/cross-ai.mjs:2540–2575`](skills/ai-kit-spec-review/references/cross-ai.mjs#L2540-L2575)). The final report can therefore disagree with the documented evidence contract ([`references/subprocess-quota-policy.md:61–67`](skills/ai-kit-spec-review/references/subprocess-quota-policy.md#L61-L67)). **Fix:** record the attempt and timestamps before every failure return; test immediate auth/quota and empty answers.
+4. **Minor — Native-only runs must load substantial irrelevant recovery detail.**  
+   **Evidence:** `skills/ai-kit-spec-review/SKILL.md:153` requires reading all 384 lines of `cross-ai-dispatch.md` even with `--no-cross-ai`, although that reference’s `110–122` skips directly to native dispatch.  
+   **Fix:** Separate common setup from external dispatch/recovery, and load recovery instructions only for external lanes or resume entry.
 
-6. **Minor — A short, unterminated limit message is not detected live.** The stderr relay checks a partial line only after it exceeds its buffer cap ([`references/cross-ai.mjs:1116–1128`](skills/ai-kit-spec-review/references/cross-ai.mjs#L1116-L1128)); a child that prints `quota exceeded` without a newline and hangs can wait for the attempt deadline. **Fix:** inspect the pending stderr fragment on each chunk and assert prompt termination in the live-partial self-test.
+No files were changed and no credential files were read. Tests and live CLI/scheduler behavior were not run; runtime conclusions are based on source inspection.
 
-7. **Minor — Early cycle refusals leave a temporary directory.** The runner creates it at [`references/cross-ai.mjs:2384`](skills/ai-kit-spec-review/references/cross-ai.mjs#L2384), but the cap and not-yet-due returns at lines 2408–2422 precede the cleanup `finally` at lines 2650–2652. **Fix:** validate saved state before creating the directory, or move those returns inside the cleanup scope.
-
-No files were changed; executable behavior and host scheduling remain unverified by this read-only review.
-
-DIGEST 0255c52b8ea93d62
-CURRENT 94/120
-CRITICAL 2 IMPORTANT 3
+DIGEST e85ac2aec5c16f61
+CURRENT 104/120
+CRITICAL 0 IMPORTANT 2

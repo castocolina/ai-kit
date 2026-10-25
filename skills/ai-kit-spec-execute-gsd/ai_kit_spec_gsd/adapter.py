@@ -124,8 +124,8 @@ def _fallback_notice(top_choice_key, reason_code: str, reason_prose: str) -> dic
         "reason": reason_code,
         "message": (
             f"ai-kit-spec-execute chose {top_choice} for this task, but {reason_prose}. No "
-            f"configuration change was made to GSD's config -- GSD's own currently-active "
-            f"default (unmodified by ai-kit-spec-execute) will run instead."
+            f"configuration change was made to GSD's config. Execution stops here: running "
+            f"this phase on GSD's own native executor needs an explicit owner decision."
         ),
     }
 

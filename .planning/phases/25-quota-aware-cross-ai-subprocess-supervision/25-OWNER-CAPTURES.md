@@ -158,12 +158,9 @@ for any SKILL.md the fixtures changed.
 - QTA-01, QTA-02 and QTA-03 are ready for `/gsd-verify-work 25`.
 - `human_needed`: C1-C7 above (every result still `not run (owner)`), plus the unverified
   pattern rows.
-- **Blocked:** the skill-judge gate. `25-SKILL-JUDGE.md` records all four changed skills as
-  `BLOCKED`. Both referee lanes stopped and the runner switched nothing:
-  - my-referee-one: 5-hour session quota, reset past the 4-hour cap;
-  - my-referee-two: OmniRoute 404 `Combo has no executable targets`.
-
-  On Opus's numbers, three skills sit below their base scores. The owner decides on re-running
-  the lanes and on that bar.
+- **Skill-judge gate (round 6, 2026-10-25, all three judges completed):** spec-review PASS (102
+  against base 97). execute-gsd (96 against 104), execute-superpowers (84, two Criticals fixed
+  after the round, against 110) and curated-config (103 against 106) are UNRESOLVED on the
+  no-regression bar only. Whether the old bases stay the bar is the owner's decision.
 - Next: `/gsd-secure-phase 25`, then the verifier, then the merge to local main and
   `tools/setup.py install` once the gate clears. Any push needs the owner's consent.

@@ -162,7 +162,8 @@ anything. When no configured entry is available, the walk ends on the session de
 vendor as the author): the Step 5 message then adds `every configured reviewer unavailable;
 reviewed with the session default`. This walk is the shipped pre-dispatch behavior (the owner
 has not ruled on it yet); the owner rule below covers everything after a failure, and the walk
-is not permission to switch then.
+is not permission to switch then. One consequence to state when it happens: a confirmed router
+lane that is out of quota at probe time is walked past, so its cooldown cycles never start.
 
 Record every entry `probe-quota` marked unavailable, with the reason it printed. The Step 5
 message lists each as `unavailable: <entry> (<reason>)`.

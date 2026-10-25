@@ -668,6 +668,9 @@ class TestResolveGsdDispatch(unittest.TestCase):
         self.assertEqual(result["reason"], "no_usable_dispatch")
         self.assertIn("gemini/gemini-3.1-pro", result["message"])
         self.assertNotIn("context", result["message"])
+        # A fallback notice stops for the owner; it never promises a native run.
+        self.assertIn("Execution stops here", result["message"])
+        self.assertNotIn("will run instead", result["message"])
 
     def test_tiered_gemini_keeps_its_native_tier_route_without_a_screen_warning(self):
         # A-WR-08: the native-tier route writes GSD config and needs no execute builder, so the

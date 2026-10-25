@@ -58,12 +58,14 @@ only quota-exhausted when the state was written is eligible again: the next `res
 refreshes quota, so it gets a real chance to have recovered. A permanently excluded one is never
 retried, and the task keeps its fix round and its escalation anchor.
 
-That Step 2 re-entry is the owner-controlled resume only. The one-shot router wake does not use
-it. When the state file holds `injection_json`, the wake re-dispatches that object unchanged
-through Step 3's `dispatch-task` and skips `resolve-injection`, so a candidate that recovered in
-the meantime cannot replace the lane. `injection_json` matters only to that wake: an
-owner-controlled resume re-enters Step 2 whether or not the file holds it (after a terminal stop
-it is inert).
+That Step 2 re-entry applies only when the file holds no `injection_json` (a stop before any
+dispatch, where selection along the ladder is still pre-dispatch). When it holds `injection_json`,
+a dispatch on that pair already failed: both the one-shot router wake and an owner's plain
+"resume" re-dispatch that object unchanged through Step 3's `dispatch-task` and skip
+`resolve-injection`, so no recovered or different candidate replaces the lane. Only an owner
+who names a replacement pair re-enters Step 2, with that choice. After the 4-hour cap the
+pinned lane refuses with exit 69 until its last attempt is about 4 hours old; report that
+instead of re-resolving.
 
 ## Resumable state: writing it
 

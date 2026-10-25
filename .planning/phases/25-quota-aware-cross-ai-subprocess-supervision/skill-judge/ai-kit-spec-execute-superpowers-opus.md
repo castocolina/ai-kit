@@ -1,72 +1,67 @@
 # ai-kit-spec-execute-superpowers — skill-judge report (native Opus subagent, clean context)
 
-Round 5 (evidence round), skill digest `beff20e2e6df85d9`, judged at commit e2bb140. Rubric: the skill-judge skill (120 points).
+Round 6, skill digest `9fa91a3b0024ebf5`, judged at commit 12083a7. Rubric: the skill-judge skill (120 points).
 
-# Skill evaluation: ai-kit-spec-execute-superpowers (Phase 25 state)
+**Skill-judge report: ai-kit-spec-execute-superpowers**
 
-The skill scores 100/120 (grade B), with 0 Critical and 2 Important findings. Its pattern is a Process/Tool hybrid: a 457-line SKILL.md plus three references and the shared quota policy. I estimate the content mix at about 75% expert, 15% activation and 10% redundant.
+**Score: 101/120 (84%, grade B).** No Critical findings. The Phase 25 policy is described correctly, and its main claims hold against the code. Three Important findings below; all are wording and layout, not wrong behavior.
 
-**Phase 25 claims checked against the code, and they hold:**
-- **One CLI per call, no fallback:** no stale "hourly" or "next ladder candidate" wording remains.
-- **Where the router tokens live:** `classify_dispatch_failure` turns both exit 75 and exit 69 into `"quota"`. `retry_after_s` and `cycle` sit only inside `status`, the parsed `AIKIT-XAI` line (`execute_dispatch.py:144-152`, `runner_dispatch.py:241-247`).
-- **"Confirmed only by the catalog":** true for this adapter's path. `dispatch-task` uses the package template, whose `routerBacked` is `{}`. The flag comes from `resolve_route` (`runner_dispatch.py:182-183, 216-226`; `tooling_guidance.py:23-27`).
-- **The 1800 s budget:** it covers the whole call (`cross-ai.mjs:1727-1743, 1796-1808`).
-- **The 4-hour cap:** a stop past it is exit 69 (`cross-ai.mjs:2411-2416, 2459-2468`). A re-entry before the due time comes back as exit 75 with the remaining seconds (`:2417-2424`).
-- **Evidence lines:** they land in `$DISPATCH_BASE.err`, because the runner's stderr is relayed live.
-- **The `<files>` rule:** the dirty-tree gate is implemented at `cross-ai.mjs:2697-2708`.
-- **No switch after a failure:** both failure branches stop, and none re-resolves to another candidate.
+**Scope.** I read the full rubric (`~/.claude/skills/skill-judge/SKILL.md`), then `SKILL.md` (461 lines), `references/escalation.md`, `references/state-management.md`, `references/design-notes.md`, the linked `skills/ai-kit-spec-review/references/subprocess-quota-policy.md`, and `git diff 11ac3eb..HEAD`. I checked the claims against `ai_kit_spec_superpowers/{cli,dispatch_injection}.py`, `ai_kit_spec/{execute_dispatch,runner_dispatch,error_classifier}.py` and `cross-ai.mjs`.
+
+**Claims that match the code:**
+- **One CLI per call:** `runner_flags` passes only `--prefer <runtime>`.
+- **Router confirmation:** a lane counts as router only when the model catalog's `fallback_quota` is confirmed. `resolve_route` then adds `--route-<cli> router`.
+- **Where the tokens live:** `retry_after_s` and `cycle` exist only inside `status`, which is the parsed `AIKIT-XAI` line (`execute_dispatch.py:150-151`).
+- **Exit codes:** exit 75 and exit 69 both classify as `"quota"`. A cooldown that would run past the cap returns exit 69 (`cross-ai.mjs:2494-2500`). A re-entry before the due time returns exit 75 with the remaining wait (`2443-2449`), which the "75 plus both tokens" rule handles.
+- **Evidence lines:** the stderr relay passes every line through (`runner_dispatch.py:262-271`), so they do land in `$DISPATCH_BASE.err`.
+- **Task digest:** it hashes only `<objective>` (`cross-ai.mjs:1863`), and the guidance text injected ahead of the prompt has no `<objective>` tag.
+- **Writes outside the task files:** SDD's `.superpowers/sdd/` directory is ignored entirely, so writing the report and prompt files there does not trip the dirty-tree gate.
+- **Exit status:** `dispatch-task` exits 0 even when the runner fails; only a refused candidate exits non-zero, with no JSON.
+
+### Dimension scores
 
 | Dimension | Score | Max | Notes |
 |---|---|---|---|
-| D1 Knowledge Delta | 17 | 20 | Hard-won detail (the three exclusion sets, the escalation anchor, why the task digest needs a byte-identical objective). The routing and exec-confinement notes are repeated 2–3 times. |
-| D2 Mindset + Procedures | 13 | 15 | A good "permanent or same-wave?" question to ask first, and exact procedures for fragile steps. |
-| D3 Anti-Patterns | 14 | 15 | NEVER index with reasons, repeated where each rule applies. |
-| D4 Spec / Description | 13 | 15 | WHAT and WHEN are clear; few trigger keywords (cross-AI, external CLI, quota). |
-| D5 Progressive Disclosure | 12 | 15 | MANDATORY read triggers are placed in the workflow, and design-notes is load-on-demand. The body is still 457 lines and restates parts of the policy. |
-| D6 Freedom Calibration | 13 | 15 | Low freedom for state and dispatch, which fits. One fragile step is left unguarded (finding 2). |
-| D7 Pattern | 7 | 10 | Recognizable Process pattern, but about 1.5–2x the usual length. |
-| D8 Usability | 11 | 15 | Thorough on edge cases, with gaps in error handling (2, 4, 5). One authorization claim overstates its source (1). |
+| D1 Knowledge Delta | 16 | 20 | Almost all content is project-specific (the three exclusion sets, write-then-append, status read from stdout, digest and `<files>` rules). Some content is repeated (exec confinement, the round 4–5 rationale and "two current rules" appear in both SKILL.md and the references). |
+| D2 Mindset + Procedures | 13 | 15 | "Before touching any exclusion-set variable, ask…" is a real thinking frame, plus procedures an agent could not invent. |
+| D3 Anti-Patterns | 14 | 15 | The NEVER index gives a non-obvious reason per item and points to where each is used. |
+| D4 Spec / Description | 13 | 15 | Strong WHAT, and the WHEN is routed through ai-kit-spec-execute. No user-phrased triggers; no mention of external CLI dispatch or the quota/stop behavior. |
+| D5 Progressive Disclosure | 12 | 15 | MANDATORY triggers sit inside the workflow, and design-notes has a "read only when" gate. But SKILL.md is 461 lines, and Step 3 alone is about 260. |
+| D6 Freedom Calibration | 13 | 15 | Fragile state work is exact bash. Prompt composition (the `<objective>`/`<files>` blocks, the WRITE/APPEND sentence) is prose with no template, even though the session reuse depends on it byte for byte. |
+| D7 Pattern | 8 | 10 | A Process/Tool hybrid, clearly structured. |
+| D8 Usability | 12 | 15 | Edge cases are well covered. The ordering and ambiguity issues below cut into it. |
 
-## Findings
+### Findings
 
-1. **Important. Pre-dispatch choice and the Rounds 4–5 escalation are called "settled" and "authorized", but the owner has not confirmed that.**
-   - **Where:** `SKILL.md:411-417` ("Two rules, not open questions… authorized"), `references/design-notes.md:128-137` ("They are settled as rules"), `references/escalation.md:76`.
-   - **The record says otherwise:** `.planning/phases/25-.../25-OWNER-CAPTURES.md:124` lists "Pre-dispatch candidate selection and rounds 4-5 escalation stay (A1)" as something still to confirm, and `:144` reads "C7: not run (owner)". `25-09-SUMMARY.md:46,139` says "A1 is recorded as pending, not settled".
-   - **Why it matters:** the round-2 judge fix (`b0c4d1e`) turned "pending the owner's confirmation" into "settled". That breaks the AGENTS.md rule against claiming more certainty than the source supports. It matters most for escalation, which picks a different CLI and model by itself.
-   - **Fix:** keep both as executable current behavior. Say they "stay pending owner confirmation (25-OWNER-CAPTURES C7, A1)". Keep "nothing after a failure is authorized" as the one settled owner rule.
+**1. Important: the skill contradicts itself on whether escalation is settled.** `SKILL.md:415-417` calls pre-dispatch selection and the rounds 4–5 escalation "the shipped behavior, still awaiting the owner's confirmation". `design-notes.md:138-139` says "The executable steps state them as current behavior, not as open questions". This is the exact rule the owner's "never switch model on its own" constraint touches. An agent may stop to ask, or may refuse the round-4 bump. Note that `escalation.md`'s re-resolution can also land on a `native` session-default entry (`resolve-injection` can return `native`), which is a hand-off to the native session.
+- **Fix:** in SKILL.md, keep one present-tense sentence: "Pre-dispatch selection along `policy.ladder` (Step 2's pick, the round 4–5 bump) is authorized; nothing after a failed dispatch is." Move the "awaiting confirmation" history to design-notes only. In `escalation.md`, say explicitly whether a `native` bump is allowed.
 
-2. **Important. `dispatch-task`'s own exit status is never checked.**
-   - **Where:** `SKILL.md:273-289`. The second block runs `cat "$DISPATCH_BASE.json"` and feeds it to `classify-dispatch-failure` (`:305`) without reading `.exit`.
-   - **How it fails:** `main` catches only `ConfigError` (`cli.py:476-484`). `dispatch_execute` raises `ValueError` when it refuses a candidate, for example a missing target dir or a refused CLI (`execute_dispatch.py:106-133`), and a missing prompt file also raises. In those cases the command exits non-zero with a traceback and an empty `.json`. `classify-dispatch-failure` then crashes on `json.loads('')`, and no ok/quota/real_error branch matches.
-   - **Fix:** in the second block, read `$(cat "$DISPATCH_BASE.exit")`. If it is non-zero, or `.json` is empty, relay the tail of `.err` verbatim and STOP as a `real_error`, with no re-resolve.
+**2. Important: in the quota branch, the code appears before the "relay evidence first" rule.** `SKILL.md:322-334` shows the fold block (`WAVE_TRIED_JSON`, `WAVE_REASONS_JSON`, `EXCLUDED_KEYS_JSON`) first. Only at `:336-341` does it say to relay the `cross-ai: report` and `AIKIT-XAI` lines "before reading any token or writing any state, then run the fold block above". An agent reading top-down runs the fold first, which breaks the policy's "print … verbatim, before acting" (`subprocess-quota-policy.md:85`), the core Phase 25 rule.
+- **Fix:** put the relay as point 1, then the fold block as point 2, in reading order.
 
-3. **Minor. The quota-branch layout contradicts its own order.**
-   - **Where:** the fold bash at `SKILL.md:322-330` comes before the text at `:332-337` that says "Relay the evidence lines first… then run the fold block above". An agent reading top-down runs the fold first.
-   - **Fix:** move the fold block into list item 1, after the relay.
+**3. Important: SKILL.md is too heavy; the quota-wake flow belongs in a reference.** `SKILL.md:322-403` (the fold, token reads, schedule-or-stop, the wake prompt, the resume note) is about 80 lines that only the rare mid-dispatch quota stop needs. That pushes the file to 461 lines, near the 500-line limit.
+- **Fix:** move it to `references/quota-wake.md`, behind "MANDATORY when `CLASSIFICATION == "quota"`: read in full". Add a "Do NOT load on `ok` or `real_error`" line. Keep a 3-line stub in Step 3.
 
-4. **Minor. The relay step assumes runner lines always exist.**
-   - **Where:** `SKILL.md:335-337, 400-403`.
-   - **The gap:** the Python fail-closed paths (no Node, no template, bad model id; `runner_dispatch.py:564-573`) and an ignored status line (`:549-550`) print only `ai-kit-spec:` lines. There is no `AIKIT-XAI` or `cross-ai: report` line to relay.
-   - **Fix:** "If no `AIKIT-XAI` line is present, relay the `ai-kit-spec:` lines and state that the runner did not run."
+**4. Minor: the NEVER item names only `cycle=`.** `SKILL.md:42-43` says "a confirmed-router exit 75 carrying `cycle=`", but `:362-363` requires both `RETRY_AFTER_S` and `CYCLE`. An unwritable state file or a cap stop yields `cycle` without `retry_after_s` (`cross-ai.mjs:2499`).
+- **Fix:** change it to "carrying both `retry_after_s=` and `cycle=`".
 
-5. **Minor. A scheduled stop gives the owner no fallback.**
-   - **Where:** `SKILL.md:365` says the `CronCreate` job "lives only as long as the session". Yet `:369-370` reports `$RESUME_STATE_PATH` only for unscheduled stops.
-   - **Fix:** on a scheduled stop, also print `retry_after_s`, the state path and the wake prompt, so the owner can re-run it if the session ends.
+**5. Minor: the owner-resume guidance after the cap is incomplete.** `SKILL.md:371-374` says an unscheduled stop leads to an owner re-invoke that re-enters Step 2. After an exit 69, the stuck key carries a `"quota"` reason, so `resume-exclusions` drops it and Step 2 can pick it again. The runner then refuses it with an immediate exit 69 until `last_attempt_at` is more than 4 hours old (`cross-ai.mjs:2433-2441`).
+- **Fix:** on exit 69, also report "this lane cannot run again until about 4 h after its last attempt; an earlier re-invoke re-resolves along the ladder and may pick a different pair".
 
-6. **Minor. "the ruled single re-invoke" reads as one wake in total.**
-   - **Where:** `SKILL.md:41-45`. The real contract is one one-shot wake per confirmed-router exit 75, chained until exit 69 (policy `:86-88`; SKILL `:398`).
-   - **Fix:** "one one-shot per confirmed-router exit 75; a wake may schedule the next, until exit 69."
+**6. Minor: it is unclear whether the round 4–5 floor applies again on a resume.** `SKILL.md:260-262` says to increment `$FIX_ROUND` "(not on resume), then apply the Rounds 4–5 rule", and `:443` says the rule applies "after the increment". After the escalation quota stop (`escalation.md:88-93`), a resumed Step 2 runs without the floor and can pick the stuck or a weaker key. The example at `escalation.md:36-38` assumes the floor is applied again.
+- **Fix:** add "On resume with `$FIX_ROUND >= 4`, apply the floor before dispatch, with no increment."
 
-7. **Minor. Duplication wastes tokens and copies policy rules.**
-   - **Where:** the Step 3 intro (`SKILL.md:203`) repeats Step 2 (`:150-155`) and `design-notes.md:24-32`. "The one exception" (`:428-430`) repeats `:137-139`. "Exec confinement" (`:419-426`) repeats `design-notes.md:76-83`. `:356-370` restates the cap, exit codes and router-confirmation rule, while the policy says "A skill links here; it does not copy the rules" (`subprocess-quota-policy.md:4-5`).
-   - **Fix:** cut these to pointers, saving roughly 40 lines. Keep only the mapping that is specific to this adapter: `RETURNCODE` 75 plus both tokens.
+**7. Minor: "run backgrounded" has no portable form.** `SKILL.md:269-279` requires running the dispatch in the background, but the block is foreground syntax that relies on Claude Code's `run_in_background`.
+- **Fix:** give a host-neutral form, e.g. `( python3 … ; echo "$?" > "$DISPATCH_BASE.exit" ) &`, plus a polling note for hosts with no completion notice.
 
-8. **Minor. The `<files>` guidance misses line-range suffixes.**
-   - **Where:** `SKILL.md:254-256`. Superpowers plans write paths like `Modify: path.py:123-145`. The runner compares exact paths (`cross-ai.mjs:2667-2676, 2706-2708`), so a suffixed path never matches and the new-session retry (rung 2) is blocked.
-   - **Fix:** "strip `:N`/`:N-M` suffixes; include the Create: and Test: paths."
+**8. Minor: project-internal references leak into a portable skill.** "assumption A1 in the Phase 25 owner captures" (`design-notes.md:131`), "before Phase 25" (`:88`) and "curated-config's runner floor" (`SKILL.md:268`) mean nothing to an agent working in another repo.
+- **Fix:** state the facts directly (whole-call budget is 1800 s, the same as the runner's default `outerTimeoutS`) and drop the planning-artifact names.
 
-Not checked: I did not run the runner self-test or the skill's tests, and did not trace the shared `resolve-injection` internals beyond the CLI layer.
+**9. Minor: the description omits external dispatch and failure behavior.** At `SKILL.md:3` there is no mention of cross-AI or external CLI dispatch, the runner, or "stops on failure, never switches model". There are also no user-phrased triggers such as "run my superpowers plan on codex/opencode".
+- **Fix:** add one clause naming both, keeping the description under about 1,024 characters.
 
-DIGEST beff20e2e6df85d9
-CURRENT 100/120
-CRITICAL 0 IMPORTANT 2
+**Not checked:** I did not run `make test` or the runner's `--self-test`. I did not check whether `CronCreate` exists or fires on any host. The real CLIs' router behavior, and whether Codex's workspace-write sandbox allows writes in `.git`, stay unverified, as the skill itself already marks them.
+
+DIGEST 9fa91a3b0024ebf5
+CURRENT 101/120
+CRITICAL 0 IMPORTANT 3

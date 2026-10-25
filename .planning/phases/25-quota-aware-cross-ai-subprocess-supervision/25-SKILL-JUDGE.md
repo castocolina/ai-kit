@@ -5,10 +5,10 @@
 `router-env/my-referee-one` and `router-env/my-referee-two` through
 `node .planning/scripts/cross-ai.mjs --prefer opencode --model-opencode <lane> --route-opencode router --mode review`.
 **Pass rule (AGENTS.md):** `((CRITICAL 0 and IMPORTANT 0) or score >= 96) and score >= base score`.
-**Recorded score:** the native Opus score of the evidence round (round 5). It is the only judge
-that completed that round; the referee lanes stopped (below), so every verdict is `BLOCKED`.
+**Recorded score:** round 6, the first round since round 2 in which all three judges completed.
+Each verdict records the lowest of the three scores and the highest Critical and Important counts.
 
-## Why the referee lanes are blocked
+## Why the referee lanes were blocked in rounds 3 to 5 (recovered for round 6)
 
 The runner stopped both referee lanes and switched nothing (owner rule). It ran one CLI per
 call, relayed its evidence lines and exited:
@@ -53,6 +53,10 @@ runner stop with no score.
 | r5 | | execute-gsd | 96 C0/I3 | quota | crash |
 | r5 | | execute-superpowers | 100 C0/I2 | quota | crash |
 | r5 | | curated-config | 104 C0/I1 | quota | crash |
+| r6 | ed63b5e, 8c3dbfa, 5b28f21, dff71c4 | spec-review | 102 C0/I1 | 104 C0/I2 | 111 C0/I1 |
+| r6 | | execute-gsd | 96 C0/I2 | 105 C0/I2 | 109 C0/I0 |
+| r6 | | execute-superpowers | 101 C0/I3 | 84 C2/I1 | 111 C0/I0 |
+| r6 | | curated-config | 103 C0/I3 | 112 C0/I0 | 115 C0/I1 |
 
 The judges kept finding new edge cases each round, and most of those were real defects that got
 fixed in code with tests:
@@ -67,62 +71,69 @@ fixed in code with tests:
 Opus scores stayed between 95 and 106 across the rounds. The base scores for execute-gsd (104)
 and execute-superpowers (110) come from Phase 18.1's independent judging of much shorter skills.
 
-## Findings fixed after round 5 (not re-judged)
+## Findings fixed after round 5 (judged in round 6)
 
-ed63b5e fixes the round-5 Importants:
-- execute-gsd prints `RESUME_STATE_PATH=` and records `resume_via`, and its Step 2 exit-0
-  sentence is scoped to `cross_ai_hook`;
-- superpowers stops on a `dispatch-task` failure that left no JSON, and no longer calls the
-  pre-dispatch rules owner-settled (A1 is still open in C7);
-- spec-review keeps one resume file per pending lane with a merge lock, and names the
-  session-default end of the probe walk;
-- curated-config never dispatches a model call to verify a runner.
+ed63b5e fixed the round-5 Importants. The code-review and ponytail fixes (8c3dbfa, 5b28f21, dff71c4)
+also changed the runner and the policy before round 6.
 
-The Phase 25 code review re-runs all three judges on these four skills once the referee lanes
-recover.
+## Findings fixed after round 6 (not re-judged)
+
+- e3f00fb, superpowers (both referee-one Criticals): an owner's plain resume of a failed dispatch
+  re-dispatches the pinned injection, and Step 2 re-resolves only with a pair the owner names. An
+  external `BLOCKED` never takes the more-capable-model route on its own.
+- 2d85d2d, execute-gsd: the fallback notice says execution stops for the owner instead of
+  promising a native run (code and test). The skill states the quota retry only on a confirmed
+  router lane and writes the resumable state on every stop.
+- 6ae617c: spec-review gets a `.running` marker instead of writing into `.exit`, and a rule that
+  two lanes pending at dispatch merge nothing; it also states the probe walk's router-lane
+  consequence. curated-config gets `ensure-runner`'s real report fields and names who owns the
+  re-entry and the below-template-7 choice.
+
+Phase 25.1 edits these four SKILL.md files again (pointers to the new `ai-kit-cross-ai` skill), and
+its closing plan re-runs all three judges on them.
 
 ## Verdicts
 
 Skill: ai-kit-spec-review
-Verdict: BLOCKED
+Verdict: PASS
 Base score: 97
-Score: 100
+Score: 102
 Critical findings: 0
 Important findings: 2
-Rule: (C0 and I2 → false) or 100 >= 96 → true; 100 >= 97 → true. The numbers pass, but two of the three judge lanes did not complete.
+Rule: lowest score 102 (Opus 102, referee-one 104, referee-two 111); (C0 and I2 → false) or 102 >= 96 → true; 102 >= 97 → true.
 Reports: skill-judge/ai-kit-spec-review-opus.md, skill-judge/ai-kit-spec-review-my-referee-one.md, skill-judge/ai-kit-spec-review-my-referee-two.md
 
 Skill: ai-kit-spec-execute-gsd
-Verdict: BLOCKED
+Verdict: UNRESOLVED
 Base score: 104
 Score: 96
 Critical findings: 0
-Important findings: 3
-Rule: (C0 and I3 → false) or 96 >= 96 → true; 96 >= 104 → false. Below the base score, so `UNRESOLVED` on the numbers; also blocked on the referee lanes.
+Important findings: 2
+Rule: lowest score 96 (Opus 96, referee-one 105, referee-two 109); (C0 and I2 → false) or 96 >= 96 → true; 96 >= 104 → false. Below the Phase 18.1 base.
 Reports: skill-judge/ai-kit-spec-execute-gsd-opus.md, skill-judge/ai-kit-spec-execute-gsd-my-referee-one.md, skill-judge/ai-kit-spec-execute-gsd-my-referee-two.md
 
 Skill: ai-kit-spec-execute-superpowers
-Verdict: BLOCKED
+Verdict: UNRESOLVED
 Base score: 110
-Score: 100
-Critical findings: 0
-Important findings: 2
-Rule: (C0 and I2 → false) or 100 >= 96 → true; 100 >= 110 → false. Below the base score, so `UNRESOLVED` on the numbers; also blocked on the referee lanes.
+Score: 84
+Critical findings: 2
+Important findings: 3
+Rule: lowest score 84 (Opus 101, referee-one 84 with C2, referee-two 111); (C2 → false) or 84 >= 96 → false. Both Criticals are fixed in e3f00fb and not re-judged; even at Opus's 101 it stays below the base of 110.
 Reports: skill-judge/ai-kit-spec-execute-superpowers-opus.md, skill-judge/ai-kit-spec-execute-superpowers-my-referee-one.md, skill-judge/ai-kit-spec-execute-superpowers-my-referee-two.md
 
 Skill: ai-kit-gsd-curated-config
-Verdict: BLOCKED
+Verdict: UNRESOLVED
 Base score: 106
-Score: 104
+Score: 103
 Critical findings: 0
-Important findings: 1
-Rule: (C0 and I1 → false) or 104 >= 96 → true; 104 >= 106 → false. Below the base score, so `UNRESOLVED` on the numbers; also blocked on the referee lanes.
+Important findings: 3
+Rule: lowest score 103 (Opus 103, referee-one 112, referee-two 115, the last read from its dimension table: the report omitted the score line); (C0 and I3 → false) or 103 >= 96 → true; 103 >= 106 → false. Below the Phase 22 base.
 Reports: skill-judge/ai-kit-gsd-curated-config-opus.md, skill-judge/ai-kit-gsd-curated-config-my-referee-one.md, skill-judge/ai-kit-gsd-curated-config-my-referee-two.md
 
 ## Owner decision needed
 
-1. Re-run the referee lanes when they recover: my-referee-one after its 5-hour session resets
-   (about 06:00 -03 on 2026-10-25), and my-referee-two once its combo has an executable target.
-2. Decide whether the no-regression bases for execute-gsd (104) and execute-superpowers (110),
-   which were judged on much shorter skills, stay the bar for skills that now carry the Phase 25
-   policy.
+The three UNRESOLVED skills fail only the no-regression bar. Their bases come from earlier, much
+shorter versions: execute-gsd and execute-superpowers from Phase 18.1, curated-config from Phase 22.
+Every round-6 judge scored them at 96 or more, except referee-one on superpowers (84, two Criticals
+now fixed). Decide whether those bases stay the bar for skills that now carry the Phase 25 policy,
+or whether the Phase 25.1 closing round sets new ones.

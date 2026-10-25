@@ -1,59 +1,63 @@
 # ai-kit-spec-execute-gsd — skill-judge report (native Opus subagent, clean context)
 
-Round 5 (evidence round), skill digest `0a5d05b298c07ee8`, judged at commit e2bb140. Rubric: the skill-judge skill (120 points).
+Round 6, skill digest `5ec033df03ba8007`, judged at commit 12083a7. Rubric: the skill-judge skill (120 points).
 
-**Skill-judge report: `skills/ai-kit-spec-execute-gsd/`**
+## Skill-judge report: ai-kit-spec-execute-gsd
 
-Files scored: `SKILL.md` (499 lines), `references/dispatch-notes.md` (66 lines) and the linked `skills/ai-kit-spec-review/references/subprocess-quota-policy.md`. It follows the Process pattern, written in a low-freedom, script-heavy style. Roughly 70% of the content is expert knowledge, 20% is reminders, and 10% is redundant or repeated.
+**Grade: B, 96/120.** I found no critical issues. The Phase 25 policy is mostly described correctly in the skill: one CLI per call, no automatic fallback, the ladder, router cycles under the 4-hour cap, and evidence lines on every stop. One sentence gets the retry rule wrong for direct-route quota stops, and the file sits at the 500-line ceiling.
 
-I checked the Phase 25 claims against the code, and they hold:
-- **Route flags:** `--route-<cli> router|unknown` comes from a catalog `fallback_quota` value the user confirmed (`runner_dispatch.py:182-226`, `gsd_cross_ai.py:28`). The runner's order is flag, then `routerBacked`, then `router-inferred` (`cross-ai.mjs:1604-1614`).
-- **Exit 75 and 69:** an early re-entry is refused with exit 75 and `retry_after_s=<left>`. A lane past the cap is refused with exit 69 until its last attempt is more than 4 hours old. A used-up transient ladder exits 75 with no `retry_after_s=` (`cross-ai.mjs:813, 2409-2467`).
-- **Exit codes reach GSD:** GSD's `run-with-timeout` passes the runner's exit code through unchanged (`gsd-tools.cjs:4895-4903`).
-- **Timeout:** the 1800-second floor works with the runner's own deadline (`cross-ai.mjs:1727-1808`).
-- **No switching:** the skill never switches harness, provider or model on its own. The NEVER list at `SKILL.md:23-33` forbids re-resolving, GSD's `skip` and rewriting the hook.
+- **Pattern:** a mix of Process and Tool.
+- **Knowledge ratio:** about 70% expert, 15% activation, 15% redundant.
+- **SKILL.md:** 499 lines.
+- **References:** `references/dispatch-notes.md` (66 lines) and the linked policy (119 lines).
 
 | Dimension | Score | Max | Notes |
 |---|---|---|---|
-| D1 Knowledge Delta | 15 | 20 | Strong GSD and runner knowledge. Rationale is repeated (opt-in stated 3 times, custom-entry note stated twice). |
-| D2 Mindset + Procedures | 12 | 15 | Has a "Mindset before writing" block and non-obvious ordering (check opt-in, then ensure-runner, then write). |
-| D3 Anti-Patterns | 13 | 15 | Specific NEVER list with reasons. One bullet is garbled. |
-| D4 Spec / Description | 13 | 15 | Valid, 836 characters, says what it does and when. Missing user-phrased triggers ("run GSD phase N on codex"). |
-| D5 Progressive Disclosure | 11 | 15 | 499 lines, right at the limit. The policy link has a MANDATORY trigger and the notes have "read only if" triggers. No "do not load" guidance. Policy rules are copied inline. |
-| D6 Freedom Calibration | 13 | 15 | Exact scripts suit fragile config writes. The main "stop, don't go native" gate is prose only. |
-| D7 Pattern | 8 | 10 | Clear Process pattern, but heavy for it. |
-| D8 Usability | 11 | 15 | Mismatches in the state-file and exit-code handling, listed below. |
+| D1 Knowledge Delta | 15 | 20 | Project-specific expert content (hook word-splitting, ownership sidecar, exit 75/69 semantics). Diluted by stop rules repeated many times and internal function names. |
+| D2 Mindset + Procedures | 12 | 15 | Good "before writing, ask yourself" bullets (SKILL.md:187-198) and procedures Claude wouldn't know. |
+| D3 Anti-Patterns | 13 | 15 | Strong NEVER list with reasons (`skip` falls back to native, re-resolving can rewrite the hook, early retry is refused). |
+| D4 Spec / Description | 13 | 15 | Valid frontmatter, 820 characters, says WHAT and WHEN. No phrases a user would actually say, and no mention of quota-stop handling. |
+| D5 Progressive Disclosure | 11 | 15 | MANDATORY trigger for the policy (SKILL.md:454) and "read only if" pointers. But 499 lines with a 35-line inline script. |
+| D6 Freedom Calibration | 13 | 15 | Low freedom for fragile config writes is right. Copying long inline scripts by hand is a risk. |
+| D7 Pattern | 8 | 10 | Clear Step 0 to 3 process, overloaded with policy prose. |
+| D8 Usability | 11 | 15 | Very thorough error and stop handling, but has the inaccuracies below. Prose is dense. |
 
-**Findings**
+### Verified against the code (no finding)
 
-1. **Important.** The block never prints `RESUME_STATE_PATH=`, but the skill tells the agent to report and reuse it. `SKILL.md:152-153` and `:488-489` both refer to that line. The block at `:161-171` only prints `{"written": true, "path": ...}` (`ai_kit_spec_gsd/cli.py:392`). Because every shell call starts fresh, the wake prompt's `<RESUME_STATE_PATH>` has no recorded source. **Fix:** add `printf 'RESUME_STATE_PATH=%s\n' "$RESUME_STATE_PATH"` to the block and exit non-zero if `write-resumable-state` fails.
+- The route flag: `build_cross_ai_command` → `resolve_route` → `runner_flags` emits `--route-<cli> router|unknown` only for a catalog-confirmed route (gsd_cross_ai.py:25-28, runner_dispatch.py:182-183, 213-226).
+- An early re-entry is refused without a model call and returns exit 75 with `retry_after_s` (cross-ai.mjs:2443-2450).
+- The `--min cross_ai_timeout=1800` behavior (cli.py `_cmd_write_workflow_keys`).
+- GSD shows the runner's stderr and offers retry/skip/abort (`.claude/gsd-core/workflows/execute-phase/detail/elaboration.md:99-120`).
+- The skill never tells the agent to switch CLI, provider or model (SKILL.md:20-24, 25, 451, 457).
 
-2. **Important.** One state file carries two opposite resume instructions.
-   - `SKILL.md:156-160` says the caller re-invokes this skill from the file's contents.
-   - `:466-474` writes the same file, at the same `PROJECT_KEY`/`PHASE_ID` path, after a router stop. There, re-invoking the skill is forbidden, because it re-runs Step 1 and can rewrite the hook.
-   - The JSON has no field that tells the two cases apart, and nothing in the repo reads it (no `gsd-resume` consumer).
-   **Fix:** add `"resume_via": "skill"|"gsd-execute-phase"` (or a stage field) to the state JSON in both writes, and reword `:156` to scope its instruction to that value.
+### Findings
 
-3. **Important.** The Step 2 block exits 0 even when nothing was written. If the runner is not ready or guidance is missing and the cleanup succeeds, the block prints `RESULT_MODE=fallback_notice` and exits 0 (`SKILL.md:256-286`). Yet `:295` says "Exit 0 of the block writes the hook". The stop-before-native-executor rule then rests on the agent re-reading `RESULT_MODE`. **Fix:** `exit 3` after a successful `clear_hook` on both failure branches, and document "exit 3 = nothing written, STOP".
+1. **Important.** SKILL.md:450-451 says the runner "retries a transient or quota failure in the same session, then in new sessions". That is wrong for direct and `router-inferred` lanes: a quota hit off a confirmed router lane stops at once with no rung (cross-ai.mjs:2599 and 2606 `!(hit === 'quota' && lane)` → `classStop()`; policy:56-61). It also contradicts the skill's own SKILL.md:491-493. **Fix:** "It retries a transient failure, and a quota failure only on a confirmed router lane, first in the same session and then in new sessions, on that same CLI and model."
 
-4. **Minor.** The MANDATORY policy pointer uses `$REVIEW_SPEC_SKILL_DIR` (`SKILL.md:452-454`), but Step 0 prints and records only three values (`:76`, `:79`). **Fix:** add `REVIEW_SPEC_SKILL_DIR` to the Step 0 `printf`, or write the path as `$(dirname "$TOOLS_PY")/references/...`.
+2. **Important.** The file is at the 500-line cap and much of it repeats.
+   - The "fallback_notice / runner failure stops, never continue to native" rule appears about 7 times (SKILL.md:29-30, 147-151, 173-178, 288-293, 329-332, 338-341, 365-367).
+   - The plan opt-in rule appears 4 times (14-17, 191-195, 211-216, 325-328).
+   - SKILL.md:182-185 is a generic reviewer/native paragraph that doesn't apply to this flow.
+   - SKILL.md:421-431 narrates internal function names.
 
-5. **Minor.** The policy says "A skill links here; it does not copy the rules" (`subprocess-quota-policy.md:3-5`). The skill copies the route resolution, cap refusal and bare-75 rules anyway (`SKILL.md:460-464`, `:489-493`). They are accurate today but will drift. **Fix:** keep only the GSD-specific parts (pending prompt, wake text, never re-run Step 1) and defer the rest to the policy.
+   **Fix:** state each rule once in NEVER, point to it from the steps, and drop the generic paragraph and the internals narration. That frees about 60-80 lines.
 
-6. **Minor.** The plan opt-in check is all-or-nothing (`SKILL.md:211-216`). A phase that mixes `cross_ai: true` plans with native plans can never run, although GSD supports that mix (`elaboration.md:63-68`). **Fix:** stop only when no plan opts in, and list the plans that don't so the owner can confirm they run natively.
+3. **Minor.** SKILL.md:452-453 says "Step 0 resolves `$REVIEW_SPEC_SKILL_DIR`", but Step 0 only prints `GSD_SHIM`, `TOOLS_PY` and `CURATED_PY` (SKILL.md:73). Under the skill's own fresh-shell rule (82-85) the value was never captured. **Fix:** add `REVIEW_SPEC_SKILL_DIR=%s` to Step 0's printf, or say "the directory of `$TOOLS_PY`".
 
-7. **Minor.** The wake prompt (`SKILL.md:476-481`) doesn't point back to Step 3's rules on the result: relay the evidence lines, never `skip`, schedule the next one-shot. After context compaction those rules are lost. **Fix:** add the line "Then apply ai-kit-spec-execute-gsd Step 3's stop rules to the result."
+4. **Minor.** SKILL.md:489-491 says that after a cap stop the runner "keeps refusing that lane with exit 69". In the code, the cap stop saves `due_at = at + cooldown` (cross-ai.mjs:2478-2500). The `first_seen + cap` check only fires once the cap has passed (2436). So a re-entry before the cap ends hits the `due_at` branch (2443-2450) and gets exit 75 with `retry_after_s=`, which by the skill's rules schedules a wake. **Fix:** either have the runner return 69 for a capped episode (persist `stopped: 'cap'`), or reword the skill to say "an exit 69 after the cap; an earlier re-entry may still see exit 75".
 
-8. **Minor.** A stop with no `AIKIT-XAI` line is not covered. Examples are GSD's `run-with-timeout` exit 124, 126 or 127, or the runner not launching. **Fix:** one sentence: "no AIKIT-XAI line: relay GSD's exit code and error log, STOP, owner decides."
+5. **Minor.** SKILL.md:491-493 lists the causes of a bare exit 75 but leaves out a router lane whose cycle state file can't be written (cross-ai.mjs:2474-2488, `retryAfterS` undefined when `!stateWritable`). **Fix:** add "or an unwritable cycle-state file" to that list.
 
-9. **Minor.** Wording and repetition:
-   - The NEVER bullet at `SKILL.md:29-31` reads as "never answer retry except … answer nothing". Reword it to "only the scheduled wake answers retry".
-   - The custom-entry note (`:16-20`, repeated at `dispatch-notes.md:57-60`) and the codex confinement note (`:309-316`, repeated at `dispatch-notes.md:23-32`) appear twice. Keep each once.
-   - The opt-in rationale appears three times (`:191-195`, `:211-216`, `:325-328`). Keep one.
-   - The Step 3 lookup (`:443-444`) skips `<project>/.claude/skills/gsd-execute-phase/SKILL.md`.
+6. **Minor.** SKILL.md:297-299 and 338: when a user's `cross_ai_timeout` is below 1800, Step 2 raises it and takes ownership. A later cleanup then deletes the key instead of restoring the user's value (`apply_changes` with `None`, gsd_config.py:142-147), so GSD falls back to 300 and the original survives only in another run's backup. **Fix:** restore the backed-up prior value on cleanup, or print the backup path in the cleanup output.
 
-What I skipped: I did not run the runner's `--self-test` or any shim command (read-only task), and I did not verify `cache_write_json` atomicity. Risk: findings 1-3 are on the resume and stop path, so a router-quota wake can go wrong even though the runner itself behaves correctly.
+7. **Minor.** SKILL.md:384-418 is a 35-line inline Python script for editing the guidance markers, which the agent has to copy by hand. **Fix:** move it into a shim subcommand (for example `python3 $GSD_SHIM write-phase-guidance --file ... --guidance-file -`) and keep exit codes 2 and 3 as they are.
 
-DIGEST 0a5d05b298c07ee8
+8. **Minor.** The resolve-time ladder walk (adapter.py:298-307) skips quota-exhausted candidates and moves to the next configured one. This is pre-handoff selection from the owner's ordered list, which sits next to the "never switch provider/model" rule without being explained. **Fix:** add one line in Step 1 saying this owner-ordered walk, before handoff, is the only selection, and nothing changes after a dispatch starts.
+
+9. **Minor.** The description (SKILL.md:3) has no trigger phrases a user would type (for example "execute GSD phase N", "run phase with cross-AI executor") and doesn't mention resuming from a quota stop. **Fix:** add 2-3 such phrases and shorten the parenthetical config detail.
+
+I didn't run any tests or the runner self-test, and didn't live-check whether the CronCreate wake fires while GSD's prompt is pending; the skill already flags that as unverified. Finding 4 is a runner edge case: a wasted wake, not data loss.
+
+DIGEST 5ec033df03ba8007
 CURRENT 96/120
-CRITICAL 0 IMPORTANT 3
+CRITICAL 0 IMPORTANT 2
