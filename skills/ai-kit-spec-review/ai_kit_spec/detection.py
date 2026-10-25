@@ -26,8 +26,9 @@ RUNTIMES_TTL_SECONDS = 30 * 24 * 3600   # ~30 days: CLI/model presence is near-s
 # clis.pi from pi's RPC get_available_models.
 # Version 6 (22, ruling Q4) adds clis.pi.context_window and clis.pi.max_tokens,
 # the exact RPC integers.
+# Version 7 (25.1) adds clis.copilot.
 # 18.1 D-04/D-13: clis keyed by runtime id, node recorded
-RUNTIMES_SCHEMA_VERSION = 6
+RUNTIMES_SCHEMA_VERSION = 7
 
 # ── Runtime/CLI detection ───────────────────────────────────────────────
 
@@ -113,6 +114,8 @@ RUNTIMES: dict[str, Runtime] = {
         review_only=True,
         mcp_list=True,
     ),
+    # copilot has no known host signal (unverified) and its runner rows are unverified.
+    "copilot": Runtime(("copilot",), (), runner=True),
     "grok": Runtime(
         ("grok",),
         (),

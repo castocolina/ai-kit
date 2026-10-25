@@ -1349,7 +1349,7 @@ class TestRuntimePrecedenceMatrix(unittest.TestCase):
     def test_known_clis_follow_runtime_table(self):
         self.assertEqual(
             detection.KNOWN_CLIS,
-            ("pi", "opencode", "cursor", "codex", "claude", "grok"),
+            ("pi", "opencode", "cursor", "codex", "claude", "copilot", "grok"),
         )
 
     def test_docstring_confidence_labels_for_pi_and_codex_thread_id(self):
@@ -2871,7 +2871,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
         snapshot = build_runtimes_snapshot(
             which_fn=lambda *_a, **_k: None, run_fn=lambda *a, **k: None)
         self.assertEqual(snapshot["schema_version"], detection.RUNTIMES_SCHEMA_VERSION)
-        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 6)
+        self.assertEqual(detection.RUNTIMES_SCHEMA_VERSION, 7)
 
     def test_fresh_but_unversioned_cache_redetects_and_stamps(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2943,7 +2943,7 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             self.assertTrue(recorded)
             cached = cache_read_json(path)
             assert cached is not None
-            self.assertEqual(cached["schema_version"], 6)
+            self.assertEqual(cached["schema_version"], 7)
 
     def test_fresh_version_2_cache_redetects_and_restamps(self):
         # 17 D-32: version 2 predates the opencode 2.x /api/model source, so even a
@@ -3056,9 +3056,10 @@ class TestRuntimesSchemaVersion(unittest.TestCase):
             {"schema_version": 3},
             {"schema_version": 4},
             {"schema_version": 5},
+            {"schema_version": 6},
         ):
             self.assertFalse(f(bad))
-        for good in ({"schema_version": 6}, {"schema_version": 7}):
+        for good in ({"schema_version": 7}, {"schema_version": 8}):
             self.assertTrue(f(good))
 
     def test_cache_is_stale_stays_schema_agnostic(self):
@@ -4313,7 +4314,7 @@ class TestMainCli(unittest.TestCase):
         def raising_dispatch(*a, **kw):
             raise ValueError(
                 "'gemini' cannot be an execution CLI; supported execute CLIs: "
-                "codex, cursor, opencode, pi"
+                "codex, copilot, cursor, opencode, pi"
             )
 
         with tempfile.TemporaryDirectory() as d:
@@ -5447,8 +5448,8 @@ class TestExecuteCliError(unittest.TestCase):
         self.assertIsNotNone(claude)
         self.assertIsNotNone(grok)
         assert claude is not None and grok is not None
-        self.assertIn("codex, cursor, opencode, pi", claude)
-        self.assertIn("codex, cursor, opencode, pi", grok)
+        self.assertIn("codex, copilot, cursor, opencode, pi", claude)
+        self.assertIn("codex, copilot, cursor, opencode, pi", grok)
         self.assertIsNotNone(commands.execute_cli_error("nonexistent-cli"))
 
 
@@ -5491,7 +5492,7 @@ class TestExecuteCliRejection(unittest.TestCase):
             with self.subTest(cli=cli_name):
                 code, stderr = self._rejected_dispatch_run(cli_name)
                 self.assertEqual(code, 2)
-                self.assertIn("codex, cursor, opencode, pi", stderr)
+                self.assertIn("codex, copilot, cursor, opencode, pi", stderr)
 
     def test_rejection_is_idempotent_across_reruns(self):
         # D-15: nothing is written before the check, so a rejected executor fails identically
@@ -5501,7 +5502,9 @@ class TestExecuteCliRejection(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_supported_execute_clis_are_the_runner_table(self):
-        self.assertEqual(commands.SUPPORTED_EXECUTE_CLIS, ("codex", "cursor", "opencode", "pi"))
+        self.assertEqual(
+            commands.SUPPORTED_EXECUTE_CLIS, ("codex", "copilot", "cursor", "opencode", "pi")
+        )
 
     def test_grok_keeps_its_custom_entry_generator(self):
         # R10/D-29 boundary: the table builders are gone; grok still generates the custom
@@ -5531,7 +5534,7 @@ class TestExecuteLadderScreen(unittest.TestCase):
         self.assertEqual([c["key"] for c in result], ["oc"])
         self.assertEqual(len(warnings), 1)
         self.assertIn("cla", warnings[0])
-        self.assertIn("codex, cursor, opencode, pi", warnings[0])
+        self.assertIn("codex, copilot, cursor, opencode, pi", warnings[0])
 
     def test_purpose_both_grok_entry_is_skipped_with_a_warning(self):
         warnings = []
@@ -5545,7 +5548,7 @@ class TestExecuteLadderScreen(unittest.TestCase):
         candidates = [{"key": "cla", "runtime": "claude", "model": "m", "purpose": "execute"}]
         with self.assertRaises(ValueError) as ctx:
             self._screen(candidates, warn_fn=lambda _msg: self.fail("must raise, not warn"))
-        self.assertIn("codex, cursor, opencode, pi", str(ctx.exception))
+        self.assertIn("codex, copilot, cursor, opencode, pi", str(ctx.exception))
         self.assertIn("cla", str(ctx.exception))
 
     def test_custom_command_is_dropped_and_execute_purpose_raises(self):

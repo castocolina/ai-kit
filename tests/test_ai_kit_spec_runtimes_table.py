@@ -58,7 +58,7 @@ class TestRuntimeTracer(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         snapshot = json.loads(buf.getvalue())
-        self.assertEqual(snapshot["schema_version"], 6)
+        self.assertEqual(snapshot["schema_version"], 7)
         cursor = snapshot["clis"]["cursor"]
         self.assertTrue(cursor["installed"])
         self.assertEqual(cursor["models"], ["auto"])
@@ -73,7 +73,7 @@ class TestRuntimeTable(unittest.TestCase):
     def test_ids_follow_host_precedence_and_known_clis(self):
         self.assertEqual(
             list(detection.RUNTIMES),
-            ["pi", "opencode", "cursor", "codex", "claude", "grok"],
+            ["pi", "opencode", "cursor", "codex", "claude", "copilot", "grok"],
         )
         self.assertEqual(detection.KNOWN_CLIS, tuple(detection.RUNTIMES))
         self.assertTrue(detection.RUNTIMES["claude"].review_only)
@@ -469,6 +469,8 @@ class TestRegistryIdsInTable(unittest.TestCase):
             sys.path.remove(curated_path)
         ids = set(detection.RUNTIMES)
         self.assertLessEqual(set(cross_ai.RUNNER_IDS), ids)
+        self.assertNotIn("copilot", cross_ai.RUNNER_IDS)
+        self.assertNotIn("copilot", cross_ai.DEFAULT_PREFER)
         self.assertLessEqual(set(cross_ai_build.REVIEWER_SLUGS), ids)
         self.assertLessEqual(set(preference_match._RUNTIME_ORDER), ids)
 

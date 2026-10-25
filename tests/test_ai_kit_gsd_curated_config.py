@@ -983,7 +983,7 @@ class TestApplyExecutionCli(unittest.TestCase):
                         env_fn=self.env_fn,
                     )
                 self.assertEqual(exit_code, 2)
-                self.assertIn("codex, cursor, opencode, pi", stderr.getvalue())
+                self.assertIn("codex, copilot, cursor, opencode, pi", stderr.getvalue())
                 config_set_calls = [call for call in run.calls if "config-set" in call]
                 self.assertEqual(config_set_calls, [])
                 # A rerun fails identically: nothing was written before the check.

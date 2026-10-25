@@ -426,7 +426,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 ),
                 options=dispatch_injection.BuildInjectionOptions(quota={}),
             )
-        self.assertIn("codex, cursor, opencode, pi", str(ctx.exception))
+        self.assertIn("codex, copilot, cursor, opencode, pi", str(ctx.exception))
 
     def test_cli_purpose_execute_exits_2_with_the_supported_list_on_stderr(self):
         candidates = [
@@ -473,7 +473,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
                 )
         self.assertEqual(rc, 2)
         self.assertEqual(out.getvalue(), "")
-        self.assertIn("codex, cursor, opencode, pi", stderr.getvalue())
+        self.assertIn("codex, copilot, cursor, opencode, pi", stderr.getvalue())
         self.assertIn("ai-kit-spec-execute-superpowers:", stderr.getvalue())
 
     def test_cli_custom_entry_with_purpose_execute_exits_2_not_a_traceback(self):

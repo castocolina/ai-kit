@@ -1428,6 +1428,28 @@ const RUNTIMES = {
     reviewExtras: [],
     env: {},
   },
+  // Flags documented in copilot 1.0.103 `--help` and `help permissions`; error, quota and
+  // exit-code shapes unverified (no real copilot run in this phase).
+  copilot: {
+    bins: ['copilot'],
+    list: null,
+    argvPrompt: true,
+    errorsUnverified: true,
+    modelId: MODEL_ID,
+    exec: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.profileFlags || [])],
+    review: (m, c) => ['-p', c.promptArg, '-s', '--no-ask-user', '--model', m, ...(c.profileFlags || [])],
+    resume: null,
+    parse: (out) => ({ text: out, sessionId: null, error: null }),
+    modelSuffix: null,
+    env: { COPILOT_ALLOW_ALL: '' },
+    profiles: {
+      exec: ['--allow-all-tools'],
+      review: ['--allow-all-tools', '--available-tools=view,grep,glob',
+        '--excluded-tools=bash,create,edit,apply_patch', '--deny-tool=shell', '--deny-tool=write',
+        '--disable-builtin-mcps'],
+    },
+    reviewExtras: [],
+  },
 };
 
 // CONFIG.effort.pi pins thinking unless the model spec already carries a :level suffix
@@ -3043,7 +3065,34 @@ function sameSessionArgv(name, rt, model, ctx, sid, mode, input = RESUME_MSG) {
 // Rung 2 is a fresh argv on the same CLI and model. Pi gets a new session id.
 function newSessionArgv(name, rt, model, ctx, mode, prompt) {
   if (name === 'pi') ctx.sid = crypto.randomUUID();
+  if (rt.argvPrompt) {
+    ctx.promptArg = argvPromptElement(prompt);
+    return { argv: withExtra(name, rt[mode](model, ctx)), input: null };
+  }
   return { argv: withExtra(name, rt[mode](model, ctx)), input: prompt };
+}
+
+// An argv prompt is one element. ARGV_PROMPT_MAX covers that element plus the resume text a
+// fresh-session retry can prepend, so no retry argv can pass the limit either.
+const ARGV_PROMPT_MAX = 102400;
+
+// shortcut: the option parser's handling of a leading dash is unverified, so a prompt that
+// starts with `-` is prefixed with a newline and never reads as another flag.
+function argvPromptElement(prompt) {
+  const text = String(prompt ?? '');
+  return text.startsWith('-') ? `\n${text}` : text;
+}
+
+function argvPromptProblem(prompt) {
+  const element = Buffer.byteLength(argvPromptElement(prompt));
+  const reserve = Buffer.byteLength(`${RESUME_MSG}\n\n`);
+  const bytes = element + reserve;
+  return bytes > ARGV_PROMPT_MAX ? { bytes } : null;
+}
+
+function displayArgv(argv, promptEl) {
+  if (promptEl === undefined) return argv;
+  return argv.map((el) => (el === promptEl ? '<prompt>' : el));
 }
 function readOr(p, dflt) { try { return fs.readFileSync(p, 'utf8'); } catch { return dflt; } }
 
@@ -3215,8 +3264,11 @@ function runChild(bin, argv, opts = {}) {
 
     timer = setTimeout(() => { timedOut = true; finalize('timeout'); }, spawnMs);
     try {
+      // An argv prompt carries its text on argv, so stdin is closed off (`ignore`) and never
+      // inherited from the runner.
+      const stdinMode = opts.input === null ? 'ignore' : 'pipe';
       child = spawn(bin, argv, {
-        cwd: opts.cwd, env: opts.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true,
+        cwd: opts.cwd, env: opts.env, stdio: [stdinMode, 'pipe', 'pipe'], detached: true,
       });
     } catch (e) {
       spawnErr = e;
@@ -3226,7 +3278,9 @@ function runChild(bin, argv, opts = {}) {
     noteChildPgid('spawn', child.pid);
     current = child;
     currentFinalize = finalize;
-    if (opts.input !== undefined) {
+    if (opts.input === null) {
+      // stdin is `ignore`: there is no stream to write or end.
+    } else if (opts.input !== undefined) {
       child.stdin.on('error', () => { /* closed early */ });
       child.stdin.end(opts.input);
     } else {
@@ -3661,6 +3715,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     cursorMode: opts.cursorMode,
     piThinking: opts.piThinking, codexSandbox: opts.codexSandbox,
     profileFlags: opts.profileFlags || [],
+    promptArg: '<prompt>',
   };
   const env = childEnv(rt.env, process.env);
   const reviewProblem = (argv) => {
@@ -3673,10 +3728,11 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     log(`cross-ai: review argv for ${name} holds ${problem}; review extras allowed for ${name}: ${allowed}; refused`);
     return { ok: false, status: 'usage', exit: 2, cli_rc: '-', outBytes: 0 };
   };
+  if (rt.argvPrompt) ctx.promptArg = argvPromptElement(prompt);
   let argv = withExtra(name, rt[mode](model, ctx));
   const initialProblem = reviewProblem(argv);
   if (initialProblem) return refuseReview(initialProblem);
-  let input = prompt;
+  let input = rt.argvPrompt ? null : prompt;
   // The dirty-tree gate runs once, when a fresh series opens, and its input covers every
   // call of that series. Re-running it mid-series would see the series' own edits.
   let seriesInput = prompt;
@@ -3863,7 +3919,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const childCap = attemptCapMs(opts, startedMs, episodeEnd());
       const left = Math.max(0, Math.round(childCap / 1000));
       log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${left}s`);
-      log(`cross-ai: argv=${JSON.stringify(argv)}`);
+      log(`cross-ai: argv=${JSON.stringify(displayArgv(argv, rt.argvPrompt ? ctx.promptArg : undefined))}`);
       const childLimit = episodeEnd() ? Math.min(runDeadline, episodeEnd()) : runDeadline;
       const route = opts.route || 'unknown';
       const r = await runOnce(binPath, argv, input, env, ctx.cwd, name,
@@ -3877,7 +3933,9 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const lane = confirmedRoute(route);
       const evidenceOf = (cls) => {
         const rule = cls && cls.rule ? cls.rule : '-';
-        const pattern = cls && cls.label ? cls.label : 'none';
+        // A runtime whose error wording is uncaptured reports every pattern unverified,
+        // even a wildcard row the catalog itself labels verified.
+        const pattern = rt.errorsUnverified ? 'unverified' : (cls && cls.label ? cls.label : 'none');
         return { route, rule, pattern, upstream: upstreamOf(cls, r, name) };
       };
       if (r.spawnErr) {
@@ -4789,6 +4847,44 @@ process.stdin.on('data', () => {}).on('end', () => {
 `);
 }
 
+function writeFakeCopilot(binDir) {
+  writeExe(binDir, 'copilot', '', String.raw`
+const model = argOf('--model');
+const mode = model.startsWith('fake-') ? model.slice(5) : '';
+log('copilot ' + mode);
+const seen = process.env.FAKE_COPILOT_SEEN;
+const tokenNames = ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'];
+let stdinFifo = false;
+let stdinBytes = 0;
+let stdinError = null;
+try {
+  stdinFifo = fs.fstatSync(0).isFIFO();
+  stdinBytes = fs.readFileSync(0).length;
+} catch (e) {
+  stdinError = String(e && e.code || e && e.message || e);
+}
+const tokens = tokenNames.filter((name) => process.env[name]);
+if (seen) {
+  fs.writeFileSync(seen, JSON.stringify({
+    argv: process.argv.slice(2), prompt: argOf('-p'),
+    promptBytes: Buffer.byteLength(argOf('-p')), stdinFifo, stdinBytes, stdinError,
+    tokens, allowAll: process.env.COPILOT_ALLOW_ALL !== undefined,
+  }));
+}
+if (!tokens.length) {
+  process.stderr.write('Error: not logged in. Run copilot login or set COPILOT_GITHUB_TOKEN.\n');
+  process.exit(1);
+}
+if (mode === 'event400') {
+  process.stderr.write('[400]: event: error\n');
+  process.exit(1);
+}
+fs.appendFileSync('a.txt', 'ok-line\n');
+process.stderr.write('copilot: using token ' + process.env[tokens[0]] + '\n');
+process.stdout.write('# Summary\nok');
+`);
+}
+
 function writeFakeClaude(binDir) {
   writeExe(binDir, 'claude', '', String.raw`
 log('claude ' + argOf('--model'));
@@ -5180,6 +5276,7 @@ async function blackBoxSelfTest() {
     writeFakeOpencode(binDir);
     writeFakeCodex(binDir);
     writeFakeClaude(binDir);
+    writeFakeCopilot(binDir);
     for (const name of fs.readdirSync(binDir)) {
       if (name === 'codex') continue;
       const src = path.join(binDir, name);
@@ -5386,6 +5483,7 @@ async function blackBoxSelfTest() {
         pure: () => {
           const ctx = {
             cwd: '/tmp/x', sid: 'sid', outFile: '/tmp/x/out.md', cursorMode: 'ask',
+            promptArg: '<prompt>',
           };
           const attacks = {
             codex: ['-s danger-full-access', '--sandbox=danger-full-access',
@@ -5394,6 +5492,7 @@ async function blackBoxSelfTest() {
             opencode: ['--agent build', '--auto'],
             cursor: ['--force', '--mode agent'],
             claude: ['--permission-mode bypassPermissions', '--dangerously-skip-permissions'],
+            copilot: ['--available-tools=bash', '--allow-tool shell', '--allow-all-tools'],
           };
           for (const [name, rt] of Object.entries(RUNTIMES)) {
             const formulas = [rt.review(name === 'cursor' ? 'm' : 'fake/m', ctx)];
@@ -5430,7 +5529,19 @@ async function blackBoxSelfTest() {
           const granting = ['--force', '--auto', '--yolo', '--allow-all', '--allow-all-paths',
             '--allow-all-urls', '--allow-all-tools', '--allow-tool', '--approve-mcps',
             '--dangerously-bypass-approvals-and-sandbox', '--dangerously-skip-permissions'];
-          const ctx = { cwd: '/tmp/x', sid: 'sid', outFile: '/tmp/x/out.md', cursorMode: 'ask' };
+          // --allow-all-tools is accepted in a review formula only beside an --available-tools=
+          // allowlist whose names are all read-only: a wrong name then narrows, never widens.
+          const readOnlyTools = new Set(['view', 'grep', 'rg', 'glob']);
+          const confined = (argv) => {
+            const list = argv.find((t) => String(t).startsWith('--available-tools='));
+            if (!list) return false;
+            return list.slice('--available-tools='.length).split(',')
+              .every((one) => readOnlyTools.has(one));
+          };
+          const ctx = {
+            cwd: '/tmp/x', sid: 'sid', outFile: '/tmp/x/out.md', cursorMode: 'ask',
+            promptArg: '<prompt>',
+          };
           for (const [name, rt] of Object.entries(RUNTIMES)) {
             const profiles = rt.profiles
               ? Object.entries(rt.profiles).filter(([p]) => p === 'review' || p === 'none')
@@ -5438,7 +5549,9 @@ async function blackBoxSelfTest() {
             for (const [profile, flags] of profiles) {
               const argv = [...rt.review('m', { ...ctx, profileFlags: [] }), ...flags];
               const hit = granting.find((f) => argv.some((t) => t === f || t.startsWith(`${f}=`) || t.startsWith(`${f},`)));
-              if (hit) return `${name} ${profile} grants ${hit}`;
+              if (hit && !(hit === '--allow-all-tools' && confined(argv))) {
+                return `${name} ${profile} grants ${hit}`;
+              }
               const tools = argv.flatMap((t, i) => (t === '--tools' ? [argv[i + 1]] : []));
               for (const value of tools) {
                 for (const one of String(value).split(',')) {
@@ -9315,6 +9428,244 @@ async function blackBoxSelfTest() {
         exit: 2,
         status: /^AIKIT-XAI status=usage .* action=stop$/,
       },
+      {
+        name: 'copilot-exec-ok',
+        args: ['--runtime', 'copilot', '--model', 'fake-ok'],
+        env: {
+          COPILOT_GITHUB_TOKEN: 'github_pat_' + 'selftest'.padEnd(22, 'x'),
+          COPILOT_ALLOW_ALL: 'true',
+        },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=copilot model=fake-ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          c.seen = path.join(c.tmp, 'copilot-seen-exec.json');
+          c.env.FAKE_COPILOT_SEEN = c.seen;
+          return null;
+        },
+        check: (r, ctx) => {
+          const seen = JSON.parse(fs.readFileSync(ctx.seen, 'utf8'));
+          const at = seen.argv.indexOf('-p');
+          if (at < 0 || seen.argv[at + 1] !== seen.prompt) return 'prompt not on argv after -p';
+          if (!seen.prompt.includes('prompt')) return 'argv prompt missing the stdin text';
+          if (seen.stdinFifo !== false) return `stdinFifo=${seen.stdinFifo}`;
+          if (seen.stdinBytes !== 0) return `stdinBytes=${seen.stdinBytes}`;
+          if (seen.stdinError) return `stdinError=${seen.stdinError}`;
+          if (seen.allowAll !== false) return 'COPILOT_ALLOW_ALL reached the child';
+          const logged = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: argv='));
+          if (!logged.length) return 'no argv log line';
+          if (logged.some((l) => l.includes('prompt\n'))) return 'argv log carries the prompt text';
+          return logged.every((l) => l.includes('"<prompt>"')) ? null : 'argv log omits <prompt>';
+        },
+      },
+      {
+        name: 'copilot-argv-exec',
+        args: ['--runtime', 'copilot', '--model', 'fake-ok', '--print-argv'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('copilot\t'));
+          if (!line) return 'missing argv line';
+          const argv = JSON.parse(line.split('\t')[2]);
+          const want = ['-p', '<prompt>', '-s', '--no-ask-user', '--model', 'fake-ok',
+            '--allow-all-tools'];
+          return JSON.stringify(argv) === JSON.stringify(want) ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
+      {
+        name: 'copilot-token-passthrough',
+        args: ['--runtime', 'copilot', '--model', 'fake-ok'],
+        env: {
+          COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40),
+          GH_TOKEN: 'gho_' + 'b'.repeat(36),
+          GITHUB_TOKEN: 'ghs_' + 'c'.repeat(36),
+        },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=copilot model=fake-ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          c.seen = path.join(c.tmp, 'copilot-seen-tokens.json');
+          c.env.FAKE_COPILOT_SEEN = c.seen;
+          c.tokens = {
+            COPILOT_GITHUB_TOKEN: c.env.COPILOT_GITHUB_TOKEN,
+            GH_TOKEN: c.env.GH_TOKEN, GITHUB_TOKEN: c.env.GITHUB_TOKEN,
+          };
+          return null;
+        },
+        check: (r, ctx) => {
+          const seen = JSON.parse(fs.readFileSync(ctx.seen, 'utf8'));
+          const names = ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'];
+          if (JSON.stringify(seen.tokens) !== JSON.stringify(names)) {
+            return `tokens=${JSON.stringify(seen.tokens)}`;
+          }
+          const relayed = (r.stderr || '').split('\n').filter((l) => l.includes('using token'));
+          if (relayed.length !== 1 || !relayed[0].includes('<redacted>')) return 'token line not redacted';
+          let state = '';
+          if (fs.existsSync(ctx.env.XDG_STATE_HOME)) {
+            state = fs.readdirSync(ctx.env.XDG_STATE_HOME, { withFileTypes: true })
+              .filter((e) => e.isFile())
+              .map((e) => fs.readFileSync(path.join(ctx.env.XDG_STATE_HOME, e.name), 'utf8'))
+              .join('\n');
+          }
+          const all = `${r.stdout}\n${r.stderr}\n${state}`;
+          for (const value of Object.values(ctx.tokens)) {
+            if (all.includes(value)) return 'a token value reached an output';
+          }
+          return null;
+        },
+      },
+      {
+        name: 'copilot-no-token-auth',
+        args: ['--runtime', 'copilot', '--model', 'fake-ok'],
+        config: { retry: { max_retries: 1 } },
+        exit: 69,
+        status: /^AIKIT-XAI status=auth cli=copilot model=fake-ok exit=69 .* action=stop$/,
+        check: (r, ctx) => {
+          const tail = statusTail(r.stderr || '');
+          if (!tail) return 'no status tail';
+          if (tail.rule !== 'text-not-logged-in') return `rule=${tail.rule}`;
+          if (tail.pattern !== 'unverified') return `pattern=${tail.pattern}`;
+          if (tail.attempts !== '1') return `attempts=${tail.attempts}`;
+          const report = (r.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: report '));
+          if (!report) return 'missing report line';
+          if ((r.stderr || '').includes('pattern=verified')) return 'a copilot pattern read verified';
+          return ctx.calls.length === 1 ? null : `calls=${ctx.calls.length}`;
+        },
+      },
+      {
+        name: 'pure-argv-prompt-guard',
+        pure: () => {
+          const reserve = Buffer.byteLength(`${RESUME_MSG}\n\n`);
+          const room = ARGV_PROMPT_MAX - reserve;
+          if (argvPromptProblem('a'.repeat(room))) return 'exact limit refused';
+          if (!argvPromptProblem('a'.repeat(room + 1))) return 'one byte over accepted';
+          const multi = '\u00e9'.repeat(Math.floor(room / 2));
+          const fit = argvPromptProblem(multi);
+          if (Buffer.byteLength(multi) <= room && fit) return 'multi-byte within limit refused';
+          const over = argvPromptProblem(multi + '\u00e9');
+          if (Buffer.byteLength(multi + '\u00e9') > room && !over) return 'multi-byte over limit accepted';
+          const dash = argvPromptProblem('-' + 'a'.repeat(room - 1));
+          if (!dash) return 'leading-dash newline not counted';
+          return null;
+        },
+      },
+      {
+        name: 'copilot-oversize',
+        args: ['--runtime', 'copilot', '--model', 'fake-ok'],
+        stdin: 'x'.repeat(110000),
+        env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.length) return `spawned: ${ctx.calls.join('|')}`;
+          const line = (r.stderr || '').split('\n').find((l) => l.includes('takes the prompt on argv'));
+          if (!line) return 'missing size refusal';
+          return line.includes(`over ${ARGV_PROMPT_MAX}`) ? null : line;
+        },
+      },
+      {
+        name: 'copilot-large-prompt',
+        args: ['--runtime', 'copilot', '--model', 'fake-ok'],
+        stdin: 'y'.repeat(90000),
+        env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=copilot model=fake-ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          c.seen = path.join(c.tmp, 'copilot-seen-large.json');
+          c.env.FAKE_COPILOT_SEEN = c.seen;
+          return null;
+        },
+        check: (_r, ctx) => {
+          const seen = JSON.parse(fs.readFileSync(ctx.seen, 'utf8'));
+          // The harness writes the stdin as given, and the runner appends one newline of its
+          // own only when the stdin has none, then the exec preamble.
+          const want = Buffer.byteLength('y'.repeat(90000) + EXEC_PREAMBLE);
+          return seen.promptBytes === want ? null : `promptBytes=${seen.promptBytes} want=${want}`;
+
+        },
+      },
+      {
+        name: 'copilot-none-profile-refused',
+        args: ['--runtime', 'copilot', '--tools-profile', 'none', '--model', 'fake-ok'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('copilot has no tools profile none') ? null : 'missing refusal'),
+      },
+      {
+        name: 'copilot-review-widen-refused',
+        args: ['--runtime', 'copilot', '--mode', 'review', '--tools-profile', 'exec', '--model', 'fake-ok'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('review mode allows only the review or none') ? null : 'missing refusal'),
+      },
+      {
+        name: 'copilot-review-extra-refused',
+        config: { extraArgs: { copilot: ['--available-tools=bash'] }, retry: { max_retries: 1 } },
+        args: ['--runtime', 'copilot', '--mode', 'review', '--model', 'fake-ok'],
+        env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: async (r, ctx) => {
+          if (ctx.calls.length) return `spawned: ${ctx.calls.join('|')}`;
+          if (!(r.stderr || '').includes('review argv for copilot holds --available-tools=bash')) {
+            return 'element not named';
+          }
+          const copy = writeCopy(ctx.tmp, 'copilot-extra-allow', {
+            extraArgs: { copilot: ['--allow-tool', 'shell'] }, retry: { max_retries: 1 },
+          });
+          const got = await runCaseProcess({
+            args: ['--runtime', 'copilot', '--mode', 'review', '--model', 'fake-ok'],
+          }, { ...ctx, copy });
+          if (got.status !== 2) return `allow-tool exit ${got.status}`;
+          return (got.stderr || '').includes('review argv for copilot holds --allow-tool')
+            ? null : 'allow-tool element not named';
+        },
+      },
+      {
+        name: 'copilot-transient-new-sessions',
+        args: ['--runtime', 'copilot', '--model', 'fake-event400'],
+        config: { retry: { max_retries: 2, session_resets: 1 } },
+        env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
+        exit: 75,
+        status: /^AIKIT-XAI status=transient cli=copilot model=fake-event400 exit=75 .* action=stop$/,
+        check: (_r, ctx) => {
+          const calls = ctx.calls.filter((l) => l.startsWith('copilot '));
+          if (calls.length !== 3) return `calls=${calls.length}`;
+          return calls.every((l) => l === 'copilot event400') ? null : `calls=${calls.join('|')}`;
+        },
+      },
+      {
+        name: 'copilot-dash-prompt',
+        args: ['--runtime', 'copilot', '--model', 'fake-ok'],
+        stdin: '---\nrest\n',
+        env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=copilot model=fake-ok exit=0 .* tree=dirty action=stop$/,
+        setup: (c) => {
+          c.seen = path.join(c.tmp, 'copilot-seen-dash.json');
+          c.env.FAKE_COPILOT_SEEN = c.seen;
+          return null;
+        },
+        check: (_r, ctx) => {
+          const seen = JSON.parse(fs.readFileSync(ctx.seen, 'utf8'));
+          return seen.prompt.startsWith('\n---') ? null : `prompt head=${JSON.stringify(seen.prompt.slice(0, 12))}`;
+        },
+      },
+      {
+        name: 'copilot-argv-review',
+        args: ['--runtime', 'copilot', '--mode', 'review', '--model', 'fake-ok', '--print-argv'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('copilot\t'));
+          if (!line) return 'missing argv line';
+          const argv = JSON.parse(line.split('\t')[2]);
+          const tail = ['--allow-all-tools', '--available-tools=view,grep,glob',
+            '--excluded-tools=bash,create,edit,apply_patch', '--deny-tool=shell',
+            '--deny-tool=write', '--disable-builtin-mcps'];
+          const head = ['-p', '<prompt>', '-s', '--no-ask-user', '--model', 'fake-ok'];
+          const want = [...head, ...tail];
+          return JSON.stringify(argv) === JSON.stringify(want) ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
 
     ];
 
@@ -9422,7 +9773,7 @@ async function main(argv) {
       cwd: process.cwd(), sid: '<sid>', outFile: '<tmp>/last-message.md',
       codexEffort: knobs.codexEffort, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
       piThinking: knobs.piThinking, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
-      profileFlags,
+      profileFlags, promptArg: '<prompt>',
     };
     const formula = rt[o.mode];
     const argvOut = (c.model && typeof formula === 'function')
@@ -9458,6 +9809,13 @@ async function main(argv) {
     body = `${prepended.replace(/^(?:<!--[^\n]*-->\r?\n)+/, '')}\n\n${raw}`;
   }
   const prompt = body + (o.preamble ? (o.mode === 'exec' ? EXEC_PREAMBLE : REVIEW_PREAMBLE) : '');
+  if (rt.argvPrompt) {
+    const over = argvPromptProblem(prompt);
+    if (over) {
+      log(`cross-ai: ${name} takes the prompt on argv; ${over.bytes} bytes is over ${ARGV_PROMPT_MAX}`);
+      return reportAndFinish('usage', { ...liveFields, cli: name, model: model || '-', tree: 'unknown', exit: 2 });
+    }
+  }
   const { outer, inner: innerS, innerDefault } = dl;
   runDeadline = Date.now() + innerS * 1000;
   const marginMs = (outer - innerDefault) * 1000;
@@ -9504,6 +9862,7 @@ async function main(argv) {
     const probe = {
       cwd: process.cwd(), sid: '<sid>', outFile: '<tmp>/last-message.md',
       cursorMode: o.cursorMode, piThinking: knobs.piThinking, profileFlags,
+      promptArg: '<prompt>',
     };
     const bare = c.rt.review(c.model, probe);
     const problem = reviewArgvProblem(withExtra(c.name, bare), bare, c.rt.reviewExtras || []);
