@@ -76,7 +76,7 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
         # 1. the runner: the one supervision core for a table runtime
         out = os.path.join(tmp, "runner.json")
         result = run_runner(
-            RunnerSpec("opencode", "m", "review", timeout),
+            RunnerSpec("opencode", "fake/m", "review", timeout),
             "p",
             seams=RunnerSeams(
                 which_fn=lambda _name: sys.executable,

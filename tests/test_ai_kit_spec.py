@@ -11723,7 +11723,7 @@ class TestDispatchExecuteArgv(unittest.TestCase):
     """D-10: execute dispatch reports shlex.join of the runner argv, never a shell string."""
 
     def test_target_dir_with_braces_reaches_the_child_verbatim_as_one_argument(self):
-        candidate = {"runtime": "opencode", "model": "m", "key": "opencode/m"}
+        candidate = {"runtime": "opencode", "model": "fake/m", "key": "opencode/fake/m"}
         captured = {}
 
         def fake_popen(argv, **kwargs):

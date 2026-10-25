@@ -20,12 +20,18 @@
  * generator will then refuse to overwrite this file silently (sha256 header above).
  *
  * Flags:
- *   --prefer pi,cursor,opencode,codex   first entry runs; rest is a menu
+ *   --runtime <id>                           the one CLI this call runs
+ *   --prefer <list>                          alias: only the first entry runs (notice
+ *                                            names the rest)
+ *   --model <id>                             model for the selected runtime (wins over
+ *                                            --model-<cli>)
  *   --model-<cli> <id>                       model per CLI, e.g. --model-cursor auto
  *   --route-<cli> router|unknown             confirmed route of that CLI (wins over CONFIG)
  *   --classify-only <path>                   classify a JSON case file and exit (no spawn,
  *                                            no write, stdin ignored; path relative to cwd)
  *   --mode exec|review                       exec = full permissions (default); review = read-only
+ *   --tools-profile exec|review|none         named tool set from the runtime's table row
+ *                                            (review accepts review or none)
  *   --timeout <s>                            inner deadline (lowers default; never above derived inner)
  *   --outer-timeout <s>                      outer deadline (replaces the GSD lookup and the
  *                                            CONFIG cap)
@@ -1279,6 +1285,17 @@ function finish(status, fields) {
   return exit;
 }
 
+// Declared above RUNTIMES: a row's modelId reads these at module load, and a later const
+// would be in its temporal dead zone.
+// No leading dash (read as a CLI option) and no shell or space characters (U-4).
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/;
+// Cursor only: one trailing [k=v,...] bracket (D-18). No space, quote, `$` or `;`.
+const CURSOR_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\[[A-Za-z0-9._=,-]+\])?$/;
+// pi: provider/model with an optional :<thinking> from the seven pi levels only (SPEC R9).
+const PI_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._@+-]*\/[A-Za-z0-9][A-Za-z0-9._\/@+-]*(?::(?:off|minimal|low|medium|high|xhigh|max))?$/;
+// opencode: provider/model (`:` stays inside the model part) and one trailing #variant.
+const OPENCODE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._@+-]*\/[A-Za-z0-9][A-Za-z0-9._:\/@+-]*(?:#[A-Za-z0-9._-]+)?$/;
+
 // process.exit drops writes still queued on a pipe, so exit only once both streams have
 // flushed (a stalled reader gets a bounded wait, shorter on the signal path).
 function exitFlushed(code) {
@@ -1321,6 +1338,9 @@ const RUNTIMES = {
       if (!ev) return { text: '', sessionId: null, error: 'no result event in cursor output' };
       return { text: ev.result || '', sessionId: ev.session_id || null, error: ev.is_error ? (ev.result || 'is_error') : null };
     },
+    modelId: CURSOR_MODEL_ID,
+    profiles: null,
+    reviewExtras: [],
     env: {},
   },
   // opencode 2.0.29 run --help formulas; partial bare profile: opencode still loads
@@ -1336,18 +1356,30 @@ const RUNTIMES = {
     resume: (m, c, sid, mode) => [...RUNTIMES.opencode[mode](m, c), '--session', sid],
     parse: parseOpencode,
     modelSuffix: /#[^#/]+$/, // provider/model#variant; the listing has no variants
+    modelId: OPENCODE_MODEL_ID,
+    profiles: null,
+    reviewExtras: [],
     env: { OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1' },
   },
   pi: {
     bins: ['pi'],
     list: { argv: PI_RPC_ARGS, input: PI_RPC_REQUEST, parse: parsePiListingIds },
-    exec: (m, c) => ['-p', '--model', m, ...piThinkingArgs(m, c), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline'],
+    exec: (m, c) => ['-p', '--model', m, ...piThinkingArgs(m, c), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
+      ...(c.profileFlags || [])],
     review: (m, c) => ['-p', '--model', m, ...piThinkingArgs(m, c), '--session-id', c.sid, '--no-skills', '--no-extensions', '--no-approve', '--offline',
-      '--tools', 'read,grep,find,ls'],
+      ...(c.profileFlags || [])],
     resume: (m, c, sid, mode) => RUNTIMES.pi[mode](m, c),
     parse: (out) => ({ text: out, sessionId: null, error: null }),
     // pi documents --model provider/id[:thinking]; the listing has bare ids.
     modelSuffix: /:(?:off|minimal|low|medium|high|xhigh|max)$/,
+    modelId: PI_MODEL_ID,
+    // Tool sets live here, not in the formulas, so a profile can only narrow review.
+    profiles: {
+      exec: [],
+      review: ['--tools', 'read,grep,find,ls', '--no-mcp', '--no-context-files'],
+      none: ['--no-tools', '--no-mcp', '--no-context-files'],
+    },
+    reviewExtras: ['--skill'],
     env: {},
   },
   // unverified (outside the default prefer)
@@ -1371,6 +1403,9 @@ const RUNTIMES = {
       try { text = fs.readFileSync(c.outFile, 'utf8'); } catch { /* no answer written */ }
       return { text, sessionId: sid, error };
     },
+    modelId: MODEL_ID,
+    profiles: null,
+    reviewExtras: [],
     env: {},
   },
   // read-only enforcement not live-verified
@@ -1388,6 +1423,9 @@ const RUNTIMES = {
         error: j.is_error ? (j.result || 'is_error') : null,
       };
     },
+    modelId: MODEL_ID,
+    profiles: null,
+    reviewExtras: [],
     env: {},
   },
 };
@@ -3395,6 +3433,31 @@ function withExtra(cli, argv) {
   return extra && extra.length ? [...argv, ...extra] : argv;
 }
 
+// A review argv may only extend its bare formula with the runtime's allowlist: a listed flag
+// (compared before any `=`) or the one non-flag value right after it. Anything else, an
+// alias, a config override or a re-enabling flag, is a reason naming the element.
+function reviewArgvProblem(argv, baseArgv, allowed) {
+  const base = baseArgv || [];
+  for (let i = 0; i < base.length; i++) {
+    if (argv[i] !== base[i]) return argv[i] === undefined ? '(missing)' : argv[i];
+  }
+  const ok = new Set(allowed || []);
+  for (let i = base.length; i < argv.length; i++) {
+    const el = argv[i];
+    const flag = String(el).split('=')[0];
+    if (ok.has(flag)) {
+      if (!String(el).includes('=')) {
+        const value = argv[i + 1];
+        if (value === undefined || String(value).startsWith('-')) return el;
+        i += 1;
+      }
+      continue;
+    }
+    return el;
+  }
+  return null;
+}
+
 for (const [sig, n] of [['SIGTERM', 15], ['SIGINT', 2], ['SIGHUP', 1]]) {
   process.on(sig, () => {
     if (selfTestRoot) { selfTestAbort(128 + n); return; }
@@ -3597,9 +3660,22 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     codexEffort: opts.codexEffort, codexServiceTier: opts.codexServiceTier,
     cursorMode: opts.cursorMode,
     piThinking: opts.piThinking, codexSandbox: opts.codexSandbox,
+    profileFlags: opts.profileFlags || [],
   };
   const env = childEnv(rt.env, process.env);
+  const reviewProblem = (argv) => {
+    if (mode !== 'review') return null;
+    const base = rt.review(model, ctx);
+    return reviewArgvProblem(argv, base, rt.reviewExtras || []);
+  };
+  const refuseReview = (problem) => {
+    const allowed = (rt.reviewExtras || []).join(', ') || 'none';
+    log(`cross-ai: review argv for ${name} holds ${problem}; review extras allowed for ${name}: ${allowed}; refused`);
+    return { ok: false, status: 'usage', exit: 2, cli_rc: '-', outBytes: 0 };
+  };
   let argv = withExtra(name, rt[mode](model, ctx));
+  const initialProblem = reviewProblem(argv);
+  if (initialProblem) return refuseReview(initialProblem);
   let input = prompt;
   // The dirty-tree gate runs once, when a fresh series opens, and its input covers every
   // call of that series. Re-running it mid-series would see the series' own edits.
@@ -3966,6 +4042,8 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         // same-session retry gets the plain resume note.
         const resumed = gated ? seriesInput : RESUME_MSG;
         const retry = sameSessionArgv(name, rt, model, ctx, sid, mode, resumed);
+        const resumeProblem = reviewProblem(retry.argv);
+        if (resumeProblem) return refuseReview(resumeProblem);
         argv = retry.argv;
         input = retry.input;
       } else if (step.next === 'reset') {
@@ -4047,24 +4125,32 @@ async function rung2Gate(cwd, beforeSig, prompt, midSig) {
 const CODEX_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
 const PI_THINKING = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 const CURSOR_MODES = new Set(['ask', 'plan']);
-// No leading dash (read as a CLI option) and no shell or space characters (U-4).
-const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/;
-// Cursor only: one trailing [k=v,...] bracket (D-18). No space, quote, `$` or `;`.
-const CURSOR_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\[[A-Za-z0-9._=,-]+\])?$/;
-
 const ROUTE_VALUES = new Set(['router', 'unknown']);
 
 function parseArgs(argv) {
   const o = {
-    prefer: null, models: {}, routes: {}, mode: 'exec', timeout: null, outerTimeout: null,
+    runtime: null, prefer: null, model: null, toolsProfile: null,
+    models: {}, routes: {}, mode: 'exec', timeout: null, outerTimeout: null,
     printArgv: false, preamble: true, selfTest: false, classifyOnly: null,
     codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]; const v = () => { if (i + 1 >= argv.length) throw new Error(`${a} needs a value`); return argv[++i]; };
-    if (a === '--prefer') o.prefer = v().split(',').filter(Boolean);
-    else if (a.startsWith('--model-')) {
+    if (a === '--runtime') o.runtime = v();
+    else if (a === '--prefer') o.prefer = v().split(',').filter(Boolean);
+    else if (a === '--model') {
+      // The runtime is not known yet, and --model may come before --runtime, so this is the
+      // superset charset (every MODEL_ID id plus one cursor bracket). The row's modelId is
+      // checked in main on the selected runtime only.
+      o.model = v();
+      if (!CURSOR_MODEL_ID.test(o.model)) throw new Error(`--model must match ${CURSOR_MODEL_ID.source}`);
+    } else if (a === '--tools-profile') {
+      o.toolsProfile = v();
+      if (!['exec', 'review', 'none'].includes(o.toolsProfile)) {
+        throw new Error('--tools-profile must be exec, review or none');
+      }
+    } else if (a.startsWith('--model-')) {
       const id = v();
       const modelRe = a === '--model-cursor' ? CURSOR_MODEL_ID : MODEL_ID;
       if (!modelRe.test(id)) throw new Error(`${a} must match ${modelRe.source}`);
@@ -4101,10 +4187,47 @@ function parseArgs(argv) {
     else throw new Error(`unknown argument: ${a}`);
   }
   if (o.mode === 'exec' && o.cursorMode) throw new Error('--cursor-mode is review-only');
+  const known = Object.keys(RUNTIMES).join(', ');
+  if (o.runtime !== null && !Object.hasOwn(RUNTIMES, o.runtime)) {
+    throw new Error(`unknown runtime: ${o.runtime} (known: ${known})`);
+  }
   for (const n of [...(o.prefer || []), ...Object.keys(o.models), ...Object.keys(o.routes)]) {
-    if (!Object.hasOwn(RUNTIMES, n)) throw new Error(`unknown cli: ${n} (known: ${Object.keys(RUNTIMES).join(', ')})`);
+    if (!Object.hasOwn(RUNTIMES, n)) throw new Error(`unknown cli: ${n} (known: ${known})`);
   }
   return o;
+}
+
+// One runtime per call (SPEC R6, D-13): --runtime, then the first --prefer entry, then
+// CONFIG.runtime, then the first CONFIG.prefer entry. A list is never walked.
+function resolveRuntime(o) {
+  const known = (name) => typeof name === 'string' && Object.hasOwn(RUNTIMES, name);
+  const ignored = (source, first, rest) => (
+    `cross-ai: ${source} reads only its first entry (${first}); ignored: ${rest.join(', ')}`
+  );
+  if (o.runtime) {
+    const notes = [];
+    if (o.prefer && o.prefer.length) {
+      notes.push(`cross-ai: --runtime ${o.runtime} wins; ignored --prefer ${o.prefer.join(',')}`);
+    }
+    return { name: o.runtime, notes };
+  }
+  if (o.prefer && o.prefer.length) {
+    const notes = [];
+    if (o.prefer.length > 1) notes.push(ignored('--prefer', o.prefer[0], o.prefer.slice(1)));
+    return { name: o.prefer[0], notes };
+  }
+  if (typeof CONFIG.runtime === 'string') {
+    if (!known(CONFIG.runtime)) return { error: `cross-ai: unknown runtime: ${CONFIG.runtime}` };
+    return { name: CONFIG.runtime, notes: [] };
+  }
+  const prefer = Array.isArray(CONFIG.prefer) ? CONFIG.prefer.filter((n) => typeof n === 'string' && n) : [];
+  if (prefer.length) {
+    if (!known(prefer[0])) return { error: `cross-ai: unknown runtime: ${prefer[0]}` };
+    const notes = [];
+    if (prefer.length > 1) notes.push(ignored('CONFIG.prefer', prefer[0], prefer.slice(1)));
+    return { name: prefer[0], notes };
+  }
+  return { error: 'cross-ai: no runtime: pass --runtime <id>' };
 }
 
 // Pure: one JSON line per case, then the status line. No spawn, no write, stdin unread.
@@ -4188,6 +4311,8 @@ function writeCopy(tmp, name, override) {
     ...rest,
     retry: { base_s: 0, factor: 1.5, max_retries: 5, session_resets: 1, hard_waits_s: [0, 0, 0] },
   };
+  // An override key set to null removes it (a copy with no prefer and no runtime).
+  for (const key of Object.keys(cfg)) if (cfg[key] === null) delete cfg[key];
   const translated = {};
   if (Array.isArray(backoffS)) translated.base_s = backoffS[0] ?? 0;
   if (cooldownS !== undefined) translated.hard_waits_s = [cooldownS, cooldownS, cooldownS];
@@ -5107,6 +5232,249 @@ async function blackBoxSelfTest() {
         exit: 2,
         status: /^AIKIT-XAI status=usage .* action=stop$/,
       })),
+      ...['--yolo', 'a b', 'x;rm'].map((model, i) => ({
+        name: `bad-model-flag-${i}`,
+        args: ['--runtime', 'pi', '--model', model],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* action=stop$/,
+      })),
+      {
+        name: 'model-flag-cursor-bracket',
+        args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor[effort=high]', '--print-argv'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
+          if (!line) return 'missing argv line';
+          const argv = JSON.parse(line.split('\t')[2]);
+          return argv.includes('fake-ok-cursor[effort=high]') ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
+      {
+        name: 'model-flag-cursor-bracket-order',
+        args: ['--model', 'fake-ok-cursor[effort=high]', '--runtime', 'cursor', '--print-argv'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
+          if (!line) return 'missing argv line';
+          const argv = JSON.parse(line.split('\t')[2]);
+          return argv.includes('fake-ok-cursor[effort=high]') ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
+      {
+        name: 'model-flag-pi-thinking',
+        args: ['--runtime', 'pi', '--model', 'fake/ok:high', '--print-argv'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
+          if (!line) return 'missing argv line';
+          const argv = JSON.parse(line.split('\t')[2]);
+          if (!argv.includes('fake/ok:high')) return `argv=${JSON.stringify(argv)}`;
+          return argv.includes('--thinking') ? 'unexpected --thinking' : null;
+        },
+      },
+      {
+        // One case, three runtimes: --model works for opencode, codex and claude review.
+        name: 'model-flag-each',
+        args: ['--print-argv', '--runtime', 'opencode', '--model', 'fake/ok#fast'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: async (_r, ctx) => {
+          const runs = [
+            ['opencode', 'exec', 'fake/ok#fast'],
+            ['codex', 'exec', 'fake-ok-codex'],
+            ['claude', 'review', 'opus'],
+          ];
+          for (const [rt, mode, model] of runs) {
+            const got = await runCaseProcess({
+              args: ['--print-argv', '--runtime', rt, '--mode', mode, '--model', model],
+            }, ctx);
+            if (got.status !== 0) return `${rt} exit ${got.status}`;
+            const line = (got.stdout || '').split('\n').find((l) => l.startsWith(`${rt}\t`));
+            if (!line) return `missing ${rt} argv line`;
+            const argv = JSON.parse(line.split('\t')[2]);
+            if (!argv.includes(model)) return `${rt} argv=${JSON.stringify(argv)}`;
+          }
+          return null;
+        },
+      },
+      ...[
+        ['opencode', 'fake/ok#fast', 'exec'],
+        ['codex', 'fake-ok-codex', 'exec'],
+        ['claude', 'opus', 'review'],
+      ].map(([rt, model, mode]) => ({
+        name: `model-flag-each-${rt}`,
+        args: ['--print-argv', '--runtime', rt, '--mode', mode, '--model', model],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith(`${rt}\t`));
+          if (!line) return 'missing argv line';
+          const argv = JSON.parse(line.split('\t')[2]);
+          return argv.includes(model) ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      })),
+      {
+        name: 'model-and-alias',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--model-pi', 'fake/other', '--print-argv'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          if (!(r.stderr || '').includes('cross-ai: --model wins; ignored --model-pi fake/other')) {
+            return 'missing --model wins note';
+          }
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
+          const argv = JSON.parse(line.split('\t')[2]);
+          if (!argv.includes('fake/ok')) return `argv=${JSON.stringify(argv)}`;
+          return argv.includes('fake/other') ? 'alias model reached argv' : null;
+        },
+      },
+      {
+        name: 'model-invalid-pi-bare',
+        args: ['--runtime', 'pi', '--model', 'glm'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (r) => {
+          const line = (r.stderr || '').split('\n').find((l) => l.includes('must match'));
+          if (!line || !line.includes('pi model glm must match')) return `line=${line}`;
+          return line.includes(PI_MODEL_ID.source) ? null : 'message omits the pi grammar';
+        },
+      },
+      {
+        name: 'model-invalid-bracket-pi',
+        args: ['--runtime', 'pi', '--model', 'fake/ok[x=1]'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'model-invalid-pi-suffix',
+        args: ['--runtime', 'pi', '--model', 'fake/ok:free', '--print-argv'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'model-opencode-colon',
+        args: ['--runtime', 'opencode', '--model', 'or/meta/llama:free', '--print-argv'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+      },
+      {
+        name: 'model-opencode-two-variants',
+        args: ['--runtime', 'opencode', '--model', 'fake/ok#a#b', '--print-argv'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'model-other-runtime-not-checked',
+        args: [
+          '--runtime', 'cursor', '--model-cursor', 'fake-ok-cursor', '--model-pi', 'glm',
+          '--print-argv',
+        ],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
+          if (!line) return 'missing argv line';
+          const argv = JSON.parse(line.split('\t')[2]);
+          return argv.includes('fake-ok-cursor') ? null : `argv=${JSON.stringify(argv)}`;
+        },
+      },
+      {
+        name: 'pure-review-extras',
+        pure: () => {
+          const ctx = {
+            cwd: '/tmp/x', sid: 'sid', outFile: '/tmp/x/out.md', cursorMode: 'ask',
+          };
+          const attacks = {
+            codex: ['-s danger-full-access', '--sandbox=danger-full-access',
+              '-c sandbox_mode="danger-full-access"', '--config x=y'],
+            pi: ['-t bash', '--tools bash', '-e x.ts', '--extension x.ts', '--skill --tools'],
+            opencode: ['--agent build', '--auto'],
+            cursor: ['--force', '--mode agent'],
+            claude: ['--permission-mode bypassPermissions', '--dangerously-skip-permissions'],
+          };
+          for (const [name, rt] of Object.entries(RUNTIMES)) {
+            const formulas = [rt.review(name === 'cursor' ? 'm' : 'fake/m', ctx)];
+            if (rt.resume) formulas.push(rt.resume('fake/m', ctx, 'sid', 'review'));
+            for (const base of formulas) {
+              if (reviewArgvProblem(base, base, rt.reviewExtras || [])) {
+                return `${name} bare review formula refused`;
+              }
+              for (const extra of attacks[name]) {
+                const argv = [...base, ...extra.split(' ')];
+                const problem = reviewArgvProblem(argv, base, rt.reviewExtras || []);
+                if (!problem) return `${name} accepted ${extra}`;
+                if (!String(problem).includes(extra.split(' ')[0])) {
+                  return `${name} ${extra} reason ${problem} omits the element`;
+                }
+              }
+            }
+          }
+          const pi = RUNTIMES.pi.review('fake/ok', ctx);
+          if (reviewArgvProblem([...pi, '--skill', 'skills/x/SKILL.md'], pi, ['--skill'])) {
+            return 'pi --skill path refused';
+          }
+          if (reviewArgvProblem([...pi, '--skill=skills/x/SKILL.md'], pi, ['--skill'])) {
+            return 'pi --skill=path refused';
+          }
+          return null;
+        },
+      },
+      {
+        // A check of the table itself. --trust is deliberately absent: cursor's review
+        // baseline carries it, and it trusts the workspace rather than granting a tool.
+        name: 'pure-profiles-read-only',
+        pure: () => {
+          const granting = ['--force', '--auto', '--yolo', '--allow-all', '--allow-all-paths',
+            '--allow-all-urls', '--allow-all-tools', '--allow-tool', '--approve-mcps',
+            '--dangerously-bypass-approvals-and-sandbox', '--dangerously-skip-permissions'];
+          const ctx = { cwd: '/tmp/x', sid: 'sid', outFile: '/tmp/x/out.md', cursorMode: 'ask' };
+          for (const [name, rt] of Object.entries(RUNTIMES)) {
+            const profiles = rt.profiles
+              ? Object.entries(rt.profiles).filter(([p]) => p === 'review' || p === 'none')
+              : [['review', []]];
+            for (const [profile, flags] of profiles) {
+              const argv = [...rt.review('m', { ...ctx, profileFlags: [] }), ...flags];
+              const hit = granting.find((f) => argv.some((t) => t === f || t.startsWith(`${f}=`) || t.startsWith(`${f},`)));
+              if (hit) return `${name} ${profile} grants ${hit}`;
+              const tools = argv.flatMap((t, i) => (t === '--tools' ? [argv[i + 1]] : []));
+              for (const value of tools) {
+                for (const one of String(value).split(',')) {
+                  if (!['read', 'grep', 'find', 'ls'].includes(one)) {
+                    return `${name} ${profile} --tools ${one}`;
+                  }
+                }
+              }
+            }
+          }
+          return null;
+        },
+      },
+      {
+        name: 'pure-model-grammar',
+        pure: () => {
+          const accept = [
+            [PI_MODEL_ID, 'fake/ok:high'], [PI_MODEL_ID, 'router-env/my-coding:high'],
+            [OPENCODE_MODEL_ID, 'fake/ok#fast'], [OPENCODE_MODEL_ID, 'or/meta/llama:free'],
+          ];
+          const refuse = [
+            [PI_MODEL_ID, 'glm'], [PI_MODEL_ID, 'fake/ok[x=1]'], [PI_MODEL_ID, 'fake/ok:free'],
+            [OPENCODE_MODEL_ID, 'glm'], [OPENCODE_MODEL_ID, 'fake/ok#a#b'],
+          ];
+          for (const [re, id] of accept) if (!re.test(id)) return `${re} refused ${id}`;
+          for (const [re, id] of refuse) if (re.test(id)) return `${re} accepted ${id}`;
+          const rows = {
+            pi: PI_MODEL_ID, opencode: OPENCODE_MODEL_ID, cursor: CURSOR_MODEL_ID,
+            codex: MODEL_ID, claude: MODEL_ID,
+          };
+          for (const [name, re] of Object.entries(rows)) {
+            if (RUNTIMES[name].modelId !== re) return `${name} modelId is not the declared regex`;
+          }
+          return null;
+        },
+      },
       {
         name: 'unknown_prefer',
         args: ['--prefer', 'nosuchcli', '--model-nosuchcli', 'x'],
@@ -5148,6 +5516,11 @@ async function blackBoxSelfTest() {
               const never = ['--force', '--auto', '--dangerously-bypass-approvals-and-sandbox'];
               for (const f of never) if (argv.includes(f)) return `review argv has ${f}`;
               if (rt === 'opencode' && !argv.includes('--standalone')) return 'review argv missing --standalone';
+              if (rt === 'pi') {
+                for (const f of ['--tools', 'read,grep,find,ls', '--no-mcp', '--no-context-files']) {
+                  if (!argv.includes(f)) return `review argv missing ${f}`;
+                }
+              }
               if (!argv.includes(model)) return 'model missing';
               return null;
             },
@@ -7554,13 +7927,14 @@ async function blackBoxSelfTest() {
         check: (r) => ((r.stderr || '').includes('claude is review-only') ? null : 'missing review-only line'),
       },
       {
-        // Menu selection: a later review-only entry never rejects an exec first choice.
+        // A later review-only entry is ignored, never started, and never rejects the first.
         name: 'review-only-later-menu-ok',
         args: ['--prefer', 'pi,claude', '--mode', 'exec', '--model-pi', 'fake/ok', '--model-claude', 'fake-ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
         check: (r, ctx) => {
           if ((r.stderr || '').includes('is review-only')) return 'review-only refusal';
+          if (!(r.stderr || '').includes('ignored: claude')) return 'missing ignored-entries note';
           if (ctx.calls.some((l) => l.startsWith('claude '))) return 'claude ran';
           return ctx.calls.some((l) => l.startsWith('pi ')) ? null : 'pi did not run';
         },
@@ -7659,7 +8033,11 @@ async function blackBoxSelfTest() {
           const sid = (a) => a[a.indexOf('--session-id') + 1];
           if (sid(rung2) === sid(first)) return 'rung2 reuses the session id';
           const same = (a) => JSON.stringify(a.filter((t) => t !== sid(a)));
-          return same(rung2) === same(first) ? null : 'rung2 differs beyond the session id';
+          if (same(rung2) !== same(first)) return 'rung2 differs beyond the session id';
+          for (const f of ['--tools', 'read,grep,find,ls', '--no-mcp', '--no-context-files']) {
+            if (!rung1.includes(f)) return `resumed review argv missing ${f}`;
+          }
+          return null;
         },
       },
       {
@@ -8481,6 +8859,139 @@ async function blackBoxSelfTest() {
           return tail[0] === '--skill' && tail[1] === 'skills/x/SKILL.md' ? null : `tail=${JSON.stringify(tail)}`;
         },
       },
+      {
+        name: 'profile-pi-review-argv',
+        args: ['--runtime', 'pi', '--mode', 'review', '--model', 'fake/ok', '--print-argv'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
+          const argv = JSON.parse(line.split('\t')[2]);
+          const at = argv.indexOf('--tools');
+          const flags = ['--tools', 'read,grep,find,ls', '--no-mcp', '--no-context-files'];
+          if (JSON.stringify(argv.slice(at, at + flags.length)) !== JSON.stringify(flags)) {
+            return `argv=${JSON.stringify(argv)}`;
+          }
+          return at > argv.indexOf('--offline') ? null : 'profile flags precede the base';
+        },
+      },
+      {
+        name: 'profile-pi-none-argv',
+        args: [
+          '--runtime', 'pi', '--mode', 'review', '--tools-profile', 'none',
+          '--model', 'fake/ok', '--print-argv',
+        ],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
+          const argv = JSON.parse(line.split('\t')[2]);
+          const flags = ['--no-tools', '--no-mcp', '--no-context-files'];
+          const at = argv.indexOf('--no-tools');
+          if (JSON.stringify(argv.slice(at)) !== JSON.stringify(flags)) return `argv=${JSON.stringify(argv)}`;
+          return argv.includes('--tools') ? 'none profile still has --tools' : null;
+        },
+      },
+      {
+        name: 'profile-pi-exec-default',
+        args: ['--runtime', 'pi', '--mode', 'exec', '--model', 'fake/ok', '--print-argv'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
+          const argv = JSON.parse(line.split('\t')[2]);
+          const extra = ['--tools', '--no-tools', '--no-mcp', '--no-context-files'];
+          const hit = extra.find((f) => argv.includes(f));
+          return hit ? `exec argv gained ${hit}` : null;
+        },
+      },
+      {
+        name: 'profile-review-widen-refused',
+        args: ['--runtime', 'pi', '--mode', 'review', '--tools-profile', 'exec', '--model', 'fake/ok'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('review mode allows only the review or none') ? null : 'missing refusal'),
+      },
+      {
+        name: 'profile-unsupported-cursor',
+        args: ['--runtime', 'cursor', '--tools-profile', 'none', '--model', 'fake-ok-cursor'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('cursor has no tools profile none') ? null : 'missing refusal'),
+      },
+      {
+        name: 'profile-bad-name',
+        args: ['--tools-profile', 'write'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'no-passthrough',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--', '--yolo'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'no-passthrough-extra-arg',
+        args: ['--runtime', 'pi', '--model', 'fake/ok', '--extra-arg', 'x'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        // One case, three widening extras: each exits 2 before any fake call.
+        name: 'review-extra-args-widen-refused',
+        config: { extraArgs: { pi: ['--tools', 'bash'] }, prefer: ['pi'], retry: { max_retries: 1 } },
+        args: ['--mode', 'review', '--model-pi', 'fake/ok'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: async (r, ctx) => {
+          if (ctx.calls.length) return `spawned: ${ctx.calls.join('|')}`;
+          if (!(r.stderr || '').includes('review argv for pi holds --tools')) return 'element not named';
+          const more = [
+            [{ pi: ['-e', 'x.ts'] }, 'pi', '-e'],
+            [{ opencode: ['--agent', 'build'] }, 'opencode', '--agent'],
+          ];
+          for (const [extraArgs, cli, element] of more) {
+            const copy = writeCopy(ctx.tmp, `widen-${cli}`, {
+              extraArgs, prefer: [cli], retry: { max_retries: 1 },
+            });
+            const got = await runCaseProcess({
+              args: ['--mode', 'review', '--model-pi', 'fake/ok', '--model-opencode', 'fake/ok'],
+            }, { ...ctx, copy });
+            if (got.status !== 2) return `${cli} exit ${got.status}`;
+            const err = got.stderr || '';
+            if (!err.includes(`review argv for ${cli} holds ${element}`)) return `${cli} element not named`;
+            if (!err.includes(`review extras allowed for ${cli}:`)) return `${cli} allowlist not named`;
+          }
+          return null;
+        },
+      },
+      ...[
+        { pi: ['--tools', 'bash'] },
+        { pi: ['-e', 'x.ts'] },
+        { opencode: ['--agent', 'build'] },
+      ].map((extraArgs, i) => ({
+        name: `review-extra-args-widen-refused-${i}`,
+        args: ['--mode', 'review', '--model-pi', 'fake/ok', '--model-opencode', 'fake/ok'],
+        config: { extraArgs, prefer: [Object.keys(extraArgs)[0]] },
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.length) return `spawned: ${ctx.calls.join('|')}`;
+          const err = r.stderr || '';
+          const cli = Object.keys(extraArgs)[0];
+          const element = extraArgs[cli][0];
+          if (!err.includes(`review argv for ${cli} holds ${element}`)) return 'element not named';
+          return err.includes(`review extras allowed for ${cli}:`) ? null : 'allowlist not named';
+        },
+      })),
+      {
+        name: 'review-extra-args-skill-ok',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-ok'],
+        config: { extraArgs: { pi: ['--skill', 'skills/x/SKILL.md'] } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi .* tree=clean action=stop$/,
+      },
       ...[
         { mode: 'crash', exit: 1, status: 'crash', tree: 'clean' },
         { mode: 'quota', exit: 75, status: 'quota', tree: 'clean' },
@@ -8520,7 +9031,8 @@ async function blackBoxSelfTest() {
         exit: row.exit,
         status: new RegExp(`^AIKIT-XAI status=${row.status} cli=pi model=fake/${row.model || row.mode} ` +
           `exit=${row.exit} .* tree=${row.tree} action=stop$`),
-        check: (_r, ctx) => {
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('ignored: cursor, opencode')) return 'missing ignored-entries note';
           const other = ctx.calls.find((l) => (
             l.startsWith('cursor-agent') || l.startsWith('opencode')
           ));
@@ -8537,7 +9049,8 @@ async function blackBoxSelfTest() {
         exit: 1,
         status: new RegExp('^AIKIT-XAI status=contract_violation cli=pi ' +
           'model=fake/review-edit exit=1 .* action=stop$'),
-        check: (_r, ctx) => {
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('ignored: cursor, opencode')) return 'missing ignored-entries note';
           const other = ctx.calls.find((l) => (
             l.startsWith('cursor-agent') || l.startsWith('opencode')
           ));
@@ -8547,18 +9060,74 @@ async function blackBoxSelfTest() {
       {
         name: 'config-prefer-first-only',
         config: {
-          prefer: ['pi', 'cursor', 'opencode'],
+          prefer: ['pi', 'cursor'],
           models: { pi: 'fake/crash', cursor: 'fake-ok-cursor', opencode: 'fake/ok' },
         },
         args: [],
         exit: 1,
         status: /^AIKIT-XAI status=crash cli=pi model=fake\/crash exit=1 .* action=stop$/,
-        check: (_r, ctx) => {
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('CONFIG.prefer reads only its first entry (pi); ignored: cursor')) {
+            return 'missing CONFIG ignored-entries note';
+          }
           const other = ctx.calls.find((l) => (
             l.startsWith('cursor-agent') || l.startsWith('opencode')
           ));
           return other ? `second cli: ${other}` : null;
         },
+      },
+      {
+        name: 'runtime-flag',
+        args: ['--runtime', 'pi', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('pi ')) ? null : 'pi did not run'),
+      },
+      {
+        name: 'runtime-and-prefer',
+        args: ['--runtime', 'pi', '--prefer', 'cursor', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('cross-ai: --runtime pi wins; ignored --prefer cursor')) {
+            return 'missing --runtime wins note';
+          }
+          return ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null;
+        },
+      },
+      {
+        name: 'prefer-first-only-notice',
+        args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('--prefer reads only its first entry (pi); ignored: cursor')) {
+            return 'missing ignored-entries note';
+          }
+          return ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null;
+        },
+      },
+      {
+        name: 'config-runtime',
+        config: { runtime: 'pi', prefer: ['cursor'], models: { pi: 'fake/ok', cursor: 'fake-ok-cursor' } },
+        args: [],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null),
+      },
+      {
+        name: 'runtime-unknown',
+        args: ['--runtime', 'nosuch'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+      },
+      {
+        name: 'runtime-none',
+        config: { prefer: null },
+        args: [],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('no runtime: pass --runtime <id>') ? null : 'missing usage line'),
       },
       {
         name: 'not-installed-first',
@@ -8791,23 +9360,51 @@ async function main(argv) {
   if (o.classifyOnly !== null) return runClassifyOnly(o.classifyOnly);
   childPgidFile = o.childPgidFile;
   childPgidBroken = false;
-  const order = o.prefer || CONFIG.prefer;
-  const models = { ...CONFIG.models, ...o.models };
-  const cands = order.map((name) => ({
-    name, rt: RUNTIMES[name], model: models[name],
-    bin: resolveBin(RUNTIMES[name], process.env.PATH || ''),
-  }));
+  const picked = resolveRuntime(o);
+  if (picked.error) {
+    log(picked.error);
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  for (const note of picked.notes) log(note);
+  const name = picked.name;
+  const rt = RUNTIMES[name];
+  if (o.model !== null && o.models[name] !== undefined) {
+    log(`cross-ai: --model wins; ignored --model-${name} ${o.models[name]}`);
+  }
+  const model = o.model ?? o.models[name] ?? CONFIG.models[name];
+  if (model && !rt.modelId.test(model)) {
+    log(`cross-ai: ${name} model ${model} must match ${rt.modelId.source}`);
+    return reportAndFinish('usage', { ...liveFields, cli: name, model, tree: 'unknown', exit: 2 });
+  }
+  const c = {
+    name, rt, model,
+    bin: resolveBin(rt, process.env.PATH || ''),
+  };
   // Baked per-runner effort (the plan's selection); --codex-effort still wins for codex.
   const effort = CONFIG.effort || {};
   const knobs = {
     codexEffort: o.codexEffort ?? (CODEX_EFFORTS.has(effort.codex) ? effort.codex : null),
     piThinking: PI_THINKING.has(effort.pi) ? effort.pi : null,
   };
-  const first = cands[0];
-  if (o.mode === 'exec' && first && !first.rt.exec) {
-    log(`cross-ai: ${first.name} is review-only (no exec formula)`);
+  if (o.mode === 'exec' && !rt.exec) {
+    log(`cross-ai: ${name} is review-only (no exec formula)`);
     return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
+  const profile = o.toolsProfile ?? o.mode;
+  if (o.mode === 'review' && profile === 'exec') {
+    log('cross-ai: review mode allows only the review or none tools profile');
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  if (rt.profiles === null) {
+    if (profile !== o.mode) {
+      log(`cross-ai: ${name} has no tools profile ${profile}`);
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
+  } else if (!Object.hasOwn(rt.profiles, profile)) {
+    log(`cross-ai: ${name} has no tools profile ${profile}`);
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  const profileFlags = rt.profiles ? rt.profiles[profile] : [];
 
   const dl = logDeadline(process.cwd(), process.env, o);
   if (dl.error) {
@@ -8825,21 +9422,19 @@ async function main(argv) {
       cwd: process.cwd(), sid: '<sid>', outFile: '<tmp>/last-message.md',
       codexEffort: knobs.codexEffort, codexServiceTier: o.codexServiceTier, cursorMode: o.cursorMode,
       piThinking: knobs.piThinking, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
+      profileFlags,
     };
-    for (const c of cands) {
-      const formula = c.rt[o.mode];
-      const argvOut = (c.model && typeof formula === 'function')
-        ? withExtra(c.name, formula(c.model, ctx)) : null;
-      process.stdout.write(`${c.name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(argvOut) : 'NO MODEL'}\n`);
-      if (c.model && argvOut) {
-        const rung1 = sameSessionArgv(c.name, c.rt, c.model, ctx, '<sid>', o.mode);
-        if (rung1) log(`cross-ai: rung1 ${c.name} argv=${JSON.stringify(rung1.argv)}`);
-        else log(`cross-ai: rung1 ${c.name} unavailable`);
-        const rung2 = newSessionArgv(c.name, c.rt, c.model, ctx, o.mode, '<prompt>');
-        log(`cross-ai: rung2 ${c.name} argv=${JSON.stringify(rung2.argv)}`);
-      }
+    const formula = rt[o.mode];
+    const argvOut = (c.model && typeof formula === 'function')
+      ? withExtra(name, formula(c.model, ctx)) : null;
+    process.stdout.write(`${name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(argvOut) : 'NO MODEL'}\n`);
+    if (c.model && argvOut) {
+      const rung1 = sameSessionArgv(name, rt, c.model, ctx, '<sid>', o.mode);
+      if (rung1) log(`cross-ai: rung1 ${name} argv=${JSON.stringify(rung1.argv)}`);
+      else log(`cross-ai: rung1 ${name} unavailable`);
+      const rung2 = newSessionArgv(name, rt, c.model, ctx, o.mode, '<prompt>');
+      log(`cross-ai: rung2 ${name} argv=${JSON.stringify(rung2.argv)}`);
     }
-    if (first) log(`cross-ai: a run uses ${first.name} only`);
     return reportAndFinish('ok', {
       ...liveFields, tree: 'clean', exit: 0, out: 0,
       retry: resolved.retry, capS: resolved.capS,
@@ -8868,15 +9463,9 @@ async function main(argv) {
   const marginMs = (outer - innerDefault) * 1000;
   finalizeBy = runDeadline + Math.min(FINALIZE_CAP_MS, Math.floor(marginMs / 2));
 
-  const c = first;
-  liveFields.cli = c?.name ?? '-';
-  liveFields.model = c?.model ?? '-';
-  if (c) liveFields.route = routeOf(c.name, c.model || '', o.routes);
-  if (cands.length > 1) {
-    const rest = cands.slice(1).map((x) => x.name).join(', ');
-    log(`cross-ai: only ${c.name} runs; ${rest} is the owner's menu ` +
-      '(no automatic fallback)');
-  }
+  liveFields.cli = c.name;
+  liveFields.model = c.model ?? '-';
+  liveFields.route = routeOf(c.name, c.model || '', o.routes);
   // Decided once: a directory with no .git ancestor still dispatches (D-34).
   const noTree = !inGitTree(process.cwd());
   if (noTree) {
@@ -8885,10 +9474,6 @@ async function main(argv) {
     if (o.mode === 'review') {
       log('cross-ai: review mode cannot verify the read-only contract outside a git work tree');
     }
-  }
-  if (!c) {
-    log('cross-ai: no CLI named');
-    return reportAndFinish('not_installed', { ...liveFields, tree: 'clean', exit: 127 });
   }
   if (!c.bin) {
     log(`cross-ai: ${c.name} not installed; no other CLI runs (no automatic fallback)`);
@@ -8913,6 +9498,21 @@ async function main(argv) {
     return reportAndFinish(gitFailStatus(), {
       ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1,
     });
+  }
+  // The review argv is known before any spawn: a widening extra is a usage error, not a run.
+  if (o.mode === 'review' && c.model) {
+    const probe = {
+      cwd: process.cwd(), sid: '<sid>', outFile: '<tmp>/last-message.md',
+      cursorMode: o.cursorMode, piThinking: knobs.piThinking, profileFlags,
+    };
+    const bare = c.rt.review(c.model, probe);
+    const problem = reviewArgvProblem(withExtra(c.name, bare), bare, c.rt.reviewExtras || []);
+    if (problem) {
+      const allowed = (c.rt.reviewExtras || []).join(', ') || 'none';
+      log(`cross-ai: review argv for ${c.name} holds ${problem} from CONFIG.extraArgs; ` +
+        `review extras allowed for ${c.name}: ${allowed}; refused`);
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
   }
   const listEnv = childEnv(c.rt.env, process.env);
   const listing = await listModels(c.rt, c.bin, listEnv, runDeadline);
@@ -8940,6 +9540,7 @@ async function main(argv) {
     piThinking: knobs.piThinking, codexServiceTier: o.codexServiceTier,
     cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
     route: liveFields.route, retry: resolved.retry, capS: resolved.capS,
+    profileFlags,
   });
   liveFields.out = r.outBytes || 0;
   liveFields.cli_rc = r.cli_rc ?? '-';

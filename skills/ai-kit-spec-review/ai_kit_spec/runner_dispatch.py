@@ -48,9 +48,23 @@ _STDERR_TAIL_LINES = 64  # lines kept in memory; the result keeps their last _ST
 _POLL_SLICE_S = 0.2
 _STATUS_PREFIX = "AIKIT-XAI "
 
-# The template's regex sources verbatim (cross-ai.mjs MODEL_ID / CURSOR_MODEL_ID).
+# The template's regex sources verbatim (cross-ai.mjs MODEL_ID / CURSOR_MODEL_ID /
+# PI_MODEL_ID / OPENCODE_MODEL_ID).
 MODEL_ID_SRC = "/^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/"
 CURSOR_MODEL_ID_SRC = "/^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\\[[A-Za-z0-9._=,-]+\\])?$/"
+PI_MODEL_ID_SRC = (
+    "/^[A-Za-z0-9][A-Za-z0-9._@+-]*\\/[A-Za-z0-9][A-Za-z0-9._\\/@+-]*"
+    "(?::(?:off|minimal|low|medium|high|xhigh|max))?$/"
+)
+OPENCODE_MODEL_ID_SRC = (
+    "/^[A-Za-z0-9][A-Za-z0-9._@+-]*\\/[A-Za-z0-9][A-Za-z0-9._:\\/@+-]*"
+    "(?:#[A-Za-z0-9._-]+)?$/"
+)
+_MODEL_ID_SRC = {
+    "cursor": CURSOR_MODEL_ID_SRC,
+    "pi": PI_MODEL_ID_SRC,
+    "opencode": OPENCODE_MODEL_ID_SRC,
+}
 
 _NO_NODE_LINE = "ai-kit-spec: subprocess dispatch needs Node (node not found on PATH)"
 _NO_TEMPLATE_LINE = "ai-kit-spec: runner template not found"
@@ -63,9 +77,14 @@ _TRAILER_IGNORE_LINE = (
 
 
 def model_id_ok(runtime: str, model: str) -> bool:
-    """True when `model` matches the charset the runner itself accepts for `runtime`."""
-    src = CURSOR_MODEL_ID_SRC if runtime == "cursor" else MODEL_ID_SRC
+    """True when `model` matches the grammar the runner itself accepts for `runtime`."""
+    src = _MODEL_ID_SRC.get(runtime, MODEL_ID_SRC)
     return re.fullmatch(src[1:-1], model) is not None
+
+
+def model_id_src(runtime: str) -> str:
+    """The grammar source `run_runner` names when it refuses `runtime`'s model id."""
+    return _MODEL_ID_SRC.get(runtime, MODEL_ID_SRC)
 
 
 class RunnerSpec(NamedTuple):
@@ -570,6 +589,7 @@ def run_runner(spec: RunnerSpec, prompt: str, seams: RunnerSeams | None = None) 
     if not model_id_ok(spec.runtime, spec.model):
         active.print_fn(
             f"ai-kit-spec: model id {spec.model} is not a valid {spec.runtime} model id"
+            f" (must match {model_id_src(spec.runtime)})"
         )
         return RunnerResult(None, "", None, "configuration", False, [], "")
     if spec.route is None:

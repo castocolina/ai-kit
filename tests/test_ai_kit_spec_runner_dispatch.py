@@ -25,10 +25,13 @@ from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.runner_dispatch import (
     CURSOR_MODEL_ID_SRC,
     MODEL_ID_SRC,
+    OPENCODE_MODEL_ID_SRC,
+    PI_MODEL_ID_SRC,
     CustomSpec,
     RunnerSeams,
     RunnerSpec,
     build_runner_argv,
+    model_id_ok,
     parse_status_line,
     run_custom_command,
     run_runner,
@@ -256,6 +259,24 @@ class TestModelIdCharsetParity(unittest.TestCase):
     def test_sources_match_the_template(self):
         self.assertEqual(MODEL_ID_SRC, _template_regex("MODEL_ID"))
         self.assertEqual(CURSOR_MODEL_ID_SRC, _template_regex("CURSOR_MODEL_ID"))
+        self.assertEqual(PI_MODEL_ID_SRC, _template_regex("PI_MODEL_ID"))
+        self.assertEqual(OPENCODE_MODEL_ID_SRC, _template_regex("OPENCODE_MODEL_ID"))
+
+    def test_model_id_ok_uses_the_runtime_grammar(self):
+        self.assertFalse(model_id_ok("pi", "glm"))
+        self.assertFalse(model_id_ok("opencode", "glm"))
+        self.assertFalse(model_id_ok("pi", "fake/ok:free"))
+        self.assertTrue(model_id_ok("pi", "router-env/my-coding:high"))
+        self.assertTrue(model_id_ok("opencode", "fake/ok#fast"))
+
+    def test_bare_pi_id_names_the_grammar_and_never_spawns(self):
+        popen = _ScriptedPopen([])
+        lines: list[str] = []
+        result = run_runner(_spec(runtime="pi", model="glm"), "hi", _seams(popen, lines, []))
+        self.assertEqual(result.reason, "configuration")
+        self.assertEqual(popen.argvs, [])
+        self.assertTrue(any("is not a valid pi model id" in line for line in lines))
+        self.assertTrue(any(PI_MODEL_ID_SRC in line for line in lines))
 
     def _refused(self, model):
         popen = _ScriptedPopen([])
