@@ -890,7 +890,8 @@ function reportAndFinish(status, fields, stopped) {
   const why = stopped || fields.stopped || 'class';
   if (status !== 'ok' && !fields.reportDone) {
     logReport(status, fields.cli ?? '-', fields.model ?? '-', fields.route, fields.attempts || 0,
-      fields.cycles || 0, fields.firstFailureMs || 0, fields.lastFailureMs || 0, why);
+      fields.cycles || 0, fields.firstFailureMs || 0, fields.lastFailureMs || 0, why,
+      fields.dueAtMs || 0);
   }
   return finish(status, fields);
 }
@@ -1954,6 +1955,15 @@ function ladderNext(st, cls, nowMs, lim) {
   return { next, why };
 }
 
+// The caller's hard tier (SPEC R3, D-08): cycle n waits hard_waits_s[n] as one exit-75 hint,
+// the list's end or a wait that would pass the episode cap is a terminal stop, and the call
+// itself never sleeps the wait. capLeftS is the seconds the episode cap still allows.
+function hardWaitFor(cycle, waits, capLeftS) {
+  if (cycle >= waits.length) return { stop: 'hard-waits' };
+  if (waits[cycle] > capLeftS) return { stop: 'cap' };
+  return { retryAfterS: Math.trunc(waits[cycle]), cycle };
+}
+
 // Rung 1 continues the captured session. Null when no session can be continued: no id,
 // no resume formula, a sandboxed codex exec, or codex review (its resume argv has no
 // read-only sandbox).
@@ -1995,23 +2005,31 @@ function taskDigest(prompt) {
   return sha16(m ? m[1] : body);
 }
 
-function cycleFilePath(cli, model, cwd = process.cwd(), home = stateHome()) {
+// The route kind is part of the file name (orchestrator decision 2026-10-25): a confirmed
+// router lane and every other route on the same CLI and model keep separate records, so an
+// unconfirmed call can never read, delete or overwrite a router-quota record. Nothing has
+// shipped under the Phase 25 single-file name, so there is no migration.
+function cycleFilePath(cli, model, kind, cwd = process.cwd(), home = stateHome()) {
   let root = cwd;
   try { root = fs.realpathSync(root); } catch { /* the cwd itself is the key */ }
   const dir = path.join(home, 'ai-kit', 'spec', 'cycles', sha16(root));
-  return path.join(dir, `${cli}-${sha16(model)}.json`);
+  return path.join(dir, `${cli}-${kind}-${sha16(model)}.json`);
 }
 
-// A case's state file, resolved inside the case's own XDG state dir.
-function caseCycleFile(ctx, cli, model) {
+// A case's state file, resolved inside the case's own XDG state dir. Router by default: the
+// Phase 25 fixtures all sit on confirmed router lanes.
+function caseCycleFile(ctx, cli, model, kind = 'router') {
   const home = path.join(ctx.env.XDG_STATE_HOME);
-  return cycleFilePath(cli, model, ctx.repo, home);
+  return cycleFilePath(cli, model, kind, ctx.repo, home);
 }
 
 function readCycleState(file) {
   const parsed = parseJson(readOr(file, ''));
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   if (typeof parsed.first_seen !== 'number' || typeof parsed.cycle !== 'number') return null;
+  // A record without the class of the attempt that reached the hard handler is not a record
+  // this runner wrote; treat it as absent rather than guess (25.1-03 route-keyed files).
+  if (parsed.class !== 'transient' && parsed.class !== 'quota') return null;
   return parsed;
 }
 
@@ -2515,12 +2533,14 @@ function logAttempt(n, rung, cycle, sid, status, rule, pattern, startedMs) {
     `status=${status} rule=${rule || '-'} pattern=${pattern || '-'} at=${at} took=${took}s`);
 }
 
-// One report line before the status line of every run that does not end ok.
-function logReport(status, cli, model, route, attempts, cycles, firstMs, lastMs, stopped) {
+// One report line before the status line of every run that does not end ok. due_at is the
+// ISO-8601 UTC time (seconds) of a hint exit's wait end, `-` on every other stop.
+function logReport(status, cli, model, route, attempts, cycles, firstMs, lastMs, stopped, dueMs = 0) {
   const iso = (ms) => (ms ? new Date(ms).toISOString() : '-');
+  const dueIso = (ms) => (ms ? new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z') : '-');
   log(`cross-ai: report status=${status} lane=${cli}/${model} route=${route || 'unknown'} ` +
     `attempts=${attempts} cycles=${cycles} first_failure=${iso(firstMs)} ` +
-    `last_failure=${iso(lastMs)} stopped=${stopped}`);
+    `last_failure=${iso(lastMs)} due_at=${dueIso(dueMs)} stopped=${stopped}`);
 }
 
 function stoppedWhy(step, dirty) {
@@ -2563,35 +2583,77 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     retry: 0, resets: 0, canResume: false, firstMs: 0, cycle: 0, prevWaitMs: 0,
   };
   let admitted = false;
-  const stateFile = cycleFilePath(name, model);
-  const digest = taskDigest(prompt);
-  // Only a confirmed router lane owns cycle state: an unconfirmed call on the same CLI and model
-  // neither reads it (no inherited cooldown or session) nor deletes it.
+  // Every lane owns its own state file; the route kind keys the name, so a confirmed router
+  // lane and an unconfirmed call on the same CLI and model never share a record.
   const routerLane = confirmedRoute(opts.route || 'unknown');
-  const loaded = routerLane ? readCycleState(stateFile) : null;
+  const stateFile = cycleFilePath(name, model, routerLane ? 'router' : 'other');
+  const digest = taskDigest(prompt);
+  const loaded = readCycleState(stateFile);
   const now0 = Date.now();
   const capMs = capS * 1000;
   let cycleCount = 0;
   let priorAttempts = 0;
   let persisted = null;
+  // One state line per run, at the first action on the file (a save, a delete or a refusal
+  // read): the caller's evidence for where the lane's record lives.
+  let stateLogged = false;
+  const logState = () => {
+    if (stateLogged) return;
+    stateLogged = true;
+    log(`cross-ai: state ${stateFile}`);
+  };
+  const dropStateFile = () => {
+    if (!fs.existsSync(stateFile)) return;
+    deleteCycleState(stateFile);
+    logState();
+  };
   if (loaded && typeof loaded.last_attempt_at === 'number') {
     if (now0 - loaded.last_attempt_at > capMs) {
+      // Stale, stopped or not: the episode is long over, so the record is dropped and the
+      // lane starts a fresh episode at cycle 0 (the owner's other reset is time itself).
       deleteCycleState(stateFile);
+      logState();
       log('cross-ai: stale-state-fresh-start');
-    } else if (now0 - loaded.first_seen > capMs) {
+    } else if (loaded.stopped) {
+      // A terminal stop holds the lane (D-08): every call is refused without a model call
+      // until the record goes stale or the owner deletes the file to start a new episode.
+      logState();
+      log(`cross-ai: lane stopped=${loaded.stopped} at ` +
+        `${new Date(loaded.stopped_at).toISOString()}; delete ${stateFile} to start a new episode`);
       return {
-        ok: false, status: 'quota', code: 69, exit: 69, outBytes: 0, cli_rc: '-',
+        ok: false, status: loaded.class, code: 69, exit: 69, outBytes: 0, cli_rc: '-',
+        route: opts.route || 'unknown', rule: '-', pattern: 'none',
+        attempts: loaded.attempts || 0, cycles: loaded.cycle || 0,
+        stopped: loaded.stopped,
+      };
+    } else if (now0 - loaded.first_seen > capMs) {
+      // The episode ended while the lane waited: persist the cap stop (D-09) so a later
+      // session or Phase 26's wake can surface it, then refuse without a model call. A write
+      // failure never changes the stop (the notice is the trace, the exit stays 69).
+      try {
+        writeCycleState(stateFile, {
+          ...loaded, last_attempt_at: now0, retry_after_s: null, due_at: null,
+          stopped: 'cap', stopped_at: now0,
+        });
+      } catch (e) {
+        log(`cross-ai: cycle state unwritable: ${stateFile} (${e.code || e.message})`);
+      }
+      logState();
+      return {
+        ok: false, status: loaded.class, code: 69, exit: 69, outBytes: 0, cli_rc: '-',
         route: opts.route || 'unknown', rule: '-', pattern: 'none',
         attempts: loaded.attempts || 0, cycles: loaded.cycle || 0, stopped: 'cap',
         
       };
     } else if (typeof loaded.due_at === 'number' && now0 < loaded.due_at) {
       const left = Math.max(0, Math.round((loaded.due_at - now0) / 1000));
+      logState();
       return {
-        ok: false, status: 'quota', outBytes: 0, cli_rc: '-',
+        ok: false, status: loaded.class, outBytes: 0, cli_rc: '-',
         route: opts.route || 'unknown', rule: '-', pattern: 'none',
         attempts: loaded.attempts || 0, cycles: loaded.cycle || 0,
         retryAfterS: left, cycle: loaded.cycle || 0, stopped: 'rungs',
+        dueAtMs: loaded.due_at,
       };
     } else {
       cycleCount = (loaded.cycle || 0) + 1;
@@ -2616,44 +2678,57 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     firstFailureMs, lastFailureMs,
   });
   const dropState = (status) => {
-    if (!routerLane) return;
     if (STATE_DELETE.has(status) || (status !== 'quota' && !QUOTA_KEEP.has(status))) {
-      deleteCycleState(stateFile);
+      dropStateFile();
     }
   };
-  // An unwritable state file never turns a quota stop into a crash: the stop stays quota, but
-  // with no cycle to track it is a bare exit 75 (no retry_after_s=).
-  // 25.1-03 replaces the [0] index with hardWaitFor and adds the transient hint.
-  const hardWaitS = retryCfg.hard_waits_s[0];
+  // An unwritable state file never leaves a hint the runner cannot track: the wait or stop
+  // stays its class, but the exit is a bare one (no retry_after_s=) so no caller loop runs
+  // untracked (25.1-03, kept from Phase 25's quota rule).
   let stateWritable = true;
-  const saveCycle = (sid, at) => {
-    const due = at + hardWaitS * 1000;
+  const saveCycle = (sid, at, record) => {
     try {
       writeCycleState(stateFile, {
         first_seen: ladder.firstMs, last_attempt_at: at, cycle: ladder.cycle,
-        attempts, last_sid: sid || null, task_digest: digest,
-        retry_after_s: hardWaitS, due_at: due,
+        attempts, last_sid: sid || null, task_digest: digest, ...record,
       });
+      logState();
     } catch (e) {
       stateWritable = false;
       log(`cross-ai: cycle state unwritable: ${stateFile} (${e.code || e.message})`);
     }
   };
-  // One hard handler for both soft classes. The call never sleeps the hard wait: a confirmed
-  // router quota saves its cycle and names the wait, a transient exits with no hint, and either
-  // class exits 69 once the next wait would pass the episode end. A soft step refused for `cap`
-  // is already past that end.
-  const hardStop = (r, evidence, why, sid, cls) => {
+  // One hard handler for both soft classes (D-07). The call never sleeps the hard wait: the
+  // next wait hard_waits_s[cycle] is one exit-75 hint the caller owns, and once the list is
+  // spent or the cap would pass it, the call exits 69 with the stop persisted on disk (D-08,
+  // D-09). A soft step refused for `cap` is already past the episode end, so it stops at once.
+  const hardHandler = (r, evidence, why, sid, cls) => {
     const at = Date.now();
-    const end = episodeEnd();
-    const capped = why === 'cap' || (Boolean(end) && at + hardWaitS * 1000 > end);
-    const stopped = capped ? 'cap' : (why === 'deadline' ? 'deadline' : 'rungs');
-    if (cls === 'quota') saveCycle(sid, at);
+    const stopped = why === 'deadline' ? 'deadline' : 'rungs';
+    const step = why === 'cap'
+      ? { stop: 'cap' }
+      : hardWaitFor(ladder.cycle, retryCfg.hard_waits_s,
+          ladder.firstMs ? (ladder.firstMs + capMs - at) / 1000 : -1);
+    if (step.stop) {
+      saveCycle(sid, at, {
+        class: cls, stopped: step.stop, stopped_at: at, retry_after_s: null, due_at: null,
+      });
+      return {
+        ok: false, status: cls, timedOut: false,
+        outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(),
+        cycle: ladder.cycle, exit: 69, stopped: step.stop,
+      };
+    }
+    const dueAtMs = at + step.retryAfterS * 1000;
+    saveCycle(sid, at, {
+      class: cls, retry_after_s: step.retryAfterS, due_at: dueAtMs,
+    });
     return {
-      ok: false, status: cls === 'quota' ? 'quota' : 'transient', timedOut: false,
+      ok: false, status: cls, timedOut: false,
       outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(),
-      retryAfterS: cls === 'quota' && !capped && stateWritable ? hardWaitS : undefined,
-      cycle: ladder.cycle, exit: capped ? 69 : 75, stopped,
+      retryAfterS: stateWritable ? step.retryAfterS : undefined,
+      dueAtMs: stateWritable ? dueAtMs : undefined,
+      cycle: step.cycle, exit: 75, stopped,
     };
   };
   try {
@@ -2750,7 +2825,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         const failed = r.code !== 0 || Boolean(p.error);
         if (!failed && p.text.trim()) {
           attempts += 1;
-          if (routerLane) deleteCycleState(stateFile);
+          dropStateFile();
           return {
             ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'),
             cli_rc: 0, ...counts(),
@@ -2792,13 +2867,13 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       });
       const wait = end ? Math.min(nominal, Math.max(0, end - Date.now())) : nominal;
       log(`cross-ai: ladder ${name} next=${step.next} why=${step.why}`);
-      if (step.next === 'hard') return hardStop(r, evidence, step.why, sid, cls);
+      if (step.next === 'hard') return hardHandler(r, evidence, step.why, sid, cls);
       if (step.next === 'stop') {
         // A no-budget timeout, the first attempt stopped before any retry was admitted, stays
         // timeout/124 (ladderStop). Any other soft deadline or cap stop is the hard handler's.
         const noBudget = step.why === 'deadline' && !admitted && r.timedOut && attempt === 0;
         if (soft && (step.why === 'deadline' || step.why === 'cap') && !noBudget) {
-          return hardStop(r, evidence, step.why, sid, cls);
+          return hardHandler(r, evidence, step.why, sid, cls);
         }
         const stop = ladderStop(step, Boolean(r.timedOut), admitted, hit || 'crash');
         dropState(stop.status);
@@ -3795,6 +3870,33 @@ function deadCheck(ctx, names) {
   return null;
 }
 
+// Hard-tier no-switch rule (owner rule, SPEC R3): every child the case spawned named the same
+// CLI and model. The `rpc` listing is the runner's own preflight, not a model call; the fake
+// records its mode label (`pi event400`), so the fake/ prefix is dropped here.
+function sameLane(ctx, cli, model) {
+  const label = String(model || '').replace(/^fake\//, '');
+  const bad = ctx.calls.filter((l) => l !== `${cli} rpc` && l !== `${cli} ${label}`);
+  return bad.length ? `other calls: ${bad.join('|')}` : null;
+}
+
+// The prior hard-tier record a case starts from (25.1-03): first attempted a minute ago, due
+// a second ago, at `cycle` with class `cls`, in the kind's file. `extra` overrides fields.
+function writePriorRecord(c, cli, model, kind, cls, cycle, extra = {}) {
+  const minute = 60 * 1000;
+  const file = caseCycleFile(c, cli, model, kind);
+  writeCycleState(file, {
+    first_seen: Date.now() - minute, last_attempt_at: Date.now() - minute,
+    cycle, attempts: 6 * (cycle + 1), last_sid: null, task_digest: 'other',
+    retry_after_s: 600, due_at: Date.now() - 1000, class: cls, ...extra,
+  });
+  return file;
+}
+
+// The shared hard_waits list of the 25.1-03 hard-tier cases: real waits, never slept.
+const HARD_TIER_RETRY = Object.freeze({
+  max_retries: 0, session_resets: 0, hard_waits_s: [600, 900, 1800],
+});
+
 async function runSelfTestCase(tmp, spec) {
   if (typeof spec.pure === 'function') return spec.pure();
   const repo = path.join(tmp, `r-${spec.name}`);
@@ -4239,6 +4341,7 @@ async function blackBoxSelfTest() {
           writeCycleState(file, {
             first_seen: old, last_attempt_at: old, cycle: 3, attempts: 21,
             last_sid: 'old', task_digest: 'old', retry_after_s: 0, due_at: old,
+            class: 'quota',
           });
           return null;
         },
@@ -4262,7 +4365,7 @@ async function blackBoxSelfTest() {
           writeCycleState(file, {
             first_seen: Date.now() - 5 * 3600 * 1000, last_attempt_at: Date.now(),
             cycle: 2, attempts: 14, last_sid: 'old', task_digest: 'old',
-            retry_after_s: 0, due_at: 0,
+            retry_after_s: 0, due_at: 0, class: 'quota',
           });
           return null;
         },
@@ -4273,7 +4376,17 @@ async function blackBoxSelfTest() {
         check: (r, ctx) => {
           const runs = ctx.calls.filter((l) => l !== 'pi rpc');
           if (runs.length) return `spawned: ${runs.join('|')}`;
-          return (r.stderr || '').includes('stopped=cap') ? null : 'missing stopped=cap';
+          if (!(r.stderr || '').includes('stopped=cap')) return 'missing stopped=cap';
+          // 25.1-03: the early return persists its stop (D-09), so a later session can surface it.
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/quota'));
+          if (!saved) return 'cap stop was not persisted';
+          if (saved.stopped !== 'cap' || typeof saved.stopped_at !== 'number') {
+            return `record=${JSON.stringify(saved)}`;
+          }
+          if (saved.retry_after_s !== null || saved.due_at !== null) {
+            return 'wait fields not cleared';
+          }
+          return null;
         },
       },
       {
@@ -4303,6 +4416,7 @@ async function blackBoxSelfTest() {
             first_seen: first, last_attempt_at: Date.now() - 1000, cycle: 0, attempts: 7,
             last_sid: '00000000-0000-4000-8000-000000000001',
             task_digest: taskDigest('clamp-probe\n'), retry_after_s: 0, due_at: 0,
+            class: 'quota',
           });
           return null;
         },
@@ -4325,7 +4439,7 @@ async function blackBoxSelfTest() {
           writeCycleState(file, {
             first_seen: Date.now() - (14400 - 300) * 1000, last_attempt_at: Date.now() - 1000,
             cycle: 1, attempts: 7, last_sid: null, task_digest: 'other', retry_after_s: 0,
-            due_at: 0,
+            due_at: 0, class: 'quota',
           });
           return null;
         },
@@ -4347,7 +4461,7 @@ async function blackBoxSelfTest() {
           writeCycleState(file, {
             first_seen: Date.now() - 60000, last_attempt_at: Date.now() - 1000, cycle: 1,
             attempts: 7, last_sid: null, task_digest: 'other', retry_after_s: 600,
-            due_at: Date.now() + 600000,
+            due_at: Date.now() + 600000, class: 'quota',
           });
           return null;
         },
@@ -4377,8 +4491,401 @@ async function blackBoxSelfTest() {
         config: { routerBacked: { pi: true } },
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/quota exit=75 (?!.*retry_after_s=).* action=stop$/,
-        check: (r) => ((r.stderr || '').includes('cycle state unwritable') ? null
-          : 'missing unwritable note'),
+        check: (r) => {
+          const err = r.stderr || '';
+          if (!err.includes('cycle state unwritable')) return 'missing unwritable note';
+          if (err.includes('cross-ai: state ')) return 'state line without a written file';
+          return null;
+        },
+      },
+      {
+        // The lane is the checkout, CLI, model and route kind, not the task: a different
+        // prompt on a lane with a pending due_at is refused without a model call too.
+        name: 'hard-tier-other-task-refused',
+        setup: (c) => {
+          writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0, {
+            due_at: Date.now() + 5 * 60 * 1000,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400', '--no-preamble'],
+        stdin: 'another task\n',
+        config: { retry: { ...HARD_TIER_RETRY } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          const spawned = ctx.calls.filter((l) => l !== 'pi rpc');
+          if (spawned.length) return `spawned: ${spawned.join('|')}`;
+          const tail = statusTail(r.stderr || '');
+          const left = tail ? Number(tail.retry_after_s) : NaN;
+          if (!(left >= 290 && left <= 300)) return `retry_after_s=${tail && tail.retry_after_s}`;
+          const report = (r.stderr || '').split('\n')
+            .find((l) => l.startsWith('cross-ai: report '));
+          return report && report.includes('stopped=rungs') ? null : `report=${report}`;
+        },
+      },
+      {
+        // Once due_at has passed, a different task starts in a fresh session and never
+        // resumes the record's last_sid.
+        name: 'hard-tier-other-task-fresh-session',
+        setup: (c) => {
+          writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0, {
+            last_sid: 'old-sid',
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400', '--no-preamble'],
+        stdin: 'another task\n',
+        config: { retry: { ...HARD_TIER_RETRY } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length !== 1) return `rows=${rows.length}`;
+          if (rows[0][1] !== 'prompt') return `kind=${rows[0][1]}`;
+          if (rows[0][0] === 'old-sid') return 'resumed the record session';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '900' || tail.cycle !== '1') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // The route kind keys the file: a pending router record neither refuses, deletes nor
+        // steers an unconfirmed spend on the same CLI and model; it keeps its bytes.
+        name: 'hard-tier-route-files-separate',
+        setup: (c) => {
+          const router = writePriorRecord(c, 'pi', 'fake/event400', 'router', 'quota', 1, {
+            due_at: Date.now() + 5 * 60 * 1000,
+          });
+          c.routerBytes = fs.readFileSync(router, 'utf8');
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { ...HARD_TIER_RETRY } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '600' || tail.cycle !== '0') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'));
+          if (!saved || saved.class !== 'transient' || saved.cycle !== 0) {
+            return `other=${JSON.stringify(saved)}`;
+          }
+          const router = caseCycleFile(ctx, 'pi', 'fake/event400', 'router');
+          if (fs.readFileSync(router, 'utf8') !== ctx.routerBytes) {
+            return 'router file was touched';
+          }
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // A spent transient series on an unconfirmed route gets the caller's hard tier too:
+        // one hint (hard_waits_s[0]), the state line naming the `other` file, and a record
+        // with the class, the cycle and the wait (D-07, route-keyed files).
+        name: 'hard-tier-transient-cycle0',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 1, session_resets: 0, hard_waits_s: [600, 900, 1800] } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi event400').length;
+          if (n !== 2) return `calls=${n}`;
+          const err = r.stderr || '';
+          const file = caseCycleFile(ctx, 'pi', 'fake/event400', 'other');
+          if (!err.includes(`cross-ai: state ${file}`)) return 'missing state line for the other file';
+          const tail = statusTail(err);
+          if (!tail || tail.retry_after_s !== '600' || tail.cycle !== '0') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          const report = err.split('\n').find((l) => l.startsWith('cross-ai: report '));
+          if (!report || !/due_at=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ /.test(report)) {
+            return `report=${report}`;
+          }
+          const saved = readCycleState(file);
+          if (!saved) return 'no transient record saved';
+          if (saved.class !== 'transient' || saved.cycle !== 0 || saved.retry_after_s !== 600) {
+            return `record=${JSON.stringify(saved)}`;
+          }
+          if (typeof saved.due_at !== 'number' || saved.due_at <= Date.now() - 1000) {
+            return `due_at=${saved.due_at}`;
+          }
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // A transient series cut by the call deadline gets the same hint, never a bare 75.
+        name: 'hard-tier-transient-deadline',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400', '--timeout', '3'],
+        config: { retry: { max_retries: 1, session_resets: 0, hard_waits_s: [600, 900, 1800] } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.elapsedMs >= 5000) return `elapsed ${ctx.elapsedMs}ms`;
+          const n = ctx.calls.filter((l) => l === 'pi event400').length;
+          if (n !== 1) return `calls=${n}`;
+          const err = r.stderr || '';
+          if (!err.includes('stopped=deadline')) return 'missing stopped=deadline';
+          const tail = statusTail(err);
+          if (!tail || tail.retry_after_s !== '600' || tail.cycle !== '0') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // After a record at cycle 0 the next hard wait is hard_waits_s[1].
+        name: 'hard-tier-cycle1',
+        setup: (c) => {
+          writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0);
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { ...HARD_TIER_RETRY } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '900' || tail.cycle !== '1') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'));
+          if (!saved || saved.cycle !== 1 || saved.retry_after_s !== 900) {
+            return `record=${JSON.stringify(saved)}`;
+          }
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // After a record at cycle 1 the next hard wait is hard_waits_s[2].
+        name: 'hard-tier-cycle2',
+        setup: (c) => {
+          writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 1);
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { ...HARD_TIER_RETRY } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '1800' || tail.cycle !== '2') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // The list's end is terminal: exit 69, the stop on the report line and on disk.
+        name: 'hard-tier-stop',
+        setup: (c) => {
+          writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 2);
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { ...HARD_TIER_RETRY } },
+        exit: 69,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=69 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 1) return 'call count';
+          const err = r.stderr || '';
+          const report = err.split('\n').find((l) => l.startsWith('cross-ai: report '));
+          if (!report || !report.includes('stopped=hard-waits')) return `report=${report}`;
+          const tail = statusTail(err);
+          if (tail && tail.retry_after_s !== undefined) return `tail=${JSON.stringify(tail)}`;
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/event400', 'other'));
+          if (!saved || saved.stopped !== 'hard-waits' || typeof saved.stopped_at !== 'number') {
+            return `record=${JSON.stringify(saved)}`;
+          }
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // 900 s of wait against 600 s of cap: the cap wins over the list entry.
+        name: 'hard-tier-cap-first',
+        setup: (c) => {
+          writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0, {
+            first_seen: Date.now() - (3 * 3600 + 50 * 60) * 1000,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { ...HARD_TIER_RETRY } },
+        exit: 69,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=69 .* action=stop$'),
+        check: (r, ctx) => {
+          const report = (r.stderr || '').split('\n')
+            .find((l) => l.startsWith('cross-ai: report '));
+          if (!report || !report.includes('stopped=cap')) return `report=${report}`;
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // A stopped record refuses every call on the lane without a model call, logs the state
+        // path and the owner reset line, and holds its bytes until stale or deleted (D-08).
+        name: 'hard-tier-stopped-refused',
+        setup: (c) => {
+          const file = writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 2, {
+            stopped: 'hard-waits', stopped_at: Date.now() - 60000,
+            retry_after_s: null, due_at: null,
+          });
+          c.stoppedBytes = fs.readFileSync(file, 'utf8');
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { ...HARD_TIER_RETRY } },
+        exit: 69,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=69 .* action=stop$'),
+        check: (r, ctx) => {
+          const spawned = ctx.calls.filter((l) => l !== 'pi rpc');
+          if (spawned.length) return `spawned: ${spawned.join('|')}`;
+          const err = r.stderr || '';
+          const file = caseCycleFile(ctx, 'pi', 'fake/event400', 'other');
+          if (!err.includes(`cross-ai: state ${file}`)) return 'missing state line';
+          if (!err.includes('cross-ai: lane stopped=hard-waits at ') ||
+            !err.includes(`delete ${file} to start a new episode`)) {
+            return 'missing lane stopped line';
+          }
+          const tail = statusTail(err);
+          if (tail && tail.retry_after_s !== undefined) return `tail=${JSON.stringify(tail)}`;
+          if (fs.readFileSync(file, 'utf8') !== ctx.stoppedBytes) {
+            return 'stopped record was rewritten';
+          }
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // The stale rule is the owner's time-based reset: a stopped record older than the cap
+        // is deleted and the lane starts a fresh episode.
+        name: 'hard-tier-stopped-stale',
+        setup: (c) => {
+          writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 2, {
+            stopped: 'hard-waits', stopped_at: Date.now() - 5 * 3600 * 1000,
+            last_attempt_at: Date.now() - 5 * 3600 * 1000,
+            first_seen: Date.now() - 5 * 3600 * 1000,
+            retry_after_s: null, due_at: null,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { ...HARD_TIER_RETRY } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('stale-state-fresh-start')) return 'missing stale note';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '600' || tail.cycle !== '0') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // The hard_waits list itself is project config: precedence over the rendered copy.
+        name: 'hard-tier-config-waits',
+        planningConfig: { workflow: { cross_ai_retry: { hard_waits_s: [60] } } },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 1, session_resets: 0 } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi event400').length !== 2) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '60' || tail.cycle !== '0') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // A confirmed router quota starts its own ladder at cycle 0 in the router file.
+        name: 'hard-tier-router-quota-cycle0',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota', '--route-pi', 'router'],
+        config: { retry: { ...HARD_TIER_RETRY } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=quota cli=pi model=fake/quota exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          if (ctx.calls.filter((l) => l === 'pi quota').length !== 1) return 'call count';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '600' || tail.cycle !== '0') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          const saved = readCycleState(caseCycleFile(ctx, 'pi', 'fake/quota'));
+          if (!saved || saved.class !== 'quota' || saved.cycle !== 0 ||
+            saved.retry_after_s !== 600) {
+            return `record=${JSON.stringify(saved)}`;
+          }
+          return sameLane(ctx, 'pi', 'fake/quota');
+        },
+      },
+      {
+        // A pending due_at refuses the re-entry with the seconds left, the record's class and
+        // Phase 25's stopped=rungs, and spawns nothing (SPEC R1 idempotency).
+        name: 'hard-tier-early-reentry',
+        setup: (c) => {
+          writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0, {
+            due_at: Date.now() + 5 * 60 * 1000,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { ...HARD_TIER_RETRY } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          const spawned = ctx.calls.filter((l) => l !== 'pi rpc');
+          if (spawned.length) return `spawned: ${spawned.join('|')}`;
+          const tail = statusTail(r.stderr || '');
+          const left = tail ? Number(tail.retry_after_s) : NaN;
+          if (!(left >= 290 && left <= 300)) return `retry_after_s=${tail && tail.retry_after_s}`;
+          if (tail.cycle !== '0') return `cycle=${tail.cycle}`;
+          const report = (r.stderr || '').split('\n')
+            .find((l) => l.startsWith('cross-ai: report '));
+          if (!report || !report.includes('status=transient') || !report.includes('stopped=rungs')) {
+            return `report=${report}`;
+          }
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // An unwritable state file never leaves a hint the runner cannot track: a spent
+        // transient ladder is a bare 75 with the notice, no state line, no retry_after_s.
+        name: 'hard-tier-transient-unwritable',
+        setup: (c) => {
+          const blocker = path.join(c.home, 'state-is-a-file');
+          fs.writeFileSync(blocker, 'x');
+          c.env.XDG_STATE_HOME = blocker;
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 1, session_resets: 0, hard_waits_s: [600, 900, 1800] } },
+        exit: 75,
+        status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 (?!.*retry_after_s=).* action=stop$/,
+        check: (r) => {
+          const err = r.stderr || '';
+          if (!err.includes('cycle state unwritable')) return 'missing unwritable note';
+          if (err.includes('cross-ai: state ')) return 'state line without a written file';
+          return null;
+        },
       },
       {
         // Off a router lane a quota stops after one call and writes no state.
@@ -5068,10 +5575,14 @@ async function blackBoxSelfTest() {
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/overloaded ' +
           'exit=75 cli_rc=1 .* tree=clean action=stop$'),
-        check: (_r, ctx) => {
+        check: (r, ctx) => {
           if (ctx.elapsedMs >= 5000) return `elapsed ${ctx.elapsedMs}ms`;
           const n = ctx.calls.filter((l) => l === 'pi overloaded').length;
-          return n === 1 ? null : `calls=${n}`;
+          if (n !== 1) return `calls=${n}`;
+          // 25.1-03: a deadline-cut transient series carries the caller's hint, not a bare 75.
+          const tail = statusTail(r.stderr || '');
+          return tail && tail.retry_after_s === '0' && tail.cycle === '0'
+            ? null : `tail=${JSON.stringify(tail)}`;
         },
       },
       {
@@ -5107,7 +5618,7 @@ async function blackBoxSelfTest() {
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
           'exit=75 .* tree=clean action=stop$'),
-        check: (_r, ctx) => {
+        check: (r, ctx) => {
           const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
           if (runs.length !== 12) return `calls=${runs.length}`;
           if (runs.some((l) => l !== 'pi event400')) return `model changed: ${runs.join('|')}`;
@@ -5121,7 +5632,10 @@ async function blackBoxSelfTest() {
           if (kinds[0] !== 'prompt' || kinds[6] !== 'resume-plus') return `inputs ${kinds.join(',')}`;
           if (kinds.slice(1, 6).some((k) => k !== 'resume')) return `series 1 ${kinds.join(',')}`;
           if (kinds.slice(7).some((k) => k !== 'resume-plus')) return `series 2 ${kinds.join(',')}`;
-          return null;
+          // 25.1-03: the spent transient series hands the caller its (zeroed) hard wait.
+          const tail = statusTail(r.stderr || '');
+          return tail && tail.retry_after_s === '0' && tail.cycle === '0'
+            ? null : `tail=${JSON.stringify(tail)}`;
         },
       },
       {
@@ -5519,6 +6033,30 @@ async function blackBoxSelfTest() {
         pure: () => {
           if (clampCapS(99999) !== 14400) return `capS=${clampCapS(99999)}`;
           return clampCapS(-5) === 0 ? null : `capS=${clampCapS(-5)}`;
+        },
+      },
+      {
+        // The caller's hard tier, pure: one wait per cycle from the list, the list's end and a
+        // wait past the cap left both stop, and the boundary sits on the wait itself.
+        name: 'pure-hard-wait',
+        pure: () => {
+          const waits = [600, 900, 1800];
+          const seq = [0, 1, 2].map((c) => hardWaitFor(c, waits, 14400));
+          const want = [
+            { retryAfterS: 600, cycle: 0 }, { retryAfterS: 900, cycle: 1 },
+            { retryAfterS: 1800, cycle: 2 },
+          ];
+          if (JSON.stringify(seq) !== JSON.stringify(want)) return `waits=${JSON.stringify(seq)}`;
+          const onBoundary = hardWaitFor(1, waits, 900);
+          if (onBoundary.retryAfterS !== 900 || onBoundary.cycle !== 1) {
+            return `boundary=${JSON.stringify(onBoundary)}`;
+          }
+          const capped = hardWaitFor(1, waits, 899);
+          if (!capped || capped.stop !== 'cap') return `capped=${JSON.stringify(capped)}`;
+          const spent = hardWaitFor(3, waits, 14400);
+          if (!spent || spent.stop !== 'hard-waits') return `spent=${JSON.stringify(spent)}`;
+          const short = hardWaitFor(1, [60], 1e9);
+          return short && short.stop === 'hard-waits' ? null : `short=${JSON.stringify(short)}`;
         },
       },
       {
@@ -6543,6 +7081,20 @@ async function blackBoxSelfTest() {
       ...[
         { mode: 'crash', exit: 1, status: 'crash', tree: 'clean' },
         { mode: 'quota', exit: 75, status: 'quota', tree: 'clean' },
+        {
+          // The transient hard tier never switches either: a spent series exits 75 on pi only.
+          mode: 'transient', model: 'event400', exit: 75, status: 'transient', tree: 'clean',
+          config: { retry: { max_retries: 1, session_resets: 0 } },
+        },
+        {
+          // A spent hard tier (record at cycle 2) stops on the same lane, still one CLI only.
+          mode: 'hard-waits', model: 'event400', exit: 69, status: 'transient', tree: 'clean',
+          config: { retry: { max_retries: 0, session_resets: 0 } },
+          setup: (c) => {
+            writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 2);
+            return null;
+          },
+        },
         { mode: 'billing', exit: 69, status: 'billing', tree: 'clean' },
         { mode: 'auth', exit: 69, status: 'auth', tree: 'clean' },
         { mode: 'perm', exit: 69, status: 'permission_blocked', tree: 'clean' },
@@ -6555,13 +7107,15 @@ async function blackBoxSelfTest() {
         { mode: 'missing', exit: 69, status: 'bad_model', tree: 'clean' },
       ].map((row) => ({
         name: `no-second-cli-${row.mode}`,
+        ...(row.setup ? { setup: row.setup } : {}),
         args: [
-          '--prefer', 'pi,cursor,opencode', '--model-pi', `fake/${row.mode}`,
+          '--prefer', 'pi,cursor,opencode', '--model-pi', `fake/${row.model || row.mode}`,
           '--model-cursor', 'fake-ok-cursor', '--model-opencode', 'fake/ok',
           ...(row.extra || []),
         ],
+        ...(row.config ? { config: row.config } : {}),
         exit: row.exit,
-        status: new RegExp(`^AIKIT-XAI status=${row.status} cli=pi model=fake/${row.mode} ` +
+        status: new RegExp(`^AIKIT-XAI status=${row.status} cli=pi model=fake/${row.model || row.mode} ` +
           `exit=${row.exit} .* tree=${row.tree} action=stop$`),
         check: (_r, ctx) => {
           const other = ctx.calls.find((l) => (
@@ -6962,6 +7516,7 @@ async function main(argv) {
     attempts: r.attempts || 0, cycles: r.cycles || 0,
     retryAfterS: r.retryAfterS, cycle: r.cycle, reportDone: r.reportDone,
     firstFailureMs: r.firstFailureMs, lastFailureMs: r.lastFailureMs,
+    dueAtMs: r.dueAtMs,
   };
   const why = r.stopped || (r.timedOut ? 'timeout' : 'class');
   // The snapshot reads against the finalize window, not the call deadline: an attempt may
