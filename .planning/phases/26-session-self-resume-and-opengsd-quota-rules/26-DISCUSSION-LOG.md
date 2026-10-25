@@ -94,3 +94,63 @@ Open questions and the spike list are in CONTEXT `<specifics>` and `<deferred>`.
 # Update 2026-10-14 (uz answer)
 
 - D-21 default: copy the original session's permission flags (refined in CONTEXT).
+
+# Update 2026-10-24 (assumptions mode)
+
+**Input:** `26-SPEC.md` with the 2026-10-24 R4/R7 amendments (committed in `f1cb7c4`), Phase 25.1's
+SPEC and CONTEXT (`a73bcd3`, `52476a1`), and the 2026-10-14 CONTEXT (D-01..D-27 kept; refined
+bullets only).
+
+## Assumptions Presented
+
+The analyzer was `gsd-assumptions-analyzer` (opus), 39 tool calls, in the background beside the
+25.1 analyzer. It read `man systemd.timer` (systemd 259), ran `systemd-analyze calendar` on sample
+reset times, checked `notify-send` 0.8.8 and the user manager's environment (names only), and read
+strings from the installed Claude Code 2.1.310 binary (reverse-engineered). It armed no unit and
+ran no AI CLI.
+
+| Assumption | Confidence | Evidence |
+|---|---|---|
+| Reset wake as a second `OnCalendar=` on the persistent timer | Likely | `man systemd.timer`; transient units die at reboot (`man systemd.unit`) |
+| Pre-reset fires not counted; 7-day bound | Likely | 25.1-EVIDENCE Claude `seven_day`; `tools/claude_segments.py:83-142` |
+| `arm --reset-at/--reset-text` plus a Claude `StopFailure` hook row | Unclear | 2.1.310 binary strings; `tools/setup.py:1732-1800` |
+| Journal plus best-effort `notify-send` from `fire` | Likely | live `notify-send`, linger on |
+| Phase 26 notifies only its own give-up | Likely | 25.1-SPEC R3; D-25 |
+| R19 signals from the pointer, with a sync test | Likely | 25-09-PLAN pointer draft; `rules.py` literal matching |
+| `verbatim` flag through remediation and Step C | Likely | agents SKILL.md Step C; `remediation.py` |
+| Executors call only the wake CLI | Likely | 25-09 text test |
+| Resume prompt continues hard-tier waits | Likely | 25.1-SPEC R3 |
+| 25 D-24 parser fixture superseded | Confident | 25.1-SPEC Boundaries; no parser in `cross-ai.mjs` |
+
+## jev screening
+
+One local call per item; `needs_fallback` items go to the first consented remote (TypeSafe).
+Summaries only.
+
+| Item | Laya | TypeSafe | Outcome |
+|---|---|---|---|
+| B1 reset timer | extra_calendar_entry 0.43 (fb) | extra_calendar_entry 0.86 | D-28 |
+| B2 cap counting | count_all 0.57 (fb) | skip_before_reset_bounded 0.74 (fb) | **Own reasoning:** counting all disarms before a weekly reset; the 7-day bound keeps "never forever" (D-29, ledger) |
+| B3 reset capture | agent_only 0.50 (fb) | option_plus_host_hook 0.98 | D-30 |
+| B4 notice channel | host_push 0.47 (fb) | journal_plus_best_effort_desktop 0.98 | D-31 |
+| B5 notice ownership | both 0.87 | own_giveup_only 0.99 (second opinion) | **Laya overridden**: D-32 |
+| B6 R19 signals | from_pointer_with_sync_test 0.72 | – | D-33 |
+| B7 verbatim flag | verbatim_flag 0.45 (fb) | verbatim_flag 0.99 | D-34 |
+| B8 executor text | call_tool_only 0.79 | – | D-35 |
+| B9 resume prompt | prompt_says_continue 0.48 (fb) | prompt_says_continue 0.91 | D-36 |
+
+## Live facts that changed the plan
+
+- systemd 259 accepts repeated `OnCalendar=` entries and catches up persistent timers; transient
+  timers do not survive a reboot (D-28).
+- Claude Code 2.1.310's binary names a `StopFailure` hook with a `rate_limit` matcher
+  (reverse-engineered, unverified) (D-30).
+- The draft instruction-file pointer (25-09) contains none of R19's "10-minute"/"4-hour"/"route-aware"
+  signals (D-33).
+
+## Corrections Made
+
+- 26-SPEC R4's 2026-10-24 amendment narrowed: the hard-tier notice is the 25.1 caller's (D-32);
+  ROADMAP Phase 26 SC 5 and QTA-04 amended to match; 25-CONTEXT D-24 marked superseded (D-37).
+- 26-SPEC Edge Coverage: the floor was recomputed (46 rows); three R4 rows for the amendment and
+  the six R9 rows missing since 2026-10-14 were added; the check passes.

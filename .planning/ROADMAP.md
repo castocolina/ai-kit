@@ -79,6 +79,7 @@ runtime hosting the session. Source spec:
 - [ ] **Phase 23: Host-split status line for Claude Code and Cursor CLI** - Split `tools/status-line.py` per host and ship a Cursor CLI status line with the shared 5/10/15 proximity gauge (promoted from backlog 999.4; independent of Phases 17–22)
 - [ ] **Phase 24: Spec-and-discuss chain skill** - Installable skill that runs spec → discuss over a phase range with optional Laya/TypeSafe decisions, quality over simplicity unless MVP mode
 - [ ] **Phase 25: Quota-aware cross-AI subprocess supervision** - Route-aware quota classification and a 10-minute / 4-hour wait-and-resume for cross-AI children (from todo 2026-10-14)
+- [ ] **Phase 25.1: Configurable cross-AI retry ladder and upstream error propagation** *(INSERTED)* - Soft backoff, session reset and caller-owned hard waits, configurable; upstream errors passed through verbatim; an evidence-based error catalog (owner request 2026-10-24)
 - [ ] **Phase 26: Session self-resume and OpenGSD quota rules** - The orchestrating session wakes itself after its own quota stalls; `ai-kit-project-rules-agents` emits both quota directives for OpenGSD projects (spike first)
 - [ ] **Phase 27: One-shot goal and loop prompt skill** - A skill that picks `/goal`, schedule/loop or `/gsd-autonomous` for a set of phases or plans and emits a ready-to-paste prompt whose definition of done requires green e2e tests
 
@@ -844,6 +845,56 @@ before the runner is planned.
 - [ ] 25-10-PLAN.md
 - [ ] 25-11-PLAN.md
 
+### Phase 25.1: Configurable cross-AI retry ladder and upstream error propagation (INSERTED)
+
+**Goal:** Every cross-AI run's failure ladder is configurable per project and per user (a soft
+exponential backoff, a session reset, a second soft series, then hard waits owned by the caller),
+the runner passes the upstream error through verbatim instead of interpreting reset times, and
+the error catalog is a data file built from captured evidence across routes and providers.
+Source: owner request 2026-10-24 (after the Phase 25 plan reviews); evidence in
+`25.1-EVIDENCE.md`.
+**Requirements**: QTA-07, QTA-08, QTA-09, QTA-10, QTA-11, QTA-12, QTA-13, QTA-14 *(QTA-12..14 added 2026-10-24, owner)*
+**Depends on:** Phase 25 (the ladder, state file and status tokens it builds)
+**Success Criteria** (what must be TRUE):
+
+  1. Inside one call the runner retries the same session with a soft exponential backoff (defaults:
+     base 1 s, factor 1.5, at most 5 retries: 1, 1.5, 2.25, 3.4, 5.1 s, with small jitter), then
+     resets the session once, runs a second soft series, then exits with the evidence report and a
+     retry hint. It never sleeps a hard wait. The values come from the project's
+     `.planning/config.json` (`workflow.cross_ai_retry`), then the user's ai-kit config, then the
+     rendered defaults; out-of-range values are refused with a clear message.
+  2. The hard tier belongs to the caller (the review/execute skills or the orchestrating agent):
+     one-shot re-invokes of the same lane after 10, 15 and 30 minutes (`hard_waits_s`, configurable),
+     then a user notification with the evidence and a stop. The 4-hour cap stays absolute. Nothing
+     switches harness, provider or model (owner rule, reconfirmed 2026-10-24).
+  3. The report carries the upstream error verbatim (redacted: no keys, tokens or account ids) and
+     copies any structured fields the upstream sent (`retry_after`, `reset_at`,
+     `retry_after_seconds`, `resetsAt`) as-is, labelled as upstream data. The runner does not parse
+     free-text reset times; the waiting harness or agent infers, and flags the inference.
+  4. The runner takes one runtime (`--runtime <id>`; `--prefer` stays as an alias that reads only
+     its first entry). Changing the runtime is a config edit by the agent, never an in-runner switch.
+  5. The error catalog is a data file (pattern, route, provider, class, verified/unverified,
+     source), seeded from `25.1-EVIDENCE.md`. OmniRoute's own reason codes (`ALL_TARGETS_SKIPPED`,
+     `all_targets_cooling_down`, a model cooldown or "unavailable" pause, `circuit_open`,
+     `model_not_in_catalog`) are rows of their own, apart from the provider bodies OmniRoute passes
+     through; a status code alone never decides a class (a 403 can be a 5-hour usage limit, a router
+     402 can reset in 2 minutes).
+  6. *(Added 2026-10-24, owner.)* A high-level `ai-kit-cross-ai` skill is the canonical guide to
+     calling the runner across hosts (choose, launch, wait, read the status, chain review or
+     execution, notify, never switch) with the field pitfalls; the review, execute, curated-config
+     and spec-config skills point to it instead of repeating it.
+  7. *(Added 2026-10-24, owner.)* The script owns model and tool forms: one `--model` for the
+     selected runtime, validated against that runtime's grammar (cursor bracket parameters, pi
+     thinking suffix), and named per-CLI tool profiles (`exec`, `review`, `none`) selected per
+     call, with pi's strict read-only and no-tools sets, and no raw argument passthrough.
+  8. *(Added 2026-10-24, owner.)* The GitHub Copilot CLI is a runtime (`copilot -p … -s
+     --no-ask-user --model …`, prompt on argv with stdin not inherited, token passed through and
+     never logged), every row unverified until a real capture.
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 25.1 to break down)
+
 ### Phase 26: Session self-resume and OpenGSD quota rules
 
 **Goal**: An orchestrating session that runs out of its own quota resumes by itself, through a
@@ -853,6 +904,7 @@ AGENTS.md. Source: the same todo (part 1, mechanism A and the rules-skill rule).
 whether `claude -p --continue` *(amended 2026-10-14, 26-SPEC R3: `--resume <session-id>`, never "most recent")* (or each host's equivalent) started from an OS timer re-enters the
 right session; codex, pi and opencode facts are third-party only so far.
 **Requirements**: QTA-04, QTA-05, QTA-06 *(QTA-06 added 2026-10-14)*
+*(amended 2026-10-24, 25.1: the wake time and the user notice follow the 25.1 hard tier — see SC 5)*
 **Success Criteria** (what must be TRUE):
 
   1. Per host, the skill detects which wake primitives outlive the session (an OS timer or a cloud
@@ -860,6 +912,12 @@ right session; codex, pi and opencode facts are third-party only so far.
      survival. Unverified host behavior is flagged.
   2. The main agent sets an hourly wake that re-enters the same session; the session-resume
      mechanism and the subprocess mechanism (Phase 25) stay separate, each with its own trigger.
+  5. *(Added 2026-10-24, 25.1.)* When the stalled session's host reports a reset time (in its
+     own words or a structured field the agent reads), the wake is set at that time plus 60 s and the
+     inference is flagged; without one, the hourly wake stands. When the subprocess hard tier
+     (25.1 SC 2) or the 4-hour cap is exhausted, the user gets a notification with the evidence,
+     and nothing switches harness, provider or model *(amended 2026-10-24, 26 D-32: that notice is
+     the 25.1 caller's; the session wake notifies only when it gives up itself)*.
   3. `ai-kit-project-rules-agents` gains a rule *(amended 2026-10-14: two rules, R18 and R19)*, active only for OpenGSD projects, that checks
      and remediates both directives as separate items.
   4. *(Added 2026-10-14, QTA-06.)* The same checker gains a language-agnostic rule for every

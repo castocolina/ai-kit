@@ -1,6 +1,6 @@
 # Phase 26: Session self-resume and OpenGSD quota rules - Context
 
-**Gathered:** 2026-10-14 (assumptions mode, `--analyze --all --batch`, jev screening, best over easy)
+**Gathered:** 2026-10-14 (assumptions mode, `--analyze --all --batch`, jev screening, best over easy); updated 2026-10-24 (assumptions mode, after the 26-SPEC R4/R7 amendments and Phase 25.1)
 **Status:** Ready for the spike (SPEC R2), then planning
 
 <domain>
@@ -65,6 +65,7 @@ must confirm.
   - `permission_mode` (D-21), `backend`;
   - `created`, the exact list of paths `arm` wrote;
   - `refs`, read-only pointers to the executor's or Phase 25's state.
+  - **Refined 2026-10-24:** D-29 adds `not_before`, `wake_source` and `reset_evidence`.
 
   It never holds environment values. `disarm` removes exactly `created`.
   - **Laya overridden** (derive 0.89): deriving the list by naming convention can miss the
@@ -96,6 +97,7 @@ must confirm.
   5. Take a non-blocking `fcntl.flock`; if it is held, exit.
   6. Run one resume as a child, holding the lock.
   7. Check the done marker again.
+  - **Refined 2026-10-24:** step 3 counts a fire only at or after `not_before` (D-29).
 
   The unit is `Type=oneshot`, so it has no start timeout.
 - **D-11: Every wake counts toward the cap, including log-only wakes.** SPEC R5 and its MUST NOT
@@ -103,6 +105,7 @@ must confirm.
   stays open.
   - **Own reasoning** (Laya count_all 0.53 (fb), TypeSafe count_resumes 0.79): TypeSafe's
     choice contradicts the locked MUST NOT. Ledger.
+  - **Refined 2026-10-24:** fires before a host-reported reset are logged but not counted; a reset more than 7 days away is refused, so the wake still never runs forever (D-29).
 
 ### The OS timer
 - **D-12: The units are `ai-kit-session-wake-<host>-<id>.timer` and `.service`, in
@@ -113,6 +116,7 @@ must confirm.
   - Tests get a scratch unit directory through `XDG_CONFIG_HOME`.
   - The session id is checked against a safe character set before it enters a unit name.
   - Analyzer: Confident.
+  - **Refined 2026-10-24:** a host-reported reset adds a second absolute `OnCalendar=` (reset + 60 s, UTC) to the same persistent timer, written by re-running `arm` (D-28).
 - **D-13: `arm` runs `daemon-reload` and `enable --now`; `disarm` cleans up fully.**
   - `disarm` runs `disable --now`, then `clean --what=state` (the persistent stamp), deletes the
     files, and runs `daemon-reload`.
@@ -132,6 +136,7 @@ must confirm.
 
 ### Resume command, companion, permission mode
 - **D-15: The resume argv comes from one per-host table, every row unverified until the spike.**
+  - **Refined 2026-10-24:** the spike records the installed Claude Code version (2.1.310 on 2026-10-24); Phase 26 owns its own reset-text parser (D-37).
 
   | Host | Resume argv |
   |---|---|
@@ -149,6 +154,7 @@ must confirm.
   - read the wake state and the state files it lists, including Phase 25's pending waits;
   - continue only unfinished work;
   - run `ai-kit-session-wake done` when nothing remains.
+  - **Refined 2026-10-24:** the fixed prompt also says to continue pending cross-AI hard-tier waits from their own state, never restarting at cycle 0 and never switching harness, provider or model (D-36).
 
   The resumed agent re-runs `arm`, which refreshes the pid (the R3 idempotency row).
 - **D-20: `arm` reports the host's in-session companion and the orchestrator creates it.** On
@@ -158,6 +164,7 @@ must confirm.
   - **Own reasoning** (Laya arm_reports_companion 0.40 (fb), TypeSafe document_gap 0.92):
     documenting the gap leaves a live, stalled session idle for 24 hours, and the design rule
     says best over easy. Ledger.
+  - **Refined 2026-10-24:** the companion text (one-shot at reset + 60 s when known) lives in the session-wake SKILL.md and `arm`'s output, not in the executors (D-35).
 - **D-21: The permission mode is explicit at `arm`, recorded, and printed.** The resume never
   silently replays a bypass mode. **Deferred to uz:** the default value. One option is to
   copy the original session's flags (this session was launched with permission checks
@@ -206,6 +213,7 @@ must confirm.
     SKILL.md, `README.md:38` and `ai-kit-project-rules-makefile/SKILL.md:17`.
   - **Laya overridden** (flat 0.88): a flat list counts half the clauses as present. TypeSafe
     second opinion groups 0.94.
+  - **Refined 2026-10-24:** R19's signals come from the policy reference's instruction-file pointer and its summary is that pointer verbatim; the "10-minute" and "4-hour" groups go (D-33, D-34).
 
 - **D-27: R20, the parallel-test CPU-share rule (QTA-06, added 2026-10-14 by uz).** It is a
   `workflow` rule appended after R19 and is NOT gated on `opengsd`: its condition is "a stack is
@@ -226,6 +234,7 @@ must confirm.
   - SPEC R8 amended.
   - **Laya overridden** (always 0.79): it contradicts the locked edge "a single-plan run arms
     nothing". TypeSafe second opinion per_framework_units 0.87.
+  - **Refined 2026-10-24:** the executors call only `ai-kit-session-wake arm` and `done`; no hourly, recurring or scheduler wording (D-35).
 - **D-24: `arm` refuses inside a subagent or a cross-AI child**, detected through environment
   markers: `CLAUDE_CODE_CHILD_SESSION`, plus a runner marker that Phase 25/18 sets on children.
   **The spike confirms** the marker is unset in the main agent.
@@ -235,6 +244,7 @@ must confirm.
   - the session-wake package never imports `write_resumable_state` or references Phase 25's
     wait paths;
   - Phase 25's code never imports the session-wake package.
+  - **Refined 2026-10-24:** Phase 26 notifies only about its own give-up; the 25.1 hard-tier and cap notice is the caller's (D-32).
 
   Laya ast_rule 0.74.
 
@@ -249,6 +259,67 @@ must confirm.
   - No test touches real systemd.
   - New modules go into the `test-unit` and `lint` lists in the Makefile.
 
+### Added 2026-10-24 (assumptions mode, after the 26-SPEC 2026-10-24 amendments)
+- **D-28: A host-reported reset becomes a second `OnCalendar=` entry on the same persistent timer**
+  (absolute UTC time, reset + 60 s), beside `OnCalendar=hourly`; re-running `arm` with the reset
+  rewrites the unit, and `fire` never rewrites units. Live (systemd 259, `man systemd.timer`):
+  `OnCalendar=` may repeat, the timer fires when any entry elapses, `Persistent=true` catches up
+  after downtime, and `AccuracySec=` (1 min default) stays inside the 60 s margin; transient
+  `systemd-run` timers live under the runtime dir and die at reboot.
+  - TypeSafe extra_calendar_entry 0.86 (Laya extra_calendar_entry 0.43 (fb)).
+- **D-29: The state gains `not_before`, `wake_source` (`hourly` | `reset_inferred`) and
+  `reset_evidence`** (the host text or field verbatim, redacted, capped at 2000 characters as in
+  25.1 R4). `arm` and `status` print "inferred". A fire before `not_before` is logged, not
+  counted; every fire at or after it counts toward 24. A reset in the past, malformed, or more
+  than 7 days away is refused with the reason printed, and the hourly wake stands.
+  - **Own reasoning** (Laya count_all 0.57 (fb), TypeSafe skip_before_reset_bounded 0.74 (fb)):
+    counting every fire disarms before any weekly reset (Claude Code's `seven_day` limit); the
+    7-day bound keeps SPEC R5's "never runs forever". Ledger.
+- **D-30: The reset reaches the wake through `arm --reset-at <epoch|ISO>` or
+  `arm --reset-text <text>`** (D-02 stays at six subcommands; text is parsed with `zoneinfo` and
+  flagged inferred). On Claude Code, a `StopFailure` hook row (matcher `rate_limit`) in
+  `tools/setup.py`'s `HOOK_REGISTRY` calls `arm --reset-text` at the stall, because the agent may
+  get no turn after its own limit. The hook's existence and input fields (`error`,
+  `error_details`, `last_assistant_message`) come from binary strings of 2.1.310 only:
+  reverse-engineered, unverified, a spike item.
+  - TypeSafe option_plus_host_hook 0.98 (Laya agent_only 0.50 (fb)).
+- **D-31: The wake's own notice is sent by `fire`:** always a journal line (the oneshot unit's
+  stdout), plus `notify-send` when it is on PATH and the user manager has a session bus
+  (best-effort, flagged unverified with no login session); without systemd, stdout only. It fires
+  when the 24-wake cap disarms, names the state path and the last resume's exit, and never fails
+  `fire`. Live: `notify-send` 0.8.8 is installed; the user manager has the desktop session
+  variables (names only checked) and linger is on.
+  - TypeSafe journal_plus_best_effort_desktop 0.98 (Laya host_push 0.47 (fb)).
+- **D-32: Phase 26 notifies only about its own give-up.** The 25.1 hard-tier and cap notice is
+  the caller's (25.1 R3, D-09); the 26-SPEC R4 amendment is read that way (amended in the same
+  commit), keeping SPEC R7/R8's two mechanisms and D-25's isolation.
+  - **Laya overridden** (both 0.87): two components would notify on the same event and the wake
+    package would read Phase 25 state. TypeSafe second opinion own_giveup_only 0.99.
+- **D-33: R19's signal groups come from the policy reference's `## Pointer for instruction
+  files` block** (e.g. `cross-ai.mjs`, the never-switch clause, the `AIKIT-XAI` / `cross-ai: report`
+  evidence lines), and its summary is that pointer verbatim. A repo-only test asserts the R19
+  summary equals the reference's pointer and that the pointer satisfies every R19 group. The
+  exact phrases wait on 25.1 R7's final pointer.
+  - Laya from_pointer_with_sync_test 0.72.
+- **D-34: R19 (and R18 when it is a fixed block) carries `verbatim: true`;** `build_remediation`
+  passes it on and the agents SKILL.md Step C inserts verbatim entries unchanged (it paraphrases
+  everything today). R18's summary becomes "arms the session wake at the host-reported reset +
+  60 s when known (inferred), else hourly".
+  - TypeSafe verbatim_flag 0.99 (Laya verbatim_flag 0.45 (fb)).
+- **D-35: The executors call only the wake CLI** (`arm`, `done`), so 25-09's text test (no
+  `hourly`/`every hour`/`recurring`, no unqualified `CronCreate`) stays green; the companion text
+  lives in the session-wake skill.
+  - Laya call_tool_only 0.79.
+- **D-36: The fixed resume prompt names hard-tier continuation:** continue any pending cross-AI
+  wait from its own state file (`cycle`, `due_at`), never restart at cycle 0, never switch
+  harness, provider or model. The wake code still passes only the `refs` it was given (D-07) and
+  never reads Phase 25/25.1 paths (D-25).
+  - TypeSafe prompt_says_continue 0.91 (Laya prompt_says_continue 0.48 (fb)).
+- **D-37: Phase 25 D-24's shared Node/Python reset-parser fixture is superseded by 25.1** (no
+  runner-side parsing); Phase 26 owns its parser and fixtures, labelled inferred (amended in
+  25-CONTEXT).
+  - Confident (25.1-SPEC Boundaries; no parser in `cross-ai.mjs`).
+
 ### Claude's Discretion
 - Log line format, the `status` output layout, the exact R18 phrase list beyond the three
   named.
@@ -258,6 +329,9 @@ must confirm.
 ## Canonical References
 
 - `.planning/phases/26-session-self-resume-and-opengsd-quota-rules/26-SPEC.md` — locked WHAT
+- `.planning/phases/25.1-configurable-cross-ai-retry-ladder-and-upstream-error-propag/25.1-SPEC.md` and `25.1-CONTEXT.md` — hard tier, notice, stop record, pointer (R3, R7; D-08, D-09)
+- `.planning/phases/25-quota-aware-cross-ai-subprocess-supervision/25-09-PLAN.md` — the policy reference, its pointer block and the executor text test
+- `tools/setup.py` `HOOK_REGISTRY` (1732-1800) — where the `StopFailure` row goes (D-30)
 - `.planning/phases/25-quota-aware-cross-ai-subprocess-supervision/25-CONTEXT.md` — D-16 (in-session one-shot chain), D-23 (policy reference R19 quotes), D-24 (coupling)
 - `skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/rules.py` — R01–R17 shapes (R04 groups)
 - `skills/_shared/ai_kit_rules_common/{classification,tool_presence,remediation,stack_cache}.py`
@@ -294,6 +368,15 @@ The spike must measure:
 10. whether a fresh enable fires immediately, and whether a running oneshot can safely remove
     its own unit;
 11. the CLI version for every finding.
+12. *(added 2026-10-24)* whether Claude Code's main agent gets any turn after its own usage limit,
+    and whether `StopFailure` (matcher `rate_limit`) fires with the "resets ..." text or a
+    structured reset field in `error_details` / `last_assistant_message`;
+13. *(added 2026-10-24)* the grammar of Claude Code's reset text (is the date ever omitted, as in
+    "resets 9:30pm (America/Santiago)"? day rollover);
+14. *(added 2026-10-24)* whether `notify-send` from a lingering user service works after a reboot
+    with no graphical login, and whether a failed send blocks or exits non-zero;
+15. *(added 2026-10-24)* whether codex, pi and opencode expose their own reset time or a
+    notification primitive at a self-limit stall.
 </specifics>
 
 <deferred>

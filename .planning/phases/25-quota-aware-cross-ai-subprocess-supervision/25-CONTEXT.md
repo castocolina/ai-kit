@@ -185,6 +185,8 @@ built (D-20). Code that 18.1 R7 deletes is never patched.
   - the claude `resets <time> (<zone>)` parser may be needed from Python by Phase 26. The
     reset-parsing grammar is therefore a fixture file both can test against; the Node parser
     stays canonical.
+    *(amended 2026-10-24, 26 D-37: superseded — Phase 25.1 removes runner-side reset parsing, so
+    Phase 26 owns its own parser and fixtures)*
 
 ### Claude's Discretion
 - Grace period length, the probe prompt text, the exact JSON schema field names, the fixture file

@@ -102,6 +102,13 @@ subprocess quota (Phase 25).
      A lock prevents two resumes at once.
    - Acceptance: tests for an alive process (log only), a gone process (one resume), and two
      overlapping wakes (one resume).
+   - *Amended 2026-10-24 (25.1, owner):* when the stalled host reports a reset time (its own text
+     or a structured field such as Claude Code's `resetsAt`, read by the agent; the runner does not
+     parse reset times), the next wake is set at that time plus 60 s and marked inferred; without
+     one, the hourly wake stands. When the 25.1 hard tier (10/15/30 minutes) or the 4-hour cap is
+     exhausted, the user gets a notification with the evidence; nothing switches harness,
+     provider or model. *(Amended 2026-10-24, 26 D-32: that notice is the 25.1 caller's; Phase
+     26 notifies only when its own wake gives up, D-31.)*
 
 5. **Disarm** (QTA-04).
    - Current: none.
@@ -131,7 +138,7 @@ subprocess quota (Phase 25).
    - Target: `ai-kit-project-rules-agents` gains two rules under a new `opengsd` condition:
      - session resume: the main agent arms the hourly session wake per R3–R6;
      - subprocess quota: cross-AI child limits follow Phase 25's policy (10-minute re-checks,
-       a 4-hour cap, the route-aware classes, resuming only unfinished work).
+       a 4-hour cap, the route-aware classes, resuming only unfinished work). *(amended 2026-10-24, 25 owner decision and 25.1: the policy is the runner's ladder — soft backoff, one session reset, a second soft series, caller-owned hard waits of 10/15/30 minutes under the 4-hour cap, a user notice, never a harness/provider/model switch; the detail lives in `cross-ai.mjs` and AGENTS.md carries only the 3-4 line pointer)*
 
      Each rule is checked and remediated on its own. The condition is true only when `.planning/`
      exists and `gsd-tools runtime-identity` proves `@opengsd/gsd-core`. When the identity
@@ -207,7 +214,7 @@ subprocess quota (Phase 25).
 
 ## Edge Coverage
 
-**Coverage:** 37/37 applicable edges resolved · 0 unresolved (floor recomputed 2026-10-14 after the R1/R3/R6/R7/R8 amendments)
+**Coverage:** 46/46 applicable edges resolved · 0 unresolved (floor recomputed 2026-10-24 after the R4/R7 amendments; the R9 rows, missing since R9 was added on 2026-10-14, were added)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -248,6 +255,15 @@ subprocess quota (Phase 25).
 | empty | R8 | ✅ covered | A single-plan run arms no session wake |
 | ordering | R8 | 🧪 backstop | Arm happens before the first dispatch; disarm after the final summary |
 | concurrency | R8 | 🧪 backstop | Only the orchestrator arms or disarms; subagents never do |
+| boundary | R4 | ✅ covered | A reset exactly 7 days away is accepted, one second later is refused; a reset at or before now is refused; a fire exactly at `not_before` counts (26 D-29) (added 2026-10-24) |
+| encoding | R4 | ✅ covered | Reset text is decoded as UTF-8 and parsed with its named IANA zone; the stored `reset_evidence` is capped at 2000 code points, never splitting a surrogate pair (26 D-29) (added 2026-10-24) |
+| precision | R4 | ✅ covered | The reset wake is written as an absolute UTC time with seconds; reset + 60 s absorbs the timer's 1-minute accuracy (26 D-28) (added 2026-10-24) |
+| adjacency | R9 | ✅ covered | Each detected stack keeps its own clause (R9 acceptance); two stacks whose clause text is identical write it once (added 2026-10-24) |
+| boundary | R9 | ✅ covered | A stated share of exactly 40% passes; 41% or a hardcoded count is flagged (added 2026-10-24) |
+| empty | R9 | ✅ covered | A repo with no detected stack makes the rule not applicable (R9 acceptance) (added 2026-10-24) |
+| encoding | R9 | 🧪 backstop | Clause matching is case-insensitive substring on the decoded AGENTS.md text, as for the other rules (added 2026-10-24) |
+| ordering | R9 | ✅ covered | Clauses for a multi-stack repo are written in `detect_stacks` order, stable across runs (added 2026-10-24) |
+| precision | R9 | ✅ covered | The computed worker count is floor(40% of available CPUs), at least 1 (16.1 D-06) (added 2026-10-24) |
 
 ## Prohibitions (must-NOT)
 

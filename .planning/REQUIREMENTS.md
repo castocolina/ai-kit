@@ -127,10 +127,18 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 - [ ] **QTA-01**: A per-CLI table of quota, limit and billing message patterns, built from observed child output and labelled verified/unverified, classifies a stop as wait-recoverable or not by route: billing or limit errors on a router-backed route (`infer_fallback_quota`) are wait-recoverable (fallback chains return to subscription tiers within minutes or hours); billing or access errors on a direct third-party provider route (OpenCode Zen, Cursor API models) are not *(amended 2026-10-24: the classification feeds the QTA-03 ladder — transient, quota/rate-limit, auth/billing, other — and never selects another candidate)*
 - [ ] **QTA-02**: Limits are detected live in the child's stdout/stderr and after the fact (timeout or partial exit), feeding the shared typed reason (16.1 D-13) and the runner's status line (18 D-27, 18.1 D-12)
 - [ ] **QTA-03**: *(amended 2026-10-24, owner decision; supersedes the 10-minute / 4-hour wait-and-resume)* A failed external run follows one ladder: a transient error (`[400]: event: error`, 5xx, cut stream, timeout) retries up to 3 times in the same session, then up to 3 times in a new session on the same lane; a quota or rate-limit error on a router lane retries the same lane up to 3 times, then switches session up to 3 times, then reports with evidence (status, lane/combo, model, times) and waits a cooldown (10 minutes by default, 4-hour cap) before the next cycle (owner adjustment, same day); an auth error (401/403) stops and reports. The runner never switches harness, provider or model on its own and has no automatic fallback to another CLI (the harness catalog is a menu used only when the owner names one); the policy runs in the runner and in `ai-kit-spec-review`/`ai-kit-spec-execute*` and is documented in the skill, README and runner tests
-- [ ] **QTA-04**: The orchestrating session sets an hourly self-wake that survives its own quota stall, chosen per host by survival (OS timer or cloud routine over in-session primitives), with unverified host behavior flagged *(amended 2026-10-14, 26 D-03: the wake resumes the exact session id; cloud routines cannot re-enter a local session, so the surviving primitive is an OS timer)*
+- [ ] **QTA-04**: The orchestrating session sets an hourly self-wake that survives its own quota stall, chosen per host by survival (OS timer or cloud routine over in-session primitives), with unverified host behavior flagged *(amended 2026-10-14, 26 D-03: the wake resumes the exact session id; cloud routines cannot re-enter a local session, so the surviving primitive is an OS timer)* *(amended 2026-10-24, 25.1: a host-reported reset time sets the wake at reset + 60 s, flagged as inferred; exhausting the 25.1 hard tier or the cap notifies the user — through the 25.1 caller, 26 D-32)*
 - [ ] **QTA-05**: `ai-kit-project-rules-agents` gains an OpenGSD-only rule that checks and remediates the session-resume and subprocess-quota directives as separate items *(amended 2026-10-14, 26-SPEC R7: two rules, R18 and R19)*
 
 - [ ] **QTA-06**: `ai-kit-project-rules-agents` gains a language-agnostic rule, active for every project with a detected stack, that checks and remediates an AGENTS.md rule: unit tests run in parallel with a worker count of at most 40% of the available CPUs, never a hardcoded core count, written in the detected stack's own form *(added 2026-10-14 by uz; 26 D-27)*
+- [ ] **QTA-07**: *(added 2026-10-24, owner)* The in-call ladder is a soft exponential backoff in the same session (defaults base 1 s, factor 1.5, at most 5 retries), one session reset, a second soft series, then an exit with the evidence report; values are configurable in the project's `.planning/config.json` (`workflow.cross_ai_retry`) over the user's ai-kit config over rendered defaults, and the runner never sleeps a hard wait
+- [ ] **QTA-08**: *(added 2026-10-24, owner)* The hard tier is the caller's: one-shot re-invokes of the same lane after 10, 15 and 30 minutes (configurable), then a user notification with evidence and a stop, under the absolute 4-hour cap; nothing switches harness, provider or model
+- [ ] **QTA-09**: *(added 2026-10-24, owner)* The runner passes the upstream error through verbatim (redacted) and copies structured upstream retry fields as-is; it does not parse free-text reset times, and any inference by the waiting harness or agent is flagged
+- [ ] **QTA-10**: *(added 2026-10-24, owner)* The quota/limit/error catalog is a data file (pattern, route, provider, class, verified/unverified, source) seeded from captured evidence, with router reason codes separate from passed-through provider bodies; a status code alone never decides a class
+- [ ] **QTA-11**: *(added 2026-10-24, owner)* The runner takes exactly one runtime (`--runtime`; `--prefer` reads only its first entry); changing it is an agent's config edit
+- [ ] **QTA-12**: *(added 2026-10-24, owner)* A high-level `ai-kit-cross-ai` skill is the canonical guide to calling the cross-AI runner across hosts (choose runtime and model, launch, wait, read the status, chain review or execution, hard tier and notice, never switch) with the field pitfalls; the other skills and the policy reference point to it
+- [ ] **QTA-13**: *(added 2026-10-24, owner)* The runner owns model and tool forms: `--model` for the selected runtime validated per runtime grammar, and named per-CLI `--tools-profile exec|review|none` (pi strict read-only and no-tools sets), with no raw argument passthrough
+- [ ] **QTA-14**: *(added 2026-10-24, owner)* The GitHub Copilot CLI is a runtime in the RUNTIMES table and the runner (prompt on argv with stdin not inherited, tool control flags, token passed through and never logged), unverified until a real capture
 
 ### Goal-Prompt Skill
 
@@ -224,16 +232,24 @@ None deferred beyond v1.3 at definition time.
 | QTA-04 | Phase 26 | Pending |
 | QTA-05 | Phase 26 | Pending |
 | QTA-06 | Phase 26 | Pending |
+| QTA-07 | Phase 25.1 | Pending |
+| QTA-08 | Phase 25.1 | Pending |
+| QTA-09 | Phase 25.1 | Pending |
+| QTA-10 | Phase 25.1 | Pending |
+| QTA-11 | Phase 25.1 | Pending |
+| QTA-12 | Phase 25.1 | Pending |
+| QTA-13 | Phase 25.1 | Pending |
+| QTA-14 | Phase 25.1 | Pending |
 | GPS-01 | Phase 27 | Pending |
 | GPS-02 | Phase 27 | Pending |
 | GPS-03 | Phase 27 | Pending |
 | GPS-04 | Phase 27 | Pending |
 
 **Coverage:**
-- v1.3 requirements: 71 total (SPEC 6, INV 3, REC 6, XAI 2, SKL 4, APP 5, EVAL 8, AGT 2, DEC 3, PCH 2, ADV 4, HARD 5, RTM 3, SDC 4, STL 5, QTA 5, GPS 4). SPEC-05 (pi
+- v1.3 requirements: 80 total *(updated 2026-10-24: QTA-06 had not been counted; QTA-07..QTA-14 added for Phase 25.1)* (SPEC 6, INV 3, REC 6, XAI 2, SKL 4, APP 5, EVAL 8, AGT 2, DEC 3, PCH 2, ADV 4, HARD 5, RTM 3, SDC 4, STL 5, QTA 14, GPS 4). SPEC-05 (pi
   enumeration) and SPEC-06 (cursor wrapper) were split out of SPEC-02 during the Phase 16
   discussion, 2026-09-23.
-- Mapped to phases: 71/71 (EVAL-04 and AGT-02 deferred to backlog)
+- Mapped to phases: 80/80 (EVAL-04 and AGT-02 deferred to backlog)
 - Unmapped: 0
 
 ---
