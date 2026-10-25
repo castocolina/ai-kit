@@ -601,7 +601,7 @@ class TestSpawnCleanup(_ChildTracker):
                 sys.exit(0)
             """)
             lines: list[str] = []
-            seams = RunnerSeams(print_fn=lines.append)
+            seams = RunnerSeams(print_fn=lines.append, route_fn=lambda *_a: None)
             started = time.monotonic()
             run_custom_command(
                 CustomSpec("k", [sys.executable, script, marker], [5]), "hi", seams
@@ -632,6 +632,7 @@ class TestSpawnCleanup(_ChildTracker):
                 time.sleep(60)
             """)
             seams = RunnerSeams(
+                route_fn=lambda *_a: None,
                 which_fn=lambda name: sys.executable if name == "node" else None,
                 runner_path_fn=lambda: runner,
             )
@@ -661,7 +662,8 @@ class TestSpawnCleanup(_ChildTracker):
                 if sig == 0:
                     raise ProcessLookupError
 
-            seams = RunnerSeams(kill_fn=kill_fn, sleep_fn=lambda _seconds: None)
+            seams = RunnerSeams(kill_fn=kill_fn, sleep_fn=lambda _seconds: None,
+                                 route_fn=lambda *_a: None)
             rd._kill_recorded_groups(pgid_file, seams)
             sent = [(pgid, sig) for pgid, sig in kills if sig != 0]
             self.assertEqual(sent, [(5151, signal.SIGTERM), (5151, signal.SIGKILL)])
@@ -681,7 +683,7 @@ class TestRunCustomCommand(_ChildTracker):
                 sys.exit(0)
             """)
             lines: list[str] = []
-            seams = RunnerSeams(print_fn=lines.append)
+            seams = RunnerSeams(print_fn=lines.append, route_fn=lambda *_a: None)
             result = run_custom_command(
                 CustomSpec("k", [sys.executable, script, marker], [1, 5]), "hi", seams
             )

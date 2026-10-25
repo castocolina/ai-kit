@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=7 sha256=d9c3c71bbe4dff1257a981dc1e1bc0314a9ca240bea7804fe57c3fc3d82e65eb
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=7 sha256=2a4d30328a554e5e1cd36b7871974bf16e8f0f0a3dac427df3bfcc2fba383e7b
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v7).
  *
@@ -162,7 +162,7 @@ const PATTERNS = [
     "id": "text-billing",
     "cli": "*",
     "input": "any",
-    "match": "\\bbilling\\b",
+    "match": "(?<![/.])\\bbilling\\b(?![/.]\\w)",
     "class": "billing",
     "routerClass": "quota",
     "terminal": true,
@@ -766,7 +766,7 @@ const PATTERNS = [
     "id": "code-401-403",
     "cli": "*",
     "input": "any",
-    "match": "\\b40[13]\\b",
+    "match": "(?<![:.\\d])\\b40[13]\\b(?!:\\d)",
     "class": "auth",
     "terminal": false,
     "label": "verified",
@@ -786,7 +786,7 @@ const PATTERNS = [
     "id": "code-5xx",
     "cli": "*",
     "input": "any",
-    "match": "\\b50[0234]\\b",
+    "match": "(?<![:.\\d])\\b50[0234]\\b(?!:\\d)",
     "class": "transient",
     "terminal": false,
     "label": "verified",
@@ -1119,7 +1119,7 @@ function makeLineRelay(hooks = {}) {
   const onPartial = hooks.onPartial || (() => {});
   const emit = (line) => {
     onLine(line);
-    log(redactSecrets(line));
+    if (!hooks.quiet) log(redactSecrets(line));
   };
   return {
     push(chunk) {
@@ -1283,6 +1283,23 @@ function ocError(error) {
 }
 
 const CLASSIFY_CASES = [
+  {
+    // A stack-trace line number is not an HTTP code (25 code review WR-06).
+    name: 'stack-line-401-not-auth', cli: 'pi',
+    stderr: 'TypeError: x is undefined\n    at run (/app/dist/cli.js:401:17)',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'stack-line-500-not-transient', cli: 'pi',
+    stderr: 'Error: boom\n    at f (/app/index.js:500:3)',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    // A billing path segment is not a billing message, even on a router lane.
+    name: 'billing-path-not-quota', cli: 'pi', route: 'router',
+    stderr: "ENOENT: no such file or directory, open 'src/billing/x.ts'",
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
   {
     name: 'codex-usage-limit-clock', cli: 'codex',
     stdout: codexPair(
@@ -1615,7 +1632,10 @@ function routeOf(cli, model, routes) {
   const flagged = routes && Object.hasOwn(routes, cli) ? routes[cli] : undefined;
   if (flagged === 'router' || flagged === 'unknown') return flagged;
   const baked = CONFIG.routerBacked[cli];
-  if (baked === true) return 'router';
+  // routerBacked is per CLI and was confirmed for its pinned model: another model on that CLI
+  // is not the confirmed lane (ponytail review, 25).
+  const pinned = CONFIG.models && CONFIG.models[cli];
+  if (baked === true) return pinned && pinned !== model ? 'unknown' : 'router';
   if (baked === false) return 'unknown';
   const id = String(model || '').toLowerCase();
   if (ROUTER_HINTS.some((hint) => id.includes(hint))) return 'router-inferred';
@@ -1877,7 +1897,8 @@ function readCycleState(file) {
 function writeCycleState(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   try { fs.chmodSync(path.dirname(file), 0o700); } catch { /* best effort */ }
-  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.tmp`);
+  const tmp = path.join(path.dirname(file),
+    `.${path.basename(file)}.${process.pid}.${crypto.randomUUID()}.tmp`);
   const fd = fs.openSync(tmp, 'wx', 0o600);
   try {
     fs.writeFileSync(fd, JSON.stringify(data));
@@ -2287,7 +2308,10 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
     if (source !== 'stderr' || state.liveHit) return;
     armLimit(state, liveMatch(cli, 'stderr', buf));
   };
-  const outRelay = makeLineRelay({ onLine: noteLine('stdout'), onPartial: notePartial('stdout') });
+  // The answer goes to stdout only: the stdout relay feeds the live watcher, never the log.
+  const outRelay = makeLineRelay({
+    onLine: noteLine('stdout'), onPartial: notePartial('stdout'), quiet: true,
+  });
   const errRelay = makeLineRelay({ onLine: noteLine('stderr'), onPartial: notePartial('stderr') });
   const hb = setInterval(() => {
     const secs = Math.round((Date.now() - started) / 1000);
@@ -2331,7 +2355,8 @@ const sleep = (ms) => new Promise((resolve) => {
 // an attempt admitted near the cap cannot run past it.
 function attemptCapMs(opts, nowMs, quotaEndMs = 0) {
   const remaining = Math.max(0, runDeadline - nowMs);
-  let budget = remaining - 60000 > 0 ? remaining - 60000 : remaining;
+  // Reserve 60 s for the next rung only when the attempt keeps at least as much: no 1 s cliff.
+  let budget = remaining >= 120000 ? remaining - 60000 : remaining;
   if (quotaEndMs > 0) {
     // The cap itself is the hard stop: the reserve guards admission, not the child's length.
     const capLeft = Math.max(0, quotaEndMs - nowMs);
@@ -2456,13 +2481,21 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       deleteCycleState(stateFile);
     }
   };
+  // An unwritable state file never turns a quota stop into a crash: the stop stays quota, but
+  // with no cycle to track it is a bare exit 75 (no retry_after_s=).
+  let stateWritable = true;
   const saveCycle = (sid, at) => {
     const due = at + limits.cooldownS * 1000;
-    writeCycleState(stateFile, {
-      first_seen: ladder.firstQuotaMs, last_attempt_at: at, cycle: ladder.cycle,
-      attempts, last_sid: sid || null, task_digest: digest,
-      retry_after_s: limits.cooldownS, due_at: due,
-    });
+    try {
+      writeCycleState(stateFile, {
+        first_seen: ladder.firstQuotaMs, last_attempt_at: at, cycle: ladder.cycle,
+        attempts, last_sid: sid || null, task_digest: digest,
+        retry_after_s: limits.cooldownS, due_at: due,
+      });
+    } catch (e) {
+      stateWritable = false;
+      log(`cross-ai: cycle state unwritable: ${stateFile} (${e.code || e.message})`);
+    }
   };
   const cycleStop = (r, evidence, why, sid) => {
     const at = Date.now();
@@ -2472,7 +2505,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     const capped = stopped === 'cap';
     return {
       ok: false, status: 'quota', outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
-      ...counts(), retryAfterS: capped ? undefined : limits.cooldownS,
+      ...counts(), retryAfterS: capped || !stateWritable ? undefined : limits.cooldownS,
       cycle: ladder.cycle, exit: capped ? 69 : 75, stopped,
     };
   };
@@ -2521,9 +2554,26 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         };
       }
       const p = rt.parse(r.stdout, ctx);
+      // A live hit wins only when it ended the child: one that finished on its own with exit 0
+      // and an answer succeeded, whatever it printed on stderr on the way.
+      const finished = !r.timedOut && r.code === 0 && !p.error && Boolean(p.text.trim());
+      if (r.liveHit && !r.limited && finished) r.liveHit = null;
       // A live terminal signal is the attempt's class; no second pass (D-09).
       let hit = null;
       let evidence = evidenceOf(null);
+      // A non-retryable class ends the call here; both class checks below share it.
+      const classStop = () => {
+        attempts += 1;
+        logAttempt(attempts, rungOf(), ladder.cycle, p.sessionId, hit, evidence.rule,
+          evidence.pattern, startedMs);
+        lastFailureMs = Date.now();
+        if (!firstFailureMs) firstFailureMs = startedMs;
+        dropState(hit);
+        return {
+          ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+          ...counts(), stopped: 'class',
+        };
+      };
       if (r.liveHit) {
         const live = hitForLane(r.liveHit, lane);
         hit = live.status;
@@ -2555,16 +2605,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
             cli_rc: 0, ...counts(),
           };
         }
-        if (hit && hit !== 'transient' && !(hit === 'quota' && lane)) {
-          attempts += 1;
-          logAttempt(attempts, rungOf(), ladder.cycle, p.sessionId, hit, evidence.rule,
-            evidence.pattern, startedMs);
-          dropState(hit);
-          return {
-            ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
-            ...counts(), stopped: 'class',
-          };
-        }
+        if (hit && hit !== 'transient' && !(hit === 'quota' && lane)) return classStop();
         if (!failed) {
           return {
             ok: false, status: 'empty_answer', outBytes: r.outBytes, cli_rc: 0,
@@ -2572,16 +2613,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
           };
         }
       }
-      if (hit && hit !== 'transient' && !r.timedOut && !(hit === 'quota' && lane)) {
-        attempts += 1;
-        logAttempt(attempts, rungOf(), ladder.cycle, p.sessionId, hit, evidence.rule,
-          evidence.pattern, startedMs);
-        dropState(hit);
-        return {
-          ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
-          ...counts(), stopped: 'class',
-        };
-      }
+      if (hit && hit !== 'transient' && !r.timedOut && !(hit === 'quota' && lane)) return classStop();
       const cls0 = ladderClass(Boolean(r.timedOut), hit);
       const quotaLane = cls0 === 'stop' && hit === 'quota' && lane;
       const cls = quotaLane ? 'quota' : cls0;
@@ -2602,7 +2634,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       log(`cross-ai: ${name} failed (exit ${r.code}${sig}, rule=${hit ? evidence.rule : '-' })`);
       ladder.canResume = Boolean(sameSessionArgv(name, rt, model, ctx, sid, mode));
       const step = ladderNext(ladder, cls, Date.now(), {
-        ...limits, deadlineMs: runDeadline, waitMs: Math.min(wait, quotaEnd() || wait),
+        ...limits, deadlineMs: runDeadline, waitMs: quotaEnd() ? Math.min(wait, Math.max(0, quotaEnd() - Date.now())) : wait,
         capMs, cooldownMs: limits.cooldownS * 1000,
       });
       log(`cross-ai: ladder ${name} next=${step.next} why=${step.why}`);
@@ -2913,6 +2945,11 @@ const STICKY_FAKE = new Set([
 let stdinBuf = '';
 const FAKE_MODES = {
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
+  'stderr-then-ok': () => {
+    process.stderr.write('tool bash: cat /root/x: Permission denied\n');
+    fs.appendFileSync('a.txt', 'ok-line\n');
+    process.stdout.write('# Summary\nok');
+  },
   echoprompt: () => {
     fs.writeFileSync('prompt.seen', stdinBuf);
     fs.appendFileSync('a.txt', 'e\n');
@@ -3821,6 +3858,16 @@ async function blackBoxSelfTest() {
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/billing exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
+        // routerBacked covers only the CLI's pinned model: a direct model on it stops on billing.
+        name: 'billing-unpinned-model-on-router-cli',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
+        config: { routerBacked: { pi: true }, models: { pi: 'fake/pinned-router' } },
+        exit: 69,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=69 .* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('action=stop route=unknown ') ? null
+          : 'route was not unknown'),
+      },
+      {
         name: 'billing-403-router',
         args: ['--prefer', 'pi', '--model-pi', 'fake/spend403'],
         config: { routerBacked: { pi: true } },
@@ -4074,6 +4121,29 @@ async function blackBoxSelfTest() {
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* action=stop$/,
         check: (_r, ctx) => (readCycleState(caseCycleFile(ctx, 'pi', 'fake/ok'))
           ? null : 'router state deleted by an unconfirmed call'),
+      },
+      {
+        // A terminal stderr line from a child that then exits 0 with an answer is a success.
+        name: 'live-hit-then-success',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/stderr-then-ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/stderr-then-ok exit=0 .* action=stop$/,
+      },
+      {
+        // An unwritable state dir keeps the quota class: a bare 75, never a crash.
+        name: 'quota-state-unwritable',
+        setup: (c) => {
+          const blocker = path.join(c.home, 'state-is-a-file');
+          fs.writeFileSync(blocker, 'x');
+          c.env.XDG_STATE_HOME = blocker;
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/quota exit=75 (?!.*retry_after_s=).* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('cycle state unwritable') ? null
+          : 'missing unwritable note'),
       },
       {
         // Off a router lane a quota stops after one call and writes no state.

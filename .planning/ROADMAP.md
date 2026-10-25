@@ -1144,3 +1144,27 @@ set (native Opus + my-referee-one + my-referee-two) scores no Important.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.12: Runner and adapter cleanup after the Phase 25 reviews (BACKLOG)
+
+**Goal:** [Captured for future planning] Cut what the Phase 25 code and ponytail reviews
+(`25-REVIEW.md`) found unneeded or duplicated, with no behavior change:
+- one "confirmed router" rule shared by Python's catalog `fallback_quota` and curated-config's
+  `is_router`/`router_confirmed`/execute;
+- a `quota_cycle` class from superpowers' `classify_dispatch_failure`, instead of three shell
+  JSON parses in its SKILL;
+- `plan_io.py` calls gsd-core's `buildAgentSkillsBlock` instead of re-implementing its
+  skill-resolution rules;
+- dead `runCli` state, the live-detection plumbing and the clamp helpers (IN-01, IN-03);
+- the runner's embedded self-test harness (about 3,300 lines) moves to a sibling file that
+  rendered copies do not carry;
+- the lower user `cross_ai_timeout` is restored on cleanup (WR-05).
+
+Success criteria when promoted: each change keeps the runner self-test, `make test` and
+`make validate` green, and the template still renders a pristine copy.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

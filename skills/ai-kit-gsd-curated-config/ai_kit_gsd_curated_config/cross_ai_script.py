@@ -251,8 +251,12 @@ def plan_runner_upgrade(project_dir: str, template: bytes, scrub_env) -> ScriptP
     state = script_state(existing)
     try:
         older = template_version(existing) < template_version(template)
+        newer = template_version(existing) > template_version(template)
     except ValueError:
-        older = True
+        older, newer = True, False
+    if state == "pristine" and newer:
+        # A newer ai-kit wrote it: never downgrade.
+        return ScriptPlan("keep-pristine", path, None, existing, state, "", existing)
     if state == "pristine":
         # A pristine copy takes every template fix, a same-version body fix included; an
         # identical re-render is kept untouched.

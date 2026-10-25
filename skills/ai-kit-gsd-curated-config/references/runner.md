@@ -42,8 +42,9 @@ The runner follows the failure ladder in
 [`../../ai-kit-spec-review/references/subprocess-quota-policy.md`](../../ai-kit-spec-review/references/subprocess-quota-policy.md).
 CONFIG knobs: `sameSessionRetries` and `newSessionRetries` (0..3), `cooldownS` (0..`capS`),
 `capS` (at most 14400), `backoffS`, and `attemptTimeoutS` (default 0, no per-attempt cap,
-otherwise clamped to 10..1800). A router lane is authorized for quota cycles by the plan's
-`router_backed` (CONFIG `routerBacked`) or the `--route-<cli> router` flag. The `router-inferred`
+otherwise clamped to 10..1800; only a set value leaves a timed-out attempt room for a retry rung). A router lane is authorized for quota cycles by the plan's
+`router_backed` (CONFIG `routerBacked`, for the runner's pinned model only) or the
+`--route-<cli> router` flag. The `router-inferred`
 name heuristic is advisory only and cannot authorize quota cycles: an inferred route gets no
 cycles and stops like a direct route. `--classify-only <file>` takes a JSON array of cases and
 classifies that saved capture without spawning anything. A runner upgraded from an older template

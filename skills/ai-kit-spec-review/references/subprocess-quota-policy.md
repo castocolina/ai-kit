@@ -17,7 +17,8 @@ that ladder and never restates it differently. A skill links here; it does not c
 The pattern table in the runner classifies each failed attempt:
 
 - `transient`: `[400]: event: error`, 5xx, overloaded or capacity text, a cut stream, a timeout
-  with no quota match.
+  with no quota match. A timeout reaches a rung only when `attemptTimeoutS` is set: with the
+  shipped 0 the attempt uses the whole deadline, so a plain timeout stops as `timeout` (124).
 - `quota`: usage limit, quota, rate limit, 429. On a confirmed router lane, billing, access and
   router-tail credential rows count as `quota` too.
 - Everything else stops: auth, off-router billing, permission, bad model, crash, empty answer,
@@ -47,7 +48,8 @@ The pattern table in the runner classifies each failed attempt:
   no second store.
 - A new cycle starts while `now + cooldown <= first quota failure + capS` (14400, the 4-hour
   cap). Past the cap the runner exits 69 and stops for good.
-- A re-entry before the state file's due time is refused without spawning a child. A file whose
+- A re-entry before the state file's due time is refused without a model call (the runner's
+  preflight may still list the CLI's models). A file whose
   `last_attempt_at` is older than the cap is a stale episode: it is replaced, the call proceeds,
   and the evidence notes `stale-state-fresh-start`.
 
@@ -74,7 +76,8 @@ The pattern table in the runner classifies each failed attempt:
 - `backoffS`: the short backoff between rungs inside one call. The call never sleeps the cooldown.
 - `cooldownS`: seconds the caller waits between cycles (default 600), clamped to `0..capS`.
 - `capS`: the cap in seconds (default 14400), clamped to `0..14400`.
-- `routerBacked`: per-CLI confirmed route (`true` router, `false` unknown). `--route-<cli>` wins.
+- `routerBacked`: per-CLI confirmed route (`true` router, `false` unknown); with a pinned
+  `models[cli]`, `true` covers only that model. `--route-<cli>` wins.
 - `attemptTimeoutS`: `0` (none) or clamped to `10..1800`.
 
 ## What a skill does on a stop

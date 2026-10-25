@@ -25,7 +25,7 @@ description: "Resolves the best available (runtime, model) pair for a GSD (Get S
 - **Never answer GSD's `skip`.** It falls back to the native executor.
 - **Only the scheduled wake answers GSD's `retry`.** On a confirmed-router exit 75 carrying
   `retry_after_s=` and `cycle=`, answer nothing in that turn (Step 3). An early retry is
-  refused by the runner without starting the CLI and returns another exit 75.
+  refused by the runner without a model call and returns another exit 75.
 - **A `fallback_notice`, or a runner-setup failure, stops after cleanup and reports.** It never
   continues to GSD's native execution unless the owner explicitly decides to.
 
@@ -334,8 +334,8 @@ that GSD's own runtime runs, decided without a host check.
 **Mode-transition cleanup** — run this whenever the resolved `mode` is `native_tier` or
 `fallback_notice` (i.e. NOT `cross_ai_hook`), before any later step, so a stale adapter-owned
 cross-AI hook from a PRIOR run never stays silently active once a LATER run resolves a different
-dispatch mode. Never touches a value the user set by hand (`clear-workflow-keys` is a no-op unless
-the key is adapter-owned). For `native_tier`, a successful cleanup continues to Step 3. For
+dispatch mode. It never touches a value the user set by hand (`clear-workflow-keys` is a no-op
+unless the key is adapter-owned), except a `cross_ai_timeout` below 1800 that Step 2 raised. For `native_tier`, a successful cleanup continues to Step 3. For
 `fallback_notice`, a successful cleanup STOPS and reports: continuing would run GSD's native
 executor, which takes an explicit owner decision:
 
@@ -488,7 +488,7 @@ pending is unverified, which is why the prompt's first branch exists. A host wit
 scheduler schedules nothing: it prints `retry_after_s`, the `RESUME_STATE_PATH=` the block just
 printed and that same wake prompt, labels the printed re-invoke unverified, and the owner runs
 it. A stop past the 4-hour cap exits 69 and nothing is scheduled; the runner keeps refusing that
-lane with exit 69, without starting the CLI, until its last attempt is more than 4 hours old. A
+lane with exit 69, without a model call, until its last attempt is more than 4 hours old. A
 bare exit 75 (no `retry_after_s=`: an off-router quota stop or an exhausted transient ladder) is
 an owner stop and schedules nothing either.
 

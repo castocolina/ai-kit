@@ -431,6 +431,17 @@ class TestEnsureRunnerStates(unittest.TestCase):
             self.assertEqual(plan.kind, "change")
             self.assertTrue(plan.data.endswith(b"// body fix\n"))
 
+    def test_pristine_newer_template_is_never_downgraded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            newer = re.sub(rb"template=\d+", b"template=99", self.template, count=1)
+            data = cross_ai_script.render(newer, cross_ai_script.template_config(newer))
+            target = self._runner(tmp)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(data)
+            plan = cross_ai_script.plan_runner_upgrade(tmp, self.template, HOST_SIGNAL_ENV_VARS)
+            self.assertEqual(plan.kind, "keep-pristine")
+
     def test_pristine_current_kept_byte_for_byte(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = _current_pristine(self.template)
