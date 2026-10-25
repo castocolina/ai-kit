@@ -890,24 +890,53 @@ Source: owner request 2026-10-24 (after the Phase 25 plan reviews); evidence in
   8. *(Added 2026-10-24, owner.)* The GitHub Copilot CLI is a runtime (`copilot -p … -s
      --no-ask-user --model …`, prompt on argv with stdin not inherited, token passed through and
      never logged), every row unverified until a real capture.
-**Plans:** 0/14 plans executed
+**Plans:** 0/15 plans executed
 
 Plans:
+**Wave 1**
 - [ ] 25.1-01-PLAN.md
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 25.1-02-PLAN.md
+
+**Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 25.1-03-PLAN.md
+
+**Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 25.1-04-PLAN.md
+
+**Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 25.1-05-PLAN.md
+
+**Wave 6** *(blocked on Wave 5 completion)*
 - [ ] 25.1-06-PLAN.md
+
+**Wave 7** *(blocked on Wave 6 completion)*
 - [ ] 25.1-07-PLAN.md
+
+**Wave 8** *(blocked on Wave 7 completion)*
 - [ ] 25.1-08-PLAN.md
+
+**Wave 9** *(blocked on Wave 8 completion)*
 - [ ] 25.1-09-PLAN.md
+
+**Wave 10** *(blocked on Wave 9 completion)*
 - [ ] 25.1-10-PLAN.md
+
+**Wave 11** *(blocked on Wave 10 completion)*
 - [ ] 25.1-11-PLAN.md
+
+**Wave 12** *(blocked on Wave 11 completion)*
 - [ ] 25.1-12-PLAN.md
+
+**Wave 13** *(blocked on Wave 12 completion)*
 - [ ] 25.1-13-PLAN.md
+
+**Wave 14** *(blocked on Wave 13 completion)*
 - [ ] 25.1-14-PLAN.md
-- [ ] TBD (run /gsd-plan-phase 25.1 to break down)
+
+**Wave 15** *(blocked on Wave 14 completion)*
+- [ ] 25.1-15-PLAN.md
 
 ### Phase 26: Session self-resume and OpenGSD quota rules
 
