@@ -58,11 +58,17 @@ TEMPLATE = _RESOLVED_TEMPLATE
 
 
 def runner_env(tmp: str) -> dict[str, str]:
-    """Hermetic env matching cross-ai.mjs --self-test (fakes + node + git only)."""
+    """Hermetic env matching cross-ai.mjs --self-test (fakes + node + git + mkfifo only)."""
     bin_dir = os.path.join(tmp, "bin")
     os.makedirs(bin_dir, exist_ok=True)
     node_bin = _real_node_executable()
     git_bin = shutil.which("git")
+    # the FIFO cases (overlay-fifo-refused, retry-config-fifo) create their FIFO with mkfifo
+    mkfifo_bin = shutil.which("mkfifo")
+    if mkfifo_bin:
+        link = os.path.join(bin_dir, "mkfifo")
+        if not os.path.lexists(link):
+            os.symlink(mkfifo_bin, link)
     if node_bin:
         link = os.path.join(bin_dir, "node")
         if not os.path.lexists(link):

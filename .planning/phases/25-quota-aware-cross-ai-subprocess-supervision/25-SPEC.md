@@ -261,6 +261,9 @@ The owner decision above supersedes the wait-and-resume design. Each criterion a
 **kept**, **adapted** (with the plan that pins it) or **superseded** (with the reason). The
 caller contract is `skills/ai-kit-spec-review/references/subprocess-quota-policy.md`; the runner
 template 7 self-test is the source of truth.
+*(Amended 2026-10-25, Phase 25.1: the in-call rungs are now the configurable soft series of QTA-07, and the
+router cooldown cycles are the caller's hard tier of QTA-08 (`hard_waits_s`, then notify and stop); the
+caller contract moved to `skills/ai-kit-cross-ai/`.)*
 
 ### Acceptance criteria
 

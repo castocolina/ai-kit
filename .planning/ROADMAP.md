@@ -78,7 +78,7 @@ runtime hosting the session. Source spec:
 - [ ] **Phase 22: Pi Live Validation** - Live smoke run from the pi host (independent; may run any time after Phase 19)
 - [ ] **Phase 23: Host-split status line for Claude Code and Cursor CLI** - Split `tools/status-line.py` per host and ship a Cursor CLI status line with the shared 5/10/15 proximity gauge (promoted from backlog 999.4; independent of Phases 17–22)
 - [ ] **Phase 24: Spec-and-discuss chain skill** - Installable skill that runs spec → discuss over a phase range with optional Laya/TypeSafe decisions, quality over simplicity unless MVP mode
-- [ ] **Phase 25: Quota-aware cross-AI subprocess supervision** - The owner's failure ladder in the runner: one CLI per call, transient retries 3 in the same session then 3 in new sessions, router-lane quota cycles across calls under a 4-hour cap, evidence on every stop (from todo 2026-10-14; owner decision 2026-10-24)
+- [ ] **Phase 25: Quota-aware cross-AI subprocess supervision** - The owner's failure ladder in the runner: one CLI per call, transient retries 3 in the same session then 3 in new sessions, router-lane quota cycles across calls under a 4-hour cap, evidence on every stop (from todo 2026-10-14; owner decision 2026-10-24) *(amended 2026-10-25, 25.1: the in-call rungs are the configurable soft series of QTA-07 and the cooldown is the caller's hard tier of QTA-08)*
 - [ ] **Phase 25.1: Configurable cross-AI retry ladder and upstream error propagation** *(INSERTED)* - Soft backoff, session reset and caller-owned hard waits, configurable; upstream errors passed through verbatim; an evidence-based error catalog (owner request 2026-10-24)
 - [ ] **Phase 26: Session self-resume and OpenGSD quota rules** - The orchestrating session wakes itself after its own quota stalls; `ai-kit-project-rules-agents` emits both quota directives for OpenGSD projects (spike first)
 - [ ] **Phase 27: One-shot goal and loop prompt skill** - A skill that picks `/goal`, schedule/loop or `/gsd-autonomous` for a set of phases or plans and emits a ready-to-paste prompt whose definition of done requires green e2e tests
@@ -828,7 +828,7 @@ before the runner is planned.
   4. A transient failure retries up to 3 times in the same session, then up to 3 times in a new
      session on the same lane. A router quota or rate-limit error retries the lane up to 3 times,
      then switches session up to 3 times, then reports status, lane, model and times and waits a
-     cooldown before the next cycle, never past 4 hours. An auth error stops and reports.
+     cooldown before the next cycle, never past 4 hours. An auth error stops and reports. *(amended 2026-10-25, 25.1: the in-call rungs are the configurable soft series of QTA-07 and the cooldown is the caller's hard tier of QTA-08)*
   5. The runner has no automatic fallback to another CLI and never switches harness, provider or
      model on its own; the same policy runs in `ai-kit-spec-review` / `ai-kit-spec-execute*`, and
      the skill, README and runner self-tests document and pin it.
@@ -890,7 +890,7 @@ Source: owner request 2026-10-24 (after the Phase 25 plan reviews); evidence in
   8. *(Added 2026-10-24, owner.)* The GitHub Copilot CLI is a runtime (`copilot -p … -s
      --no-ask-user --model …`, prompt on argv with stdin not inherited, token passed through and
      never logged), every row unverified until a real capture.
-**Plans:** 14/15 plans executed
+**Plans:** 15/15 plans executed
 
 Plans:
 **Wave 1**
@@ -936,7 +936,7 @@ Plans:
 - [x] 25.1-14-PLAN.md
 
 **Wave 15** *(blocked on Wave 14 completion)*
-- [ ] 25.1-15-PLAN.md
+- [x] 25.1-15-PLAN.md
 
 ### Phase 26: Session self-resume and OpenGSD quota rules
 
@@ -1205,6 +1205,24 @@ Plans:
 
 Success criteria when promoted: each change keeps the runner self-test, `make test` and
 `make validate` green, and the template still renders a pristine copy.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.13: Register workflow.cross_ai_retry with gsd-core so config-set accepts it (BACKLOG)
+
+**Goal:** [Captured for future planning] Ship a gsd-core capability manifest that registers
+`workflow.cross_ai_retry.*`, so `config-set workflow.cross_ai_retry.<key>` validates and writes the
+key instead of the owner hand-editing `.planning/config.json` (Phase 25.1 D-02). Starting evidence
+(25.1-RESEARCH.md Q2): gsd-core 1.17.0 composes federated capability config keys from
+`capability.json` manifests under `$GSD_HOME/.gsd/capabilities/<id>/` (global) or
+`<project>/.gsd/capabilities/<id>/` (project); a project-scope capability needs a consent record
+keyed to the project's realpath and its bundle hash, or it stays discovered-but-inactive. Open:
+the exact manifest fields, whether a list-typed key such as `hard_waits_s` is accepted, the
+global versus project scope choice and the consent gate.
 **Requirements:** (none yet)
 **Plans:** 0 plans
 
