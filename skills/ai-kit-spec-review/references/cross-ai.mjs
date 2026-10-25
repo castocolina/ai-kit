@@ -891,7 +891,17 @@ function reportAndFinish(status, fields, stopped) {
   if (status !== 'ok' && !fields.reportDone) {
     logReport(status, fields.cli ?? '-', fields.model ?? '-', fields.route, fields.attempts || 0,
       fields.cycles || 0, fields.firstFailureMs || 0, fields.lastFailureMs || 0, why,
-      fields.dueAtMs || 0);
+      fields.dueAtMs || 0, fields.upstream || null);
+    if (fields.upstream?.body) {
+      const raw = fields.upstream.raw || '';
+      const extra = redactedValues(normalizeInput(raw));
+      log(redactSecrets(`cross-ai: upstream body=${JSON.stringify(fields.upstream.body)}`, extra));
+      const values = fields.upstream.fields;
+      const safe = values && Object.fromEntries(Object.entries(values).map(([key, value]) => [
+        key, typeof value === 'string' ? replaceCopies(value, extra) : value,
+      ]));
+      log(redactSecrets(`cross-ai: upstream fields=${safe ? JSON.stringify(safe) : '-'}`, extra));
+    }
   }
   return finish(status, fields);
 }
@@ -1083,12 +1093,41 @@ function normalize(text) {
 
 const INPUT_CAP = 65536;
 const ANSI_RE = /\x1B\[[0-9;?]*[A-Za-z]/g;
-// Child text can echo a key. These three shapes are replaced before any line is logged.
+// Child text can echo credentials and identifiers. Key rules preserve the key and replace
+// only its complete quoted or delimited value.
 const SECRET_RES = [
   /(sk|rk)-[A-Za-z0-9_-]{8,}/gi,
   /Bearer [A-Za-z0-9._-]{8,}/gi,
-  /(api[_-]?key|token|secret)['"]?\s*[:=]\s*\S+/gi,
+  /conn:[0-9a-f]{8,}/gi,
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/gi,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/gi,
 ];
+const KEY_VALUE_RE = /((?:\\?["']?)(?:api[_-]?key|token|secret)(?:\\?["']?)\s*[:=]\s*)(?:\\?"(?:\\\\.|[^"\\])*\\?"|\\?'(?:\\\\.|[^'\\])*\\?'|[^\s,"'\]}\];&]+)/gi;
+const ID_VALUE_RE = /((?:\\?["']?)(?:account|connection|conn|org|organization|user|request|session|key)[_-]?id(?:\\?["']?)\s*[:=]\s*)(?:\\?"(?:\\\\.|[^"\\])*\\?"|\\?'(?:\\\\.|[^'\\])*\\?'|[^\s,"'\]}\];&]+)/gi;
+
+function redactedValues(text) {
+  const values = [];
+  for (const re of [KEY_VALUE_RE, ID_VALUE_RE]) {
+    re.lastIndex = 0;
+    let match;
+    while ((match = re.exec(String(text)))) {
+      const removed = match[0].slice(match[1].length).replace(/^\\?["']|\\?["']$/g, '');
+      if (removed) values.push(removed);
+    }
+  }
+  return [...new Set(values)];
+}
+
+function replaceCopies(text, values) {
+  let out = text;
+  for (const value of values) {
+    if (!value) continue;
+    const escaped = value.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, 'g'), '<redacted>');
+  }
+  return out;
+}
 
 function decodeUtf8(text) {
   if (typeof text !== 'string') return '';
@@ -1100,10 +1139,19 @@ function normalizeInput(text) {
   return decoded.length > INPUT_CAP ? decoded.slice(-INPUT_CAP) : decoded;
 }
 
-function redactSecrets(line) {
+function redactSecrets(line, extra = []) {
   let out = String(line);
-  for (const re of SECRET_RES) out = out.replace(re, '<redacted>');
-  return out;
+  const copies = [...redactedValues(out), ...extra];
+  for (const re of [KEY_VALUE_RE, ID_VALUE_RE, ...SECRET_RES]) {
+    re.lastIndex = 0;
+    out = out.replace(re, (match, prefix) => {
+      if (!prefix) return '<redacted>';
+      const value = match.slice(prefix.length);
+      const quote = value.match(/^\\?["']/)?.[0] || '';
+      return quote ? `${prefix}${quote}<redacted>${quote}` : `${prefix}<redacted>`;
+    });
+  }
+  return replaceCopies(out, copies);
 }
 
 // One bounded line splitter per stream. The live watcher hooks this same buffer: one cap,
@@ -1141,7 +1189,7 @@ function makeLineRelay(hooks = {}) {
   };
 }
 
-const NO_MATCH = { status: 'crash', rule: '-', label: 'none' };
+const NO_MATCH = { status: 'crash', rule: '-', label: 'none', source: null, line: null, raw: null };
 const compiledRows = new Map();
 
 function rowRegex(row) {
@@ -1158,20 +1206,25 @@ function rowAdmits(row, source) {
   return row.input === source;
 }
 
-function classifyStop({ cli, routerLane, stderr, events }, table = PATTERNS) {
-  const sources = [
-    ['stderr', normalizeInput(stderr || '')],
-    ...((events || []).map((ev) => ['event', normalizeInput(ev || '')])),
-  ];
+function classifyStop({ cli, routerLane, stderr, events, eventRaw }, table = PATTERNS) {
+  const normalizedStderr = normalizeInput(stderr || '');
+  const sources = [['stderr', normalizedStderr, null]];
+  for (let i = 0; i < (events || []).length; i += 1) {
+    sources.push(['event', normalizeInput(events[i] || ''), eventRaw?.[i] ?? null]);
+  }
   for (const row of table) {
     if (row.cli !== '*' && row.cli !== cli) continue;
     const re = rowRegex(row);
-    for (const [source, text] of sources) {
+    for (const [source, text, raw] of sources) {
       if (!text || !rowAdmits(row, source)) continue;
       re.lastIndex = 0;
-      if (!re.test(text)) continue;
+      const match = re.exec(text);
+      if (!match) continue;
+      const start = text.lastIndexOf('\n', match.index) + 1;
+      const end = text.indexOf('\n', match.index);
+      const line = source === 'stderr' ? text.slice(start, end < 0 ? undefined : end) : text;
       const status = routerLane && row.routerClass === 'quota' ? 'quota' : row.class;
-      return { status, rule: row.id, label: row.label };
+      return { status, rule: row.id, label: row.label, source, line, raw: raw || line };
     }
   }
   return { ...NO_MATCH };
@@ -1265,6 +1318,70 @@ function extractEvents(cli, stdout, terminalOnly = false) {
     }
   }
   return out;
+}
+
+function eventsWithRaw(cli, stdout, terminalOnly = false) {
+  const events = [];
+  const eventRaw = [];
+  for (const raw of String(stdout || '').split('\\n')) {
+    const extracted = extractEvents(cli, raw, terminalOnly);
+    for (const event of extracted) {
+      events.push(event);
+      eventRaw.push(raw);
+    }
+  }
+  return { events, eventRaw };
+}
+
+function upstreamFields(raw) {
+  const text = String(raw || '');
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  // shortcut: one parse from the first object opener; captures with a prose brace prefix
+  // require a dedicated fixture before broadening this bounded parser.
+  const outer = parseJson(text.slice(start));
+  if (!outer || typeof outer !== 'object' || Array.isArray(outer)) return null;
+  const body = outer.error?.response?.body;
+  const nested = typeof body === 'string' ? parseJson(body) : null;
+  const objects = [outer, outer.error, nested, nested?.error];
+  const keys = ['retry_after', 'reset_at', 'retry_after_seconds', 'resetsAt'];
+  const result = {};
+  for (const key of keys) {
+    for (const object of objects) {
+      if (!object || typeof object !== 'object' || !Object.hasOwn(object, key)) continue;
+      const value = object[key];
+      if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) {
+        result[key] = value;
+        break;
+      }
+    }
+  }
+  return Object.keys(result).length ? result : null;
+}
+
+function capCodePoints(text, n) { return Array.from(String(text)).slice(0, n).join(''); }
+
+function upstreamOf(cls, r, cli) {
+  let raw = r.liveHit?.raw || cls?.raw || '';
+  if (!raw) {
+    const stderr = String(r.stderr || '').split('\\n').filter((line) => line.trim());
+    raw = stderr.at(-1) || '';
+  }
+  if (!raw) {
+    const terminal = eventsWithRaw(cli, r.stdout || '', true);
+    raw = terminal.eventRaw.at(-1) || '';
+  }
+  if (!raw) return null;
+  const extras = redactedValues(normalizeInput(raw));
+  const fields = upstreamFields(raw);
+  const safeFields = fields && Object.fromEntries(Object.entries(fields).map(([key, value]) => [
+    key, typeof value === 'string' ? redactSecrets(replaceCopies(value, extras), extras) : value,
+  ]));
+  return {
+    raw,
+    body: capCodePoints(redactSecrets(normalizeInput(raw), extras), 2000),
+    fields: safeFields,
+  };
 }
 
 function codexPair(message) {
@@ -1686,6 +1803,91 @@ function classifyCases() {
         const first = classifyOne(twice);
         const second = classifyOne(twice);
         if (JSON.stringify(first) !== JSON.stringify(second)) return 'classifyStop is not stable';
+        return null;
+      },
+    },
+    {
+      name: 'pure-redact-json-tail',
+      pure: () => {
+        const got = redactSecrets('{"message":"x","token":"abc","retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z"}');
+        return got === '{"message":"x","token":"<redacted>","retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z"}' ? null : got;
+      },
+    },
+    {
+      name: 'pure-redact-shapes',
+      pure: () => {
+        const source = 'conn:ab12cd34 12345678-1234-abcd-1234-1234567890ab "connectionId":"x1" account_id=x2 "requestId": "x3" ghp_' + 'a'.repeat(36) + ' github_pat_' + 'b'.repeat(40) + ' retry_after":340954 reset_at":"2026-10-23T04:01:04.472Z"';
+        const got = redactSecrets(source);
+        for (const secret of ['ab12cd34', '12345678-1234-abcd-1234-1234567890ab', 'x1', 'x2', 'x3', 'ghp_', 'github_pat_']) if (got.includes(secret)) return `leaked ${secret}`;
+        return got.includes('340954') && got.includes('2026-10-23') ? null : 'retry fields lost';
+      },
+    },
+    {
+      name: 'pure-redact-escaped-json',
+      pure: () => {
+        const input = '{"error":{"response":{"body":"{\\"accountId\\":\\"acct-123\\",\\"api_key\\":\\"sentinel\\",\\"requestId\\": \\"req-9\\",\\"retry_after\\":120}"}}}';
+        const got = redactSecrets(input);
+        for (const secret of ['acct-123', 'sentinel', 'req-9']) if (got.includes(secret)) return `leaked ${secret}`;
+        return got.includes('retry_after') ? null : 'retry_after lost';
+      },
+    },
+    {
+      name: 'pure-redact-quoted-values',
+      pure: () => {
+        const inputs = [
+          '{"secret":"alpha,beta","retry_after":120}',
+          '{"accountId":"tenant private","reset_at":"2026-10-23T04:01:04.472Z"}',
+          '{"token":"a\\"b,c"}',
+          '\\"api_key\\":\\"x, y\\"',
+        ];
+        const outputs = inputs.map((text) => redactSecrets(text));
+        return outputs[0].includes('alpha,beta') || !outputs[0].includes('retry_after') ||
+          outputs[1].includes('tenant private') || !outputs[1].includes('reset_at') ||
+          outputs[2].includes('a\\"b,c') || outputs[3].includes('x, y') ? 'quoted value redaction failed' : null;
+      },
+    },
+    {
+      name: 'pure-upstream-fields-redacted',
+      pure: () => {
+        const token = 'ghp_' + 'a'.repeat(36);
+        const raw = `{"accountId":"acct-77","reset_at":"acct-77","token":"sentinel","retry_after":"sentinel","retry_after_seconds":"${token}","resetsAt":1761170400}`;
+        const fields = upstreamFields(raw);
+        const safe = Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, typeof value === 'string' ? redactSecrets(replaceCopies(value, redactedValues(raw)), redactedValues(raw)) : value]));
+        return JSON.stringify(safe) === '{"retry_after":"<redacted>","reset_at":"<redacted>","retry_after_seconds":"<redacted>","resetsAt":1761170400}' && !redactSecrets(raw).includes('acct-77') && redactedValues(raw).includes('acct-77') && redactSecrets('{"token":"1","retry_after":120}').includes('"retry_after":120') ? null : JSON.stringify(safe);
+      },
+    },
+    {
+      name: 'pure-events-with-raw',
+      pure: () => {
+        const raw = ocError({ message: 'first', response: { body: '{"message":"nested"}' } });
+        const got = eventsWithRaw('opencode', raw);
+        return got.events.length === 3 && got.eventRaw.every((line) => line === raw) ? null : JSON.stringify(got);
+      },
+    },
+    {
+      name: 'pure-redact-idempotent',
+      pure: () => {
+        const once = redactSecrets('{"accountId":"acct-77","token":"secret"}');
+        return redactSecrets(once) === once ? null : redactSecrets(once);
+      },
+    },
+    {
+      name: 'pure-upstream-cap',
+      pure: () => {
+        const capped = capCodePoints('😀'.repeat(2500), 2000);
+        return Array.from(capped).length === 2000 && !/[\\uD800-\\uDBFF]$/.test(capped) ? null : `codepoints=${Array.from(capped).length}`;
+      },
+    },
+    {
+      name: 'pure-upstream-fields',
+      pure: () => {
+        const cases = [
+          ['429: {"retry_after":340954,"reset_at":"2026-10-19T00:00:00.000Z"}', '{"retry_after":340954,"reset_at":"2026-10-19T00:00:00.000Z"}'],
+          ['{"retry_after_seconds":30}', '{"retry_after_seconds":30}'],
+          ['{"type":"rate_limit","resetsAt":1761170400}', '{"resetsAt":1761170400}'],
+          ['Kimi usage limit 403', 'null'], ['1310 GLM limit', 'null'],
+        ];
+        for (const [raw, expected] of cases) if (JSON.stringify(upstreamFields(raw) ?? null) !== expected) return raw;
         return null;
       },
     },
@@ -2208,7 +2410,8 @@ function parsePiListingIds(stdout) {
 
 function parseOpencodeListingIds(stdout) {
   if (typeof stdout !== 'string') return null;
-  return stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+  const ids = stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+  return ids;
 }
 
 // Mirrors detection.parse_cursor_models (D-10), which a parity test runs on the same fixtures:
@@ -2398,12 +2601,12 @@ function eventTable() {
   return terminalTable().filter((row) => row.class !== 'transient');
 }
 
-function liveMatch(cli, source, text) {
+function liveMatch(cli, source, text, raw = text) {
   const table = source === 'stderr' ? terminalTable() : eventTable();
   const events = source === 'event' ? [text] : [];
   const stderr = source === 'stderr' ? text : '';
   // Lane is applied later: the record keeps the row, and the confirmed route decides the status.
-  const cls = classifyStop({ cli, routerLane: false, stderr, events }, table);
+  const cls = classifyStop({ cli, routerLane: false, stderr, events, eventRaw: source === 'event' ? [raw] : [] }, table);
   return cls.status === 'crash' ? null : cls;
 }
 
@@ -2416,7 +2619,8 @@ function hitForLane(hit, lane) {
 
 function armLimit(state, cls) {
   if (state.liveHit || !cls) return;
-  state.liveHit = { status: cls.status, rule: cls.rule, label: cls.label };
+  state.liveHit = { status: cls.status, rule: cls.rule, label: cls.label,
+    source: cls.source, line: cls.line, raw: cls.raw };
   const child = current;
   state.limitTimer = setTimeout(() => {
     if (current === child && currentFinalize) currentFinalize('limit');
@@ -2436,16 +2640,17 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
   const cli = label;
   const noteLine = (source) => (line) => {
     if (source === 'stderr') {
-      armLimit(state, liveMatch(cli, 'stderr', line));
+      armLimit(state, liveMatch(cli, 'stderr', line, line));
       return;
     }
-    for (const text of extractEvents(cli, line, true)) {
-      armLimit(state, liveMatch(cli, 'event', text));
+    const extracted = eventsWithRaw(cli, line, true);
+    for (let i = 0; i < extracted.events.length; i += 1) {
+      armLimit(state, liveMatch(cli, 'event', extracted.events[i], extracted.eventRaw[i]));
     }
   };
   const notePartial = (source) => (buf) => {
     if (source !== 'stderr' || state.liveHit) return;
-    armLimit(state, liveMatch(cli, 'stderr', buf));
+    armLimit(state, liveMatch(cli, 'stderr', buf, buf));
   };
   // The answer goes to stdout only: the stdout relay feeds the live watcher, never the log.
   const outRelay = makeLineRelay({
@@ -2535,12 +2740,13 @@ function logAttempt(n, rung, cycle, sid, status, rule, pattern, startedMs) {
 
 // One report line before the status line of every run that does not end ok. due_at is the
 // ISO-8601 UTC time (seconds) of a hint exit's wait end, `-` on every other stop.
-function logReport(status, cli, model, route, attempts, cycles, firstMs, lastMs, stopped, dueMs = 0) {
+function logReport(status, cli, model, route, attempts, cycles, firstMs, lastMs, stopped, dueMs = 0, upstream = null) {
   const iso = (ms) => (ms ? new Date(ms).toISOString() : '-');
   const dueIso = (ms) => (ms ? new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z') : '-');
   log(`cross-ai: report status=${status} lane=${cli}/${model} route=${route || 'unknown'} ` +
     `attempts=${attempts} cycles=${cycles} first_failure=${iso(firstMs)} ` +
-    `last_failure=${iso(lastMs)} due_at=${dueIso(dueMs)} stopped=${stopped}`);
+    `last_failure=${iso(lastMs)} due_at=${dueIso(dueMs)} stopped=${stopped} ` +
+    `upstream=${upstream?.body ? 'present' : '-'}`);
 }
 
 function stoppedWhy(step, dirty) {
@@ -2770,7 +2976,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const evidenceOf = (cls) => {
         const rule = cls && cls.rule ? cls.rule : '-';
         const pattern = cls && cls.label ? cls.label : 'none';
-        return { route, rule, pattern };
+        return { route, rule, pattern, upstream: upstreamOf(cls, r, name) };
       };
       if (r.spawnErr) {
         const code = r.spawnErr.code === 'ENOENT' ? 127 : 126;
@@ -2807,17 +3013,15 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       } else if (r.timedOut) {
         // Post-hoc over everything it printed, terminal and non-terminal rows alike.
         const captured = [r.stderr || '', r.partialErr || '', r.partialOut || ''].join('\n');
-        const events = extractEvents(name, r.stdout);
-        const cls = classifyStop({ cli: name, routerLane: lane, stderr: captured, events });
+        const { events, eventRaw } = eventsWithRaw(name, r.stdout);
+        const cls = classifyStop({ cli: name, routerLane: lane, stderr: captured, events, eventRaw });
         if (cls.status !== 'crash') {
           hit = cls.status;
           evidence = evidenceOf(cls);
         }
       } else {
-        const cls = classifyStop({
-          cli: name, routerLane: lane,
-          stderr: r.stderr, events: extractEvents(name, r.stdout),
-        });
+        const { events, eventRaw } = eventsWithRaw(name, r.stdout);
+        const cls = classifyStop({ cli: name, routerLane: lane, stderr: r.stderr, events, eventRaw });
         if (cls.status !== 'crash') {
           hit = cls.status;
           evidence = evidenceOf(cls);
@@ -3214,7 +3418,7 @@ const fakeMode = model.startsWith('fake/') ? model.slice(5).replace(/:[a-z]+$/, 
 const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('gc', pid); };
 const STICKY_FAKE = new Set([
   'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big', 'sentinelsplit',
-  'limit-mid', 'limit-partial', 'limit-flood', 'limit-partial-flood',
+  'limit-mid', 'limit-partial', 'limit-flood', 'limit-partial-flood', 'auth-then-noise',
   'transient-hang', 'bare-429-hang', 'retry-notice', 'retry-notice-429', 'slowquota',
   'capclamp',
 ]);
@@ -3249,10 +3453,29 @@ const FAKE_MODES = {
     setTimeout(() => { fs.appendFileSync('a.txt', 'slow\n'); process.stdout.write('# Summary\nok'); process.exit(0); }, 2500);
   },
   empty: () => {},
-  crash: () => { process.stderr.write('boom\n'); process.exit(7); },
+  crash: () => { process.exit(7); },
   quote: () => {
     fs.appendFileSync('a.txt', 'q\n');
     process.stdout.write('429 rate limit and billing noted.\n# Summary\nok');
+  },
+  router402: () => {
+    const key = process.env.AIKIT_XAI_SENTINEL || 'sentinel';
+    process.stderr.write('402: {"message":"[acme-cli/acme-4.7] [402]: Acme Build usage balance exhausted (reset after 2m)","retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z","api_key":"' + key + '","connection":"conn:ab12cd34"}\n');
+    process.exit(1);
+  },
+  'router402-nofields': () => {
+    const key = process.env.AIKIT_XAI_SENTINEL || 'sentinel';
+    process.stderr.write('402: {"message":"[acme-cli/acme-4.7] [402]: Acme Build usage balance exhausted (reset after 2m)","api_key":"' + key + '","connection":"conn:ab12cd34"}\n');
+    process.exit(1);
+  },
+  'auth-then-noise': () => {
+    process.stderr.write('Error: not logged in\nlater noise\n');
+    setInterval(() => {}, 1 << 30);
+  },
+  'session-echo': () => {
+    const session = argOf('--session-id') || '';
+    process.stderr.write(session + '\n401 unauthorized\n');
+    process.exit(1);
   },
   billing: () => { process.stderr.write('402 payment required\n'); process.exit(1); },
   'router-env-billing': () => { process.stderr.write('402 payment required\n'); process.exit(1); },
@@ -3577,6 +3800,15 @@ if (sub[0] === 'models') {
 const model = argOf('--model');
 log('opencode ' + model);
 process.stdin.on('data', () => {}).on('end', () => {
+  if (model === 'fake/ok' && ['upstream-event', 'two-events'].includes(process.env.FAKE_OPENCODE_MODE)) {
+    const acct = 'acct-' + process.pid;
+    const token = process.env.AIKIT_XAI_SENTINEL || 'sentinel';
+    const events = process.env.FAKE_OPENCODE_MODE === 'upstream-event'
+      ? [JSON.stringify({ type: 'error', sessionID: 'ses_fake', error: { type: 'provider.quota', status: 429, message: 'The usage limit has been reached', response: { body: JSON.stringify({ accountId: acct, api_key: token, retry_after: 30 }) } } })]
+      : [JSON.stringify({ type: 'error', sessionID: 'ses_fake', error: { type: 'provider.quota', status: 429, message: 'unrelated event' } }), JSON.stringify({ type: 'error', sessionID: 'ses_fake', error: { type: 'provider.quota', status: 429, message: 'The usage limit has been reached', response: { body: JSON.stringify({ retry_after: 120 }) } } })];
+    for (const event of events) console.log(event);
+    process.exit(1);
+  }
   fs.appendFileSync('a.txt', 'oc\n');
   const lines = [
     JSON.stringify({ type: 'text', sessionID: 'ses_1', part: { id: 'p1', messageID: 'm1', type: 'text', text: 'Plan first.' } }),
@@ -3652,7 +3884,7 @@ process.stdin.on('data', () => {}).on('end', () => {
 
 const STATUS_HEAD_RE = new RegExp(
   '^(.* action=stop)(?: (route=\\S+ rule=\\S+ pattern=\\S+))?' +
-  '(?: (attempts=\\S+ cycles=\\S+))?(?: (retry_after_s=\\S+ cycle=\\S+))?$',
+  '(?: (attempts=\\S+ cycles=\\S+))?(?: (retry_after_s=\\S+ cycle=\\S+))?(?: upstream=\\S+)?$',
 );
 
 function statusLineOk(stderr, pattern) {
@@ -3805,7 +4037,7 @@ async function runTwice(spec, c, second) {
     ? fs.readFileSync(c.calls, 'utf8').trim().split('\n').filter(Boolean) : [];
   fs.writeFileSync(c.calls, '');
   const again = await runCaseProcess({
-    ...spec, args: c.args || spec.args, stdin: second.stdin ?? spec.stdin, exit: second.exit,
+    ...spec, args: second.args || c.args || spec.args, stdin: second.stdin ?? spec.stdin, exit: second.exit,
   }, c);
   if (again.reason) return { reason: `second: ${again.reason}` };
   if (again.status !== second.exit) return { reason: `second exit ${again.status}` };
@@ -3931,6 +4163,7 @@ async function runSelfTestCase(tmp, spec) {
     FAKE_SIDS: path.join(tmp, `sids-${spec.name}.log`),
     AIKIT_XAI_SENTINEL: 'sk-aikit-SENTINEL-' + process.pid,
     AIKIT_XAI_BEARER: 'brtok-' + process.pid,
+    ...(spec.fakeOpencodeMode ? { FAKE_OPENCODE_MODE: spec.fakeOpencodeMode } : {}),
     ...(spec.env || {}),
   });
   const c = { tmp, repo, home, calls, pidFile, copy, env };
@@ -5036,6 +5269,94 @@ async function blackBoxSelfTest() {
         check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null),
       },
       {
+        name: 'upstream-opencode-event',
+        fakeOpencodeMode: 'upstream-event',
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok', '--route-opencode', 'router'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [600] } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        check: (r, ctx) => {
+          const body = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: upstream body='));
+          const fields = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: upstream fields='));
+          const all = `${r.stdout}\n${r.stderr}`;
+          return body && body.includes('response') && fields === 'cross-ai: upstream fields={"retry_after":30}' &&
+            !all.includes(ctx.env.AIKIT_XAI_SENTINEL) && !/acct-\\d+/.test(all)
+            ? null : 'nested opencode event was not preserved and redacted';
+        },
+      },
+      {
+        name: 'upstream-two-events',
+        fakeOpencodeMode: 'two-events',
+        args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok', '--route-opencode', 'router'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [600] } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        check: (r) => {
+          const body = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: upstream body='));
+          return body && JSON.parse(body.slice(body.indexOf('=') + 1)).includes('The usage limit has been reached')
+            ? null : 'matched event provenance lost';
+        },
+      },
+      {
+        name: 'upstream-live-kill',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/auth-then-noise', '--timeout', '8'],
+        exit: 69,
+        status: /^AIKIT-XAI status=auth .* action=stop$/,
+        check: (r) => {
+          const body = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: upstream body='));
+          return body && JSON.parse(body.slice(body.indexOf('=') + 1)) === 'Error: not logged in' ? null : 'live match provenance lost';
+        },
+      },
+      {
+        name: 'upstream-pi-session-masked',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/session-echo'],
+        exit: 69,
+        status: /^AIKIT-XAI status=auth .* action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n');
+          const relay = lines.find((line) => line.includes('<redacted>'));
+          const attempt = lines.find((line) => line.startsWith('cross-ai: attempt '));
+          return relay && attempt && /session=([0-9a-f-]+)/.test(attempt) && !attempt.includes('session=<redacted>')
+            ? null : 'session id masking mismatch';
+        },
+      },
+      {
+        name: 'upstream-waits-identical',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router402', '--route-pi', 'router'],
+        config: { retry: { base_s: 0.02, factor: 1.5, max_retries: 2, session_resets: 0, hard_waits_s: [600] } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        second: {
+          args: ['--prefer', 'pi', '--model-pi', 'fake/router402-nofields', '--route-pi', 'router'],
+          exit: 75,
+          status: /^AIKIT-XAI status=quota .* action=stop$/,
+        },
+        check: (both) => {
+          if (!both.first || !both.again) return `twice results missing: ${Object.keys(both)}`;
+          const countAttempts = (stderr) => (stderr.match(/cross-ai: attempt n=/g) || []).length;
+          if (!both.again.stderr.includes('cross-ai: upstream body=')) return 'second run did not exercise upstream capture';
+          if (countAttempts(both.first.stderr) !== countAttempts(both.again.stderr)) return `attempt count changed ${countAttempts(both.first.stderr)} vs ${countAttempts(both.again.stderr)}`;
+          const waits = (stderr) => [...stderr.matchAll(/cross-ai: wait ms=(\d+)/g)].map((match) => Number(match[1]));
+          const a = waits(both.first.stderr);
+          const b = waits(both.again.stderr);
+          if (a.length !== b.length || a.length !== 2) return `wait step sequence ${a.length} vs ${b.length}`;
+          for (let i = 0; i < a.length; i += 1) {
+            const expected = 20 * 1.5 ** i;
+            if (Math.abs(a[i] - expected) > expected * 0.1 || Math.abs(b[i] - expected) > expected * 0.1) return `wait outside configured series: ${a[i]} vs ${b[i]}`;
+          }
+          const tails = [statusTail(both.first.stderr), statusTail(both.again.stderr)];
+          return tails.every((tail) => tail?.retry_after_s === '600' && tail.cycle === '0') ? null : 'hard hint changed';
+        },
+      },
+      {
+        name: 'upstream-none',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/crash'],
+        exit: 1,
+        status: /^AIKIT-XAI status=crash .* action=stop$/,
+        check: (r) => (r.stderr || '').includes('upstream=-') && !(r.stderr || '').includes('cross-ai: upstream ')
+          ? null : 'empty upstream should have no trailer',
+      },
+      {
         name: 'crash',
         args: ['--prefer', 'pi', '--model-pi', 'fake/crash'],
         exit: 1,
@@ -5059,6 +5380,15 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/empty'],
         exit: 1,
         status: /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
+      },
+      {
+        name: 'upstream-cursor-result',
+        args: ['--prefer', 'cursor', '--model-cursor', 'fake-err-cursor'],
+        exit: 69,
+        status: /^AIKIT-XAI status=auth .* action=stop$/,
+        check: (r) => (r.stderr || '').includes('cross-ai: upstream body=') &&
+          JSON.parse((r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: upstream body=')).split('=').slice(1).join('=')).includes('"is_error":true')
+          ? null : 'cursor error event was not passed through',
       },
       {
         name: 'cursor-error',
@@ -7312,6 +7642,32 @@ async function blackBoxSelfTest() {
         },
       },
       {
+        name: 'upstream-router-402',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router402', '--route-pi', 'router'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [600] } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        check: (r, ctx) => {
+          if (!r.stderr) return 'missing captured stderr';
+          const report = (r.stderr || '').indexOf('cross-ai: report ');
+          const body = (r.stderr || '').indexOf('cross-ai: upstream body=');
+          const fields = (r.stderr || '').indexOf('cross-ai: upstream fields=');
+          const status = (r.stderr || '').indexOf('AIKIT-XAI ');
+          if (!(report >= 0 && body > report && fields > body && status > fields)) return 'upstream trailer order';
+          const bodyLine = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: upstream body='));
+          const fieldsLine = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: upstream fields='));
+          if (!JSON.parse(bodyLine.slice(bodyLine.indexOf('=') + 1)).includes('Acme Build')) return 'body missing upstream text';
+          if (fieldsLine !== 'cross-ai: upstream fields={"retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z"}') return 'fields mismatch';
+          const state = fs.existsSync(ctx.env.XDG_STATE_HOME)
+            ? fs.readdirSync(ctx.env.XDG_STATE_HOME, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => fs.readFileSync(path.join(ctx.env.XDG_STATE_HOME, entry.name), 'utf8')).join('\n')
+            : '';
+          const all = `${r.stdout}\n${r.stderr}\n${state}`;
+          if (all.includes(ctx.env.AIKIT_XAI_SENTINEL)) return 'sentinel leaked';
+          if (all.includes('ab12cd34')) return 'connection suffix leaked';
+          return (r.stderr || '').includes('upstream=present') ? null : 'missing upstream marker';
+        },
+      },
+      {
         name: 'route-flag-bad',
         args: ['--prefer', 'pi', '--route-pi', 'maybe'],
         exit: 2,
@@ -7572,7 +7928,8 @@ async function main(argv) {
   const finalStatus = r.status || 'crash';
   return reportAndFinish(finalStatus, {
     ...liveFields, tree, cli_rc: r.cli_rc, cli: c.name, model: c.model,
-    route: r.route, rule: r.rule, pattern: r.pattern, exit: r.exit, ...counted,
+    route: r.route, rule: r.rule, pattern: r.pattern, upstream: r.upstream,
+    exit: r.exit, ...counted,
   }, why);
 }
 
