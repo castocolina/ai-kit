@@ -99,8 +99,8 @@ class QuotaExhaustedError(RuntimeError):
     ai_kit_spec.error_classifier.REASONS (quota/auth/timeout/configuration/dispatch_unavailable/
     real_error -- the one shared, stderr-and-exit-status-only classifier, D-13; HIGH finding:
     a real probe/dispatch failure has more shapes than "quota" vs "auth", and only one of them is
-    ever worth an hourly wait), PLUS one superpowers-local reason:
-      - "quota": a genuine, time-bound rate/usage-limit signal -- worth the hourly wake.
+    worth a later owner re-run), PLUS one superpowers-local reason:
+      - "quota": a genuine, time-bound rate/usage-limit signal -- worth a later owner re-run.
       - "auth": an authentication/entitlement/setup problem -- never fixed by waiting.
       - "timeout": the probe itself hung/timed out -- a broken invocation, not a rate limit.
       - "configuration": a missing/malformed command template -- a config problem.
@@ -114,9 +114,9 @@ class QuotaExhaustedError(RuntimeError):
     `all_auth_failures` is True only when every entry in `reasons` is "auth" (kept for the
     original stop-and-ask-about-setup signal). `any_quota_recoverable` is the general HIGH-finding
     gate a caller now uses instead: True only when at least one entry in `reasons` is "quota" --
-    the ONLY case where scheduling an hourly CronCreate wake accomplishes anything. If it's False,
-    EVERY tried candidate failed for a reason waiting never fixes, and the caller must stop and
-    report the real problem(s) instead of scheduling a futile wake."""
+    the ONLY case where a later owner re-run can help. If it's False, EVERY tried candidate
+    failed for a reason waiting never fixes, and the caller must stop and report the real
+    problem(s). Nothing is scheduled."""
 
     def __init__(self, task_type, tried: list, reasons: dict | None = None):
         self.task_type = task_type
@@ -125,8 +125,7 @@ class QuotaExhaustedError(RuntimeError):
         super().__init__(
             f"every resolved candidate for task_type={task_type!r} is unusable "
             f"(tried: {tried!r}, reasons: {self.reasons!r}) -- caller must persist resumable "
-            f"state and, only if any_quota_recoverable, schedule a CronCreate quota re-check "
-            f"rather than retry immediately"
+            f"state and stop; nothing is scheduled"
         )
 
     @property
@@ -135,13 +134,12 @@ class QuotaExhaustedError(RuntimeError):
 
     @property
     def any_quota_recoverable(self) -> bool:
-        """HIGH finding: the real gate for scheduling an hourly CronCreate wake. True only if at
-        least one tried candidate's reason is "quota" -- a genuine, time-bound rate/usage limit.
-        Every other reason (auth/timeout/configuration/dispatch_unavailable/real_error, and
-        every route name the walk records) never improves by waiting; if NONE of `reasons` is
-        "quota", waiting an hour
-        fixes nothing for any candidate, and the caller must stop and report the real problem(s)
-        instead. Delegates to the shared reasons_summary (above) -- see its own docstring for why
+        """HIGH finding: the gate for a later owner re-run. True only if at least one tried
+        candidate's reason is "quota" -- a genuine, time-bound rate/usage limit. Every other
+        reason (auth/timeout/configuration/dispatch_unavailable/real_error, and every route name
+        the walk records) never improves by waiting; if NONE of `reasons` is "quota", a later
+        re-run fixes nothing for any candidate, and the caller must stop and report the real
+        problem(s). Nothing is scheduled. Delegates to the shared reasons_summary (above) -- why
         a caller merging reasons across more than one resolve-injection call must recompute this
         SAME summary over the merged dict rather than trust one call's own `.reasons` alone."""
         return reasons_summary(self.reasons)["any_quota_recoverable"]
@@ -151,8 +149,8 @@ def compute_resume_exclusions(tried: list, reasons: dict, prior_excluded_keys: l
     """CRITICAL finding (recurrence guard): a persisted resumable-state `excluded_keys` set must
     NEVER permanently exclude a candidate whose only failure reason was "quota" -- once
     permanently excluded, a candidate can NEVER be retried again, even after quota genuinely
-    recovers, which defeats the entire purpose of the hourly CronCreate wake this same exhaustion
-    event schedules. This function is the single place that decides what belongs in a PERSISTED
+    recovers, which defeats a later owner re-run of this same exhaustion. This function is the
+    single place that decides what belongs in a PERSISTED
     exclusion set: `prior_excluded_keys` (already permanent, carried forward unchanged) plus every
     key in `tried` whose reason is NOT "quota" (auth/timeout/configuration/dispatch_unavailable/
     real_error, or a route name -- genuinely permanent, by construction of QuotaExhaustedError's
@@ -229,8 +227,8 @@ def _unavailability_reason(quota: dict, key: str) -> str:
     classifier (ai_kit_spec.error_classifier, D-13) already stored on the quota.json entry
     at probe time -- never a re-parse of the human-readable `detail` text. A legacy entry
     written before reasons existed reads "real_error" (never "quota" -- a false "quota"
-    here would wrongly schedule an hourly CronCreate wake for a failure that will never
-    improve by waiting, exactly the bug the HIGH finding closed)."""
+    here would wrongly mark a failure "quota" and invite a later owner re-run for one that
+    will never improve by waiting, exactly the bug the HIGH finding closed)."""
     return entry_reason(quota.get(key) or {}) or "real_error"
 
 
@@ -399,12 +397,12 @@ def dispatch_superpowers_task(request: DispatchTaskRequest,
 
 def classify_dispatch_failure(dispatch_result: dict) -> str:
     """Classifies a completed dispatch_superpowers_task result from the runner's own reason:
-    "ok" (returncode 0), "quota" when the runner reported reason `quota` (retry with the next
-    ladder candidate, never this same one), or "real_error" for anything else, including a
-    timeout and every auth/entitlement/setup signal -- HIGH finding: those never get better by
-    waiting, so they must never come back "quota" and trigger the caller's hourly CronCreate
-    wake loop -- surfaced honestly to the harness's own BLOCKED/fix-loop path instead, design
-    spec Section 12's explicit "never silently retry disguised as quota-wait" rule."""
+    "ok" (returncode 0), "quota" when the runner reported reason `quota` -- stop and report
+    (the runner already ran its ladder), never re-dispatch to another candidate -- or
+    "real_error" for anything else, including a timeout and every auth/entitlement/setup
+    signal. HIGH finding: those never get better by waiting, so they must never come back
+    "quota". They surface honestly to the harness's own BLOCKED path instead, design spec
+    Section 12's explicit "never silently retry disguised as quota-wait" rule."""
     if dispatch_result.get("returncode", 0) == 0:
         return "ok"
     if dispatch_result.get("reason") == "quota":

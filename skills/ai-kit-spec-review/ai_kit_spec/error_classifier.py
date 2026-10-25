@@ -14,7 +14,7 @@ waiting for."""
 # Closed reason vocabulary (D-13). Order here is documentation only; classify_error's
 # check order is: timeout, exit 0, auth, quota, dispatch_unavailable, configuration.
 REASONS = (
-    "quota",               # time-bound rate/usage limit — worth an hourly retry
+    "quota",               # usage or rate limit, already retried by the runner on a router lane
     "auth",                # authentication/entitlement/setup — never fixed by waiting
     "timeout",             # the invocation itself hung
     "configuration",       # malformed/missing command template or unknown model

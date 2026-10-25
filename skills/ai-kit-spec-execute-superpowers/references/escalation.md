@@ -86,10 +86,11 @@ Read `any_quota_recoverable` exactly as Step 2 does:
   recoverable branch: merge this result's `tried`/`reasons` into the wave sets, compute
   `$RESUME_EXCLUDED_KEYS_JSON` with `resume-exclusions`, write `$STATE_JSON` (with this round's
   `$FIX_ROUND`, `$LAST_DISPATCHED_KEY` and `$ESCALATION_ANCHOR_KEY`) via `write-resumable-state`,
-  schedule the wake, then
-  stop the wave. Never dispatch a same-or-weaker candidate as a substitute.
+  then stop the wave for a later re-run by the owner. Never dispatch a same-or-weaker candidate
+  as a substitute.
 - **`False`, or `no_candidate`** — no more-capable candidate is eligible for automatic quota
-  recovery (a `"capacity"` failure may still clear by itself; an hourly wake is not the remedy). Do not fall through to a same-or-weaker one and do not schedule a wake. STOP and
+  recovery (a `"capacity"` failure may still clear by itself; a later re-run is the owner's
+  call). Do not fall through to a same-or-weaker one. Nothing is scheduled. STOP and
   tell the user that rounds 4–5 cannot honor the capability bump with the current ladder, reading
   `reasons`/`detail` for which candidates failed and why. When the pool was narrowed only by the
   floor (the stuck key is top-ranked), `reasons`/`detail` are empty by design: name the keys in

@@ -58,11 +58,11 @@ only quota-exhausted when the state was written is eligible again: the next `res
 refreshes quota, so it gets a real chance to have recovered. A permanently excluded one is never
 retried, and the task keeps its fix round and its escalation anchor.
 
-## Resumable state: writing it and scheduling the wake
+## Resumable state: writing it
 
 When `INJECTION_MODE == "quota_exhausted"` and `any_quota_recoverable == True`: write resumable
-state and schedule an hourly wake, then STOP this wave (do not dispatch this task). One `Bash`
-call:
+state, then STOP this wave and report the reasons per key and the state path (the owner
+re-invokes to resume). Nothing is scheduled. Do not dispatch this task. One `Bash` call:
 
 ```bash
 PROJECT_KEY="$(python3 -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:12])" "$CWD")"
@@ -96,9 +96,5 @@ printf 'RESUME_STATE_PATH=%s\nWAVE_TRIED_JSON=%s\nWAVE_REASONS_JSON=%s\n' \
   "$RESUME_STATE_PATH" "$WAVE_TRIED_JSON" "$WAVE_REASONS_JSON"
 ```
 
-Schedule `CronCreate`: hourly interval, prompt `"re-check quota via probe-quota and, once restored,
-resume ai-kit-spec-execute-superpowers from $RESUME_STATE_PATH"` (substitute the printed path).
-`CronCreate` jobs are session-scoped (design spec §10) — they vanish if the session exits, only fire
-while the session is idle, and recurring jobs auto-expire after 7 days; tell the user this
-explicitly. On a host without a scheduler, tell the user the state path and that they resume by
-hand.
+Then STOP this wave and report the reasons per key and `$RESUME_STATE_PATH`. Nothing is
+scheduled; the owner re-invokes to resume.

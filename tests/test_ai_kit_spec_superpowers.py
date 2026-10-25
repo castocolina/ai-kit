@@ -572,7 +572,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
     def test_auth_failure_is_classified_distinctly_and_flagged_all_auth_failures(self):
         # HIGH finding: an unauthenticated/unentitled candidate must never look like a real,
         # time-bound quota exhaustion -- .all_auth_failures is what tells a caller to skip the
-        # futile hourly CronCreate wake and surface an actionable setup error instead.
+        # futile later re-run and surface an actionable setup error instead.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
             {
@@ -602,7 +602,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
 
     def test_timeout_failure_classified_distinctly_not_quota(self):
         # HIGH finding: a probe timeout is a real, non-time-bound problem (a hung/broken CLI
-        # invocation) -- it must never be classified "quota" and trigger a futile hourly wake.
+        # invocation) -- it must never be classified "quota" and invite a futile later re-run.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
             {
@@ -689,7 +689,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
     def test_arbitrary_nonzero_exit_classified_as_real_error_not_quota(self):
         # HIGH finding (the core bug): prior to this revision, EVERY non-auth detail defaulted to
         # "quota" -- a bad model id or any other unrelated failure text is a real error, not a
-        # time-bound rate limit, and must never trigger a futile hourly CronCreate wake.
+        # time-bound rate limit, and must never invite a futile later re-run.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
             {
@@ -718,7 +718,7 @@ class TestBuildDispatchInjection(unittest.TestCase):
 
     def test_any_quota_recoverable_true_when_at_least_one_reason_is_quota(self):
         # HIGH finding: any_quota_recoverable is the general gate a caller uses to decide whether
-        # scheduling an hourly CronCreate wake accomplishes anything -- True as soon as ANY tried
+        # a later re-run accomplishes anything -- True as soon as ANY tried
         # candidate's reason is "quota", even when others in the same batch are permanent.
         task = "### Task 1\n**Files:**\n- Create: `server/api.py`\n"
         candidates = [
@@ -781,7 +781,7 @@ class TestComputeResumeExclusions(unittest.TestCase):
     def test_quota_reason_keys_are_not_permanently_excluded(self):
         # CRITICAL finding (recurrence): a persisted resume state must NOT permanently exclude a
         # candidate whose only failure reason was quota -- it must be eligible again once quota
-        # recovers, or the hourly CronCreate wake can never actually resume anything.
+        # recovers, or a later re-run can never actually resume anything.
         result = dispatch_injection.compute_resume_exclusions(
             tried=["claude/opus-5", "codex/terra"],
             reasons={"claude/opus-5": "quota", "codex/terra": "auth"},
@@ -968,7 +968,7 @@ class TestClassifyDispatchFailure(unittest.TestCase):
 
     def test_real_error_on_auth_reason(self):
         # HIGH finding: an auth/entitlement/setup failure must classify as real_error, never
-        # quota -- it will never be fixed by an hourly quota-wake retry.
+        # quota -- it will never be fixed by a later re-run.
         self.assertEqual(
             dispatch_injection.classify_dispatch_failure(
                 {"returncode": 69, "reason": "auth"}
@@ -1112,7 +1112,7 @@ class TestCliResolveInjection(unittest.TestCase):
         self.assertEqual(result["reasons"], {"claude/opus-5": "quota"})
         self.assertFalse(result["all_auth_failures"])
         # HIGH finding: any_quota_recoverable, not all_auth_failures, is the real gate Task 4's
-        # SKILL.md now uses to decide whether an hourly CronCreate wake accomplishes anything.
+        # SKILL.md now uses to decide whether a later re-run accomplishes anything.
         self.assertTrue(result["any_quota_recoverable"])
         # CRITICAL finding (Rounds 4-5 capability escalation): ladder_keys must be present even on
         # the quota_exhausted branch -- Step 2's own resumable-state persistence path is exactly
@@ -1228,7 +1228,7 @@ class TestCliResolveInjection(unittest.TestCase):
         # required_context) -- build_dispatch_injection_fn's own "no candidate survived narrowing"
         # ValueError, previously uncaught, must never crash this command. It is a genuine curation
         # gap, never a quota-availability problem, so it gets its own "no_candidate" mode -- never
-        # folded into "quota_exhausted", which would wrongly imply a CronCreate wake could help.
+        # folded into "quota_exhausted", which would wrongly imply a later re-run could help.
         candidates = [
             {
                 "key": "small-context/model",
@@ -1414,7 +1414,7 @@ class TestCliResolveInjection(unittest.TestCase):
         self.assertEqual(result["reasons"], {"codex/terra": "quota"})
         self.assertTrue(result["any_quota_recoverable"])
 
-    def test_quota_reason_below_the_floor_or_outside_the_walk_never_schedules_a_wake(self):
+    def test_quota_reason_below_the_floor_or_outside_the_walk_never_gets_a_later_rerun(self):
         # A wave-tried quota key below the Rounds 4-5 floor, or a stale reason for a key that is
         # neither excluded nor tried, cannot be picked by this call: it must not make the result
         # look quota-recoverable.
@@ -2089,7 +2089,7 @@ class TestCliClassifyDispatchFailure(unittest.TestCase):
 
 class TestCliResumeExclusions(unittest.TestCase):
     def test_prints_only_permanent_exclusions(self):
-        # CRITICAL finding: the executable subcommand SKILL.md's resume/wake path calls -- proves
+        # CRITICAL finding: the executable subcommand SKILL.md's resume path calls -- proves
         # the reason-based split (quota dropped, everything else kept) is real and testable, not
         # just inline, untested bash arithmetic.
         out = io.StringIO()

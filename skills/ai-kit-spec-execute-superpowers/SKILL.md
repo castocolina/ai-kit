@@ -36,13 +36,15 @@ Each item is repeated at its point of use; this is the index.
   per task, `append` after that, and every prompt after the first says APPEND (Step 3).
 - **Never** parse the implementer status out of `$REPORT_FILE` — read it from
   `$DISPATCH_RESULT_JSON["stdout"]` only (Step 3).
-- **Never** schedule `CronCreate` when `any_quota_recoverable == False` or on `no_candidate` — no
-  wait fixes a permanent failure; STOP and report instead (Step 2).
+- **Never** re-dispatch a task to another candidate after its dispatched run failed, and never
+  schedule anything except the ruled single re-invoke: one one-shot `CronCreate` at `retry_after_s`
+  for a confirmed-router exit 75 carrying `cycle=`, re-invoking the same lane (the runner already
+  ran its ladder; `../ai-kit-spec-review/references/subprocess-quota-policy.md`) (Step 3).
 - **Never** run `trust-local` without the user's explicit yes, and never ask twice in one run
   (Step 2).
 
-`CronCreate` and the `Agent` tool are Claude Code tools. On another host, use its own scheduler and
-subagent mechanism, or STOP and tell the user to resume by hand.
+The `Agent` tool is a Claude Code tool. On another host, use its own subagent mechanism, or STOP
+and tell the user to resume by hand.
 
 ## Step 0: Resolve the shim path
 
@@ -155,7 +157,7 @@ Record both when the block ran. `$INJECTION_KEY` is the ladder key (e.g. `codex/
 
 - **`no_candidate`** — nothing configured for this task survives affinity/context narrowing (read
   `detail`, e.g. every `context_limit` is below the task's `required_context`). A curation gap, not
-  quota: do **not** schedule `CronCreate`. STOP this wave and report `detail`.
+  quota. STOP this wave and report `detail`. Nothing is scheduled.
 - **`quota_exhausted`** — read `any_quota_recoverable`
   (`python3 -c 'import json,sys; print(json.loads(sys.argv[1])["any_quota_recoverable"])' "$INJECTION_JSON"`).
   It, not `all_auth_failures`, is the gate. `reasons` holds `"quota"`, `"auth"`,
@@ -166,8 +168,8 @@ Record both when the block ran. `$INJECTION_KEY` is the ladder key (e.g. `codex/
   worth waiting for. A skip route is recorded under that route name and never picked.
   - **`any_quota_recoverable == False`** — no candidate is eligible for automatic quota recovery
     (only `"quota"` is). Some reasons may still clear later by themselves (`"capacity"`), others
-    need a fix first (credentials, configuration); either way an hourly wake is not the remedy.
-    Do **not** schedule `CronCreate`. STOP this wave and tell the user which key needs what fix,
+    need a fix first (credentials, configuration). STOP this wave and tell the user which key needs
+    what fix, and nothing is scheduled.
     read off `reasons`: `"auth"` needs login or entitlement, `"billing_or_access"` credits or
     model access, `"configuration"` a fixed model id, prompt or flag (the runner refused it),
     `"capacity"` a later retry or another model, `"git_timeout"` a look at the repo (the runner's
@@ -176,14 +178,12 @@ Record both when the block ran. `$INJECTION_KEY` is the ladder key (e.g. `codex/
     call, not one of subagent-driven-development's four stop-and-ask conditions; see
     `references/design-notes.md`.
   - **`any_quota_recoverable == True`** — at least one candidate is quota-exhausted, which is
-    time-bound. Write resumable state, schedule an hourly `CronCreate` wake, then STOP this wave
-    without dispatching. **MANDATORY: read `references/state-management.md`'s "Resumable state"
-    sections first** — they give the exact bash for merging `tried`/`reasons` into the wave sets,
-    computing `$RESUME_EXCLUDED_KEYS_JSON` with the `resume-exclusions` subcommand (never inline
-    set arithmetic), and the `STATE_JSON` passed to `write-resumable-state`. `CronCreate` prompt:
-    `"re-check quota via probe-quota and, once restored, resume ai-kit-spec-execute-superpowers
-    from $RESUME_STATE_PATH"`. Tell the user the job is session-scoped: it vanishes when the
-    session exits, fires only while the session is idle, and expires after 7 days.
+    time-bound. Write resumable state, then STOP this wave and report the reasons per key and the
+    state path; the owner re-invokes to resume. Nothing is scheduled. **MANDATORY: read
+    `references/state-management.md`'s "Resumable state" sections first** — they give the exact
+    bash for merging `tried`/`reasons` into the wave sets, computing `$RESUME_EXCLUDED_KEYS_JSON`
+    with the `resume-exclusions` subcommand (never inline set arithmetic), and the `STATE_JSON`
+    passed to `write-resumable-state`.
 - **Otherwise** `$INJECTION_JSON` carries `mode`, `key`, `runtime`, `model`, `ladder_keys`, and for
   `external_cli` also `effort`, `service_tier`. Go to Step 3.
 
@@ -240,8 +240,8 @@ back to `write` for this task.
    overwrite its existing contents from earlier rounds." (`--report-mode` only controls
    `dispatch-task`'s own stdout fallback, never what the CLI does to the file.) On a fix round, also
    append the open findings verbatim. **At the start of every fix round, increment `$FIX_ROUND`
-   and set `ESCALATION_ANCHOR_KEY="$LAST_DISPATCHED_KEY"` first** (neither for a same-round quota
-   retry nor on resume), then apply the Rounds 4–5 rule below, then compose.
+   and set `ESCALATION_ANCHOR_KEY="$LAST_DISPATCHED_KEY"` first** (not on resume), then apply the
+   Rounds 4–5 rule below, then compose. A failed dispatch does not get a same-round re-dispatch.
 2. **Write the status contract** (`DONE` / `DONE_WITH_CONCERNS` / `NEEDS_CONTEXT` / `BLOCKED`, from
    implementer-prompt.md's "After Review Findings") to `$FORMAT_BLOCK_FILE`. It becomes the
    dispatch's format block.
@@ -299,17 +299,24 @@ printf 'WAVE_TRIED_JSON=%s\nWAVE_REASONS_JSON=%s\nEXCLUDED_KEYS_JSON=%s\n' \
   "$WAVE_TRIED_JSON" "$WAVE_REASONS_JSON" "$EXCLUDED_KEYS_JSON"
 ```
 
-  Then re-run Step 2's `resolve-injection` with the same shape: the new `--exclude-keys-json`, a
-  recomputed `--excluded-reasons-json` (prior merged with the updated wave reasons), and, when this
-  round is capability-escalated (`$ESCALATION_EXCLUDE_JSON` non-empty), also
-  `--escalation-excluded-keys-json "$ESCALATION_EXCLUDE_JSON"` so the retry keeps the capability
-  floor. Retry Step 3 with the new injection; never re-dispatch the same candidate blind. If the
-  re-resolution reports `quota_exhausted` (it does so even when every candidate is now excluded),
-  follow Step 2's `any_quota_recoverable` branch, which also merges its `tried`/`reasons` into the
-  wave sets.
-- **`"real_error"`** — never retried unchanged. Handle it as subagent-driven-development's
-  `BLOCKED`: more context and retry, a capability-escalated candidate (below), split the task, or
-  rule on a plan defect.
+  Then write resumable state and STOP the wave. The wave sets above already hold this key and
+  its `"quota"` reason, so run the resumable-state bash in `references/state-management.md` from
+  `RESUME_EXCLUDED_KEYS_JSON` onward (skip the two fold lines). Relay the runner's `cross-ai:
+  report` and `AIKIT-XAI` lines from `dispatch-task`'s stderr verbatim before acting on them.
+  Never re-resolve to another candidate after a failed dispatch. A confirmed-router exit 75
+  carrying `retry_after_s=` and `cycle=` is consumed by exactly one one-shot `CronCreate` wake at
+  `retry_after_s`, re-invoking the same lane (same CLI and model), never a repeated or
+  fixed-interval job, until a stop past the 4-hour cap (exit 69). Every other stop waits for the
+  owner and nothing is scheduled.
+- **`"real_error"`** — a failed external dispatch stops for the owner. Never answer it by
+  resolving a stronger or any other candidate. The owner chooses: more context and retry by the
+  owner, split the task, or rule on a plan defect. Relay the runner's `cross-ai: report` and
+  `AIKIT-XAI` lines from `dispatch-task`'s stderr.
+
+Task-review fix rounds after successful work (Step 4) are separate from dispatch-failure handling
+and keep their own rules. Rounds 4-5 escalation and the automatic pre-dispatch candidate choice
+are existing behavior, kept for now but explicitly pending owner confirmation through C7 in
+`25-OWNER-CAPTURES.md` (A1) — not settled policy. Every post-failure choice is owner-controlled.
 
 **Exec confinement.** Codex runs under `--codex-sandbox workspace-write`: the runner uses
 `--sandbox workspace-write` instead of the bypass, so writes stay inside the target dir plus

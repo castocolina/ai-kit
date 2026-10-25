@@ -30,9 +30,10 @@ running its GSD commands; the host's own folder trust is the only gate. `resolve
 the `*-workflow-keys` calls print `ai-kit: gsd-core <version> at <path>` on stderr; if that path
 is inside a repo you have not reviewed, stop and check it.
 
-**Host-specific steps.** `CronCreate` (Step 1's quota wake) and the `Skill` tool (Step 3) are
-Claude Code tools. On another host, use its own scheduler and skill-invocation mechanism, or tell
-the user to resume or run `/gsd-execute-phase` by hand.
+**Host-specific steps.** The `Skill` tool (Step 3) is a Claude Code tool. On another host, use
+its own skill-invocation mechanism, or tell the user to run `/gsd-execute-phase` by hand. A stop
+schedules nothing here (Step 1); the runner's own ladder is
+`../ai-kit-spec-review/references/subprocess-quota-policy.md`.
 
 ## Step 0: Resolve the shim path
 
@@ -135,10 +136,10 @@ If `mode == "fallback_notice"` and `reason == "malformed_config"`, print the mes
 not proceed to Step 2/3 at all.
 
 If `mode == "fallback_notice"` and `reason == "quota_exhausted"`: this is a genuine, time-bound
-exhaustion discovered before any handoff to GSD — write resumable state and schedule an hourly
-`CronCreate` wake (below), then STOP for this wave (do not proceed to Step 3 — GSD's own default
-would run with no configuration change, which the caller may prefer to defer rather than accept
-immediately):
+exhaustion discovered before any handoff to GSD — write resumable state (below), then STOP for
+this wave and report the probe reasons and the state path. Nothing is scheduled; the owner
+re-invokes when quota is back (do not proceed to Step 3 — GSD's own default would run with no
+configuration change, which the caller may prefer to defer rather than accept immediately):
 
 ```bash
 PROJECT_KEY="$(python3 -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:12])" "$CWD")"
@@ -152,17 +153,15 @@ print(json.dumps({"framework": "gsd", "project_path": sys.argv[1],
 python3 "$GSD_SHIM" write-resumable-state --path "$RESUME_STATE_PATH" --state-json "$STATE_JSON"
 ```
 
-Then schedule a `CronCreate` job: hourly interval, prompt `"re-check quota via probe-quota and,
-once restored, resume ai-kit-spec-execute-gsd from $RESUME_STATE_PATH"`. `CronCreate` jobs are
-session-scoped (design spec §10) — they vanish if the session exits, only fire while the session
-is idle, and recurring jobs auto-expire after 7 days; tell the user this explicitly.
+Then STOP for this wave and report the probe reasons and `$RESUME_STATE_PATH`. Nothing is
+scheduled; the owner re-invokes when quota is back.
 
 Every other `fallback_notice` reason (`no_configured_candidate`, `all_candidates_context_rejected`,
 `unsafe_hook_token` — see Step 2, `no_usable_dispatch` — no candidate has a native GSD tier or a CLI with an execute builder, so
 the execute-CLI screen skipped them all with a stderr warning each; `key` names the top one) is
 permanent, non-time-bound — print the message, run the mode-transition
 cleanup below, and proceed to Step 3 with no candidate resolved (GSD's own currently-active
-default runs unmodified). Never schedule a wake for these.
+default runs unmodified). Nothing is scheduled for these.
 
 ## Step 2: Act on the dispatch mode
 
@@ -418,9 +417,17 @@ by checking, in order: `<project>/.claude/commands/gsd-execute-phase.md` (GSD is
 project), then `$HOME/.claude/skills/gsd-execute-phase/SKILL.md` — use whichever exists first and
 read its frontmatter for the skill name (typically `gsd-execute-phase`), passing `$PHASE_ID` as its
 argument. This is a tool call the agent makes directly, not a shell command this document can show
-as a `bash` fence. After that call returns, this skill's own job is complete; any dispatch failure
-GSD's own skill surfaces (including its own cross-AI retry/skip/abort UI) is GSD's problem to
-handle and report, not this adapter's.
+as a `bash` fence. After that call returns, this skill's own job is complete.
+
+The runner runs the failure ladder
+(`../ai-kit-spec-review/references/subprocess-quota-policy.md`). When GSD's cross-AI step fails,
+relay the runner's `cross-ai: report` and `AIKIT-XAI` lines verbatim before acting on them. Never
+answer GSD's `skip` (it moves the plan to another harness) and never `retry` an `auth`, `billing`
+or `bad_model` stop on your own; the owner chooses. A confirmed-router quota stop (exit 75
+carrying `retry_after_s=` and `cycle=`) is the one delayed re-entry: the orchestrating session
+schedules exactly one one-shot `CronCreate` wake at `retry_after_s` and re-invokes the same lane
+(same CLI and model) without changing it, until a stop past the 4-hour cap (exit 69). Never a
+repeated or fixed-interval job. Every other stop waits for the owner and nothing is scheduled.
 
 If the `Skill` tool call itself fails to resolve — e.g. `gsd-execute-phase` isn't installed or its
 definition is missing/unreadable — that is a genuine environment problem, not a dispatch failure:
