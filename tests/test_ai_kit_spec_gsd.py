@@ -296,7 +296,7 @@ class TestBuildCrossAiCommand(unittest.TestCase):
         result = gsd_cross_ai.build_cross_ai_command(candidate)
         self.assertEqual(
             result,
-            "node .planning/scripts/cross-ai.mjs --prefer codex --model-codex gpt-5.6-sol "
+            "node .planning/scripts/cross-ai.mjs --runtime codex --model gpt-5.6-sol "
             "--mode exec --codex-sandbox workspace-write --no-preamble --prepend-file "
             ".planning/scripts/cross-ai-guidance.md")
 
@@ -349,7 +349,7 @@ class TestCrossAiHookResult(unittest.TestCase):
         self.assertEqual(result["mode"], "cross_ai_hook")
         self.assertEqual(
             result["cross_ai_command"],
-            "node .planning/scripts/cross-ai.mjs --prefer codex --model-codex gpt-5.6-sol "
+            "node .planning/scripts/cross-ai.mjs --runtime codex --model gpt-5.6-sol "
             "--mode exec --codex-effort high --codex-sandbox workspace-write --no-preamble "
             "--prepend-file .planning/scripts/cross-ai-guidance.md")
         self.assertEqual(result["guidance_path"], ".planning/scripts/cross-ai-guidance.md")

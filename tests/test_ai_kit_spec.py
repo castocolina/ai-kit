@@ -4869,9 +4869,9 @@ class TestMainCli(unittest.TestCase):
         body = json.loads(out.getvalue())
         self.assertEqual(body["kind"], "runner")
         argv = body["argv"]
-        self.assertIn("--prefer", argv)
+        self.assertIn("--runtime", argv)
         self.assertIn("codex", argv)
-        self.assertIn("--model-codex", argv)
+        self.assertIn("--model", argv)
         self.assertIn("{model}", argv)
         self.assertEqual(argv[argv.index("--codex-effort") + 1], "high")
         self.assertIn("review-spec.toml stores runtime and model", err.getvalue())
@@ -11840,7 +11840,7 @@ class TestCrossAiTemplateText(unittest.TestCase):
             "heartbeatS": 30,
             "models": {},
             "outerTimeoutS": 1800,
-            "prefer": ["pi", "cursor", "opencode"],
+            "runtime": "pi",
             "retry": {
                 "base_s": 1,
                 "factor": 1.5,
@@ -11852,6 +11852,7 @@ class TestCrossAiTemplateText(unittest.TestCase):
             "scrubEnv": self._SCRUB_DEFAULT,
         }
         self.assertEqual(cfg, expected)
+        self.assertNotIn("prefer", cfg)
         self.assertNotIn("timeoutMarginS", cfg)
         reserialized = "const CONFIG = " + json.dumps(cfg, indent=2, sort_keys=True) + ";"
         self.assertEqual(block, reserialized)
@@ -11869,7 +11870,8 @@ class TestCrossAiTemplateText(unittest.TestCase):
         cfg_start = text.index("const CONFIG = ") + len("const CONFIG = ")
         cfg_end = text.index("\n// </config>")
         cfg = json.loads(text[cfg_start:cfg_end].rstrip(";"))
-        for key in ("prefer", "models", "extraArgs", "routerBacked"):
+        self.assertNotIn("prefer", cfg)
+        for key in ("runtime", "models", "extraArgs", "routerBacked"):
             val = cfg.get(key)
             if isinstance(val, (dict, list)):
                 self.assertFalse(any("grok" in str(k).lower() for k in val))

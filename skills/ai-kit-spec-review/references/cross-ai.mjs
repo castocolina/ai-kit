@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=7 sha256=UNSTAMPED
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=UNSTAMPED
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v7).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
@@ -56,6 +56,10 @@
  * Live outer timeout reads workflow.cross_ai_timeout the way gsd-tools config-get does:
  * .planning[/$GSD_PROJECT][/workstreams/$GSD_WORKSTREAM]/config.json, then the root config
  * under GSD_WORKSTREAM, else 300.
+ * Retry config reads workflow.cross_ai_retry through the same files, then
+ * ${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json key cross_ai_retry, then CONFIG.retry,
+ * per key. The error catalog is PATTERNS (generated from cross-ai-errors.json) plus the owner
+ * overlay ${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai-errors.json.
  * No idle watchdog in this version (D-43); only the overall deadline bounds each child.
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -75,11 +79,6 @@ const CONFIG = {
   "heartbeatS": 30,
   "models": {},
   "outerTimeoutS": 1800,
-  "prefer": [
-    "pi",
-    "cursor",
-    "opencode"
-  ],
   "retry": {
     "base_s": 1,
     "factor": 1.5,
@@ -92,6 +91,7 @@ const CONFIG = {
     "session_resets": 1
   },
   "routerBacked": {},
+  "runtime": "pi",
   "scrubEnv": [
     "AI_AGENT",
     "CLAUDECODE",
@@ -4364,13 +4364,16 @@ function writeCopy(tmp, name, override) {
   const cfg = {
     attemptTimeoutS: 0, capS: 14400, effort: {}, extraArgs: {},
     heartbeatS: 30, models: {}, outerTimeoutS: 1800,
-    prefer: ['pi', 'cursor', 'opencode'], routerBacked: {},
+    runtime: 'pi', routerBacked: {},
     scrubEnv: [...CONFIG.scrubEnv],
     ...rest,
     retry: { base_s: 0, factor: 1.5, max_retries: 5, session_resets: 1, hard_waits_s: [0, 0, 0] },
   };
-  // An override key set to null removes it (a copy with no prefer and no runtime).
-  for (const key of Object.keys(cfg)) if (cfg[key] === null) delete cfg[key];
+  if (Object.hasOwn(rest, 'prefer') && !Object.hasOwn(rest, 'runtime')) cfg.runtime = null;
+  // Null normally removes an override; runtime null models prefer-only copies.
+  for (const key of Object.keys(cfg)) {
+    if (cfg[key] === null && !(key === 'runtime' && Object.hasOwn(rest, 'prefer'))) delete cfg[key];
+  }
   const translated = {};
   if (Array.isArray(backoffS)) translated.base_s = backoffS[0] ?? 0;
   if (cooldownS !== undefined) translated.hard_waits_s = [cooldownS, cooldownS, cooldownS];
@@ -9173,6 +9176,7 @@ async function blackBoxSelfTest() {
       {
         name: 'config-prefer-first-only',
         config: {
+          runtime: null,
           prefer: ['pi', 'cursor'],
           models: { pi: 'fake/crash', cursor: 'fake-ok-cursor', opencode: 'fake/ok' },
         },

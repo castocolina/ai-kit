@@ -62,7 +62,8 @@ class TestRender(unittest.TestCase):
         # C-WR-04/PT-07: plans stamp TEMPLATE_VERSION; readiness is a floor at or below it.
         shipped = cross_ai_script.template_version(self.template)
         self.assertEqual(cross_ai.TEMPLATE_VERSION, shipped)
-        self.assertLessEqual(cross_ai_script._READY_TEMPLATE, shipped)
+        self.assertEqual(cross_ai_script._READY_TEMPLATE, shipped)
+        self.assertEqual(shipped, 8)
 
     def test_project_paths_match_the_runner_dispatch_paths(self):
         # PT-07: the GSD hook names files this module renders.
@@ -341,14 +342,21 @@ class TestPlanScript(unittest.TestCase):
             self.assertEqual(int(match.group(1)), int(_shipped_version()) + 1)
 
 
-def _v2_pristine(template: bytes, runtime: str) -> bytes:
-    """A pristine script stamped template=2, body otherwise identical to a current render."""
+def _old_pristine(template: bytes, config: dict) -> bytes:
+    """A pristine old-version copy with precisely the supplied CONFIG migration state."""
     cfg = cross_ai_script.template_config(template)
-    cfg["runtime"] = runtime
+    cfg.pop("runtime", None)
     cfg.pop("prefer", None)
+    cfg.update(config)
+    cfg["backoffS"] = [30, 60]
     cfg["scrubEnv"] = sorted(HOST_SIGNAL_ENV_VARS)
     rendered = cross_ai_script.render(template, cfg)
-    return re.sub(rb"template=\d+", b"template=2", rendered, count=1)
+    return re.sub(rb"template=\d+", b"template=7", rendered, count=1)
+
+
+def _v2_pristine(template: bytes, prefer: list[str]) -> bytes:
+    """A pristine prefer-only script stamped template=7, like the previous template."""
+    return _old_pristine(template, {"prefer": prefer})
 
 
 class TestEnsureRunner(unittest.TestCase):
@@ -356,11 +364,72 @@ class TestEnsureRunner(unittest.TestCase):
     def setUpClass(cls):
         cls.template = _load_template()
 
+    def test_upgrade_migrates_first_prefer_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old = _v2_pristine(self.template, ["cursor", "pi"])
+            original_cfg = cross_ai_script.template_config(old)
+            self.assertNotIn("runtime", original_cfg)
+            self.assertEqual(original_cfg["prefer"], ["cursor", "pi"])
+            target = os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(old)
+            plan = cross_ai_script.plan_runner_upgrade(tmp, self.template, HOST_SIGNAL_ENV_VARS)
+            self.assertEqual(plan.kind, "change")
+            cross_ai_script.write_script(plan)
+            with open(target, "rb") as handle:
+                upgraded = cross_ai_script.template_config(handle.read())
+            self.assertEqual(upgraded["runtime"], "cursor")
+            self.assertNotIn("prefer", upgraded)
+            self.assertEqual(upgraded["backoffS"], [30, 60])
+
+    def test_upgrade_keeps_existing_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old = _old_pristine(self.template, {"runtime": "opencode", "prefer": ["cursor"]})
+            target = os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(old)
+            plan = cross_ai_script.plan_runner_upgrade(tmp, self.template, HOST_SIGNAL_ENV_VARS)
+            cross_ai_script.write_script(plan)
+            with open(target, "rb") as handle:
+                upgraded = cross_ai_script.template_config(handle.read())
+            self.assertEqual(upgraded["runtime"], "opencode")
+            self.assertNotIn("prefer", upgraded)
+
+    def test_upgrade_malformed_runtime_uses_prefer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old = _old_pristine(self.template, {"runtime": 5, "prefer": ["cursor"]})
+            target = os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(old)
+            plan = cross_ai_script.plan_runner_upgrade(tmp, self.template, HOST_SIGNAL_ENV_VARS)
+            cross_ai_script.write_script(plan)
+            with open(target, "rb") as handle:
+                upgraded = cross_ai_script.template_config(handle.read())
+            self.assertEqual(upgraded["runtime"], "cursor")
+            self.assertNotIn("prefer", upgraded)
+
+    def test_upgrade_empty_prefer_has_no_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old = _old_pristine(self.template, {"prefer": []})
+            target = os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(old)
+            plan = cross_ai_script.plan_runner_upgrade(tmp, self.template, HOST_SIGNAL_ENV_VARS)
+            cross_ai_script.write_script(plan)
+            with open(target, "rb") as handle:
+                upgraded = cross_ai_script.template_config(handle.read())
+            self.assertNotIn("runtime", upgraded)
+            self.assertNotIn("prefer", upgraded)
+
     def test_upgrade_tracer(self):
         from ai_kit_spec.runner_dispatch import RunnerSpec, project_runner_command
 
         with tempfile.TemporaryDirectory() as tmp:
-            old = _v2_pristine(self.template, "codex")
+            old = _v2_pristine(self.template, ["codex"])
             target = os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "wb") as handle:
@@ -375,9 +444,9 @@ class TestEnsureRunner(unittest.TestCase):
             with open(target, "rb") as handle:
                 upgraded = handle.read()
             self.assertIn(b"template=" + _shipped_version(), upgraded.split(b"\n", 2)[1])
-            self.assertEqual(
-                cross_ai_script.template_config(upgraded)["runtime"], "codex"
-            )
+            upgraded_cfg = cross_ai_script.template_config(upgraded)
+            self.assertEqual(upgraded_cfg["runtime"], "codex")
+            self.assertNotIn("prefer", upgraded_cfg)
             guidance = os.path.join(tmp, ".planning", "scripts", "cross-ai-guidance.md")
             with open(guidance, "rb") as handle:
                 text = handle.read()
@@ -473,7 +542,7 @@ class TestEnsureRunnerStates(unittest.TestCase):
 
     def test_edited_template_2_writes_new_and_is_not_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
-            data = _v2_pristine(self.template, "codex") + b"\n"
+            data = _v2_pristine(self.template, ["codex"]) + b"\n"
             target = self._runner(tmp)
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "wb") as handle:
@@ -487,10 +556,10 @@ class TestEnsureRunnerStates(unittest.TestCase):
                 self.assertEqual(handle.read(), data)
             self.assertTrue(os.path.isfile(target + ".new"))
 
-    def test_edited_template_6_writes_new_and_is_not_ready(self):
-        # Template 6 could still fall back to another CLI; only template 7 carries the ladder.
+    def test_edited_template_7_writes_new_and_is_not_ready(self):
+        # Template 7 does not accept the new --runtime/--model producer flags.
         with tempfile.TemporaryDirectory() as tmp:
-            data = re.sub(rb"template=\d+", b"template=6",
+            data = re.sub(rb"template=\d+", b"template=7",
                           _current_pristine(self.template), count=1) + b"\n"
             target = self._runner(tmp)
             os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -503,7 +572,7 @@ class TestEnsureRunnerStates(unittest.TestCase):
             with open(target, "rb") as handle:
                 self.assertEqual(handle.read(), data)
 
-    def test_edited_template_3_kept_and_ready(self):
+    def test_edited_template_8_kept_and_ready(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = _current_pristine(self.template) + b"\n"
             target = self._runner(tmp)

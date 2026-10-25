@@ -196,7 +196,7 @@ def project_runner_command(spec: RunnerSpec, *, guidance: bool = False) -> str |
 def runner_flags(spec: RunnerSpec) -> list[str]:
     """The runner flags one `RunnerSpec` turns into. Never a shell string."""
     flags = [
-        "--prefer", spec.runtime, f"--model-{spec.runtime}", spec.model, "--mode", spec.mode,
+        "--runtime", spec.runtime, "--model", spec.model, "--mode", spec.mode,
     ]
     if spec.route in ("router", "unknown"):
         flags += [f"--route-{spec.runtime}", spec.route]

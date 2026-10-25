@@ -137,8 +137,8 @@ class TestProjectRunnerCommand(unittest.TestCase):
         spec = RunnerSpec("opencode", "router-env/my-coding", "exec", 0)
         self.assertEqual(
             rd.project_runner_command(spec),
-            "node .planning/scripts/cross-ai.mjs --prefer opencode "
-            "--model-opencode router-env/my-coding --mode exec",
+            "node .planning/scripts/cross-ai.mjs --runtime opencode "
+            "--model router-env/my-coding --mode exec",
         )
 
     def test_codex_sandbox_only_in_exec_mode(self):
@@ -182,7 +182,7 @@ class TestBuildRunnerArgv(unittest.TestCase):
         spec = _spec(timeout_s=600)
         argv = build_runner_argv(spec, "/runner/cross-ai.mjs", "node")
         self.assertEqual(argv, [
-            "node", "/runner/cross-ai.mjs", "--prefer", "opencode", "--model-opencode",
+            "node", "/runner/cross-ai.mjs", "--runtime", "opencode", "--model",
             "fake/ok", "--mode", "review", "--timeout", "600", "--outer-timeout", "630",
             "--no-preamble",
         ])
@@ -220,7 +220,7 @@ class TestBuildRunnerArgv(unittest.TestCase):
     def test_bracket_cursor_model_passes_through(self):
         spec = _spec(runtime="cursor", model="gpt[effort=high]", mode="review")
         flags = runner_flags(spec)
-        self.assertEqual(flags[flags.index("--model-cursor") + 1], "gpt[effort=high]")
+        self.assertEqual(flags[flags.index("--model") + 1], "gpt[effort=high]")
 
     def test_confirmed_route_is_a_flag(self):
         for route in ("router", "unknown"):
@@ -229,6 +229,8 @@ class TestBuildRunnerArgv(unittest.TestCase):
                     _spec(runtime="pi", route=route), "/runner/cross-ai.mjs", "node",
                 )
                 self.assertEqual(argv[argv.index("--route-pi") + 1], route)
+                self.assertEqual(argv[:8], ["node", "/runner/cross-ai.mjs", "--runtime", "pi",
+                                            "--model", "fake/ok", "--mode", "review"])
 
     def test_no_route_leaves_the_argv_unchanged(self):
         argv = build_runner_argv(_spec(), "/runner/cross-ai.mjs", "node")

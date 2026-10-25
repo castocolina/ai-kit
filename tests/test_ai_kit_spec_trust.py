@@ -130,8 +130,8 @@ class TestTrustLifecycle(TrustEnvTestCase):
         lines = self.show_lines()
         self.assertEqual([line["key"] for line in lines], ["codex", "custom"])
         # a factory-shaped legacy command normalizes to a runtime: the runner's argv
-        self.assertEqual(lines[0]["argv"][2:4], ["--prefer", "codex"])
-        self.assertIn("--model-codex", lines[0]["argv"])
+        self.assertEqual(lines[0]["argv"][2:4], ["--runtime", "codex"])
+        self.assertIn("--model", lines[0]["argv"])
         self.assertNotIn("<prompt>", lines[0]["argv"])
         # an unknown cli keeps its own command; this template names no {prompt}
         self.assertEqual(lines[1]["argv"], ["mycli", "--fast", "custom-model"])

@@ -26,10 +26,9 @@ GUIDANCE_HEADER_RE = re.compile(
 _GUIDANCE_NOTICE = (
     b"<!-- Rendered by ai-kit; edits produce a .new file on the next render. -->"
 )
-# A floor, not the current version: template 7 is the first with the owner's failure ladder
-# (one CLI per call, no fallback to another CLI; Phase 25). Templates 3-6 carry the hook's
-# flags but can still fall back, so an edited copy of one is not ready until `.new` is merged.
-_READY_TEMPLATE = 7
+# A floor, not the current version: template 8 is the first that accepts --runtime/--model and
+# the retry config. Template 7 has neither; templates 3-6 can still fall back.
+_READY_TEMPLATE = 8
 _CONFIG_START = b"// <config>"
 _CONFIG_END = b"// </config>"
 _CONFIG_MARKER = b"const CONFIG = "
@@ -234,6 +233,15 @@ def _upgrade_config(template: bytes, existing: bytes, scrub_env) -> dict:
     except ValueError:
         kept = {}
     merged = {**template_config(template), **kept}
+    runtime = kept.get("runtime")
+    prefer = kept.get("prefer")
+    if isinstance(runtime, str):
+        merged["runtime"] = runtime
+    elif isinstance(prefer, list) and prefer and isinstance(prefer[0], str):
+        merged["runtime"] = prefer[0]
+    else:
+        merged.pop("runtime", None)
+    merged.pop("prefer", None)
     merged["scrubEnv"] = sorted(scrub_env)
     return merged
 

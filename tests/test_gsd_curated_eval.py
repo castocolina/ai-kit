@@ -2309,7 +2309,7 @@ class TestGrader(unittest.TestCase):
         self.assertTrue(
             hook is not None
             and hook.startswith(
-                "node .planning/scripts/cross-ai.mjs --prefer pi --model-pi router-env/my-coding"
+                "node .planning/scripts/cross-ai.mjs --runtime pi --model router-env/my-coding"
             )
         )
         cfg = dict(CONFIG_B, **{"workflow.cross_ai_command": hook})

@@ -742,8 +742,8 @@ class TestBuildExecutionCommandRunner(unittest.TestCase):
             command = cross_ai_build.build_execution_command("cursor-agent", "auto", tmp)
         self.assertEqual(
             command,
-            "node .planning/scripts/cross-ai.mjs --prefer cursor "
-            "--model-cursor auto --mode exec",
+            "node .planning/scripts/cross-ai.mjs --runtime cursor "
+            "--model auto --mode exec",
         )
 
     def test_codex_ends_with_the_sandbox_flag(self):
