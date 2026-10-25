@@ -211,7 +211,7 @@ consult it only if you're tempted to deviate from the command as given.
 **Why you must not render the command yourself and pass it back in.** `dispatch-reviewer` takes
 the reviewer entry (`--reviewers-json` + `--index`), not a pre-rendered command string. A
 `subprocess` or `unverified` entry runs through the supervised runner: `node` plus the runner
-template, with `--prefer <runtime>`, `--model-<runtime> <model>`, `--mode review` and the entry's
+template, with `--runtime <runtime>`, `--model <model>`, `--mode review` and the entry's
 timeout. A `custom` entry (a `command`, no `runtime`) is rendered by `render_reviewer_command`
 *after* the tooling guidance is prefixed onto the prompt, then run by the fixed-argv launcher on
 the same supervision core. That ordering is load-bearing for a custom entry: some of them (grok)
@@ -356,19 +356,9 @@ Template 7 also prints evidence tokens `route`, `rule`, `pattern`, `attempts` an
 `cross-ai: attempt` line per failed attempt plus one `cross-ai: report` line on a stop. What each
 means is in [`../../ai-kit-cross-ai/references/subprocess-quota-policy.md`](../../ai-kit-cross-ai/references/subprocess-quota-policy.md).
 
-No status line at all falls back to the exit code. This is the no-status-line case only: a
-runner lane always prints its `AIKIT-XAI` line, and that line's `status` wins over this table.
-The mapping is `_EXIT_FALLBACK` in `ai_kit_spec/error_classifier.py`, and every code not listed
-here is `real_error` — an exit 75 included, so a lane that died without a status line is not
-read as a router quota cooldown:
-
-| Exit code | Reason |
-|---|---|
-| `0` | success (no reason) |
-| `2` | `configuration` |
-| `124` | `timeout` |
-| `127` | `dispatch_unavailable` (also how a missing `node` is reported — subprocess dispatch needs Node) |
-| any other, including `69` and `75` | `real_error` |
+With no status line, the fallback mapping is `_EXIT_FALLBACK` in `ai_kit_spec/error_classifier.py`:
+exit 2 is `configuration`, 124 `timeout`, 127 `dispatch_unavailable`, and every other code
+`real_error`. For caller behavior, see section 4 of [`../../ai-kit-cross-ai/SKILL.md`](../../ai-kit-cross-ai/SKILL.md).
 
 ## Declared paths and cross-repo roots
 

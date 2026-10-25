@@ -967,6 +967,54 @@ class TestClassifyDispatchFailure(unittest.TestCase):
             "ok",
         )
 
+    def test_quota_on_hinted_transient_capacity_exit(self):
+        payload = {
+            "returncode": 75, "reason": "capacity",
+            "status": {
+                "status": "transient", "exit": "75",
+                "retry_after_s": "600", "cycle": "0",
+            },
+        }
+        self.assertEqual(dispatch_injection.classify_dispatch_failure(payload), "quota")
+
+    def test_real_error_on_bare_transient_exit(self):
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure({
+                "returncode": 75, "reason": "capacity",
+                "status": {"status": "transient", "exit": "75"},
+            }),
+            "real_error",
+        )
+
+    def test_real_error_on_non_numeric_hint(self):
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure({
+                "returncode": 75, "reason": "capacity",
+                "status": {
+                    "status": "transient", "retry_after_s": "600s", "cycle": "0",
+                },
+            }),
+            "real_error",
+        )
+
+    def test_real_error_on_transient_hard_tier_stop(self):
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure({
+                "returncode": 69, "reason": "capacity",
+                "status": {"status": "transient", "exit": "69", "stopped": "hard-waits"},
+            }),
+            "real_error",
+        )
+
+    def test_quota_on_terminal_quota_exit_69(self):
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure({
+                "returncode": 69, "reason": "quota",
+                "status": {"status": "quota", "exit": "69", "stopped": "hard-waits"},
+            }),
+            "quota",
+        )
+
     def test_real_error_on_auth_reason(self):
         # HIGH finding: an auth/entitlement/setup failure must classify as real_error, never
         # quota -- it will never be fixed by a later re-run.

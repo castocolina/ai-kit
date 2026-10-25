@@ -119,11 +119,11 @@ would be a second walk the runner is not allowed to take.
 
 ## Why a failed dispatch is not re-dispatched
 
-The runner owns the ladder. One `dispatch-task` call already retried the transient failures and,
-on a confirmed router lane, stopped with the cooldown. Resolving another candidate after that stop
-would switch CLI or model, which the runner refuses to do on its own. The one exception is the
-ruled router exit 75: the wake re-dispatches the persisted `injection_json` unchanged and skips
-`resolve-injection`, so the lane stays the one that stopped.
+The runner owns the soft ladder. A spent transient ladder and confirmed-router quota stop both
+carry the caller-owned hard tier in `retry_after_s`; the caller waits that interval and re-dispatches
+the persisted `injection_json` unchanged. The configured `hard_waits_s` defaults are 600, 900 and
+1800 seconds. This is a one-shot re-invoke of the same task, lane and model, not another candidate
+resolution. A hard-tier stop ends the sequence for the owner.
 
 ## Why the pre-dispatch choice and the Rounds 4–5 escalation are rules
 

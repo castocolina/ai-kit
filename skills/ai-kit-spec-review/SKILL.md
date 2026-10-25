@@ -323,32 +323,21 @@ For each entry in `REVIEWER_LIST`:
      growing. The report body is on stdout, in `$RUN_TMP_DIR/iter<N>-<key>.md`; only the
      evidence lines are on stderr, so read every `AIKIT-XAI` and `cross-ai:` line from
      `$RUN_TMP_DIR/iter<N>-<key>.err` (a custom lane's launcher writes its own stderr there and
-     has no `AIKIT-XAI` line). **Branch before deleting anything.** Exit 75 with `route=router`
-     and `retry_after_s=` on the last `AIKIT-XAI` line is the pending router lane below: do not
-     delete the report, and do not enter Step 1.5 for this lane yet. Every other nonzero exit,
-     including any exit 75 without `retry_after_s=` (an off-router quota stop, or an exhausted
-     transient ladder on any route), deletes `$RUN_TMP_DIR/iter<N>-<key>.md` so
-     Step 1.5's fail-closed `### Status:` handling applies. Never move on to Step 1.5 while a
-     dispatch is still running; stop that process first if you must abandon one. **MANDATORY
-     before deviating from either rule**: read
+     has no `AIKIT-XAI` line). **Branch before deleting anything.** Exit 75 with `retry_after_s=` on the last
+     `AIKIT-XAI` line gets one one-shot re-invoke of the same lane, CLI and model at that delay,
+     whether the runner classified it `transient` or `quota`. A `stopped=hard-waits` or
+     `stopped=cap` exit 69 prints that lane's `cross-ai: report`, `cross-ai: upstream` and
+     `AIKIT-XAI` lines verbatim from its `.err` file and schedules nothing more. A bare exit 75
+     (no `retry_after_s=`) is an owner stop. Every other nonzero exit deletes
+     `$RUN_TMP_DIR/iter<N>-<key>.md` so Step 1.5's fail-closed `### Status:` handling applies.
+     Never move on to Step 1.5 while a dispatch is still running; stop that process first if you
+     must abandon one. **MANDATORY before deviating from either dispatch rule**: read
      [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md)'s
      [Step 1 subprocess dispatch](references/cross-ai-dispatch.md#step-1-subprocess-dispatch--full-rationale-for-dispatch-reviewer)
-     section — the injection hazard behind rule (1) and the tier math behind rule (2).
+     section.
 
-  **MANDATORY before acting on any subprocess stop**: read
-  [`../ai-kit-cross-ai/references/subprocess-quota-policy.md`](../ai-kit-cross-ai/references/subprocess-quota-policy.md). It is the
-  caller contract; link it, do not restate it. The owner rule, in one line: a failed or unusable
-  run never switches harness, provider or model and never moves the work to the native session
-  on its own; the runner owns the ladder, and the owner decides.
-
-  **Pending router lane.** The case is an exit code of 75, `route=router` on the last
-  `AIKIT-XAI` line, and `retry_after_s=` on that same line. **MANDATORY**: follow
-  [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md)'s
-  [pending router lane](references/cross-ai-dispatch.md#pending-router-lane--lifecycle-and-resume)
-  section: keep the slot pending, merge the sibling now as single mode, write the resume files,
-  and schedule one one-shot re-invoke at `retry_after_s` per router exit 75. A re-invoke that
-  again exits 75 with `retry_after_s=` repeats that until the lane resolves or the cap turns it
-  into exit 69. No fixer runs while a lane is pending.
+  **Cross-AI caller contract:** [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md).
+  Never switch harness, provider or model.
 
 ### Step 1.5 — Merge reviewer reports, then bind `EFFECTIVE_REPORT_PATH` (runs every iteration — only the merge call itself is conditional)
 
@@ -451,10 +440,10 @@ Emit one short message in the user's terminal. Do NOT paste full reports unless 
 | Router quota cooldown | `Router quota cooldown: lane <key> pending, re-invokes once at +<retry_after_s>s (scheduled here, or printed for the owner). No fixer runs while it is pending. Its sibling lane is merged now as single mode; this lane's report stays pending at <iter<N>-<key>.md>.` Then quote the lane's `cross-ai: report` and last `AIKIT-XAI` lines verbatim from <iter<N>-<key>.err>. |
 | Single reviewer | `One reviewer (<key>). Report: <iter<N>-<key>.md>. <Approved / issues remain>.` |
 
-A Failure whose lane ran through the runner also quotes that lane's `cross-ai: report` line and its
-last `AIKIT-XAI` line verbatim. The report body is in `iter<N>-<key>.md`; only those evidence
-lines are read from `iter<N>-<key>.err`. A `custom` lane has neither line: quote the launcher's
-stderr reason instead. The router-quota row is not a Failure. When the probe walk marked entries
+A Failure whose lane ran through the runner also quotes that lane's `cross-ai: report`,
+`cross-ai: upstream` and `AIKIT-XAI` lines verbatim. Read those evidence lines from
+`iter<N>-<key>.err`; the report body is in `iter<N>-<key>.md`. A `custom` lane has no runner
+lines: quote the launcher's stderr reason instead. The router-quota row is not a Failure. When the probe walk marked entries
 unavailable, append one `unavailable: <entry> (<reason>)` line per entry.
 
 An approval while a lane is pending does not surface as Approved. Surface it as the router-quota

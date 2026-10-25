@@ -36,13 +36,10 @@ Each item is repeated at its point of use; this is the index.
   per task, `append` after that, and every prompt after the first says APPEND (Step 3).
 - **Never** parse the implementer status out of `$REPORT_FILE` — read it from
   `$DISPATCH_RESULT_JSON["stdout"]` only (Step 3).
-- **Never** re-resolve to another candidate after a failed dispatch, and never re-run
-  `resolve-injection` to recover from one.
-  The only schedule is the ruled single re-invoke:
-  one one-shot `CronCreate` at `retry_after_s` for a confirmed-router exit 75 carrying `cycle=`,
-  and its prompt re-dispatches the persisted `injection_json` unchanged (the runner already ran
-  its ladder; `$REVIEW_SKILL_DIR/../ai-kit-cross-ai/references/subprocess-quota-policy.md`, the same file as
-  `../ai-kit-cross-ai/references/subprocess-quota-policy.md`) (Step 3).
+- **Never** re-resolve to another candidate after a failed dispatch or re-run
+  `resolve-injection` to recover. The cross-AI caller contract is
+  [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md); re-dispatch only the persisted
+  injection after its one-shot wait (Step 3).
 - **Never** run `trust-local` without the user's explicit yes, and never ask twice in one run
   (Step 2).
 
@@ -52,10 +49,8 @@ A host without that scheduler schedules nothing: it prints `retry_after_s`, the 
 path and the re-invoke command for that same one-shot wake, and the owner runs it. That printed
 row is unverified.
 
-**MANDATORY before the first external dispatch, and again before acting on a stop**: read
-`$REVIEW_SKILL_DIR/../ai-kit-cross-ai/references/subprocess-quota-policy.md` (from this skill,
-`../ai-kit-cross-ai/references/subprocess-quota-policy.md`). It is the ladder and the
-host-specific re-entry contract; do not reconstruct it.
+**Cross-AI caller contract:** [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md).
+Never switch harness, provider or model.
 
 ## Step 0: Resolve the shim path
 
@@ -322,8 +317,9 @@ STATUS="$(printf '%s\n' "$STATUS_LINE" | rg -o '\b(DONE_WITH_CONCERNS|NEEDS_CONT
   more-context, split and plan-defect routes on the same pair, but never its "more capable
   model" route on your own: that is a model switch after an unusable run, so stop and report
   for the owner's decision.
-- **`"quota"`** — this candidate ran out of quota mid-dispatch. Record it as a wave-tried key WITH
-  the `"quota"` reason, never straight into `$EXCLUDED_KEYS_JSON` without one:
+- **`"quota"`** — the runner's time-bound hard-tier outcome, including a confirmed-router quota
+  stop or an exhausted transient ladder carrying `retry_after_s=`. Record it as a wave-tried key
+  WITH the `"quota"` reason, never straight into `$EXCLUDED_KEYS_JSON` without one:
 
 ```bash
 WAVE_TRIED_JSON="$(python3 -c 'import json,sys; print(json.dumps(sorted(set(json.loads(sys.argv[1])) | {sys.argv[2]})))' \
@@ -339,14 +335,11 @@ printf 'WAVE_TRIED_JSON=%s\nWAVE_REASONS_JSON=%s\nEXCLUDED_KEYS_JSON=%s\n' \
   Never re-resolve to another candidate after a failed dispatch. The evidence lines come before
   that fold, because a later step must not act on a stop it has not relayed. Then, in this order:
 
-  1. **Relay the evidence lines first.** Relay the runner's `cross-ai: report` and `AIKIT-XAI`
-     lines from `$DISPATCH_BASE.err` verbatim before reading any token or writing any state,
-     then run the fold block above.
-  2. **Read the tokens.** `retry_after_s` and `cycle` are not top-level fields of
-     `$DISPATCH_RESULT_JSON`: `dispatch-task` emits `dispatch_execute`'s dict, and both tokens
-     live only inside its `status` dict, which is the parsed `AIKIT-XAI` line. An exit 75 that
-     is not a confirmed-router quota cycle (an off-router quota stop) carries no `retry_after_s=`
-     and no `cycle=`, so both reads come back empty and nothing is scheduled:
+  1. **Relay evidence first.** On a stop, relay the `cross-ai: report`, `cross-ai: upstream`
+     and `AIKIT-XAI` lines verbatim from `$DISPATCH_BASE.err` before reading tokens or writing
+     state, then run the fold block above.
+  2. **Read the tokens.** `retry_after_s` and `cycle` are in the nested `status` dict parsed
+     from the runner's `AIKIT-XAI` line, not at the top level of `$DISPATCH_RESULT_JSON`:
 
 ```bash
 RETURNCODE="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("returncode"))' "$DISPATCH_RESULT_JSON")"
@@ -360,15 +353,12 @@ printf 'RETURNCODE=%s\nRETRY_AFTER_S=%s\nCYCLE=%s\n' "$RETURNCODE" "$RETRY_AFTER
      `references/state-management.md` under "Quota-branch state write": it keeps `PROJECT_KEY`
      and `RESUME_STATE_PATH` and persists `$INJECTION_JSON` as `injection_json`, so the wake
      re-dispatches this exact injection. Do not edit the Step 2 block by hand.
-  4. **Schedule or stop.** `classify-dispatch-failure` maps both exit 75 and exit 69 to
-     `"quota"` when the runner's reason is `quota`, so the classification alone does not say
-     which. Schedule only when `RETURNCODE` is `75` and both `RETRY_AFTER_S` and `CYCLE` are
-     non-empty. That is the confirmed-router case. A lane is confirmed only by the model
-     catalog's confirmed `fallback_quota` (ai-kit-spec-config), which `dispatch-task` passes as
-     `--route-<cli> router`; a bare exit 75 on a router-named lane means that entry is
-     unconfirmed.
-     Where `CronCreate` is callable (load it if deferred), schedule one one-shot wake at `retry_after_s`
-     (`RETRY_AFTER_S`, at least 60 s, rounded up to the next whole minute) whose prompt is exactly the fenced text below and nothing more; the job
+  4. **Schedule or stop.** Only exit 75 with whole-number `RETRY_AFTER_S` and `CYCLE` gets the
+     one-shot wait and re-dispatch of the same task, lane and model. An exit 69 with
+     `stopped=hard-waits` or `stopped=cap` is an owner stop after relaying the evidence; schedule
+     nothing. A bare exit 75 is also an owner stop.
+     Where `CronCreate` is callable, schedule one one-shot wake at `retry_after_s` (`RETRY_AFTER_S`,
+     at least 60 s, rounded up to the next whole minute) with the fenced prompt below; the job
      lives only as long as the session. A host without that scheduler schedules nothing: it
      prints `retry_after_s`, `$RESUME_STATE_PATH` and that same prompt, marks the printed row
      unverified, and the owner runs it. Never a repeated or fixed-interval job. A
@@ -405,9 +395,9 @@ re-enter Step 2. Load the ai-kit-spec-execute-superpowers skill, then:
   pinned and does not enter Step 2. An owner's plain resume keeps it pinned too; Step 2 re-resolves
   only when the owner names a replacement pair (`references/state-management.md`). A stop on the
   re-dispatched run re-enters this same quota branch; it does not pick another candidate.
-- **`"real_error"`** — a failed external dispatch stops for the owner. Never answer it by
-  resolving a stronger or any other candidate. Relay the runner's `cross-ai: report` and
-  `AIKIT-XAI` lines from `$DISPATCH_BASE.err` first, then read `$DISPATCH_RESULT_JSON`'s
+- **`"real_error"`** — a failed external dispatch stops for the owner. Never resolve another
+  candidate. Relay the runner's report, upstream and `AIKIT-XAI` lines from `$DISPATCH_BASE.err`
+  verbatim first, then read `$DISPATCH_RESULT_JSON`'s
   `reason` and report its fix with Step 2's reason-to-fix list (auth, billing or access,
   configuration, capacity, `git_timeout`, timeout, `dispatch_unavailable`). Only a `real_error` reason proper
   (a crash, an empty answer, no change) offers the owner more context and a retry, a split of

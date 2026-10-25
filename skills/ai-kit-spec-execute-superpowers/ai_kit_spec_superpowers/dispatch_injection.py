@@ -396,21 +396,28 @@ def dispatch_superpowers_task(request: DispatchTaskRequest,
 
 
 def classify_dispatch_failure(dispatch_result: dict) -> str:
-    """Classifies a completed dispatch_superpowers_task result from the runner's own reason:
-    "ok" (returncode 0), "quota" when the runner reported reason `quota`, or "real_error" for
-    anything else, including a timeout and every auth/entitlement/setup signal. Those never get
-    better by waiting, so they must never come back "quota". They surface honestly to the
-    harness's own BLOCKED path instead: never silently retry a terminal stop disguised as a
-    quota wait.
+    """Classify runner outcomes without authorizing a candidate switch.
 
-    "quota" covers both the ruled router exit 75 and a terminal quota stop such as exit 69.
-    This function does not tell them apart and it never re-dispatches. The two tokens are not
-    top-level fields of the result: they live only inside its "status" dict, the parsed
-    AIKIT-XAI line. The caller reads returncode and status["retry_after_s"] / status["cycle"],
-    and only exit 75 with both tokens set gets the one one-shot re-invoke of the same
-    injection."""
-    if dispatch_result.get("returncode", 0) == 0:
+    ``quota`` is the time-bound outcome for which the runner asks the caller to wait:
+    either a confirmed-router quota stop or a spent transient ladder carrying its hard-tier
+    hint. It also covers a terminal quota stop such as exit 69; this function does not tell
+    those apart and never re-dispatches. The tokens live only in the nested ``status`` dict.
+    Only exit 75 with whole-number ``retry_after_s`` and ``cycle`` gets the one one-shot
+    re-invoke of the same injection. Other outcomes, including auth and timeout, are
+    ``real_error``.
+    """
+    returncode = dispatch_result.get("returncode", 0)
+    if returncode == 0:
         return "ok"
+    status = dispatch_result.get("status")
+    if returncode == 75 and isinstance(status, dict):
+        tokens = (status.get("retry_after_s"), status.get("cycle"))
+        if all(
+            (isinstance(token, int) and not isinstance(token, bool) and token >= 0)
+            or (isinstance(token, str) and re.fullmatch(r"[0-9]+", token))
+            for token in tokens
+        ):
+            return "quota"
     if dispatch_result.get("reason") == "quota":
         return "quota"
     return "real_error"

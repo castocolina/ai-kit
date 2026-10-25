@@ -23,9 +23,9 @@ description: "Resolves the best available (runtime, model) pair for a GSD (Get S
   retry, or run `/gsd-execute-phase` with the hook unchanged. Re-running Step 1 after the owner
   says yes to `trust-local` is that yes, not a recovery.
 - **Never answer GSD's `skip`.** It falls back to the native executor.
-- **Only the scheduled wake answers GSD's `retry`.** On a confirmed-router exit 75 carrying
-  `retry_after_s=` and `cycle=`, answer nothing in that turn (Step 3). An early retry is
-  refused by the runner without a model call and returns another exit 75.
+- **Only the scheduled wake answers GSD's `retry`.** On any exit 75 carrying `retry_after_s=`,
+  answer nothing in that turn; the one-shot wake waits that delay and retries the same lane, CLI
+  and model. See the cross-AI caller contract below.
 - **A `fallback_notice`, or a runner-setup failure, stops after cleanup and reports.** It never
   continues to GSD's native execution unless the owner explicitly decides to.
 
@@ -38,11 +38,11 @@ running its GSD commands; the host's own folder trust is the only gate. `resolve
 the `*-workflow-keys` calls print `ai-kit: gsd-core <version> at <path>` on stderr; if that path
 is inside a repo you have not reviewed, stop and check it.
 
-**Host-specific steps.** The `Skill` tool (Step 3) is a Claude Code tool, and so is the
-one-shot `CronCreate` wake at `retry_after_s`. On another host, use its own skill-invocation
-mechanism, or tell the user to run `/gsd-execute-phase` by hand; a host without the scheduler
-takes Step 3's print path. Step 1 stops schedule nothing. The only scheduled wake is Step 3's
-one-shot router-quota re-entry, and Step 3 names the policy to read on every cross-AI stop.
+**Cross-AI caller contract:** [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md),
+including its policy reference. On Claude Code, schedule one-shot CronCreate at retry_after_s.
+These tools are Claude Code specific. On another host, use its own skill-invocation mechanism or
+tell the user to run `/gsd-execute-phase` by hand; without the scheduler, print the re-invoke
+details and schedule nothing. Never switch harness, provider or model.
 
 ## Step 0: Resolve the shim path
 
@@ -447,26 +447,17 @@ argument. This is a tool call the agent makes directly, not a shell command this
 as a `bash` fence. The job continues while GSD's cross-AI step runs: the rules below govern every
 answer to its retry/skip/abort prompt.
 
-The runner uses one CLI per call. It retries a transient failure, and a quota failure only on a
-confirmed router lane, in the same session and then in new sessions, on that same CLI and model;
-it never selects another lane itself. The ladder is
-`../ai-kit-cross-ai/references/subprocess-quota-policy.md` (`$(dirname "$TOOLS_PY")/../ai-kit-cross-ai/references/`).
-**MANDATORY when a cross-AI run stops**: read that policy before acting.
-When GSD's cross-AI step fails, relay the runner's `cross-ai: report` and `AIKIT-XAI` lines
-verbatim, then run the Step 1 `write-resumable-state` block with `RESUME_VIA=gsd-execute-phase`
-for every stop, so the owner has a durable record. Never answer GSD's `skip` (it falls back to the
-native executor) and never answer `retry` except the one ruled case below.
+When GSD's cross-AI step stops, relay the runner's `cross-ai: report`, `cross-ai: upstream` and
+`AIKIT-XAI` lines verbatim from the runner's `.err` file, then run the Step 1
+`write-resumable-state` block with `RESUME_VIA=gsd-execute-phase` so the owner has a durable
+record. A bare exit 75 without `retry_after_s=` is an owner stop and schedules nothing.
 
-A confirmed-router quota stop (exit 75 carrying `retry_after_s=` and `cycle=`) is the one delayed
-re-entry. The hook carries `--route-<cli> router` when the model catalog confirms this model's
-`fallback_quota: true` (ai-kit-spec-config) and `--route-<cli> unknown` when it confirms false;
-with no confirmed entry the runner uses curated-config's per-CLI `router_backed`. A
-`route=router-inferred` lane gets no cycles.
+For any exit 75 carrying `retry_after_s=` (transient ladder exhausted or confirmed-router quota),
+answer nothing to GSD's prompt in that turn. Run the `write-resumable-state` block, then schedule
+one one-shot wake at that delay. The wake retries the same lane, CLI and model; after
+`stopped=hard-waits` or `stopped=cap` (exit 69), give the notice and answer `abort`. Never answer
+`skip`, and after a hard-tier stop schedule nothing more. Never switch harness, provider or model.
 
-In the turn that sees that stop, answer nothing to GSD's prompt. First run the Step 1
-`write-resumable-state` block with `RESUME_VIA=gsd-execute-phase` (its inputs `$CWD`,
-`$GSD_CONFIG_PATH`, `$PHASE_ID` and `$PHASE_PROMPT_FILE` are in hand) so a durable record exists, then schedule, then end the turn
-with GSD's prompt pending. Only the wake answers `retry`.
 Where `CronCreate` is callable (load it if deferred), schedule one one-shot wake at `retry_after_s`
 (at least 60 s, rounded up to the next whole minute) whose prompt is exactly this text. The job
 lives only as long as the session. After a session exit the owner runs `/gsd-execute-phase
@@ -480,17 +471,12 @@ GSD's retry/skip/abort prompt is still pending: answer retry, and nothing else.
 GSD already exited: run /gsd-execute-phase <PHASE_ID> with the hook unchanged.
 ```
 
-Each later exit 75 schedules the next single one-shot at that exit's own `retry_after_s`. The chain
-repeats while each exit carries `retry_after_s=`; any other result, an exit 69 with
-`stopped=cap` or an auth or billing stop included, ends it for the owner. Never schedule the next wake before the current one has exited,
-and never a repeated or fixed-interval job. Whether a wake fires while GSD's prompt is still
-pending is unverified, which is why the prompt's first branch exists. A host without that
-scheduler schedules nothing: it prints `retry_after_s`, the `RESUME_STATE_PATH=` the block just
-printed and that same wake prompt, labels the printed re-invoke unverified, and the owner runs
-it. A stop past the 4-hour cap exits 69 and nothing is scheduled; the runner keeps refusing that
-lane with exit 69, without a model call, until its last attempt is more than 4 hours old. A
-bare exit 75 (no `retry_after_s=`: an off-router quota stop or an exhausted transient ladder) is
-an owner stop and schedules nothing either.
+Each subsequent exit 75 carrying `retry_after_s=` gets one new one-shot wake at its own delay.
+Never schedule before the current invocation exits, and never use a repeated or fixed-interval
+job. Whether a wake fires while GSD's prompt is pending is unverified, which is why the prompt's
+first branch exists. A host without that scheduler prints `retry_after_s`, the
+`RESUME_STATE_PATH=` and the wake prompt, labels the printed re-invoke unverified, and lets the
+owner run it. A `stopped=hard-waits` or `stopped=cap` exit 69 is a terminal owner stop.
 
 If the `Skill` tool call itself fails to resolve — e.g. `gsd-execute-phase` isn't installed or its
 definition is missing/unreadable — that is a genuine environment problem, not a dispatch failure:

@@ -86,21 +86,22 @@ class PolicyReference(unittest.TestCase):
 
 
 class ReviewSkill(unittest.TestCase):
-    def test_skill_links_the_policy_and_pins_the_one_shot_reinvoke(self):
+    def test_skill_points_to_cross_ai_and_pins_hard_tier(self):
         text = REVIEW_SKILL.read_text(encoding="utf-8")
-        self.assertIn("references/subprocess-quota-policy.md", text)
+        self.assertIn("../ai-kit-cross-ai/SKILL.md", text)
         self.assertEqual(wake_lines(text), [])
-        self.assertIn("retry_after_s", text)
-        self.assertIn("one-shot", text)
+        for token in ("retry_after_s", "one-shot", "stopped=hard-waits"):
+            self.assertIn(token, text)
+        self.assertRegex(text, r"Never switch harness, provider or model")
 
     def test_dispatch_reference_names_transient(self):
         self.assertIn("transient", DISPATCH_REF.read_text(encoding="utf-8"))
 
 
 class GsdExecuteSkill(unittest.TestCase):
-    def test_skill_links_the_reference_and_schedules_only_the_one_shot(self):
+    def test_skill_points_to_cross_ai_and_schedules_only_the_one_shot(self):
         text = GSD_SKILL.read_text(encoding="utf-8")
-        self.assertIn("subprocess-quota-policy.md", text)
+        self.assertIn("../ai-kit-cross-ai/SKILL.md", text)
         self.assertEqual(wake_lines(text), [])
         hits = cron_lines(text)
         self.assertTrue(hits)
@@ -110,6 +111,14 @@ class GsdExecuteSkill(unittest.TestCase):
 
 
 class SuperpowersExecuteSkill(unittest.TestCase):
+    def test_skill_points_to_cross_ai_and_pins_hard_tier(self):
+        text = SUPER_SKILL.read_text(encoding="utf-8")
+        tokens = ("ai-kit-cross-ai/SKILL.md", "retry_after_s", "one-shot", "stopped=hard-waits")
+        for token in tokens:
+            self.assertIn(token, text)
+        self.assertRegex(text, r"Never switch harness, provider or model")
+        self.assertIn(STOP_SENTENCE, text)
+
     def test_skill_and_references_have_no_wake_line(self):
         texts = [SUPER_SKILL.read_text(encoding="utf-8")]
         texts += [path.read_text(encoding="utf-8") for path in SUPER_REFS]
@@ -118,7 +127,7 @@ class SuperpowersExecuteSkill(unittest.TestCase):
 
     def test_skill_links_the_reference_and_stops_instead_of_re_resolving(self):
         text = SUPER_SKILL.read_text(encoding="utf-8")
-        self.assertIn("subprocess-quota-policy.md", text)
+        self.assertIn("../ai-kit-cross-ai/SKILL.md", text)
         self.assertIn(STOP_SENTENCE, text)
         self.assertNotIn(OLD_REDISPATCH, text)
 
@@ -145,6 +154,33 @@ class PythonMessages(unittest.TestCase):
     def test_dispatch_and_classifier_have_no_wake_line(self):
         for path in (DISPATCH, CLASSIFIER):
             self.assertEqual(wake_lines(path.read_text(encoding="utf-8")), [])
+
+
+class ExitTableScan(unittest.TestCase):
+    EXIT_CODES = {"69", "75", "124", "127"}
+
+    @classmethod
+    def rows(cls, text):
+        found = []
+        for line in text.splitlines():
+            cells = line.strip().strip("|").split("|")
+            if len(cells) < 2:
+                continue
+            first = cells[0].strip().replace("`", "")
+            if first in cls.EXIT_CODES:
+                found.append(line)
+        return found
+
+    def test_project_markdown_has_no_runner_exit_code_tables(self):
+        paths = [*list((REPO / "skills").rglob("*.md")), README]
+        paths = [p for p in paths if "skills/ai-kit-cross-ai/" not in p.as_posix()]
+        hits = [(p.relative_to(REPO), row) for p in paths
+                for row in self.rows(p.read_text(encoding="utf-8"))]
+        self.assertEqual(hits, [])
+
+    def test_exact_first_cell_match_only(self):
+        self.assertEqual(len(self.rows("| `75` | retry |")), 1)
+        self.assertEqual(self.rows("| any other, including `69` and `75` | real_error |"), [])
 
 
 class NonVacuity(unittest.TestCase):

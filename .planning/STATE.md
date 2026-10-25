@@ -5,16 +5,16 @@ milestone_name: GSD Curated Config v2
 current_phase: "25.1"
 current_phase_name: Configurable cross-AI retry ladder and upstream error propagation (INSERTED)
 status: executing
-stopped_at: Completed 25.1-11-PLAN.md
-last_updated: "2026-10-25T17:33:52.508Z"
+stopped_at: Completed 25.1-12-PLAN.md
+last_updated: "2026-10-25T17:42:30.079Z"
 last_activity: 2026-10-24
 last_activity_desc: Phase 23 execution started
-state_head: e30d34269a70c89774dc6c44bcb06fba16f9a3eb
+state_head: 39b61cebebb4baa22c58c76f36e9b9bc19453f4a
 progress:
   total_phases: 18
   completed_phases: 1
   total_plans: 186
-  completed_plans: 182
+  completed_plans: 183
   percent: 6
 ---
 
@@ -298,6 +298,7 @@ Progress: [█░░░░░░░░░] 6%
 | Phase 25.1 P09 | 1916s | 3 tasks | 19 files |
 | Phase 25.1 P10 | 900s | 2 tasks | 2 files |
 | Phase 25.1 P11 | 396s | 3 tasks | 18 files |
+| Phase 25.1 P12 | 450s | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -577,6 +578,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-25T17:33:50.747Z
-Stopped at: Completed 25.1-11-PLAN.md
+Last session: 2026-10-25T17:42:28.334Z
+Stopped at: Completed 25.1-12-PLAN.md
 Resume file: None
