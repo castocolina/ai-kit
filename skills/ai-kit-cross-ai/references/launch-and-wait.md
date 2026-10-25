@@ -1,18 +1,18 @@
 # Launch and wait
 
-Per-host patterns for section 2 and section 3 of [`../SKILL.md`](../SKILL.md). The runner command
-is the same everywhere; only the background primitive differs. A host without one uses the
-foreground wait below.
+Per-host patterns for section 2 and section 3 of [`../SKILL.md`](../SKILL.md). Each section below
+is named for the host the caller runs in, never for the target runtime: every example passes the
+owner's `$RUNTIME` and `$MODEL` unchanged. Pick the pattern by what the host can do: a host whose
+background primitive posts a completion notice uses it; any other host uses the foreground wait.
 
-Every lane writes its files into its own scratch directory outside the tracked tree (a temp dir,
-or a gitignored one such as `tmp/<lane>/`): a file created in the tree while a review lane runs
-dirties the tree and stops that review with `contract_violation tree=dirty`. A lane's files are:
+Every lane writes into its own scratch directory, per section 2 of [`../SKILL.md`](../SKILL.md)
+(`mktemp -d`, or a directory git ignores as a whole). A lane's files are:
 - `lane.out`: the answer (stdout);
 - `lane.err`: the evidence (stderr), whose last line is the `AIKIT-XAI` status line;
 - `lane.rc`: the exit code, written by the launch itself.
 
 The exit code is also the `exit=` field of that last line. Stop a lane only through its own
-launch: its background task, or the PID of the foreground command you started.
+launch: its background task, or the foreground command you started.
 
 The report line below is copied from a hermetic runner run against a fake CLI; the ok line shows
 the shape of a finished exec lane, with illustrative values.
@@ -24,8 +24,8 @@ exits. Make the runner itself that command: no trailing `&`, or the shell exits 
 notice fires while the lane still runs. Read the lane's files only after the notice arrives.
 
 ```bash
-L=tmp/lane-pi; mkdir -p "$L"
-node .planning/scripts/cross-ai.mjs --runtime pi --model "$MODEL" --mode exec \
+L="$(mktemp -d)"; printf 'lane dir: %s\n' "$L"
+node .planning/scripts/cross-ai.mjs --runtime "$RUNTIME" --model "$MODEL" --mode exec \
   < prompt.md > "$L/lane.out" 2> "$L/lane.err"; echo $? > "$L/lane.rc"
 ```
 
@@ -43,34 +43,34 @@ cross-ai: report status=auth lane=pi/fake/auth route=unknown attempts=1 cycles=0
 ```
 
 On an exit 75 with `retry_after_s=`, schedule one one-shot `CronCreate` at `retry_after_s` and
-re-invoke the same lane. No other wake exists.
+re-invoke the same lane, per section 6 of [`../SKILL.md`](../SKILL.md). When that tool is not
+callable in the session, use the print-and-stop path of that section.
 
 ## pi
 
-unverified. pi's help shows no notification or one-shot scheduling feature, so pi uses the
-foreground wait below with `--runtime pi`. Print `retry_after_s`, the state path and the
-re-invoke command; do not schedule anything.
+unverified. pi's help shows no notification or one-shot scheduling feature, so a pi host uses the
+foreground wait below. Print `retry_after_s`, the state path and the re-invoke command; do not
+schedule anything.
 
 ## opencode
 
-unverified. opencode's help shows no notification or one-shot scheduling feature, so opencode
-uses the foreground wait below with `--runtime opencode`.
+unverified. opencode's help shows no notification or one-shot scheduling feature, so an opencode
+host uses the foreground wait below.
 
 ## cursor
 
-unverified. No background primitive is documented for cursor, so cursor uses the foreground wait
-below with `--runtime cursor`.
+unverified. No background primitive is documented for cursor, so a cursor host uses the
+foreground wait below.
 
 ## codex
 
-unverified. No background primitive is documented for codex, so codex uses the foreground wait
-below with `--runtime codex`.
+unverified. No background primitive is documented for codex, so a codex host uses the foreground
+wait below.
 
 ## copilot
 
-unverified. No background primitive is documented for copilot, so copilot uses the foreground
-wait below with `--runtime copilot`. Copilot takes the prompt on argv, which the runner passes
-for it; the prompt is then visible in the process table.
+unverified. No background primitive is documented for copilot, so a copilot host uses the
+foreground wait below.
 
 ## A host without a background primitive
 
@@ -80,7 +80,7 @@ Then read `lane.rc` and `lane.err`. Print `retry_after_s`, the state path and th
 command instead of scheduling a wake.
 
 ```bash
-L=tmp/lane-"$RUNTIME"; mkdir -p "$L"
+L="$(mktemp -d)"; printf 'lane dir: %s\n' "$L"
 node .planning/scripts/cross-ai.mjs --runtime "$RUNTIME" --model "$MODEL" --mode exec \
   < prompt.md > "$L/lane.out" 2> "$L/lane.err"; echo $? > "$L/lane.rc"
 ```

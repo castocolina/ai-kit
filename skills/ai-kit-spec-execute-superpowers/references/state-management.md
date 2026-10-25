@@ -60,12 +60,13 @@ retried, and the task keeps its fix round and its escalation anchor.
 
 That Step 2 re-entry applies only when the file holds no `injection_json` (a stop before any
 dispatch, where selection along the ladder is still pre-dispatch). When it holds `injection_json`,
-a dispatch on that pair already failed: both the one-shot router wake and an owner's plain
+a dispatch on that pair already failed: both the one-shot wake after an exit 75 carrying
+`retry_after_s=` and `cycle=` (router quota or a spent transient ladder) and an owner's plain
 "resume" re-dispatch that object unchanged through Step 3's `dispatch-task` and skip
 `resolve-injection`, so no recovered or different candidate replaces the lane. Only an owner
 who names a replacement pair re-enters Step 2, with that choice. After the 4-hour cap the
-pinned lane refuses with exit 69 until its last attempt is about 4 hours old; report that
-instead of re-resolving.
+pinned lane refuses with exit 69 until its last attempt is about 4 hours old or the owner
+deletes the state file the refusal names; report that instead of re-resolving.
 
 ## Resumable state: writing it
 

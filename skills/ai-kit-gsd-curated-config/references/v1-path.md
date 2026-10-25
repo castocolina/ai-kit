@@ -2,7 +2,7 @@
 
 Read only when running the v1 flow. Never run v1 `apply-execution`/`apply-review` on a project
 v2 `apply` configured: `apply-execution` overwrites `workflow.cross_ai_command` with its own
-single-runtime runner command, dropping the prefer order and models v2 chose.
+single-runtime runner command, dropping the runtime and model menu v2 chose.
 
 One curated question (`model_profile`) plus detected and preset steps. Use it only for a
 project v2 has never configured. v1 has no plan review or dry run: each `apply-*` call writes
@@ -25,7 +25,9 @@ gets the v2 dry run instead. Order and safeguards:
 6. `apply-execution` can exit 0 without configuring execution. Read its JSON:
    `cross_ai_command_written` false with a `degraded_reason` (`runner_not_ready`,
    `no_candidate`, `no_model`, `unsafe_hook_token`, `unsupported_model_id`, `no_builder`) means the command was left
-   absent or unchanged. Report the reason and the printed notes; for `runner_not_ready`, fix the
+   absent or unchanged. Report the reason and the printed notes (a copilot target's note, that
+   its error rows are unverified, it runs with all tools allowed and its prompt shows on argv, is
+   relayed verbatim before calling copilot execution configured); for `runner_not_ready`, fix the
    runner `ensure-runner` reported and re-run before telling the user execution is configured.
    `unsafe_hook_token`: the model id holds a character GSD's unquoted hook would split or glob
    (nothing was rendered; pick another id). `unsupported_model_id`: the id is outside its

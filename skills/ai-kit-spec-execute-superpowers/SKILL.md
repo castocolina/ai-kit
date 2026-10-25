@@ -37,20 +37,20 @@ Each item is repeated at its point of use; this is the index.
 - **Never** parse the implementer status out of `$REPORT_FILE` — read it from
   `$DISPATCH_RESULT_JSON["stdout"]` only (Step 3).
 - **Never** re-resolve to another candidate after a failed dispatch or re-run
-  `resolve-injection` to recover. The cross-AI caller contract is
-  [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md); re-dispatch only the persisted
-  injection after its one-shot wait (Step 3).
+  `resolve-injection` to recover; re-dispatch only the persisted injection after its one-shot
+  wait (Step 3).
 - **Never** run `trust-local` without the user's explicit yes, and never ask twice in one run
   (Step 2).
 
 The `Agent` tool is a Claude Code tool, and so is the one-shot `CronCreate` at `retry_after_s`.
-On another host, use its own subagent mechanism, or STOP and tell the user to resume by hand.
-A host without that scheduler schedules nothing: it prints `retry_after_s`, the resumable state
-path and the re-invoke command for that same one-shot wake, and the owner runs it. That printed
-row is unverified.
+On another host, use its own subagent mechanism (or STOP and tell the user to resume by hand)
+and Step 3 point 4's print path for the wake.
 
 **Cross-AI caller contract:** [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md).
-Never switch harness, provider or model.
+MANDATORY: read it before the first `dispatch-task` and again before acting on any non-zero exit
+(sections 4, 6 and 8). Never switch harness, provider or model after a failed or unusable run;
+pre-dispatch selection and the Rounds 4–5 bump (Step 3) are the only key changes, both before
+anything has failed.
 
 ## Step 0: Resolve the shim path
 
@@ -287,7 +287,8 @@ printf 'DISPATCH_RESULT_JSON=%s\nREPORT_MODE=%s\nLAST_DISPATCHED_KEY=%s\n' \
   "$DISPATCH_RESULT_JSON" "$REPORT_MODE" "$LAST_DISPATCHED_KEY"
 ```
 
-   The runner's `cross-ai: report` and `AIKIT-XAI` evidence lines are in `$DISPATCH_BASE.err`.
+   The runner's evidence lines (`cross-ai: report`, `cross-ai: upstream`, `AIKIT-XAI`, and a
+   `cross-ai: state` or `cross-ai: lane stopped=` path) are in `$DISPATCH_BASE.err`.
 
    `--heartbeat-interval` is required but unused: the runner prints its own heartbeat.
 
@@ -317,8 +318,9 @@ STATUS="$(printf '%s\n' "$STATUS_LINE" | rg -o '\b(DONE_WITH_CONCERNS|NEEDS_CONT
   more-context, split and plan-defect routes on the same pair, but never its "more capable
   model" route on your own: that is a model switch after an unusable run, so stop and report
   for the owner's decision.
-- **`"quota"`** — the runner's time-bound hard-tier outcome, including a confirmed-router quota
-  stop or an exhausted transient ladder carrying `retry_after_s=`. Record it as a wave-tried key
+- **`"quota"`** — the runner's hard-tier outcome: a confirmed-router quota stop or an exhausted
+  transient ladder carrying `retry_after_s=`, and also the terminal exit-69 hard-tier stops and a
+  bare exit 75; point 4 decides wait versus stop. Record it as a wave-tried key
   WITH the `"quota"` reason, never straight into `$EXCLUDED_KEYS_JSON` without one:
 
 ```bash
@@ -359,21 +361,21 @@ printf 'RETURNCODE=%s\nRETRY_AFTER_S=%s\nCYCLE=%s\n' "$RETURNCODE" "$RETRY_AFTER
      `stopped=cap`, or a `cross-ai: lane stopped=` refusal) is an owner stop after relaying the
      evidence, including that line's state path, whose deletion is the owner's reset; schedule
      nothing. A bare exit 75 is also an owner stop.
-     Where `CronCreate` is callable, schedule one one-shot wake at `retry_after_s` (`RETRY_AFTER_S`,
-     at least 60 s, rounded up to the next whole minute) with the fenced prompt below; the job
-     lives only as long as the session. A host without that scheduler schedules nothing: it
-     prints `retry_after_s`, `$RESUME_STATE_PATH` and that same prompt, marks the printed row
-     unverified, and the owner runs it. Never a repeated or fixed-interval job. A
-     stop past the 4-hour cap exits 69; no other stop (auth, off-router billing, permission, bad model,
-     `not_installed`, a bare exit 75) is scheduled either. For every unscheduled stop, report
-     `$RESUME_STATE_PATH`: an owner re-invoke re-dispatches the pinned injection, or re-enters Step 2
-     only with a replacement pair the owner names.
+     Where `CronCreate` is callable, schedule one one-shot wake at `retry_after_s` (`RETRY_AFTER_S`;
+     whole-minute rounding and the under-60 s case: ai-kit-cross-ai section 6) with the fenced
+     prompt below; the job lives only as long as the session. A host without that scheduler, or
+     a wait it cannot represent, schedules nothing: it prints `retry_after_s`,
+     `$RESUME_STATE_PATH` and that same prompt, marks the printed row unverified, and the owner
+     runs it. Never a repeated or fixed-interval job. Either way, STOP this wave and end the turn:
+     do not start the next task until the wake's "ok" path has handled this task's report. No
+     other stop (the cap, auth, off-router billing, permission, bad model, `not_installed`, a bare
+     exit 75) is scheduled; for each, report `$RESUME_STATE_PATH`: an owner re-invoke re-dispatches
+     the pinned injection, or re-enters Step 2 only with a replacement pair the owner names.
 
 ```text
 Quota wake for this one task. Do not resolve a candidate, do not read the plan and do not
 re-enter Step 2. Load the ai-kit-spec-execute-superpowers skill, then:
 1. Bind SHIM=<SHIM>, CWD=<CWD>, QUOTA_PATH=<QUOTA_PATH>, DISPATCH_BASE=<DISPATCH_BASE>,
-   REVIEW_SKILL_DIR=<REVIEW_SKILL_DIR>,
    PROMPT_FILE=<PROMPT_FILE>, FORMAT_BLOCK_FILE=<FORMAT_BLOCK_FILE>, REPORT_FILE=<REPORT_FILE>,
    RESUME_STATE_PATH=<RESUME_STATE_PATH> and REPORT_MODE=append.
 2. From that state file bind PLAN_FILE (plan_path), TASK_N (task_index) and the restore list in
@@ -387,7 +389,7 @@ re-enter Step 2. Load the ai-kit-spec-execute-superpowers skill, then:
    continue at "2. Handle the report" for task TASK_N.
 ```
 
-  Substitute the nine placeholders (`<DISPATCH_BASE>` is the one Step 3 printed). The
+  Substitute the eight placeholders (`<DISPATCH_BASE>` is the one Step 3 printed). The
   objective block stays byte-identical to the dispatch that just stopped: the runner reuses its
   session only when the task digest matches, and rewriting the objective would start a
   different task on the same lane. The report sentence sits outside it, so switching WRITE to
@@ -408,13 +410,12 @@ re-enter Step 2. Load the ai-kit-spec-execute-superpowers skill, then:
 Task-review fix rounds after successful work (Step 4) are separate from dispatch-failure handling
 and keep their own rules.
 
-**Two current rules.** Pre-dispatch selection along the owner-configured ladder is the
-shipped behavior, still awaiting the owner's confirmation (`references/design-notes.md`): the candidate `resolve-injection` picks before a dispatch, and the Rounds 4–5
-stronger-model re-resolution before a fix-round dispatch, both run before anything has failed.
-Nothing after a failure is authorized (the owner's rule): a failed or unusable run never switches harness, provider
-or model and never moves the work to the native session on its own. The runner owns the ladder;
-the owner decides. The history of both behaviors, and why neither was ever a post-failure
-recovery, is in `references/design-notes.md`.
+**Two current rules.** Pre-dispatch selection along the owner-configured ladder (the candidate
+`resolve-injection` picks, and the Rounds 4–5 re-resolution before a fix-round dispatch) is the
+shipped behavior, still awaiting the owner's confirmation. Nothing after a failure is authorized:
+a failed or unusable run never switches harness, provider or model and never moves the work to
+the native session. The runner owns the soft retry ladder; the owner decides. History:
+`references/design-notes.md`.
 
 **Exec confinement.** Codex runs under `--codex-sandbox workspace-write`: the runner uses
 `--sandbox workspace-write` instead of the bypass, so writes stay inside the target dir plus

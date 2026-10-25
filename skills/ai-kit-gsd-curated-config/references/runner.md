@@ -1,7 +1,8 @@
 # Runner details (template 8)
 
 Read when a runner upgrade, a `.new` merge, `ensure-runner`, the template flags, the live
-timeout, hand-edited CONFIG `extraArgs`, or a dispatch whose `AIKIT-XAI` line shows a
+timeout, hand-edited CONFIG `extraArgs`, retry tuning (`workflow.cross_ai_retry`), or a dispatch
+whose `AIKIT-XAI` line shows a
 `status=` other than `ok` comes up. Every status line carries `action=stop`, a clean exit 0
 included, so `action=stop` alone is not a trigger. Do NOT load for the stock v2 flow otherwise.
 SKILL.md's "Cross-AI execution" section
@@ -40,15 +41,20 @@ read-only and still reaches that shared service.
 
 The soft retry series and one session reset plus second soft series run inside a call, configured by
 `workflow.cross_ai_retry` in the project config or by `{"cross_ai_retry": {...}}` in
-`${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json`; hand-edit these sources because
-`config-set` refuses the project key. Tune neither in CONFIG: edits only receive `.new` upgrades.
-The caller owns the hard waits and notice. CONFIG retains `capS` (at most 14400),
-`attemptTimeoutS`, `routerBacked` and `runtime`. For caller actions on any non-ok status, see
-[`../../ai-kit-cross-ai/SKILL.md`](../../ai-kit-cross-ai/SKILL.md).
+`${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json`. The owner hand-edits these sources
+(`config-set` refuses the project key); this skill never writes them. CONFIG also keeps a `retry`
+object, the last fallback below those two: do not tune it there, because CONFIG edits only
+receive `.new` upgrades. The caller owns the hard waits and notice. CONFIG retains `capS` (at
+most 14400), `attemptTimeoutS`, `routerBacked` and `runtime`. For caller actions on any non-ok
+status, see [`../../ai-kit-cross-ai/SKILL.md`](../../ai-kit-cross-ai/SKILL.md).
 
 ## Runner upgrade
 
-`plan_runner_upgrade` upgrades a pristine older runner in place and keeps its CONFIG; a pristine
+`plan_runner_upgrade` upgrades a pristine older runner in place and keeps its CONFIG with two
+changes: an old `prefer` becomes `runtime` (its first entry), and a kept `CONFIG.models` id the
+new grammar refuses is dropped with a note ending `dropped it, pick a new <runner> model`. Relay
+that note: calls on that runner stop with `no_model` until the owner re-picks with `plan-set
+script:cross-ai.model.<runner>`, a dry run and an apply. A pristine
 current-template runner takes a same-version body fix the same way and is otherwise kept
 byte for byte; an edited runner is never replaced — a `.new` file is
 written for the owner to merge (`ensure-runner` reports `runner: "new-as-.new"` and `ready:
@@ -62,8 +68,9 @@ file. It never overwrites a user-edited runner, and readiness
 comes from the JSON it prints (`ready`, `runner`, `notes`), not from whether a `.new` file
 exists. A user-edited runner already on the current template is kept as-is and reported ready,
 with no `.new` file. An edited runner on an older template gets a `.new` file plus the printed
-notes. The readiness floor is template 8, the first with `--runtime` and retry config. Template 7 has
-neither. A hook built with `--runtime` against a project's template-7 copy fails with `unknown
+notes. The readiness floor is template 8, the first with `--runtime` and retry config. Template 7
+has neither `--runtime` nor the configurable retry series; it carries only the fixed
+`sameSessionRetries`/`cooldownS` knobs. A hook built with `--runtime` against a project's template-7 copy fails with `unknown
 argument` (exit 2) until `ensure-runner` re-renders it: a pristine copy upgrades in place, while an
 edited one gets `.new`. Templates 3-6 can still fall back to another CLI. A foreign runner is
 never ready. v1

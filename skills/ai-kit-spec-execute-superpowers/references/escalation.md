@@ -75,7 +75,8 @@ reassigning `$EXCLUDED_KEYS_JSON`, framed as subagent-driven-development require
 implementer attempted this task [N] times; you own it now. Read the report file for what was
 tried." This re-run is the pre-dispatch choice for a fix round, not a recovery from a failed
 dispatch. A dispatch that then fails does not re-enter it: the failure stops for the owner, or,
-for the ruled router exit 75, the one-shot wake re-dispatches the same injection.
+for an exit 75 carrying `retry_after_s=` and `cycle=` (router quota or a spent transient ladder),
+the one-shot wake re-dispatches the same injection.
 
 The floor needs no separate persistence: it is recomputed every time from `$LADDER_KEYS_JSON` and
 `$ESCALATION_ANCHOR_KEY`, and the latter is persisted. Round 5's stuck key is round 4's bumped

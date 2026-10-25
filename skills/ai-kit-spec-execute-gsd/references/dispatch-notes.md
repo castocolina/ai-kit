@@ -24,13 +24,9 @@ cursor effort/fast brackets stay argv-only (ai-kit's own Python dispatch), never
 ## Codex confinement
 
 The hook passes `--codex-sandbox workspace-write` for a codex executor, the same confinement the
-old direct-dispatch path used. The runner then uses `--sandbox workspace-write` instead of the
-bypass, so writes stay inside the project directory plus `/tmp` and `$TMPDIR`, which
-workspace-write always allows. Whether GSD's own git commits succeed under `workspace-write` is
-unverified: `.git` writability under it has not been confirmed. Every other exec target runs with
-full permissions and gets only the soft-confinement sentence in the guidance file, which is
-guidance, not a boundary. `claude` is review-only and never a hook target. pi exec uses the
-runner's pi formula, verified by its hermetic self-test only; live verification is still open.
+old direct-dispatch path used. The open question it leaves is `.git`: whether GSD's own git
+commits succeed under `workspace-write` is unverified. The current per-runtime exec notes (codex,
+the full-permission targets, pi, copilot) are in SKILL.md's "Exec confinement" paragraph.
 
 ## History: the guidance file supersedes the old guidance-append step
 

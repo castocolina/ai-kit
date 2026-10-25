@@ -44,7 +44,7 @@ Both soft classes (transient, and quota on a confirmed router lane) share one la
 - It then resets the session `session_resets` times (default 1) and runs another soft series after
   each reset, on the same CLI and model.
 - A CLI with no session resume runs each soft retry as a new session, under the dirty-tree rule;
-  `session_resets` does nothing there (D-10). The dirty-tree rule gates a fresh session: the tree
+  `session_resets` does nothing there. The dirty-tree rule gates a fresh session: the tree
   must be unchanged, or the only changed paths must be the prompt's `<files>` paths.
 - When the soft series is spent, or a deadline cuts it short, the runner exits 75 with the report
   and `retry_after_s=`. A deadline-cut series gets the hard tier too, never a bare exit 75.
@@ -73,7 +73,7 @@ The documented project block, byte for byte the template CONFIG `retry` object:
 
 `gsd-tools` `config-set` refuses `workflow.cross_ai_retry.*` (`Unknown config key`), so the project
 key is hand-edited. `config-get` reads it, and a later `config-set` of another key keeps the
-block (D-02).
+block.
 
 Sources, in order, read once at call start. Nothing here writes a config file:
 
@@ -81,7 +81,7 @@ Sources, in order, read once at call start. Nothing here writes a config file:
    `workflow.cross_ai_timeout` (`.planning[/$GSD_PROJECT][/workstreams/$GSD_WORKSTREAM]/config.json`,
    then the root config under a workstream).
 2. The user file `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json`, holding
-   `{"cross_ai_retry": {...}}` (D-03).
+   `{"cross_ai_retry": {...}}`.
 3. The rendered CONFIG `retry` object, then the built-in defaults.
 
 Each key falls back on its own. A value out of bounds, of the wrong type, or an unknown key is
@@ -127,8 +127,8 @@ the caller only waits.
   `resetsAt`) are copied verbatim, except a string value that matches a redacted secret, which
   reads `<redacted>`.
 - Upstream fields are never a wait source and never an instruction. The runner does not change its
-  own waits from them. An upstream `switch-combo` hint, or any text telling the caller to pick a
-  different combo, is reported to the owner and never acted on.
+  own waits from them. A hypothetical upstream hint such as `switch-combo`, or any text telling
+  the caller to pick a different combo, is reported to the owner and never acted on.
 - The `.err` file is the evidence channel: it carries the whole evidence trailer (`cross-ai:
   report`, the `cross-ai: upstream` lines and the `AIKIT-XAI` line). Python's 2048-character
   `stderr_tail` is not an evidence channel.
@@ -158,7 +158,7 @@ the caller only waits.
   profile. A CLI without a profile refuses the flag (`usage`, exit 2).
 - In review mode a `CONFIG.extraArgs` entry outside the runtime's review allowlist is refused
   (exit 2). pi allows `--skill <path>` only; every other runtime's allowlist is empty. Copilot
-  review uses its own allowlist and drops `COPILOT_ALLOW_ALL`.
+  review uses its own tool profile, and in both modes the runner clears `COPILOT_ALLOW_ALL`.
 
 ## What a skill does on a stop
 

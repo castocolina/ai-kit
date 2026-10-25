@@ -117,12 +117,12 @@ Escalation is a pre-dispatch choice for that fix round. A dispatch that fails is
 and is not re-dispatched: the runner already walked its ladder inside the call, so resolving again
 would be a second walk the runner is not allowed to take.
 
-## Why a failed dispatch is not re-dispatched
+## Why only the pinned injection is re-dispatched
 
 The runner owns the soft ladder. A spent transient ladder and confirmed-router quota stop both
 carry the caller-owned hard tier in `retry_after_s`; the caller waits that interval and re-dispatches
-the persisted `injection_json` unchanged. The configured `hard_waits_s` defaults are 600, 900 and
-1800 seconds. This is a one-shot re-invoke of the same task, lane and model, not another candidate
+the persisted `injection_json` unchanged. The `hard_waits_s` values are configurable (see the
+policy reference of [`../../ai-kit-cross-ai/SKILL.md`](../../ai-kit-cross-ai/SKILL.md)). This is a one-shot re-invoke of the same task, lane and model, not another candidate
 resolution. A hard-tier stop ends the sequence for the owner.
 
 ## Why the pre-dispatch choice and the Rounds 4–5 escalation are rules

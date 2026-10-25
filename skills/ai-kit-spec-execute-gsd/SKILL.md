@@ -25,7 +25,7 @@ description: "Resolves the best available (runtime, model) pair for a GSD (Get S
 - **Never answer GSD's `skip`.** It falls back to the native executor.
 - **Only the scheduled wake answers GSD's `retry`.** On any exit 75 carrying `retry_after_s=`,
   answer nothing in that turn; the one-shot wake waits that delay and retries the same lane, CLI
-  and model. See the cross-AI caller contract below.
+  and model. Every other stop answers `abort` (Step 3).
 - **A `fallback_notice`, or a runner-setup failure, stops after cleanup and reports.** It never
   continues to GSD's native execution unless the owner explicitly decides to.
 
@@ -38,11 +38,11 @@ running its GSD commands; the host's own folder trust is the only gate. `resolve
 the `*-workflow-keys` calls print `ai-kit: gsd-core <version> at <path>` on stderr; if that path
 is inside a repo you have not reviewed, stop and check it.
 
-**Cross-AI caller contract:** [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md),
-including its policy reference. On Claude Code, schedule one-shot CronCreate at retry_after_s.
-These tools are Claude Code specific. On another host, use its own skill-invocation mechanism or
-tell the user to run `/gsd-execute-phase` by hand; without the scheduler, print the re-invoke
-details and schedule nothing. Never switch harness, provider or model.
+**Cross-AI caller contract:** [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md), a
+MANDATORY read at Step 3's stop handling; if that sibling is missing, STOP. The `Skill` tool and
+the one-shot CronCreate at retry_after_s (Step 3) are Claude Code specific. On another host, use
+its own skill-invocation mechanism or tell the user to run `/gsd-execute-phase` by hand. Never
+switch harness, provider or model.
 
 ## Step 0: Resolve the shim path
 
@@ -154,7 +154,8 @@ proceed to Step 3 — GSD's own default would run with no configuration change).
 resume: `skill` (this Step 1 case, `RESUME_VIA=skill`) means the caller re-invokes this skill
 with `cwd` from `project_path`, `phase_id` from `phase_id` and the prompt file from
 `phase_prompt_file`; `gsd-execute-phase` (Step 3's router stop) means the owner runs
-`/gsd-execute-phase <phase_id>` with the hook unchanged and never re-invokes this skill:
+`/gsd-execute-phase <phase_id>` with the hook unchanged (after a hard-tier stop, first deleting
+the state file the runner named) and never re-invokes this skill:
 
 ```bash
 RESUME_VIA=skill  # Step 3's router stop runs this block with gsd-execute-phase
@@ -188,11 +189,6 @@ that GSD's own runtime runs, decided without a host check.
 - Resolve dispatch mode fresh every run, never reuse a cached decision — quota state, installed
   CLIs, and per-plan `cross_ai: true` opt-in can all change between runs, and a stale cached mode
   would silently dispatch through the wrong path.
-- Before writing `workflow.cross_ai_command`, ask yourself: is this plan's frontmatter actually
-  opted in (`cross_ai: true`)? A workflow-level write alone never makes GSD delegate to cross-AI
-  — writing the hook without checking the plan's own opt-in (the "Plan opt-in, checked before the
-  write" note further down this step) would silently misconfigure a plan the user never asked to
-  run cross-AI.
 - Run the mode-transition cleanup even when this run resolves a non-cross-AI mode — a stale
   adapter-owned hook from a PRIOR run must never keep dispatching cross-AI just because THIS run
   didn't touch it.
@@ -450,20 +446,21 @@ argument. This is a tool call the agent makes directly, not a shell command this
 as a `bash` fence. The job continues while GSD's cross-AI step runs: the rules below govern every
 answer to its retry/skip/abort prompt.
 
-When GSD's cross-AI step stops, relay the runner's `cross-ai: report`, `cross-ai: upstream` and
-`AIKIT-XAI` lines verbatim from the runner's `.err` file, then run the Step 1
-`write-resumable-state` block with `RESUME_VIA=gsd-execute-phase` so the owner has a durable
-record. A bare exit 75 without `retry_after_s=` is an owner stop and schedules nothing.
+**MANDATORY on any cross-AI stop:** read [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md)
+sections 4 and 6-8 before answering GSD's prompt. Relay the runner's `cross-ai: report`,
+`cross-ai: upstream` and `AIKIT-XAI` lines verbatim from GSD's `$ERROR_LOG` (the hook's stderr,
+read in full, never a truncated tail), then run the Step 1 `write-resumable-state` block with
+`RESUME_VIA=gsd-execute-phase` so the owner has a durable record.
 
-For any exit 75 carrying `retry_after_s=` (transient ladder exhausted or confirmed-router quota),
-answer nothing to GSD's prompt in that turn. Run the `write-resumable-state` block, then schedule
-one one-shot wake at that delay. The wake retries the same lane, CLI and model; after
-`stopped=hard-waits` or `stopped=cap` (exit 69), give the notice and answer `abort`. Never answer
-`skip`, and after a hard-tier stop schedule nothing more. Never switch harness, provider or model.
+For an exit 75 carrying `retry_after_s=` (transient ladder exhausted or confirmed-router quota),
+answer nothing to GSD's prompt in that turn and schedule the wake below; it retries the same
+lane, CLI and model. Every other stop (a bare 75, any 69 including `stopped=hard-waits` or
+`stopped=cap`, 1, 2, 124, 127) gets the notice and the answer `abort`, and schedules nothing.
+Never answer `skip`. Never switch harness, provider or model.
 
 Where `CronCreate` is callable (load it if deferred), schedule one one-shot wake at `retry_after_s`
-(at least 60 s, rounded up to the next whole minute) whose prompt is exactly this text. The job
-lives only as long as the session. After a session exit the owner runs `/gsd-execute-phase
+(whole-minute rounding and the under-60 s case: ai-kit-cross-ai section 6) whose prompt is
+exactly this text. The job lives only as long as the session. After a session exit the owner runs `/gsd-execute-phase
 <PHASE_ID>` from the state file's `project_path` with the hook unchanged, and never re-invokes
 this skill (that re-runs Step 1, which can rewrite the hook):
 
@@ -479,7 +476,9 @@ Never schedule before the current invocation exits, and never use a repeated or 
 job. Whether a wake fires while GSD's prompt is pending is unverified, which is why the prompt's
 first branch exists. A host without that scheduler prints `retry_after_s`, the
 `RESUME_STATE_PATH=` and the wake prompt, labels the printed re-invoke unverified, and lets the
-owner run it. A `stopped=hard-waits` or `stopped=cap` exit 69 is a terminal owner stop.
+owner run it. A `stopped=hard-waits` or `stopped=cap` exit 69 is a terminal owner stop: the
+runner refuses that lane until the owner deletes the state file it names, which starts a new
+episode.
 
 If the `Skill` tool call itself fails to resolve — e.g. `gsd-execute-phase` isn't installed or its
 definition is missing/unreadable — that is a genuine environment problem, not a dispatch failure:
