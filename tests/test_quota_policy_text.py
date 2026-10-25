@@ -12,6 +12,8 @@ import unittest
 REPO = pathlib.Path(__file__).resolve().parent.parent
 REFERENCE = REPO / "skills/ai-kit-spec-review/references/subprocess-quota-policy.md"
 GSD_SKILL = REPO / "skills/ai-kit-spec-execute-gsd/SKILL.md"
+REVIEW_SKILL = REPO / "skills/ai-kit-spec-review/SKILL.md"
+DISPATCH_REF = REPO / "skills/ai-kit-spec-review/references/cross-ai-dispatch.md"
 SUPER_DIR = REPO / "skills/ai-kit-spec-execute-superpowers"
 SUPER_SKILL = SUPER_DIR / "SKILL.md"
 SUPER_REFS = (
@@ -21,6 +23,12 @@ SUPER_REFS = (
 )
 DISPATCH = SUPER_DIR / "ai_kit_spec_superpowers/dispatch_injection.py"
 CLASSIFIER = REPO / "skills/ai-kit-spec-review/ai_kit_spec/error_classifier.py"
+CURATED_SKILL = REPO / "skills/ai-kit-gsd-curated-config/SKILL.md"
+RUNNER_REF = REPO / "skills/ai-kit-gsd-curated-config/references/runner.md"
+README = REPO / "README.md"
+
+FALLBACK_SENTENCE = "next runner in the prefer order"
+OLD_VERSION = re.compile(r"template[- ]6")
 
 STOP_SENTENCE = "Never re-resolve to another candidate after a failed dispatch."
 OLD_REDISPATCH = "Retry Step 3 with the new injection"
@@ -77,6 +85,18 @@ class PolicyReference(unittest.TestCase):
         self.assertEqual(wake_lines(REFERENCE.read_text(encoding="utf-8")), [])
 
 
+class ReviewSkill(unittest.TestCase):
+    def test_skill_links_the_policy_and_pins_the_one_shot_reinvoke(self):
+        text = REVIEW_SKILL.read_text(encoding="utf-8")
+        self.assertIn("references/subprocess-quota-policy.md", text)
+        self.assertEqual(wake_lines(text), [])
+        self.assertIn("retry_after_s", text)
+        self.assertIn("one-shot", text)
+
+    def test_dispatch_reference_names_transient(self):
+        self.assertIn("transient", DISPATCH_REF.read_text(encoding="utf-8"))
+
+
 class GsdExecuteSkill(unittest.TestCase):
     def test_skill_links_the_reference_and_schedules_only_the_one_shot(self):
         text = GSD_SKILL.read_text(encoding="utf-8")
@@ -106,6 +126,19 @@ class SuperpowersExecuteSkill(unittest.TestCase):
         for line in cron_lines(SUPER_SKILL.read_text(encoding="utf-8")):
             self.assertIn("one-shot", line)
             self.assertIn("retry_after_s", line)
+
+
+class CuratedConfigDocs(unittest.TestCase):
+    def test_curated_files_and_readme_drop_the_fallback_and_the_old_version(self):
+        for path in (CURATED_SKILL, RUNNER_REF, README):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn(FALLBACK_SENTENCE, text)
+            self.assertIsNone(OLD_VERSION.search(text))
+
+    def test_curated_skill_links_the_policy_and_readme_names_the_ladder(self):
+        self.assertIn("subprocess-quota-policy.md", CURATED_SKILL.read_text(encoding="utf-8"))
+        self.assertIn("no automatic fallback", README.read_text(encoding="utf-8"))
+        self.assertIn("## Failure ladder", RUNNER_REF.read_text(encoding="utf-8"))
 
 
 class PythonMessages(unittest.TestCase):

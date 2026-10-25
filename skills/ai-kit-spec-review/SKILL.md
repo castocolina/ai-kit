@@ -324,6 +324,21 @@ For each entry in `REVIEWER_LIST`:
      section for the full rationale — it explains the injection/escaping hazard rule (1)
      prevents and the tier-math behind rule (2).
 
+  Every subprocess lane runs the runner's failure ladder
+  ([`references/subprocess-quota-policy.md`](references/subprocess-quota-policy.md)): transient
+  failures retry in the same session and then in new sessions, a router quota failure cycles with
+  a cooldown under a 4-hour cap, and the runner never switches CLI, provider or model. A lane that
+  still fails ends with the runner's `cross-ai: report` line and its last `AIKIT-XAI` line, which
+  Step 5 relays verbatim. Never re-dispatch a failed lane to another reviewer on your own: the
+  merge reports it as failed, as today.
+
+  Review caller contract: when the failed lane is a confirmed router route and the runner exits
+  75 carrying `retry_after_s=` and `cycle=`, the review orchestrator schedules exactly one
+  one-shot re-invoke of that same lane (same CLI and model) at `retry_after_s`, bounded by the
+  4-hour cap, and merges the lane only after that re-invoke resolves or the cap turns it into
+  exit 69. An ordinary terminal failure (exit 69, auth, off-router, bad model) is merged as
+  failed with nothing scheduled.
+
 ### Step 1.5 — Merge reviewer reports, then bind `EFFECTIVE_REPORT_PATH` (runs every iteration — only the merge call itself is conditional)
 
 **This whole step always runs, in both the 1- and 2-reviewer cases** —
@@ -434,6 +449,9 @@ Emit one short message in the user's terminal. Do NOT paste full reports unless 
 | Insufficient info (stage gap) | `Only <existing docs> exist; project is at the <stage> stage. No <requested archetype> to review yet. Reviewed <existing> as <archetype>; produce <next stage> before reviewing it.` |
 | Validator blocked (Step 3c) | `Regenerated <archetype> was rejected by <validator> — <reasons>. Findings: <report path>. Fix manually and re-run /ai-kit-spec-review.` |
 | Failure | `<failure mode message>. Last available output: <quote brief>.` |
+
+A Failure whose lane ran through the runner also quotes that lane's `cross-ai: report` line and its
+last `AIKIT-XAI` line verbatim.
 
 After surfacing, the orchestrator's job is done. Do NOT continue to "next steps" — the user decides whether to invoke `writing-plans`, edit manually, or re-invoke `/ai-kit-spec-review` after their own edits.
 

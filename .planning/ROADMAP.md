@@ -832,7 +832,7 @@ before the runner is planned.
   5. The runner has no automatic fallback to another CLI and never switches harness, provider or
      model on its own; the same policy runs in `ai-kit-spec-review` / `ai-kit-spec-execute*`, and
      the skill, README and runner self-tests document and pin it.
-**Plans**: 9/11 plans executed
+**Plans**: 10/11 plans executed
 - [x] 25-01-PLAN.md
 - [x] 25-02-PLAN.md
 - [x] 25-03-PLAN.md
@@ -842,7 +842,7 @@ before the runner is planned.
 - [x] 25-07-PLAN.md
 - [x] 25-08-PLAN.md
 - [x] 25-09-PLAN.md
-- [ ] 25-10-PLAN.md
+- [x] 25-10-PLAN.md
 - [ ] 25-11-PLAN.md
 
 ### Phase 25.1: Configurable cross-AI retry ladder and upstream error propagation (INSERTED)

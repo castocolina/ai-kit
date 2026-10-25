@@ -1,4 +1,4 @@
-# Runner details (the current bundled template)
+# Runner details (template 7)
 
 Read when a runner upgrade, a `.new` merge, `ensure-runner`, the template flags, the live
 timeout, or hand-edited CONFIG `extraArgs` comes up. Do NOT load for the stock v2 flow.
@@ -34,7 +34,26 @@ read-only and still reaches that shared service.
   `--dangerously-bypass-approvals-and-sandbox`; every other exec target always runs with full
   permissions (no sandbox, no ask mode), and any guidance it receives is prose, not a boundary.
 
+## Failure ladder
+
+The runner follows the failure ladder in
+[`../../ai-kit-spec-review/references/subprocess-quota-policy.md`](../../ai-kit-spec-review/references/subprocess-quota-policy.md).
+CONFIG knobs: `sameSessionRetries` and `newSessionRetries` (0..3), `cooldownS` (0..`capS`),
+`capS` (at most 14400), `backoffS`, and `attemptTimeoutS` (default 0, no per-attempt cap,
+otherwise clamped to 10..1800). A router lane is authorized for quota cycles by the plan's
+`router_backed` (CONFIG `routerBacked`) or the `--route-<cli> router` flag. The `router-inferred`
+name heuristic is advisory only and cannot authorize quota cycles: an inferred route stops and
+reports like an unknown route (there is no built `direct` route kind). `--classify-only <file>`
+classifies a saved capture without spawning anything. A runner upgraded from an older template
+keeps an unused `retries` key.
+
 ## Runner upgrade
+
+`plan_runner_upgrade` upgrades a pristine older runner in place and keeps its CONFIG; a pristine
+current-template runner is kept as is; an edited runner is never replaced — a `.new` file is
+written for the owner to merge. So only a newly rendered or successfully upgraded active copy
+carries the ladder, and the way to see what a project actually runs is the active runner's line-2
+`template=<n>` header, never the `.new` file.
 
 `ensure-runner` renders or upgrades the project runner and, with `--guidance-file`, the guidance
 file. It never overwrites a user-edited runner, and readiness

@@ -271,11 +271,16 @@ its stderr instead (quota, auth, configuration, and the remaining closed reasons
 | `auth` | `auth` |
 | `billing`, `billing_or_access` | `billing_or_access` |
 | `capacity` | `capacity` |
+| `transient` | `capacity` (template 7; `capacity` stays for template-6 runners) |
 | `timeout`, `idle_stall` | `timeout` |
 | `bad_model`, `bad_prompt`, `permission_blocked`, `usage`, `no_model`, `empty_stdin` | `configuration` |
 | `not_installed` | `dispatch_unavailable` |
 | `no_change`, `empty_answer`, `crash`, `contract_violation`, `signal`, `git_error` | `real_error` |
 | `git_timeout` | `git_timeout` |
+
+Template 7 also prints evidence tokens `route`, `rule`, `pattern`, `attempts` and `cycles`, and one
+`cross-ai: attempt` line per failed attempt plus one `cross-ai: report` line on a stop. What each
+means is in [`subprocess-quota-policy.md`](subprocess-quota-policy.md).
 
 No status line at all falls back to the exit code:
 

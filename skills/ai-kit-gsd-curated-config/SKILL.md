@@ -110,7 +110,8 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
 
    - **Runner models** are the pseudo-keys `script:cross-ai.model.<runner>` (pick from
      `artifacts[0].choices.<runner>.candidates`) and `script:cross-ai.prefer` (a JSON list
-     of runner ids, in order). `plan-unset script:cross-ai.model.<runner>` reopens a choice.
+     of runner ids: only the first installed runner runs, and the rest is the owner's menu).
+     `plan-unset script:cross-ai.model.<runner>` reopens a choice.
      A pi or codex model with reasoning modes also pins its effort (`config.effort`, medium
      or the nearest mode); the runner passes it as pi `--thinking` / codex effort.
    - **pi session steer** (`model_profile_overrides.pi.sonnet`, pi hosts only): the
@@ -191,8 +192,8 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
 - **Runner `git_timeout` or `git_error` status** (git could not read the work tree): claim
   nothing about its state, and report the status line only. After that status, or once a CLI
   has run outside a git work tree, the runner tries no other CLI: nothing proves the first one
-  wrote nothing. (It moves to the next runner in the prefer order only after a fallback status
-  on a verified-clean tree, `no_change` for example.) **`tree=unknown`** on a run outside any git
+  wrote nothing. The runner never runs a second CLI, whatever the outcome. **`tree=unknown`**
+  on a run outside any git
   work tree means the CLI ran without the check: report that, and do not read it as a clean or
   dirty tree.
 - **Effort sync** is not offered when the inventory points at a workstream config (gsd-core
@@ -201,8 +202,11 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
 ## Cross-AI execution
 
 v2 `apply` sets `workflow.cross_ai_command` to the bare `node .planning/scripts/cross-ai.mjs` and
-renders the runner from the current bundled template; the runner reads its prefer order and
-models from its own CONFIG. The hook names the runner, never a raw vendor CLI string.
+renders the runner from the current bundled template (template 7). The runner runs the first
+runner of its prefer order with its model, reports a missing first runner as `not_installed` and
+never replaces it, and follows the failure ladder
+([`../ai-kit-spec-review/references/subprocess-quota-policy.md`](../ai-kit-spec-review/references/subprocess-quota-policy.md)).
+The hook names the runner, never a raw vendor CLI string.
 
 **Permissions depend on which flow wrote the hook — say which one applies:**
 
