@@ -78,7 +78,7 @@ runtime hosting the session. Source spec:
 - [ ] **Phase 22: Pi Live Validation** - Live smoke run from the pi host (independent; may run any time after Phase 19)
 - [ ] **Phase 23: Host-split status line for Claude Code and Cursor CLI** - Split `tools/status-line.py` per host and ship a Cursor CLI status line with the shared 5/10/15 proximity gauge (promoted from backlog 999.4; independent of Phases 17–22)
 - [ ] **Phase 24: Spec-and-discuss chain skill** - Installable skill that runs spec → discuss over a phase range with optional Laya/TypeSafe decisions, quality over simplicity unless MVP mode
-- [ ] **Phase 25: Quota-aware cross-AI subprocess supervision** - Route-aware quota classification and a 10-minute / 4-hour wait-and-resume for cross-AI children (from todo 2026-10-14)
+- [ ] **Phase 25: Quota-aware cross-AI subprocess supervision** - The owner's failure ladder in the runner: one CLI per call, transient retries 3 in the same session then 3 in new sessions, router-lane quota cycles across calls under a 4-hour cap, evidence on every stop (from todo 2026-10-14; owner decision 2026-10-24)
 - [ ] **Phase 25.1: Configurable cross-AI retry ladder and upstream error propagation** *(INSERTED)* - Soft backoff, session reset and caller-owned hard waits, configurable; upstream errors passed through verbatim; an evidence-based error catalog (owner request 2026-10-24)
 - [ ] **Phase 26: Session self-resume and OpenGSD quota rules** - The orchestrating session wakes itself after its own quota stalls; `ai-kit-project-rules-agents` emits both quota directives for OpenGSD projects (spike first)
 - [ ] **Phase 27: One-shot goal and loop prompt skill** - A skill that picks `/goal`, schedule/loop or `/gsd-autonomous` for a set of phases or plans and emits a ready-to-paste prompt whose definition of done requires green e2e tests
@@ -832,7 +832,7 @@ before the runner is planned.
   5. The runner has no automatic fallback to another CLI and never switches harness, provider or
      model on its own; the same policy runs in `ai-kit-spec-review` / `ai-kit-spec-execute*`, and
      the skill, README and runner self-tests document and pin it.
-**Plans**: 10/11 plans executed
+**Plans**: 11/11 plans executed
 - [x] 25-01-PLAN.md
 - [x] 25-02-PLAN.md
 - [x] 25-03-PLAN.md
@@ -843,7 +843,7 @@ before the runner is planned.
 - [x] 25-08-PLAN.md
 - [x] 25-09-PLAN.md
 - [x] 25-10-PLAN.md
-- [ ] 25-11-PLAN.md
+- [x] 25-11-PLAN.md
 
 ### Phase 25.1: Configurable cross-AI retry ladder and upstream error propagation (INSERTED)
 

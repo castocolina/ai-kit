@@ -418,6 +418,19 @@ class TestEnsureRunnerStates(unittest.TestCase):
             self.assertTrue(result["ready"])
             self.assertTrue(os.path.isfile(self._runner(tmp)))
 
+    def test_pristine_same_version_takes_a_body_fix(self):
+        # A template fix without a version bump still reaches a pristine copy.
+        with tempfile.TemporaryDirectory() as tmp:
+            old = _current_pristine(self.template)
+            target = self._runner(tmp)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(old)
+            fixed = self.template + b"\n// body fix\n"
+            plan = cross_ai_script.plan_runner_upgrade(tmp, fixed, HOST_SIGNAL_ENV_VARS)
+            self.assertEqual(plan.kind, "change")
+            self.assertTrue(plan.data.endswith(b"// body fix\n"))
+
     def test_pristine_current_kept_byte_for_byte(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = _current_pristine(self.template)
@@ -445,6 +458,22 @@ class TestEnsureRunnerStates(unittest.TestCase):
             with open(target, "rb") as handle:
                 self.assertEqual(handle.read(), data)
             self.assertTrue(os.path.isfile(target + ".new"))
+
+    def test_edited_template_6_writes_new_and_is_not_ready(self):
+        # Template 6 could still fall back to another CLI; only template 7 carries the ladder.
+        with tempfile.TemporaryDirectory() as tmp:
+            data = re.sub(rb"template=\d+", b"template=6",
+                          _current_pristine(self.template), count=1) + b"\n"
+            target = self._runner(tmp)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(data)
+            code, result = _run_ensure(["--cwd", tmp])
+            self.assertEqual(code, 1)
+            self.assertFalse(result["ready"])
+            self.assertEqual(result["runner"], "new-as-.new")
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), data)
 
     def test_edited_template_3_kept_and_ready(self):
         with tempfile.TemporaryDirectory() as tmp:

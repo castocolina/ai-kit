@@ -35,10 +35,10 @@ locked out after a resume. Track the inputs separately for the task's whole life
   every earlier wave's real reason.
 - `$FIX_ROUND` — the fix round the task is on.
 - `$LAST_DISPATCHED_KEY` — the key of the most recent `dispatch-task` for this task (empty before
-  the first), same-round retries included.
-- `$ESCALATION_ANCHOR_KEY` — `$LAST_DISPATCHED_KEY` copied when a fix round starts, unchanged by
-  that round's retries and by a resume. The Rounds 4–5 floor is computed from it, never from a
-  fresh pick.
+  the first). A failed dispatch is not retried in the same round, so this records the dispatch
+  that ran, not a retry.
+- `$ESCALATION_ANCHOR_KEY` — `$LAST_DISPATCHED_KEY` copied when a fix round starts, unchanged by a
+  resume. The Rounds 4–5 floor is computed from it, never from a fresh pick.
 
 Neither derived union is ever persisted; always recompute it from its inputs.
 
@@ -58,11 +58,22 @@ only quota-exhausted when the state was written is eligible again: the next `res
 refreshes quota, so it gets a real chance to have recovered. A permanently excluded one is never
 retried, and the task keeps its fix round and its escalation anchor.
 
+That Step 2 re-entry is the owner-controlled resume only. The one-shot router wake does not use
+it. When the state file holds `injection_json`, the wake re-dispatches that object unchanged
+through Step 3's `dispatch-task` and skips `resolve-injection`, so a candidate that recovered in
+the meantime cannot replace the lane. `injection_json` matters only to that wake: an
+owner-controlled resume re-enters Step 2 whether or not the file holds it (after a terminal stop
+it is inert).
+
 ## Resumable state: writing it
 
 When `INJECTION_MODE == "quota_exhausted"` and `any_quota_recoverable == True`: write resumable
 state, then STOP this wave and report the reasons per key and the state path (the owner
-re-invokes to resume). Nothing is scheduled. Do not dispatch this task. One `Bash` call:
+re-invokes to resume). Nothing is scheduled. Do not dispatch this task. One `Bash` call.
+
+Step 3's mid-dispatch quota path does not edit this block. It runs the "Quota-branch state
+write" variant below, which drops the two `WAVE_*` fold lines (that path already folded this
+key) and persists the current `$INJECTION_JSON` as `injection_json`.
 
 ```bash
 PROJECT_KEY="$(python3 -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:12])" "$CWD")"
@@ -98,3 +109,35 @@ printf 'RESUME_STATE_PATH=%s\nWAVE_TRIED_JSON=%s\nWAVE_REASONS_JSON=%s\n' \
 
 Then STOP this wave and report the reasons per key and `$RESUME_STATE_PATH`. Nothing is
 scheduled; the owner re-invokes to resume.
+
+## Quota-branch state write
+
+Step 3's mid-dispatch `"quota"` branch runs this block verbatim instead of the one above. It is
+the same write with the two `WAVE_*` fold lines removed and `injection_json` added, so the wake
+re-dispatches the exact injection that stopped. Do not assemble it by editing the block above.
+
+```bash
+PROJECT_KEY="$(python3 -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:12])" "$CWD")"
+RESUME_STATE_PATH="$(dirname "$QUOTA_PATH")/superpowers-resume-${PROJECT_KEY}-task-${TASK_N}.json"
+RESUME_EXCLUDED_KEYS_JSON="$(python3 "$SHIM" resume-exclusions --tried-json "$WAVE_TRIED_JSON" \
+  --reasons-json "$WAVE_REASONS_JSON" --prior-excluded-keys-json "$PRIOR_EXCLUDED_KEYS_JSON")"
+PERSIST_REASONS_JSON="$(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); a.update(json.loads(sys.argv[2])); k=set(json.loads(sys.argv[3])); print(json.dumps({x: r for x, r in a.items() if x in k}))' \
+  "$PRIOR_REASONS_JSON" "$WAVE_REASONS_JSON" "$RESUME_EXCLUDED_KEYS_JSON")"
+STATE_JSON="$(python3 -c '
+import json, sys
+print(json.dumps({"framework": "superpowers", "plan_path": sys.argv[1], "task_index": sys.argv[2],
+                   "fix_round": int(sys.argv[3]), "excluded_keys": json.loads(sys.argv[4]),
+                   "tried": json.loads(sys.argv[5]), "reasons": json.loads(sys.argv[6]),
+                   "last_dispatched_key": sys.argv[7], "escalation_anchor_key": sys.argv[8],
+                   "injection_json": json.loads(sys.argv[9])}))' \
+  "$PLAN_FILE" "$TASK_N" "$FIX_ROUND" "$RESUME_EXCLUDED_KEYS_JSON" "$WAVE_TRIED_JSON" \
+  "$PERSIST_REASONS_JSON" "$LAST_DISPATCHED_KEY" "$ESCALATION_ANCHOR_KEY" "$INJECTION_JSON")"
+python3 "$SHIM" write-resumable-state --path "$RESUME_STATE_PATH" --state-json "$STATE_JSON"
+printf 'RESUME_STATE_PATH=%s\n' "$RESUME_STATE_PATH"
+```
+
+Read `injection_json` back out of a written state file with this one-liner:
+
+```bash
+python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["injection_json"]))' "$RESUME_STATE_PATH"
+```

@@ -1510,9 +1510,36 @@ class TestPlanSetExtra(unittest.TestCase):
 
 
 class TestScriptRouterBacked(unittest.TestCase):
-    """router_backed follows a confirmed fallback_quota, never an inferred router."""
+    """router_backed follows the inventory row, the same rule recommend uses.
 
-    def _call(self, row):
+    The rows come from catalog_adapter.build_candidates, the real inventory row builder, so the
+    test fails if that builder stops carrying the fields _confirmed_router reads."""
+
+    def _inventory_row(self, confirmed, purpose="execute"):
+        from ai_kit_gsd_curated_config import catalog_adapter, gsd_catalog
+
+        entry = {
+            "provider": "router-env",
+            "is_router": True,
+            "runtimes": {"pi": {"model_id": "router-env/x"}},
+        }
+        if confirmed:
+            entry["heuristic_confirmed"] = ["is_router"]
+            entry["name_declared_purpose"] = purpose
+        ranker = gsd_catalog.load_ai_kit_spec_module("model_ranker")
+        assert ranker is not None
+        rows = catalog_adapter.build_candidates(
+            {"clis": {"pi": {"installed": True, "models": ["router-env/x"]}}},
+            {"router-env/x": entry},
+            "claude",
+            ranker.load_ranking_weights(),
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("fallback_quota", rows[0])
+        self.assertNotIn("heuristic_confirmed", rows[0])
+        return rows[0]
+
+    def _backed(self, row):
         plan = {
             "host": "claude",
             "rigor": "standard",
@@ -1522,36 +1549,32 @@ class TestScriptRouterBacked(unittest.TestCase):
                 "choices": {},
             }],
         }
-        return plan_edit.EditCall(
+        call = plan_edit.EditCall(
             plan=plan,
             inv={"installed_runtimes": ["pi"], "candidates": [row]},
             force=False,
             encode=lambda _key, _value: "",
         )
-
-    def _row(self, quota, confirmed, router=True):
-        row = cand("router-env/x", runtime="pi", is_host=False, is_router=router)
-        if quota is not None:
-            row["fallback_quota"] = quota
-        if confirmed:
-            row["heuristic_confirmed"] = ["fallback_quota"]
-        return row
-
-    def _backed(self, row):
-        edited, notes = plan_edit._plan_set_script_model(
-            self._call(row), "pi", "router-env/x",
-        )
+        edited, notes = plan_edit._plan_set_script_model(call, "pi", row["model"])
         self.assertEqual(notes, [])
         return edited["artifacts"][0]["config"]["router_backed"]["pi"]
 
     def test_inferred_router_writes_false(self):
-        self.assertIs(self._backed(self._row(None, False)), False)
+        row = self._inventory_row(confirmed=False)
+        self.assertTrue(row["is_router"])
+        self.assertFalse(row["router_confirmed"])
+        self.assertIs(self._backed(row), False)
 
-    def test_confirmed_false_writes_false(self):
-        self.assertIs(self._backed(self._row(False, True)), False)
+    def test_confirmed_router_writes_true(self):
+        row = self._inventory_row(confirmed=True)
+        self.assertTrue(row["router_confirmed"])
+        self.assertIs(self._backed(row), True)
 
-    def test_confirmed_true_writes_true(self):
-        self.assertIs(self._backed(self._row(True, True, router=False)), True)
+    def test_confirmed_review_router_writes_false(self):
+        row = self._inventory_row(confirmed=True, purpose="review")
+        self.assertTrue(row["router_confirmed"])
+        self.assertEqual(row["name_declared_purpose"], "review")
+        self.assertIs(self._backed(row), False)
 
 
 if __name__ == "__main__":

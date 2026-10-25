@@ -208,12 +208,16 @@ def _plan_set_script(call: EditCall, key: str, raw: str) -> tuple[dict, list[str
 def _confirmed_router(row) -> bool:
     """True only for a user-confirmed router lane (D-05).
 
-    An inferred `is_router` and a confirmed false both stay false, so a rendered copy never
-    treats a guess as an authoritative route."""
-    if not isinstance(row, dict) or not isinstance(row.get("fallback_quota"), bool):
+    The same confirmation rule `recommend` uses (`cross_ai._declared_routers(..., "execute")`):
+    the inventory row must carry `is_router` and `router_confirmed`, both true, and declare the
+    purpose `execute`. An inferred router (`router_confirmed` false) or a confirmed review router
+    stays false, so a re-picked model never gets quota cycles recommend would not grant.
+    Inventory rows never carry `fallback_quota` or `heuristic_confirmed`; those live on the
+    catalog entry the row was built from."""
+    if not isinstance(row, dict):
         return False
-    confirmed = row.get("heuristic_confirmed")
-    return isinstance(confirmed, list) and "fallback_quota" in confirmed and row["fallback_quota"]
+    return (row.get("is_router") is True and row.get("router_confirmed") is True
+            and row.get("name_declared_purpose") == "execute")
 
 
 def _plan_set_script_model(

@@ -154,7 +154,7 @@ _default_print = stderr_print
 # pi exec uses the runner's formula, which only its hermetic self-test covers today.
 PI_EXEC_NOTE = (
     "ai-kit-spec: pi exec uses the runner's pi formula, verified by its hermetic "
-    "self-test only; live verification is Phase 22"
+    "self-test only; live verification is still open"
 )
 
 
@@ -179,6 +179,8 @@ def runner_flags(spec: RunnerSpec) -> list[str]:
     flags = [
         "--prefer", spec.runtime, f"--model-{spec.runtime}", spec.model, "--mode", spec.mode,
     ]
+    if spec.route in ("router", "unknown"):
+        flags += [f"--route-{spec.runtime}", spec.route]
     if spec.runtime == "codex":
         if spec.effort:
             flags += ["--codex-effort", spec.effort]
@@ -233,8 +235,6 @@ def build_runner_argv(spec: RunnerSpec, runner_path: str, node: str) -> list[str
         node, runner_path, *runner_flags(spec),
         "--timeout", timeout, "--outer-timeout", outer, "--no-preamble",
     ]
-    if spec.route in ("router", "unknown"):
-        argv += [f"--route-{spec.runtime}", spec.route]
     return argv
 
 

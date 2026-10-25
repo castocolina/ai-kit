@@ -6,10 +6,10 @@ prompt into that hook and captures its stdout. Codex is confined with `--codex-s
 workspace-write`. The guidance file is placed before the prompt and the runner's own preamble
 is off, so nothing is said twice.
 """
-from ai_kit_spec.runner_dispatch import RunnerSpec, project_runner_command
+from ai_kit_spec.runner_dispatch import RunnerSpec, project_runner_command, resolve_route
 
 
-def build_cross_ai_command(resolved_candidate: dict):
+def build_cross_ai_command(resolved_candidate: dict, env: dict | None = None):
     """The project-root-relative hook string, or None when no safe hook can be built.
 
     The hook is relative to the project root GSD runs it from. A native candidate (`runtime`
@@ -22,5 +22,9 @@ def build_cross_ai_command(resolved_candidate: dict):
         runtime, resolved_candidate["model"], "exec", 0,
         effort=resolved_candidate.get("effort"),
         service_tier=resolved_candidate.get("service_tier"),
+        # The catalog's confirmed route pins the lane, so CONFIG.routerBacked (per CLI, not
+        # per model) never grants router cycles to a direct model on that CLI. No env, no
+        # catalog read: the runner's own rule decides.
+        route=None if env is None else resolve_route(runtime, resolved_candidate["model"], env),
     )
     return project_runner_command(spec, guidance=True)

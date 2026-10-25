@@ -36,15 +36,26 @@ Each item is repeated at its point of use; this is the index.
   per task, `append` after that, and every prompt after the first says APPEND (Step 3).
 - **Never** parse the implementer status out of `$REPORT_FILE` — read it from
   `$DISPATCH_RESULT_JSON["stdout"]` only (Step 3).
-- **Never** re-dispatch a task to another candidate after its dispatched run failed, and never
-  schedule anything except the ruled single re-invoke: one one-shot `CronCreate` at `retry_after_s`
-  for a confirmed-router exit 75 carrying `cycle=`, re-invoking the same lane (the runner already
-  ran its ladder; `../ai-kit-spec-review/references/subprocess-quota-policy.md`) (Step 3).
+- **Never** re-resolve to another candidate after a failed dispatch, and never re-run
+  `resolve-injection` to recover from one.
+  The only schedule is the ruled single re-invoke:
+  one one-shot `CronCreate` at `retry_after_s` for a confirmed-router exit 75 carrying `cycle=`,
+  and its prompt re-dispatches the persisted `injection_json` unchanged (the runner already ran
+  its ladder; `$REVIEW_SKILL_DIR/references/subprocess-quota-policy.md`, the same file as
+  `../ai-kit-spec-review/references/subprocess-quota-policy.md`) (Step 3).
 - **Never** run `trust-local` without the user's explicit yes, and never ask twice in one run
   (Step 2).
 
-The `Agent` tool is a Claude Code tool. On another host, use its own subagent mechanism, or STOP
-and tell the user to resume by hand.
+The `Agent` tool is a Claude Code tool, and so is the one-shot `CronCreate` at `retry_after_s`.
+On another host, use its own subagent mechanism, or STOP and tell the user to resume by hand.
+A host without that scheduler schedules nothing: it prints `retry_after_s`, the resumable state
+path and the re-invoke command for that same one-shot wake, and the owner runs it. That printed
+row is unverified.
+
+**MANDATORY before the first external dispatch, and again before acting on a stop**: read
+`$REVIEW_SKILL_DIR/references/subprocess-quota-policy.md` (from this skill,
+`../ai-kit-spec-review/references/subprocess-quota-policy.md`). It is the ladder and the
+host-specific re-entry contract; do not reconstruct it.
 
 ## Step 0: Resolve the shim path
 
@@ -169,12 +180,12 @@ Record both when the block ran. `$INJECTION_KEY` is the ladder key (e.g. `codex/
   - **`any_quota_recoverable == False`** — no candidate is eligible for automatic quota recovery
     (only `"quota"` is). Some reasons may still clear later by themselves (`"capacity"`), others
     need a fix first (credentials, configuration). STOP this wave and tell the user which key needs
-    what fix, and nothing is scheduled.
-    read off `reasons`: `"auth"` needs login or entitlement, `"billing_or_access"` credits or
+    what fix, read off `reasons`: `"auth"` needs login or entitlement, `"billing_or_access"` credits or
     model access, `"configuration"` a fixed model id, prompt or flag (the runner refused it),
     `"capacity"` a later retry or another model, `"git_timeout"` a look at the repo (the runner's
     work-tree check timed out, not the CLI), `"timeout"`/`"dispatch_unavailable"` an
-    investigation of the CLI, `"real_error"` its own diagnosis. This stop is the adapter's own
+    investigation of the CLI, `"real_error"` its own diagnosis. Nothing is scheduled. This stop is
+    the adapter's own
     call, not one of subagent-driven-development's four stop-and-ask conditions; see
     `references/design-notes.md`.
   - **`any_quota_recoverable == True`** — at least one candidate is quota-exhausted, which is
@@ -193,8 +204,9 @@ A reviewer or executor is a (runtime, model) pair. Each call runs it natively wh
 
 **`mode == "native"`:** this host's own subagent mechanism, unchanged. On Claude Code, pass `model`
 as the `Agent` tool's `model` parameter (omit it when empty) and record the returned agent identity;
-fix-loop rounds 1–3 resume that same agent. Its round 4/5 model bump is that skill's own judgment,
-with no ladder. On any other host the native case is only the session default, so omit `model` and
+fix-loop rounds 1–3 resume that same agent. Its round 4/5 model bump follows that skill's own
+rule (a more capable model) and happens before the round's dispatch, after a review returned
+findings: pre-dispatch selection, never a switch after a failed dispatch. On any other host the native case is only the session default, so omit `model` and
 let the host use its current session. Either way, record `LAST_DISPATCHED_KEY="$INJECTION_KEY"`
 after the dispatch. A non-Claude native dispatch cannot raise its own model, so rounds 4–5 take
 the ladder escalation below; when it finds nothing higher, it stops and asks for a more capable
@@ -214,8 +226,9 @@ mkdir -p "$TASK_STATE_DIR"
 PROMPT_FILE="$TASK_STATE_DIR/task-${TASK_N}-prompt.txt"
 FORMAT_BLOCK_FILE="$TASK_STATE_DIR/task-${TASK_N}-format-block.md"
 REPORT_FILE="${BRIEF_FILE%-brief.md}-report.md"
-printf 'PROMPT_FILE=%s\nFORMAT_BLOCK_FILE=%s\nREPORT_FILE=%s\n' \
-  "$PROMPT_FILE" "$FORMAT_BLOCK_FILE" "$REPORT_FILE"
+DISPATCH_BASE="$(mktemp -d)/task-${TASK_N}-dispatch"  # outside the repo: never a tree change
+printf 'PROMPT_FILE=%s\nFORMAT_BLOCK_FILE=%s\nREPORT_FILE=%s\nDISPATCH_BASE=%s\n' \
+  "$PROMPT_FILE" "$FORMAT_BLOCK_FILE" "$REPORT_FILE" "$DISPATCH_BASE"
 ```
 
 `$REPORT_FILE` (`…/task-N-report.md`) is the path subagent-driven-development's review and ledger
@@ -235,7 +248,12 @@ back to `write` for this task.
 1. **Compose the prompt** from subagent-driven-development's implementer-prompt.md template (brief
    path, context, report-file path, the "you do not dispatch subagents" contract) into
    `$PROMPT_FILE`. It must tell the CLI to put its detailed report in `$REPORT_FILE` and return
-   only a short status line. On the task's first dispatch the prompt says WRITE `$REPORT_FILE`; on
+   only a short status line. Put everything the implementer is asked to do inside one
+   `<objective>…</objective>` block, and keep the WRITE/APPEND report sentence below outside it:
+   the runner's task digest hashes only the objective text, so a quota wake that changes WRITE to
+   APPEND still reuses the session. List the task's repo-relative paths in one comma-separated
+   `<files>…</files>` block: the runner retries in a new session over a changed tree only when
+   every changed path is listed there. On the task's first dispatch the prompt says WRITE `$REPORT_FILE`; on
    every later dispatch it says "APPEND your detailed report to the end of `$REPORT_FILE` — do not
    overwrite its existing contents from earlier rounds." (`--report-mode` only controls
    `dispatch-task`'s own stdout fallback, never what the CLI does to the file.) On a fix round, also
@@ -246,23 +264,39 @@ back to `write` for this task.
    implementer-prompt.md's "After Review Findings") to `$FORMAT_BLOCK_FILE`. It becomes the
    dispatch's format block.
 3. **Dispatch.** `dispatch-task` prepares tooling guidance itself and runs the pair through the
-   supervised runner. `--timeout 900` is a fixed constant: a candidate's per-entry `timeout_tiers`
-   is not plumbed into this adapter.
+   supervised runner. `--timeout 1800` is a fixed constant and the budget for the whole call,
+   every retry rung included (curated-config's runner floor); a candidate's per-entry
+   `timeout_tiers` is not plumbed into this adapter. **Hard rule:** run this call backgrounded,
+   never under a foreground tool timeout, which kills it and loses the evidence lines. It is finished only when the `.exit` file exists.
 
 ```bash
-DISPATCH_RESULT_JSON="$(python3 "$SHIM" dispatch-task --injection-json "$INJECTION_JSON" \
-  --prompt-file "$PROMPT_FILE" --target-dir "$CWD" --heartbeat-interval 60 --timeout 900 \
+rm -f "$DISPATCH_BASE.exit"
+python3 "$SHIM" dispatch-task --injection-json "$INJECTION_JSON" \
+  --prompt-file "$PROMPT_FILE" --target-dir "$CWD" --heartbeat-interval 60 --timeout 1800 \
   --format-block-file "$FORMAT_BLOCK_FILE" --report-file "$REPORT_FILE" \
-  --report-mode "$REPORT_MODE")"
+  --report-mode "$REPORT_MODE" > "$DISPATCH_BASE.json" 2> "$DISPATCH_BASE.err"
+echo "$?" > "$DISPATCH_BASE.exit"
+```
+
+   Then, in a new call once `$DISPATCH_BASE.exit` exists:
+
+```bash
+DISPATCH_EXIT="$(cat "$DISPATCH_BASE.exit")"
+DISPATCH_RESULT_JSON="$(cat "$DISPATCH_BASE.json")"
+# A refused candidate or a missing prompt file exits non-zero with no JSON: relay the tail of
+# $DISPATCH_BASE.err verbatim and STOP as real_error, with no re-resolve.
+[ -n "$DISPATCH_RESULT_JSON" ] || { echo "dispatch-task exit $DISPATCH_EXIT, no result"; exit 1; }
 REPORT_MODE=append
 LAST_DISPATCHED_KEY="$INJECTION_KEY"
 printf 'DISPATCH_RESULT_JSON=%s\nREPORT_MODE=%s\nLAST_DISPATCHED_KEY=%s\n' \
   "$DISPATCH_RESULT_JSON" "$REPORT_MODE" "$LAST_DISPATCHED_KEY"
 ```
 
+   The runner's `cross-ai: report` and `AIKIT-XAI` evidence lines are in `$DISPATCH_BASE.err`.
+
    `--heartbeat-interval` is required but unused: the runner prints its own heartbeat.
 
-   The block itself switches `REPORT_MODE` to `append` and records `$LAST_DISPATCHED_KEY`, which
+   The second block switches `REPORT_MODE` to `append` and records `$LAST_DISPATCHED_KEY`, which
    the next fix round copies into its escalation anchor (a native dispatch records its key the
    same way). If the CLI
    wrote `$REPORT_FILE` itself, `dispatch-task` leaves it untouched; only when the file is
@@ -299,24 +333,92 @@ printf 'WAVE_TRIED_JSON=%s\nWAVE_REASONS_JSON=%s\nEXCLUDED_KEYS_JSON=%s\n' \
   "$WAVE_TRIED_JSON" "$WAVE_REASONS_JSON" "$EXCLUDED_KEYS_JSON"
 ```
 
-  Then write resumable state and STOP the wave. The wave sets above already hold this key and
-  its `"quota"` reason, so run the resumable-state bash in `references/state-management.md` from
-  `RESUME_EXCLUDED_KEYS_JSON` onward (skip the two fold lines). Relay the runner's `cross-ai:
-  report` and `AIKIT-XAI` lines from `dispatch-task`'s stderr verbatim before acting on them.
-  Never re-resolve to another candidate after a failed dispatch. A confirmed-router exit 75
-  carrying `retry_after_s=` and `cycle=` is consumed by exactly one one-shot `CronCreate` wake at
-  `retry_after_s`, re-invoking the same lane (same CLI and model), never a repeated or
-  fixed-interval job, until a stop past the 4-hour cap (exit 69). Every other stop waits for the
-  owner and nothing is scheduled.
+  Never re-resolve to another candidate after a failed dispatch. The evidence lines come before
+  that fold, because a later step must not act on a stop it has not relayed. Then, in this order:
+
+  1. **Relay the evidence lines first.** Relay the runner's `cross-ai: report` and `AIKIT-XAI`
+     lines from `$DISPATCH_BASE.err` verbatim before reading any token or writing any state,
+     then run the fold block above.
+  2. **Read the tokens.** `retry_after_s` and `cycle` are not top-level fields of
+     `$DISPATCH_RESULT_JSON`: `dispatch-task` emits `dispatch_execute`'s dict, and both tokens
+     live only inside its `status` dict, which is the parsed `AIKIT-XAI` line. An exit 75 that
+     is not a confirmed-router quota cycle (an off-router quota stop) carries no `retry_after_s=`
+     and no `cycle=`, so both reads come back empty and nothing is scheduled:
+
+```bash
+RETURNCODE="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("returncode"))' "$DISPATCH_RESULT_JSON")"
+RETRY_AFTER_S="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); s=d.get("status") or {}; print("" if s.get("retry_after_s") is None else s.get("retry_after_s"))' "$DISPATCH_RESULT_JSON")"
+CYCLE="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); s=d.get("status") or {}; print("" if s.get("cycle") is None else s.get("cycle"))' "$DISPATCH_RESULT_JSON")"
+printf 'RETURNCODE=%s\nRETRY_AFTER_S=%s\nCYCLE=%s\n' "$RETURNCODE" "$RETRY_AFTER_S" "$CYCLE"
+```
+
+  3. **Write the state.** This branch already folded this key into the wave sets, so run the
+     quota-branch variant of the resumable-state bash, shown in full in
+     `references/state-management.md` under "Quota-branch state write": it keeps `PROJECT_KEY`
+     and `RESUME_STATE_PATH` and persists `$INJECTION_JSON` as `injection_json`, so the wake
+     re-dispatches this exact injection. Do not edit the Step 2 block by hand.
+  4. **Schedule or stop.** `classify-dispatch-failure` maps both exit 75 and exit 69 to
+     `"quota"` when the runner's reason is `quota`, so the classification alone does not say
+     which. Schedule only when `RETURNCODE` is `75` and both `RETRY_AFTER_S` and `CYCLE` are
+     non-empty. That is the confirmed-router case. A lane is confirmed only by the model
+     catalog's confirmed `fallback_quota` (ai-kit-spec-config), which `dispatch-task` passes as
+     `--route-<cli> router`; a bare exit 75 on a router-named lane means that entry is
+     unconfirmed.
+     Where `CronCreate` is callable (load it if deferred), schedule one one-shot wake at `retry_after_s`
+     (`RETRY_AFTER_S`, at least 60 s, rounded up to the next whole minute) whose prompt is exactly the fenced text below and nothing more; the job
+     lives only as long as the session. A host without that scheduler schedules nothing: it
+     prints `retry_after_s`, `$RESUME_STATE_PATH` and that same prompt, marks the printed row
+     unverified, and the owner runs it. Never a repeated or fixed-interval job. A
+     stop past the 4-hour cap exits 69; no other stop (auth, off-router billing, permission, bad model,
+     `not_installed`, a bare exit 75) is scheduled either. For every unscheduled stop, report
+     `$RESUME_STATE_PATH`: an owner re-invoke re-enters Step 2.
+
+```text
+Quota wake for this one task. Do not resolve a candidate, do not read the plan and do not
+re-enter Step 2. Load the ai-kit-spec-execute-superpowers skill, then:
+1. Bind SHIM=<SHIM>, CWD=<CWD>, QUOTA_PATH=<QUOTA_PATH>, DISPATCH_BASE=<DISPATCH_BASE>,
+   REVIEW_SKILL_DIR=<REVIEW_SKILL_DIR>,
+   PROMPT_FILE=<PROMPT_FILE>, FORMAT_BLOCK_FILE=<FORMAT_BLOCK_FILE>, REPORT_FILE=<REPORT_FILE>,
+   RESUME_STATE_PATH=<RESUME_STATE_PATH> and REPORT_MODE=append.
+2. From that state file bind PLAN_FILE (plan_path), TASK_N (task_index) and the restore list in
+   references/state-management.md "Initial and resume values" (not its Step 2 re-entry); set
+   INJECTION_JSON from injection_json and INJECTION_KEY from injection_json["key"].
+3. If PROMPT_FILE still says WRITE the report, replace only that sentence with the APPEND
+   sentence; leave the <objective> block byte-identical.
+4. Run Step 3 point 3 (both blocks, the dispatch backgrounded) and point 4 as written. Every
+   Bash call starts a fresh shell: substitute each value above literally in each call.
+5. On "ok", load superpowers:subagent-driven-development, restore its ledger for PLAN_FILE and
+   continue at "2. Handle the report" for task TASK_N.
+```
+
+  Substitute the nine placeholders (`<DISPATCH_BASE>` is the one Step 3 printed). The
+  objective block stays byte-identical to the dispatch that just stopped: the runner reuses its
+  session only when the task digest matches, and rewriting the objective would start a
+  different task on the same lane. The report sentence sits outside it, so switching WRITE to
+  APPEND never overwrites the partial report.
+
+  **Resume of that wake.** Restoring `$RESUME_STATE_PATH` for this re-invoke keeps `injection_json`
+  pinned and does not enter Step 2. Re-enter Step 2, which resolves a candidate again, only for an
+  owner-controlled resume. A stop on the re-dispatched run re-enters this same quota branch; it
+  does not pick another candidate.
 - **`"real_error"`** — a failed external dispatch stops for the owner. Never answer it by
-  resolving a stronger or any other candidate. The owner chooses: more context and retry by the
-  owner, split the task, or rule on a plan defect. Relay the runner's `cross-ai: report` and
-  `AIKIT-XAI` lines from `dispatch-task`'s stderr.
+  resolving a stronger or any other candidate. Relay the runner's `cross-ai: report` and
+  `AIKIT-XAI` lines from `$DISPATCH_BASE.err` first, then read `$DISPATCH_RESULT_JSON`'s
+  `reason` and report its fix with Step 2's reason-to-fix list (auth, billing or access,
+  configuration, capacity, `git_timeout`, timeout, `dispatch_unavailable`). Only a `real_error` reason proper
+  (a crash, an empty answer, no change) offers the owner more context and a retry, a split of
+  the task, or a ruling on a plan defect.
 
 Task-review fix rounds after successful work (Step 4) are separate from dispatch-failure handling
-and keep their own rules. Rounds 4-5 escalation and the automatic pre-dispatch candidate choice
-are existing behavior, kept for now but explicitly pending owner confirmation through C7 in
-`25-OWNER-CAPTURES.md` (A1) — not settled policy. Every post-failure choice is owner-controlled.
+and keep their own rules.
+
+**Two current rules.** Pre-dispatch selection along the owner-configured ladder is the
+shipped behavior, still awaiting the owner's confirmation (`references/design-notes.md`): the candidate `resolve-injection` picks before a dispatch, and the Rounds 4–5
+stronger-model re-resolution before a fix-round dispatch, both run before anything has failed.
+Nothing after a failure is authorized (the owner's rule): a failed or unusable run never switches harness, provider
+or model and never moves the work to the native session on its own. The runner owns the ladder;
+the owner decides. The history of both behaviors, and why neither was ever a post-failure
+recovery, is in `references/design-notes.md`.
 
 **Exec confinement.** Codex runs under `--codex-sandbox workspace-write`: the runner uses
 `--sandbox workspace-write` instead of the bypass, so writes stay inside the target dir plus
@@ -325,7 +427,7 @@ inside `.git` is unverified. Every other exec target runs with full permissions;
 receives tells it to write only inside the target dir, and that prose is guidance, not a boundary.
 `claude` is review-only: routing skips an exec-mode `claude` candidate on any other host, so it
 never runs here. pi exec uses the runner's pi formula, verified by its hermetic self-test only;
-live verification is Phase 22, and stderr prints that note before the run.
+live verification is still open, and stderr prints that note before the run.
 
 **The one exception.** Every subprocess runs through the supervised runner, except a custom entry
 (a `command` and no `runtime`), which exec mode never runs (Step 2's exit 2, or a `review_only`
@@ -333,14 +435,18 @@ skip).
 
 **Node.** Subprocess dispatch needs Node 24 (GSD's declared floor); older versions untested.
 Without Node, the runner fails closed as `dispatch_unavailable`
-(`ai-kit-spec: subprocess dispatch needs Node`) and the session default still runs.
+(`ai-kit-spec: subprocess dispatch needs Node`). `resolve-injection`'s pre-dispatch walk can still
+pick a native session-default entry; a dispatch that already failed that way is `real_error` and
+stops for the owner.
 
 **Rounds 4–5 capability escalation (`external_cli`, and `native` on every host but Claude
 Code).** When `$FIX_ROUND >= 4` after the increment, subagent-driven-development requires "a MORE
 CAPABLE model". Excluding the stuck key and re-walking the ladder does not guarantee that — the
 next survivor may be weaker. The floor is relative to `$ESCALATION_ANCHOR_KEY` (the dispatch that
 got stuck, fixed for the whole round and persisted across resumes), never to the key Step 2 just
-picked or to a same-round retry. **MANDATORY: before
+picked. This re-resolution happens before the round's dispatch, so it is authorized pre-dispatch
+selection along the owner-configured ladder. A failed dispatch is not retried in the same round
+and never triggers it. **MANDATORY: before
 computing `$ESCALATION_EXCLUDE_JSON` or passing `--escalation-excluded-keys-json`, read
 `references/escalation.md` in full.** It defines the ladder-position capability proxy, the exact
 computation and its edge cases, why the set never joins `$EXCLUDED_KEYS_JSON`, and how to branch

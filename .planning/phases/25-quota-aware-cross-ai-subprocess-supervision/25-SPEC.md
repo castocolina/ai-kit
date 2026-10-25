@@ -254,3 +254,80 @@ names one). Orchestrator interpretation, to confirm with the owner: auth errors 
 covered by the adjustment and keep stop-and-report. The "several minutes" cooldown defaults to 10
 minutes between full cycles and is bounded by this phase's existing 4-hour cap, so a cycle never
 loops forever. Detail and tests live in `cross-ai.mjs`; instruction files keep the short pointer.
+
+## Acceptance after the owner decision (2026-10-24)
+
+The owner decision above supersedes the wait-and-resume design. Each criterion and edge maps to
+**kept**, **adapted** (with the plan that pins it) or **superseded** (with the reason). The
+caller contract is `skills/ai-kit-spec-review/references/subprocess-quota-policy.md`; the runner
+template 7 self-test is the source of truth.
+
+### Acceptance criteria
+
+- Every observed limit message is a classified fixture, labelled verified or unverified:
+  **kept** (25-02 pattern table, 25-03 `--classify-only`, 25-04 live detection).
+- Route kind changes the class of a billing message: **adapted** (25-03, 25-06, 25-08). Only a
+  confirmed router route (`--route-<cli> router` or `CONFIG.routerBacked[cli]: true`) turns a
+  billing or limit message into `quota` (exit 75, router cycles); a direct route, or a name-only
+  `router-inferred` guess, keeps `billing` (exit 69, stop and report).
+- A reset beyond 4 hours stops at once; a reset inside sets the first re-check:
+  **superseded**. No reset time is parsed; every router cycle waits the fixed 600 s cooldown
+  under the 14400 s cap. Phase 25.1 passes the upstream error through and leaves the
+  reset inference to the waiting harness (owner, 2026-10-24).
+- Live detection stops a child early; post-hoc detection classifies a timed-out child:
+  **kept** (25-04).
+- The runner exits at once with `retry-later` and a resume-state file; the cap comes from the
+  file: **adapted** (25-06). Exit 75 with `retry_after_s=` and `cycle=` comes only after the
+  3 + 3 ladder on a confirmed router lane; the cycle state file is keyed by lane, model and
+  project, and the cap is measured from its first-seen time.
+- Clean + candidate falls back; dirty waits and resumes; 4 hours stops with a report:
+  **superseded** for the fallback and the dirty wait (one CLI per call, 25-01; a failure that
+  changed the tree stops for the owner); **kept** for the 4-hour stop (exit 69, `stopped=cap`,
+  25-06).
+- A resume names the already-done work: **superseded**. There is no done-work list; a dirty
+  failure stops for the owner instead of resuming.
+- The three skills follow the policy and pass `/skill-judge`: **kept**, now four skills
+  (25-09, 25-10; verdicts in `25-SKILL-JUDGE.md`).
+- `make test` and `make validate` are green: **kept** (25-11 Task 3, plus `make e2e-docker`).
+- MUST NOT: a wait never exceeds 4 hours from first-seen: **kept** (25-06 cap clamp, 14400 s).
+- MUST NOT: a billing or access error on a direct third-party route is never waited on:
+  **kept** (25-03, 25-06 self-tests).
+
+### Edges
+
+- **R1** (adjacency, boundary, empty, encoding, ordering, precision): **kept** (25-02).
+- **R2** adjacency, empty, precision: **adapted** (25-03, 25-08). The router class needs a
+  confirmed route; exit codes are 75 for `quota` and 69 for `billing`. Concurrency, encoding,
+  idempotency, ordering: **kept** (pure classification, 25-03 `--classify-only`).
+- **R3** encoding: **superseded** (no reset parsing). Adjacency, empty, ordering: **adapted**
+  (25-06). The 4-hour boundary applies to the cycle cap from first-seen, a missing reset is the
+  only case, and cycles repeat every 600 s until the cap.
+- **R4** (boundary, empty, encoding, precision): **kept** (25-04).
+- **R5** boundary: **adapted** (25-06). The cap is 14400 s elapsed from first-seen, not 24
+  re-checks. Precision: **kept**. Concurrency and idempotency: **adapted** to 25-06's cross-call
+  cycle state file, which carries:
+  - an atomic 0600 write;
+  - the quota budget keyed by lane and model;
+  - the last session id stored with its task digest (the `<objective>` text), so one task never
+    resumes another's session;
+  - early re-entry refused (exit 75, `elapsed=0s`, the remaining `retry_after_s`);
+  - a file whose last attempt is older than the 4-hour cap replaced as a fresh episode, noted
+    `stale-state-fresh-start`.
+- **R6** adjacency: **superseded** (no candidate fallback; the same lane cycles). Ordering:
+  **superseded** (no fallback order). Empty: **adapted** (25-01). One CLI per call; a missing
+  one stops with `not_installed`, exit 127. Boundary and precision: **kept** (25-06 cap,
+  `tree=clean|dirty` from the runner's snapshot).
+- **R7** adjacency, encoding, ordering, idempotency: **superseded**. There is no done-work list
+  and no other CLI's session to avoid. Concurrency: **adapted** (25-06; early re-entry is refused
+  by the state file's `due_at`). Empty: **kept** (a same-session or new-session retry re-sends the
+  prompt unchanged, 25-05).
+- **R8** concurrency: **superseded** (no recurring re-checks; one one-shot re-invoke per router
+  exit 75, 25-09). Adjacency, empty, ordering: **kept** (25-09, 25-10; skills relay the
+  `cross-ai: report` and `AIKIT-XAI` lines before acting).
+
+### Reason set
+
+25 D-21's `billing_or_access` reason is superseded as a behavior. A billing or access stop is
+stop-and-report off a router (exit 69). On a confirmed router lane it is a router quota cycle:
+the runner classifies it as `quota`, exit 75. Python keeps the label in `STATUS_TO_REASON` for
+the status line it maps.

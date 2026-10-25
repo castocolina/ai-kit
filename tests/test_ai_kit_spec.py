@@ -5431,7 +5431,7 @@ class TestDispatchExecute(unittest.TestCase):
                     runner_fn=fake_runner, print_fn=printed.append
                 ),
             )
-        self.assertTrue(any("Phase 22" in line for line in printed))
+        self.assertTrue(any("still open" in line for line in printed))
 
 
 class TestExecuteCliError(unittest.TestCase):

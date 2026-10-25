@@ -24,7 +24,7 @@ You are the orchestrator running as the `ai-kit-spec-review` skill (invocable vi
 
 ## Step 0 — Persist before dispatch (ALWAYS)
 
-Before any subagent dispatch, every document under review **must exist on disk** at a stable path. Subagents run in isolated contexts and read inputs via the `Read` tool; an in-memory document does not survive the dispatch boundary, and the next iteration would re-read the unfixed file and contradict itself.
+Before any subagent dispatch, every document under review **must exist on disk** at a stable path. Subagents read inputs via `Read`; an in-memory document does not survive the dispatch boundary, and the next iteration would re-read the unfixed file and contradict itself.
 
 | Caller state | Action |
 |---|---|
@@ -56,22 +56,12 @@ the document's own location:
 3. **Pass the resolved worktree root** as `<CODEBASE_ROOT>` to **both** the reviewer and the fixer.
    Never default to your CWD or the main repo root when the document lives in a worktree.
 
-**The plan's declared paths win — do not normalize them to convention.** A plan may
-deliberately declare a worktree/target outside the ambient convention (e.g. a cross-repo
-execution that creates `../.worktrees/target-repo/<wt>` even though `CLAUDE.md` /
-`CLAUDE.local.md` recommend `.claude/worktrees/`). For *this* review, authority runs:
-**(1) the explicit paths in the plan/spec under review → (2) `CLAUDE.local.md` → `CLAUDE.md`
-→ (3) Claude's default recommendation.** The reviewer grounds against the paths the plan
-declares, AS DECLARED; it must not flag them merely for diverging from convention, and must
-not "correct" them toward `.claude/worktrees`. Carry this precedence into the reviewer prompt.
-
-**Cross-repo plans have more than one root.** If the document references files in a second
-repo/worktree (a target repo it acts on), don't force a single `--show-toplevel`. Capture each
-**declared** root from the plan, label which references belong to which root, and pass the set
-so the reviewer grounds each claim against the right checkout instead of chasing references
-across both. If the roots are unclear, run `git worktree list` in each repo and ask once.
-
-Record the result as `CODEBASE_ROOT` (one root, or a labeled set for cross-repo plans).
+Record the result as `CODEBASE_ROOT` (one root, or a labeled set for cross-repo plans). A
+plan's declared paths win over convention, and a cross-repo plan has more than one root: the
+precedence and the labeled-set rule are in
+[`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md#declared-paths-and-cross-repo-roots).
+Read that section when the plan names paths outside the ambient worktree convention or touches a
+second repo.
 
 ## Step 0.5 — Detect framework, resolve its profile, classify archetype
 
@@ -160,9 +150,22 @@ downstream scope — and list any prerequisite gaps.
 
 Runs once per invocation, after Step 0.6. Before walking the cross-AI ladder, ask yourself: is cross-AI support actually installed and requested here, or does this invocation degrade cleanly to the session default (`--no-cross-ai`, or `ai-kit-spec.py` simply not present)? Answering that first avoids resolving quota/runtime state nobody asked for.
 
-**MANDATORY — READ ENTIRE FILE, on every run**: Before running any command below, read [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md) completely — it has the exact VERBATIM bash snippets, resolution order, and fail-closed rules for resolving `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `RUNTIMES_JSON`, `QUOTA_JSON`, `SHARED_TOOLING_PATH`, `TOOL_AVAILABILITY_JSON`, `RUN_TMP_DIR`, and ultimately `REVIEWER_LIST`. Do not attempt to reconstruct these from memory. `--no-cross-ai` does not skip it: points 0–2 (paths, tooling facts, `RUN_TMP_DIR`, the session-default list) are what Step 1's native dispatch substitutes and writes into; the flag skips only points 3–6.
+**MANDATORY — READ ENTIRE FILE, on every run**: Before running any command below, read [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md) completely — it has the exact VERBATIM bash snippets, resolution order, and fail-closed rules for resolving `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `RUNTIMES_JSON`, `QUOTA_JSON`, `SHARED_TOOLING_PATH`, `TOOL_AVAILABILITY_JSON`, `RUN_TMP_DIR`, and ultimately `REVIEWER_LIST`. Do not attempt to reconstruct these from memory. `--no-cross-ai` does not skip it: points 0–2 (paths, tooling facts, `RUN_TMP_DIR`, the session-default list) are what Step 1's native dispatch substitutes and writes into; the flag skips only points 3–6. Do NOT load `references/cross-ai.mjs` for this step: the policy file describes the ladder, and the script is the runner, not instructions. Do NOT load `references/cli-profiles/`: those are per-CLI notes, read only when a named CLI's flags are in doubt.
 
 Once resolved, `REVIEWER_LIST`, `RUN_TMP_DIR`, `TOOLS_PY`, `CHECKLIST_SKILL_MD`, `SHARED_TOOLING_PATH`, and `TOOL_AVAILABILITY_JSON` are consumed by Step 1 below exactly as named.
+
+**Probe-quota walks the configured ladder before any dispatch, and that walk is pre-dispatch
+selection, not a recovery.** `probe-quota` probes each ladder entry in order. A probe that fails
+for any reason, a timeout included, marks that entry unavailable, and `resolve-reviewers` moves
+the review to the next configured entry, which may be another provider, before Step 1 dispatches
+anything. When no configured entry is available, the walk ends on the session default (same
+vendor as the author): the Step 5 message then adds `every configured reviewer unavailable;
+reviewed with the session default`. This walk is the shipped pre-dispatch behavior (the owner
+has not ruled on it yet); the owner rule below covers everything after a failure, and the walk
+is not permission to switch then.
+
+Record every entry `probe-quota` marked unavailable, with the reason it printed. The Step 5
+message lists each as `unavailable: <entry> (<reason>)`.
 
 When `probe-quota` or `resolve-reviewers` prints `ignoring untrusted project-local config`
 (on stderr), a project-local `.aikit/review-spec.toml` is present but not trusted yet — show
@@ -205,28 +208,30 @@ after the file was deleted.
   user-global) — learned/refreshed profiles the orchestrator writes for frameworks not covered by a
   seed. Create the dir on first write.
 - **Runner:** subprocess dispatch needs Node 24 (GSD's declared floor); older versions untested.
-  Without Node, subprocess entries are skipped as `dispatch_unavailable`
-  (the stderr line starts `ai-kit-spec: subprocess dispatch needs Node`) and the session
-  default still runs.
+  Without Node, the probe walk marks subprocess entries unavailable before dispatch (the stderr
+  line starts `ai-kit-spec: subprocess dispatch needs Node`); a dispatch that hits it is a
+  `dispatch_unavailable` Failure, never a session-default run.
 - **`claude` is review-only:** the runtime table flags it review-only, so it is a review target
   and never an execution CLI. Routing skips an exec-mode `claude` candidate unless it is a
   Claude Code alias on a Claude Code host (that one runs natively).
 
 ## NEVER (hard landmines)
 
-These are the failures that have actually bitten this loop; violating any one silently corrupts
-the review. Two that deserve a callout before you're even inside the loop:
+These have actually bitten this loop; violating one silently corrupts the review:
 
 - **NEVER dispatch any subagent before every document under review is saved on disk** (Step 0). Subagents read via `Read`; an in-memory doc does not survive the dispatch boundary.
 - **NEVER run the generic fixer before `EFFECTIVE_REPORT_PATH` exists on disk** (Step 1.5). The fixer has nothing to `Read` otherwise.
 
-The `## Hard rules for the orchestrator` table near the end carries the full list (these two plus
-paraphrasing-into-prompts, defaulting `CODEBASE_ROOT` to CWD, editing the document yourself, and
-reusing a subagent across iterations) with reasons for each.
+The `## Hard rules for the orchestrator` table near the end carries the full list, with reasons.
 
 ## Loop
 
-Run this loop. Each iteration is one reviewer dispatch followed by (conditionally) one fixer dispatch. Steps 1-5 below fully specify the branching; if you want a visual companion for tracing how the four Step 3 routes rejoin the loop, see [`references/loop-diagram.md`](references/loop-diagram.md) (optional — not required to execute the loop correctly).
+**Resume entry.** A prompt carrying a resume pointer (`RUN_TMP_DIR=<dir>, iteration <N>,
+reviewer <key>`) skips Steps 0 through 0.7 and creates no temp dir: read the loop inputs from
+`$RUN_TMP_DIR/resume-<key>.json` (`REVIEWER_LIST` is `$RUN_TMP_DIR/reviewers.json`), then follow the resume rules in `references/cross-ai-dispatch.md`'s
+pending router lane section.
+
+Run this loop. Each iteration is one reviewer dispatch followed by (conditionally) one fixer dispatch. Steps 1-5 specify the branching; [`references/loop-diagram.md`](references/loop-diagram.md) is an optional visual companion for how the four Step 3 routes rejoin the loop.
 
 ### Step 1 — Dispatch reviewer(s) (every iteration)
 
@@ -304,40 +309,45 @@ For each entry in `REVIEWER_LIST`:
        --timeout-tiers "$TIMEOUT_TIERS" \
        --tool-availability-json "$TOOL_AVAILABILITY_JSON" \
        --stdout-only \
-       > "$RUN_TMP_DIR/iter<N>-<key>.md"; echo "$?" > "$RUN_TMP_DIR/iter<N>-<key>.exit"
+       > "$RUN_TMP_DIR/iter<N>-<key>.md" \
+       2> "$RUN_TMP_DIR/iter<N>-<key>.err"; echo "$?" > "$RUN_TMP_DIR/iter<N>-<key>.exit"
      ```
      `--cwd` runs the reviewer, and the runner's read-only tree check, in the document's
      worktree rather than this session's cwd (for a labeled set, the root of `<DOC_PATHS>`'s
      first entry).
-     **Two hard rules, no exceptions:** (1) do not render the command yourself and pass it back
-     in — hand `dispatch-reviewer` the reviewer entry and let it render internally; and (2) run
-     this backgrounded or with an explicit near-cap shell timeout, never the tool default (the
-     tiers are cumulative and can reach 60 minutes of wall time). **The dispatch is finished
-     only when `iter<N>-<key>.exit` exists** — never because the report file stopped growing
-     (the `>` redirect creates it at once, and it can sit unchanged while the CLI works). Read
-     the exit code from that file: nonzero leaves this reviewer's slot undispatched — delete
-     `$RUN_TMP_DIR/iter<N>-<key>.md` so Step 1.5's fail-closed `### Status:` handling applies
-     unchanged. Never move on to Step 1.5 while a dispatch is still running; if you must abandon
-     one, stop that process first. **MANDATORY before deviating from either rule**: read
+     **Two hard rules, no exceptions:** (1) never render the command yourself — hand
+     `dispatch-reviewer` the entry and let it render; (2) run it backgrounded or with a near-cap
+     shell timeout, never the tool default (the tiers can reach 60 minutes). The dispatch is
+     finished only when `iter<N>-<key>.exit` exists, never because the report file stopped
+     growing. The report body is on stdout, in `$RUN_TMP_DIR/iter<N>-<key>.md`; only the
+     evidence lines are on stderr, so read every `AIKIT-XAI` and `cross-ai:` line from
+     `$RUN_TMP_DIR/iter<N>-<key>.err` (a custom lane's launcher writes its own stderr there and
+     has no `AIKIT-XAI` line). **Branch before deleting anything.** Exit 75 with `route=router`
+     and `retry_after_s=` on the last `AIKIT-XAI` line is the pending router lane below: do not
+     delete the report, and do not enter Step 1.5 for this lane yet. Every other nonzero exit,
+     including any exit 75 without `retry_after_s=` (an off-router quota stop, or an exhausted
+     transient ladder on any route), deletes `$RUN_TMP_DIR/iter<N>-<key>.md` so
+     Step 1.5's fail-closed `### Status:` handling applies. Never move on to Step 1.5 while a
+     dispatch is still running; stop that process first if you must abandon one. **MANDATORY
+     before deviating from either rule**: read
      [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md)'s
      [Step 1 subprocess dispatch](references/cross-ai-dispatch.md#step-1-subprocess-dispatch--full-rationale-for-dispatch-reviewer)
-     section for the full rationale — it explains the injection/escaping hazard rule (1)
-     prevents and the tier-math behind rule (2).
+     section — the injection hazard behind rule (1) and the tier math behind rule (2).
 
-  Every subprocess lane runs the runner's failure ladder
-  ([`references/subprocess-quota-policy.md`](references/subprocess-quota-policy.md)): transient
-  failures retry in the same session and then in new sessions, a router quota failure cycles with
-  a cooldown under a 4-hour cap, and the runner never switches CLI, provider or model. A lane that
-  still fails ends with the runner's `cross-ai: report` line and its last `AIKIT-XAI` line, which
-  Step 5 relays verbatim. Never re-dispatch a failed lane to another reviewer on your own: the
-  merge reports it as failed, as today.
+  **MANDATORY before acting on any subprocess stop**: read
+  [`references/subprocess-quota-policy.md`](references/subprocess-quota-policy.md). It is the
+  caller contract; link it, do not restate it. The owner rule, in one line: a failed or unusable
+  run never switches harness, provider or model and never moves the work to the native session
+  on its own; the runner owns the ladder, and the owner decides.
 
-  Review caller contract: when the failed lane is a confirmed router route and the runner exits
-  75 carrying `retry_after_s=` and `cycle=`, the review orchestrator schedules exactly one
-  one-shot re-invoke of that same lane (same CLI and model) at `retry_after_s`, bounded by the
-  4-hour cap, and merges the lane only after that re-invoke resolves or the cap turns it into
-  exit 69. An ordinary terminal failure (exit 69, auth, off-router, bad model) is merged as
-  failed with nothing scheduled.
+  **Pending router lane.** The case is an exit code of 75, `route=router` on the last
+  `AIKIT-XAI` line, and `retry_after_s=` on that same line. **MANDATORY**: follow
+  [`references/cross-ai-dispatch.md`](references/cross-ai-dispatch.md)'s
+  [pending router lane](references/cross-ai-dispatch.md#pending-router-lane--lifecycle-and-resume)
+  section: keep the slot pending, merge the sibling now as single mode, write the resume files,
+  and schedule one one-shot re-invoke at `retry_after_s` per router exit 75. A re-invoke that
+  again exits 75 with `retry_after_s=` repeats that until the lane resolves or the cap turns it
+  into exit 69. No fixer runs while a lane is pending.
 
 ### Step 1.5 — Merge reviewer reports, then bind `EFFECTIVE_REPORT_PATH` (runs every iteration — only the merge call itself is conditional)
 
@@ -363,26 +373,16 @@ status is `### Status: Failure — …`). The redirect above still captures that
 bind `EFFECTIVE_REPORT_PATH` to that merged file and go straight to Step 2 with the Failure
 line it contains.
 
-Record `EFFECTIVE_REPORT_PATH`: `$RUN_TMP_DIR/iter<N>-merged.md` when
-`REVIEWER_LIST` had 2 entries, else `$RUN_TMP_DIR/iter<N>-<key>.md` (the
-single reviewer's own raw report) when it had 1. **Every later step reads
-`EFFECTIVE_REPORT_PATH` and only that name** — there is exactly one
-report artifact per iteration from Step 1.5 onward, never three or four
-different invented filenames for the same underlying thing. The merged
-report becomes the input to Step 2 (parse `### Status:`) exactly as a
-single reviewer's report would — the merge already reproduces that line
-(`Approved` when no findings survived the merge, `Issues Found — fix and
-re-invoke` when they did, or `Failure — <lanes>` when a lane could not be
-merged). When `REVIEWER_LIST` has only 1 entry, skip the
-merge call — that entry's raw report (or the host tool's output,
-written to the same `iter<N>-<key>.md` path per Step 1) is
-`EFFECTIVE_REPORT_PATH` directly, unchanged from today's behavior. If
-`EFFECTIVE_REPORT_PATH` does not exist on disk at all — the single-mode
-case of Step 1's "dispatch-reviewer exits nonzero" dispatch failure, which
-deliberately leaves that path unwritten — treat it exactly like a
-report that lacks a `### Status:` line: Step 2's existing "No Status
-line -> Surface failure" rule applies unchanged, there is no separate
-"missing file" case to handle.
+Record `EFFECTIVE_REPORT_PATH`: `$RUN_TMP_DIR/iter<N>-merged.md` for 2 entries, else the
+single reviewer's `$RUN_TMP_DIR/iter<N>-<key>.md`. **Every later step reads
+`EFFECTIVE_REPORT_PATH` and only that name** — one report artifact per iteration from here on.
+The merge already reproduces the `### Status:` line (`Approved`, `Issues Found — fix and
+re-invoke`, or `Failure — <lanes>`), so Step 2 parses it exactly as a single reviewer's report.
+With 1 entry, skip the merge call: that entry's raw report is `EFFECTIVE_REPORT_PATH` directly.
+A pending router lane is the exception: its sibling is merged as this single-reviewer case, with
+the pending-lane note from Step 1. If `EFFECTIVE_REPORT_PATH` does not exist on disk — Step 1
+deleted it after a nonzero exit — treat it as a report with no `### Status:` line: Step 2's
+"No Status line -> Surface failure" rule applies, and there is no separate missing-file case.
 
 ### Step 2 — Parse reviewer Status
 
@@ -390,6 +390,7 @@ Read `EFFECTIVE_REPORT_PATH` (Step 1.5) from disk; locate the line beginning `##
 
 | Status | Action |
 |---|---|
+| A lane is pending (Step 1's pending router lane) | Checked first, whatever the Status line says. Skip Step 3 and surface the router-quota row, quoting the sibling's status. With no sibling (one reviewer), end this invocation after scheduling; the pending report is never parsed. |
 | `### Status: Approved` | Loop ends. Go to Surface (success). |
 | `### Status: Issues Found — fix and re-invoke` | Continue to Step 3 if iter < cap, else go to Surface (cap reached). |
 | `### Status: Failure — <reason>` | Loop ends. Surface failure with the reason verbatim (in double mode it names the failed lanes). Never treat as Approved. |
@@ -415,11 +416,9 @@ Dispatch per the route's `invoke`:
 
 *(Reached only from Step 3a — the generic direct-edit fixer. The native-revise paths 3b-skill / 3b-cmd parse their own status inline and do not pass through here.)*
 
-Before treating `No Edits` as equivalent to `Escalation Required`, notice the table below already
-does — both end the loop and go to Surface. The distinction that matters is not to the loop but
-to the user reading Step 5's message: "fixer looked and genuinely found nothing fixable" reads
-very differently from "fixer tried and gave up," so carry the fixer's own stated reason into the
-Surface message rather than collapsing both to a generic "escalation."
+Both `No Edits` and `Escalation Required` end the loop, but they read differently to the user, so
+carry the fixer's own stated reason into the Step 5 message rather than collapsing both to a
+generic "escalation."
 
 Locate the `### Status:` line in the fixer's Fix Summary.
 
@@ -433,9 +432,8 @@ Locate the `### Status:` line in the fixer's Fix Summary.
 ### Step 5 — Surface to user
 
 Before writing the message, ask: does the user need to *decide* something here, or just be
-*informed*? Cap-reached and escalation outcomes need a decision, so they earn the full report;
-a clean approval needs only a one-line confirmation. Over-pasting a report nobody has to act on
-buries the signal as much as under-informing does.
+*informed*? Cap-reached and escalation earn the full report; a clean approval needs one line.
+Over-pasting a report nobody acts on buries the signal as much as under-informing does.
 
 Emit one short message in the user's terminal. Do NOT paste full reports unless the user is at cap or escalation.
 
@@ -449,11 +447,19 @@ Emit one short message in the user's terminal. Do NOT paste full reports unless 
 | Insufficient info (stage gap) | `Only <existing docs> exist; project is at the <stage> stage. No <requested archetype> to review yet. Reviewed <existing> as <archetype>; produce <next stage> before reviewing it.` |
 | Validator blocked (Step 3c) | `Regenerated <archetype> was rejected by <validator> — <reasons>. Findings: <report path>. Fix manually and re-run /ai-kit-spec-review.` |
 | Failure | `<failure mode message>. Last available output: <quote brief>.` |
+| Router quota cooldown | `Router quota cooldown: lane <key> pending, re-invokes once at +<retry_after_s>s (scheduled here, or printed for the owner). No fixer runs while it is pending. Its sibling lane is merged now as single mode; this lane's report stays pending at <iter<N>-<key>.md>.` Then quote the lane's `cross-ai: report` and last `AIKIT-XAI` lines verbatim from <iter<N>-<key>.err>. |
+| Single reviewer | `One reviewer (<key>). Report: <iter<N>-<key>.md>. <Approved / issues remain>.` |
 
 A Failure whose lane ran through the runner also quotes that lane's `cross-ai: report` line and its
-last `AIKIT-XAI` line verbatim.
+last `AIKIT-XAI` line verbatim. The report body is in `iter<N>-<key>.md`; only those evidence
+lines are read from `iter<N>-<key>.err`. A `custom` lane has neither line: quote the launcher's
+stderr reason instead. The router-quota row is not a Failure. When the probe walk marked entries
+unavailable, append one `unavailable: <entry> (<reason>)` line per entry.
 
-After surfacing, the orchestrator's job is done. Do NOT continue to "next steps" — the user decides whether to invoke `writing-plans`, edit manually, or re-invoke `/ai-kit-spec-review` after their own edits.
+An approval while a lane is pending does not surface as Approved. Surface it as the router-quota
+row above: the pending lane is still unverified, and no fixer has run.
+
+After surfacing, stop. Do not continue to "next steps" — the user decides what follows.
 
 ## Hard rules for the orchestrator
 
@@ -466,20 +472,19 @@ After surfacing, the orchestrator's job is done. Do NOT continue to "next steps"
 | Reviewer and fixer are separate subagents, never the same. | Fixer must edit; reviewer must not. Separation = audit integrity. |
 | Stop at the iteration cap. | Avoid infinite review↔fix loops on irreconcilable disagreement. |
 | If reviewer and fixer disagree on a finding's severity across iterations, surface to user. | Orchestrator does not arbitrate. |
+| Never re-dispatch a failed subprocess lane to another CLI, provider, model or the native session. | The runner owns the failure ladder and the owner decides; a switch hides the stop and reviews with a lane nobody chose. |
 
 ## Routing table — who rewrites what
 
-Routing is data-driven from each profile's `revise_protocol.routes` — that profile is always the
-authoritative source; consult it, not a cached mental table, whenever routing is in doubt. For a
-convenience snapshot of the seed profiles' routes (FR-1.5), see
-[`references/routing-table.md`](references/routing-table.md) — useful for a quick sanity check,
-but it may lag a profile that's since been edited.
-
+Routing is data-driven from each profile's `revise_protocol.routes`, which is authoritative over
+any cached table. [`references/routing-table.md`](references/routing-table.md) is a convenience
+snapshot of the seed profiles' routes and may lag a profile edited since.
 ## Cleanup
 
-**Remove `$RUN_TMP_DIR` (`rm -rf "$RUN_TMP_DIR"`) only when the Surface outcome is `Approved`.**
-Every other outcome (cap reached, escalation, insufficient info, failure) keeps it: a review
-often spans several invocations (a cap handed back, an out-of-band fix, a fresh re-check), and
-deleting the reports when one round merely ends once destroyed the only evidence of a still-open
-review. The labelled directory name (Step 0.7 point 1) says which repo, branch and document each
-kept directory belongs to; remove a stale one by hand once that review is approved or abandoned.
+**Remove `$RUN_TMP_DIR` (`rm -rf "$RUN_TMP_DIR"`) only when the Surface outcome is `Approved`
+and no lane is pending.** Never remove it while a lane is pending: the one-shot re-invoke reads
+that directory through its resume pointer, and removing it strands the lane. Every other outcome
+(cap reached, escalation, insufficient info, failure, a pending lane) keeps it, because a review
+spans several invocations and deleting the reports once destroyed the only evidence of a
+still-open review. Each kept directory's name (Step 0.7 point 1) names its repo, branch and
+document; remove a stale one by hand once that review is done.

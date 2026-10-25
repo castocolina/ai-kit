@@ -90,7 +90,7 @@ def write_ownership(config_path: str, owned: dict) -> None:
     cache_write_json(_ownership_path(config_path), owned)
 
 
-def _dotted_get(gsd_config: dict, dotted_key: str):
+def dotted_get(gsd_config: dict, dotted_key: str):
     current = gsd_config
     for part in dotted_key.split("."):
         if not isinstance(current, dict) or part not in current:
@@ -102,7 +102,7 @@ def _dotted_get(gsd_config: dict, dotted_key: str):
 def is_adapter_owned(gsd_config: dict, config_path: str, dotted_key: str) -> bool:
     """True only when the config's current value is not None and exactly equals the sidecar's
     record for that dotted key -- a missing sidecar means every value reads as user-owned."""
-    current = _dotted_get(gsd_config, dotted_key)
+    current = dotted_get(gsd_config, dotted_key)
     return current is not None and current == read_ownership(config_path).get(dotted_key)
 
 

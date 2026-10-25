@@ -42,6 +42,7 @@ from ai_kit_spec_gsd.cross_ai_guidance import GSD_SUMMARY_FORMAT_BLOCK, build_gs
 from ai_kit_spec_gsd.gsd_config import (
     GsdWriteContext,
     apply_changes,
+    dotted_get,
     generate_run_id,
     is_adapter_owned,
     read_gsd_config,
@@ -152,7 +153,8 @@ def _required_context_from_prompt_file(path: str | None) -> int:
 
 def _cmd_resolve_dispatch(args: argparse.Namespace, deps: CliDeps) -> int:
     run_id = args.run_id if args.run_id else generate_run_id()
-    candidates, top_n_keys = deps.assemble_candidates_fn(args.cwd, dict(os.environ))
+    env = dict(os.environ)
+    candidates, top_n_keys = deps.assemble_candidates_fn(args.cwd, env)
     ctx = _build_write_context(args.cwd, run_id, deps)
     if ctx is None:
         return 2
@@ -169,6 +171,7 @@ def _cmd_resolve_dispatch(args: argparse.Namespace, deps: CliDeps) -> int:
         current_runtime=resolve_active_runtime(gsd_config),
         required_context=required_context,
         quota=quota,
+        env=env,
     )
     try:
         result = resolve_gsd_dispatch(
@@ -203,15 +206,40 @@ def _parse_workflow_set_specs(specs: list[str]) -> list:
     return changes
 
 
+def _parse_workflow_min_specs(specs: list[str]) -> list:
+    floors = []
+    for spec in specs:
+        key, _, raw = spec.partition("=")
+        floors.append(("workflow." + key, int(raw)))
+    return floors
+
+
+def _below_floor(value, floor: int) -> bool:
+    return not isinstance(value, int) or isinstance(value, bool) or value < floor
+
+
 def _cmd_write_workflow_keys(args: argparse.Namespace, deps: CliDeps) -> int:
     try:
         changes = _parse_workflow_set_specs(args.set)
+        floors = _parse_workflow_min_specs(args.min or [])
     except ValueError as exc:
-        print(f"ai-kit-spec-execute-gsd: --set needs KEY=JSON ({exc})", file=sys.stderr)
+        print(f"ai-kit-spec-execute-gsd: --set needs KEY=JSON, --min KEY=INT ({exc})",
+              file=sys.stderr)
         return 2
     ctx = _build_write_context(args.cwd, args.run_id, deps)
     if ctx is None:
         return 2
+    if floors:
+        gsd_config, status = deps.read_gsd_config_fn(
+            ctx.config_path, warn_fn=lambda msg: print(msg, file=sys.stderr))
+        if status == "malformed":
+            print(f"ai-kit-spec-execute-gsd: {ctx.config_path} is malformed -- refusing to "
+                  f"write workflow keys over it", file=sys.stderr)
+            return 2
+        # A value already at or above the floor is kept and stays user-owned, so a later
+        # clear-workflow-keys leaves it alone.
+        changes += [(key, floor) for key, floor in floors
+                    if _below_floor(dotted_get(gsd_config, key), floor)]
     result = apply_changes(ctx, changes)
     deps.stdout.write(json.dumps(result._asdict()))
     return 1 if result.failed else 0
@@ -392,6 +420,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_write_workflows.add_argument("--set", action="append", required=True, metavar="KEY=JSON",
                                     help="workflow key (without the 'workflow.' prefix) and its "
                                          "JSON value -- e.g. '--set cross_ai_execution=true'")
+    p_write_workflows.add_argument("--min", action="append", metavar="KEY=INT",
+                                    help="workflow key written as INT only when its current "
+                                         "value is not an int of at least INT")
 
     p_clear_workflows = sub.add_parser("clear-workflow-keys")
     p_clear_workflows.add_argument("--cwd", required=True)

@@ -231,12 +231,15 @@ class TestBuildRunnerArgv(unittest.TestCase):
         argv = build_runner_argv(_spec(), "/runner/cross-ai.mjs", "node")
         self.assertFalse(any(token.startswith("--route-") for token in argv))
 
-    def test_project_runner_command_never_carries_a_route_flag(self):
-        spec = RunnerSpec("opencode", "m", "exec", 0, route="router")
-        command = rd.project_runner_command(spec)
+    def test_project_runner_command_carries_only_a_confirmed_route(self):
+        # The hook pins the lane's own confirmed route (25-11): CONFIG.routerBacked is per CLI,
+        # so without the flag a direct model on a router-flagged CLI would get router cycles.
+        command = rd.project_runner_command(RunnerSpec("opencode", "m", "exec", 0, route="router"))
         assert command is not None
-        self.assertNotIn("--route-", command)
-        self.assertNotIn("--route-", " ".join(runner_flags(spec)))
+        self.assertIn("--route-opencode router", command)
+        bare = rd.project_runner_command(RunnerSpec("opencode", "m", "exec", 0))
+        assert bare is not None
+        self.assertNotIn("--route-", bare)
 
 
 def _template_regex(name: str) -> str:

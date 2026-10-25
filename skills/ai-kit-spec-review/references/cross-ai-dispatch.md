@@ -237,16 +237,86 @@ exiting, which is what writes the `.exit` file; the report file's size proves no
 redirect creates it immediately and a working CLI can leave it unchanged for minutes. A dispatch
 whose `.exit` file holds a nonzero code is handled like the nonzero exit below.
 
-**If `dispatch-reviewer` exits nonzero** (an empty `timeout_tiers`, or a custom entry whose
-`command` template is malformed or missing — config errors, not runtime failures), this
-reviewer's slot failed to dispatch. Delete `$RUN_TMP_DIR/iter<N>-<key>.md` (the `>` redirect
-already created it) —
+**If `dispatch-reviewer` exits nonzero** (a config error such as an empty `timeout_tiers` or a
+custom entry whose `command` template is malformed or missing, or one of the runtime stops
+below), this reviewer's slot failed to dispatch. The report body is on stdout, in
+`iter<N>-<key>.md`; only the `AIKIT-XAI` and `cross-ai:` evidence lines are on stderr, in
+`iter<N>-<key>.err`. Read those evidence lines first. Exit 75 is not uniformly terminal: when
+the last `AIKIT-XAI` line has `route=router` and `retry_after_s=`, keep the report and follow
+the [pending router lane](#pending-router-lane--lifecycle-and-resume) section below. The rules
+themselves are [`subprocess-quota-policy.md`](subprocess-quota-policy.md); this file does not
+restate them. Any exit 75 without `retry_after_s=` (an off-router quota stop, or an exhausted
+transient ladder on any route) is terminal. Every other nonzero
+exit deletes `$RUN_TMP_DIR/iter<N>-<key>.md` (the `>` redirect already created it):
 leaving it absent is what makes Step 1.5's `merge-reports` (double mode) exit non-zero and
 print `### Status: Failure — <lanes>` naming the failed lane(s), or the missing-file case
 (single mode) fail closed through Step 2's "No Status line" rule — never treat either outcome
 as Approved.
 
-## Outside a git work tree (D-34)
+## Pending router lane — lifecycle and resume
+
+The case: exit 75, `route=router` and `retry_after_s=` on the lane's last `AIKIT-XAI` line. A
+review lane is a confirmed router only when the model catalog confirms its `fallback_quota`
+(ai-kit-spec-config sets it; `dispatch-reviewer` then passes `--route-<cli> router`). A
+`route=router-inferred` lane gets no cycles: its quota stop is a bare exit 75, a failed lane.
+
+1. **Keep the slot pending.** Do not delete `iter<N>-<key>.md` and do not merge this lane yet.
+   While a lane is pending, no fixer runs this iteration, even when the sibling's report is clean.
+2. **Merge the sibling now** as single mode (one report, not `double`), with a note naming the
+   pending lane and its `iter<N>-<key>.err` path. The Step 5 router-quota row says the lane is
+   pending and unverified, with `retry_after_s` and that path.
+3. **Write the resume files** before scheduling, so a wake after a context reset or in a new
+   session has every input on disk. Record the `dispatch-reviewer` argv you just ran as JSON data
+   (never as a shell script: a substituted path could carry shell syntax), then the loop inputs:
+   ```bash
+   python3 -c 'import json,sys; json.dump(sys.argv[2:], open(sys.argv[1], "w"))' \
+     "$RUN_TMP_DIR/iter<N>-<key>-argv.json" python3 "$TOOLS_PY" dispatch-reviewer \
+     --cwd <CODEBASE_ROOT> --reviewers-json "$RUN_TMP_DIR/reviewers.json" --index <index> \
+     --prompt-file "$RUN_TMP_DIR/iter<N>-<key>-prompt.txt" --timeout-tiers "$TIMEOUT_TIERS" \
+     --tool-availability-json "$TOOL_AVAILABILITY_JSON" --stdout-only
+   python3 -c 'import json,sys; a=sys.argv[2:]; json.dump(dict(zip(a[::2], a[1::2])), open(sys.argv[1], "w"), indent=1)' \
+     "$RUN_TMP_DIR/resume-<key>.json" iteration "<N>" key "<key>" index "<index>" \
+     iteration_cap "<cap>" codebase_root "<CODEBASE_ROOT>" doc_paths "<DOC_PATHS>" \
+     archetype "<ARCHETYPE>" framework_profile_path "<FRAMEWORK_PROFILE_PATH>" \
+     grounding_docs "<GROUNDING_DOCS>" tools_py "$TOOLS_PY" \
+     checklist_skill_md "$CHECKLIST_SKILL_MD" shared_tooling_path "$SHARED_TOOLING_PATH" \
+     tool_availability_json "$TOOL_AVAILABILITY_JSON" unavailable "<the Step 0.7 unavailable lines>" \
+     sibling_key "<the sibling's key, or none>"
+   ```
+   `REVIEWER_LIST` is the contents of `$RUN_TMP_DIR/reviewers.json`. Each pending lane writes its
+   own `iter<N>-<key>-argv.json` and `resume-<key>.json`, so two pending lanes never overwrite
+   each other.
+4. **Schedule one one-shot re-invoke** at `retry_after_s` seconds (at least 60 s, rounded up to
+   the next whole minute). On Claude Code, if `CronCreate` is callable (load it if it is
+   deferred), that is one one-shot job whose prompt is the fenced text below and nothing more.
+   The job lives only as long as the session, so always also print `retry_after_s`, the resume
+   pointer and the `-argv.json` path; a host without `CronCreate` prints only that, labelled
+   unverified, and ends this invocation.
+
+```text
+Resume ai-kit-spec-review. Do not start a new run and do not create a new temp dir. Re-enter
+the skill with this resume pointer: RUN_TMP_DIR=<RUN_TMP_DIR>, iteration <N>, reviewer <key>.
+```
+
+5. **On the re-invoke** (SKILL.md's Resume entry): read `resume-<key>.json`, write `running` to
+   `iter<N>-<key>.exit`, then re-run the recorded argv with no shell (same prompt file, tiers and flags; same CLI and model), backgrounded:
+   ```bash
+   python3 -c 'import json,subprocess,sys; a=json.load(open(sys.argv[1])); rc=subprocess.call(a, stdout=open(sys.argv[2], "w"), stderr=open(sys.argv[3], "w")); open(sys.argv[4], "w").write(f"{rc}\n")' \
+     "$RUN_TMP_DIR/iter<N>-<key>-argv.json" "$RUN_TMP_DIR/iter<N>-<key>.md" \
+     "$RUN_TMP_DIR/iter<N>-<key>.err" "$RUN_TMP_DIR/iter<N>-<key>.exit"
+   ```
+   Wait for `iter<N>-<key>.exit`, then branch on its contents and the last `AIKIT-XAI` line:
+   - exit 75 with `retry_after_s=` again: repeat points 3–4 (one one-shot per router exit 75);
+   - otherwise, when `sibling_key` names a lane still pending or running (its `.exit` reads
+     `running`, or 75 with `retry_after_s=`), record this result and end;
+   - otherwise take the merge lock, `mkdir "$RUN_TMP_DIR/iter<N>-merge.lock"`: only the lane whose
+     `mkdir` succeeds merges, so two resumes never run the fixer twice;
+   - exit 0: merge this lane with the sibling's report (double mode, or single mode with no
+     sibling) at Step 1.5, then continue the loop from Step 2;
+   - anything else (the cap's exit 69 included): delete the report, merge the lane as failed and
+     schedule nothing.
+
+## Outside a git work tree
 
 The runner does not require a git work tree. Outside one it still runs the CLI, reports
 `tree=unknown` on its status line, and says so: `cross-ai: <cwd> is not inside a git work tree;
@@ -282,7 +352,11 @@ Template 7 also prints evidence tokens `route`, `rule`, `pattern`, `attempts` an
 `cross-ai: attempt` line per failed attempt plus one `cross-ai: report` line on a stop. What each
 means is in [`subprocess-quota-policy.md`](subprocess-quota-policy.md).
 
-No status line at all falls back to the exit code:
+No status line at all falls back to the exit code. This is the no-status-line case only: a
+runner lane always prints its `AIKIT-XAI` line, and that line's `status` wins over this table.
+The mapping is `_EXIT_FALLBACK` in `ai_kit_spec/error_classifier.py`, and every code not listed
+here is `real_error` — an exit 75 included, so a lane that died without a status line is not
+read as a router quota cooldown:
 
 | Exit code | Reason |
 |---|---|
@@ -290,4 +364,21 @@ No status line at all falls back to the exit code:
 | `2` | `configuration` |
 | `124` | `timeout` |
 | `127` | `dispatch_unavailable` (also how a missing `node` is reported — subprocess dispatch needs Node) |
-| any other | `real_error` |
+| any other, including `69` and `75` | `real_error` |
+
+## Declared paths and cross-repo roots
+
+**The plan's declared paths win — do not normalize them to convention.** A plan may deliberately
+declare a worktree or target outside the ambient convention (a cross-repo execution that creates
+`../.worktrees/target-repo/<wt>` even though `CLAUDE.md` / `CLAUDE.local.md` recommend
+`.claude/worktrees/`). For this review, authority runs: (1) the explicit paths in the plan or
+spec under review, (2) `CLAUDE.local.md` then `CLAUDE.md`, (3) Claude's default recommendation.
+The reviewer grounds against the paths the plan declares, as declared; it must not flag them
+merely for diverging from convention, and must not "correct" them toward `.claude/worktrees`.
+Carry this precedence into the reviewer prompt.
+
+**Cross-repo plans have more than one root.** When the document references files in a second
+repo or worktree (a target repo it acts on), don't force a single `--show-toplevel`. Capture
+each declared root from the plan, label which references belong to which root, and pass the set
+so the reviewer grounds each claim against the right checkout instead of chasing references
+across both. If the roots are unclear, run `git worktree list` in each repo and ask once.

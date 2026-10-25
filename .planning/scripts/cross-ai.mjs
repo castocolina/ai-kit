@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=7 sha256=a67c2669efbf5cceb1f98d4fe07b145645820222e76b54cb1d92032ec49fa532
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=7 sha256=d9c3c71bbe4dff1257a981dc1e1bc0314a9ca240bea7804fe57c3fc3d82e65eb
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v7).
  *
@@ -1787,7 +1787,7 @@ function ladderLimits(opts) {
 
 // Pure step of the transient and router-quota ladders. Table-free: the caller decides the
 // class. `st = {same, fresh, canResume, firstQuotaMs, cycle}`, `cls` is `transient`,
-// `quota` or `stop`. A quota rung also needs an hour of cap headroom; once the rungs are
+// `quota` or `stop`. A quota rung also needs 60 s of cap headroom; once the rungs are
 // spent a cycle is admitted only when the cooldown itself fits under the cap and 60 s of
 // deadline work remains. The call never sleeps the cooldown.
 function ladderNext(st, cls, nowMs, lim) {
@@ -2404,7 +2404,10 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   let admitted = false;
   const stateFile = cycleFilePath(name, model);
   const digest = taskDigest(prompt);
-  const loaded = readCycleState(stateFile);
+  // Only a confirmed router lane owns cycle state: an unconfirmed call on the same CLI and model
+  // neither reads it (no inherited cooldown or session) nor deletes it.
+  const routerLane = confirmedRoute(opts.route || 'unknown');
+  const loaded = routerLane ? readCycleState(stateFile) : null;
   const now0 = Date.now();
   const capMs = limits.capS * 1000;
   let cycleCount = 0;
@@ -2448,6 +2451,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     firstFailureMs, lastFailureMs,
   });
   const dropState = (status) => {
+    if (!routerLane) return;
     if (STATE_DELETE.has(status) || (status !== 'quota' && !QUOTA_KEEP.has(status))) {
       deleteCycleState(stateFile);
     }
@@ -2460,8 +2464,10 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       retry_after_s: limits.cooldownS, due_at: due,
     });
   };
-  const cycleStop = (r, evidence, stopped, sid) => {
+  const cycleStop = (r, evidence, why, sid) => {
     const at = Date.now();
+    // The cap wins over any other stop reason: a cooldown past it is never offered.
+    const stopped = quotaEnd() && at + limits.cooldownS * 1000 > quotaEnd() ? 'cap' : why;
     saveCycle(sid, at);
     const capped = stopped === 'cap';
     return {
@@ -2494,8 +2500,11 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       const childLimit = quotaEnd() ? Math.min(runDeadline, quotaEnd()) : runDeadline;
       const r = await runOnce(binPath, argv, input, env, ctx.cwd, name,
         { capMs: childCap, limit: childLimit });
-      // A child can only stall the post-run git snapshot while it is alive.
-      try { fs.rmSync(path.join(env.HOME || '', '.fake-git-hang')); } catch { /* not set */ }
+      // Self-test fakes only (FAKE_CALLS): a fake child stalls the post-run git snapshot only
+      // while it is alive. A real run never touches the caller's home.
+      if (process.env.FAKE_CALLS) {
+        try { fs.rmSync(path.join(env.HOME || '', '.fake-git-hang')); } catch { /* not set */ }
+      }
       if (aborting) return { ok: false, code: 128 + aborting, outBytes: r.outBytes, cli_rc: r.code };
       const route = opts.route || 'unknown';
       const lane = confirmedRoute(route);
@@ -2540,7 +2549,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         const failed = r.code !== 0 || Boolean(p.error);
         if (!failed && p.text.trim()) {
           attempts += 1;
-          deleteCycleState(stateFile);
+          if (routerLane) deleteCycleState(stateFile);
           return {
             ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'),
             cli_rc: 0, ...counts(),
@@ -4028,6 +4037,43 @@ async function blackBoxSelfTest() {
           if (!(r.stderr || '').includes('stopped=cap')) return 'missing stopped=cap';
           return deadCheck(ctx, ['pi']);
         },
+      },
+      {
+        // 300 s of cap left, cooldown 600 s: a deadline stop becomes the cap's exit 69.
+        name: 'quota-deadline-near-cap',
+        setup: (c) => {
+          const file = caseCycleFile(c, 'pi', 'fake/slowquota');
+          writeCycleState(file, {
+            first_seen: Date.now() - (14400 - 300) * 1000, last_attempt_at: Date.now() - 1000,
+            cycle: 1, attempts: 7, last_sid: null, task_digest: 'other', retry_after_s: 0,
+            due_at: 0,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/slowquota', '--timeout', '4'],
+        config: { routerBacked: { pi: true }, cooldownS: 600 },
+        exit: 69,
+        status: /^AIKIT-XAI status=quota .* exit=69 .* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('stopped=cap') ? null : 'missing stopped=cap'),
+      },
+      {
+        // An unconfirmed call on the router lane's CLI and model neither inherits nor deletes
+        // its cycle state.
+        name: 'unconfirmed-route-ignores-state',
+        setup: (c) => {
+          const file = caseCycleFile(c, 'pi', 'fake/ok');
+          writeCycleState(file, {
+            first_seen: Date.now() - 60000, last_attempt_at: Date.now() - 1000, cycle: 1,
+            attempts: 7, last_sid: null, task_digest: 'other', retry_after_s: 600,
+            due_at: Date.now() + 600000,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* action=stop$/,
+        check: (_r, ctx) => (readCycleState(caseCycleFile(ctx, 'pi', 'fake/ok'))
+          ? null : 'router state deleted by an unconfirmed call'),
       },
       {
         // Off a router lane a quota stops after one call and writes no state.

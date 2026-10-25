@@ -17,7 +17,7 @@ has to substitute a path by hand.
 ## Why mode is checked before `key`/`runtime`
 
 The `quota_exhausted` shape (`mode`, `task_type`, `tried`, `reasons`, `all_auth_failures`,
-`any_quota_recoverable`) and the `no_candidate` shape (`mode`, `task_type`, `detail`,
+`any_quota_recoverable`, `ladder_keys`) and the `no_candidate` shape (`mode`, `task_type`, `detail`,
 `ladder_keys`) carry no `key`/`runtime`. Reading `["key"]` first raised `KeyError` on exactly the
 cases Step 2 exists to handle.
 
@@ -80,9 +80,13 @@ Codex runs under `--codex-sandbox workspace-write`, so its writes stay inside th
 sandbox is unverified. Every other exec target runs with full permissions and gets only the
 soft-confinement sentence, which is guidance, not a boundary. `claude` is review-only and never an
 exec target. pi exec uses the runner's pi formula, verified by its hermetic self-test only until
-Phase 22.
+live verification, which is still open.
 
-## Why `--timeout 900` is a fixed constant
+## Why `--timeout 1800` is a fixed constant
+
+It is the budget for the whole runner call: every same-session and new-session retry rung runs
+inside it, so it matches curated-config's runner floor of 1800 s (it was 900 s before Phase 25,
+when one call was one attempt).
 
 `ai-kit-spec-config` can write a per-entry `timeout_tiers`, but `assemble_candidates` does not
 carry it onto a candidate dict, and nothing like `ai_kit_spec.config_io.resolve_timeout_tiers` is
@@ -96,8 +100,9 @@ plumbing explicitly if a known-slow execute candidate needs more time; do not as
 Folding the key straight into `$EXCLUDED_KEYS_JSON` with no reason makes a temporary exclusion
 look permanent once resumable state is persisted, so the candidate never comes back after quota
 recovers. Recording it in `$WAVE_TRIED_JSON`/`$WAVE_REASONS_JSON` lets `resume-exclusions` drop it
-on resume. Within the same wave the exclusion is immediate, so the candidate is not retried a
-moment later.
+on resume. Within the same wave the exclusion is immediate. The candidate is not retried a moment
+later: a failed dispatch never gets a same-round re-dispatch, because the runner already ran its
+ladder inside that one call, and a second resolution could pick another CLI or model.
 
 When the exclusions cover every candidate (a one-entry ladder tried once, or several failures in a
 row), `resolve-injection` reports a controlled `quota_exhausted` result and recovers the known
@@ -107,5 +112,28 @@ reasons from `--excluded-reasons-json`. An older version raised `ValueError` her
 ## Why `$FIX_ROUND` increments before the escalation check
 
 Round 4's own dispatch is the first one where `$FIX_ROUND` reads `4`, and that is when capability
-escalation must first apply. Incrementing after the check would delay escalation by one round. A
-same-round quota retry is not a new round and does not increment.
+escalation must first apply. Incrementing after the check would delay escalation by one round.
+Escalation is a pre-dispatch choice for that fix round. A dispatch that fails is not a new round
+and is not re-dispatched: the runner already walked its ladder inside the call, so resolving again
+would be a second walk the runner is not allowed to take.
+
+## Why a failed dispatch is not re-dispatched
+
+The runner owns the ladder. One `dispatch-task` call already retried the transient failures and,
+on a confirmed router lane, stopped with the cooldown. Resolving another candidate after that stop
+would switch CLI or model, which the runner refuses to do on its own. The one exception is the
+ruled router exit 75: the wake re-dispatches the persisted `injection_json` unchanged and skips
+`resolve-injection`, so the lane stays the one that stopped.
+
+## Why the pre-dispatch choice and the Rounds 4–5 escalation are rules
+
+Both behaviors predate the owner rule. They stay as the shipped behavior while the owner's
+confirmation is open (assumption A1 in the Phase 25 owner captures). Pre-dispatch selection
+along the owner-configured ladder runs here as follows: the
+candidate `resolve-injection` picks before a dispatch, and the Rounds 4–5 stronger-model
+re-resolution, both run before any run has failed, and both stay inside the ladder the owner
+configured. Nothing after a failure is authorized. A failed or unusable run never switches
+harness, provider or model and never moves the work to the native session on its own; the runner
+owns the ladder and the owner decides. Neither behavior was ever a recovery from a failed run.
+The executable steps state them as current behavior, not as open questions, so an agent acts
+on them consistently until the owner rules.

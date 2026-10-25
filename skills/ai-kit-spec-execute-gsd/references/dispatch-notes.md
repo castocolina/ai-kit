@@ -29,7 +29,7 @@ workspace-write always allows. Whether GSD's own git commits succeed under `work
 unverified: `.git` writability under it has not been confirmed. Every other exec target runs with
 full permissions and gets only the soft-confinement sentence in the guidance file, which is
 guidance, not a boundary. `claude` is review-only and never a hook target. pi exec uses the
-runner's pi formula, verified by its hermetic self-test only; live verification is Phase 22.
+runner's pi formula, verified by its hermetic self-test only; live verification is still open.
 
 ## History: the guidance file supersedes the old guidance-append step
 

@@ -312,6 +312,25 @@ class TestBuildCrossAiCommand(unittest.TestCase):
         assert hook is not None
         self.assertIn("--codex-effort high --codex-service-tier priority", hook)
 
+    def test_hook_pins_the_catalog_confirmed_route_only(self):
+        import json
+        import tempfile
+        candidate = {"runtime": "pi", "model": "router-env/my-coding", "key": "pi/x"}
+        for confirmed, expected in ((["fallback_quota"], "--route-pi router"), ([], None)):
+            with self.subTest(confirmed=confirmed), tempfile.TemporaryDirectory() as t:
+                path = os.path.join(t, "ai-kit", "spec", "model-catalog.json")
+                os.makedirs(os.path.dirname(path))
+                with open(path, "w", encoding="utf-8") as handle:
+                    json.dump({"router-env/my-coding": {
+                        "runtimes": {"pi": {"model_id": "router-env/my-coding"}},
+                        "fallback_quota": True, "heuristic_confirmed": confirmed}}, handle)
+                hook = gsd_cross_ai.build_cross_ai_command(candidate, {"XDG_CACHE_HOME": t})
+                assert hook is not None
+                if expected:
+                    self.assertIn(expected, hook)
+                else:
+                    self.assertNotIn("--route-pi", hook)
+
 
 class TestCrossAiHookResult(unittest.TestCase):
     """The hook result the SKILL writes, or a visible reason when no safe hook exists."""
@@ -1150,6 +1169,41 @@ class TestWorkflowKeysViaConfigSet(unittest.TestCase):
             self.assertEqual(fake.config["workflow.cross_ai_execution"], True)
             self.assertEqual(fake.config["workflow.cross_ai_timeout"], 900)
             self.assertEqual(fake.config["workflow.cross_ai_command"], "python3 x")
+
+    def _run_min(self, fake, t, existing):
+        import io
+        import json
+        nested = {} if existing is None else {"workflow": {"cross_ai_timeout": existing}}
+        stdout = io.StringIO()
+        code = cli.main(
+            ["write-workflow-keys", "--cwd", t, "--run-id", "r1",
+             "--set", "cross_ai_execution=true", "--min", "cross_ai_timeout=1800"],
+            run_fn=fake.run_fn, which_fn=_node_which,
+            resolve_gsd_tools_fn=lambda start: fake.gsd_tools_path, stdout=stdout,
+            read_gsd_config_fn=lambda p, warn_fn=None: (nested, "ok"))
+        self.assertEqual(code, 0)
+        return json.loads(stdout.getvalue())
+
+    def test_min_keeps_a_value_at_or_above_the_floor_and_does_not_own_it(self):
+        import tempfile
+
+        from ai_kit_spec_gsd.gsd_config import read_ownership
+        with tempfile.TemporaryDirectory() as t:
+            fake = FakeGsdTools(t)
+            result = self._run_min(fake, t, 3600)
+            self.assertEqual(result["applied"], ["workflow.cross_ai_execution"])
+            self.assertNotIn("workflow.cross_ai_timeout", fake.config)
+            owned = read_ownership(os.path.join(t, ".planning", "config.json"))
+            self.assertNotIn("workflow.cross_ai_timeout", owned)
+
+    def test_min_writes_the_floor_over_a_missing_low_or_non_int_value(self):
+        import tempfile
+        for existing in (None, 900, True, "3600"):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as t:
+                fake = FakeGsdTools(t)
+                result = self._run_min(fake, t, existing)
+                self.assertIn("workflow.cross_ai_timeout", result["applied"])
+                self.assertEqual(fake.config["workflow.cross_ai_timeout"], 1800)
 
     def test_ownership_sidecar_maps_each_dotted_key_to_its_written_value(self):
         import io

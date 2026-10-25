@@ -256,6 +256,11 @@ Source: `.planning/research/2026-10-13-audit/` reports 08, 10, 15, 17, 18; XAI-0
     - 127: no CLI installed.
   - Exactly one last-line `AIKIT-XAI status=… cli= model= exit= cli_rc= elapsed= out=
     tree=clean|dirty action=fallback|retry-later|stop`, from every exit path.
+  - *(amended 2026-10-24, Phase 25 owner decision)* every status line now ends `action=stop`
+    with the evidence tail (`route=`, `rule=`, `pattern=`, `attempts=`, `cycles=`, plus
+    `retry_after_s=`/`cycle=` on a router quota cycle). The 10-minute / 4-hour wait is replaced
+    by the failure ladder in `subprocess-quota-policy.md`, and only a confirmed router route
+    makes a billing or limit error exit 75.
   - Errors are matched on stderr and structured fields only (the prototype included the answer
     text).
   - Models are preflighted against each CLI's own list; it continues with a note if the

@@ -1,7 +1,9 @@
 # Runner details (template 7)
 
 Read when a runner upgrade, a `.new` merge, `ensure-runner`, the template flags, the live
-timeout, or hand-edited CONFIG `extraArgs` comes up. Do NOT load for the stock v2 flow.
+timeout, hand-edited CONFIG `extraArgs`, or a dispatch whose `AIKIT-XAI` line shows a
+`status=` other than `ok` comes up. Every status line carries `action=stop`, a clean exit 0
+included, so `action=stop` alone is not a trigger. Do NOT load for the stock v2 flow otherwise.
 SKILL.md's "Cross-AI execution" section
 keeps the permission facts; this file never weakens them.
 
@@ -42,26 +44,29 @@ CONFIG knobs: `sameSessionRetries` and `newSessionRetries` (0..3), `cooldownS` (
 `capS` (at most 14400), `backoffS`, and `attemptTimeoutS` (default 0, no per-attempt cap,
 otherwise clamped to 10..1800). A router lane is authorized for quota cycles by the plan's
 `router_backed` (CONFIG `routerBacked`) or the `--route-<cli> router` flag. The `router-inferred`
-name heuristic is advisory only and cannot authorize quota cycles: an inferred route stops and
-reports like an unknown route (there is no built `direct` route kind). `--classify-only <file>`
-classifies a saved capture without spawning anything. A runner upgraded from an older template
+name heuristic is advisory only and cannot authorize quota cycles: an inferred route gets no
+cycles and stops like a direct route. `--classify-only <file>` takes a JSON array of cases and
+classifies that saved capture without spawning anything. A runner upgraded from an older template
 keeps an unused `retries` key.
 
 ## Runner upgrade
 
 `plan_runner_upgrade` upgrades a pristine older runner in place and keeps its CONFIG; a pristine
-current-template runner is kept as is; an edited runner is never replaced — a `.new` file is
-written for the owner to merge. So only a newly rendered or successfully upgraded active copy
-carries the ladder, and the way to see what a project actually runs is the active runner's line-2
-`template=<n>` header, never the `.new` file.
+current-template runner takes a same-version body fix the same way and is otherwise kept
+byte for byte; an edited runner is never replaced — a `.new` file is
+written for the owner to merge, and that edited older runner reports `script.active: false`.
+So only a newly rendered or successfully upgraded active copy carries the ladder, and the way to
+see what a project actually runs is the active runner's line-2 `template=<n>` header, never the
+`.new` file.
 
 `ensure-runner` renders or upgrades the project runner and, with `--guidance-file`, the guidance
 file. It never overwrites a user-edited runner, and readiness
 comes from the JSON it prints (`ready`, `runner`, `notes`), not from whether a `.new` file
 exists. A user-edited runner already on the current template is kept as-is and reported ready,
 with no `.new` file. An edited runner on an older template gets a `.new` file plus the printed
-notes; it stays ready from template 3 on (the readiness floor: the first template with the hook's
-flags), while an edited template-1/2 or foreign runner is not ready until `.new` is merged by hand. v1
+notes. It is not ready until `.new` is merged by hand when it is below template 7 (the readiness
+floor: the first template with the owner's failure ladder; templates 3-6 carry the hook's flags
+but can still fall back to another CLI), and neither is a foreign runner. v1
 `apply-execution` writes the runner command (`node .planning/scripts/cross-ai.mjs …`) only when
 that render is ready.
 

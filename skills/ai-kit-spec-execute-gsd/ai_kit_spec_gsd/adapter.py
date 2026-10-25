@@ -79,6 +79,7 @@ class DispatchContext(NamedTuple):
     current_runtime: str = "claude"
     required_context: int = 0
     quota: dict | None = None
+    env: dict | None = None  # the catalog lookup for the hook's confirmed route
 
 
 class DispatchSeams(NamedTuple):
@@ -199,7 +200,7 @@ def _try_candidate_dispatch(
     result = _dispatch_non_claude_tier(candidate, gsd_config, ctx, dispatch, seams)
     if result is not None:
         return result
-    command = build_cross_ai_command(candidate)
+    command = build_cross_ai_command(candidate, dispatch.env)
     if command is not None:
         runtime = candidate["runtime"]
         result = {"mode": "cross_ai_hook", "cross_ai_command": command,

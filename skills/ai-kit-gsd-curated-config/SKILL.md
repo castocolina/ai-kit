@@ -1,6 +1,6 @@
 ---
 name: ai-kit-gsd-curated-config
-description: "Curated GSD `.planning/config.json` setup for a target project: picks models per tier, wires installed skills to GSD agents, and sets up a cross-AI execution runner and cross-AI plan review. v2 flow — inventory, recommend, plan edits, apply, follow-ups; the kept v1 path asks only `model_profile`. Use when asked to \"configure .planning/config.json\", \"set up GSD config fast\", \"wire skills to GSD agents\" or \"set up a cross-AI execution runner\", without the full `gsd-settings`/`gsd-config` interrogation — a faster alternative, not a replacement."
+description: "Curated GSD `.planning/config.json` setup for a target project: picks models per tier, wires installed skills to GSD agents, and sets up a cross-AI execution runner and cross-AI plan review. v2 flow — inventory, recommend, plan edits, apply, follow-ups; the kept v1 path asks only `model_profile`. Use when asked to \"configure .planning/config.json\", \"set up GSD config fast\", \"wire skills to GSD agents\", \"set up a cross-AI execution runner\", \"render cross-ai.mjs\", \"ensure-runner\", or to merge a \"cross-ai.mjs.new\", without the full `gsd-settings`/`gsd-config` interrogation — a faster alternative, not a replacement."
 ---
 
 # ai-kit-gsd-curated-config
@@ -34,6 +34,12 @@ only, never a request).
 | `0` | the call finished; for `apply-execution` read `cross_ai_command_written` and `degraded_reason` before calling it configured | success (read the JSON for warnings and `needs_choice`) |
 | `2` | install problem (sibling skill, `node` or `gsd-tools.cjs` missing) or, for `apply-execution`/`apply-review`, an unrecognized `--cli` before any write. Surface stderr verbatim; do not retry | a refusal you can fix: bad `--out`, inventory digest mismatch, open `needs_choice`, malformed inventory or plan, held apply marker, refused `plan-set` value, skipped `agent_skills` reference — or the same install problems. Read the stderr line, fix the input, re-run (`inventory`/`recommend` first when it says so) |
 | `1` | a gsd-tools read/write failed | `apply` write failed and rolled back (or `restore_error`); a follow-up command failed |
+
+These are this CLI's exits. The rendered runner (`cross-ai.mjs`) has its own; read its stop from
+the `AIKIT-XAI` line's `status=`, never from the exit code alone: 1 covers `git_error`,
+`git_timeout`, `crash`, `no_change`, `empty_answer` and `contract_violation`; 2 `usage`,
+`no_model`, `empty_stdin`; 69 a terminal stop; 75 quota or transient; 124 `timeout`; 127
+`not_installed` (the runner's stop, not a missing shell command); 128+N `signal`.
 
 ## Resolve the entrypoint
 
@@ -97,7 +103,13 @@ python3 "$ENTRYPOINT" recommend --inventory "$WORK/inventory.json" --profile <pr
 ```
 
 3. **Review the plan with the user**: every `needs_choice` entry, note, warning and
-   `effect`/unverified flag. Resolve each choice with `plan-set` or decline it with
+   `effect`/unverified flag, and the plan's `router_backed` value per runner. `router_backed` is
+   what authorizes a router lane's quota cycles, and a name-only guess does not. `recommend` sets
+   it from the inventory: a candidate whose `is_router` and `router_confirmed` are both true (and
+   whose declared purpose is `execute`) starts that runner at `true`. There is no key to edit it
+   directly. Re-picking a model with `plan-set script:cross-ai.model.<runner>` recomputes it from
+   that same inventory rule, so re-picking the confirmed router keeps it `true` and re-picking a
+   direct model sets it `false`. Resolve each choice with `plan-set` or decline it with
    `plan-unset` — never skip one. Values are JSON for lists, booleans and numbers
    (`'["ponytail"]'`, `true`, `1800`) and bare text for strings. An `agent_skills.<agent>`
    value is that agent's whole list.
@@ -110,7 +122,8 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
 
    - **Runner models** are the pseudo-keys `script:cross-ai.model.<runner>` (pick from
      `artifacts[0].choices.<runner>.candidates`) and `script:cross-ai.prefer` (a JSON list
-     of runner ids: only the first installed runner runs, and the rest is the owner's menu).
+     of runner ids: only the first named runner runs, and the rest is the owner's menu; see
+     "Cross-AI execution").
      `plan-unset script:cross-ai.model.<runner>` reopens a choice.
      A pi or codex model with reasoning modes also pins its effort (`config.effort`, medium
      or the nearest mode); the runner passes it as pi `--thinking` / codex effort.
@@ -189,23 +202,30 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
   applied state; **never** restore its backup. Delete only the leftovers the warning names.
   If a marker remains, the next `apply` refuses (exit 2) and prints the recovery steps
   recorded in it (the dry run does not check the marker).
-- **Runner `git_timeout` or `git_error` status** (git could not read the work tree): claim
-  nothing about its state, and report the status line only. After that status, or once a CLI
-  has run outside a git work tree, the runner tries no other CLI: nothing proves the first one
-  wrote nothing. The runner never runs a second CLI, whatever the outcome. **`tree=unknown`**
-  on a run outside any git
-  work tree means the CLI ran without the check: report that, and do not read it as a clean or
-  dirty tree.
+- **Runner `git_timeout` or `git_error` status** (git could not read the work tree): the call
+  ends there, exit 1, with `tree=unknown`. Claim nothing about the tree, and report the
+  `cross-ai: report` and `AIKIT-XAI` lines only. Nothing proves the CLI wrote nothing, and a
+  template 7 runner never runs a second CLI, whatever the outcome. **`tree=unknown`** on a run
+  outside any git work tree means the CLI ran without the check: report that, and do not read
+  it as a clean or dirty tree.
 - **Effort sync** is not offered when the inventory points at a workstream config (gsd-core
   sync reads only the root config).
 
 ## Cross-AI execution
 
 v2 `apply` sets `workflow.cross_ai_command` to the bare `node .planning/scripts/cross-ai.mjs` and
-renders the runner from the current bundled template (template 7). The runner runs the first
-runner of its prefer order with its model, reports a missing first runner as `not_installed` and
-never replaces it, and follows the failure ladder
+renders the runner from the current bundled template (template 7). On template 7 and later only
+the first named runner runs, with its model; a missing one stops with `not_installed` (exit 127) and is never replaced,
+and the runner follows the failure ladder
 ([`../ai-kit-spec-review/references/subprocess-quota-policy.md`](../ai-kit-spec-review/references/subprocess-quota-policy.md)).
+**MANDATORY when a dispatch does not end ok** (any `AIKIT-XAI` line whose `status=` is not
+`ok`; every line carries `action=stop`, including a clean exit 0, so `action=stop` alone says
+nothing): read that policy before acting. It is the caller contract. The one sanctioned
+re-entry is the one-shot after an exit 75 carrying `retry_after_s=` on a confirmed router
+(`route=router`, never `router-inferred`); every other stop ends here. Another runner in
+`prefer` is the owner's menu: the owner re-invokes `node .planning/scripts/cross-ai.mjs --prefer
+<id>` with the same prompt on stdin (its model comes from CONFIG), or re-plans `script:cross-ai.prefer` and re-applies. Never
+hand-edit CONFIG `prefer`: an edited runner is pinned to `.new` upgrades.
 The hook names the runner, never a raw vendor CLI string.
 
 **Permissions depend on which flow wrote the hook — say which one applies:**
@@ -221,7 +241,14 @@ The hook names the runner, never a raw vendor CLI string.
   .planning/scripts/cross-ai-guidance.md`, whose write-only-inside-the-project sentence is prose,
   not a boundary.
 
-After every external dispatch, print the `AIKIT-XAI status=…` line from stderr **verbatim**.
+This skill never dispatches a model call: check a runner with `--print-argv` only. A live dispatch
+runs with full permissions and only when the user asks for one. When you see a dispatch's output
+(a GSD run, or one the user asked for), print the `AIKIT-XAI status=…` line from stderr
+**verbatim**. The `cross-ai: report` line exists only when
+the run did not end ok: print it verbatim too, then stop. On a clean run there is no report line
+to find, so do not treat its absence as a stop. Never answer a runner stop by reordering
+`prefer`, changing a provider or model, running another CLI, or moving the work to the native
+session.
 
 **Bare profile by default** (pi `--no-skills --no-extensions`, opencode with Claude-skill
 loading off). The opencode bare profile is **partial**: `~/.agents/skills` and
@@ -233,10 +260,19 @@ no such check (see `references/v1-path.md`). A copied default naming the host
 is flagged for replacement. If you deliberately want that CLI with another provider, make the
 user-owned `review.reviewer_instances` edit; curated-config neither writes nor validates it.
 
-**`.new` is not active:** a user-edited runner is never overwritten; apply writes
-`cross-ai.mjs.new` and reports `script.active: false`. Never treat `.new` as live. **Read
+**`.new` is not active:** a user-edited runner is never overwritten.
+- **v2 `apply`:** any edited runner gets `cross-ai.mjs.new` and reports `script.active: false`;
+  the new CONFIG is not live. If the active runner's line-2 `template=` is below 7, it can still
+  fall back to another CLI: tell the user, and merge `.new` (runner.md) or set
+  `workflow.cross_ai_execution false` before any dispatch.
+- **`ensure-runner`:** an edited current-template runner is kept and ready; an edited older one
+  gets `.new` and is not ready below template 7 (the first with the failure ladder).
+
+Check the active runner's line-2 `template=` header, never the `.new` file, to see which
+template a project runs. Never treat `.new` as live. **Read
 [`references/runner.md`](references/runner.md) when** a runner upgrade, a `.new` merge,
-`ensure-runner`, the template flags, the live timeout, or hand-edited CONFIG `extraArgs` comes up.
+`ensure-runner`, the template flags, the live timeout, hand-edited CONFIG `extraArgs`, or a
+dispatch whose `AIKIT-XAI` line shows a `status=` other than `ok` comes up.
 
 ## Skills
 
@@ -315,7 +351,7 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
 | `plan-unset` | `key`, `--plan` (`--inventory` optional) | Decline / remove a plan entry |
 | `apply` | `--plan`, `--inventory`, `--project-dir` | Write config + runner (`--dry-run` previews) |
 | `followups` | `--plan`, `--inventory`, `--project-dir` | List, or `--approve` the listed commands |
-| `ensure-runner` | `--cwd` (`--guidance-file <path>` or `-` for stdin, optional) | Render or upgrade `.planning/scripts/cross-ai.mjs`; prints JSON `{ready, runner, guidance, notes}`, exit 0 ready, 1 not ready, 2 on error. Readiness is the `ready` field: an edited current-template runner is kept ready; an edited older one gets `.new` and stays ready from template 3 on; a foreign one is not ready |
+| `ensure-runner` | `--cwd` (`--guidance-file <path>` or `-` for stdin, optional) | Render or upgrade `.planning/scripts/cross-ai.mjs`; prints JSON `{ready, runner, guidance, notes}`, exit 0 ready, 1 not ready, 2 on error. Readiness is the `ready` field: an edited current-template runner is kept ready; an edited older one gets `.new`, reports `script.active: false`, and is not ready below template 7 (the first with the failure ladder); a foreign one is not ready. The active file's line-2 `template=` header is what runs |
 | v1 | `--project-dir`, except the two `detect-*-candidate` (no flags) | See `references/v1-path.md` |
 
 ## NEVER
@@ -337,6 +373,11 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
   Why, and what it drops, is in [`references/v1-path.md`](references/v1-path.md).
 - **Never delete an apply marker** without following the recovery text apply prints.
 - **Never treat `cross-ai.mjs.new` as active** before merging it and running `--print-argv`.
+  An edited older runner reports `script.active: false`; check the active file's line-2
+  `template=` header, not the `.new` file.
+- **Never answer a runner stop by reordering `prefer`, changing a provider or model, running
+  another CLI, or moving the work to the native session.** The runner already chose its one CLI, and the owner
+  decides what happens next.
 
 ## Common mistakes
 
@@ -360,5 +401,5 @@ bury the decisions). The summary must still carry, verbatim: every warning, ever
 `needs_choice` with its candidates, every **unverified** note or `effect` flag (never upgraded to
 fact), every refusal or degraded reason, and the exact rows an approval is bound to (the
 follow-up argv/cwd list and its fingerprint). Show the full JSON when the user asks, and keep the
-files in `$WORK` so it stays available. For cross-AI dispatches, include the verbatim `AIKIT-XAI`
-line.
+files in `$WORK` so it stays available. For cross-AI dispatches, include the verbatim
+`AIKIT-XAI` line, and the verbatim `cross-ai: report` line only when the status was not `ok`.

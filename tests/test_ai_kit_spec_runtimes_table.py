@@ -839,7 +839,8 @@ _CONFINEMENT_TOKENS = (
     "$TMPDIR",
     "full permissions",
     "self-test",
-    "Phase 22",
+    # the live-verification caveat (was "Phase 22"; internal phase ids left the skills, 25-11)
+    "live verification is still open",
 )
 
 _FORBIDDEN = (

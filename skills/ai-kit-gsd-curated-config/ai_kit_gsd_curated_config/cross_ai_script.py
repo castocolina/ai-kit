@@ -26,9 +26,10 @@ GUIDANCE_HEADER_RE = re.compile(
 _GUIDANCE_NOTICE = (
     b"<!-- Rendered by ai-kit; edits produce a .new file on the next render. -->"
 )
-# A floor, not the current version: template 3 is the first with the flags the GSD hook
-# emits (--codex-sandbox, --no-preamble, --prepend-file; D-18/D-27/D-30).
-_READY_TEMPLATE = 3
+# A floor, not the current version: template 7 is the first with the owner's failure ladder
+# (one CLI per call, no fallback to another CLI; Phase 25). Templates 3-6 carry the hook's
+# flags but can still fall back, so an edited copy of one is not ready until `.new` is merged.
+_READY_TEMPLATE = 7
 _CONFIG_START = b"// <config>"
 _CONFIG_END = b"// </config>"
 _CONFIG_MARKER = b"const CONFIG = "
@@ -252,10 +253,12 @@ def plan_runner_upgrade(project_dir: str, template: bytes, scrub_env) -> ScriptP
         older = template_version(existing) < template_version(template)
     except ValueError:
         older = True
-    if state == "pristine" and older:
-        data = render(template, _upgrade_config(template, existing, scrub_env))
-        return ScriptPlan("change", path, path, data, state, "", existing)
     if state == "pristine":
+        # A pristine copy takes every template fix, a same-version body fix included; an
+        # identical re-render is kept untouched.
+        data = render(template, _upgrade_config(template, existing, scrub_env))
+        if older or data != existing:
+            return ScriptPlan("change", path, path, data, state, "", existing)
         return ScriptPlan("keep-pristine", path, None, existing, state, "", existing)
     if older:
         data = render(template, _upgrade_config(template, existing, scrub_env))

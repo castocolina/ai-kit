@@ -28,11 +28,12 @@ stuck one counts as a bump.
 
 The floor is relative to `$ESCALATION_ANCHOR_KEY` — `$LAST_DISPATCHED_KEY` copied once when this
 fix round started (the dispatch whose report the round is fixing), persisted as
-`escalation_anchor_key` and restored on resume (`references/state-management.md`). A same-round
-retry changes `$LAST_DISPATCHED_KEY`, never the anchor: if the bumped candidate fails mid-dispatch
-on quota, the floor still sits at the stuck key, so that candidate stays eligible once its quota
-recovers. Never use the `$INJECTION_KEY` Step 2 just resolved: after a quota wait or a resume, that fresh pick can already be the
-more-capable candidate, and a floor computed from it would exclude the very bump it found. Example:
+`escalation_anchor_key` and restored on resume (`references/state-management.md`). There is no
+same-round retry: a failed dispatch stops, and the anchor stays the key the round started from, so
+a bumped candidate that later hits quota stays eligible once its quota recovers. Never use the
+`$INJECTION_KEY` Step 2 just resolved: after a quota wait or an owner resume, that fresh pick can
+already be the more-capable candidate, and a floor computed from it would exclude the very bump it
+found. Example:
 ladder `A > B`, B is stuck, round 4 waits on quota-exhausted A; after the resume Step 2 picks A,
 and a floor relative to A would exclude both and stop falsely.
 
@@ -72,7 +73,9 @@ Re-run `resolve-injection` with this round's same `--exclude-keys-json` and
 candidate (`native` or `external_cli`) is this round's bumped implementer: dispatch it without
 reassigning `$EXCLUDED_KEYS_JSON`, framed as subagent-driven-development requires: "A prior
 implementer attempted this task [N] times; you own it now. Read the report file for what was
-tried." A mid-dispatch quota retry in this round keeps passing the same floor.
+tried." This re-run is the pre-dispatch choice for a fix round, not a recovery from a failed
+dispatch. A dispatch that then fails does not re-enter it: the failure stops for the owner, or,
+for the ruled router exit 75, the one-shot wake re-dispatches the same injection.
 
 The floor needs no separate persistence: it is recomputed every time from `$LADDER_KEYS_JSON` and
 `$ESCALATION_ANCHOR_KEY`, and the latter is persisted. Round 5's stuck key is round 4's bumped
@@ -87,7 +90,7 @@ Read `any_quota_recoverable` exactly as Step 2 does:
   `$RESUME_EXCLUDED_KEYS_JSON` with `resume-exclusions`, write `$STATE_JSON` (with this round's
   `$FIX_ROUND`, `$LAST_DISPATCHED_KEY` and `$ESCALATION_ANCHOR_KEY`) via `write-resumable-state`,
   then stop the wave for a later re-run by the owner. Never dispatch a same-or-weaker candidate
-  as a substitute.
+  as a substitute, and never re-dispatch the failed run to another candidate.
 - **`False`, or `no_candidate`** — no more-capable candidate is eligible for automatic quota
   recovery (a `"capacity"` failure may still clear by itself; a later re-run is the owner's
   call). Do not fall through to a same-or-weaker one. Nothing is scheduled. STOP and

@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import pathlib
 import shlex
 import shutil
 import sys
@@ -990,6 +991,36 @@ class TestClassifyDispatchFailure(unittest.TestCase):
                 {"returncode": -9, "reason": "timeout", "timed_out": True}
             ),
             "real_error",
+        )
+
+    def test_wake_tokens_come_from_the_nested_status_dict(self):
+        # The SKILL's quota branch reads retry_after_s and cycle from the nested status dict,
+        # the parsed AIKIT-XAI line. Both tokens live nowhere else in the dispatch result, so
+        # this runs the exact extraction the SKILL shows and asserts both values.
+        payload = json.dumps({
+            "runtime": "pi", "model": "router-env/x", "returncode": 75, "reason": "quota",
+            "status": {"status": "quota", "exit": "75", "retry_after_s": "600", "cycle": "2"},
+        })
+        # Run the exact one-liners the SKILL shows, so this fails if they drift.
+        skill = pathlib.Path(__file__).resolve().parents[1].joinpath(
+            "skills/ai-kit-spec-execute-superpowers/SKILL.md"
+        ).read_text(encoding="utf-8")
+        out = {}
+        for token in ("retry_after_s", "cycle"):
+            shown = (
+                'd=json.loads(sys.argv[1]); s=d.get("status") or {}; '
+                f'print("" if s.get("{token}") is None else s.get("{token}"))'
+            )
+            self.assertIn(shown, skill)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), unittest.mock.patch.object(
+                sys, "argv", ["skill", payload]
+            ):
+                exec(compile("import json,sys; " + shown, "<skill>", "exec"))
+            out[token] = buf.getvalue().strip()
+        self.assertEqual(out, {"retry_after_s": "600", "cycle": "2"})
+        self.assertEqual(
+            dispatch_injection.classify_dispatch_failure(json.loads(payload)), "quota",
         )
 
 

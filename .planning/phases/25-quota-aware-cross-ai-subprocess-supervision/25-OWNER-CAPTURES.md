@@ -148,3 +148,22 @@ Result: not run (owner)
 When results land, run `/gsd-plan-phase 25 --gaps` to add fixtures from the captures, flip the
 matching labels from `unverified` to `verified`, rerun the runner self-test, and run skill-judge
 for any SKILL.md the fixtures changed.
+
+## Phase status
+
+2026-10-25, phase tip after 25-11 (logs in `tmp/p25/11/`, removed after the SUMMARY):
+- Gates: ruff, pyright, vulture, `make test`, `make validate` and the clean-room
+  `make e2e-docker` all exit 0. The container ran with `--rm`, and no e2e build process,
+  runner self-test fake or scratch-rooted `node` process survived.
+- QTA-01, QTA-02 and QTA-03 are ready for `/gsd-verify-work 25`.
+- `human_needed`: C1-C7 above (every result still `not run (owner)`), plus the unverified
+  pattern rows.
+- **Blocked:** the skill-judge gate. `25-SKILL-JUDGE.md` records all four changed skills as
+  `BLOCKED`. Both referee lanes stopped and the runner switched nothing:
+  - my-referee-one: 5-hour session quota, reset past the 4-hour cap;
+  - my-referee-two: OmniRoute 404 `Combo has no executable targets`.
+
+  On Opus's numbers, three skills sit below their base scores. The owner decides on re-running
+  the lanes and on that bar.
+- Next: `/gsd-secure-phase 25`, then the verifier, then the merge to local main and
+  `tools/setup.py install` once the gate clears. Any push needs the owner's consent.
