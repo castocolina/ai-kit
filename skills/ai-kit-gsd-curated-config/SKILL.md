@@ -204,7 +204,7 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
 - **Runner `git_timeout` or `git_error` status** (git could not read the work tree): the call
   ends there, exit 1, with `tree=unknown`. Claim nothing about the tree, and report the
   `cross-ai: report` and `AIKIT-XAI` lines only. Nothing proves the CLI wrote nothing, and a
-  template 7 runner never runs a second CLI, whatever the outcome. **`tree=unknown`** on a run
+  template 8 runner never runs a second CLI, whatever the outcome. **`tree=unknown`** on a run
   outside any git work tree means the CLI ran without the check: report that, and do not read
   it as a clean or dirty tree.
 - **Effort sync** is not offered when the inventory points at a workstream config (gsd-core
@@ -212,23 +212,13 @@ python3 "$ENTRYPOINT" followups --plan "$WORK/plan.json" --inventory "$WORK/inve
 
 ## Cross-AI execution
 
-v2 `apply` sets `workflow.cross_ai_command` to the bare `node .planning/scripts/cross-ai.mjs` and
-renders the runner from the current bundled template (template 7). On template 7 and later only
-the first named runner runs, with its model; a missing one stops with `not_installed` (exit 127) and is never replaced,
-and the runner follows the failure ladder
-([`../ai-kit-cross-ai/references/subprocess-quota-policy.md`](../ai-kit-cross-ai/references/subprocess-quota-policy.md)).
-**MANDATORY when a dispatch does not end ok** (any `AIKIT-XAI` line whose `status=` is not
-`ok`; every line carries `action=stop`, including a clean exit 0, so `action=stop` alone says
-nothing): read that policy before acting. It is the caller contract. The one sanctioned
-re-entry is the one-shot after an exit 75 carrying `retry_after_s=` on a confirmed router
-(`route=router`, never `router-inferred`); every other stop ends here. When GSD made the
-dispatch, that re-entry is GSD's caller's (ai-kit-spec-execute-gsd); this skill only reports the
-lines and `retry_after_s`, and schedules the one-shot only for a dispatch the user asked it to
-run. Another runner in `prefer` is the owner's menu: the owner re-invokes `node
-.planning/scripts/cross-ai.mjs --prefer <id>` with the same prompt on stdin (its model comes from
-CONFIG), or re-plans `script:cross-ai.runtime` and re-applies. Never hand-edit CONFIG `prefer`:
-an edited runner is pinned to `.new` upgrades.
-The hook names the runner, never a raw vendor CLI string.
+v2 `apply` sets `workflow.cross_ai_command` to `node .planning/scripts/cross-ai.mjs` and renders
+the bundled template 8. Each call uses one runtime (`CONFIG.runtime`, set by the plan) and its
+model; a missing binary stops as `not_installed` and is never replaced. For any non-`ok` status,
+follow the caller contract in [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md): handle
+the hard tier and notice there, and never switch. To change runtime, run
+`plan-set script:cross-ai.runtime <id>` and re-apply. Never hand-edit CONFIG: edits receive `.new`
+on upgrade. The hook names the runner, never a raw vendor CLI string.
 
 **Permissions depend on which flow wrote the hook — say which one applies:**
 
@@ -264,11 +254,10 @@ user-owned `review.reviewer_instances` edit; curated-config neither writes nor v
 
 **`.new` is not active:** a user-edited runner is never overwritten.
 - **v2 `apply`:** any edited runner gets `cross-ai.mjs.new` and reports `script.active: false`;
-  the new CONFIG is not live. If the active runner's line-2 `template=` is below 7, it can still
-  fall back to another CLI: tell the user. The owner chooses: merge `.new` (runner.md), or
+  the new CONFIG is not live. If the active runner's line-2 `template=` is below 8, it has no `--runtime` or retry config: tell the user. The owner chooses: merge `.new` (runner.md), or
   `plan-set workflow.cross_ai_execution false`, then dry-run and apply. Do neither unasked.
 - **`ensure-runner`:** an edited current-template runner is kept and ready; an edited older one
-  gets `.new` and is not ready below template 7 (the first with the failure ladder).
+  gets `.new` and is not ready below template 8 (the first with `--runtime` and retry config).
 
 Check the active runner's line-2 `template=` header, never the `.new` file, to see which
 template a project runs. Never treat `.new` as live. **Read
@@ -353,7 +342,7 @@ dispatch whose `AIKIT-XAI` line shows a `status=` other than `ok` comes up.
 | `plan-unset` | `key`, `--plan` (`--inventory` optional) | Decline / remove a plan entry |
 | `apply` | `--plan`, `--inventory`, `--project-dir` | Write config + runner (`--dry-run` previews) |
 | `followups` | `--plan`, `--inventory`, `--project-dir` | List, or `--approve` the listed commands |
-| `ensure-runner` | `--cwd` (`--guidance-file <path>` or `-` for stdin, optional) | Render or upgrade `.planning/scripts/cross-ai.mjs`; prints JSON `{ready, runner, guidance, notes}`, exit 0 ready, 1 not ready, 2 on error. Readiness is the `ready` field: an edited current-template runner is kept ready; an edited older one gets `.new` (`runner: "new-as-.new"`) and is not ready below template 7 (the first with the failure ladder); a foreign one is not ready. The active file's line-2 `template=` header is what runs |
+| `ensure-runner` | `--cwd` (`--guidance-file <path>` or `-` for stdin, optional) | Render or upgrade `.planning/scripts/cross-ai.mjs`; prints JSON `{ready, runner, guidance, notes}`, exit 0 ready, 1 not ready, 2 on error. Readiness is the `ready` field: an edited current-template runner is kept ready; an edited older one gets `.new` (`runner: "new-as-.new"`) and is not ready below template 8 (the first with `--runtime` and retry config); a foreign one is not ready. The active file's line-2 `template=` header is what runs |
 | v1 | `--project-dir`, except the two `detect-*-candidate` (no flags) | See `references/v1-path.md` |
 
 ## NEVER

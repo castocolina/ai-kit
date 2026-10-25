@@ -238,7 +238,9 @@ plus the knobs that runtime takes as entry fields (`effort` and `service_tier` f
 `cursor_mode` for cursor, default `ask`). The runner builds the argv from those fields at
 dispatch. `build-command --runtime <id>` is an optional preview of that argv — it prints the
 argv and says that review-spec.toml stores `runtime` and `model`; do not store its output as a
-`command`.
+`command`. How a stored pair is run, waited for and retried is in
+[`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md) for runtime/model dispatch; this skill
+only stores the pair, and the runner refuses a model id its runtime's grammar disallows.
 ```bash
 python3 "$TOOLS_PY" build-command --runtime <id> \
   [--effort <e>] [--service-tier <t>] [--mode plan|ask]

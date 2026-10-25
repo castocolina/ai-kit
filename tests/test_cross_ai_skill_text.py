@@ -18,6 +18,13 @@ LAUNCH = REPO / "skills/ai-kit-cross-ai/references/launch-and-wait.md"
 TEMPLATE = REPO / "skills/ai-kit-spec-review/references/cross-ai.mjs"
 OLD_POLICY = REPO / "skills/ai-kit-spec-review/references/subprocess-quota-policy.md"
 README = REPO / "README.md"
+CURATED_SKILL = REPO / "skills/ai-kit-gsd-curated-config/SKILL.md"
+CURATED_RUNNER = REPO / "skills/ai-kit-gsd-curated-config/references/runner.md"
+SPEC_CONFIG_SKILL = REPO / "skills/ai-kit-spec-config/SKILL.md"
+STALE_TEMPLATE7 = re.compile(
+    r"below template[- ]7|template[- ]7 \(the first|template[- ]7 runner never runs|"
+    r"bundled template \(template[- ]7\)", re.IGNORECASE
+)
 
 sys.path.insert(0, str(REPO / "skills/ai-kit-spec-review"))
 sys.path.insert(0, str(REPO / "skills/ai-kit-gsd-curated-config"))
@@ -161,6 +168,51 @@ class SkillShape(unittest.TestCase):
         self.assertIsNotNone(SWITCH_RE.search(bad))
         good = "Never switch harness, provider or model."
         self.assertIsNone(SWITCH_RE.search(good))
+
+
+class CuratedConfigPins(unittest.TestCase):
+    def test_curated_docs_point_to_cross_ai_and_pin_template_eight(self):
+        skill = CURATED_SKILL.read_text(encoding="utf-8")
+        runner = CURATED_RUNNER.read_text(encoding="utf-8")
+        for text in (skill, runner):
+            self.assertIn("../ai-kit-cross-ai/SKILL.md", text)
+            self.assertIsNone(STALE_TEMPLATE7.search(text))
+            self.assertNotIn("--prefer <id>", text)
+        self.assertRegex(skill, r"template[- ]8")
+        self.assertIn("script:cross-ai.runtime", skill)
+        failure = _section(runner, "## Failure ladder")
+        self.assertIn("workflow.cross_ai_retry", failure)
+        upgrade = _section(runner, "## Runner upgrade")
+        self.assertIn("template 8", upgrade)
+        self.assertIn("ensure-runner", upgrade)
+        opt_in = _section(runner, "**Opt-in skills and MCP servers:**")
+        self.assertIn("review allowlist", opt_in)
+        runner_text = runner
+        self.assertIn("unknown\nargument", runner_text)
+        self.assertIn("exit 2", runner_text)
+        self.assertIn("template-7", runner_text)
+        self.assertIn(".new", upgrade)
+
+    def test_stale_template7_regex_catches_each_legacy_form(self):
+        examples = (
+            "not ready below template 7",
+            "template-7 (the first old floor)",
+            "template 7 runner never runs a second CLI",
+            "bundled template (template 7)",
+        )
+        for line in examples:
+            with self.subTest(line=line):
+                self.assertIsNotNone(STALE_TEMPLATE7.search(line))
+
+    def test_spec_config_has_one_pointer_and_no_retry_instructions(self):
+        text = SPEC_CONFIG_SKILL.read_text(encoding="utf-8")
+        pointer_lines = [line for line in text.splitlines() if "ai-kit-cross-ai" in line]
+        self.assertEqual(len(pointer_lines), 1)
+        self.assertIn("../ai-kit-cross-ai/SKILL.md", pointer_lines[0])
+        self.assertIn("runtime", pointer_lines[0])
+        self.assertNotRegex(
+            text.lower(), r"retry_after_s|hard tier|wait .*second|exit code.*(?:69|75)"
+        )
 
 
 class ReadmeRows(unittest.TestCase):

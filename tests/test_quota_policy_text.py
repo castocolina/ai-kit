@@ -145,7 +145,7 @@ class CuratedConfigDocs(unittest.TestCase):
             self.assertIsNone(OLD_VERSION.search(text))
 
     def test_curated_skill_links_the_policy_and_readme_names_the_ladder(self):
-        self.assertIn("subprocess-quota-policy.md", CURATED_SKILL.read_text(encoding="utf-8"))
+        self.assertIn("../ai-kit-cross-ai/SKILL.md", CURATED_SKILL.read_text(encoding="utf-8"))
         self.assertIn("no automatic fallback", README.read_text(encoding="utf-8"))
         self.assertIn("## Failure ladder", RUNNER_REF.read_text(encoding="utf-8"))
 

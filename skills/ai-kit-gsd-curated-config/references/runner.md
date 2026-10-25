@@ -1,4 +1,4 @@
-# Runner details (template 7)
+# Runner details (template 8)
 
 Read when a runner upgrade, a `.new` merge, `ensure-runner`, the template flags, the live
 timeout, hand-edited CONFIG `extraArgs`, or a dispatch whose `AIKIT-XAI` line shows a
@@ -38,17 +38,13 @@ read-only and still reaches that shared service.
 
 ## Failure ladder
 
-The runner follows the failure ladder in
-[`../../ai-kit-cross-ai/references/subprocess-quota-policy.md`](../../ai-kit-cross-ai/references/subprocess-quota-policy.md).
-CONFIG knobs: `sameSessionRetries` and `newSessionRetries` (0..3), `cooldownS` (0..`capS`),
-`capS` (at most 14400), `backoffS`, and `attemptTimeoutS` (default 0, no per-attempt cap,
-otherwise clamped to 10..1800; only a set value leaves a timed-out attempt room for a retry rung). A router lane is authorized for quota cycles by the plan's
-`router_backed` (CONFIG `routerBacked`, for the runner's pinned model only) or the
-`--route-<cli> router` flag. The `router-inferred`
-name heuristic is advisory only and cannot authorize quota cycles: an inferred route gets no
-cycles and stops like a direct route. `--classify-only <file>` takes a JSON array of cases and
-classifies that saved capture without spawning anything. A runner upgraded from an older template
-keeps an unused `retries` key.
+The soft retry series and one session reset plus second soft series run inside a call, configured by
+`workflow.cross_ai_retry` in the project config or by `{"cross_ai_retry": {...}}` in
+`${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai.json`; hand-edit these sources because
+`config-set` refuses the project key. Tune neither in CONFIG: edits only receive `.new` upgrades.
+The caller owns the hard waits and notice. CONFIG retains `capS` (at most 14400),
+`attemptTimeoutS`, `routerBacked` and `runtime`. For caller actions on any non-ok status, see
+[`../../ai-kit-cross-ai/SKILL.md`](../../ai-kit-cross-ai/SKILL.md).
 
 ## Runner upgrade
 
@@ -56,7 +52,7 @@ keeps an unused `retries` key.
 current-template runner takes a same-version body fix the same way and is otherwise kept
 byte for byte; an edited runner is never replaced — a `.new` file is
 written for the owner to merge (`ensure-runner` reports `runner: "new-as-.new"` and `ready:
-false` below template 7; v2 `apply` reports `script.active: false`).
+false` below template 8; v2 `apply` reports `script.active: false`).
 So only a newly rendered or successfully upgraded active copy carries the ladder, and the way to
 see what a project actually runs is the active runner's line-2 `template=<n>` header, never the
 `.new` file.
@@ -66,9 +62,11 @@ file. It never overwrites a user-edited runner, and readiness
 comes from the JSON it prints (`ready`, `runner`, `notes`), not from whether a `.new` file
 exists. A user-edited runner already on the current template is kept as-is and reported ready,
 with no `.new` file. An edited runner on an older template gets a `.new` file plus the printed
-notes. It is not ready until `.new` is merged by hand when it is below template 7 (the readiness
-floor: the first template with the owner's failure ladder; templates 3-6 carry the hook's flags
-but can still fall back to another CLI), and neither is a foreign runner. v1
+notes. The readiness floor is template 8, the first with `--runtime` and retry config. Template 7 has
+neither. A hook built with `--runtime` against a project's template-7 copy fails with `unknown
+argument` (exit 2) until `ensure-runner` re-renders it: a pristine copy upgrades in place, while an
+edited one gets `.new`. Templates 3-6 can still fall back to another CLI. A foreign runner is
+never ready. v1
 `apply-execution` writes the runner command (`node .planning/scripts/cross-ai.mjs …`) only when
 that render is ready.
 
@@ -79,6 +77,8 @@ uses the smaller of that value and the timeout baked in at apply.
 
 **Opt-in skills and MCP servers:** hand-edit the generated script's CONFIG `extraArgs` per
 target. The next apply then writes `cross-ai.mjs.new` instead of overwriting the live runner.
+Review mode refuses (exit 2) any `extraArgs` entry outside the runtime's review allowlist
+(pi `--skill <path>` only), so extras for exec lanes cannot also run review lanes on that runtime.
 
 **`.new` is not active:** the live runner keeps its old CONFIG and apply reports
 `script.active: false`. Merge `.new` by hand (keep customizations), check the **active**
