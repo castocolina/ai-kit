@@ -890,9 +890,23 @@ Source: owner request 2026-10-24 (after the Phase 25 plan reviews); evidence in
   8. *(Added 2026-10-24, owner.)* The GitHub Copilot CLI is a runtime (`copilot -p … -s
      --no-ask-user --model …`, prompt on argv with stdin not inherited, token passed through and
      never logged), every row unverified until a real capture.
-**Plans:** 0 plans
+**Plans:** 0/14 plans executed
 
 Plans:
+- [ ] 25.1-01-PLAN.md
+- [ ] 25.1-02-PLAN.md
+- [ ] 25.1-03-PLAN.md
+- [ ] 25.1-04-PLAN.md
+- [ ] 25.1-05-PLAN.md
+- [ ] 25.1-06-PLAN.md
+- [ ] 25.1-07-PLAN.md
+- [ ] 25.1-08-PLAN.md
+- [ ] 25.1-09-PLAN.md
+- [ ] 25.1-10-PLAN.md
+- [ ] 25.1-11-PLAN.md
+- [ ] 25.1-12-PLAN.md
+- [ ] 25.1-13-PLAN.md
+- [ ] 25.1-14-PLAN.md
 - [ ] TBD (run /gsd-plan-phase 25.1 to break down)
 
 ### Phase 26: Session self-resume and OpenGSD quota rules
