@@ -62,17 +62,11 @@ import { fileURLToPath } from 'node:url';
 // <config>
 const CONFIG = {
   "attemptTimeoutS": 0,
-  "backoffS": [
-    30,
-    60
-  ],
   "capS": 14400,
-  "cooldownS": 600,
   "effort": {},
   "extraArgs": {},
   "heartbeatS": 30,
   "models": {},
-  "newSessionRetries": 3,
   "outerTimeoutS": 1800,
   "prefer": [
     "pi",
@@ -91,7 +85,6 @@ const CONFIG = {
     "session_resets": 1
   },
   "routerBacked": {},
-  "sameSessionRetries": 3,
   "scrubEnv": [
     "AI_AGENT",
     "CLAUDECODE",
@@ -1814,12 +1807,7 @@ function logDeadline(cwd, env, o) {
   return d;
 }
 
-// Counts stay in 0..3; a per-attempt cap is 0 (none) or 10..1800 s.
-function clampCount(value) {
-  const n = Math.trunc(Number(value));
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.min(3, n);
-}
+// A per-attempt cap is 0 (none) or 10..1800 s.
 function clampAttemptTimeout(value) {
   const n = Math.trunc(Number(value));
   if (!Number.isFinite(n) || n <= 0) return 0;
@@ -1939,61 +1927,40 @@ function softWaitMs(retry, k, rand = Math.random, prevMs = 0) {
   const jittered = Math.round(nominal * (1 + (rand() * 2 - 1) * 0.1));
   return Math.max(jittered, Math.ceil(0.9 * prevMs));
 }
-function clampCooldownS(value, capS) {
-  const n = Math.trunc(Number(value));
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.min(capS, n);
-}
-function ladderLimits(opts) {
-  const capS = clampCapS(opts.capS ?? CONFIG.capS);
-  return {
-    same: clampCount(opts.sameSessionRetries ?? CONFIG.sameSessionRetries),
-    fresh: clampCount(opts.newSessionRetries ?? CONFIG.newSessionRetries),
-    capS,
-    cooldownS: clampCooldownS(opts.cooldownS ?? CONFIG.cooldownS, capS),
-  };
-}
-
-// Pure step of the transient and router-quota ladders. Table-free: the caller decides the
-// class. `st = {same, fresh, canResume, firstQuotaMs, cycle}`, `cls` is `transient`,
-// `quota` or `stop`. A quota rung also needs 60 s of cap headroom; once the rungs are
-// spent a cycle is admitted only when the cooldown itself fits under the cap and 60 s of
-// deadline work remains. The call never sleeps the cooldown.
+// Pure step of the soft series. Table-free: the caller decides the class. `st = {retry,
+// resets, canResume, firstMs, cycle}`, `lim = {maxRetries, sessionResets, deadlineMs, waitMs,
+// capMs}`. A CLI that cannot resume still walks the same-session retries, each as a new
+// session (D-10). Once the series and its resets are spent both soft classes hand the call to
+// the one hard handler; the call never sleeps a hard wait. The admission checks apply to both
+// soft classes: one shared episode cap (D-07).
 function ladderNext(st, cls, nowMs, lim) {
   if (cls !== 'transient' && cls !== 'quota') return { next: 'stop', why: 'class' };
-  let next = 'stop';
-  let why = 'rungs';
-  if (st.canResume && st.fresh === 0 && st.same < lim.same) {
-    next = 'same';
-    why = 'same-session';
-  } else if (st.fresh < lim.fresh) {
-    next = 'new';
-    why = 'new-session';
+  let next = 'hard';
+  let why = 'soft-spent';
+  if (st.retry < lim.maxRetries) {
+    next = st.canResume ? 'same' : 'new';
+    why = 'soft-retry';
+  } else if (st.canResume && st.resets < lim.sessionResets) {
+    next = 'reset';
+    why = 'session-reset';
   }
-  if (next !== 'stop') {
-    if (nowMs + (lim.waitMs || 0) + 60000 > lim.deadlineMs) {
-      return { next: 'stop', why: 'deadline' };
-    }
-    if (cls === 'quota' && nowMs + 60000 > (st.firstQuotaMs || 0) + lim.capMs) {
-      return { next: 'stop', why: 'cap' };
-    }
-    return { next, why };
+  if (next === 'hard') return { next, why };
+  if (nowMs + (lim.waitMs || 0) + 60000 > lim.deadlineMs) {
+    return { next: 'stop', why: 'deadline' };
   }
-  if (cls !== 'quota') return { next, why };
-  const cooldownMs = lim.cooldownMs || 0;
-  const capEnd = (st.firstQuotaMs || 0) + lim.capMs;
-  if (nowMs + cooldownMs > capEnd) return { next: 'stop', why: 'cap' };
-  if (nowMs + cooldownMs + 60000 > lim.deadlineMs) return { next: 'stop', why: 'deadline' };
-  return { next: 'cooldown', why: 'cooldown' };
+  if (st.firstMs && nowMs + 60000 > st.firstMs + lim.capMs) {
+    return { next: 'stop', why: 'cap' };
+  }
+  return { next, why };
 }
 
 // Rung 1 continues the captured session. Null when no session can be continued: no id,
 // no resume formula, a sandboxed codex exec, or codex review (its resume argv has no
 // read-only sandbox).
-function sameSessionArgv(name, rt, model, ctx, sid, mode) {
+function sameSessionArgv(name, rt, model, ctx, sid, mode, input = RESUME_MSG) {
   if (!sid || !rt.resume) return null;
   if (name === 'codex' && (mode === 'review' || ctx.codexSandbox)) return null;
-  return { argv: withExtra(name, rt.resume(model, ctx, sid, mode)), input: RESUME_MSG };
+  return { argv: withExtra(name, rt.resume(model, ctx, sid, mode)), input };
 }
 
 // Rung 2 is a fresh argv on the same CLI and model. Pi gets a new session id.
@@ -2019,8 +1986,13 @@ function sha16(text) {
 }
 
 function taskDigest(prompt) {
-  const m = /<objective>([\s\S]*?)<\/objective>/.exec(String(prompt || ''));
-  return sha16(m ? m[1] : String(prompt || ''));
+  // The preamble is appended after a blank line and carries its own objective block, which
+  // would make every task hash the same. The caller's prompt is the part before it.
+  const text = String(prompt || '');
+  const cut = text.lastIndexOf('\n\n<');
+  const body = cut > 0 ? text.slice(0, cut) : text;
+  const m = /<objective>([\s\S]*?)<\/objective>/.exec(body);
+  return sha16(m ? m[1] : body);
 }
 
 function cycleFilePath(cli, model, cwd = process.cwd(), home = stateHome()) {
@@ -2555,15 +2527,18 @@ function stoppedWhy(step, dirty) {
   if (dirty) return 'dirty-tree';
   if (step && step.why === 'deadline') return 'deadline';
   if (step && step.why === 'cap') return 'cap';
-  if (step && step.next === 'cooldown') return 'rungs';
-  if (step && step.why === 'rungs') return 'rungs';
+  if (step && step.why === 'soft-spent') return 'rungs';
   return 'class';
 }
 
 async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
-  const backoff = opts.backoffS || CONFIG.backoffS;
+  // The preamble is the runner's own rules, appended after a blank line. The dirty-tree gate
+  // judges edits against the caller's prompt only: the preamble names files the plan never did.
+  const preambleAt = prompt.lastIndexOf('\n\n<');
+  const userPrompt = preambleAt > 0 ? prompt.slice(0, preambleAt) : prompt;
+  const retryCfg = opts.retry || RETRY_DEFAULTS;
   const beforeSig = opts.beforeSig ?? null;
-  const limits = ladderLimits(opts);
+  const capS = clampCapS(opts.capS ?? CONFIG.capS);
   const tmp = makeTemp('cross-ai-');
   const ctx = {
     cwd: process.cwd(), sid: crypto.randomUUID(), outFile: path.join(tmp, 'last-message.md'),
@@ -2574,7 +2549,19 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const env = childEnv(rt.env, process.env);
   let argv = withExtra(name, rt[mode](model, ctx));
   let input = prompt;
-  const ladder = { same: 0, fresh: 0, canResume: false, firstQuotaMs: 0, cycle: 0 };
+  // The dirty-tree gate runs once, when a fresh series opens, and its input covers every
+  // call of that series. Re-running it mid-series would see the series' own edits.
+  let seriesInput = prompt;
+  let gated = false;
+  // A re-entry repeats the task, so its same-session retries send the prompt, not the note.
+  let continued = false;
+  // seenSig is the tree before the attempt in flight, seriesSig the tree before the current
+  // series. A fresh series is judged against the previous series' end, never its own edits.
+  let seenSig = beforeSig;
+  let seriesSig = beforeSig;
+  const ladder = {
+    retry: 0, resets: 0, canResume: false, firstMs: 0, cycle: 0, prevWaitMs: 0,
+  };
   let admitted = false;
   const stateFile = cycleFilePath(name, model);
   const digest = taskDigest(prompt);
@@ -2583,7 +2570,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const routerLane = confirmedRoute(opts.route || 'unknown');
   const loaded = routerLane ? readCycleState(stateFile) : null;
   const now0 = Date.now();
-  const capMs = limits.capS * 1000;
+  const capMs = capS * 1000;
   let cycleCount = 0;
   let priorAttempts = 0;
   let persisted = null;
@@ -2610,16 +2597,20 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       cycleCount = (loaded.cycle || 0) + 1;
       priorAttempts = loaded.attempts || 0;
       persisted = loaded;
-      ladder.firstQuotaMs = loaded.first_seen;
+      ladder.firstMs = loaded.first_seen;
       ladder.cycle = cycleCount;
     }
   }
   let firstFailureMs = persisted ? persisted.first_seen : 0;
   let lastFailureMs = 0;
   let attempts = priorAttempts;
-  let quotaSeen = Boolean(persisted);
-  const rungOf = () => (ladder.fresh > 0 ? 'new' : ladder.same > 0 ? 'same' : 'first');
-  const quotaEnd = () => (ladder.firstQuotaMs ? ladder.firstQuotaMs + capMs : 0);
+  // The label of the step that produced the attempt about to run: a reset starts a fresh
+  // session, a same-session retry resumes, and a no-resume retry is a new session.
+  let rungLabel = 'first';
+  const rungOf = () => rungLabel;
+  // One episode clock for both soft classes: the first soft failure of the call, or a loaded
+  // record's first_seen. 0 before any soft failure, so the cap never bites a first attempt.
+  const episodeEnd = () => (ladder.firstMs ? ladder.firstMs + capMs : 0);
   const counts = () => ({
     attempts, cycles: ladder.cycle,
     firstFailureMs, lastFailureMs,
@@ -2632,54 +2623,65 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   };
   // An unwritable state file never turns a quota stop into a crash: the stop stays quota, but
   // with no cycle to track it is a bare exit 75 (no retry_after_s=).
+  // 25.1-03 replaces the [0] index with hardWaitFor and adds the transient hint.
+  const hardWaitS = retryCfg.hard_waits_s[0];
   let stateWritable = true;
   const saveCycle = (sid, at) => {
-    const due = at + limits.cooldownS * 1000;
+    const due = at + hardWaitS * 1000;
     try {
       writeCycleState(stateFile, {
-        first_seen: ladder.firstQuotaMs, last_attempt_at: at, cycle: ladder.cycle,
+        first_seen: ladder.firstMs, last_attempt_at: at, cycle: ladder.cycle,
         attempts, last_sid: sid || null, task_digest: digest,
-        retry_after_s: limits.cooldownS, due_at: due,
+        retry_after_s: hardWaitS, due_at: due,
       });
     } catch (e) {
       stateWritable = false;
       log(`cross-ai: cycle state unwritable: ${stateFile} (${e.code || e.message})`);
     }
   };
-  const cycleStop = (r, evidence, why, sid) => {
+  // One hard handler for both soft classes. The call never sleeps the hard wait: a confirmed
+  // router quota saves its cycle and names the wait, a transient exits with no hint, and either
+  // class exits 69 once the next wait would pass the episode end. A soft step refused for `cap`
+  // is already past that end.
+  const hardStop = (r, evidence, why, sid, cls) => {
     const at = Date.now();
-    // The cap wins over any other stop reason: a cooldown past it is never offered.
-    const stopped = quotaEnd() && at + limits.cooldownS * 1000 > quotaEnd() ? 'cap' : why;
-    saveCycle(sid, at);
-    const capped = stopped === 'cap';
+    const end = episodeEnd();
+    const capped = why === 'cap' || (Boolean(end) && at + hardWaitS * 1000 > end);
+    const stopped = capped ? 'cap' : (why === 'deadline' ? 'deadline' : 'rungs');
+    if (cls === 'quota') saveCycle(sid, at);
     return {
-      ok: false, status: 'quota', outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
-      ...counts(), retryAfterS: capped || !stateWritable ? undefined : limits.cooldownS,
+      ok: false, status: cls === 'quota' ? 'quota' : 'transient', timedOut: false,
+      outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence, ...counts(),
+      retryAfterS: cls === 'quota' && !capped && stateWritable ? hardWaitS : undefined,
       cycle: ladder.cycle, exit: capped ? 69 : 75, stopped,
     };
   };
   try {
-    if (persisted) {
-      const sameTask = persisted.task_digest === digest && persisted.last_sid;
-      if (sameTask) {
-        ctx.sid = persisted.last_sid;
-        const retry = sameSessionArgv(name, rt, model, ctx, persisted.last_sid, mode);
-        if (retry) {
-          argv = retry.argv;
-          input = retry.input;
-          ladder.canResume = true;
-        }
-      } else {
-        ladder.same = limits.same;
+    if (persisted && persisted.task_digest === digest && persisted.last_sid) {
+      ctx.sid = persisted.last_sid;
+      // A re-entry repeats the task on the saved session, so the session gets the prompt
+      // itself; the resume note would hide it.
+      const retry = sameSessionArgv(name, rt, model, ctx, persisted.last_sid, mode, prompt);
+      if (retry) {
+        argv = retry.argv;
+        input = retry.input;
+        seriesInput = prompt;
+        continued = true;
+        ladder.canResume = true;
       }
     }
     for (let attempt = 0; ; attempt++) {
+      // Before the child runs: the snapshot after it would race the next attempt's edits.
+      if (mode === 'exec' && seenSig !== null) {
+        const seen = await treeState(ctx.cwd, runDeadline);
+        if (seen) seenSig = stateSig(seen);
+      }
       const startedMs = Date.now();
-      const childCap = attemptCapMs(opts, startedMs, quotaEnd());
+      const childCap = attemptCapMs(opts, startedMs, episodeEnd());
       const left = Math.max(0, Math.round(childCap / 1000));
       log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${left}s`);
       log(`cross-ai: argv=${JSON.stringify(argv)}`);
-      const childLimit = quotaEnd() ? Math.min(runDeadline, quotaEnd()) : runDeadline;
+      const childLimit = episodeEnd() ? Math.min(runDeadline, episodeEnd()) : runDeadline;
       const r = await runOnce(binPath, argv, input, env, ctx.cwd, name,
         { capMs: childCap, limit: childLimit });
       // Self-test fakes only (FAKE_CALLS): a fake child stalls the post-run git snapshot only
@@ -2770,27 +2772,33 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       lastFailureMs = Date.now();
       if (!firstFailureMs) firstFailureMs = startedMs;
       const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
-      logAttempt(attempts, rungOf(), ladder.cycle, sid, hit || (r.timedOut ? 'timeout' : 'crash'),
+      const rung = rungOf();
+      logAttempt(attempts, rung, ladder.cycle, sid, hit || (r.timedOut ? 'timeout' : 'crash'),
         hit ? evidence.rule : '-', hit ? evidence.pattern : '-', startedMs);
-      if (cls === 'quota') {
-        quotaSeen = true;
-        if (!ladder.firstQuotaMs) ladder.firstQuotaMs = persisted
-          ? persisted.first_seen : Date.now();
-        saveCycle(sid, Date.now());
-      }
-      const wait = (backoff[attempt] ?? backoff[backoff.length - 1]) * 1000;
+      const soft = cls === 'transient' || cls === 'quota';
+      if (soft && !ladder.firstMs) ladder.firstMs = Date.now();
       const sig = r.signal ? ' ' + r.signal : '';
       log(`cross-ai: ${name} failed (exit ${r.code}${sig}, rule=${hit ? evidence.rule : '-' })`);
       ladder.canResume = Boolean(sameSessionArgv(name, rt, model, ctx, sid, mode));
+      // k restarts at 1 with every series, so the reset and the first retry after it both wait
+      // about base_s, and the ordering floor applies within one series only.
+      const k = ladder.retry < retryCfg.max_retries ? ladder.retry + 1 : 1;
+      const prevMs = k === 1 ? 0 : ladder.prevWaitMs;
+      const nominal = softWaitMs(retryCfg, k, Math.random, prevMs);
+      const end = episodeEnd();
       const step = ladderNext(ladder, cls, Date.now(), {
-        ...limits, deadlineMs: runDeadline, waitMs: quotaEnd() ? Math.min(wait, Math.max(0, quotaEnd() - Date.now())) : wait,
-        capMs, cooldownMs: limits.cooldownS * 1000,
+        maxRetries: retryCfg.max_retries, sessionResets: retryCfg.session_resets,
+        deadlineMs: runDeadline, waitMs: nominal, capMs,
       });
+      const wait = end ? Math.min(nominal, Math.max(0, end - Date.now())) : nominal;
       log(`cross-ai: ladder ${name} next=${step.next} why=${step.why}`);
-      if (step.next === 'cooldown') return cycleStop(r, evidence, 'rungs', sid);
+      if (step.next === 'hard') return hardStop(r, evidence, step.why, sid, cls);
       if (step.next === 'stop') {
-        if (quotaSeen && (step.why === 'deadline' || step.why === 'cap' || step.why === 'rungs')) {
-          return cycleStop(r, evidence, step.why, sid);
+        // A no-budget timeout, the first attempt stopped before any retry was admitted, stays
+        // timeout/124 (ladderStop). Any other soft deadline or cap stop is the hard handler's.
+        const noBudget = step.why === 'deadline' && !admitted && r.timedOut && attempt === 0;
+        if (soft && (step.why === 'deadline' || step.why === 'cap') && !noBudget) {
+          return hardStop(r, evidence, step.why, sid, cls);
         }
         const stop = ladderStop(step, Boolean(r.timedOut), admitted, hit || 'crash');
         dropState(stop.status);
@@ -2817,31 +2825,58 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
           };
         }
       }
-      let nextInput = prompt;
-      if (step.next === 'new' && mode === 'exec') {
-        const gate = await rung2Gate(ctx.cwd, beforeSig, prompt);
+      // The first series is spent, so whatever follows continues the task.
+      if (ladder.retry >= retryCfg.max_retries) gated = true;
+      const opensSeries = !continued && (step.next === 'reset' || (step.next === 'new' && !gated));
+      if (opensSeries && mode === 'exec') {
+        const base = step.next === 'reset' ? seriesSig : seenSig;
+        const gate = await rung2Gate(ctx.cwd, base, userPrompt, seenSig);
         if (gate.stop) {
           log(`cross-ai: ladder ${name} stop why=dirty-tree`);
-          const stopped = quotaSeen ? 'quota' : gate.status;
+          const stopped = cls === 'quota' ? 'quota' : gate.status;
           return {
             ok: false, status: stopped, outBytes: r.outBytes, cli_rc: r.code ?? '-',
             ...evidence, ...counts(), stopped: 'dirty-tree',
           };
         }
-        nextInput = gate.input;
+        seriesInput = gate.input;
+        gated = true;
+        seriesSig = seenSig;
       }
-      const waitBound = quotaEnd() ? Math.min(wait, Math.max(0, quotaEnd() - Date.now())) : wait;
-      await sleep(budgetMs(waitBound, runDeadline));
+      // A later series of one call continues the task, so it carries the resume note. The
+      // gate's own text wins when the tree changed.
+      if (gated && (seriesInput === prompt || seriesInput === userPrompt)) {
+        seriesInput = `${RESUME_MSG}\n\n${prompt}`;
+      }
+      const nextInput = seriesInput;
+      log(`cross-ai: wait ms=${wait} next=${step.next} retry=${k}`);
+      await sleep(budgetMs(wait, runDeadline));
       if (aborting) return { ok: false, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...counts() };
       admitted = true;
+      ladder.prevWaitMs = wait;
       if (step.next === 'same') {
-        ladder.same += 1;
-        const retry = sameSessionArgv(name, rt, model, ctx, sid, mode);
+        ladder.retry += 1;
+        rungLabel = 'same';
+        // A fresh series opened over a dirty tree keeps the gate's resume text; every other
+        // same-session retry gets the plain resume note.
+        const resumed = gated ? seriesInput : RESUME_MSG;
+        const retry = sameSessionArgv(name, rt, model, ctx, sid, mode, resumed);
+        argv = retry.argv;
+        input = retry.input;
+      } else if (step.next === 'reset') {
+        ladder.resets += 1;
+        ladder.retry = 0;
+        rungLabel = 'reset';
+        const retry = newSessionArgv(name, rt, model, ctx, mode, nextInput);
         argv = retry.argv;
         input = retry.input;
       } else {
-        ladder.fresh += 1;
-        const retry = newSessionArgv(name, rt, model, ctx, mode, nextInput);
+        ladder.retry += 1;
+        rungLabel = 'new';
+        // A new session with nothing to resume gets the task itself. The resume note is for a
+        // session that already ran, or for a reset continuing one.
+        const fresh = gated ? nextInput : prompt;
+        const retry = newSessionArgv(name, rt, model, ctx, mode, fresh);
         argv = retry.argv;
         input = retry.input;
       }
@@ -2886,14 +2921,19 @@ async function changedPaths(before, mid, cwd) {
 // Rung 2 runs over an unchanged tree with the original prompt, or over a changed tree only
 // when every changed path is one the prompt lists (the resume message goes before it then).
 // A non-git cwd, a git failure or any other change stops the ladder.
-async function rung2Gate(cwd, beforeSig, prompt) {
+async function rung2Gate(cwd, beforeSig, prompt, midSig) {
   const stop = (status) => ({ stop: true, status });
   if (!inGitTree(cwd) || beforeSig === null) return stop('transient');
   const beforeTree = String(beforeSig).split('\t').slice(1).join('\t');
-  const mid = await treeState(cwd, runDeadline);
+  // The caller's snapshot when it has one: re-reading here races the next attempt's edits.
+  const mid = midSig !== undefined ? midSig : await (async () => {
+    const read = await treeState(cwd, runDeadline);
+    return read === null ? null : stateSig(read);
+  })();
   if (mid === null) return stop(gitFailStatus());
-  if (stateSig(mid) === beforeSig) return { stop: false, input: prompt };
-  const changed = await changedPaths(beforeTree, mid.tree, cwd);
+  if (mid === beforeSig) return { stop: false, input: prompt };
+  const midTree = String(mid).split('\t').slice(1).join('\t');
+  const changed = await changedPaths(beforeTree, midTree, cwd);
   const allowed = promptFiles(prompt);
   if (!changed || !changed.length || changed.some((p) => !allowed.has(p))) return stop('transient');
   return { stop: false, input: `${RESUME_MSG}\n\n${prompt}` };
@@ -3031,17 +3071,24 @@ function hermeticEnv(tmp, extra = {}) {
 function writeCopy(tmp, name, override) {
   const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
   // base_s 0 and hard waits of 0 keep every existing case instant. A partial override.retry
-  // merges per key, so a case never falls back to the 1-second default by omission.
-  const { retry: retryOverride, ...rest } = override || {};
+  // merges per key, so a case never falls back to the 1-second default by omission. An
+  // override of a deleted Phase 25 key becomes a retry override (D-04). This comment must not
+  // name the config sentinels: the copy rewrite stops at the first closing sentinel.
+  const { retry: retryOverride, backoffS, cooldownS, ...rest } = override || {};
   const cfg = {
-    attemptTimeoutS: 0, backoffS: [0, 0], capS: 14400, cooldownS: 0, effort: {}, extraArgs: {},
-    heartbeatS: 30, models: {}, newSessionRetries: 3, outerTimeoutS: 1800,
-    prefer: ['pi', 'cursor', 'opencode'], routerBacked: {}, sameSessionRetries: 3,
+    attemptTimeoutS: 0, capS: 14400, effort: {}, extraArgs: {},
+    heartbeatS: 30, models: {}, outerTimeoutS: 1800,
+    prefer: ['pi', 'cursor', 'opencode'], routerBacked: {},
     scrubEnv: [...CONFIG.scrubEnv],
-    retry: { base_s: 0, factor: 1.5, max_retries: 5, session_resets: 1, hard_waits_s: [0, 0, 0] },
     ...rest,
+    retry: { base_s: 0, factor: 1.5, max_retries: 5, session_resets: 1, hard_waits_s: [0, 0, 0] },
   };
-  if (retryOverride) cfg.retry = { ...cfg.retry, ...retryOverride };
+  const translated = {};
+  if (Array.isArray(backoffS)) translated.base_s = backoffS[0] ?? 0;
+  if (cooldownS !== undefined) translated.hard_waits_s = [cooldownS, cooldownS, cooldownS];
+  if (retryOverride || backoffS !== undefined || cooldownS !== undefined) {
+    cfg.retry = { ...cfg.retry, ...translated, ...retryOverride };
+  }
   const block = `// <config>\nconst CONFIG = ${JSON.stringify(cfg, null, 2)};\n// </config>`;
   const out = src.replace(/\/\/ <config>[\s\S]*?\/\/ <\/config>/, block);
   const p = path.join(tmp, `runner-${name}.mjs`);
@@ -3145,13 +3192,19 @@ const FAKE_MODES = {
     let n = 0;
     try { n = Number(fs.readFileSync(ctr, 'utf8')) || 0; } catch { /* first call */ }
     fs.writeFileSync(ctr, String(n + 1));
+    if (n === 6 && stdinBuf.includes('a different task')) log('quota8-new-task');
     if (n < 7) { process.stderr.write('quota exceeded\n'); process.exit(1); }
     fs.writeFileSync('prompt.seen', stdinBuf);
     fs.appendFileSync('a.txt', 'ok-line\n');
     process.stdout.write('# Summary\nok');
   },
   slowquota: () => {
+    const ctr = (process.env.HOME || '') + '/.fake-slowquota-count';
+    let n = 0;
+    try { n = Number(fs.readFileSync(ctr, 'utf8')) || 0; } catch { /* first */ }
+    fs.writeFileSync(ctr, String(n + 1));
     process.stderr.write('429 Too Many Requests\n');
+    if (n < 1) { process.exit(1); return; }
     setInterval(() => {}, 1 << 30);
   },
   capclamp: () => {
@@ -3390,8 +3443,9 @@ process.stdin.on('end', () => {
     let kind = 'other';
     if (stdinBuf.startsWith(head)) {
       kind = stdinBuf.includes('\n\n') ? 'resume-plus' : 'resume';
-    }
-    else if (stdinBuf.length) kind = 'prompt';
+    } else if (stdinBuf.includes(head)) {
+      kind = 'resume-plus';
+    } else if (stdinBuf.length) kind = 'prompt';
     fs.appendFileSync(process.env.FAKE_SIDS, sid + ' ' + kind + '\n');
   }
   const fn = FAKE_MODES[fakeMode];
@@ -4067,21 +4121,21 @@ async function blackBoxSelfTest() {
         },
       },
       {
-        // One cycle of a confirmed router lane: 7 calls, exit 75, cycle 0 persisted.
+        // One cycle of a confirmed router lane: the soft series, exit 75, cycle 0 persisted.
         name: 'router-quota-one-cycle',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8'],
-        config: { routerBacked: { pi: true } },
+        config: { routerBacked: { pi: true }, retry: { max_retries: 2, session_resets: 1 } },
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=quota cli=pi model=fake/quota-until-8 ' +
           'exit=75 .* tree=clean action=stop$'),
         check: (r, ctx) => {
           const n = ctx.calls.filter((l) => l === 'pi quota-until-8').length;
-          if (n !== 7) return `calls=${n}`;
+          if (n !== 6) return `calls=${n}`;
           const tail = statusTail(r.stderr || '');
           if (!tail || tail.retry_after_s !== '0' || tail.cycle !== '0') {
             return `tail=${JSON.stringify(tail)}`;
           }
-          if (tail.attempts !== '7' || tail.cycles !== '0') {
+          if (tail.attempts !== '6' || tail.cycles !== '0') {
             return `counts=${tail.attempts}/${tail.cycles}`;
           }
           const file = caseCycleFile(ctx, 'pi', 'fake/quota-until-8');
@@ -4093,7 +4147,10 @@ async function blackBoxSelfTest() {
         // The second invocation resumes the same session and the fake answers on call 8.
         name: 'router-quota-second-cycle',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8'],
-        config: { routerBacked: { pi: true }, capS: 3600 },
+        config: {
+          routerBacked: { pi: true }, capS: 3600,
+          retry: { max_retries: 2, session_resets: 1 },
+        },
         exit: 75,
         status: /^AIKIT-XAI status=quota .* action=stop$/,
         second: {
@@ -4103,12 +4160,17 @@ async function blackBoxSelfTest() {
         },
         check: (both, ctx) => {
           const runs = (rows) => rows.filter((l) => l === 'pi quota-until-8');
-          if (runs(both.calls1).length !== 7) return `first calls=${runs(both.calls1).length}`;
-          if (runs(both.calls2).length !== 1) return `second calls=${runs(both.calls2).length}`;
+          if (runs(both.calls1).length !== 6) return `first calls=${runs(both.calls1).length}`;
+          // The fake answers on its 8th call, so the re-entry fails once, then retries and answers.
+          if (runs(both.calls2).length !== 2) return `second calls=${runs(both.calls2).length}`;
           const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
           if (rows.length !== 8) return `sids=${rows.length}`;
-          if (rows[7][0] !== rows[6][0]) return 'second cycle did not resume the session';
-          if (rows[7][1] !== 'resume') return `call 8 input ${rows[7][1]}`;
+          if (rows[6][0] !== rows[5][0] || rows[7][0] !== rows[5][0]) {
+            return 'second cycle did not resume the session';
+          }
+          if (rows[6][1] !== 'prompt' || rows[7][1] !== 'resume') {
+            return `inputs ${rows[6][1]},${rows[7][1]}`;
+          }
           const tail = statusTail(both.again.stderr || '');
           if (!tail || tail.attempts !== '8' || tail.cycles !== '1') {
             return `tail=${JSON.stringify(tail)}`;
@@ -4121,7 +4183,10 @@ async function blackBoxSelfTest() {
         // A different prompt never joins the previous task's session.
         name: 'router-quota-second-cycle-new-task',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8', '--no-preamble'],
-        config: { routerBacked: { pi: true }, capS: 3600 },
+        config: {
+          routerBacked: { pi: true }, capS: 3600,
+          retry: { max_retries: 2, session_resets: 1 },
+        },
         exit: 75,
         status: /^AIKIT-XAI status=quota .* action=stop$/,
         second: {
@@ -4131,26 +4196,32 @@ async function blackBoxSelfTest() {
         },
         check: (both, ctx) => {
           const runs2 = both.calls2.filter((l) => l === 'pi quota-until-8');
-          if (runs2.length !== 1) return `second calls=${runs2.length}`;
+          if (runs2.length !== 2) return `second calls=${runs2.length}`;
           const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
           if (rows.length !== 8) return `sids=${rows.length}`;
-          if (rows[7][0] === rows[0][0]) return 'new task resumed the old session';
-          if (rows[7][1] !== 'prompt') return `call 8 input ${rows[7][1]}`;
-          const seen = readOr(path.join(ctx.repo, 'prompt.seen'), '');
-          return seen.includes('a different task') ? null : 'new prompt was not sent';
+          if (rows[6][0] === rows[0][0] || rows[7][0] === rows[0][0]) {
+            return 'new task resumed the old session';
+          }
+          if (rows[6][1] !== 'prompt' || rows[7][1] !== 'resume') {
+            return `inputs ${rows[6][1]},${rows[7][1]}`;
+          }
+          return both.calls2.includes('quota8-new-task') ? null : 'new prompt was not sent';
         },
       },
       {
-        // The only cooldown override: a re-entry inside it spawns nothing.
+        // The hard wait is the re-entry gate: a re-entry inside it spawns nothing.
         name: 'router-quota-early-reentry',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
-        config: { routerBacked: { pi: true }, cooldownS: 600, capS: 3600 },
+        config: {
+          routerBacked: { pi: true }, capS: 3600,
+          retry: { max_retries: 2, session_resets: 1, hard_waits_s: [600, 600, 600] },
+        },
         exit: 75,
         status: /^AIKIT-XAI status=quota .* action=stop$/,
         second: { exit: 75, status: /^AIKIT-XAI status=quota .* action=stop$/ },
         check: (both) => {
           const all = [...both.calls1, ...both.calls2].filter((l) => l === 'pi quota');
-          if (all.length !== 7) return `calls=${all.length}`;
+          if (all.length !== 6) return `calls=${all.length}`;
           const tail = statusTail(both.again.stderr || '');
           if (!tail || tail.retry_after_s !== '600' || tail.cycle !== '0') {
             return `tail=${JSON.stringify(tail)}`;
@@ -4178,7 +4249,7 @@ async function blackBoxSelfTest() {
         check: (r, ctx) => {
           if (!(r.stderr || '').includes('stale-state-fresh-start')) return 'missing stale note';
           const n = ctx.calls.filter((l) => l === 'pi quota').length;
-          if (n !== 7) return `calls=${n}`;
+          if (n !== 12) return `calls=${n}`;
           const tail = statusTail(r.stderr || '');
           return tail && tail.cycle === '0' ? null : `cycle=${tail && tail.cycle}`;
         },
@@ -4206,7 +4277,8 @@ async function blackBoxSelfTest() {
         },
       },
       {
-        // A quota-class deadline stop still starts the cycle accounting.
+        // A quota-class deadline stop still starts the cycle accounting. The first attempt
+        // fails at once so a retry is admitted; the second hangs until the deadline refuses it.
         name: 'quota-deadline-cycle',
         args: ['--prefer', 'pi', '--model-pi', 'fake/slowquota', '--timeout', '4'],
         config: { routerBacked: { pi: true } },
@@ -4246,7 +4318,7 @@ async function blackBoxSelfTest() {
         },
       },
       {
-        // 300 s of cap left, cooldown 600 s: a deadline stop becomes the cap's exit 69.
+        // 300 s of cap left, hard wait 600 s: a deadline stop becomes the cap's exit 69.
         name: 'quota-deadline-near-cap',
         setup: (c) => {
           const file = caseCycleFile(c, 'pi', 'fake/slowquota');
@@ -4258,7 +4330,10 @@ async function blackBoxSelfTest() {
           return null;
         },
         args: ['--prefer', 'pi', '--model-pi', 'fake/slowquota', '--timeout', '4'],
-        config: { routerBacked: { pi: true }, cooldownS: 600 },
+        config: {
+          routerBacked: { pi: true },
+          retry: { hard_waits_s: [600, 600, 600] },
+        },
         exit: 69,
         status: /^AIKIT-XAI status=quota .* exit=69 .* action=stop$/,
         check: (r) => ((r.stderr || '').includes('stopped=cap') ? null : 'missing stopped=cap'),
@@ -4360,7 +4435,7 @@ async function blackBoxSelfTest() {
           return null;
         },
         args: ['--prefer', 'pi', '--model-pi', 'fake/sentinelrouter'],
-        config: { routerBacked: { pi: true } },
+        config: { routerBacked: { pi: true }, retry: { max_retries: 2, session_resets: 1 } },
         exit: 75,
         status: /^AIKIT-XAI status=quota .* action=stop$/,
         check: (r, ctx) => {
@@ -4369,13 +4444,13 @@ async function blackBoxSelfTest() {
           if (logText.includes(key)) return 'sentinel key leaked into the log';
           const attempts = (r.stderr || '').split('\n')
             .filter((l) => l.startsWith('cross-ai: attempt '));
-          if (attempts.length !== 7) return `attempt lines=${attempts.length}`;
+          if (attempts.length !== 6) return `attempt lines=${attempts.length}`;
           const reports = (r.stderr || '').split('\n')
             .filter((l) => l.startsWith('cross-ai: report '));
           if (reports.length !== 1) return `report lines=${reports.length}`;
           if (!reports[0].includes('stopped=rungs')) return `report=${reports[0]}`;
           const runs = ctx.calls.filter((l) => l === 'pi sentinelrouter');
-          return runs.length === 7 ? null : `calls=${runs.length}`;
+          return runs.length === 6 ? null : `calls=${runs.length}`;
         },
       },
       {
@@ -4391,17 +4466,17 @@ async function blackBoxSelfTest() {
         },
       },
       {
-        // A router quota over edits finishes rung 1, then the dirty tree stops rung 2.
+        // A router quota over edits finishes its first series, then the dirty tree stops the reset.
         name: 'dirty-billing-router',
         args: ['--prefer', 'pi', '--model-pi', 'fake/dirtybilling'],
-        config: { routerBacked: { pi: true } },
+        config: { routerBacked: { pi: true }, retry: { max_retries: 2, session_resets: 1 } },
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/dirtybilling exit=75 cli_rc=1 .* tree=dirty action=stop$/,
         check: (r, ctx) => {
           const runs = ctx.calls.filter((l) => l === 'pi dirtybilling');
-          if (runs.length !== 4) return `calls=${runs.length}`;
+          if (runs.length !== 3) return `calls=${runs.length}`;
           const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
-          if (new Set(rows.map((row) => row[0])).size !== 1) return 'rung 1 switched session';
+          if (new Set(rows.map((row) => row[0])).size !== 1) return 'series 1 switched session';
           return (r.stderr || '').includes('stopped=dirty-tree') ? null : 'missing dirty-tree';
         },
       },
@@ -4458,6 +4533,13 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/crash'],
         exit: 1,
         status: /^AIKIT-XAI status=crash cli=pi model=fake\/crash exit=1 cli_rc=7 elapsed=\d+s out=\d+ tree=clean action=stop$/,
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi crash').length;
+          if (n !== 1) return `calls=${n}`;
+          if ((r.stderr || '').includes('cross-ai: wait ')) return 'a crash waited';
+          const report = (r.stderr || '').split('\n').find((l) => l.startsWith('cross-ai: report '));
+          return report && report.includes('status=crash') ? null : `report=${report}`;
+        },
       },
       {
         name: 'nochange',
@@ -4679,7 +4761,7 @@ async function blackBoxSelfTest() {
       {
         name: 'sigterm-backoff',
         args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded', '--timeout', '200'],
-        config: { backoffS: [20] },
+        config: { retry: { base_s: 20 } },
         signal: { when: (c) => readOr(c.calls, '').includes('pi overloaded'), sig: 'SIGTERM', withinMs: 2900 },
         exit: 143,
         status: /^AIKIT-XAI status=signal cli=pi model=fake\/overloaded exit=143 .* tree=clean action=stop$/,
@@ -4976,7 +5058,7 @@ async function blackBoxSelfTest() {
         status: /^AIKIT-XAI status=transient cli=pi model=fake\/overloaded exit=75 .* action=stop$/,
         check: (_r, ctx) => {
           const n = ctx.calls.filter((l) => l === 'pi overloaded').length;
-          return n === 7 ? null : `overloaded calls=${n}`;
+          return n === 12 ? null : `overloaded calls=${n}`;
         },
       },
       {
@@ -5019,7 +5101,7 @@ async function blackBoxSelfTest() {
         },
       },
       {
-        // 3 same-session retries, then 3 new sessions, then stop. Same model every call.
+        // One series of 6, one session reset, a second series of 6. Same model every call.
         name: 'ladder-transient-exhausted',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
         exit: 75,
@@ -5027,56 +5109,56 @@ async function blackBoxSelfTest() {
           'exit=75 .* tree=clean action=stop$'),
         check: (_r, ctx) => {
           const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
-          if (runs.length !== 7) return `calls=${runs.length}`;
+          if (runs.length !== 12) return `calls=${runs.length}`;
           if (runs.some((l) => l !== 'pi event400')) return `model changed: ${runs.join('|')}`;
           const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
-          if (rows.length !== 7) return `sids=${rows.length}`;
+          if (rows.length !== 12) return `sids=${rows.length}`;
           const ids = rows.map((r) => r[0]);
-          if (new Set(ids.slice(0, 4)).size !== 1) return 'rung 1 switched session';
-          const fresh = ids.slice(4);
-          if (new Set(fresh).size !== 3) return `fresh ids=${fresh.join(',')}`;
-          if (fresh.includes(ids[0])) return 'a new session reused the first id';
+          if (new Set(ids.slice(0, 6)).size !== 1) return 'series 1 switched session';
+          if (new Set(ids.slice(6)).size !== 1) return 'series 2 switched session';
+          if (ids[6] === ids[0]) return 'the reset reused the first session id';
           const kinds = rows.map((r) => r[1]);
-          if (kinds[0] !== 'prompt') return `call 1 input ${kinds[0]}`;
-          if (kinds.slice(1, 4).some((k) => k !== 'resume')) {
-            return `rung 1 input ${kinds.join(',')}`;
-          }
-          if (kinds.slice(4).some((k) => k !== 'prompt')) return `rung 2 input ${kinds.join(',')}`;
+          if (kinds[0] !== 'prompt' || kinds[6] !== 'resume-plus') return `inputs ${kinds.join(',')}`;
+          if (kinds.slice(1, 6).some((k) => k !== 'resume')) return `series 1 ${kinds.join(',')}`;
+          if (kinds.slice(7).some((k) => k !== 'resume-plus')) return `series 2 ${kinds.join(',')}`;
           return null;
         },
       },
       {
-        // Every changed path is named by the prompt, so rung 2 continues with the resume message.
+        // Every changed path is named by the prompt, so the reset continues with the resume message.
         name: 'ladder-dirty-inside',
         stdin: '<tasks>\n<task>\n<files>a.txt</files>\n</task>\n</tasks>\n',
         args: ['--prefer', 'pi', '--model-pi', 'fake/dirtyevent400', '--no-preamble'],
+        config: { retry: { max_retries: 1, session_resets: 1 } },
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/dirtyevent400 ' +
           'exit=75 .* tree=dirty action=stop$'),
         check: (r, ctx) => {
           const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
-          if (rows.length !== 7) return `calls=${rows.length}`;
-          const fresh = rows.slice(4).map((r) => r[1]);
-          if (fresh.some((k) => k !== 'resume-plus')) return `rung 2 input ${fresh.join(',')}`;
+          if (rows.length !== 4) return `calls=${rows.length}`;
+          if (rows[0][1] !== 'prompt' || rows[1][1] !== 'resume') return `series 1 ${rows[1][1]}`;
+          const fresh = rows.slice(2).map((row) => row[1]);
+          if (fresh.some((k) => k !== 'resume-plus')) return `reset input ${fresh.join(',')}`;
           return null;
         },
       },
       {
-        // A change the prompt never names stops the ladder after rung 1.
+        // A change the prompt never names stops the ladder at the first fresh session.
         name: 'ladder-dirty-outside',
         stdin: 'prompt\n',
         args: ['--prefer', 'pi', '--model-pi', 'fake/dirtyevent400', '--no-preamble'],
+        config: { retry: { max_retries: 1, session_resets: 1 } },
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/dirtyevent400 ' +
           'exit=75 .* tree=dirty action=stop$'),
         check: (r, ctx) => {
           const n = ctx.calls.filter((l) => l === 'pi dirtyevent400').length;
-          if (n !== 4) return `calls=${n}`;
+          if (n !== 2) return `calls=${n}`;
           return (r.stderr || '').includes('why=dirty-tree') ? null : 'missing dirty-tree line';
         },
       },
       {
-        // Outside a git work tree nothing can account for an edit, so rung 2 never starts.
+        // Outside a git work tree nothing can account for an edit, so no fresh session starts.
         name: 'ladder-non-git',
         setup: (c) => {
           fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true });
@@ -5084,106 +5166,265 @@ async function blackBoxSelfTest() {
           return null;
         },
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 1, session_resets: 1 } },
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
           'exit=75 .* tree=unknown action=stop$'),
         check: (r, ctx) => {
           const n = ctx.calls.filter((l) => l === 'pi event400').length;
-          if (n !== 4) return `calls=${n}`;
+          if (n !== 2) return `calls=${n}`;
           return (r.stderr || '').includes('why=dirty-tree') ? null : 'missing dirty-tree line';
         },
       },
       {
-        // Cursor never prints a session id, so rung 1 is skipped: one call plus three new ones.
+        // Cursor never prints a session id, so every soft retry is a new session and the
+        // reset count does nothing (D-10). Rewritten with its edge cases in Task 3.
         name: 'ladder-no-session-cursor',
         args: ['--prefer', 'cursor', '--model-cursor', 'fake-event400-cursor'],
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=transient cli=cursor ' +
           'model=fake-event400-cursor exit=75 .* action=stop$'),
-        check: (_r, ctx) => {
+        check: (r, ctx) => {
           const n = ctx.calls.filter((l) => l === 'cursor-agent fake-event400-cursor').length;
-          return n === 4 ? null : `cursor calls=${n}`;
+          if (n !== 6) return `cursor calls=${n}`;
+          if ((r.stderr || '').includes('next=reset')) return 'a no-resume CLI was offered a reset';
+          const news = (r.stderr || '').split('\n').filter((l) => l.startsWith('cross-ai: wait ') && l.includes('next=new'));
+          return news.length === 5 ? null : `new-session waits=${news.length}`;
+        },
+      },
+      {
+        // No same-session retry: the first failure goes straight to the reset.
+        name: 'soft-ladder-zero-retries',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { max_retries: 0 } },
+        exit: 75,
+        status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 .* action=stop$/,
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi event400').length;
+          if (n !== 2) return `calls=${n}`;
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length !== 2) return `sids=${rows.length}`;
+          if (rows[0][0] === rows[1][0]) return 'the reset reused the first session';
+          if (rows[1][1] !== 'resume-plus') return `reset input ${rows[1][1]}`;
+          return null;
+        },
+      },
+      {
+        // No session reset: one series, then the hard step.
+        name: 'soft-ladder-zero-resets',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { session_resets: 0 } },
+        exit: 75,
+        status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 .* action=stop$/,
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi event400').length;
+          if (n !== 6) return `calls=${n}`;
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (new Set(rows.map((row) => row[0])).size !== 1) return 'series switched session';
+          return null;
+        },
+      },
+      {
+        // The 7th call is the reset, a new session with the task, never a 7th resume.
+        name: 'soft-ladder-adjacency',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        exit: 75,
+        status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 .* action=stop$/,
+        check: (_r, ctx) => {
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length < 7) return `calls=${rows.length}`;
+          const first = rows[0][0];
+          if (rows.slice(0, 6).some((row) => row[0] !== first)) return 'series 1 switched session';
+          if (rows[6][0] === first) return 'the 7th call resumed the first session';
+          if (rows[6][1] !== 'resume-plus') return `7th input ${rows[6][1]}`;
+          return null;
         },
       },
       {
         // Codex review has no read-only resume, so every retry is a fresh review run.
         name: 'ladder-codex-review-fresh',
         args: ['--mode', 'review', '--prefer', 'codex', '--model-codex', 'fake-event400-codex'],
-        config: { prefer: ['codex'] },
+        config: { prefer: ['codex'], retry: { max_retries: 2, session_resets: 1 } },
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=transient cli=codex ' +
           'model=fake-event400-codex exit=75 .* action=stop$'),
         check: (_r, ctx) => {
           const n = ctx.calls.filter((l) => l === 'codex fake-event400-codex').length;
-          if (n !== 4) return `codex calls=${n}`;
+          if (n !== 3) return `codex calls=${n}`;
           if (ctx.calls.some((l) => l.startsWith('codex-resume'))) return 'review resumed';
           return null;
         },
       },
       {
-        // Codex exec captures thread.started, so calls 2-4 resume that session.
+        // Codex exec captures thread.started: one series resumes it, the reset starts another.
         name: 'ladder-codex-exec-resume',
         args: ['--prefer', 'codex', '--model-codex', 'fake-event400-codex'],
-        config: { prefer: ['codex'] },
+        config: { prefer: ['codex'], retry: { max_retries: 2, session_resets: 1 } },
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=transient cli=codex ' +
           'model=fake-event400-codex exit=75 .* action=stop$'),
         check: (_r, ctx) => {
           const n = ctx.calls.filter((l) => l === 'codex fake-event400-codex').length;
-          if (n !== 7) return `codex calls=${n}`;
+          if (n !== 6) return `codex calls=${n}`;
           const resumed = ctx.calls.filter((l) => l === 'codex-resume fake-event400-codex');
-          return resumed.length === 3 ? null : `resumes=${resumed.length}`;
+          return resumed.length === 4 ? null : `resumes=${resumed.length}`;
         },
       },
       {
-        // Review mode resumes pi with its read-only flags, then starts new sessions.
+        // Review mode resumes pi with its read-only flags, then the reset starts a new session.
         name: 'ladder-review-resume',
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-event400'],
+        config: { retry: { max_retries: 2, session_resets: 1 } },
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=transient cli=pi ' +
           'model=fake/review-event400 exit=75 .* action=stop$'),
         check: (_r, ctx) => {
           const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
-          if (rows.length !== 7) return `calls=${rows.length}`;
+          if (rows.length !== 6) return `calls=${rows.length}`;
           const ids = rows.map((r) => r[0]);
-          if (new Set(ids.slice(0, 4)).size !== 1) return 'rung 1 switched session';
-          if (new Set(ids.slice(4)).size !== 3) return 'rung 2 did not start new sessions';
+          if (new Set(ids.slice(0, 3)).size !== 1) return 'series 1 switched session';
+          if (new Set(ids.slice(3)).size !== 1) return 'series 2 switched session';
+          if (ids[3] === ids[0]) return 'the reset reused the first session id';
           return null;
         },
       },
       {
-        // Seven transient failures with a resumable session: three same, three new, then stop.
+        // Defaults with a resumable session: same x5, one reset, same x5, then the hard step,
+        // for both soft classes.
         name: 'pure-ladder-sequence',
         pure: () => {
-          const lim = { same: 3, fresh: 3, deadlineMs: 1000000, waitMs: 0 };
-          const st = { same: 0, fresh: 0, canResume: true };
-          const got = [];
-          for (let i = 0; i < 7; i++) {
-            const step = ladderNext(st, 'transient', 0, lim);
-            got.push(`${step.next}/${step.why}`);
-            if (step.next === 'same') st.same += 1;
-            else if (step.next === 'new') st.fresh += 1;
-          }
+          const lim = {
+            maxRetries: 5, sessionResets: 1, deadlineMs: 100000000, waitMs: 0, capMs: 14400000,
+          };
           const want = [
-            'same/same-session', 'same/same-session', 'same/same-session',
-            'new/new-session', 'new/new-session', 'new/new-session', 'stop/rungs',
+            ...Array(5).fill('same/soft-retry'), 'reset/session-reset',
+            ...Array(5).fill('same/soft-retry'), 'hard/soft-spent',
           ];
-          return JSON.stringify(got) === JSON.stringify(want) ? null : `steps=${got.join(',')}`;
+          for (const cls of ['transient', 'quota']) {
+            const st = { retry: 0, resets: 0, canResume: true, firstMs: 0, cycle: 0 };
+            const got = [];
+            for (let i = 0; i < 12; i++) {
+              const step = ladderNext(st, cls, 0, lim);
+              got.push(`${step.next}/${step.why}`);
+              if (step.next === 'same') st.retry += 1;
+              else if (step.next === 'reset') { st.resets += 1; st.retry = 0; }
+            }
+            if (JSON.stringify(got) !== JSON.stringify(want)) return `${cls}: ${got.join(',')}`;
+          }
+          return null;
         },
       },
       {
-        // No session to continue: straight to the three new sessions, then stop.
+        // The shared episode cap and the deadline admission apply to both soft classes.
+        name: 'pure-ladder-cap-both-classes',
+        pure: () => {
+          const first = 1000000;
+          const capMs = 14400000;
+          for (const cls of ['transient', 'quota']) {
+            const st = { retry: 0, resets: 0, canResume: true, firstMs: first, cycle: 0 };
+            const capped = ladderNext(st, cls, first + capMs - 59999, {
+              maxRetries: 5, sessionResets: 1, deadlineMs: first + capMs + 1000000,
+              waitMs: 0, capMs,
+            });
+            if (capped.next !== 'stop' || capped.why !== 'cap') {
+              return `${cls} cap=${capped.next}/${capped.why}`;
+            }
+            const inside = ladderNext(st, cls, first + capMs - 60000, {
+              maxRetries: 5, sessionResets: 1, deadlineMs: first + capMs + 1000000,
+              waitMs: 0, capMs,
+            });
+            if (inside.next !== 'same') return `${cls} inside cap=${inside.next}/${inside.why}`;
+            const now = 5000000;
+            const late = ladderNext(st, cls, now, {
+              maxRetries: 5, sessionResets: 1, deadlineMs: now + 59999, waitMs: 0, capMs,
+            });
+            if (late.next !== 'stop' || late.why !== 'deadline') {
+              return `${cls} deadline=${late.next}/${late.why}`;
+            }
+          }
+          return null;
+        },
+      },
+      {
+        // The resolved soft series, logged: 5 same, the reset, 5 same, each within +-10% + 1 ms
+        // and never under 0.9 x the previous wait of its series.
+        name: 'soft-ladder-waits',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { base_s: 0.02 } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* action=stop$'),
+        check: (r) => {
+          const waits = (r.stderr || '').split('\n')
+            .map((l) => l.match(/^cross-ai: wait ms=(\d+(?:\.\d+)?) next=(\S+) retry=(\d+)$/))
+            .filter(Boolean);
+          if (waits.length !== 11) return `wait lines=${waits.length}`;
+          const nominal = [20, 30, 45, 67.5, 101.25];
+          const want = [
+            ...nominal.map((ms, i) => ['same', i + 1, ms]),
+            ['reset', 1, 20],
+            ...nominal.map((ms, i) => ['same', i + 1, ms]),
+          ];
+          let prev = 0;
+          for (let i = 0; i < want.length; i++) {
+            const [, step, k, ms] = [null, ...want[i]];
+            const got = Number(waits[i][1]);
+            if (waits[i][2] !== step || Number(waits[i][3]) !== k) {
+              return `line ${i}: next=${waits[i][2]} retry=${waits[i][3]}`;
+            }
+            if (Math.abs(got - ms) > ms * 0.1 + 1) return `line ${i}: ${got} ms, want ${ms}`;
+            if (k > 1 && got < 0.9 * prev) return `line ${i}: ${got} < 0.9 x ${prev}`;
+            prev = k === 1 ? 0 : got;
+          }
+          return null;
+        },
+      },
+      {
+        // The ladder reads the values resolveRetry resolved: 1 retry, no reset, 2 calls.
+        name: 'retry-config-drives-ladder',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        planningConfig: { workflow: { cross_ai_retry: { max_retries: 1, session_resets: 0 } } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* action=stop$'),
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi event400').length;
+          return n === 2 ? null : `calls=${n}`;
+        },
+      },
+      {
+        // A transient episode near the cap gets one attempt and the cap stop, no soft series.
+        name: 'soft-ladder-transient-cap',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { capS: 2, retry: { base_s: 0.5 } },
+        exit: 69,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=69 .* action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi event400').length;
+          if (n !== 1) return `calls=${n}`;
+          const err = r.stderr || '';
+          if (!err.includes('stopped=cap')) return 'missing stopped=cap';
+          const report = err.split('\n').find((l) => l.startsWith('cross-ai: report '));
+          if (!report || !report.includes('status=transient')) return `report=${report}`;
+          return null;
+        },
+      },
+      {
+        // No session to continue: every soft retry is a new session, and no reset is offered.
         name: 'pure-ladder-no-resume',
         pure: () => {
-          const lim = { same: 3, fresh: 3, deadlineMs: 1000000, waitMs: 0 };
-          const st = { same: 0, fresh: 0, canResume: false };
+          const lim = {
+            maxRetries: 5, sessionResets: 1, deadlineMs: 100000000, waitMs: 0, capMs: 14400000,
+          };
+          const st = { retry: 0, resets: 0, canResume: false, firstMs: 0, cycle: 0 };
           const got = [];
-          for (let i = 0; i < 4; i++) {
+          for (let i = 0; i < 6; i++) {
             const step = ladderNext(st, 'transient', 0, lim);
             got.push(`${step.next}/${step.why}`);
-            if (step.next === 'new') st.fresh += 1;
+            if (step.next === 'new') st.retry += 1;
           }
-          const want = ['new/new-session', 'new/new-session', 'new/new-session', 'stop/rungs'];
+          const want = [...Array(5).fill('new/soft-retry'), 'hard/soft-spent'];
           return JSON.stringify(got) === JSON.stringify(want) ? null : `steps=${got.join(',')}`;
         },
       },
@@ -5192,18 +5433,15 @@ async function blackBoxSelfTest() {
         // inside it at +60000 (waitMs 0).
         name: 'pure-ladder-deadline',
         pure: () => {
-          const st = { same: 0, fresh: 0, canResume: true };
+          const st = { retry: 0, resets: 0, canResume: true, firstMs: 0, cycle: 0 };
           const now = 1000000;
-          const early = ladderNext(st, 'transient', now, {
-            same: 3, fresh: 3, deadlineMs: now + 59999, waitMs: 0,
-          });
-          const on = ladderNext(st, 'transient', now, {
-            same: 3, fresh: 3, deadlineMs: now + 60000, waitMs: 0,
-          });
+          const lim = { maxRetries: 5, sessionResets: 1, waitMs: 0, capMs: 14400000 };
+          const early = ladderNext(st, 'transient', now, { ...lim, deadlineMs: now + 59999 });
+          const on = ladderNext(st, 'transient', now, { ...lim, deadlineMs: now + 60000 });
           if (early.next !== 'stop' || early.why !== 'deadline') {
             return `early=${early.next}/${early.why}`;
           }
-          if (on.next !== 'same' || on.why !== 'same-session') {
+          if (on.next !== 'same' || on.why !== 'soft-retry') {
             return `boundary=${on.next}/${on.why}`;
           }
           return null;
@@ -5212,8 +5450,8 @@ async function blackBoxSelfTest() {
       {
         name: 'pure-ladder-clamps',
         pure: () => {
-          if (clampCount(9) !== 3) return `9 -> ${clampCount(9)}`;
-          if (clampCount(-1) !== 0) return `-1 -> ${clampCount(-1)}`;
+          if (clampCapS(99999) !== 14400) return `99999 -> ${clampCapS(99999)}`;
+          if (clampCapS(-1) !== 0) return `-1 -> ${clampCapS(-1)}`;
           if (clampAttemptTimeout(0) !== 0) return `0 -> ${clampAttemptTimeout(0)}`;
           if (clampAttemptTimeout(5) !== 10) return `5 -> ${clampAttemptTimeout(5)}`;
           if (clampAttemptTimeout(1801) !== 1800) return `1801 -> ${clampAttemptTimeout(1801)}`;
@@ -5221,77 +5459,66 @@ async function blackBoxSelfTest() {
         },
       },
       {
-        // A timeout class walks the same rungs; a rungs stop ends transient, a pre-rung
+        // A timeout class walks the soft series; a spent series ends transient, a pre-series
         // deadline stop stays a timeout.
         name: 'pure-ladder-timeout',
         pure: () => {
-          const lim = { same: 3, fresh: 3, deadlineMs: 1000000, waitMs: 0 };
-          const st = { same: 0, fresh: 0, canResume: true };
+          const lim = {
+            maxRetries: 5, sessionResets: 1, deadlineMs: 100000000, waitMs: 0, capMs: 14400000,
+          };
+          const st = { retry: 0, resets: 0, canResume: true, firstMs: 0, cycle: 0 };
           const first = ladderNext(st, 'transient', 0, lim);
           if (first.next !== 'same') return `timeout class did not walk: ${first.next}`;
-          const rungs = ladderStop({ why: 'rungs' }, true, true, 'crash');
-          if (rungs.status !== 'transient' || rungs.timedOut) return `rungs stop ${rungs.status}`;
+          const spent = ladderStop({ why: 'soft-spent' }, true, true, 'crash');
+          if (spent.status !== 'transient' || spent.timedOut) return `spent stop ${spent.status}`;
           const early = ladderStop({ why: 'deadline' }, true, false, 'crash');
           if (early.status !== 'timeout' || !early.timedOut) return `deadline stop ${early.status}`;
           return null;
         },
       },
       {
-        // A router quota walks the same rungs, then asks the caller for a cooldown.
+        // A router quota walks the same soft series and ends on the hard step, never a cooldown.
         name: 'pure-ladder-quota-cycle',
         pure: () => {
           const lim = {
-            same: 3, fresh: 3, deadlineMs: 100000000, waitMs: 0,
-            capMs: 14400000, cooldownMs: 600000,
+            maxRetries: 5, sessionResets: 1, deadlineMs: 100000000, waitMs: 0, capMs: 14400000,
           };
-          const st = { same: 0, fresh: 0, canResume: true, firstQuotaMs: 0, cycle: 0 };
+          const st = { retry: 0, resets: 0, canResume: true, firstMs: 0, cycle: 0 };
           const got = [];
-          for (let i = 0; i < 7; i++) {
+          for (let i = 0; i < 12; i++) {
             const step = ladderNext(st, 'quota', 0, lim);
             got.push(`${step.next}/${step.why}`);
-            if (step.next === 'same') st.same += 1;
-            else if (step.next === 'new') st.fresh += 1;
+            if (step.next === 'same') st.retry += 1;
+            else if (step.next === 'reset') { st.resets += 1; st.retry = 0; }
           }
           const want = [
-            'same/same-session', 'same/same-session', 'same/same-session',
-            'new/new-session', 'new/new-session', 'new/new-session', 'cooldown/cooldown',
+            ...Array(5).fill('same/soft-retry'), 'reset/session-reset',
+            ...Array(5).fill('same/soft-retry'), 'hard/soft-spent',
           ];
           return JSON.stringify(got) === JSON.stringify(want) ? null : `steps=${got.join(',')}`;
         },
       },
       {
-        // Exactly at the cap is inside; one cooldown later is past it.
+        // Exactly 60 s of cap headroom is inside; one millisecond less is past it.
         name: 'pure-ladder-cap-boundary',
         pure: () => {
-          const st = { same: 3, fresh: 3, canResume: true, firstQuotaMs: 0, cycle: 0 };
-          const lim = { same: 3, fresh: 3, capMs: 14400000, cooldownMs: 600000 };
-          const inside = ladderNext(st, 'quota', 13800000, { ...lim, deadlineMs: 100000000 });
-          if (inside.next !== 'cooldown') return `inside=${inside.next}/${inside.why}`;
-          const past = ladderNext(st, 'quota', 13860000, { ...lim, deadlineMs: 100000000 });
+          const first = 1000000;
+          const capMs = 14400000;
+          const st = { retry: 0, resets: 0, canResume: true, firstMs: first, cycle: 0 };
+          const lim = { maxRetries: 5, sessionResets: 1, capMs, deadlineMs: 100000000, waitMs: 0 };
+          const inside = ladderNext(st, 'quota', first + capMs - 60000, lim);
+          if (inside.next !== 'same') return `inside=${inside.next}/${inside.why}`;
+          const past = ladderNext(st, 'quota', first + capMs - 59999, lim);
           return past.next === 'stop' && past.why === 'cap'
             ? null : `past=${past.next}/${past.why}`;
         },
       },
       {
-        // The cycle fits the cap, but under 60 s of deadline work remains.
-        name: 'pure-ladder-cooldown-deadline',
-        pure: () => {
-          const st = { same: 3, fresh: 3, canResume: true, firstQuotaMs: 0, cycle: 0 };
-          const now = 13800000;
-          const step = ladderNext(st, 'quota', now, {
-            same: 3, fresh: 3, capMs: 14400000, cooldownMs: 600000,
-            deadlineMs: now + 30000, waitMs: 0,
-          });
-          return step.next === 'stop' && step.why === 'deadline'
-            ? null : `got=${step.next}/${step.why}`;
-        },
-      },
-      {
+        // The cap never exceeds 14400 s and a negative one is 0.
         name: 'pure-ladder-cap-clamp',
         pure: () => {
-          const got = ladderLimits({ capS: 99999, cooldownS: -5 });
-          if (got.capS !== 14400) return `capS=${got.capS}`;
-          return got.cooldownS === 0 ? null : `cooldownS=${got.cooldownS}`;
+          if (clampCapS(99999) !== 14400) return `capS=${clampCapS(99999)}`;
+          return clampCapS(-5) === 0 ? null : `capS=${clampCapS(-5)}`;
         },
       },
       {
@@ -5299,8 +5526,8 @@ async function blackBoxSelfTest() {
         name: 'pure-ladder-plain-quota',
         pure: () => {
           const step = ladderNext(
-            { same: 0, fresh: 0, canResume: true, firstQuotaMs: 0, cycle: 0 }, 'stop', 0,
-            { same: 3, fresh: 3, deadlineMs: 100000000, capMs: 14400000, cooldownMs: 0 },
+            { retry: 0, resets: 0, canResume: true, firstMs: 0, cycle: 0 }, 'stop', 0,
+            { maxRetries: 5, sessionResets: 1, deadlineMs: 100000000, capMs: 14400000, waitMs: 0 },
           );
           return step.next === 'stop' && step.why === 'class'
             ? null : `got=${step.next}/${step.why}`;
@@ -5310,10 +5537,10 @@ async function blackBoxSelfTest() {
         name: 'pure-ladder-inferred-no-cycle',
         pure: () => {
           const step = ladderNext(
-            { same: 0, fresh: 0, canResume: true, firstQuotaMs: 0, cycle: 0 }, 'stop', 0,
-            { same: 3, fresh: 3, deadlineMs: 100000000, capMs: 14400000, cooldownMs: 600000 },
+            { retry: 0, resets: 0, canResume: true, firstMs: 0, cycle: 0 }, 'stop', 0,
+            { maxRetries: 5, sessionResets: 1, deadlineMs: 100000000, capMs: 14400000, waitMs: 0 },
           );
-          return step.next === 'cooldown' ? 'inferred route cycled' : null;
+          return step.next === 'hard' ? 'inferred route reached the hard step' : null;
         },
       },
       {

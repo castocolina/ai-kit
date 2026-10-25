@@ -890,14 +890,14 @@ Source: owner request 2026-10-24 (after the Phase 25 plan reviews); evidence in
   8. *(Added 2026-10-24, owner.)* The GitHub Copilot CLI is a runtime (`copilot -p … -s
      --no-ask-user --model …`, prompt on argv with stdin not inherited, token passed through and
      never logged), every row unverified until a real capture.
-**Plans:** 1/15 plans executed
+**Plans:** 2/15 plans executed
 
 Plans:
 **Wave 1**
 - [x] 25.1-01-PLAN.md
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 25.1-02-PLAN.md
+- [x] 25.1-02-PLAN.md
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 25.1-03-PLAN.md

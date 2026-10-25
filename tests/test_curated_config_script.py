@@ -76,7 +76,7 @@ class TestRender(unittest.TestCase):
         self.assertEqual(cfg["outerTimeoutS"], 1800)
         self.assertEqual(cfg["routerBacked"], {"pi": True})
         self.assertEqual(cfg["scrubEnv"], sorted(HOST_SIGNAL_ENV_VARS))
-        self.assertIn("backoffS", cfg)
+        self.assertIn("retry", cfg)
         self.assertEqual(cfg["effort"], {})
         art["config"]["effort"] = {"pi": "medium"}
         cfg = cross_ai_script.runner_config(self.template, art, HOST_SIGNAL_ENV_VARS)

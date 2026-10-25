@@ -11831,14 +11831,11 @@ class TestCrossAiTemplateText(unittest.TestCase):
         cfg = json.loads(cfg_text)
         expected = {
             "attemptTimeoutS": 0,
-            "backoffS": [30, 60],
             "capS": 14400,
-            "cooldownS": 600,
             "effort": {},
             "extraArgs": {},
             "heartbeatS": 30,
             "models": {},
-            "newSessionRetries": 3,
             "outerTimeoutS": 1800,
             "prefer": ["pi", "cursor", "opencode"],
             "retry": {
@@ -11849,7 +11846,6 @@ class TestCrossAiTemplateText(unittest.TestCase):
                 "session_resets": 1,
             },
             "routerBacked": {},
-            "sameSessionRetries": 3,
             "scrubEnv": self._SCRUB_DEFAULT,
         }
         self.assertEqual(cfg, expected)
