@@ -798,5 +798,30 @@ class TestReadTarget(unittest.TestCase):
             self.assertIsInstance(ctx.exception, ValueError)
 
 
+class TestDogfoodCopy(unittest.TestCase):
+    """The project's own runner copy stays a pristine render of the shipped template body."""
+
+    def test_dogfood_copy_matches_template_body(self):
+        path = os.path.join(REPO_ROOT, ".planning", "scripts", "cross-ai.mjs")
+        if not os.path.exists(path):
+            self.skipTest("no dogfood copy")
+        with open(path, "rb") as f:
+            copy = f.read()
+        template = _load_template()
+        self.assertEqual(cross_ai_script.template_version(copy),
+                         cross_ai_script.template_version(template))
+        self.assertEqual(cross_ai_script.script_state(copy), "pristine")
+
+        def outside(data: bytes) -> bytes:
+            parts = cross_ai_script.split_header(data)
+            assert parts is not None
+            shebang, _header, body = parts
+            start, end = body.find(b"// <config>"), body.find(b"// </config>")
+            self.assertTrue(0 <= start < end)
+            return shebang + body[:start] + body[end:]
+
+        self.assertEqual(outside(copy), outside(template))
+
+
 if __name__ == "__main__":
     unittest.main()
