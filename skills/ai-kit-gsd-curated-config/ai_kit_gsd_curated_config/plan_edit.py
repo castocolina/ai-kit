@@ -205,6 +205,17 @@ def _plan_set_script(call: EditCall, key: str, raw: str) -> tuple[dict, list[str
     return _plan_set_script_model(call, runner_id, raw)
 
 
+def _confirmed_router(row) -> bool:
+    """True only for a user-confirmed router lane (D-05).
+
+    An inferred `is_router` and a confirmed false both stay false, so a rendered copy never
+    treats a guess as an authoritative route."""
+    if not isinstance(row, dict) or not isinstance(row.get("fallback_quota"), bool):
+        return False
+    confirmed = row.get("heuristic_confirmed")
+    return isinstance(confirmed, list) and "fallback_quota" in confirmed and row["fallback_quota"]
+
+
 def _plan_set_script_model(
     call: EditCall, runner_id: str, raw: str,
 ) -> tuple[dict, list[str]]:
@@ -225,7 +236,7 @@ def _plan_set_script_model(
             f"{model!r} is not listed for {runner_id} in the inventory; "
             "pass --force to pin it anyway"
         )
-    router = bool(row.get("is_router")) if row else False
+    router = _confirmed_router(row)
     models = config.setdefault("models", {})
     router_map = config.setdefault("router_backed", {})
     models[runner_id] = model

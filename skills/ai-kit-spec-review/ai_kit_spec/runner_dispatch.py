@@ -20,9 +20,12 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
+from ai_kit_spec.cache import cache_read_json
 from ai_kit_spec.commands import SUPPORTED_EXECUTE_CLIS
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 from ai_kit_spec.error_classifier import classify_error, reason_for_status
+from ai_kit_spec.model_catalog import cache_catalog_path, split_catalog_meta
+from ai_kit_spec.routing import strip_model_suffix
 from ai_kit_spec.tooling_guidance import resolve_cross_ai_template_path
 
 # Project-local paths a GSD hook names, relative to the project root (D-26, D-30).
@@ -75,6 +78,7 @@ class RunnerSpec(NamedTuple):
     service_tier: str | None = None
     cursor_mode: str | None = None
     codex_sandbox: str | None = None  # the sandbox mode; None is workspace-write
+    route: str | None = None  # a confirmed catalog route; None defers to the runner
 
 
 def review_spec(runtime: str, model: str, extra: dict | None, timeout_s: int,
@@ -187,14 +191,51 @@ def runner_flags(spec: RunnerSpec) -> list[str]:
     return flags
 
 
+def _confirmed_quota(entry, runtime: str, model: str) -> bool | None:
+    """The entry's confirmed boolean for this runtime and model, else None."""
+    if not isinstance(entry, dict):
+        return None
+    runtimes = entry.get("runtimes")
+    if not isinstance(runtimes, dict):
+        return None
+    row = runtimes.get(runtime)
+    if not isinstance(row, dict) or row.get("model_id") != model:
+        return None
+    confirmed = entry.get("heuristic_confirmed")
+    quota = entry.get("fallback_quota")
+    if not isinstance(confirmed, list) or "fallback_quota" not in confirmed:
+        return None
+    return quota if isinstance(quota, bool) else None
+
+
+def resolve_route(runtime: str, model: str, env: dict) -> str | None:
+    """The catalog's user-confirmed route for this runtime and model (D-05).
+
+    `"router"` or `"unknown"` only when `fallback_quota` is a boolean the user confirmed
+    for the normalized model. A missing, unreadable or malformed catalog, and every entry
+    that is not that shape, yields None: the runner's own heuristic then decides and labels
+    the result. Never raises, never writes."""
+    raw = cache_read_json(cache_catalog_path(env))
+    entries, _meta = split_catalog_meta(raw)
+    bare = strip_model_suffix(runtime, model)
+    for entry in entries.values():
+        quota = _confirmed_quota(entry, runtime, bare)
+        if quota is not None:
+            return "router" if quota else "unknown"
+    return None
+
+
 def build_runner_argv(spec: RunnerSpec, runner_path: str, node: str) -> list[str]:
     """`node`, the template, the flags, and the two timeouts. Never a shell string."""
     timeout = str(spec.timeout_s)
     outer = str(spec.timeout_s + RUNNER_OUTER_MARGIN_S)
-    return [
+    argv = [
         node, runner_path, *runner_flags(spec),
         "--timeout", timeout, "--outer-timeout", outer, "--no-preamble",
     ]
+    if spec.route in ("router", "unknown"):
+        argv += [f"--route-{spec.runtime}", spec.route]
+    return argv
 
 
 def parse_status_line(line: str) -> dict | None:
@@ -215,6 +256,7 @@ class RunnerSeams(NamedTuple):
     print_fn: Callable[[str], None] = _default_print
     runner_path_fn: Callable[[], str | None] = resolve_cross_ai_template_path
     env_fn: Callable[[], dict] = lambda: dict(os.environ)
+    route_fn: Callable[[str, str, dict], str | None] = resolve_route
 
 
 def _start_stderr_relay(stream, seams: RunnerSeams) -> tuple[threading.Thread, _RelayState]:
@@ -530,6 +572,8 @@ def run_runner(spec: RunnerSpec, prompt: str, seams: RunnerSeams | None = None) 
             f"ai-kit-spec: model id {spec.model} is not a valid {spec.runtime} model id"
         )
         return RunnerResult(None, "", None, "configuration", False, [], "")
+    if spec.route is None:
+        spec = spec._replace(route=active.route_fn(spec.runtime, spec.model, active.env_fn()))
     argv = build_runner_argv(spec, runner_path, node)
     pgid_dir = tempfile.mkdtemp(prefix="aikit-pgid-")
     os.chmod(pgid_dir, 0o700)

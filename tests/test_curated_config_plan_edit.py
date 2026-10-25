@@ -1509,5 +1509,50 @@ class TestPlanSetExtra(unittest.TestCase):
             self.assertIn(vault, entry["value"])
 
 
+class TestScriptRouterBacked(unittest.TestCase):
+    """router_backed follows a confirmed fallback_quota, never an inferred router."""
+
+    def _call(self, row):
+        plan = {
+            "host": "claude",
+            "rigor": "standard",
+            "entries": [],
+            "artifacts": [{
+                "config": {"prefer": ["pi"], "models": {}, "router_backed": {}},
+                "choices": {},
+            }],
+        }
+        return plan_edit.EditCall(
+            plan=plan,
+            inv={"installed_runtimes": ["pi"], "candidates": [row]},
+            force=False,
+            encode=lambda _key, _value: "",
+        )
+
+    def _row(self, quota, confirmed, router=True):
+        row = cand("router-env/x", runtime="pi", is_host=False, is_router=router)
+        if quota is not None:
+            row["fallback_quota"] = quota
+        if confirmed:
+            row["heuristic_confirmed"] = ["fallback_quota"]
+        return row
+
+    def _backed(self, row):
+        edited, notes = plan_edit._plan_set_script_model(
+            self._call(row), "pi", "router-env/x",
+        )
+        self.assertEqual(notes, [])
+        return edited["artifacts"][0]["config"]["router_backed"]["pi"]
+
+    def test_inferred_router_writes_false(self):
+        self.assertIs(self._backed(self._row(None, False)), False)
+
+    def test_confirmed_false_writes_false(self):
+        self.assertIs(self._backed(self._row(False, True)), False)
+
+    def test_confirmed_true_writes_true(self):
+        self.assertIs(self._backed(self._row(True, True, router=False)), True)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -715,6 +715,75 @@ class TestGsdHookE2E(unittest.TestCase):
             self.assertEqual(pids_with_cwd_under(tmp), [])
 
 
+def _route_catalog(cache_home: str) -> None:
+    """A synthetic catalog: one confirmed router model, under a scratch cache home."""
+    directory = os.path.join(cache_home, "ai-kit", "spec")
+    os.makedirs(directory)
+    raw = {
+        "_meta": {"schema_version": 3},
+        "vendor/fake": {
+            "provider": "vendor",
+            "runtimes": {"opencode": {"model_id": "fake/quota"}},
+            "source": {},
+            "confidence": "high",
+            "last_verified": "2026-01-01",
+            "fallback_quota": True,
+            "heuristic_confirmed": ["fallback_quota"],
+        },
+    }
+    with open(os.path.join(directory, "model-catalog.json"), "w", encoding="utf-8") as handle:
+        json.dump(raw, handle)
+
+
+class TestRouteFlagE2E(unittest.TestCase):
+    """A confirmed catalog route reaches the real runner; no catalog leaves the heuristic."""
+
+    def setUp(self):
+        if _real_node_executable() is None:
+            self.skipTest("node not on PATH: route flag e2e skipped")
+        if shutil.which("git") is None:
+            self.skipTest("git not on PATH: route flag e2e skipped")
+
+    def _run(self, tmp, env):
+        repo = os.path.join(tmp, "repo")
+        os.makedirs(repo)
+        _git_init(repo)
+        write_fake_opencode(os.path.join(tmp, "bin"))
+        lines: list[str] = []
+        result = run_runner(
+            RunnerSpec("opencode", "fake/quota", "review", 30, cwd=repo),
+            "hi",
+            RunnerSeams(env_fn=lambda: dict(env), print_fn=lines.append),
+        )
+        return result, lines
+
+    def test_confirmed_route_reaches_the_runner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = runner_env(tmp)
+            env["XDG_CACHE_HOME"] = os.path.join(tmp, "cache")
+            _route_catalog(env["XDG_CACHE_HOME"])
+            result, lines = self._run(tmp, env)
+            self.assertIn("--route-opencode", result.argv)
+            self.assertEqual(
+                result.argv[result.argv.index("--route-opencode") + 1], "router",
+            )
+            assert result.status is not None
+            self.assertEqual(result.status["route"], "router")
+            self.assertEqual(result.status["status"], "quota")
+            self.assertEqual(result.reason, "quota")
+            self.assertEqual(sum("cross-ai: report" in line for line in lines), 1)
+            self.assertEqual(pids_with_cwd_under(tmp), [])
+
+    def test_without_a_catalog_the_runner_uses_its_heuristic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result, _lines = self._run(tmp, runner_env(tmp))
+            self.assertFalse(any(token.startswith("--route-") for token in result.argv))
+            assert result.status is not None
+            self.assertEqual(result.status["route"], "unknown")
+            self.assertEqual(result.status["status"], "quota")
+            self.assertEqual(pids_with_cwd_under(tmp), [])
+
+
 class TestRunnerDispatchNoNode(unittest.TestCase):
     def test_no_node_fails_closed(self):
         spawned: list[list[str]] = []

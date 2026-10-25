@@ -118,6 +118,8 @@ def _seams(popen, lines, kills, clock=None):
         print_fn=lines.append,
         runner_path_fn=lambda: "/runner/cross-ai.mjs",
         env_fn=lambda: {"PATH": "/usr/bin"},
+        # The spawn path never reads a catalog: a real cache stays out of these tests.
+        route_fn=lambda *_args: None,
     )
 
 
@@ -216,6 +218,25 @@ class TestBuildRunnerArgv(unittest.TestCase):
         spec = _spec(runtime="cursor", model="gpt[effort=high]", mode="review")
         flags = runner_flags(spec)
         self.assertEqual(flags[flags.index("--model-cursor") + 1], "gpt[effort=high]")
+
+    def test_confirmed_route_is_a_flag(self):
+        for route in ("router", "unknown"):
+            with self.subTest(route=route):
+                argv = build_runner_argv(
+                    _spec(runtime="pi", route=route), "/runner/cross-ai.mjs", "node",
+                )
+                self.assertEqual(argv[argv.index("--route-pi") + 1], route)
+
+    def test_no_route_leaves_the_argv_unchanged(self):
+        argv = build_runner_argv(_spec(), "/runner/cross-ai.mjs", "node")
+        self.assertFalse(any(token.startswith("--route-") for token in argv))
+
+    def test_project_runner_command_never_carries_a_route_flag(self):
+        spec = RunnerSpec("opencode", "m", "exec", 0, route="router")
+        command = rd.project_runner_command(spec)
+        assert command is not None
+        self.assertNotIn("--route-", command)
+        self.assertNotIn("--route-", " ".join(runner_flags(spec)))
 
 
 def _template_regex(name: str) -> str:
@@ -944,6 +965,122 @@ class TestDispatchReviewerRunner(unittest.TestCase):
         self.assertIsNone(seen["runner"])
         self.assertIsNone(seen["custom"])
         self.assertEqual(os.getcwd(), before)
+
+
+def _catalog_entry(runtime, model_id, quota, confirmed):
+    entry = {
+        "provider": "vendor",
+        "runtimes": {runtime: {"model_id": model_id}},
+        "source": {},
+        "confidence": "high",
+        "last_verified": "2026-01-01",
+        "fallback_quota": quota,
+    }
+    if confirmed:
+        entry["heuristic_confirmed"] = ["fallback_quota"]
+    return entry
+
+
+def _write_catalog(cache_home, entries):
+    directory = os.path.join(cache_home, "ai-kit", "spec")
+    os.makedirs(directory)
+    path = os.path.join(directory, "model-catalog.json")
+    raw = {"_meta": {"schema_version": 3}}
+    raw.update(entries)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(raw, handle)
+
+
+class TestResolveRoute(unittest.TestCase):
+    """A confirmed catalog boolean becomes a route; everything else stays unset."""
+
+    def _resolve(self, cache_home, runtime, model):
+        env = {"XDG_CACHE_HOME": cache_home, "HOME": cache_home}
+        return rd.resolve_route(runtime, model, env)
+
+    def test_confirmed_false_and_its_variants_are_unknown(self):
+        cases = (
+            ("pi", "router-env/x", "router-env/x"),
+            ("pi", "router-env/x", "router-env/x:high"),
+            ("cursor", "gpt", "gpt[effort=high]"),
+            ("opencode", "vendor/x", "vendor/x#fast"),
+        )
+        with tempfile.TemporaryDirectory() as cache_home:
+            entries = {
+                f"k-{runtime}": _catalog_entry(runtime, model_id, False, True)
+                for runtime, model_id, _requested in cases
+            }
+            _write_catalog(cache_home, entries)
+            for runtime, _model_id, requested in cases:
+                with self.subTest(requested=requested):
+                    self.assertEqual(self._resolve(cache_home, runtime, requested), "unknown")
+
+    def test_confirmed_true_is_router(self):
+        with tempfile.TemporaryDirectory() as cache_home:
+            _write_catalog(cache_home, {
+                "vendor/x": _catalog_entry("opencode", "vendor/x", True, True),
+            })
+            self.assertEqual(self._resolve(cache_home, "opencode", "vendor/x"), "router")
+
+    def test_unconfirmed_and_malformed_yield_none(self):
+        with tempfile.TemporaryDirectory() as cache_home:
+            env = {"XDG_CACHE_HOME": cache_home, "HOME": cache_home}
+            self.assertIsNone(rd.resolve_route("pi", "router-env/x", env))
+            directory = os.path.join(cache_home, "ai-kit", "spec")
+            os.makedirs(directory)
+            path = os.path.join(directory, "model-catalog.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("{not json")
+            self.assertIsNone(rd.resolve_route("pi", "router-env/x", env))
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"vendor/x": _catalog_entry("pi", "router-env/x", True, False)},
+                          handle)
+            self.assertIsNone(rd.resolve_route("pi", "router-env/x", env))
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"_meta": {"schema_version": 3}}, handle)
+            self.assertIsNone(rd.resolve_route("pi", "router-env/x", env))
+            malformed = {
+                "_meta": {"schema_version": 3},
+                "a-list": ["not", "an", "entry"],
+                "b-runtimes": {"runtimes": ["pi"], "fallback_quota": True,
+                               "heuristic_confirmed": ["fallback_quota"]},
+                "c-row": {"runtimes": {"pi": None}, "fallback_quota": False,
+                          "heuristic_confirmed": ["fallback_quota"]},
+            }
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(malformed, handle)
+            self.assertIsNone(rd.resolve_route("pi", "router-env/x", env))
+
+    def test_run_runner_fills_a_blank_route_from_the_seam(self):
+        seen = {}
+
+        def route_fn(runtime, model, env):
+            seen["call"] = (runtime, model, env)
+            return "router"
+
+        proc = _FakeProc([_status_line(cli="pi", model="router-env/x")])
+        popen = _ScriptedPopen([proc])
+        lines: list[str] = []
+        seams = _seams(popen, lines, [])._replace(
+            route_fn=route_fn, env_fn=lambda: {"XDG_CACHE_HOME": "/scratch"},
+        )
+        result = run_runner(_spec(runtime="pi", model="router-env/x"), "hi", seams)
+        self.assertEqual(seen["call"][0], "pi")
+        self.assertEqual(seen["call"][1], "router-env/x")
+        self.assertEqual(seen["call"][2], {"XDG_CACHE_HOME": "/scratch"})
+        self.assertEqual(popen.argvs[0][popen.argvs[0].index("--route-pi") + 1], "router")
+        self.assertEqual(result.reason, None)
+
+    def test_an_explicit_route_is_not_replaced(self):
+        def route_fn(*_args):
+            raise AssertionError("an explicit route must not read the catalog")
+
+        proc = _FakeProc([_status_line()])
+        popen = _ScriptedPopen([proc])
+        seams = _seams(popen, [], [])._replace(route_fn=route_fn)
+        run_runner(_spec(route="unknown"), "hi", seams)
+        argv = popen.argvs[0]
+        self.assertEqual(argv[argv.index("--route-opencode") + 1], "unknown")
 
 
 if __name__ == "__main__":

@@ -83,6 +83,8 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
                 runner_path_fn=lambda: script,
                 popen_fn=_dump_popen(out),
                 print_fn=lambda *_a: None,
+                # The parent env is the real one: never let the spawn read its cache.
+                route_fn=lambda *_a: None,
             ),
         )
         assert result.returncode == 0, result
@@ -125,7 +127,11 @@ def _run_all_dispatchers(script: str, tmp: str, timeout: int = 60) -> dict:
                 build_reinforcement_fn=lambda *_a, **_kw: "",
                 build_soft_confinement_fn=lambda *_a, **_kw: "",
                 # which_fn: the image without node must still reach the spawn.
-                runner_seams=RunnerSeams(popen_fn=fake_popen, which_fn=lambda _name: "node"),
+                runner_seams=RunnerSeams(
+                    popen_fn=fake_popen, which_fn=lambda _name: "node",
+                    # The parent env is the real one: never let the spawn read its cache.
+                    route_fn=lambda *_a: None,
+                ),
             ),
         )
         assert result["reason"] == "dispatch_unavailable", result

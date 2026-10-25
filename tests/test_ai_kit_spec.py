@@ -11745,7 +11745,9 @@ class TestDispatchExecuteArgv(unittest.TestCase):
                     build_tooling_guidance_fn=lambda *a, **kw: "",
                     # which_fn: the image without node must still reach the spawn.
                     runner_seams=runner_dispatch.RunnerSeams(
-                        popen_fn=fake_popen, which_fn=lambda _name, **_k: "node"
+                        popen_fn=fake_popen, which_fn=lambda _name, **_k: "node",
+                        # The parent env is the real one: never let the spawn read its cache.
+                        route_fn=lambda *_a: None,
                     ),
                 ),
             )
