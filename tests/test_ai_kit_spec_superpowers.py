@@ -977,13 +977,15 @@ class TestClassifyDispatchFailure(unittest.TestCase):
         }
         self.assertEqual(dispatch_injection.classify_dispatch_failure(payload), "quota")
 
-    def test_real_error_on_bare_transient_exit(self):
+    def test_quota_on_bare_transient_exit(self):
+        # 25.1 WR-01: a bare 75 is a spent ladder whose hint was dropped (state unwritable);
+        # it is the same lane's wait, never Step 2's capacity fix. No re-invoke: no tokens.
         self.assertEqual(
             dispatch_injection.classify_dispatch_failure({
                 "returncode": 75, "reason": "capacity",
                 "status": {"status": "transient", "exit": "75"},
             }),
-            "real_error",
+            "quota",
         )
 
     def test_real_error_on_non_numeric_hint(self):
@@ -997,11 +999,23 @@ class TestClassifyDispatchFailure(unittest.TestCase):
             "real_error",
         )
 
-    def test_real_error_on_transient_hard_tier_stop(self):
+    def test_quota_on_transient_hard_tier_stop(self):
+        # 25.1 WR-01: a spent transient hard tier is an owner stop, not a capacity error.
+        for stopped in ("hard-waits", "cap"):
+            with self.subTest(stopped=stopped):
+                self.assertEqual(
+                    dispatch_injection.classify_dispatch_failure({
+                        "returncode": 69, "reason": "capacity",
+                        "status": {"status": "transient", "exit": "69", "stopped": stopped},
+                    }),
+                    "quota",
+                )
+
+    def test_real_error_on_transient_exit_1(self):
         self.assertEqual(
             dispatch_injection.classify_dispatch_failure({
-                "returncode": 69, "reason": "capacity",
-                "status": {"status": "transient", "exit": "69", "stopped": "hard-waits"},
+                "returncode": 1, "reason": "capacity",
+                "status": {"status": "transient", "exit": "1"},
             }),
             "real_error",
         )

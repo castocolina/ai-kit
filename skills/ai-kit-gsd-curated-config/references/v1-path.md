@@ -24,11 +24,13 @@ gets the v2 dry run instead. Order and safeguards:
 5. `detect-frontend`, then `apply-workflow-defaults` with that boolean for both UI flags.
 6. `apply-execution` can exit 0 without configuring execution. Read its JSON:
    `cross_ai_command_written` false with a `degraded_reason` (`runner_not_ready`,
-   `no_candidate`, `no_model`, `unsafe_hook_token`, `no_builder`) means the command was left
+   `no_candidate`, `no_model`, `unsafe_hook_token`, `unsupported_model_id`, `no_builder`) means the command was left
    absent or unchanged. Report the reason and the printed notes; for `runner_not_ready`, fix the
    runner `ensure-runner` reported and re-run before telling the user execution is configured.
    `unsafe_hook_token`: the model id holds a character GSD's unquoted hook would split or glob
-   (nothing was rendered; pick another id). `no_builder`: the `ai-kit-spec-review` sibling is
+   (nothing was rendered; pick another id). `unsupported_model_id`: the id is outside its
+   runtime's grammar (a bare pi or opencode id), so the runner would refuse it; nothing was
+   rendered. `no_builder`: the `ai-kit-spec-review` sibling is
    missing.
 
 ```bash

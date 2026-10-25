@@ -383,6 +383,25 @@ class TestEnsureRunner(unittest.TestCase):
             self.assertNotIn("prefer", upgraded)
             self.assertEqual(upgraded["backoffS"], [30, 60])
 
+    def test_upgrade_drops_a_kept_model_the_new_grammar_refuses(self):
+        # 25.1 WR-05: template 7 accepted a bare pi id; the new runner exits 2 on it.
+        with tempfile.TemporaryDirectory() as tmp:
+            old = _old_pristine(self.template, {
+                "runtime": "pi", "models": {"pi": "glm-4.6", "opencode": "p/ok"},
+            })
+            target = os.path.join(tmp, ".planning", "scripts", "cross-ai.mjs")
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as handle:
+                handle.write(old)
+            plan = cross_ai_script.plan_runner_upgrade(tmp, self.template, HOST_SIGNAL_ENV_VARS)
+            self.assertEqual(plan.kind, "change")
+            self.assertIn("'glm-4.6'", plan.note)
+            self.assertIn("dropped", plan.note)
+            cross_ai_script.write_script(plan)
+            with open(target, "rb") as handle:
+                upgraded = cross_ai_script.template_config(handle.read())
+            self.assertEqual(upgraded["models"], {"opencode": "p/ok"})
+
     def test_upgrade_keeps_existing_runtime(self):
         with tempfile.TemporaryDirectory() as tmp:
             old = _old_pristine(self.template, {"runtime": "opencode", "prefer": ["cursor"]})
@@ -779,6 +798,32 @@ class TestApplyExecutionHookToken(unittest.TestCase):
             )
             self.assertEqual(summary["notes"], [])
             self.assertNotIn(PI_EXEC_NOTE, err.getvalue())
+
+    def test_model_outside_the_runner_grammar_degrades_before_any_render(self):
+        # 25.1 CR-01: `glm-4.6` is hook-safe, but the runner refuses a bare pi id with exit 2.
+        from tests.test_ai_kit_gsd_curated_config import (
+            _make_fake_install,
+            _which_stub,
+            make_fake_run,
+        )
+
+        with tempfile.TemporaryDirectory() as install, tempfile.TemporaryDirectory() as project:
+            _make_fake_install(install)
+            run = make_fake_run([(0, "ok", "")])
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(
+                    ["apply-execution", "--project-dir", project, "--cli", "pi",
+                     "--model", "glm-4.6"],
+                    which_fn=_which_stub(), run_fn=run,
+                    env_fn=lambda: {"CLAUDE_CONFIG_DIR": install},
+                )
+            summary = json.loads(out.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(summary["degraded_reason"], "unsupported_model_id")
+            self.assertFalse(summary["cross_ai_command_written"])
+            self.assertIn("grammar", err.getvalue())
+            self.assertFalse(os.path.exists(os.path.join(project, ".planning")))
 
 
 class TestReadTarget(unittest.TestCase):

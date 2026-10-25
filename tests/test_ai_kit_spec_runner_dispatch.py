@@ -152,7 +152,7 @@ class TestProjectRunnerCommand(unittest.TestCase):
         self.assertNotIn("codex-sandbox", review_cmd)
 
     def test_guidance_appends_prepend_file(self):
-        spec = RunnerSpec("opencode", "m", "exec", 0)
+        spec = RunnerSpec("opencode", "p/m", "exec", 0)
         command = rd.project_runner_command(spec, guidance=True)
         assert command is not None
         self.assertTrue(command.endswith(
@@ -168,6 +168,12 @@ class TestProjectRunnerCommand(unittest.TestCase):
             with self.subTest(model=model):
                 spec = RunnerSpec("opencode", model, "exec", 0)
                 self.assertIsNone(rd.project_runner_command(spec))
+
+    def test_model_outside_the_runner_grammar_is_none(self):
+        # 25.1 CR-01: the runner exits 2 on these, so no hook may carry them.
+        for runtime, model in (("pi", "glm-4.6"), ("opencode", "gpt-5")):
+            with self.subTest(runtime=runtime, model=model):
+                self.assertIsNone(rd.project_runner_command(RunnerSpec(runtime, model, "exec", 0)))
 
     def test_bracket_model_is_never_a_hook_token(self):
         # GSD globs the unquoted hook: `gpt-6[effort=high]` would match a file `gpt-6e`.
@@ -239,10 +245,11 @@ class TestBuildRunnerArgv(unittest.TestCase):
     def test_project_runner_command_carries_only_a_confirmed_route(self):
         # The hook pins the lane's own confirmed route (25-11): CONFIG.routerBacked is per CLI,
         # so without the flag a direct model on a router-flagged CLI would get router cycles.
-        command = rd.project_runner_command(RunnerSpec("opencode", "m", "exec", 0, route="router"))
+        spec = RunnerSpec("opencode", "p/m", "exec", 0, route="router")
+        command = rd.project_runner_command(spec)
         assert command is not None
         self.assertIn("--route-opencode router", command)
-        bare = rd.project_runner_command(RunnerSpec("opencode", "m", "exec", 0))
+        bare = rd.project_runner_command(RunnerSpec("opencode", "p/m", "exec", 0))
         assert bare is not None
         self.assertNotIn("--route-", bare)
 
@@ -267,7 +274,12 @@ class TestModelIdCharsetParity(unittest.TestCase):
     def test_model_id_ok_uses_the_runtime_grammar(self):
         self.assertFalse(model_id_ok("pi", "glm"))
         self.assertFalse(model_id_ok("opencode", "glm"))
-        self.assertFalse(model_id_ok("pi", "fake/ok:free"))
+        # 25.1 WR-05: pi resolves the whole id first and splits only a known thinking level,
+        # so a colon inside the model part (Ollama tags, `:free`) is part of the id.
+        self.assertTrue(model_id_ok("pi", "fake/ok:free"))
+        self.assertTrue(model_id_ok("pi", "ollama/qwen3:8b"))
+        self.assertTrue(model_id_ok("pi", "ollama/qwen3:8b:high"))
+        self.assertFalse(model_id_ok("pi", "ollama/:8b"))
         self.assertTrue(model_id_ok("pi", "router-env/my-coding:high"))
         self.assertTrue(model_id_ok("opencode", "fake/ok#fast"))
 

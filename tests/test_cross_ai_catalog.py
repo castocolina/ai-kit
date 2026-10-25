@@ -3,7 +3,9 @@
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 
@@ -41,6 +43,19 @@ class CrossAiCatalogTest(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("catalog ok ", proc.stdout)
+
+    def test_write_keeps_the_template_mode_and_leaves_no_temp_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "cross-ai.mjs")
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write("old")
+            os.chmod(target, 0o755)
+            with mock.patch.object(cross_ai_catalog, "TEMPLATE_PATH", target):
+                cross_ai_catalog._write_template("new \u00e9")
+            with open(target, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "new \u00e9")
+            self.assertEqual(os.stat(target).st_mode & 0o777, 0o755)
+            self.assertEqual(os.listdir(tmp), ["cross-ai.mjs"])
 
 
 if __name__ == "__main__":

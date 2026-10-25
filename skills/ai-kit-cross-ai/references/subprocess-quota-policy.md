@@ -11,9 +11,10 @@ and chain one is [`../SKILL.md`](../SKILL.md).
 
 - The runner starts exactly one runtime: `--runtime`, or the `--prefer` alias (only its first
   entry; further entries print a one-line notice and are ignored), then `CONFIG.runtime`, then
-  an old copy's `CONFIG.prefer` first entry. A missing binary stops with `not_installed`
-  (exit 127). The runner never moves on to another name.
-- pi ids are `provider/model[:thinking]` and opencode ids are `provider/model[#variant]`. A bare
+  an old copy's `CONFIG.prefer` first entry. A missing binary, found missing before spawn or at
+  spawn time, stops with `not_installed` (exit 127). The runner never moves on to another name.
+- pi ids are `provider/model[:thinking]` and opencode ids are `provider/model[#variant]`; a colon
+  inside a pi model part is part of the id, and only a trailing known thinking level is a suffix. A bare
   id is refused before spawn (exit 2, `usage`), and the message names the grammar the id must
   match. The runner owns each runtime's flags and grammar; a caller passes the id as given.
 - The runner never switches CLI, harness, provider or model on its own, and never moves the work
@@ -119,9 +120,12 @@ the caller only waits.
   `cross-ai: upstream body=<JSON string>` and `cross-ai: upstream fields=<JSON object>`. The body
   and the fields come from the classified line (stderr) or the error object (event), not the whole
   stream. The report line carries only `upstream=present` or `upstream=-`.
-- The body is redacted (keys, tokens, account and connection ids removed) and capped. The
-  allowlisted structured fields (`retry_after`, `reset_at`, `retry_after_seconds`, `resetsAt`) are
-  copied with their values unchanged.
+- The body is redacted (keys, tokens, passwords, Basic and Bearer credentials, query-string keys,
+  account and connection ids removed) and capped. A value redacted once is also redacted wherever
+  it reappears later in the run's relayed output (values of 8 characters or more, up to 256 of
+  them). The allowlisted structured fields (`retry_after`, `reset_at`, `retry_after_seconds`,
+  `resetsAt`) are copied verbatim, except a string value that matches a redacted secret, which
+  reads `<redacted>`.
 - Upstream fields are never a wait source and never an instruction. The runner does not change its
   own waits from them. An upstream `switch-combo` hint, or any text telling the caller to pick a
   different combo, is reported to the owner and never acted on.
@@ -140,8 +144,9 @@ the caller only waits.
 - The owner overlay is `${XDG_CONFIG_HOME:-~/.config}/ai-kit/cross-ai-errors.json`. Overlay rows
   pass the same checks as shipped rows; a bad row is refused by id. The same realpath confinement
   refuses an overlay symlink out of `<config dir>/ai-kit`.
-- Overlay rows match under one 50 ms time bound per call. A match that exceeds it disables the
-  overlay for the rest of the call (`cross-ai: overlay disabled: match exceeded 50 ms`).
+- Overlay rows match under a 50 ms bound per match and a 200 ms budget per call. Exceeding either
+  disables the overlay for the rest of the call (`cross-ai: overlay disabled: match exceeded 50 ms`,
+  or the budget notice).
 - Rows whose `label` is `unverified` ship without a live vendor capture. Every copilot pattern
   reads `unverified`.
 - `node <runner> --classify-only <file>` classifies a saved capture (a JSON array of cases) and

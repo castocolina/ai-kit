@@ -19,7 +19,13 @@ from ai_kit_spec.execute_selection import (
     screen_execute_clis,
 )
 from ai_kit_spec.quota import resolve_ladder_pick
-from ai_kit_spec.runner_dispatch import PI_EXEC_NOTE, PROJECT_GUIDANCE_PATH
+from ai_kit_spec.runner_dispatch import (
+    EXEC_NOTES,
+    HOOK_TOKEN_RE,
+    PROJECT_GUIDANCE_PATH,
+    model_id_ok,
+    model_id_src,
+)
 
 from ai_kit_spec_gsd.gsd_config import (
     KNOWN_GSD_TIERS,
@@ -208,10 +214,11 @@ def _try_candidate_dispatch(
                   "key": candidate["key"], "model": candidate["model"],
                   "guidance_path": PROJECT_GUIDANCE_PATH,
                   "provenance": "resolved_candidate"}
-        if runtime == "pi":
-            # D-35: visible before the hook is enabled; self-test verified only.
-            print(PI_EXEC_NOTE, file=sys.stderr)
-            result["notes"] = [PI_EXEC_NOTE]
+        note = EXEC_NOTES.get(runtime)
+        if note:
+            # D-35, 25.1 WR-04: visible before the hook is enabled.
+            print(note, file=sys.stderr)
+            result["notes"] = [note]
         return result
     return None
 
@@ -224,8 +231,15 @@ def _unsafe_hook_notice(candidate: dict) -> dict | None:
     """
     if build_cross_ai_command(candidate) is not None:
         return None
-    if execute_cli_error(candidate.get("runtime")) is not None:
+    runtime = candidate.get("runtime") or ""
+    if execute_cli_error(runtime) is not None:
         return None
+    model = candidate.get("model") or ""
+    if HOOK_TOKEN_RE.fullmatch(model) and not model_id_ok(runtime, model):
+        return _fallback_notice(
+            candidate["key"], "unsupported_model_id",
+            f"the model id {model!r} does not match the runner's {runtime} grammar "
+            f"{model_id_src(runtime)}; the runner would refuse every call with exit 2")
     return _fallback_notice(
         candidate["key"], "unsafe_hook_token",
         "the model id contains a character GSD's unquoted hook expansion cannot carry")

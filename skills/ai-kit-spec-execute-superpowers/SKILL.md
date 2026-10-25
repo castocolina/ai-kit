@@ -177,7 +177,7 @@ Record both when the block ran. `$INJECTION_KEY` is the ladder key (e.g. `codex/
     need a fix first (credentials, configuration). STOP this wave and tell the user which key needs
     what fix, read off `reasons`: `"auth"` needs login or entitlement, `"billing_or_access"` credits or
     model access, `"configuration"` a fixed model id, prompt or flag (the runner refused it),
-    `"capacity"` a later retry or another model, `"git_timeout"` a look at the repo (the runner's
+    `"capacity"` a later retry on the same lane, `"git_timeout"` a look at the repo (the runner's
     work-tree check timed out, not the CLI), `"timeout"`/`"dispatch_unavailable"` an
     investigation of the CLI, `"real_error"` its own diagnosis. Nothing is scheduled. This stop is
     the adapter's own
@@ -354,8 +354,10 @@ printf 'RETURNCODE=%s\nRETRY_AFTER_S=%s\nCYCLE=%s\n' "$RETURNCODE" "$RETRY_AFTER
      and `RESUME_STATE_PATH` and persists `$INJECTION_JSON` as `injection_json`, so the wake
      re-dispatches this exact injection. Do not edit the Step 2 block by hand.
   4. **Schedule or stop.** Only exit 75 with whole-number `RETRY_AFTER_S` and `CYCLE` gets the
-     one-shot wait and re-dispatch of the same task, lane and model. An exit 69 with
-     `stopped=hard-waits` or `stopped=cap` is an owner stop after relaying the evidence; schedule
+     one-shot wait and re-dispatch of the same task, lane and model. A runner exit 69 or 75 whose
+     status is `transient` or `quota` reaches this branch; an exit 69 (`stopped=hard-waits`,
+     `stopped=cap`, or a `cross-ai: lane stopped=` refusal) is an owner stop after relaying the
+     evidence, including that line's state path, whose deletion is the owner's reset; schedule
      nothing. A bare exit 75 is also an owner stop.
      Where `CronCreate` is callable, schedule one one-shot wake at `retry_after_s` (`RETRY_AFTER_S`,
      at least 60 s, rounded up to the next whole minute) with the fenced prompt below; the job
@@ -421,7 +423,9 @@ inside `.git` is unverified. Every other exec target runs with full permissions;
 receives tells it to write only inside the target dir, and that prose is guidance, not a boundary.
 `claude` is review-only: routing skips an exec-mode `claude` candidate on any other host, so it
 never runs here. pi exec uses the runner's pi formula, verified by its hermetic self-test only;
-live verification is still open, and stderr prints that note before the run.
+live verification is still open, and stderr prints that note before the run. A copilot exec
+target gets the same kind of note: its error rows are unverified, it runs with all tools allowed,
+and the task prompt is visible on argv.
 
 **The one exception.** Every subprocess runs through the supervised runner, except a custom entry
 (a `command` and no `runtime`), which exec mode never runs (Step 2's exit 2, or a `review_only`

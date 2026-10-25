@@ -365,6 +365,33 @@ class TestCrossAiHookResult(unittest.TestCase):
                 self.assertEqual(result["reason"], "unsafe_hook_token")
                 self.assertNotIn("cross_ai_command", result)
 
+    def test_model_outside_the_runner_grammar_is_a_fallback_notice(self):
+        # 25.1 CR-01: a bare pi id is hook-safe but the runner refuses it with exit 2.
+        for runtime, model in (("pi", "glm-4.6"), ("opencode", "gpt-5")):
+            with self.subTest(runtime=runtime):
+                result = _resolve_gsd_dispatch(
+                    [self._candidate(runtime, model)], [f"{runtime}/x"], {}, _ctx(), "/repo")
+                self.assertEqual(result["mode"], "fallback_notice")
+                self.assertEqual(result["reason"], "unsupported_model_id")
+                self.assertNotIn("cross_ai_command", result)
+
+    def test_copilot_exec_note_is_visible_before_the_hook(self):
+        # 25.1 WR-04: copilot's shapes are unverified and its prompt rides on argv.
+        import contextlib
+        import io
+
+        from ai_kit_spec.runner_dispatch import COPILOT_EXEC_NOTE
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            copilot = _resolve_gsd_dispatch(
+                [self._candidate("copilot", "gpt-5")], ["copilot/x"], {}, _ctx(), "/repo")
+        self.assertEqual(copilot["mode"], "cross_ai_hook")
+        self.assertIn(COPILOT_EXEC_NOTE, stderr.getvalue())
+        self.assertEqual(copilot["notes"], [COPILOT_EXEC_NOTE])
+        self.assertIn("unverified", COPILOT_EXEC_NOTE)
+        self.assertIn("argv", COPILOT_EXEC_NOTE)
+
     def test_pi_exec_note_is_visible_for_pi_and_absent_for_codex(self):
         import contextlib
         import io

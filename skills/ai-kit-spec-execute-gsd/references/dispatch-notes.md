@@ -16,7 +16,8 @@ whichever word it falls inside.
 
 The hook therefore carries only tokens from an allowlist (letters, digits and `._:/@+=,#-`). A
 model id or any other token outside that allowlist never becomes a hook: the adapter returns
-`fallback_notice` with reason `unsafe_hook_token` instead of writing a broken string. That
+`fallback_notice` with reason `unsafe_hook_token` instead of writing a broken string; a model
+id outside its runtime's grammar returns reason `unsupported_model_id`. That
 includes a cursor bracket id such as `model[effort=high]`: unquoted, it is a glob class, so
 cursor effort/fast brackets stay argv-only (ai-kit's own Python dispatch), never hook-capable.
 

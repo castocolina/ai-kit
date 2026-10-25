@@ -36,9 +36,9 @@ from . import (
 )
 
 try:
-    from ai_kit_spec.runner_dispatch import PI_EXEC_NOTE as _PI_EXEC_NOTE
+    from ai_kit_spec.runner_dispatch import EXEC_NOTES as _EXEC_NOTES
 except ImportError:  # the sibling skill is optional, same as cross_ai_build's import
-    _PI_EXEC_NOTE = None
+    _EXEC_NOTES = {}
 
 VALID_MODEL_PROFILES = ("quality", "balanced", "budget", "adaptive")
 
@@ -285,6 +285,20 @@ def _cmd_apply_execution(args, which_fn, run_fn, env_fn):
     return 0
 
 
+def _model_refusal(cli_name, model) -> tuple[str, str] | None:
+    """`(degraded_reason, message)` for a model no hook may carry, else None."""
+    if cross_ai_build.unsafe_hook_token(cli_name, model):
+        return "unsafe_hook_token", (
+            f"--model {model!r} is not a safe hook token "
+            "(GSD splits and globs the hook unquoted)")
+    runtime = cross_ai_build.runtime_id(cli_name) if cross_ai_build.runtime_id else cli_name
+    grammar = cross_ai_build.runner_model_problem("--model", runtime, model)
+    if grammar:
+        # The runner exits 2 on every call with this id (25.1 CR-01).
+        return "unsupported_model_id", grammar
+    return None
+
+
 def _execution_hook(args):
     """`(degraded_reason, runner_result, command)`: the hook to write, or why there is none."""
     if not args.cli:
@@ -294,11 +308,11 @@ def _execution_hook(args):
         # literal string "None" into the rendered command (str.format has no None guard) --
         # a fabricated, broken command reported as success. Fail closed instead (D-05).
         return "no_model", None, None
-    if cross_ai_build.unsafe_hook_token(args.cli, args.model):
+    refusal = _model_refusal(args.cli, args.model)
+    if refusal:
         # Checked before the runner render so a hook that can never be written renders nothing.
-        print(f"ai-kit-gsd-curated-config: --model {args.model!r} is not a safe hook token "
-              "(GSD splits and globs the hook unquoted)", file=sys.stderr)
-        return "unsafe_hook_token", None, None
+        print(f"ai-kit-gsd-curated-config: {refusal[1]}", file=sys.stderr)
+        return refusal[0], None, None
     runner_result = cross_ai_script.ensure_runner(args.project_dir)
     if not runner_result["ready"]:
         return "runner_not_ready", runner_result, None
@@ -308,14 +322,15 @@ def _execution_hook(args):
     return None, runner_result, command
 
 
-def _pi_exec_note(cli_name) -> str | None:
-    """D-35: pi exec is self-test verified only, so the note is part of the result."""
-    if cross_ai_build.runtime_id is None or cross_ai_build.runtime_id(cli_name) != "pi":
+def _exec_note(cli_name) -> str | None:
+    """D-35, 25.1 WR-04: pi and copilot exec are not live-verified, so the note is part of
+    the result."""
+    if cross_ai_build.runtime_id is None:
         return None
-    if _PI_EXEC_NOTE is None:
-        return None
-    print(_PI_EXEC_NOTE, file=sys.stderr)
-    return _PI_EXEC_NOTE
+    note = _EXEC_NOTES.get(cross_ai_build.runtime_id(cli_name))
+    if note:
+        print(note, file=sys.stderr)
+    return note
 
 
 def _execution_notes(runner_result, cli_name) -> list[str]:
@@ -327,9 +342,9 @@ def _execution_notes(runner_result, cli_name) -> list[str]:
         error = runner_result.get("error")
         if error and error not in notes:
             notes.append(error)
-    pi_note = _pi_exec_note(cli_name) if cli_name else None
-    if pi_note and pi_note not in notes:
-        notes.append(pi_note)
+    note = _exec_note(cli_name) if cli_name else None
+    if note and note not in notes:
+        notes.append(note)
     return notes
 
 

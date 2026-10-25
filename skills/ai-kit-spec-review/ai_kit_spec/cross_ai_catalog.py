@@ -5,11 +5,11 @@ file, renders the block and splices it. Paths resolve from this file.
 """
 
 import argparse
-import contextlib
 import json
 import os
 import sys
-import tempfile
+
+from ai_kit_spec.cache import cache_write_text
 
 _REFERENCES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "references")
 CATALOG_PATH = os.path.join(_REFERENCES, "cross-ai-errors.json")
@@ -43,18 +43,8 @@ def splice(template_text, block):
 
 
 def _write_template(text):
-    directory = os.path.dirname(os.path.abspath(TEMPLATE_PATH))
-    mode = os.stat(TEMPLATE_PATH).st_mode & 0o777
-    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".cross-ai-catalog-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-        os.chmod(tmp, mode)
-        os.replace(tmp, TEMPLATE_PATH)
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    """Atomic rewrite that keeps the template's own mode (it is executable)."""
+    cache_write_text(TEMPLATE_PATH, text, mode=os.stat(TEMPLATE_PATH).st_mode & 0o777)
 
 
 def main(argv):

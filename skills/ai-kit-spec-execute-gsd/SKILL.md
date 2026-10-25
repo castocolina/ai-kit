@@ -171,7 +171,7 @@ printf 'RESUME_STATE_PATH=%s\n' "$RESUME_STATE_PATH"
 ```
 
 Every other `fallback_notice` reason (`no_configured_candidate`, `all_candidates_context_rejected`,
-`unsafe_hook_token` — see Step 2, `no_usable_dispatch` — no candidate has a native GSD tier or a
+`unsafe_hook_token` and `unsupported_model_id` — see Step 2, `no_usable_dispatch` — no candidate has a native GSD tier or a
 CLI with an execute builder, so the execute-CLI screen skipped them all with a stderr warning
 each; `key` names the top one) is permanent. Print the message, run the mode-transition cleanup
 in Step 2, and STOP. Report the reason. Do not proceed to Step 3: that would hand the phase to
@@ -220,7 +220,9 @@ that GSD's own runtime runs, decided without a host check.
   earlier keys from that call were reverted (any in `revert_failed` still hold the new value);
   exit 2 means gsd-tools could not be resolved, as in Step 1. Show the output to the user and STOP.
   A model id the unquoted hook cannot carry comes back from Step 1 as `fallback_notice` with
-  reason `unsafe_hook_token` instead of a broken hook string. That includes a cursor model id
+  reason `unsafe_hook_token` instead of a broken hook string, and a model id outside its
+  runtime's grammar (a bare pi or opencode id) comes back with reason `unsupported_model_id`,
+  because the runner would refuse it with exit 2 on every call. That includes a cursor model id
   carrying brackets (`model[effort=high]`): GSD globs the unquoted hook, so cursor effort/fast
   brackets are argv-only (ai-kit's own Python dispatch), never hook-capable.
 
@@ -313,7 +315,8 @@ that GSD's own runtime runs, decided without a host check.
   guidance file tells it to write only inside the project dir, and that prose is guidance, not a
   boundary. `claude` is review-only and never a hook target. pi exec uses the runner's pi formula,
   verified by its hermetic self-test only; live verification is still open, and stderr prints that
-  note before the hook is written.
+  note before the hook is written. A copilot hook gets the same kind of note: its error rows are
+  unverified, it runs with all tools allowed, and the task prompt is visible on argv.
 
   **Node.** Subprocess dispatch needs Node 24 (GSD's declared floor); older versions untested.
   The hook starts with `node .planning/scripts/cross-ai.mjs`, so without Node it cannot launch and

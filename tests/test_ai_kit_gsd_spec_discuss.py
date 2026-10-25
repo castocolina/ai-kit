@@ -13,7 +13,6 @@ import io
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -22,7 +21,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from tests.test_jev_fast_decision import JevStub
+from tests.test_jev_fast_decision import JevStub, closed_port_url
 
 SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "ai-kit-gsd-spec-discuss" / "scripts"
 REPO_CLIENT = SCRIPTS.parent.parent / "jev-fast-decision" / "scripts" / "jev_review.py"
@@ -134,14 +133,6 @@ def noul_item(identifier, context="All green on the live check."):
 def score_item(identifier, levels=None, context="The refund is duplicated."):
     return {"id": identifier, "type": "score", "instructions": "How severe is it?",
             "context": context, "criteria": levels or ["low", "mid", "high"]}
-
-
-def closed_port_url():
-    """A loopback URL on a port nothing listens on (bound, then released right away)."""
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    return f"http://127.0.0.1:{port}/v1/systemone"
 
 
 def _isolated_decide(tmp):

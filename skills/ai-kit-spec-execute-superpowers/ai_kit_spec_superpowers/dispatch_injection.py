@@ -400,8 +400,10 @@ def classify_dispatch_failure(dispatch_result: dict) -> str:
 
     ``quota`` is the time-bound outcome for which the runner asks the caller to wait:
     either a confirmed-router quota stop or a spent transient ladder carrying its hard-tier
-    hint. It also covers a terminal quota stop such as exit 69; this function does not tell
-    those apart and never re-dispatches. The tokens live only in the nested ``status`` dict.
+    hint. It also covers a hard-tier stop (exit 69, ``stopped=hard-waits`` or ``cap``) and a
+    bare exit 75 whose hint was dropped, for both the quota and the transient class; this
+    function does not tell those apart and never re-dispatches. The tokens live only in the
+    nested ``status`` dict.
     Only exit 75 with whole-number ``retry_after_s`` and ``cycle`` gets the one one-shot
     re-invoke of the same injection. Other outcomes, including auth and timeout, are
     ``real_error``.
@@ -418,6 +420,11 @@ def classify_dispatch_failure(dispatch_result: dict) -> str:
             for token in tokens
         ):
             return "quota"
+    # A malformed hint is not the runner's line, so only a bare one reads as the lane's wait.
+    if (returncode in (69, 75) and isinstance(status, dict)
+            and status.get("status") in ("transient", "quota")
+            and status.get("retry_after_s") is None):
+        return "quota"
     if dispatch_result.get("reason") == "quota":
         return "quota"
     return "real_error"

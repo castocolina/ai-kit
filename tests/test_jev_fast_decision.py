@@ -62,12 +62,16 @@ THREE_ITEMS = {"reviewed_head": HEAD,
                           "context": "the refund is duplicated"}]}
 
 
+_RESERVED_PORTS = []  # bound, never listening: connects are refused and no stub can reuse the port
+
+
 def closed_port_url():
-    """A loopback URL on a port nothing listens on (bound, then released right away)."""
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    return f"http://127.0.0.1:{port}/v1/systemone"
+    """A loopback URL on a port nothing listens on. The socket stays bound for the whole run:
+    releasing it let a later stub bind the same port, so a "closed" Laya URL hit that stub."""
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    _RESERVED_PORTS.append(sock)
+    return f"http://127.0.0.1:{sock.getsockname()[1]}/v1/systemone"
 
 
 def noul_item(identifier, context="app crashes on save"):

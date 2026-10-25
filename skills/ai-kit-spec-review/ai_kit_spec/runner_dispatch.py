@@ -52,10 +52,7 @@ _STATUS_PREFIX = "AIKIT-XAI "
 # PI_MODEL_ID / OPENCODE_MODEL_ID).
 MODEL_ID_SRC = "/^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/"
 CURSOR_MODEL_ID_SRC = "/^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\\[[A-Za-z0-9._=,-]+\\])?$/"
-PI_MODEL_ID_SRC = (
-    "/^[A-Za-z0-9][A-Za-z0-9._@+-]*\\/[A-Za-z0-9][A-Za-z0-9._\\/@+-]*"
-    "(?::(?:off|minimal|low|medium|high|xhigh|max))?$/"
-)
+PI_MODEL_ID_SRC = "/^[A-Za-z0-9][A-Za-z0-9._@+-]*\\/[A-Za-z0-9][A-Za-z0-9._:\\/@+-]*$/"
 OPENCODE_MODEL_ID_SRC = (
     "/^[A-Za-z0-9][A-Za-z0-9._@+-]*\\/[A-Za-z0-9][A-Za-z0-9._:\\/@+-]*"
     "(?:#[A-Za-z0-9._-]+)?$/"
@@ -175,6 +172,14 @@ PI_EXEC_NOTE = (
     "ai-kit-spec: pi exec uses the runner's pi formula, verified by its hermetic "
     "self-test only; live verification is still open"
 )
+# copilot has no live capture yet (25.1 WR-04): say so before its hook or dispatch runs.
+COPILOT_EXEC_NOTE = (
+    "ai-kit-spec: copilot exec is unverified: its error, quota and exit shapes have no live "
+    "capture (every pattern reads unverified), it runs with --allow-all-tools and no "
+    "confinement, and it takes the whole task prompt on argv, visible in the process table"
+)
+# The visible caveat per exec runtime, printed and returned before the hook or dispatch runs.
+EXEC_NOTES = {"pi": PI_EXEC_NOTE, "copilot": COPILOT_EXEC_NOTE}
 
 
 def project_runner_command(spec: RunnerSpec, *, guidance: bool = False) -> str | None:
@@ -182,8 +187,9 @@ def project_runner_command(spec: RunnerSpec, *, guidance: bool = False) -> str |
 
     GSD expands the value unquoted (word splitting and globbing), so the tokens are joined
     with single spaces and never quoted; any token outside the allowlist, a cursor bracket
-    model included, returns None instead of a command."""
-    if spec.runtime not in SUPPORTED_EXECUTE_CLIS:
+    model included, returns None instead of a command. So does a model id outside the
+    runtime's runner grammar: the runner would refuse every call with exit 2."""
+    if spec.runtime not in SUPPORTED_EXECUTE_CLIS or not model_id_ok(spec.runtime, spec.model):
         return None
     tokens = ["node", PROJECT_RUNNER_PATH, *runner_flags(spec)]
     if guidance:

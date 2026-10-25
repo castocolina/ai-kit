@@ -869,7 +869,7 @@ class TestApplyExecutionCli(unittest.TestCase):
             exit_code = cli.main(
                 [
                     "apply-execution", "--project-dir", project,
-                    "--cli", "opencode", "--model", "some-model",
+                    "--cli", "opencode", "--model", "p/some-model",
                 ],
                 which_fn=_which_stub(),
                 run_fn=run,
@@ -955,7 +955,7 @@ class TestApplyExecutionCli(unittest.TestCase):
         project = self._scratch_project()
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            code, _run, summary = self._apply(project, "pi", "m", [(0, "ok", "")] * 2)
+            code, _run, summary = self._apply(project, "pi", "p/m", [(0, "ok", "")] * 2)
         self.assertEqual(code, 0)
         self.assertIn(PI_EXEC_NOTE, summary["notes"])
         self.assertIn(PI_EXEC_NOTE, err.getvalue())
@@ -965,6 +965,19 @@ class TestApplyExecutionCli(unittest.TestCase):
             _code, _run, summary = self._apply(project, "codex", "m", [(0, "ok", "")] * 2)
         self.assertNotIn(PI_EXEC_NOTE, summary["notes"])
         self.assertNotIn(PI_EXEC_NOTE, err.getvalue())
+
+    def test_copilot_exec_note_in_json_and_stderr(self):
+        # 25.1 WR-04: the copilot hook is enabled only with its unverified caveat.
+        from ai_kit_spec.runner_dispatch import COPILOT_EXEC_NOTE
+
+        project = self._scratch_project()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, _run, summary = self._apply(project, "copilot", "gpt-5", [(0, "ok", "")] * 2)
+        self.assertEqual(code, 0)
+        self.assertTrue(summary["cross_ai_command_written"])
+        self.assertIn(COPILOT_EXEC_NOTE, summary["notes"])
+        self.assertIn(COPILOT_EXEC_NOTE, err.getvalue())
 
     def test_rejected_executor_cli_exits_2_before_any_config_write(self):
         # D-15 (Phase 16.1): an explicit claude/grok (or case-variant) executor choice fails

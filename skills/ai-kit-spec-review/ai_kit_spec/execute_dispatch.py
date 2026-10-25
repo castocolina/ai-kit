@@ -21,8 +21,8 @@ from ai_kit_spec.commands import execute_cli_error
 from ai_kit_spec.detection import runtime_id
 from ai_kit_spec.dispatch_guidance import build_dispatch_reinforcement_guidance
 from ai_kit_spec.runner_dispatch import (
+    EXEC_NOTES,
     OS_SANDBOXED_EXEC,
-    PI_EXEC_NOTE,
     RunnerSeams,
     RunnerSpec,
     run_runner,
@@ -133,8 +133,9 @@ def dispatch_execute(
     refusal = _refuse_candidate(candidate, spec.target_dir)
     if refusal:
         raise ValueError(refusal)
-    if candidate["runtime"] == "pi":
-        active.print_fn(PI_EXEC_NOTE)
+    note = EXEC_NOTES.get(candidate["runtime"])
+    if note:
+        active.print_fn(note)
     result = active.runner_fn(
         _runner_spec(candidate, spec),
         build_execute_guidance(spec, active) + "\n\n" + spec.prompt,

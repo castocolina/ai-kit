@@ -31,11 +31,17 @@ runtime_id: Callable[[str], str] | None
 project_runner_command: Callable[..., str | None] | None
 RunnerSpec: Callable[..., Any] | None
 model_id_ok: Callable[[str, str], bool] | None
+HOOK_TOKEN_RE: Any
 
 try:
     from ai_kit_spec.commands import execute_cli_error
     from ai_kit_spec.detection import runtime_id
-    from ai_kit_spec.runner_dispatch import RunnerSpec, model_id_ok, project_runner_command
+    from ai_kit_spec.runner_dispatch import (
+        HOOK_TOKEN_RE,
+        RunnerSpec,
+        model_id_ok,
+        project_runner_command,
+    )
 except ImportError:
     # `ai_kit_spec` is optional at import time (module docstring above): if its skill
     # directory can't be resolved, or the sibling install is missing/broken, this module must
@@ -50,6 +56,7 @@ except ImportError:
     project_runner_command = None
     RunnerSpec = None
     model_id_ok = None
+    HOOK_TOKEN_RE = None
 
 # Closed reviewer slugs. Unknown names are rejected before any config write.
 REVIEWER_SLUGS = ("claude", "cursor", "opencode")
@@ -110,7 +117,8 @@ def _runner_hook(cli, model) -> str | None:
 def unsafe_hook_token(cli, model) -> bool:
     """True when the sibling is present but the hook cannot carry `model` (a shell or glob
     character, which GSD's unquoted hook would split or expand); `no_builder` is the absent
-    sibling."""
-    if project_runner_command is None:
+    sibling. A grammar mismatch is `runner_model_problem`'s, not this check's."""
+    del cli
+    if HOOK_TOKEN_RE is None:
         return False
-    return _runner_hook(cli, model) is None
+    return HOOK_TOKEN_RE.fullmatch(str(model)) is None

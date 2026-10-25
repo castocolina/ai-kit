@@ -12,7 +12,7 @@ import os
 import re
 from typing import NamedTuple
 
-from . import cross_ai, gsd_catalog
+from . import cross_ai, cross_ai_build, gsd_catalog
 
 HEADER_RE = re.compile(
     rb"^// ai-kit-cross-ai generator=ai-kit-gsd-curated-config "
@@ -226,8 +226,26 @@ def _publish(write_path: str, data: bytes) -> None:
     cache.cache_write_bytes(write_path, data, mode=cache.umask_file_mode())
 
 
-def _upgrade_config(template: bytes, existing: bytes, scrub_env) -> dict:
-    """The existing CONFIG wins; a file that is not ours keeps the template's."""
+def _drop_refused_models(config: dict) -> list[str]:
+    """Drop each kept `CONFIG.models` id the new runner's grammar refuses (25.1 WR-05).
+
+    The runner would exit 2 on every call with it; without it the call names `no_model`."""
+    models = config.get("models")
+    if not isinstance(models, dict):
+        return []
+    notes = []
+    for runner_id, model in list(models.items()):
+        problem = isinstance(model, str) and cross_ai_build.runner_model_problem(
+            "kept CONFIG.models", runner_id, model)
+        if problem:
+            del models[runner_id]
+            notes.append(f"{problem}; dropped it, pick a new {runner_id} model")
+    return notes
+
+
+def _upgrade_config(template: bytes, existing: bytes, scrub_env) -> tuple[dict, str]:
+    """The existing CONFIG wins; a file that is not ours keeps the template's. Also the note
+    naming each kept model the new grammar refuses (dropped)."""
     try:
         kept = template_config(existing)
     except ValueError:
@@ -243,7 +261,9 @@ def _upgrade_config(template: bytes, existing: bytes, scrub_env) -> dict:
         merged.pop("runtime", None)
     merged.pop("prefer", None)
     merged["scrubEnv"] = sorted(scrub_env)
-    return merged
+    if isinstance(merged.get("models"), dict):
+        merged["models"] = dict(merged["models"])
+    return merged, "; ".join(_drop_refused_models(merged))
 
 
 def _kept_note(state: str, path: str) -> str:
@@ -270,15 +290,16 @@ def plan_runner_upgrade(project_dir: str, template: bytes, scrub_env) -> ScriptP
     if state == "pristine":
         # A pristine copy takes every template fix, a same-version body fix included; an
         # identical re-render is kept untouched.
-        data = render(template, _upgrade_config(template, existing, scrub_env))
+        config, note = _upgrade_config(template, existing, scrub_env)
+        data = render(template, config)
         if older or data != existing:
-            return ScriptPlan("change", path, path, data, state, "", existing)
+            return ScriptPlan("change", path, path, data, state, note, existing)
         return ScriptPlan("keep-pristine", path, None, existing, state, "", existing)
     if older:
-        data = render(template, _upgrade_config(template, existing, scrub_env))
-        return ScriptPlan(
-            "new-as-.new", path, path + ".new", data, state, _note_new(state, path), existing
-        )
+        config, note = _upgrade_config(template, existing, scrub_env)
+        data = render(template, config)
+        notes = "; ".join(filter(None, (_note_new(state, path), note)))
+        return ScriptPlan("new-as-.new", path, path + ".new", data, state, notes, existing)
     return ScriptPlan("keep-edited", path, None, existing, state, _kept_note(state, path), existing)
 
 

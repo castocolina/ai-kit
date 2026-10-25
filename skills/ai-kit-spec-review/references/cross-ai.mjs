@@ -68,6 +68,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import os from 'node:os';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 
 // <config>
@@ -1291,8 +1292,10 @@ function finish(status, fields) {
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/;
 // Cursor only: one trailing [k=v,...] bracket (D-18). No space, quote, `$` or `;`.
 const CURSOR_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\[[A-Za-z0-9._=,-]+\])?$/;
-// pi: provider/model with an optional :<thinking> from the seven pi levels only (SPEC R9).
-const PI_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._@+-]*\/[A-Za-z0-9][A-Za-z0-9._\/@+-]*(?::(?:off|minimal|low|medium|high|xhigh|max))?$/;
+// pi: provider/model. pi matches the whole id first and splits a trailing :<thinking> only
+// when it is one of the seven levels (its model-resolver), so `:` inside the model part
+// (Ollama tags such as qwen3:8b) is part of the id; modelSuffix strips only a known level.
+const PI_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._@+-]*\/[A-Za-z0-9][A-Za-z0-9._:\/@+-]*$/;
 // opencode: provider/model (`:` stays inside the model part) and one trailing #variant.
 const OPENCODE_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._@+-]*\/[A-Za-z0-9][A-Za-z0-9._:\/@+-]*(?:#[A-Za-z0-9._-]+)?$/;
 
@@ -1506,13 +1509,15 @@ const ANSI_RE = /\x1B\[[0-9;?]*[A-Za-z]/g;
 // only its complete quoted or delimited value.
 const SECRET_RES = [
   /(sk|rk)-[A-Za-z0-9_-]{8,}/gi,
-  /Bearer [A-Za-z0-9._-]{8,}/gi,
+  /Bearer [A-Za-z0-9._~+/=-]{8,}/gi,
+  /\bBasic [A-Za-z0-9+/=]{8,}/gi,
+  /\bAIza[0-9A-Za-z_-]{20,}/g,
   /conn:[0-9a-f]{8,}/gi,
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
   /\bgh[pousr]_[A-Za-z0-9]{20,}\b/gi,
   /\bgithub_pat_[A-Za-z0-9_]{20,}\b/gi,
 ];
-const KEY_VALUE_RE = /((?:\\?["']?)(?:api[_-]?key|token|secret)(?:\\?["']?)\s*[:=]\s*)(?:\\?"(?:\\\\.|[^"\\])*\\?"|\\?'(?:\\\\.|[^'\\])*\\?'|[^\s,"'\]}\];&]+)/gi;
+const KEY_VALUE_RE = /((?:\\?["']?)(?:api[_-]?key|token|secret|password|passwd|(?<=[?&])key)(?:\\?["']?)\s*[:=]\s*)(?:\\?"(?:\\\\.|[^"\\])*\\?"|\\?'(?:\\\\.|[^'\\])*\\?'|[^\s,"'\]}\];&]+)/gi;
 const ID_VALUE_RE = /((?:\\?["']?)(?:account|connection|conn|org|organization|user|request|session|key)[_-]?id(?:\\?["']?)\s*[:=]\s*)(?:\\?"(?:\\\\.|[^"\\])*\\?"|\\?'(?:\\\\.|[^'\\])*\\?'|[^\s,"'\]}\];&]+)/gi;
 
 function redactedValues(text) {
@@ -1566,13 +1571,26 @@ function redactSecrets(line, extra = []) {
 // One bounded line splitter per stream. The live watcher hooks this same buffer: one cap,
 // one flush. `onLine` sees each complete line; `onPartial` sees the buffer before a trim,
 // so an unterminated terminal line is recorded before a newline-free flood drops its head.
+// D-17: each relayed line is normalized (ANSI stripped, decoded) before it is redacted, and
+// `seen` (shared by a run's stdout and stderr relays) keeps every value redacted so far, so a
+// later copy of it is redacted too. The live watcher still sees the raw line.
+const SEEN_MIN_CHARS = 8;
+// shortcut: the per-run set stops growing at 256 values; a flood of distinct keys past that
+// relays later copies of the newer values per line only. Raise it if a capture needs more.
+const SEEN_MAX = 256;
 function makeLineRelay(hooks = {}) {
   let pending = '';
   const onLine = hooks.onLine || (() => {});
   const onPartial = hooks.onPartial || (() => {});
+  const seen = hooks.seen || new Set();
   const emit = (line) => {
     onLine(line);
-    if (!hooks.quiet) log(redactSecrets(line));
+    const clean = normalizeInput(line);
+    // A short value (`"token":"1"`) would turn every later `1` into <redacted>: per line only.
+    for (const value of redactedValues(clean)) {
+      if (value.length >= SEEN_MIN_CHARS && seen.size < SEEN_MAX) seen.add(value);
+    }
+    if (!hooks.quiet) log(redactSecrets(clean, [...seen]));
   };
   return {
     push(chunk) {
@@ -1852,7 +1870,7 @@ function upstreamOf(cls, r, cli) {
     raw = terminal.eventRaw.at(-1) || '';
   }
   if (!raw) return null;
-  const extras = redactedValues(normalizeInput(raw));
+  const extras = [...new Set([...redactedValues(normalizeInput(raw)), ...(r.redacted || [])])];
   const fields = upstreamFields(raw);
   const safeFields = fields && Object.fromEntries(Object.entries(fields).map(([key, value]) => [
     key, typeof value === 'string' ? redactSecrets(replaceCopies(value, extras), extras) : value,
@@ -2736,6 +2754,56 @@ function classifyCases() {
       },
     },
     {
+      // 25.1 CR-02 (D-17): the relay strips ANSI before matching, and a value redacted on one
+      // line (either stream) stays redacted on every later line and in the upstream body.
+      name: 'pure-relay-redacts-copies-and-ansi',
+      pure: () => {
+        const out = [];
+        const saved = log;
+        log = (text) => { out.push(text); };
+        const seen = new Set();
+        try {
+          const quiet = makeLineRelay({ seen, quiet: true });
+          quiet.push('{"token":"zz7OUTsecretvalue7"}\n');
+          const relay = makeLineRelay({ seen });
+          relay.push('{"error":{"message":"bad","api_key":"zz9QQsecretvalue77"}}\n' +
+            'retrying with key zz9QQsecretvalue77\n\x1b[31mapi_key\x1b[0m: zz8ANSIsecretvalue\n' +
+            'stdout copy zz7OUTsecretvalue7 attempt 1\n');
+          relay.flush();
+        } finally {
+          log = saved;
+        }
+        const text = out.join('\n');
+        for (const leak of ['zz9QQsecretvalue77', 'zz8ANSIsecretvalue', 'zz7OUTsecretvalue7']) {
+          if (text.includes(leak)) return `leaked ${leak}: ${text}`;
+        }
+        if (out.length !== 4 || !out[3].includes('attempt 1')) return `lines=${JSON.stringify(out)}`;
+        const up = upstreamOf(null, { stderr: 'boom zz9QQsecretvalue77', redacted: [...seen] }, 'pi');
+        return up && !up.body.includes('zz9QQ') ? null : `upstream=${JSON.stringify(up)}`;
+      },
+    },
+    {
+      // 25.1 WR-03: password keys, Basic auth, a Google `?key=` URL and a wide Bearer token.
+      name: 'pure-redact-credential-shapes',
+      pure: () => {
+        const cases = [
+          ['password=hunter2hunter2', 'hunter2hunter2'],
+          ['{"passwd":"pw-secret-1"}', 'pw-secret-1'],
+          ['Authorization: Basic dXNlcjpwYXNzd29yZA==', 'dXNlcjpwYXNzd29yZA'],
+          ['GET https://x.googleapis.com/v1/m?key=AIzaSyA1234567890abcdefghijk 403', 'AIzaSyA12345'],
+          ['GET https://x.example/v1?a=1&key=plainkey99 403', 'plainkey99'],
+          ['bare AIzaSyB1234567890abcdefghijk here', 'AIzaSyB12345'],
+          ['Authorization: Bearer abc~def+ghi/jkl=', 'ghi/jkl'],
+        ];
+        for (const [input, secret] of cases) {
+          const got = redactSecrets(input);
+          if (got.includes(secret)) return `leaked ${secret}: ${got}`;
+        }
+        const keep = redactSecrets('monkey=1 hotkey: x');
+        return keep === 'monkey=1 hotkey: x' ? null : `over-redacted: ${keep}`;
+      },
+    },
+    {
       name: 'pure-redact-idempotent',
       pure: () => {
         const once = redactSecrets('{"accountId":"acct-77","token":"secret"}');
@@ -2862,10 +2930,15 @@ function readJsonObject(file, rootDir = null) {
   return { obj: parsed };
 }
 
+// ${XDG_CONFIG_HOME:-$HOME/.config}/ai-kit, for the overlay and the user retry file alike. An
+// unset HOME is the account's own home, never a path relative to the working directory.
+function aiKitConfigDir(env) {
+  const configHome = env.XDG_CONFIG_HOME || path.join(env.HOME || os.homedir(), '.config');
+  return path.join(configHome, 'ai-kit');
+}
+
 function loadOverlay(env) {
-  const home = env.HOME || os.homedir();
-  const configHome = env.XDG_CONFIG_HOME || path.join(home, '.config');
-  const root = path.join(configHome, 'ai-kit');
+  const root = aiKitConfigDir(env);
   const file = path.join(root, 'cross-ai-errors.json');
   if (!fs.existsSync(file)) return [];
   // Confinement, file type and size are checked before any byte is read: a FIFO or a huge file
@@ -3011,10 +3084,10 @@ function resolveRetry(cwd, env) {
     if (got.value === undefined) continue;
     sources.push({ label, value: got.value });
   }
-  const configHome = env.XDG_CONFIG_HOME || path.join(env.HOME || '', '.config');
-  const userFile = path.join(configHome, 'ai-kit', 'cross-ai.json');
+  const userRoot = aiKitConfigDir(env);
+  const userFile = path.join(userRoot, 'cross-ai.json');
   const userLabel = `user ${userFile}`;
-  const userRead = readJsonObject(userFile, path.join(configHome, 'ai-kit'));
+  const userRead = readJsonObject(userFile, userRoot);
   if (userRead.error) {
     log(`cross-ai: config ${userLabel} ${userRead.error}; retry keys from the next source`);
   } else if (userRead.obj && Object.hasOwn(userRead.obj, 'cross_ai_retry')) {
@@ -3613,13 +3686,6 @@ function liveMatch(cli, source, text, raw = text, route = 'unknown', model = '')
   return cls;
 }
 
-function hitForLane(hit, lane) {
-  if (!hit || !lane) return hit;
-  const row = TABLE.find((r) => r.id === hit.rule);
-  if (!row || row.routerClass !== 'quota') return hit;
-  return { ...hit, status: 'quota' };
-}
-
 function armLimit(state, cls) {
   if (state.liveHit || !cls) return;
   state.liveHit = { status: cls.status, rule: cls.rule, label: cls.label,
@@ -3658,36 +3724,47 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
     armLimit(state, liveMatch(cli, 'stderr', buf, buf, route, model));
   };
   // The answer goes to stdout only: the stdout relay feeds the live watcher, never the log.
+  // Both relays share one set of redacted values (D-17), which also feeds upstreamOf.
+  const seen = new Set();
   const outRelay = makeLineRelay({
-    onLine: noteLine('stdout'), onPartial: notePartial('stdout'), quiet: true,
+    onLine: noteLine('stdout'), onPartial: notePartial('stdout'), quiet: true, seen,
   });
-  const errRelay = makeLineRelay({ onLine: noteLine('stderr'), onPartial: notePartial('stderr') });
+  const errRelay = makeLineRelay({
+    onLine: noteLine('stderr'), onPartial: notePartial('stderr'), seen,
+  });
   const hb = setInterval(() => {
     const secs = Math.round((Date.now() - started) / 1000);
     log(`cross-ai: ${label} running ${secs}s, stdout +${outBytes - lastBytes} bytes`);
     lastBytes = outBytes;
   }, CONFIG.heartbeatS * 1000);
   const childLimit = opts.limit ?? runDeadline;
+  // One decoder per stream: a multi-byte character split across two chunks decodes whole.
+  const outDecoder = new StringDecoder('utf8');
+  const errDecoder = new StringDecoder('utf8');
+  const onErrText = (text) => {
+    if (!text) return;
+    watchChunk(cli, 'stderr', errRelay, state, text);
+    errTail = (errTail + text).slice(-INPUT_CAP);
+  };
   const r = await runChild(bin, argv, {
     cwd, env, input, capMs: budgetMs(opts.capMs ?? Number.POSITIVE_INFINITY, childLimit),
     limit: childLimit,
     onStdout: (d) => {
       outBytes += d.length;
-      watchChunk(cli, 'stdout', outRelay, state, decodeUtf8(d.toString('utf8')));
+      watchChunk(cli, 'stdout', outRelay, state, outDecoder.write(d));
     },
-    onStderr: (d) => {
-      const text = decodeUtf8(d.toString('utf8'));
-      watchChunk(cli, 'stderr', errRelay, state, text);
-      errTail = (errTail + text).slice(-INPUT_CAP);
-    },
+    onStderr: (d) => onErrText(errDecoder.write(d)),
   });
   clearInterval(hb);
   if (state.limitTimer) clearTimeout(state.limitTimer);
+  const outRest = outDecoder.end();
+  if (outRest) outRelay.push(outRest);
+  onErrText(errDecoder.end());
   outRelay.flush();
   errRelay.flush();
   return {
     ...r, stderr: errTail || r.stderr, outBytes, liveHit: state.liveHit,
-    partialOut: outRelay.partial(), partialErr: errRelay.partial(),
+    partialOut: outRelay.partial(), partialErr: errRelay.partial(), redacted: [...seen],
   };
 }
 
@@ -3846,8 +3923,11 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       // A terminal stop holds the lane (D-08): every call is refused without a model call
       // until the record goes stale or the owner deletes the file to start a new episode.
       logState();
-      log(`cross-ai: lane stopped=${loaded.stopped} at ` +
-        `${new Date(loaded.stopped_at).toISOString()}; delete ${stateFile} to start a new episode`);
+      // A hand-edited record may lack the stop time; the stop itself still holds (25.1 IN-01).
+      const stoppedAt = Number.isFinite(loaded.stopped_at)
+        ? new Date(loaded.stopped_at).toISOString() : '-';
+      log(`cross-ai: lane stopped=${loaded.stopped} at ${stoppedAt}; ` +
+        `delete ${stateFile} to start a new episode`);
       return {
         ok: false, status: loaded.class, code: 69, exit: 69, outBytes: 0, cli_rc: '-',
         route: opts.route || 'unknown', rule: '-', pattern: 'none',
@@ -4003,10 +4083,14 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         return { route, rule, pattern, upstream: upstreamOf(cls, r, name) };
       };
       if (r.spawnErr) {
-        const code = r.spawnErr.code === 'ENOENT' ? 127 : 126;
+        // ENOENT at spawn (the binary or its interpreter is gone) is not_installed/127, as when
+        // the CLI is missing from PATH; any other spawn error stays a crash.
+        const missing = r.spawnErr.code === 'ENOENT';
+        log(`cross-ai: ${name} did not start (${r.spawnErr.code || r.spawnErr.message}); ` +
+          'no other CLI runs (no automatic fallback)');
         return {
-          ok: false, code, error: String(r.spawnErr), outBytes: 0, cli_rc: null,
-          ...counts(), stopped: 'class',
+          ok: false, status: missing ? 'not_installed' : 'crash', exit: missing ? 127 : 1,
+          error: String(r.spawnErr), outBytes: 0, cli_rc: '-', ...counts(), stopped: 'class',
         };
       }
       const p = rt.parse(r.stdout, ctx);
@@ -4031,9 +4115,9 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         };
       };
       if (r.liveHit) {
-        const live = hitForLane(r.liveHit, lane);
-        hit = live.status;
-        evidence = evidenceOf(live);
+        // liveMatch classified with this call's route, so the router-quota mapping is applied.
+        hit = r.liveHit.status;
+        evidence = evidenceOf(r.liveHit);
       } else if (r.timedOut) {
         // Post-hoc over everything it printed, terminal and non-terminal rows alike.
         const captured = [r.stderr || '', r.partialErr || '', r.partialOut || ''].join('\n');
@@ -4321,7 +4405,9 @@ function parseArgs(argv) {
   if (o.runtime !== null && !Object.hasOwn(RUNTIMES, o.runtime)) {
     throw new Error(`unknown runtime: ${o.runtime} (known: ${known})`);
   }
-  for (const n of [...(o.prefer || []), ...Object.keys(o.models), ...Object.keys(o.routes)]) {
+  // SPEC R6: only the entry that runs is checked; the ignored rest gets resolveRuntime's notice.
+  const runs = o.runtime === null && o.prefer && o.prefer.length ? [o.prefer[0]] : [];
+  for (const n of [...runs, ...Object.keys(o.models), ...Object.keys(o.routes)]) {
     if (!Object.hasOwn(RUNTIMES, n)) throw new Error(`unknown cli: ${n} (known: ${known})`);
   }
   return o;
@@ -4395,9 +4481,9 @@ function runClassifyOnly(file) {
       cli, route, model: entry.model || '', stderr: entry.stderr || '',
       events: extractEvents(cli, entry.stdout || ''),
     });
-    lines.push(JSON.stringify({
-      name: entry.name, status: cls.status, rule: cls.rule, pattern: cls.label, route,
-    }));
+    // Same rule as a live run: an uncaptured runtime reports every pattern unverified.
+    const pattern = RUNTIMES[cli].errorsUnverified ? 'unverified' : cls.label;
+    lines.push(JSON.stringify({ name: entry.name, status: cls.status, rule: cls.rule, pattern, route }));
   }
   if (lines.length) process.stdout.write(`${lines.join('\n')}\n`);
   return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: lines.length });
@@ -5547,10 +5633,16 @@ async function blackBoxSelfTest() {
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
       },
       {
-        name: 'model-invalid-pi-suffix',
+        // 25.1 WR-05: a colon that is not a thinking level is part of pi's model id.
+        name: 'model-pi-colon-id',
         args: ['--runtime', 'pi', '--model', 'fake/ok:free', '--print-argv'],
-        exit: 2,
-        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
+          if (!line) return 'missing argv line';
+          return JSON.parse(line.split('\t')[2]).includes('fake/ok:free') ? null : line;
+        },
       },
       {
         name: 'model-opencode-colon',
@@ -5672,9 +5764,12 @@ async function blackBoxSelfTest() {
           const accept = [
             [PI_MODEL_ID, 'fake/ok:high'], [PI_MODEL_ID, 'router-env/my-coding:high'],
             [OPENCODE_MODEL_ID, 'fake/ok#fast'], [OPENCODE_MODEL_ID, 'or/meta/llama:free'],
+            // 25.1 WR-05: a colon inside pi's model part is part of the id (Ollama tags).
+            [PI_MODEL_ID, 'fake/ok:free'], [PI_MODEL_ID, 'ollama/qwen3:8b'],
+            [PI_MODEL_ID, 'ollama/qwen3:8b:high'],
           ];
           const refuse = [
-            [PI_MODEL_ID, 'glm'], [PI_MODEL_ID, 'fake/ok[x=1]'], [PI_MODEL_ID, 'fake/ok:free'],
+            [PI_MODEL_ID, 'glm'], [PI_MODEL_ID, 'fake/ok[x=1]'], [PI_MODEL_ID, 'ollama/:8b'],
             [OPENCODE_MODEL_ID, 'glm'], [OPENCODE_MODEL_ID, 'fake/ok#a#b'],
           ];
           for (const [re, id] of accept) if (!re.test(id)) return `${re} refused ${id}`;
@@ -5687,6 +5782,91 @@ async function blackBoxSelfTest() {
             if (RUNTIMES[name].modelId !== re) return `${name} modelId is not the declared regex`;
           }
           return null;
+        },
+      },
+      {
+        // SPEC R6: --prefer reads only its first entry; an ignored entry is a notice, never a
+        // usage error, whatever it names.
+        name: 'prefer-ignored-unknown-entry',
+        args: ['--prefer', 'pi,nosuchcli', '--model-pi', 'fake/ok', '--print-argv'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => ((r.stderr || '').includes(
+          'cross-ai: --prefer reads only its first entry (pi); ignored: nosuchcli') ? null : 'missing notice'),
+      },
+      {
+        // With HOME and XDG_CONFIG_HOME unset, the user retry file is the account's own
+        // ~/.config/ai-kit/cross-ai.json, never one relative to the working directory.
+        name: 'pure-retry-user-config-without-home',
+        pure: () => {
+          const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-home-'));
+          const home = path.join(root, 'home');
+          const work = path.join(root, 'work');
+          for (const [dir, base] of [[home, 3], [work, 7]]) {
+            fs.mkdirSync(path.join(dir, '.config', 'ai-kit'), { recursive: true });
+            fs.writeFileSync(path.join(dir, '.config', 'ai-kit', 'cross-ai.json'),
+              JSON.stringify({ cross_ai_retry: { base_s: base } }));
+          }
+          const savedHome = os.homedir;
+          const savedLog = log;
+          const savedCwd = process.cwd();
+          os.homedir = () => home;
+          log = () => {};
+          try {
+            process.chdir(work);
+            const got = resolveRetry(work, {}).retry.base_s;
+            return got === 3 ? null : `base_s=${got}`;
+          } finally {
+            process.chdir(savedCwd);
+            os.homedir = savedHome;
+            log = savedLog;
+            fs.rmSync(root, { recursive: true, force: true });
+          }
+        },
+      },
+      {
+        // A CLI that cannot be executed at spawn time (its interpreter is gone) is not_installed
+        // with exit 127, as when it is missing from PATH, never a crash.
+        name: 'spawn-enoent-not-installed',
+        setup: (c) => {
+          const dir = path.join(c.tmp, 'bin-enoent');
+          fs.mkdirSync(dir);
+          for (const b of ['node', 'git']) fs.symlinkSync(path.join(c.tmp, 'bin', b), path.join(dir, b));
+          fs.writeFileSync(path.join(dir, 'pi'), '#!/nonexistent/interpreter\n');
+          fs.chmodSync(path.join(dir, 'pi'), 0o755);
+          c.env.PATH = dir;
+          return null;
+        },
+        args: ['--runtime', 'pi', '--model', 'fake/ok'],
+        config: { retry: { max_retries: 0, session_resets: 0 } },
+        exit: 127,
+        status: /^AIKIT-XAI status=not_installed cli=pi model=fake\/ok exit=127 .* action=stop$/,
+      },
+      {
+        // A multi-byte character split across two pipe chunks is decoded whole (StringDecoder),
+        // never as two U+FFFD.
+        name: 'utf8-split-across-chunks',
+        setup: (c) => {
+          const dir = path.join(c.tmp, 'bin-utf8');
+          fs.mkdirSync(dir);
+          for (const b of ['node', 'git']) fs.symlinkSync(path.join(c.tmp, 'bin', b), path.join(dir, b));
+          fs.writeFileSync(path.join(dir, 'pi'), '#!/usr/bin/env node\n' +
+            "if (process.argv.includes('rpc')) process.exit(1);\n" +
+            "const b = Buffer.from('caf\\u00e9 boom\\n');\n" +
+            'process.stderr.write(b.subarray(0, 4));\n' +
+            'setTimeout(() => { process.stderr.write(b.subarray(4)); process.exitCode = 1; }, 150);\n');
+          fs.chmodSync(path.join(dir, 'pi'), 0o755);
+          c.env.PATH = dir;
+          return null;
+        },
+        args: ['--runtime', 'pi', '--model', 'fake/ok'],
+        config: { retry: { max_retries: 0, session_resets: 0 } },
+        exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/ok exit=1 .* action=stop$/,
+        check: (r) => {
+          const err = r.stderr || '';
+          if (err.includes('\uFFFD')) return 'split character decoded as U+FFFD';
+          return err.includes('caf\u00e9 boom') ? null : 'relayed line missing';
         },
       },
       {
@@ -6432,6 +6612,27 @@ async function blackBoxSelfTest() {
           if (tail && tail.retry_after_s !== undefined) return `tail=${JSON.stringify(tail)}`;
           if (fs.readFileSync(file, 'utf8') !== ctx.stoppedBytes) {
             return 'stopped record was rewritten';
+          }
+          return sameLane(ctx, 'pi', 'fake/event400');
+        },
+      },
+      {
+        // 25.1 IN-01: a hand-edited stopped record with no stopped_at still refuses (69), no crash.
+        name: 'hard-tier-stopped-no-stop-time',
+        setup: (c) => {
+          writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 2, {
+            stopped: 'hard-waits', retry_after_s: null, due_at: null,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        config: { retry: { ...HARD_TIER_RETRY } },
+        exit: 69,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=69 .* action=stop$'),
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('cross-ai: lane stopped=hard-waits at -;')) {
+            return 'missing lane stopped line';
           }
           return sameLane(ctx, 'pi', 'fake/event400');
         },
@@ -9536,6 +9737,23 @@ async function blackBoxSelfTest() {
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
         check: (_r, ctx) => (ctx.calls.length ? `spawned: ${ctx.calls.join('|')}` : null),
+      },
+      {
+        // 25.1 WR-02: an uncaptured runtime reads unverified here too, as on a live run.
+        name: 'classify-only-copilot-unverified',
+        setup: (c) => {
+          fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify([
+            { name: 'x', cli: 'copilot', stderr: 'Error: quota exceeded' },
+          ]));
+          return null;
+        },
+        args: ['--classify-only', 'fixtures.json'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const got = JSON.parse((r.stdout || '').split('\n')[0] || '{}');
+          return got.status === 'quota' && got.pattern === 'unverified' ? null : JSON.stringify(got);
+        },
       },
       {
         name: 'classify-only-bad-file',
