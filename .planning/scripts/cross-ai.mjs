@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=b1c8f557a5c92aaa80976df86271317dde737de1fa99c8a2481cba219e2b689c
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=1ba809f74f89de905c40025037074824356e6dc9e8106a2c6ce2165e37c9e66b
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
@@ -1523,21 +1523,22 @@ function normalize(text) {
 }
 
 const INPUT_CAP = 65536;
-const ANSI_RE = /\x1B\[[0-9;?]*[A-Za-z]/g;
+// CSI color and cursor codes, and OSC sequences such as terminal hyperlinks (BEL or ST end).
+const ANSI_RE = /\x1B\[[0-9;?]*[A-Za-z]|\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g;
 // Child text can echo credentials and identifiers. Key rules preserve the key and replace
 // only its complete quoted or delimited value.
 const SECRET_RES = [
   /(sk|rk)-[A-Za-z0-9_-]{8,}/gi,
-  /Bearer [A-Za-z0-9._~+/=-]{8,}/gi,
-  /\bBasic [A-Za-z0-9+/=]{8,}/gi,
+  /(?<=\bBearer )[A-Za-z0-9._~+/=-]{8,}/gi,
+  /(?<=\bBasic )[A-Za-z0-9+/=]{8,}/gi,
   /\bAIza[0-9A-Za-z_-]{20,}/g,
   /conn:[0-9a-f]{8,}/gi,
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
   /\bgh[pousr]_[A-Za-z0-9]{20,}\b/gi,
   /\bgithub_pat_[A-Za-z0-9_]{20,}\b/gi,
 ];
-const KEY_VALUE_RE = /((?:\\?["']?)(?:api[_-]?key|token|secret|password|passwd|(?<=[?&])key)(?:\\?["']?)\s*[:=]\s*)(?:\\?"(?:\\\\.|[^"\\])*\\?"|\\?'(?:\\\\.|[^'\\])*\\?'|[^\s,"'\]}\];&]+)/gi;
-const ID_VALUE_RE = /((?:\\?["']?)(?:account|connection|conn|org|organization|user|request|session|key)[_-]?id(?:\\?["']?)\s*[:=]\s*)(?:\\?"(?:\\\\.|[^"\\])*\\?"|\\?'(?:\\\\.|[^'\\])*\\?'|[^\s,"'\]}\];&]+)/gi;
+const KEY_VALUE_RE = /((?:\\?["']?)(?:api[_-]?key|token|secret|password|passwd|(?<=[?&])key)(?:\\?["']?)\s*(?:=>|[:=])\s*)(?:\\?"(?:\\\\.|[^"\\])*\\?"|\\?'(?:\\\\.|[^'\\])*\\?'|[^\s,"'\]}\];&]+)/gi;
+const ID_VALUE_RE = /((?:\\?["']?)(?:account|connection|conn|org|organization|user|request|session|key)[_-]?id(?:\\?["']?)\s*(?:=>|[:=])\s*)(?:\\?"(?:\\\\.|[^"\\])*\\?"|\\?'(?:\\\\.|[^'\\])*\\?'|[^\s,"'\]}\];&]+)/gi;
 
 function redactedValues(text) {
   const values = [];
@@ -1575,14 +1576,19 @@ function normalizeInput(text) {
 function redactSecrets(line, extra = []) {
   let out = String(line);
   const copies = [...redactedValues(out), ...extra];
-  for (const re of [KEY_VALUE_RE, ID_VALUE_RE, ...SECRET_RES]) {
+  // Key rules keep their key and quote; a shape rule has no capture group (the callback's second
+  // argument is then the match offset, never a prefix), so it replaces the whole match.
+  for (const re of [KEY_VALUE_RE, ID_VALUE_RE]) {
     re.lastIndex = 0;
     out = out.replace(re, (match, prefix) => {
-      if (!prefix) return '<redacted>';
       const value = match.slice(prefix.length);
       const quote = value.match(/^\\?["']/)?.[0] || '';
       return quote ? `${prefix}${quote}<redacted>${quote}` : `${prefix}<redacted>`;
     });
+  }
+  for (const re of SECRET_RES) {
+    re.lastIndex = 0;
+    out = out.replace(re, '<redacted>');
   }
   return replaceCopies(out, copies);
 }
@@ -2820,6 +2826,25 @@ function classifyCases() {
         }
         const keep = redactSecrets('monkey=1 hotkey: x');
         return keep === 'monkey=1 hotkey: x' ? null : `over-redacted: ${keep}`;
+      },
+    },
+    {
+      // A mid-line credential keeps its line intact: the scheme word stays, no stray offset is
+      // printed, and a hyperlink escape or an `=>` separator does not shield a key.
+      name: 'pure-redact-mid-line-and-escapes',
+      pure: () => {
+        const tok = ['abcd', 'efgh', 'ijkl', 'mnop'].join('');
+        const cases = [
+          [`Authorization: Bearer ${tok}`, 'Authorization: Bearer <redacted>'],
+          [`header Basic ${tok}== end`, 'header Basic <redacted> end'],
+          [`see \x1B]8;;https://x.test/?key=${tok}\x1B\\link\x1B]8;;\x1B\\ ok`, 'see link ok'],
+          [`api_key => ${tok}`, 'api_key => <redacted>'],
+        ];
+        for (const [raw, want] of cases) {
+          const got = redactSecrets(normalizeInput(raw));
+          if (got !== want) return JSON.stringify({ raw, got, want });
+        }
+        return null;
       },
     },
     {
@@ -9917,9 +9942,10 @@ async function blackBoxSelfTest() {
           if (relayed.length !== 1 || !relayed[0].includes('<redacted>')) return 'token line not redacted';
           let state = '';
           if (fs.existsSync(ctx.env.XDG_STATE_HOME)) {
-            state = fs.readdirSync(ctx.env.XDG_STATE_HOME, { withFileTypes: true })
+            // Recursive: the lane records live under ai-kit/spec/cycles/<root-hash>/.
+            state = fs.readdirSync(ctx.env.XDG_STATE_HOME, { withFileTypes: true, recursive: true })
               .filter((e) => e.isFile())
-              .map((e) => fs.readFileSync(path.join(ctx.env.XDG_STATE_HOME, e.name), 'utf8'))
+              .map((e) => fs.readFileSync(path.join(e.parentPath, e.name), 'utf8'))
               .join('\n');
           }
           const all = `${r.stdout}\n${r.stderr}\n${state}`;
@@ -10123,8 +10149,9 @@ async function main(argv) {
     return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   OVERLAY_IDS = new Set();
-  TABLE = mergeCatalog(PATTERNS, loadOverlay(process.env));
+  // The self-test never reads the owner's real overlay; each case builds its own.
   if (o.selfTest) return blackBoxSelfTest();
+  TABLE = mergeCatalog(PATTERNS, loadOverlay(process.env));
   if (o.classifyOnly !== null) return runClassifyOnly(o.classifyOnly);
   childPgidFile = o.childPgidFile;
   childPgidBroken = false;

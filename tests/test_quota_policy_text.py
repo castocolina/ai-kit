@@ -109,6 +109,13 @@ class GsdExecuteSkill(unittest.TestCase):
             self.assertIn("one-shot", line)
             self.assertIn("retry_after_s", line)
 
+    def test_skill_never_answers_skip_and_aborts_every_other_stop(self):
+        """T-25.1-23: GSD's skip runs the plan on the main executor, so the skill never answers it,
+        and every stop without a retry hint answers abort."""
+        text = GSD_SKILL.read_text(encoding="utf-8")
+        self.assertIn("Never answer `skip`", text)
+        self.assertRegex(text, r"gets the notice and the answer `abort`")
+
 
 class SuperpowersExecuteSkill(unittest.TestCase):
     def test_skill_points_to_cross_ai_and_pins_hard_tier(self):
