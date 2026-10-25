@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=6 sha256=83ed84ef96743445320fd06c78548c9d4fbf636b50ee0839bc5c3f45ad0479ec
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=7 sha256=a67c2669efbf5cceb1f98d4fe07b145645820222e76b54cb1d92032ec49fa532
 /*
- * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v6).
+ * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v7).
  *
  * tree=clean means this CLI run left HEAD and the tree unchanged; dirty changed them;
  * unknown means the cwd is not inside a git work tree (the CLI ran without the check) or git
@@ -20,8 +20,11 @@
  * generator will then refuse to overwrite this file silently (sha256 header above).
  *
  * Flags:
- *   --prefer pi,cursor,opencode,codex   order to try (default CONFIG.prefer)
+ *   --prefer pi,cursor,opencode,codex   first entry runs; rest is a menu
  *   --model-<cli> <id>                       model per CLI, e.g. --model-cursor auto
+ *   --route-<cli> router|unknown             confirmed route of that CLI (wins over CONFIG)
+ *   --classify-only <path>                   classify a JSON case file and exit (no spawn,
+ *                                            no write, stdin ignored; path relative to cwd)
  *   --mode exec|review                       exec = full permissions (default); review = read-only
  *   --timeout <s>                            inner deadline (lowers default; never above derived inner)
  *   --outer-timeout <s>                      outer deadline (replaces the GSD lookup and the
@@ -58,10 +61,13 @@ import { fileURLToPath } from 'node:url';
 
 // <config>
 const CONFIG = {
+  "attemptTimeoutS": 0,
   "backoffS": [
     30,
     60
   ],
+  "capS": 14400,
+  "cooldownS": 600,
   "defaultOuterTimeoutS": 300,
   "effort": {},
   "extraArgs": {},
@@ -73,6 +79,7 @@ const CONFIG = {
     "opencode": "router-env/my-coding",
     "pi": "router-env/my-coding"
   },
+  "newSessionRetries": 3,
   "outerTimeoutS": 1800,
   "prefer": [
     "pi",
@@ -81,6 +88,7 @@ const CONFIG = {
   ],
   "retries": 2,
   "routerBacked": {},
+  "sameSessionRetries": 3,
   "scrubEnv": [
     "AI_AGENT",
     "CLAUDECODE",
@@ -115,48 +123,714 @@ const REVIEW_PREAMBLE = `
 Read-only review. Do not modify files, do not commit, do not run commands that change state. Reply with the review only.
 </reviewer_rules>
 `;
-const RESUME_MSG = 'You were interrupted by a transient provider error. Continue the same task from where you stopped: ' +
-  'first inspect git status, git diff and git log, do not redo finished steps, finish the remaining steps ' +
+const RESUME_MSG = 'You were interrupted by a provider error. Continue the same task from where you ' +
+  'stopped: first inspect git status, git diff and git log, do not redo finished steps, finish the remaining ' +
   '(verify commands and commits included), then reply with the final report as originally asked.';
 
-// First matching key wins: billing and quota come before auth so a 403 spending-limit or
-// free-tier error is not read as an auth failure.
+// Mirrors model_heuristics._ROUTER_NAME_HINTS; a Python test pins this line.
+// A hint match is advisory only (route=router-inferred): it never enables the router-quota
+// cycles, which need the flag or a confirmed CONFIG.routerBacked[cli] boolean.
+const ROUTER_HINTS = ["router", "-env", "local-llm"];
+
+// Pinned table order (vendor codes, then quota text, then auth, then capacity, then
+// opencode type hints, then bare codes): pure-classify-order-mutation proves a reversal
+// changes the class of a message that carries both billing and quota wording.
 // <patterns>
-const PATTERNS = {
-  "permission_blocked": "permission denied|requires approval|approval required|workspace trust required|pre-dispatch filters",
-  "billing": "spending limit|billing|payment required|\\b402\\b|free ?tier",
-  "quota": "quota exceeded|insufficient_quota|usage limit",
-  "auth": "\\b40[13]\\b|unauthori[sz]ed|token_expired|invalid_refresh_token|could not be refreshed|not logged in|log ?in required|please (?:log|sign) ?in|invalid api key|requires an opencode API key|credential gate",
-  "bad_model": "model not found|unknown model|invalid model",
-  "capacity": "overloaded|at capacity|service unavailable|\\b503\\b",
-  "transient": "temporarily unavailable|cooling down|is locked|rate.?limit|too many requests|\\b429\\b|\\b50[24]\\b|ECONNRESET|ETIMEDOUT|socket hang up|stream (?:closed|disconnected)"
-};
+const PATTERNS = [
+  {
+    "id": "vendor-usage-limit-reached",
+    "cli": "*",
+    "input": "any",
+    "match": "usage_limit_reached",
+    "class": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe"
+  },
+  {
+    "id": "vendor-insufficient-quota",
+    "cli": "*",
+    "input": "any",
+    "match": "insufficient_quota",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe"
+  },
+  {
+    "id": "text-billing",
+    "cli": "*",
+    "input": "any",
+    "match": "\\bbilling\\b",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe"
+  },
+  {
+    "id": "vendor-monthly-limit",
+    "cli": "*",
+    "input": "any",
+    "match": "MonthlyLimitError",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.2 CONTEXT, wrapper reproduced"
+  },
+  {
+    "id": "text-spending-limit",
+    "cli": "*",
+    "input": "any",
+    "match": "spending[ -]limit",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded hyphen"
+  },
+  {
+    "id": "text-payment-required",
+    "cli": "*",
+    "input": "any",
+    "match": "payment required",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe format"
+  },
+  {
+    "id": "text-free-tier",
+    "cli": "*",
+    "input": "any",
+    "match": "free ?tier",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.3 recorded"
+  },
+  {
+    "id": "text-insufficient-funds",
+    "cli": "*",
+    "input": "any",
+    "match": "insufficient (?:account )?funds",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.2 Go wording"
+  },
+  {
+    "id": "text-run-out-credits",
+    "cli": "*",
+    "input": "any",
+    "match": "run out of credits",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-model-access-disabled",
+    "cli": "*",
+    "input": "any",
+    "match": "model access is disabled",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.2 Zen wording"
+  },
+  {
+    "id": "text-named-models",
+    "cli": "cursor",
+    "input": "any",
+    "match": "named models unavailable",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.4"
+  },
+  {
+    "id": "text-free-plan-auto",
+    "cli": "cursor",
+    "input": "any",
+    "match": "free plans can only use auto",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.4"
+  },
+  {
+    "id": "vendor-free-usage",
+    "cli": "*",
+    "input": "any",
+    "match": "FreeUsageLimitError",
+    "class": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe"
+  },
+  {
+    "id": "vendor-go-usage",
+    "cli": "*",
+    "input": "any",
+    "match": "GoUsageLimitError",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.3 cited list"
+  },
+  {
+    "id": "cursor-action-usage-limit",
+    "cli": "cursor",
+    "input": "any",
+    "match": "actionrequirederror.*usage limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.4 channel unverified"
+  },
+  {
+    "id": "pi-chatgpt-usage-limit",
+    "cli": "pi",
+    "input": "any",
+    "match": "chatgpt usage limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.3 cited bundle"
+  },
+  {
+    "id": "claude-hit-your-limit",
+    "cli": "claude",
+    "input": "any",
+    "match": "hit your limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.5 cited binary"
+  },
+  {
+    "id": "text-usage-limit",
+    "cli": "*",
+    "input": "any",
+    "match": "usage limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe"
+  },
+  {
+    "id": "text-hit-your-limit",
+    "cli": "*",
+    "input": "any",
+    "match": "hit your (?:\\w+ )?limit",
+    "class": "quota",
+    "terminal": true,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.4 cursor wording"
+  },
+  {
+    "id": "text-quota-exceeded",
+    "cli": "*",
+    "input": "any",
+    "match": "quota exceeded",
+    "class": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe"
+  },
+  {
+    "id": "text-rate-limit",
+    "cli": "*",
+    "input": "any",
+    "match": "rate.?limit",
+    "class": "quota",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
+  },
+  {
+    "id": "text-too-many-requests",
+    "cli": "*",
+    "input": "any",
+    "match": "too many requests",
+    "class": "quota",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.3 pi retries; not terminal (25-04)"
+  },
+  {
+    "id": "text-requires-opencode-key",
+    "cli": "*",
+    "input": "any",
+    "match": "requires an opencode api key",
+    "class": "auth",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe"
+  },
+  {
+    "id": "text-credential-gate",
+    "cli": "*",
+    "input": "any",
+    "match": "credential gate",
+    "class": "auth",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-pre-dispatch",
+    "cli": "*",
+    "input": "any",
+    "match": "pre-dispatch filters",
+    "class": "permission_blocked",
+    "routerClass": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-unauthorized",
+    "cli": "*",
+    "input": "any",
+    "match": "unauthori[sz]ed",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe"
+  },
+  {
+    "id": "text-token-expired",
+    "cli": "*",
+    "input": "any",
+    "match": "token_expired",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-invalid-refresh",
+    "cli": "*",
+    "input": "any",
+    "match": "invalid_refresh_token",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-refresh-reused",
+    "cli": "*",
+    "input": "any",
+    "match": "refresh.token.(?:was already used|reused)",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-could-not-refresh",
+    "cli": "*",
+    "input": "any",
+    "match": "could not be refreshed",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-not-logged-in",
+    "cli": "*",
+    "input": "any",
+    "match": "not logged in",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-login-required",
+    "cli": "*",
+    "input": "any",
+    "match": "log ?in required",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-please-sign-in",
+    "cli": "*",
+    "input": "any",
+    "match": "please (?:log|sign) ?in",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recorded"
+  },
+  {
+    "id": "text-invalid-api-key",
+    "cli": "*",
+    "input": "any",
+    "match": "invalid api key",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.4 live"
+  },
+  {
+    "id": "text-incorrect-api-key",
+    "cli": "*",
+    "input": "any",
+    "match": "incorrect api key",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe"
+  },
+  {
+    "id": "text-api-key-invalid",
+    "cli": "*",
+    "input": "any",
+    "match": "api key is invalid",
+    "class": "auth",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.4 live"
+  },
+  {
+    "id": "text-permission-denied",
+    "cli": "*",
+    "input": "any",
+    "match": "permission denied",
+    "class": "permission_blocked",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-requires-approval",
+    "cli": "*",
+    "input": "any",
+    "match": "requires approval",
+    "class": "permission_blocked",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-approval-required",
+    "cli": "*",
+    "input": "any",
+    "match": "approval required",
+    "class": "permission_blocked",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-workspace-trust",
+    "cli": "*",
+    "input": "any",
+    "match": "workspace trust required",
+    "class": "permission_blocked",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-model-not-found",
+    "cli": "*",
+    "input": "any",
+    "match": "model not found",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe item"
+  },
+  {
+    "id": "text-unknown-model",
+    "cli": "*",
+    "input": "any",
+    "match": "unknown model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe item"
+  },
+  {
+    "id": "text-invalid-model",
+    "cli": "*",
+    "input": "any",
+    "match": "invalid model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe item"
+  },
+  {
+    "id": "text-cannot-use-model",
+    "cli": "*",
+    "input": "any",
+    "match": "cannot use this model",
+    "class": "bad_model",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.4 live"
+  },
+  {
+    "id": "claude-overloaded",
+    "cli": "claude",
+    "input": "any",
+    "match": "overloaded",
+    "class": "transient",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "25-RESEARCH 2.5 CONTEXT"
+  },
+  {
+    "id": "text-overloaded",
+    "cli": "*",
+    "input": "any",
+    "match": "overloaded",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe"
+  },
+  {
+    "id": "text-at-capacity",
+    "cli": "*",
+    "input": "any",
+    "match": "at capacity",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-service-unavailable",
+    "cli": "*",
+    "input": "any",
+    "match": "service (?:temporarily )?unavailable",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-resource-pressure",
+    "cli": "*",
+    "input": "any",
+    "match": "resource pressure",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-admission-capacity",
+    "cli": "*",
+    "input": "any",
+    "match": "admission capacity",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-event-400",
+    "cli": "*",
+    "input": "any",
+    "match": "\\[400\\]: event: error",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-CONTEXT transient upstream 400"
+  },
+  {
+    "id": "text-temporarily-unavailable",
+    "cli": "*",
+    "input": "any",
+    "match": "temporarily unavailable",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 recorded"
+  },
+  {
+    "id": "text-cooling-down",
+    "cli": "*",
+    "input": "any",
+    "match": "cooling down",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "prior table"
+  },
+  {
+    "id": "text-is-locked",
+    "cli": "*",
+    "input": "any",
+    "match": "is locked",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "prior table"
+  },
+  {
+    "id": "text-econnreset",
+    "cli": "*",
+    "input": "any",
+    "match": "ECONNRESET",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "prior table"
+  },
+  {
+    "id": "text-etimedout",
+    "cli": "*",
+    "input": "any",
+    "match": "ETIMEDOUT",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "prior table"
+  },
+  {
+    "id": "text-socket-hangup",
+    "cli": "*",
+    "input": "any",
+    "match": "socket hang up",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "prior table"
+  },
+  {
+    "id": "text-stream-cut",
+    "cli": "*",
+    "input": "any",
+    "match": "stream (?:closed|disconnected)",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 recovered stream"
+  },
+  {
+    "id": "opencode-type-quota",
+    "cli": "opencode",
+    "input": "event",
+    "match": "opencode-type:provider\\.(?:quota|rate-limit)",
+    "class": "quota",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe"
+  },
+  {
+    "id": "opencode-type-auth",
+    "cli": "opencode",
+    "input": "event",
+    "match": "opencode-type:provider\\.auth",
+    "class": "auth",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe, weak hint"
+  },
+  {
+    "id": "code-402",
+    "cli": "*",
+    "input": "any",
+    "match": "\\b402\\b",
+    "class": "billing",
+    "routerClass": "quota",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.1 probe; not terminal (25-04)"
+  },
+  {
+    "id": "code-401-403",
+    "cli": "*",
+    "input": "any",
+    "match": "\\b40[13]\\b",
+    "class": "auth",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
+  },
+  {
+    "id": "code-429",
+    "cli": "*",
+    "input": "any",
+    "match": "\\b429\\b",
+    "class": "quota",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-CONTEXT kimi 429; not terminal (25-04)"
+  },
+  {
+    "id": "code-5xx",
+    "cli": "*",
+    "input": "any",
+    "match": "\\b50[0234]\\b",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
+  },
+  {
+    "id": "code-529",
+    "cli": "*",
+    "input": "any",
+    "match": "\\b529\\b",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25-RESEARCH 2.2 probe; not terminal (25-04)"
+  }
+];
 // </patterns>
 
 const STATUS_TABLE = {
-  ok: { exit: 0, action: 'stop' },
-  no_change: { exit: 1, action: 'fallback' },
-  empty_answer: { exit: 1, action: 'fallback' },
-  crash: { exit: 1, action: 'fallback' },
-  contract_violation: { exit: 1, action: 'stop' },
-  usage: { exit: 2, action: 'stop' },
-  no_model: { exit: 2, action: 'stop' },
-  empty_stdin: { exit: 2, action: 'stop' },
-  permission_blocked: { exit: 69, action: 'fallback' },
-  bad_model: { exit: 69, action: 'fallback' },
-  auth: { exit: 69, action: 'fallback' },
-  billing: { exit: 69, action: 'fallback' },
-  quota: { exit: 75, action: 'retry-later' },
-  capacity: { exit: 75, action: 'retry-later' },
-  timeout: { exit: 124, action: 'stop' },
-  not_installed: { exit: 127, action: 'fallback' },
-  signal: { exit: 128, action: 'stop' },
-  git_error: { exit: 1, action: 'stop' },
-  git_timeout: { exit: 1, action: 'stop' },
+  ok: { exit: 0 },
+  no_change: { exit: 1 },
+  empty_answer: { exit: 1 },
+  crash: { exit: 1 },
+  contract_violation: { exit: 1 },
+  usage: { exit: 2 },
+  no_model: { exit: 2 },
+  empty_stdin: { exit: 2 },
+  permission_blocked: { exit: 69 },
+  bad_model: { exit: 69 },
+  auth: { exit: 69 },
+  billing: { exit: 69 },
+  quota: { exit: 75 },
+  transient: { exit: 75 },
+  timeout: { exit: 124 },
+  not_installed: { exit: 127 },
+  signal: { exit: 128 },
+  git_error: { exit: 1 },
+  git_timeout: { exit: 1 },
 };
 
 const FINALIZE_CAP_MS = 10000;
 const KILL_GRACE_MS = 2000;
+// A child that prints a terminal limit and keeps running is stopped this long after the line.
+const LIMIT_GRACE_MS = 1500;
 const PIPE_DRAIN_MS = 2000;
 // gsd-tools run-with-timeout SIGKILLs the runner 3 s after forwarding a signal, and the CLI
 // runs in its own group, so the whole signal path (grace, kill, drain, tree) fits in 2.5 s.
@@ -174,7 +848,10 @@ const PI_RPC_REQUEST = '{"id":"1","type":"get_available_models"}\n';
 let childPgidFile = null;
 let childPgidBroken = false;
 let runStartedMs = Date.now();
-let liveFields = { cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean' };
+let liveFields = {
+  cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean',
+  route: 'unknown', rule: '-', pattern: 'none',
+};
 let finished = false;
 let finishedExit = 1;
 let runDeadline = 0;
@@ -213,22 +890,34 @@ function log(text) {
   process.stderr.write(text.endsWith('\n') ? text : `${text}\n`);
 }
 
+// Every run that does not end ok reports once, immediately before its status line.
+function reportAndFinish(status, fields, stopped) {
+  const why = stopped || fields.stopped || 'class';
+  if (status !== 'ok' && !fields.reportDone) {
+    logReport(status, fields.cli ?? '-', fields.model ?? '-', fields.route, fields.attempts || 0,
+      fields.cycles || 0, fields.firstFailureMs || 0, fields.lastFailureMs || 0, why);
+  }
+  return finish(status, fields);
+}
+
 function finish(status, fields) {
   if (finished) return finishedExit;
-  const row = STATUS_TABLE[status] || { exit: 1, action: 'stop' };
-  let action = fields.action ?? row.action;
+  const row = STATUS_TABLE[status] || { exit: 1 };
   const tree = fields.tree ?? 'unknown';
-  let exit = fields.exit ?? row.exit;
-  if (status === 'billing' && fields.cli && CONFIG.routerBacked[fields.cli]) {
-    action = 'retry-later';
-    exit = 75;
-  }
-  // Neither another CLI nor a later retry may run over edits this run left (or may have left).
-  if ((action === 'fallback' || action === 'retry-later') && tree !== 'clean') action = 'stop';
+  const exit = fields.exit ?? row.exit;
   const elapsed = fields.elapsed ?? Math.max(0, Math.round((Date.now() - runStartedMs) / 1000));
-  const line = `AIKIT-XAI status=${status} cli=${fields.cli ?? '-'} model=${fields.model ?? '-'} ` +
+  const route = fields.route ?? 'unknown';
+  const rule = fields.rule ?? '-';
+  const pattern = fields.pattern ?? 'none';
+  const attempts = fields.attempts ?? 0;
+  const cycles = fields.cycles ?? 0;
+  let line = `AIKIT-XAI status=${status} cli=${fields.cli ?? '-'} model=${fields.model ?? '-'} ` +
     `exit=${exit} cli_rc=${fields.cli_rc ?? '-'} elapsed=${elapsed}s out=${fields.out ?? 0} ` +
-    `tree=${tree} action=${action}`;
+    `tree=${tree} action=stop route=${route} rule=${rule} pattern=${pattern}` +
+    ` attempts=${attempts} cycles=${cycles}`;
+  if (fields.retryAfterS !== undefined && fields.retryAfterS !== null) {
+    line += ` retry_after_s=${fields.retryAfterS} cycle=${fields.cycle ?? cycles}`;
+  }
   if (!stderrGone) process.stderr.write(`${line}\n`);
   finished = true;
   finishedExit = exit;
@@ -258,7 +947,9 @@ process.on('uncaughtException', (e) => {
   if (current) killGroup(current, 'SIGKILL');
   for (const dir of [...tempDirs]) dropTemp(dir);
   log(`cross-ai: internal error: ${e && e.stack || e}`);
-  exitFlushed(finish('crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' }));
+  exitFlushed(reportAndFinish(
+        'crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' },
+      ));
 });
 
 const RUNTIMES = {
@@ -394,19 +1085,595 @@ function normalize(text) {
   return text.replace(/\x1B\[[0-9;?]*[A-Za-z]/g, '').replace(/([.!?:])(#{1,6} \S)/g, '$1\n\n$2').trim() + '\n';
 }
 
-function classify(stderrText, structuredError) {
-  const inputs = [stderrText || '', structuredError || ''];
-  for (const [key, src] of Object.entries(PATTERNS)) {
-    const re = new RegExp(src, 'i');
-    for (const text of inputs) {
-      if (re.test(text)) return key;
+const INPUT_CAP = 65536;
+const ANSI_RE = /\x1B\[[0-9;?]*[A-Za-z]/g;
+// Child text can echo a key. These three shapes are replaced before any line is logged.
+const SECRET_RES = [
+  /(sk|rk)-[A-Za-z0-9_-]{8,}/gi,
+  /Bearer [A-Za-z0-9._-]{8,}/gi,
+  /(api[_-]?key|token|secret)['"]?\s*[:=]\s*\S+/gi,
+];
+
+function decodeUtf8(text) {
+  if (typeof text !== 'string') return '';
+  return Buffer.from(text, 'utf8').toString('utf8');
+}
+
+function normalizeInput(text) {
+  const decoded = decodeUtf8(text).replace(ANSI_RE, '').replace(/\u2019/g, "'");
+  return decoded.length > INPUT_CAP ? decoded.slice(-INPUT_CAP) : decoded;
+}
+
+function redactSecrets(line) {
+  let out = String(line);
+  for (const re of SECRET_RES) out = out.replace(re, '<redacted>');
+  return out;
+}
+
+// One bounded line splitter per stream. The live watcher hooks this same buffer: one cap,
+// one flush. `onLine` sees each complete line; `onPartial` sees the buffer before a trim,
+// so an unterminated terminal line is recorded before a newline-free flood drops its head.
+function makeLineRelay(hooks = {}) {
+  let pending = '';
+  const onLine = hooks.onLine || (() => {});
+  const onPartial = hooks.onPartial || (() => {});
+  const emit = (line) => {
+    onLine(line);
+    log(redactSecrets(line));
+  };
+  return {
+    push(chunk) {
+      pending += chunk;
+      let nl = pending.indexOf('\n');
+      while (nl >= 0) {
+        emit(pending.slice(0, nl));
+        pending = pending.slice(nl + 1);
+        nl = pending.indexOf('\n');
+      }
+      if (pending.length > INPUT_CAP) {
+        onPartial(pending);
+        emit(pending.slice(0, INPUT_CAP));
+        pending = '';
+      }
+    },
+    flush() {
+      if (!pending) return;
+      emit(pending);
+      pending = '';
+    },
+    partial() { return pending; },
+  };
+}
+
+const NO_MATCH = { status: 'crash', rule: '-', label: 'none' };
+const compiledRows = new Map();
+
+function rowRegex(row) {
+  let re = compiledRows.get(row);
+  if (!re) {
+    re = new RegExp(row.match, 'i');
+    compiledRows.set(row, re);
+  }
+  return re;
+}
+
+function rowAdmits(row, source) {
+  if (row.input === 'any') return true;
+  return row.input === source;
+}
+
+function classifyStop({ cli, routerLane, stderr, events }, table = PATTERNS) {
+  const sources = [
+    ['stderr', normalizeInput(stderr || '')],
+    ...((events || []).map((ev) => ['event', normalizeInput(ev || '')])),
+  ];
+  for (const row of table) {
+    if (row.cli !== '*' && row.cli !== cli) continue;
+    const re = rowRegex(row);
+    for (const [source, text] of sources) {
+      if (!text || !rowAdmits(row, source)) continue;
+      re.lastIndex = 0;
+      if (!re.test(text)) continue;
+      const status = routerLane && row.routerClass === 'quota' ? 'quota' : row.class;
+      return { status, rule: row.id, label: row.label };
     }
+  }
+  return { ...NO_MATCH };
+}
+
+function pushStr(out, value) {
+  if (typeof value === 'string' && value) out.push(value);
+  else if (typeof value === 'number') out.push(String(value));
+}
+
+function nestedBodyFields(raw) {
+  const out = [];
+  if (typeof raw !== 'string' || !raw) return out;
+  out.push(raw);
+  const body = parseJson(raw);
+  if (!body || typeof body !== 'object') return out;
+  const inner = body.error && typeof body.error === 'object' ? body.error : null;
+  for (const obj of [inner, body]) {
+    if (!obj) continue;
+    pushStr(out, obj.type);
+    pushStr(out, obj.code);
+    pushStr(out, obj.message);
+  }
+  return out;
+}
+
+function opencodeEventStrings(ev) {
+  const out = [];
+  const err = ev.error && typeof ev.error === 'object' ? ev.error : {};
+  pushStr(out, err.message);
+  if (err.status !== undefined && err.status !== null) out.push(`status ${err.status}`);
+  if (typeof err.type === 'string' && err.type) out.push(`opencode-type:${err.type}`);
+  const response = err.response && typeof err.response === 'object' ? err.response : null;
+  if (response) out.push(...nestedBodyFields(response.body));
+  pushStr(out, err.name);
+  const data = err.data && typeof err.data === 'object' ? err.data : null;
+  if (data) {
+    pushStr(out, data.message);
+    if (data.statusCode !== undefined && data.statusCode !== null) {
+      out.push(`status ${data.statusCode}`);
+    }
+  }
+  return out;
+}
+
+function codexEventStrings(ev) {
+  const out = [];
+  if (ev.type === 'error') pushStr(out, ev.message);
+  if (ev.type === 'turn.failed') {
+    const err = ev.error && typeof ev.error === 'object' ? ev.error : null;
+    pushStr(out, err ? err.message : null);
+  }
+  return out;
+}
+
+function resultEventString(out) {
+  const ev = lastJson(out, (j) => j.type === 'result');
+  if (!ev || !ev.is_error) return [];
+  return typeof ev.result === 'string' && ev.result ? [ev.result] : [];
+}
+
+function eventIsTerminal(cli, ev) {
+  if (cli === 'opencode') return ev.type === 'error';
+  if (cli === 'codex') return ev.type === 'turn.failed';
+  if (cli === 'cursor' || cli === 'claude') return ev.type === 'result' && Boolean(ev.is_error);
+  return false;
+}
+
+// terminalOnly (25-04): live watching keeps only terminal events. A bare codex `error` is
+// recorded after the fact, never a live kill (ruling Q1); only `turn.failed` kills.
+function extractEvents(cli, stdout, terminalOnly = false) {
+  const out = [];
+  const text = typeof stdout === 'string' ? stdout : '';
+  if (cli === 'opencode') {
+    for (const ev of jsonLines(text)) {
+      if (ev.type !== 'error') continue;
+      if (terminalOnly && !eventIsTerminal(cli, ev)) continue;
+      out.push(...opencodeEventStrings(ev));
+    }
+  } else if (cli === 'codex') {
+    for (const ev of jsonLines(text)) {
+      if (terminalOnly && !eventIsTerminal(cli, ev)) continue;
+      out.push(...codexEventStrings(ev));
+    }
+  } else if (cli === 'cursor' || cli === 'claude') {
+    if (terminalOnly) {
+      const ev = lastJson(text, (j) => j.type === 'result');
+      if (ev && eventIsTerminal(cli, ev)) out.push(...resultEventString(text));
+    } else {
+      out.push(...resultEventString(text));
+    }
+  }
+  return out;
+}
+
+function codexPair(message) {
+  return [
+    JSON.stringify({ type: 'error', message }),
+    JSON.stringify({ type: 'turn.failed', error: { message } }),
+  ].join('\n');
+}
+
+function ocError(error) {
+  return JSON.stringify({ type: 'error', sessionID: 'ses_1', error });
+}
+
+const CLASSIFY_CASES = [
+  {
+    name: 'codex-usage-limit-clock', cli: 'codex',
+    stdout: codexPair(
+      'You’ve hit your usage limit. Upgrade to Pro ' +
+      '(https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage ' +
+      'to purchase more credits or try again at 2:24 PM.',
+    ),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'codex-usage-limit-later', cli: 'codex',
+    stdout: codexPair(
+      'You’ve hit your usage limit. Upgrade to Pro, or try again later.',
+    ),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'codex-usage-limit-dated', cli: 'codex',
+    stdout: codexPair(
+      'You’ve hit your usage limit. Try again at Dec 31st, 2099 9:00 PM.',
+    ),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'codex-insufficient-quota', cli: 'codex',
+    stdout: codexPair('Quota exceeded. Check your plan and billing details.'),
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'codex-insufficient-quota-router', cli: 'codex', route: 'router',
+    stdout: codexPair('Quota exceeded. Check your plan and billing details.'),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'codex-402-format', cli: 'codex',
+    stdout: codexPair('unexpected status 402 Payment Required: {}, url: http://127.0.0.1/x'),
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'codex-refresh-reused', cli: 'codex',
+    stderr: 'Failed to refresh token: refresh token was already used (refresh_token_reused)',
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'codex-item-error-ignored', cli: 'codex',
+    stdout: JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'error', message: 'Model metadata for x not found' },
+    }),
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'opencode-usage-limit', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.quota', message: 'The usage limit has been reached', status: 429,
+      response: { body: JSON.stringify({ code: 'usage_limit_reached', resets_at: 1 }) },
+    }),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-insufficient-quota', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.quota', status: 429,
+      message: 'You exceeded your current quota, please check your plan and billing details.',
+      response: { body: JSON.stringify({ code: 'insufficient_quota' }) },
+    }),
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-free-usage', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.quota', status: 429, message: 'Rate limit exceeded. Please try again later.',
+      response: { body: JSON.stringify({ type: 'FreeUsageLimitError' }) },
+    }),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-requires-key', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.quota', status: 402, message: 'requires an opencode API key',
+    }),
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-requires-key-router', cli: 'opencode', route: 'router',
+    stdout: ocError({
+      type: 'provider.quota', status: 402, message: 'requires an opencode API key',
+    }),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-monthly-limit', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.auth', status: 401,
+      message: 'Your workspace has reached its monthly spending limit',
+      response: { body: JSON.stringify({ type: 'MonthlyLimitError' }) },
+    }),
+    expect: { status: 'billing', pattern: 'unverified' },
+  },
+  {
+    name: 'opencode-monthly-limit-router', cli: 'opencode', route: 'router',
+    stdout: ocError({
+      type: 'provider.auth', status: 401,
+      message: 'Your workspace has reached its monthly spending limit',
+      response: { body: JSON.stringify({ type: 'MonthlyLimitError' }) },
+    }),
+    expect: { status: 'quota', pattern: 'unverified' },
+  },
+  {
+    name: 'opencode-spend-403', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.auth', status: 403,
+      message: 'Error 403: spending limit reached for this team',
+    }),
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-model-disabled', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.auth', status: 403, message: 'Model access is disabled',
+      response: { body: JSON.stringify({ type: 'ModelDisabledError' }) },
+    }),
+    expect: { status: 'billing', pattern: 'unverified' },
+  },
+  {
+    name: 'opencode-model-disabled-router', cli: 'opencode', route: 'router',
+    stdout: ocError({
+      type: 'provider.auth', status: 403, message: 'Model access is disabled',
+    }),
+    expect: { status: 'quota', pattern: 'unverified' },
+  },
+  {
+    name: 'opencode-bad-key', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.auth', status: 401, message: 'Incorrect API key provided',
+    }),
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-bad-key-router', cli: 'opencode', route: 'router',
+    stdout: ocError({
+      type: 'provider.auth', status: 401, message: 'Incorrect API key provided',
+    }),
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-rate-limit', cli: 'opencode',
+    stdout: ocError({
+      type: 'provider.rate-limit', status: 429,
+      message: 'rate_limit_exceeded',
+      response: { body: JSON.stringify({ code: 'rate_limit_exceeded' }) },
+    }),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-legacy-shape', cli: 'opencode',
+    stdout: ocError({
+      name: 'APIError', data: { message: 'The usage limit has been reached', statusCode: 429 },
+    }),
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'opencode-text-mode', cli: 'opencode',
+    stderr: 'Error: The usage limit has been reached',
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'router-resource-pressure', cli: 'opencode',
+    stderr: 'Error: Service temporarily unavailable due to resource pressure. Retry shortly.',
+    expect: { status: 'transient', pattern: 'verified' },
+  },
+  {
+    name: 'router-admission', cli: 'opencode',
+    stderr: 'Chat admission capacity is temporarily unavailable',
+    expect: { status: 'transient', pattern: 'verified' },
+  },
+  {
+    name: 'router-prefilter', cli: 'opencode',
+    stderr: 'all targets were skipped by pre-dispatch filters',
+    expect: { status: 'permission_blocked', pattern: 'verified' },
+  },
+  {
+    name: 'router-prefilter-router', cli: 'opencode', route: 'router',
+    stderr: 'all targets were skipped by pre-dispatch filters',
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'router-credential-gate', cli: 'opencode',
+    stderr: 'Credential gate blocked opencode-zen/model',
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'router-credential-gate-router', cli: 'opencode', route: 'router',
+    stderr: 'Credential gate blocked opencode-zen/model',
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'xai-spending-hyphen', cli: 'opencode',
+    stderr: 'personal-team-blocked:spending-limit',
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'pi-insufficient-quota', cli: 'pi',
+    stderr: '429: {"type":"insufficient_quota","code":"insufficient_quota",' +
+      '"message":"You exceeded your current quota, please check your plan and billing details."}',
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'pi-402-format', cli: 'pi',
+    stderr: '402: {"type":"monthly","message":"x"}',
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'pi-free-tier', cli: 'pi',
+    stderr: '403: {"type":"FreeTierError"}',
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'pi-event-400', cli: 'pi',
+    stderr: '[400]: event: error',
+    expect: { status: 'transient', pattern: 'verified' },
+  },
+  {
+    name: 'pi-session-warning', cli: 'pi',
+    stderr: 'Warning: No project session found with id abc; creating a new session with that id.',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'pi-chatgpt-relative', cli: 'pi',
+    stderr: 'You have hit your ChatGPT usage limit (plus plan). Try again in ~5 min.',
+    expect: { status: 'quota', pattern: 'unverified' },
+  },
+  {
+    name: 'kimi-429-router', cli: 'opencode', route: 'router',
+    stderr: '429 monthly quota exhausted',
+    expect: { status: 'quota', pattern: 'verified' },
+  },
+  {
+    name: 'cursor-usage-limit', cli: 'cursor',
+    stderr: "ActionRequiredError: You've hit your usage limit",
+    expect: { status: 'quota', pattern: 'unverified' },
+  },
+  {
+    name: 'cursor-named-models', cli: 'cursor',
+    stderr: 'ActionRequiredError: Named models unavailable',
+    expect: { status: 'billing', pattern: 'unverified' },
+  },
+  {
+    name: 'cursor-free-plan-auto', cli: 'cursor',
+    stderr: 'Free plans can only use Auto',
+    expect: { status: 'billing', pattern: 'unverified' },
+  },
+  {
+    name: 'cursor-action-required-alone', cli: 'cursor',
+    stderr: 'ActionRequiredError: something else happened',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'cursor-bad-model', cli: 'cursor',
+    stderr: 'Cannot use this model: example',
+    expect: { status: 'bad_model', pattern: 'verified' },
+  },
+  {
+    name: 'cursor-bad-key', cli: 'cursor',
+    stderr: 'Warning: The provided API key is invalid',
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'cursor-result-error', cli: 'cursor',
+    stdout: JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized' }),
+    expect: { status: 'auth', pattern: 'verified' },
+  },
+  {
+    name: 'claude-overloaded', cli: 'claude',
+    stderr: 'Overloaded. try again in a moment',
+    expect: { status: 'transient', pattern: 'unverified' },
+  },
+  {
+    name: 'claude-resets', cli: 'claude',
+    stderr: "You've hit your limit \u00b7 resets 9:30pm (America/Santiago)",
+    expect: { status: 'quota', pattern: 'unverified' },
+  },
+  {
+    name: 'edge-4021-tokens', cli: 'pi',
+    stderr: 'used 4021 tokens',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'edge-empty', cli: 'pi',
+    stderr: '',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'edge-answer-only-pi', cli: 'pi',
+    stdout: 'You have hit your usage limit according to the model.',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'edge-answer-only-opencode', cli: 'opencode',
+    stdout: JSON.stringify({
+      type: 'text', sessionID: 'ses_1',
+      part: { type: 'text', text: 'The usage limit has been reached, says the model.' },
+    }),
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'edge-ansi', cli: 'pi',
+    stderr: '\u001b[31m402 payment required\u001b[0m',
+    expect: { status: 'billing', pattern: 'verified' },
+  },
+  {
+    name: 'edge-billing-and-quota', cli: 'pi',
+    stderr: 'quota exceeded, check billing',
+    expect: { status: 'billing', pattern: 'verified', rule: 'text-billing' },
+  },
+  {
+    name: 'edge-vendor-code-beats-bare', cli: 'opencode',
+    stderr: 'noise 401 from the transport',
+    stdout: ocError({
+      type: 'provider.auth', status: 401, message: 'wrapped',
+      response: { body: JSON.stringify({ code: 'usage_limit_reached' }) },
+    }),
+    expect: { status: 'quota', pattern: 'verified', rule: 'vendor-usage-limit-reached' },
+  },
+];
+
+// Flag, then an explicit CONFIG boolean, then the name heuristic, else unknown (D-05).
+// Only `router` is a confirmed lane: an inferred route stays advisory.
+function routeOf(cli, model, routes) {
+  const flagged = routes && Object.hasOwn(routes, cli) ? routes[cli] : undefined;
+  if (flagged === 'router' || flagged === 'unknown') return flagged;
+  const baked = CONFIG.routerBacked[cli];
+  if (baked === true) return 'router';
+  if (baked === false) return 'unknown';
+  const id = String(model || '').toLowerCase();
+  if (ROUTER_HINTS.some((hint) => id.includes(hint))) return 'router-inferred';
+  return 'unknown';
+}
+
+function confirmedRoute(route) {
+  return route === 'router';
+}
+
+function classifyOne(entry, table) {
+  return classifyStop({
+    cli: entry.cli,
+    routerLane: entry.route === 'router',
+    stderr: entry.stderr || '',
+    events: extractEvents(entry.cli, entry.stdout || ''),
+  }, table);
+}
+
+function pureClassify(entry) {
+  const got = classifyOne(entry);
+  const want = entry.expect;
+  if (got.status !== want.status) return `status ${got.status} expected ${want.status}`;
+  if (got.label !== want.pattern) return `pattern ${got.label} expected ${want.pattern}`;
+  if (want.rule !== undefined && got.rule !== want.rule) {
+    return `rule ${got.rule} expected ${want.rule}`;
   }
   return null;
 }
 
-function tryNextCli(status, tree) {
-  return (STATUS_TABLE[status] || STATUS_TABLE.crash).action === 'fallback' && tree === 'clean';
+function classifyCases() {
+  const generated = CLASSIFY_CASES.map((entry) => ({
+    name: `pure-classify-${entry.name}`,
+    pure: () => pureClassify(entry),
+  }));
+  const pinned = CLASSIFY_CASES.find((entry) => entry.name === 'edge-billing-and-quota');
+  const twice = CLASSIFY_CASES.find((entry) => entry.name === 'opencode-monthly-limit-router');
+  return [
+    ...generated,
+    {
+      name: 'pure-classify-order-mutation',
+      pure: () => {
+        const forward = classifyOne(pinned);
+        const reversed = classifyOne(pinned, [...PATTERNS].reverse());
+        if (reversed.status === forward.status) return `reversal kept status ${forward.status}`;
+        return null;
+      },
+    },
+    {
+      name: 'pure-classify-idempotent',
+      pure: () => {
+        const first = classifyOne(twice);
+        const second = classifyOne(twice);
+        if (JSON.stringify(first) !== JSON.stringify(second)) return 'classifyStop is not stable';
+        return null;
+      },
+    },
+  ];
 }
 
 function which(bin, envPath = process.env.PATH || '') {
@@ -485,19 +1752,145 @@ function logDeadline(cwd, env, o) {
   log(`cross-ai: deadline ${d.inner}s (outer ${d.outer}s)`);
   return d;
 }
-function retryArgv(name, rt, model, ctx, sid, mode, prompt) {
-  if (mode === 'review') {
-    // A fresh run: pi would reopen (resume) an existing --session-id.
-    ctx.sid = crypto.randomUUID();
-    return { argv: withExtra(name, rt.review(model, ctx)), input: prompt };
+
+// Counts stay in 0..3; a per-attempt cap is 0 (none) or 10..1800 s.
+function clampCount(value) {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(3, n);
+}
+function clampAttemptTimeout(value) {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(1800, Math.max(10, n));
+}
+// SPEC 4-hour prohibition: the cap never exceeds 14400 s, and the cooldown never exceeds it.
+function clampCapS(value) {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(14400, n);
+}
+function clampCooldownS(value, capS) {
+  const n = Math.trunc(Number(value));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(capS, n);
+}
+function ladderLimits(opts) {
+  const capS = clampCapS(opts.capS ?? CONFIG.capS);
+  return {
+    same: clampCount(opts.sameSessionRetries ?? CONFIG.sameSessionRetries),
+    fresh: clampCount(opts.newSessionRetries ?? CONFIG.newSessionRetries),
+    capS,
+    cooldownS: clampCooldownS(opts.cooldownS ?? CONFIG.cooldownS, capS),
+  };
+}
+
+// Pure step of the transient and router-quota ladders. Table-free: the caller decides the
+// class. `st = {same, fresh, canResume, firstQuotaMs, cycle}`, `cls` is `transient`,
+// `quota` or `stop`. A quota rung also needs an hour of cap headroom; once the rungs are
+// spent a cycle is admitted only when the cooldown itself fits under the cap and 60 s of
+// deadline work remains. The call never sleeps the cooldown.
+function ladderNext(st, cls, nowMs, lim) {
+  if (cls !== 'transient' && cls !== 'quota') return { next: 'stop', why: 'class' };
+  let next = 'stop';
+  let why = 'rungs';
+  if (st.canResume && st.fresh === 0 && st.same < lim.same) {
+    next = 'same';
+    why = 'same-session';
+  } else if (st.fresh < lim.fresh) {
+    next = 'new';
+    why = 'new-session';
   }
-  // A sandboxed exec retry is a fresh run: resume's sandbox flag is not verified.
-  if (sid && rt.resume && !(mode === 'exec' && ctx.codexSandbox)) {
-    return { argv: withExtra(name, rt.resume(model, ctx, sid, mode)), input: RESUME_MSG };
+  if (next !== 'stop') {
+    if (nowMs + (lim.waitMs || 0) + 60000 > lim.deadlineMs) {
+      return { next: 'stop', why: 'deadline' };
+    }
+    if (cls === 'quota' && nowMs + 60000 > (st.firstQuotaMs || 0) + lim.capMs) {
+      return { next: 'stop', why: 'cap' };
+    }
+    return { next, why };
   }
-  return { argv: withExtra(name, rt[mode](model, ctx)), input: `${RESUME_MSG}\n\n${prompt}` };
+  if (cls !== 'quota') return { next, why };
+  const cooldownMs = lim.cooldownMs || 0;
+  const capEnd = (st.firstQuotaMs || 0) + lim.capMs;
+  if (nowMs + cooldownMs > capEnd) return { next: 'stop', why: 'cap' };
+  if (nowMs + cooldownMs + 60000 > lim.deadlineMs) return { next: 'stop', why: 'deadline' };
+  return { next: 'cooldown', why: 'cooldown' };
+}
+
+// Rung 1 continues the captured session. Null when no session can be continued: no id,
+// no resume formula, a sandboxed codex exec, or codex review (its resume argv has no
+// read-only sandbox).
+function sameSessionArgv(name, rt, model, ctx, sid, mode) {
+  if (!sid || !rt.resume) return null;
+  if (name === 'codex' && (mode === 'review' || ctx.codexSandbox)) return null;
+  return { argv: withExtra(name, rt.resume(model, ctx, sid, mode)), input: RESUME_MSG };
+}
+
+// Rung 2 is a fresh argv on the same CLI and model. Pi gets a new session id.
+function newSessionArgv(name, rt, model, ctx, mode, prompt) {
+  if (name === 'pi') ctx.sid = crypto.randomUUID();
+  return { argv: withExtra(name, rt[mode](model, ctx)), input: prompt };
 }
 function readOr(p, dflt) { try { return fs.readFileSync(p, 'utf8'); } catch { return dflt; } }
+
+// Quota cycles span calls. The file is keyed by lane and model under the XDG state dir
+// (the home fallback is ~/.local/state, so a scratch HOME never reaches the real one).
+const STATE_DELETE = new Set(['ok', 'auth', 'billing', 'permission_blocked', 'bad_model']);
+const QUOTA_KEEP = new Set(['quota', 'transient', 'timeout']);
+
+function stateHome() {
+  const named = (process.env.XDG_STATE_HOME || '').trim();
+  if (named) return named;
+  return path.join(process.env.HOME || os.homedir(), '.local', 'state');
+}
+
+function sha16(text) {
+  return crypto.createHash('sha256').update(String(text)).digest('hex').slice(0, 16);
+}
+
+function taskDigest(prompt) {
+  const m = /<objective>([\s\S]*?)<\/objective>/.exec(String(prompt || ''));
+  return sha16(m ? m[1] : String(prompt || ''));
+}
+
+function cycleFilePath(cli, model, cwd = process.cwd(), home = stateHome()) {
+  let root = cwd;
+  try { root = fs.realpathSync(root); } catch { /* the cwd itself is the key */ }
+  const dir = path.join(home, 'ai-kit', 'spec', 'cycles', sha16(root));
+  return path.join(dir, `${cli}-${sha16(model)}.json`);
+}
+
+// A case's state file, resolved inside the case's own XDG state dir.
+function caseCycleFile(ctx, cli, model) {
+  const home = path.join(ctx.env.XDG_STATE_HOME);
+  return cycleFilePath(cli, model, ctx.repo, home);
+}
+
+function readCycleState(file) {
+  const parsed = parseJson(readOr(file, ''));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  if (typeof parsed.first_seen !== 'number' || typeof parsed.cycle !== 'number') return null;
+  return parsed;
+}
+
+function writeCycleState(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  try { fs.chmodSync(path.dirname(file), 0o700); } catch { /* best effort */ }
+  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.tmp`);
+  const fd = fs.openSync(tmp, 'wx', 0o600);
+  try {
+    fs.writeFileSync(fd, JSON.stringify(data));
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(tmp, file);
+  try { fs.chmodSync(file, 0o600); } catch { /* the create mode already is 0600 */ }
+}
+
+function deleteCycleState(file) {
+  try { fs.rmSync(file, { force: true }); } catch { /* already gone */ }
+}
 
 function stateSig(st) {
   if (!st) return null;
@@ -556,6 +1949,7 @@ function runChild(bin, argv, opts = {}) {
     let child = null;
     let timer = null;
     let timedOut = false;
+    let limited = false;
     let spawnErr = null;
     let code = null;
     let signal = null;
@@ -570,6 +1964,7 @@ function runChild(bin, argv, opts = {}) {
       if (currentFinalize === finalize) currentFinalize = null;
       if (child) {
         killGroup(child, 'SIGTERM');
+        if (reason === 'limit') limited = true;
         if (child.exitCode === null && reason !== 'exit') {
           await waitForExit(child, budgetMs(aborting ? SIGNAL_GRACE_MS : KILL_GRACE_MS, finalizeBy));
         }
@@ -585,7 +1980,7 @@ function runChild(bin, argv, opts = {}) {
       }
       if (current === child) current = null;
       resolve({
-        code, signal, timedOut, spawnErr,
+        code, signal, timedOut, limited, spawnErr,
         stdout: Buffer.concat(outChunks).toString('utf8'),
         stderr: Buffer.concat(errChunks).toString('utf8'),
       });
@@ -622,7 +2017,6 @@ function runChild(bin, argv, opts = {}) {
     child.on('exit', (c, s) => { code = c; signal = s; finalize('exit'); });
   });
 }
-
 
 function parsePiListingIds(stdout) {
   if (typeof stdout !== 'string') return null;
@@ -828,27 +2222,100 @@ for (const [sig, n] of [['SIGTERM', 15], ['SIGINT', 2], ['SIGHUP', 1]]) {
     backstop = setTimeout(() => {
       if (current) killGroup(current, 'SIGKILL');
       for (const dir of [...tempDirs]) dropTemp(dir);
-      exitFlushed(finish('signal', { ...liveFields, exit: 128 + n, tree: 'unknown' }));
+      const fields = { ...liveFields, exit: 128 + n, tree: 'unknown' };
+      exitFlushed(reportAndFinish('signal', fields, 'signal'));
     }, SIGNAL_BUDGET_MS + 200);
   });
 }
 
-async function runOnce(bin, argv, input, env, cwd, label) {
+// Live rows: a kill needs a row marked terminal. A structured event additionally skips
+// transient rows (D-09), so a retry notice or a bare code never kills.
+function terminalTable() {
+  return PATTERNS.filter((row) => row.terminal);
+}
+
+function eventTable() {
+  return terminalTable().filter((row) => row.class !== 'transient');
+}
+
+function liveMatch(cli, source, text) {
+  const table = source === 'stderr' ? terminalTable() : eventTable();
+  const events = source === 'event' ? [text] : [];
+  const stderr = source === 'stderr' ? text : '';
+  // Lane is applied later: the record keeps the row, and the confirmed route decides the status.
+  const cls = classifyStop({ cli, routerLane: false, stderr, events }, table);
+  return cls.status === 'crash' ? null : cls;
+}
+
+function hitForLane(hit, lane) {
+  if (!hit || !lane) return hit;
+  const row = PATTERNS.find((r) => r.id === hit.rule);
+  if (!row || row.routerClass !== 'quota') return hit;
+  return { ...hit, status: 'quota' };
+}
+
+function armLimit(state, cls) {
+  if (state.liveHit || !cls) return;
+  state.liveHit = { status: cls.status, rule: cls.rule, label: cls.label };
+  const child = current;
+  state.limitTimer = setTimeout(() => {
+    if (current === child && currentFinalize) currentFinalize('limit');
+  }, LIMIT_GRACE_MS);
+}
+
+function watchChunk(cli, source, relay, state, chunk) {
+  relay.push(chunk);
+}
+
+async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
   let outBytes = 0;
   let lastBytes = 0;
   const started = Date.now();
   let errTail = '';
+  const state = { liveHit: null, limitTimer: null };
+  const cli = label;
+  const noteLine = (source) => (line) => {
+    if (source === 'stderr') {
+      armLimit(state, liveMatch(cli, 'stderr', line));
+      return;
+    }
+    for (const text of extractEvents(cli, line, true)) {
+      armLimit(state, liveMatch(cli, 'event', text));
+    }
+  };
+  const notePartial = (source) => (buf) => {
+    if (source !== 'stderr' || state.liveHit) return;
+    armLimit(state, liveMatch(cli, 'stderr', buf));
+  };
+  const outRelay = makeLineRelay({ onLine: noteLine('stdout'), onPartial: notePartial('stdout') });
+  const errRelay = makeLineRelay({ onLine: noteLine('stderr'), onPartial: notePartial('stderr') });
   const hb = setInterval(() => {
-    log(`cross-ai: ${label} running ${Math.round((Date.now() - started) / 1000)}s, stdout +${outBytes - lastBytes} bytes`);
+    const secs = Math.round((Date.now() - started) / 1000);
+    log(`cross-ai: ${label} running ${secs}s, stdout +${outBytes - lastBytes} bytes`);
     lastBytes = outBytes;
   }, CONFIG.heartbeatS * 1000);
+  const childLimit = opts.limit ?? runDeadline;
   const r = await runChild(bin, argv, {
-    cwd, env, input, capMs: budgetMs(Number.POSITIVE_INFINITY, runDeadline), limit: runDeadline,
-    onStdout: (d) => { outBytes += d.length; },
-    onStderr: (d) => { log(d.toString('utf8')); errTail = (errTail + d.toString('utf8')).slice(-65536); },
+    cwd, env, input, capMs: budgetMs(opts.capMs ?? Number.POSITIVE_INFINITY, childLimit),
+    limit: childLimit,
+    onStdout: (d) => {
+      outBytes += d.length;
+      watchChunk(cli, 'stdout', outRelay, state, decodeUtf8(d.toString('utf8')));
+    },
+    onStderr: (d) => {
+      const text = decodeUtf8(d.toString('utf8'));
+      watchChunk(cli, 'stderr', errRelay, state, text);
+      errTail = (errTail + text).slice(-INPUT_CAP);
+    },
   });
   clearInterval(hb);
-  return { ...r, stderr: errTail || r.stderr, outBytes };
+  if (state.limitTimer) clearTimeout(state.limitTimer);
+  outRelay.flush();
+  errRelay.flush();
+  return {
+    ...r, stderr: errTail || r.stderr, outBytes, liveHit: state.liveHit,
+    partialOut: outRelay.partial(), partialErr: errRelay.partial(),
+  };
 }
 
 // A signal wakes every sleeper so the backoff never outlives the signal budget.
@@ -858,67 +2325,388 @@ const sleep = (ms) => new Promise((resolve) => {
   sleepers.add(wake);
 });
 
+// The child timer keeps 60 s in hand for the next rung when the deadline has it.
+// A deadline shorter than that still runs this attempt (the ladder then admits nothing).
+// A router-quota cycle also clamps the timer to the absolute cap minus the same reserve, so
+// an attempt admitted near the cap cannot run past it.
+function attemptCapMs(opts, nowMs, quotaEndMs = 0) {
+  const remaining = Math.max(0, runDeadline - nowMs);
+  let budget = remaining - 60000 > 0 ? remaining - 60000 : remaining;
+  if (quotaEndMs > 0) {
+    // The cap itself is the hard stop: the reserve guards admission, not the child's length.
+    const capLeft = Math.max(0, quotaEndMs - nowMs);
+    budget = Math.min(budget, capLeft);
+  }
+  const cap = clampAttemptTimeout(opts.attemptTimeoutS ?? CONFIG.attemptTimeoutS);
+  if (cap > 0) return Math.min(cap * 1000, budget);
+  return budget;
+}
+
+// A quota or rate-limit match wins over a plain timeout; anything else on a timed-out
+// attempt is a transient rung (owner list), and a real failure class is itself.
+function ladderClass(timedOut, hit) {
+  if (!timedOut) return hit === 'transient' ? 'transient' : 'stop';
+  if (hit && hit !== 'transient') return 'stop';
+  return 'transient';
+}
+
+// A rungs stop that started as a timeout still reports transient (owner rung 4): Python
+// re-runs a timeout status once per tier. timeout/124 is only the no-budget stop before any
+// rung was admitted. A transient failure that cannot start a rung stays transient.
+function ladderStop(step, timedOut, admitted, fallback) {
+  if (step.why === 'class') return { status: fallback, timedOut: false };
+  if (step.why === 'deadline' && !admitted && timedOut) {
+    return { status: 'timeout', timedOut: true };
+  }
+  return { status: 'transient', timedOut: false };
+}
+
+// One evidence line per failed attempt. Values are ids, labels and times only.
+function logAttempt(n, rung, cycle, sid, status, rule, pattern, startedMs) {
+  const took = Math.max(0, Math.round((Date.now() - startedMs) / 1000));
+  const at = new Date(startedMs).toISOString();
+  log(`cross-ai: attempt n=${n} rung=${rung} cycle=${cycle} session=${sid || '-'} ` +
+    `status=${status} rule=${rule || '-'} pattern=${pattern || '-'} at=${at} took=${took}s`);
+}
+
+// One report line before the status line of every run that does not end ok.
+function logReport(status, cli, model, route, attempts, cycles, firstMs, lastMs, stopped) {
+  const iso = (ms) => (ms ? new Date(ms).toISOString() : '-');
+  log(`cross-ai: report status=${status} lane=${cli}/${model} route=${route || 'unknown'} ` +
+    `attempts=${attempts} cycles=${cycles} first_failure=${iso(firstMs)} ` +
+    `last_failure=${iso(lastMs)} stopped=${stopped}`);
+}
+
+function stoppedWhy(step, dirty) {
+  if (dirty) return 'dirty-tree';
+  if (step && step.why === 'deadline') return 'deadline';
+  if (step && step.why === 'cap') return 'cap';
+  if (step && step.next === 'cooldown') return 'rungs';
+  if (step && step.why === 'rungs') return 'rungs';
+  return 'class';
+}
+
 async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
   const backoff = opts.backoffS || CONFIG.backoffS;
   const beforeSig = opts.beforeSig ?? null;
+  const limits = ladderLimits(opts);
   const tmp = makeTemp('cross-ai-');
   const ctx = {
     cwd: process.cwd(), sid: crypto.randomUUID(), outFile: path.join(tmp, 'last-message.md'),
-    codexEffort: opts.codexEffort, codexServiceTier: opts.codexServiceTier, cursorMode: opts.cursorMode,
+    codexEffort: opts.codexEffort, codexServiceTier: opts.codexServiceTier,
+    cursorMode: opts.cursorMode,
     piThinking: opts.piThinking, codexSandbox: opts.codexSandbox,
   };
   const env = childEnv(rt.env, process.env);
-  let argv = withExtra(name, rt[mode](model, ctx)); let input = prompt;
+  let argv = withExtra(name, rt[mode](model, ctx));
+  let input = prompt;
+  const ladder = { same: 0, fresh: 0, canResume: false, firstQuotaMs: 0, cycle: 0 };
+  let admitted = false;
+  const stateFile = cycleFilePath(name, model);
+  const digest = taskDigest(prompt);
+  const loaded = readCycleState(stateFile);
+  const now0 = Date.now();
+  const capMs = limits.capS * 1000;
+  let cycleCount = 0;
+  let priorAttempts = 0;
+  let persisted = null;
+  if (loaded && typeof loaded.last_attempt_at === 'number') {
+    if (now0 - loaded.last_attempt_at > capMs) {
+      deleteCycleState(stateFile);
+      log('cross-ai: stale-state-fresh-start');
+    } else if (now0 - loaded.first_seen > capMs) {
+      return {
+        ok: false, status: 'quota', code: 69, exit: 69, outBytes: 0, cli_rc: '-',
+        route: opts.route || 'unknown', rule: '-', pattern: 'none',
+        attempts: loaded.attempts || 0, cycles: loaded.cycle || 0, stopped: 'cap',
+        
+      };
+    } else if (typeof loaded.due_at === 'number' && now0 < loaded.due_at) {
+      const left = Math.max(0, Math.round((loaded.due_at - now0) / 1000));
+      return {
+        ok: false, status: 'quota', outBytes: 0, cli_rc: '-',
+        route: opts.route || 'unknown', rule: '-', pattern: 'none',
+        attempts: loaded.attempts || 0, cycles: loaded.cycle || 0,
+        retryAfterS: left, cycle: loaded.cycle || 0, stopped: 'rungs',
+      };
+    } else {
+      cycleCount = (loaded.cycle || 0) + 1;
+      priorAttempts = loaded.attempts || 0;
+      persisted = loaded;
+      ladder.firstQuotaMs = loaded.first_seen;
+      ladder.cycle = cycleCount;
+    }
+  }
+  let firstFailureMs = persisted ? persisted.first_seen : 0;
+  let lastFailureMs = 0;
+  let attempts = priorAttempts;
+  let quotaSeen = Boolean(persisted);
+  const rungOf = () => (ladder.fresh > 0 ? 'new' : ladder.same > 0 ? 'same' : 'first');
+  const quotaEnd = () => (ladder.firstQuotaMs ? ladder.firstQuotaMs + capMs : 0);
+  const counts = () => ({
+    attempts, cycles: ladder.cycle,
+    firstFailureMs, lastFailureMs,
+  });
+  const dropState = (status) => {
+    if (STATE_DELETE.has(status) || (status !== 'quota' && !QUOTA_KEEP.has(status))) {
+      deleteCycleState(stateFile);
+    }
+  };
+  const saveCycle = (sid, at) => {
+    const due = at + limits.cooldownS * 1000;
+    writeCycleState(stateFile, {
+      first_seen: ladder.firstQuotaMs, last_attempt_at: at, cycle: ladder.cycle,
+      attempts, last_sid: sid || null, task_digest: digest,
+      retry_after_s: limits.cooldownS, due_at: due,
+    });
+  };
+  const cycleStop = (r, evidence, stopped, sid) => {
+    const at = Date.now();
+    saveCycle(sid, at);
+    const capped = stopped === 'cap';
+    return {
+      ok: false, status: 'quota', outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+      ...counts(), retryAfterS: capped ? undefined : limits.cooldownS,
+      cycle: ladder.cycle, exit: capped ? 69 : 75, stopped,
+    };
+  };
   try {
+    if (persisted) {
+      const sameTask = persisted.task_digest === digest && persisted.last_sid;
+      if (sameTask) {
+        ctx.sid = persisted.last_sid;
+        const retry = sameSessionArgv(name, rt, model, ctx, persisted.last_sid, mode);
+        if (retry) {
+          argv = retry.argv;
+          input = retry.input;
+          ladder.canResume = true;
+        }
+      } else {
+        ladder.same = limits.same;
+      }
+    }
     for (let attempt = 0; ; attempt++) {
-      log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${Math.round(budgetMs(Number.POSITIVE_INFINITY, runDeadline) / 1000)}s`);
+      const startedMs = Date.now();
+      const childCap = attemptCapMs(opts, startedMs, quotaEnd());
+      const left = Math.max(0, Math.round(childCap / 1000));
+      log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${left}s`);
       log(`cross-ai: argv=${JSON.stringify(argv)}`);
-      const r = await runOnce(binPath, argv, input, env, ctx.cwd, name);
+      const childLimit = quotaEnd() ? Math.min(runDeadline, quotaEnd()) : runDeadline;
+      const r = await runOnce(binPath, argv, input, env, ctx.cwd, name,
+        { capMs: childCap, limit: childLimit });
+      // A child can only stall the post-run git snapshot while it is alive.
+      try { fs.rmSync(path.join(env.HOME || '', '.fake-git-hang')); } catch { /* not set */ }
       if (aborting) return { ok: false, code: 128 + aborting, outBytes: r.outBytes, cli_rc: r.code };
-      if (r.timedOut) return { ok: false, code: 124, timedOut: true, outBytes: r.outBytes, cli_rc: r.code };
-      if (r.spawnErr) return { ok: false, code: r.spawnErr.code === 'ENOENT' ? 127 : 126, error: String(r.spawnErr), outBytes: 0, cli_rc: null };
+      const route = opts.route || 'unknown';
+      const lane = confirmedRoute(route);
+      const evidenceOf = (cls) => {
+        const rule = cls && cls.rule ? cls.rule : '-';
+        const pattern = cls && cls.label ? cls.label : 'none';
+        return { route, rule, pattern };
+      };
+      if (r.spawnErr) {
+        const code = r.spawnErr.code === 'ENOENT' ? 127 : 126;
+        return {
+          ok: false, code, error: String(r.spawnErr), outBytes: 0, cli_rc: null,
+          ...counts(), stopped: 'class',
+        };
+      }
       const p = rt.parse(r.stdout, ctx);
-      const hit = classify(r.stderr, p.error);
-      // stderr noise never overrules a clean exit with an answer; it only names a failure.
-      const failed = r.code !== 0 || Boolean(p.error);
-      if (!failed && p.text.trim()) {
-        return { ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'), cli_rc: 0 };
+      // A live terminal signal is the attempt's class; no second pass (D-09).
+      let hit = null;
+      let evidence = evidenceOf(null);
+      if (r.liveHit) {
+        const live = hitForLane(r.liveHit, lane);
+        hit = live.status;
+        evidence = evidenceOf(live);
+      } else if (r.timedOut) {
+        // Post-hoc over everything it printed, terminal and non-terminal rows alike.
+        const captured = [r.stderr || '', r.partialErr || '', r.partialOut || ''].join('\n');
+        const events = extractEvents(name, r.stdout);
+        const cls = classifyStop({ cli: name, routerLane: lane, stderr: captured, events });
+        if (cls.status !== 'crash') {
+          hit = cls.status;
+          evidence = evidenceOf(cls);
+        }
+      } else {
+        const cls = classifyStop({
+          cli: name, routerLane: lane,
+          stderr: r.stderr, events: extractEvents(name, r.stdout),
+        });
+        if (cls.status !== 'crash') {
+          hit = cls.status;
+          evidence = evidenceOf(cls);
+        }
+        const failed = r.code !== 0 || Boolean(p.error);
+        if (!failed && p.text.trim()) {
+          attempts += 1;
+          deleteCycleState(stateFile);
+          return {
+            ok: true, text: normalize(p.text), outBytes: Buffer.byteLength(r.stdout, 'utf8'),
+            cli_rc: 0, ...counts(),
+          };
+        }
+        if (hit && hit !== 'transient' && !(hit === 'quota' && lane)) {
+          attempts += 1;
+          logAttempt(attempts, rungOf(), ladder.cycle, p.sessionId, hit, evidence.rule,
+            evidence.pattern, startedMs);
+          dropState(hit);
+          return {
+            ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+            ...counts(), stopped: 'class',
+          };
+        }
+        if (!failed) {
+          return {
+            ok: false, status: 'empty_answer', outBytes: r.outBytes, cli_rc: 0,
+            ...counts(), stopped: 'class',
+          };
+        }
       }
-      if (hit && hit !== 'transient') {
-        return { ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
+      if (hit && hit !== 'transient' && !r.timedOut && !(hit === 'quota' && lane)) {
+        attempts += 1;
+        logAttempt(attempts, rungOf(), ladder.cycle, p.sessionId, hit, evidence.rule,
+          evidence.pattern, startedMs);
+        dropState(hit);
+        return {
+          ok: false, status: hit, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+          ...counts(), stopped: 'class',
+        };
       }
-      if (!failed) return { ok: false, status: 'empty_answer', outBytes: r.outBytes, cli_rc: 0 };
+      const cls0 = ladderClass(Boolean(r.timedOut), hit);
+      const quotaLane = cls0 === 'stop' && hit === 'quota' && lane;
+      const cls = quotaLane ? 'quota' : cls0;
+      attempts += 1;
+      lastFailureMs = Date.now();
+      if (!firstFailureMs) firstFailureMs = startedMs;
+      const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
+      logAttempt(attempts, rungOf(), ladder.cycle, sid, hit || (r.timedOut ? 'timeout' : 'crash'),
+        hit ? evidence.rule : '-', hit ? evidence.pattern : '-', startedMs);
+      if (cls === 'quota') {
+        quotaSeen = true;
+        if (!ladder.firstQuotaMs) ladder.firstQuotaMs = persisted
+          ? persisted.first_seen : Date.now();
+        saveCycle(sid, Date.now());
+      }
       const wait = (backoff[attempt] ?? backoff[backoff.length - 1]) * 1000;
-      log(`cross-ai: ${name} failed (exit ${r.code}${r.signal ? ' ' + r.signal : ''}, ${hit || 'crash'}${p.error ? ': ' + p.error.slice(0, 200) : ''})`);
-      // Retry only with the wait plus a minute of work left before the deadline.
-      const exhausted = hit === 'transient' && (
-        attempt >= (opts.retries ?? CONFIG.retries) || runDeadline - Date.now() < wait + 60000
-      );
-      if (hit !== 'transient' || exhausted) {
-        const st = exhausted ? 'capacity' : 'crash';
-        return { ok: false, status: st, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
+      const sig = r.signal ? ' ' + r.signal : '';
+      log(`cross-ai: ${name} failed (exit ${r.code}${sig}, rule=${hit ? evidence.rule : '-' })`);
+      ladder.canResume = Boolean(sameSessionArgv(name, rt, model, ctx, sid, mode));
+      const step = ladderNext(ladder, cls, Date.now(), {
+        ...limits, deadlineMs: runDeadline, waitMs: Math.min(wait, quotaEnd() || wait),
+        capMs, cooldownMs: limits.cooldownS * 1000,
+      });
+      log(`cross-ai: ladder ${name} next=${step.next} why=${step.why}`);
+      if (step.next === 'cooldown') return cycleStop(r, evidence, 'rungs', sid);
+      if (step.next === 'stop') {
+        if (quotaSeen && (step.why === 'deadline' || step.why === 'cap' || step.why === 'rungs')) {
+          return cycleStop(r, evidence, step.why, sid);
+        }
+        const stop = ladderStop(step, Boolean(r.timedOut), admitted, hit || 'crash');
+        dropState(stop.status);
+        return {
+          ok: false, status: stop.status, timedOut: stop.timedOut,
+          code: stop.status === 'timeout' ? 124 : undefined,
+          outBytes: r.outBytes, cli_rc: r.code ?? '-', ...evidence,
+          ...counts(), stopped: stoppedWhy(step, false),
+        };
       }
       if (mode === 'review' && beforeSig !== null) {
         const mid = await treeState(ctx.cwd, runDeadline);
         if (mid === null) {
+          const status = gitFailStatus();
           return {
-            ok: false, status: gitFailStatus(), outBytes: r.outBytes, cli_rc: r.code ?? '-',
+            ok: false, status, outBytes: r.outBytes, cli_rc: r.code ?? '-',
+            ...counts(), stopped: 'class',
           };
         }
         if (stateSig(mid) !== beforeSig) {
-          return { ok: false, status: 'contract_violation', outBytes: r.outBytes, cli_rc: r.code ?? '-' };
+          return {
+            ok: false, status: 'contract_violation', outBytes: r.outBytes, cli_rc: r.code ?? '-',
+            ...counts(), stopped: 'class',
+          };
         }
       }
-      await sleep(budgetMs(wait, runDeadline));
-      if (aborting) return { ok: false, outBytes: r.outBytes, cli_rc: r.code ?? '-' };
-      const sid = p.sessionId || (name === 'pi' ? ctx.sid : null);
-      const retry = retryArgv(name, rt, model, ctx, sid, mode, prompt);
-      argv = retry.argv;
-      input = retry.input;
+      let nextInput = prompt;
+      if (step.next === 'new' && mode === 'exec') {
+        const gate = await rung2Gate(ctx.cwd, beforeSig, prompt);
+        if (gate.stop) {
+          log(`cross-ai: ladder ${name} stop why=dirty-tree`);
+          const stopped = quotaSeen ? 'quota' : gate.status;
+          return {
+            ok: false, status: stopped, outBytes: r.outBytes, cli_rc: r.code ?? '-',
+            ...evidence, ...counts(), stopped: 'dirty-tree',
+          };
+        }
+        nextInput = gate.input;
+      }
+      const waitBound = quotaEnd() ? Math.min(wait, Math.max(0, quotaEnd() - Date.now())) : wait;
+      await sleep(budgetMs(waitBound, runDeadline));
+      if (aborting) return { ok: false, outBytes: r.outBytes, cli_rc: r.code ?? '-', ...counts() };
+      admitted = true;
+      if (step.next === 'same') {
+        ladder.same += 1;
+        const retry = sameSessionArgv(name, rt, model, ctx, sid, mode);
+        argv = retry.argv;
+        input = retry.input;
+      } else {
+        ladder.fresh += 1;
+        const retry = newSessionArgv(name, rt, model, ctx, mode, nextInput);
+        argv = retry.argv;
+        input = retry.input;
+      }
     }
   } finally {
     dropTemp(tmp);
   }
+}
+
+// Every <files> body in the prompt, split on commas. Backticks, quotes and a leading `./`
+// are presentation, not part of the path. The union of every block is the plan's own scope
+// (assumption A6: the GSD prompt carries the whole plan).
+function promptFiles(prompt) {
+  const out = new Set();
+  const re = /<files>([\s\S]*?)<\/files>/g;
+  let m;
+  while ((m = re.exec(String(prompt || '')))) {
+    for (let raw of m[1].split(',')) {
+      raw = raw.trim().replace(/^[`'"]+|[`'"]+$/g, '').replace(/^\.\//, '').trim();
+      if (raw) out.add(raw);
+    }
+  }
+  return out;
+}
+
+// Null when the ignored or nested parts differ, or git fails: those changes have no path to
+// account for. Otherwise the sorted paths that differ between the two write-tree ids.
+async function changedPaths(before, mid, cwd) {
+  const beforeParts = String(before || '').split('\t');
+  const midParts = String(mid || '').split('\t');
+  if (beforeParts.slice(1).join('\t') !== midParts.slice(1).join('\t')) return null;
+  const git = which('git', process.env.PATH || '');
+  if (!git || !beforeParts[0] || !midParts[0]) return null;
+  const diff = await runChild(
+    git, ['diff-tree', '-r', '--name-only', '-z', beforeParts[0], midParts[0]],
+    { cwd, capMs: GIT_CAP_MS, limit: runDeadline },
+  );
+  if (diff.timedOut || diff.spawnErr || diff.code !== 0) return null;
+  return diff.stdout.split('\0').filter(Boolean).sort();
+}
+
+// Rung 2 runs over an unchanged tree with the original prompt, or over a changed tree only
+// when every changed path is one the prompt lists (the resume message goes before it then).
+// A non-git cwd, a git failure or any other change stops the ladder.
+async function rung2Gate(cwd, beforeSig, prompt) {
+  const stop = (status) => ({ stop: true, status });
+  if (!inGitTree(cwd) || beforeSig === null) return stop('transient');
+  const beforeTree = String(beforeSig).split('\t').slice(1).join('\t');
+  const mid = await treeState(cwd, runDeadline);
+  if (mid === null) return stop(gitFailStatus());
+  if (stateSig(mid) === beforeSig) return { stop: false, input: prompt };
+  const changed = await changedPaths(beforeTree, mid.tree, cwd);
+  const allowed = promptFiles(prompt);
+  if (!changed || !changed.length || changed.some((p) => !allowed.has(p))) return stop('transient');
+  return { stop: false, input: `${RESUME_MSG}\n\n${prompt}` };
 }
 
 const CODEX_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
@@ -929,10 +2717,13 @@ const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*$/;
 // Cursor only: one trailing [k=v,...] bracket (D-18). No space, quote, `$` or `;`.
 const CURSOR_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/#@+-]*(?:\[[A-Za-z0-9._=,-]+\])?$/;
 
+const ROUTE_VALUES = new Set(['router', 'unknown']);
+
 function parseArgs(argv) {
   const o = {
-    prefer: null, models: {}, mode: 'exec', timeout: null, outerTimeout: null, printArgv: false,
-    preamble: true, selfTest: false, codexEffort: null, codexServiceTier: null, cursorMode: null,
+    prefer: null, models: {}, routes: {}, mode: 'exec', timeout: null, outerTimeout: null,
+    printArgv: false, preamble: true, selfTest: false, classifyOnly: null,
+    codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -943,7 +2734,11 @@ function parseArgs(argv) {
       const modelRe = a === '--model-cursor' ? CURSOR_MODEL_ID : MODEL_ID;
       if (!modelRe.test(id)) throw new Error(`${a} must match ${modelRe.source}`);
       o.models[a.slice(8)] = id;
-    }
+    } else if (a.startsWith('--route-')) {
+      const route = v();
+      if (!ROUTE_VALUES.has(route)) throw new Error(`${a} must be router or unknown`);
+      o.routes[a.slice(8)] = route;
+    } else if (a === '--classify-only') o.classifyOnly = v();
     else if (a === '--mode') { o.mode = v(); if (!['exec', 'review'].includes(o.mode)) throw new Error('--mode must be exec or review'); }
     else if (a === '--timeout') { o.timeout = Number(v()); if (!(o.timeout > 0)) throw new Error('--timeout must be > 0'); }
     else if (a === '--outer-timeout') {
@@ -971,8 +2766,53 @@ function parseArgs(argv) {
     else throw new Error(`unknown argument: ${a}`);
   }
   if (o.mode === 'exec' && o.cursorMode) throw new Error('--cursor-mode is review-only');
-  for (const n of [...(o.prefer || []), ...Object.keys(o.models)]) if (!Object.hasOwn(RUNTIMES, n)) throw new Error(`unknown cli: ${n} (known: ${Object.keys(RUNTIMES).join(', ')})`);
+  for (const n of [...(o.prefer || []), ...Object.keys(o.models), ...Object.keys(o.routes)]) {
+    if (!Object.hasOwn(RUNTIMES, n)) throw new Error(`unknown cli: ${n} (known: ${Object.keys(RUNTIMES).join(', ')})`);
+  }
   return o;
+}
+
+// Pure: one JSON line per case, then the status line. No spawn, no write, stdin unread.
+function runClassifyOnly(file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
+  } catch (e) {
+    log(`cross-ai: --classify-only unreadable: ${e.message}`);
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  let cases;
+  try { cases = JSON.parse(raw); } catch (e) {
+    log(`cross-ai: --classify-only invalid JSON: ${e.message}`);
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  if (!Array.isArray(cases)) {
+    log('cross-ai: --classify-only file must be a JSON array');
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  }
+  const lines = [];
+  for (const entry of cases) {
+    const cli = entry && entry.cli;
+    if (!Object.hasOwn(RUNTIMES, cli)) {
+      log(`cross-ai: --classify-only unknown cli: ${cli}`);
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
+    if (entry.route !== undefined && !ROUTE_VALUES.has(entry.route)) {
+      log(`cross-ai: --classify-only bad route: ${entry.route}`);
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    }
+    const route = entry.route === 'router' || entry.route === 'unknown'
+      ? entry.route : routeOf(cli, entry.model || '', {});
+    const cls = classifyStop({
+      cli, routerLane: confirmedRoute(route), stderr: entry.stderr || '',
+      events: extractEvents(cli, entry.stdout || ''),
+    });
+    lines.push(JSON.stringify({
+      name: entry.name, status: cls.status, rule: cls.rule, pattern: cls.label, route,
+    }));
+  }
+  if (lines.length) process.stdout.write(`${lines.join('\n')}\n`);
+  return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: lines.length });
 }
 
 function readStdin() {
@@ -1001,8 +2841,10 @@ function hermeticEnv(tmp, extra = {}) {
 function writeCopy(tmp, name, override) {
   const src = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
   const cfg = {
-    backoffS: [0, 0], effort: {}, extraArgs: {}, heartbeatS: 30, models: {}, outerTimeoutS: 1800,
-    prefer: ['pi', 'cursor', 'opencode'], retries: 2, routerBacked: {}, scrubEnv: [...CONFIG.scrubEnv],
+    attemptTimeoutS: 0, backoffS: [0, 0], capS: 14400, cooldownS: 0, effort: {}, extraArgs: {},
+    heartbeatS: 30, models: {}, newSessionRetries: 3, outerTimeoutS: 1800,
+    prefer: ['pi', 'cursor', 'opencode'], routerBacked: {}, sameSessionRetries: 3,
+    scrubEnv: [...CONFIG.scrubEnv],
     ...override,
   };
   const block = `// <config>\nconst CONFIG = ${JSON.stringify(cfg, null, 2)};\n// </config>`;
@@ -1053,7 +2895,12 @@ const args = process.argv;
 const model = argOf('--model');
 const fakeMode = model.startsWith('fake/') ? model.slice(5).replace(/:[a-z]+$/, '') : '';
 const recordGc = (pid) => { fs.writeFileSync('gc.pid', String(pid)); recordPid('gc', pid); };
-const STICKY_FAKE = new Set(['hang', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big']);
+const STICKY_FAKE = new Set([
+  'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big', 'sentinelsplit',
+  'limit-mid', 'limit-partial', 'limit-flood', 'limit-partial-flood',
+  'transient-hang', 'bare-429-hang', 'retry-notice', 'retry-notice-429', 'slowquota',
+  'capclamp',
+]);
 let stdinBuf = '';
 const FAKE_MODES = {
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
@@ -1086,11 +2933,41 @@ const FAKE_MODES = {
     process.stdout.write('429 rate limit and billing noted.\n# Summary\nok');
   },
   billing: () => { process.stderr.write('402 payment required\n'); process.exit(1); },
+  'router-env-billing': () => { process.stderr.write('402 payment required\n'); process.exit(1); },
   spend403: () => { process.stderr.write('Error 403: spending limit reached for this team\n'); process.exit(1); },
   freetier: () => { process.stderr.write('403: {"type":"FreeTierError"}\n'); process.exit(1); },
   auth: () => { process.stderr.write('401 unauthorized\n'); process.exit(1); },
   perm: () => { process.stderr.write('permission denied\n'); process.exit(1); },
   quota: () => { process.stderr.write('quota exceeded\n'); process.exit(1); },
+  'quota-until-8': () => {
+    const home = process.env.HOME || '';
+    const ctr = home + '/.fake-quota8-count';
+    let n = 0;
+    try { n = Number(fs.readFileSync(ctr, 'utf8')) || 0; } catch { /* first call */ }
+    fs.writeFileSync(ctr, String(n + 1));
+    if (n < 7) { process.stderr.write('quota exceeded\n'); process.exit(1); }
+    fs.writeFileSync('prompt.seen', stdinBuf);
+    fs.appendFileSync('a.txt', 'ok-line\n');
+    process.stdout.write('# Summary\nok');
+  },
+  slowquota: () => {
+    process.stderr.write('429 Too Many Requests\n');
+    setInterval(() => {}, 1 << 30);
+  },
+  capclamp: () => {
+    const ctr = 'capclamp.count';
+    let n = 0;
+    try { n = Number(fs.readFileSync(ctr, 'utf8')) || 0; } catch { /* first */ }
+    fs.writeFileSync(ctr, String(n + 1));
+    if (n < 1) { process.stderr.write('429 Too Many Requests\n'); process.exit(1); }
+    setInterval(() => {}, 1 << 30);
+  },
+  'router-env-quota': () => { process.stderr.write('429 too many requests\n'); process.exit(1); },
+  sentinelrouter: () => {
+    const key = process.env.AIKIT_XAI_CASE_SENTINEL || '';
+    process.stderr.write('402 requires an opencode API key: ' + key + '\n');
+    process.exit(1);
+  },
   dirtycrash: () => { fs.appendFileSync('a.txt', 'd\n'); process.stderr.write('boom\n'); process.exit(7); },
   dirtyquota: () => { fs.appendFileSync('a.txt', 'dq\n'); process.stderr.write('quota exceeded\n'); process.exit(1); },
   dirtybilling: () => { fs.appendFileSync('a.txt', 'db\n'); process.stderr.write('402 payment required\n'); process.exit(1); },
@@ -1113,6 +2990,53 @@ const FAKE_MODES = {
   hang: () => {
     const gc = spawn(process.execPath, ['-e', 'while(true){}'], { stdio: 'ignore' });
     recordGc(gc.pid);
+    setInterval(() => {}, 1 << 30);
+  },
+  'limit-mid': () => {
+    process.stderr.write("You've hit your usage limit\n");
+    setInterval(() => {}, 1 << 30);
+  },
+  'limit-partial': () => {
+    process.stderr.write('quota exceeded');
+    setInterval(() => {}, 1 << 30);
+  },
+  'answer-only-limit': () => {
+    fs.appendFileSync('a.txt', 'a\n');
+    process.stdout.write('# Summary\n' + "You've hit your usage limit, quoted from the task");
+  },
+  'retry-notice': () => {
+    process.stderr.write('Retrying in 1s: 503 Service Unavailable\n');
+    setTimeout(() => {
+      fs.appendFileSync('a.txt', 'a\n');
+      process.stdout.write('# Summary\nok');
+      process.exit(0);
+    }, 800);
+  },
+  'retry-notice-429': () => {
+    process.stderr.write('Retrying in 1s: 429 Too Many Requests\n');
+    setTimeout(() => {
+      fs.appendFileSync('a.txt', 'a\n');
+      process.stdout.write('# Summary\nok');
+      process.exit(0);
+    }, 800);
+  },
+  'limit-flood': () => {
+    process.stderr.write('quota exceeded\n');
+    const line = 'x'.repeat(200) + '\n';
+    for (let i = 0; i < 512; i++) process.stderr.write(line);
+    setInterval(() => {}, 1 << 30);
+  },
+  'transient-hang': () => {
+    process.stderr.write('[400]: event: error\n');
+    setInterval(() => {}, 1 << 30);
+  },
+  'limit-partial-flood': () => {
+    process.stderr.write('quota exceeded');
+    process.stderr.write('x'.repeat(100 * 1024));
+    setInterval(() => {}, 1 << 30);
+  },
+  'bare-429-hang': () => {
+    process.stderr.write('429 Too Many Requests\n');
     setInterval(() => {}, 1 << 30);
   },
   gcpipe: () => {
@@ -1138,6 +3062,26 @@ const FAKE_MODES = {
     fs.writeFileSync((process.env.HOME || '') + '/.fake-git-fail', '1');
     process.stdout.write('# Summary\nok');
   },
+  event400: () => {
+    process.stderr.write('[400]: event: error\n');
+    process.exit(1);
+  },
+  dirtyevent400: () => {
+    fs.appendFileSync('a.txt', 'dirty\n');
+    process.stderr.write('[400]: event: error\n');
+    process.exit(1);
+  },
+  hangonce: () => {
+    const home = process.env.HOME || '';
+    const ctr = home + '/.fake-hangonce-count';
+    let n = 0;
+    try { n = Number(fs.readFileSync(ctr, 'utf8')) || 0; } catch { /* first call */ }
+    fs.writeFileSync(ctr, String(n + 1));
+    if (n < 1) { setInterval(() => {}, 1 << 30); return; }
+    fs.appendFileSync('a.txt', 'ok-line\n');
+    process.stdout.write('# Summary\nok');
+    process.exit(0);
+  },
   flaky: () => {
     const home = process.env.HOME || '';
     const ctr = home + '/.fake-flaky-count';
@@ -1145,14 +3089,34 @@ const FAKE_MODES = {
     try { n = Number(fs.readFileSync(ctr, 'utf8')) || 0; } catch { /* first call */ }
     if (n < 1) {
       fs.writeFileSync(ctr, '1');
-      process.stderr.write('429 Too Many Requests\n');
+      process.stderr.write('[400]: event: error\n');
       process.exit(1);
     }
     fs.appendFileSync('a.txt', 'ok-line\n');
     process.stdout.write('# Summary\nok');
   },
   overloaded: () => {
-    process.stderr.write('429 Too Many Requests\n');
+    process.stderr.write('[400]: event: error\n');
+    process.exit(1);
+  },
+  sentinelquota: () => {
+    const key = process.env.AIKIT_XAI_SENTINEL || '';
+    process.stderr.write('quota exceeded for key ' + key + '\n');
+    process.exit(1);
+  },
+  sentinelsplit: () => {
+    const key = process.env.AIKIT_XAI_SENTINEL || '';
+    const bearer = process.env.AIKIT_XAI_BEARER || '';
+    const mid = Math.floor(key.length / 2);
+    process.stderr.write(key.slice(0, mid));
+    setTimeout(() => {
+      process.stderr.write(key.slice(mid) + '\nBearer ' + bearer + '\n');
+      process.exit(1);
+    }, 50);
+  },
+  sentineloverlong: () => {
+    const key = process.env.AIKIT_XAI_SENTINEL || '';
+    process.stderr.write(key + 'x'.repeat(70000));
     process.exit(1);
   },
   'review-ok': () => { process.stdout.write('# Review\nok'); },
@@ -1174,6 +3138,10 @@ const FAKE_MODES = {
     fs.writeFileSync((process.env.HOME || '') + '/.fake-git-fail', '1');
     process.stdout.write('# Review\nok');
   },
+  'review-event400': () => {
+    process.stderr.write('[400]: event: error\n');
+    process.exit(1);
+  },
   'review-flaky-edit': () => {
     const home = process.env.HOME || '';
     const ctr = home + '/.fake-review-flaky-count';
@@ -1182,7 +3150,7 @@ const FAKE_MODES = {
     if (n < 1) {
       fs.writeFileSync(ctr, '1');
       fs.appendFileSync('a.txt', 'flaky-edit\n');
-      process.stderr.write('429 Too Many Requests\n');
+      process.stderr.write('[400]: event: error\n');
       process.exit(1);
     }
     process.stdout.write('# Review\nok');
@@ -1216,6 +3184,16 @@ log('pi ' + (fakeMode || model));
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (d) => { stdinBuf += d; });
 process.stdin.on('end', () => {
+  if (process.env.FAKE_SIDS) {
+    const sid = argOf('--session-id');
+    const head = 'You were interrupted by a provider error.';
+    let kind = 'other';
+    if (stdinBuf.startsWith(head)) {
+      kind = stdinBuf.includes('\n\n') ? 'resume-plus' : 'resume';
+    }
+    else if (stdinBuf.length) kind = 'prompt';
+    fs.appendFileSync(process.env.FAKE_SIDS, sid + ' ' + kind + '\n');
+  }
   const fn = FAKE_MODES[fakeMode];
   if (!fn) process.exit(1);
   fn();
@@ -1236,7 +3214,9 @@ if (sub[0] === 'models') {
     console.log('\x1b[1mauto\x1b[0m (current, default)');
     console.log('composer-2.5 - Composer 2.5');
   } else if (process.env.FAKE_CURSOR_LIST !== 'empty') {
-    for (const id of ['fake-ok-cursor', 'fake-err-cursor', 'composer-2.5']) console.log(id + ' - label');
+    for (const id of [
+      'fake-ok-cursor', 'fake-err-cursor', 'fake-event400-cursor', 'composer-2.5',
+    ]) console.log(id + ' - label');
   }
   process.exit(0);
 }
@@ -1246,6 +3226,10 @@ process.stdin.on('data', () => {}).on('end', () => {
   if (model === 'fake-err-cursor') {
     console.log(JSON.stringify({ type: 'result', is_error: true, result: '401 unauthorized', session_id: 'c2' }));
     process.exit(0);
+  }
+  if (model === 'fake-event400-cursor') {
+    process.stderr.write('[400]: event: error\n');
+    process.exit(1);
   }
   fs.appendFileSync('a.txt', 'cursor\n');
   console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '## Summary\nok', session_id: 'c1' }));
@@ -1290,30 +3274,80 @@ function writeFakeCodex(binDir) {
 const sub = process.argv.slice(2);
 if (sub[0] === 'debug' && sub[1] === 'models') {
   log('codex models');
-  console.log(JSON.stringify({ models: ['fake-ok-codex', 'fake-retry-codex'].map((slug) => ({ slug, visibility: 'list' })) }));
+  const listed = [
+    'fake-ok-codex', 'fake-retry-codex', 'fake-limit-codex',
+    'fake-error-then-ok-codex', 'fake-bare-error-hang-codex', 'fake-event400-codex',
+  ];
+  console.log(JSON.stringify({ models: listed.map((slug) => ({ slug, visibility: 'list' })) }));
   process.exit(0);
 }
 const outFile = argOf('-o');
+if (sub[0] === 'exec' && sub[1] === 'resume') log('codex-resume ' + argOf('-m'));
 log('codex ' + argOf('-m'));
 process.stdin.on('data', () => {}).on('end', () => {
-  fs.appendFileSync('a.txt', 'cx\n');
+  const model = argOf('-m');
+  if (model !== 'fake-event400-codex') fs.appendFileSync('a.txt', 'cx\n');
   if (outFile) fs.writeFileSync(outFile, '## Summary\nok');
   console.log(JSON.stringify({ type: 'thread.started', thread_id: 't1' }));
-  if (argOf('-m') === 'fake-retry-codex') {
+  const limitText = 'You\u2019ve hit your usage limit. Upgrade to Pro, or try again later.';
+  if (model === 'fake-retry-codex') {
     console.log(JSON.stringify({ type: 'error', message: 'stream disconnected; retrying 1/5' }));
     console.log(JSON.stringify({ type: 'turn.completed' }));
+  } else if (model === 'fake-limit-codex') {
+    console.log(JSON.stringify({ type: 'error', message: limitText }));
+    console.log(JSON.stringify({ type: 'turn.failed', error: { message: limitText } }));
+    setInterval(() => {}, 1 << 30);
+    return;
+  } else if (model === 'fake-error-then-ok-codex') {
+    console.log(JSON.stringify({ type: 'error', message: limitText }));
+    setTimeout(() => {
+      if (outFile) fs.writeFileSync(outFile, '## Summary\nok');
+      console.log(JSON.stringify({ type: 'turn.completed' }));
+      process.exit(0);
+    }, 500);
+    return;
+  } else if (model === 'fake-bare-error-hang-codex') {
+    console.log(JSON.stringify({ type: 'error', message: limitText }));
+    setInterval(() => {}, 1 << 30);
+    return;
+  } else if (model === 'fake-event400-codex') {
+    console.log(JSON.stringify({
+      type: 'turn.failed', error: { message: 'stream disconnected before completion' },
+    }));
+    setTimeout(() => process.exit(1), 50);
+    return;
   }
 });
 `);
 }
+
+const STATUS_HEAD_RE = new RegExp(
+  '^(.* action=stop)(?: (route=\\S+ rule=\\S+ pattern=\\S+))?' +
+  '(?: (attempts=\\S+ cycles=\\S+))?(?: (retry_after_s=\\S+ cycle=\\S+))?$',
+);
 
 function statusLineOk(stderr, pattern) {
   const lines = stderr.split('\n').filter((l) => l.trim());
   const hits = lines.filter((l) => l.startsWith('AIKIT-XAI '));
   if (hits.length !== 1) return `expected one AIKIT-XAI line, got ${hits.length}`;
   if (hits[0] !== lines[lines.length - 1]) return 'AIKIT-XAI line is not last stderr line';
-  if (!pattern.test(hits[0])) return `status line mismatch: ${hits[0]}`;
+  const parts = STATUS_HEAD_RE.exec(hits[0]);
+  if (!parts) return `status line mismatch: ${hits[0]}`;
+  if (!pattern.test(parts[1])) return `status line mismatch: ${hits[0]}`;
   return null;
+}
+
+function statusTail(stderr) {
+  const line = stderr.split('\n').filter((l) => l.startsWith('AIKIT-XAI ')).pop() || '';
+  const parts = STATUS_HEAD_RE.exec(line);
+  if (!parts || !parts[2]) return null;
+  const tail = [parts[2], parts[3], parts[4]].filter(Boolean).join(' ');
+  const tok = Object.fromEntries(tail.split(' ').map((t) => t.split('=')));
+  return {
+    route: tok.route, rule: tok.rule, pattern: tok.pattern,
+    attempts: tok.attempts, cycles: tok.cycles,
+    retry_after_s: tok.retry_after_s, cycle: tok.cycle,
+  };
 }
 
 function pidAlive(pid) {
@@ -1427,10 +3461,36 @@ function runCaseProcess(spec, c) {
   });
 }
 
+// A second invocation of the same copy, sharing the case's XDG state dir and HOME.
+async function runTwice(spec, c, second) {
+  const first = await runCaseProcess({ ...spec, args: c.args || spec.args }, c);
+  if (first.reason) return { reason: `first: ${first.reason}` };
+  if (first.status !== spec.exit) return { reason: `first exit ${first.status}` };
+  const calls1 = fs.existsSync(c.calls)
+    ? fs.readFileSync(c.calls, 'utf8').trim().split('\n').filter(Boolean) : [];
+  fs.writeFileSync(c.calls, '');
+  const again = await runCaseProcess({
+    ...spec, args: c.args || spec.args, stdin: second.stdin ?? spec.stdin, exit: second.exit,
+  }, c);
+  if (again.reason) return { reason: `second: ${again.reason}` };
+  if (again.status !== second.exit) return { reason: `second exit ${again.status}` };
+  const calls2 = fs.existsSync(c.calls)
+    ? fs.readFileSync(c.calls, 'utf8').trim().split('\n').filter(Boolean) : [];
+  return { first, again, calls1, calls2 };
+}
+
 async function checkCase(spec, c) {
+  if (spec.second) {
+    const both = await runTwice(spec, c, spec.second);
+    if (both.reason) return both.reason;
+    const err = statusLineOk(both.again.stderr || '', spec.second.status);
+    if (err) return `second: ${err}`;
+    return spec.check ? spec.check(both, { ...c, calls: both.calls2 }) : null;
+  }
   const r = await runCaseProcess({ ...spec, args: c.args || spec.args }, c);
   if (r.reason) return r.reason;
   if (r.status !== spec.exit) return `exit ${r.status} expected ${spec.exit}`;
+
   if (!spec.closeStderr) {
     const err = statusLineOk(r.stderr || '', spec.status);
     if (err) return err;
@@ -1476,6 +3536,7 @@ function deadCheck(ctx, names) {
 }
 
 async function runSelfTestCase(tmp, spec) {
+  if (typeof spec.pure === 'function') return spec.pure();
   const repo = path.join(tmp, `r-${spec.name}`);
   fs.mkdirSync(repo, { recursive: true });
   const gitEnv = hermeticEnv(tmp, { HOME: path.join(tmp, 'home-git') });
@@ -1502,7 +3563,13 @@ async function runSelfTestCase(tmp, spec) {
   const pidFile = path.join(tmp, `pids-${spec.name}.log`);
   const copy = writeCopy(tmp, spec.name, spec.config || {});
   const env = hermeticEnv(tmp, {
-    HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), FAKE_CALLS: calls, FAKE_PIDS: pidFile, ...(spec.env || {}),
+    HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'),
+    XDG_STATE_HOME: path.join(home, '.local', 'state', spec.name),
+    FAKE_CALLS: calls, FAKE_PIDS: pidFile,
+    FAKE_SIDS: path.join(tmp, `sids-${spec.name}.log`),
+    AIKIT_XAI_SENTINEL: 'sk-aikit-SENTINEL-' + process.pid,
+    AIKIT_XAI_BEARER: 'brtok-' + process.pid,
+    ...(spec.env || {}),
   });
   const c = { tmp, repo, home, calls, pidFile, copy, env };
   let reason;
@@ -1729,64 +3796,378 @@ async function blackBoxSelfTest() {
         name: 'empty-auth',
         args: ['--prefer', 'pi', '--model-pi', 'fake/emptyauth'],
         exit: 69,
-        status: /^AIKIT-XAI status=auth cli=pi model=fake\/emptyauth exit=69 cli_rc=0 .* tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=auth cli=pi model=fake\/emptyauth exit=69 cli_rc=0 .* tree=clean action=stop$/,
       },
       {
         name: 'billing',
         args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
         exit: 69,
-        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'billing-router',
         args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
         config: { routerBacked: { pi: true } },
         exit: 75,
-        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=retry-later$/,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/billing exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'billing-403-router',
         args: ['--prefer', 'pi', '--model-pi', 'fake/spend403'],
         config: { routerBacked: { pi: true } },
         exit: 75,
-        status: /^AIKIT-XAI status=billing cli=pi model=fake\/spend403 exit=75 cli_rc=1 .* tree=clean action=retry-later$/,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/spend403 exit=75 cli_rc=1 .* tree=clean action=stop$/,
       },
       {
         name: 'billing-free-tier',
         args: ['--prefer', 'pi', '--model-pi', 'fake/freetier'],
         exit: 69,
-        status: /^AIKIT-XAI status=billing cli=pi model=fake\/freetier exit=69 cli_rc=1 .* tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/freetier exit=69 cli_rc=1 .* tree=clean action=stop$/,
       },
       {
         name: 'auth',
         args: ['--prefer', 'pi', '--model-pi', 'fake/auth'],
         exit: 69,
-        status: /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'perm',
         args: ['--prefer', 'pi', '--model-pi', 'fake/perm'],
         exit: 69,
-        status: /^AIKIT-XAI status=permission_blocked cli=pi model=fake\/perm exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=permission_blocked cli=pi model=fake\/perm exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'quota',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
         exit: 75,
-        status: /^AIKIT-XAI status=quota cli=pi model=fake\/quota exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=retry-later$/,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/quota exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          if (!tail) return 'status line has no evidence tail';
+          if (tail.route !== 'unknown') return `route=${tail.route}`;
+          if (!/^\S+$/.test(tail.rule) || tail.rule === '-') return `rule=${tail.rule}`;
+          if (tail.pattern !== 'verified' && tail.pattern !== 'unverified') return `pattern=${tail.pattern}`;
+          return null;
+        },
       },
       {
+        // One cycle of a confirmed router lane: 7 calls, exit 75, cycle 0 persisted.
+        name: 'router-quota-one-cycle',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=quota cli=pi model=fake/quota-until-8 ' +
+          'exit=75 .* tree=clean action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi quota-until-8').length;
+          if (n !== 7) return `calls=${n}`;
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.retry_after_s !== '0' || tail.cycle !== '0') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          if (tail.attempts !== '7' || tail.cycles !== '0') {
+            return `counts=${tail.attempts}/${tail.cycles}`;
+          }
+          const file = caseCycleFile(ctx, 'pi', 'fake/quota-until-8');
+          const saved = readCycleState(file);
+          return saved && saved.cycle === 0 ? null : 'state file missing cycle 0';
+        },
+      },
+      {
+        // The second invocation resumes the same session and the fake answers on call 8.
+        name: 'router-quota-second-cycle',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8'],
+        config: { routerBacked: { pi: true }, capS: 3600 },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        second: {
+          exit: 0,
+          status: new RegExp('^AIKIT-XAI status=ok cli=pi model=fake/quota-until-8 ' +
+            'exit=0 .* action=stop$'),
+        },
+        check: (both, ctx) => {
+          const runs = (rows) => rows.filter((l) => l === 'pi quota-until-8');
+          if (runs(both.calls1).length !== 7) return `first calls=${runs(both.calls1).length}`;
+          if (runs(both.calls2).length !== 1) return `second calls=${runs(both.calls2).length}`;
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length !== 8) return `sids=${rows.length}`;
+          if (rows[7][0] !== rows[6][0]) return 'second cycle did not resume the session';
+          if (rows[7][1] !== 'resume') return `call 8 input ${rows[7][1]}`;
+          const tail = statusTail(both.again.stderr || '');
+          if (!tail || tail.attempts !== '8' || tail.cycles !== '1') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          const file = caseCycleFile(ctx, 'pi', 'fake/quota-until-8');
+          return readCycleState(file) ? 'state file survived an ok run' : null;
+        },
+      },
+      {
+        // A different prompt never joins the previous task's session.
+        name: 'router-quota-second-cycle-new-task',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8', '--no-preamble'],
+        config: { routerBacked: { pi: true }, capS: 3600 },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        second: {
+          exit: 0,
+          stdin: '<objective>a different task</objective>\n',
+          status: /^AIKIT-XAI status=ok .* action=stop$/,
+        },
+        check: (both, ctx) => {
+          const runs2 = both.calls2.filter((l) => l === 'pi quota-until-8');
+          if (runs2.length !== 1) return `second calls=${runs2.length}`;
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length !== 8) return `sids=${rows.length}`;
+          if (rows[7][0] === rows[0][0]) return 'new task resumed the old session';
+          if (rows[7][1] !== 'prompt') return `call 8 input ${rows[7][1]}`;
+          const seen = readOr(path.join(ctx.repo, 'prompt.seen'), '');
+          return seen.includes('a different task') ? null : 'new prompt was not sent';
+        },
+      },
+      {
+        // The only cooldown override: a re-entry inside it spawns nothing.
+        name: 'router-quota-early-reentry',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
+        config: { routerBacked: { pi: true }, cooldownS: 600, capS: 3600 },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        second: { exit: 75, status: /^AIKIT-XAI status=quota .* action=stop$/ },
+        check: (both) => {
+          const all = [...both.calls1, ...both.calls2].filter((l) => l === 'pi quota');
+          if (all.length !== 7) return `calls=${all.length}`;
+          const tail = statusTail(both.again.stderr || '');
+          if (!tail || tail.retry_after_s !== '600' || tail.cycle !== '0') {
+            return `tail=${JSON.stringify(tail)}`;
+          }
+          const spawned = both.calls2.filter((l) => l !== 'pi rpc');
+          return spawned.length === 0 ? null : 're-entry spawned a child';
+        },
+      },
+      {
+        // Both timestamps past the cap: the file is stale and a fresh cycle starts.
+        name: 'stale-state-fresh-start',
+        setup: (c) => {
+          const file = caseCycleFile(c, 'pi', 'fake/quota');
+          const old = Date.now() - 5 * 3600 * 1000;
+          writeCycleState(file, {
+            first_seen: old, last_attempt_at: old, cycle: 3, attempts: 21,
+            last_sid: 'old', task_digest: 'old', retry_after_s: 0, due_at: old,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('stale-state-fresh-start')) return 'missing stale note';
+          const n = ctx.calls.filter((l) => l === 'pi quota').length;
+          if (n !== 7) return `calls=${n}`;
+          const tail = statusTail(r.stderr || '');
+          return tail && tail.cycle === '0' ? null : `cycle=${tail && tail.cycle}`;
+        },
+      },
+      {
+        // An active episode past the cap stops before any child.
+        name: 'expired-state-cap-stop',
+        setup: (c) => {
+          const file = caseCycleFile(c, 'pi', 'fake/quota');
+          writeCycleState(file, {
+            first_seen: Date.now() - 5 * 3600 * 1000, last_attempt_at: Date.now(),
+            cycle: 2, attempts: 14, last_sid: 'old', task_digest: 'old',
+            retry_after_s: 0, due_at: 0,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
+        config: { routerBacked: { pi: true } },
+        exit: 69,
+        status: /^AIKIT-XAI status=quota .* exit=69 .* action=stop$/,
+        check: (r, ctx) => {
+          const runs = ctx.calls.filter((l) => l !== 'pi rpc');
+          if (runs.length) return `spawned: ${runs.join('|')}`;
+          return (r.stderr || '').includes('stopped=cap') ? null : 'missing stopped=cap';
+        },
+      },
+      {
+        // A quota-class deadline stop still starts the cycle accounting.
+        name: 'quota-deadline-cycle',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/slowquota', '--timeout', '4'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* exit=75 .* action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('stopped=deadline')) return 'missing stopped=deadline';
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.cycle !== '0') return `cycle=${tail && tail.cycle}`;
+          const file = caseCycleFile(ctx, 'pi', 'fake/slowquota');
+          return readCycleState(file) ? null : 'deadline stop wrote no state';
+        },
+      },
+      {
+        // About 90 s of cap left: the admitted child is stopped at the cap.
+        name: 'quota-cap-clamp-child',
+        stdin: 'clamp-probe\n',
+        setup: (c) => {
+          const file = caseCycleFile(c, 'pi', 'fake/capclamp');
+          const first = Date.now() - (3600 * 1000 - 8000);
+          writeCycleState(file, {
+            first_seen: first, last_attempt_at: Date.now() - 1000, cycle: 0, attempts: 7,
+            last_sid: '00000000-0000-4000-8000-000000000001',
+            task_digest: taskDigest('clamp-probe\n'), retry_after_s: 0, due_at: 0,
+          });
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/capclamp', '--outer-timeout', '200',
+          '--no-preamble'],
+        config: { routerBacked: { pi: true }, capS: 3600 },
+        exit: 69,
+        status: /^AIKIT-XAI status=quota .* exit=69 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.elapsedMs >= 80000) return `elapsed ${ctx.elapsedMs}`;
+          if (!(r.stderr || '').includes('stopped=cap')) return 'missing stopped=cap';
+          return deadCheck(ctx, ['pi']);
+        },
+      },
+      {
+        // Off a router lane a quota stops after one call and writes no state.
+        name: 'plain-quota-no-retry',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* exit=75 .* action=stop$/,
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi quota').length;
+          if (n !== 1) return `calls=${n}`;
+          const file = caseCycleFile(ctx, 'pi', 'fake/quota');
+          return readCycleState(file) ? 'off-router quota wrote a state file' : null;
+        },
+      },
+      {
+        // An inferred lane keeps the base billing class and never cycles.
+        name: 'inferred-quota-no-cycle',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router-env-billing'],
+        config: { routerBacked: {} },
+        exit: 69,
+        status: new RegExp('^AIKIT-XAI status=billing cli=pi ' +
+          'model=fake/router-env-billing exit=69 .* action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi router-env-billing').length;
+          if (n !== 1) return `calls=${n}`;
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.route !== 'router-inferred') return `route=${tail && tail.route}`;
+          return tail.cycle !== undefined ? 'inferred lane printed a cycle token' : null;
+        },
+      },
+      {
+        // An inferred route's own quota text stops at once with no cycle state.
+        name: 'inferred-quota-stop',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router-env-quota'],
+        config: { routerBacked: {} },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=quota cli=pi ' +
+          'model=fake/router-env-quota exit=75 .* action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi router-env-quota').length;
+          if (n !== 1) return `calls=${n}`;
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.route !== 'router-inferred') return `route=${tail && tail.route}`;
+          if (tail.cycle !== undefined) return 'inferred quota printed a cycle token';
+          const file = caseCycleFile(ctx, 'pi', 'fake/router-env-quota');
+          return readCycleState(file) ? 'inferred quota wrote a state file' : null;
+        },
+      },
+      {
+        // The key is built here and handed to the fake: the fake's pid is not this one.
+        name: 'sentinel-evidence',
+        setup: (c) => {
+          c.env.AIKIT_XAI_CASE_SENTINEL = 'sk-aikit-SENTINEL-' + process.pid;
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/sentinelrouter'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* action=stop$/,
+        check: (r, ctx) => {
+          const key = 'sk-aikit-SENTINEL-' + process.pid;
+          const logText = `${r.stderr || ''}\n${r.stdout || ''}`;
+          if (logText.includes(key)) return 'sentinel key leaked into the log';
+          const attempts = (r.stderr || '').split('\n')
+            .filter((l) => l.startsWith('cross-ai: attempt '));
+          if (attempts.length !== 7) return `attempt lines=${attempts.length}`;
+          const reports = (r.stderr || '').split('\n')
+            .filter((l) => l.startsWith('cross-ai: report '));
+          if (reports.length !== 1) return `report lines=${reports.length}`;
+          if (!reports[0].includes('stopped=rungs')) return `report=${reports[0]}`;
+          const runs = ctx.calls.filter((l) => l === 'pi sentinelrouter');
+          return runs.length === 7 ? null : `calls=${runs.length}`;
+        },
+      },
+      {
+        // Off a router lane a quota over edits stops after the one call.
         name: 'dirty-quota',
         args: ['--prefer', 'pi', '--model-pi', 'fake/dirtyquota'],
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/dirtyquota exit=75 cli_rc=1 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          const runs = ctx.calls.filter((l) => l === 'pi dirtyquota');
+          if (runs.length !== 1) return `calls=${runs.length}`;
+          return (r.stderr || '').includes('stopped=class') ? null : 'missing stopped=class';
+        },
       },
       {
+        // A router quota over edits finishes rung 1, then the dirty tree stops rung 2.
         name: 'dirty-billing-router',
         args: ['--prefer', 'pi', '--model-pi', 'fake/dirtybilling'],
         config: { routerBacked: { pi: true } },
         exit: 75,
-        status: /^AIKIT-XAI status=billing cli=pi model=fake\/dirtybilling exit=75 cli_rc=1 .* tree=dirty action=stop$/,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/dirtybilling exit=75 cli_rc=1 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          const runs = ctx.calls.filter((l) => l === 'pi dirtybilling');
+          if (runs.length !== 4) return `calls=${runs.length}`;
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (new Set(rows.map((row) => row[0])).size !== 1) return 'rung 1 switched session';
+          return (r.stderr || '').includes('stopped=dirty-tree') ? null : 'missing dirty-tree';
+        },
+      },
+      {
+        name: 'sentinel-failed-line',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/sentinelquota'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/sentinelquota exit=75 .* action=stop$/,
+        check: (r) => {
+          const key = 'sk-aikit-SENTINEL-' + process.pid;
+          if ((r.stderr || '').includes(key)) return 'sentinel key leaked into the log';
+          if (!(r.stderr || '').includes('<redacted>')) return 'stderr relay was not redacted';
+          return null;
+        },
+      },
+      {
+        name: 'sentinelsplit',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/sentinelsplit'],
+        exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/sentinelsplit exit=1 .* action=stop$/,
+        check: (r) => {
+          const key = 'sk-aikit-SENTINEL-' + process.pid;
+          const bearer = 'brtok-' + process.pid;
+          const logText = r.stderr || '';
+          if (logText.includes(key)) return 'split sentinel key leaked into the log';
+          if (logText.includes(bearer)) return 'bearer sentinel leaked into the log';
+          if (!logText.includes('<redacted>')) return 'split stderr was not redacted';
+          return null;
+        },
+      },
+      {
+        name: 'sentinel-overlong',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/sentineloverlong'],
+        exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/sentineloverlong exit=1 .* action=stop$/,
+        check: (r) => {
+          const key = 'sk-aikit-SENTINEL-' + process.pid;
+          const logText = r.stderr || '';
+          if (logText.includes(key)) return 'overlong sentinel key leaked into the log';
+          if (logText.includes('x'.repeat(66000))) return 'overlong line was not truncated';
+          return null;
+        },
       },
       {
         name: 'git-after-quota',
@@ -1800,25 +4181,25 @@ async function blackBoxSelfTest() {
         name: 'crash',
         args: ['--prefer', 'pi', '--model-pi', 'fake/crash'],
         exit: 1,
-        status: /^AIKIT-XAI status=crash cli=pi model=fake\/crash exit=1 cli_rc=7 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/crash exit=1 cli_rc=7 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'nochange',
         args: ['--prefer', 'pi', '--model-pi', 'fake/nochange'],
         exit: 1,
-        status: /^AIKIT-XAI status=no_change cli=pi model=fake\/nochange exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=no_change cli=pi model=fake\/nochange exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'empty',
         args: ['--prefer', 'pi', '--model-pi', 'fake/empty'],
         exit: 1,
-        status: /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'cursor-error',
         args: ['--prefer', 'cursor', '--model-cursor', 'fake-err-cursor'],
         exit: 69,
-        status: /^AIKIT-XAI status=auth cli=cursor model=fake-err-cursor exit=69 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=fallback$/,
+        status: /^AIKIT-XAI status=auth cli=cursor model=fake-err-cursor exit=69 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
         check: (_r, ctx) => {
           const mi = ctx.calls.indexOf('cursor-agent models');
           const ri = ctx.calls.indexOf('cursor-agent fake-err-cursor');
@@ -1834,16 +4215,11 @@ async function blackBoxSelfTest() {
         check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran after dirty crash' : null),
       },
       {
-        name: 'fallback',
+        name: 'no-change-no-fallback',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/nochange', '--model-cursor', 'fake-ok-cursor'],
-        exit: 0,
-        status: /^AIKIT-XAI status=ok cli=cursor model=fake-ok-cursor exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
-        check: (_r, ctx) => {
-          const piIdx = ctx.calls.findIndex((l) => l.startsWith('pi '));
-          const curIdx = ctx.calls.findIndex((l) => l.startsWith('cursor-agent'));
-          if (piIdx < 0 || curIdx < 0 || piIdx > curIdx) return `call order: ${ctx.calls.join('|')}`;
-          return null;
-        },
+        exit: 1,
+        status: /^AIKIT-XAI status=no_change cli=pi model=fake\/nochange exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
+        check: (_r, ctx) => (ctx.calls.some((l) => l.startsWith('cursor-agent')) ? 'cursor ran' : null),
       },
       {
         name: 'reedit',
@@ -1860,11 +4236,142 @@ async function blackBoxSelfTest() {
         check: (_r, ctx) => deadCheck(ctx, ['gc']),
       },
       {
+        // SPEC R4: a terminal usage-limit line, then the child stays alive. Stopped at the grace.
+        name: 'live-limit-kill',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/limit-mid', '--timeout', '60'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/limit-mid exit=75 .* action=stop$/,
+        check: (_r, ctx) => (
+          ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['pi'])
+        ),
+      },
+      {
+        // An unterminated `quota exceeded` matches the terminal rows before the buffer trim,
+        // so the grace stops the child well inside the deadline (a live kill, not post-hoc).
+        name: 'live-partial-kill',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/limit-partial', '--timeout', '3'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/limit-partial exit=75 .* action=stop$/,
+        check: (_r, ctx) => (
+          ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['pi'])
+        ),
+      },
+      {
+        // A limit phrase in the answer alone is ignored (SPEC R4 precision).
+        name: 'answer-only-ok',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/answer-only-limit'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/answer-only-limit exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
+          return runs.length === 1 ? null : `pi calls ${ctx.calls.join('|')}`;
+
+        },
+      },
+      {
+        // A 503 retry notice is not a terminal signal.
+        name: 'retry-notice-no-kill',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/retry-notice', '--timeout', '60'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/retry-notice exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
+          return runs.length === 1 ? null : `pi calls ${ctx.calls.join('|')}`;
+        },
+      },
+      {
+        // A 429 inside a retry notice never kills: the bare-code rows are not terminal.
+        name: 'retry-notice-429-no-kill',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/retry-notice-429', '--timeout', '60'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/retry-notice-429 exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
+          return runs.length === 1 ? null : `pi calls ${ctx.calls.join('|')}`;
+        },
+      },
+      {
+        // A completed transient line on a timed-out attempt is a transient rung, and a
+        // deadline this short cannot admit one, so the run stops before any rung.
+        name: 'post-hoc-timeout-transient-stays',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/transient-hang', '--timeout', '3'],
+        config: { backoffS: [30, 60] },
+        exit: 124,
+        status: new RegExp('^AIKIT-XAI status=timeout cli=pi model=fake/transient-hang ' +
+          'exit=124 .* action=stop$'),
+        check: (_r, ctx) => deadCheck(ctx, ['pi']),
+      },
+      {
+        // An unterminated quota line plus a newline-free flood: the pre-trim match kills live.
+        name: 'live-partial-flood',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/limit-partial-flood', '--timeout', '3'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=quota cli=pi model=fake/limit-partial-flood ' +
+          'exit=75 .* action=stop$'),
+        check: (_r, ctx) => (
+          ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['pi'])
+        ),
+      },
+      {
+        // A complete non-terminal 429 line never kills live; the post-hoc pass still labels quota.
+        name: 'post-hoc-timeout-429',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/bare-429-hang', '--timeout', '3'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/bare-429-hang exit=75 .* action=stop$/,
+        check: (_r, ctx) => {
+          if (ctx.elapsedMs < 2500) return `elapsed ${ctx.elapsedMs} (killed live)`;
+          return deadCheck(ctx, ['pi']);
+        },
+      },
+      {
+        // A flood after a terminal line cannot hide the signal recorded at first sight.
+        name: 'live-limit-flood',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/limit-flood', '--timeout', '60'],
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/limit-flood exit=75 .* action=stop$/,
+        check: (_r, ctx) => deadCheck(ctx, ['pi']),
+      },
+      {
+        // turn.failed carrying limit text is terminal; the grace stops the child.
+        name: 'live-codex-turn-failed',
+        args: ['--prefer', 'codex', '--model-codex', 'fake-limit-codex', '--timeout', '60'],
+        config: { prefer: ['codex'] },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=codex model=fake-limit-codex exit=75 .* action=stop$/,
+        check: (_r, ctx) => (
+          ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['codex'])
+        ),
+      },
+      {
+        // Ruling Q1: a bare codex error event is recorded, never a kill.
+        name: 'live-codex-bare-error-no-kill',
+        args: ['--prefer', 'codex', '--model-codex', 'fake-error-then-ok-codex', '--timeout', '60'],
+        config: { prefer: ['codex'] },
+        exit: 0,
+        status: new RegExp('^AIKIT-XAI status=ok cli=codex model=fake-error-then-ok-codex ' +
+          'exit=0 .* action=stop$'),
+      },
+      {
+        // A bare codex error is never terminal, so the deadline passes and post-hoc labels quota.
+        name: 'post-hoc-timeout-codex-error',
+        args: [
+          '--prefer', 'codex', '--model-codex', 'fake-bare-error-hang-codex', '--timeout', '3',
+        ],
+        config: { prefer: ['codex'] },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=quota cli=codex ' +
+          'model=fake-bare-error-hang-codex exit=75 .* action=stop$'),
+        check: (_r, ctx) => {
+          if (ctx.elapsedMs < 2500) return `elapsed ${ctx.elapsedMs} (killed live)`;
+          return deadCheck(ctx, ['codex']);
+        },
+      },
+      {
         name: 'not-installed-codex',
         args: ['--prefer', 'codex', '--model-codex', 'x'],
         env: { PATH: `${path.join(tmp, 'bin-nocodex')}` },
         exit: 127,
-        status: /^AIKIT-XAI status=not_installed .* exit=127 .* action=fallback$/,
+        status: /^AIKIT-XAI status=not_installed .* exit=127 .* action=stop$/,
       },
       {
         name: 'sigterm-hang',
@@ -2080,12 +4587,13 @@ async function blackBoxSelfTest() {
       {
         name: 'bad-model',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/missing', '--model-cursor', 'fake-ok-cursor'],
-        exit: 0,
-        status: /^AIKIT-XAI status=ok cli=cursor model=fake-ok-cursor exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
+        exit: 69,
+        status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing exit=69 .* tree=clean action=stop$/,
         check: (r, ctx) => {
           if (!(r.stderr || '').includes('bad_model')) return 'stderr missing bad_model';
           if (!ctx.calls.includes('pi rpc')) return 'missing pi rpc';
           if (ctx.calls.some((l) => l === 'pi missing')) return 'pi run should not happen';
+          if (ctx.calls.some((l) => l.startsWith('cursor-agent'))) return 'cursor ran';
           return null;
         },
       },
@@ -2106,13 +4614,13 @@ async function blackBoxSelfTest() {
         name: 'model-suffix-bad-base',
         args: ['--prefer', 'pi', '--model-pi', 'fake/missing:high'],
         exit: 69,
-        status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing:high exit=69 .* action=fallback$/,
+        status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing:high exit=69 .* action=stop$/,
       },
       {
         name: 'bad-model-only',
         args: ['--prefer', 'pi', '--model-pi', 'fake/missing'],
         exit: 69,
-        status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing exit=69 .* action=fallback$/,
+        status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing exit=69 .* action=stop$/,
       },
       {
         name: 'list-broken',
@@ -2174,6 +4682,11 @@ async function blackBoxSelfTest() {
           const flaky = ctx.calls.filter((l) => l === 'pi flaky');
           if (flaky.length !== 2) return `flaky calls=${flaky.length}`;
           if (!/attempt=1 timeout=2\d\ds/.test(r.stderr)) return 'attempt line lacks the time left'; // IN-01
+          const sids = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n');
+          if (sids.length !== 2) return `sids=${sids.join('|')}`;
+          const [a, b] = sids.map((l) => l.split(' '));
+          if (a[0] !== b[0]) return 'flaky switched session';
+          if (b[1] !== 'resume') return `second input ${b[1]}`;
           const st = spawnSync('git', ['status', '--porcelain'], { cwd: ctx.repo, env: ctx.env, encoding: 'utf8' });
           const lines = (st.stdout || '').trim().split('\n').filter(Boolean);
           if (lines.length !== 1 || !lines[0].endsWith(' a.txt')) return `porcelain=${lines.join('|')}`;
@@ -2184,10 +4697,10 @@ async function blackBoxSelfTest() {
         name: 'overloaded',
         args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded'],
         exit: 75,
-        status: /^AIKIT-XAI status=capacity cli=pi model=fake\/overloaded exit=75 .* action=retry-later$/,
+        status: /^AIKIT-XAI status=transient cli=pi model=fake\/overloaded exit=75 .* action=stop$/,
         check: (_r, ctx) => {
           const n = ctx.calls.filter((l) => l === 'pi overloaded').length;
-          return n === 3 ? null : `overloaded calls=${n}`;
+          return n === 7 ? null : `overloaded calls=${n}`;
         },
       },
       {
@@ -2195,8 +4708,348 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded', '--timeout', '3'],
         config: { backoffS: [30, 60] },
         exit: 75,
-        status: /^AIKIT-XAI status=capacity cli=pi model=fake\/overloaded exit=75 cli_rc=1 .* tree=clean action=retry-later$/,
-        check: (_r, ctx) => (ctx.elapsedMs < 5000 ? null : `elapsed ${ctx.elapsedMs}ms`),
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/overloaded ' +
+          'exit=75 cli_rc=1 .* tree=clean action=stop$'),
+        check: (_r, ctx) => {
+          if (ctx.elapsedMs >= 5000) return `elapsed ${ctx.elapsedMs}ms`;
+          const n = ctx.calls.filter((l) => l === 'pi overloaded').length;
+          return n === 1 ? null : `calls=${n}`;
+        },
+      },
+      {
+        // A quota-free timeout is a transient rung when the deadline still admits one.
+        name: 'ladder-timeout-then-ok',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/hangonce', '--timeout', '120'],
+        config: { attemptTimeoutS: 10, backoffS: [0, 0] },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/hangonce exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi hangonce').length;
+          if (n !== 2) return `hangonce calls=${n}`;
+          return deadCheck(ctx, ['pi']);
+        },
+      },
+      {
+        // After the attempt fewer than 60 s remain, so no rung is admitted.
+        name: 'ladder-timeout-no-budget',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '15'],
+        config: { attemptTimeoutS: 8 },
+        exit: 124,
+        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 .* action=stop$/,
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi hang').length;
+          if (n !== 1) return `hang calls=${n}`;
+          return deadCheck(ctx, ['gc']);
+        },
+      },
+      {
+        // 3 same-session retries, then 3 new sessions, then stop. Same model every call.
+        name: 'ladder-transient-exhausted',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* tree=clean action=stop$'),
+        check: (_r, ctx) => {
+          const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
+          if (runs.length !== 7) return `calls=${runs.length}`;
+          if (runs.some((l) => l !== 'pi event400')) return `model changed: ${runs.join('|')}`;
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length !== 7) return `sids=${rows.length}`;
+          const ids = rows.map((r) => r[0]);
+          if (new Set(ids.slice(0, 4)).size !== 1) return 'rung 1 switched session';
+          const fresh = ids.slice(4);
+          if (new Set(fresh).size !== 3) return `fresh ids=${fresh.join(',')}`;
+          if (fresh.includes(ids[0])) return 'a new session reused the first id';
+          const kinds = rows.map((r) => r[1]);
+          if (kinds[0] !== 'prompt') return `call 1 input ${kinds[0]}`;
+          if (kinds.slice(1, 4).some((k) => k !== 'resume')) {
+            return `rung 1 input ${kinds.join(',')}`;
+          }
+          if (kinds.slice(4).some((k) => k !== 'prompt')) return `rung 2 input ${kinds.join(',')}`;
+          return null;
+        },
+      },
+      {
+        // Every changed path is named by the prompt, so rung 2 continues with the resume message.
+        name: 'ladder-dirty-inside',
+        stdin: '<tasks>\n<task>\n<files>a.txt</files>\n</task>\n</tasks>\n',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/dirtyevent400', '--no-preamble'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/dirtyevent400 ' +
+          'exit=75 .* tree=dirty action=stop$'),
+        check: (r, ctx) => {
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length !== 7) return `calls=${rows.length}`;
+          const fresh = rows.slice(4).map((r) => r[1]);
+          if (fresh.some((k) => k !== 'resume-plus')) return `rung 2 input ${fresh.join(',')}`;
+          return null;
+        },
+      },
+      {
+        // A change the prompt never names stops the ladder after rung 1.
+        name: 'ladder-dirty-outside',
+        stdin: 'prompt\n',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/dirtyevent400', '--no-preamble'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/dirtyevent400 ' +
+          'exit=75 .* tree=dirty action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi dirtyevent400').length;
+          if (n !== 4) return `calls=${n}`;
+          return (r.stderr || '').includes('why=dirty-tree') ? null : 'missing dirty-tree line';
+        },
+      },
+      {
+        // Outside a git work tree nothing can account for an edit, so rung 2 never starts.
+        name: 'ladder-non-git',
+        setup: (c) => {
+          fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true });
+          c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo);
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
+          'exit=75 .* tree=unknown action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'pi event400').length;
+          if (n !== 4) return `calls=${n}`;
+          return (r.stderr || '').includes('why=dirty-tree') ? null : 'missing dirty-tree line';
+        },
+      },
+      {
+        // Cursor never prints a session id, so rung 1 is skipped: one call plus three new ones.
+        name: 'ladder-no-session-cursor',
+        args: ['--prefer', 'cursor', '--model-cursor', 'fake-event400-cursor'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=cursor ' +
+          'model=fake-event400-cursor exit=75 .* action=stop$'),
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'cursor-agent fake-event400-cursor').length;
+          return n === 4 ? null : `cursor calls=${n}`;
+        },
+      },
+      {
+        // Codex review has no read-only resume, so every retry is a fresh review run.
+        name: 'ladder-codex-review-fresh',
+        args: ['--mode', 'review', '--prefer', 'codex', '--model-codex', 'fake-event400-codex'],
+        config: { prefer: ['codex'] },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=codex ' +
+          'model=fake-event400-codex exit=75 .* action=stop$'),
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'codex fake-event400-codex').length;
+          if (n !== 4) return `codex calls=${n}`;
+          if (ctx.calls.some((l) => l.startsWith('codex-resume'))) return 'review resumed';
+          return null;
+        },
+      },
+      {
+        // Codex exec captures thread.started, so calls 2-4 resume that session.
+        name: 'ladder-codex-exec-resume',
+        args: ['--prefer', 'codex', '--model-codex', 'fake-event400-codex'],
+        config: { prefer: ['codex'] },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=codex ' +
+          'model=fake-event400-codex exit=75 .* action=stop$'),
+        check: (_r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'codex fake-event400-codex').length;
+          if (n !== 7) return `codex calls=${n}`;
+          const resumed = ctx.calls.filter((l) => l === 'codex-resume fake-event400-codex');
+          return resumed.length === 3 ? null : `resumes=${resumed.length}`;
+        },
+      },
+      {
+        // Review mode resumes pi with its read-only flags, then starts new sessions.
+        name: 'ladder-review-resume',
+        args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-event400'],
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=pi ' +
+          'model=fake/review-event400 exit=75 .* action=stop$'),
+        check: (_r, ctx) => {
+          const rows = readOr(ctx.env.FAKE_SIDS, '').trim().split('\n').map((l) => l.split(' '));
+          if (rows.length !== 7) return `calls=${rows.length}`;
+          const ids = rows.map((r) => r[0]);
+          if (new Set(ids.slice(0, 4)).size !== 1) return 'rung 1 switched session';
+          if (new Set(ids.slice(4)).size !== 3) return 'rung 2 did not start new sessions';
+          return null;
+        },
+      },
+      {
+        // Seven transient failures with a resumable session: three same, three new, then stop.
+        name: 'pure-ladder-sequence',
+        pure: () => {
+          const lim = { same: 3, fresh: 3, deadlineMs: 1000000, waitMs: 0 };
+          const st = { same: 0, fresh: 0, canResume: true };
+          const got = [];
+          for (let i = 0; i < 7; i++) {
+            const step = ladderNext(st, 'transient', 0, lim);
+            got.push(`${step.next}/${step.why}`);
+            if (step.next === 'same') st.same += 1;
+            else if (step.next === 'new') st.fresh += 1;
+          }
+          const want = [
+            'same/same-session', 'same/same-session', 'same/same-session',
+            'new/new-session', 'new/new-session', 'new/new-session', 'stop/rungs',
+          ];
+          return JSON.stringify(got) === JSON.stringify(want) ? null : `steps=${got.join(',')}`;
+        },
+      },
+      {
+        // No session to continue: straight to the three new sessions, then stop.
+        name: 'pure-ladder-no-resume',
+        pure: () => {
+          const lim = { same: 3, fresh: 3, deadlineMs: 1000000, waitMs: 0 };
+          const st = { same: 0, fresh: 0, canResume: false };
+          const got = [];
+          for (let i = 0; i < 4; i++) {
+            const step = ladderNext(st, 'transient', 0, lim);
+            got.push(`${step.next}/${step.why}`);
+            if (step.next === 'new') st.fresh += 1;
+          }
+          const want = ['new/new-session', 'new/new-session', 'new/new-session', 'stop/rungs'];
+          return JSON.stringify(got) === JSON.stringify(want) ? null : `steps=${got.join(',')}`;
+        },
+      },
+      {
+        // Hand-checked boundary: nowMs + waitMs + 60000 passes the deadline at +59999 and is
+        // inside it at +60000 (waitMs 0).
+        name: 'pure-ladder-deadline',
+        pure: () => {
+          const st = { same: 0, fresh: 0, canResume: true };
+          const now = 1000000;
+          const early = ladderNext(st, 'transient', now, {
+            same: 3, fresh: 3, deadlineMs: now + 59999, waitMs: 0,
+          });
+          const on = ladderNext(st, 'transient', now, {
+            same: 3, fresh: 3, deadlineMs: now + 60000, waitMs: 0,
+          });
+          if (early.next !== 'stop' || early.why !== 'deadline') {
+            return `early=${early.next}/${early.why}`;
+          }
+          if (on.next !== 'same' || on.why !== 'same-session') {
+            return `boundary=${on.next}/${on.why}`;
+          }
+          return null;
+        },
+      },
+      {
+        name: 'pure-ladder-clamps',
+        pure: () => {
+          if (clampCount(9) !== 3) return `9 -> ${clampCount(9)}`;
+          if (clampCount(-1) !== 0) return `-1 -> ${clampCount(-1)}`;
+          if (clampAttemptTimeout(0) !== 0) return `0 -> ${clampAttemptTimeout(0)}`;
+          if (clampAttemptTimeout(5) !== 10) return `5 -> ${clampAttemptTimeout(5)}`;
+          if (clampAttemptTimeout(1801) !== 1800) return `1801 -> ${clampAttemptTimeout(1801)}`;
+          return null;
+        },
+      },
+      {
+        // A timeout class walks the same rungs; a rungs stop ends transient, a pre-rung
+        // deadline stop stays a timeout.
+        name: 'pure-ladder-timeout',
+        pure: () => {
+          const lim = { same: 3, fresh: 3, deadlineMs: 1000000, waitMs: 0 };
+          const st = { same: 0, fresh: 0, canResume: true };
+          const first = ladderNext(st, 'transient', 0, lim);
+          if (first.next !== 'same') return `timeout class did not walk: ${first.next}`;
+          const rungs = ladderStop({ why: 'rungs' }, true, true, 'crash');
+          if (rungs.status !== 'transient' || rungs.timedOut) return `rungs stop ${rungs.status}`;
+          const early = ladderStop({ why: 'deadline' }, true, false, 'crash');
+          if (early.status !== 'timeout' || !early.timedOut) return `deadline stop ${early.status}`;
+          return null;
+        },
+      },
+      {
+        // A router quota walks the same rungs, then asks the caller for a cooldown.
+        name: 'pure-ladder-quota-cycle',
+        pure: () => {
+          const lim = {
+            same: 3, fresh: 3, deadlineMs: 100000000, waitMs: 0,
+            capMs: 14400000, cooldownMs: 600000,
+          };
+          const st = { same: 0, fresh: 0, canResume: true, firstQuotaMs: 0, cycle: 0 };
+          const got = [];
+          for (let i = 0; i < 7; i++) {
+            const step = ladderNext(st, 'quota', 0, lim);
+            got.push(`${step.next}/${step.why}`);
+            if (step.next === 'same') st.same += 1;
+            else if (step.next === 'new') st.fresh += 1;
+          }
+          const want = [
+            'same/same-session', 'same/same-session', 'same/same-session',
+            'new/new-session', 'new/new-session', 'new/new-session', 'cooldown/cooldown',
+          ];
+          return JSON.stringify(got) === JSON.stringify(want) ? null : `steps=${got.join(',')}`;
+        },
+      },
+      {
+        // Exactly at the cap is inside; one cooldown later is past it.
+        name: 'pure-ladder-cap-boundary',
+        pure: () => {
+          const st = { same: 3, fresh: 3, canResume: true, firstQuotaMs: 0, cycle: 0 };
+          const lim = { same: 3, fresh: 3, capMs: 14400000, cooldownMs: 600000 };
+          const inside = ladderNext(st, 'quota', 13800000, { ...lim, deadlineMs: 100000000 });
+          if (inside.next !== 'cooldown') return `inside=${inside.next}/${inside.why}`;
+          const past = ladderNext(st, 'quota', 13860000, { ...lim, deadlineMs: 100000000 });
+          return past.next === 'stop' && past.why === 'cap'
+            ? null : `past=${past.next}/${past.why}`;
+        },
+      },
+      {
+        // The cycle fits the cap, but under 60 s of deadline work remains.
+        name: 'pure-ladder-cooldown-deadline',
+        pure: () => {
+          const st = { same: 3, fresh: 3, canResume: true, firstQuotaMs: 0, cycle: 0 };
+          const now = 13800000;
+          const step = ladderNext(st, 'quota', now, {
+            same: 3, fresh: 3, capMs: 14400000, cooldownMs: 600000,
+            deadlineMs: now + 30000, waitMs: 0,
+          });
+          return step.next === 'stop' && step.why === 'deadline'
+            ? null : `got=${step.next}/${step.why}`;
+        },
+      },
+      {
+        name: 'pure-ladder-cap-clamp',
+        pure: () => {
+          const got = ladderLimits({ capS: 99999, cooldownS: -5 });
+          if (got.capS !== 14400) return `capS=${got.capS}`;
+          return got.cooldownS === 0 ? null : `cooldownS=${got.cooldownS}`;
+        },
+      },
+      {
+        // An off-router quota and an inferred route never start a cycle.
+        name: 'pure-ladder-plain-quota',
+        pure: () => {
+          const step = ladderNext(
+            { same: 0, fresh: 0, canResume: true, firstQuotaMs: 0, cycle: 0 }, 'stop', 0,
+            { same: 3, fresh: 3, deadlineMs: 100000000, capMs: 14400000, cooldownMs: 0 },
+          );
+          return step.next === 'stop' && step.why === 'class'
+            ? null : `got=${step.next}/${step.why}`;
+        },
+      },
+      {
+        name: 'pure-ladder-inferred-no-cycle',
+        pure: () => {
+          const step = ladderNext(
+            { same: 0, fresh: 0, canResume: true, firstQuotaMs: 0, cycle: 0 }, 'stop', 0,
+            { same: 3, fresh: 3, deadlineMs: 100000000, capMs: 14400000, cooldownMs: 600000 },
+          );
+          return step.next === 'cooldown' ? 'inferred route cycled' : null;
+        },
+      },
+      {
+        name: 'pure-prompt-files',
+        pure: () => {
+          const text = '<files>`a.txt`, "./b.txt", c.txt</files>\n' +
+            '<files>d.txt, </files>\nnotes <files>e.txt</files>';
+          const got = [...promptFiles(text)].sort();
+          const want = ['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt'];
+          return JSON.stringify(got) === JSON.stringify(want)
+            ? null : `files=${got.join(',')}`;
+        },
       },
       {
         name: 'review-ok',
@@ -2257,12 +5110,16 @@ async function blackBoxSelfTest() {
         check: (r) => ((r.stderr || '').includes('claude is review-only') ? null : 'missing review-only line'),
       },
       {
-        // IN-09: a review-only CLI anywhere in an exec prefer list is refused before any run.
-        name: 'claude-exec-late-usage',
+        // Menu selection: a later review-only entry never rejects an exec first choice.
+        name: 'review-only-later-menu-ok',
         args: ['--prefer', 'pi,claude', '--mode', 'exec', '--model-pi', 'fake/ok', '--model-claude', 'fake-ok'],
-        exit: 2,
-        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
-        check: (_r, ctx) => (ctx.calls.length ? `calls=${ctx.calls.join(',')}` : null),
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
+        check: (r, ctx) => {
+          if ((r.stderr || '').includes('is review-only')) return 'review-only refusal';
+          if (ctx.calls.some((l) => l.startsWith('claude '))) return 'claude ran';
+          return ctx.calls.some((l) => l.startsWith('pi ')) ? null : 'pi did not run';
+        },
       },
       {
         name: 'prefer-proto-key',
@@ -2307,11 +5164,12 @@ async function blackBoxSelfTest() {
           const stdoutLine = (r.stdout || '').split('\n').find((l) => l.startsWith('codex\t'));
           if (!stdoutLine) return 'missing codex stdout';
           const reviewArgv = stdoutLine.split('\t')[2];
-          const m = (r.stderr || '').match(/cross-ai: retry codex argv=(\S+)/);
-          if (!m) return 'missing retry line';
-          const retryArgv = m[1];
-          if (retryArgv !== reviewArgv) return 'retry argv mismatch';
-          const parsed = JSON.parse(retryArgv);
+          const err = r.stderr || '';
+          if (!err.includes('cross-ai: rung1 codex unavailable')) return 'rung 1 was available';
+          const m = err.match(/cross-ai: rung2 codex argv=(\S+)/);
+          if (!m) return 'missing rung2 line';
+          if (m[1] !== reviewArgv) return 'rung2 argv mismatch';
+          const parsed = JSON.parse(m[1]);
           if (!parsed.includes('--sandbox') || !parsed.includes('read-only')) return 'missing sandbox';
           if (parsed.some((t) => String(t).includes('resume'))) return 'has resume';
           return null;
@@ -2325,17 +5183,19 @@ async function blackBoxSelfTest() {
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
         check: (r) => {
-          const m = (r.stderr || '').match(/cross-ai: retry codex argv=(\S+)/);
-          if (!m) return 'missing retry line';
+          const m = (r.stderr || '').match(/cross-ai: rung1 codex argv=(\S+)/);
+          if (!m) return 'missing rung1 line';
           const parsed = JSON.parse(m[1]);
           if (!parsed.includes('resume')) return 'missing resume';
           if (!parsed.includes('--dangerously-bypass-approvals-and-sandbox')) return 'missing bypass';
-          for (const k of ['model_reasoning_effort=high', 'service_tier=flex']) if (!parsed.includes(k)) return `retry argv missing ${k}`;
+          for (const k of ['model_reasoning_effort=high', 'service_tier=flex']) {
+            if (!parsed.includes(k)) return `rung1 argv missing ${k}`;
+          }
           return null;
         },
       },
       {
-        // SPEC R5: a review retry is a fresh run, so pi gets a new session id.
+        // Rung 1 reopens the same pi session; rung 2 differs only by the session id.
         name: 'argv-retry-pi-review',
         args: ['--print-argv', '--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/ok'],
         exit: 0,
@@ -2343,13 +5203,19 @@ async function blackBoxSelfTest() {
         check: (r) => {
           const line = (r.stdout || '').split('\n').find((l) => l.startsWith('pi\t'));
           const first = JSON.parse(line.split('\t')[2]);
-          const m = (r.stderr || '').match(/cross-ai: retry pi argv=(\S+)/);
-          if (!m) return 'missing retry line';
-          const retry = JSON.parse(m[1]);
+          const err = r.stderr || '';
+          const one = err.match(/cross-ai: rung1 pi argv=(\S+)/);
+          const two = err.match(/cross-ai: rung2 pi argv=(\S+)/);
+          if (!one || !two) return 'missing rung line';
+          const rung1 = JSON.parse(one[1]);
+          const rung2 = JSON.parse(two[1]);
+          if (JSON.stringify(rung1) !== JSON.stringify(first)) {
+            return 'rung1 differs from the first argv';
+          }
           const sid = (a) => a[a.indexOf('--session-id') + 1];
-          if (sid(retry) === sid(first)) return 'retry reuses the session id';
+          if (sid(rung2) === sid(first)) return 'rung2 reuses the session id';
           const same = (a) => JSON.stringify(a.filter((t) => t !== sid(a)));
-          return same(retry) === same(first) ? null : 'retry argv differs beyond the session id';
+          return same(rung2) === same(first) ? null : 'rung2 differs beyond the session id';
         },
       },
       {
@@ -2360,10 +5226,18 @@ async function blackBoxSelfTest() {
         check: (r) => {
           const stdoutLine = (r.stdout || '').split('\n').find((l) => l.startsWith('cursor\t'));
           if (!stdoutLine) return 'missing cursor stdout';
-          const reviewArgv = stdoutLine.split('\t')[2];
-          const m = (r.stderr || '').match(/cross-ai: retry cursor argv=(\S+)/);
-          if (!m || m[1] !== reviewArgv) return 'retry mismatch';
-          if (JSON.parse(m[1]).includes('--resume')) return 'has resume';
+          const review = JSON.parse(stdoutLine.split('\t')[2]);
+          const m = (r.stderr || '').match(/cross-ai: rung1 cursor argv=(\S+)/);
+          if (!m) return 'missing rung1 line';
+          const parsed = JSON.parse(m[1]);
+          if (!parsed.includes('--mode') || parsed[parsed.indexOf('--mode') + 1] !== 'ask') {
+            return 'lost --mode ask';
+          }
+          if (!parsed.includes('--resume')) return 'missing --resume';
+          const dropped = parsed.filter((t) => t !== '--resume' && t !== '<sid>');
+          if (JSON.stringify(dropped) !== JSON.stringify(review)) {
+            return 'rung1 differs beyond --resume';
+          }
           return null;
         },
       },
@@ -2736,10 +5610,12 @@ async function blackBoxSelfTest() {
           if (argv.includes('--dangerously-bypass-approvals-and-sandbox')) {
             return 'bypass still present';
           }
-          const retry = (r.stderr || '').split('\n').find((l) => l.includes('retry codex argv='));
-          if (!retry) return 'missing retry argv';
-          const retryArgv = JSON.parse(retry.slice(retry.indexOf('[')));
-          if (retryArgv.includes('resume')) return 'retry resumed';
+          const err = r.stderr || '';
+          if (!err.includes('cross-ai: rung1 codex unavailable')) return 'rung 1 was available';
+          const rung2 = err.split('\n').find((l) => l.includes('rung2 codex argv='));
+          if (!rung2) return 'missing rung2 argv';
+          const rung2Argv = JSON.parse(rung2.slice(rung2.indexOf('[')));
+          if (rung2Argv.includes('resume')) return 'rung 2 resumed';
           return null;
         },
       },
@@ -2821,14 +5697,122 @@ async function blackBoxSelfTest() {
           return tail[0] === '--skill' && tail[1] === 'skills/x/SKILL.md' ? null : `tail=${JSON.stringify(tail)}`;
         },
       },
+      ...[
+        { mode: 'crash', exit: 1, status: 'crash', tree: 'clean' },
+        { mode: 'quota', exit: 75, status: 'quota', tree: 'clean' },
+        { mode: 'billing', exit: 69, status: 'billing', tree: 'clean' },
+        { mode: 'auth', exit: 69, status: 'auth', tree: 'clean' },
+        { mode: 'perm', exit: 69, status: 'permission_blocked', tree: 'clean' },
+        { mode: 'empty', exit: 1, status: 'empty_answer', tree: 'clean' },
+        { mode: 'nochange', exit: 1, status: 'no_change', tree: 'clean' },
+        {
+          mode: 'hang', exit: 124, status: 'timeout', tree: '.*',
+          extra: ['--timeout', '2'], dead: ['pi', 'gc'],
+        },
+        { mode: 'missing', exit: 69, status: 'bad_model', tree: 'clean' },
+      ].map((row) => ({
+        name: `no-second-cli-${row.mode}`,
+        args: [
+          '--prefer', 'pi,cursor,opencode', '--model-pi', `fake/${row.mode}`,
+          '--model-cursor', 'fake-ok-cursor', '--model-opencode', 'fake/ok',
+          ...(row.extra || []),
+        ],
+        exit: row.exit,
+        status: new RegExp(`^AIKIT-XAI status=${row.status} cli=pi model=fake/${row.mode} ` +
+          `exit=${row.exit} .* tree=${row.tree} action=stop$`),
+        check: (_r, ctx) => {
+          const other = ctx.calls.find((l) => (
+            l.startsWith('cursor-agent') || l.startsWith('opencode')
+          ));
+          if (other) return `second cli: ${other}`;
+          return row.dead ? deadCheck(ctx, row.dead) : null;
+        },
+      })),
+      {
+        name: 'no-second-cli-review-edit',
+        args: [
+          '--mode', 'review', '--prefer', 'pi,cursor,opencode', '--model-pi', 'fake/review-edit',
+          '--model-cursor', 'fake-ok-cursor', '--model-opencode', 'fake/ok',
+        ],
+        exit: 1,
+        status: new RegExp('^AIKIT-XAI status=contract_violation cli=pi ' +
+          'model=fake/review-edit exit=1 .* action=stop$'),
+        check: (_r, ctx) => {
+          const other = ctx.calls.find((l) => (
+            l.startsWith('cursor-agent') || l.startsWith('opencode')
+          ));
+          return other ? `second cli: ${other}` : null;
+        },
+      },
+      {
+        name: 'config-prefer-first-only',
+        config: {
+          prefer: ['pi', 'cursor', 'opencode'],
+          models: { pi: 'fake/crash', cursor: 'fake-ok-cursor', opencode: 'fake/ok' },
+        },
+        args: [],
+        exit: 1,
+        status: /^AIKIT-XAI status=crash cli=pi model=fake\/crash exit=1 .* action=stop$/,
+        check: (_r, ctx) => {
+          const other = ctx.calls.find((l) => (
+            l.startsWith('cursor-agent') || l.startsWith('opencode')
+          ));
+          return other ? `second cli: ${other}` : null;
+        },
+      },
+      {
+        name: 'not-installed-first',
+        setup: (c) => {
+          const dir = path.join(c.tmp, `bin-nopi-${c.repo.split('/').pop()}`);
+          fs.mkdirSync(dir);
+          for (const name of fs.readdirSync(path.join(c.tmp, 'bin'))) {
+            if (name === 'pi') continue;
+            fs.symlinkSync(path.join(c.tmp, 'bin', name), path.join(dir, name));
+          }
+          c.env.PATH = dir;
+          return null;
+        },
+        args: [
+          '--prefer', 'pi,cursor', '--model-pi', 'fake/ok', '--model-cursor', 'fake-ok-cursor',
+        ],
+        exit: 127,
+        status: /^AIKIT-XAI status=not_installed cli=pi .* exit=127 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.calls.length) return `calls=${ctx.calls.join('|')}`;
+          const line = 'pi not installed; no other CLI runs';
+          return (r.stderr || '').includes(line) ? null : 'missing line';
+        },
+      },
+      {
+        name: 'no-model-first',
+        args: ['--prefer', 'pi,cursor', '--model-cursor', 'fake-ok-cursor'],
+        exit: 2,
+        status: /^AIKIT-XAI status=no_model cli=pi .* exit=2 .* action=stop$/,
+        check: (_r, ctx) => (ctx.calls.length ? `calls=${ctx.calls.join('|')}` : null),
+      },
+      {
+        name: 'review-only-first-refused',
+        args: [
+          '--mode', 'exec', '--prefer', 'claude,pi', '--model-claude', 'fake-ok',
+          '--model-pi', 'fake/ok',
+        ],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
+        check: (r, ctx) => {
+          if (!(r.stderr || '').includes('claude is review-only')) {
+            return 'missing review-only line';
+          }
+          return ctx.calls.some((l) => l.startsWith('pi ')) ? 'pi ran' : null;
+        },
+      },
       {
         name: 'outer-race',
-        config: { outerTimeoutS: 10 },
+        config: { outerTimeoutS: 40 },
         args: ['--prefer', 'pi', '--model-pi', 'fake/outer-race', '--timeout', '8'],
         exit: 124,
-        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/outer-race exit=124 .* tree=unknown action=stop$/,
+        status: /^AIKIT-XAI status=timeout cli=pi model=fake\/outer-race exit=124 .* action=stop$/,
         check: (r, ctx) => {
-          if (ctx.elapsedMs >= 10000) return `elapsed ${ctx.elapsedMs}`;
+          if (ctx.elapsedMs >= 30000) return `elapsed ${ctx.elapsedMs}`;
           const lines = (r.stderr || '').split('\n');
           const statusIdx = lines.findIndex((l) => l.startsWith('AIKIT-XAI '));
           if (statusIdx < 0) return 'no status';
@@ -2838,6 +5822,103 @@ async function blackBoxSelfTest() {
           if (late.some((l) => lines.indexOf(l) >= statusIdx)) return 'gc-late after status';
           return deadCheck(ctx, ['gc']);
         },
+      },
+      ...classifyCases(),
+      {
+        name: 'classify-only-fixtures',
+        setup: (c) => {
+          const rows = CLASSIFY_CASES.map((entry) => {
+            const row = { name: entry.name, cli: entry.cli };
+            if (entry.route !== undefined) row.route = entry.route;
+            if (entry.model !== undefined) row.model = entry.model;
+            if (entry.stderr !== undefined) row.stderr = entry.stderr;
+            if (entry.stdout !== undefined) row.stdout = entry.stdout;
+            return row;
+          });
+          fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify(rows));
+          return null;
+        },
+        args: ['--classify-only', 'fixtures.json'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (r) => {
+          const lines = (r.stdout || '').split('\n').filter(Boolean);
+          if (lines.length !== CLASSIFY_CASES.length) {
+            return `fixture lines ${lines.length} expected ${CLASSIFY_CASES.length}`;
+          }
+          for (let i = 0; i < lines.length; i++) {
+            const got = JSON.parse(lines[i]);
+            const want = CLASSIFY_CASES[i];
+            if (got.status !== want.expect.status) {
+              return `${want.name} status ${got.status} expected ${want.expect.status}`;
+            }
+            if (got.pattern !== want.expect.pattern) {
+              return `${want.name} pattern ${got.pattern} expected ${want.expect.pattern}`;
+            }
+            if (want.expect.rule !== undefined && got.rule !== want.expect.rule) {
+              return `${want.name} rule ${got.rule} expected ${want.expect.rule}`;
+            }
+          }
+          return null;
+        },
+      },
+      {
+        name: 'classify-only-no-spawn',
+        setup: (c) => {
+          fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify([
+            { name: 'x', cli: 'pi', stderr: '402 payment required' },
+          ]));
+          return null;
+        },
+        args: ['--classify-only', 'fixtures.json'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
+        check: (_r, ctx) => (ctx.calls.length ? `spawned: ${ctx.calls.join('|')}` : null),
+      },
+      {
+        name: 'classify-only-bad-file',
+        args: ['--classify-only', 'missing.json'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* action=stop$/,
+      },
+      {
+        name: 'route-config',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
+        config: { routerBacked: { pi: true } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/billing exit=75 cli_rc=1 .* tree=clean action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail && tail.route === 'router' ? null : `route=${tail && tail.route}`;
+        },
+      },
+      {
+        name: 'route-flag-wins',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/billing', '--route-pi', 'unknown'],
+        config: { routerBacked: { pi: true } },
+        exit: 69,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=69 cli_rc=1 .* tree=clean action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail && tail.route === 'unknown' ? null : `route=${tail && tail.route}`;
+        },
+      },
+      {
+        name: 'route-heuristic',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router-env-billing'],
+        config: { routerBacked: {} },
+        exit: 69,
+        status: /^AIKIT-XAI status=billing cli=pi model=fake\/router-env-billing exit=69 cli_rc=1 .* tree=clean action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail && tail.route === 'router-inferred' ? null : `route=${tail && tail.route}`;
+        },
+      },
+      {
+        name: 'route-flag-bad',
+        args: ['--prefer', 'pi', '--route-pi', 'maybe'],
+        exit: 2,
+        status: /^AIKIT-XAI status=usage .* action=stop$/,
       },
 
     ];
@@ -2869,13 +5950,17 @@ async function blackBoxSelfTest() {
 async function main(argv) {
   runStartedMs = Date.now();
   finished = false;
-  liveFields = { cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean' };
+  liveFields = {
+    cli: '-', model: '-', cli_rc: '-', out: 0, tree: 'clean',
+    route: 'unknown', rule: '-', pattern: 'none',
+  };
   let o;
   try { o = parseArgs(argv); } catch (e) {
     log(`cross-ai: ${e.message}`);
-    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   if (o.selfTest) return blackBoxSelfTest();
+  if (o.classifyOnly !== null) return runClassifyOnly(o.classifyOnly);
   childPgidFile = o.childPgidFile;
   childPgidBroken = false;
   const order = o.prefer || CONFIG.prefer;
@@ -2890,16 +5975,16 @@ async function main(argv) {
     codexEffort: o.codexEffort ?? (CODEX_EFFORTS.has(effort.codex) ? effort.codex : null),
     piThinking: PI_THINKING.has(effort.pi) ? effort.pi : null,
   };
-  const reviewOnly = o.mode === 'exec' ? cands.find((c) => !c.rt.exec) : null;
-  if (reviewOnly) {
-    log(`cross-ai: ${reviewOnly.name} is review-only (no exec formula)`);
-    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+  const first = cands[0];
+  if (o.mode === 'exec' && first && !first.rt.exec) {
+    log(`cross-ai: ${first.name} is review-only (no exec formula)`);
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
 
   const dl = logDeadline(process.cwd(), process.env, o);
   if (dl.error) {
     log(dl.error);
-    return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+    return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
   if (o.codexSandbox && o.mode !== 'exec') {
     log('cross-ai: --codex-sandbox applies to exec mode only; review already runs read-only');
@@ -2911,19 +5996,25 @@ async function main(argv) {
       piThinking: knobs.piThinking, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
     };
     for (const c of cands) {
-      const argvOut = c.model ? withExtra(c.name, c.rt[o.mode](c.model, ctx)) : null;
+      const formula = c.rt[o.mode];
+      const argvOut = (c.model && typeof formula === 'function')
+        ? withExtra(c.name, formula(c.model, ctx)) : null;
       process.stdout.write(`${c.name}\t${c.bin || 'MISSING'}\t${argvOut ? JSON.stringify(argvOut) : 'NO MODEL'}\n`);
       if (c.model && argvOut) {
-        const retry = retryArgv(c.name, c.rt, c.model, ctx, '<sid>', o.mode, '<prompt>');
-        log(`cross-ai: retry ${c.name} argv=${JSON.stringify(retry.argv)}`);
+        const rung1 = sameSessionArgv(c.name, c.rt, c.model, ctx, '<sid>', o.mode);
+        if (rung1) log(`cross-ai: rung1 ${c.name} argv=${JSON.stringify(rung1.argv)}`);
+        else log(`cross-ai: rung1 ${c.name} unavailable`);
+        const rung2 = newSessionArgv(c.name, c.rt, c.model, ctx, o.mode, '<prompt>');
+        log(`cross-ai: rung2 ${c.name} argv=${JSON.stringify(rung2.argv)}`);
       }
     }
-    return finish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
+    if (first) log(`cross-ai: a run uses ${first.name} only`);
+    return reportAndFinish('ok', { ...liveFields, tree: 'clean', exit: 0, out: 0 });
   }
   const raw = readStdin();
   if (!raw || !raw.trim()) {
     log('cross-ai: pipe the prompt on stdin');
-    return finish('empty_stdin', { ...liveFields, tree: 'clean', exit: 2 });
+    return reportAndFinish('empty_stdin', { ...liveFields, tree: 'clean', exit: 2 });
   }
   let body = raw;
   if (o.prependFile) {
@@ -2932,7 +6023,7 @@ async function main(argv) {
       prepended = fs.readFileSync(path.resolve(process.cwd(), o.prependFile), 'utf8');
     } catch {
       log(`cross-ai: --prepend-file unreadable: ${o.prependFile}`);
-      return finish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
+      return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
     // The guidance file's stamp lines are bookkeeping for a human editor, not prompt text.
     body = `${prepended.replace(/^(?:<!--[^\n]*-->\r?\n)+/, '')}\n\n${raw}`;
@@ -2943,118 +6034,142 @@ async function main(argv) {
   const marginMs = (outer - innerDefault) * 1000;
   finalizeBy = runDeadline + Math.min(FINALIZE_CAP_MS, Math.floor(marginMs / 2));
 
-  let last = null;
-  let sawModel = false;
+  const c = first;
+  liveFields.cli = c?.name ?? '-';
+  liveFields.model = c?.model ?? '-';
+  if (c) liveFields.route = routeOf(c.name, c.model || '', o.routes);
+  if (cands.length > 1) {
+    const rest = cands.slice(1).map((x) => x.name).join(', ');
+    log(`cross-ai: only ${c.name} runs; ${rest} is the owner's menu ` +
+      '(no automatic fallback)');
+  }
   // Decided once: a directory with no .git ancestor still dispatches (D-34).
   const noTree = !inGitTree(process.cwd());
   if (noTree) {
     log(`cross-ai: ${process.cwd()} is not inside a git work tree; running without the tree ` +
-      'check (tree=unknown); no other CLI runs after one has run');
+      'check (tree=unknown)');
     if (o.mode === 'review') {
       log('cross-ai: review mode cannot verify the read-only contract outside a git work tree');
     }
   }
-  for (const c of cands) {
-    if (aborting) break;
-    if (!c.bin) { log(`cross-ai: ${c.name} not installed, skipping`); continue; }
-    if (!c.model) {
-      log(`cross-ai: no model configured for ${c.name} (--model-${c.name}), skipping`);
-      last = last || { kind: 'no_model' };
-      continue;
-    }
-    sawModel = true;
-    liveFields.cli = c.name;
-    liveFields.model = c.model;
-    const before = noTree ? null : await treeState(process.cwd(), runDeadline);
-    if (aborting) break;
-    if (!noTree && before === null) {
-      return finish(gitFailStatus(), { ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1 });
-    }
-    const listEnv = childEnv(c.rt.env, process.env);
-    const listing = await listModels(c.rt, c.bin, listEnv, runDeadline);
-    if (listing.ok) {
-      const listed = c.rt.modelSuffix ? c.model.replace(c.rt.modelSuffix, '') : c.model;
-      if (listed !== c.model) {
-        log(`cross-ai: ${c.name} preflight checks ${listed}; the suffix ${c.model.slice(listed.length)} is not validated`);
-      }
-      if (!listing.ids.includes(listed)) {
-        log(`cross-ai: ${c.name} bad_model (${c.model} not in model list)`);
-        // bad_model falls back and nothing ran, so the next CLI may always try.
-        last = { status: 'bad_model', cli: c.name, model: c.model, tree: 'clean', cli_rc: '-' };
-        log(`cross-ai: ${c.name} bad_model, trying the next CLI`);
-        continue;
-      }
-    } else if (listing.reason !== 'no listing') {
-      log(`cross-ai: ${c.name} model list unavailable (${listing.reason}); not preflighted`);
-    }
-    if (aborting) break;
-    // From here until the next snapshot nothing proves the tree clean (CR-03).
-    liveFields.tree = 'unknown';
-    const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, {
-      beforeSig: noTree ? null : stateSig(before), codexEffort: knobs.codexEffort,
-      piThinking: knobs.piThinking, codexServiceTier: o.codexServiceTier,
-      cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
+  if (!c) {
+    log('cross-ai: no CLI named');
+    return reportAndFinish('not_installed', { ...liveFields, tree: 'clean', exit: 127 });
+  }
+  if (!c.bin) {
+    log(`cross-ai: ${c.name} not installed; no other CLI runs (no automatic fallback)`);
+    return reportAndFinish('not_installed', {
+      ...liveFields, cli: c.name, model: c.model || '-', tree: 'clean', exit: 127,
     });
-    liveFields.out = r.outBytes || 0;
-    liveFields.cli_rc = r.cli_rc ?? '-';
-    let after = noTree ? null : await treeState(process.cwd(), finalizeBy);
-    // A signal during this snapshot killed its git child: read once more on the signal budget.
-    if (!noTree && aborting && after === null) after = await treeState(process.cwd(), finalizeBy);
-    const tree = noTree ? 'unknown' : treeLabel(before, after);
-    liveFields.tree = tree;
-    if (aborting) break;
-    if (
-      r.status === 'contract_violation' || r.status === 'git_error' || r.status === 'git_timeout'
-    ) {
-      const treeField = r.status === 'contract_violation' ? tree : 'unknown';
-      return finish(r.status, { ...liveFields, tree: treeField, cli_rc: r.cli_rc ?? '-', exit: 1 });
+  }
+  if (!c.model) {
+    log(`cross-ai: no model configured for ${c.name} (--model-${c.name})`);
+    return reportAndFinish('no_model', {
+      ...liveFields, cli: c.name, model: '-', tree: 'clean', exit: 2,
+    });
+  }
+  if (aborting) {
+    return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
+  }
+  const before = noTree ? null : await treeState(process.cwd(), runDeadline);
+  if (aborting) {
+    return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
+  }
+  if (!noTree && before === null) {
+    return reportAndFinish(gitFailStatus(), {
+      ...liveFields, cli_rc: '-', tree: 'unknown', exit: 1,
+    });
+  }
+  const listEnv = childEnv(c.rt.env, process.env);
+  const listing = await listModels(c.rt, c.bin, listEnv, runDeadline);
+  if (listing.ok) {
+    const listed = c.rt.modelSuffix ? c.model.replace(c.rt.modelSuffix, '') : c.model;
+    if (listed !== c.model) {
+      log(`cross-ai: ${c.name} preflight checks ${listed}; the suffix ${c.model.slice(listed.length)} is not validated`);
     }
-    if (r.timedOut) {
-      return finish('timeout', { ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? '-' });
-    }
-    if (o.mode === 'review' && before && after && tree === 'dirty') {
-      return finish('contract_violation', { ...liveFields, tree, cli_rc: r.cli_rc ?? '-', exit: 1 });
-    }
-    if (r.ok) {
-      if (!noTree && (after === null || before === null)) {
-        return finish(gitFailStatus(), { ...liveFields, tree: 'unknown', cli_rc: 0, exit: 1 });
-      }
-      if (o.mode === 'exec' && tree === 'clean') {
-        last = { status: 'no_change', cli: c.name, model: c.model, tree, cli_rc: 0 };
-        log(`cross-ai: ${c.name} answered without repo change, trying the next CLI`);
-        continue;
-      }
-      process.stdout.write(r.text);
-      return finish('ok', { ...liveFields, tree, exit: 0, cli_rc: 0, out: r.outBytes || 0 });
-    }
-    if (!noTree && after === null) {
-      return finish(gitFailStatus(), {
-        ...liveFields, tree: 'unknown', cli_rc: r.cli_rc ?? '-', exit: 1,
+    if (!listing.ids.includes(listed)) {
+      log(`cross-ai: ${c.name} bad_model (${c.model} not in model list)`);
+      return reportAndFinish('bad_model', {
+        ...liveFields, cli: c.name, model: c.model, tree: 'clean', cli_rc: '-',
       });
     }
-    const status = r.status || 'crash';
-    last = { status, cli: c.name, model: c.model, tree, cli_rc: r.cli_rc };
-    if (tryNextCli(status, tree)) {
-      log(`cross-ai: ${c.name} ${status}, trying the next CLI`);
-      continue;
-    }
-    return finish(status, { ...liveFields, tree, cli_rc: r.cli_rc, cli: c.name, model: c.model });
+  } else if (listing.reason !== 'no listing') {
+    log(`cross-ai: ${c.name} model list unavailable (${listing.reason}); not preflighted`);
   }
-  if (aborting) return finish('signal', { ...liveFields, exit: 128 + aborting });
-  if (!sawModel && last && last.kind === 'no_model') {
-    return finish('no_model', { ...liveFields, tree: 'clean', exit: 2 });
+  if (aborting) {
+    return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
   }
-  if (!last) {
-    log(`cross-ai: none of [${order.join(', ')}] is installed`);
-    return finish('not_installed', { ...liveFields, tree: 'clean', exit: 127 });
-  }
-  if (last.status === 'no_change') {
-    return finish('no_change', { ...liveFields, cli: last.cli, model: last.model, tree: last.tree, cli_rc: 0 });
-  }
-  return finish(last.status || 'crash', {
-    ...liveFields, cli: last.cli || '-', model: last.model || '-', tree: last.tree || 'unknown',
-    cli_rc: last.cli_rc ?? '-',
+  // From here until the next snapshot nothing proves the tree clean (CR-03).
+  liveFields.tree = 'unknown';
+  const r = await runCli(c.name, c.rt, c.bin, c.model, o.mode, prompt, {
+    beforeSig: noTree ? null : stateSig(before), codexEffort: knobs.codexEffort,
+    piThinking: knobs.piThinking, codexServiceTier: o.codexServiceTier,
+    cursorMode: o.cursorMode, codexSandbox: o.mode === 'exec' ? o.codexSandbox : null,
+    route: liveFields.route,
   });
+  liveFields.out = r.outBytes || 0;
+  liveFields.cli_rc = r.cli_rc ?? '-';
+  const counted = {
+    attempts: r.attempts || 0, cycles: r.cycles || 0,
+    retryAfterS: r.retryAfterS, cycle: r.cycle, reportDone: r.reportDone,
+    firstFailureMs: r.firstFailureMs, lastFailureMs: r.lastFailureMs,
+  };
+  const why = r.stopped || (r.timedOut ? 'timeout' : 'class');
+  // The snapshot reads against the finalize window, not the call deadline: an attempt may
+  // legitimately run until the deadline (cycle-3 attempt cap), and the tree read comes after.
+  let after = noTree ? null : await treeState(process.cwd(), finalizeBy);
+  // A signal during this snapshot killed its git child: read once more on the signal budget.
+  if (!noTree && aborting && after === null) after = await treeState(process.cwd(), finalizeBy);
+  const tree = noTree ? 'unknown' : treeLabel(before, after);
+  liveFields.tree = tree;
+  if (aborting) {
+    return reportAndFinish('signal', { ...liveFields, exit: 128 + aborting }, 'signal');
+  }
+  if (
+    r.status === 'contract_violation' || r.status === 'git_error' || r.status === 'git_timeout'
+  ) {
+    const treeField = r.status === 'contract_violation' ? tree : 'unknown';
+    return reportAndFinish(r.status, {
+      ...liveFields, tree: treeField, cli_rc: r.cli_rc ?? '-', exit: 1, ...counted,
+    }, why);
+  }
+  // A classified status (live kill or post-hoc) wins over a bare timeout (cycle 3).
+  if (r.timedOut && !r.status) {
+    return reportAndFinish('timeout', {
+      ...liveFields, tree, exit: 124, cli_rc: r.cli_rc ?? '-', ...counted,
+    }, 'timeout');
+  }
+  if (o.mode === 'review' && before && after && tree === 'dirty') {
+    return reportAndFinish('contract_violation', {
+      ...liveFields, tree, cli_rc: r.cli_rc ?? '-', exit: 1, ...counted,
+    }, 'class');
+  }
+  if (r.ok) {
+    if (!noTree && (after === null || before === null)) {
+      const status = gitFailStatus();
+      return reportAndFinish(status, { ...liveFields, tree: 'unknown', cli_rc: 0, exit: 1 });
+    }
+    if (o.mode === 'exec' && tree === 'clean') {
+      return reportAndFinish('no_change', {
+        ...liveFields, cli: c.name, model: c.model, tree, cli_rc: 0, ...counted,
+      });
+    }
+    process.stdout.write(r.text);
+    return reportAndFinish('ok', {
+      ...liveFields, tree, exit: 0, cli_rc: 0, out: r.outBytes || 0, ...counted,
+    });
+  }
+  if (!noTree && after === null && r.exit !== 69 && r.retryAfterS === undefined) {
+    const status = gitFailStatus();
+    return reportAndFinish(status, {
+      ...liveFields, tree: 'unknown', cli_rc: r.cli_rc ?? '-', exit: 1,
+    });
+  }
+  const finalStatus = r.status || 'crash';
+  return reportAndFinish(finalStatus, {
+    ...liveFields, tree, cli_rc: r.cli_rc, cli: c.name, model: c.model,
+    route: r.route, rule: r.rule, pattern: r.pattern, exit: r.exit, ...counted,
+  }, why);
 }
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -3062,7 +6177,9 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
     (code) => exitFlushed(code ?? 0),
     (e) => {
       log(`cross-ai: internal error: ${e && e.stack || e}`);
-      exitFlushed(finish('crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' }));
+      exitFlushed(reportAndFinish(
+        'crash', { ...liveFields, tree: 'unknown', exit: 1, cli_rc: '-' },
+      ));
     },
   );
 }

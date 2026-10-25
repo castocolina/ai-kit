@@ -4,27 +4,11 @@ milestone: v1.3
 milestone_name: GSD Curated Config v2
 current_phase: 23
 status: executing
-stopped_at: Completed 25-04-PLAN.md
-last_updated: "2026-10-24T22:35:21.586Z"
-last_activity: 2026-10-23
-last_activity_desc: Phase 23 execution started
-state_head: e1312a2df98dfb6504c0484eed5124641222f05b
-stopped_at: Completed 25-05-PLAN.md
-last_updated: "2026-10-24T22:46:17.975Z"
-last_activity: 2026-10-23
-last_activity_desc: Phase 23 execution started
-state_head: a73bcd3bf7353e6366d215e4b04970a716a88908
 stopped_at: Completed 25-06-PLAN.md
 last_updated: "2026-10-24T23:43:21.772Z"
 last_activity: 2026-10-23
 last_activity_desc: Phase 23 execution started
 state_head: ce6984e7c4c95df4507b10b434a0ef2031dc8232
-state_head: c058517961c23d3e39d3dc7b2de0ce3b1f5fbcb6
-stopped_at: Phases 25.1 and 26 context gathered (spec-discuss --auto, 2026-10-24)
-last_updated: "2026-10-24T23:01:38.247Z"
-last_activity: 2026-10-23
-last_activity_desc: Phase 23 execution started
-state_head: ca5b8a69b6aaa69a8fb60f53e4de74eb33312ab2
 progress:
   total_phases: 18
   completed_phases: 1
@@ -577,11 +561,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-24T22:46:16.373Z
-Stopped at: Completed 25-05-PLAN.md
 Last session: 2026-10-24T23:22:43.919Z
 Stopped at: Completed 25-06-PLAN.md
 Resume file: None
-Last session: 2026-10-24T23:01:36.674Z
-Stopped at: Phases 25.1 and 26 context gathered (spec-discuss --auto, 2026-10-24)
-Resume file: .planning/phases/25.1-configurable-cross-ai-retry-ladder-and-upstream-error-propag/25.1-CONTEXT.md
