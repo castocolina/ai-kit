@@ -55,6 +55,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import vm from 'node:vm';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -133,8 +134,115 @@ const ROUTER_HINTS = ["router", "-env", "local-llm"];
 // <patterns>
 const PATTERNS = [
   {
-    "id": "vendor-usage-limit-reached",
+    "id": "omniroute-all-targets-skipped",
+    "tier": 0,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "ALL_TARGETS_SKIPPED|all targets were skipped by pre-dispatch filters",
+    "class": "quota",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "25.1-EVIDENCE.md captured bodies 2026-10-24 and 2026-10-25; supersedes Phase 25 text-pre-dispatch"
+  },
+  {
+    "id": "omniroute-all-targets-cooling-down",
+    "tier": 0,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "all_targets_cooling_down",
+    "class": "transient",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "CHANGELOG 0a1265ea8"
+  },
+  {
+    "id": "omniroute-circuit-open",
+    "tier": 0,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "circuit_open",
+    "class": "transient",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "CHANGELOG 0a1265ea8"
+  },
+  {
+    "id": "omniroute-model-cooldown",
+    "tier": 0,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "model_cooldown",
+    "class": "transient",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "CHANGELOG 0a1265ea8"
+  },
+  {
+    "id": "omniroute-endpoint-unavailable",
+    "tier": 0,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "endpoint is unavailable",
+    "class": "transient",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "CHANGELOG 0a1265ea8"
+  },
+  {
+    "id": "omniroute-model-unavailable",
+    "tier": 0,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\\bmodel \\S+ is unavailable\\b",
+    "class": "transient",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "2026-10-24 capture"
+  },
+  {
+    "id": "omniroute-no-executable-targets",
+    "tier": 0,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "no_executable_targets|combo has no executable targets",
+    "class": "bad_model",
+    "terminal": false,
+    "label": "verified",
+    "evidence": "2026-10-25 capture"
+  },
+  {
+    "id": "omniroute-model-not-in-catalog",
+    "tier": 0,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "model_not_in_catalog",
+    "class": "bad_model",
+    "terminal": false,
+    "label": "unverified",
+    "evidence": "CHANGELOG 0a1265ea8"
+  },
+  {
+    "id": "vendor-usage-limit-reached",
+    "tier": 1,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "usage_limit_reached",
     "class": "quota",
@@ -144,7 +252,10 @@ const PATTERNS = [
   },
   {
     "id": "vendor-insufficient-quota",
+    "tier": 1,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "insufficient_quota",
     "class": "billing",
@@ -154,8 +265,24 @@ const PATTERNS = [
     "evidence": "25-RESEARCH 2.1 probe"
   },
   {
-    "id": "text-billing",
+    "id": "vendor-zhipu-1310",
+    "tier": 1,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
+    "input": "any",
+    "match": "\"code\"\\s*:\\s*\"1310\"",
+    "class": "quota",
+    "terminal": true,
+    "label": "verified",
+    "evidence": "the Zhipu GLM capture"
+  },
+  {
+    "id": "text-billing",
+    "tier": 2,
+    "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "(?<![/.])\\bbilling\\b(?![/.]\\w)",
     "class": "billing",
@@ -166,7 +293,10 @@ const PATTERNS = [
   },
   {
     "id": "vendor-monthly-limit",
+    "tier": 2,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "MonthlyLimitError",
     "class": "billing",
@@ -177,7 +307,10 @@ const PATTERNS = [
   },
   {
     "id": "text-spending-limit",
+    "tier": 2,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "spending[ -]limit",
     "class": "billing",
@@ -188,7 +321,10 @@ const PATTERNS = [
   },
   {
     "id": "text-payment-required",
+    "tier": 2,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "payment required",
     "class": "billing",
@@ -199,7 +335,10 @@ const PATTERNS = [
   },
   {
     "id": "text-free-tier",
+    "tier": 2,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "free ?tier",
     "class": "billing",
@@ -210,7 +349,10 @@ const PATTERNS = [
   },
   {
     "id": "text-insufficient-funds",
+    "tier": 2,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "insufficient (?:account )?funds",
     "class": "billing",
@@ -221,7 +363,10 @@ const PATTERNS = [
   },
   {
     "id": "text-run-out-credits",
+    "tier": 2,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "run out of credits",
     "class": "billing",
@@ -232,7 +377,10 @@ const PATTERNS = [
   },
   {
     "id": "text-model-access-disabled",
+    "tier": 2,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "model access is disabled",
     "class": "billing",
@@ -243,7 +391,10 @@ const PATTERNS = [
   },
   {
     "id": "text-named-models",
+    "tier": 2,
     "cli": "cursor",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "named models unavailable",
     "class": "billing",
@@ -254,7 +405,10 @@ const PATTERNS = [
   },
   {
     "id": "text-free-plan-auto",
+    "tier": 2,
     "cli": "cursor",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "free plans can only use auto",
     "class": "billing",
@@ -265,7 +419,10 @@ const PATTERNS = [
   },
   {
     "id": "vendor-free-usage",
+    "tier": 3,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "FreeUsageLimitError",
     "class": "quota",
@@ -275,7 +432,10 @@ const PATTERNS = [
   },
   {
     "id": "vendor-go-usage",
+    "tier": 3,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "GoUsageLimitError",
     "class": "quota",
@@ -285,7 +445,10 @@ const PATTERNS = [
   },
   {
     "id": "cursor-action-usage-limit",
+    "tier": 3,
     "cli": "cursor",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "actionrequirederror.*usage limit",
     "class": "quota",
@@ -295,7 +458,10 @@ const PATTERNS = [
   },
   {
     "id": "pi-chatgpt-usage-limit",
+    "tier": 3,
     "cli": "pi",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "chatgpt usage limit",
     "class": "quota",
@@ -305,7 +471,10 @@ const PATTERNS = [
   },
   {
     "id": "claude-hit-your-limit",
+    "tier": 3,
     "cli": "claude",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "hit your limit",
     "class": "quota",
@@ -315,7 +484,10 @@ const PATTERNS = [
   },
   {
     "id": "text-usage-limit",
+    "tier": 3,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "usage limit",
     "class": "quota",
@@ -325,7 +497,10 @@ const PATTERNS = [
   },
   {
     "id": "text-hit-your-limit",
+    "tier": 3,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "hit your (?:\\w+ )?limit",
     "class": "quota",
@@ -335,7 +510,10 @@ const PATTERNS = [
   },
   {
     "id": "text-quota-exceeded",
+    "tier": 3,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "quota exceeded",
     "class": "quota",
@@ -345,7 +523,10 @@ const PATTERNS = [
   },
   {
     "id": "text-rate-limit",
+    "tier": 3,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "rate.?limit",
     "class": "quota",
@@ -355,7 +536,10 @@ const PATTERNS = [
   },
   {
     "id": "text-too-many-requests",
+    "tier": 3,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "too many requests",
     "class": "quota",
@@ -365,7 +549,10 @@ const PATTERNS = [
   },
   {
     "id": "text-requires-opencode-key",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "requires an opencode api key",
     "class": "auth",
@@ -376,7 +563,10 @@ const PATTERNS = [
   },
   {
     "id": "text-credential-gate",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "credential gate",
     "class": "auth",
@@ -386,19 +576,11 @@ const PATTERNS = [
     "evidence": "25-RESEARCH 2.2 recorded"
   },
   {
-    "id": "text-pre-dispatch",
-    "cli": "*",
-    "input": "any",
-    "match": "pre-dispatch filters",
-    "class": "permission_blocked",
-    "routerClass": "quota",
-    "terminal": true,
-    "label": "verified",
-    "evidence": "25-RESEARCH 2.2 recorded"
-  },
-  {
     "id": "text-unauthorized",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "unauthori[sz]ed",
     "class": "auth",
@@ -408,7 +590,10 @@ const PATTERNS = [
   },
   {
     "id": "text-token-expired",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "token_expired",
     "class": "auth",
@@ -418,7 +603,10 @@ const PATTERNS = [
   },
   {
     "id": "text-invalid-refresh",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "invalid_refresh_token",
     "class": "auth",
@@ -428,7 +616,10 @@ const PATTERNS = [
   },
   {
     "id": "text-refresh-reused",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "refresh.token.(?:was already used|reused)",
     "class": "auth",
@@ -438,7 +629,10 @@ const PATTERNS = [
   },
   {
     "id": "text-could-not-refresh",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "could not be refreshed",
     "class": "auth",
@@ -448,7 +642,10 @@ const PATTERNS = [
   },
   {
     "id": "text-not-logged-in",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "not logged in",
     "class": "auth",
@@ -458,7 +655,10 @@ const PATTERNS = [
   },
   {
     "id": "text-login-required",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "log ?in required",
     "class": "auth",
@@ -468,7 +668,10 @@ const PATTERNS = [
   },
   {
     "id": "text-please-sign-in",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "please (?:log|sign) ?in",
     "class": "auth",
@@ -478,7 +681,10 @@ const PATTERNS = [
   },
   {
     "id": "text-invalid-api-key",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "invalid api key",
     "class": "auth",
@@ -488,7 +694,10 @@ const PATTERNS = [
   },
   {
     "id": "text-incorrect-api-key",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "incorrect api key",
     "class": "auth",
@@ -498,7 +707,10 @@ const PATTERNS = [
   },
   {
     "id": "text-api-key-invalid",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "api key is invalid",
     "class": "auth",
@@ -508,7 +720,10 @@ const PATTERNS = [
   },
   {
     "id": "text-permission-denied",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "permission denied",
     "class": "permission_blocked",
@@ -518,7 +733,10 @@ const PATTERNS = [
   },
   {
     "id": "text-requires-approval",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "requires approval",
     "class": "permission_blocked",
@@ -528,7 +746,10 @@ const PATTERNS = [
   },
   {
     "id": "text-approval-required",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "approval required",
     "class": "permission_blocked",
@@ -538,7 +759,10 @@ const PATTERNS = [
   },
   {
     "id": "text-workspace-trust",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "workspace trust required",
     "class": "permission_blocked",
@@ -548,7 +772,10 @@ const PATTERNS = [
   },
   {
     "id": "text-model-not-found",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "model not found",
     "class": "bad_model",
@@ -558,7 +785,10 @@ const PATTERNS = [
   },
   {
     "id": "text-unknown-model",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "unknown model",
     "class": "bad_model",
@@ -568,7 +798,10 @@ const PATTERNS = [
   },
   {
     "id": "text-invalid-model",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "invalid model",
     "class": "bad_model",
@@ -578,7 +811,10 @@ const PATTERNS = [
   },
   {
     "id": "text-cannot-use-model",
+    "tier": 4,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "cannot use this model",
     "class": "bad_model",
@@ -588,7 +824,10 @@ const PATTERNS = [
   },
   {
     "id": "claude-overloaded",
+    "tier": 5,
     "cli": "claude",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "overloaded",
     "class": "transient",
@@ -598,7 +837,10 @@ const PATTERNS = [
   },
   {
     "id": "text-overloaded",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "overloaded",
     "class": "transient",
@@ -608,7 +850,10 @@ const PATTERNS = [
   },
   {
     "id": "text-at-capacity",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "at capacity",
     "class": "transient",
@@ -618,7 +863,10 @@ const PATTERNS = [
   },
   {
     "id": "text-service-unavailable",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "service (?:temporarily )?unavailable",
     "class": "transient",
@@ -628,7 +876,10 @@ const PATTERNS = [
   },
   {
     "id": "text-resource-pressure",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "resource pressure",
     "class": "transient",
@@ -638,7 +889,10 @@ const PATTERNS = [
   },
   {
     "id": "text-admission-capacity",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "admission capacity",
     "class": "transient",
@@ -648,7 +902,10 @@ const PATTERNS = [
   },
   {
     "id": "text-event-400",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "\\[400\\]: event: error",
     "class": "transient",
@@ -658,7 +915,10 @@ const PATTERNS = [
   },
   {
     "id": "text-temporarily-unavailable",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "temporarily unavailable",
     "class": "transient",
@@ -668,7 +928,10 @@ const PATTERNS = [
   },
   {
     "id": "text-cooling-down",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "cooling down",
     "class": "transient",
@@ -678,7 +941,10 @@ const PATTERNS = [
   },
   {
     "id": "text-is-locked",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "is locked",
     "class": "transient",
@@ -688,7 +954,10 @@ const PATTERNS = [
   },
   {
     "id": "text-econnreset",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "ECONNRESET",
     "class": "transient",
@@ -698,7 +967,10 @@ const PATTERNS = [
   },
   {
     "id": "text-etimedout",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "ETIMEDOUT",
     "class": "transient",
@@ -708,7 +980,10 @@ const PATTERNS = [
   },
   {
     "id": "text-socket-hangup",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "socket hang up",
     "class": "transient",
@@ -718,7 +993,10 @@ const PATTERNS = [
   },
   {
     "id": "text-stream-cut",
+    "tier": 5,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "stream (?:closed|disconnected)",
     "class": "transient",
@@ -728,7 +1006,10 @@ const PATTERNS = [
   },
   {
     "id": "opencode-type-quota",
+    "tier": 5,
     "cli": "opencode",
+    "route": "*",
+    "provider": "*",
     "input": "event",
     "match": "opencode-type:provider\\.(?:quota|rate-limit)",
     "class": "quota",
@@ -738,7 +1019,10 @@ const PATTERNS = [
   },
   {
     "id": "opencode-type-auth",
+    "tier": 5,
     "cli": "opencode",
+    "route": "*",
+    "provider": "*",
     "input": "event",
     "match": "opencode-type:provider\\.auth",
     "class": "auth",
@@ -748,7 +1032,10 @@ const PATTERNS = [
   },
   {
     "id": "code-402",
+    "tier": 6,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "\\b402\\b",
     "class": "billing",
@@ -759,7 +1046,10 @@ const PATTERNS = [
   },
   {
     "id": "code-401-403",
+    "tier": 6,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "(?<![:.\\d])\\b40[13]\\b(?!:\\d)",
     "class": "auth",
@@ -769,7 +1059,10 @@ const PATTERNS = [
   },
   {
     "id": "code-429",
+    "tier": 6,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "\\b429\\b",
     "class": "quota",
@@ -779,7 +1072,10 @@ const PATTERNS = [
   },
   {
     "id": "code-5xx",
+    "tier": 6,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "(?<![:.\\d])\\b50[0234]\\b(?!:\\d)",
     "class": "transient",
@@ -789,7 +1085,10 @@ const PATTERNS = [
   },
   {
     "id": "code-529",
+    "tier": 6,
     "cli": "*",
+    "route": "*",
+    "provider": "*",
     "input": "any",
     "match": "\\b529\\b",
     "class": "transient",
@@ -799,6 +1098,56 @@ const PATTERNS = [
   }
 ];
 // </patterns>
+
+// Shipped rows, then the per-call table (overlay rows join it in main). Tier order is the
+// match order for both live and post-hoc classification.
+let TABLE = PATTERNS;
+
+const OVERLAY_MATCH_MS = 50;
+const OVERLAY_CALL_BUDGET_MS = 200;
+const ROW_CLASSES = ['quota', 'billing', 'auth', 'permission_blocked', 'bad_model', 'transient'];
+const ROW_ID_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
+const PROVIDER_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+let OVERLAY_IDS = new Set();
+let overlayDisabled = false;
+let overlaySpentMs = 0;
+let overlayScript = null;
+
+function mergeCatalog(shipped, overlay) {
+  overlayDisabled = false;
+  overlaySpentMs = 0;
+  overlayScript = null;
+  return [...overlay, ...shipped]
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => (a.row.tier - b.row.tier) || (a.index - b.index))
+    .map((item) => item.row);
+}
+
+function validateRow(row, known) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return 'row is not an object';
+  for (const key of ['id', 'tier', 'cli', 'route', 'provider', 'input', 'match', 'class',
+    'terminal', 'label', 'evidence']) {
+    if (!Object.hasOwn(row, key)) return `missing ${key}`;
+  }
+  if (typeof row.id !== 'string' || !ROW_ID_RE.test(row.id)) return 'id is not a row id';
+  if (!Number.isInteger(row.tier) || row.tier < 0 || row.tier > 6) return 'tier is not 0..6';
+  if (row.cli !== '*' && !Object.hasOwn(known, row.cli)) return 'cli is not a known runtime';
+  if (!['*', 'router', 'unknown'].includes(row.route)) return 'route is not *, router or unknown';
+  if (row.provider !== '*' && (typeof row.provider !== 'string' || !PROVIDER_RE.test(row.provider))) {
+    return 'provider is not * or a lowercase prefix';
+  }
+  if (!['stderr', 'event', 'any'].includes(row.input)) return 'input is not stderr, event or any';
+  if (typeof row.match !== 'string' || row.match.length > 200) {
+    return 'match is not a string of at most 200 characters';
+  }
+  try { new RegExp(row.match, 'i'); } catch { return 'match is not a regex'; }
+  if (!ROW_CLASSES.includes(row.class)) return 'class is not a known class';
+  if (row.routerClass !== undefined && row.routerClass !== 'quota') return 'routerClass is not quota';
+  if (typeof row.terminal !== 'boolean') return 'terminal is not a boolean';
+  if (row.label !== 'verified' && row.label !== 'unverified') return 'label is not verified or unverified';
+  if (typeof row.evidence !== 'string' || !row.evidence) return 'evidence is empty';
+  return null;
+}
 
 const STATUS_TABLE = {
   ok: { exit: 0 },
@@ -880,10 +1229,10 @@ let stderrGone = false;
 process.stdout.on('error', () => { /* answer reader gone */ });
 process.stderr.on('error', () => { stderrGone = true; });
 
-function log(text) {
+let log = (text) => {
   if (finished || stderrGone) return;
   process.stderr.write(text.endsWith('\n') ? text : `${text}\n`);
-}
+};
 
 // Every run that does not end ok reports once, immediately before its status line.
 function reportAndFinish(status, fields, stopped) {
@@ -1206,24 +1555,95 @@ function rowAdmits(row, source) {
   return row.input === source;
 }
 
-function classifyStop({ cli, routerLane, stderr, events, eventRaw }, table = PATTERNS) {
+// `router` is the confirmed lane only. `unknown` is every other route (including
+// router-inferred). `*` admits all.
+function routeAdmits(row, route) {
+  const want = row.route || '*';
+  if (want === '*') return true;
+  if (want === 'router') return route === 'router';
+  if (want === 'unknown') return route !== 'router';
+  return false;
+}
+
+// A provider prefix filters non-router lanes by model id. On a confirmed router lane the
+// member is only in the body, so the column is informational and the row still admits.
+function providerAdmits(row, route, model) {
+  const provider = row.provider || '*';
+  if (provider === '*') return true;
+  if (route === 'router') return true;
+  return String(model || '').toLowerCase().startsWith(provider);
+}
+
+function overlayHits(text) {
+  if (!OVERLAY_IDS.size || overlayDisabled) return new Set();
+  if (!overlayScript) {
+    overlayScript = new vm.Script(
+      'const found = [];\n' +
+      'for (const row of rows) { if (new RegExp(row.match, "i").test(text)) found.push(row.id); }\n' +
+      'found;',
+    );
+  }
+  const rows = TABLE.filter((row) => OVERLAY_IDS.has(row.id))
+    .map((row) => ({ id: row.id, match: row.match }));
+  const started = performance.now();
+  let found;
+  try {
+    found = overlayScript.runInContext(vm.createContext({ rows, text }), { timeout: OVERLAY_MATCH_MS });
+  } catch (err) {
+    overlaySpentMs += performance.now() - started;
+    overlayDisabled = true;
+    if (err && err.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') {
+      log(`cross-ai: overlay disabled: match exceeded ${OVERLAY_MATCH_MS} ms`);
+    } else {
+      log(`cross-ai: overlay disabled: match failed (${err && err.message})`);
+    }
+    return new Set();
+  }
+  overlaySpentMs += performance.now() - started;
+  if (overlaySpentMs >= OVERLAY_CALL_BUDGET_MS) {
+    overlayDisabled = true;
+    const spent = Math.round(overlaySpentMs);
+    log(`cross-ai: overlay disabled: matching used ${spent} ms this call ` +
+      `(budget ${OVERLAY_CALL_BUDGET_MS} ms)`);
+  }
+  return new Set(Array.isArray(found) ? found : []);
+}
+
+function classifyStop({ cli, routerLane, route, model, stderr, events, eventRaw }, table = TABLE) {
+  const callRoute = route ?? (routerLane ? 'router' : 'unknown');
+  const lane = routerLane ?? (callRoute === 'router');
+  const callModel = model || '';
   const normalizedStderr = normalizeInput(stderr || '');
   const sources = [['stderr', normalizedStderr, null]];
   for (let i = 0; i < (events || []).length; i += 1) {
     sources.push(['event', normalizeInput(events[i] || ''), eventRaw?.[i] ?? null]);
   }
+  const overlayByText = new Map();
   for (const row of table) {
     if (row.cli !== '*' && row.cli !== cli) continue;
-    const re = rowRegex(row);
+    if (!routeAdmits(row, callRoute) || !providerAdmits(row, callRoute, callModel)) continue;
+    const overlayRow = OVERLAY_IDS.has(row.id);
     for (const [source, text, raw] of sources) {
       if (!text || !rowAdmits(row, source)) continue;
-      re.lastIndex = 0;
-      const match = re.exec(text);
-      if (!match) continue;
+      let match = null;
+      if (overlayRow) {
+        let hits = overlayByText.get(text);
+        if (!hits) {
+          hits = overlayHits(text);
+          overlayByText.set(text, hits);
+        }
+        if (!hits.has(row.id)) continue;
+        match = { index: text.search(rowRegex(row)) };
+      } else {
+        const re = rowRegex(row);
+        re.lastIndex = 0;
+        match = re.exec(text);
+        if (!match) continue;
+      }
       const start = text.lastIndexOf('\n', match.index) + 1;
       const end = text.indexOf('\n', match.index);
       const line = source === 'stderr' ? text.slice(start, end < 0 ? undefined : end) : text;
-      const status = routerLane && row.routerClass === 'quota' ? 'quota' : row.class;
+      const status = lane && row.routerClass === 'quota' ? 'quota' : row.class;
       return { status, rule: row.id, label: row.label, source, line, raw: raw || line };
     }
   }
@@ -1592,12 +2012,165 @@ const CLASSIFY_CASES = [
   {
     name: 'router-prefilter', cli: 'opencode',
     stderr: 'all targets were skipped by pre-dispatch filters',
-    expect: { status: 'permission_blocked', pattern: 'verified' },
+    expect: { status: 'quota', pattern: 'verified', rule: 'omniroute-all-targets-skipped' },
   },
   {
     name: 'router-prefilter-router', cli: 'opencode', route: 'router',
     stderr: 'all targets were skipped by pre-dispatch filters',
-    expect: { status: 'quota', pattern: 'verified' },
+    expect: { status: 'quota', pattern: 'verified', rule: 'omniroute-all-targets-skipped' },
+  },
+  {
+    name: 'evidence-all-targets-skipped-router', cli: 'pi', route: 'router',
+    stderr: '429: {"message":"Service temporarily unavailable: all targets were skipped by ' +
+      'pre-dispatch filters (weekly 100% ...) reset after 94h 42m 34s","type":"rate_limit_error",' +
+      '"code":"ALL_TARGETS_SKIPPED","retry_after":340954,"reset_at":"2026-10-19T00:00:00.000Z"}',
+    expect: { status: 'quota', pattern: 'verified', rule: 'omniroute-all-targets-skipped' },
+  },
+  {
+    name: 'evidence-all-targets-skipped-unknown', cli: 'pi',
+    stderr: '429: {"message":"Service temporarily unavailable: all targets were skipped by ' +
+      'pre-dispatch filters (weekly 100% ...) reset after 94h 42m 34s","type":"rate_limit_error",' +
+      '"code":"ALL_TARGETS_SKIPPED","retry_after":340954,"reset_at":"2026-10-19T00:00:00.000Z"}',
+    expect: { status: 'quota', pattern: 'verified', rule: 'omniroute-all-targets-skipped' },
+  },
+  {
+    name: 'evidence-sessions-5h', cli: 'opencode', route: 'router',
+    stdout: ocError({
+      type: 'provider.rate-limit', status: 429,
+      message: 'Service temporarily unavailable: all targets were skipped by pre-dispatch ' +
+        'filters (Session (5h) 100% conn:<8 hex>)',
+    }),
+    expect: { status: 'quota', pattern: 'verified', rule: 'omniroute-all-targets-skipped' },
+  },
+  {
+    name: 'evidence-member-usage-limit', cli: 'opencode', route: 'router',
+    stderr: '[429]: The usage limit has been reached (reset after 4h 15m 3s) ' +
+      '{"retry_after":15303,"reset_at":"2026-10-25T08:42:03.640Z"}',
+    expect: { status: 'quota', pattern: 'verified', rule: 'text-usage-limit' },
+  },
+  {
+    name: 'evidence-member-402-router', cli: 'pi', route: 'router',
+    stderr: '402: {"message":"[acme-cli/acme-4.7] [402]: Acme Build usage balance exhausted ' +
+      '(reset after 2m)","retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z"}',
+    expect: { status: 'quota', pattern: 'verified', rule: 'code-402' },
+  },
+  {
+    name: 'evidence-member-402-inferred', cli: 'pi', route: 'router-inferred',
+    model: 'router-env/my-coding',
+    stderr: '402: {"message":"[acme-cli/acme-4.7] [402]: Acme Build usage balance exhausted ' +
+      '(reset after 2m)","retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z"}',
+    expect: { status: 'billing', pattern: 'verified', rule: 'code-402' },
+  },
+  {
+    name: 'evidence-kimi-403', cli: 'pi',
+    stderr: "[403]: You've reached your 5-hour usage limit. Your quota will reset when the " +
+      'current 5-hour window ends.',
+    expect: { status: 'quota', pattern: 'verified', rule: 'text-usage-limit' },
+  },
+  {
+    name: 'evidence-glm-1310', cli: 'pi',
+    stderr: '429: {"code":"1310","message":"\u60a8\u5df2\u8fbe\u5230\u6bcf\u5468\u6216' +
+      '\u6bcf\u6708\u4f7f\u7528\u4e0a\u9650\uff0c\u9650\u989d\u5c06\u4e8e 2026-10-21 22:10:59 ' +
+      '\u91cd\u7f6e"}',
+    expect: { status: 'quota', pattern: 'verified', rule: 'vendor-zhipu-1310' },
+  },
+  {
+    name: 'evidence-glm-omniroute', cli: 'pi', route: 'router',
+    stderr: '[zai/glm-5.3-flash] [429]: Usage limit reached for 5 hour (reset after 3h 26m 12s)',
+    expect: { status: 'quota', pattern: 'verified', rule: 'text-usage-limit' },
+  },
+  {
+    name: 'evidence-model-unavailable', cli: 'pi', route: 'router',
+    stderr: '503: {"message":"Model codex/gpt-6-luna-high is unavailable",' +
+      '"type":"server_error","code":"service_unavailable"}',
+    expect: { status: 'transient', pattern: 'verified', rule: 'omniroute-model-unavailable' },
+  },
+  {
+    name: 'evidence-stream-stall', cli: 'pi', route: 'router',
+    stderr: 'Streaming response reported an upstream error before content \u2014 marking as ' +
+      'invalid for combo failover (stream content stall: no model output within the window)',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'evidence-quality-check', cli: 'pi', route: 'router',
+    stderr: 'Model codex/gpt-6.1-sol-high returned 200 but failed quality check',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'evidence-opencode-go-400', cli: 'opencode',
+    stderr: '[400]: event: error',
+    expect: { status: 'transient', pattern: 'verified', rule: 'text-event-400' },
+  },
+  {
+    name: 'evidence-claude-weekly', cli: 'claude',
+    stderr: '429 rate_limit {"rateLimitType":"seven_day","resetsAt":1761181200} ' +
+      "You've hit your weekly limit \u00b7 resets Oct 22, 10pm (America/Santiago)",
+    expect: { status: 'quota', pattern: 'unverified', rule: 'text-hit-your-limit' },
+  },
+  {
+    name: 'evidence-invalid-credential', cli: 'pi',
+    stderr: 'request failed: Invalid credential (HTTP 401)',
+    expect: { status: 'auth', pattern: 'verified', rule: 'code-401-403' },
+  },
+  {
+    name: 'evidence-quota-preflight', cli: 'pi', route: 'router',
+    stderr: '[QuotaPreflight] zai/glm weekly: 3.0% remaining \u2014 approaching cutoff',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
+  },
+  {
+    name: 'evidence-no-executable-targets', cli: 'opencode', route: 'router',
+    stdout: ocError({
+      type: 'provider.invalid-request', status: 404,
+      message: 'Combo has no executable targets',
+      response: { body: JSON.stringify({
+        error: {
+          message: 'Combo has no executable targets', type: 'invalid_request_error',
+          code: 'model_not_found',
+        },
+        diagnostics: { terminalReason: 'no_executable_targets' },
+      }) },
+    }),
+    expect: { status: 'bad_model', pattern: 'verified', rule: 'omniroute-no-executable-targets' },
+  },
+  {
+    name: 'evidence-kimi-monthly-429', cli: 'pi', route: 'router',
+    stderr: 'HTTP 429',
+    expect: { status: 'quota', pattern: 'verified', rule: 'code-429' },
+  },
+  {
+    name: 'evidence-all-targets-cooling-down', cli: 'pi', route: 'router',
+    stderr: 'all_targets_cooling_down: provider/model: circuit_open (45s)',
+    expect: { status: 'transient', pattern: 'unverified', rule: 'omniroute-all-targets-cooling-down' },
+  },
+  {
+    name: 'evidence-circuit-open', cli: 'pi', route: 'router',
+    stderr: 'circuit_open (45s)',
+    expect: { status: 'transient', pattern: 'unverified', rule: 'omniroute-circuit-open' },
+  },
+  {
+    name: 'evidence-model-cooldown', cli: 'pi', route: 'router',
+    stderr: '{"code":"model_cooldown","retry_after":"2026-10-25T08:42:03.640Z"}',
+    expect: { status: 'transient', pattern: 'unverified', rule: 'omniroute-model-cooldown' },
+  },
+  {
+    name: 'evidence-endpoint-unavailable', cli: 'pi', route: 'router',
+    stderr: '400: endpoint is unavailable',
+    expect: { status: 'transient', pattern: 'unverified', rule: 'omniroute-endpoint-unavailable' },
+  },
+  {
+    name: 'evidence-model-not-in-catalog', cli: 'pi', route: 'router',
+    stderr: '{"code":"model_not_in_catalog"}',
+    expect: { status: 'bad_model', pattern: 'unverified', rule: 'omniroute-model-not-in-catalog' },
+  },
+  {
+    name: 'evidence-responses-frame', cli: 'pi',
+    stderr: '{"status_code":429,"error_type":"rate_limit_error","retry_after_seconds":30}',
+    expect: { status: 'quota', pattern: 'verified', rule: 'text-rate-limit' },
+  },
+  {
+    name: 'evidence-precision-4021', cli: 'pi',
+    stderr: 'wrote 4021 tokens',
+    expect: { status: 'crash', pattern: 'none', rule: '-' },
   },
   {
     name: 'router-credential-gate', cli: 'opencode',
@@ -1762,7 +2335,8 @@ function confirmedRoute(route) {
 function classifyOne(entry, table) {
   return classifyStop({
     cli: entry.cli,
-    routerLane: entry.route === 'router',
+    route: entry.route || 'unknown',
+    model: entry.model || '',
     stderr: entry.stderr || '',
     events: extractEvents(entry.cli, entry.stdout || ''),
   }, table);
@@ -1803,6 +2377,213 @@ function classifyCases() {
         const first = classifyOne(twice);
         const second = classifyOne(twice);
         if (JSON.stringify(first) !== JSON.stringify(second)) return 'classifyStop is not stable';
+        return null;
+      },
+    },
+    {
+      // Without the tier-0 reason rows the same body matches a later provider row, so the
+      // reason-code row is what decides it.
+      name: 'pure-catalog-reason-code-wins',
+      pure: () => {
+        const entry = CLASSIFY_CASES.find((item) => item.name === 'evidence-all-targets-skipped-router');
+        const withReason = classifyOne(entry);
+        const without = classifyOne(entry, TABLE.filter((row) => row.tier !== 0));
+        if (withReason.rule !== 'omniroute-all-targets-skipped') return `rule ${withReason.rule}`;
+        if (without.rule === withReason.rule) return 'tier-0 rows did not decide the match';
+        return null;
+      },
+    },
+    {
+      name: 'pure-catalog-tier-order',
+      pure: () => {
+        let prev = -1;
+        for (const row of TABLE) {
+          if (row.tier < prev) return `${row.id} tier ${row.tier} after ${prev}`;
+          prev = row.tier;
+        }
+        return null;
+      },
+    },
+    {
+      name: 'pure-catalog-shipped-valid',
+      pure: () => {
+        const seen = new Set();
+        for (const row of PATTERNS) {
+          const reason = validateRow(row, RUNTIMES);
+          if (reason) return `${row.id}: ${reason}`;
+          if (seen.has(row.id)) return `duplicate ${row.id}`;
+          seen.add(row.id);
+        }
+        return null;
+      },
+    },
+    {
+      name: 'pure-catalog-bad-rows',
+      pure: () => {
+        const base = {
+          id: 'user-row', tier: 3, cli: '*', route: '*', provider: '*', input: 'any',
+          match: 'acme', class: 'quota', terminal: false, label: 'unverified', evidence: 'probe',
+        };
+        const cases = [
+          [{ ...base, class: 'doom' }, 'class'],
+          [{ ...base, label: undefined }, 'label'],
+          [{ ...base, evidence: '' }, 'evidence'],
+          [{ ...base, route: 'direct' }, 'route'],
+          [{ ...base, provider: 'Bad Prefix' }, 'provider'],
+          [{ ...base, tier: 7 }, 'tier'],
+          [{ ...base, match: 'a'.repeat(201) }, 'match'],
+          [{ ...base, match: '(' }, 'match'],
+          [{ ...base, cli: 'nosuch' }, 'cli'],
+        ];
+        for (const [row, field] of cases) {
+          const reason = validateRow(row, RUNTIMES);
+          if (!reason || !reason.includes(field)) return `${field}: ${reason}`;
+        }
+        return null;
+      },
+    },
+    {
+      name: 'pure-catalog-route-provider',
+      pure: () => {
+        const routerRow = { route: 'router' };
+        if (!routeAdmits(routerRow, 'router') || routeAdmits(routerRow, 'unknown') ||
+          routeAdmits(routerRow, 'router-inferred')) return 'route router';
+        const unknownRow = { route: 'unknown' };
+        if (routeAdmits(unknownRow, 'router') || !routeAdmits(unknownRow, 'unknown') ||
+          !routeAdmits(unknownRow, 'router-inferred')) return 'route unknown';
+        const zai = { provider: 'zai' };
+        if (!providerAdmits(zai, 'unknown', 'zai-coding-cn/glm-5.3')) return 'zai model refused';
+        if (providerAdmits(zai, 'unknown', 'kimi/k2')) return 'kimi admitted';
+        if (!providerAdmits(zai, 'router', 'kimi/k2')) return 'router lane refused';
+        return null;
+      },
+    },
+    {
+      name: 'pure-overlay-regex-timeout',
+      pure: () => {
+        const row = {
+          id: 'user-catastrophic', tier: 3, cli: '*', route: '*', provider: '*', input: 'any',
+          match: '^(a+)+$', class: 'quota', terminal: false, label: 'unverified', evidence: 'probe',
+        };
+        if (validateRow(row, RUNTIMES)) return 'row refused';
+        const text = `${'a'.repeat(41)}!`;
+        const started = Date.now();
+        const logs = [];
+        const real = log;
+        log = (line) => logs.push(line);
+        try {
+          OVERLAY_IDS = new Set([row.id]);
+          TABLE = mergeCatalog(PATTERNS, [row]);
+          const first = classifyStop({ cli: 'pi', route: 'unknown', stderr: text });
+          const second = classifyStop({ cli: 'pi', route: 'unknown', stderr: text });
+          const elapsed = Date.now() - started;
+          if (elapsed >= 1000) return `elapsed ${elapsed}`;
+          const notices = logs.filter((line) => line === 'cross-ai: overlay disabled: match exceeded 50 ms');
+          if (notices.length !== 1) return `notices ${notices.length}: ${logs.join('|')}`;
+          if (first.rule === row.id || second.rule === row.id) return `matched overlay ${first.rule}`;
+          return null;
+        } finally {
+          log = real;
+          OVERLAY_IDS = new Set();
+          TABLE = mergeCatalog(PATTERNS, []);
+        }
+      },
+    },
+    {
+      name: 'pure-overlay-budget',
+      pure: () => {
+        const rows = [];
+        for (let i = 0; i < 40; i += 1) {
+          rows.push({
+            id: `user-catastrophic-${i}`, tier: 3, cli: '*', route: '*', provider: '*', input: 'any',
+            match: '^(a+)+$', class: 'quota', terminal: false, label: 'unverified', evidence: 'probe',
+          });
+        }
+        const text = `${'a'.repeat(41)}!`;
+        const logs = [];
+        const real = log;
+        log = (line) => logs.push(line);
+        const started = Date.now();
+        try {
+          OVERLAY_IDS = new Set(rows.map((row) => row.id));
+          TABLE = mergeCatalog(PATTERNS, rows);
+          classifyStop({ cli: 'pi', route: 'unknown', stderr: text });
+          const firstMs = Date.now() - started;
+          const mid = logs.length;
+          const again = Date.now();
+          classifyStop({ cli: 'pi', route: 'unknown', stderr: text });
+          const secondMs = Date.now() - again;
+          const notices = logs.filter((line) => line === 'cross-ai: overlay disabled: match exceeded 50 ms');
+          if (firstMs >= 300) return `first ${firstMs}`;
+          if (notices.length !== 1) return `notices ${notices.length}`;
+          if (logs.length !== mid) return 'second classification logged';
+          if (secondMs >= 20) return `second ${secondMs}`;
+          return null;
+        } finally {
+          log = real;
+          OVERLAY_IDS = new Set();
+          TABLE = mergeCatalog(PATTERNS, []);
+        }
+      },
+    },
+    {
+      name: 'pure-overlay-call-budget',
+      pure: () => {
+        const row = {
+          id: 'user-slow', tier: 3, cli: '*', route: '*', provider: '*', input: 'any',
+          match: '^(a+)+$', class: 'quota', terminal: false, label: 'unverified', evidence: 'probe',
+        };
+        let sample = '';
+        const re = new RegExp(row.match, 'i');
+        for (let n = 12; n <= 24; n += 1) {
+          const candidate = `${'a'.repeat(n)}!`;
+          const t0 = performance.now();
+          re.test(candidate);
+          if (performance.now() - t0 < 10) sample = candidate;
+        }
+        if (!sample) return 'no sub-timeout sample';
+        const logs = [];
+        const real = log;
+        log = (line) => logs.push(line);
+        const started = Date.now();
+        try {
+          OVERLAY_IDS = new Set([row.id]);
+          TABLE = mergeCatalog(PATTERNS, [row]);
+          for (let i = 0; i < 1000; i += 1) overlayHits(sample);
+          const elapsed = Date.now() - started;
+          if (elapsed >= 600) return `elapsed ${elapsed}`;
+          const timeouts = logs.filter((line) => line.includes('match exceeded'));
+          if (timeouts.length) return `timeout notice: ${timeouts[0]}`;
+          const notices = logs.filter((line) => line.startsWith('cross-ai: overlay disabled: matching used '));
+          if (notices.length !== 1) return `notices ${notices.length}: ${logs.join('|')}`;
+          const spent = Number(notices[0].match(/used (\d+) ms/)[1]);
+          if (spent < 200 || spent > 260) return `spent ${spent}`;
+          const before = overlaySpentMs;
+          overlayHits(sample);
+          if (overlaySpentMs !== before) return 'ran after the notice';
+          return null;
+        } finally {
+          log = real;
+          OVERLAY_IDS = new Set();
+          TABLE = mergeCatalog(PATTERNS, []);
+        }
+      },
+    },
+    {
+      // Live matching sees one line; a multi-line fixture is out of scope because post-hoc
+      // matching sees the whole text.
+      name: 'pure-live-agrees-posthoc',
+      pure: () => {
+        for (const entry of CLASSIFY_CASES) {
+          if (entry.stderr === undefined || String(entry.stderr).includes('\n')) continue;
+          const post = classifyOne(entry);
+          const live = liveMatch(entry.cli, 'stderr', entry.stderr, entry.stderr,
+            entry.route || 'unknown', entry.model || '');
+          const liveRule = live ? live.rule : null;
+          if (liveRule !== null && liveRule !== post.rule) {
+            return `${entry.name} live ${liveRule} post ${post.rule}`;
+          }
+        }
         return null;
       },
     },
@@ -1978,6 +2759,52 @@ function readJsonObject(file, rootDir = null) {
   const parsed = parseJson(readOr(file, ''));
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { error: 'not a JSON object' };
   return { obj: parsed };
+}
+
+function loadOverlay(env) {
+  const home = env.HOME || os.homedir();
+  const configHome = env.XDG_CONFIG_HOME || path.join(home, '.config');
+  const root = path.join(configHome, 'ai-kit');
+  const file = path.join(root, 'cross-ai-errors.json');
+  if (!fs.existsSync(file)) return [];
+  const confined = readJsonObject(file, root);
+  if (confined.error && confined.error.startsWith('resolves outside')) {
+    log(`cross-ai: overlay ignored (${file}): ${confined.error}`);
+    return [];
+  }
+  let stat;
+  try { stat = fs.statSync(file); } catch (e) {
+    log(`cross-ai: overlay ignored (${file}): unreadable (${e.code || e.message})`);
+    return [];
+  }
+  if (stat.size > 65536) {
+    log(`cross-ai: overlay ignored (${file}): larger than 65536 bytes`);
+    return [];
+  }
+  const parsed = parseJson(readOr(file, ''));
+  if (!Array.isArray(parsed)) {
+    log(`cross-ai: overlay ignored (${file}): not a JSON array`);
+    return [];
+  }
+  const seen = new Set(PATTERNS.map((row) => row.id));
+  const accepted = [];
+  parsed.forEach((row, index) => {
+    const id = row && typeof row.id === 'string' ? row.id : `#${index}`;
+    const reason = validateRow(row, RUNTIMES);
+    if (reason) {
+      log(`cross-ai: overlay row ${id} refused (${file}): ${reason}`);
+      return;
+    }
+    if (seen.has(row.id)) {
+      log(`cross-ai: overlay row ${row.id} refused (${file}): id already used`);
+      return;
+    }
+    seen.add(row.id);
+    accepted.push(row);
+  });
+  OVERLAY_IDS = new Set(accepted.map((row) => row.id));
+  if (accepted.length) log(`cross-ai: overlay ${accepted.length} rows`);
+  return accepted;
 }
 function workflowValue(cfgPath, key, rootDir = null) {
   const read = readJsonObject(cfgPath, rootDir);
@@ -2591,28 +3418,25 @@ for (const [sig, n] of [['SIGTERM', 15], ['SIGINT', 2], ['SIGHUP', 1]]) {
   });
 }
 
-// Live rows: a kill needs a row marked terminal. A structured event additionally skips
-// transient rows (D-09), so a retry notice or a bare code never kills.
-function terminalTable() {
-  return PATTERNS.filter((row) => row.terminal);
-}
-
-function eventTable() {
-  return terminalTable().filter((row) => row.class !== 'transient');
-}
-
-function liveMatch(cli, source, text, raw = text) {
-  const table = source === 'stderr' ? terminalTable() : eventTable();
+// Live matching uses the same tier order as post-hoc matching. The first admitted row wins;
+// the kill is armed only when that row is terminal and, for an event, not transient. A later
+// terminal row never wins over an earlier non-terminal one.
+function liveMatch(cli, source, text, raw = text, route = 'unknown', model = '') {
   const events = source === 'event' ? [text] : [];
   const stderr = source === 'stderr' ? text : '';
-  // Lane is applied later: the record keeps the row, and the confirmed route decides the status.
-  const cls = classifyStop({ cli, routerLane: false, stderr, events, eventRaw: source === 'event' ? [raw] : [] }, table);
-  return cls.status === 'crash' ? null : cls;
+  const cls = classifyStop({
+    cli, route, model, stderr, events, eventRaw: source === 'event' ? [raw] : [],
+  });
+  if (cls.status === 'crash') return null;
+  const row = TABLE.find((item) => item.id === cls.rule);
+  if (!row || !row.terminal) return null;
+  if (source === 'event' && row.class === 'transient') return null;
+  return cls;
 }
 
 function hitForLane(hit, lane) {
   if (!hit || !lane) return hit;
-  const row = PATTERNS.find((r) => r.id === hit.rule);
+  const row = TABLE.find((r) => r.id === hit.rule);
   if (!row || row.routerClass !== 'quota') return hit;
   return { ...hit, status: 'quota' };
 }
@@ -2638,19 +3462,21 @@ async function runOnce(bin, argv, input, env, cwd, label, opts = {}) {
   let errTail = '';
   const state = { liveHit: null, limitTimer: null };
   const cli = label;
+  const route = opts.route || 'unknown';
+  const model = opts.model || '';
   const noteLine = (source) => (line) => {
     if (source === 'stderr') {
-      armLimit(state, liveMatch(cli, 'stderr', line, line));
+      armLimit(state, liveMatch(cli, 'stderr', line, line, route, model));
       return;
     }
     const extracted = eventsWithRaw(cli, line, true);
     for (let i = 0; i < extracted.events.length; i += 1) {
-      armLimit(state, liveMatch(cli, 'event', extracted.events[i], extracted.eventRaw[i]));
+      armLimit(state, liveMatch(cli, 'event', extracted.events[i], extracted.eventRaw[i], route, model));
     }
   };
   const notePartial = (source) => (buf) => {
     if (source !== 'stderr' || state.liveHit) return;
-    armLimit(state, liveMatch(cli, 'stderr', buf, buf));
+    armLimit(state, liveMatch(cli, 'stderr', buf, buf, route, model));
   };
   // The answer goes to stdout only: the stdout relay feeds the live watcher, never the log.
   const outRelay = makeLineRelay({
@@ -2963,15 +3789,15 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       log(`cross-ai: cli=${name} bin=${binPath} mode=${mode} attempt=${attempt + 1} timeout=${left}s`);
       log(`cross-ai: argv=${JSON.stringify(argv)}`);
       const childLimit = episodeEnd() ? Math.min(runDeadline, episodeEnd()) : runDeadline;
+      const route = opts.route || 'unknown';
       const r = await runOnce(binPath, argv, input, env, ctx.cwd, name,
-        { capMs: childCap, limit: childLimit });
+        { capMs: childCap, limit: childLimit, route, model });
       // Self-test fakes only (FAKE_CALLS): a fake child stalls the post-run git snapshot only
       // while it is alive. A real run never touches the caller's home.
       if (process.env.FAKE_CALLS) {
         try { fs.rmSync(path.join(env.HOME || '', '.fake-git-hang')); } catch { /* not set */ }
       }
       if (aborting) return { ok: false, code: 128 + aborting, outBytes: r.outBytes, cli_rc: r.code };
-      const route = opts.route || 'unknown';
       const lane = confirmedRoute(route);
       const evidenceOf = (cls) => {
         const rule = cls && cls.rule ? cls.rule : '-';
@@ -3014,14 +3840,14 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         // Post-hoc over everything it printed, terminal and non-terminal rows alike.
         const captured = [r.stderr || '', r.partialErr || '', r.partialOut || ''].join('\n');
         const { events, eventRaw } = eventsWithRaw(name, r.stdout);
-        const cls = classifyStop({ cli: name, routerLane: lane, stderr: captured, events, eventRaw });
+        const cls = classifyStop({ cli: name, route, model, stderr: captured, events, eventRaw });
         if (cls.status !== 'crash') {
           hit = cls.status;
           evidence = evidenceOf(cls);
         }
       } else {
         const { events, eventRaw } = eventsWithRaw(name, r.stdout);
-        const cls = classifyStop({ cli: name, routerLane: lane, stderr: r.stderr, events, eventRaw });
+        const cls = classifyStop({ cli: name, route, model, stderr: r.stderr, events, eventRaw });
         if (cls.status !== 'crash') {
           hit = cls.status;
           evidence = evidenceOf(cls);
@@ -3306,14 +4132,14 @@ function runClassifyOnly(file) {
       log(`cross-ai: --classify-only unknown cli: ${cli}`);
       return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
-    if (entry.route !== undefined && !ROUTE_VALUES.has(entry.route)) {
+    if (entry.route !== undefined && entry.route !== 'router-inferred' && !ROUTE_VALUES.has(entry.route)) {
       log(`cross-ai: --classify-only bad route: ${entry.route}`);
       return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
     }
-    const route = entry.route === 'router' || entry.route === 'unknown'
+    const route = entry.route === 'router' || entry.route === 'unknown' || entry.route === 'router-inferred'
       ? entry.route : routeOf(cli, entry.model || '', {});
     const cls = classifyStop({
-      cli, routerLane: confirmedRoute(route), stderr: entry.stderr || '',
+      cli, route, model: entry.model || '', stderr: entry.stderr || '',
       events: extractEvents(cli, entry.stdout || ''),
     });
     lines.push(JSON.stringify({
@@ -3420,7 +4246,7 @@ const STICKY_FAKE = new Set([
   'hang', 'hangonce', 'gcescape', 'outer-race', 'stubborn', 'slowok', 'big', 'sentinelsplit',
   'limit-mid', 'limit-partial', 'limit-flood', 'limit-partial-flood', 'auth-then-noise',
   'transient-hang', 'bare-429-hang', 'retry-notice', 'retry-notice-429', 'slowquota',
-  'capclamp',
+  'capclamp', 'reason-code-hang', 'slow-lines', 'router-stop-hang',
 ]);
 let stdinBuf = '';
 const FAKE_MODES = {
@@ -3588,6 +4414,24 @@ const FAKE_MODES = {
   },
   'bare-429-hang': () => {
     process.stderr.write('429 Too Many Requests\n');
+    setInterval(() => {}, 1 << 30);
+  },
+  'reason-code-hang': () => {
+    process.stderr.write('429: {"message":"Service temporarily unavailable: all targets were skipped by pre-dispatch filters (weekly 100% ...) reset after 94h 42m 34s","type":"rate_limit_error","code":"ALL_TARGETS_SKIPPED","retry_after":340954,"reset_at":"2026-10-19T00:00:00.000Z"}\n');
+    setTimeout(() => process.exit(1), 2500);
+  },
+  'slow-lines': () => {
+    const line = 'a'.repeat(20) + '!\n';
+    process.stderr.write(line.repeat(2000));
+    setInterval(() => {}, 1 << 30);
+  },
+  'catastrophic-flood': () => {
+    const line = 'a'.repeat(41) + '!\n';
+    process.stderr.write(line.repeat(100));
+    setInterval(() => {}, 1 << 30);
+  },
+  'router-stop-hang': () => {
+    process.stderr.write('acme router stop\n');
     setInterval(() => {}, 1 << 30);
   },
   gcpipe: () => {
@@ -4013,7 +4857,7 @@ function runCaseProcess(spec, c) {
     child.stdin.end(spec.stdin ?? 'prompt\n');
     if (spec.closeStderr) waitFor(() => spec.closeStderr(c), 10000).then(() => child.stderr.destroy());
     if (spec.signal) {
-      waitFor(() => spec.signal.when(c), 10000).then((ready) => {
+      waitFor(() => spec.signal.when(c, stderr), 10000).then((ready) => {
         if (done) return;
         if (!ready) { end('signal precondition never met'); return; }
         sigMs = Date.now();
@@ -4190,6 +5034,8 @@ function selfTestAbort(code) {
 }
 
 async function blackBoxSelfTest() {
+  OVERLAY_IDS = new Set();
+  TABLE = mergeCatalog(PATTERNS, []);
   const gitBin = which('git');
   if (!gitBin) {
     process.stderr.write('self-test: git not found\n');
@@ -5472,6 +6318,233 @@ async function blackBoxSelfTest() {
         check: (_r, ctx) => {
           const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
           return runs.length === 1 ? null : `pi calls ${ctx.calls.join('|')}`;
+        },
+      },
+      {
+        // The reason-code row is not terminal, so a child that prints it and stays alive past
+        // the grace is not killed. Post-hoc classification still names that row.
+        name: 'live-reason-code-no-kill',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/reason-code-hang', '--timeout', '60'],
+        config: { retry: { max_retries: 1, session_resets: 0 } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota cli=pi model=fake\/reason-code-hang exit=75 cli_rc=1 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.elapsedMs < 2500) return `killed live at ${ctx.elapsedMs}ms`;
+          const tail = statusTail(r.stderr || '');
+          if (!tail || tail.rule !== 'omniroute-all-targets-skipped') return `rule=${tail && tail.rule}`;
+          if (tail.retry_after_s !== undefined) return `retry_after_s=${tail.retry_after_s}`;
+          const runs = ctx.calls.filter((l) => l.startsWith('pi ') && l !== 'pi rpc');
+          return runs.length === 1 ? null : `pi calls ${ctx.calls.join('|')}`;
+        },
+      },
+      {
+        name: 'overlay-expensive-rows-signal',
+        setup: (c) => {
+          const rows = [];
+          for (let i = 0; i < 40; i += 1) {
+            rows.push({
+              id: `user-catastrophic-${i}`, tier: 3, cli: '*', route: '*', provider: '*',
+              input: 'any', match: '^(a+)+$', class: 'quota', terminal: false,
+              label: 'unverified', evidence: 'probe',
+            });
+          }
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai-errors.json'), JSON.stringify(rows));
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/catastrophic-flood', '--timeout', '60'],
+        signal: {
+          when: (c) => readOr(c.calls, '').includes('pi catastrophic-flood'),
+          sig: 'SIGTERM', withinMs: 2900,
+        },
+        exit: 143,
+        status: /^AIKIT-XAI status=signal .* exit=143 .* action=stop$/,
+      },
+      {
+        name: 'overlay-sub-timeout-lines-signal',
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai-errors.json'), JSON.stringify([{
+            id: 'user-slow', tier: 3, cli: '*', route: '*', provider: '*', input: 'any',
+            match: '^(a+)+$', class: 'quota', terminal: false, label: 'unverified', evidence: 'probe',
+          }]));
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/slow-lines', '--timeout', '60'],
+        signal: {
+          // Signal only after the runner spent its overlay budget; signalling at the fake's start raced the first chunk.
+          when: (c, err) => err.includes('cross-ai: overlay disabled:'),
+          sig: 'SIGTERM', withinMs: 2900,
+        },
+        exit: 143,
+        status: /^AIKIT-XAI status=signal .* exit=143 .* action=stop$/,
+        check: (r) => {
+          const lines = (r.stderr || '').split('\n');
+          const notices = lines.filter((line) => line.startsWith('cross-ai: overlay disabled:'));
+          return notices.length === 1 ? null : `notices ${notices.length}`;
+        },
+      },
+      {
+        name: 'overlay-row-used',
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai-errors.json'), JSON.stringify([{
+            id: 'user-acme-quota', tier: 3, cli: '*', route: '*', provider: '*', input: 'any',
+            match: 'acme credits gone', class: 'quota', terminal: false,
+            label: 'unverified', evidence: 'probe',
+          }]));
+          fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify([
+            { name: 'acme', cli: 'pi', stderr: 'acme credits gone' },
+          ]));
+          return null;
+        },
+        args: ['--classify-only', 'fixtures.json'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: (r) => {
+          const line = (r.stdout || '').split('\n').find(Boolean);
+          const got = JSON.parse(line || '{}');
+          if (got.rule !== 'user-acme-quota' || got.pattern !== 'unverified') return JSON.stringify(got);
+          return (r.stderr || '').includes('cross-ai: overlay 1 rows') ? null : 'missing overlay count';
+        },
+      },
+      {
+        name: 'overlay-router-row-live',
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai-errors.json'), JSON.stringify([{
+            id: 'user-router-stop', tier: 2, cli: '*', route: 'router', provider: '*', input: 'any',
+            match: 'acme router stop', class: 'quota', terminal: true,
+            label: 'unverified', evidence: 'probe',
+          }]));
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router-stop-hang', '--route-pi', 'router',
+          '--timeout', '60'],
+        config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [600] } },
+        exit: 75,
+        status: /^AIKIT-XAI status=quota .* exit=75 .* action=stop$/,
+        check: (r, ctx) => {
+          if (ctx.elapsedMs >= 10000) return `not killed at ${ctx.elapsedMs}`;
+          const tail = statusTail(r.stderr || '');
+          return tail && tail.rule === 'user-router-stop' ? null : `rule=${tail && tail.rule}`;
+        },
+      },
+      {
+        name: 'overlay-router-row-unconfirmed',
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai-errors.json'), JSON.stringify([{
+            id: 'user-router-stop', tier: 2, cli: '*', route: 'router', provider: '*', input: 'any',
+            match: 'acme router stop', class: 'quota', terminal: true,
+            label: 'unverified', evidence: 'probe',
+          }]));
+          return null;
+        },
+        args: ['--prefer', 'pi', '--model-pi', 'fake/router-stop-hang', '--timeout', '3'],
+        exit: 124,
+        status: /^AIKIT-XAI status=timeout .* action=stop$/,
+        check: (r) => {
+          const tail = statusTail(r.stderr || '');
+          return tail && tail.rule === '-' ? null : `unconfirmed rule=${tail && tail.rule}`;
+        },
+      },
+      {
+        name: 'overlay-bad-row-refused',
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          const file = path.join(dir, 'cross-ai-errors.json');
+          const good = {
+            id: 'user-kept', tier: 3, cli: '*', route: '*', provider: '*', input: 'any',
+            match: 'acme kept', class: 'quota', terminal: false, label: 'unverified', evidence: 'probe',
+          };
+          fs.writeFileSync(file, JSON.stringify([
+            { ...good, id: 'user-doom', class: 'doom' },
+            { ...good, id: 'user-nolabel', label: undefined },
+            { ...good, id: 'code-429' },
+            { ...good, id: 'user-direct', route: 'direct' },
+            good,
+          ]));
+          fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify([
+            { name: 'kept', cli: 'pi', stderr: 'acme kept' },
+          ]));
+          c.overlayFile = file;
+          return null;
+        },
+        args: ['--classify-only', 'fixtures.json'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: (r, ctx) => {
+          const got = JSON.parse((r.stdout || '').split('\n').find(Boolean) || '{}');
+          if (got.rule !== 'user-kept') return `rule=${got.rule}`;
+          const err = r.stderr || '';
+          for (const id of ['user-doom', 'user-nolabel', 'code-429', 'user-direct']) {
+            const line = err.split('\n').find((item) => item.startsWith(`cross-ai: overlay row ${id} refused`));
+            if (!line || !line.includes(ctx.overlayFile)) return `missing refusal ${id}`;
+          }
+          return err.includes('cross-ai: overlay 1 rows') ? null : 'good row dropped';
+        },
+      },
+      {
+        name: 'overlay-malformed',
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai-errors.json'), '[');
+          fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify([
+            { name: 'plain', cli: 'pi', stderr: '402 payment required' },
+          ]));
+          return null;
+        },
+        args: ['--classify-only', 'fixtures.json'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: (r) => {
+          if (!(r.stderr || '').includes('not a JSON array')) return 'missing notice';
+          const got = JSON.parse((r.stdout || '').split('\n').find(Boolean) || '{}');
+          return got.status === 'billing' && got.rule === 'text-payment-required' ? null : JSON.stringify(got);
+        },
+      },
+      {
+        name: 'overlay-position',
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, 'cross-ai-errors.json'), JSON.stringify([
+            {
+              id: 'user-usage-acme', tier: 3, cli: '*', route: '*', provider: '*', input: 'any',
+              match: 'usage limit \\(acme\\)', class: 'quota', terminal: false,
+              label: 'unverified', evidence: 'probe',
+            },
+            {
+              id: 'user-bare-403', tier: 6, cli: '*', route: '*', provider: '*', input: 'any',
+              match: '\\b403\\b', class: 'quota', terminal: false,
+              label: 'unverified', evidence: 'probe',
+            },
+          ]));
+          fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify([
+            { name: 'acme', cli: 'pi', stderr: 'usage limit (acme)' },
+            {
+              name: 'kimi', cli: 'pi',
+              stderr: "[403]: You've reached your 5-hour usage limit.",
+            },
+          ]));
+          return null;
+        },
+        args: ['--classify-only', 'fixtures.json'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: (r) => {
+          const lines = (r.stdout || '').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+          if (lines[0]?.rule !== 'user-usage-acme') return `acme ${lines[0]?.rule}`;
+          if (lines[1]?.rule !== 'text-usage-limit') return `kimi ${lines[1]?.rule}`;
+          return null;
         },
       },
       {
@@ -7712,6 +8785,8 @@ async function main(argv) {
     log(`cross-ai: ${e.message}`);
     return reportAndFinish('usage', { ...liveFields, tree: 'unknown', exit: 2 });
   }
+  OVERLAY_IDS = new Set();
+  TABLE = mergeCatalog(PATTERNS, loadOverlay(process.env));
   if (o.selfTest) return blackBoxSelfTest();
   if (o.classifyOnly !== null) return runClassifyOnly(o.classifyOnly);
   childPgidFile = o.childPgidFile;
