@@ -4,26 +4,36 @@ Per-host patterns for section 2 and section 3 of [`../SKILL.md`](../SKILL.md). T
 is the same everywhere; only the background primitive differs. A host without one uses the
 foreground wait below.
 
-Record the PID the launch prints, and kill a lane by that PID only. Each parallel lane gets its
-own status file and its own PID. Never edit the tree while a review lane runs.
+Every lane writes its files into its own scratch directory outside the tracked tree (a temp dir,
+or a gitignored one such as `tmp/<lane>/`): a file created in the tree while a review lane runs
+dirties the tree and stops that review with `contract_violation tree=dirty`. A lane's files are:
+- `lane.out`: the answer (stdout);
+- `lane.err`: the evidence (stderr), whose last line is the `AIKIT-XAI` status line;
+- `lane.rc`: the exit code, written by the launch itself.
 
-The examples below are copied from hermetic runner runs against a fake CLI.
+The exit code is also the `exit=` field of that last line. Stop a lane only through its own
+launch: its background task, or the PID of the foreground command you started.
+
+The report line below is copied from a hermetic runner run against a fake CLI; the ok line shows
+the shape of a finished exec lane, with illustrative values.
 
 ## Claude Code
 
-Claude Code's background Bash runs the lane and posts a completion notice. Launch it in the
-background, keep the recorded PID, and read the status only after the notice arrives.
+Claude Code's background Bash runs one command and posts a completion notice when that command
+exits. Make the runner itself that command: no trailing `&`, or the shell exits at once and the
+notice fires while the lane still runs. Read the lane's files only after the notice arrives.
 
 ```bash
+L=tmp/lane-pi; mkdir -p "$L"
 node .planning/scripts/cross-ai.mjs --runtime pi --model "$MODEL" --mode exec \
-  < prompt.md > lane.out 2> lane.err &
-echo $! > lane.pid
+  < prompt.md > "$L/lane.out" 2> "$L/lane.err"; echo $? > "$L/lane.rc"
 ```
 
-When the completion notice arrives, read `lane.err`. Its last line is the status, for example:
+The background task identifies the lane; stop a lane by stopping its task. When the notice
+arrives, read `lane.rc`, then the last line of `lane.err`, for example:
 
 ```
-AIKIT-XAI status=ok cli=- model=- exit=0 cli_rc=- elapsed=0s out=0 tree=clean action=stop route=unknown rule=- pattern=none attempts=0 cycles=0
+AIKIT-XAI status=ok cli=pi model=fake/ok exit=0 cli_rc=0 elapsed=1s out=12 tree=clean action=stop route=unknown rule=- pattern=none attempts=1 cycles=0
 ```
 
 A stop carries the report line before it:
@@ -38,76 +48,39 @@ re-invoke the same lane. No other wake exists.
 ## pi
 
 unverified. pi's help shows no notification or one-shot scheduling feature, so pi uses the
-foreground wait: the command blocks, and its PID file records the lane.
-
-```bash
-node .planning/scripts/cross-ai.mjs --runtime pi --model "$MODEL" --mode exec \
-  < prompt.md > lane.out 2> lane.err &
-echo $! > lane.pid
-wait "$(cat lane.pid)"
-```
-
-Then read `lane.err` the same way. Print `retry_after_s`, the state path and the re-invoke
-command; do not schedule anything.
+foreground wait below with `--runtime pi`. Print `retry_after_s`, the state path and the
+re-invoke command; do not schedule anything.
 
 ## opencode
 
 unverified. opencode's help shows no notification or one-shot scheduling feature, so opencode
-uses the same foreground wait, with `--runtime opencode` and its own PID file.
-
-```bash
-node .planning/scripts/cross-ai.mjs --runtime opencode --model "$MODEL" --mode exec \
-  < prompt.md > lane.out 2> lane.err &
-echo $! > lane.pid
-wait "$(cat lane.pid)"
-```
+uses the foreground wait below with `--runtime opencode`.
 
 ## cursor
 
 unverified. No background primitive is documented for cursor, so cursor uses the foreground wait
-with `--runtime cursor` and its own PID file.
-
-```bash
-node .planning/scripts/cross-ai.mjs --runtime cursor --model "$MODEL" --mode exec \
-  < prompt.md > lane.out 2> lane.err &
-echo $! > lane.pid
-wait "$(cat lane.pid)"
-```
+below with `--runtime cursor`.
 
 ## codex
 
 unverified. No background primitive is documented for codex, so codex uses the foreground wait
-with `--runtime codex` and its own PID file.
-
-```bash
-node .planning/scripts/cross-ai.mjs --runtime codex --model "$MODEL" --mode exec \
-  < prompt.md > lane.out 2> lane.err &
-echo $! > lane.pid
-wait "$(cat lane.pid)"
-```
+below with `--runtime codex`.
 
 ## copilot
 
 unverified. No background primitive is documented for copilot, so copilot uses the foreground
-wait with `--runtime copilot` and its own PID file. Copilot takes the prompt on argv, which the
-runner passes for it; the prompt is then visible in the process table.
-
-```bash
-node .planning/scripts/cross-ai.mjs --runtime copilot --model "$MODEL" --mode exec \
-  < prompt.md > lane.out 2> lane.err &
-echo $! > lane.pid
-wait "$(cat lane.pid)"
-```
+wait below with `--runtime copilot`. Copilot takes the prompt on argv, which the runner passes
+for it; the prompt is then visible in the process table.
 
 ## A host without a background primitive
 
-unverified. A host not listed above gets the foreground wait: start the runner, record its PID,
-and `wait` on that PID. Read `lane.err` afterwards. Print `retry_after_s`, the state path and the
-re-invoke command instead of scheduling a wake.
+unverified. Any host above but Claude Code, and any host not listed, gets the foreground wait:
+run the runner as a plain command, which blocks until the lane exits, and record its exit code.
+Then read `lane.rc` and `lane.err`. Print `retry_after_s`, the state path and the re-invoke
+command instead of scheduling a wake.
 
 ```bash
+L=tmp/lane-"$RUNTIME"; mkdir -p "$L"
 node .planning/scripts/cross-ai.mjs --runtime "$RUNTIME" --model "$MODEL" --mode exec \
-  < prompt.md > lane.out 2> lane.err &
-echo $! > lane.pid
-wait "$(cat lane.pid)"
+  < prompt.md > "$L/lane.out" 2> "$L/lane.err"; echo $? > "$L/lane.rc"
 ```

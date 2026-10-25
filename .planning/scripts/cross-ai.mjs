@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=7f88cea0ab3e7e83a385fb954d1d23af39a89788dcdbd687337586af4e7f517f
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=3fd4bb09fcff8ee85594645977d4a1336f5dad4b37694082955a1c1268676a72
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
@@ -1551,7 +1551,7 @@ function replaceCopies(text, values) {
   let out = text;
   for (const value of values) {
     if (!value) continue;
-    const escaped = value.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&');
+    const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     out = out.replace(new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, 'g'), '<redacted>');
   }
   return out;
@@ -1822,7 +1822,7 @@ function extractEvents(cli, stdout, terminalOnly = false) {
 function eventsWithRaw(cli, stdout, terminalOnly = false) {
   const events = [];
   const eventRaw = [];
-  for (const raw of String(stdout || '').split('\\n')) {
+  for (const raw of String(stdout || '').split('\n')) {
     const extracted = extractEvents(cli, raw, terminalOnly);
     for (const event of extracted) {
       events.push(event);
@@ -1863,7 +1863,7 @@ function capCodePoints(text, n) { return Array.from(String(text)).slice(0, n).jo
 function upstreamOf(cls, r, cli) {
   let raw = r.liveHit?.raw || cls?.raw || '';
   if (!raw) {
-    const stderr = String(r.stderr || '').split('\\n').filter((line) => line.trim());
+    const stderr = String(r.stderr || '').split('\n').filter((line) => line.trim());
     raw = stderr.at(-1) || '';
   }
   if (!raw) {
@@ -2725,6 +2725,36 @@ function classifyCases() {
       },
     },
     {
+      // Each event keeps its own stdout line as its raw text, never the whole multi-line output.
+      name: 'pure-events-with-raw-per-line',
+      pure: () => {
+        const first = ocError({ message: 'first' });
+        const second = ocError({ message: 'second' });
+        const got = eventsWithRaw('opencode', `${first}\n${second}\n`);
+        return got.eventRaw.length === 2 && got.eventRaw[0] === first && got.eventRaw[1] === second
+          ? null : JSON.stringify(got.eventRaw);
+      },
+    },
+    {
+      name: 'pure-capture-cap',
+      pure: () => {
+        const buf = { chunks: [], bytes: 0, dropped: false };
+        for (const s of ['aaaa', 'bbbb', 'cccc']) pushCapped(buf, Buffer.from(s), 8);
+        const kept = Buffer.concat(buf.chunks).toString();
+        return kept === 'bbbbcccc' && buf.bytes === 8 && buf.dropped ? null : `${kept} ${buf.bytes} ${buf.dropped}`;
+      },
+    },
+    {
+      // A copied value is matched literally, metacharacters included, and never throws.
+      name: 'pure-replace-copies-literal',
+      pure: () => {
+        const values = ['a(b', 'q[1]', 'x.y', 'c\\d'];
+        let got;
+        try { got = replaceCopies('1 a(b 2 q[1] 3 x.y 4 xzy 5 c\\d', values); } catch (e) { return `threw: ${e.message}`; }
+        return got === '1 <redacted> 2 <redacted> 3 <redacted> 4 xzy 5 <redacted>' ? null : got;
+      },
+    },
+    {
       name: 'pure-redact-idempotent',
       pure: () => {
         const once = redactSecrets('{"accountId":"acct-77","token":"secret"}');
@@ -2816,25 +2846,36 @@ function liveOuterTimeoutS(cwd, env) {
 // A missing file is silent and is tested before realpathSync, which throws ENOENT when
 // .planning itself is absent (the common case). With rootDir, the file's real path must stay
 // inside the root's real path: a stow-style symlink out of it is refused by name.
+function confinementError(file, rootDir) {
+  let realFile;
+  let realRoot;
+  try {
+    realFile = fs.realpathSync(file);
+    realRoot = fs.realpathSync(rootDir);
+  } catch (e) {
+    return `unreadable (${e.code || e.message})`;
+  }
+  const rel = path.relative(realRoot, realFile);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    return `resolves outside ${rootDir} (retry config reads are confined; a symlink out of ` +
+      'it is not followed)';
+  }
+  return null;
+}
+
+// A config read never blocks or fills memory before the deadlines exist.
+const CONFIG_READ_MAX = 1024 * 1024;
+
 function readJsonObject(file, rootDir = null) {
   if (!fs.existsSync(file)) return { obj: null };
   if (rootDir != null) {
-    let realFile;
-    let realRoot;
-    try {
-      realFile = fs.realpathSync(file);
-      realRoot = fs.realpathSync(rootDir);
-    } catch (e) {
-      return { error: `unreadable (${e.code || e.message})` };
-    }
-    const rel = path.relative(realRoot, realFile);
-    if (rel.startsWith('..') || path.isAbsolute(rel)) {
-      return {
-        error: `resolves outside ${rootDir} (retry config reads are confined; a symlink out of ` +
-          'it is not followed)',
-      };
-    }
+    const error = confinementError(file, rootDir);
+    if (error) return { error };
   }
+  let stat;
+  try { stat = fs.statSync(file); } catch (e) { return { error: `unreadable (${e.code || e.message})` }; }
+  if (!stat.isFile()) return { error: 'not a regular file' };
+  if (stat.size > CONFIG_READ_MAX) return { error: `larger than ${CONFIG_READ_MAX} bytes` };
   const parsed = parseJson(readOr(file, ''));
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { error: 'not a JSON object' };
   return { obj: parsed };
@@ -2846,14 +2887,20 @@ function loadOverlay(env) {
   const root = path.join(configHome, 'ai-kit');
   const file = path.join(root, 'cross-ai-errors.json');
   if (!fs.existsSync(file)) return [];
-  const confined = readJsonObject(file, root);
-  if (confined.error && confined.error.startsWith('resolves outside')) {
-    log(`cross-ai: overlay ignored (${file}): ${confined.error}`);
+  // Confinement, file type and size are checked before any byte is read: a FIFO or a huge file
+  // must never block or fill memory before the deadlines exist.
+  const confined = confinementError(file, root);
+  if (confined) {
+    log(`cross-ai: overlay ignored (${file}): ${confined}`);
     return [];
   }
   let stat;
   try { stat = fs.statSync(file); } catch (e) {
     log(`cross-ai: overlay ignored (${file}): unreadable (${e.code || e.message})`);
+    return [];
+  }
+  if (!stat.isFile()) {
+    log(`cross-ai: overlay ignored (${file}): not a regular file`);
     return [];
   }
   if (stat.size > 65536) {
@@ -3232,6 +3279,18 @@ function drainStream(stream, ms) {
   });
 }
 
+// A noisy child must not exhaust memory before the status line: keep only the newest bytes per stream.
+const CAPTURE_MAX_BYTES = 32 * 1024 * 1024;
+
+function pushCapped(buf, d, max = CAPTURE_MAX_BYTES) {
+  buf.chunks.push(d);
+  buf.bytes += d.length;
+  while (buf.bytes > max && buf.chunks.length > 1) {
+    buf.bytes -= buf.chunks.shift().length;
+    buf.dropped = true;
+  }
+}
+
 function runChild(bin, argv, opts = {}) {
   const capMs = opts.capMs ?? Number.POSITIVE_INFINITY;
   const limit = opts.limit ?? finalizeBy;
@@ -3248,8 +3307,8 @@ function runChild(bin, argv, opts = {}) {
     let spawnErr = null;
     let code = null;
     let signal = null;
-    const outChunks = [];
-    const errChunks = [];
+    const out = { chunks: [], bytes: 0, dropped: false };
+    const err = { chunks: [], bytes: 0, dropped: false };
 
     // Caps are read when each wait starts, so a signal mid-finalize shortens what is left.
     const finalize = async (reason) => {
@@ -3274,10 +3333,13 @@ function runChild(bin, argv, opts = {}) {
         noteChildPgid('exit', child.pid);
       }
       if (current === child) current = null;
+      for (const [label, buf] of [['stdout', out], ['stderr', err]]) {
+        if (buf.dropped) log(`cross-ai: child ${label} passed ${CAPTURE_MAX_BYTES} bytes; kept the newest ${buf.bytes}`);
+      }
       resolve({
         code, signal, timedOut, limited, spawnErr,
-        stdout: Buffer.concat(outChunks).toString('utf8'),
-        stderr: Buffer.concat(errChunks).toString('utf8'),
+        stdout: Buffer.concat(out.chunks).toString('utf8'),
+        stderr: Buffer.concat(err.chunks).toString('utf8'),
       });
     };
 
@@ -3306,11 +3368,11 @@ function runChild(bin, argv, opts = {}) {
       child.stdin.end();
     }
     child.stdout.on('data', (d) => {
-      outChunks.push(d);
+      pushCapped(out, d);
       opts.onStdout?.(d);
     });
     child.stderr.on('data', (d) => {
-      errChunks.push(d);
+      pushCapped(err, d);
       opts.onStderr?.(d);
     });
     child.on('error', (e) => { spawnErr = e; finalize('error'); });
@@ -3737,9 +3799,11 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
     promptArg: '<prompt>',
   };
   const env = childEnv(rt.env, process.env);
-  const reviewProblem = (argv) => {
+  // A resume argv is checked against the runtime's own resume formula, so its session flag is
+  // trusted and only extras beyond the formula count as a widening.
+  const reviewProblem = (argv, sid = null) => {
     if (mode !== 'review') return null;
-    const base = rt.review(model, ctx);
+    const base = sid ? rt.resume(model, ctx, sid, mode) : rt.review(model, ctx);
     return reviewArgvProblem(argv, base, rt.reviewExtras || []);
   };
   const refuseReview = (problem) => {
@@ -4086,9 +4150,15 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
       // The first series is spent, so whatever follows continues the task.
       if (ladder.retry >= retryCfg.max_retries) gated = true;
       const opensSeries = !continued && (step.next === 'reset' || (step.next === 'new' && !gated));
-      if (opensSeries && mode === 'exec') {
+      // Every fresh session is gated, not only the one that opens a series: a later failed
+      // attempt's own out-of-scope edit must stop the next fresh start too.
+      const fresh = step.next === 'reset' || step.next === 'new';
+      if (fresh && mode === 'exec') {
         const base = step.next === 'reset' ? seriesSig : seenSig;
-        const gate = await rung2Gate(ctx.cwd, base, userPrompt, seenSig);
+        // The tree now, after the failed attempt: its own edits are what the gate must judge.
+        const now = await treeState(ctx.cwd, runDeadline);
+        const nowSig = now ? stateSig(now) : null;
+        const gate = await rung2Gate(ctx.cwd, base, userPrompt, nowSig);
         if (gate.stop) {
           log(`cross-ai: ladder ${name} stop why=dirty-tree`);
           const stopped = cls === 'quota' ? 'quota' : gate.status;
@@ -4097,9 +4167,11 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
             ...evidence, ...counts(), stopped: 'dirty-tree',
           };
         }
-        seriesInput = gate.input;
-        gated = true;
-        seriesSig = seenSig;
+        if (opensSeries) {
+          seriesInput = gate.input;
+          gated = true;
+          seriesSig = nowSig;
+        }
       }
       // A later series of one call continues the task, so it carries the resume note. The
       // gate's own text wins when the tree changed.
@@ -4119,7 +4191,7 @@ async function runCli(name, rt, binPath, model, mode, prompt, opts = {}) {
         // same-session retry gets the plain resume note.
         const resumed = gated ? seriesInput : RESUME_MSG;
         const retry = sameSessionArgv(name, rt, model, ctx, sid, mode, resumed);
-        const resumeProblem = reviewProblem(retry.argv);
+        const resumeProblem = reviewProblem(retry.argv, sid);
         if (resumeProblem) return refuseReview(resumeProblem);
         argv = retry.argv;
         input = retry.input;
@@ -4185,7 +4257,7 @@ async function rung2Gate(cwd, beforeSig, prompt, midSig) {
   const stop = (status) => ({ stop: true, status });
   if (!inGitTree(cwd) || beforeSig === null) return stop('transient');
   const beforeTree = String(beforeSig).split('\t').slice(1).join('\t');
-  // The caller's snapshot when it has one: re-reading here races the next attempt's edits.
+  // The caller's snapshot when it has one, taken after the failed attempt and before the next.
   const mid = midSig !== undefined ? midSig : await (async () => {
     const read = await treeState(cwd, runDeadline);
     return read === null ? null : stateSig(read);
@@ -4816,7 +4888,7 @@ if (sub[0] === 'models') {
     console.log('composer-2.5 - Composer 2.5');
   } else if (process.env.FAKE_CURSOR_LIST !== 'empty') {
     for (const id of [
-      'fake-ok-cursor', 'fake-err-cursor', 'fake-event400-cursor', 'composer-2.5',
+      'fake-ok-cursor', 'fake-err-cursor', 'fake-event400-cursor', 'fake-flaky-cursor', 'fake-dirty400-cursor', 'fake-latedirty-cursor', 'composer-2.5',
     ]) console.log(id + ' - label');
   }
   process.exit(0);
@@ -4831,6 +4903,32 @@ process.stdin.on('data', () => {}).on('end', () => {
   if (model === 'fake-event400-cursor') {
     process.stderr.write('[400]: event: error\n');
     process.exit(1);
+  }
+  if (model === 'fake-latedirty-cursor') {
+    const ctr = process.env.HOME + '/.fake-latedirty-cursor-count';
+    const n = fs.existsSync(ctr) ? Number(fs.readFileSync(ctr, 'utf8')) : 0;
+    fs.writeFileSync(ctr, String(n + 1));
+    if (n >= 1) fs.appendFileSync('a.txt', 'late-dirty\n');
+    process.stderr.write('[400]: event: error\n');
+    process.exit(1);
+  }
+  if (model === 'fake-dirty400-cursor') {
+    fs.appendFileSync('a.txt', 'dirty\n');
+    process.stderr.write('[400]: event: error\n');
+    process.exit(1);
+  }
+  if (model === 'fake-flaky-cursor') {
+    const ctr = process.env.HOME + '/.fake-flaky-cursor-count';
+    const n = fs.existsSync(ctr) ? Number(fs.readFileSync(ctr, 'utf8')) : 0;
+    fs.writeFileSync(ctr, String(n + 1));
+    log('cursor-agent flaky resume=' + (argOf('--resume') || '-'));
+    if (n === 0) {
+      process.stderr.write('503 Service Unavailable\n');
+      console.log(JSON.stringify({ type: 'result', is_error: true, result: '503 Service Unavailable', session_id: 'c3' }));
+      process.exit(1);
+    }
+    console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '## Summary\nok', session_id: 'c3' }));
+    process.exit(0);
   }
   fs.appendFileSync('a.txt', 'cursor\n');
   console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '## Summary\nok', session_id: 'c1' }));
@@ -6647,8 +6745,9 @@ async function blackBoxSelfTest() {
         status: /^AIKIT-XAI status=quota .* action=stop$/,
         check: (r) => {
           const body = (r.stderr || '').split('\n').find((line) => line.startsWith('cross-ai: upstream body='));
-          return body && JSON.parse(body.slice(body.indexOf('=') + 1)).includes('The usage limit has been reached')
-            ? null : 'matched event provenance lost';
+          const text = body ? JSON.parse(body.slice(body.indexOf('=') + 1)) : '';
+          if (!text.includes('The usage limit has been reached')) return 'matched event provenance lost';
+          return text.includes('unrelated event') ? 'body holds the earlier event too' : null;
         },
       },
       {
@@ -6998,6 +7097,24 @@ async function blackBoxSelfTest() {
           }
           return err.includes('cross-ai: overlay 1 rows') ? null : 'good row dropped';
         },
+      },
+      {
+        // A FIFO overlay is refused by type before any read, so it can never block the runner.
+        name: 'overlay-fifo-refused',
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          const made = spawnSync('mkfifo', [path.join(dir, 'cross-ai-errors.json')]);
+          if (made.status !== 0) return 'mkfifo unavailable';
+          fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify([
+            { name: 'plain', cli: 'pi', stderr: '402 payment required' },
+          ]));
+          return null;
+        },
+        args: ['--classify-only', 'fixtures.json'],
+        exit: 0,
+        status: /^AIKIT-XAI status=ok .* action=stop$/,
+        check: (r) => ((r.stderr || '').includes('not a regular file') ? null : 'missing notice'),
       },
       {
         name: 'overlay-malformed',
@@ -7583,6 +7700,38 @@ async function blackBoxSelfTest() {
         },
       },
       {
+        // The failed attempt's own edit is judged before a fresh session opens: cursor has no
+        // session, so its next rung is new, and an edit the prompt never names stops it.
+        name: 'ladder-new-dirty-cursor',
+        stdin: 'prompt\n',
+        args: ['--runtime', 'cursor', '--model', 'fake-dirty400-cursor', '--no-preamble'],
+        config: { retry: { max_retries: 2, session_resets: 0, base_s: 0 } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=cursor model=fake-dirty400-cursor ' +
+          'exit=75 .* tree=dirty action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'cursor-agent fake-dirty400-cursor').length;
+          if (n !== 1) return `calls=${n}`;
+          return (r.stderr || '').includes('why=dirty-tree') ? null : 'missing dirty-tree line';
+        },
+      },
+      {
+        // Every fresh session is gated, not only the first: an edit made by a later failed
+        // attempt stops the next one.
+        name: 'ladder-later-dirty-cursor',
+        stdin: 'prompt\n',
+        args: ['--runtime', 'cursor', '--model', 'fake-latedirty-cursor', '--no-preamble'],
+        config: { retry: { max_retries: 3, session_resets: 0, base_s: 0 } },
+        exit: 75,
+        status: new RegExp('^AIKIT-XAI status=transient cli=cursor model=fake-latedirty-cursor ' +
+          'exit=75 .* tree=dirty action=stop$'),
+        check: (r, ctx) => {
+          const n = ctx.calls.filter((l) => l === 'cursor-agent fake-latedirty-cursor').length;
+          if (n !== 2) return `calls=${n}`;
+          return (r.stderr || '').includes('why=dirty-tree') ? null : 'missing dirty-tree line';
+        },
+      },
+      {
         // Outside a git work tree nothing can account for an edit, so no fresh session starts.
         name: 'ladder-non-git',
         setup: (c) => {
@@ -8055,6 +8204,18 @@ async function blackBoxSelfTest() {
         },
       },
       {
+        // A review-mode same-session retry carries the runtime's own resume flag, never a widening.
+        name: 'review-resume-cursor',
+        args: ['--mode', 'review', '--runtime', 'cursor', '--model', 'fake-flaky-cursor'],
+        config: { retry: { max_retries: 1, session_resets: 0, base_s: 0 } },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=cursor model=fake-flaky-cursor exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const calls = ctx.calls.filter((l) => l.startsWith('cursor-agent flaky'));
+          return calls.join('|') === 'cursor-agent flaky resume=-|cursor-agent flaky resume=c3' ? null : calls.join('|');
+        },
+      },
+      {
         name: 'claude-exec-usage',
         args: ['--prefer', 'claude', '--mode', 'exec', '--model-claude', 'fake-ok'],
         exit: 2,
@@ -8390,6 +8551,21 @@ async function blackBoxSelfTest() {
           }
           return retryLine(r, 'base_s=0') || retryLine(r, 'max_retries=1');
         },
+      },
+      {
+        // A FIFO user retry file is refused by type before any read and the run goes on.
+        name: 'retry-config-fifo',
+        args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
+        stdin: 'do the thing\n',
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* action=stop$/,
+        setup: (c) => {
+          const dir = path.join(c.home, '.config', 'ai-kit');
+          fs.mkdirSync(dir, { recursive: true });
+          const made = spawnSync('mkfifo', [path.join(dir, 'cross-ai.json')]);
+          return made.status === 0 ? null : 'mkfifo unavailable';
+        },
+        check: (r) => ((r.stderr || '').includes('not a regular file') ? null : 'missing notice'),
       },
       {
         name: 'retry-config-malformed',

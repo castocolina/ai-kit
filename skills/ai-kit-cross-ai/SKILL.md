@@ -30,8 +30,9 @@ CLI's flags, so this skill does not restate them. `--mode exec|review` and
 `--tools-profile exec|review|none` select the contract and the tool set; the mode picks the
 default profile.
 
-Changing the runtime is a config edit done by the agent (the project hook or the plan), never a
-choice the runner makes after a failure.
+The runtime and model are the owner's choice, set in the project hook or the plan before a run.
+Neither the runner nor a caller changes them in response to a failure: a failure ends in sections
+6-8, and only the owner changes the configuration afterwards.
 
 ## 2. Launch
 
@@ -40,29 +41,33 @@ Run the project copy `.planning/scripts/cross-ai.mjs`. A project without one use
 prompt on argv while stdin is inherited: a runtime that takes the prompt on argv (copilot) has
 its stdin ignored by the runner.
 
-Launch in the background where the host has a background primitive, then record the PID. The
-per-host pattern is [`references/launch-and-wait.md`](references/launch-and-wait.md).
+Give each lane its own scratch directory outside the tracked tree (a temp dir or a gitignored
+one): a file created in the tree while a review lane runs stops that review. Write the exit code
+with the launch. MANDATORY before the first launch on a host: read
+[`references/launch-and-wait.md`](references/launch-and-wait.md) for that host's background or
+foreground pattern.
 
 ```bash
+L=tmp/lane-pi; mkdir -p "$L"
 node .planning/scripts/cross-ai.mjs --runtime pi --model "$MODEL" --mode exec \
-  < prompt.md > lane.out 2> lane.err
+  < prompt.md > "$L/lane.out" 2> "$L/lane.err"; echo $? > "$L/lane.rc"
 ```
 
 ## 3. Wait
 
-The runner has two timeouts. `--timeout` is the inner deadline and `--outer-timeout` replaces it
-as the outer deadline; without either, the runner reads GSD's `workflow.cross_ai_timeout` and
-falls back to gsd-core's 300 s default. There is no idle watchdog. A heartbeat of
+The outer deadline is `min(CONFIG outerTimeoutS, GSD's workflow.cross_ai_timeout or gsd-core's
+300 s default)`; `--outer-timeout` replaces that lookup and the CONFIG cap. `--timeout` sets the
+inner deadline and can only lower it, never raise it. There is no idle watchdog. A heartbeat of
 `cross-ai: pi running 30s, stdout +0 bytes` is normal for `pi -p`: no new stdout is not a stall.
 
-Each parallel lane gets its own status file and its own PID. Never edit the tree while a review
-lane runs: the runner stops a review whose tree changed with
+Each parallel lane gets its own scratch directory (`lane.out`, `lane.err`, `lane.rc`). Never
+edit the tree while a review lane runs: the runner stops a review whose tree changed with
 `contract_violation tree=dirty`.
 
 ## 4. Read the result
 
-Read the exit code, then the last stderr line. Both are already on disk: the status file, the
-`.err` file and the last stderr line. Re-reading is safe and never re-runs the lane. The `.err`
+Read the exit code (`lane.rc`, equal to the `exit=` field of the last line), then the last line
+of `lane.err`. Both are already on disk, and re-reading never re-runs the lane. The `.err`
 file carries the whole evidence trailer. Python's 2048-character `stderr_tail` is not an evidence
 channel, so read the file, not a truncated tail.
 
@@ -101,7 +106,7 @@ Exit codes, and what the caller does with each:
 
 A review lane's answer is the report to merge; an execution lane's answer is the change to
 verify. Chain the next step only after section 4 has been read. A lane that is still running is
-not chained: wait for its own PID and read its own status file.
+not chained: wait for its own launch to exit and read its own `lane.rc` and `lane.err`.
 
 ## 6. Hard tier and notice
 
