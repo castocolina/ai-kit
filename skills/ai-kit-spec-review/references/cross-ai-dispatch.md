@@ -244,7 +244,7 @@ below), this reviewer's slot failed to dispatch. The report body is on stdout, i
 `iter<N>-<key>.err`. Read those evidence lines first. Exit 75 is not uniformly terminal: when
 the last `AIKIT-XAI` line has `route=router` and `retry_after_s=`, keep the report and follow
 the [pending router lane](#pending-router-lane--lifecycle-and-resume) section below. The rules
-themselves are [`subprocess-quota-policy.md`](subprocess-quota-policy.md); this file does not
+themselves are [`../../ai-kit-cross-ai/references/subprocess-quota-policy.md`](../../ai-kit-cross-ai/references/subprocess-quota-policy.md); this file does not
 restate them. Any exit 75 without `retry_after_s=` (an off-router quota stop, or an exhausted
 transient ladder on any route) is terminal. Every other nonzero
 exit deletes `$RUN_TMP_DIR/iter<N>-<key>.md` (the `>` redirect already created it):
@@ -354,7 +354,7 @@ its stderr instead (quota, auth, configuration, and the remaining closed reasons
 
 Template 7 also prints evidence tokens `route`, `rule`, `pattern`, `attempts` and `cycles`, and one
 `cross-ai: attempt` line per failed attempt plus one `cross-ai: report` line on a stop. What each
-means is in [`subprocess-quota-policy.md`](subprocess-quota-policy.md).
+means is in [`../../ai-kit-cross-ai/references/subprocess-quota-policy.md`](../../ai-kit-cross-ai/references/subprocess-quota-policy.md).
 
 No status line at all falls back to the exit code. This is the no-status-line case only: a
 runner lane always prints its `AIKIT-XAI` line, and that line's `status` wins over this table.

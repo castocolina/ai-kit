@@ -450,7 +450,7 @@ answer to its retry/skip/abort prompt.
 The runner uses one CLI per call. It retries a transient failure, and a quota failure only on a
 confirmed router lane, in the same session and then in new sessions, on that same CLI and model;
 it never selects another lane itself. The ladder is
-`../ai-kit-spec-review/references/subprocess-quota-policy.md` (`$(dirname "$TOOLS_PY")/references/`).
+`../ai-kit-cross-ai/references/subprocess-quota-policy.md` (`$(dirname "$TOOLS_PY")/../ai-kit-cross-ai/references/`).
 **MANDATORY when a cross-AI run stops**: read that policy before acting.
 When GSD's cross-AI step fails, relay the runner's `cross-ai: report` and `AIKIT-XAI` lines
 verbatim, then run the Step 1 `write-resumable-state` block with `RESUME_VIA=gsd-execute-phase`

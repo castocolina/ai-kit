@@ -336,7 +336,7 @@ For each entry in `REVIEWER_LIST`:
      section — the injection hazard behind rule (1) and the tier math behind rule (2).
 
   **MANDATORY before acting on any subprocess stop**: read
-  [`references/subprocess-quota-policy.md`](references/subprocess-quota-policy.md). It is the
+  [`../ai-kit-cross-ai/references/subprocess-quota-policy.md`](../ai-kit-cross-ai/references/subprocess-quota-policy.md). It is the
   caller contract; link it, do not restate it. The owner rule, in one line: a failed or unusable
   run never switches harness, provider or model and never moves the work to the native session
   on its own; the runner owns the ladder, and the owner decides.

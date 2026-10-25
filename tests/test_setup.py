@@ -1677,6 +1677,21 @@ class TestSyncPiLinks(unittest.TestCase):
         self.assertEqual(os.readlink(outside), self.other_target)
         self.assertEqual(c["unlinked"], 0)
 
+    def test_cross_ai_skill_links_on_pi(self):
+        # ai-kit-cross-ai is a PI_SKILLS name: a repo entry plus a claude link
+        # mirrors into the pi skills dir, pointing at the kit.
+        target = os.path.join(self.install, "skills", "ai-kit-cross-ai")
+        os.makedirs(target)
+        os.symlink(target, os.path.join(self.claude, "skills", "ai-kit-cross-ai"))
+        entries = {"skills": [("ai-kit-cross-ai", target)],
+                   "commands": [], "agents": []}
+        c = setup.new_counts()
+        setup.sync_pi_links(self.paths, entries, False, c,
+                            names={"ai-kit-cross-ai"})
+        link = os.path.join(self.pi, "skills", "ai-kit-cross-ai")
+        self.assertEqual(os.readlink(link), target)
+        self.assertEqual(c["linked"], 1)
+
 
 class TestBackupEntry(unittest.TestCase):
     """_backup_entry: the exclusive, numbered claim dir (D-15/T-21.1-23)."""

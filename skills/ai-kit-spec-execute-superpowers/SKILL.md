@@ -41,8 +41,8 @@ Each item is repeated at its point of use; this is the index.
   The only schedule is the ruled single re-invoke:
   one one-shot `CronCreate` at `retry_after_s` for a confirmed-router exit 75 carrying `cycle=`,
   and its prompt re-dispatches the persisted `injection_json` unchanged (the runner already ran
-  its ladder; `$REVIEW_SKILL_DIR/references/subprocess-quota-policy.md`, the same file as
-  `../ai-kit-spec-review/references/subprocess-quota-policy.md`) (Step 3).
+  its ladder; `$REVIEW_SKILL_DIR/../ai-kit-cross-ai/references/subprocess-quota-policy.md`, the same file as
+  `../ai-kit-cross-ai/references/subprocess-quota-policy.md`) (Step 3).
 - **Never** run `trust-local` without the user's explicit yes, and never ask twice in one run
   (Step 2).
 
@@ -53,8 +53,8 @@ path and the re-invoke command for that same one-shot wake, and the owner runs i
 row is unverified.
 
 **MANDATORY before the first external dispatch, and again before acting on a stop**: read
-`$REVIEW_SKILL_DIR/references/subprocess-quota-policy.md` (from this skill,
-`../ai-kit-spec-review/references/subprocess-quota-policy.md`). It is the ladder and the
+`$REVIEW_SKILL_DIR/../ai-kit-cross-ai/references/subprocess-quota-policy.md` (from this skill,
+`../ai-kit-cross-ai/references/subprocess-quota-policy.md`). It is the ladder and the
 host-specific re-entry contract; do not reconstruct it.
 
 ## Step 0: Resolve the shim path

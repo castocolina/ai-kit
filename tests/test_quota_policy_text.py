@@ -10,7 +10,7 @@ import re
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
-REFERENCE = REPO / "skills/ai-kit-spec-review/references/subprocess-quota-policy.md"
+REFERENCE = REPO / "skills/ai-kit-cross-ai/references/subprocess-quota-policy.md"
 GSD_SKILL = REPO / "skills/ai-kit-spec-execute-gsd/SKILL.md"
 REVIEW_SKILL = REPO / "skills/ai-kit-spec-review/SKILL.md"
 DISPATCH_REF = REPO / "skills/ai-kit-spec-review/references/cross-ai-dispatch.md"

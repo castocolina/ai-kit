@@ -216,7 +216,7 @@ v2 `apply` sets `workflow.cross_ai_command` to the bare `node .planning/scripts/
 renders the runner from the current bundled template (template 7). On template 7 and later only
 the first named runner runs, with its model; a missing one stops with `not_installed` (exit 127) and is never replaced,
 and the runner follows the failure ladder
-([`../ai-kit-spec-review/references/subprocess-quota-policy.md`](../ai-kit-spec-review/references/subprocess-quota-policy.md)).
+([`../ai-kit-cross-ai/references/subprocess-quota-policy.md`](../ai-kit-cross-ai/references/subprocess-quota-policy.md)).
 **MANDATORY when a dispatch does not end ok** (any `AIKIT-XAI` line whose `status=` is not
 `ok`; every line carries `action=stop`, including a clean exit 0, so `action=stop` alone says
 nothing): read that policy before acting. It is the caller contract. The one sanctioned

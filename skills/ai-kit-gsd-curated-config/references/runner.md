@@ -39,7 +39,7 @@ read-only and still reaches that shared service.
 ## Failure ladder
 
 The runner follows the failure ladder in
-[`../../ai-kit-spec-review/references/subprocess-quota-policy.md`](../../ai-kit-spec-review/references/subprocess-quota-policy.md).
+[`../../ai-kit-cross-ai/references/subprocess-quota-policy.md`](../../ai-kit-cross-ai/references/subprocess-quota-policy.md).
 CONFIG knobs: `sameSessionRetries` and `newSessionRetries` (0..3), `cooldownS` (0..`capS`),
 `capS` (at most 14400), `backoffS`, and `attemptTimeoutS` (default 0, no per-attempt cap,
 otherwise clamped to 10..1800; only a set value leaves a timed-out attempt room for a retry rung). A router lane is authorized for quota cycles by the plan's

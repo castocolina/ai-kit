@@ -43,8 +43,8 @@ from typing import cast
 CATEGORIES = ("agents", "commands", "skills")
 
 # D-14: skills also linked into <pi_dir>/skills, derived from the claude
-# selection. Phase 22 widens this set.
-PI_SKILLS = frozenset({"jev-fast-decision"})
+# selection. pi is a primary host and gets the cross-AI guide too.
+PI_SKILLS = frozenset({"ai-kit-cross-ai", "jev-fast-decision"})
 _LEGACY_ENTRY = "status-line.py"
 _CLAUDE_ENTRY = "claude-status-line.py"
 _CURSOR_ENTRY = "cursor-status-line.py"
