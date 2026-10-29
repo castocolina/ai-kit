@@ -1,7 +1,7 @@
 # Phase 26: Session self-resume and OpenGSD quota rules - Context
 
 **Gathered:** 2026-10-14 (assumptions mode, `--analyze --all --batch`, jev screening, best over easy); updated 2026-10-24 (assumptions mode, after the 26-SPEC R4/R7 amendments and Phase 25.1)
-**Status:** Ready for the spike (SPEC R2), then planning
+**Status:** Spike done (26-SPIKE-REPORT.md, 2026-10-25); ready for planning
 
 <domain>
 ## Phase Boundary
@@ -81,12 +81,14 @@ must confirm.
   - The pid comes from the host's env var where one is verified: `CLAUDE_PID`, live, whose
     `comm` is `claude`. Otherwise an ancestor walk finds the host binary, flagged unverified.
     The shell's own `os.getppid()` is never used.
+  - *(Amended 2026-10-25, spike 26-SPIKE-REPORT item 7: the process `CLAUDE_PID` names has `comm` `2.1.299`, the version string, not `claude`; the `comm` condition is dropped, pid + start time + boot id stay.)*
   - Laya proc_bootid 0.52 (fb), TypeSafe proc_bootid 0.98. Laya env_then_walk 0.58 (fb),
     TypeSafe env_then_walk 0.95.
 - **D-09: The resume runs in the host's launch directory** (`/proc/<pid>/cwd`). In this session
   that is the main checkout, while the shell is in a worktree, and the transcript is keyed by
   the launch directory. Before resuming, `fire` checks that the session exists, because pi and
   opencode create a missing one. SPEC R3 amended. **The spike confirms this.**
+  - *(Amended 2026-10-25, spike 001: Claude Code 2.1.310 selects the transcript by id alone, so a resume from another directory also re-enters it; the launch directory stays the resume's cwd for the work it does. pi and opencode create a missing session (their --help), confirmed.)*
 
 ### Firing
 - **D-10: Each wake runs these steps in order:**
@@ -94,6 +96,7 @@ must confirm.
   2. If the done marker exists, disarm.
   3. Increment `wake_count` atomically.
   4. If the process is alive, log to the journal (stdout) and exit, disarming on the 24th wake.
+     *(Spike 002, 2026-10-25: load-bearing. A concurrent `claude -p --resume` while the original lives is not refused and its turn is silently lost from the session.)*
   5. Take a non-blocking `fcntl.flock`; if it is held, exit.
   6. Run one resume as a child, holding the lock.
   7. Check the done marker again.
@@ -149,6 +152,7 @@ must confirm.
   <id>`, which "starts a copy … when the session is already running", together with `claude
   agents`, and may switch claude to it. Laya background_only 0.64 (fb), TypeSafe
   spike_decides_headless_default 0.90.
+  - *(Amended 2026-10-25, spike 003: pi re-enters with `-p --session-id <id>` from a transient timer, verified; that is pi's row. `--permission-prompts none` exists in claude 2.1.310; whether it prevents every hang is unverified. `--bg --resume` was not measured.)*
 - **D-16: The resume prompt is a code constant, pinned by a test.** Only the state path is
   filled in. The prompt tells the agent to:
   - read the wake state and the state files it lists, including Phase 25's pending waits;
@@ -161,6 +165,7 @@ must confirm.
   Claude Code the companion is a one-shot `CronCreate`/`ScheduleWakeup` chain, or `/goal`. It
   covers a stall while the process is alive, which the OS timer only logs. **The spike
   (item 4) confirms** whether a fire during a usage limit runs later.
+  - *(Amended 2026-10-25, spike 004: a CronCreate fire during a usage limit is consumed by the limit reply and never replayed; recurring jobs expire after 7 days; `/goal` pauses and needs a message after the reset. The companion is therefore a one-shot at the known reset + margin, or the OS timer.)*
   - **Own reasoning** (Laya arm_reports_companion 0.40 (fb), TypeSafe document_gap 0.92):
     documenting the gap leaves a live, stalled session idle for 24 hours, and the design rule
     says best over easy. Ledger.
@@ -172,6 +177,7 @@ must confirm.
   explicit_at_arm 0.81 locks the explicit-and-printed part; the default is a safety call for
   uz and does not block the spike.
   - **Refined 2026-10-14 (uz):** the default copies the original session's permission flags
+  - *(Amended 2026-10-25, 26-RESEARCH Q2: on a background host the process `CLAUDE_PID` names is `claude bg-spare ...` with no permission flags, so there is nothing to copy. Then `arm` records `permission_mode: unknown`, prints it, and the resume runs with the host's default checks; it never enables a bypass implicitly. This extends uz's rule to the case it did not cover; it does not change it.)*
     (read from the host process's command line at `arm`), recorded in the state file and
     printed by `arm` and `status`; `--permission-mode` on `arm` overrides it.
 
@@ -224,6 +230,12 @@ must confirm.
   phrase. A literal core count (for example `-j 8` or `-n 12`) next to a test command is a
   finding. The "19 rules" strings from D-22 become 20. Every per-stack flag is live-verified at
   plan time against current tool docs (AGENTS.md: verify before trusting training data).
+  - **Amended 2026-10-28 (plan review cycle 1):** the "test-runner" group names no Gradle
+    command, so Gradle gets its own rows (`gradle` for `build.gradle`, `gradle-kts` for
+    `build.gradle.kts`) chosen by marker file instead of by the group. Every runner the group
+    does name still takes its form from the table. The shared catalog stays unchanged because
+    the cicd and precommit checkers also read it. Each Gradle clause uses the syntax of its own
+    build file.
 
 ### Executors
 - **D-23: Arming is threshold-based, and both executors get an explicit end step that writes
@@ -238,8 +250,10 @@ must confirm.
 - **D-24: `arm` refuses inside a subagent or a cross-AI child**, detected through environment
   markers: `CLAUDE_CODE_CHILD_SESSION`, plus a runner marker that Phase 25/18 sets on children.
   **The spike confirms** the marker is unset in the main agent.
+  - *(Contradicted 2026-10-25, spike report item 7: `CLAUDE_CODE_CHILD_SESSION=1` in this run's main agent, a background-job session. The marker cannot be the refusal signal as is; a discriminator that tells a subagent from a background main agent is an open research question.)*
   - **Laya overridden** (instructions_only 0.84): an inherited environment makes a child arm a
     second timer for the wrong host. TypeSafe second opinion refuse_markers 0.97.
+  - *(Amended 2026-10-25, 26-RESEARCH Q1 and spike item 7: `CLAUDE_CODE_CHILD_SESSION=1` is set in every Bash-tool, hook and status-line subprocess (Claude Code docs), so it cannot mark a subagent; in-process subagents share the main session's env and process tree. A subagent's `arm` is an idempotent refresh keyed by host + session id, so it is harmless; `done`/`disarm` from a subagent is prevented by SKILL.md text only (residual risk, stated). A cross-AI child is detected by an explicit marker the runner sets on its child env (`AI_KIT_CROSS_AI_CHILD=1`, a small runner change in this phase), with an ancestor scan for `cross-ai.mjs` in `/proc/<pid>/cmdline` as the fallback for older runner copies (flagged unverified off Linux). jev: Laya b 0.53 (fb), TypeSafe a 0.79 (fb) -> own reasoning: the marker is the robust primary (inherited by every descendant, host-independent), the scan keeps older copies safe.)*
 - **D-25: An AST rule in `tests/test_arch.py`, with a non-vacuity case, enforces the isolation:**
   - the session-wake package never imports `write_resumable_state` or references Phase 25's
     wait paths;
@@ -250,6 +264,7 @@ must confirm.
 
 ### Tests
 - **D-26: Tests run on fakes and scratch directories only.**
+  - *(Amended 2026-10-25, 26-RESEARCH: the Makefile and pre-commit test lists are generated by `tools/gen_test_groups.py`, never hand-edited; `pyproject.toml` pyright `extraPaths` gains the new skill; `PI_SKILLS` gains `ai-kit-session-wake`; local gsd-core is 1.17.0. Reboot survival, first fire after enable and a oneshot removing its own unit stay unverified: fake-backed tests in the plan plus one owner capture listed as human_verification (jev TypeSafe b 1.00); no blocking checkpoint.)*
   - Fake `systemctl`, `loginctl` and fake host CLIs on a scratch PATH append their argv, cwd
     and env-var names to a log.
   - A scratch HOME, `XDG_CONFIG_HOME` and `XDG_STATE_HOME` hold every file.

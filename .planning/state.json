@@ -81,12 +81,12 @@
     {
       "number": "25.1",
       "name": "Configurable cross-AI retry ladder and upstream error propagation",
-      "status": "in_progress"
+      "status": "pending"
     },
     {
       "number": "26",
       "name": "Session self-resume and OpenGSD quota rules",
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "number": "27",
@@ -97,7 +97,7 @@
   "next": {
     "command": "/gsd-progress --next",
     "label": "Advance to the next step",
-    "reason": "Phase 16 of 18 · 0% · executing"
+    "reason": "Phase 17 of 18 · 0% · executing"
   },
-  "updated_at": "2026-10-25T09:37:32.262Z"
+  "updated_at": "2026-10-29T05:55:09.093Z"
 }

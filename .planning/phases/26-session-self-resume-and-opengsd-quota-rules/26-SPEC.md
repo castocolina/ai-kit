@@ -79,6 +79,7 @@ subprocess quota (Phase 25).
      Its findings set R1's labels and amend this SPEC where a fact contradicts it.
    - Acceptance: a committed spike report. Each R1 row's label points to a spike finding or to
      an official doc.
+   - *(Amended 2026-10-25: the report is `26-SPIKE-REPORT.md` with `.planning/spikes/001`-`004`. Verified: timer re-entry for claude, pi and opencode; a concurrent claude resume is silently lost; a CronCreate fire during a limit is lost and recurring jobs expire after 7 days; the reset-text grammar. Unverified: the headless claude exit during a limit, auth after reboot, codex, `--bg`. Contradicted: `CLAUDE_CODE_CHILD_SESSION` is `1` in a background-job main agent.)*
 
 3. **Arm by session id** (QTA-04).
    - Current: none.

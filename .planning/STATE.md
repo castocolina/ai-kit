@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v1.3
 milestone_name: GSD Curated Config v2
-current_phase: "25.1"
-current_phase_name: Configurable cross-AI retry ladder and upstream error propagation (INSERTED)
+current_phase: 26
+current_phase_name: session-self-resume-and-opengsd-quota-rules
 status: executing
 stopped_at: Completed 25.1-15-PLAN.md
-last_updated: "2026-10-25T19:39:15.573Z"
+last_updated: "2026-10-29T05:55:09.084Z"
 last_activity: 2026-10-24
 last_activity_desc: Phase 23 execution started
-state_head: 64bc06c9ff1a22f241810a4add5be41f73c1a140
+state_head: b3cf659cfa47b214d2b5981b5de1169cbea0dc4c
 progress:
   total_phases: 18
   completed_phases: 1
-  total_plans: 186
+  total_plans: 198
   completed_plans: 186
-  percent: 6
+  percent: 0
 ---
 
 # Project State
@@ -29,12 +29,12 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 
 ## Current Position
 
-Phase: 25.1 (Configurable cross-AI retry ladder and upstream error propagation (INSERTED)) — READY TO EXECUTE
+Phase: 26 (session-self-resume-and-opengsd-quota-rules) — READY TO EXECUTE
 Plan: 1 of ?
 Status: Ready to execute
 Last activity: 2026-10-24 - Completed quick task 261024-ryk: agent_skills references gsd-core resolves
 
-Progress: [█░░░░░░░░░] 6%
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
