@@ -117,6 +117,7 @@ extraPaths = [
     "skills/ai-kit-project-rules-docker",
     "skills/ai-kit-project-rules-makefile",
     "skills/ai-kit-project-rules-precommit",
+    "skills/ai-kit-session-wake",
     "skills/ai-kit-spec-config",
     "skills/ai-kit-spec-execute",
     "skills/ai-kit-spec-execute-gsd",

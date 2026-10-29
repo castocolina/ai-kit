@@ -969,7 +969,7 @@ right session; codex, pi and opencode facts are third-party only so far.
      form. Remediation writes that form into the rules section.
 **Plans**: TBD
 - [x] 26-01-PLAN.md
-- [ ] 26-02-PLAN.md
+- [x] 26-02-PLAN.md
 - [ ] 26-03-PLAN.md
 - [ ] 26-04-PLAN.md
 - [ ] 26-05-PLAN.md

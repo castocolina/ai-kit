@@ -772,6 +772,96 @@ def check_no_shell_true(tree):
     return violations
 
 
+# D-25: AST isolation between the session wake (Phase 26) and Phase 25's
+# subprocess ladder. The wake package never imports the ladder's modules nor
+# names its state writer or wait paths; the ladder's code never imports the
+# wake package. Both directions get non-vacuity cases below.
+_WAKE_SKILL = "skills/ai-kit-session-wake"
+_PHASE25_SKILLS = (
+    "skills/ai-kit-spec-review",
+    "skills/ai-kit-spec-execute-gsd",
+    "skills/ai-kit-spec-execute-superpowers",
+    "skills/ai-kit-cross-ai",
+)
+_PHASE25_LADDER_PKGS = frozenset({"ai_kit_spec_gsd", "ai_kit_spec_superpowers"})
+_WAKE_STATE_TOKEN = "write_resumable_state"
+
+
+def _import_targets(node):
+    """Module names one Import/ImportFrom node binds (the module, per alias
+    for plain imports)."""
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    if isinstance(node, ast.ImportFrom) and node.module:
+        return [node.module]
+    return []
+
+
+def check_wake_isolation(tree):
+    """D-25 (wake side): no Phase 25 ladder import, no reference to its state
+    writer (substring, so `write_resumable_state_fn` and
+    `_cmd_write_resumable_state` are caught), no wait-path string (`cycles`
+    or anything containing `spec/cycles`)."""
+    violations = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for target in _import_targets(node):
+                root = target.split(".")[0]
+                forbidden = (
+                    root in _PHASE25_LADDER_PKGS
+                    or target == "ai_kit_spec.cache"
+                    or target.startswith("ai_kit_spec.cache.")
+                )
+                if forbidden:
+                    violations.append(f"line {node.lineno}: forbidden import {target}")
+            for alias in node.names:
+                for name in (alias.name, alias.asname):
+                    if name and _WAKE_STATE_TOKEN in name:
+                        violations.append(f"line {node.lineno}: forbidden alias {name}")
+            continue
+        if isinstance(node, ast.Name) and _WAKE_STATE_TOKEN in node.id:
+            violations.append(f"line {node.lineno}: forbidden name {node.id}")
+        elif isinstance(node, ast.Attribute) and _WAKE_STATE_TOKEN in node.attr:
+            violations.append(f"line {node.lineno}: forbidden attribute {node.attr}")
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if _WAKE_STATE_TOKEN in node.value:
+                violations.append(f"line {node.lineno}: forbidden Phase 25 name {node.value!r}")
+            elif node.value == "cycles" or "spec/cycles" in node.value:
+                violations.append(
+                    f"line {node.lineno}: forbidden Phase 25 wait path {node.value!r}"
+                )
+    return violations
+
+
+def check_no_wake_import(tree):
+    """D-25 (ladder side): Phase 25's code never imports the session wake
+    package or any submodule."""
+    violations = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        for target in _import_targets(node):
+            if target == "ai_kit_session_wake" or target.startswith("ai_kit_session_wake."):
+                violations.append(f"line {node.lineno}: session wake import {target}")
+    return violations
+
+
+def _parse_path(path):
+    """Parse any repo file into an AST (never import or execute it)."""
+    with open(path, encoding="utf-8") as handle:
+        return ast.parse(handle.read(), filename=path)
+
+
+def _iter_skill_python(rel_skill):
+    """Every .py under one skill directory, sorted, stable."""
+    root = os.path.join(_REPO_ROOT, rel_skill)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d != "__pycache__")
+        for filename in sorted(filenames):
+            if filename.endswith(".py"):
+                yield os.path.join(dirpath, filename)
+
+
 # Rule 9: the only places allowed to swallow every exception. Each is a documented
 # backstop that keeps one failure from blanking the status line or killing a TUI, or
 # (curated-config apply) from crashing a committed apply, where SPEC R13 says only warn.
@@ -848,6 +938,9 @@ _START_NEW_SESSION_ALLOWED = frozenset(
         "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/catalog_adapter.py",
         # Detached quota refresher; not a supervisor (D-13).
         "tools/cursor_quota.py",
+        # The wake's single resume runs in its own session so the fire can
+        # kill its whole group on RESUME_TIMEOUT_S (D-10 step 6; 26-02).
+        "skills/ai-kit-session-wake/ai_kit_session_wake/fire.py",
     }
 )
 _SUPERVISOR_OWNER = "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py"
@@ -1694,6 +1787,87 @@ class TestArchNonVacuity(unittest.TestCase):
         renamed = src.replace("apply_row", "helper")
         flagged = check_broad_except_allowlist("tools/config_doctor_checks.py", renamed)
         self.assertEqual(1, len(flagged))
+
+    def test_wake_isolation_flags_phase25_reach(self):
+        # Each shape the D-25 rule exists to catch, including the two real
+        # Phase 25 names caught only by substring (the attribute and the
+        # string literal).
+        flagged = (
+            "from ai_kit_spec_gsd.cli import write_resumable_state\n",
+            "import ai_kit_spec.cache\n",
+            "x = state.write_resumable_state\n",
+            "deps.write_resumable_state_fn(path, state)\n",
+            'f = "_cmd_write_resumable_state"\n',
+            'p = os.path.join(root, "spec", "cycles")\n',
+            'p = "ai-kit/spec/cycles/x"\n',
+        )
+        for source in flagged:
+            self.assertNotEqual([], check_wake_isolation(ast.parse(source)))
+        for clean in (
+            "from ai_kit_spec.detection import RUNTIMES\n",
+            "x = state.write_json_atomic\n",
+        ):
+            self.assertEqual([], check_wake_isolation(ast.parse(clean)))
+
+    def test_no_wake_import_flags_phase25_code(self):
+        self.assertNotEqual(
+            [], check_no_wake_import(ast.parse("import ai_kit_session_wake.cli\n"))
+        )
+        self.assertNotEqual(
+            [], check_no_wake_import(ast.parse("from ai_kit_session_wake import fire\n"))
+        )
+        self.assertEqual([], check_no_wake_import(ast.parse("import json\n")))
+
+
+class TestSessionWakeIsolation(unittest.TestCase):
+    """D-25 live-tree checks: the session wake and Phase 25's subprocess
+    ladder never reach into each other's state. AST only: parse, never
+    import the checked modules."""
+
+    def test_wake_package_never_reaches_phase25(self):
+        scanned, violations = 0, []
+        for path in _iter_skill_python(_WAKE_SKILL):
+            scanned += 1
+            for problem in check_wake_isolation(_parse_path(path)):
+                violations.append(f"{os.path.relpath(path, _REPO_ROOT)}: {problem}")
+        self.assertGreater(scanned, 0)
+        self.assertEqual([], violations)
+
+    def test_phase25_never_imports_the_wake(self):
+        scanned, violations = 0, []
+        for skill in _PHASE25_SKILLS:
+            for path in _iter_skill_python(skill):
+                scanned += 1
+                for problem in check_no_wake_import(_parse_path(path)):
+                    violations.append(f"{os.path.relpath(path, _REPO_ROOT)}: {problem}")
+        self.assertGreater(scanned, 0)
+        self.assertEqual([], violations)
+
+    def test_runner_template_names_no_wake(self):
+        template = os.path.join(
+            _REPO_ROOT, "skills", "ai-kit-spec-review", "references", "cross-ai.mjs"
+        )
+        with open(template, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertNotIn("ai_kit_session_wake", text)
+        self.assertNotIn("ai-kit-session-wake", text)
+
+    def test_rule8_covers_wake_and_hooks(self):
+        # Rule 8 extended: the wake package and every tools/hooks/*.py script
+        # (the 26-07 hook joins with no edit here). The scanned set must be
+        # non-empty, so the rule is never vacuous.
+        hook_paths = sorted(
+            os.path.join(_REPO_ROOT, "tools", "hooks", name)
+            for name in os.listdir(os.path.join(_REPO_ROOT, "tools", "hooks"))
+            if name.endswith(".py")
+        )
+        paths = list(_iter_skill_python(_WAKE_SKILL)) + hook_paths
+        self.assertGreater(len(paths), 0)
+        violations = []
+        for path in paths:
+            for problem in check_no_shell_true(_parse_path(path)):
+                violations.append(f"{os.path.relpath(path, _REPO_ROOT)}: {problem}")
+        self.assertEqual([], violations)
 
 
 class TestSegmentInventory(unittest.TestCase):
