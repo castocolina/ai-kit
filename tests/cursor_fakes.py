@@ -4,6 +4,7 @@ import json
 import pathlib
 import signal
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -48,11 +49,14 @@ class _Response(NamedTuple):
     header_trickle_s: float
 
 
-class _DaemonThreadingHTTPServer(ThreadingHTTPServer):
-    """Handler threads never outlive the test process (a trickling response
-    handler intentionally runs forever; the client gives up at its deadline)."""
+class _QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """Non-daemon handler threads, joined by server_close(): a daemon thread still writing a
+    traceback at interpreter shutdown aborts Python (`_enter_buffered_busy`)."""
 
-    daemon_threads = True
+    def handle_error(self, request, client_address):
+        # A client that gave up at its deadline is the point of the stall fakes, not an error.
+        if not isinstance(sys.exc_info()[1], ConnectionError):
+            super().handle_error(request, client_address)
 
 
 class FakeDashboard:
@@ -61,6 +65,7 @@ class FakeDashboard:
     def __init__(self):
         self.requests: list[dict[str, str | None]] = []
         self._scripts: dict[str, list[_Response]] = {}
+        self._stopped = threading.Event()
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -77,10 +82,11 @@ class FakeDashboard:
                 method = self.path.rsplit("/", 1)[-1]
                 queue = owner._scripts.get(method, [])
                 response = queue.pop(0) if queue else _Response(404, {}, 0, None, 0.0, 0.0)
-                time.sleep(response.delay_s)
+                if owner._stopped.wait(response.delay_s):
+                    return
                 if response.header_trickle_s > 0:
                     # T-23-30: dribble only the status line and headers, one
-                    # byte per interval, forever — every individual recv
+                    # byte per interval, until the server stops — every individual recv
                     # succeeds, so a per-socket timeout alone never ends
                     # open(); only absolute-deadline enforcement can break
                     # the stall.
@@ -88,28 +94,28 @@ class FakeDashboard:
                     self.wfile.flush()
                     header = b"X-Trickle: 0123456789abcdef\r\n"
                     index = 0
-                    while True:
+                    while not owner._stopped.wait(response.header_trickle_s):
                         self.wfile.write(header[index:index + 1])
                         self.wfile.flush()
                         index = (index + 1) % len(header)
-                        time.sleep(response.header_trickle_s)
+                    return
                 self.send_response(response.status)
                 if response.location:
                     self.send_header("Location", response.location)
                 payload = json.dumps(response.body).encode()
                 if response.trickle_s > 0:
-                    # Dribble the body one byte per interval, forever: a client
+                    # Dribble the body one byte per interval until the server stops: a client
                     # that reads incrementally sees bytes keep arriving just
                     # before every read — a read that loops internally for a
                     # full 64 KiB would then outlive any deadline.
                     self.send_header("Content-Type", "application/json")
                     self.end_headers()
                     index = 0
-                    while True:
+                    while not owner._stopped.wait(response.trickle_s):
                         self.wfile.write(payload[index:index + 1])
                         self.wfile.flush()
                         index = (index + 1) % len(payload)
-                        time.sleep(response.trickle_s)
+                    return
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
@@ -121,7 +127,7 @@ class FakeDashboard:
             def log_message(self, _format, *_args):
                 return
 
-        self._server = _DaemonThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._server = _QuietThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
     @property
@@ -140,6 +146,7 @@ class FakeDashboard:
         return self
 
     def __exit__(self, *_exc):
+        self._stopped.set()  # ends every delay and trickle loop, so server_close() can join
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(timeout=2)

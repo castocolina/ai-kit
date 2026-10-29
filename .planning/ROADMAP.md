@@ -968,6 +968,18 @@ right session; codex, pi and opencode facts are third-party only so far.
      at 40% of the available CPUs and never a hardcoded core count, in the detected stack's own
      form. Remediation writes that form into the rules section.
 **Plans**: TBD
+- [x] 26-01-PLAN.md
+- [ ] 26-02-PLAN.md
+- [ ] 26-03-PLAN.md
+- [ ] 26-04-PLAN.md
+- [ ] 26-05-PLAN.md
+- [ ] 26-06-PLAN.md
+- [ ] 26-07-PLAN.md
+- [ ] 26-08-PLAN.md
+- [ ] 26-09-PLAN.md
+- [ ] 26-10-PLAN.md
+- [ ] 26-11-PLAN.md
+- [ ] 26-12-PLAN.md
 
 ### Phase 27: One-shot goal and loop prompt skill
 

@@ -3639,6 +3639,7 @@ function childEnv(extra, baseEnv) {
   const env = { ...baseEnv, ...extra };
   for (const k of CONFIG.scrubEnv) if (!(k in extra)) delete env[k];
   for (const [k, v] of Object.entries(extra)) if (v === '') delete env[k];
+  env.AI_KIT_CROSS_AI_CHILD = '1'; // the session wake refuses to arm in a runner child (26 D-24)
   return env;
 }
 
@@ -4620,6 +4621,11 @@ const STICKY_FAKE = new Set([
 let stdinBuf = '';
 const FAKE_MODES = {
   ok: () => { fs.appendFileSync('a.txt', 'ok-line\n'); process.stdout.write('# Summary\nok'); },
+  envmarker: () => {
+    fs.writeFileSync('marker.seen', process.env.AI_KIT_CROSS_AI_CHILD ?? '<unset>');
+    fs.appendFileSync('a.txt', 'm\n');
+    process.stdout.write('# Summary\nok');
+  },
   'stderr-then-ok': () => {
     process.stderr.write('tool bash: cat /root/x: Permission denied\n');
     fs.appendFileSync('a.txt', 'ok-line\n');
@@ -9231,6 +9237,18 @@ async function blackBoxSelfTest() {
           const err = r.stderr || '';
           if (err.includes('bad_model')) return 'auto rejected as bad_model';
           return err.includes('not preflighted') ? 'listing not used' : null;
+        },
+      },
+      {
+        // 26 D-24: every child carries AI_KIT_CROSS_AI_CHILD=1, even when the parent holds another value.
+        name: 'child-marker-env',
+        args: ['--runtime', 'pi', '--model', 'fake/envmarker'],
+        env: { AI_KIT_CROSS_AI_CHILD: '0' },
+        exit: 0,
+        status: /^AIKIT-XAI status=ok cli=pi model=fake\/envmarker exit=0 .* action=stop$/,
+        check: (_r, ctx) => {
+          const seen = readOr(path.join(ctx.repo, 'marker.seen'), '<missing>');
+          return seen === '1' ? null : `marker.seen=${JSON.stringify(seen)}`;
         },
       },
       {
