@@ -2,6 +2,7 @@
 (26-03 adds `status` and `matrix`). The host defaults to
 `detect_current_runtime` on the seams env (`unknown` is refused, exit 2); the
 session id defaults to the host row's session-env value."""
+
 import argparse
 import os
 import sys
@@ -12,7 +13,10 @@ from ai_kit_spec.detection import detect_current_runtime
 from .arm import ArmOptions, arm
 from .fire import disarm, done, fire
 from .hosts import HOSTS
-from .state import Seams, default_seams
+from .liveness import is_alive
+from .matrix import matrix_json, render_matrix
+from .state import Seams, default_seams, read_state, state_dir
+from .units import linger_enabled, systemctl, unit_names
 
 EXIT_OK = 0
 EXIT_REFUSED = 2
@@ -31,6 +35,8 @@ def _pick_target(host_flag: str | None, sid_flag: str | None, env: Mapping[str, 
     """Resolve (host, session id) from the flags or the host defaults; print
     the refusal and return None when there is nothing to operate on."""
     host = host_flag or detect_current_runtime(env)
+    if host == "cursor":
+        return host, sid_flag or "cursor-session"
     row = HOSTS.get(host)
     if row is None:
         print(f"ai-kit-session-wake: unknown or unsupported host {host!r}", file=sys.stderr)
@@ -56,10 +62,13 @@ def _parser() -> argparse.ArgumentParser:
         ("disarm", "remove a session's wake completely"),
         ("fire", "one timer wake: resume the recorded session id once"),
         ("done", "write the done marker so the next wake disarms"),
+        ("status", "show recorded wake state"),
+        ("matrix", "show wake survival by host"),
     ):
         sub_parser = sub.add_parser(name, help=help_text)
         sub_parser.add_argument("--host", help="runtime label (default: detect from the env)")
         sub_parser.add_argument("--session-id", help="session id (default: the host's env var)")
+    sub.choices["matrix"].add_argument("--json", action="store_true")
     sub.choices["arm"].add_argument("--pid", type=int, help="the host process id")
     sub.choices["arm"].add_argument(
         "--permission-mode", help="the mode the resume replays (default: unknown, no bypass)"
@@ -70,25 +79,79 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _dispatch(
+    command: str, host: str, session_id: str, args: argparse.Namespace, seams: Seams
+) -> int:
+    if command == "arm":
+        opts = ArmOptions(host, session_id, args.pid, args.permission_mode, tuple(args.ref))
+        return arm(opts, seams, default_shim_path())
+    if command == "disarm":
+        return disarm(host, session_id, seams)
+    if command == "fire":
+        return fire(host, session_id, seams)
+    return done(host, session_id, seams)
+
+
 def main(argv: list[str], seams: Seams | None = None) -> int:
     """Run one subcommand; every refusal is an exit code, never an exception."""
     seams = seams if seams is not None else default_seams()
     args = _parser().parse_args(argv)
+    if args.command == "matrix":
+        print(matrix_json() if args.json else render_matrix())
+        return EXIT_OK
+    if args.command == "status":
+        return _status(args, seams)
+    if args.command == "arm" and args.host == "cursor":
+        print("no surviving primitive for cursor")
+        return EXIT_NO_PRIMITIVE
     target = _pick_target(args.host, args.session_id, seams.env)
     if target is None:
         return EXIT_REFUSED
     host, session_id = target
-    if args.command == "arm":
-        opts = ArmOptions(
-            host=host,
-            session_id=session_id,
-            pid=args.pid,
-            permission_mode=args.permission_mode,
-            refs=tuple(args.ref),
-        )
-        return arm(opts, seams, default_shim_path())
-    if args.command == "disarm":
-        return disarm(host, session_id, seams)
-    if args.command == "fire":
-        return fire(host, session_id, seams)
-    return done(host, session_id, seams)
+    return _dispatch(args.command, host, session_id, args, seams)
+
+
+def _status_entry(path: str, seams: Seams) -> None:
+    name = os.path.basename(path)[:-5]
+    host, _, sid = name.partition("-")
+    state, reason = read_state(path, host, sid)
+    print(path)
+    if state is None:
+        print(f"invalid state: {reason}")
+        return
+    cwd_note = "" if state.get("launch_cwd_verified", True) else " (unverified)"
+    print(f"launch_cwd: {state['launch_cwd']}{cwd_note}")
+    status = "alive" if is_alive(state, seams) else "gone"
+    print(f"host process: {status} ({state.get('liveness_source', 'proc')})")
+    print(f"wakes: {state['wake_count']}/{state['cap']}")
+    print("next wake: hourly")
+    print(
+        f"permission_mode: {state['permission_mode']} ({state.get('permission_source', 'unknown')})"
+    )
+    print(f"linger: {linger_enabled(seams)}")
+    active = systemctl(seams, "is-active", unit_names(host, sid).timer)
+    print(active.stdout.strip() or active.stderr.strip() or "unknown")
+    for created in state["created"]:
+        print(f"created: {created}")
+
+
+def _status(args: argparse.Namespace, seams: Seams) -> int:
+    directory = state_dir(seams.env)
+    if bool(args.host) != bool(args.session_id):
+        print("status requires both --host and --session-id", file=sys.stderr)
+        return EXIT_REFUSED
+    files = []
+    if args.host and args.session_id:
+        files = [os.path.join(directory, f"{args.host}-{args.session_id}.json")]
+    elif os.path.isdir(directory):
+        files = [
+            os.path.join(directory, name)
+            for name in sorted(os.listdir(directory))
+            if name.endswith(".json")
+        ]
+    if not files:
+        print("nothing armed")
+        return EXIT_OK
+    for path in files:
+        _status_entry(path, seams)
+    return EXIT_OK

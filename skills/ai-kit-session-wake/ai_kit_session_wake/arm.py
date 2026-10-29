@@ -5,6 +5,7 @@ One arm per (host, session id): a first arm mints a fresh `arm_id`; a refresh
 one it started on (review round 2). The lock file is created once with
 O_CREAT|O_EXCL and never replaced.
 """
+
 import os
 import secrets
 import shutil
@@ -16,6 +17,7 @@ from ai_kit_spec.detection import RUNTIMES, detect_current_runtime
 
 from .hosts import HOSTS, session_exists
 from .liveness import identify, launch_cwd
+from .matrix import best_primitive
 from .state import (
     ARM_WINDOW_S,
     PERMISSION_MODE_RE,
@@ -25,14 +27,18 @@ from .state import (
     SessionPaths,
     read_state,
     session_paths,
+    update_state,
     write_json_atomic,
     write_text_atomic,
 )
 from .units import (
+    linger_enabled,
     render_service,
     render_timer,
+    service_environment,
     stamp_path,
     systemctl,
+    systemd_available,
     unit_dir,
     unit_names,
 )
@@ -46,6 +52,13 @@ class ArmOptions(NamedTuple):
     pid: int | None
     permission_mode: str | None
     refs: tuple[str, ...]
+
+
+class _ArmRefresh(NamedTuple):
+    opts: ArmOptions
+    target: "_ArmTarget"
+    old_state: dict
+    payload: dict
 
 
 class _ArmTarget(NamedTuple):
@@ -76,10 +89,51 @@ def _resolve_pid(opts: ArmOptions, seams: Seams, pid_env: str) -> int | None:
     return int(raw) if raw.isdigit() else None
 
 
+def _check_interpreter(cli_path: str, env: Mapping[str, str]) -> str | None:
+    try:
+        with open(cli_path, "rb") as handle:
+            first = handle.readline(256).decode("utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not first.startswith("#!"):
+        return None
+    words = first[2:].split()
+    if not words:
+        return None
+    interpreter = words[0]
+    name = interpreter
+    if os.path.basename(interpreter) == "env":
+        args = words[1:]
+        if args and args[0] == "-S":
+            args = args[1:]
+        if not args:
+            return None
+        name = args[0]
+        wake_path = dict(service_environment(env)).get("PATH", "")
+        resolved = shutil.which(name, path=wake_path)
+    elif os.path.isabs(interpreter):
+        resolved = (
+            interpreter if os.path.isfile(interpreter) and os.access(interpreter, os.X_OK) else None
+        )
+    else:
+        resolved = shutil.which(interpreter, path=env.get("PATH", ""))
+    if resolved is None:
+        wake_path = dict(service_environment(env)).get("PATH", "")
+        return (
+            f"refused: {cli_path} runs through {name}, which the wake's PATH ({wake_path}) "
+            "does not resolve; per-shell entries such as fnm_multishells are dropped; "
+            f"put {name} on a stable PATH entry and re-run arm"
+        )
+    return None
+
+
 def _resolve_target(opts: ArmOptions, seams: Seams) -> _ArmTarget | int:
     """Resolve the (host, session id) pair, or return the refusal code."""
     env = seams.env
     host = opts.host or detect_current_runtime(env)
+    if host == "cursor":
+        print("no surviving primitive for cursor")
+        return 3
     row = HOSTS.get(host)
     if row is None:
         return _refuse(f"unknown or unsupported host {host!r}; pass --host")
@@ -91,6 +145,16 @@ def _resolve_target(opts: ArmOptions, seams: Seams) -> _ArmTarget | int:
     except ValueError as exc:
         return _refuse(str(exc))
     return _verify_session(opts, seams, host, session_id, paths)
+
+
+def _verify_cli_session(
+    host: str, session_id: str, cwd: str, seams: Seams, cli_path: str
+) -> str | None:
+    problem = _check_interpreter(cli_path, seams.env)
+    status, why = session_exists(host, session_id, cwd, seams)
+    if status != "exists":
+        return f"session {session_id} not found ({why})"
+    return problem
 
 
 def _verify_session(
@@ -109,9 +173,9 @@ def _verify_session(
     cli_path = shutil.which(RUNTIMES[host].binaries[0], path=env.get("PATH", ""))
     if cli_path is None:
         return _refuse(f"the {host} CLI is not on PATH")
-    status, why = session_exists(host, session_id, cwd, seams)
-    if status != "exists":
-        return _refuse(f"session {session_id} not found ({why})")
+    problem = _verify_cli_session(host, session_id, cwd, seams, cli_path)
+    if problem:
+        return _refuse(problem)
     mode = opts.permission_mode or "unknown"
     source = "flag" if opts.permission_mode else "unknown"
     if PERMISSION_MODE_RE.fullmatch(mode) is None:
@@ -146,6 +210,8 @@ def _arm_payload(target: _ArmTarget, seams: Seams, env: Mapping[str, str]) -> di
         "pid": target.pid,
         "pid_start": target.pid_start,
         "boot_id": target.boot_id,
+        "liveness_source": "proc" if target.boot_id else "ps-unverified",
+        "pid_source": "flag" if target.pid else "host-env",
         "armed_at": now,
         "wake_count": previous["wake_count"] if previous else 0,
         "cap": WAKE_CAP,
@@ -154,6 +220,7 @@ def _arm_payload(target: _ArmTarget, seams: Seams, env: Mapping[str, str]) -> di
         "reset_evidence": None,
         "reset_at": None,
         "launch_cwd": target.cwd,
+        "launch_cwd_verified": True,
         "cli_path": target.cli_path,
         "permission_mode": target.mode,
         "permission_source": target.source,
@@ -171,16 +238,90 @@ def _arm_payload(target: _ArmTarget, seams: Seams, env: Mapping[str, str]) -> di
     }
 
 
-def _enable_timer(seams: Seams, timer: str) -> str | None:
-    """daemon-reload, then enable --now; the first failure is returned as a
-    message naming the verb and stderr (26-06 Task 3 adds the rollback)."""
+def _read_text(path: str) -> str | None:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+    except FileNotFoundError:
+        return None
+
+
+def _enable_timer(seams: Seams, timer: str, restart: bool = False) -> str | None:
+    """Reload units, optionally restart a changed timer, then enable it."""
     reload_proc = systemctl(seams, "daemon-reload")
     if reload_proc.returncode != 0:
         return f"systemctl daemon-reload failed: {reload_proc.stderr.strip()}"
+    if restart:
+        restart_proc = systemctl(seams, "restart", timer)
+        if restart_proc.returncode != 0:
+            return f"systemctl restart {timer} failed: {restart_proc.stderr.strip()}"
     enable_proc = systemctl(seams, "enable", "--now", timer)
     if enable_proc.returncode != 0:
         return f"systemctl enable --now {timer} failed: {enable_proc.stderr.strip()}"
     return None
+
+
+def _refresh_payload(payload: dict, previous: dict, opts: ArmOptions, target: _ArmTarget) -> dict:
+    payload.update(
+        {
+            "armed_at": previous["armed_at"],
+            "wake_count": previous["wake_count"],
+            "cap": previous["cap"],
+            "created": previous["created"],
+            "not_before": previous["not_before"],
+            "wake_source": previous["wake_source"],
+            "reset_evidence": previous["reset_evidence"],
+            "reset_at": previous.get("reset_at"),
+            "last_resume_exit": previous["last_resume_exit"],
+            "permission_mode": target.mode if opts.permission_mode else previous["permission_mode"],
+            "permission_source": target.source
+            if opts.permission_mode
+            else previous["permission_source"],
+            "refs": list(dict.fromkeys([*previous["refs"], *payload["refs"]])),
+        }
+    )
+    return payload
+
+
+def _write_units(
+    seams: Seams, target: _ArmTarget, shim_path: str, refreshed: bool
+) -> tuple[str, str, bool]:
+    env = seams.env
+    timer, service = unit_names(target.host, target.session_id)
+    ud = unit_dir(env)
+    service_path = os.path.join(ud, service)
+    timer_path = os.path.join(ud, timer)
+    service_text = render_service(sys.executable, shim_path, target.host, target.session_id, env)
+    timer_text = render_timer(target.host, target.session_id)
+    old_timer_text = _read_text(timer_path)
+    if _read_text(service_path) != service_text:
+        write_text_atomic(service_path, service_text)
+    timer_changed = old_timer_text != timer_text
+    if timer_changed:
+        write_text_atomic(timer_path, timer_text)
+    return timer, service, timer_changed and refreshed
+
+
+def _report_arm(target: _ArmTarget, payload: dict, refreshed: bool, seams: Seams) -> None:
+    print(f"{'refreshed' if refreshed else 'armed'} {target.host}-{target.session_id}")
+    for path in payload["created"][:4]:
+        print(f"wrote {path}")
+    for path in payload["created"][4:]:
+        print(f"systemctl creates {path}")
+    print(f"permission_mode: {target.mode} ({target.source})")
+    best = best_primitive(target.host, systemd_ok=True)
+    if best is not None:
+        print(f"primitive: {best['primitive']} (unverified: {', '.join(best['unverified'])})")
+        print(
+            "companion: none (the OS timer is the wake; an in-session fire during a usage "
+            "limit is lost, spike 004)"
+        )
+    linger = linger_enabled(seams)
+    if linger is False:
+        user = seams.env.get("USER") or seams.env.get("LOGNAME") or "<user>"
+        print(f"warning: linger is off; the wake stops at logout (loginctl enable-linger {user})")
+    elif linger is None:
+        print("linger: unknown")
 
 
 def arm(opts: ArmOptions, seams: Seams, shim_path: str) -> int:
@@ -190,27 +331,54 @@ def arm(opts: ArmOptions, seams: Seams, shim_path: str) -> int:
         return resolved
     target = resolved
     env = seams.env
+    old_state, state_reason = read_state(target.paths.state, target.host, target.session_id)
+    if state_reason not in ("ok", "missing"):
+        return _refuse(f"invalid state ({state_reason}); run disarm first")
+    if not systemd_available(seams):
+        fallback = best_primitive(target.host, systemd_ok=False)
+        print(f"no surviving primitive for {target.host}")
+        if fallback is not None:
+            print(
+                f"fall back to the in-session primitive {fallback['primitive']} "
+                "(survives a stall only; dies with the process)"
+            )
+            print("warning: the wake will not outlive the session")
+        return 3
     payload = _arm_payload(target, seams, env)
-    write_json_atomic(target.paths.state, payload)
+    refreshed = old_state is not None
+    if refreshed:
+        return _refresh_arm(seams, shim_path, _ArmRefresh(opts, target, old_state, payload))
+    return _finish_arm(seams, shim_path, target, payload)
+
+
+def _refresh_arm(seams: Seams, shim_path: str, refresh: _ArmRefresh) -> int:
+    payload = _refresh_payload(refresh.payload, refresh.old_state, refresh.opts, refresh.target)
+
+    def apply(current: dict) -> dict:
+        payload["wake_count"] = current["wake_count"]
+        return payload
+
+    update_state(refresh.target.paths.state, apply)
+    return _finish_arm(seams, shim_path, refresh.target, payload, refreshed=True)
+
+
+def _finish_arm(
+    seams: Seams,
+    shim_path: str,
+    target: _ArmTarget,
+    payload: dict,
+    refreshed: bool = False,
+) -> int:
+    if not refreshed:
+        write_json_atomic(target.paths.state, payload)
     try:
         lock_fd = os.open(target.paths.lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(lock_fd)
     except FileExistsError:
         pass  # never replace the lock: holders must keep the same inode
-    timer, service = unit_names(target.host, target.session_id)
-    ud = unit_dir(env)
-    service_text = render_service(
-        sys.executable, shim_path, target.host, target.session_id, env
-    )
-    write_text_atomic(os.path.join(ud, service), service_text)
-    write_text_atomic(os.path.join(ud, timer), render_timer(target.host, target.session_id))
-    failure = _enable_timer(seams, timer)
+    timer, _service, restart = _write_units(seams, target, shim_path, refreshed)
+    failure = _enable_timer(seams, timer, restart=restart)
     if failure is not None:
         return _refuse(failure)
-    print(f"armed {target.host}-{target.session_id}")
-    for path in payload["created"][:4]:
-        print(f"wrote {path}")
-    for path in payload["created"][4:]:
-        print(f"systemctl creates {path}")
-    print(f"permission_mode: {target.mode} ({target.source})")
+    _report_arm(target, payload, refreshed, seams)
     return 0

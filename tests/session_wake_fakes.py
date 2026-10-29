@@ -4,6 +4,7 @@ Everything runs on a scratch root: PATH holds only `<root>/bin`, the HOME and
 XDG dirs sit under `<root>/home`, and every fake appends one JSON log line to
 `$AI_KIT_FAKE_LOG`. No real systemd, no real host CLI, no real home.
 """
+
 import json
 import os
 import shutil
@@ -16,7 +17,7 @@ from ai_kit_session_wake.state import Seams
 # AI_KIT_FAKE_LOG is absent the line is skipped (26-04 gives the prelude a
 # log-path fallback beside the fake's bin dir; this plan's prelude is
 # unchanged by that review disposition).
-_PRELUDE = '''import json, os, sys
+_PRELUDE = """import json, os, sys
 _log = os.environ.get("AI_KIT_FAKE_LOG")
 if _log:
     with open(_log, "a", encoding="utf-8") as _handle:
@@ -27,7 +28,7 @@ if _log:
             "env_names": sorted(os.environ),
             "stdin_null": os.readlink("/proc/self/fd/0") == "/dev/null",
         }) + "\\n")
-'''
+"""
 
 
 def scoped_env(root: str) -> dict[str, str]:
@@ -46,12 +47,12 @@ def scoped_env(root: str) -> dict[str, str]:
     }
 
 
-def write_fake(bin_dir: str, name: str, body: str) -> str:
-    """Write an executable fake named `name` (shebang = this interpreter)."""
+def write_fake(bin_dir: str, name: str, body: str, shebang: str | None = None) -> str:
+    """Write an executable fake named `name` (shebang = this interpreter by default)."""
     os.makedirs(bin_dir, exist_ok=True)
     path = os.path.join(bin_dir, name)
     with open(path, "w", encoding="utf-8") as handle:
-        handle.write(f"#!{sys.executable}\n")
+        handle.write(f"{shebang or f'#!{sys.executable}'}\n")
         handle.write(_PRELUDE.replace("__FAKE_NAME__", repr(name)))
         handle.write(body)
     os.chmod(path, 0o755)
@@ -59,8 +60,8 @@ def write_fake(bin_dir: str, name: str, body: str) -> str:
 
 
 _SYSTEMCTL_BODY = """
-_argv = sys.argv[1:]
-if _argv[1:3] == ["show", "-p"]:
+_argv = sys.argv[2:]
+if _argv[:2] == ["show", "-p"]:
     if os.environ.get("FAKE_SYSTEMCTL_DOWN"):
         sys.exit(1)
     print("Version=259")

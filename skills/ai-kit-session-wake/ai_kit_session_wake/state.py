@@ -6,6 +6,7 @@ Every other module in this package takes its environment and clock from a
 `time.time`, so tests steer the whole package through one scratch env and one
 fixed clock (D-26).
 """
+
 import contextlib
 import fcntl
 import json
@@ -63,7 +64,10 @@ def session_paths(env: Mapping[str, str], host: str, session_id: str) -> Session
     """Paths for one (host, session id) pair; raises ValueError naming the id
     when it fails the safe charset, before it ever reaches a path (T-26-03)."""
     if not isinstance(session_id, str) or SESSION_ID_RE.fullmatch(session_id) is None:
-        raise ValueError(f"invalid session id: {session_id!r}")
+        raise ValueError(
+            f"refused session id {session_id!r}: only letters, digits, '_' and '-', "
+            "1 to 128 characters"
+        )
     stem = os.path.join(state_dir(env), f"{host}-{session_id}")
     return SessionPaths(f"{stem}.json", f"{stem}.lock", f"{stem}.done")
 
@@ -172,11 +176,7 @@ def _counters_problem(payload: dict) -> str | None:
     if not _count_int(payload.get("wake_count")) or payload["wake_count"] < 0:
         return "wake_count is not a non-negative integer"
     cap = payload.get("cap")
-    if (
-        not isinstance(cap, int)
-        or isinstance(cap, bool)
-        or not 1 <= cap <= WAKE_CAP
-    ):
+    if not isinstance(cap, int) or isinstance(cap, bool) or not 1 <= cap <= WAKE_CAP:
         return f"cap is not an integer in 1..{WAKE_CAP}"
     return None
 

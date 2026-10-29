@@ -5,6 +5,7 @@ from `seams.env`, and `systemctl` resolves on the seams PATH so tests drive
 fakes (D-26). `ExecStart` words are quoted with backslash, double quote, `%`
 and `$` escaped; there is no shell anywhere (T-26-03).
 """
+
 import os
 import shutil
 import subprocess
@@ -85,19 +86,23 @@ def render_timer(host: str, sid: str, reset_line: str | None = None) -> str:
 
 def service_environment(env: Mapping[str, str]) -> list[tuple[str, str]]:
     """The (key, value) pairs the service env carries, in D-13's order."""
-    return [(key, env[key]) for key in _SERVICE_ENV_KEYS if env.get(key)]
+    result = [(key, env[key]) for key in _SERVICE_ENV_KEYS if env.get(key)]
+    for index, (key, value) in enumerate(result):
+        if key == "PATH":
+            filtered = os.pathsep.join(
+                item for item in value.split(os.pathsep) if "fnm_multishells" not in item
+            )
+            result[index] = (key, filtered)
+    return result
 
 
-def render_service(
-    python: str, shim: str, host: str, sid: str, env: Mapping[str, str]
-) -> str:
+def render_service(python: str, shim: str, host: str, sid: str, env: Mapping[str, str]) -> str:
     """The oneshot service: absolute `ExecStart` (the python3 that ran arm, the
     shim, `fire --host <host> --session-id <sid>`), one Environment= pair per
     `service_environment` entry (D-13)."""
     argv = [python, shim, "fire", "--host", host, "--session-id", sid]
     env_lines = [
-        f'Environment="{_escape(key)}={_escape(value)}"'
-        for key, value in service_environment(env)
+        f'Environment="{_escape(key)}={_escape(value)}"' for key, value in service_environment(env)
     ]
     lines = [
         "[Unit]",
@@ -136,7 +141,7 @@ def systemd_available(seams: Seams) -> bool:
     return systemctl(seams, "show", "-p", "Version").returncode == 0
 
 
-def linger_enabled(seams: Seams) -> bool | None:
+def linger_enabled(seams: Seams, linger_dir: str = "/var/lib/systemd/linger") -> bool | None:
     """Whether the user's linger is on: `loginctl show-user <user> -p Linger
     --value`, falling back to `/var/lib/systemd/linger/<user>`; None when
     neither answers. The user comes from the seams env's USER/LOGNAME."""
@@ -156,6 +161,6 @@ def linger_enabled(seams: Seams) -> bool | None:
             proc = None
         if proc is not None and proc.returncode == 0:
             return proc.stdout.strip() == "yes"
-    if user and os.path.exists(f"/var/lib/systemd/linger/{user}"):
+    if user and os.path.exists(os.path.join(linger_dir, user)):
         return True
     return None
