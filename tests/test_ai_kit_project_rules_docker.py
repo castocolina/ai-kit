@@ -514,7 +514,8 @@ class TestCliSurface(unittest.TestCase):
         with tempfile.TemporaryDirectory() as repo:
             _write(os.path.join(repo, "Makefile"), "test:\n\techo t\n")
             result = cli.remediate(repo)
-            self.assertEqual(sorted(result), ["blocked", "remediate"])
+            self.assertEqual(sorted(result), ["blocked", "notices", "remediate"])
+            self.assertEqual(result["notices"], [])
 
     def test_unknown_subcommand_returns_2(self):
         self.assertEqual(cli.main(["bogus"]), 2)

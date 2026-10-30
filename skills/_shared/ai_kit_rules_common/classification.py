@@ -12,15 +12,61 @@ from __future__ import annotations
 import math
 
 CONDITION_ALWAYS = "always"
+CONDITION_OPENGSD = "opengsd"
+
+
+def condition_state(condition: str, tool_presence: dict) -> str:
+    """Tri-state: `"met"`, `"unmet"` or `"unverified"`.
+
+    `unverified` is only produced by the `opengsd` identity probe (26 D-19): the rule is not
+    applicable, but the caller must report that it could not be proven, never silently skip it.
+    """
+    if condition == CONDITION_ALWAYS:
+        return "met"
+    if condition.startswith("tool-presence:"):
+        name = condition.split(":", 1)[1]
+        return "met" if tool_presence.get(name, False) else "unmet"
+    if condition == CONDITION_OPENGSD:
+        status = tool_presence.get("opengsd")
+        if status == "ok":
+            return "met"
+        if status == "unverified":
+            return "unverified"
+    return "unmet"
 
 
 def evaluate_condition(condition: str, tool_presence: dict) -> bool:
-    if condition == CONDITION_ALWAYS:
-        return True
-    if condition.startswith("tool-presence:"):
-        name = condition.split(":", 1)[1]
-        return bool(tool_presence.get(name, False))
-    return False
+    return condition_state(condition, tool_presence) == "met"
+
+
+def _not_applicable(rule: dict, state: str, tool_presence: dict) -> dict:
+    if state == "unverified":
+        reason = (
+            f"condition '{rule['condition']}' unverified: "
+            f"{tool_presence.get(rule['condition'] + '_reason', 'not proven')}"
+        )
+        finding = {
+            "id": rule["id"],
+            "status": "not_applicable",
+            "unverified": True,
+            "reason": reason,
+        }
+    else:
+        finding = {
+            "id": rule["id"],
+            "status": "not_applicable",
+            "reason": f"condition '{rule['condition']}' not met in this environment",
+        }
+    finding.update(
+        {
+            "matched_signals": [],
+            "criticality": rule["criticality"],
+            "summary": rule["summary"],
+        }
+    )
+    if rule.get("verbatim"):
+        finding["verbatim"] = True
+    return finding
 
 
 def _is_tool_scoped_groups(signals: tuple) -> bool:
@@ -114,20 +160,9 @@ def check_rules(
         signals = rule["signals"]
         if not signals:
             continue
-        if not evaluate_condition(rule["condition"], tool_presence):
-            findings.append(
-                {
-                    "id": rule["id"],
-                    "status": "not_applicable",
-                    "reason": (
-                        f"condition '{rule['condition']}' not met in this "
-                        "environment"
-                    ),
-                    "matched_signals": [],
-                    "criticality": rule["criticality"],
-                    "summary": rule["summary"],
-                }
-            )
+        state = condition_state(rule["condition"], tool_presence)
+        if state != "met":
+            findings.append(_not_applicable(rule, state, tool_presence))
             continue
 
         missing_tools: list[str] | None = None
@@ -150,6 +185,8 @@ def check_rules(
         }
         if missing_tools is not None:
             finding["missing_tools"] = missing_tools
+        if rule.get("verbatim"):
+            finding["verbatim"] = True
         findings.append(finding)
 
     if include_present:
@@ -159,6 +196,8 @@ def check_rules(
 
 __all__ = [
     "CONDITION_ALWAYS",
+    "CONDITION_OPENGSD",
     "check_rules",
+    "condition_state",
     "evaluate_condition",
 ]

@@ -831,7 +831,8 @@ class TestCliSurface(unittest.TestCase):
                 _precommit_yaml(_hook("mypy", entry="mypy .")),
             )
             result = cli.remediate(repo)
-            self.assertEqual(sorted(result), ["blocked", "remediate"])
+            self.assertEqual(sorted(result), ["blocked", "notices", "remediate"])
+            self.assertEqual(result["notices"], [])
             self.assertTrue(all(e["kind"] == "precommit" for e in result["remediate"]))
 
     def test_unknown_subcommand_returns_2(self):

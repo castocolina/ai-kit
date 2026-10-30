@@ -16,7 +16,7 @@ text (D-01) -- never a verbatim block-quote.
 
 from __future__ import annotations
 
-from ai_kit_rules_common.classification import CONDITION_ALWAYS
+from ai_kit_rules_common.classification import CONDITION_ALWAYS, CONDITION_OPENGSD
 
 
 def condition_tool_presence(name: str) -> str:
@@ -26,6 +26,15 @@ def condition_tool_presence(name: str) -> str:
 CRITICALITY_CRITICAL = 1
 CRITICALITY_HIGH = 2
 CRITICALITY_MEDIUM = 3
+
+# R19's summary is the policy reference's instruction-file pointer, verbatim (26 D-33, D-34):
+# skills/ai-kit-cross-ai/references/subprocess-quota-policy.md `## Pointer for instruction files`.
+# tests/test_ai_kit_project_rules_agents.py pins this text to that block.
+R19_POINTER = (
+    "Cross-AI runs go through .planning/scripts/cross-ai.mjs.\n"
+    "The runner owns the soft ladder and the hard tier, and never switches CLI or model.\n"
+    "Read its last AIKIT-XAI line and the ai-kit-cross-ai skill before acting."
+)
 
 RULES: tuple[dict, ...] = (
     {
@@ -243,5 +252,33 @@ RULES: tuple[dict, ...] = (
             "why -- skip narrating abandoned alternatives unless the "
             "rejection itself carries a load-bearing lesson."
         ),
+    },
+    {
+        "id": "R18",
+        "category": "workflow",
+        "criticality": CRITICALITY_HIGH,
+        "condition": CONDITION_OPENGSD,
+        "signals": ("session wake", "self-resume", "resume by session id"),
+        "summary": (
+            "The main agent arms the ai-kit-session-wake skill's session wake before a "
+            "multi-plan run: a self-resume by session id at the host-reported reset + 60 s "
+            "when known (inferred), else hourly; it runs done when the run ends, and only "
+            "the orchestrator arms or disarms it."
+        ),
+        "verbatim": True,
+    },
+    {
+        "id": "R19",
+        "category": "workflow",
+        "criticality": CRITICALITY_HIGH,
+        "condition": CONDITION_OPENGSD,
+        "signals": (
+            ("cross-ai.mjs",),
+            ("never switches", "never switch"),
+            ("aikit-xai",),
+            ("ai-kit-cross-ai",),
+        ),
+        "summary": R19_POINTER,
+        "verbatim": True,
     },
 )

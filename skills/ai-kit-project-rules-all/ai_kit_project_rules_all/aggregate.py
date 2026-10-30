@@ -32,12 +32,14 @@ def aggregate(domain_results: dict) -> dict:
     remediate: list[dict] = []
     blocked: list[dict] = []
     failed: list[dict] = []
+    notices: list[dict] = []
 
     for domain in DOMAIN_ORDER:
         result = domain_results[domain]
         if "remediate" in result:
             remediate.extend(result["remediate"])
             blocked.extend(result.get("blocked", []))
+            notices.extend(result.get("notices", []))
         else:
             failed.append(result)
 
@@ -48,4 +50,4 @@ def aggregate(domain_results: dict) -> dict:
         if entry.get("kind") == "workflow":
             entry["hand_off"] = "agent-md-refactor"
 
-    return {"remediate": remediate, "blocked": blocked, "failed": failed}
+    return {"remediate": remediate, "blocked": blocked, "failed": failed, "notices": notices}

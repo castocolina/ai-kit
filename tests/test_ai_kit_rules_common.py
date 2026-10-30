@@ -1,6 +1,11 @@
+import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(
     0,
@@ -128,7 +133,6 @@ class TestCheckRulesIncludePresent(unittest.TestCase):
         self.assertIn("X01", ids)
 
 
-import tempfile
 
 from ai_kit_rules_common.tool_presence import MODERN_CLI_TOOLS, check_tool_presence
 
@@ -154,7 +158,6 @@ class TestToolPresence(unittest.TestCase):
         self.assertTrue(result["gsd"])
 
 
-import json
 from datetime import UTC, datetime, timedelta
 
 from ai_kit_rules_common.stack_cache import (
@@ -295,7 +298,7 @@ class TestRemediation(unittest.TestCase):
     def test_returns_dict_never_bare_list(self):
         result = build_remediation({"workflow": []})
         self.assertIsInstance(result, dict)
-        self.assertEqual(result, {"remediate": [], "blocked": []})
+        self.assertEqual(result, {"remediate": [], "blocked": [], "notices": []})
 
     def test_unknown_kind_keys_ignored_safely(self):
         # A report carrying a kind key this module doesn't branch on (e.g.
@@ -1654,7 +1657,6 @@ class TestYamlTextQuoteStripDriftGuard(unittest.TestCase):
                 )
 
 
-import subprocess
 
 from ai_kit_rules_common.stack_detect import detect_stacks
 
@@ -2277,6 +2279,122 @@ class TestCommandTextRunnerPrefixDriftGuard(unittest.TestCase):
             self.assertEqual(literal, _cmdtext.RUNNER_PREFIX_RE.pattern)
         finally:
             _cmdtext._ONE_TOKEN_RUNNER_RE = original
+
+
+class TestGsdIdentity(unittest.TestCase):
+    """SPEC R7 precision: only the exact `@opengsd/gsd-core` package is `ok`; every
+    unprovable shape is `unverified` (D-19); other valid names are `absent`."""
+
+    SENTINEL = "sk-" + "test-" + "not-a-real-secret-0426"
+
+    def setUp(self):
+        from ai_kit_rules_common import gsd_identity
+
+        self.gsd_identity = gsd_identity
+        root = tempfile.mkdtemp(prefix="p26-08-identity-")
+        self.addCleanup(shutil.rmtree, root, True)
+        self.repo = os.path.join(root, "repo")
+        tools = os.path.join(self.repo, ".claude", "gsd-core", "bin", "gsd-tools.cjs")
+        os.makedirs(os.path.dirname(tools))
+        with open(tools, "w", encoding="utf-8") as handle:
+            handle.write("")
+        self.bin_dir = os.path.join(root, "bin")
+        os.makedirs(self.bin_dir)
+        node = os.path.join(self.bin_dir, "node")
+        with open(node, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\nexit 0\n")
+        os.chmod(node, 0o755)
+        self.env = {"PATH": self.bin_dir, "HOME": os.path.join(root, "home")}
+        self.calls = []
+
+    def _run_fn(self, stdout="", returncode=0, exc=None):
+        """Fake `subprocess.run`: `git` (the resolver's toplevel lookup) fails as in a non-git
+        scratch dir; only the identity call is recorded and answered."""
+
+        def run_fn(argv, **kwargs):
+            if argv[0] == "git":
+                return subprocess.CompletedProcess(argv, 128, stdout="", stderr="")
+            self.calls.append((argv, kwargs))
+            if exc is not None:
+                raise exc
+            return subprocess.CompletedProcess(argv, returncode, stdout=stdout, stderr="")
+
+        return run_fn
+
+    def _probe(self, **kwargs):
+        return self.gsd_identity.probe(
+            kwargs.pop("env", self.env),
+            self.repo,
+            run_fn=kwargs.pop("run_fn", self._run_fn('{"packageName":"@opengsd/gsd-core"}')),
+            **kwargs,
+        )
+
+    def test_exact_package_is_ok(self):
+        status, _reason, path = self._probe()
+        self.assertEqual(status, "ok")
+        self.assertIsNotNone(path)
+        self.assertTrue(str(path).endswith(os.path.join("bin", "gsd-tools.cjs")))
+
+    def test_lookalike_and_other_packages_are_absent(self):
+        for name in ("@opengsd/gsd-core-fork", " @opengsd/gsd-core", "get-shit-done-cc"):
+            with self.subTest(name=name):
+                run_fn = self._run_fn(json.dumps({"packageName": name}))
+                status, reason, _path = self._probe(run_fn=run_fn)
+                self.assertEqual(status, "absent")
+                self.assertIn("not @opengsd/gsd-core", reason)
+
+    def test_unprovable_shapes_are_unverified(self):
+        cases = {
+            "non-zero exit": self._run_fn("", returncode=1),
+            "timeout": self._run_fn(exc=subprocess.TimeoutExpired("node", 5)),
+            "invalid JSON": self._run_fn("not json"),
+            "JSON list": self._run_fn("[]"),
+            "no packageName": self._run_fn('{"version":"1"}'),
+            "non-string packageName": self._run_fn('{"packageName":7}'),
+        }
+        for label, run_fn in cases.items():
+            with self.subTest(label=label):
+                status, reason, _path = self._probe(run_fn=run_fn)
+                self.assertEqual(status, "unverified")
+                self.assertTrue(reason)
+
+    def test_missing_node_is_unverified(self):
+        empty_bin = os.path.join(os.path.dirname(self.bin_dir), "empty-bin")
+        os.makedirs(empty_bin)
+        status, reason, path = self._probe(env={"PATH": empty_bin, "HOME": self.repo})
+        self.assertEqual(status, "unverified")
+        self.assertIn("node", reason)
+        self.assertIsNotNone(path)
+        self.assertTrue(str(path).endswith(os.path.join("bin", "gsd-tools.cjs")))  # located...
+        self.assertEqual(self.calls, [])  # ...but the identity command never ran
+
+    def test_no_gsd_tools_in_launcher_order_is_unverified(self):
+        bare = os.path.join(os.path.dirname(self.repo), "bare")
+        os.makedirs(bare)
+        status, reason, path = self.gsd_identity.probe(
+            {"PATH": self.bin_dir, "HOME": bare}, bare, run_fn=self._run_fn("{}")
+        )
+        self.assertEqual(status, "unverified")
+        self.assertIn("launcher order", reason)
+        self.assertIsNone(path)
+
+    def test_missing_sibling_skill_is_unverified(self):
+        with mock.patch.object(self.gsd_identity, "_load_gsd_catalog", return_value=None):
+            status, reason, path = self._probe()
+        self.assertEqual(status, "unverified")
+        self.assertIn("sibling skill", reason)
+        self.assertIsNone(path)
+
+    def test_probe_env_holds_only_path_and_home(self):
+        self.env["SECRET_SENTINEL"] = self.SENTINEL
+        self._probe()
+        self.assertEqual(len(self.calls), 1)
+        probe_env = self.calls[0][1]["env"]
+        self.assertEqual(set(probe_env), {"PATH", "HOME"})
+        self.assertNotIn(self.SENTINEL, json.dumps(probe_env))
+        self.assertEqual(self.calls[0][1]["timeout"], 5)
+        tools = os.path.join(self.repo, ".claude", "gsd-core", "bin", "gsd-tools.cjs")
+        self.assertEqual(self.calls[0][0][1:], [tools, "runtime-identity", "--raw"])
 
 
 if __name__ == "__main__":

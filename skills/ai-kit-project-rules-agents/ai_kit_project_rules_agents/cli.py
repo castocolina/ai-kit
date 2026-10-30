@@ -8,8 +8,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 import urllib.parse
+
+from ai_kit_rules_common import gsd_identity
 
 from .remediation import build_remediation
 from .rule_checker import check_workflow_rules
@@ -154,18 +157,60 @@ def _resolve(
     return text + "\n\n" + "\n\n".join(appended), broken
 
 
-def check(repo_root: str, agents_md_path: str | None = None) -> dict:
+def _opengsd_presence(
+    repo_root: str, env: dict | None, run_fn
+) -> dict[str, str]:
+    """`opengsd` and `opengsd_reason` for the `opengsd` condition (26 D-17, D-19).
+
+    The identity probe runs only when `.planning/` exists; it runs the repo's own gsd-tools,
+    so its path is printed on stderr for the user.
+    """
+    if not os.path.isdir(os.path.join(repo_root, ".planning")):
+        return {"opengsd": "absent", "opengsd_reason": "no .planning/ directory"}
+    probe_env = dict(os.environ) if env is None else env
+    status, reason, tools_path = gsd_identity.probe(probe_env, repo_root, run_fn)
+    if tools_path:
+        print(f"ai-kit: gsd identity probe ran {tools_path}", file=sys.stderr)
+    return {"opengsd": status, "opengsd_reason": reason}
+
+
+def check(
+    repo_root: str,
+    agents_md_path: str | None = None,
+    *,
+    env: dict | None = None,
+    run_fn=subprocess.run,
+    include_present: bool = False,
+) -> dict:
     text, broken = _resolve(repo_root, agents_md_path)
-    presence = check_tool_presence(repo_root=repo_root)
-    workflow_findings = check_workflow_rules(text, presence)
+    presence: dict = dict(check_tool_presence(repo_root=repo_root))
+    presence.update(_opengsd_presence(repo_root, env, run_fn))
+    workflow_findings = check_workflow_rules(
+        text, presence, include_present=include_present
+    )
     workflow_findings = sorted(workflow_findings, key=lambda f: f["criticality"])
     return {"workflow": workflow_findings, "links": broken}
 
 
-def remediate(repo_root: str, agents_md_path: str | None = None) -> dict:
+def remediate(
+    repo_root: str,
+    agents_md_path: str | None = None,
+    *,
+    env: dict | None = None,
+    run_fn=subprocess.run,
+    include_present: bool = False,
+) -> dict:
     """`check(...)` then `remediation.build_remediation(...)` -- no second
     lookup into `rules.py`, no competing finding shape."""
-    return build_remediation(check(repo_root, agents_md_path))
+    return build_remediation(
+        check(
+            repo_root,
+            agents_md_path,
+            env=env,
+            run_fn=run_fn,
+            include_present=include_present,
+        )
+    )
 
 
 def main(argv: list[str]) -> int:

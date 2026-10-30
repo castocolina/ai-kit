@@ -63,6 +63,9 @@ E2E_MODULES = frozenset({
     "tests.test_hook_registry_e2e",  # R10: real setup.py hook runs under a temp HOME
     "tests.test_cross_ai_runner_e2e",
     "tests.test_precompact_shims_e2e",  # node runs of the pi and opencode shims (D-18)
+    # real dispatch of the six checkers; the agents domain runs the project-local gsd-core
+    # through node (26-08)
+    "tests.test_ai_kit_project_rules_all_e2e",
 })
 EXPLICIT_GROUPS = {
     "arch": ARCH_MODULES,

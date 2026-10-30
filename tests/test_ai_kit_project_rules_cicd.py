@@ -814,7 +814,9 @@ class TestCliSurface(unittest.TestCase):
 
     def test_remediate_returns_two_key_payload(self):
         repo = _fixture({"Makefile": _MK_RUFF_MYPY})
-        self.assertEqual(set(cli.remediate(repo)), {"remediate", "blocked"})
+        payload = cli.remediate(repo)
+        self.assertEqual(set(payload), {"remediate", "blocked", "notices"})
+        self.assertEqual(payload["notices"], [])
 
     def test_unknown_subcommand_returns_2(self):
         buf = io.StringIO()

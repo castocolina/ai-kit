@@ -30,9 +30,16 @@ from __future__ import annotations
 # derives from `category`.
 STRUCTURAL_KINDS = ("makefile", "precommit", "arch", "docker", "cicd")
 
+# Workflow-finding flags a `remediate` entry carries forward when present: `verbatim` (the
+# summary is inserted unchanged, 26 D-34), and the per-stack fields of the R-series checkers.
+_CARRIED_WORKFLOW_KEYS = ("verbatim", "stacks", "unverified_stacks", "hardcoded_counts")
+
 
 def build_remediation(report: dict) -> dict:
-    """Build `{"remediate": [...ordered...], "blocked": [...]}` from `report`.
+    """Build `{"remediate": [...], "blocked": [...], "notices": [...]}` from `report`.
+
+    `notices` holds every `workflow` finding flagged `unverified` (26 D-19): a rule whose
+    condition could not be proven is never silently dropped. Structural-only reports get `[]`.
 
     `workflow`-kind findings with `status` in `("missing", "near_miss")`
     become `remediate` entries -- `auto_apply` is `True` for `missing`,
@@ -75,22 +82,38 @@ def build_remediation(report: dict) -> dict:
     """
     remediate: list[dict] = []
     blocked: list[dict] = []
+    notices: list[dict] = []
 
     for finding in report.get("workflow", []):
         status = finding.get("status")
+        if finding.get("unverified"):
+            notices.append(
+                {
+                    "kind": "workflow",
+                    "id": finding["id"],
+                    "status": status,
+                    "unverified": True,
+                    "reason": finding.get("reason", ""),
+                    "criticality": finding["criticality"],
+                    "summary": finding["summary"],
+                }
+            )
+            continue
         if status not in ("missing", "near_miss"):
             continue
-        remediate.append(
-            {
-                "kind": "workflow",
-                "id": finding["id"],
-                "status": status,
-                "criticality": finding["criticality"],
-                "summary": finding["summary"],
-                "matched_signals": finding.get("matched_signals", []),
-                "auto_apply": status == "missing",
-            }
-        )
+        entry = {
+            "kind": "workflow",
+            "id": finding["id"],
+            "status": status,
+            "criticality": finding["criticality"],
+            "summary": finding["summary"],
+            "matched_signals": finding.get("matched_signals", []),
+            "auto_apply": status == "missing",
+        }
+        for carried in _CARRIED_WORKFLOW_KEYS:
+            if carried in finding:
+                entry[carried] = finding[carried]
+        remediate.append(entry)
 
     for kind in STRUCTURAL_KINDS:
         for finding in report.get(kind, []):
@@ -119,7 +142,7 @@ def build_remediation(report: dict) -> dict:
                 )
 
     remediate.sort(key=lambda entry: entry["criticality"])
-    return {"remediate": remediate, "blocked": blocked}
+    return {"remediate": remediate, "blocked": blocked, "notices": notices}
 
 
 __all__ = ["STRUCTURAL_KINDS", "build_remediation"]

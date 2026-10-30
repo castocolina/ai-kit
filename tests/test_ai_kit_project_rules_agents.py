@@ -1,5 +1,7 @@
+import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -9,6 +11,10 @@ sys.path.insert(
     0,
     os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-project-rules-agents"),
 )
+sys.path.insert(
+    0,
+    os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-project-rules-all"),
+)
 
 from ai_kit_project_rules_agents import (
     cli,
@@ -17,6 +23,7 @@ from ai_kit_project_rules_agents import (
     rules,
     tool_presence,
 )
+from ai_kit_project_rules_all import aggregate as rules_all_aggregate
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
@@ -503,7 +510,8 @@ class TestRemediation(unittest.TestCase):
     def test_returns_dict_never_bare_list(self):
         result = remediation.build_remediation({"workflow": []})
         self.assertIsInstance(result, dict)
-        self.assertEqual(set(result.keys()), {"remediate", "blocked"})
+        self.assertEqual(set(result.keys()), {"remediate", "blocked", "notices"})
+        self.assertEqual(result["notices"], [])
 
 
 class TestGateRegistration(unittest.TestCase):
@@ -578,6 +586,263 @@ class TestGateRegistration(unittest.TestCase):
                 f"hook {hook_id!r} has a same-named Makefile target "
                 f"but is missing from validate: prerequisites {prerequisites}",
             )
+
+
+class TestOpenGsdRules(unittest.TestCase):
+    """R18 and R19 are gated on a proven `@opengsd/gsd-core` identity (26 D-19, SPEC R7)."""
+
+    IDENTITY = '{"packageName":"@opengsd/gsd-core","version":"1.17.0"}'
+    SENTINEL = "sk-" + "test-" + "not-a-real-secret-0426"
+
+    def _project(self, root, agents_text=None):
+        repo = os.path.join(root, "repo")
+        _write(os.path.join(repo, ".planning", "STATE.md"), "state\n")
+        _write(os.path.join(repo, ".claude", "gsd-core", "bin", "gsd-tools.cjs"), "")
+        if agents_text is not None:
+            _write(os.path.join(repo, "AGENTS.md"), agents_text)
+        bin_dir = os.path.join(root, "bin")
+        fake_bin(bin_dir, ["node"], "#!/bin/sh\nexit 0\n")
+        return repo, bin_dir
+
+    def _run(self, identity_stdout=None, exit_code=0, record=None):
+        def run_fn(argv, **kwargs):
+            if record is not None:
+                record.append((argv, kwargs))
+            if "runtime-identity" in argv:
+                return subprocess.CompletedProcess(
+                    argv, exit_code, stdout=identity_stdout or "", stderr=""
+                )
+            return subprocess.CompletedProcess(argv, 128, stdout="", stderr="")
+
+        return run_fn
+
+    def _env(self, root, bin_dir):
+        env = scoped_env(bin_dir, os.path.join(root, "home"))
+        return env
+
+    @staticmethod
+    def _ids(result):
+        return {finding["id"] for finding in result["workflow"]}
+
+    def _finding(self, result, rule_id):
+        for finding in result["workflow"]:
+            if finding["id"] == rule_id:
+                return finding
+        self.fail(f"{rule_id} is absent from the findings")
+
+    def test_no_agents_md_both_rules_missing(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo, bin_dir = self._project(root)
+            result = cli.check(
+                repo, env=self._env(root, bin_dir), run_fn=self._run(self.IDENTITY)
+            )
+            for rule_id in ("R18", "R19"):
+                self.assertEqual(self._finding(result, rule_id)["status"], "missing")
+
+    def test_pointer_and_summary_satisfy_rules_and_cli_filters_present(self):
+        text = (
+            "The main agent arms the session wake and a self-resume by session id.\n"
+            + rules.R19_POINTER
+            + "\n"
+        )
+        with tempfile.TemporaryDirectory() as root:
+            repo, bin_dir = self._project(root, text)
+            env = self._env(root, bin_dir)
+            filtered = cli.check(repo, env=env, run_fn=self._run(self.IDENTITY))
+            self.assertEqual(self._ids(filtered) & {"R18", "R19"}, set())
+            full = cli.check(
+                repo, env=env, run_fn=self._run(self.IDENTITY), include_present=True
+            )
+            self.assertEqual(self._finding(full, "R18")["status"], "present")
+            self.assertEqual(self._finding(full, "R19")["status"], "present")
+
+    def test_one_directive_yields_one_present_one_missing(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo, bin_dir = self._project(root, rules.R19_POINTER + "\n")
+            full = cli.check(
+                repo,
+                env=self._env(root, bin_dir),
+                run_fn=self._run(self.IDENTITY),
+                include_present=True,
+            )
+            self.assertEqual(self._finding(full, "R19")["status"], "present")
+            self.assertEqual(self._finding(full, "R18")["status"], "missing")
+
+    def test_unverified_identity_is_notice_in_remediate(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo, bin_dir = self._project(root)
+            report = cli.remediate(
+                repo, env=self._env(root, bin_dir), run_fn=self._run(exit_code=1)
+            )
+            notice_ids = [n["id"] for n in report["notices"]]
+            self.assertEqual(notice_ids, ["R18", "R19"])
+            for notice in report["notices"]:
+                self.assertTrue(notice["unverified"])
+                self.assertIn("reason", notice)
+                self.assertEqual(notice["kind"], "workflow")
+            remediated = {entry["id"] for entry in report["remediate"]}
+            self.assertFalse(remediated & {"R18", "R19"})
+            for rule_id in ("R18", "R19"):
+                finding = self._finding(
+                    cli.check(
+                        repo, env=self._env(root, bin_dir), run_fn=self._run(exit_code=1)
+                    ),
+                    rule_id,
+                )
+                self.assertEqual(finding["status"], "not_applicable")
+                self.assertTrue(finding["unverified"])
+
+    def test_unverified_notice_reaches_rules_all_aggregate(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo, bin_dir = self._project(root)
+            agents_report = cli.remediate(
+                repo, env=self._env(root, bin_dir), run_fn=self._run(exit_code=1)
+            )
+        domains = {
+            "agents": agents_report,
+            "makefile": {"remediate": [], "blocked": [], "notices": []},
+            "precommit": {"remediate": [], "blocked": []},
+            "arch": {"remediate": [], "blocked": []},
+            "docker": {"remediate": [], "blocked": []},
+            "cicd": {"remediate": [], "blocked": []},
+        }
+        report = rules_all_aggregate.aggregate(domains)
+        self.assertEqual([n["id"] for n in report["notices"]], ["R18", "R19"])
+
+    def test_valid_identity_naming_another_package_is_plain_not_applicable(self):
+        other = '{"packageName":"@opengsd/gsd-core-fork","version":"9"}'
+        with tempfile.TemporaryDirectory() as root:
+            repo, bin_dir = self._project(root)
+            result = cli.check(
+                repo, env=self._env(root, bin_dir), run_fn=self._run(other)
+            )
+            for rule_id in ("R18", "R19"):
+                finding = self._finding(result, rule_id)
+                self.assertEqual(finding["status"], "not_applicable")
+                self.assertNotIn("unverified", finding)
+            report = cli.remediate(
+                repo, env=self._env(root, bin_dir), run_fn=self._run(other)
+            )
+            self.assertEqual(report["notices"], [])
+
+    def test_no_planning_dir_skips_probe_and_rules(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = os.path.join(root, "repo")
+            os.makedirs(repo)
+            calls = []
+            result = cli.check(
+                repo,
+                env=self._env(root, root),
+                run_fn=self._run(self.IDENTITY, record=calls),
+            )
+            self.assertEqual(calls, [])
+            self.assertEqual(self._finding(result, "R18")["status"], "not_applicable")
+            self.assertNotIn("unverified", self._finding(result, "R18"))
+            report = cli.remediate(
+                repo, env=self._env(root, root), run_fn=self._run(self.IDENTITY)
+            )
+            self.assertEqual(report["notices"], [])
+
+    def test_probe_env_and_findings_carry_no_caller_secret(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo, bin_dir = self._project(root)
+            env = self._env(root, bin_dir)
+            env["SECRET_SENTINEL"] = self.SENTINEL
+            calls = []
+            result = cli.check(
+                repo, env=env, run_fn=self._run(self.IDENTITY, record=calls),
+                include_present=True,
+            )
+            probe_calls = [kw for argv, kw in calls if "runtime-identity" in argv]
+            self.assertEqual(len(probe_calls), 1)
+            self.assertEqual(set(probe_calls[0]["env"]), {"PATH", "HOME"})
+            self.assertNotIn(self.SENTINEL, json.dumps(result))
+
+    def test_check_tool_presence_stays_hermetic(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo, bin_dir = self._project(root)
+            presence = tool_presence.check_tool_presence(
+                search_path=bin_dir, repo_root=repo
+            )
+            self.assertNotIn("opengsd", presence)
+            self.assertIs(presence["gsd"], True)
+
+
+class TestOpenGsdRuleText(unittest.TestCase):
+    def test_r18_and_r19_follow_r17_in_catalog_order(self):
+        ids = [rule["id"] for rule in rules.RULES]
+        self.assertEqual(ids[-3:], ["R17", "R18", "R19"])
+
+    def test_signal_sets_are_disjoint_and_avoid_the_banned_phrases(self):
+        by_id = {rule["id"]: rule for rule in rules.RULES}
+        flat_r18 = set(by_id["R18"]["signals"])
+        r19_phrases = {p for group in by_id["R19"]["signals"] for p in group}
+        self.assertEqual(flat_r18 & r19_phrases, set())
+        for banned in ("unfinished work", "quota", "hourly"):
+            self.assertNotIn(banned, flat_r18)
+            self.assertNotIn(banned, r19_phrases)
+
+    def test_r19_summary_is_the_policy_pointer_verbatim(self):
+        from tests.test_quota_policy_text import REFERENCE, pointer_lines
+
+        text = REFERENCE.read_text(encoding="utf-8")
+        pointer = "\n".join(pointer_lines(text))
+        self.assertEqual(rules.R19_POINTER, pointer)
+        by_id = {rule["id"]: rule for rule in rules.RULES}
+        self.assertEqual(by_id["R19"]["summary"], pointer)
+        self.assertTrue(by_id["R19"]["verbatim"])
+        self.assertTrue(by_id["R18"]["verbatim"])
+
+    def test_pointer_satisfies_every_r19_group(self):
+        from tests.test_quota_policy_text import REFERENCE, pointer_lines
+
+        pointer = "\n".join(pointer_lines(REFERENCE.read_text(encoding="utf-8")))
+        by_id = {rule["id"]: rule for rule in rules.RULES}
+        for group in by_id["R19"]["signals"]:
+            self.assertTrue(any(p in pointer.lower() for p in group), msg=group)
+
+    def test_r18_summary_satisfies_its_signals(self):
+        by_id = {rule["id"]: rule for rule in rules.RULES}
+        summary = by_id["R18"]["summary"].lower()
+        self.assertTrue(any(p in summary for p in by_id["R18"]["signals"]))
+        self.assertIn("host-reported reset + 60 s", by_id["R18"]["summary"])
+
+    def test_non_vacuity_partial_pointer_is_near_miss(self):
+        presence = {"opengsd": "ok", "opengsd_reason": "test"}
+        text = rules.R19_POINTER.replace("cross-ai.mjs", "runner.mjs")
+        findings = rule_checker.check_workflow_rules(text, presence, include_present=True)
+        self.assertEqual(self._status(findings, "R19"), "near_miss")
+
+    def test_non_vacuity_partial_summary_is_near_miss(self):
+        presence = {"opengsd": "ok", "opengsd_reason": "test"}
+        # flat rule: 0 matches is missing, 1 of 3 is near_miss, 2 of 3 reaches ceil(3/2) = present
+        findings = rule_checker.check_workflow_rules(
+            "a session wake only", presence, include_present=True
+        )
+        self.assertEqual(self._status(findings, "R18"), "near_miss")
+        findings = rule_checker.check_workflow_rules(
+            "nothing relevant here", presence, include_present=True
+        )
+        self.assertEqual(self._status(findings, "R18"), "missing")
+        findings = rule_checker.check_workflow_rules(
+            "session wake and self-resume", presence, include_present=True
+        )
+        self.assertEqual(self._status(findings, "R18"), "present")
+
+    def test_unverified_condition_is_not_applicable_not_met(self):
+        from ai_kit_rules_common.classification import condition_state, evaluate_condition
+
+        self.assertEqual(condition_state("opengsd", {"opengsd": "unverified"}), "unverified")
+        self.assertFalse(evaluate_condition("opengsd", {"opengsd": "unverified"}))
+        self.assertEqual(condition_state("opengsd", {"opengsd": "absent"}), "unmet")
+        self.assertEqual(condition_state("opengsd", {"opengsd": "ok"}), "met")
+
+    @staticmethod
+    def _status(findings, rule_id):
+        for finding in findings:
+            if finding["id"] == rule_id:
+                return finding["status"]
+        return None
 
 
 if __name__ == "__main__":
