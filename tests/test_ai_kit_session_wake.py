@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from unittest import mock
@@ -22,19 +23,37 @@ sys.path.insert(
         "ai-kit-session-wake",
     ),
 )
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "skills",
+        "ai-kit-spec-review",
+    ),
+)
+
 
 from ai_kit_session_wake import cli, units
 from ai_kit_session_wake import fire as fire_mod
+from ai_kit_session_wake import hosts as hosts_mod
 from ai_kit_session_wake.arm import ArmOptions
-from ai_kit_session_wake.hosts import HOSTS, WAKE_SCRUB
+from ai_kit_session_wake.hosts import (
+    HOSTS,
+    WAKE_SCRUB,
+    resume_argv,
+    session_exists,
+)
+from ai_kit_session_wake.liveness import cross_ai_ancestor
 from ai_kit_session_wake.state import (
     ARM_WINDOW_S,
     WAKE_CAP,
+    Seams,
     read_state,
     session_paths,
     state_dir,
     update_state,
 )
+from ai_kit_spec.detection import RUNTIMES
 
 from tests import session_wake_fakes as fakes
 
@@ -142,7 +161,7 @@ class TestWakeTracer(_Scratch):
         self.assertEqual(4, len(wrote))
         creates = [line for line in lines if line.startswith("systemctl creates ")]
         self.assertEqual(2, len(creates))
-        self.assertIn("permission_mode: unknown (unknown)", lines)
+        self.assertIn("permission_mode: default (host-cmdline)", lines)
 
         state_path = paths.state
         state = _read(state_path)
@@ -740,7 +759,6 @@ class TestArmPrimitive(_Scratch):
         host.wait()
 
     def test_no_systemd_fallback_and_unknown_host(self):
-        from ai_kit_session_wake.state import Seams
 
         sid = uuid.uuid4().hex
         launch = os.path.join(self.root, "launch")
@@ -813,7 +831,7 @@ class TestStatus(_Scratch):
         self.assertIn(session_paths(env, "claude", sid).state, text)
         self.assertIn("wakes: 0/24", text)
         self.assertIn("next wake: hourly", text)
-        self.assertIn("permission_mode: unknown (unknown)", text)
+        self.assertIn("permission_mode: default (host-cmdline)", text)
         self.assertIn("host process: alive", text)
         self.assertIn("created:", text)
         self.assertIn("active", text)
@@ -853,6 +871,750 @@ class TestStatus(_Scratch):
         with contextlib.redirect_stdout(output):
             self.assertEqual(0, cli.main(["status"], seams=fakes.fixed_seams(self.env, T0)))
         self.assertIn("nothing armed", output.getvalue())
+
+
+class TestPiTracer(_Scratch):
+    """A pi orchestrator arms through the ancestor walk and its host's exit is
+    followed by one `pi -p --session-id` resume (D-04, D-08, D-15; spike 003)."""
+
+    @staticmethod
+    def _kill(proc):
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+
+    def test_pi_store_exact_stem_and_resume_argv(self):
+        sid = "session-123"
+        fakes.pi_session(self.env["HOME"], sid)
+        seams = fakes.fixed_seams(self.env, T0)
+        self.assertEqual("exists", session_exists("pi", sid, self.root, seams)[0])
+        self.assertEqual("missing", session_exists("pi", "123", self.root, seams)[0])
+        self.assertEqual(
+            ["pi", "-p", "--session-id", sid, "prompt"],
+            resume_argv(
+                {"host": "pi", "session_id": sid, "cli_path": "pi", "permission_mode": "unknown"},
+                "prompt",
+            ),
+        )
+
+    def test_arm_through_ancestor_walk_then_one_pi_resume(self):
+        sid = uuid.uuid4().hex
+        launch = os.path.join(self.root, "launch")
+        os.makedirs(launch)
+        pi_cli = fakes.fake_host(self.bin_dir, "pi")
+        fakes.pi_session(self.env["HOME"], sid)
+        arm_env = {
+            **self.env,
+            "FAKE_HOST_MODE": "arm",
+            "FAKE_WAKE_SHIM": _SHIM,
+            "FAKE_WAKE_HOST": "pi",
+            "FAKE_WAKE_SID": sid,
+        }
+        host = subprocess.Popen(
+            [sys.executable, pi_cli],
+            cwd=launch,
+            env=arm_env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self._kill, host)
+        self.assertEqual(0, host.wait(timeout=120))
+        arm_children = [
+            entry
+            for entry in fakes.read_log(self.env["AI_KIT_FAKE_LOG"])
+            if entry["name"] == "arm-child"
+        ]
+        self.assertEqual(1, len(arm_children))
+        self.assertEqual(0, arm_children[0]["returncode"])
+        self.assertIn("(unverified", arm_children[0]["stdout"])
+        paths = session_paths(self.env, "pi", sid)
+        state = _read(paths.state)
+        self.assertEqual(host.pid, state["pid"])
+        self.assertEqual("ancestor-unverified", state["pid_source"])
+        self.assertEqual(os.path.realpath(launch), os.path.realpath(state["launch_cwd"]))
+        self.assertEqual(pi_cli, state["cli_path"])
+
+        fire_env = {
+            key: value
+            for key, value in self.env.items()
+            if key not in ("FAKE_HOST_MODE", "FAKE_WAKE_HOST", "FAKE_WAKE_SID")
+        }
+        fire_env["FAKE_WAKE_DONE"] = "1"
+        fire_env["FAKE_WAKE_SHIM"] = _SHIM
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            rc = cli.main(
+                ["fire", "--host", "pi", "--session-id", sid],
+                # The arm ran in a subprocess on the real clock, so the fire
+                # clock must sit past its real not_before (arm window 60 s).
+                seams=fakes.fixed_seams(fire_env, time.time() + 120),
+            )
+        self.assertEqual(0, rc)
+        self.assertIn("resume exit 0", out.getvalue())
+        prompt = PROMPT_TEMPLATE.replace("{state_path}", paths.state)
+        resumes = [
+            entry
+            for entry in fakes.read_log(self.env["AI_KIT_FAKE_LOG"])
+            if entry["name"] == "pi" and entry["argv"]
+        ]
+        self.assertEqual(1, len(resumes))
+        self.assertEqual(["-p", "--session-id", sid, prompt], resumes[0]["argv"])
+        self.assertEqual(os.path.realpath(launch), os.path.realpath(resumes[0]["cwd"]))
+        self.assertTrue(resumes[0]["stdin_null"])
+        for path in (*state["created"], paths.done):
+            self.assertFalse(os.path.exists(path), path)
+        calls = self.systemctl_calls()
+        self.assertEqual(
+            [
+                ["--user", "disable", "--now", units.unit_names("pi", sid).timer],
+                ["--user", "clean", "--what=state", units.unit_names("pi", sid).timer],
+                ["--user", "daemon-reload"],
+            ],
+            calls[-3:],
+        )
+
+
+class TestHostProcess(_Scratch):
+    """D-08 pid order: --pid, then the host's env var, then the ancestor
+    walk (unverified); none of them -> refuse naming --pid."""
+
+    @staticmethod
+    def _kill(proc):
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+
+    def _launch_dir(self) -> str:
+        launch = os.path.join(self.root, "launch")
+        os.makedirs(launch, exist_ok=True)
+        return launch
+
+    def test_flag_pid_wins_over_env(self):
+        sid = uuid.uuid4().hex
+        launch = self._launch_dir()
+        fakes.fake_host(self.bin_dir, "claude")
+        fakes.claude_session(self.env["HOME"], sid)
+        env_host = fakes.start_host_process(launch)
+        self.addCleanup(self._kill, env_host)
+        flag_host = fakes.start_host_process(launch)
+        self.addCleanup(self._kill, flag_host)
+        env = {**self.env, "CLAUDE_PID": str(env_host.pid)}
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                0,
+                cli.main(
+                    [
+                        "arm",
+                        "--host",
+                        "claude",
+                        "--session-id",
+                        sid,
+                        "--pid",
+                        str(flag_host.pid),
+                    ],
+                    seams=fakes.fixed_seams(env, T0),
+                ),
+            )
+        state = _read(session_paths(self.env, "claude", sid).state)
+        self.assertEqual(flag_host.pid, state["pid"])
+        self.assertEqual("flag", state["pid_source"])
+
+    def test_env_pid_source(self):
+        sid = uuid.uuid4().hex
+        launch = self._launch_dir()
+        fakes.fake_host(self.bin_dir, "claude")
+        fakes.claude_session(self.env["HOME"], sid)
+        host = fakes.start_host_process(launch)
+        self.addCleanup(self._kill, host)
+        env = {**self.env, "CLAUDE_PID": str(host.pid)}
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                0,
+                cli.main(
+                    ["arm", "--host", "claude", "--session-id", sid],
+                    seams=fakes.fixed_seams(env, T0),
+                ),
+            )
+        state = _read(session_paths(self.env, "claude", sid).state)
+        self.assertEqual(host.pid, state["pid"])
+        self.assertEqual("env:CLAUDE_PID", state["pid_source"])
+
+    def test_ancestor_unverified_nearest_match(self):
+        sid = uuid.uuid4().hex
+        launch = self._launch_dir()
+        claude_cli = fakes.fake_host(self.bin_dir, "claude")
+        fakes.claude_session(self.env["HOME"], sid)
+        env = {
+            **self.env,
+            "FAKE_HOST_MODE": "arm",
+            "FAKE_WAKE_SHIM": _SHIM,
+            "FAKE_WAKE_HOST": "claude",
+            "FAKE_WAKE_SID": sid,
+        }
+        host = subprocess.Popen(
+            [sys.executable, claude_cli],
+            cwd=launch,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self._kill, host)
+        self.assertEqual(0, host.wait(timeout=120))
+        arm_children = [
+            entry
+            for entry in fakes.read_log(self.env["AI_KIT_FAKE_LOG"])
+            if entry["name"] == "arm-child"
+        ]
+        self.assertEqual(1, len(arm_children))
+        self.assertEqual(0, arm_children[0]["returncode"])
+        self.assertIn("(unverified", arm_children[0]["stdout"])
+        state = _read(session_paths(self.env, "claude", sid).state)
+        self.assertEqual(host.pid, state["pid"])
+        self.assertEqual("ancestor-unverified", state["pid_source"])
+
+    def test_no_source_refuses_naming_pid(self):
+        sid = uuid.uuid4().hex
+        empty = os.path.join(self.root, "empty-proc")
+        os.makedirs(empty)
+        env = {**self.env, "CLAUDE_CODE_SESSION_ID": sid}
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            rc = cli.main(
+                ["arm", "--host", "claude", "--session-id", sid],
+                seams=Seams(env=env, now=lambda: T0, proc_root=empty),
+            )
+        self.assertEqual(2, rc)
+        self.assertIn("--pid", err.getvalue())
+        self.assertFalse(os.path.exists(state_dir(self.env)))
+
+
+class TestChildRefusal(_Scratch):
+    """D-24 as amended 2026-10-25: the runner marker is primary, the ancestor
+    scan the fallback for older runner copies; CLAUDE_CODE_CHILD_SESSION is
+    never a signal."""
+
+    @staticmethod
+    def _kill(proc):
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+
+    _RUNNER_SCRIPT = (
+        "import json, os, subprocess, sys\n"
+        "proc = subprocess.run(\n"
+        "    [sys.executable, os.environ['FAKE_WAKE_SHIM'], 'arm', '--host', 'claude',\n"
+        "     '--session-id', os.environ['FAKE_WAKE_SID']],\n"
+        "    capture_output=True, text=True,\n"
+        ")\n"
+        "with open(os.environ['FAKE_WAKE_RESULT'], 'w', encoding='utf-8') as h:\n"
+        "    json.dump({'returncode': proc.returncode, 'stderr': proc.stderr}, h)\n"
+    )
+
+    def _runner_child(self, script_text, sid, extra_env=None):
+        script = os.path.join(self.root, "cross-ai.mjs")
+        with open(script, "w", encoding="utf-8") as handle:
+            handle.write(script_text)
+        result_path = os.path.join(self.root, "runner-result.json")
+        env = {
+            **self.env,
+            "FAKE_WAKE_SHIM": _SHIM,
+            "FAKE_WAKE_SID": sid,
+            "FAKE_WAKE_RESULT": result_path,
+            **(extra_env or {}),
+        }
+        proc = subprocess.Popen(
+            [sys.executable, script],
+            cwd=self.root,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self._kill, proc)
+        proc.wait(timeout=120)
+        with open(result_path, encoding="utf-8") as handle:
+            return json.load(handle), proc.pid
+
+    def test_marker_refuses_and_writes_nothing(self):
+        sid = uuid.uuid4().hex
+        fakes.fake_host(self.bin_dir, "claude")
+        fakes.claude_session(self.env["HOME"], sid)
+        host = fakes.start_host_process(self.root)
+        self.addCleanup(self._kill, host)
+        for marker, refused in (("1", True), ("0", False), ("", False)):
+            with self.subTest(marker=marker):
+                env = {
+                    **self.env,
+                    "AI_KIT_CROSS_AI_CHILD": marker,
+                    "CLAUDE_PID": str(host.pid),
+                    "CLAUDE_CODE_SESSION_ID": sid,
+                }
+                out = io.StringIO()
+                err = io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    rc = cli.main(["arm", "--host", "claude"], seams=fakes.fixed_seams(env, T0))
+                if refused:
+                    self.assertEqual(2, rc)
+                    self.assertIn("AI_KIT_CROSS_AI_CHILD", err.getvalue())
+                    self.assertFalse(os.path.exists(state_dir(self.env)))
+                    self.assertFalse(os.path.exists(units.unit_dir(self.env)))
+                else:
+                    self.assertEqual(0, rc, err.getvalue())
+
+    def test_older_runner_ancestor_refuses_marked_one_proceeds(self):
+        sid = uuid.uuid4().hex
+        fakes.fake_host(self.bin_dir, "claude")
+        fakes.claude_session(self.env["HOME"], sid)
+        host = fakes.start_host_process(self.root)
+        self.addCleanup(self._kill, host)
+        result, runner_pid = self._runner_child(self._RUNNER_SCRIPT, sid)
+        self.assertEqual(2, result["returncode"])
+        self.assertIn("cross-ai.mjs", result["stderr"])
+        self.assertIn(str(runner_pid), result["stderr"])
+        self.assertFalse(os.path.exists(state_dir(self.env)))
+        marked = self._RUNNER_SCRIPT.replace(
+            "import json", "# sets AI_KIT_CROSS_AI_CHILD on every child\nimport json"
+        )
+        result, _pid = self._runner_child(
+            marked,
+            sid,
+            {"CLAUDE_PID": str(host.pid), "CLAUDE_CODE_SESSION_ID": sid},
+        )
+        self.assertEqual(0, result["returncode"], result["stderr"])
+
+    def test_claude_child_session_marker_alone_arms(self):
+        sid = uuid.uuid4().hex
+        fakes.fake_host(self.bin_dir, "claude")
+        fakes.claude_session(self.env["HOME"], sid)
+        host = fakes.start_host_process(self.root)
+        self.addCleanup(self._kill, host)
+        env = {
+            **self.env,
+            "CLAUDE_CODE_CHILD_SESSION": "1",
+            "CLAUDE_PID": str(host.pid),
+            "CLAUDE_CODE_SESSION_ID": sid,
+        }
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                0, cli.main(["arm", "--host", "claude"], seams=fakes.fixed_seams(env, T0))
+            )
+
+    def test_off_linux_ancestor_scan_unverified(self):
+        missing = os.path.join(self.root, "no-proc")
+        seams = Seams(env=self.env, now=lambda: T0, proc_root=missing)
+        self.assertIsNone(cross_ai_ancestor(os.getpid(), seams))
+        sid = uuid.uuid4().hex
+        fakes.fake_host(self.bin_dir, "claude")
+        fakes.claude_session(self.env["HOME"], sid)
+        host = fakes.start_host_process(self.root)
+        self.addCleanup(self._kill, host)
+        env = {**self.env, "CLAUDE_PID": str(host.pid), "CLAUDE_CODE_SESSION_ID": sid}
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            cli.main(
+                ["arm", "--host", "claude"],
+                seams=Seams(env=env, now=lambda: T0, proc_root=missing),
+            )
+        self.assertIn("ancestor scan unverified off Linux", out.getvalue())
+
+
+class TestPermissionMode(_Scratch):
+    """D-21 as amended 2026-10-25: the mode is copied from the host command
+    line, printed with its source, and never escalates on its own."""
+
+    @staticmethod
+    def _kill(proc):
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+
+    def _stand_in(self, *extra_argv):
+        cli_path = fakes.fake_host(self.bin_dir, "claude")
+        proc = subprocess.Popen(
+            [sys.executable, cli_path, *extra_argv],
+            cwd=self.root,
+            env={**self.env, "FAKE_HOST_SLEEP": "1"},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self._kill, proc)
+        return proc
+
+    def _arm(self, sid, host_pid, args=()):
+        fakes.claude_session(self.env["HOME"], sid)
+        env = {**self.env, "CLAUDE_PID": str(host_pid), "CLAUDE_CODE_SESSION_ID": sid}
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli.main(
+                ["arm", "--host", "claude", "--session-id", sid, *args],
+                seams=fakes.fixed_seams(env, T0),
+            )
+        return rc, out.getvalue(), err.getvalue()
+
+    def _fire(self, sid):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            rc = cli.main(
+                ["fire", "--host", "claude", "--session-id", sid],
+                seams=fakes.fixed_seams(self.env, T0 + 120),
+            )
+        return rc, out.getvalue()
+
+    def _resume_entries(self, sid):
+        return [
+            entry
+            for entry in fakes.read_log(self.env["AI_KIT_FAKE_LOG"])
+            if entry["name"] == "claude" and entry["argv"][:2] == ["--resume", sid]
+        ]
+
+    def test_bypass_copied_and_replayed(self):
+        sid = uuid.uuid4().hex
+        fakes.fake_host(self.bin_dir, "claude")
+        host = self._stand_in("--dangerously-skip-permissions")
+        rc, out, _err = self._arm(sid, host.pid)
+        self.assertEqual(0, rc, out)
+        state = _read(session_paths(self.env, "claude", sid).state)
+        self.assertEqual("bypassPermissions", state["permission_mode"])
+        self.assertEqual("host-cmdline", state["permission_source"])
+        self.assertIn("the resume runs with it", out)
+        self._kill(host)
+        rc, out = self._fire(sid)
+        self.assertEqual(0, rc, out)
+        resumes = self._resume_entries(sid)
+        self.assertEqual(1, len(resumes))
+        self.assertIn("--permission-mode", resumes[0]["argv"])
+        self.assertIn("bypassPermissions", resumes[0]["argv"])
+
+    def test_plan_forms_bg_spare_and_default(self):
+        fakes.fake_host(self.bin_dir, "claude")
+        for extra, expected in (
+            (("--permission-mode", "plan"), "plan"),
+            (("--permission-mode=plan",), "plan"),
+            (("bg-spare", "--bg-spare", "sock"), "unknown"),
+            ((), "default"),
+        ):
+            with self.subTest(extra=extra):
+                sid = uuid.uuid4().hex
+                host = self._stand_in(*extra)
+                rc, out, _err = self._arm(sid, host.pid)
+                self.assertEqual(0, rc, out)
+                state = _read(session_paths(self.env, "claude", sid).state)
+                self.assertEqual(expected, state["permission_mode"])
+                self.assertEqual("host-cmdline", state["permission_source"])
+                if expected in ("unknown", "default"):
+                    self._kill(host)
+                    rc, out = self._fire(sid)
+                    self.assertEqual(0, rc, out)
+                    resumes = self._resume_entries(sid)
+                    self.assertEqual(1, len(resumes))
+                    self.assertNotIn("--permission-mode", resumes[0]["argv"])
+
+    def test_arm_flag_override_and_invalid_refused(self):
+        sid = uuid.uuid4().hex
+        fakes.fake_host(self.bin_dir, "claude")
+        host = self._stand_in()
+        rc, out, _err = self._arm(sid, host.pid, ("--permission-mode", "plan"))
+        self.assertEqual(0, rc, out)
+        state = _read(session_paths(self.env, "claude", sid).state)
+        self.assertEqual("plan", state["permission_mode"])
+        self.assertEqual("flag", state["permission_source"])
+        rc, _out, err = self._arm(sid, host.pid, ("--permission-mode", "x y"))
+        self.assertEqual(2, rc)
+        self.assertIn("invalid permission mode", err)
+
+    def test_rearm_keeps_mode_unless_flag(self):
+        sid = uuid.uuid4().hex
+        fakes.fake_host(self.bin_dir, "claude")
+        host = self._stand_in("--dangerously-skip-permissions")
+        rc, out, _err = self._arm(sid, host.pid)
+        self.assertEqual(0, rc, out)
+        path = session_paths(self.env, "claude", sid).state
+        self.assertEqual("bypassPermissions", _read(path)["permission_mode"])
+        rc, out, _err = self._arm(sid, host.pid)
+        self.assertEqual(0, rc, out)
+        self.assertEqual("bypassPermissions", _read(path)["permission_mode"])
+        self.assertEqual("host-cmdline", _read(path)["permission_source"])
+        rc, out, _err = self._arm(sid, host.pid, ("--permission-mode", "default"))
+        self.assertEqual(0, rc, out)
+        self.assertEqual("default", _read(path)["permission_mode"])
+        self.assertEqual("flag", _read(path)["permission_source"])
+        rc, out, _err = self._arm(sid, host.pid)
+        self.assertEqual(0, rc, out)
+        self.assertEqual("default", _read(path)["permission_mode"])
+        self.assertEqual("flag", _read(path)["permission_source"])
+
+    def test_pi_mode_unknown_not_applied(self):
+        sid = uuid.uuid4().hex
+        fakes.fake_host(self.bin_dir, "pi")
+        fakes.pi_session(self.env["HOME"], sid)
+        host = fakes.start_host_process(self.root)
+        self.addCleanup(self._kill, host)
+        env = {**self.env}
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            rc = cli.main(
+                [
+                    "arm",
+                    "--host",
+                    "pi",
+                    "--session-id",
+                    sid,
+                    "--pid",
+                    str(host.pid),
+                ],
+                seams=fakes.fixed_seams(env, T0),
+            )
+        self.assertEqual(0, rc, out.getvalue())
+        state = _read(session_paths(self.env, "pi", sid).state)
+        self.assertEqual("unknown", state["permission_mode"])
+        self.assertIn("no flags readable from the host", out.getvalue())
+        self.assertIn("not applied: no verified permission flag for pi", out.getvalue())
+
+
+class TestSessionProbe(_Scratch):
+    """D-09/D-13: the session must be found by its exact id where the wake
+    service will look, before arm; fire splits missing from unknown."""
+
+    @staticmethod
+    def _kill(proc):
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+
+    def _write_listing(self, payload):
+        with open(
+            os.path.join(self.bin_dir, "opencode-sessions.json"), "w", encoding="utf-8"
+        ) as handle:
+            if isinstance(payload, str):
+                handle.write(payload)
+            else:
+                json.dump(payload, handle)
+
+    def _listing(self, ids):
+        return [{"id": sid} for sid in ids]
+
+    def test_glob_rows_exact_stem(self):
+        seams = fakes.fixed_seams(self.env, T0)
+        sid = "transcript-9f"
+        fakes.claude_session(self.env["HOME"], sid)
+        fakes.pi_session(self.env["HOME"], sid)
+        fakes.codex_session(self.env["HOME"], sid)
+        for host in ("claude", "pi", "codex"):
+            status, why = session_exists(host, sid, self.root, seams)
+            self.assertEqual("exists", status, why)
+        for host, needle in (
+            ("claude", "projects"),
+            ("pi", "sessions"),
+            ("codex", "rollout"),
+        ):
+            status, why = session_exists(host, "other-id", self.root, seams)
+            self.assertEqual("missing", status, host)
+            self.assertIn("layout unverified", why)
+            self.assertIn("searched", why)
+            self.assertIn(needle, why)
+
+    def test_longer_ids_missing_and_pi_fire_gives_up(self):
+        seams = fakes.fixed_seams(self.env, T0)
+        sid = "abc123"
+        pi_dir = os.path.join(self.env["HOME"], ".pi", "agent", "sessions", "--scratch--")
+        codex_dir = os.path.join(self.env["HOME"], ".codex", "sessions", "2026", "10", "25")
+        for name in (
+            f"2026-10-25_x{sid}.jsonl",
+            f"2026-10-25_{sid}x.jsonl",
+            f"2026-10-25_a-{sid}.jsonl",
+        ):
+            os.makedirs(pi_dir, exist_ok=True)
+            with open(os.path.join(pi_dir, name), "w", encoding="utf-8") as handle:
+                handle.write("{}\\n")
+            self.assertEqual("missing", session_exists("pi", sid, self.root, seams)[0], name)
+            os.remove(os.path.join(pi_dir, name))
+        os.makedirs(codex_dir, exist_ok=True)
+        with open(
+            os.path.join(codex_dir, f"rollout-2026-10-25T10-00-00-x{sid}.jsonl"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            handle.write("{}\\n")
+        self.assertEqual("missing", session_exists("codex", sid, self.root, seams)[0])
+        # A pi wake whose store holds only the longer id: fire gives up with no
+        # fake pi call (the resume would create a new session).
+        fakes.fake_host(self.bin_dir, "pi")
+        fakes.pi_session(self.env["HOME"], sid)
+        launch = os.path.join(self.root, "launch")
+        os.makedirs(launch)
+        host = fakes.start_host_process(launch)
+        self.addCleanup(self._kill, host)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                0,
+                cli.main(
+                    ["arm", "--host", "pi", "--session-id", sid, "--pid", str(host.pid)],
+                    seams=fakes.fixed_seams(self.env, T0),
+                ),
+            )
+        exact = os.path.join(pi_dir, f"2026-10-25_{sid}.jsonl")
+        os.remove(exact)
+        with open(
+            os.path.join(pi_dir, f"2026-10-25_a-{sid}.jsonl"), "w", encoding="utf-8"
+        ) as handle:
+            handle.write("{}\\n")
+        self._kill(host)
+        paths = session_paths(self.env, "pi", sid)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            rc = cli.main(
+                ["fire", "--host", "pi", "--session-id", sid],
+                seams=fakes.fixed_seams(self.env, T0 + 120),
+            )
+        self.assertEqual(0, rc)
+        self.assertIn("gave up", out.getvalue())
+        self.assertEqual(
+            [],
+            [e for e in fakes.read_log(self.env["AI_KIT_FAKE_LOG"]) if e["name"] == "pi"],
+        )
+        timer, _service = units.unit_names("pi", sid)
+        for path in (
+            paths.state,
+            paths.lock,
+            paths.done,
+            os.path.join(units.unit_dir(self.env), timer),
+            os.path.join(units.unit_dir(self.env), "timers.target.wants", timer),
+        ):
+            self.assertFalse(os.path.exists(path), path)
+
+    def test_opencode_listing_statuses(self):
+        fakes.fake_opencode(self.bin_dir)
+        seams = fakes.fixed_seams(self.env, T0)
+        self._write_listing(self._listing(["ses_a", "ses_b", "ses_c"]))
+        self.assertEqual("exists", session_exists("opencode", "ses_a", self.root, seams)[0])
+        self.assertEqual("missing", session_exists("opencode", "ses_z", self.root, seams)[0])
+        self._write_listing("{not json")
+        self.assertEqual("unknown", session_exists("opencode", "ses_a", self.root, seams)[0])
+        self._write_listing({"not": "a list"})
+        self.assertEqual("unknown", session_exists("opencode", "ses_a", self.root, seams)[0])
+        self._write_listing(["bare strings only"])
+        self.assertEqual("unknown", session_exists("opencode", "ses_a", self.root, seams)[0])
+        self._write_listing(self._listing(["ses_a"]))
+        with open(
+            os.path.join(self.bin_dir, "opencode-list-fail"), "w", encoding="utf-8"
+        ) as handle:
+            handle.write("")
+        self.assertEqual("unknown", session_exists("opencode", "ses_a", self.root, seams)[0])
+        os.remove(os.path.join(self.bin_dir, "opencode-list-fail"))
+
+    def test_opencode_truncated_arm_refuses_fire_skips(self):
+        fakes.fake_opencode(self.bin_dir)
+        self._write_listing(self._listing([f"ses_{n}" for n in "abcde"]))
+        launch = os.path.join(self.root, "launch")
+        os.makedirs(launch)
+        host = fakes.start_host_process(launch)
+        self.addCleanup(self._kill, host)
+        with mock.patch.object(hosts_mod, "OPENCODE_LIST_MAX", 3):
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                rc = cli.main(
+                    ["arm", "--host", "opencode", "--session-id", "ses_d", "--pid", str(host.pid)],
+                    seams=fakes.fixed_seams(self.env, T0),
+                )
+            self.assertEqual(2, rc)
+            self.assertIn("would create a new session", err.getvalue())
+            self.assertFalse(os.path.exists(state_dir(self.env)))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                rc = cli.main(
+                    ["arm", "--host", "opencode", "--session-id", "ses_a", "--pid", str(host.pid)],
+                    seams=fakes.fixed_seams(self.env, T0),
+                )
+            self.assertEqual(0, rc, out.getvalue())
+            probes = [
+                e for e in fakes.read_log(self.env["AI_KIT_FAKE_LOG"]) if e["name"] == "opencode"
+            ]
+            self.assertTrue(probes)
+            self.assertEqual("session", probes[-1]["argv"][0])
+            self.assertIn("--max-count", probes[-1]["argv"])
+            self.assertIn("3", probes[-1]["argv"])
+            self.assertEqual(os.path.realpath(launch), os.path.realpath(probes[-1]["cwd"]))
+        self._kill(host)
+        # New sessions arrived since the arm, pushing ses_a beyond the third
+        # entry: the patched listing can no longer prove it exists (or not).
+        self._write_listing(self._listing(["ses_w", "ses_x", "ses_y", "ses_a", "ses_b"]))
+        with mock.patch.object(hosts_mod, "OPENCODE_LIST_MAX", 3):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                rc = cli.main(
+                    ["fire", "--host", "opencode", "--session-id", "ses_a"],
+                    seams=fakes.fixed_seams(self.env, T0 + 120),
+                )
+            self.assertEqual(0, rc)
+            self.assertIn("cannot check the session", out.getvalue())
+            state = _read(session_paths(self.env, "opencode", "ses_a").state)
+            self.assertEqual(1, state["wake_count"])
+        self.assertEqual(
+            [],
+            [
+                e
+                for e in fakes.read_log(self.env["AI_KIT_FAKE_LOG"])
+                if e["name"] == "opencode" and e["argv"][:1] == ["run"]
+            ],
+        )
+
+
+class TestResumeRows(_Scratch):
+    """D-15/SPEC R2: one resume argv per host row, every unverified row
+    labelled."""
+
+    @staticmethod
+    def _kill(proc):
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+
+    def test_resume_argv_rows_and_host_keys(self):
+        self.assertTrue(set(HOSTS).issubset(set(RUNTIMES)))
+        sid = "sid-1"
+        common = {"session_id": sid, "cli_path": "cli", "permission_mode": "unknown"}
+        self.assertEqual(
+            ["cli", "run", "--session", sid, "prompt"],
+            resume_argv({"host": "opencode", **common}, "prompt"),
+        )
+        self.assertEqual(
+            ["cli", "exec", "resume", sid, "prompt"],
+            resume_argv({"host": "codex", **common}, "prompt"),
+        )
+        self.assertEqual(
+            ["cli", "-p", "--session-id", sid, "prompt"],
+            resume_argv({"host": "pi", **common}, "prompt"),
+        )
+        self.assertEqual(
+            ["cli", "--resume", sid, "--permission-prompts", "none", "-p", "prompt"],
+            resume_argv({"host": "claude", **common}, "prompt"),
+        )
+
+    def test_codex_arm_prints_unverified_and_cursor_refused(self):
+        sid = uuid.uuid4().hex
+        fakes.fake_host(self.bin_dir, "codex")
+        fakes.codex_session(self.env["HOME"], sid)
+        host = fakes.start_host_process(self.root)
+        self.addCleanup(self._kill, host)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            rc = cli.main(
+                ["arm", "--host", "codex", "--session-id", sid, "--pid", str(host.pid)],
+                seams=fakes.fixed_seams(self.env, T0),
+            )
+        self.assertEqual(0, rc, out.getvalue())
+        self.assertIn("unverified", out.getvalue())
+        self.assertIn("resume argv: exec resume", out.getvalue())
+        cursor_out = io.StringIO()
+        with contextlib.redirect_stdout(cursor_out):
+            self.assertEqual(
+                3,
+                cli.main(
+                    ["arm", "--host", "cursor", "--session-id", "c"],
+                    seams=fakes.fixed_seams(self.env, T0),
+                ),
+            )
+        self.assertIn("no surviving primitive for cursor", cursor_out.getvalue())
 
 
 class TestArmOptionsShape(unittest.TestCase):

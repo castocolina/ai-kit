@@ -15,8 +15,8 @@ from typing import NamedTuple
 
 from ai_kit_spec.detection import RUNTIMES, detect_current_runtime
 
-from .hosts import HOSTS, session_exists
-from .liveness import identify, launch_cwd
+from .hosts import HOSTS, permission_from_cmdline, session_exists
+from .liveness import cross_ai_ancestor, find_host_ancestor, identify, launch_cwd, read_cmdline
 from .matrix import best_primitive
 from .state import (
     ARM_WINDOW_S,
@@ -75,6 +75,7 @@ class _ArmTarget(NamedTuple):
     mode: str
     source: str
     refs: tuple[str, ...]
+    pid_source: str = "flag"
 
 
 def _refuse(message: str) -> int:
@@ -127,9 +128,24 @@ def _check_interpreter(cli_path: str, env: Mapping[str, str]) -> str | None:
     return None
 
 
-def _resolve_target(opts: ArmOptions, seams: Seams) -> _ArmTarget | int:
+def _resolve_target(opts: ArmOptions, seams: Seams) -> _ArmTarget | int:  # pylint: disable=too-many-return-statements
     """Resolve the (host, session id) pair, or return the refusal code."""
     env = seams.env
+    marker = env.get("AI_KIT_CROSS_AI_CHILD", "")
+    if marker not in ("", "0"):
+        return _refuse(
+            "refused: this process runs inside a cross-AI runner child "
+            "(AI_KIT_CROSS_AI_CHILD); only the orchestrating session arms its wake"
+        )
+    runner_pid = cross_ai_ancestor(os.getpid(), seams)
+    if runner_pid is not None:
+        return _refuse(
+            f"refused: this process runs inside cross-ai.mjs pid {runner_pid}; "
+            "only the orchestrating session arms its wake"
+        )
+    if not os.path.isdir(seams.proc_root):
+        print("ancestor scan unverified off Linux")
+    # Ignore CLAUDE_CODE_CHILD_SESSION: Claude Code sets it in every Bash-tool subprocess.
     host = opts.host or detect_current_runtime(env)
     if host == "cursor":
         print("no surviving primitive for cursor")
@@ -137,7 +153,9 @@ def _resolve_target(opts: ArmOptions, seams: Seams) -> _ArmTarget | int:
     row = HOSTS.get(host)
     if row is None:
         return _refuse(f"unknown or unsupported host {host!r}; pass --host")
-    session_id = opts.session_id or env.get(row.session_env, "")
+    session_id = opts.session_id or (env.get(row.session_env, "") if row.session_env else "")
+    if not session_id and host == "pi":
+        return _refuse("no session id: pass --session-id (pi exposes no verified session variable)")
     if not session_id:
         return _refuse(f"no session id: pass --session-id or set {row.session_env}")
     try:
@@ -152,20 +170,38 @@ def _verify_cli_session(
 ) -> str | None:
     problem = _check_interpreter(cli_path, seams.env)
     status, why = session_exists(host, session_id, cwd, seams)
+    if status == "unknown":
+        return (
+            f"cannot verify session {session_id} ({why}); a resume of a missing id "
+            "would create a new session"
+        )
     if status != "exists":
-        return f"session {session_id} not found ({why})"
+        return (
+            f"session {session_id} not found ({why}); a resume of a missing id "
+            "would create a new session"
+        )
     return problem
 
 
-def _verify_session(
+def _verify_session(  # pylint: disable=too-many-locals
     opts: ArmOptions, seams: Seams, host: str, session_id: str, paths: SessionPaths
 ) -> _ArmTarget | int:
     """Verify the host process, its launch dir, the CLI and the transcript
     exist; record the explicit permission mode (D-08, D-09, D-21)."""
     env = seams.env
-    pid = _resolve_pid(opts, seams, HOSTS[host].pid_env)
+    row = HOSTS[host]
+    pid = _resolve_pid(opts, seams, row.pid_env) if row.pid_env else opts.pid
+    pid_source = (
+        "flag"
+        if opts.pid is not None
+        else (f"env:{row.pid_env}" if pid is not None and row.pid_env else "")
+    )
     if pid is None:
-        return _refuse("cannot resolve the host process; pass --pid")
+        pid = find_host_ancestor(RUNTIMES[host].binaries, os.getpid(), seams)
+        if pid is not None:
+            pid_source = "ancestor-unverified"
+    if pid is None:
+        return _refuse(f"cannot resolve the {host} host process; pass --pid")
     identity = identify(pid, seams)
     if identity is None:
         return _refuse(f"no process {pid} to arm a wake for")
@@ -178,6 +214,10 @@ def _verify_session(
         return _refuse(problem)
     mode = opts.permission_mode or "unknown"
     source = "flag" if opts.permission_mode else "unknown"
+    if not opts.permission_mode:
+        argv = read_cmdline(pid, seams)
+        mode = permission_from_cmdline(host, argv)
+        source = "host-cmdline" if argv else "unknown"
     if PERMISSION_MODE_RE.fullmatch(mode) is None:
         return _refuse(f"invalid permission mode {mode!r} (1..32 letters)")
     return _ArmTarget(
@@ -192,6 +232,7 @@ def _verify_session(
         mode,
         source,
         tuple(opts.refs),
+        pid_source,
     )
 
 
@@ -211,7 +252,7 @@ def _arm_payload(target: _ArmTarget, seams: Seams, env: Mapping[str, str]) -> di
         "pid_start": target.pid_start,
         "boot_id": target.boot_id,
         "liveness_source": "proc" if target.boot_id else "ps-unverified",
-        "pid_source": "flag" if target.pid else "host-env",
+        "pid_source": target.pid_source,
         "armed_at": now,
         "wake_count": previous["wake_count"] if previous else 0,
         "cap": WAKE_CAP,
@@ -308,7 +349,31 @@ def _report_arm(target: _ArmTarget, payload: dict, refreshed: bool, seams: Seams
         print(f"wrote {path}")
     for path in payload["created"][4:]:
         print(f"systemctl creates {path}")
-    print(f"permission_mode: {target.mode} ({target.source})")
+    row = HOSTS[target.host]
+    certainty = "verified" if row.verified else "unverified"
+    print(f"resume argv: {' '.join(row.resume)} ({certainty}: {row.evidence})")
+    if target.pid_source == "ancestor-unverified":
+        print(
+            f"host pid: {target.pid} (unverified: nearest ancestor matching the "
+            f"{target.host} binary)"
+        )
+    not_applied = (
+        ""
+        if target.host == "claude"
+        else f" (not applied: no verified permission flag for {target.host})"
+    )
+    if target.mode == "bypassPermissions" and target.source == "host-cmdline":
+        print(
+            "permission_mode: bypassPermissions (copied from the host command line; "
+            "the resume runs with it; pass --permission-mode to change it)"
+        )
+    elif target.mode == "unknown":
+        print(
+            "permission_mode: unknown (no flags readable from the host; "
+            f"the resume uses the host's default checks){not_applied}"
+        )
+    else:
+        print(f"permission_mode: {target.mode} ({target.source}){not_applied}")
     best = best_primitive(target.host, systemd_ok=True)
     if best is not None:
         print(f"primitive: {best['primitive']} (unverified: {', '.join(best['unverified'])})")

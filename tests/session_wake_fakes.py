@@ -18,7 +18,9 @@ from ai_kit_session_wake.state import Seams
 # log-path fallback beside the fake's bin dir; this plan's prelude is
 # unchanged by that review disposition).
 _PRELUDE = """import json, os, sys
-_log = os.environ.get("AI_KIT_FAKE_LOG")
+_log = os.environ.get("AI_KIT_FAKE_LOG") or os.path.join(
+    os.path.dirname(os.path.dirname(sys.argv[0])), "fake.log"
+)
 if _log:
     with open(_log, "a", encoding="utf-8") as _handle:
         _handle.write(json.dumps({
@@ -84,6 +86,20 @@ if os.environ.get("FAKE_WAKE_DONE") and _fire and _shim:
         [sys.executable, _shim, "done", "--host", _host, "--session-id", _sid],
         check=False, stdout=subprocess.DEVNULL,
     )
+if os.environ.get("FAKE_HOST_MODE") == "arm":
+    _proc = subprocess.run(
+        [sys.executable, os.environ["FAKE_WAKE_SHIM"], "arm", "--host",
+         os.environ["FAKE_WAKE_HOST"], "--session-id", os.environ["FAKE_WAKE_SID"]],
+        capture_output=True, text=True, env=dict(os.environ),
+    )
+    with open(os.environ["AI_KIT_FAKE_LOG"], "a", encoding="utf-8") as _handle:
+        _handle.write(json.dumps({
+            "name": "arm-child", "returncode": _proc.returncode,
+            "stdout": _proc.stdout, "stderr": _proc.stderr,
+        }) + "\\n")
+    sys.exit(_proc.returncode)
+if os.environ.get("FAKE_HOST_SLEEP"):
+    time.sleep(600)
 """
 
 
@@ -100,9 +116,52 @@ def fake_loginctl(bin_dir: str) -> str:
 
 
 def fake_host(bin_dir: str, name: str) -> str:
-    """A fake host CLI; with FAKE_WAKE_DONE set it runs the shim's `done` for
-    the session named by AI_KIT_SESSION_WAKE_FIRE."""
-    return write_fake(bin_dir, name, "import os, subprocess, sys\n" + _HOST_BODY)
+    """A fake host CLI. With FAKE_HOST_MODE=arm it runs the shim's `arm` as its
+    own child (so it is the arm process's ancestor), logs the child's exit code
+    and output, and exits with it. Started with FAKE_HOST_SLEEP set it sleeps
+    until killed, so it can stand in for a host process with chosen argv."""
+    return write_fake(bin_dir, name, "import json, os, subprocess, sys, time\n" + _HOST_BODY)
+
+
+def codex_session(home: str, sid: str) -> str:
+    """A codex rollout file for `sid` in the unverified help-derived layout."""
+    directory = os.path.join(home, ".codex", "sessions", "2026", "10", "25")
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, f"rollout-2026-10-25T10-00-00-{sid}.jsonl")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("{}\n")
+    return path
+
+
+def fake_opencode(bin_dir: str) -> str:
+    """A fake opencode whose fixtures sit beside it (the service env the probe
+    runs under drops env variables): `<bin>/opencode-sessions.json` is printed
+    cut to the given --max-count, `<bin>/opencode-list-fail` makes it exit 1."""
+    body = """
+_here = os.path.dirname(os.path.realpath(__file__))
+if os.path.exists(os.path.join(_here, "opencode-list-fail")):
+    sys.exit(1)
+_count = 10000
+if "--max-count" in sys.argv:
+    _count = int(sys.argv[sys.argv.index("--max-count") + 1])
+try:
+    with open(os.path.join(_here, "opencode-sessions.json"), encoding="utf-8") as _h:
+        _data = json.load(_h)
+    print(json.dumps(_data[:_count]))
+except Exception:
+    with open(os.path.join(_here, "opencode-sessions.json"), encoding="utf-8") as _h:
+        sys.stdout.write(_h.read())
+"""
+    return write_fake(bin_dir, "opencode", "import json, os, sys\n" + body)
+
+
+def pi_session(home: str, sid: str) -> str:
+    directory = os.path.join(home, ".pi", "agent", "sessions", "--scratch--")
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, f"2026-10-25_{sid}.jsonl")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("{}\\n")
+    return path
 
 
 def read_log(path: str) -> list[dict]:

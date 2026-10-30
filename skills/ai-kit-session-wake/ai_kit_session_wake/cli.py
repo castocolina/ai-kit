@@ -41,7 +41,7 @@ def _pick_target(host_flag: str | None, sid_flag: str | None, env: Mapping[str, 
     if row is None:
         print(f"ai-kit-session-wake: unknown or unsupported host {host!r}", file=sys.stderr)
         return None
-    session_id = sid_flag or env.get(row.session_env, "")
+    session_id = sid_flag or (env.get(row.session_env, "") if row.session_env else "")
     if not session_id:
         print(
             f"ai-kit-session-wake: no session id: pass --session-id or set {row.session_env}",

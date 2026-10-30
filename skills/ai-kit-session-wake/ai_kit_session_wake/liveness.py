@@ -4,6 +4,7 @@ A process counts as alive only when the pid exists, its start time matches,
 and the boot id matches. `comm`, `exe` and `cmdline` are never compared: the
 host's `comm` is its version string (`2.1.299`), which changes on auto-update.
 """
+
 import os
 import shutil
 import subprocess
@@ -103,6 +104,62 @@ def launch_cwd(pid: int, seams: Seams) -> tuple[str, bool]:
     if target.endswith(" (deleted)"):
         return os.getcwd(), False
     return target, True
+
+
+def _proc_parent(pid: int, seams: Seams) -> int | None:
+    try:
+        with open(os.path.join(seams.proc_root, str(pid), "stat"), encoding="utf-8") as handle:
+            stat = handle.read()
+        return int(stat[stat.rindex(")") + 2 :].split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def ancestors(start_pid: int, seams: Seams, limit: int = 64) -> list[int]:
+    result = []
+    current = start_pid
+    for _ in range(limit):
+        parent = _proc_parent(current, seams)
+        if parent is None or parent <= 1:
+            break
+        result.append(parent)
+        current = parent
+    return result
+
+
+def find_host_ancestor(binaries, start_pid: int, seams: Seams) -> int | None:
+    for pid in ancestors(start_pid, seams):
+        try:
+            with open(os.path.join(seams.proc_root, str(pid), "comm"), encoding="utf-8") as handle:
+                comm = handle.read().strip()
+        except OSError:
+            comm = ""
+        argv = read_cmdline(pid, seams) or []
+        if comm in binaries or any(os.path.basename(arg) in binaries for arg in argv[:2]):
+            return pid
+    return None
+
+
+def cross_ai_ancestor(start_pid: int, seams: Seams) -> int | None:
+    if not os.path.isdir(seams.proc_root):
+        return None
+    for pid in ancestors(start_pid, seams):
+        argv = read_cmdline(pid, seams) or []
+        for arg in argv:
+            if os.path.basename(arg) != "cross-ai.mjs":
+                continue
+            script = (
+                arg if os.path.isabs(arg) else os.path.join(seams.proc_root, str(pid), "cwd", arg)
+            )
+            try:
+                with open(script, encoding="utf-8", errors="replace") as handle:
+                    current_runner = "AI_KIT_CROSS_AI_CHILD" in handle.read()
+            except OSError:
+                current_runner = False
+            # Current runners set the marker on every child; only older copies need this fallback.
+            if not current_runner:
+                return pid
+    return None
 
 
 def read_cmdline(pid: int, seams: Seams) -> list[str] | None:
