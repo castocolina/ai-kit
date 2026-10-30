@@ -49,6 +49,43 @@ def scoped_env(root: str) -> dict[str, str]:
     }
 
 
+def doc_block_env(root: str, commands: list[str]) -> dict[str, str]:
+    """The env for running a SKILL.md bash block (26-10, plan-checker blocker).
+
+    PATH is `<root>/bin` first (the fake systemctl, loginctl and notify-send, plus a
+    `python3` wrapper that execs this interpreter), then `<root>/tools`, which holds one
+    symlink per name in `commands` and nothing else: never a system directory, so the
+    real `systemctl --user` is unreachable. HOME and XDG dirs are the scratch ones."""
+    env = scoped_env(root)
+    bin_dir = os.path.join(root, "bin")
+    tools_dir = os.path.join(root, "tools")
+    os.makedirs(tools_dir, exist_ok=True)
+    fake_systemctl(bin_dir)
+    fake_loginctl(bin_dir)
+    fake_notify_send(bin_dir)
+    wrapper = os.path.join(bin_dir, "python3")
+    with open(wrapper, "w", encoding="utf-8") as handle:
+        handle.write(
+            f"#!{sys.executable}\n"
+            "import os, sys\n"
+            f"os.execv({sys.executable!r}, [{sys.executable!r}] + sys.argv[1:])\n"
+        )
+    os.chmod(wrapper, 0o755)
+    for name in commands:
+        target = shutil.which(name)
+        if target is None:
+            raise RuntimeError(f"doc block needs {name!r}, which does not resolve")
+        link = os.path.join(tools_dir, name)
+        if not os.path.lexists(link):
+            os.symlink(target, link)
+    env["PATH"] = os.pathsep.join([bin_dir, tools_dir])
+    for name in ("systemctl", "loginctl", "notify-send"):
+        resolved = shutil.which(name, path=env["PATH"])
+        if resolved is None or not resolved.startswith(bin_dir + os.sep):
+            raise RuntimeError(f"{name} must resolve under the scratch bin dir, got {resolved!r}")
+    return env
+
+
 def write_fake(bin_dir: str, name: str, body: str, shebang: str | None = None) -> str:
     """Write an executable fake named `name` (shebang = this interpreter by default)."""
     os.makedirs(bin_dir, exist_ok=True)
@@ -213,6 +250,41 @@ def pi_session(home: str, sid: str) -> str:
     path = os.path.join(directory, f"2026-10-25_{sid}.jsonl")
     with open(path, "w", encoding="utf-8") as handle:
         handle.write("{}\\n")
+    return path
+
+
+# A stub shim for the executor blocks (26-10): logs its argv, then mirrors the real `arm`
+# contract. STUB_HOST is the host it arms for; pi and opencode refuse without --session-id
+# (exit 2, the real refusal text). STUB_ARM_OUTPUT overrides the printed line (for example
+# `refreshed`); STUB_ARM_RC overrides the exit code. `done` and `disarm` log and exit 0.
+_STUB_SHIM_BODY = """
+import json, os, sys
+_argv = sys.argv[1:]
+_log = os.environ["AI_KIT_FAKE_LOG"]
+with open(_log, "a", encoding="utf-8") as _handle:
+    _handle.write(json.dumps({"name": "shim", "argv": _argv}) + "\\n")
+if not _argv or _argv[0] != "arm":
+    sys.exit(0)
+_host = os.environ.get("STUB_HOST", "claude")
+_sid = ""
+if "--session-id" in _argv:
+    _sid = _argv[_argv.index("--session-id") + 1]
+if _host in ("pi", "opencode") and not _sid:
+    print("ai-kit-session-wake: no session id: pass --session-id", file=sys.stderr)
+    sys.exit(2)
+_sid = _sid or os.environ.get("STUB_SID", "stub-session")
+_out = os.environ.get("STUB_ARM_OUTPUT") or f"armed {_host}-{_sid}"
+print(_out.replace("{id}", _sid))
+sys.exit(int(os.environ.get("STUB_ARM_RC", "0")))
+"""
+
+
+def stub_shim(path: str) -> str:
+    """Write the stub shim at `path` (creating its directory) and return the path."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(f"#!{sys.executable}\n" + _STUB_SHIM_BODY)
+    os.chmod(path, 0o755)
     return path
 
 

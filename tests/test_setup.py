@@ -1692,6 +1692,24 @@ class TestSyncPiLinks(unittest.TestCase):
         self.assertEqual(os.readlink(link), target)
         self.assertEqual(c["linked"], 1)
 
+    def test_session_wake_skill_links_on_pi(self):
+        # 26-10: ai-kit-session-wake is a PI_SKILLS name, so the claude selection mirrors it
+        # into the pi skills dir, pointing at the kit; a name outside the set stays out.
+        target = os.path.join(self.install, "skills", "ai-kit-session-wake")
+        os.makedirs(target)
+        os.symlink(target, os.path.join(self.claude, "skills", "ai-kit-session-wake"))
+        entries = {"skills": [("ai-kit-session-wake", target),
+                              ("other-skill", self.other_target)],
+                   "commands": [], "agents": []}
+        c = setup.new_counts()
+        setup.sync_pi_links(self.paths, entries, False, c,
+                            names={"ai-kit-session-wake", "other-skill"})
+        link = os.path.join(self.pi, "skills", "ai-kit-session-wake")
+        self.assertEqual(os.readlink(link), target)
+        self.assertFalse(os.path.lexists(os.path.join(self.pi, "skills", "other-skill")))
+        self.assertEqual(c["linked"], 1)
+        self.assertIn("ai-kit-session-wake", setup.PI_SKILLS)
+
 
 class TestBackupEntry(unittest.TestCase):
     """_backup_entry: the exclusive, numbered claim dir (D-15/T-21.1-23)."""

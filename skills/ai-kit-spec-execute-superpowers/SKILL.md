@@ -99,6 +99,45 @@ Follow that skill's own Setup exactly (workspace, ledger, plan read, pre-flight 
 `$PLAN_FILE`, `$TASK_N`, and `$BRIEF_FILE` below are values that skill already holds when it
 dispatches each task's implementer — read them, never invent them.
 
+## Arm the session wake (plans with two or more tasks, D-23)
+
+Before the first implementer dispatch below, arm the session wake only when `$PLAN_FILE` holds two
+or more `### Task <n>` headings. A single-task plan arms nothing. The wake is owned by this run only
+when this block itself prints `armed`; a refusal, exit 3 or `refreshed` (a wake that existed before
+this run) leaves `WAKE_OWNED=0`, and the stop re-arm and the close step then call nothing. Never
+fail the run on the wake. Run this one `Bash` call:
+
+```bash
+TASK_COUNT=$(grep -cE '^### Task [0-9]' "$PLAN_FILE")
+WAKE_OWNED=0
+WAKE_SHIM="$(dirname "$SKILL_DIR")/ai-kit-session-wake/ai-kit-session-wake.py"
+if [ "$TASK_COUNT" -lt 2 ]; then
+  echo "single-task plan: no session wake"
+elif [ ! -f "$WAKE_SHIM" ]; then
+  echo "ai-kit-session-wake not installed; no session wake"
+else
+  WAKE_OUT="$(python3 "$WAKE_SHIM" arm ${WAKE_SESSION_ID:+--session-id "$WAKE_SESSION_ID"} --ref "$PLAN_FILE" 2>&1)"
+  WAKE_RC=$?
+  echo "$WAKE_OUT"
+  echo "session wake arm exit $WAKE_RC"
+  WAKE_LINE="$(printf '%s\n' "$WAKE_OUT" | grep '^armed ' | head -n 1)"
+  if [ "$WAKE_RC" -eq 0 ] && [ -n "$WAKE_LINE" ]; then
+    WAKE_HOST_ID="${WAKE_LINE#armed }"
+    WAKE_HOST="${WAKE_HOST_ID%%-*}"
+    WAKE_ID="${WAKE_HOST_ID#*-}"
+    WAKE_OWNED=1
+  fi
+fi
+printf 'WAKE_SHIM=%s\nWAKE_OWNED=%s\nWAKE_HOST=%s\nWAKE_ID=%s\n' \
+  "$WAKE_SHIM" "$WAKE_OWNED" "${WAKE_HOST:-}" "${WAKE_ID:-}"
+```
+
+**Record the printed `WAKE_SHIM`, `WAKE_OWNED`, `WAKE_HOST` and `WAKE_ID` as literal values.**
+The identity: on claude the shim reads the session itself; on pi and opencode the recorded
+`WAKE_SESSION_ID` must hold this session's exact id (the ai-kit-session-wake skill's Arm section),
+never a guess from the newest session file. Without it `arm` refuses (exit 2): the refusal is
+printed above and the run goes on with no wake.
+
 ## Step 2: Before each task's implementer dispatch — resolve the injection
 
 **Before touching any exclusion-set variable, ask:** is this exclusion permanent (auth, config,
@@ -354,7 +393,15 @@ printf 'RETURNCODE=%s\nRETRY_AFTER_S=%s\nCYCLE=%s\n' "$RETURNCODE" "$RETRY_AFTER
      quota-branch variant of the resumable-state bash, shown in full in
      `references/state-management.md` under "Quota-branch state write": it keeps `PROJECT_KEY`
      and `RESUME_STATE_PATH` and persists `$INJECTION_JSON` as `injection_json`, so the wake
-     re-dispatches this exact injection. Do not edit the Step 2 block by hand.
+     re-dispatches this exact injection. Do not edit the Step 2 block by hand. When
+     `WAKE_OWNED=1`, re-arm the wake with that state file (D-36), using the recorded identity.
+     Run this block (it calls nothing when `WAKE_OWNED=0`):
+
+```bash
+if [ "$WAKE_OWNED" = 1 ]; then
+  python3 "$WAKE_SHIM" arm --host "$WAKE_HOST" --session-id "$WAKE_ID" --ref "$RESUME_STATE_PATH"
+fi
+```
   4. **Schedule or stop.** Only exit 75 with whole-number `RETRY_AFTER_S` and `CYCLE` gets the
      one-shot wait and re-dispatch of the same task, lane and model. A runner exit 69 or 75 whose
      status is `transient` or `quota` reaches this branch; an exit 69 (`stopped=hard-waits`,
@@ -458,3 +505,17 @@ Whichever mode Step 3 used, subagent-driven-development's "3. Review the task", 
 (rounds 1–5), and the final whole-branch review run unmodified on `$REPORT_FILE` and the real
 commits. This skill's scope ends at Step 3; it never touches review, fix-loop adjudication, or the
 ledger.
+
+## Close the session wake (D-23)
+
+When this skill's job ends (the final whole-branch review finished, or a stop ended the run:
+STOP this wave, or an owner stop) and only when `WAKE_OWNED=1`, run:
+
+```bash
+if [ "$WAKE_OWNED" = 1 ]; then
+  python3 "$WAKE_SHIM" done --host "$WAKE_HOST" --session-id "$WAKE_ID"
+fi
+```
+
+Never run it on the one-shot wait branch of point 4, which continues the run, nor for a task still
+waiting on its wake. When `WAKE_OWNED=0`, call nothing.

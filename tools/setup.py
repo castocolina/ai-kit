@@ -43,8 +43,9 @@ from typing import cast
 CATEGORIES = ("agents", "commands", "skills")
 
 # D-14: skills also linked into <pi_dir>/skills, derived from the claude
-# selection. pi is a primary host and gets the cross-AI guide too.
-PI_SKILLS = frozenset({"ai-kit-cross-ai", "jev-fast-decision"})
+# selection. pi is a primary host and gets the cross-AI guide too, and the session
+# wake (26-10: an AGENTS.md rule names it, so pi must be able to discover it).
+PI_SKILLS = frozenset({"ai-kit-cross-ai", "jev-fast-decision", "ai-kit-session-wake"})
 _LEGACY_ENTRY = "status-line.py"
 _CLAUDE_ENTRY = "claude-status-line.py"
 _CURSOR_ENTRY = "cursor-status-line.py"

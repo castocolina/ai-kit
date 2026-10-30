@@ -31,6 +31,7 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`mermaid-audit`](skills/mermaid-audit/SKILL.md) | skill | Render and review Mermaid diagrams embedded in Markdown — syntax, layout, **color palette, node shapes, and aspect ratio**; emits ready-to-paste `classDef` fixes and ships a consensus eval that checks the rules are reproducible across agents. |
 | [`markdown-to-pdf`](skills/markdown-to-pdf/SKILL.md) | skill | Convert a Markdown document with embedded mermaid diagrams into a **PDF** (or a **marp** slide deck) — every ` ```mermaid ` block is auto-rendered with `mmdc` and embedded; auto-selects the best installed backend (Typst/Pandoc, LaTeX, WeasyPrint, Chromium) and never auto-installs. |
 | [`ai-kit-cross-ai`](skills/ai-kit-cross-ai/SKILL.md) | skill | Canonical guide to calling, waiting for and chaining the cross-AI runner, with the caller-owned hard tier and never switching harness, provider or model. |
+| [`ai-kit-session-wake`](skills/ai-kit-session-wake/SKILL.md) | skill | Arms, checks and disarms a per-session systemd user-timer wake that resumes this exact session id after the orchestrating agent stalls on its own usage limit or its process dies. Not for cross-AI subprocess limits. |
 | [`ai-kit-spec-review`](skills/ai-kit-spec-review/SKILL.md) | skill | Review-and-fix loop over (runtime, model) pairs: native when the host can select the model, otherwise the supervised runner (`claude` is review-only). Loops until approved. |
 | [`ai-kit-spec-config`](skills/ai-kit-spec-config/SKILL.md) | skill | Wizard for the reviewer config: picks (runtime, model) pairs, writes `review-spec.toml`; a runtime outside the runner table is a trust-gated custom command. |
 | [`ai-kit-spec-execute`](skills/ai-kit-spec-execute/SKILL.md) | skill | Router: detects which framework (GSD, superpowers, …) generated a plan/phase, then delegates execution to that framework's `ai-kit-spec-execute-*` adapter. |
@@ -54,7 +55,7 @@ The repo is the source of truth. `tools/install.sh`:
 
 1. **fetch** — clones (or `git pull`s) the repo into `~/.local/share/ai-kit`; falls back to a tarball download when `git` is absent.
 2. **verify** — enumerates `skills/`, `commands/`, and `agents/` and validates each entry's shape (skills need a `SKILL.md`; commands/agents need Markdown with frontmatter). Malformed entries are skipped with a warning.
-3. **link** — symlinks each valid entry into `~/.claude/<category>/`. Existing real files and symlinks that point outside ai-kit are never touched. The `jev-fast-decision` and `ai-kit-cross-ai` skills are additionally linked into `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` for pi, derived from the same selection (opencode reads `~/.claude/skills`; nothing is ever linked under `~/.agents/skills`; codex and cursor have no link — see the skill's reference for their status). A missing pi agent dir is skipped with a message, never created.
+3. **link** — symlinks each valid entry into `~/.claude/<category>/`. Existing real files and symlinks that point outside ai-kit are never touched. The `jev-fast-decision`, `ai-kit-cross-ai` and `ai-kit-session-wake` skills are additionally linked into `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` for pi, derived from the same selection (opencode reads `~/.claude/skills`; nothing is ever linked under `~/.agents/skills`; codex and cursor have no link — see the skill's reference for their status). A missing pi agent dir is skipped with a message, never created.
 4. **prune** — removes broken symlinks under `~/.claude/` that point into the install dir, so deleting a skill from the repo and re-running cleans up after itself.
 5. **statusline** — sets `statusLine` in `~/.claude/settings.json` to the bundled `tools/claude-status-line.py` (a backup is written to `settings.json.bak`).
 
@@ -529,8 +530,8 @@ nothing is touched unless explicitly requested:
 
 - `--skills all` — link every skill (or `--skills name1,name2` for a subset).
   Additive only: never unlinks a skill already present from a prior run. A
-  `jev-fast-decision` link is mirrored into the pi agent skills dir
-  (`${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills`) when its claude link is made.
+  `jev-fast-decision`, `ai-kit-cross-ai` and `ai-kit-session-wake` links are mirrored into the
+  pi agent skills dir (`${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills`) when their claude link is made.
 - `--replace-existing` — (requires `--headless --skills`) move a real directory
   or foreign symlink standing at one of the named skills' link paths into
   `${XDG_STATE_HOME:-~/.local/state}/ai-kit/backups/<claude|pi>/<name>.bak-<timestamp>/`

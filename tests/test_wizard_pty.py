@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import pty
+import re
 import select
 import shutil
 import struct
@@ -723,7 +724,14 @@ class TestPhase2E2E(unittest.TestCase):
                       msg="Choose: expected the six-row hooks category")
         hook_ids = ("session-briefing", "tool-advisor", "tool-reminder",
                     "decision-probe", "precompact", "session-wake")
-        positions = [all_output.find(hook_id) for hook_id in hook_ids]
+        # Match only the HOOKS rows (a bullet, then the id): a bare substring also matches the
+        # skill row `ai-kit-session-wake` that the skills list renders earlier (26-10).
+        plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", all_output)
+        positions = [
+            next((m.start() for m in re.finditer(r"[\u25c9\u25ef]\s+" + re.escape(hook_id) + r"\s",
+                                                  plain)), -1)
+            for hook_id in hook_ids
+        ]
         self.assertTrue(all(position >= 0 for position in positions),
                         msg=f"Choose: missing hook row in {hook_ids!r}: {positions!r}")
         self.assertEqual(positions, sorted(positions),

@@ -1,5 +1,6 @@
 import json
 import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -23,6 +24,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
 import detect_framework
 from ai_kit_spec import detection, execute_selection, gsd_tools
 from ai_kit_spec_gsd import adapter, cli, cross_ai_guidance, gsd_config, gsd_cross_ai
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
+                                 "ai-kit-session-wake"))
+from tests import session_wake_fakes
 
 
 def _stub_run_fn(*args, **kwargs):
@@ -1937,3 +1942,219 @@ class TestNativeTierViaConfigSet(unittest.TestCase):
             calls = fake.config_set_calls()
             self.assertEqual(calls[-1][3:5], ["runtime", "null"])
 
+
+
+# ── 26-10: the session wake step (D-23, D-35, D-36) ─────────────────────────
+# The blocks run under session_wake_fakes.doc_block_env (a scratch bin dir first, then only the
+# named coreutils), so `python3` is the wrapper that execs this interpreter and the real
+# systemctl is never reached. The stub shim stands in for ai-kit-session-wake and logs each call.
+
+_WAKE_MARKER = "ai-kit-session-wake.py"
+_WAKE_COMMANDS = ["dirname", "find", "wc", "grep", "head", "printf", "cat", "sed", "tr", "echo"]
+
+
+def _wake_block(marker: str) -> str:
+    """The first fenced bash block of this SKILL.md that contains `marker`."""
+    skill = os.path.join(
+        os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute-gsd", "SKILL.md"
+    )
+    with open(skill, encoding="utf-8") as handle:
+        text = handle.read()
+    for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
+        if marker in block:
+            return block
+    raise AssertionError(f"SKILL.md has no bash block containing {marker!r}")
+
+
+_GSD_SKILL = pathlib.Path(__file__).resolve().parent.parent / "skills" / "ai-kit-spec-execute-gsd"
+
+
+def _gsd_skill_text() -> str:
+    return (_GSD_SKILL / "SKILL.md").read_text(encoding="utf-8")
+
+
+def _fenced_block_containing(needle: str) -> str:
+    """The SKILL.md's own fenced bash block that holds `needle` (the step as written)."""
+    for block in re.findall(r"```bash\n(.*?)```", _gsd_skill_text(), re.DOTALL):
+        if needle in block:
+            return block
+    raise AssertionError(f"SKILL.md has no bash block containing {needle!r}")
+
+
+class TestSessionWakeStep(unittest.TestCase):
+    """The gsd arm, re-arm and close blocks, run against a stub shim in a scratch root."""
+
+    def setUp(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        self.bash_bin: str = bash_bin
+        self.root = tempfile.mkdtemp(prefix="gsd-wake-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.skills = os.path.join(self.root, "skills")
+        self.gsd_skill = os.path.join(self.skills, "ai-kit-spec-execute-gsd")
+        self.shim = os.path.join(self.skills, "ai-kit-session-wake", "ai-kit-session-wake.py")
+        session_wake_fakes.stub_shim(self.shim)
+        self.cwd = os.path.join(self.root, "project")
+        self.phase = os.path.join(self.cwd, ".planning", "phases", "26-x")
+        os.makedirs(self.phase)
+        os.makedirs(os.path.join(self.cwd, ".planning"), exist_ok=True)
+        self.prompt = os.path.join(self.phase, "26-x-CONTEXT.md")
+        with open(self.prompt, "w", encoding="utf-8") as handle:
+            handle.write("# context\n")
+        self.log = os.path.join(self.root, "fake.log")
+        self.env = session_wake_fakes.doc_block_env(self.root, _WAKE_COMMANDS)
+
+    def _plans(self, count: int):
+        for n in range(1, count + 1):
+            with open(os.path.join(self.phase, f"26-0{n}-PLAN.md"), "w", encoding="utf-8") as h:
+                h.write("---\ncross_ai: true\n---\n")
+
+    def _run(self, block: str, extra: dict | None = None):
+        env = {
+            **self.env,
+            "AI_KIT_FAKE_LOG": self.log,
+            "GSD_SKILL_DIR": self.gsd_skill,
+            "CWD": self.cwd,
+            "PHASE_PROMPT_FILE": self.prompt,
+            **(extra or {}),
+        }
+        return subprocess.run(
+            [self.bash_bin, "-c", block], cwd=self.cwd, env=env,
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+
+    def _shim_calls(self):
+        if not os.path.exists(self.log):
+            return []
+        return [e["argv"] for e in session_wake_fakes.read_log(self.log) if e["name"] == "shim"]
+
+    @staticmethod
+    def _value(out: str, key: str) -> str:
+        for line in out.splitlines():
+            if line.startswith(key + "="):
+                return line[len(key) + 1:]
+        raise AssertionError(f"{key}= not printed in: {out!r}")
+
+    def test_single_plan_phase_arms_nothing(self):
+        self._plans(1)
+        proc = self._run(_wake_block(_WAKE_MARKER))
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("single-plan phase: no session wake", proc.stdout)
+        self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
+        self.assertEqual([], self._shim_calls())
+
+    def test_two_plans_on_claude_arm_once_and_record_the_identity(self):
+        self._plans(2)
+        proc = self._run(_wake_block(_WAKE_MARKER), {"STUB_HOST": "claude", "STUB_SID": "sid-c1"})
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(self.shim, self._value(proc.stdout, "WAKE_SHIM"))
+        self.assertEqual("1", self._value(proc.stdout, "WAKE_OWNED"))
+        self.assertEqual("claude", self._value(proc.stdout, "WAKE_HOST"))
+        self.assertEqual("sid-c1", self._value(proc.stdout, "WAKE_ID"))
+        self.assertEqual(
+            [["arm", "--ref", os.path.join(self.cwd, ".planning", "STATE.md")]],
+            self._shim_calls(),
+        )
+
+    def test_two_plans_on_pi_without_an_id_relays_the_refusal_and_goes_on(self):
+        self._plans(2)
+        proc = self._run(_wake_block(_WAKE_MARKER), {"STUB_HOST": "pi"})
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("no session id: pass --session-id", proc.stdout)
+        self.assertIn("session wake arm exit 2", proc.stdout)
+        self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
+
+    def test_pi_with_the_recorded_id_passes_session_id(self):
+        self._plans(2)
+        proc = self._run(
+            _wake_block(_WAKE_MARKER),
+            {"STUB_HOST": "pi", "WAKE_SESSION_ID": "pi-exact-id"},
+        )
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual("1", self._value(proc.stdout, "WAKE_OWNED"))
+        self.assertEqual("pi", self._value(proc.stdout, "WAKE_HOST"))
+        self.assertEqual("pi-exact-id", self._value(proc.stdout, "WAKE_ID"))
+        self.assertIn(["arm", "--session-id", "pi-exact-id",
+                       "--ref", os.path.join(self.cwd, ".planning", "STATE.md")],
+                      self._shim_calls())
+
+    def test_refreshed_wake_is_not_owned(self):
+        self._plans(2)
+        proc = self._run(
+            _wake_block(_WAKE_MARKER),
+            {"STUB_HOST": "claude", "STUB_ARM_OUTPUT": "refreshed claude-old"},
+        )
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
+
+    def test_exit_three_is_not_owned_and_never_fails_the_run(self):
+        self._plans(2)
+        proc = self._run(
+            _wake_block(_WAKE_MARKER),
+            {"STUB_HOST": "claude", "STUB_ARM_RC": "3", "STUB_ARM_OUTPUT": "armed claude-x"},
+        )
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
+
+    def test_missing_sibling_shim_prints_not_installed(self):
+        self._plans(2)
+        os.remove(self.shim)
+        proc = self._run(_wake_block(_WAKE_MARKER))
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("ai-kit-session-wake not installed", proc.stdout)
+        self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
+
+    def test_stop_rearm_and_close_run_only_when_owned(self):
+        self._plans(2)
+        owned = {"WAKE_SHIM": self.shim, "WAKE_OWNED": "1", "WAKE_HOST": "claude",
+                 "WAKE_ID": "sid-c1", "RESUME_STATE_PATH": os.path.join(self.root, "r.json")}
+        rearm = (
+            'python3 "$WAKE_SHIM" arm --host "$WAKE_HOST" --session-id "$WAKE_ID" '
+            '--ref "$RESUME_STATE_PATH"'
+        )
+        close = 'python3 "$WAKE_SHIM" done --host "$WAKE_HOST" --session-id "$WAKE_ID"'
+        for block in (rearm, close):
+            with self.subTest(block=block[:40]):
+                env = {**self.env, "AI_KIT_FAKE_LOG": self.log, **owned}
+                proc = subprocess.run(
+                    [self.bash_bin, "-c", block], cwd=self.cwd, env=env,
+                    capture_output=True, text=True, timeout=60, check=False,
+                )
+                self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(
+            [["arm", "--host", "claude", "--session-id", "sid-c1",
+              "--ref", os.path.join(self.root, "r.json")],
+             ["done", "--host", "claude", "--session-id", "sid-c1"]],
+            self._shim_calls(),
+        )
+
+    def test_single_plan_run_through_a_stop_and_completion_touches_no_wake(self):
+        """A single-plan run never owns a wake, so the SKILL.md's own stop re-arm and close
+        blocks (run as written, not a copy) call nothing through a stop and its completion."""
+        self._plans(1)
+        arm = self._run(_wake_block(_WAKE_MARKER))
+        self.assertEqual("0", self._value(arm.stdout, "WAKE_OWNED"))
+        rearm = _fenced_block_containing('--ref "$RESUME_STATE_PATH"')
+        close = _fenced_block_containing('done --host "$WAKE_HOST"')
+        env = {**self.env, "AI_KIT_FAKE_LOG": self.log, "WAKE_SHIM": self.shim,
+               "WAKE_OWNED": "0", "WAKE_HOST": "", "WAKE_ID": "",
+               "RESUME_STATE_PATH": os.path.join(self.root, "r.json")}
+        for block in (rearm, close):
+            proc = subprocess.run([self.bash_bin, "-c", block], cwd=self.cwd, env=env,
+                                  capture_output=True, text=True, timeout=60, check=False)
+            self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual([], self._shim_calls())
+
+    def test_skill_text_orders_arm_before_invoke_and_close_after(self):
+        text = _gsd_skill_text()
+        arm = text.index("Session wake (multi-plan phases, D-23)")
+        invoke = text.index("**Then invoke GSD's own `/gsd-execute-phase` skill directly")
+        close = text.index("**Close the session wake (D-23).**")
+        self.assertLess(arm, invoke)
+        self.assertLess(invoke, close)
+        self.assertIn("Never run it on the exit-75 `retry_after_s=` branch", text)
+        close_text = text[close:]
+        self.assertIn("answered `abort`", close_text)
+        self.assertIn("the phase completed", close_text)
+        self.assertEqual(1, text.count("ai-kit-session-wake/ai-kit-session-wake.py"))

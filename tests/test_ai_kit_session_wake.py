@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -1834,6 +1835,117 @@ class TestArmRollback(_Scratch):
             ],
             calls[failing:],
         )
+
+
+_SKILL_MD = os.path.join(_REPO, "skills", "ai-kit-session-wake", "SKILL.md")
+_SKILL_ROOT = os.path.dirname(_SKILL_MD)
+_SUBCOMMANDS = ("arm", "disarm", "status", "fire", "done", "matrix")
+
+
+def _skill_text() -> str:
+    with open(_SKILL_MD, encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _resolve_block(text: str) -> str:
+    """The fenced bash block that resolves the shim (found by the candidate loop)."""
+    for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
+        if "for d in" in block and "SHIM=" in block:
+            return block.replace("<absolute path to THIS SKILL.md>", _SKILL_MD)
+    raise AssertionError("SKILL.md has no bash resolve block")
+
+
+class TestSessionWakeSkillText(_Scratch):
+    """D-01: the skill is discoverable, its text names the contract, and its own resolve-and-arm
+    block arms a scratch session as written under doc_block_env (the real systemctl is never
+    reached: the fake log proves the calls)."""
+
+    def test_frontmatter_name_matches_dir_and_description_is_bounded(self):
+        text = _skill_text()
+        self.assertTrue(text.startswith("---\n"))
+        name = re.search(r"^name: (.+)$", text, re.MULTILINE)
+        assert name is not None
+        self.assertEqual("ai-kit-session-wake", name.group(1).strip())
+        self.assertEqual(os.path.basename(_SKILL_ROOT), name.group(1).strip())
+        desc = re.search(r'^description: "(.*)"$', text, re.MULTILINE)
+        assert desc is not None
+        self.assertLessEqual(len(desc.group(1)), 1024)
+        self.assertIn("not for cross-ai subprocess limits", desc.group(1).lower())
+
+    def test_text_names_contract_terms(self):
+        text = _skill_text()
+        for token in ("--session-id", "AI_KIT_CROSS_AI_CHILD", "subagent", "one-shot",
+                      "unverified", "StopFailure", "spike 004"):
+            self.assertIn(token, text)
+        for code in ("0", "2", "3"):
+            self.assertRegex(text, rf"(?m)^- {code}:")
+
+    def test_doc_block_env_raises_on_an_unresolved_command_and_keeps_systemctl_fake(self):
+        """26-10 Task 1 step 4: an unresolved name raises; systemctl, loginctl and notify-send
+        resolve only under the scratch bin dir; the tools dir holds only the named symlinks."""
+        with self.assertRaises(RuntimeError):
+            fakes.doc_block_env(self.root, ["no-such-command-26-10"])
+        env = fakes.doc_block_env(self.root, ["dirname", "grep"])
+        bin_dir = os.path.join(self.root, "bin")
+        for name in ("systemctl", "loginctl", "notify-send"):
+            resolved = shutil.which(name, path=env["PATH"])
+            assert resolved is not None
+            self.assertTrue(resolved.startswith(bin_dir + os.sep), resolved)
+        tools_dir = os.path.join(self.root, "tools")
+        self.assertEqual(["dirname", "grep"], sorted(os.listdir(tools_dir)))
+        for name in ("dirname", "grep"):
+            self.assertTrue(os.path.islink(os.path.join(tools_dir, name)))
+
+    def test_every_named_subcommand_is_in_the_shim_help(self):
+        text = _skill_text()
+        help_out = subprocess.run(
+            [sys.executable, _SHIM, "--help"], capture_output=True, text=True,
+            env=fakes.scoped_env(self.root), check=False,
+        ).stdout
+        for sub in _SUBCOMMANDS:
+            self.assertIn(f" {sub} ", help_out)
+            self.assertIn(f"`{sub}`", text)
+
+    def test_resolve_block_arms_a_scratch_claude_session_as_written(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        sid = uuid.uuid4().hex
+        launch = os.path.join(self.root, "launch")
+        os.makedirs(launch)
+        host = fakes.start_host_process(launch)
+        self.addCleanup(self._kill, host)
+        commands = ["dirname", "ls", "wc", "grep", "cat", "mkdir", "rm", "sed", "tr", "printf"]
+        env = fakes.doc_block_env(self.root, commands)
+        env.update({
+            "CLAUDECODE": "1",
+            "CLAUDE_PID": str(host.pid),
+            "CLAUDE_CODE_SESSION_ID": sid,
+        })
+        fakes.fake_host(self.bin_dir, "claude")
+        fakes.claude_session(env["HOME"], sid)
+        block = _resolve_block(_skill_text()) + "\npython3 \"$SHIM\" arm\n"
+        proc = subprocess.run(
+            [bash_bin, "-c", block], cwd=launch, env=env,
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn(f"SHIM={_SHIM}", proc.stdout)
+        self.assertIn(f"armed claude-{sid}", proc.stdout)
+        state = session_paths(env, "claude", sid).state
+        self.assertTrue(os.path.exists(state))
+        self.assertTrue(os.path.realpath(state).startswith(os.path.realpath(self.root)))
+        calls = [e["argv"] for e in fakes.read_log(env["AI_KIT_FAKE_LOG"])
+                 if e["name"] == "systemctl"]
+        self.assertIn(["--user", "daemon-reload"], calls)
+        timer_name, _service = units.unit_names("claude", sid)
+        self.assertIn(["--user", "enable", "--now", timer_name], calls)
+
+    @staticmethod
+    def _kill(proc):
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
 
 
 class TestArmOptionsShape(unittest.TestCase):

@@ -3,8 +3,10 @@ import io
 import json
 import os
 import pathlib
+import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -25,6 +27,10 @@ import detect_framework as router_detect_framework
 from ai_kit_spec import detection, routing, runner_dispatch
 from ai_kit_spec_superpowers import cli as superpowers_cli
 from ai_kit_spec_superpowers import dispatch_injection, task_classification
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
+                                 "ai-kit-session-wake"))
+from tests import session_wake_fakes
 
 
 class TestClassifyTask(unittest.TestCase):
@@ -2313,3 +2319,181 @@ class TestUntrustedLocalExecuteEntry(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 candidates, _ = dispatch_injection.assemble_candidates(cwd, env)
             self.assertIn("x1", [c["key"] for c in candidates])
+
+
+# ── 26-10: the session wake step (D-23, D-35, D-36) ─────────────────────────
+# The blocks run under session_wake_fakes.doc_block_env; the stub shim stands in for
+# ai-kit-session-wake and logs every call. Each test writes its own plan with N `### Task` headings.
+
+_SUPER_SKILL = pathlib.Path(__file__).resolve().parent.parent / "skills" / (
+    "ai-kit-spec-execute-superpowers") / "SKILL.md"
+_SUPER_COMMANDS = ["dirname", "grep", "wc", "printf", "cat", "sed", "tr", "echo", "head"]
+
+
+def _super_text() -> str:
+    return _SUPER_SKILL.read_text(encoding="utf-8")
+
+
+def _super_block(needle: str) -> str:
+    """The superpowers SKILL.md's own first fenced bash block that holds `needle`."""
+    for block in re.findall(r"```bash\n(.*?)```", _super_text(), re.DOTALL):
+        if needle in block:
+            return block
+    raise AssertionError(f"SKILL.md has no bash block containing {needle!r}")
+
+
+class TestSessionWakeStep(unittest.TestCase):
+    """The superpowers arm, re-arm and close steps, run against a stub shim in a scratch root."""
+
+    def setUp(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        self.bash_bin: str = bash_bin
+        self.root = tempfile.mkdtemp(prefix="super-wake-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.skills = os.path.join(self.root, "skills")
+        self.super_skill = os.path.join(self.skills, "ai-kit-spec-execute-superpowers")
+        self.shim = os.path.join(self.skills, "ai-kit-session-wake", "ai-kit-session-wake.py")
+        session_wake_fakes.stub_shim(self.shim)
+        self.cwd = os.path.join(self.root, "project")
+        os.makedirs(os.path.join(self.cwd, "docs"))
+        self.plan = os.path.join(self.cwd, "docs", "plan.md")
+        self.log = os.path.join(self.root, "fake.log")
+        self.env = session_wake_fakes.doc_block_env(self.root, _SUPER_COMMANDS)
+
+    def _plan(self, tasks: int):
+        body = "# Plan\n\n" + "".join(
+            f"### Task {n}: thing\n\nbody\n\n" for n in range(1, tasks + 1)
+        )
+        with open(self.plan, "w", encoding="utf-8") as handle:
+            handle.write(body)
+
+    def _run(self, block: str, extra: dict | None = None):
+        env = {
+            **self.env,
+            "AI_KIT_FAKE_LOG": self.log,
+            "SKILL_DIR": self.super_skill,
+            "CWD": self.cwd,
+            "PLAN_FILE": self.plan,
+            **(extra or {}),
+        }
+        return subprocess.run(
+            [self.bash_bin, "-c", block], cwd=self.cwd, env=env,
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+
+    def _shim_calls(self):
+        if not os.path.exists(self.log):
+            return []
+        return [e["argv"] for e in session_wake_fakes.read_log(self.log) if e["name"] == "shim"]
+
+    @staticmethod
+    def _value(out: str, key: str) -> str:
+        for line in out.splitlines():
+            if line.startswith(key + "="):
+                return line[len(key) + 1:]
+        raise AssertionError(f"{key}= not printed in: {out!r}")
+
+    def _arm_block(self) -> str:
+        return _super_block("single-task plan: no session wake")
+
+    def test_single_task_plan_arms_nothing(self):
+        self._plan(1)
+        proc = self._run(self._arm_block())
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("single-task plan: no session wake", proc.stdout)
+        self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
+        self.assertEqual([], self._shim_calls())
+
+    def test_two_tasks_on_claude_arm_once_and_record_the_identity(self):
+        self._plan(2)
+        proc = self._run(self._arm_block(), {"STUB_HOST": "claude", "STUB_SID": "sid-s1"})
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(self.shim, self._value(proc.stdout, "WAKE_SHIM"))
+        self.assertEqual("1", self._value(proc.stdout, "WAKE_OWNED"))
+        self.assertEqual("claude", self._value(proc.stdout, "WAKE_HOST"))
+        self.assertEqual("sid-s1", self._value(proc.stdout, "WAKE_ID"))
+        self.assertEqual([["arm", "--ref", self.plan]], self._shim_calls())
+
+    def test_pi_without_an_id_relays_the_refusal_and_goes_on(self):
+        self._plan(2)
+        proc = self._run(self._arm_block(), {"STUB_HOST": "pi"})
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("no session id: pass --session-id", proc.stdout)
+        self.assertIn("session wake arm exit 2", proc.stdout)
+        self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
+
+    def test_pi_with_the_recorded_id_passes_session_id(self):
+        self._plan(2)
+        proc = self._run(self._arm_block(), {"STUB_HOST": "pi", "WAKE_SESSION_ID": "pi-s-id"})
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual("1", self._value(proc.stdout, "WAKE_OWNED"))
+        self.assertEqual("pi-s-id", self._value(proc.stdout, "WAKE_ID"))
+        self.assertIn(["arm", "--session-id", "pi-s-id", "--ref", self.plan],
+                      self._shim_calls())
+
+    def test_refreshed_and_exit_three_are_not_owned(self):
+        self._plan(2)
+        refreshed = self._run(self._arm_block(),
+                              {"STUB_HOST": "claude", "STUB_ARM_OUTPUT": "refreshed claude-old"})
+        self.assertEqual("0", self._value(refreshed.stdout, "WAKE_OWNED"))
+        exit3 = self._run(self._arm_block(),
+                          {"STUB_HOST": "claude", "STUB_ARM_RC": "3",
+                           "STUB_ARM_OUTPUT": "armed claude-x"})
+        self.assertEqual(0, exit3.returncode, exit3.stderr)
+        self.assertEqual("0", self._value(exit3.stdout, "WAKE_OWNED"))
+
+    def test_missing_sibling_shim_prints_not_installed(self):
+        self._plan(2)
+        os.remove(self.shim)
+        proc = self._run(self._arm_block())
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("ai-kit-session-wake not installed", proc.stdout)
+
+    def test_owned_rearm_and_close_use_the_recorded_identity(self):
+        self._plan(2)
+        owned = {"WAKE_SHIM": self.shim, "WAKE_OWNED": "1", "WAKE_HOST": "claude",
+                 "WAKE_ID": "sid-s1", "RESUME_STATE_PATH": os.path.join(self.root, "r.json")}
+        rearm = _super_block('--ref "$RESUME_STATE_PATH"')
+        close = _super_block('done --host "$WAKE_HOST"')
+        for block in (rearm, close):
+            env = {**self.env, "AI_KIT_FAKE_LOG": self.log, **owned}
+            proc = subprocess.run([self.bash_bin, "-c", block], cwd=self.cwd, env=env,
+                                  capture_output=True, text=True, timeout=60, check=False)
+            self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(
+            [["arm", "--host", "claude", "--session-id", "sid-s1",
+              "--ref", os.path.join(self.root, "r.json")],
+             ["done", "--host", "claude", "--session-id", "sid-s1"]],
+            self._shim_calls(),
+        )
+
+    def test_single_task_run_through_a_stop_and_completion_touches_no_wake(self):
+        self._plan(1)
+        arm = self._run(self._arm_block())
+        self.assertEqual("0", self._value(arm.stdout, "WAKE_OWNED"))
+        rearm = _super_block('--ref "$RESUME_STATE_PATH"')
+        close = _super_block('done --host "$WAKE_HOST"')
+        env = {**self.env, "AI_KIT_FAKE_LOG": self.log, "WAKE_SHIM": self.shim,
+               "WAKE_OWNED": "0", "WAKE_HOST": "", "WAKE_ID": "",
+               "RESUME_STATE_PATH": os.path.join(self.root, "r.json")}
+        for block in (rearm, close):
+            proc = subprocess.run([self.bash_bin, "-c", block], cwd=self.cwd, env=env,
+                                  capture_output=True, text=True, timeout=60, check=False)
+            self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual([], self._shim_calls())
+
+    def test_arm_sits_before_step_two_and_close_after_step_four(self):
+        text = _super_text()
+        arm = text.index("## Arm the session wake (plans with two or more tasks, D-23)")
+        step2 = text.index("## Step 2: Before each task's implementer dispatch")
+        step4 = text.index("## Step 4: Task review, fix loop, final review")
+        close = text.index("## Close the session wake (D-23)")
+        self.assertLess(arm, step2)
+        self.assertLess(step4, close)
+        self.assertEqual(1, text.count("ai-kit-session-wake/ai-kit-session-wake.py"))
+        # D-23: done runs when the job ends: the plan finished, or a stop ended the run
+        close_text = text[close:]
+        self.assertIn("STOP this wave, or an owner stop", close_text)
+        self.assertIn("the final whole-branch review finished", close_text)

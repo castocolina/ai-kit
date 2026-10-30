@@ -434,6 +434,43 @@ writes the guidance into the tracked file the hook places before the prompt. Rea
 need the history of why this step used to append guidance here and why that changed:
 `references/dispatch-notes.md#history-the-guidance-file-supersedes-the-old-guidance-append-step`.
 
+**Session wake (multi-plan phases, D-23).** Before the invoke below, arm the session wake only
+when the phase holds two or more plan files. A single-plan phase arms nothing. The wake is
+owned by this run only when this block itself prints `armed`; a refusal, exit 3 or `refreshed`
+(a wake that existed before this run) leaves `WAKE_OWNED=0`, and the stop re-arm and the close
+step then call nothing. Never fail the run on the wake. Run this one `Bash` call:
+
+```bash
+PLAN_COUNT=$(find "$(dirname "$PHASE_PROMPT_FILE")" -maxdepth 1 -name '*-PLAN.md' | wc -l)
+WAKE_OWNED=0
+WAKE_SHIM="$(dirname "$GSD_SKILL_DIR")/ai-kit-session-wake/ai-kit-session-wake.py"
+if [ "$PLAN_COUNT" -lt 2 ]; then
+  echo "single-plan phase: no session wake"
+elif [ ! -f "$WAKE_SHIM" ]; then
+  echo "ai-kit-session-wake not installed; no session wake"
+else
+  WAKE_OUT="$(python3 "$WAKE_SHIM" arm ${WAKE_SESSION_ID:+--session-id "$WAKE_SESSION_ID"} --ref "$CWD/.planning/STATE.md" 2>&1)"
+  WAKE_RC=$?
+  echo "$WAKE_OUT"
+  echo "session wake arm exit $WAKE_RC"
+  WAKE_LINE="$(printf '%s\n' "$WAKE_OUT" | grep '^armed ' | head -n 1)"
+  if [ "$WAKE_RC" -eq 0 ] && [ -n "$WAKE_LINE" ]; then
+    WAKE_HOST_ID="${WAKE_LINE#armed }"
+    WAKE_HOST="${WAKE_HOST_ID%%-*}"
+    WAKE_ID="${WAKE_HOST_ID#*-}"
+    WAKE_OWNED=1
+  fi
+fi
+printf 'WAKE_SHIM=%s\nWAKE_OWNED=%s\nWAKE_HOST=%s\nWAKE_ID=%s\n' \
+  "$WAKE_SHIM" "$WAKE_OWNED" "${WAKE_HOST:-}" "${WAKE_ID:-}"
+```
+
+**Record the printed `WAKE_SHIM`, `WAKE_OWNED`, `WAKE_HOST` and `WAKE_ID` as literal values.**
+The identity: on claude the shim reads the session itself; on pi and opencode the recorded
+`WAKE_SESSION_ID` must hold this session's exact id (the ai-kit-session-wake skill's Arm
+section), never a guess from the newest session file. Without it `arm` refuses (exit 2): the
+refusal is printed above and the run goes on with no wake.
+
 **Then invoke GSD's own `/gsd-execute-phase` skill directly, via the `Skill` tool, for `$PHASE_ID`
 — this is the entire remaining job of this skill.** There is no subprocess to run, no stdout to
 capture, no heartbeat to route — GSD's own workflow performs the actual
@@ -450,7 +487,14 @@ answer to its retry/skip/abort prompt.
 sections 4 and 6-8 before answering GSD's prompt. Relay the runner's `cross-ai: report`,
 `cross-ai: upstream` and `AIKIT-XAI` lines verbatim from GSD's `$ERROR_LOG` (the hook's stderr,
 read in full, never a truncated tail), then run the Step 1 `write-resumable-state` block with
-`RESUME_VIA=gsd-execute-phase` so the owner has a durable record.
+`RESUME_VIA=gsd-execute-phase` so the owner has a durable record. Then re-arm the session wake
+with that state file (D-36), only when this run owns it (`WAKE_OWNED=1`, Session wake above):
+
+```bash
+if [ "$WAKE_OWNED" = 1 ]; then
+  python3 "$WAKE_SHIM" arm --host "$WAKE_HOST" --session-id "$WAKE_ID" --ref "$RESUME_STATE_PATH"
+fi
+```
 
 For an exit 75 carrying `retry_after_s=` (transient ladder exhausted or confirmed-router quota),
 answer nothing to GSD's prompt in that turn and schedule the wake below; it retries the same
@@ -485,3 +529,15 @@ definition is missing/unreadable — that is a genuine environment problem, not 
 STOP, do not retry, and report the exact resolution error to the user along with both paths
 checked: `<project>/.claude/commands/gsd-execute-phase.md` and
 `$HOME/.claude/skills/gsd-execute-phase/SKILL.md` so they can reinstall or repair GSD.
+
+**Close the session wake (D-23).** When this skill's job ends (the phase completed, or a stop
+answered `abort`) and only when `WAKE_OWNED=1`, run:
+
+```bash
+if [ "$WAKE_OWNED" = 1 ]; then
+  python3 "$WAKE_SHIM" done --host "$WAKE_HOST" --session-id "$WAKE_ID"
+fi
+```
+
+Never run it on the exit-75 `retry_after_s=` branch: that branch continues the run, and its
+one-shot wake still needs the session. When `WAKE_OWNED=0`, call nothing.
