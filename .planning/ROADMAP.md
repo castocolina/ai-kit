@@ -1241,3 +1241,46 @@ global versus project scope choice and the consent gate.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.14: Install ai-kit skills as real copies through the skills CLI, synced across hosts (BACKLOG)
+
+**Priority:** major. This is the next feature to implement after v1.3.
+**Goal:** [Captured for future planning] The setup installs each ai-kit skill into a host as a
+symlink. Replace that with real (non-symlink) installs done through the existing `skills` CLI
+(`npx --yes skills add <owner/repo or local path> --yes`; the exact subcommands, flags, target-host
+selectors and non-interactive behavior are unverified and must be checked live before planning).
+The same layer must install, remove and sync the skills in each supported host: pi, cursor,
+copilot, codex, opencode and claude. Open: how a local path is copied instead of linked; how
+sync detects drift (a removed skill, a changed `SKILL.md`, a renamed directory); how it migrates
+existing symlinks without touching unrelated user skills; and how it relates to `tools/setup.py`
+atomic writes and backups, the dry-run-first rule, and the scratch-HOME rule for tests and e2e.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.15: A cross-AI chain skill for execute and review runs (BACKLOG)
+
+**Priority:** major. It builds on the todo "Unify the review/execute lane TOML".
+**Goal:** [Captured for future planning] Turn the xai execute/review scripts used in v1.3 into a
+portable Agent Skill (suggested name `ai-kit-cross-ai-chain`, beside the single-call
+`ai-kit-cross-ai`) that bundles the script as an asset and carries the calling convention:
+an explicit `--role execute|review` with per-role rails, confinement, timeouts and done
+criteria; run in the background and wait for the notification; read the AIKIT-XAI status line;
+the retry ladder (same-session resume x3, then a new session x3; never switch harness, provider
+or model); coverage gates behind verify (tasks versus tagged commits, early exit, SUMMARY
+admissions, forbidden-file diff); a start-of-chain tree baseline and a run lock; an append-only
+run ledger; an informational-versus-blocking Issues taxonomy; a classifier for execute results
+(done, partial, another round) and for review results (severity fit by problem kind, test tier,
+reproducibility, end-user reach, MVP versus production; converge, continue or escalate). Runtime,
+model, effort, timeout and polling rate are decided, not hard-coded, optionally through the
+decision system behind the TOML knob (never a hard dependency). Evidence, incident catalogue and
+the ten ranked recommendations: `.planning/phases/999.15-cross-ai-chain-skill-for-execute-and-review-runs/999.15-LESSONS.md`.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
