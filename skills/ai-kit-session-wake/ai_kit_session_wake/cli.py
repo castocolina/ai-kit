@@ -72,6 +72,11 @@ def _parser() -> argparse.ArgumentParser:
     sub.choices["matrix"].add_argument("--json", action="store_true")
     sub.choices["arm"].add_argument("--pid", type=int, help="the host process id")
     sub.choices["arm"].add_argument(
+        "--only-if-armed",
+        action="store_true",
+        help="refresh an existing wake only; exit 0 without arming when none exists",
+    )
+    sub.choices["arm"].add_argument(
         "--permission-mode", help="the mode the resume replays (default: unknown, no bypass)"
     )
     sub.choices["arm"].add_argument(
@@ -102,7 +107,8 @@ def _dispatch(
 ) -> int:
     if command == "arm":
         opts = ArmOptions(
-            host, session_id, args.pid, args.permission_mode, tuple(args.ref), _reset_arg(args)
+            host, session_id, args.pid, args.permission_mode, tuple(args.ref), _reset_arg(args),
+            only_if_armed=args.only_if_armed,
         )
         return arm(opts, seams, default_shim_path())
     if command == "disarm":

@@ -238,7 +238,7 @@ class HookRegistryE2E(unittest.TestCase):
 
     def test_each_id_alone_wires_only_its_entries(self):
         for hook_id in ("session-briefing", "tool-advisor", "tool-reminder",
-                        "decision-probe", "precompact"):
+                        "decision-probe", "precompact", "session-wake"):
             with self.subTest(hook_id=hook_id):
                 self.setUp()
                 for directory in (self.claude, self.cursor, self.pi, self.opencode):

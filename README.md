@@ -98,8 +98,8 @@ piece and defaults to doing nothing, so it is not a "headless defaults" mode.
 A clean `Ctrl-C`, `q`, or `esc` abort leaves the original config intact.
 
 The picks screen includes a **HOOKS** group with one row per hook knob:
-`session-briefing`, `tool-advisor`, `tool-reminder`, `decision-probe` and
-`precompact`. Defaults set the initial checkboxes. Checked rows are installed;
+`session-briefing`, `tool-advisor`, `tool-reminder`, `decision-probe`,
+`precompact` and `session-wake`. Defaults set the initial checkboxes. Checked rows are installed;
 unchecked rows remove that ai-kit hook from every host where it is installed.
 The precompact row wires Claude's `PreCompact` producer and compact
 `SessionStart` injector, plus symlinks the pi extension and experimental
@@ -554,7 +554,7 @@ nothing is touched unless explicitly requested:
   default. Defaults: `session-briefing`, `tool-advisor` and `tool-reminder` on;
   `decision-probe` off; `precompact` follows each host's recorded verdict.
   `--with-hooks=<id[:host],...>` (for example `--with-hooks=tool-advisor`) is
-  additive: it only adds the named hooks and never removes existing ones. The five ids are documented here:
+  additive: it only adds the named hooks and never removes existing ones. The six ids are documented here:
 
   | Id | What it does | Hosts | Default |
   |---|---|---|---|
@@ -563,6 +563,7 @@ nothing is touched unless explicitly requested:
   | `tool-reminder` | Output-size reminder with a better installed tool | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
   | `decision-probe` | Reports usable decision backends | Claude Code | off |
   | `precompact` | Decision-system pre-summary before compaction | Claude Code, pi, experimental opencode | Per recorded host verdict |
+  | `session-wake` | Passes a usage-limit reset to an armed session wake (experimental) | Claude Code | off |
 
   `python3 tools/setup.py uninstall --hooks=<ids>` removes only those hook
   ids (comma-separated, with optional `:host` selectors). Claude Code settings

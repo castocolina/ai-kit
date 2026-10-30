@@ -69,18 +69,21 @@ class TestRegistryShape(unittest.TestCase):
                 self.assertEqual(row.experimental, row.host == "opencode")
         self.assertEqual(setup.HOOK_IDS, (
             "session-briefing", "tool-advisor", "tool-reminder",
-            "decision-probe", "precompact"))
+            "decision-probe", "precompact", "session-wake"))
         expected = {
             "session-briefing": {"claude", "cursor"},
             "tool-advisor": {"claude", "pi"},
             "tool-reminder": {"claude", "pi"},
             "decision-probe": {"claude"},
+            "session-wake": {"claude"},
         }
         for hook_id, hosts in expected.items():
             rows = [row for row in setup.HOOK_REGISTRY if row.id == hook_id]
             self.assertEqual({row.host for row in rows}, hosts)
             self.assertTrue(all(os.path.isfile(os.path.join(
                 _REPO, *row.script.split("/"))) for row in rows))
+            if hook_id == "session-wake":
+                continue  # experimental and default off; pinned below
             self.assertTrue(all(row.verdict is None and not row.experimental
                                 for row in rows))
             self.assertEqual(all(row.default for row in rows), hook_id != "decision-probe")
@@ -102,6 +105,12 @@ class TestRegistryShape(unittest.TestCase):
                           claude["decision-probe"].matcher,
                           claude["decision-probe"].timeout),
                          ("SessionStart", "startup", 5))
+        wake = next(row for row in setup.HOOK_REGISTRY if row.id == "session-wake")
+        self.assertEqual((wake.host, wake.event, wake.matcher, wake.timeout),
+                         ("claude", "StopFailure", "rate_limit", 10))
+        self.assertTrue(wake.experimental)
+        self.assertFalse(wake.default)
+        self.assertIsNone(wake.verdict)
 
 
 class TestParseHookSelector(unittest.TestCase):
@@ -433,7 +442,7 @@ class TestHookSelectionItems(unittest.TestCase):
         self.assertEqual(items, [("hooks", hook_id, on) for hook_id, on in (
             ("session-briefing", False), ("tool-advisor", False),
             ("tool-reminder", False), ("decision-probe", False),
-            ("precompact", False))])
+            ("precompact", False), ("session-wake", False))])
         self.assertFalse(initial[("hooks", "precompact")])
         os.makedirs(self.claude)
         with contextlib.redirect_stdout(io.StringIO()):

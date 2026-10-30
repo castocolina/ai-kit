@@ -55,7 +55,8 @@ class ResetArg(NamedTuple):
 
 
 class ArmOptions(NamedTuple):
-    """What the caller (or the CLI) passes to one arm."""
+    """What the caller (or the CLI) passes to one arm. `only_if_armed` (26-07)
+    refreshes an existing wake and refuses to create one."""
 
     host: str | None
     session_id: str | None
@@ -63,6 +64,7 @@ class ArmOptions(NamedTuple):
     permission_mode: str | None
     refs: tuple[str, ...]
     reset: ResetArg | None = None
+    only_if_armed: bool = False
 
 
 class _ArmRefresh(NamedTuple):
@@ -195,7 +197,19 @@ def _resolve_target(opts: ArmOptions, seams: Seams) -> _ArmTarget | int:  # pyli
         paths = session_paths(env, host, session_id)
     except ValueError as exc:
         return _refuse(str(exc))
+    if opts.only_if_armed and _not_armed(paths, host, session_id):
+        return 0
     return _verify_session(opts, seams, host, session_id, paths)
+
+
+def _not_armed(paths: SessionPaths, host: str, session_id: str) -> bool:
+    """`--only-if-armed` (26-07): print the notice when no state file exists;
+    True means the caller returns 0 before any probe."""
+    _state, reason = read_state(paths.state, host, session_id)
+    if reason != "missing":
+        return False
+    print("not armed; nothing refreshed")
+    return True
 
 
 def _verify_cli_session(
@@ -234,7 +248,8 @@ def _verify_session(  # pylint: disable=too-many-locals
         if pid is not None:
             pid_source = "ancestor-unverified"
     if pid is None:
-        return _refuse(f"cannot resolve the {host} host process; pass --pid")
+        # 26-07: a refresh from a hook may not see the host pid; keep the recorded one
+        return _recorded_target(opts, seams, host, session_id, paths)
     identity = identify(pid, seams)
     if identity is None:
         return _refuse(f"no process {pid} to arm a wake for")
@@ -266,6 +281,34 @@ def _verify_session(  # pylint: disable=too-many-locals
         source,
         tuple(opts.refs),
         pid_source,
+    )
+
+
+def _recorded_target(
+    opts: ArmOptions, seams: Seams, host: str, session_id: str, paths: SessionPaths
+) -> _ArmTarget | int:
+    """The refresh target built from the recorded state (26-07): the host pid,
+    its start time, boot id, launch dir and CLI stay as the first arm recorded
+    them. The permission mode stays too unless the caller passes one."""
+    if not opts.only_if_armed:
+        return _refuse(f"cannot resolve the {host} host process; pass --pid")
+    state, reason = read_state(paths.state, host, session_id)
+    if state is None:
+        return _refuse(f"invalid state ({reason}); run disarm first")
+    cli_path = shutil.which(RUNTIMES[host].binaries[0], path=seams.env.get("PATH", ""))
+    return _ArmTarget(
+        host,
+        session_id,
+        paths,
+        int(state["pid"]),
+        state["pid_start"],
+        state.get("boot_id"),
+        state["launch_cwd"],
+        cli_path or state.get("cli_path", ""),
+        state["permission_mode"],
+        state["permission_source"],
+        tuple(opts.refs),
+        state.get("pid_source", ""),
     )
 
 

@@ -1760,6 +1760,10 @@ HOOK_SUMMARIES = {
     "tool-reminder": "After grep/cat/sed/find, names output size and a better installed tool.",
     "decision-probe": "Reports whether jev-fast-decision backends are usable; off by default.",
     "precompact": "PreCompact pre-summary (local Laya).",
+    "session-wake": (
+        "StopFailure rate_limit: passes the host's reset text to an armed session wake; "
+        "off by default, payload unverified."
+    ),
 }
 
 HOOK_REGISTRY = (
@@ -1811,6 +1815,10 @@ HOOK_REGISTRY = (
         matcher=None, script="tools/hooks/opencode/ai-kit-precompact.ts",
         default=PRECOMPACT_VERDICTS["opencode"] == "positive",
         experimental=True, verdict=PRECOMPACT_VERDICTS["opencode"], timeout=None),
+    HookRow(
+        id="session-wake", host="claude", event="StopFailure", matcher="rate_limit",
+        script="tools/hooks/claude_session_wake.py", default=False,
+        experimental=True, verdict=None, timeout=10),
 )
 
 HOOK_IDS = tuple(dict.fromkeys(row.id for row in HOOK_REGISTRY))

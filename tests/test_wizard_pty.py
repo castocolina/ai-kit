@@ -720,9 +720,9 @@ class TestPhase2E2E(unittest.TestCase):
         self.assertIn("select components", all_output,
                       msg="Choose: expected picksbox border title 'select components'")
         self.assertIn("HOOKS", all_output,
-                      msg="Choose: expected the five-row hooks category")
+                      msg="Choose: expected the six-row hooks category")
         hook_ids = ("session-briefing", "tool-advisor", "tool-reminder",
-                    "decision-probe", "precompact")
+                    "decision-probe", "precompact", "session-wake")
         positions = [all_output.find(hook_id) for hook_id in hook_ids]
         self.assertTrue(all(position >= 0 for position in positions),
                         msg=f"Choose: missing hook row in {hook_ids!r}: {positions!r}")
@@ -730,7 +730,7 @@ class TestPhase2E2E(unittest.TestCase):
                          msg=f"Choose: hook rows are out of registry order: {positions!r}")
         for description in ("SessionStart briefing names", "PreToolUse advisor:",
                             "After grep/cat/sed/find", "Reports whether jev-fast-decision",
-                            "PreCompact pre-summary"):
+                            "PreCompact pre-summary", "StopFailure rate_limit"):
             self.assertIn(description, all_output,
                           msg=f"Choose: missing hook description {description!r}")
         # Arrange board border titles

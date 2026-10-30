@@ -941,6 +941,9 @@ _START_NEW_SESSION_ALLOWED = frozenset(
         # The wake's single resume runs in its own session so the fire can
         # kill its whole group on RESUME_TIMEOUT_S (D-10 step 6; 26-02).
         "skills/ai-kit-session-wake/ai_kit_session_wake/fire.py",
+        # The StopFailure hook's `arm --only-if-armed` child runs in its own session so the
+        # hook can kill the whole group at its 8 s deadline (26-07; the same pattern as fire).
+        "tools/hooks/claude_session_wake.py",
     }
 )
 _SUPERVISOR_OWNER = "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py"

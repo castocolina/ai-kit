@@ -7,6 +7,7 @@
 - **Tool reminder (`tool-reminder`)** reports output size and a better installed tool after a matching command. It appears on the first occurrence and every tenth repeat; shared state lives in `$XDG_RUNTIME_DIR/ai-kit/advisor/` (with the cache fallback).
 - **Decision probe (`decision-probe`)** runs the `startup` probe, off by default, and names usable backends only. It performs one bounded probe of at most 3 seconds.
 - **PreCompact pre-summary (`precompact`)** is described below; its host behavior and default follow the recorded verdicts.
+- **Session wake reset (`session-wake`)** is a Claude Code `StopFailure` hook for `rate_limit`, off by default and experimental. It passes the host's reset text to `ai-kit-session-wake arm --only-if-armed`, so only a session already armed refreshes its wake (reset plus 60 s). Whether the payload carries the reset text is unverified (RESEARCH Q5); with no reset text it does nothing. It has an 8 s deadline, under the row's 10 s timeout.
 
 No hook rewrites, approves, denies or blocks a tool call. Hook results are fail-open.
 
@@ -24,13 +25,13 @@ These flags are the session briefing's guidance for installed tools:
 
 Every cell gives an explicit status. PreCompact delivery/default wording reflects `PRECOMPACT_VERDICTS` in `tools/setup.py` at the time this table was written; a live result in `21.3-LIVE.md` can change a cell.
 
-| Host | session-briefing | tool-advisor | tool-reminder | decision-probe | precompact |
-|------|------------------|--------------|---------------|----------------|------------|
-| Claude Code | wired | wired | wired | wired (default off) | wired; default off: unmeasured |
-| Cursor | wired (model context only; no user-visible field) | gap (secondary host, SPEC R7) | gap (secondary host, SPEC R7) | gap (secondary host) | gap (no verified PreCompact route) |
-| pi | gap (no verified session-start route) | wired (tool_result) | wired (tool_result) | gap (no verified session-start route) | wired; default off: unmeasured (`session_before_compact`) |
-| opencode | gap (no documented session-start injection point) | gap (tool.execute.after append unverified; spike S-OC in 21.3-LIVE.md) | gap (tool.execute.after append unverified; spike S-OC in 21.3-LIVE.md) | gap (no documented session-start injection point) | experimental; default off: unmeasured (`experimental.session.compacting`) |
-| Codex | gap (no verified hook route) | gap (no verified hook route) | gap (no verified hook route) | gap (no verified hook route) | gap (no verified hook route) |
+| Host | session-briefing | tool-advisor | tool-reminder | decision-probe | precompact | session-wake |
+|------|------------------|--------------|---------------|----------------|------------|--------------|
+| Claude Code | wired | wired | wired | wired (default off) | wired; default off: unmeasured | experimental; default off (StopFailure, payload unverified) |
+| Cursor | wired (model context only; no user-visible field) | gap (secondary host, SPEC R7) | gap (secondary host, SPEC R7) | gap (secondary host) | gap (no verified PreCompact route) | gap (no StopFailure route) |
+| pi | gap (no verified session-start route) | wired (tool_result) | wired (tool_result) | gap (no verified session-start route) | wired; default off: unmeasured (`session_before_compact`) | gap (no StopFailure route) |
+| opencode | gap (no documented session-start injection point) | gap (tool.execute.after append unverified; spike S-OC in 21.3-LIVE.md) | gap (tool.execute.after append unverified; spike S-OC in 21.3-LIVE.md) | gap (no documented session-start injection point) | experimental; default off: unmeasured (`experimental.session.compacting`) | gap (no StopFailure route) |
+| Codex | gap (no verified hook route) | gap (no verified hook route) | gap (no verified hook route) | gap (no verified hook route) | gap (no verified hook route) | gap (no verified hook route) |
 
 The precompact delivery verdict and default are separate: a `gap: <reason>` verdict is shown as `gap (<reason>)`; a non-gap route is `wired` (opencode is `experimental`), with `default on` only for `positive` and `default off: <verdict>` otherwise. A live result in `21.3-LIVE.md` can change a cell.
 

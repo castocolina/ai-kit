@@ -1256,7 +1256,7 @@ class TestHostCoverageDocs(unittest.TestCase):
     def test_host_table_has_no_empty_cell(self):
         header, rows = self._host_table()
         hook_ids = ("session-briefing", "tool-advisor", "tool-reminder",
-                    "decision-probe", "precompact")
+                    "decision-probe", "precompact", "session-wake")
         self.assertEqual(header, ["Host", *hook_ids])
         for host in ("Claude Code", "Cursor", "pi", "opencode", "Codex"):
             self.assertIn(host, rows)
@@ -1267,12 +1267,13 @@ class TestHostCoverageDocs(unittest.TestCase):
                                 f"invalid status {host}: {cell}")
 
     def test_precompact_cells_follow_verdicts(self):
-        _header, rows = self._host_table()
+        header, rows = self._host_table()
+        column = header.index("precompact") - 1  # header's first cell is the host
         for host in ("claude", "pi", "opencode"):
             with self.subTest(host=host):
                 host_row = {"claude": "Claude Code", "pi": "pi",
                             "opencode": "opencode"}[host]
-                cell = rows[host_row][-1]
+                cell = rows[host_row][column]
                 verdict = setup.PRECOMPACT_VERDICTS[host]
                 if verdict.startswith("gap:"):
                     self.assertTrue(cell.startswith("gap ("))
