@@ -63,8 +63,12 @@ python3 "$ENTRYPOINT" check <repo_root>
 python3 "$ENTRYPOINT" remediate <repo_root>
 ```
 
-Both subcommands return the SAME three-key shape: `{"remediate": [...], "blocked": [...], "failed":
-[...]}`.
+Both subcommands return the SAME four-key shape: `{"remediate": [...], "blocked": [...], "failed":
+[...], "notices": [...]}`.
+
+- `notices` -- every domain's `notices` (rules skipped because a condition could not be verified,
+  each with its `reason`), concatenated in domain order (the `DOMAIN_ORDER` sequence), never
+  re-sorted and never inserted as a remediation.
 
 - `remediate` -- every domain's `remediate` entries, concatenated across all 6 domains and then
   globally sorted by `criticality` ascending (never grouped per-domain) -- the **cross-domain**

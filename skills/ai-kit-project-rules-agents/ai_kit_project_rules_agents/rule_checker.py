@@ -6,7 +6,7 @@ reframed as `"not_applicable"`, never flagged as a generic gap.
 The actual classification engine lives in `ai_kit_rules_common.
 classification` (shared across the rules-checker skill family). This
 module's only job is binding that generic engine to THIS skill's own
-17-rule `RULES` tuple.
+20-rule `RULES` tuple.
 """
 
 from __future__ import annotations

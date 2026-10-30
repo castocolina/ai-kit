@@ -1,4 +1,4 @@
-"""ai-kit's 17-rule house ruleset as structured data (D-06).
+"""ai-kit's 20-rule house ruleset as structured data (D-06).
 
 Each entry is a plain dict with keys: id, category, criticality, condition,
 signals, summary. `signals` drives Task 2's keyword heuristic and comes in
@@ -16,7 +16,17 @@ text (D-01) -- never a verbatim block-quote.
 
 from __future__ import annotations
 
-from ai_kit_rules_common.classification import CONDITION_ALWAYS, CONDITION_OPENGSD
+from ai_kit_rules_common.classification import (
+    CONDITION_ALWAYS,
+    CONDITION_OPENGSD,
+    CONDITION_STACK_DETECTED,
+)
+from ai_kit_rules_common.tool_catalog import (
+    PARALLEL_TEST_COUNT_FLAGS,
+    PARALLEL_TEST_FORMS,
+    PARALLEL_TEST_GENERIC,
+    PARALLEL_TEST_SIGNAL_GROUPS,
+)
 
 
 def condition_tool_presence(name: str) -> str:
@@ -279,6 +289,17 @@ RULES: tuple[dict, ...] = (
             ("ai-kit-cross-ai",),
         ),
         "summary": R19_POINTER,
+        "verbatim": True,
+    },
+    {
+        "id": "R20",
+        "category": "workflow",
+        "criticality": CRITICALITY_MEDIUM,
+        "condition": CONDITION_STACK_DETECTED,
+        "signals": PARALLEL_TEST_SIGNAL_GROUPS,
+        "summary": PARALLEL_TEST_GENERIC,
+        "stack_forms": PARALLEL_TEST_FORMS,
+        "count_flags": PARALLEL_TEST_COUNT_FLAGS,
         "verbatim": True,
     },
 )

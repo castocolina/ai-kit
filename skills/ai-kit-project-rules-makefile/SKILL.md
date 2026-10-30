@@ -14,7 +14,7 @@ for whoever invoked this skill.
 Two neighbouring boundaries, named here so a reader files the right question in the right
 place:
 
-- Auditing an AGENTS.md/CLAUDE.md-style agent-instruction file against ai-kit's own 17-rule
+- Auditing an AGENTS.md/CLAUDE.md-style agent-instruction file against ai-kit's own 20-rule
   house ruleset is the `ai-kit-project-rules-agents` sibling skill's domain, not this one's --
   that skill also carries its own remediation hand-off mechanism, which this skill does not
   have and does not replicate.

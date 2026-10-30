@@ -26,6 +26,18 @@ _MARKERS: tuple[tuple[str, str], ...] = (
 )
 
 
+# First-marker order of the stacks (go, python, node, java, rust). Clauses for a multi-stack
+# repo are written in this order, so two runs write identical text (SPEC R9 ordering).
+STACK_ORDER: tuple[str, ...] = tuple(dict.fromkeys(stack for _marker, stack in _MARKERS))
+
+
+def detect_markers(repo_root: str) -> list[str]:
+    """Return the marker file names present under `repo_root`, in `_MARKERS` order."""
+    return [
+        marker for marker, _stack in _MARKERS if os.path.isfile(os.path.join(repo_root, marker))
+    ]
+
+
 def detect_stacks(repo_root: str) -> set[str]:
     """Return the set of stacks whose marker file(s) exist under `repo_root`.
 
@@ -38,4 +50,4 @@ def detect_stacks(repo_root: str) -> set[str]:
     return stacks
 
 
-__all__ = ["detect_stacks"]
+__all__ = ["STACK_ORDER", "detect_markers", "detect_stacks"]

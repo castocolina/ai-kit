@@ -78,18 +78,10 @@ TAXONOMY_CATEGORIES = (
 )
 
 TAXONOMY_DEFINITIONS = {
-    "formatting": (
-        "Deterministic, opinionated code-shape rewriting. No semantic judgment."
-    ),
-    "type-checking": (
-        "Static type/contract verification requiring a type system or annotations."
-    ),
-    "linting": (
-        "Syntactic/semantic rule-based checks for bugs, anti-patterns, complexity."
-    ),
-    "security": (
-        "Pattern/taint-based detection of exploitable vulnerability classes."
-    ),
+    "formatting": ("Deterministic, opinionated code-shape rewriting. No semantic judgment."),
+    "type-checking": ("Static type/contract verification requiring a type system or annotations."),
+    "linting": ("Syntactic/semantic rule-based checks for bugs, anti-patterns, complexity."),
+    "security": ("Pattern/taint-based detection of exploitable vulnerability classes."),
     "duplicate-code": "Clone/copy-paste detection via token or AST matching.",
     "dead-code": "Reachability/usage analysis for unused symbols, exports, files, deps.",
 }
@@ -270,9 +262,7 @@ _SUPPLEMENTARY_INDEX_ENTRIES: dict[str, str] = {
 }
 
 
-def _merge_supplementary(
-    index: dict[str, str], supplementary: dict[str, str]
-) -> None:
+def _merge_supplementary(index: dict[str, str], supplementary: dict[str, str]) -> None:
     for entry, category in supplementary.items():
         existing = index.get(entry)
         if existing is not None and existing != category:
@@ -339,8 +329,7 @@ OUT_OF_TAXONOMY_GROUPS: dict[str, dict[str, object]] = {
             "name-tests-test",
         ),
         "reason": (
-            "a standard pre-commit-hooks whitespace/file-hygiene fixer, not "
-            "a static analyzer"
+            "a standard pre-commit-hooks whitespace/file-hygiene fixer, not a static analyzer"
         ),
     },
 }
@@ -364,6 +353,7 @@ MAKEFILE_CATEGORY_ALIAS: dict[str, str | None] = {
     "duplicate-code": "duplicate-code-detector",
     "dead-code": "dead-code-detector",
 }
+
 
 # D-03: the "Confirmed redundant-vs-complementary pairs" table, transcribed
 # verbatim -- ten rows, each carrying its ecosystem, its two tool-name
@@ -488,10 +478,7 @@ REDUNDANT_VS_COMPLEMENTARY_PAIRS: tuple[PairRow, ...] = (
         "tools": ("staticcheck", "golangci-lint"),
         "rule_family_members": (),
         "relationship": "redundant",
-        "reason": (
-            "Fully redundant — golangci-lint bundles staticcheck verbatim. "
-            "Don't run both."
-        ),
+        "reason": ("Fully redundant — golangci-lint bundles staticcheck verbatim. Don't run both."),
     },
     {
         "ecosystem": "Go",
@@ -743,6 +730,152 @@ def resolve_hot_reload(command_text: str, stacks) -> str | None:
     return candidates[0][3]
 
 
+# ---------------------------------------------------------------------------
+# Parallel-test CPU share (26 D-27, SPEC R9). Rows are DATA, never code branches: the
+# shared engine matches each row's runner phrases, count flags, signals and marker files,
+# so adding a stack is a row, not a new `if stack == ...` in the checker.
+#
+# Each row: `stack` (groups rows for the detection order), `markers` (the marker files that
+# select the row), `runners` (phrases from the shared `test-runner` group; empty when the group
+# names no such command), `clause` (the text written into AGENTS.md), `signals` (lowercase
+# phrases that prove the clause is present), `count_flags` (dash flags, or build-setting
+# words for a row with no runner) and `source` (dated, with how it was checked).
+# ---------------------------------------------------------------------------
+
+
+class ParallelTestForm(TypedDict):
+    form: str
+    stack: str
+    markers: tuple[str, ...]
+    runners: tuple[str, ...]
+    clause: str
+    signals: tuple[str, ...]
+    count_flags: tuple[str, ...]
+    source: str
+
+
+PARALLEL_TEST_FORMS: tuple[ParallelTestForm, ...] = (
+    {
+        "form": "go",
+        "stack": "go",
+        "markers": ("go.mod",),
+        "runners": ("go test",),
+        "clause": "go: `go test -p N ./...`, N computed at run time as above.",
+        "signals": ("go test -p",),
+        "count_flags": ("-p", "-parallel"),
+        "source": (
+            "verified 2026-10-25: go help build (go1.27.1): -p n runs that many test "
+            "binaries in parallel"
+        ),
+    },
+    {
+        "form": "python",
+        "stack": "python",
+        "markers": ("requirements.txt", "pyproject.toml", "setup.py", "Pipfile"),
+        "runners": ("pytest", "unittest"),
+        "clause": (
+            "python: pytest-xdist `pytest -n N`, N computed at run time as above (`-n auto` "
+            "uses every physical core); a stdlib unittest suite runs one subprocess per "
+            "module with workers from `os.process_cpu_count()` capped the same way."
+        ),
+        "signals": ("pytest -n", "process_cpu_count"),
+        "count_flags": ("-n", "--numprocesses", "--maxprocesses"),
+        "source": (
+            "cited 2026-10-25: pytest-xdist distribution docs (-n NUM; -n auto is physical "
+            "cores; no percent form); stdlib pattern: tools/run_unittest_parallel.py (16.1 D-06)"
+        ),
+    },
+    {
+        "form": "node",
+        "stack": "node",
+        "markers": ("package.json",),
+        "runners": ("jest", "vitest"),
+        "clause": "node: jest or vitest `--maxWorkers=40%`.",
+        "signals": ("--maxworkers=40%",),
+        "count_flags": ("--maxworkers", "-w"),
+        "source": (
+            "cited 2026-10-25: jestjs.io/docs/cli and vitest.dev/config/maxworkers "
+            "(percent strings accepted)"
+        ),
+    },
+    {
+        "form": "maven",
+        "stack": "java",
+        "markers": ("pom.xml",),
+        "runners": ("mvn test",),
+        "clause": "java (Maven): `mvn -T 0.4C test` (0.4 threads per core).",
+        "signals": ("-t 0.4c",),
+        "count_flags": ("-t", "--threads"),
+        "source": (
+            "verified 2026-10-25: mvn -h (Apache Maven 3.9.16): -T takes a count or a "
+            "per-core multiplier such as 2C"
+        ),
+    },
+    {
+        "form": "gradle",
+        "stack": "java",
+        "markers": ("build.gradle",),
+        "runners": (),
+        "clause": (
+            "java (Gradle, Groovy DSL): set the Test task's `maxParallelForks = "
+            "Math.max(1, (int) (Runtime.runtime.availableProcessors() * 0.4))`."
+        ),
+        "signals": ("maxparallelforks",),
+        "count_flags": ("maxparallelforks",),
+        "source": (
+            'cited 2026-10-28: docs.gradle.org current DSL, Test.maxParallelForks ("The '
+            'maximum number of test processes to start in parallel", int, default 1; no '
+            "percent form)"
+        ),
+    },
+    {
+        "form": "gradle-kts",
+        "stack": "java",
+        "markers": ("build.gradle.kts",),
+        "runners": (),
+        "clause": (
+            "java (Gradle, Kotlin DSL): set the Test task's `maxParallelForks = "
+            "(Runtime.getRuntime().availableProcessors() * 0.4).toInt().coerceAtLeast(1)`."
+        ),
+        "signals": ("maxparallelforks",),
+        "count_flags": ("maxparallelforks",),
+        "source": (
+            "cited 2026-10-28: docs.gradle.org current DSL, Test.maxParallelForks (same "
+            "property; only the build-script syntax differs)"
+        ),
+    },
+    {
+        "form": "rust",
+        "stack": "rust",
+        "markers": ("Cargo.toml",),
+        "runners": ("cargo test",),
+        "clause": "rust: `cargo test -- --test-threads=N`, N computed at run time as above.",
+        "signals": ("--test-threads",),
+        "count_flags": ("--test-threads",),
+        "source": ("cited 2026-10-25: doc.rust-lang.org/book/ch11-02-running-tests.html"),
+    },
+)
+
+# The generic sentence every R20 finding carries, plus the signal groups and count flags the
+# engine checks on any line that says "test" (26 D-27: parallel, a 40% share, a CPU-share phrase).
+PARALLEL_TEST_GENERIC = (
+    "Unit tests run in parallel with a worker count of floor(40% of the available CPUs), "
+    "at least 1, computed at run time; never a hardcoded core or worker count."
+)
+PARALLEL_TEST_SIGNAL_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("parallel",),
+    ("40%",),
+    ("available cpus", "cpu share", "share of the available"),
+)
+PARALLEL_TEST_COUNT_FLAGS: tuple[str, ...] = (
+    "-j",
+    "--jobs",
+    "--workers",
+    "--parallel",
+    "--threads",
+)
+
+
 __all__ = [
     "AMBIGUOUS_TOOL_DEFAULTS",
     "BASELINE_STACKS",
@@ -750,12 +883,17 @@ __all__ = [
     "HOT_RELOAD_TOOLS",
     "MAKEFILE_CATEGORY_ALIAS",
     "OUT_OF_TAXONOMY_GROUPS",
+    "PARALLEL_TEST_COUNT_FLAGS",
+    "PARALLEL_TEST_FORMS",
+    "PARALLEL_TEST_GENERIC",
+    "PARALLEL_TEST_SIGNAL_GROUPS",
     "REDUNDANT_VS_COMPLEMENTARY_PAIRS",
     "SCRIPT_INDIRECTION_PREFIXES",
     "TAXONOMY_CATEGORIES",
     "TAXONOMY_DEFINITIONS",
     "TOOL_CATEGORY_INDEX",
     "PairRow",
+    "ParallelTestForm",
     "find_pair_relationship",
     "resolve_hot_reload",
     "resolve_tool_category",

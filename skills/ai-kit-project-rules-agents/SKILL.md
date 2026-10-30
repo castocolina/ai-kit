@@ -1,13 +1,13 @@
 ---
 name: ai-kit-project-rules-agents
-description: Use when an AGENTS.md or CLAUDE.md-style agent-instruction file needs checking against ai-kit's own 17-rule house ruleset, or when asked "is my AGENTS.md missing any workflow rules". Wraps `/agent-md-refactor` with a house-rule check it has no awareness of on its own.
+description: Use when an AGENTS.md or CLAUDE.md-style agent-instruction file needs checking against ai-kit's own 20-rule house ruleset, or when asked "is my AGENTS.md missing any workflow rules". Wraps `/agent-md-refactor` with a house-rule check it has no awareness of on its own.
 ---
 
 # ai-kit-project-rules-agents
 
 ## Scope
 
-This skill checks a target repo's AGENTS.md/CLAUDE.md-style instruction file against ai-kit's own 17-rule house ruleset (`rules.py`). The 17 rules are ai-kit's own accumulated convention, applied here to whichever repo is being checked — they are NOT a general-purpose rules engine offered to other projects.
+This skill checks a target repo's AGENTS.md/CLAUDE.md-style instruction file against ai-kit's own 20-rule house ruleset (`rules.py`). The 20 rules are ai-kit's own accumulated convention, applied here to whichever repo is being checked — they are NOT a general-purpose rules engine offered to other projects.
 
 ## Resolve the entrypoint
 
@@ -34,7 +34,7 @@ python3 "$ENTRYPOINT" check <repo_root>
 python3 "$ENTRYPOINT" remediate <repo_root>
 ```
 
-`check` returns `{"workflow": [...], "links": [...]}`. `links` lists broken relative links from the root instruction file (image links included, `#anchor`/`?query` stripped, anchor-only links skipped); fix a broken link by correcting or removing it, since `remediate` does not touch links. `remediate` runs `check` internally and returns the ordered hand-off payload this skill wraps around: `{"remediate": [...ordered...], "blocked": [...]}` — the shared builder always returns both keys, but this skill has no research-dispatch domain, so `blocked` is always empty here. Trimmed example:
+`check` returns `{"workflow": [...], "links": [...]}`. `links` lists broken relative links from the root instruction file (image links included, `#anchor`/`?query` stripped, anchor-only links skipped); fix a broken link by correcting or removing it, since `remediate` does not touch links. `remediate` runs `check` internally and returns the ordered hand-off payload this skill wraps around: `{"remediate": [...ordered...], "blocked": [...], "notices": [...]}`. `blocked` is always empty here (this skill has no research-dispatch domain). `notices` lists every rule skipped because its condition could not be verified (for example R18/R19 when the GSD identity is `unverified`), each with its `reason`; report them to the user, never insert them. Trimmed example:
 
 ```json
 {
@@ -58,7 +58,7 @@ The hand-off is Steps A/B/C.
 
 **Step B (assemble one ordered list).** Build the final ordered list = every `auto_apply: true` entry, plus every user-confirmed near-miss entry, in the same most-critical-first order `remediate` already returned. Declined near-miss entries are dropped and reported inline as skipped (D-05).
 
-**Step C (one invocation, named injection point).** Invoke `/agent-md-refactor` against the target file EXACTLY ONCE. Treat the Step B list's `summary` strings — paraphrased, never the todo/rule text pasted verbatim — as additional "essential content" candidates for that skill's OWN Phase 2 ("Identify the Essentials") and Phase 3 ("Group the Rest"), preserving the list's most-critical-first order as the priority when Phase 2 has to choose what earns root-file placement. This is what makes the hand-off concrete: a named injection point and an exact ordering, not a vague "then run agent-md-refactor" instruction.
+**Step C (one invocation, named injection point).** Invoke `/agent-md-refactor` against the target file EXACTLY ONCE. Treat the Step B list's `summary` strings as additional "essential content" candidates for that skill's OWN Phase 2 ("Identify the Essentials") and Phase 3 ("Group the Rest"), preserving the list's most-critical-first order as the priority when Phase 2 has to choose what earns root-file placement. Entries with `verbatim: true` (R18, R19, R20) are inserted exactly as given, as one block, never reworded: their signal phrases must survive the refactor unchanged. Every other entry's summary is paraphrased. This is what makes the hand-off concrete: a named injection point and an exact ordering, not a vague "then run agent-md-refactor" instruction.
 
 Invoke `/agent-md-refactor` via WHICHEVER skill-invocation mechanism the current host provides for an already-installed skill it knows about: a slash command, a named subagent/Task dispatch (Claude Code's `Agent` tool with `subagent_type: general-purpose` is named here as one worked example, never a requirement), or loading that skill's own `SKILL.md` instructions directly into context. Resolve `agent-md-refactor/SKILL.md`'s own location with the SAME host-neutral candidate-list pattern used above for this skill's own entrypoint — never a hardcoded `~/.claude/...` path. **Portable fallback:** on a host with no subagent-dispatch mechanism available at all, read `agent-md-refactor/SKILL.md`'s instructions directly into context and follow them manually for this one invocation. There is no Python import or subprocess call into `agent-md-refactor` anywhere — it has no such interface; the hand-off is always a documented instruction sequence for whichever agent is executing this skill, never code.
 
@@ -93,10 +93,14 @@ Invoke `/agent-md-refactor` via WHICHEVER skill-invocation mechanism the current
   read by this skill at all. Don't "fix" a rule's category thinking it
   changes routing; it doesn't.
 
+## Trust note
+
+`check` and `remediate` run the project's own gsd-tools `runtime-identity` when `.planning/` exists, to prove whether the GSD install is OpenGSD (R18/R19). This is the same trust as running that project's GSD commands. The path it runs is printed on stderr, so the user can see which tool ran.
+
 ## Reporting rule (D-05)
 
 Findings and remediation results are reported INLINE in the conversation only. This skill never writes a persisted report file into the target repo — git is already the history of AGENTS.md edits, and a separate "why this file was edited" report is exactly the kind of file the user does not want.
 
 ## Ruleset reference
 
-`rules.py` is the source of truth for the 17 house rules (id/category/criticality/condition/signals/summary). This document points at it rather than restating the rule text.
+`rules.py` is the source of truth for the 20 house rules (id/category/criticality/condition/signals/summary). This document points at it rather than restating the rule text. R20 is composed per detected stack: its clause for each stack comes from `ai_kit_rules_common.tool_catalog.PARALLEL_TEST_FORMS`.

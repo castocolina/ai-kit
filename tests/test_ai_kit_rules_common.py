@@ -2397,5 +2397,73 @@ class TestGsdIdentity(unittest.TestCase):
         self.assertEqual(self.calls[0][0][1:], [tools, "runtime-identity", "--raw"])
 
 
+class TestParallelTestTable(unittest.TestCase):
+    """The R20 form table is data, pinned against the shared catalog and detection (26 D-27)."""
+
+    @staticmethod
+    def _forms():
+        from ai_kit_rules_common import tool_catalog
+
+        return tool_catalog.PARALLEL_TEST_FORMS
+
+    def test_every_runner_is_in_the_shared_test_runner_group(self):
+        from ai_kit_rules_common import tool_catalog
+
+        group_markers = tool_catalog.OUT_OF_TAXONOMY_GROUPS["test-runner"]["markers"]
+        self.assertIsInstance(group_markers, tuple)
+        markers: set[object] = set()
+        if isinstance(group_markers, tuple):
+            markers = set(group_markers)
+        for row in self._forms():
+            for runner in row["runners"]:
+                self.assertIn(runner, markers, msg=row["form"])
+
+    @staticmethod
+    def _marker_owners(forms):
+        """Map each marker to its row's stack; a marker in two rows raises AssertionError."""
+        owner: dict[str, str] = {}
+        for row in forms:
+            for marker in row["markers"]:
+                if marker in owner:
+                    raise AssertionError(f"{marker} is in two rows")
+                owner[marker] = row["stack"]
+        return owner
+
+    def test_every_marker_file_belongs_to_exactly_one_row_of_its_stack(self):
+        from ai_kit_rules_common import stack_detect
+
+        owner = self._marker_owners(self._forms())
+        for marker, stack in stack_detect._MARKERS:
+            self.assertEqual(owner.get(marker), stack, msg=marker)
+
+    def test_row_stacks_follow_the_detection_order(self):
+        from ai_kit_rules_common import stack_detect
+
+        order = {stack: index for index, stack in enumerate(stack_detect.STACK_ORDER)}
+        indexes = [order[row["stack"]] for row in self._forms()]
+        self.assertEqual(indexes, sorted(indexes))
+
+    def test_every_row_has_a_dated_source_and_a_clause(self):
+        import re
+
+        for row in self._forms():
+            self.assertTrue(row["source"].strip(), msg=row["form"])
+            self.assertRegex(row["source"], r"(19|20)\d\d-\d\d-\d\d", msg=row["form"])
+            self.assertTrue(row["clause"].strip(), msg=row["form"])
+            self.assertTrue(re.search(r"\S", row["form"]), msg=row["form"])
+
+    def test_a_row_without_a_runner_has_no_dash_count_flag(self):
+        for row in self._forms():
+            if row["runners"]:
+                continue
+            for flag in row["count_flags"]:
+                self.assertFalse(flag.startswith("-"), msg=f"{row['form']}: {flag}")
+
+    def test_non_vacuity_a_marker_in_two_rows_is_caught(self):
+        bad = dict(self._forms()[0], markers=("go.mod", "pom.xml"))
+        with self.assertRaises(AssertionError):
+            self._marker_owners((bad, *self._forms()[1:]))
+
+
 if __name__ == "__main__":
     unittest.main()

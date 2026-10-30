@@ -24,6 +24,11 @@ from ai_kit_project_rules_agents import (
     tool_presence,
 )
 from ai_kit_project_rules_all import aggregate as rules_all_aggregate
+from ai_kit_rules_common.tool_catalog import (
+    PARALLEL_TEST_COUNT_FLAGS,
+    PARALLEL_TEST_GENERIC,
+    PARALLEL_TEST_SIGNAL_GROUPS,
+)
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MAKEFILE_PATH = os.path.join(_REPO, "Makefile")
@@ -769,9 +774,9 @@ class TestOpenGsdRules(unittest.TestCase):
 
 
 class TestOpenGsdRuleText(unittest.TestCase):
-    def test_r18_and_r19_follow_r17_in_catalog_order(self):
+    def test_r18_r19_r20_follow_r17_in_catalog_order(self):
         ids = [rule["id"] for rule in rules.RULES]
-        self.assertEqual(ids[-3:], ["R17", "R18", "R19"])
+        self.assertEqual(ids[-4:], ["R17", "R18", "R19", "R20"])
 
     def test_signal_sets_are_disjoint_and_avoid_the_banned_phrases(self):
         by_id = {rule["id"]: rule for rule in rules.RULES}
@@ -843,6 +848,300 @@ class TestOpenGsdRuleText(unittest.TestCase):
             if finding["id"] == rule_id:
                 return finding["status"]
         return None
+
+
+_COUNT_FILES = (
+    "skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/rules.py",
+    "skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/rule_checker.py",
+    "skills/ai-kit-project-rules-agents/SKILL.md",
+    "README.md",
+    "skills/ai-kit-project-rules-makefile/SKILL.md",
+)
+_COUNT_RE = re.compile(r"\b(\d+)(-rule| house rules| rules\b)")
+
+
+class TestRuleCountStrings(unittest.TestCase):
+    """Every `<n>-rule`, `<n> rules` and `<n> house rules` tracks `len(RULES)` (D-22, D-27)."""
+
+    def test_every_count_string_equals_rule_count(self):
+        expected = len(rules.RULES)
+        seen = []
+        for rel in _COUNT_FILES:
+            with open(os.path.join(_REPO, rel), encoding="utf-8") as handle:
+                for match in _COUNT_RE.finditer(handle.read()):
+                    seen.append((rel, int(match.group(1))))
+        self.assertGreaterEqual(len(seen), 8, msg=f"non-vacuity: found only {seen}")
+        stale = [item for item in seen if item[1] != expected]
+        self.assertEqual(stale, [], msg=f"count strings disagree with {expected} rules")
+
+
+class TestParallelTestRule(unittest.TestCase):
+    """R20: the parallel-test CPU share, composed per detected stack (26 D-27, SPEC R9)."""
+
+    def _repo(self, root, markers=(), agents_text=None):
+        repo = os.path.join(root, "repo")
+        os.makedirs(repo, exist_ok=True)
+        for marker in markers:
+            _write(os.path.join(repo, marker), "")
+        if agents_text is not None:
+            _write(os.path.join(repo, "AGENTS.md"), agents_text)
+        return repo
+
+    @staticmethod
+    def _env(root):
+        return scoped_env(os.path.join(root, "bin"), os.path.join(root, "home"))
+
+    def _check(self, repo, root, include_present=False):
+        return cli.check(repo, env=self._env(root), include_present=include_present)
+
+    @staticmethod
+    def _r20(result):
+        """The R20 finding, or None when the CLI filtered it out (present, by default)."""
+        for finding in result["workflow"]:
+            if finding["id"] == "R20":
+                return finding
+        return None
+
+    def _present_r20(self, repo, root):
+        """R20 with `include_present=True`; fails the test explicitly if it is absent."""
+        finding = self._r20(self._check(repo, root, include_present=True))
+        if finding is None:
+            self.fail("R20 is absent even with include_present=True")
+        return finding
+
+    def test_python_repo_without_rule_is_missing_with_python_clause(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = self._repo(root, ["pyproject.toml"], "# Agents\n")
+            finding = self._present_r20(repo, root)
+            self.assertEqual(finding["status"], "missing")
+            self.assertIn("floor(40% of the available CPUs)", finding["summary"])
+            self.assertIn("python: pytest-xdist `pytest -n N`", finding["summary"])
+            self.assertEqual(finding["stacks"], ["python"])
+            self.assertEqual(finding["unverified_stacks"], [])
+
+    def test_remediation_text_written_back_is_present_and_filtered_by_cli(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = self._repo(root, ["pyproject.toml"], "# Agents\n")
+            remediated = [
+                entry
+                for entry in cli.remediate(repo, env=self._env(root))["remediate"]
+                if entry["id"] == "R20"
+            ]
+            self.assertEqual(len(remediated), 1)
+            self.assertTrue(remediated[0]["verbatim"])
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "# Agents\n\n" + remediated[0]["summary"] + "\n",
+            )
+            self.assertIsNone(self._r20(self._check(repo, root)))
+            self.assertEqual(self._present_r20(repo, root)["status"], "present")
+
+    def test_no_stack_marker_makes_rule_not_applicable(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = self._repo(root, [], "# Agents\n")
+            self.assertEqual(self._present_r20(repo, root)["status"], "not_applicable")
+
+    # --- Task 2: per-stack forms, multi-stack order, the 40% boundary, literal counts ---
+
+    _STACK_FIXTURES = {
+        "go": ("go.mod",),
+        "node": ("package.json",),
+        "rust": ("Cargo.toml",),
+        "maven": ("pom.xml",),
+        "gradle": ("build.gradle",),
+        "gradle-kts": ("build.gradle.kts",),
+    }
+
+    def _composed(self, root, markers):
+        """Compose R20 for a repo with `markers`, write it back, and return its summary."""
+        repo = self._repo(root, markers, "# Agents\n")
+        finding = self._present_r20(repo, root)
+        _write(os.path.join(repo, "AGENTS.md"), "# Agents\n\n" + finding["summary"] + "\n")
+        return finding, repo
+
+    def test_each_stack_gets_its_own_clause_and_round_trips_present(self):
+        from ai_kit_rules_common import tool_catalog
+
+        clause_by_marker = {}
+        for row in tool_catalog.PARALLEL_TEST_FORMS:
+            for marker in row["markers"]:
+                clause_by_marker[marker] = row["clause"]
+        for marker, expected_markers in self._STACK_FIXTURES.items():
+            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as root:
+                markers = expected_markers
+                finding, repo = self._composed(root, markers)
+                clause = clause_by_marker[markers[0]]
+                self.assertIn(clause, finding["summary"])
+                self.assertEqual(finding["status"], "missing")
+                self.assertIsNone(self._r20(self._check(repo, root)))
+                self.assertEqual(self._present_r20(repo, root)["status"], "present")
+
+    def test_gradle_groovy_and_kotlin_clauses_are_each_their_own_syntax(self):
+        with tempfile.TemporaryDirectory() as root:
+            groovy, _ = self._composed(root, ("build.gradle",))
+            self.assertIn(
+                "Math.max(1, (int) (Runtime.runtime.availableProcessors() * 0.4))",
+                groovy["summary"],
+            )
+            self.assertNotIn("coerceAtLeast", groovy["summary"])
+        with tempfile.TemporaryDirectory() as root:
+            kotlin, _ = self._composed(root, ("build.gradle.kts",))
+            self.assertIn("coerceAtLeast(1)", kotlin["summary"])
+            self.assertNotIn("Math.max", kotlin["summary"])
+
+    def test_three_java_markers_give_maven_groovy_kotlin_in_that_order(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = self._repo(root, ["pom.xml", "build.gradle", "build.gradle.kts"], "# A\n")
+            finding = self._present_r20(repo, root)
+            clauses = [line for line in finding["summary"].split("\n") if line.startswith("java")]
+            self.assertEqual(len(clauses), 3)
+            self.assertTrue(clauses[0].startswith("java (Maven)"))
+            self.assertIn("Groovy DSL", clauses[1])
+            self.assertIn("Kotlin DSL", clauses[2])
+
+    def test_gradle_literal_fork_count_is_flagged_not_the_clause(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = self._repo(root, ["build.gradle"], "# A\n")
+            _write(
+                os.path.join(repo, "AGENTS.md"),
+                "maxParallelForks = 8\n",
+            )
+            finding = self._present_r20(repo, root)
+            self.assertEqual(finding["hardcoded_counts"], ["maxParallelForks = 8"])
+            self.assertEqual(finding["status"], "near_miss")
+
+    def test_multi_stack_order_and_stable_across_runs(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = self._repo(root, ["pyproject.toml", "go.mod", "package.json"], "# A\n")
+            first = self._present_r20(repo, root)
+            second = self._present_r20(repo, root)
+            self.assertEqual(first["stacks"], ["go", "python", "node"])
+            self.assertEqual(first, second)
+            lines = first["summary"].split("\n")
+            go_at = next(i for i, line in enumerate(lines) if line.startswith("go:"))
+            py_at = next(i for i, line in enumerate(lines) if line.startswith("python:"))
+            node_at = next(i for i, line in enumerate(lines) if line.startswith("node:"))
+            self.assertLess(go_at, py_at)
+            self.assertLess(py_at, node_at)
+
+    def test_two_stacks_with_identical_clause_write_it_once(self):
+        from ai_kit_rules_common import classification
+
+        shared = "shared: one clause for two stacks."
+        forms = (
+            {"form": "a", "stack": "go", "markers": ("go.mod",), "runners": (), "clause": shared,
+             "signals": ("shared",), "count_flags": ("-p",), "source": "s"},
+            {"form": "b", "stack": "rust", "markers": ("Cargo.toml",), "runners": (),
+             "clause": shared, "signals": ("shared",), "count_flags": ("-p",), "source": "s"},
+        )
+        rule = {
+            "id": "R20",
+            "criticality": 3,
+            "condition": "stack-detected",
+            "signals": PARALLEL_TEST_SIGNAL_GROUPS,
+            "summary": PARALLEL_TEST_GENERIC,
+            "stack_forms": forms,
+            "count_flags": PARALLEL_TEST_COUNT_FLAGS,
+        }
+        presence = {"stacks": ["go", "rust"], "stack_markers": ["go.mod", "Cargo.toml"]}
+        finding = classification.check_rules("# A\n", presence, (rule,), include_present=True)[0]
+        self.assertEqual(finding["summary"].count(shared), 1)
+        self.assertEqual(finding["stacks"], ["go", "rust"])
+
+    def test_share_of_exactly_forty_percent_passes(self):
+        with tempfile.TemporaryDirectory() as root:
+            text = (
+                "Unit tests run in parallel with a worker count of floor(40% of the available "
+                "CPUs), at least 1. node: jest --maxWorkers=40%.\n"
+            )
+            repo = self._repo(root, ["package.json"], text)
+            finding = self._present_r20(repo, root)
+            self.assertEqual(finding["hardcoded_counts"], [])
+            self.assertEqual(finding["status"], "present")
+
+    def test_share_above_forty_percent_is_flagged_in_each_form(self):
+        cases = {
+            "percent flag": "jest --maxWorkers=41% for unit tests",
+            "per-core multiplier": "mvn -T 0.41C test runs unit tests",
+            "prose share": "use 41% of the available CPUs for the test suite",
+        }
+        for label, line in cases.items():
+            with self.subTest(form=label), tempfile.TemporaryDirectory() as root:
+                repo = self._repo(root, ["package.json", "pom.xml"], line + "\n")
+                finding = self._present_r20(repo, root)
+                self.assertEqual(finding["hardcoded_counts"], [line], msg=label)
+                self.assertEqual(finding["status"], "near_miss")
+
+    def test_maven_zero_point_four_cores_passes_and_zero_point_four_one_fails(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = self._repo(root, ["pom.xml"], "Maven: mvn -T 0.4C test (unit tests)\n")
+            self.assertEqual(self._present_r20(repo, root)["hardcoded_counts"], [])
+        with tempfile.TemporaryDirectory() as root:
+            repo = self._repo(root, ["pom.xml"], "Maven: mvn -T 0.41C test (unit tests)\n")
+            self.assertEqual(
+                self._present_r20(repo, root)["hardcoded_counts"],
+                ["Maven: mvn -T 0.41C test (unit tests)"],
+            )
+
+    def test_literal_counts_next_to_a_test_command_are_flagged(self):
+        cases = [
+            ("pytest -n 12 unit tests", ["python"]),
+            ("make -j 8 test", ["python"]),
+            ("jest --maxWorkers=4 unit tests", ["node"]),
+        ]
+        for line, markers in cases:
+            with self.subTest(line=line), tempfile.TemporaryDirectory() as root:
+                marker_files = {"python": "pyproject.toml", "node": "package.json"}
+                repo = self._repo(root, [marker_files[m] for m in markers], line + "\n")
+                finding = self._present_r20(repo, root)
+                self.assertEqual(finding["hardcoded_counts"], [line])
+                self.assertEqual(finding["status"], "near_miss")
+
+    def test_rust_test_threads_is_flagged_once_not_as_a_short_flag(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = self._repo(root, ["Cargo.toml"], "cargo test -- --test-threads=4\n")
+            finding = self._present_r20(repo, root)
+            self.assertEqual(finding["hardcoded_counts"], ["cargo test -- --test-threads=4"])
+
+    def test_non_vacuity_non_test_lines_are_not_flagged(self):
+        text = "tail -n 50 build.log\nmake -j 8 build\n"
+        with tempfile.TemporaryDirectory() as root:
+            repo = self._repo(root, ["pyproject.toml"], text)
+            finding = self._present_r20(repo, root)
+            self.assertEqual(finding["hardcoded_counts"], [])
+
+    def test_unverified_stack_clause_says_so_and_is_listed(self):
+        from ai_kit_rules_common import classification
+
+        forms = ({"stack": "go", "markers": ("go.mod",), "runners": (), "clause": "go: x",
+                  "signals": ("go x",), "count_flags": ("-p",), "source": "s", "form": "go"},)
+        rule = {
+            "id": "R20",
+            "criticality": 3,
+            "condition": "stack-detected",
+            "signals": PARALLEL_TEST_SIGNAL_GROUPS,
+            "summary": PARALLEL_TEST_GENERIC,
+            "stack_forms": forms,
+            "count_flags": PARALLEL_TEST_COUNT_FLAGS,
+        }
+        presence = {"stacks": ["go", "cobol"], "stack_markers": ["go.mod"]}
+        finding = classification.check_rules("# A\n", presence, (rule,), include_present=True)[0]
+        self.assertEqual(finding["unverified_stacks"], ["cobol"])
+        self.assertIn("cobol: no verified form exists", finding["summary"])
+        self.assertIn("go: x", finding["summary"])
+
+    def test_generic_sentence_is_case_insensitive(self):
+        with tempfile.TemporaryDirectory() as root:
+            text = (
+                "Unit tests run in PARALLEL with a worker count of FLOOR(40% OF THE AVAILABLE "
+                "CPUS), AT LEAST 1.\n"
+            )
+            repo = self._repo(root, ["pyproject.toml"], text)
+            finding = self._present_r20(repo, root)
+            self.assertEqual(finding["status"], "near_miss")
+            self.assertEqual(finding["hardcoded_counts"], [])
+
+
 
 
 if __name__ == "__main__":

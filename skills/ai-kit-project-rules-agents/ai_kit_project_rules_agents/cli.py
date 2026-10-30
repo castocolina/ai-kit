@@ -13,6 +13,7 @@ import sys
 import urllib.parse
 
 from ai_kit_rules_common import gsd_identity
+from ai_kit_rules_common.stack_detect import STACK_ORDER, detect_markers, detect_stacks
 
 from .remediation import build_remediation
 from .rule_checker import check_workflow_rules
@@ -185,6 +186,9 @@ def check(
     text, broken = _resolve(repo_root, agents_md_path)
     presence: dict = dict(check_tool_presence(repo_root=repo_root))
     presence.update(_opengsd_presence(repo_root, env, run_fn))
+    detected = detect_stacks(repo_root)
+    presence["stacks"] = [stack for stack in STACK_ORDER if stack in detected]
+    presence["stack_markers"] = detect_markers(repo_root)
     workflow_findings = check_workflow_rules(
         text, presence, include_present=include_present
     )

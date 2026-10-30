@@ -9,10 +9,29 @@ skipped/reframed as `"not_applicable"`, never flagged as a generic gap.
 
 from __future__ import annotations
 
+import functools
 import math
+import re
+from collections.abc import Sequence
+from decimal import Decimal
 
 CONDITION_ALWAYS = "always"
 CONDITION_OPENGSD = "opengsd"
+CONDITION_STACK_DETECTED = "stack-detected"
+
+# 26 D-27 / SPEC R9: a stated share above this cap is a finding (40% of the available CPUs).
+_SHARE_CAP = Decimal("40")
+_PROSE_SHARE_RE = re.compile(
+    r"(\d+(?:\.\d+)?)%\s+of\s+(?:the\s+)?(?:available\s+)?(?:cpus?|cores?|processors?)\b"
+)
+_TEST_WORD_RE = re.compile(r"\btests?\b")
+# A count follows the flag after `=` or spaces; a suffix `%` (the number is the share) or `c`
+# (the number is a per-core multiplier, so 0.41c is 41%). A literal count carries no suffix.
+_COUNT_AFTER = r"(?:\s*=\s*|\s+)(\d+(?:\.\d+)?)(%|c)?(?!\w)"
+_UNVERIFIED_CLAUSE = (
+    "{stack}: no verified form exists; follow the rule above with this stack's own test "
+    "runner (unverified)."
+)
 
 
 def condition_state(condition: str, tool_presence: dict) -> str:
@@ -32,6 +51,8 @@ def condition_state(condition: str, tool_presence: dict) -> str:
             return "met"
         if status == "unverified":
             return "unverified"
+    if condition == CONDITION_STACK_DETECTED:
+        return "met" if tool_presence.get("stacks") else "unmet"
     return "unmet"
 
 
@@ -142,6 +163,145 @@ def _classify_tool_scoped_groups(
     return status, sorted(matched), sorted(missing_tools)
 
 
+@functools.cache
+def _flag_pattern(flag: str) -> re.Pattern[str]:
+    """A dash flag (or build-setting word) only at a token start, then its count."""
+    return re.compile(rf"(?<![\w-]){re.escape(flag.lower())}{_COUNT_AFTER}")
+
+
+@functools.cache
+def _runner_pattern(runner: str) -> re.Pattern[str]:
+    """A runner phrase: its words in order as whole words, anything between them."""
+    words = [re.escape(word) for word in runner.lower().split()]
+    return re.compile(r"\b" + r"\b.*\b".join(words) + r"\b")
+
+
+def _count_is_hardcoded(number: str, suffix: str) -> bool:
+    if not suffix:
+        return True
+    share = Decimal(number) * (100 if suffix == "c" else 1)
+    return share > _SHARE_CAP
+
+
+def _flags_hardcode_count(line: str, flags: Sequence[str]) -> bool:
+    for flag in flags:
+        for match in _flag_pattern(flag).finditer(line):
+            if _count_is_hardcoded(match.group(1), match.group(2) or ""):
+                return True
+    return False
+
+
+def _line_is_hardcoded(line: str, forms: Sequence[dict], generic_flags: Sequence[str]) -> bool:
+    if any(Decimal(m.group(1)) > _SHARE_CAP for m in _PROSE_SHARE_RE.finditer(line)):
+        return True
+    if _TEST_WORD_RE.search(line) and _flags_hardcode_count(line, generic_flags):
+        return True
+    for form in forms:
+        runners = form["runners"]
+        # A row with no catalog runner (Gradle) scans its build-setting words on every line.
+        if runners and not any(_runner_pattern(runner).search(line) for runner in runners):
+            continue
+        if _flags_hardcode_count(line, form["count_flags"]):
+            return True
+    return False
+
+
+def hardcoded_worker_counts(
+    text: str, forms: Sequence[dict], generic_flags: Sequence[str]
+) -> list[str]:
+    """Stripped lines of `text` that state a literal worker count or a share above 40%.
+
+    A literal count or a share over the cap next to a test command is a finding (26 D-27).
+    Each line appears once, in text order.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    for raw in (text or "").splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped in seen:
+            continue
+        if _line_is_hardcoded(raw.lower(), forms, generic_flags):
+            seen.add(stripped)
+            found.append(stripped)
+    return found
+
+
+def _form_selection(
+    stacks: Sequence[str], markers: Sequence[str], forms: Sequence[dict]
+) -> tuple[list[str], list[str], list[dict]]:
+    """Clauses (deduplicated, in stack then table order), unverified stacks, selected rows."""
+    clauses: list[str] = []
+    unverified: list[str] = []
+    selected: list[dict] = []
+    for stack in stacks:
+        rows = [
+            row
+            for row in forms
+            if row["stack"] == stack and any(marker in markers for marker in row["markers"])
+        ]
+        if not rows:
+            unverified.append(stack)
+            clause = _UNVERIFIED_CLAUSE.format(stack=stack)
+            if clause not in clauses:
+                clauses.append(clause)
+            continue
+        selected.extend(rows)
+        for row in rows:
+            if row["clause"] not in clauses:
+                clauses.append(row["clause"])
+    return clauses, unverified, selected
+
+
+def _stack_form_status(generic_status: str, row_flags: list[bool], has_counts: bool) -> str:
+    if has_counts:
+        return "near_miss"
+    if generic_status == "present" and all(row_flags):
+        return "present"
+    if generic_status == "missing" and not any(row_flags):
+        return "missing"
+    return "near_miss"
+
+
+def _row_hits(selected: Sequence[dict], lowered: str) -> tuple[list[bool], set[str]]:
+    """Per selected row, whether any of its signals is in the text, and the phrases hit."""
+    flags: list[bool] = []
+    matched: set[str] = set()
+    for row in selected:
+        hits = [phrase for phrase in row["signals"] if phrase in lowered]
+        flags.append(bool(hits))
+        matched.update(hits)
+    return flags, matched
+
+
+def _stack_form_finding(rule: dict, text: str, presence: dict) -> dict:
+    """R20-shaped rule (`stack_forms`): the generic groups, each selected stack row, the counts.
+
+    Unverified stacks do not lower the status: the clause the user writes says so, and the
+    composed text must classify as present (26 D-27 round trip).
+    """
+    lowered = text.lower()
+    generic_status, generic_matched = _classify_plain_groups(lowered, rule["signals"])
+    stacks = list(presence.get("stacks", []))
+    clauses, unverified, selected = _form_selection(
+        stacks, list(presence.get("stack_markers", [])), rule["stack_forms"]
+    )
+    row_flags, row_matched = _row_hits(selected, lowered)
+    counts = hardcoded_worker_counts(text, rule["stack_forms"], rule["count_flags"])
+    finding = {
+        "id": rule["id"],
+        "status": _stack_form_status(generic_status, row_flags, bool(counts)),
+        "matched_signals": sorted(set(generic_matched) | row_matched),
+        "criticality": rule["criticality"],
+        "summary": "\n".join([rule["summary"], *clauses]),
+        "stacks": stacks,
+        "unverified_stacks": unverified,
+        "hardcoded_counts": counts,
+    }
+    if rule.get("verbatim"):
+        finding["verbatim"] = True
+    return finding
+
+
 def check_rules(
     text: str,
     tool_presence: dict,
@@ -163,6 +323,10 @@ def check_rules(
         state = condition_state(rule["condition"], tool_presence)
         if state != "met":
             findings.append(_not_applicable(rule, state, tool_presence))
+            continue
+
+        if rule.get("stack_forms") is not None:
+            findings.append(_stack_form_finding(rule, text or "", tool_presence))
             continue
 
         missing_tools: list[str] | None = None
@@ -197,7 +361,9 @@ def check_rules(
 __all__ = [
     "CONDITION_ALWAYS",
     "CONDITION_OPENGSD",
+    "CONDITION_STACK_DETECTED",
     "check_rules",
     "condition_state",
     "evaluate_condition",
+    "hardcoded_worker_counts",
 ]
