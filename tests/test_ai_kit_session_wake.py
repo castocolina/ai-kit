@@ -13,6 +13,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from datetime import UTC, datetime
 from unittest import mock
 
 sys.path.insert(
@@ -1618,6 +1619,221 @@ class TestResumeRows(_Scratch):
                 ),
             )
         self.assertIn("no surviving primitive for cursor", cursor_out.getvalue())
+
+
+class TestArmRollback(_Scratch):
+    """A failed first arm undoes itself; a failed refresh restores the
+    previous wake exactly (SPEC R3/R6, T-26-41)."""
+
+    def _arm_env(self, sid: str, host) -> dict:
+        fakes.fake_host(self.bin_dir, "claude")
+        fakes.claude_session(self.env["HOME"], sid)
+        return {
+            **self.env,
+            "CLAUDECODE": "1",
+            "CLAUDE_PID": str(host.pid),
+            "CLAUDE_CODE_SESSION_ID": sid,
+        }
+
+    def _wake_paths(self, env: dict, sid: str) -> dict:
+        timer_name, service_name = units.unit_names("claude", sid)
+        ud = units.unit_dir(env)
+        paths = session_paths(env, "claude", sid)
+        return {
+            "state": paths.state,
+            "lock": paths.lock,
+            "timer": os.path.join(ud, timer_name),
+            "service": os.path.join(ud, service_name),
+            "wants": os.path.join(ud, "timers.target.wants", timer_name),
+            "stamp": units.stamp_path(env, timer_name),
+        }
+
+    @staticmethod
+    def _kill(host):
+        host.kill()
+        host.wait()
+
+    def _refuse_arm(self, env: dict, flags: list[str]) -> tuple[int, str]:
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = cli.main(["arm", *flags], seams=fakes.fixed_seams(env, T0))
+        return code, err.getvalue()
+
+    def test_failed_first_arm_leaves_nothing(self):
+        sid = uuid.uuid4().hex
+        launch = os.path.join(self.root, "launch")
+        os.makedirs(launch)
+        host = fakes.start_host_process(launch)
+        self.addCleanup(self._kill, host)
+        env = {**self._arm_env(sid, host), "FAKE_SYSTEMCTL_FAIL": "enable"}
+        timer_name = units.unit_names("claude", sid).timer
+        code, message = self._refuse_arm(env, [])
+        self.assertEqual(2, code)
+        self.assertIn("enable", message)
+        self.assertIn("failed enable --now", message)
+        for path in self._wake_paths(env, sid).values():
+            self.assertFalse(os.path.exists(path), path)
+        calls = self.systemctl_calls()
+        failing = calls.index(["--user", "enable", "--now", timer_name])
+        self.assertEqual(
+            [
+                ["--user", "enable", "--now", timer_name],
+                ["--user", "disable", "--now", timer_name],
+                ["--user", "daemon-reload"],
+            ],
+            calls[failing:],
+        )
+
+    def test_partial_enable_is_undone(self):
+        sid = uuid.uuid4().hex
+        launch = os.path.join(self.root, "launch")
+        os.makedirs(launch)
+        host = fakes.start_host_process(launch)
+        self.addCleanup(self._kill, host)
+        env = {**self._arm_env(sid, host), "FAKE_SYSTEMCTL_PARTIAL": "enable"}
+        timer_name = units.unit_names("claude", sid).timer
+        code, message = self._refuse_arm(env, [])
+        self.assertEqual(2, code)
+        self.assertIn("enable", message)
+        self.assertIn("failed enable --now", message)
+        for path in self._wake_paths(env, sid).values():
+            self.assertFalse(os.path.exists(path), path)
+        calls = self.systemctl_calls()
+        failing = calls.index(["--user", "enable", "--now", timer_name])
+        self.assertEqual(
+            [
+                ["--user", "enable", "--now", timer_name],
+                ["--user", "disable", "--now", timer_name],
+                ["--user", "daemon-reload"],
+            ],
+            calls[failing:],
+        )
+
+    def _arm_from_host_a(self, sid: str, env: dict) -> tuple[dict, dict, dict]:
+        """A first hourly arm from host A with one ref and wake_count 5;
+        returns (first state, unit byte snapshots, wake paths)."""
+        ref_a = os.path.join(self.root, "ref-a.json")
+        with open(ref_a, "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0, cli.main(["arm", "--ref", ref_a], seams=fakes.fixed_seams(env, T0)))
+        paths = session_paths(env, "claude", sid)
+        update_state(paths.state, lambda state: {**state, "wake_count": 5})
+        first, reason = read_state(paths.state, "claude", sid)
+        self.assertEqual("ok", reason)
+        assert first is not None
+        wake = self._wake_paths(env, sid)
+        with open(wake["timer"], encoding="utf-8") as handle:
+            timer_before = handle.read()
+        with open(wake["service"], encoding="utf-8") as handle:
+            service_before = handle.read()
+        first["refs"] = [os.path.abspath(ref_a)]
+        return first, {"timer": timer_before, "service": service_before}, wake
+
+    def test_failed_refresh_restores_the_previous_wake(self):
+        sid = uuid.uuid4().hex
+        launch = os.path.join(self.root, "launch")
+        os.makedirs(launch)
+        host_a = fakes.start_host_process(launch)
+        self.addCleanup(self._kill, host_a)
+        env = self._arm_env(sid, host_a)
+        first, before, wake = self._arm_from_host_a(sid, env)
+        host_a.kill()
+        host_a.wait()
+        host_b = fakes.start_host_process(launch)
+        self.addCleanup(self._kill, host_b)
+        env = {**env, "CLAUDE_PID": str(host_b.pid), "FAKE_SYSTEMCTL_FAIL": "enable"}
+        ref_b = os.path.join(self.root, "ref-b.json")
+        with open(ref_b, "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        reset_at = datetime.fromtimestamp(T0 + 7200, tz=UTC).isoformat().replace("+00:00", "Z")
+        code, message = self._refuse_arm(env, ["--ref", ref_b, "--reset-at", reset_at])
+        self.assertEqual(2, code)
+        self.assertIn("enable", message)
+        self.assertIn("previous wake restored", message)
+        state, reason = read_state(wake["state"], "claude", sid)
+        self.assertEqual("ok", reason)
+        assert state is not None
+        for field in (
+            "pid",
+            "pid_start",
+            "boot_id",
+            "armed_at",
+            "created",
+            "not_before",
+            "wake_source",
+            "reset_at",
+            "reset_evidence",
+            "permission_mode",
+            "permission_source",
+            "last_resume_exit",
+        ):
+            self.assertEqual(first[field], state[field], field)
+        self.assertEqual([os.path.abspath(os.path.join(self.root, "ref-a.json"))], state["refs"])
+        self.assertEqual(5, state["wake_count"])
+        with open(wake["timer"], encoding="utf-8") as handle:
+            self.assertEqual(before["timer"], handle.read())
+        with open(wake["service"], encoding="utf-8") as handle:
+            self.assertEqual(before["service"], handle.read())
+        for path in (wake["state"], wake["lock"], wake["timer"], wake["service"]):
+            self.assertTrue(os.path.exists(path), path)
+        timer_name = units.unit_names("claude", sid).timer
+        calls = self.systemctl_calls()
+        failing = len(calls) - 1 - calls[::-1].index(["--user", "enable", "--now", timer_name])
+        self.assertEqual(
+            [
+                ["--user", "enable", "--now", timer_name],
+                ["--user", "daemon-reload"],
+                ["--user", "restart", timer_name],
+            ],
+            calls[failing:],
+        )
+
+    def test_failing_rollback_step_is_named_and_nothing_is_removed(self):
+        sid = uuid.uuid4().hex
+        launch = os.path.join(self.root, "launch")
+        os.makedirs(launch)
+        host_a = fakes.start_host_process(launch)
+        self.addCleanup(self._kill, host_a)
+        env = self._arm_env(sid, host_a)
+        first, before, wake = self._arm_from_host_a(sid, env)
+        host_a.kill()
+        host_a.wait()
+        host_b = fakes.start_host_process(launch)
+        self.addCleanup(self._kill, host_b)
+        env = {**env, "CLAUDE_PID": str(host_b.pid), "FAKE_SYSTEMCTL_FAIL": "restart"}
+        ref_b = os.path.join(self.root, "ref-b.json")
+        with open(ref_b, "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        reset_at = datetime.fromtimestamp(T0 + 7200, tz=UTC).isoformat().replace("+00:00", "Z")
+        code, message = self._refuse_arm(env, ["--ref", ref_b, "--reset-at", reset_at])
+        self.assertEqual(2, code)
+        self.assertIn("rollback failed: restart", message)
+        state, reason = read_state(wake["state"], "claude", sid)
+        self.assertEqual("ok", reason)
+        assert state is not None
+        self.assertEqual(first["pid"], state["pid"])
+        self.assertEqual(first["not_before"], state["not_before"])
+        self.assertEqual(5, state["wake_count"])
+        with open(wake["timer"], encoding="utf-8") as handle:
+            self.assertEqual(before["timer"], handle.read())
+        with open(wake["service"], encoding="utf-8") as handle:
+            self.assertEqual(before["service"], handle.read())
+        for path in (wake["state"], wake["lock"], wake["timer"], wake["service"]):
+            self.assertTrue(os.path.exists(path), path)
+        timer_name = units.unit_names("claude", sid).timer
+        calls = self.systemctl_calls()
+        # the first arm never restarts, so the first restart in the log is the
+        # refresh's failing one; the rollback's own restart fails after it
+        failing = calls.index(["--user", "restart", timer_name])
+        self.assertEqual(
+            [
+                ["--user", "restart", timer_name],
+                ["--user", "daemon-reload"],
+                ["--user", "restart", timer_name],
+            ],
+            calls[failing:],
+        )
 
 
 class TestArmOptionsShape(unittest.TestCase):

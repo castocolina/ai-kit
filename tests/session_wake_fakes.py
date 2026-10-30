@@ -70,6 +70,19 @@ if _argv[:2] == ["show", "-p"]:
     sys.exit(0)
 if _argv[:1] == ["is-active"]:
     print("active")
+_fail = os.environ.get("FAKE_SYSTEMCTL_FAIL", "")
+if _fail and _argv[0] == _fail:
+    print("fake systemctl: failed " + " ".join(_argv), file=sys.stderr)
+    sys.exit(1)
+if os.environ.get("FAKE_SYSTEMCTL_PARTIAL") == "enable" and _argv[0] == "enable":
+    _unit = _argv[-1]
+    _base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.environ["HOME"], ".config")
+    _user_dir = os.path.join(_base, "systemd", "user")
+    _wants = os.path.join(_user_dir, "timers.target.wants")
+    os.makedirs(_wants, exist_ok=True)
+    os.symlink(os.path.join(_user_dir, _unit), os.path.join(_wants, _unit))
+    print("fake systemctl: failed " + " ".join(_argv), file=sys.stderr)
+    sys.exit(1)
 sys.exit(0)
 """
 
@@ -107,7 +120,10 @@ sys.exit(int(os.environ.get("FAKE_HOST_EXIT", "0")))
 def fake_systemctl(bin_dir: str) -> str:
     """A fake systemctl: `show -p Version` prints Version=259 unless
     FAKE_SYSTEMCTL_DOWN is set (then exit 1); `is-active` prints active;
-    everything else exits 0."""
+    everything else exits 0. FAKE_SYSTEMCTL_FAIL=<verb> makes the verb exit 1
+    with a stderr line (the rollback tests); FAKE_SYSTEMCTL_PARTIAL=enable
+    first creates the wants symlink for the unit, then exits 1 (a partial
+    `enable --now` the rollback must undo)."""
     return write_fake(bin_dir, "systemctl", "import os, sys\n" + _SYSTEMCTL_BODY)
 
 

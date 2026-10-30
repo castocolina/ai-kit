@@ -6,11 +6,12 @@ one it started on (review round 2). The lock file is created once with
 O_CREAT|O_EXCL and never replaced.
 """
 
+import contextlib
 import os
 import secrets
 import shutil
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import NamedTuple
 
 from ai_kit_spec.detection import RUNTIMES, detect_current_runtime
@@ -18,6 +19,7 @@ from ai_kit_spec.detection import RUNTIMES, detect_current_runtime
 from .hosts import HOSTS, permission_from_cmdline, session_exists
 from .liveness import cross_ai_ancestor, find_host_ancestor, identify, launch_cwd, read_cmdline
 from .matrix import best_primitive
+from .reset_parse import RESET_MARGIN_S, calendar_line, iso_z, parse_reset_at, parse_reset_text
 from .state import (
     ARM_WINDOW_S,
     PERMISSION_MODE_RE,
@@ -44,6 +46,14 @@ from .units import (
 )
 
 
+class ResetArg(NamedTuple):
+    """One reset flag (D-30): `kind` is `"text"` or `"at"`, `value` the raw
+    flag value."""
+
+    kind: str
+    value: str
+
+
 class ArmOptions(NamedTuple):
     """What the caller (or the CLI) passes to one arm."""
 
@@ -52,6 +62,7 @@ class ArmOptions(NamedTuple):
     pid: int | None
     permission_mode: str | None
     refs: tuple[str, ...]
+    reset: ResetArg | None = None
 
 
 class _ArmRefresh(NamedTuple):
@@ -59,6 +70,28 @@ class _ArmRefresh(NamedTuple):
     target: "_ArmTarget"
     old_state: dict
     payload: dict
+
+
+class _SavedUnits(NamedTuple):
+    """The unit bytes a refresh is about to replace; the rollback writes them
+    back when a systemctl call fails."""
+
+    service: str | None
+    timer: str | None
+
+
+class _FinishPlan(NamedTuple):
+    """How one `_finish_arm` ends: a refresh restores the previous wake on a
+    failure; a first arm undoes itself (SPEC R3/R6, T-26-41). `rollback`
+    receives whether the timer text had changed and returns a description of
+    the step that failed, or None."""
+
+    refreshed: bool = False
+    rollback: Callable[[bool], str | None] | None = None
+
+
+# immutable default for _finish_arm (ruff B008: no calls in argument defaults)
+_NO_ROLLBACK = _FinishPlan()
 
 
 class _ArmTarget(NamedTuple):
@@ -236,13 +269,54 @@ def _verify_session(  # pylint: disable=too-many-locals
     )
 
 
-def _arm_payload(target: _ArmTarget, seams: Seams, env: Mapping[str, str]) -> dict:
+def _hourly_fields(now: float) -> dict:
+    """The four reset-related fields of the plain hourly wake (D-29)."""
+    return {
+        "not_before": now + ARM_WINDOW_S,
+        "wake_source": "hourly",
+        "reset_evidence": None,
+        "reset_at": None,
+    }
+
+
+def _reset_fields(reset: ResetArg | None, seams: Seams) -> tuple[dict | None, str | None]:
+    """The fields an arm applies for the reset flags (D-29, D-30).
+
+    `(None, None)`: no flags, keep whatever exists. `(fields, None)`: an
+    accepted reset. `(hourly_fields, reason)`: a refused reset — the hourly
+    wake stands (SC 5), and the caller prints the reason."""
+    if reset is None:
+        return None, None
+    now = seams.now()
+    result = (
+        parse_reset_text(reset.value, now)
+        if reset.kind == "text"
+        else parse_reset_at(reset.value, now)
+    )
+    if result.reason is not None:
+        return _hourly_fields(now), result.reason
+    assert result.at is not None  # a result without a reason always carries one
+    not_before = result.at + RESET_MARGIN_S
+    return {
+        "not_before": not_before,
+        "wake_source": "reset_inferred",
+        "reset_evidence": result.evidence,
+        "reset_at": iso_z(result.at),
+    }, None
+
+
+def _arm_payload(
+    target: _ArmTarget, seams: Seams, env: Mapping[str, str], fields: dict | None
+) -> dict:
     """The state document (D-07, D-29); `created` lists the six paths arm
-    writes or systemd creates, so disarm removes exactly those (D-07)."""
+    writes or systemd creates, so disarm removes exactly those (D-07).
+    `fields` overrides the four reset-related fields (an accepted reset, or
+    the hourly fields after a refusal); None means the hourly defaults."""
     now = seams.now()
     timer, service = unit_names(target.host, target.session_id)
     ud = unit_dir(env)
     previous, _reason = read_state(target.paths.state, target.host, target.session_id)
+    applied = fields if fields is not None else _hourly_fields(now)
     return {
         "schema_version": STATE_SCHEMA_VERSION,
         "host": target.host,
@@ -256,10 +330,10 @@ def _arm_payload(target: _ArmTarget, seams: Seams, env: Mapping[str, str]) -> di
         "armed_at": now,
         "wake_count": previous["wake_count"] if previous else 0,
         "cap": WAKE_CAP,
-        "not_before": now + ARM_WINDOW_S,
-        "wake_source": "hourly",
-        "reset_evidence": None,
-        "reset_at": None,
+        "not_before": applied["not_before"],
+        "wake_source": applied["wake_source"],
+        "reset_evidence": applied["reset_evidence"],
+        "reset_at": applied["reset_at"],
         "launch_cwd": target.cwd,
         "launch_cwd_verified": True,
         "cli_path": target.cli_path,
@@ -302,17 +376,30 @@ def _enable_timer(seams: Seams, timer: str, restart: bool = False) -> str | None
     return None
 
 
-def _refresh_payload(payload: dict, previous: dict, opts: ArmOptions, target: _ArmTarget) -> dict:
+def _refresh_payload(
+    payload: dict, previous: dict, opts: ArmOptions, target: _ArmTarget, fields: dict | None
+) -> dict:
+    applied = (
+        fields
+        if fields is not None
+        else {
+            # no reset flags: the previous wake's reset fields stand (26-03)
+            "not_before": previous["not_before"],
+            "wake_source": previous["wake_source"],
+            "reset_evidence": previous["reset_evidence"],
+            "reset_at": previous.get("reset_at"),
+        }
+    )
     payload.update(
         {
             "armed_at": previous["armed_at"],
             "wake_count": previous["wake_count"],
             "cap": previous["cap"],
             "created": previous["created"],
-            "not_before": previous["not_before"],
-            "wake_source": previous["wake_source"],
-            "reset_evidence": previous["reset_evidence"],
-            "reset_at": previous.get("reset_at"),
+            "not_before": applied["not_before"],
+            "wake_source": applied["wake_source"],
+            "reset_evidence": applied["reset_evidence"],
+            "reset_at": applied["reset_at"],
             "last_resume_exit": previous["last_resume_exit"],
             "permission_mode": target.mode if opts.permission_mode else previous["permission_mode"],
             "permission_source": target.source
@@ -325,19 +412,22 @@ def _refresh_payload(payload: dict, previous: dict, opts: ArmOptions, target: _A
 
 
 def _write_units(
-    seams: Seams, target: _ArmTarget, shim_path: str, refreshed: bool
+    seams: Seams, target: _ArmTarget, shim_path: str, refreshed: bool, payload: dict
 ) -> tuple[str, str, bool]:
-    env = seams.env
     timer, service = unit_names(target.host, target.session_id)
-    ud = unit_dir(env)
+    ud = unit_dir(seams.env)
     service_path = os.path.join(ud, service)
     timer_path = os.path.join(ud, timer)
-    service_text = render_service(sys.executable, shim_path, target.host, target.session_id, env)
-    timer_text = render_timer(target.host, target.session_id)
-    old_timer_text = _read_text(timer_path)
+    service_text = render_service(
+        sys.executable, shim_path, target.host, target.session_id, seams.env
+    )
+    reset_line = None
+    if payload["wake_source"] == "reset_inferred":
+        reset_line = calendar_line(payload["not_before"])
+    timer_text = render_timer(target.host, target.session_id, reset_line)
+    timer_changed = _read_text(timer_path) != timer_text
     if _read_text(service_path) != service_text:
         write_text_atomic(service_path, service_text)
-    timer_changed = old_timer_text != timer_text
     if timer_changed:
         write_text_atomic(timer_path, timer_text)
     return timer, service, timer_changed and refreshed
@@ -375,12 +465,25 @@ def _report_arm(target: _ArmTarget, payload: dict, refreshed: bool, seams: Seams
     else:
         print(f"permission_mode: {target.mode} ({target.source}){not_applied}")
     best = best_primitive(target.host, systemd_ok=True)
+    if payload["wake_source"] == "reset_inferred":
+        wake_iso = iso_z(payload["not_before"])
+        print(
+            f"reset: {payload['reset_at']} (inferred); next wake {wake_iso} = "
+            "host-reported reset + 60 s margin; the host did not state this wake time"
+        )
     if best is not None:
         print(f"primitive: {best['primitive']} (unverified: {', '.join(best['unverified'])})")
-        print(
-            "companion: none (the OS timer is the wake; an in-session fire during a usage "
-            "limit is lost, spike 004)"
-        )
+        if payload["wake_source"] == "reset_inferred":
+            print(
+                "companion: create one one-shot in-session wake at "
+                f"{iso_z(payload['not_before'])} (inferred); a fire inside the limit is lost "
+                "(spike 004)"
+            )
+        else:
+            print(
+                "companion: none (the OS timer is the wake; an in-session fire during a usage "
+                "limit is lost, spike 004)"
+            )
     linger = linger_enabled(seams)
     if linger is False:
         user = seams.env.get("USER") or seams.env.get("LOGNAME") or "<user>"
@@ -390,7 +493,7 @@ def _report_arm(target: _ArmTarget, payload: dict, refreshed: bool, seams: Seams
 
 
 def arm(opts: ArmOptions, seams: Seams, shim_path: str) -> int:
-    """Arm (or idempotently refresh) the wake for one session (D-13)."""
+    """Arm (or idempotently refresh) the wake for one session (D-13, D-30)."""
     resolved = _resolve_target(opts, seams)
     if isinstance(resolved, int):
         return resolved
@@ -409,22 +512,107 @@ def arm(opts: ArmOptions, seams: Seams, shim_path: str) -> int:
             )
             print("warning: the wake will not outlive the session")
         return 3
-    payload = _arm_payload(target, seams, env)
+    fields, refusal = _reset_fields(opts.reset, seams)
+    if refusal is not None:
+        print(f"reset refused: {refusal}; the hourly wake stands")
+    payload = _arm_payload(target, seams, env, fields)
     refreshed = old_state is not None
     if refreshed:
-        return _refresh_arm(seams, shim_path, _ArmRefresh(opts, target, old_state, payload))
-    return _finish_arm(seams, shim_path, target, payload)
+        return _refresh_arm(seams, shim_path, _ArmRefresh(opts, target, old_state, payload), fields)
+    plan = _FinishPlan(rollback=lambda changed: _rollback_first_arm(seams, target))
+    return _finish_arm(seams, shim_path, target, payload, plan)
 
 
-def _refresh_arm(seams: Seams, shim_path: str, refresh: _ArmRefresh) -> int:
-    payload = _refresh_payload(refresh.payload, refresh.old_state, refresh.opts, refresh.target)
+def _rollback_first_arm(seams: Seams, target: _ArmTarget) -> str | None:
+    """Undo a failed first arm (SPEC R3/R6): `disable --now` (a partial
+    `enable --now`), delete every file this call wrote, `daemon-reload`.
+    Best effort; every rollback step that also failed is named."""
+    timer, service = unit_names(target.host, target.session_id)
+    ud = unit_dir(seams.env)
+    failed: list[str] = []
+    disable = systemctl(seams, "disable", "--now", timer)
+    if disable.returncode != 0:
+        failed.append(f"disable --now {timer}")
+    for path in (
+        target.paths.state,
+        target.paths.lock,
+        os.path.join(ud, service),
+        os.path.join(ud, timer),
+        os.path.join(ud, "timers.target.wants", timer),
+        stamp_path(seams.env, timer),
+    ):
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(path)
+    reload_proc = systemctl(seams, "daemon-reload")
+    if reload_proc.returncode != 0:
+        failed.append("daemon-reload")
+    if failed:
+        return "rollback failed: " + ", ".join(failed)
+    return None
+
+
+def _rollback_refresh(
+    seams: Seams, target: _ArmTarget, old_state: dict, saved: _SavedUnits, timer_changed: bool
+) -> str | None:
+    """Restore the previous wake after a failed refresh (SPEC R3/R6): the
+    fields go back through `update_state` (a concurrent fire's count is
+    kept), the saved unit bytes are written back, then `daemon-reload` and,
+    when the timer text had changed, `restart`. No file of the existing wake
+    is ever deleted."""
+    timer, service = unit_names(target.host, target.session_id)
+    ud = unit_dir(seams.env)
+    failed: list[str] = []
+
+    def apply(current: dict) -> dict:
+        restored = dict(old_state)
+        restored["wake_count"] = current["wake_count"]
+        return restored
+
+    try:
+        update_state(target.paths.state, apply)
+    except (OSError, ValueError):
+        failed.append("state restore")
+    for name, text in ((service, saved.service), (timer, saved.timer)):
+        path = os.path.join(ud, name)
+        if text is not None and _read_text(path) != text:
+            write_text_atomic(path, text)
+    reload_proc = systemctl(seams, "daemon-reload")
+    if reload_proc.returncode != 0:
+        failed.append("daemon-reload")
+    if timer_changed:
+        restart_proc = systemctl(seams, "restart", timer)
+        if restart_proc.returncode != 0:
+            failed.append(f"restart {timer}")
+    if failed:
+        return "rollback failed: " + ", ".join(failed)
+    return None
+
+
+def _refresh_arm(
+    seams: Seams, shim_path: str, refresh: _ArmRefresh, fields: dict | None
+) -> int:
+    target = refresh.target
+    timer, service = unit_names(target.host, target.session_id)
+    ud = unit_dir(seams.env)
+    saved = _SavedUnits(
+        _read_text(os.path.join(ud, service)),
+        _read_text(os.path.join(ud, timer)),
+    )
+
+    def rollback(changed: bool) -> str | None:
+        return _rollback_refresh(seams, target, refresh.old_state, saved, changed)
+
+    payload = _refresh_payload(
+        refresh.payload, refresh.old_state, refresh.opts, target, fields
+    )
 
     def apply(current: dict) -> dict:
         payload["wake_count"] = current["wake_count"]
         return payload
 
     update_state(refresh.target.paths.state, apply)
-    return _finish_arm(seams, shim_path, refresh.target, payload, refreshed=True)
+    plan = _FinishPlan(refreshed=True, rollback=rollback)
+    return _finish_arm(seams, shim_path, target, payload, plan)
 
 
 def _finish_arm(
@@ -432,18 +620,24 @@ def _finish_arm(
     shim_path: str,
     target: _ArmTarget,
     payload: dict,
-    refreshed: bool = False,
+    plan: _FinishPlan = _NO_ROLLBACK,
 ) -> int:
-    if not refreshed:
+    if not plan.refreshed:
         write_json_atomic(target.paths.state, payload)
     try:
         lock_fd = os.open(target.paths.lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(lock_fd)
     except FileExistsError:
         pass  # never replace the lock: holders must keep the same inode
-    timer, _service, restart = _write_units(seams, target, shim_path, refreshed)
+    timer, _service, timer_changed = _write_units(seams, target, shim_path, plan.refreshed, payload)
+    restart = timer_changed and plan.refreshed
     failure = _enable_timer(seams, timer, restart=restart)
     if failure is not None:
+        note = plan.rollback(restart) if plan.rollback is not None else None
+        if note is not None:
+            return _refuse(f"{failure}; {note}")
+        if plan.refreshed:
+            return _refuse(f"{failure}; previous wake restored")
         return _refuse(failure)
-    _report_arm(target, payload, refreshed, seams)
+    _report_arm(target, payload, plan.refreshed, seams)
     return 0

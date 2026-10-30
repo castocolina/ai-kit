@@ -973,7 +973,7 @@ right session; codex, pi and opencode facts are third-party only so far.
 - [x] 26-03-PLAN.md
 - [x] 26-04-PLAN.md
 - [x] 26-05-PLAN.md
-- [ ] 26-06-PLAN.md
+- [x] 26-06-PLAN.md
 - [ ] 26-07-PLAN.md
 - [ ] 26-08-PLAN.md
 - [ ] 26-09-PLAN.md

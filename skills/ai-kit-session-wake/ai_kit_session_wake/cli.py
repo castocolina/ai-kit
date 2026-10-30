@@ -10,11 +10,12 @@ from collections.abc import Mapping
 
 from ai_kit_spec.detection import detect_current_runtime
 
-from .arm import ArmOptions, arm
+from .arm import ArmOptions, ResetArg, arm
 from .fire import disarm, done, fire
 from .hosts import HOSTS
 from .liveness import is_alive
 from .matrix import matrix_json, render_matrix
+from .reset_parse import iso_z
 from .state import Seams, default_seams, read_state, state_dir
 from .units import linger_enabled, systemctl, unit_names
 
@@ -76,14 +77,33 @@ def _parser() -> argparse.ArgumentParser:
     sub.choices["arm"].add_argument(
         "--ref", action="append", default=[], help="read-only state path to record (repeatable)"
     )
+    reset = sub.choices["arm"].add_mutually_exclusive_group()
+    reset.add_argument(
+        "--reset-text",
+        help="the host's limit text; its reset time sets the wake (inferred; D-30)",
+    )
+    reset.add_argument(
+        "--reset-at",
+        help="the reset time as epoch seconds or ISO 8601 with Z or an explicit offset",
+    )
     return parser
+
+
+def _reset_arg(args: argparse.Namespace) -> ResetArg | None:
+    if args.reset_text is not None:
+        return ResetArg("text", args.reset_text)
+    if args.reset_at is not None:
+        return ResetArg("at", args.reset_at)
+    return None
 
 
 def _dispatch(
     command: str, host: str, session_id: str, args: argparse.Namespace, seams: Seams
 ) -> int:
     if command == "arm":
-        opts = ArmOptions(host, session_id, args.pid, args.permission_mode, tuple(args.ref))
+        opts = ArmOptions(
+            host, session_id, args.pid, args.permission_mode, tuple(args.ref), _reset_arg(args)
+        )
         return arm(opts, seams, default_shim_path())
     if command == "disarm":
         return disarm(host, session_id, seams)
@@ -124,7 +144,13 @@ def _status_entry(path: str, seams: Seams) -> None:
     status = "alive" if is_alive(state, seams) else "gone"
     print(f"host process: {status} ({state.get('liveness_source', 'proc')})")
     print(f"wakes: {state['wake_count']}/{state['cap']}")
-    print("next wake: hourly")
+    if state.get("wake_source") == "reset_inferred":
+        print(
+            f"next wake: {iso_z(state['not_before'])} UTC (inferred: host-reported reset + 60 s; "
+            "the host did not state this wake time), then hourly"
+        )
+    else:
+        print("next wake: hourly")
     print(
         f"permission_mode: {state['permission_mode']} ({state.get('permission_source', 'unknown')})"
     )

@@ -64,7 +64,9 @@ def _quote(word: str) -> str:
 def render_timer(host: str, sid: str, reset_line: str | None = None) -> str:
     """The persistent calendar timer (D-12); `reset_line` adds a second
     absolute `OnCalendar=` beside `hourly` (D-28, written only by a later
-    re-arm; `fire` never rewrites units)."""
+    re-arm; `fire` never rewrites units). The line is the full
+    `OnCalendar=...` entry (`reset_parse.calendar_line`); a bare time value is
+    prefixed for convenience."""
     _timer, service = unit_names(host, sid)
     lines = [
         "[Unit]",
@@ -73,7 +75,9 @@ def render_timer(host: str, sid: str, reset_line: str | None = None) -> str:
         "OnCalendar=hourly",
     ]
     if reset_line:
-        lines.append(f"OnCalendar={reset_line}")
+        lines.append(
+            reset_line if reset_line.startswith("OnCalendar=") else f"OnCalendar={reset_line}"
+        )
     lines += [
         "Persistent=true",
         f"Unit={service}",
