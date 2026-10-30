@@ -162,8 +162,13 @@ def _count_int(value: object) -> bool:
 def _identity_problem(payload: dict, host: str, session_id: str) -> str | None:
     if payload.get("schema_version") != STATE_SCHEMA_VERSION:
         return f"unsupported schema_version {payload.get('schema_version')!r}"
-    if payload.get("host") != host or payload.get("session_id") != session_id:
-        return "state is not named for this (host, session id)"
+    mismatches = [
+        name
+        for name, expected in (("host", host), ("session_id", session_id))
+        if payload.get(name) != expected
+    ]
+    if mismatches:
+        return f"state {' and '.join(mismatches)} is not this wake's"
     arm_id = payload.get("arm_id")
     if not isinstance(arm_id, str) or _ARM_ID_RE.fullmatch(arm_id) is None:
         return "arm_id is not 16 lowercase hex characters"

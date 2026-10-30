@@ -1232,7 +1232,10 @@ class TestPermissionMode(_Scratch):
         proc = subprocess.Popen(
             [sys.executable, cli_path, *extra_argv],
             cwd=self.root,
-            env={**self.env, "FAKE_HOST_SLEEP": "1"},
+            # FAKE_HOST_SLEEP is seconds now (26-05); a long span keeps the
+            # stand-in alive for the whole test, as the old until-killed
+            # sleep did.
+            env={**self.env, "FAKE_HOST_SLEEP": "600"},
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

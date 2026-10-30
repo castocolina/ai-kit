@@ -99,7 +99,8 @@ if os.environ.get("FAKE_HOST_MODE") == "arm":
         }) + "\\n")
     sys.exit(_proc.returncode)
 if os.environ.get("FAKE_HOST_SLEEP"):
-    time.sleep(600)
+    time.sleep(float(os.environ["FAKE_HOST_SLEEP"]))
+sys.exit(int(os.environ.get("FAKE_HOST_EXIT", "0")))
 """
 
 
@@ -118,9 +119,44 @@ def fake_loginctl(bin_dir: str) -> str:
 def fake_host(bin_dir: str, name: str) -> str:
     """A fake host CLI. With FAKE_HOST_MODE=arm it runs the shim's `arm` as its
     own child (so it is the arm process's ancestor), logs the child's exit code
-    and output, and exits with it. Started with FAKE_HOST_SLEEP set it sleeps
-    until killed, so it can stand in for a host process with chosen argv."""
+    and output, and exits with it. FAKE_HOST_SLEEP=<seconds> sleeps that long
+    before exiting (so a resumed fake host keeps its fire's lock held for a
+    known span); FAKE_HOST_EXIT=<code> sets the exit code."""
     return write_fake(bin_dir, name, "import json, os, subprocess, sys, time\n" + _HOST_BODY)
+
+
+_NOTIFY_BODY = """
+if os.environ.get("FAKE_NOTIFY_SLEEP"):
+    time.sleep(float(os.environ["FAKE_NOTIFY_SLEEP"]))
+if os.environ.get("FAKE_NOTIFY_FAIL"):
+    sys.exit(1)
+sys.exit(0)
+"""
+
+
+def fake_notify_send(bin_dir: str) -> str:
+    """A fake notify-send that logs its call; FAKE_NOTIFY_FAIL makes it exit 1,
+    FAKE_NOTIFY_SLEEP=<s> sleeps that long before anything else."""
+    return write_fake(bin_dir, "notify-send", "import os, sys, time\n" + _NOTIFY_BODY)
+
+
+def hold_lock(path: str, seconds: float) -> subprocess.Popen:
+    """A helper process that takes the flock on `path`, prints `locked` once
+    it holds it (the caller waits for that line before acting), and exits
+    after `seconds`. The caller owns the process and kills it in cleanup."""
+    script = (
+        "import fcntl, os, sys, time\n"
+        "fd = os.open(sys.argv[1], os.O_RDONLY)\n"
+        "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+        "print('locked', flush=True)\n"
+        "time.sleep(float(sys.argv[2]))\n"
+    )
+    return subprocess.Popen(
+        [sys.executable, "-c", script, path, str(seconds)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
 
 
 def codex_session(home: str, sid: str) -> str:

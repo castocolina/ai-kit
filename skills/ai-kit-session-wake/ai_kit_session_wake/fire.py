@@ -6,12 +6,13 @@ the session lock, and must never `stop` its own service (D-13).
 import contextlib
 import fcntl
 import os
+import shutil
 import signal
 import subprocess
 from datetime import UTC, datetime
 from typing import NamedTuple
 
-from .hosts import child_env, resume_argv, session_exists
+from .hosts import FIRE_MARKER_ENV, child_env, resume_argv, session_exists
 from .liveness import is_alive
 from .state import (
     WAKE_CAP,
@@ -34,6 +35,8 @@ RESUME_PROMPT = (
     "skill's arm to refresh this session's wake. When nothing remains, run its done."
 )
 RESUME_TIMEOUT_S = 14400
+NOTIFY_TIMEOUT_S = 5
+NOTIFY_SUMMARY = "ai-kit session wake gave up"
 
 
 class _Wake(NamedTuple):
@@ -127,17 +130,40 @@ def _remove_owned(
     _teardown(seams, timer, owned, foreign)
 
 
+def notify(seams: Seams, summary: str, body: str) -> None:
+    """The best-effort desktop notice (D-31, D-32): `notify-send <summary>
+    <body>` only when notify-send is on the seams PATH and a session bus is
+    reachable (DBUS_SESSION_BUS_ADDRESS, or <XDG_RUNTIME_DIR>/bus), bounded by
+    NOTIFY_TIMEOUT_S. Every error is ignored; without a login session the
+    journal line is the record (D-31)."""
+    exe = shutil.which("notify-send", path=seams.env.get("PATH", ""))
+    if exe is None:
+        return
+    env = seams.env
+    runtime_dir = env.get("XDG_RUNTIME_DIR", "")
+    bus_file = os.path.join(runtime_dir, "bus") if runtime_dir else ""
+    if not env.get("DBUS_SESSION_BUS_ADDRESS") and not (bus_file and os.path.exists(bus_file)):
+        return
+    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+        subprocess.run(
+            [exe, summary, body],
+            capture_output=True,
+            env=dict(env),
+            timeout=NOTIFY_TIMEOUT_S,
+            check=False,
+        )
+
+
 def give_up(host: str, session_id: str, reason: str, seams: Seams) -> None:
-    """The give-up notice (the journal line; 26-05 adds notify-send), then the
-    removal. Runs only under the lock and removes the state, so a wake gives
-    up once (D-31, D-32)."""
+    """The give-up notice (the journal line, then the bounded desktop
+    notice; D-31, D-32), then the removal. Runs only under the lock and
+    removes the state, so a wake gives up once."""
     wake = _wake(host, session_id, seams)
     state, _reason = read_state(wake.paths.state, host, session_id)
     last_exit = state["last_resume_exit"] if state else None
-    print(
-        f"ai-kit-session-wake: NOTICE ai-kit session wake gave up: {reason}; "
-        f"state {wake.paths.state}; last resume exit {last_exit}"
-    )
+    body = f"{reason}; state {wake.paths.state}; last resume exit {last_exit}"
+    print(f"ai-kit-session-wake: NOTICE ai-kit session wake gave up: {body}")
+    notify(seams, NOTIFY_SUMMARY, body)
     if state is None:
         disarm_by_name(host, session_id, seams)
         return
@@ -164,30 +190,65 @@ def disarm_by_name(host: str, session_id: str, seams: Seams) -> int:
     return 0
 
 
-def disarm(host: str, session_id: str, seams: Seams) -> int:
-    """Full cleanup (D-13): disable --now, clean --what=state, delete exactly
-    the owned `created` paths plus `.done`, the state, then the lock,
-    daemon-reload."""
-    wake = _wake(host, session_id, seams)
-    state, reason = read_state(wake.paths.state, host, session_id)
-    timer, _service = unit_names(host, session_id)
-    unit_file = os.path.join(unit_dir(seams.env), timer)
+def _disarm_locked(wake: _Wake) -> int:
+    """The 26-02 removal with the nothing-armed empty edge (SPEC R5)."""
+    state, reason = read_state(wake.paths.state, wake.host, wake.session_id)
+    timer, _service = unit_names(wake.host, wake.session_id)
+    unit_file = os.path.join(unit_dir(wake.seams.env), timer)
     if state is None:
         if reason == "missing" and not os.path.exists(unit_file):
             print("nothing to disarm")
             return 0
-        return disarm_by_name(host, session_id, seams)
-    _remove_owned(wake.paths, state, host, session_id, seams)
+        return disarm_by_name(wake.host, wake.session_id, wake.seams)
+    _remove_owned(wake.paths, state, wake.host, wake.session_id, wake.seams)
     return 0
+
+
+def disarm(host: str, session_id: str, seams: Seams) -> int:
+    """Full cleanup (D-13, SPEC R5 concurrency): inside a fire child write
+    `.done` and stop there (D-02), instead of waiting on its own parent's
+    lock; otherwise take the session lock blocking -- a running resume
+    finishes first -- then remove everything. A lock file that vanished
+    meanwhile means another disarm finished: re-read and report what is
+    left."""
+    wake = _wake(host, session_id, seams)
+    if seams.env.get(FIRE_MARKER_ENV) == f"{host}-{session_id}":
+        touch_marker(wake.paths.done)
+        print(
+            f"{wake.paths.done} written; the running wake removes everything "
+            "when its resume exits"
+        )
+        return 0
+    fd = lock_session(wake.paths, blocking=True)
+    if fd is not None:
+        try:
+            return _disarm_locked(wake)
+        finally:
+            os.close(fd)
+    return _disarm_locked(wake)
 
 
 def done(host: str, session_id: str, seams: Seams) -> int:
-    """Write the `.done` marker (26-05 adds the lock wait and the in-fire
-    fallback); the next fire's finish step disarms (D-10 step 7)."""
+    """Write the `.done` marker; inside a fire child stop there (the resume's
+    own finish step disarms, D-10 step 7); when no resume holds the lock,
+    disarm at once; when one does, say so and let it disarm on exit."""
     wake = _wake(host, session_id, seams)
     touch_marker(wake.paths.done)
     print(wake.paths.done)
-    return 0
+    if seams.env.get(FIRE_MARKER_ENV) == f"{host}-{session_id}":
+        return 0
+    fd = lock_session(wake.paths, blocking=False)
+    if fd is None:
+        print("a wake resume is running; it disarms when the resume exits")
+        return 0
+    try:
+        state, _reason = read_state(wake.paths.state, host, session_id)
+        if state is None:
+            return disarm_by_name(host, session_id, seams)
+        _remove_owned(wake.paths, state, host, session_id, seams)
+        return 0
+    finally:
+        os.close(fd)
 
 
 # ── the fire ────────────────────────────────────────────────────────────────
@@ -389,7 +450,10 @@ def fire(host: str, session_id: str, seams: Seams) -> int:
     wake = _wake(host, session_id, seams)
     state, reason = read_state(wake.paths.state, host, session_id)
     if state is None:
-        _log(wake.tag, f"no valid wake state ({reason}); disarming")
+        if reason == "missing":
+            _log(wake.tag, "no wake state; disarming by name")
+        else:
+            _log(wake.tag, f"invalid state ({reason}); disarming")
         return disarm_by_name(host, session_id, seams)
     if os.path.exists(wake.paths.done):
         return _finish(wake, "done marker present")
