@@ -58,15 +58,15 @@
         "cli": "opencode",
         "model": "router-env/my-referee-two"
       },
-      "claude-opus": {
-        "cli": "claude",
-        "model": "opus"
+      "referee-three": {
+        "cli": "opencode",
+        "model": "router-env/my-referee-three"
       }
     },
     "default_reviewers": [
       "referee-one",
       "referee-two",
-      "claude-opus"
+      "referee-three"
     ],
     "timeouts": {
       "opencode": 1800
