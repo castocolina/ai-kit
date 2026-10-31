@@ -2,7 +2,12 @@
 
 ## Gates
 
-Gate results are recorded by the next commit, after the final gate run at the phase tip.
+Phase tip cced6d1 (2026-10-31); the only later commits are documentation. Logs lived under `tmp/p27/13/` and are summarized in `27-13-SUMMARY.md`.
+
+- `make test validate e2e-docker`, one run, exit 0, 14 minutes (podman clean room): unit 74/74, uv 1/1, integration 4/4, e2e 13/13 plus 45 installer checks, arch 1/1; validate hooks ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest (core) and unittest (wizard) all Passed; the clean room printed `ai-kit clean-room E2E: PASS` (its e2e tier skips the long real-node modules).
+- Failures fixed on the way (each at its cause, its own commit): `3cd8d69` the dogfood e2e test ran `git status` in a clean-room checkout that has no `.git` (exit 128) and now falls back to a file snapshot; `cced6d1` the rendered runner's `--self-test` had a 300 s budget although it needs about 175 s alone and about 360 to 480 s beside the other e2e modules.
+- Four earlier full or e2e-only runs failed on timing, each in a different step (`parser-cursor` exit 1, `model-opencode-two-variants` exit null, the 300 s self-test budget, a `resolve-model` call read as an empty model). The host was swapping (17 GB of swap in use, peaks of 68 MB/s swap-in and 223 MB/s swap-out during the e2e tier). Two reruns with logging added passed and captured no failure, so the exact step that stalled in the other runs is unverified; the evidence is the host swap figures and the changing failing step. The matrix and runner steps keep fixed 60 s and 30 s budgets that a stalled host can exceed; that remains a risk on this machine.
+- skill-judge: `check_verdicts.py` prints `verdicts ok`; `--gate` prints `gate ok`.
 
 ## Skill-judge state
 
