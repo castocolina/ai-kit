@@ -14,7 +14,7 @@ Phase tip after 26-11 plus the 26-12 vulture fix (2026-10-30). Logs lived under 
 Each item below is a `gate pending:` line of `check_verdicts.py --gate`. The owner's answer is added to `26-SKILL-JUDGE.md` under `## Owner decisions` as an `Owner-decision:` line. The verdict word must equal the skill's current verdict; the re-judge answers add no line.
 
 - human_verification SJ-1: ai-kit-spec-execute-gsd, UNRESOLVED. Round 15 score 101 (>= 96) against the carried base 105 (25.1-SKILL-JUDGE.md round 5), 0 Critical and 2 Important open. Question: does the carried base 105 stay the bar, or is 101 accepted? Answer line: `Owner-decision: ai-kit-spec-execute-gsd accepts UNRESOLVED (<date>, <where the owner said it>)` or `Owner-decision: ai-kit-spec-execute-gsd base stays 105, one more round`.
-- human_verification SJ-2: ai-kit-spec-execute-superpowers, FAIL. Round 15 score 94 (< 96), 0 Critical and 3 Important open; carried base 110 (Phase 18.1). Question: accept as is, or run another judge round after fixing the three Important findings? Answer line: `Owner-decision: ai-kit-spec-execute-superpowers accepts FAIL (<date>, <where the owner said it>)` or `Owner-decision: ai-kit-spec-execute-superpowers fix and re-judge`.
+- human_verification SJ-2: ai-kit-spec-execute-superpowers, UNRESOLVED. Round 16 (the extra round the owner asked for) score 98 (>= 96, up from 94 in round 15), 0 Critical and 4 Important open; carried base 110 (Phase 18.1). Question: accept 98 against the base 110, or run another round? Answer line: `Owner-decision: ai-kit-spec-execute-superpowers accepts UNRESOLVED (<date>, <where the owner said it>)`.
 - human_verification SJ-3: ai-kit-project-rules-agents, FAIL. Round 15 score 93 (< 96), 1 Critical and 2 Important open; base 99 (16.1-SKILL-JUDGE-independent.md). The Critical claims an unattended `git restore` can discard uncommitted edits; a `clean` file is tracked and unmodified at backup time and dirty files are restored from the backup, so the claim is a wording issue, not a defect. Question: accept with the Critical refuted, or clarify the text and re-judge? Answer line: `Owner-decision: ai-kit-project-rules-agents accepts FAIL (<date>, <where the owner said it>; Critical refuted)` or `Owner-decision: ai-kit-project-rules-agents clarify and re-judge`.
 
 ## Owner captures (human_verification)
@@ -36,7 +36,7 @@ Evidence rule for every item: env variable names only, redacted paths, no tokens
 
 ## Orchestrator notes
 
-- (a) The three pending verdicts above: execute-gsd UNRESOLVED 101 vs base 105; execute-superpowers FAIL 94; rules-agents FAIL 93, with the owner questions in SJ-1..SJ-3.
+- (a) The three pending verdicts above: execute-gsd UNRESOLVED 101 vs base 105; execute-superpowers UNRESOLVED 98 (round 16); rules-agents FAIL 93, with the owner questions in SJ-1..SJ-3.
 - (b) Unverified inferences (nothing in the phase proves them): pi and codex session file naming; opencode `--max-count 10000`; the opencode JSON shape; the Gradle Kotlin expression; the StopFailure reset-text payload fields (RESEARCH Q5); live pi refusal and skill discovery; the doc-only parallel-test forms (xdist, jest, cargo, Gradle).
 - (c) `tests/test_tool_substitution_hook`: its compose test depends on the checkout path length (the Usage suffix is dropped above 200 characters).
 - (d) Judge non-determinism: an unchanged package moved from 115 to 108 between rounds.

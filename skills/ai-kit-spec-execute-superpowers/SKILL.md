@@ -224,7 +224,8 @@ entry with `purpose = "execute"` that can never execute (a custom `command` entr
 claude pair that does not run natively). STOP and relay its stderr verbatim; any other non-zero
 exit stops the same way.
 
-**If its stderr prints `ignoring untrusted project-local config`**, this resolution used the global
+**If its stderr prints `ai-kit-spec: ignoring untrusted project-local config <path>; review its
+commands with ...`** (match on the whole `ai-kit-spec: ignoring untrusted project-local config` prefix), this resolution used the global
 config only. Ask **once per run**: relay the line verbatim, show
 `python3 "$TOOLS_PY" trust-local --cwd "$CWD" --show` (one JSON line per local reviewer with the
 argv it would run, the prompt shown as `<prompt>`; writes nothing), and ask whether to trust it.
@@ -343,7 +344,7 @@ writes unverified). Every other exec target has full permissions, and its stay-i
 guidance is not a boundary. `claude` is review-only and never runs here. pi exec is verified by the
 runner's hermetic self-test only and live verification is still open (stderr prints that note); a copilot target gets a similar note:
 unverified error rows, all tools allowed, the task prompt visible on argv. **Node:** subprocess
-dispatch needs Node 24 (GSD's floor, unverified; older untested). The runner fails closed as
+dispatch needs Node 24 (`@opengsd/gsd-core` declares `engines.node >=24.0.0`; older untested). The runner fails closed as
 `dispatch_unavailable` (a `real_error` stop) only when `node` is absent; an older Node may crash.
 
 **Rounds 4–5 capability escalation (`external_cli`, and `native` on every host but Claude

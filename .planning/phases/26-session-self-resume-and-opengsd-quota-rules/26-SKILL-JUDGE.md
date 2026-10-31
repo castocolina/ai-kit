@@ -15,7 +15,7 @@ The makefile skill's SKILL.md changed only a count string in this phase and is n
 
 ## Rounds
 
-Fifteen rounds ran; every fix is a `fix(26-11)` commit. Only rounds 1, 2 and 15 keep their reports in
+Sixteen rounds ran; every fix is a `fix(26-11)` commit. Only rounds 1, 2, 15 and 16 keep their reports in
 `skill-judge/` (the others live in the ignored scratch directory).
 
 - Round 1 (Opus, referee-one, referee-two; 15 lanes): all five below the bar. Fixes 71a3db0, 16ddc7f, 4ece930, 8414319.
@@ -24,7 +24,8 @@ Fifteen rounds ran; every fix is a `fix(26-11)` commit. Only rounds 1, 2 and 15 
 - Rounds 4-6 (referee-three): scores 92-104; rules-all and session-wake reached 0/0 in round 6. Fixes ca17d9f, 4a5eafd, 7904a05, 657ac78, 96d85fe.
 - Rounds 7-11 (referee-two and/or referee-three): each round found new, mostly real details in the same packages; fixes 86af192, d288e31, 73ecc81, da88015, f126f18, 9a60f5a, ad03c23, 21601e8, 3905a50, bd8b951, c96bb20, 954f67a, cd83677, 6146ac5, 501e838, 350a9ef.
 - Rounds 12-14 (referee-two): the judge now checks claims against the code; several Critical findings were real (a missing backup on the links-only path, an invented wake session id, the zero-plan scan) and were fixed; others were refuted with evidence in the fix logs (a quoted-glob loop that does expand, `RC=$?` after a command substitution, `check_tool_presence` running repo binaries). Fixes 58bec82, 69bccc0, 76d2a06, b560ddd, 93101a8, d9f7c5a, a8b2f79, 399ea68, 33cbc80, ecb715f, 66c6c79.
-- Round 15 (referee-two alone, final): fixes 28a3c70, 36fec9c, aa81a27 precede it; the verdicts below.
+- Round 15 (referee-two alone): fixes 28a3c70, 36fec9c, aa81a27 precede it.
+- Round 16 (referee-two, execute-superpowers only, requested by the owner for SJ-2): fix dd7b004 precedes it; the score rose from 94 to 98 and the verdict from FAIL to UNRESOLVED. The other four skills keep their round 15 verdicts.
 
 The judge is not deterministic: the session-wake package, unchanged between rounds 13 and 14, went from
 115 with 0 Important to 108 with 1 Important under the same judge. Iterating further does not converge,
@@ -57,16 +58,16 @@ Rule: lowest score 101 (referee-two 101); ((C0 and I2) -> False) or 101 >= 96 ->
 Reports: skill-judge/r15/ai-kit-spec-execute-gsd-my-referee-two.md
 
 Skill: ai-kit-spec-execute-superpowers
-Verdict: FAIL
-Round: 15
-Reviewed-sha256: 3dc6c519ffdd401af64b024d34c5e74899bffab948ee84c4968be0a24e66d79a
+Verdict: UNRESOLVED
+Round: 16
+Reviewed-sha256: 683e3a0c9be177ab0ff81ec767451f1e17a1d6cb7e81730e143ef8ee71fd8e58
 Base score: 110
 Base source: 25.1-SKILL-JUDGE.md, carried from Phase 18.1
-Score: 94
+Score: 98
 Critical findings: 0
-Important findings: 3
-Rule: lowest score 94 (referee-two 94); ((C0 and I3) -> False) or 94 >= 96 -> False; 94 >= 110 -> False.
-Reports: skill-judge/r15/ai-kit-spec-execute-superpowers-my-referee-two.md
+Important findings: 4
+Rule: lowest score 98 (referee-two 98); ((C0 and I4) -> False) or 98 >= 96 -> True; 98 >= 110 -> False.
+Reports: skill-judge/r16/ai-kit-spec-execute-superpowers-my-referee-two.md
 
 Skill: ai-kit-project-rules-agents
 Verdict: FAIL
@@ -109,5 +110,5 @@ rules-agents Critical in round 15 claims an unattended `git restore` can discard
 ## Pending acceptance
 
 - ai-kit-spec-execute-gsd: UNRESOLVED (score 101 >= 96 but below the base 105)
-- ai-kit-spec-execute-superpowers: FAIL (score 94 < 96 with 0 Critical and 3 Important)
+- ai-kit-spec-execute-superpowers: UNRESOLVED (score 98 >= 96 but below the base 110; 4 Important open)
 - ai-kit-project-rules-agents: FAIL (score 93 < 96 with 1 Critical and 2 Important)

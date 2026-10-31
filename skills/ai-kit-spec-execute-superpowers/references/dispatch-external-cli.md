@@ -174,9 +174,11 @@ printf 'RETURNCODE=%s\nRETRY_AFTER_S=%s\nCYCLE=%s\n' "$RETURNCODE" "$RETRY_AFTER
   `INJECTION_JSON.json` as `injection_json`, so the wake re-dispatches this exact injection. Do not
   edit the Step 2 block by hand.
 
-  **Schedule-or-stop.** Only `RETURNCODE` 75 with whole-number `RETRY_AFTER_S` and `CYCLE` gets
-  the one-shot wait and re-dispatch of the same task, lane and model. A runner `RETURNCODE` 69
-  or 75 whose status is `transient` or `quota` reaches this branch; a `RETURNCODE` 69
+  **Schedule-or-stop.** Only a classified `"quota"` with `RETURNCODE` 75 and `RETRY_AFTER_S` and
+  `CYCLE` both matching `[0-9]+` gets the one-shot wait and re-dispatch of the same task, lane and
+  model (a hint such as `600s` classifies `real_error` and never reaches this branch). A tokenless
+  runner `RETURNCODE` 69 or 75 whose status is `transient` or `quota` reaches it as an owner stop;
+  a `RETURNCODE` 69
   (`stopped=hard-waits`, `stopped=cap`, or a `cross-ai: lane stopped=` refusal) is an owner stop
   after relaying the evidence, including that line's state path, whose deletion is the owner's
   reset; schedule nothing and re-arm nothing. A bare `RETURNCODE` 75 is also an owner stop.

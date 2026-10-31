@@ -2817,6 +2817,13 @@ class TestFixRoundAndWakeScope(unittest.TestCase):
         self.assertIn("rounds 1–3 run no resolution and reuse `$INJECTION_JSON`", escalation)
         self.assertNotIn("this round's same `--exclude-keys-json`", escalation)
 
+    def test_schedule_or_stop_requires_classified_quota_and_numeric_tokens(self):
+        flat = self._flat(_SUPER_REFS / "dispatch-external-cli.md")
+        self.assertIn('Only a classified `"quota"` with `RETURNCODE` 75', flat)
+        self.assertIn("both matching `[0-9]+`", flat)
+        skill = " ".join((_SUPER_REFS.parent / "SKILL.md").read_text(encoding="utf-8").split())
+        self.assertIn("`ai-kit-spec: ignoring untrusted project-local config <path>;", skill)
+
     def test_unknown_anchor_stop_comes_before_the_floor_script(self):
         text = (_SUPER_REFS / "escalation.md").read_text(encoding="utf-8")
         self.assertLess(text.index("**An empty or unknown anchor never dispatches.**"),

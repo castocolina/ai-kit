@@ -92,7 +92,7 @@ validated: "2026-10-30"
   (`test_wizard_pty`, `test_hook_registry_e2e`, `test_ai_kit_project_rules_all_e2e`).
 - 26-12-1 `make e2e-docker` was not re-run; the recorded green in `26-OWNER-CAPTURES.md` is trusted.
 - 26-11-2 stays `pending (owner)`: `check_verdicts.py --gate` prints `verdicts ok` then three
-  `gate pending:` lines (execute-gsd UNRESOLVED, execute-superpowers FAIL, project-rules-agents FAIL).
+  `gate pending:` lines (execute-gsd UNRESOLVED, execute-superpowers UNRESOLVED, project-rules-agents FAIL).
   The gate is not weakened.
 - Requirements QTA-04, QTA-05, QTA-06 each have automated rows (3/3). SPEC acceptance criteria: 9 of 11
   automated; "skill-judge" is the pending owner row, "make test/validate green" is the 26-12-1 gate run.
