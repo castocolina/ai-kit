@@ -110,6 +110,18 @@ class TestPhases(unittest.TestCase):
             result = gp_scope.load_phases(tmp, roadmap, ops, ["16"])
         self.assertEqual(result[0].cross_ai_plans, 1)
 
+    def test_symlinked_plan_file_does_not_count_as_cross_ai(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            root = Path(tmp)
+            _, roadmap, ops = self._mixed(root)
+            before = gp_scope.load_phases(tmp, roadmap, ops, ["16"])[0].cross_ai_plans
+            real = fx.write(Path(outside), "plan.md", "---\ncross_ai: true\n---\n")
+            link = root / ".planning" / "phases" / "16-alpha" / "16-03-PLAN.md"
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(real)
+            result = gp_scope.load_phases(tmp, roadmap, ops, ["16"])
+        self.assertEqual(result[0].cross_ai_plans, before)
+
     def test_malformed_roadmap_raises_without_a_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             for roadmap in ({"phases": "nope"}, ["not", "an", "object"], {"phases": [1]}):

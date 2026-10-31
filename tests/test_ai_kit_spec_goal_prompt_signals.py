@@ -149,6 +149,19 @@ class TestSignals(_Project):
         self.assertIs(self.detect()["none"], False)
 
 
+    def test_symlinked_makefile_is_not_read(self):
+        with tempfile.TemporaryDirectory() as outside:
+            fx.makefile(Path(outside), {"e2e": "x"})
+            (self.root / "Makefile").symlink_to(Path(outside) / "Makefile")
+            self.assertEqual(self.commands(), [])
+
+    def test_makefile_is_read_only_up_to_one_mebibyte(self):
+        pad = "# " + "x" * (1 << 20) + "\n"
+        (self.root / "Makefile").write_text("e2e-early:\n\tx\n" + pad + "e2e-late:\n\tx\n",
+                                            encoding="utf-8")
+        self.assertEqual(self.commands(), ["make e2e-early"])
+
+
 class TestPtyAndMarkers(_Project):
     def test_unmapped_unittest_pty_driver_is_inferred(self):
         fx.pty_driver(self.root, "tests/test_wiz.py", "pty")

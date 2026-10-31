@@ -357,6 +357,15 @@ class TestProperties(unittest.TestCase):
         loop = select_for("superpowers", None, session_only, outlive=True)["strategies"][0]
         self.assertIn("dies with the session", loop["reason"])
 
+    def test_an_absent_goal_or_loop_primitive_is_never_offered(self):
+        table = [prim("/goal", "goal", "absent"), prim("/loop", "loop", "absent")]
+        for user in (None, "goal", "loop"):
+            with self.subTest(user=user):
+                result = select_for("superpowers", user, table, outlive=True, provable=True)
+                self.assertEqual(ids(result), ["plain"])
+        asked = select_for("superpowers", "goal", table)
+        self.assertEqual([d["id"] for d in asked["dropped"]], ["goal"])
+
 
 if __name__ == "__main__":
     unittest.main()

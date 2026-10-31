@@ -283,6 +283,16 @@ class TestCli(unittest.TestCase):
         result = self.detect(*self.captures())
         self.assertEqual(result["runner"]["command"], "")
 
+    def test_config_is_read_only_up_to_one_mebibyte(self):
+        fx.opengsd_project(self.repo, PHASES)
+        document = {"workflow": {"cross_ai_command": "node elsewhere/cross-ai.mjs"}}
+        config = self.repo / ".planning" / "config.json"
+        config.write_text(json.dumps(document), encoding="utf-8")
+        self.assertEqual(self.detect(*self.captures())["runner"]["command"],
+                         "node elsewhere/cross-ai.mjs")
+        config.write_text(json.dumps({**document, "pad": "x" * (1 << 20)}), encoding="utf-8")
+        self.assertEqual(self.detect(*self.captures())["runner"]["command"], "")
+
     def test_candidate_skills_are_the_sibling_directories_present(self):
         siblings = self.root / "siblings"
         (siblings / "ai-kit-cross-ai").mkdir(parents=True)

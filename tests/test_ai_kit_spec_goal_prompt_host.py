@@ -682,6 +682,24 @@ class TestReadiness(ReadinessBase):
         self.assertFalse(result["runner_ok"])
         self.assertFalse(result["ready_for_cross_ai"])
 
+    def test_symlinked_config_reads_as_no_config(self):
+        path = os.path.join(self.repo, ".planning", "config.json")
+        outside = os.path.join(self.tmp.name, "outside.json")
+        os.replace(path, outside)
+        os.symlink(outside, path)
+        result, run = self.readiness()
+        self.assertFalse(result["runner_ok"])
+        self.assertIn("no cross_ai_command", result["problems"])
+        self.assertTrue(all("--print-argv" not in call for call in run.calls))
+
+    def test_config_is_read_only_up_to_one_mebibyte(self):
+        config = json.loads(json.dumps(READY_CONFIG))
+        config["pad"] = "x" * (1 << 20)
+        self.write_config(config)
+        result, _ = self.readiness()
+        self.assertFalse(result["runner_ok"])
+        self.assertIn("no cross_ai_command", result["problems"])
+
 
 class TestJev(unittest.TestCase):
     def setUp(self):
