@@ -49,7 +49,7 @@ for n in WAKE_SHIM WAKE_OWNED WAKE_HOST WAKE_ID; do printf '%s=%s\n' "$n" "${!n:
 ```
 
 The `WAKE_*` values now persist for every later task. When `arm` prints a `companion:` line (here
-or at the re-arm below), act on it as [`../ai-kit-session-wake/SKILL.md`](../ai-kit-session-wake/SKILL.md)
+or at the re-arm below), act on it as [`../../ai-kit-session-wake/SKILL.md`](../../ai-kit-session-wake/SKILL.md)
 says under "When `arm` prints a companion time" only; Do NOT load the rest of ai-kit-session-wake
 (this file uses just its `arm` and `done` subcommands).
 
