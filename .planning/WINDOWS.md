@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 3
+open_count: 6
 waived_count: 0
 fixed_count: 0
-total_count: 3
-last_updated: 2026-10-31T14:20:32.696Z
+total_count: 6
+last_updated: 2026-10-31T14:33:13.067Z
 ---
 
 # Broken Windows Ledger
@@ -18,6 +18,9 @@ last_updated: 2026-10-31T14:20:32.696Z
 | 1 | 27 | stub | skills/ai-kit-spec-goal-prompt/SKILL.md |  | Intentional stub SKILL.md; plan 27-10 writes the real skill | open |  | 2026-10-31T13:34:32.748Z |  |
 | 2 | 27 | deviation | skills/ai-kit-spec-goal-prompt/scripts/gp_scope.py |  | detect_scope does not restrict plan files to a requested plans work set (ScopeInputs has no file list); the caller restricts until the CLI plan wires the answers | open |  | 2026-10-31T13:43:40.051Z |  |
 | 3 | 27 | deviation | skills/ai-kit-spec-goal-prompt/scripts/gp_matrix.py |  | A user request for autonomous on a superpowers or none scope has no matrix row (M08 covers gsd-unproven only); the request is ignored, not listed in dropped. Decide: strategy or dropped request | open |  | 2026-10-31T14:20:32.696Z |  |
+| 4 | 27 | stub | skills/ai-kit-spec-goal-prompt/scripts/gp_render.py |  | render raises NotImplementedError for non-OpenGSD scopes and plans work sets until plan 27-07 | open |  | 2026-10-31T14:33:12.924Z |  |
+| 5 | 27 | stub | skills/ai-kit-spec-goal-prompt/scripts/gp_sections.py |  | done_lines raises NotImplementedError for an e2e none result and for mockups until plan 27-08 | open |  | 2026-10-31T14:33:13.001Z |  |
+| 6 | 27 | todo | tests/test_ai_kit_spec_goal_prompt_render.py |  | R18/R19 parity through check_rules is not run in 27-06; owned by 27-09 Task 2 | open |  | 2026-10-31T14:33:13.067Z |  |
 
 ````json
 [
@@ -57,6 +60,45 @@ last_updated: 2026-10-31T14:20:32.696Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-10-31T14:20:32.696Z",
+    "resolved_at": null,
+    "milestone": "v1.3"
+  },
+  {
+    "id": 4,
+    "kind": "stub",
+    "phase": "27",
+    "file": "skills/ai-kit-spec-goal-prompt/scripts/gp_render.py",
+    "line": null,
+    "description": "render raises NotImplementedError for non-OpenGSD scopes and plans work sets until plan 27-07",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-31T14:33:12.924Z",
+    "resolved_at": null,
+    "milestone": "v1.3"
+  },
+  {
+    "id": 5,
+    "kind": "stub",
+    "phase": "27",
+    "file": "skills/ai-kit-spec-goal-prompt/scripts/gp_sections.py",
+    "line": null,
+    "description": "done_lines raises NotImplementedError for an e2e none result and for mockups until plan 27-08",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-31T14:33:13.001Z",
+    "resolved_at": null,
+    "milestone": "v1.3"
+  },
+  {
+    "id": 6,
+    "kind": "todo",
+    "phase": "27",
+    "file": "tests/test_ai_kit_spec_goal_prompt_render.py",
+    "line": null,
+    "description": "R18/R19 parity through check_rules is not run in 27-06; owned by 27-09 Task 2",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-31T14:33:13.067Z",
     "resolved_at": null,
     "milestone": "v1.3"
   }

@@ -5,16 +5,16 @@ milestone_name: GSD Curated Config v2
 current_phase: 27
 current_phase_name: One-shot goal and loop prompt skill
 status: executing
-stopped_at: Completed 27-05-PLAN.md
-last_updated: "2026-10-31T14:20:26.331Z"
+stopped_at: Completed 27-06-PLAN.md
+last_updated: "2026-10-31T14:33:04.105Z"
 last_activity: 2026-10-24
 last_activity_desc: Phase 23 execution started
-state_head: c4f685df05aca5d4d5b08a4d31f8947774f5286f
+state_head: 518697ed0569b1adbaba0bbacc15120e38d7c4d7
 progress:
   total_phases: 18
   completed_phases: 1
   total_plans: 212
-  completed_plans: 203
+  completed_plans: 204
   percent: 6
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 ## Current Position
 
 Phase: 27 (One-shot goal and loop prompt skill) — READY TO EXECUTE
-Plan: 6 of 13
+Plan: 7 of 13
 Status: Ready to execute
 Last activity: 2026-10-24 - Completed quick task 261024-ryk: agent_skills references gsd-core resolves
 
@@ -316,6 +316,7 @@ Progress: [█░░░░░░░░░] 6%
 | Phase 27 P03 | unmeasured | 3 tasks | 4 files |
 | Phase 27 P04 | unmeasured | 2 tasks | 4 files |
 | Phase 27 P05 | unmeasured | 2 tasks | 4 files |
+| Phase 27 P06 | unmeasured | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -445,6 +446,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 27]: Matrix rows are data with plain-value predicates; select dedupes by strategy id (lower rank wins), sorts by (rank, matrix order) and keeps at most three
 - [Phase 27]: A requested goal or loop with no primitive is reported in dropped, never emitted; M09 plain fires only when no other row fired
 - [Phase 27]: must_outlive and provable are derived from the work (count, unattended, e2e, mockups), never asked (D-11)
+- [Phase 27]: Over-200-character fixed rule text is split across rule lines; wording otherwise verbatim (27-06)
+- [Phase 27]: D-28 supersedes D-25 1,500-character figure for the OpenGSD block; 1,800 applies to /goal conditions only (27-06)
+- [Phase 27]: Readiness problems are render warnings in stdout, never written into the goal file (27-06)
 
 ### Pending Todos
 
@@ -611,6 +615,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-31T14:20:25.484Z
-Stopped at: Completed 27-05-PLAN.md
+Last session: 2026-10-31T14:32:56.365Z
+Stopped at: Completed 27-06-PLAN.md
 Resume file: None
