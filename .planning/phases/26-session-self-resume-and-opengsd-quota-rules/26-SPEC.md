@@ -159,6 +159,7 @@ subprocess quota (Phase 25).
    - Acceptance: tests show arm and disarm around a run. No code path writes the other
      mechanism's state file. Skill-judge evidence is committed.
    - *Amended 2026-10-14 (26 D-23):* "multi-plan" means two or more work units: PLAN.md files for `-gsd`, tasks for `-superpowers` (which always runs one plan).
+   - *Amended 2026-10-30 (26 execution, 26-10):* the end step is `done`, not `disarm`: `done` is safe inside a resumed run, while a `disarm` there may wait on its own parent fire's lock.
 
 9. **Parallel tests capped at a CPU share** (QTA-06). *Added 2026-10-14 by uz.*
    - Current: no rule; ai-kit's own runner is fixed in 16.1 D-06, but projects get no such rule.

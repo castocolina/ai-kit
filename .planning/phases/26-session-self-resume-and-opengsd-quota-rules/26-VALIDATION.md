@@ -3,8 +3,8 @@ phase: "26"
 slug: "session-self-resume-and-opengsd-quota-rules"
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: "2026-10-25"
 ---
 
@@ -40,26 +40,50 @@ created: "2026-10-25"
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| (planner) | — | — | QTA-04 | — | survival matrix rows carry a source label; a host with no surviving primitive says so | unit | `tests.test_ai_kit_session_wake` | ❌ W0 | ⬜ pending |
-| (planner) | — | — | QTA-04 | — | arm is atomic, idempotent, refuses a cross-AI child (marker or ancestor scan), keeps no secret in state or units | unit | `tests.test_ai_kit_session_wake` | ❌ W0 | ⬜ pending |
-| (planner) | — | — | QTA-04 | — | liveness by pid + start time + boot id; fire never resumes a live session; one resume per fire under a lock; 24-wake bound | unit | `tests.test_ai_kit_session_wake` | ❌ W0 | ⬜ pending |
-| (planner) | — | — | QTA-04 | — | reset-text parser (spike 004 grammar, rollover, 7-day bound, inferred flag) | unit | `tests.test_ai_kit_session_wake_reset` | ❌ W0 | ⬜ pending |
-| (planner) | — | — | QTA-04 | — | wake package isolated from the Phase 25 subprocess paths (AST rule + non-vacuity) | arch | `--group arch` | ✅ extend | ⬜ pending |
-| (planner) | — | — | QTA-05 | — | R18/R19 only for OpenGSD (`runtime-identity`), unverified notices reach remediate and aggregate | unit | `tests.test_ai_kit_project_rules_agents tests.test_ai_kit_rules_common tests.test_ai_kit_project_rules_all` | ✅ extend | ⬜ pending |
-| (planner) | — | — | QTA-06 | — | parallel-test CPU-share rule per detected stack, 40% cap, no hardcoded count | unit | same | ✅ extend | ⬜ pending |
+| 26-01-1 | 1 | 1 | QTA-04 | T-26-01 | The runner marks every child with AI_KIT_CROSS_AI_CHILD=1, proven end to end by a fake pi that records it | self-test | `AIKIT_XAI_SELFTEST_CASES=child-marker-env node skills/ai-kit-spec-review/references/cross-ai.mjs --self-test` | ✅ | ✅ green |
+| 26-01-2 | 1 | 1 | QTA-04 | T-26-02 | Re-render the dogfood runner through ensure-runner and prove the copy | unit | `python3 tools/run_unittest_parallel.py tests.test_curated_config_script` | ✅ | ✅ green |
+| 26-02-1 | 2 | 2 | QTA-04 | T-26-03, T-26-04, T-26-05, T-26-06 | Arm, host gone, one resume of the exact id, done, everything removed (claude, fakes) | unit | `python3 -m unittest tests.test_ai_kit_session_wake.TestWakeTracer` | ✅ | ✅ green |
+| 26-02-2 | 2 | 2 | QTA-04 | T-26-25 | AST isolation between the session wake and Phase 25, with non-vacuity cases, and rule 8 over the new code and every hook | arch | `python3 tools/run_unittest_parallel.py --group arch` | ✅ | ✅ green |
+| 26-03-1 | 3 | 3 | QTA-04 | T-26-09 | Re-arm from the resumed agent refreshes the pid and keeps everything else, with one timer | unit | `python3 -m unittest tests.test_ai_kit_session_wake.TestRearm` | ✅ | ✅ green |
+| 26-03-2 | 3 | 3 | QTA-04 | T-26-07, T-26-08, T-26-10 | Exact, charset-checked ids, two sessions apart, no secret in any file, atomic writes, a minimal unit env that can start the CLI, linger | unit | `python3 -m unittest tests.test_ai_kit_session_wake.TestArmIdentity tests.test_ai_kit_session_wake.TestArmSafety` | ✅ | ✅ green |
+| 26-03-3 | 3 | 3 | QTA-04 | - | The survival matrix as data, `matrix [--json]`, `status`, and arm picking by survival | unit | `python3 -m unittest tests.test_ai_kit_session_wake.TestMatrix tests.test_ai_kit_session_wake.TestArmPrimitive tests.test_ai_kit_session_wake.TestStatus` | ✅ | ✅ green |
+| 26-04-1 | 4 | 4 | QTA-04 | T-26-14 | A pi session armed through the ancestor walk resumes with `pi -p --session-id` after its host exits | unit | `python3 -m unittest tests.test_ai_kit_session_wake.TestPiTracer` | ✅ | ✅ green |
+| 26-04-2 | 4 | 4 | QTA-04 | T-26-11, T-26-12 | Host-pid sources, the cross-AI child refusal and the permission-mode copy | unit | `python3 -m unittest tests.test_ai_kit_session_wake.TestChildRefusal tests.test_ai_kit_session_wake.TestPermissionMode` | ✅ | ✅ green |
+| 26-04-3 | 4 | 4 | QTA-04 | T-26-13 | Per-host session-exists probes, the opencode and codex rows, and tests of fire's missing-versus-unknown split | unit | `python3 -m unittest tests.test_ai_kit_session_wake.TestSessionProbe` | ✅ | ✅ green |
+| 26-05-1 | 5 | 5 | QTA-04 | T-26-16 | Two concurrent real fire processes on one gone session: one resume, two counted wakes; and every done, disarm or re-arm that lands mid-fire yields no resume | unit (real subprocesses) | `python3 -m unittest tests.test_ai_kit_session_wake_fire.TestOverlap tests.test_ai_kit_session_wake_fire.TestFireInterleaving` | ✅ | ✅ green |
+| 26-05-2 | 5 | 5 | QTA-04 | T-26-15, T-26-17, T-26-18 | Tests of the D-10 order (liveness edges, the arm window, the cap, a missing session, the resume timeout) and the desktop notice | unit | `python3 -m unittest tests.test_ai_kit_session_wake_fire.TestFireSequence tests.test_ai_kit_session_wake_fire.TestGiveUp` | ✅ | ✅ green |
+| 26-05-3 | 5 | 5 | QTA-04 | T-26-15, T-26-40 | Disarm and done under every trigger: nothing armed, lock wait, inside a fire child, idle done | unit | `python3 -m unittest tests.test_ai_kit_session_wake_fire.TestDisarm` | ✅ | ✅ green |
+| 26-06-1 | 6 | 6 | QTA-04 | T-26-19 | A session-limit line becomes a reset + 60 s timer line, an inferred status, and a not-before the fire honors | unit | `python3 -m unittest tests.test_ai_kit_session_wake_reset.TestResetTracer` | ✅ | ✅ green |
+| 26-06-2 | 6 | 6 | QTA-04 | T-26-20, T-26-21 | The reset grammar, rollover, 7-day bounds, zones, --reset-at forms, redaction and the length cap | unit | `python3 tools/run_unittest_parallel.py tests.test_ai_kit_session_wake_reset` | ✅ | ✅ green |
+| 26-06-3 | 6 | 6 | QTA-04 | T-26-41 | Arm rolls back a failed first arm and a failed refresh (moved here from 26-03) | unit | `python3 -m unittest tests.test_ai_kit_session_wake.TestArmRollback` | ✅ | ✅ green |
+| 26-07-1 | 7 | 7 | QTA-04 | T-26-20, T-26-22, T-26-23, T-26-24 | A StopFailure payload with the reset text moves an armed wake to reset + 60 s through the real hook script | unit | `python3 -m unittest tests.test_claude_session_wake_hook` | ✅ | ✅ green |
+| 26-07-2 | 7 | 7 | QTA-04 | T-26-23 | Register the session-wake hook (opt-in, experimental) and update every hook-id pin and doc | unit, integration, e2e | `python3 tools/run_unittest_parallel.py tests.test_hook_registry`; `uv run python tools/run_unittest_parallel.py tests.test_wizard_pty tests.test_hook_registry_e2e` | ✅ | ✅ green |
+| 26-08-1 | 8 | 8 | QTA-05 | T-26-26, T-26-29 | An OpenGSD project gets R18 and R19 end to end, and an unprovable one gets a notice in remediate and the aggregate | unit | `python3 -m unittest tests.test_ai_kit_project_rules_agents.TestOpenGsdRules` | ✅ | ✅ green |
+| 26-08-2 | 8 | 8 | QTA-05 | T-26-29, T-26-44 | Re-pin the six shape tests and move the real-dispatch tests to the e2e tier, then commit with Task 1 | unit, e2e | `python3 tools/run_unittest_parallel.py tests.test_ai_kit_project_rules_arch tests.test_ai_kit_project_rules_docker tests.test_ai_kit_project_rules_precommit`; `uv run python tools/run_unittest_parallel.py tests.test_ai_kit_project_rules_all_e2e` | ✅ | ✅ green |
+| 26-08-3 | 8 | 8 | QTA-05 | T-26-27, T-26-28 | Identity strictness, original GSD, one directive of two, no AGENTS.md, disjoint signals, the pointer sync and non-vacuity | unit | `python3 -m unittest tests.test_ai_kit_rules_common.TestGsdIdentity` | ✅ | ✅ green |
+| 26-09-1 | 9 | 9 | QTA-06 | T-26-31 | A python repo without the rule gets R20 missing, and its remediation text, written back, makes R20 present | unit | `python3 -m unittest tests.test_ai_kit_project_rules_agents.TestParallelTestRule tests.test_ai_kit_project_rules_agents.TestRuleCountStrings` | ✅ | ✅ green |
+| 26-09-2 | 9 | 9 | QTA-06 | T-26-30 | Every stack, multi-stack order and dedupe, no stack, the 40% boundary, literal counts, unknown stacks and the table guard | unit | `python3 tools/run_unittest_parallel.py tests.test_ai_kit_project_rules_agents tests.test_ai_kit_rules_common` | ✅ | ✅ green |
+| 26-10-1 | 10 | 10 | QTA-04 | T-26-32, T-26-33 | The session-wake SKILL.md, whose own resolve-and-arm block arms a scratch session as written | unit (doc block run) | `python3 -m unittest tests.test_ai_kit_session_wake.TestSessionWakeSkillText` | ✅ | ✅ green |
+| 26-10-2 | 10 | 10 | QTA-04 | - | Link the skill for pi through PI_SKILLS | unit, e2e | `python3 tools/run_unittest_parallel.py tests.test_setup` | ✅ | ✅ green |
+| 26-10-3 | 10 | 10 | QTA-04 | T-26-34, T-26-42 | Both executors arm the wake for multi-unit runs and run `done` when their job ends | unit (doc block run) | `python3 -m unittest tests.test_ai_kit_spec_gsd.TestSessionWakeStep tests.test_ai_kit_spec_superpowers.TestSessionWakeStep` | ✅ | ✅ green |
+| 26-11-1 | 11 | 11 | QTA-04, QTA-05, QTA-06 | T-26-37 | Round 1 on all five skills with digest-bound reports, then fixes | manual (judge lanes) | report presence check in Task 1 verify | ✅ | ✅ green |
+| 26-11-2 | 11 | 11 | QTA-04, QTA-05, QTA-06 | T-26-35, T-26-36, T-26-43 | Re-judge rounds until each skill is terminal, the verdict file, and the checker that reproduces it | script | `python3 .planning/phases/26-session-self-resume-and-opengsd-quota-rules/skill-judge/check_verdicts.py .planning/phases/26-session-self-resume-and-opengsd-quota-rules --gate` | ✅ | ⚠️ pending (owner) |
+| 26-12-1 | 12 | 12 | QTA-04, QTA-05, QTA-06 | T-26-38 | Every gate green at the phase tip, then the live checks from the branch | gates, live | `make test validate e2e-docker` | ✅ | ✅ green |
+| 26-12-2 | 12 | 12 | QTA-04, QTA-05, QTA-06 | T-26-39 | Stage the owner captures and fill the validation map | doc check | Task 2 verify | ✅ | ✅ green |
+| 26-12-3 | 12 | 12 | QTA-04, QTA-05, QTA-06 | T-26-39 | Amend REQUIREMENTS, ROADMAP and the SPEC where this phase's facts changed them | doc check | Task 3 verify | ✅ | ✅ green |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky. 26-11-2 is `pending (owner)`: `check_verdicts.py --gate` prints three `gate pending:` lines (see `26-OWNER-CAPTURES.md`).*
 
 ---
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_ai_kit_session_wake.py` and `tests/test_ai_kit_session_wake_reset.py` (QTA-04)
-- [ ] fake `systemctl`/`loginctl`/host-CLI fixtures on a scratch PATH (reuse the `fake_bin`/`scoped_env` shape)
-- [ ] a `tests/test_arch.py` rule class for the wake package plus its non-vacuity counterpart
-- [ ] `skills/_shared/ai_kit_rules_common/gsd_identity.py` fixtures `ok|unverified|absent` (fake `run_fn`, sentinel secret)
-- [ ] R18-R20 fixtures (python, node, go, rust, multi-stack, none)
-- [ ] `pyproject.toml` pyright `extraPaths`; `tools/gen_test_groups.py` regenerated
+- [x] `tests/test_ai_kit_session_wake.py` and `tests/test_ai_kit_session_wake_reset.py` (QTA-04)
+- [x] fake `systemctl`/`loginctl`/host-CLI fixtures on a scratch PATH (reuse the `fake_bin`/`scoped_env` shape)
+- [x] a `tests/test_arch.py` rule class for the wake package plus its non-vacuity counterpart
+- [x] `skills/_shared/ai_kit_rules_common/gsd_identity.py` fixtures `ok|unverified|absent` (fake `run_fn`, sentinel secret)
+- [x] R18-R20 fixtures (python, node, go, rust, multi-stack, none)
+- [x] `pyproject.toml` pyright `extraPaths`; `tools/gen_test_groups.py` regenerated
 
 ---
 
@@ -67,19 +91,19 @@ created: "2026-10-25"
 
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
-| A persistent user timer survives a reboot; a fresh enable fires; a running oneshot removes its own unit | QTA-04 | needs a reboot and a real armed wake | owner capture: throwaway arm/fire/disarm, then a reboot check (human_verification) |
-| Headless `claude -p` exit during a usage limit; `StopFailure` payload | QTA-04 | cannot induce a limit safely | owner capture at the next real limit |
-| Skill-judge verdicts | QTA-04 | real model calls by the judge lanes | orchestrator judge loop |
+| A persistent user timer survives a reboot; a fresh enable fires; a running oneshot removes its own unit | QTA-04 | needs a reboot and a real armed wake | owner capture items 1 and 8 in `26-OWNER-CAPTURES.md` |
+| Headless `claude -p` exit during a usage limit; `StopFailure` payload | QTA-04 | cannot induce a limit safely | owner capture items 2 and 3 in `26-OWNER-CAPTURES.md` |
+| Skill-judge verdicts | QTA-04 | real model calls by the judge lanes | orchestrator judge loop; three pending verdicts are owner captures SJ-1..SJ-3 |
 
 ---
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 60s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 60s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** pending (validate-phase sets `status`; skill-judge acceptance is pending the owner)

@@ -955,6 +955,7 @@ right session; codex, pi and opencode facts are third-party only so far.
      survival. Unverified host behavior is flagged.
   2. The main agent sets an hourly wake that re-enters the same session; the session-resume
      mechanism and the subprocess mechanism (Phase 25) stay separate, each with its own trigger.
+     *(amended 2026-10-30, 26 execution: a cross-AI child is refused through the runner marker `AI_KIT_CROSS_AI_CHILD`; pi and opencode arm with an explicit `--session-id`; a background host records `permission_mode: unknown`; a live stall whose reset time is unknown is not woken until the process exits or the owner sends a message, since the in-session companion is a one-shot at a known reset only.)*
   5. *(Added 2026-10-24, 25.1.)* When the stalled session's host reports a reset time (in its
      own words or a structured field the agent reads), the wake is set at that time plus 60 s and the
      inference is flagged; without one, the hourly wake stands. When the subprocess hard tier
@@ -967,7 +968,7 @@ right session; codex, pi and opencode facts are third-party only so far.
      project with a detected stack: AGENTS.md says unit tests run in parallel, with workers capped
      at 40% of the available CPUs and never a hardcoded core count, in the detected stack's own
      form. Remediation writes that form into the rules section.
-**Plans**: TBD
+**Plans**: 12/12 plans executed *(set 2026-10-30, 26 execution)*
 - [x] 26-01-PLAN.md
 - [x] 26-02-PLAN.md
 - [x] 26-03-PLAN.md
@@ -979,7 +980,7 @@ right session; codex, pi and opencode facts are third-party only so far.
 - [x] 26-09-PLAN.md
 - [x] 26-10-PLAN.md
 - [x] 26-11-PLAN.md
-- [ ] 26-12-PLAN.md
+- [x] 26-12-PLAN.md
 
 ### Phase 27: One-shot goal and loop prompt skill
 

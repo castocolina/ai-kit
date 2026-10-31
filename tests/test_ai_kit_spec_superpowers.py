@@ -2928,7 +2928,7 @@ class TestJsonFilesAndOwnerNamedPair(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.root, "pwned")))
         self.assertNotEqual(0, self._bash(block, **{**env, "TASK_N": "3"}).returncode)
 
-    def _seed_pair(self, owner_in_ladder=True):
+    def _seed_pair(self):
         self._put("INJECTION_JSON", {"mode": "external_cli", "key": "a/one",
                                      "ladder_keys": ["a/one", "b/two", "c/three"]})
         self._put("PRIOR_EXCLUDED_KEYS_JSON", ["z/old"])
