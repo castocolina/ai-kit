@@ -18,7 +18,6 @@ from gp_scope import Plan, dependents, execution_order
 
 __all__ = [
     "GSD_FAMILIES",
-    "TURN_CAP",
     "Work",
     "assemble_rails",
     "cleanup_lines",
@@ -40,9 +39,12 @@ __all__ = [
     "strategy_heading",
     "superpowers_order_lines",
     "superpowers_rule_lines",
+    "turn_cap",
+    "work_items",
 ]
 
-TURN_CAP = 200
+TURN_FLOOR = 60
+TURN_PER_ITEM = 40
 GSD_FAMILIES = ("opengsd", "gsd-unproven")
 GOAL_EVIDENCE = "exit code and count line"
 UNIT_CLAUSE = "Unit tests alone never count as done."
@@ -83,6 +85,18 @@ GAP_KINDS = (
     ),
     ("Already verified (verify only)", lambda p: p["has_verification"]),
 )
+CREATE_FIRST = (
+    "No e2e suite exists. The first task, before any feature plan, creates one that launches the "
+    "real app (a PTY drive for a terminal UI, a browser for a web UI) and make it pass."
+)
+EVIDENCE = (
+    "Print each command with its exact exit code, its count line and the last 20 lines of "
+    "output, ANSI codes stripped."
+)
+MOCKUP_REVIEW = (
+    "Mockup fidelity: capture e2e screenshots or TUI text snapshots, print their paths, and list "
+    "them for human review against {mockups}. No automated judge decides it."
+)
 DONE_TAIL = (
     "Print the paths of the screenshots or TUI text snapshots the e2e run produced.",
     "Start each long-lived e2e process in its own process group and record its group id in "
@@ -92,6 +106,16 @@ DONE_TAIL = (
     "human verification with its reason.",
     "Unit tests alone never count as done.",
 )
+
+
+def turn_cap(items: int) -> int:
+    """The turn cap in STOP IF and in a /goal condition: 40 turns per item, never below 60."""
+    return max(TURN_FLOOR, TURN_PER_ITEM * items)
+
+
+def work_items(work: Work) -> int:
+    """The items the turn cap counts: phases, else plans, else one free-text task."""
+    return len(work.phases) or len(work.plans) or 1
 
 
 def _one_line(text: str) -> str:
@@ -180,15 +204,13 @@ def superpowers_order_lines(plans: Sequence[Plan], order: Sequence[str]) -> list
     return lines
 
 
-def goal_block(
-    path: str, objective: str, turn_cap: int, evidence: str = GOAL_EVIDENCE
-) -> list[str]:
+def goal_block(path: str, objective: str, cap: int, evidence: str = GOAL_EVIDENCE) -> list[str]:
     """One `/goal` line: the objective, the rails section and DONE WHEN, evidence, a turn cap."""
     condition = _one_line(
         f"{objective} Done when every DONE WHEN item in {path} section Rails holds, with the "
         f"{evidence} of "
         f"every command printed. {UNIT_CLAUSE} If it does not hold, stop and report after "
-        f"{turn_cap} turns."
+        f"{cap} turns."
     )
     return [f"/goal {condition}"]
 
@@ -222,14 +244,24 @@ def strategy_heading(strategy: Mapping[str, Any], index: int) -> str:
     return f"## Strategy {index}{recommended}: {strategy['id']}{flag}{label}"
 
 
-def order_lines(phases: Sequence[Mapping[str, Any]]) -> list[str]:
-    """Numeric order, then one line per gap kind that has at least one phase."""
+def order_lines(phases: Sequence[Mapping[str, Any]], native: bool = False) -> list[str]:
+    """Numeric order, then one line per gap kind that has at least one phase. Native execution
+    keeps its plans without cross_ai: true, so it never lists the cross_ai gap."""
     ordered = sorted(phases, key=lambda p: phase_key(p["number"]))
     lines = [f"Phases in numeric order: {', '.join(p['number'] for p in ordered)}."]
     for label, applies in GAP_KINDS:
         listed = [p["number"] for p in ordered if applies(p)]
         if listed:
             lines.append(f"{label}: {', '.join(listed)}.")
+    if not native:
+        missing = [
+            p["number"]
+            for p in ordered
+            if p["plan_count"] > 0 and p["cross_ai_plans"] < p["plan_count"]
+        ]
+        if missing:
+            names = ", ".join(missing)
+            lines.append(f"Existing plans missing cross_ai: true (add it, then execute): {names}.")
     return lines
 
 
@@ -286,10 +318,10 @@ def cleanup_lines() -> list[str]:
     ]
 
 
-def stop_lines(turn_cap: int, opengsd: bool) -> list[str]:
+def stop_lines(cap: int, opengsd: bool) -> list[str]:
     lines = [
         "The same failure repeats 3 times with no progress.",
-        f"Stop after {turn_cap} turns and report.",
+        f"Stop after {cap} turns and report.",
         "A decision blocks other work and nothing resolves it.",
         "A step needs a real config write, a login or sudo.",
     ]
@@ -306,8 +338,9 @@ def report_lines(jev: Mapping[str, Any]) -> list[str]:
     ]
     if jev.get("usable"):
         lines.append(
-            "Advisory (not a gate): run one decide.py choice item, objectives all, mostly, partly "
-            "or not met, from text summaries only; report the answer under that heading."
+            "Advisory (not a gate): run one choice item through the decide.py ladder, objectives "
+            "all, mostly, partly or not met, from text summaries only; report the answer under "
+            "that heading."
         )
     else:
         reason = _one_line(jev.get("reason") or "no usable backend")
@@ -329,31 +362,39 @@ def _marker_labels(commands: Sequence[Mapping[str, str]]) -> str:
     return "; ".join(labels)
 
 
-def done_lines(e2e: Mapping[str, Any], mockups: Sequence[Any]) -> list[str]:
-    """DONE WHEN for detected e2e commands. The none case and mockups arrive in plan 27-08."""
-    if e2e.get("none") or mockups:
-        raise NotImplementedError("DONE WHEN without e2e commands or with mockups: plan 27-08")
-    gates = list(e2e.get("gates") or [])
-    gate_text = ", ".join(gates) or (
-        "the project's lint and unit commands (none detected: find them)"
-    )
-    lines = [
-        "Print each command with its exact exit code, its count line and the last 20 lines of "
-        "output, ANSI codes stripped.",
-        f"Gates first: {gate_text}.",
-    ]
-    for entry in e2e["commands"]:
+def _e2e_lines(commands: Sequence[Mapping[str, str]]) -> list[str]:
+    lines = []
+    for entry in commands:
         inferred = entry["confidence"] == "inferred"
         suffix = " (inferred: confirm it runs the real app)" if inferred else ""
         lines.append(
             f"E2E: `{entry['command']}` exits 0 and prints a test count above zero. Exit 0 with a "
             f"zero count is not green.{suffix}"
         )
-    markers = _marker_labels(e2e["commands"])
-    if markers:
-        lines.append(f"Zero-count markers: {markers}.")
-    else:
-        lines.append("Zero-count markers: read the count line yourself.")
+    markers = _marker_labels(commands)
+    lines.append(
+        f"Zero-count markers: {markers}."
+        if markers
+        else "Zero-count markers: read the count line yourself."
+    )
+    return lines
+
+
+def done_lines(e2e: Mapping[str, Any], mockups: Sequence[Any]) -> list[str]:
+    """DONE WHEN: the create-first task when no e2e suite exists, the detected e2e commands
+    otherwise, and a human-review line when mockups are given. Free text collapses to one line."""
+    gates = list(e2e.get("gates") or [])
+    gate_text = ", ".join(gates) or (
+        "the project's lint and unit commands (none detected: find them)"
+    )
+    none = bool(e2e.get("none"))
+    lines = [CREATE_FIRST] if none else []
+    lines += [EVIDENCE, f"Gates first: {gate_text}."]
+    if not none:
+        lines += _e2e_lines(e2e["commands"])
+    if mockups:
+        names = ", ".join(_one_line(mockup) for mockup in mockups)
+        lines.append(MOCKUP_REVIEW.format(mockups=names))
     lines += list(DONE_TAIL)
     return lines
 
@@ -375,7 +416,7 @@ def _rules_and_order(
     skills = detect["candidate_skills"]
     if work.family in GSD_FAMILIES:
         native = bool(answers.get("native_execution"))
-        return plan_rule_lines(skills, native), order_lines(work.phases)
+        return plan_rule_lines(skills, native), order_lines(work.phases, native)
     if work.family == "superpowers":
         return superpowers_rule_lines(skills), superpowers_order_lines(
             work.plans, execution_order(work.plans)
@@ -402,6 +443,6 @@ def rail_sections(
         ("SAFETY", safety_lines()),
         ("DONE WHEN", done_lines(detect["e2e"], answers.get("mockups") or [])),
         ("CLEANUP", cleanup_lines()),
-        ("STOP IF", stop_lines(TURN_CAP, work.family == "opengsd")),
+        ("STOP IF", stop_lines(turn_cap(work_items(work)), work.family == "opengsd")),
         ("REPORT", report_lines(detect["jev"])),
     ]

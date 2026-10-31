@@ -24,7 +24,7 @@ from gp_common import GuardError, is_machine_path, phase_key, scan_text, slugify
 from gp_scope import Plan
 from gp_sections import (
     GSD_FAMILIES,
-    TURN_CAP,
+    TURN_FLOOR,
     Work,
     assemble_rails,
     goal_block,
@@ -33,6 +33,8 @@ from gp_sections import (
     plain_block,
     rail_sections,
     strategy_heading,
+    turn_cap,
+    work_items,
 )
 
 __all__ = [
@@ -148,6 +150,8 @@ def check_fields(answers: Mapping[str, Any], home: str) -> None:
     work_set = answers.get("work_set") or {}
     if any(is_machine_path(str(path), home) for path in work_set.get("files") or []):
         raise GuardError("field work_set.files holds a machine path")
+    if any(is_machine_path(str(path), home) for path in answers.get("mockups") or []):
+        raise GuardError("field mockups holds a machine path")
 
 
 def _fenced_blocks(lines: list[str]) -> tuple[list[list[str]], bool]:
@@ -316,12 +320,14 @@ class RenderContext(NamedTuple):
 
 class BlockView(NamedTuple):
     """What the blocks need: the file's repo-relative path, the objective clause for a `/goal`
-    condition, the flags-only `/gsd-autonomous` line ("" when there is none), and the rails."""
+    condition, the flags-only `/gsd-autonomous` line ("" when there is none), the rails and the
+    turn cap (the floor when a caller does not derive one)."""
 
     path: str
     objective: str
     first_line: str
     rails: str
+    turn_cap: int = TURN_FLOOR
 
 
 class Block(NamedTuple):
@@ -348,7 +354,7 @@ def _one_block(strategy: Mapping[str, Any], heading: str, view: BlockView) -> Bl
         text = fill("BLOCK_INLINE", {"FIRST_LINE": view.first_line, "RAILS": view.rails})
         return Block(heading, text, "", True)
     if kind == "goal":
-        lines = goal_block(view.path, view.objective, TURN_CAP)
+        lines = goal_block(view.path, view.objective, view.turn_cap)
     elif kind == "loop":
         lines = loop_block(view.path, strategy.get("primitive"))
     elif kind == "plain":
@@ -421,12 +427,8 @@ def write_atomic(repo: str, relpath: str, text: str) -> None:
 
 
 def _readiness_warnings(readiness: Mapping[str, Any]) -> list[str]:
-    checks = {
-        "runner_ok": "cross-AI runner not ready",
-        "cli_listed": "runner lists no installed CLI",
-        "reviewers_ok": "a default reviewer CLI is missing",
-    }
-    return [message for key, message in checks.items() if readiness.get(key) is False]
+    """Stdout-only warnings from the readiness problems; they never enter the goal file."""
+    return [f"cross-AI readiness failed: {problem}" for problem in readiness.get("problems") or []]
 
 
 def _plan(entry: Mapping[str, Any]) -> Plan:
@@ -442,7 +444,10 @@ def _plan(entry: Mapping[str, Any]) -> Plan:
 def _phase_work(scope: Mapping[str, Any], work_set: Mapping[str, Any]) -> Work:
     if scope["kind"] not in GSD_SCOPE_KINDS:
         raise GuardError("phases work set needs a GSD scope in the detect result")
-    numbers = sorted({str(n) for n in work_set.get("numbers") or []}, key=phase_key)
+    try:
+        numbers = sorted({str(n) for n in work_set.get("numbers") or []}, key=phase_key)
+    except ValueError as exc:
+        raise GuardError("a phase number is not a dotted integer") from exc
     selected = [p for p in scope["phases"] if str(p["number"]) in numbers]
     if not numbers or {str(p["number"]) for p in selected} != set(numbers):
         raise GuardError("a phase in the work set is not in the detected scope")
@@ -546,6 +551,7 @@ def render(
         objective=" ".join(objective_lines(answers, work.scope_desc)),
         first_line=_autonomous_line(work),
         rails=rails,
+        turn_cap=turn_cap(work_items(work)),
     )
     blocks = build_blocks(strategies, view)
     text = _compose(
@@ -577,6 +583,8 @@ def render(
         "paste_chars": sum(len(block.text) for block in blocks),
         "rails_lines": len(_rule_lines(rails.split("\n"))),
         "warnings": (
-            _readiness_warnings(detect["readiness"]) if work.family in GSD_FAMILIES else []
+            _readiness_warnings(detect["readiness"])
+            if work.family in GSD_FAMILIES and not answers.get("native_execution")
+            else []
         ),
     }

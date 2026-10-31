@@ -275,8 +275,9 @@ class TestTemplateAndSections(unittest.TestCase):
     def test_report_lines_name_jev_only_with_advisory(self):
         usable = gp_sections.report_lines({"usable": True, "reason": ""})
         self.assertIn(
-            "Advisory (not a gate): run one decide.py choice item, objectives all, mostly, "
-            "partly or not met, from text summaries only; report the answer under that heading.",
+            "Advisory (not a gate): run one choice item through the decide.py ladder, objectives "
+            "all, mostly, partly or not met, from text summaries only; report the answer under "
+            "that heading.",
             usable,
         )
         omitted = gp_sections.report_lines({"usable": False, "reason": "no consent on file"})
@@ -552,11 +553,15 @@ class TestDoneLines(unittest.TestCase):
             gp_sections.done_lines(e2e, []),
         )
 
-    def test_e2e_none_and_mockups_point_to_plan_27_08(self):
-        with self.assertRaisesRegex(NotImplementedError, "27-08"):
-            gp_sections.done_lines({"commands": [], "gates": [], "none": True}, [])
-        with self.assertRaisesRegex(NotImplementedError, "27-08"):
-            gp_sections.done_lines(make_detect()["e2e"], ["shot.png"])
+    def test_e2e_none_opens_with_the_create_first_task_and_mockups_add_the_review_line(self):
+        lines = gp_sections.done_lines({"commands": [], "gates": [], "none": True}, [])
+        self.assertTrue(lines[0].startswith("No e2e suite exists. The first task"), lines[0])
+        review = gp_sections.done_lines(make_detect()["e2e"], ["shot.png"])
+        self.assertIn(
+            "Mockup fidelity: capture e2e screenshots or TUI text snapshots, print their paths, "
+            "and list them for human review against shot.png. No automated judge decides it.",
+            review,
+        )
 
 
 class TestPlacement(unittest.TestCase):
@@ -694,11 +699,17 @@ class TestRenderOpenGsd(unittest.TestCase):
 
     def test_readiness_problems_are_warnings_never_written_into_the_file(self):
         detect = make_detect(
-            readiness={"runner_ok": False, "cli_listed": True, "reviewers_ok": True, "label": ""}
+            readiness={
+                "runner_ok": False,
+                "cli_listed": True,
+                "reviewers_ok": True,
+                "problems": ["runner script missing"],
+                "label": "",
+            }
         )
         result = gp_render.render(detect, make_answers(), self._ctx())
-        self.assertEqual(result["warnings"], ["cross-AI runner not ready"])
-        self.assertNotIn("cross-AI runner not ready", self._read(result))
+        self.assertEqual(result["warnings"], ["cross-AI readiness failed: runner script missing"])
+        self.assertNotIn("cross-AI readiness failed", self._read(result))
 
     def test_rendering_twice_yields_two_files(self):
         first = gp_render.render(make_detect(), make_answers(), self._ctx())

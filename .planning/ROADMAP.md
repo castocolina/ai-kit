@@ -1008,7 +1008,7 @@ tests. Source: the same todo (part 2).
   4. jev is used only for advisory, text-based checks (e.g. how close the delivered work is to
      the stated objectives); never as a gate and never to judge UI quality or mockup fidelity,
      since it answers typed questions on text. The skill passes `/skill-judge`.
-**Plans**: 7/14 plans executed *(planned 2026-10-31; 27-14 added 2026-10-31 for the new skill-judge)*
+**Plans**: 8/14 plans executed *(planned 2026-10-31; 27-14 added 2026-10-31 for the new skill-judge)*
 **Wave 1**
 - [x] 27-01-PLAN.md - shared helpers with parity tests, fixtures, skill stub
 
@@ -1027,7 +1027,7 @@ tests. Source: the same todo (part 2).
 - [x] 27-07-PLAN.md - goal, loop and plain blocks, superpowers rails
 
 **Wave 6** *(blocked on Wave 5 completion)*
-- [ ] 27-08-PLAN.md - done-when variants, advisory jev step, cross_ai gaps
+- [x] 27-08-PLAN.md - done-when variants, advisory jev step, cross_ai gaps
 
 **Wave 7** *(blocked on Wave 6 completion)*
 - [ ] 27-09-PLAN.md - CLI, property sweep, golden, parity, e2e tier
