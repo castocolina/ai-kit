@@ -5157,7 +5157,8 @@ class TestCmdInstallExternalReconcile(unittest.TestCase):
         with mock.patch.object(setup, "launch_wizard", return_value=fake_result), \
              mock.patch.object(setup, "resolve_paths", return_value=mock.MagicMock(
                  install_dir="/fake", config_dir="/fake/cfg",
-                 claude_dir="/fake/.claude")), \
+                 claude_dir="/fake/.claude",
+                 settings="/fake/.claude/settings.json")), \
              mock.patch.object(setup, "enumerate_entries", return_value={
                  "agents": [], "commands": [], "skills": []}), \
              mock.patch.object(setup, "new_counts",
@@ -5194,7 +5195,8 @@ class TestCmdInstallExternalReconcile(unittest.TestCase):
         with mock.patch.object(setup, "launch_wizard", return_value=None), \
              mock.patch.object(setup, "resolve_paths", return_value=mock.MagicMock(
                  install_dir="/fake", config_dir="/fake/cfg",
-                 claude_dir="/fake/.claude")), \
+                 claude_dir="/fake/.claude",
+                 settings="/fake/.claude/settings.json")), \
              mock.patch.object(setup, "enumerate_entries", return_value={
                  "agents": [], "commands": [], "skills": []}), \
              mock.patch.object(setup, "new_counts",
@@ -5230,7 +5232,8 @@ class TestCmdInstallExternalReconcile(unittest.TestCase):
         with mock.patch.object(setup, "launch_wizard", return_value=fake_result), \
              mock.patch.object(setup, "resolve_paths", return_value=mock.MagicMock(
                  install_dir="/fake", config_dir="/fake/cfg",
-                 claude_dir="/fake/.claude")), \
+                 claude_dir="/fake/.claude",
+                 settings="/fake/.claude/settings.json")), \
              mock.patch.object(setup, "enumerate_entries", return_value={
                  "agents": [], "commands": [], "skills": []}), \
              mock.patch.object(setup, "new_counts",

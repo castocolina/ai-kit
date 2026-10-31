@@ -5,16 +5,16 @@ milestone_name: GSD Curated Config v2
 current_phase: 27
 current_phase_name: One-shot goal and loop prompt skill
 status: executing
-stopped_at: Completed 27-10-PLAN.md
-last_updated: "2026-10-31T15:21:02.293Z"
+stopped_at: Completed 27-11-PLAN.md
+last_updated: "2026-10-31T15:32:00.863Z"
 last_activity: 2026-10-24
 last_activity_desc: Phase 23 execution started
-state_head: b1ff8df20a0326f5e1e23872b3697334764a571d
+state_head: dcb103ce3b591e7c52deb651ad2929136dfffcfd
 progress:
   total_phases: 18
   completed_phases: 1
   total_plans: 212
-  completed_plans: 208
+  completed_plans: 209
   percent: 6
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 ## Current Position
 
 Phase: 27 (One-shot goal and loop prompt skill) — READY TO EXECUTE
-Plan: 11 of 13
+Plan: 12 of 13
 Status: Ready to execute
 Last activity: 2026-10-24 - Completed quick task 261024-ryk: agent_skills references gsd-core resolves
 
@@ -460,6 +460,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 27]: 27-09 R18/R19 parity runs through check_rules on the generated QUOTA text and the golden pins the recommended OpenGSD case (closes WINDOWS #6)
 - [Phase 27]: Skill passes --gsd-cmd: detect exits 2 on a .planning project without a GSD capture (observed)
 - [Phase 27]: Drift tests pin SKILL.md prose to the RULES ids, ZERO_TEST_MARKERS labels, the parser flags and the golden excerpt
+- [Phase 27]: 27-11: PI_SKILLS unchanged; the goal-prompt skill needs no pi link (plan states pi has no goal primitive, not re-verified)
+- [Phase 27]: 27-11: _PTY_ROWS stays 160; the wizard PTY suite passed with the goal-prompt skill added
 
 ### Pending Todos
 
@@ -626,6 +628,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-31T15:21:01.422Z
-Stopped at: Completed 27-10-PLAN.md
+Last session: 2026-10-31T15:32:00.014Z
+Stopped at: Completed 27-11-PLAN.md
 Resume file: None

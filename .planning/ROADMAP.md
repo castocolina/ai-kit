@@ -1008,7 +1008,7 @@ tests. Source: the same todo (part 2).
   4. jev is used only for advisory, text-based checks (e.g. how close the delivered work is to
      the stated objectives); never as a gate and never to judge UI quality or mockup fidelity,
      since it answers typed questions on text. The skill passes `/skill-judge`.
-**Plans**: 10/14 plans executed *(planned 2026-10-31; 27-14 added 2026-10-31 for the new skill-judge)*
+**Plans**: 11/14 plans executed *(planned 2026-10-31; 27-14 added 2026-10-31 for the new skill-judge)*
 **Wave 1**
 - [x] 27-01-PLAN.md - shared helpers with parity tests, fixtures, skill stub
 
@@ -1036,7 +1036,7 @@ tests. Source: the same todo (part 2).
 - [x] 27-10-PLAN.md - SKILL.md, references and drift tests
 
 **Wave 9** *(blocked on Wave 8 completion)*
-- [ ] 27-11-PLAN.md - README, installer smoke, wizard PTY
+- [x] 27-11-PLAN.md - README, installer smoke, wizard PTY
 
 **Wave 10** *(blocked on Wave 9 completion)*
 - [ ] 27-14-PLAN.md - skill README, evals, trigger queries, script smoke

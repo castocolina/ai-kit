@@ -2943,7 +2943,9 @@ class TestRound21OneRule(unittest.TestCase):
 
     def test_quota_wake_prompt_order_is_bind_paths_resume_found_scalars_restore(self):
         text = (_SUPER_REFS / "quota-wake.md").read_text(encoding="utf-8")
-        prompt = " ".join(re.search(r"```text\n(.*?)```", text, re.DOTALL).group(1).split())
+        block = re.search(r"```text\n(.*?)```", text, re.DOTALL)
+        assert block is not None, "quota-wake.md has no ```text block"
+        prompt = " ".join(block.group(1).split())
         order = ["read that state file", "task-paths block", "never executes Step 2 or the Seed",
                  "if RESUME_FOUND is not 1", "Record the printed SCALARS path",
                  'the "Restore" script']
@@ -3299,7 +3301,9 @@ class TestRound23OnePath(unittest.TestCase):
         after = _ref_block("dispatch-external-cli.md", "REPORT_MODE=%s")
         self.assertNotIn("LAST_DISPATCHED_KEY", after)
         ok = " ".join(text[text.index('- **`"ok"`**'):].split()[:40])
-        line = re.search(r"`(printf 'LAST_DISPATCHED_KEY=.*?)`", ok).group(1)
+        found = re.search(r"`(printf 'LAST_DISPATCHED_KEY=.*?)`", ok)
+        assert found is not None, "dispatch-external-cli.md has no ok printf line"
+        line = found.group(1)
         scalars = os.path.join(self.root, "s.env")
         proc = self._bash(line, INJECTION_KEY="a/one", SCALARS=scalars)
         self.assertEqual(0, proc.returncode, proc.stderr)
