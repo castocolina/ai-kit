@@ -1008,14 +1008,14 @@ tests. Source: the same todo (part 2).
   4. jev is used only for advisory, text-based checks (e.g. how close the delivered work is to
      the stated objectives); never as a gate and never to judge UI quality or mockup fidelity,
      since it answers typed questions on text. The skill passes `/skill-judge`.
-**Plans**: 3/14 plans executed *(planned 2026-10-31; 27-14 added 2026-10-31 for the new skill-judge)*
+**Plans**: 4/14 plans executed *(planned 2026-10-31; 27-14 added 2026-10-31 for the new skill-judge)*
 **Wave 1**
 - [x] 27-01-PLAN.md - shared helpers with parity tests, fixtures, skill stub
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [x] 27-02-PLAN.md - scope detection: phases, identity, superpowers order
 - [x] 27-03-PLAN.md - host primitives, readiness and jev usability
-- [ ] 27-04-PLAN.md - e2e command detection and zero-test markers
+- [x] 27-04-PLAN.md - e2e command detection and zero-test markers
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 27-05-PLAN.md - strategy matrix

@@ -5,16 +5,16 @@ milestone_name: GSD Curated Config v2
 current_phase: 27
 current_phase_name: One-shot goal and loop prompt skill
 status: executing
-stopped_at: Completed 27-03-PLAN.md
-last_updated: "2026-10-31T13:52:21.977Z"
+stopped_at: Completed 27-04-PLAN.md
+last_updated: "2026-10-31T14:12:38.247Z"
 last_activity: 2026-10-24
 last_activity_desc: Phase 23 execution started
-state_head: 7e6e7673d6a7b2171d8650dba027ac58929743ec
+state_head: 6272d70602bd21e3387fda2c69a44cbf3799fd20
 progress:
   total_phases: 18
   completed_phases: 1
-  total_plans: 211
-  completed_plans: 201
+  total_plans: 212
+  completed_plans: 202
   percent: 6
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 ## Current Position
 
 Phase: 27 (One-shot goal and loop prompt skill) — READY TO EXECUTE
-Plan: 4 of 13
+Plan: 5 of 13
 Status: Ready to execute
 Last activity: 2026-10-24 - Completed quick task 261024-ryk: agent_skills references gsd-core resolves
 
@@ -314,6 +314,7 @@ Progress: [█░░░░░░░░░] 6%
 | Phase 26 P10 | 438s | 3 tasks | 12 files |
 | Phase 27 P02 | unmeasured | 3 tasks | 4 files |
 | Phase 27 P03 | unmeasured | 3 tasks | 4 files |
+| Phase 27 P04 | unmeasured | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -438,6 +439,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 27]: 27-03: build_primitives takes one Seen bundle (agent-reported tools plus the --help probe) to stay within max-args=5
 - [Phase 27]: 27-03: a seen tool name is available whatever the matrix floor; a version floor applies only to cli and slash-command rows
 - [Phase 27]: 27-03: ready_for_cross_ai needs runner_ok, a listed CLI, reviewers_ok and no native choice; a non-ai-kit runner is never ready
+- [Phase 27]: E2E PTY drivers map only to e2e Makefile targets; others stay inferred (27-04)
+- [Phase 27]: Package script names must match a safe charset before entering a command (27-04 T-27-09)
 
 ### Pending Todos
 
@@ -604,6 +607,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-31T13:52:12.305Z
-Stopped at: Completed 27-03-PLAN.md
+Last session: 2026-10-31T14:12:37.406Z
+Stopped at: Completed 27-04-PLAN.md
 Resume file: None
