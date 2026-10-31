@@ -37,6 +37,7 @@ prompt for a separate agent session. The prompt carries everything needed to fin
       prints a `Resume with: /gsd-autonomous --from …` line;
   - **ai-kit e2e.** The repository's own e2e tier is `make e2e-test`: real git worktrees, the
     PTY-spawned wizard and `tests/test_install.sh`.
+  - *(amended 2026-10-31, 27 execution: the host versions measured on 2026-10-31 (27-RESEARCH.md) are Claude Code 2.1.314 and OpenGSD 1.17.0, not 2.1.299 and 1.16.0; the `/goal` floor 2.1.139 and the `/gsd-autonomous` flags above are unchanged. Original wording kept.)*
 - **Inputs from earlier phases:**
   - Phase 25 subprocess-quota policy (mechanism B);
   - Phase 26 session wake, its survival matrix and the OpenGSD identity check (mechanism A);
@@ -206,6 +207,7 @@ prompt for a separate agent session. The prompt carries everything needed to fin
 | ordering | R2 | ✅ covered | At most three strategies, ranked by fit, pinned by a test |
 | concurrency | R2 | 🧪 backstop | Strategy selection is a pure function of the detection result and the answers (added after the 2026-10-14 amendment) |
 | boundary | R3 | ✅ covered | A condition of exactly 4,000 characters passes; 4,001 fails generation with a clear error |
+| boundary | R3 | ✅ covered | *(amended 2026-10-31, 27 execution: render also refuses a `/goal` condition over the 1,800-character budget (`GOAL_BUDGET`, `gp_render.py`, added by 27-12 fix 7d25266 and documented in SKILL.md), so 4,000 passes the cap guard but not the budget; whether the host accepts 4,000 code points is unverified, owner capture 1, assumption A3)* |
 | adjacency | R3 | ✅ covered | Quota A and B are two separate sections even when both apply |
 | empty | R3 | ✅ covered | No candidate skills: the section says "none" rather than being omitted |
 | encoding | R3 | ✅ covered | The cap counts characters (code points), not bytes |

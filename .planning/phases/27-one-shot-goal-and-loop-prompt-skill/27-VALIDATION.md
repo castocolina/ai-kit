@@ -3,8 +3,8 @@ phase: "27"
 slug: "one-shot-goal-and-loop-prompt-skill"
 # status lifecycle: draft (seeded by plan-phase) -> validated (set by validate-phase)
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: "2026-10-31"
 ---
 
@@ -42,53 +42,53 @@ created: "2026-10-31"
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 27-01-1 | 1 | 1 | GPS-02, GPS-04 | T-27-01 | Copied helpers stay equal to their originals; guards catch secrets and machine paths | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_common` | no (created by the plan) | pending |
-| 27-01-2 | 1 | 1 | GPS-02, GPS-04 | T-27-02 | Fixture projects build in temp dirs; the scripts dir is type-checked | unit, types | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_common.TestFixtures` | no (created by the plan) | pending |
-| 27-02-1 | 2 | 2 | GPS-01 | T-27-03, T-27-04 | Phase state from three sources, exact OpenGSD identity, no absolute path in the result | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_scope.TestPhases tests.test_ai_kit_spec_goal_prompt_scope.TestIdentity` | no (created by the plan) | pending |
-| 27-02-2 | 2 | 2 | GPS-02 | T-27-05 | Depends-on edges, stable order, failure scope, cycle error | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_scope.TestPlans` | no (created by the plan) | pending |
-| 27-02-3 | 2 | 2 | GPS-01 | T-27-04 | Scope kind for the four fixture kinds, both/none asks, read-only | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_scope.TestScopeKind` | no (created by the plan) | pending |
-| 27-03-1 | 3 | 2 | GPS-01 | T-27-06, T-27-07 | Matrix read through the CLI, version and current-host probes degrade to unverified | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_host.TestMatrixRead tests.test_ai_kit_spec_goal_prompt_host.TestHostFacts` | no (created by the plan) | pending |
-| 27-03-2 | 3 | 2 | GPS-01 | T-27-08 | Two labels per primitive; non-current host unverified; unseen tool is not absent | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_host.TestPrimitives` | no (created by the plan) | pending |
-| 27-03-3 | 3 | 2 | GPS-02, GPS-04 | T-27-06 | Readiness proves runner, listed CLI and reviewers without a model call; jev usability | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_host.TestReadiness tests.test_ai_kit_spec_goal_prompt_host.TestJev` | no (created by the plan) | pending |
-| 27-04-1 | 4 | 2 | GPS-03 | T-27-09 | E2E commands from Makefile, package scripts and browser configs; gate commands | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_signals.TestSignals` | no (created by the plan) | pending |
-| 27-04-2 | 4 | 2 | GPS-03 | T-27-10, T-27-11 | PTY drivers mapped or inferred; labelled zero-test markers; dogfood finds this repo e2e | unit, dogfood | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_signals.TestPtyAndMarkers` | no (created by the plan) | pending |
-| 27-05-1 | 5 | 3 | GPS-01 | T-27-12 | One test per matrix row; derived inputs | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_matrix.TestRows tests.test_ai_kit_spec_goal_prompt_matrix.TestDerive` | no (created by the plan) | pending |
-| 27-05-2 | 5 | 3 | GPS-01 | T-27-13 | Matrix properties over the whole input space | property | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_matrix.TestProperties` | no (created by the plan) | pending |
-| 27-06-1 | 6 | 4 | GPS-02 | T-27-14 | Strict template, fixed OpenGSD sections, separate quota A and B | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_render.TestTemplateAndSections` | no (created by the plan) | pending |
-| 27-06-2 | 6 | 4 | GPS-02, GPS-04 | T-27-15 | Guards: 4,000/4,001 cap, forbidden strings, path fields, jev wording | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_render.TestGuards` | no (created by the plan) | pending |
-| 27-06-3 | 6 | 4 | GPS-02, GPS-03 | T-27-16 | Done-when lines, dated placement, atomic write, OpenGSD render | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_render.TestDoneLines tests.test_ai_kit_spec_goal_prompt_render.TestPlacement tests.test_ai_kit_spec_goal_prompt_render.TestRenderOpenGsd` | no (created by the plan) | pending |
-| 27-07-1 | 7 | 5 | GPS-01, GPS-02 | T-27-18 | Goal, loop and plain blocks; shared rails file shape | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_strategies.TestBlocks` | no (created by the plan) | pending |
-| 27-07-2 | 7 | 5 | GPS-02 | T-27-17 | Superpowers rails, order and stop scope | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_strategies.TestSuperpowers` | no (created by the plan) | pending |
-| 27-08-1 | 8 | 6 | GPS-03, GPS-04 | T-27-19 | Create-first, mockup human review, advisory jev only in REPORT | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_variants.TestDoneVariants` | no (created by the plan) | pending |
-| 27-08-2 | 8 | 6 | GPS-02 | T-27-20 | Existing cross_ai gap line, derived turn cap, readiness warnings outside the file | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_variants.TestCrossAiVariants` | no (created by the plan) | pending |
-| 27-09-1 | 9 | 7 | GPS-01, GPS-02 | T-27-21, T-27-22 | detect and render subcommands, exit 2 on bad input, no prompt | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_cli` | no (created by the plan) | pending |
-| 27-09-2 | 9 | 7 | GPS-02, GPS-03, GPS-04 | T-27-22 | Property sweep over scenarios, golden file, R18/R19 parity | property, golden | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_golden` | no (created by the plan) | pending |
-| 27-09-3 | 9 | 7 | GPS-01..GPS-04 | T-27-23 | Real CLI on a temp git repo with a fake node; dogfood detect | e2e | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_e2e` | no (created by the plan) | pending |
-| 27-10-1 | 10 | 8 | GPS-01..GPS-04 | T-27-24, T-27-25 | SKILL.md within 300 lines, NEVER, MANDATORY, four questions | doc check | Task 1 verify | no (created by the plan) | pending |
-| 27-10-2 | 10 | 8 | GPS-01, GPS-03 | T-27-24 | Four references mirror the data in code | doc check | Task 2 verify | no (created by the plan) | pending |
-| 27-10-3 | 10 | 8 | GPS-01..GPS-04 | T-27-24, T-27-26 | Drift tests tie prose to matrix, markers and golden | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_skilltext` | no (created by the plan) | pending |
-| 27-11-1 | 11 | 9 | GPS-04 | T-27-27 | README row and installer smoke in a scratch HOME | install smoke | Task 1 verify | no (created by the plan) | pending |
-| 27-11-2 | 11 | 9 | GPS-04 | T-27-28 | Wizard PTY with one more skill; whole-repo static gates | integration, static | `uv run python tools/run_unittest_parallel.py --group integration` | no (created by the plan) | pending |
-| 27-14-1 | 14 | 10 | GPS-04 | T-27-34 | Skill README with install, usage and links; shape pinned | doc check, unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_evals.TestReadme` | no (created by the plan) | pending |
-| 27-14-2 | 14 | 10 | GPS-04 | T-27-34 | 20 trigger queries, 10 and 10, near-misses among the negatives | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_evals.TestTriggerQueries` | no (created by the plan) | pending |
-| 27-14-3 | 14 | 10 | GPS-04 | T-27-35, T-27-36 | 9 evals with inputs and concrete assertions; fixtures proven by the real CLI; `--help`, JSON output and exit codes of the entry script | unit, CLI smoke | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_evals` | no (created by the plan) | pending |
-| 27-12-1 | 12 | 11 | GPS-04 | T-27-29 | New skill-judge round 1 (percent grade, cap 3 rounds), triage, fixes | evidence | Task 1 verify | no (created by the plan) | pending |
-| 27-12-2 | 12 | 11 | GPS-04 | T-27-29 | Rounds 2 and 3 only if needed, then stop | evidence | Task 2 verify | no (created by the plan) | pending |
-| 27-12-3 | 12 | 11 | GPS-04 | T-27-30 | Verdict file reproduced by the checker (percent, grade, severity counts); pending acceptance | evidence, checker | `python3 .planning/phases/27-one-shot-goal-and-loop-prompt-skill/skill-judge/check_verdicts.py .planning/phases/27-one-shot-goal-and-loop-prompt-skill` | no (created by the plan) | pending |
-| 27-13-1 | 13 | 12 | GPS-01..GPS-04 | T-27-32 | make test validate e2e-docker; live CLI checks on this repo | gates, live | `make test validate e2e-docker` | no (created by the plan) | pending |
-| 27-13-2 | 13 | 12 | GPS-01..GPS-04 | T-27-33 | Owner captures and filled validation map | doc check | Task 2 verify | no (created by the plan) | pending |
-| 27-13-3 | 13 | 12 | GPS-01..GPS-04 | T-27-33 | Dated amendments to REQUIREMENTS, ROADMAP and SPEC | doc check | Task 3 verify | no (created by the plan) | pending |
+| 27-01-1 | 1 | 1 | GPS-02, GPS-04 | T-27-01 | Copied helpers stay equal to their originals; guards catch secrets and machine paths | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_common` | yes | green |
+| 27-01-2 | 1 | 1 | GPS-02, GPS-04 | T-27-02 | Fixture projects build in temp dirs; the scripts dir is type-checked | unit, types | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_common.TestFixtures` | yes | green |
+| 27-02-1 | 2 | 2 | GPS-01 | T-27-03, T-27-04 | Phase state from three sources, exact OpenGSD identity, no absolute path in the result | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_scope.TestPhases tests.test_ai_kit_spec_goal_prompt_scope.TestIdentity` | yes | green |
+| 27-02-2 | 2 | 2 | GPS-02 | T-27-05 | Depends-on edges, stable order, failure scope, cycle error | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_scope.TestPlans` | yes | green |
+| 27-02-3 | 2 | 2 | GPS-01 | T-27-04 | Scope kind for the four fixture kinds, both/none asks, read-only | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_scope.TestScopeKind` | yes | green |
+| 27-03-1 | 3 | 2 | GPS-01 | T-27-06, T-27-07 | Matrix read through the CLI, version and current-host probes degrade to unverified | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_host.TestMatrixRead tests.test_ai_kit_spec_goal_prompt_host.TestHostFacts` | yes | green |
+| 27-03-2 | 3 | 2 | GPS-01 | T-27-08 | Two labels per primitive; non-current host unverified; unseen tool is not absent | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_host.TestPrimitives` | yes | green |
+| 27-03-3 | 3 | 2 | GPS-02, GPS-04 | T-27-06 | Readiness proves runner, listed CLI and reviewers without a model call; jev usability | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_host.TestReadiness tests.test_ai_kit_spec_goal_prompt_host.TestJev` | yes | green |
+| 27-04-1 | 4 | 2 | GPS-03 | T-27-09 | E2E commands from Makefile, package scripts and browser configs; gate commands | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_signals.TestSignals` | yes | green |
+| 27-04-2 | 4 | 2 | GPS-03 | T-27-10, T-27-11 | PTY drivers mapped or inferred; labelled zero-test markers; dogfood finds this repo e2e | unit, dogfood | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_signals.TestPtyAndMarkers` | yes | green |
+| 27-05-1 | 5 | 3 | GPS-01 | T-27-12 | One test per matrix row; derived inputs | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_matrix.TestRows tests.test_ai_kit_spec_goal_prompt_matrix.TestDerive` | yes | green |
+| 27-05-2 | 5 | 3 | GPS-01 | T-27-13 | Matrix properties over the whole input space | property | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_matrix.TestProperties` | yes | green |
+| 27-06-1 | 6 | 4 | GPS-02 | T-27-14 | Strict template, fixed OpenGSD sections, separate quota A and B | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_render.TestTemplateAndSections` | yes | green |
+| 27-06-2 | 6 | 4 | GPS-02, GPS-04 | T-27-15 | Guards: 4,000/4,001 cap, forbidden strings, path fields, jev wording | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_render.TestGuards` | yes | green |
+| 27-06-3 | 6 | 4 | GPS-02, GPS-03 | T-27-16 | Done-when lines, dated placement, atomic write, OpenGSD render | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_render.TestDoneLines tests.test_ai_kit_spec_goal_prompt_render.TestPlacement tests.test_ai_kit_spec_goal_prompt_render.TestRenderOpenGsd` | yes | green |
+| 27-07-1 | 7 | 5 | GPS-01, GPS-02 | T-27-18 | Goal, loop and plain blocks; shared rails file shape | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_strategies.TestBlocks` | yes | green |
+| 27-07-2 | 7 | 5 | GPS-02 | T-27-17 | Superpowers rails, order and stop scope | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_strategies.TestSuperpowers` | yes | green |
+| 27-08-1 | 8 | 6 | GPS-03, GPS-04 | T-27-19 | Create-first, mockup human review, advisory jev only in REPORT | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_variants.TestDoneVariants` | yes | green |
+| 27-08-2 | 8 | 6 | GPS-02 | T-27-20 | Existing cross_ai gap line, derived turn cap, readiness warnings outside the file | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_variants.TestCrossAiVariants` | yes | green |
+| 27-09-1 | 9 | 7 | GPS-01, GPS-02 | T-27-21, T-27-22 | detect and render subcommands, exit 2 on bad input, no prompt | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_cli` | yes | green |
+| 27-09-2 | 9 | 7 | GPS-02, GPS-03, GPS-04 | T-27-22 | Property sweep over scenarios, golden file, R18/R19 parity | property, golden | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_golden` | yes | green |
+| 27-09-3 | 9 | 7 | GPS-01..GPS-04 | T-27-23 | Real CLI on a temp git repo with a fake node; dogfood detect | e2e | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_e2e` | yes | green |
+| 27-10-1 | 10 | 8 | GPS-01..GPS-04 | T-27-24, T-27-25 | SKILL.md within 300 lines, NEVER, MANDATORY, four questions | doc check | Task 1 verify | yes | green |
+| 27-10-2 | 10 | 8 | GPS-01, GPS-03 | T-27-24 | Four references mirror the data in code | doc check | Task 2 verify | yes | green |
+| 27-10-3 | 10 | 8 | GPS-01..GPS-04 | T-27-24, T-27-26 | Drift tests tie prose to matrix, markers and golden | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_skilltext` | yes | green |
+| 27-11-1 | 11 | 9 | GPS-04 | T-27-27 | README row and installer smoke in a scratch HOME | install smoke | Task 1 verify | yes | green |
+| 27-11-2 | 11 | 9 | GPS-04 | T-27-28 | Wizard PTY with one more skill; whole-repo static gates | integration, static | `uv run python tools/run_unittest_parallel.py --group integration` | yes | green |
+| 27-14-1 | 14 | 10 | GPS-04 | T-27-34 | Skill README with install, usage and links; shape pinned | doc check, unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_evals.TestReadme` | yes | green |
+| 27-14-2 | 14 | 10 | GPS-04 | T-27-34 | 20 trigger queries, 10 and 10, near-misses among the negatives | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_evals.TestTriggerQueries` | yes | green |
+| 27-14-3 | 14 | 10 | GPS-04 | T-27-35, T-27-36 | 9 evals with inputs and concrete assertions; fixtures proven by the real CLI; `--help`, JSON output and exit codes of the entry script | unit, CLI smoke | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_evals` | yes | green |
+| 27-12-1 | 12 | 11 | GPS-04 | T-27-29 | New skill-judge round 1 (percent grade, cap 3 rounds), triage, fixes | evidence | Task 1 verify | yes | green |
+| 27-12-2 | 12 | 11 | GPS-04 | T-27-29 | Rounds 2 and 3 only if needed, then stop | evidence | Task 2 verify | yes | green |
+| 27-12-3 | 12 | 11 | GPS-04 | T-27-30 | Verdict file reproduced by the checker (percent, grade, severity counts); pending acceptance | evidence, checker | `python3 .planning/phases/27-one-shot-goal-and-loop-prompt-skill/skill-judge/check_verdicts.py .planning/phases/27-one-shot-goal-and-loop-prompt-skill` | yes | green |
+| 27-13-1 | 13 | 12 | GPS-01..GPS-04 | T-27-32 | make test validate e2e-docker; live CLI checks on this repo | gates, live | `make test validate e2e-docker` | yes | green |
+| 27-13-2 | 13 | 12 | GPS-01..GPS-04 | T-27-33 | Owner captures and filled validation map | doc check | Task 2 verify | yes | green |
+| 27-13-3 | 13 | 12 | GPS-01..GPS-04 | T-27-33 | Dated amendments to REQUIREMENTS, ROADMAP and SPEC | doc check | Task 3 verify | yes | green |
 
 ---
 
 ## Wave 0 Requirements
 
-- [ ] `tests/goal_prompt_fixtures.py` (the four fixture project kinds and the e2e variants) - plan 27-01
-- [ ] `skills/ai-kit-spec-goal-prompt/scripts/gp_common.py` with parity tests against the three originals - plan 27-01
-- [ ] `pyproject.toml` pyright `extraPaths` for the scripts dir; `python3 tools/gen_test_groups.py` after each new test module - plans 27-01..27-10
-- [ ] `E2E_MODULES` entry for the real-CLI test module (with a comment) - plan 27-09
-- [ ] `evals/files/` fixtures (planning folder stored as `planning/`, no live `.planning`) and the evals test module - plan 27-14
-- [ ] fake `node`/gsd-tools on a scratch PATH for the e2e tier; scratch HOME with `AI_KIT_REFUSE_REAL_HOME=1` - plan 27-09
+- [x] `tests/goal_prompt_fixtures.py` (the four fixture project kinds and the e2e variants) - plan 27-01
+- [x] `skills/ai-kit-spec-goal-prompt/scripts/gp_common.py` with parity tests against the three originals - plan 27-01
+- [x] `pyproject.toml` pyright `extraPaths` for the scripts dir; `python3 tools/gen_test_groups.py` after each new test module - plans 27-01..27-10
+- [x] `E2E_MODULES` entry for the real-CLI test module (with a comment) - plan 27-09
+- [x] `evals/files/` fixtures (planning folder stored as `planning/`, no live `.planning`) and the evals test module - plan 27-14
+- [x] fake `node`/gsd-tools on a scratch PATH for the e2e tier; scratch HOME with `AI_KIT_REFUSE_REAL_HOME=1` - plan 27-09
 
 ---
 
@@ -97,21 +97,21 @@ created: "2026-10-31"
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
 | A 4,000-code-point `/goal` is accepted by Claude Code (A3) | GPS-02 | needs a real session and a model | owner capture in `27-OWNER-CAPTURES.md` (plan 27-13) |
-| A pasted multi-line `/gsd-autonomous` block parses exactly as the flags-only first line says (A2) | GPS-02 | needs a second OpenGSD project and a model | owner capture |
+| A pasted multi-line `/gsd-autonomous` block parses exactly as the flags-only first line says (A2) | GPS-02 | needs a second OpenGSD project and a model | owner capture (item 2) |
 | codex `/goal` usage text and every non-Claude host's primitives (A4) | GPS-01 | reverse-engineered or absent; no safe live probe | owner capture |
 | Original GSD's `/gsd-autonomous`, `runtime-identity`, `verification.status` (A1) | GPS-01 | original GSD is not installed here | owner capture |
 | Zero-test markers of pytest, jest, vitest, Playwright, Cypress, cargo (A5) | GPS-03 | the runners are not installed here | owner capture |
-| New skill-judge verdict acceptance (pass: no Critical and no Important finding, or percent >= 80) | GPS-04 | real model calls by the judge lanes, non-deterministic | `27-SKILL-JUDGE.md` `## Pending acceptance`; owner decision lines |
+| New skill-judge verdict acceptance (pass: no Critical and no Important finding, or percent >= 80) | GPS-04 | real model calls by the judge lanes, non-deterministic | `check_verdicts.py --gate` prints `gate ok` (PASS 92.0%); the open round-3 findings are `27-OWNER-CAPTURES.md` item 7 |
 
 ---
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 60s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [ ] Feedback latency < 60s (not met: `tests.test_ai_kit_spec_goal_prompt_evals` took 130 s and the real-CLI e2e module 49 s while the gates ran in parallel; the other goal-prompt modules finish in seconds)
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending (set by plan 27-13)
+**Approval:** 27-13 filled the map from the gate run at the phase tip; `status` is left for validate-phase. Items that only an owner can verify are in `27-OWNER-CAPTURES.md`.
