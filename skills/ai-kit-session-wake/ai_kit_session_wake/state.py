@@ -212,6 +212,21 @@ def _scalars_problem(payload: dict) -> str | None:
     return None
 
 
+def _record_problem(payload: dict) -> str | None:
+    """The fields fire and a refresh index directly: a missing one must be a
+    reason, never a KeyError or a dead host that reads as alive."""
+    for key in ("pid_start", "wake_source", "permission_source"):
+        if not isinstance(payload.get(key), str) or not payload[key]:
+            return f"{key} is not a non-empty string"
+    boot_id = payload.get("boot_id", False)
+    if boot_id is not None and not (isinstance(boot_id, str) and boot_id):
+        return "boot_id is not a string or null"
+    armed_at = payload.get("armed_at")
+    if not isinstance(armed_at, (int, float)) or isinstance(armed_at, bool):
+        return "armed_at is not a number"
+    return None
+
+
 def validate_state(payload: object, host: str, session_id: str) -> str | None:
     """Return None when `payload` is a valid wake state named for this
     (host, session id), else a one-line reason (T-26-40)."""
@@ -222,6 +237,7 @@ def validate_state(payload: object, host: str, session_id: str) -> str | None:
         _counters_problem(payload),
         _paths_problem(payload),
         _scalars_problem(payload),
+        _record_problem(payload),
     ):
         if problem is not None:
             return problem

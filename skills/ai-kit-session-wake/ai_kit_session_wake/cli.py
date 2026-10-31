@@ -16,7 +16,7 @@ from .hosts import HOSTS
 from .liveness import is_alive
 from .matrix import matrix_json, render_matrix
 from .reset_parse import iso_z
-from .state import Seams, default_seams, read_state, state_dir
+from .state import Seams, default_seams, read_state, session_paths, state_dir
 from .units import linger_enabled, systemctl, unit_names
 
 EXIT_OK = 0
@@ -36,20 +36,32 @@ def _pick_target(host_flag: str | None, sid_flag: str | None, env: Mapping[str, 
     """Resolve (host, session id) from the flags or the host defaults; print
     the refusal and return None when there is nothing to operate on."""
     host = host_flag or detect_current_runtime(env)
-    if host == "cursor":
-        return host, sid_flag or "cursor-session"
     row = HOSTS.get(host)
-    if row is None:
+    if host == "cursor":
+        session_id = sid_flag or "cursor-session"
+    elif row is None:
         print(f"ai-kit-session-wake: unknown or unsupported host {host!r}", file=sys.stderr)
         return None
-    session_id = sid_flag or (env.get(row.session_env, "") if row.session_env else "")
-    if not session_id:
-        print(
-            f"ai-kit-session-wake: no session id: pass --session-id or set {row.session_env}",
-            file=sys.stderr,
-        )
-        return None
-    return host, session_id
+    else:
+        session_id = sid_flag or (env.get(row.session_env, "") if row.session_env else "")
+        if not session_id:
+            print(
+                f"ai-kit-session-wake: no session id: pass --session-id or set {row.session_env}",
+                file=sys.stderr,
+            )
+            return None
+    return (host, session_id) if _id_accepted(env, host, session_id) else None
+
+
+def _id_accepted(env: Mapping[str, str], host: str, session_id: str) -> bool:
+    """False, after printing the refusal, when the id fails the safe charset: it
+    never reaches a path or a unit name (an exit 2 instead of a traceback)."""
+    try:
+        session_paths(env, host, session_id)
+    except ValueError as exc:
+        print(f"ai-kit-session-wake: {exc}", file=sys.stderr)
+        return False
+    return True
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -171,6 +183,11 @@ def _status(args: argparse.Namespace, seams: Seams) -> int:
     directory = state_dir(seams.env)
     if bool(args.host) != bool(args.session_id):
         print("status requires both --host and --session-id", file=sys.stderr)
+        return EXIT_REFUSED
+    if args.host and args.host not in (*HOSTS, "cursor"):
+        print(f"ai-kit-session-wake: unknown or unsupported host {args.host!r}", file=sys.stderr)
+        return EXIT_REFUSED
+    if args.host and not _id_accepted(seams.env, args.host, args.session_id):
         return EXIT_REFUSED
     files = []
     if args.host and args.session_id:

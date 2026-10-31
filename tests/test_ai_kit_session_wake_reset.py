@@ -354,7 +354,8 @@ class TestResetBounds(unittest.TestCase):
                 result = parse_reset_at(value, now)
                 self.assertIsNone(result.reason, value)
                 self.assertEqual(reset, result.at)
-        for value in ("2026-10-26T16:00:00", "soon"):
+        # a superscript two is str.isdigit() but not epoch seconds
+        for value in ("2026-10-26T16:00:00", "soon", "\u00b2"):
             with self.subTest(value=value):
                 result = parse_reset_at(value, now)
                 self.assertIsNone(result.at)

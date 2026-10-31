@@ -868,6 +868,23 @@ class TestStatus(_Scratch):
             self.assertEqual(before, handle.read())
         self.assertEqual(calls, self.systemctl_calls())
 
+    def test_unsafe_ids_and_hosts_exit_2_and_touch_nothing(self):
+        seams = fakes.fixed_seams(self.env, T0)
+        cases = [
+            (command, "claude", sid)
+            for command in ("arm", "fire", "disarm", "done", "status")
+            for sid in ("a/b", "../../x", "x y")
+        ] + [("status", "../x", "abc")]
+        for command, host, sid in cases:
+            with self.subTest(command=command, host=host, sid=sid):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                    code = cli.main([command, "--host", host, "--session-id", sid], seams=seams)
+                self.assertEqual(2, code)
+                self.assertTrue(err.getvalue().startswith("ai-kit-session-wake: "))
+        self.assertFalse(os.path.exists(self.env["AI_KIT_FAKE_LOG"]))  # no systemctl call
+        self.assertFalse(os.path.exists(state_dir(self.env)))
+
     def test_empty_status(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -2012,6 +2029,18 @@ class TestArmOptionsShape(unittest.TestCase):
         opts = ArmOptions(host="claude", session_id="s", pid=None, permission_mode=None, refs=())
         self.assertIsNone(opts.pid)
         self.assertEqual((), opts.refs)
+
+
+class TestServiceEscaping(unittest.TestCase):
+    """systemd quoting: `Environment=` takes no variable expansion, `ExecStart=` does."""
+
+    def test_dollar_is_doubled_only_in_execstart(self):
+        env = {"PATH": "/bin", "HOME": "/home/a$b", "XDG_STATE_HOME": "/s/50%/x\nInjected=1"}
+        text = units.render_service("/py/$x", "/shim.py", "claude", "sid", env)
+        self.assertIn('Environment="HOME=/home/a$b"', text)
+        self.assertIn('ExecStart="/py/$$x" "/shim.py"', text)
+        self.assertIn('Environment="XDG_STATE_HOME=/s/50%%/x\\nInjected=1"', text)
+        self.assertNotIn("\nInjected=1", text)
 
 
 if __name__ == "__main__":

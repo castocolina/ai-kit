@@ -1177,6 +1177,12 @@ class TestDisarm(_Scratch):
         ("wake_count", True, "wake_count"),
         ("cap", 25, "cap"),
         ("created", "not-a-list", "created"),
+        ("pid_start", 12345, "pid_start"),
+        ("pid_start", "", "pid_start"),
+        ("boot_id", 7, "boot_id"),
+        ("wake_source", None, "wake_source"),
+        ("permission_source", None, "permission_source"),
+        ("armed_at", "now", "armed_at"),
     )
 
     def test_one_field_invalid_states_are_removed_by_name(self):

@@ -52,13 +52,17 @@ def stamp_path(env: Mapping[str, str], timer: str) -> str:
 
 
 def _escape(word: str) -> str:
-    """Escape one word for a systemd unit value: backslash and double quote
-    for the quoting, `%` (specifiers) and `$` (variables) doubled."""
-    return word.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$")
+    """Escape one word for a quoted systemd value: backslash and double quote
+    for the quoting, a newline as `\\n`, `%` (specifiers) doubled. `Environment=`
+    values take no variable expansion, so a `$` stays literal there."""
+    return (
+        word.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("%", "%%")
+    )
 
 
 def _quote(word: str) -> str:
-    return f'"{_escape(word)}"'
+    """One `ExecStart=` word: also `$` doubled, which is variable expansion there."""
+    return f'"{_escape(word).replace("$", "$$")}"'
 
 
 def render_timer(host: str, sid: str, reset_line: str | None = None) -> str:

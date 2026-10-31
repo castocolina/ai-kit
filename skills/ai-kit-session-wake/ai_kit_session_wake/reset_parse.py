@@ -262,7 +262,7 @@ def parse_reset_at(value: str, now: float) -> ResetResult:
     """Parse `--reset-at`: epoch seconds, or ISO 8601 with `Z` or an explicit
     offset (D-30). A naive ISO time is refused."""
     evidence = cap_code_points(redact(value), EVIDENCE_MAX)
-    if value.isdigit():
+    if value.isascii() and value.isdigit():  # `\u00b2`.isdigit() is true, float() refuses it
         return _result(float(value), now, evidence)
     text = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
     try:
