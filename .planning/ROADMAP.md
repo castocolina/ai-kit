@@ -70,18 +70,18 @@ runtime hosting the session. Source spec:
 - [x] **Phase 18: Cross-AI, Skills & Apply Pipeline** - Plan adjustment, cross-AI review/execution wiring, skill-affinity mapping, and a safe backup/restore apply flow (completed 2026-10-16)
 - [x] **Phase 18.1: One runtime model** (INSERTED) - Model candidates become (runtime, model) pairs; `native_runtime` and the `native_claude`/cursor-agent naming go away (completed 2026-10-17)
 - [x] **Phase 19: Evaluation on Claude** - Skill pressure-testing, `/skill-judge` gate, and a live smoke run + `resolve-model` proof from the claude host (completed 2026-10-17)
-- [ ] **Phase 20: Live Validation on Codex + Opencode** - Live smoke runs from the codex and opencode hosts, resolving the two open verifications from the spec
-- [ ] **Phase 21: Cursor Live Validation** - Live smoke run from the cursor host (independent; may run any time after Phase 19)
-- [ ] **Phase 21.1: Atomic reusable decision-system skills** - Jev decisions as injectable, cross-host skills (INSERTED 2026-10-18)
-- [ ] **Phase 21.2: PreCompact pre-summary hook** - Decision-system-classified transcript chunks feed a cheaper compaction (INSERTED 2026-10-18)
-- [ ] **Phase 21.3: Visible tool-advisory hooks** - SessionStart/PreToolUse/PostToolUse advisors as setup knobs (INSERTED 2026-10-18)
-- [ ] **Phase 22: Pi Live Validation** - Live smoke run from the pi host (independent; may run any time after Phase 19)
-- [ ] **Phase 23: Host-split status line for Claude Code and Cursor CLI** - Split `tools/status-line.py` per host and ship a Cursor CLI status line with the shared 5/10/15 proximity gauge (promoted from backlog 999.4; independent of Phases 17–22)
-- [ ] **Phase 24: Spec-and-discuss chain skill** - Installable skill that runs spec → discuss over a phase range with optional Laya/TypeSafe decisions, quality over simplicity unless MVP mode
-- [ ] **Phase 25: Quota-aware cross-AI subprocess supervision** - The owner's failure ladder in the runner: one CLI per call, transient retries 3 in the same session then 3 in new sessions, router-lane quota cycles across calls under a 4-hour cap, evidence on every stop (from todo 2026-10-14; owner decision 2026-10-24) *(amended 2026-10-25, 25.1: the in-call rungs are the configurable soft series of QTA-07 and the cooldown is the caller's hard tier of QTA-08)*
-- [ ] **Phase 25.1: Configurable cross-AI retry ladder and upstream error propagation** *(INSERTED)* - Soft backoff, session reset and caller-owned hard waits, configurable; upstream errors passed through verbatim; an evidence-based error catalog (owner request 2026-10-24)
-- [ ] **Phase 26: Session self-resume and OpenGSD quota rules** - The orchestrating session wakes itself after its own quota stalls; `ai-kit-project-rules-agents` emits both quota directives for OpenGSD projects (spike first)
-- [ ] **Phase 27: One-shot goal and loop prompt skill** - A skill that picks `/goal`, schedule/loop or `/gsd-autonomous` for a set of phases or plans and emits a ready-to-paste prompt whose definition of done requires green e2e tests
+- [x] **Phase 20: Live Validation on Codex + Opencode** - Live smoke runs from the codex and opencode hosts, resolving the two open verifications from the spec *(executed; human_needed, owner checks pending)*
+- [x] **Phase 21: Cursor Live Validation** - Live smoke run from the cursor host (independent; may run any time after Phase 19) *(executed; human_needed, owner checks pending)*
+- [x] **Phase 21.1: Atomic reusable decision-system skills** - Jev decisions as injectable, cross-host skills (INSERTED 2026-10-18) *(executed; human_needed, owner checks pending)*
+- [x] **Phase 21.2: PreCompact pre-summary hook** - Decision-system-classified transcript chunks feed a cheaper compaction (INSERTED 2026-10-18) *(executed; human_needed, owner checks pending)*
+- [x] **Phase 21.3: Visible tool-advisory hooks** - SessionStart/PreToolUse/PostToolUse advisors as setup knobs (INSERTED 2026-10-18) *(executed; human_needed, owner checks pending)*
+- [x] **Phase 22: Pi Live Validation** - Live smoke run from the pi host (independent; may run any time after Phase 19) *(executed; human_needed, owner checks pending)*
+- [x] **Phase 23: Host-split status line for Claude Code and Cursor CLI** - Split `tools/status-line.py` per host and ship a Cursor CLI status line with the shared 5/10/15 proximity gauge (promoted from backlog 999.4; independent of Phases 17–22) *(executed; human_needed, owner checks pending)*
+- [x] **Phase 24: Spec-and-discuss chain skill** - Installable skill that runs spec → discuss over a phase range with optional Laya/TypeSafe decisions, quality over simplicity unless MVP mode *(executed; human_needed, owner checks pending)*
+- [x] **Phase 25: Quota-aware cross-AI subprocess supervision** - The owner's failure ladder in the runner: one CLI per call, transient retries 3 in the same session then 3 in new sessions, router-lane quota cycles across calls under a 4-hour cap, evidence on every stop (from todo 2026-10-14; owner decision 2026-10-24) *(amended 2026-10-25, 25.1: the in-call rungs are the configurable soft series of QTA-07 and the cooldown is the caller's hard tier of QTA-08)* *(executed; human_needed, owner checks pending)*
+- [x] **Phase 25.1: Configurable cross-AI retry ladder and upstream error propagation** *(INSERTED)* - Soft backoff, session reset and caller-owned hard waits, configurable; upstream errors passed through verbatim; an evidence-based error catalog (owner request 2026-10-24) *(executed; human_needed, owner checks pending)*
+- [x] **Phase 26: Session self-resume and OpenGSD quota rules** - The orchestrating session wakes itself after its own quota stalls; `ai-kit-project-rules-agents` emits both quota directives for OpenGSD projects (spike first) *(executed; human_needed, owner checks pending)*
+- [x] **Phase 27: One-shot goal and loop prompt skill** - A skill that picks `/goal`, schedule/loop or `/gsd-autonomous` for a set of phases or plans and emits a ready-to-paste prompt whose definition of done requires green e2e tests *(executed; human_needed, owner checks pending)*
 
 ## Phase Details
 
