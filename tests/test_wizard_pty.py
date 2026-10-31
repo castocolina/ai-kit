@@ -39,9 +39,9 @@ import unittest
 # without being clipped off a short screen.
 # Also needs to fit the whole Choose-screen skills picksbox (grows by ~2-3
 # rows per installed skill, plus the "N of M components selected" footer
-# below it) — 50 stopped being enough once the usage-metrics skill (05-01)
-# brought the installed-skill count to 13.
-_PTY_ROWS = 100
+# below it) — 50 stopped being enough at 13 installed skills (usage-metrics),
+# and 100 stopped being enough at 25 (the v1.3 skill set), so size with headroom.
+_PTY_ROWS = 160
 _PTY_COLS = 120
 
 # Absolute path to the wizard so the tests work from any cwd.
