@@ -23,7 +23,7 @@ HOST_BINARY = {
     "codex": "codex",
     "pi": "pi",
     "opencode": "opencode",
-    "cursor": "cursor-agent",
+    "cursor": "agent",
 }
 WAKE_CLI = "ai-kit-session-wake/ai-kit-session-wake.py"
 SPEC_CLI = "ai-kit-spec-review/ai-kit-spec.py"
