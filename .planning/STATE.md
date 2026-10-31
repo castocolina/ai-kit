@@ -5,16 +5,16 @@ milestone_name: GSD Curated Config v2
 current_phase: 27
 current_phase_name: One-shot goal and loop prompt skill
 status: executing
-stopped_at: Completed 27-02-PLAN.md
-last_updated: "2026-10-31T13:42:38.338Z"
+stopped_at: Completed 27-03-PLAN.md
+last_updated: "2026-10-31T13:52:21.977Z"
 last_activity: 2026-10-24
 last_activity_desc: Phase 23 execution started
-state_head: 440bf604f40a02fd2f893039d1adbd18372f5d0f
+state_head: 7e6e7673d6a7b2171d8650dba027ac58929743ec
 progress:
   total_phases: 18
   completed_phases: 1
   total_plans: 211
-  completed_plans: 199
+  completed_plans: 201
   percent: 6
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 ## Current Position
 
 Phase: 27 (One-shot goal and loop prompt skill) — READY TO EXECUTE
-Plan: 2 of 13
+Plan: 4 of 13
 Status: Ready to execute
 Last activity: 2026-10-24 - Completed quick task 261024-ryk: agent_skills references gsd-core resolves
 
@@ -313,6 +313,7 @@ Progress: [█░░░░░░░░░] 6%
 | Phase 26 P09 | 1869s | 2 tasks | 16 files |
 | Phase 26 P10 | 438s | 3 tasks | 12 files |
 | Phase 27 P02 | unmeasured | 3 tasks | 4 files |
+| Phase 27 P03 | unmeasured | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -433,6 +434,10 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 27]: Depends-on links need the exact backticked filename of a loaded plan; any other line text is one free-text entry, never an edge (27 D-08)
 - [Phase 27]: detect_scope loads phases only when a roadmap JSON is supplied; the work-set restriction for plan files is left to the caller (ScopeInputs has no file list)
 - [Phase 27]: OpenGSD identity is exact packageName equality; the live project-local runtime-identity proves @opengsd/gsd-core on this checkout
+- [Phase 27]: 27-03: the seam run takes cwd so the configured runner's relative paths resolve in the repo
+- [Phase 27]: 27-03: build_primitives takes one Seen bundle (agent-reported tools plus the --help probe) to stay within max-args=5
+- [Phase 27]: 27-03: a seen tool name is available whatever the matrix floor; a version floor applies only to cli and slash-command rows
+- [Phase 27]: 27-03: ready_for_cross_ai needs runner_ok, a listed CLI, reviewers_ok and no native choice; a non-ai-kit runner is never ready
 
 ### Pending Todos
 
@@ -599,6 +604,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-31T13:42:37.511Z
-Stopped at: Completed 27-02-PLAN.md
+Last session: 2026-10-31T13:52:12.305Z
+Stopped at: Completed 27-03-PLAN.md
 Resume file: None
