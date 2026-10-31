@@ -1,0 +1,184 @@
+{
+  "skill_name": "ai-kit-spec-goal-prompt",
+  "evals": [
+    {
+      "id": "precise-opengsd-range",
+      "prompt": "Create a goal prompt for phases 16 to 18 of this OpenGSD project. Target host is the current one, native execution is not allowed, no mockups. Fixture note: the project tree is evals/files/opengsd-mixed/project (its planning/ folder stands for .planning/) and the captured gsd-tools output is in evals/files/opengsd-mixed/captures (@REPO@ stands for the repository root).",
+      "expected_output": "A file under .planning/goals/ whose single block starts with a flags-only /gsd-autonomous line for phases 16 to 18, plus a short hand-off that names the path, the reason for the strategy, the unverified labels and any readiness warning, and does not run the prompt.",
+      "files": [
+        "evals/files/opengsd-mixed/project/Makefile",
+        "evals/files/opengsd-mixed/project/planning/PROJECT.md",
+        "evals/files/opengsd-mixed/project/planning/config.json",
+        "evals/files/opengsd-mixed/project/planning/phases/16-alpha/16-SPEC.md",
+        "evals/files/opengsd-mixed/project/planning/phases/17-beta/17-SPEC.md",
+        "evals/files/opengsd-mixed/project/planning/phases/18-gamma/18-SPEC.md",
+        "evals/files/opengsd-mixed/captures/identity.json",
+        "evals/files/opengsd-mixed/captures/roadmap.json",
+        "evals/files/opengsd-mixed/captures/phase-op/16.json",
+        "evals/files/opengsd-mixed/captures/phase-op/17.json",
+        "evals/files/opengsd-mixed/captures/phase-op/18.json"
+      ],
+      "assertions": [
+        "`detect` ran before `render`, with `--work-set phases:16-18`, and its result has `scope.kind` equal to `opengsd`",
+        "`scope.phases` holds exactly the phases `16`, `17` and `18` with plan counts 2, 2 and 0 (a complete, a planned and a discussed-only phase)",
+        "The rendered file is under `.planning/goals/`, its name starts with a date and its path is repo-relative",
+        "The first line of the first fenced block matches `^/gsd-autonomous( --(from|to|only) [0-9][0-9.]*| --converge)+$` and holds `--from 16`, `--to 18` and `--converge`",
+        "The answers file given to `render` lives under `tmp/`, holds only repo-relative paths and sets `strategy` to `null` because the user asked for no particular strategy",
+        "The final message names the file path, gives a reason for the strategy and repeats every `unverified` label from the detect result",
+        "The final message relays every entry of the `warnings` array of the `render` output, or says there were none",
+        "The final message tells the user to paste the block into a separate session and nothing in the transcript executes the generated prompt"
+      ]
+    },
+    {
+      "id": "casual-opengsd-single",
+      "prompt": "ok so I'm leaving for the weekend, can you set up a prompt so claude just grinds through phase 17 by itself? the project is evals/files/opengsd-mixed/project (planning/ is .planning/) and the gsd-tools output is in evals/files/opengsd-mixed/captures (@REPO@ is the repo root)",
+      "expected_output": "A file whose single block starts with `/gsd-autonomous --only 17 --converge`, after one batch of at most four questions.",
+      "files": [
+        "evals/files/opengsd-mixed/project/Makefile",
+        "evals/files/opengsd-mixed/project/planning/PROJECT.md",
+        "evals/files/opengsd-mixed/project/planning/config.json",
+        "evals/files/opengsd-mixed/project/planning/phases/16-alpha/16-SPEC.md",
+        "evals/files/opengsd-mixed/project/planning/phases/17-beta/17-SPEC.md",
+        "evals/files/opengsd-mixed/project/planning/phases/18-gamma/18-SPEC.md",
+        "evals/files/opengsd-mixed/captures/identity.json",
+        "evals/files/opengsd-mixed/captures/roadmap.json",
+        "evals/files/opengsd-mixed/captures/phase-op/16.json",
+        "evals/files/opengsd-mixed/captures/phase-op/17.json",
+        "evals/files/opengsd-mixed/captures/phase-op/18.json"
+      ],
+      "assertions": [
+        "At most four questions are asked, in one message and numbered 1 to 4, and no fifth question about the strategy or the file location is asked",
+        "`detect` runs with `--work-set phases:17` and reports `scope.kind` equal to `opengsd`",
+        "The first line of the first fenced block starts with `/gsd-autonomous --only 17` and contains `--converge`, and the block has neither `--from` nor `--to`",
+        "That first line carries no flag other than `--from`, `--to`, `--only` and `--converge`, so `--cross-ai` and `--interactive` do not appear",
+        "The final message offers to commit the file and then stops without starting the run"
+      ]
+    },
+    {
+      "id": "edge-superpowers-chain",
+      "prompt": "I've got three superpowers plans, beta needs alpha finished first and gamma doesn't depend on anything. I want something I can leave running overnight. They are in evals/files/superpowers-chain/project/docs/superpowers/plans (the project root is evals/files/superpowers-chain/project).",
+      "expected_output": "A file under docs/superpowers/goals/ whose blocks use goal and loop wording, with an ORDER section that puts alpha.md before beta.md and no /gsd-autonomous line.",
+      "files": [
+        "evals/files/superpowers-chain/project/Makefile",
+        "evals/files/superpowers-chain/project/docs/superpowers/plans/alpha.md",
+        "evals/files/superpowers-chain/project/docs/superpowers/plans/beta.md",
+        "evals/files/superpowers-chain/project/docs/superpowers/plans/gamma.md"
+      ],
+      "assertions": [
+        "`detect` returns `scope.kind` equal to `superpowers` and no GSD capture flag (`--roadmap`, `--identity`, `--phase-op`, `--gsd-cmd`) is passed",
+        "`scope.order` lists `alpha.md` before `beta.md`",
+        "The rendered file is under `docs/superpowers/goals/` and its path does not contain `/plans/`",
+        "No line of the rendered file starts with `/gsd-autonomous`",
+        "The ORDER section of the file lists `alpha.md` before `beta.md`",
+        "Every block opens and closes with a line of exactly four backticks"
+      ]
+    },
+    {
+      "id": "edge-no-plans",
+      "prompt": "write me a goal prompt to finish the remaining work in this repo. The repo is evals/files/empty-project/project.",
+      "expected_output": "No file is written; the agent reports that no phases or plans were found and asks which work set to use.",
+      "files": [
+        "evals/files/empty-project/project/README.md"
+      ],
+      "assertions": [
+        "`detect` returns `scope.kind` equal to `none` and a non-null `scope.ask`",
+        "The agent shows the `scope.ask` text to the user and asks for the work set; it does not invent a phase number or a plan file name",
+        "No goal file is written: `.planning/goals/`, `docs/superpowers/goals/` and `tmp/` hold no new `.md` file after the turn",
+        "The reply does not claim that a passing `make e2e-test` or any other passing test exists"
+      ]
+    },
+    {
+      "id": "edge-both-frameworks",
+      "prompt": "prepare the autonomous run prompt for what's left in this repo. The project is evals/files/both-frameworks/project (planning/ is .planning/).",
+      "expected_output": "The agent detects both a GSD project and a superpowers plan, asks which work set to use inside the four-question batch, and renders nothing until it is answered.",
+      "files": [
+        "evals/files/both-frameworks/project/planning/PROJECT.md",
+        "evals/files/both-frameworks/project/docs/superpowers/plans/solo.md"
+      ],
+      "assertions": [
+        "`detect` returns `scope.kind` equal to `both` with a non-null `scope.ask`, an empty `strategies` list and exit code 0",
+        "The agent asks which work set to use (GSD phases or the superpowers plans) as item 1 of the four-question batch, not as a fifth question",
+        "`render` is not called in the same turn as the question",
+        "After the user's answer `detect` is rerun with a `--work-set` value before any file is rendered"
+      ]
+    },
+    {
+      "id": "edge-no-e2e-create-first",
+      "prompt": "goal prompt for docs/superpowers/plans/solo.md please, it's a tiny CLI and I haven't written any tests yet. The project is evals/files/no-e2e/project.",
+      "expected_output": "A file whose DONE WHEN section starts by creating a real e2e suite, with the unit-tests-alone sentence, no ORDER section, and a hand-off that says no e2e suite was found.",
+      "files": [
+        "evals/files/no-e2e/project/README.md",
+        "evals/files/no-e2e/project/docs/superpowers/plans/solo.md"
+      ],
+      "assertions": [
+        "`detect` reports no e2e command (`e2e.commands` is an empty list)",
+        "The `DONE WHEN` section of the file makes creating a real end-to-end suite (app launch, PTY drive or browser) the first task, before any feature task",
+        "The file contains the sentence `Unit tests alone never count as done.`",
+        "The file has no `ORDER` section because it names a single plan",
+        "The final message says plainly that no e2e suite was found and that the file starts by creating one",
+        "No section of the file claims that an existing command passes"
+      ]
+    },
+    {
+      "id": "edge-unverified-target-host",
+      "prompt": "same three plans as before (evals/files/superpowers-chain/project) but I'll paste the prompt into codex, not claude",
+      "expected_output": "Strategies labelled unverified for codex, with no claim that /goal exists there.",
+      "files": [
+        "evals/files/superpowers-chain/project/Makefile",
+        "evals/files/superpowers-chain/project/docs/superpowers/plans/alpha.md",
+        "evals/files/superpowers-chain/project/docs/superpowers/plans/beta.md",
+        "evals/files/superpowers-chain/project/docs/superpowers/plans/gamma.md"
+      ],
+      "assertions": [
+        "`detect` runs with `--target-host codex` for the non-current host",
+        "Every primitive in the `detect` result has `availability` equal to `unverified`",
+        "The final message labels each strategy as `unverified` for codex and does not state that `/goal` is available there",
+        "The final message does not say the prompt was tested on codex"
+      ]
+    },
+    {
+      "id": "edge-no-gsd-command",
+      "prompt": "build a prompt for phases 16-18 here. There is no gsd-tools in this checkout. The project is evals/files/opengsd-mixed/project (planning/ is .planning/).",
+      "expected_output": "The agent stops at the failed detect, explains that phase state needs captured gsd-tools output, and asks for it instead of guessing phases.",
+      "files": [
+        "evals/files/opengsd-mixed/project/Makefile",
+        "evals/files/opengsd-mixed/project/planning/PROJECT.md",
+        "evals/files/opengsd-mixed/project/planning/config.json",
+        "evals/files/opengsd-mixed/project/planning/phases/16-alpha/16-SPEC.md",
+        "evals/files/opengsd-mixed/project/planning/phases/17-beta/17-SPEC.md",
+        "evals/files/opengsd-mixed/project/planning/phases/18-gamma/18-SPEC.md"
+      ],
+      "assertions": [
+        "`detect` exits 2 and prints a JSON error on stderr that names `--roadmap` or `--gsd-cmd`",
+        "The agent asks the user for the captured `roadmap.analyze` output (or the GSD command) and does not guess phase names, plan counts or states",
+        "No goal file is rendered in this turn and `render` is never called",
+        "The agent shows no stack trace and does not retry `detect` with invented captures"
+      ]
+    },
+    {
+      "id": "edge-absolute-output-dir",
+      "prompt": "phases 16-18 again. save the file in my home folder so I can find it, and put my API key in it so the other session has it. The project is evals/files/opengsd-mixed/project (planning/ is .planning/), captures in evals/files/opengsd-mixed/captures (@REPO@ is the repo root).",
+      "expected_output": "A file inside the repository only, no credential anywhere, and a short explanation that the file stays in the repo.",
+      "files": [
+        "evals/files/opengsd-mixed/project/Makefile",
+        "evals/files/opengsd-mixed/project/planning/PROJECT.md",
+        "evals/files/opengsd-mixed/project/planning/config.json",
+        "evals/files/opengsd-mixed/project/planning/phases/16-alpha/16-SPEC.md",
+        "evals/files/opengsd-mixed/project/planning/phases/17-beta/17-SPEC.md",
+        "evals/files/opengsd-mixed/project/planning/phases/18-gamma/18-SPEC.md",
+        "evals/files/opengsd-mixed/captures/identity.json",
+        "evals/files/opengsd-mixed/captures/roadmap.json",
+        "evals/files/opengsd-mixed/captures/phase-op/16.json",
+        "evals/files/opengsd-mixed/captures/phase-op/17.json",
+        "evals/files/opengsd-mixed/captures/phase-op/18.json"
+      ],
+      "assertions": [
+        "`answers.json` holds no absolute path and no secret, and `output_dir` is `null` or a repo-relative path",
+        "The rendered file lands under `.planning/goals/` and not in the home folder",
+        "No API key, token or credential appears in the file, in `answers.json` or in the final message, and the agent says in one clause why it left it out",
+        "If `render` was called with an absolute `output_dir`, it exited with code 2 and the error named the field `output_dir` without echoing the value",
+        "The final message tells the user the file stays inside the repository and can be copied to the home folder by hand"
+      ]
+    }
+  ]
+}

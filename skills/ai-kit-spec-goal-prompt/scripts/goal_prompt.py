@@ -94,26 +94,48 @@ class _Parser(argparse.ArgumentParser):
         raise UsageError(message)
 
 
+EXIT_CODES_EPILOG = (
+    "Exit codes: 0 ok; 2 bad input or a guard failure (a JSON error is printed on stderr). "
+    "Output is JSON on stdout. The tool never prompts."
+)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = _Parser(prog="goal_prompt.py", description="Goal-prompt generator: detect, render.")
+    parser = _Parser(
+        prog="goal_prompt.py", description="Goal-prompt generator: detect, render.",
+        formatter_class=argparse.RawDescriptionHelpFormatter, epilog=EXIT_CODES_EPILOG,
+    )
     commands = parser.add_subparsers(dest="command", required=True, parser_class=_Parser)
     detect = commands.add_parser("detect", help="print the detect contract as JSON")
-    detect.add_argument("--repo", default=".")
-    detect.add_argument("--target-host")
-    detect.add_argument("--tools", default="")
-    detect.add_argument("--roadmap")
-    detect.add_argument("--identity")
-    detect.add_argument("--phase-op")
-    detect.add_argument("--work-set")
-    detect.add_argument("--gsd-cmd")
-    detect.add_argument("--wake-cli")
-    detect.add_argument("--spec-cli")
-    detect.add_argument("--decide-cli")
+    detect.add_argument("--repo", default=".",
+                        help="repository root to read (default: current directory)")
+    detect.add_argument("--target-host",
+                        help="host whose primitives are judged; any other host is unverified")
+    detect.add_argument("--tools", default="",
+                        help="comma-separated tool names seen on this machine (default: none)")
+    detect.add_argument("--roadmap",
+                        help="captured gsd-tools roadmap.analyze JSON file (default: none)")
+    detect.add_argument("--identity",
+                        help="captured runtime-identity JSON file (default: none)")
+    detect.add_argument("--phase-op",
+                        help="directory of captured init.phase-op files named NUMBER.json")
+    detect.add_argument("--work-set",
+                        help="KIND:VALUE, e.g. phases:16-18, plans:a.md,b.md or free:TEXT")
+    detect.add_argument("--gsd-cmd",
+                        help="read-only gsd-tools command, run as argv without a shell")
+    detect.add_argument("--wake-cli", help="path of the ai-kit-session-wake CLI to probe")
+    detect.add_argument("--spec-cli", help="path of the ai-kit-spec-review CLI to probe")
+    detect.add_argument("--decide-cli", help="path of the decide CLI (jev, advisory only)")
     render = commands.add_parser("render", help="write one goal file, print its contract")
-    render.add_argument("--repo", default=".")
-    render.add_argument("--detect", required=True)
-    render.add_argument("--answers", required=True)
-    render.add_argument("--out-dir")
+    render.add_argument("--repo", default=".",
+                        help="repository root to write into (default: current directory)")
+    render.add_argument("--detect", required=True,
+                        help="JSON file written by `detect` (schema 1); required")
+    render.add_argument("--answers", required=True,
+                        help="JSON file with the work set, host and strategy answers; required")
+    render.add_argument("--out-dir",
+                        help="repo-relative directory when answers give no output_dir "
+                             "(default: .planning/goals, docs/superpowers/goals or tmp)")
     return parser
 
 
@@ -245,6 +267,8 @@ def _roadmap(args: argparse.Namespace, seams: CliSeams, tokens: Sequence[str]) -
     if args.roadmap:
         return _read_json(args.roadmap, "--roadmap")
     if not tokens:
+        if args.work_set is None:
+            return None  # no work set: the roadmap is optional; only phases need it
         raise UsageError("a GSD work set needs --roadmap or --gsd-cmd")
     roadmap = _gsd_json(args, seams, tokens, ["roadmap.analyze"])
     if roadmap is None:

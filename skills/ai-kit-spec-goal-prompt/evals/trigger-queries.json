@@ -1,0 +1,22 @@
+[
+  {"query": "I need a prompt I can paste into a fresh Claude Code session so it finishes phases 21 through 24 on its own while I sleep", "should_trigger": true},
+  {"query": "write a /goal prompt for the three superpowers plans in docs/superpowers/plans, they should run overnight and end with the e2e tests green", "should_trigger": true},
+  {"query": "can you generate a one-shot autonomous run prompt for the rest of this milestone? use /gsd-autonomous if that is the right tool", "should_trigger": true},
+  {"query": "set me up a loop prompt that keeps working through the plans until the PTY tests pass, I will paste it into codex", "should_trigger": true},
+  {"query": "make a goal file I can commit for phase 27 so a separate session can do it unattended", "should_trigger": true},
+  {"query": "which is better for unattended runs here, /goal, /loop or /gsd-autonomous? build the prompt for phases 12-14 accordingly", "should_trigger": true},
+  {"query": "I am going away for the weekend. give me something to paste into claude that grinds through all the remaining plans and does not stop at unit tests", "should_trigger": true},
+  {"query": "turn plans alpha.md and beta.md into a prompt with rails, quota handling and a definition of done that needs real e2e evidence", "should_trigger": true},
+  {"query": "prep a copy-paste prompt so another agent session can finish phases 3-5 without me, with cross-AI convergence per plan", "should_trigger": true},
+  {"query": "I want a long-running run prompt for this repo: detect what my host supports for goals, loops and schedules and pick one to three strategies", "should_trigger": true},
+  {"query": "give me a plain summary of what phases 16 to 18 deliver and which of them are already done", "should_trigger": false},
+  {"query": "execute phase 17 right now in this session, I want to watch it work", "should_trigger": false},
+  {"query": "how do I make /loop check the deploy status every 5 minutes? no goal, I only need the pacing syntax", "should_trigger": false},
+  {"query": "write a system prompt for my customer-support chatbot that stays polite and keeps answers short", "should_trigger": false},
+  {"query": "review the plan docs/superpowers/plans/alpha.md for gaps before we start building", "should_trigger": false},
+  {"query": "explain what the /goal command does in Claude Code and what happens when the condition is never met", "should_trigger": false},
+  {"query": "plan phase 19 for me and check the plan against the spec before I approve it", "should_trigger": false},
+  {"query": "improve this prompt I wrote for summarizing PDFs, it is too wordy and the model keeps skipping tables", "should_trigger": false},
+  {"query": "schedule a cron job that runs the backup script every night at 2am and mails me the log", "should_trigger": false},
+  {"query": "execute the superpowers plan docs/superpowers/plans/beta.md with subagents, one task at a time", "should_trigger": false}
+]

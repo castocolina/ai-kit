@@ -66,9 +66,11 @@ class FakeRun:
     def __init__(self, routes=()):
         self.routes = list(routes)
         self.calls = []
+        self.options = []  # (timeout, cwd) per call, so the seam's arguments stay observable
 
     def __call__(self, argv, timeout, cwd=None):
         self.calls.append(list(argv))
+        self.options.append((timeout, cwd))
         for suffix, rc, out in self.routes:
             if tuple(argv[-len(suffix):]) == tuple(suffix):
                 return rc, out
@@ -200,6 +202,15 @@ class TestCli(unittest.TestCase):
         fx.opengsd_project(self.repo, PHASES)
         fx.superpowers_project(self.repo, {"a.md": fx.plan_text("Plan A")})
         result = self.detect(*self.captures())
+        self.assertEqual(result["scope"]["kind"], "both")
+        self.assertIsNotNone(result["scope"]["ask"])
+        self.assertEqual(result["strategies"], [])
+
+    def test_planning_plus_plans_without_a_work_set_or_captures_still_asks_both(self):
+        # A missing roadmap is fatal only for a phases work set (contract: exit 2 then).
+        fx.opengsd_project(self.repo, PHASES)
+        fx.superpowers_project(self.repo, {"a.md": fx.plan_text("Plan A")})
+        result = self.detect()
         self.assertEqual(result["scope"]["kind"], "both")
         self.assertIsNotNone(result["scope"]["ask"])
         self.assertEqual(result["strategies"], [])

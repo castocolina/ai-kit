@@ -1,0 +1,43 @@
+{
+  "milestones": [
+    {
+      "version": "v1.0",
+      "name": "fixture milestone"
+    }
+  ],
+  "phases": [
+    {
+      "number": "16",
+      "name": "alpha",
+      "goal": "goal of alpha",
+      "depends_on": "",
+      "plan_count": 2,
+      "summary_count": 2,
+      "has_context": true,
+      "disk_status": "complete",
+      "roadmap_complete": true
+    },
+    {
+      "number": "17",
+      "name": "beta",
+      "goal": "goal of beta",
+      "depends_on": "16",
+      "plan_count": 2,
+      "summary_count": 0,
+      "has_context": true,
+      "disk_status": "planned",
+      "roadmap_complete": false
+    },
+    {
+      "number": "18",
+      "name": "gamma",
+      "goal": "goal of gamma",
+      "depends_on": "17",
+      "plan_count": 0,
+      "summary_count": 0,
+      "has_context": true,
+      "disk_status": "discussed",
+      "roadmap_complete": false
+    }
+  ]
+}

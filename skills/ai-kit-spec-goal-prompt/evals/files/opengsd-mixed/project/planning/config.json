@@ -1,0 +1,12 @@
+{
+  "workflow": {
+    "cross_ai_execution": true,
+    "cross_ai_command": "node .planning/scripts/cross-ai.mjs"
+  },
+  "plan_review_convergence": true,
+  "review": {
+    "default_reviewers": [
+      "referee-one"
+    ]
+  }
+}

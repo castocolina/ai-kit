@@ -1,0 +1,11 @@
+{
+  "phase_found": true,
+  "phase_dir": "@REPO@/.planning/phases/17-beta",
+  "phase_number": "17",
+  "has_context": true,
+  "has_plans": true,
+  "has_reviews": false,
+  "has_verification": false,
+  "plan_count": 2,
+  "state_path": "@REPO@/.planning/STATE.md"
+}
