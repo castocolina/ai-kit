@@ -74,7 +74,7 @@ created: "2026-10-31"
 | 27-14-3 | 14 | 10 | GPS-04 | T-27-35, T-27-36 | 9 evals with inputs and concrete assertions; fixtures proven by the real CLI; `--help`, JSON output and exit codes of the entry script | unit, CLI smoke | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_evals` | yes | green (re-run 2026-10-31) |
 | 27-12-1 | 12 | 11 | GPS-04 | T-27-29 | New skill-judge round 1 (percent grade, cap 3 rounds), triage, fixes | evidence | Task 1 verify | yes | green (27-13 gate run; not re-run here) |
 | 27-12-2 | 12 | 11 | GPS-04 | T-27-29 | Rounds 2 and 3 only if needed, then stop | evidence | Task 2 verify | yes | green (27-13 gate run; not re-run here) |
-| 27-12-3 | 12 | 11 | GPS-04 | T-27-30 | Verdict file reproduced by the checker (percent, grade, severity counts); pending acceptance | evidence, checker | `python3 .planning/phases/27-one-shot-goal-and-loop-prompt-skill/skill-judge/check_verdicts.py .planning/phases/27-one-shot-goal-and-loop-prompt-skill` | yes | checker green at HEAD (post-review round 4: 88.8%, B, 0/0, UNRESOLVED vs base 90.4); `--gate` pending an owner decision |
+| 27-12-3 | 12 | 11 | GPS-04 | T-27-30 | Verdict file reproduced by the checker (percent, grade, severity counts); pending acceptance | evidence, checker | `python3 .planning/phases/27-one-shot-goal-and-loop-prompt-skill/skill-judge/check_verdicts.py .planning/phases/27-one-shot-goal-and-loop-prompt-skill` | yes | green at HEAD (post-review round 5: 115/125 = 92.0%, A, 0/0, PASS vs base 90.4); `--gate`: `gate ok` |
 | 27-13-1 | 13 | 12 | GPS-01..GPS-04 | T-27-32 | make test validate e2e-docker; live CLI checks on this repo | gates, live | `make test validate e2e-docker` | yes | green (27-13 gate run; not re-run here) |
 | 27-13-2 | 13 | 12 | GPS-01..GPS-04 | T-27-33 | Owner captures and filled validation map | doc check | Task 2 verify | yes | green (27-13 gate run; not re-run here) |
 | 27-13-3 | 13 | 12 | GPS-01..GPS-04 | T-27-33 | Dated amendments to REQUIREMENTS, ROADMAP and SPEC | doc check | Task 3 verify | yes | green (27-13 gate run; not re-run here) |
@@ -105,7 +105,7 @@ created: "2026-10-31"
 | codex `/goal` usage text and every non-Claude host's primitives (A4) | GPS-01 | reverse-engineered or absent; no safe live probe | owner capture |
 | Original GSD's `/gsd-autonomous`, `runtime-identity`, `verification.status` (A1) | GPS-01 | original GSD is not installed here | owner capture |
 | Zero-test markers of pytest, jest, vitest, Playwright, Cypress, cargo (A5) | GPS-03 | the runners are not installed here | owner capture |
-| Skill-judge verdict is current for the shipped package | GPS-04 | a post-review confirmation round 4 re-judged the shipped package (referee-two: 111/125, 88.8%, B, 0 critical, 0 high); the checker reproduces it, and the verdict is UNRESOLVED because 88.8 is under the round-1 base 90.4, so `--gate` needs an `Owner-decision:` line | `27-OWNER-CAPTURES.md` item 7; `27-SECURITY.md` U8 |
+| Skill-judge verdict is current for the shipped package | GPS-04 | post-review confirmation rounds 4 and 5 re-judged the shipped package; round 5 (referee-two: 115/125 = 92.0%, A, 0 critical, 0 high, PASS vs base 90.4) matches the committed package and the checker reproduces it; round 4 (88.8%) was UNRESOLVED before the INT-1 quota-rule fix. One judge only, so the owner may still want a second lane | `27-OWNER-CAPTURES.md` item 7; `27-SECURITY.md` U8 |
 | `tools/setup.py` `PI_SKILLS` decision (item 6); `native_execution` wording, `ToolSearch` on other hosts, `@file:` roadmap, Python 3.12 `string.Template` delimiter, real-run DONE WHEN (item 8) | GPS-01, GPS-02 | needs the second host, runtime or a model | owner captures items 6 and 8 in `27-OWNER-CAPTURES.md` |
 ---
 
@@ -118,7 +118,7 @@ created: "2026-10-31"
 - [ ] Feedback latency < 60s (not met, re-measured 2026-10-31: `tests.test_ai_kit_spec_goal_prompt_evals` took 130 s and the real-CLI e2e module 49 s while the gates ran in parallel; the other goal-prompt modules finish in seconds)
 - [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** 27-13 filled the map from the gate run at the phase tip; validated 2026-10-31 by the Nyquist audit below (automated coverage for every requirement and decision, 7 gaps filled, 1 escalated). Items that only an owner can verify are in `27-OWNER-CAPTURES.md`; the skill-judge verdict is current (round 4) but UNRESOLVED against its base; that owner decision is the one open escalation.
+**Approval:** 27-13 filled the map from the gate run at the phase tip; validated 2026-10-31 by the Nyquist audit below (automated coverage for every requirement and decision, 7 gaps filled, 1 escalated). Items that only an owner can verify are in `27-OWNER-CAPTURES.md`; the skill-judge verdict is current (round 5: PASS, 92.0%); the earlier 27-12-3 escalation is closed, and only the owner captures remain.
 
 ---
 
@@ -130,7 +130,7 @@ created: "2026-10-31"
 | Test modules re-run | 13 goal-prompt modules green (evals 130 s, e2e 51 s), then `--group unit --group arch`: 75/75 modules |
 | Gaps found | 7 (all mutation survivors: a behavior with no test that fails when its code is reverted) |
 | Resolved | 7 (7 new tests, below) |
-| Escalated | 1 (27-12-3 skill-judge verdict re-judged in post-review round 4 (88.8%, UNRESOLVED vs base 90.4); needs an owner decision, not a test) |
+| Escalated | 0 (27-12-3 was re-judged in post-review round 5: PASS 92.0%, `gate ok`; round 4 had been UNRESOLVED at 88.8%) |
 | Manual-only | 8 owner captures (`27-OWNER-CAPTURES.md` items 1-8) |
 
 Method: each guard was reverted in a scratch copy of the tree under `tmp/p27/nyquist/` (never in the real tree) and the 11 fast goal-prompt modules were run; a mutant that no test fails on is a gap. 56 mutants: 15 for the 27-secure fixes, 39 for the behaviors named in the audit brief and the matrix, rails and cleanup text (4,000/4,001 cap by value, `>=` and bytes; flags-only line scan; `--converge` kept and nothing else added; quota A and B as separate bullets; one subagent per plan, one at a time, stop scope; `cross_ai: true` rule; create-first; count above zero; unit-only clause and guard; jev advisory wording, jev guard, jev only when usable, mockup never judged by jev; unverified labels; turn cap; gap line; process-group proof; never push; archive tag; matrix rows), 2 for the `--converge` line. 49 were killed at once; the 7 survivors were gaps.
@@ -169,7 +169,7 @@ SPEC acceptance criteria:
 - E2E required with evidence, create-first: `render.TestDoneLines.test_detected_command_lines_are_exact`, `test_e2e_none_opens_with_the_create_first_task_and_mockups_add_the_review_line`, `variants.TestDoneVariants.test_no_e2e_opens_with_the_create_first_task`.
 - jev advisory and text-only (MUST NOT gate or judge UI): `render.TestGuards.test_jev_inside_done_when_flagged`, `test_jev_inside_stop_if_flagged`, `variants.TestDoneVariants.test_no_line_mentions_jev_together_with_a_mockup_screenshot_or_ui`, `variants.TestJevVariants.test_sweep_usable_jev_and_mockup_never_share_a_line`, `golden.TestPropertySweep`.
 - Never done on unit tests alone, no `--no-verify`, no secret or path: `render.TestGuards.test_done_when_without_the_unit_test_sentence_flagged`, `test_no_verify_flagged`, `test_skipped_test_tier_flagged`, `test_home_path_flagged`, `test_secret_flagged_and_never_echoed`.
-- SKILL.md passes skill-judge, `make test` and `make validate` green: `skilltext`, `evals`, 27-13 gates; the verdict is current (round 4: 88.8%, B, 0/0) but UNRESOLVED against its 90.4% base (escalated to the owner).
+- SKILL.md passes skill-judge, `make test` and `make validate` green: `skilltext`, `evals`, 27-13 gates; the verdict is current (round 5: 115/125 = 92.0%, A, 0/0, PASS vs base 90.4; one judge only).
 
 CONTEXT decisions:
 - D-01, D-02: `skilltext` (description opens with trigger words within 200 characters, 300-line cap, NEVER, MANDATORY, "Do NOT load").

@@ -9,9 +9,9 @@ behavior_unverified: 0
 overrides_applied: 0
 gaps: []
 human_verification:
-  - test: "Skill-judge acceptance at HEAD (GPS-04, second half): a post-review confirmation round 4 re-judged the shipped package; check_verdicts.py reproduces it (verdicts ok) and `--gate` prints `gate pending: ai-kit-spec-goal-prompt UNRESOLVED`; see OWNER-CAPTURES item 7"
-    expected: "Owner records an Owner-decision line accepting UNRESOLVED (111/125, 88.8%, grade B, 0 critical, 0 high, below the round-1 base 90.4%) or lowers the base; one judge only (referee-two) backed it, and the same skill scored 88.8, 92.0 and 88.8 in rounds 2 to 4"
-    why_human: "Accepting a non-PASS verdict is an owner decision; an agent message is not consent"
+  - test: "Skill-judge acceptance at HEAD (GPS-04, second half): post-review confirmation round 5 re-judged the shipped package (PASS); check_verdicts.py reproduces it (verdicts ok) and `--gate` prints `gate ok`; see OWNER-CAPTURES item 7"
+    expected: "Owner optionally accepts the PASS (115/125, 92.0%, grade A, 0 critical, 0 high, base 90.4%) with an Owner-decision line or asks for a second judge lane; one judge only (referee-two) backed it, and the same skill scored 88.8, 92.0, 88.8 and 92.0 in rounds 2 to 5"
+    why_human: "The verdict is PASS; accepting its open medium/low findings is an owner decision, and an agent message is not consent"
   - test: "4,000-code-point /goal accepted by Claude Code (A3); see OWNER-CAPTURES item 1"
     expected: "Host accepts 4,000 and rejects 4,001"
     why_human: "Needs a real session and a model call"
@@ -41,7 +41,7 @@ human_verification:
 separate agent session that carries the chosen strategy, rails, quota handling and a definition of done that
 requires green e2e tests.
 **Verified:** 2026-10-31
-**Status:** human_needed (no unmet automated truth; skill-judge re-judged at HEAD (88.8%, UNRESOLVED vs base, owner decision pending); owner captures 1-8 open)
+**Status:** human_needed (no unmet automated truth; skill-judge re-judged at HEAD (round 5: 92.0%, PASS, one judge); owner captures 1-8 open)
 **Re-verification:** No (initial verification)
 
 ## Goal Achievement
@@ -62,7 +62,7 @@ All CLI runs used a scratch HOME under `tmp/p27/verify/`, `AI_KIT_REFUSE_REAL_HO
 | 7  | GPS-02: `/goal` cap 4,000 code points; `/gsd-autonomous` first line flags-only | VERIFIED | Condition of 5,384 code points: exit 2 `"/goal condition is 5384 code points; the cap is 4000"` (`gp_render.py:81,140`); rendered `/goal` conditions 319-388 chars; OpenGSD first line `/gsd-autonomous --from 16 --to 18 --converge` and `--only 27 --converge`. `test_4000_code_points_pass_and_4001_fail` (`_golden.py:412`) ok. Acceptance by the host at exactly 4,000 is unverified (OWNER-CAPTURES item 1). The OpenGSD block (4,830 to 5,414 chars) is not a `/goal` and is bounded by `INLINE_CAP` 7000 (`gp_render.py:83`), not 4,000 |
 | 8  | GPS-03: done-when requires the real e2e command green with a count above zero, evidence printed | VERIFIED | DONE WHEN: "`make e2e-test` exits 0 and prints a test count above zero. Exit 0 with a zero count is not green", "Print each command with its exact exit code, its count line and the last 20 lines", screenshot/TUI snapshot paths, process-group cleanup, "Unit tests alone never count as done"; `/goal` condition repeats the exit code and count requirement. PTY driver detected as `inferred`. `tests.test_ai_kit_spec_goal_prompt_e2e` 4 ok (real runs, 56 s) and `_signals` 30 ok |
 | 9  | GPS-03: no e2e suite means creating one comes first | VERIFIED | `no-e2e` render: DONE WHEN first line "No e2e suite exists. The first task, before any feature plan, creates one that launches the real app..."; no command line (`gp_sections.py:101`). `_variants.py:129,139,155` ok |
-| 10 | GPS-04: jev advisory and text-only, never a gate or UI/mockup judge; skill passes /skill-judge | PARTIAL: jev VERIFIED, skill-judge re-judged, UNRESOLVED vs base | jev: one REPORT line "Advisory (not a gate): run one choice item through the decide.py ladder ... from text summaries only" (`gp_sections.py:377`); mockup scope renders "No automated judge decides it" and lists screenshots for human review; no jev text in DONE WHEN or near a mockup/UI (`_variants.py:172,219`). Skill-judge: a post-review confirmation round 4 judged the package at HEAD (referee-two, 111/125, 88.8%, B, 0 critical, 0 high); `check_verdicts.py` prints `verdicts ok` and `--gate` prints `gate pending` because 88.8% is under the round-1 base 90.4% (the earlier PASS of round 3, 92.0%, is superseded). Counted as pending (human_verification entry 1) |
+| 10 | GPS-04: jev advisory and text-only, never a gate or UI/mockup judge; skill passes /skill-judge | VERIFIED: jev VERIFIED, skill-judge PASS at HEAD (round 5, one judge) | jev: one REPORT line "Advisory (not a gate): run one choice item through the decide.py ladder ... from text summaries only" (`gp_sections.py:377`); mockup scope renders "No automated judge decides it" and lists screenshots for human review; no jev text in DONE WHEN or near a mockup/UI (`_variants.py:172,219`). Skill-judge: post-review confirmation round 5 judged the package at HEAD (referee-two, 115/125 = 92.0%, A, 0 critical, 0 high); `check_verdicts.py` prints `verdicts ok` and `--gate` prints `gate ok` (92.0% >= base 90.4%). Round 4 had scored 88.8% (UNRESOLVED) before the INT-1 quota-rule fix; the judge varies by about 3 points. Remaining owner step: human_verification entry 1 |
 
 **Score:** 9/10 truths verified; truth 10 half-verified (jev), half pending.
 
@@ -94,7 +94,7 @@ All CLI runs used a scratch HOME under `tmp/p27/verify/`, `AI_KIT_REFUSE_REAL_HO
 | over-cap condition | render with 5,384-code-point `/goal` | exit 2, cap message | PASS |
 | absolute `output_dir` | render with `/etc/foo` | exit 2, "must stay inside the repository" | PASS |
 | unit tests | 13 `tests.test_ai_kit_spec_goal_prompt_*` modules | all exit 0 | PASS |
-| skill-judge verdict check | `check_verdicts.py .planning/phases/27-...` | `verdicts ok`; `--gate`: `gate pending: ai-kit-spec-goal-prompt UNRESOLVED` | PARTIAL (see truth 10) |
+| skill-judge verdict check | `check_verdicts.py .planning/phases/27-...` | `verdicts ok`; `--gate`: `gate ok` | PASS (see truth 10) |
 
 ### Requirements Coverage
 
@@ -103,7 +103,7 @@ All CLI runs used a scratch HOME under `tmp/p27/verify/`, `AI_KIT_REFUSE_REAL_HO
 | GPS-01 | SATISFIED | Truths 1-3 |
 | GPS-02 | SATISFIED | Truths 4-7 |
 | GPS-03 | SATISFIED | Truths 8-9 |
-| GPS-04 | PARTIAL | jev half satisfied (truth 10); skill-judge half judged at HEAD (88.8%, UNRESOLVED vs base 90.4%, owner decision pending). REQUIREMENTS.md still shows it complete, which overstates the state |
+| GPS-04 | PARTIAL | jev half satisfied (truth 10); skill-judge half judged at HEAD (round 5: 92.0%, PASS vs base 90.4%, one judge). REQUIREMENTS.md still shows it complete, which overstates the state |
 
 No orphaned requirement IDs for Phase 27.
 
@@ -117,12 +117,12 @@ No orphaned requirement IDs for Phase 27.
 
 ### Human Verification Required
 
-Eight items, listed in the frontmatter. Entry 1 (skill-judge UNRESOLVED vs base) is OWNER-CAPTURES item 7; entries 2-8 are OWNER-CAPTURES items 1, 2, 3, 4, 5, 6 and 8.
+Eight items, listed in the frontmatter. Entry 1 (skill-judge PASS, optional owner acceptance) is OWNER-CAPTURES item 7; entries 2-8 are OWNER-CAPTURES items 1, 2, 3, 4, 5, 6 and 8.
 
 ### Gaps Summary
 
-No automated truth failed. GPS-04's skill-judge half is not accepted at HEAD (round 4: 88.8%, UNRESOLVED vs its 90.4% base, one judge only) and
-needs an owner decision; every other open item is an owner capture that needs a real host,
+No automated truth failed. GPS-04's skill-judge half passes at HEAD (round 5: 92.0% vs its 90.4% base, one judge only; the owner may add an acceptance line) and
+ every other open item is an owner capture that needs a real host,
 runtime or model call and is unproven here.
 
 ---
