@@ -2525,5 +2525,22 @@ class TestParallelTestTable(unittest.TestCase):
             self._marker_owners((bad, *self._forms()[1:]))
 
 
+    def test_a_very_long_line_scans_in_bounded_time(self):
+        import time
+
+        from ai_kit_rules_common.classification import hardcoded_worker_counts
+
+        go_rows = cast(
+            "list[dict]", [row for row in self._forms() if "go test" in row["runners"]]
+        )
+        self.assertTrue(go_rows)
+        start = time.monotonic()
+        found = hardcoded_worker_counts("go " * 20000, go_rows, [])
+        self.assertLess(time.monotonic() - start, 1.0)
+        self.assertEqual(found, [])
+        near = "go test " + "x" * 150 + " -p 8"
+        self.assertEqual(hardcoded_worker_counts(near, go_rows, []), [near])
+
+
 if __name__ == "__main__":
     unittest.main()

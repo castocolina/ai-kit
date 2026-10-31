@@ -171,9 +171,12 @@ def _flag_pattern(flag: str) -> re.Pattern[str]:
 
 @functools.cache
 def _runner_pattern(runner: str) -> re.Pattern[str]:
-    """A runner phrase: its words in order as whole words, anything between them."""
+    """A runner phrase: its words in order as whole words, up to 200 characters between them.
+
+    The gap is bounded so one very long line scans in linear time (T-26-30).
+    """
     words = [re.escape(word) for word in runner.lower().split()]
-    return re.compile(r"\b" + r"\b.*\b".join(words) + r"\b")
+    return re.compile(r"\b" + r"\b.{0,200}\b".join(words) + r"\b")
 
 
 def _count_is_hardcoded(number: str, suffix: str) -> bool:
