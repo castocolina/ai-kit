@@ -156,7 +156,12 @@ def main(argv):
 
     rounds = sorted(int(os.path.basename(p)[1:]) for p in glob.glob(j_dir + "/skill-judge/r*")
                     if os.path.basename(p)[1:].isdigit())
-    assert len(rounds) <= 3, "more than three rounds"
+    # The original loop is capped at three rounds. Rounds 4 and 5 exist only as the single post-review
+    # confirmation (orchestrator decision, at most one fix-and-recheck), and must be labelled so.
+    assert rounds == list(range(1, len(rounds) + 1)) and len(rounds) <= 5, "rounds must be r1..r<=5"
+    extra = ",".join(str(n) for n in rounds if n > 3)
+    lab = re.search(r"^Post-review confirmation rounds: (\S+)$", t, re.M)
+    assert (lab.group(1) if lab else "") == extra, "rounds above 3 need the label line: " + extra
     base = None
     for n in rounds:  # a new skill has no earlier baseline: the lowest finished percent of round 1
         fin = [verdict_of(r)["percent"] for j in JUDGES for r in [report(n, j)] if r and finished(r, j, rubric)]

@@ -11,7 +11,7 @@ Phase tip cced6d1 (2026-10-31); the only later commits are documentation. Logs l
 
 ## Skill-judge state
 
-`check_verdicts.py` prints `verdicts ok`; `--gate` prints `gate ok` (ai-kit-spec-goal-prompt: PASS, round 3, 115/125 = 92.0%, grade A, 0 critical, 0 high; base 90.4). One judge only (referee-two; referee-three and referee-one were down, no native Opus ran). The phase is therefore reported accepted by the gate; the nine open medium and low findings stay unaccepted by an owner (item 7).
+`check_verdicts.py` prints `verdicts ok`; `--gate` prints `gate pending: ai-kit-spec-goal-prompt UNRESOLVED` (post-review confirmation round 4, 111/125 = 88.8%, grade B, 0 critical, 0 high; base 90.4, so it needs an `Owner-decision:` line). One judge only (referee-two; referee-three was down, referee-one not used, no native Opus ran).
 
 ## Owner captures (human_verification)
 
