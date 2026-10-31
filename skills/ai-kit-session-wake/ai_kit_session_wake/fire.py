@@ -231,11 +231,16 @@ def disarm(host: str, session_id: str, seams: Seams) -> int:
 def done(host: str, session_id: str, seams: Seams) -> int:
     """Write the `.done` marker; inside a fire child stop there (the resume's
     own finish step disarms, D-10 step 7); when no resume holds the lock,
-    disarm at once; when one does, say so and let it disarm on exit."""
+    disarm at once; when one does, say so and let it disarm on exit. With
+    no lock file nothing can be resuming: write no marker, and remove any
+    leftovers by name."""
     wake = _wake(host, session_id, seams)
+    in_fire = seams.env.get(FIRE_MARKER_ENV) == f"{host}-{session_id}"
+    if not in_fire and not os.path.exists(wake.paths.lock):
+        return _done_unlocked(wake)
     touch_marker(wake.paths.done)
     print(wake.paths.done)
-    if seams.env.get(FIRE_MARKER_ENV) == f"{host}-{session_id}":
+    if in_fire:
         return 0
     fd = lock_session(wake.paths, blocking=False)
     if fd is None:
@@ -249,6 +254,19 @@ def done(host: str, session_id: str, seams: Seams) -> int:
         return 0
     finally:
         os.close(fd)
+
+
+def _done_unlocked(wake: _Wake) -> int:
+    """`done` with no lock file: nothing armed means no marker (a stale one
+    would delete a later arm at its first fire); leftovers go by name."""
+    _state, reason = read_state(wake.paths.state, wake.host, wake.session_id)
+    timer, _service = unit_names(wake.host, wake.session_id)
+    if reason == "missing" and not os.path.exists(os.path.join(unit_dir(wake.seams.env), timer)):
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(wake.paths.done)
+        print(f"nothing armed; no done marker written ({wake.host}-{wake.session_id})")
+        return 0
+    return disarm_by_name(wake.host, wake.session_id, wake.seams)
 
 
 # ── the fire ────────────────────────────────────────────────────────────────

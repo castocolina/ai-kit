@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -1071,7 +1072,7 @@ class TestClassifyDispatchFailure(unittest.TestCase):
         })
         # Run the exact one-liners the SKILL shows, so this fails if they drift.
         skill = pathlib.Path(__file__).resolve().parents[1].joinpath(
-            "skills/ai-kit-spec-execute-superpowers/SKILL.md"
+            "skills/ai-kit-spec-execute-superpowers/references/dispatch-external-cli.md"
         ).read_text(encoding="utf-8")
         out = {}
         for token in ("retry_after_s", "cycle"):
@@ -2186,6 +2187,45 @@ class TestCliClassifyDispatchFailure(unittest.TestCase):
         self.assertEqual(out.getvalue(), "quota")
 
 
+class TestImplementerStatus(unittest.TestCase):
+    """The status comes from a line that declares it, never from a word inside prose."""
+
+    def test_a_declared_status_wins_over_status_words_in_prose(self):
+        cases = {
+            "BLOCKED: checks failed; task is not DONE": "BLOCKED",
+            "Ran the suite; every test passes, nothing BLOCKED.\nSTATUS: DONE": "DONE",
+            "**Status:** DONE_WITH_CONCERNS": "DONE_WITH_CONCERNS",
+            "- NEEDS_CONTEXT - which schema?": "NEEDS_CONTEXT",
+            "DONE.": "DONE",
+            "status: DONE\nDONE": "DONE",
+        }
+        for stdout, want in cases.items():
+            with self.subTest(stdout=stdout):
+                self.assertEqual(dispatch_injection.implementer_status(stdout), want)
+
+    def test_missing_conflicting_or_echoed_declarations_read_as_blocked(self):
+        for stdout in ("", "all good, task is DONE", "STATUS: DONE\nSTATUS: BLOCKED",
+                       "Status: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED",
+                       "DONE is not reachable without the schema"):
+            with self.subTest(stdout=stdout):
+                self.assertEqual(dispatch_injection.implementer_status(stdout), "BLOCKED")
+
+    def test_cli_reads_only_the_stdout_field(self):
+        out = io.StringIO()
+        result = {"returncode": 0, "stdout": "work summary\nSTATUS: DONE", "reason": "BLOCKED"}
+        rc = superpowers_cli.main(
+            ["implementer-status", "--dispatch-result-json", json.dumps(result)], stdout=out
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue(), "DONE")
+        out = io.StringIO()
+        superpowers_cli.main(
+            ["implementer-status", "--dispatch-result-json", json.dumps({"returncode": 0})],
+            stdout=out,
+        )
+        self.assertEqual(out.getvalue(), "BLOCKED")
+
+
 class TestCliResumeExclusions(unittest.TestCase):
     def test_prints_only_permanent_exclusions(self):
         # CRITICAL finding: the executable subcommand SKILL.md's resume path calls -- proves
@@ -2327,19 +2367,26 @@ class TestUntrustedLocalExecuteEntry(unittest.TestCase):
 
 _SUPER_SKILL = pathlib.Path(__file__).resolve().parent.parent / "skills" / (
     "ai-kit-spec-execute-superpowers") / "SKILL.md"
-_SUPER_COMMANDS = ["dirname", "grep", "wc", "printf", "cat", "sed", "tr", "echo", "head"]
+_SUPER_COMMANDS = ["dirname", "mkdir", "grep", "wc", "printf", "cat", "sed", "tr", "echo", "head",
+                   "rm", "tee"]
 
 
 def _super_text() -> str:
     return _SUPER_SKILL.read_text(encoding="utf-8")
 
 
+def _super_dispatch_ref() -> str:
+    return (_SUPER_SKILL.parent / "references" / "dispatch-external-cli.md").read_text(
+        encoding="utf-8")
+
+
 def _super_block(needle: str) -> str:
-    """The superpowers SKILL.md's own first fenced bash block that holds `needle`."""
-    for block in re.findall(r"```bash\n(.*?)```", _super_text(), re.DOTALL):
+    """The first fenced bash block of SKILL.md or the external_cli reference with `needle`."""
+    for block in re.findall(r"```bash\n(.*?)```", _super_text() + "\n" + _super_dispatch_ref(),
+                            re.DOTALL):
         if needle in block:
             return block
-    raise AssertionError(f"SKILL.md has no bash block containing {needle!r}")
+    raise AssertionError(f"no SKILL.md or dispatch-external-cli.md bash block has {needle!r}")
 
 
 class TestSessionWakeStep(unittest.TestCase):
@@ -2360,6 +2407,7 @@ class TestSessionWakeStep(unittest.TestCase):
         os.makedirs(os.path.join(self.cwd, "docs"))
         self.plan = os.path.join(self.cwd, "docs", "plan.md")
         self.log = os.path.join(self.root, "fake.log")
+        self.scalars = os.path.join(self.root, "scalars.env")
         self.env = session_wake_fakes.doc_block_env(self.root, _SUPER_COMMANDS)
 
     def _plan(self, tasks: int):
@@ -2374,6 +2422,7 @@ class TestSessionWakeStep(unittest.TestCase):
             **self.env,
             "AI_KIT_FAKE_LOG": self.log,
             "SKILL_DIR": self.super_skill,
+            "SCALARS": self.scalars,
             "CWD": self.cwd,
             "PLAN_FILE": self.plan,
             **(extra or {}),
@@ -2396,7 +2445,143 @@ class TestSessionWakeStep(unittest.TestCase):
         raise AssertionError(f"{key}= not printed in: {out!r}")
 
     def _arm_block(self) -> str:
-        return _super_block("single-task plan: no session wake")
+        block = _super_block("single-task plan: no session wake")
+        # The id line is a literal the agent fills; the tests pass it through the env.
+        return re.sub(r'^WAKE_SESSION_ID="<[^"\n]*>"$', 'WAKE_SESSION_ID="${WAKE_SESSION_ID:-}"',
+                      block, count=1, flags=re.MULTILINE)
+
+    def test_arm_block_sets_the_session_id_on_its_own_first_line(self):
+        """A variable set in an earlier Bash call is gone, so the id literal opens the block."""
+        first = _super_block("single-task plan: no session wake").splitlines()[0]
+        self.assertTrue(first.startswith("WAKE_SESSION_ID="), first)
+
+    def _fill_task_paths(self, block: str, skill_dir: str, shim: str, tools: str, task_n: str):
+        """Substitute the six literals the agent fills in the task-paths block's first lines."""
+        values = {"SKILL_DIR": skill_dir, "SHIM": shim, "TOOLS_PY": tools, "CWD": self.cwd,
+                  "PLAN_FILE": self.plan, "TASK_N": task_n}
+        for name, value in values.items():
+            block = re.sub(rf'{name}="<[^"\n]*>"', lambda _m, n=name, v=value: f'{n}={v!r}', block,
+                           count=1)
+        return block
+
+    def test_task_paths_guard_rejects_empty_and_placeholder_values(self):
+        """An unbound CWD/PLAN_FILE/TASK_N would collide task state, so the block stops first."""
+        block = _super_block("RESUME_FOUND=")
+        tools = os.path.join(self.root, "tools.py")
+        with open(tools, "w", encoding="utf-8") as handle:
+            handle.write("print('q')\n")
+        for name in ("CWD", "PLAN_FILE", "TASK_N", "TOOLS_PY"):
+            for bad in ("", "<Step 1 value>"):
+                with self.subTest(name=name, bad=bad):
+                    filled = self._fill_task_paths(block, self.super_skill, "shim", tools, "3")
+                    filled = re.sub(rf"\b{name}='[^']*'", lambda _m, n=name, v=bad: f"{n}={v!r}",
+                                    filled, count=1)
+                    result = self._run(filled, {"SCALARS": "unset"})
+                    self.assertNotEqual(0, result.returncode, result.stdout)
+                    self.assertIn(f"ERROR: {name} is empty", result.stdout)
+                    self.assertFalse(os.path.exists("unset"))
+
+    def test_resume_check_finds_the_task_state_file(self):
+        """Step 2's resume check computes the state path exactly as the state-write blocks do."""
+        tools = os.path.join(self.root, "tools.py")
+        cache = os.path.join(self.root, "cache")
+        os.makedirs(cache)
+        with open(tools, "w", encoding="utf-8") as handle:
+            handle.write(f"print({os.path.join(cache, 'quota.json')!r})\n")
+        block = _super_block("RESUME_FOUND=")
+        block = self._fill_task_paths(block, self.super_skill, "shim", tools, "3")
+        extra = {"SCALARS": "unset"}
+        first = self._run(block, extra)
+        self.assertEqual(0, first.returncode, first.stderr)
+        self.assertEqual("0", self._value(first.stdout, "RESUME_FOUND"))
+        key = hashlib.sha256(f"{self.cwd}\n{self.plan}".encode()).hexdigest()[:12]
+        path = os.path.join(cache, f"superpowers-resume-{key}-task-3.json")
+        self.assertEqual(path, self._value(first.stdout, "RESUME_STATE_PATH"))
+        self.assertEqual(os.path.join(cache, "quota.json"), self._value(first.stdout, "QUOTA_PATH"))
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("{}")
+        second = self._run(block, extra)
+        self.assertEqual("1", self._value(second.stdout, "RESUME_FOUND"))
+
+    def _state_write_blocks(self) -> list[str]:
+        ref = (_SUPER_SKILL.parent / "references" / "state-management.md").read_text(
+            encoding="utf-8")
+        blocks = [b for b in re.findall(r"```bash\n(.*?)```", ref, re.DOTALL)
+                  if "write-resumable-state" in b]
+        self.assertEqual(2, len(blocks))
+        return blocks
+
+    def test_state_write_blocks_use_the_loaded_resume_path_and_never_recompute_it(self):
+        """A fresh shell has no QUOTA_PATH: recomputing wrote ./superpowers-resume-...; an empty
+        loaded path must stop the block before any write."""
+        for block in self._state_write_blocks():
+            self.assertNotRegex(block, r"(?m)^\s*(PROJECT_KEY|RESUME_STATE_PATH)=")
+            self.assertNotIn("dirname", block)
+            proc = self._run(block, {"RESUME_STATE_PATH": "", "SHIM": "false", "RUN_DIR": self.root,
+                                     "FIX_ROUND": "0"})
+            self.assertNotEqual(0, proc.returncode, proc.stdout)
+            self.assertIn("RESUME_STATE_PATH is empty", proc.stdout)
+            self.assertEqual([], [n for n in os.listdir(self.cwd) if n.startswith("superpowers-")])
+
+    def test_second_task_shell_loads_the_second_tasks_resume_path(self):
+        """The scalar file is per plan (last line wins): task 2's task-paths block must make a
+        later shell load task 2's RESUME_STATE_PATH, not task 1's."""
+        tools = os.path.join(self.root, "tools.py")
+        cache = os.path.join(self.root, "cache")
+        os.makedirs(cache)
+        with open(tools, "w", encoding="utf-8") as handle:
+            handle.write(f"print({os.path.join(cache, 'quota.json')!r})\n")
+        block = _super_block("RESUME_FOUND=")
+        for task_n in ("1", "2"):
+            filled = self._fill_task_paths(block, self.super_skill, "shim", tools, task_n)
+            proc = self._run(filled)
+            self.assertEqual(0, proc.returncode, proc.stderr)
+        loader = _super_block("while IFS== read").replace(
+            "<the path the task-paths block printed>", self._value(proc.stdout, "SCALARS"))
+        later = self._run(loader + '\nprintf "%s\\n" "$RESUME_STATE_PATH" "$RUN_DIR"')
+        key = hashlib.sha256(f"{self.cwd}\n{self.plan}".encode()).hexdigest()[:12]
+        self.assertEqual(
+            [os.path.join(cache, f"superpowers-resume-{key}-task-2.json"),
+             os.path.join(cache, f"superpowers-run-{key}-task-2")],
+            later.stdout.splitlines())
+
+    def test_wake_id_wording_names_no_verified_pi_or_opencode_session_variable(self):
+        flat = " ".join(_super_text().split())
+        self.assertNotIn("this session's exact id", flat)
+        self.assertIn("pi and opencode have no verified session variable", flat)
+        self.assertIn("never a guess or the newest session file", flat)
+        self.assertIn("Otherwise leave it empty", flat)
+
+    def test_clear_resume_state_removes_only_the_task_state_file(self):
+        """A succeeded dispatch deletes the task's own state file, never a sibling."""
+        mine = os.path.join(self.root, "superpowers-resume-k-task-3.json")
+        other = os.path.join(self.root, "superpowers-resume-k-task-4.json")
+        for path in (mine, other):
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("{}")
+        block = _super_block('rm -f -- "$RESUME_STATE_PATH"')
+        for _ in range(2):  # the second run proves a missing file is not an error
+            proc = self._run(block, {"RESUME_STATE_PATH": mine})
+            self.assertEqual(0, proc.returncode, proc.stderr)
+            self.assertFalse(os.path.exists(mine))
+            self.assertTrue(os.path.exists(other))
+        self.assertEqual(0, self._run(block, {"RESUME_STATE_PATH": ""}).returncode)
+
+    def test_fix_round_start_precedes_both_dispatch_modes(self):
+        """The round increment and anchor are shared, so native dispatch also moves the floor."""
+        text = _super_text()
+        start = text.index("**At the start of every fix round, in either mode")
+        self.assertLess(start, text.index('**`mode == "native"`:**'))
+        self.assertLess(start, text.index('**`mode == "external_cli"`:**'))
+        self.assertIn('ESCALATION_ANCHOR_KEY="$LAST_DISPATCHED_KEY"', text[start:start + 300])
+        self.assertNotIn("never dispatches a task itself", text)
+
+    def test_fix_round_start_is_new_round_only_and_reads_escalation_before_dispatch(self):
+        text = " ".join(_super_text().split())
+        self.assertIn("new rounds only, never on a resume, a re-invoke that kept its "
+                      "scalars or a Step-2 re-entry", text)
+        self.assertLess(text.index("**MANDATORY: read `references/escalation.md` now**"),
+                        text.index("**Clear the resume state when a dispatch succeeds**"))
 
     def test_single_task_plan_arms_nothing(self):
         self._plan(1)
@@ -2423,6 +2608,14 @@ class TestSessionWakeStep(unittest.TestCase):
         self.assertIn("no session id: pass --session-id", proc.stdout)
         self.assertIn("session wake arm exit 2", proc.stdout)
         self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
+
+    def test_unfilled_session_id_placeholder_is_a_hard_failure(self):
+        self._plan(2)
+        block = _super_block("single-task plan: no session wake")
+        proc = self._run(block, {"STUB_HOST": "pi"})
+        self.assertNotEqual(0, proc.returncode, proc.stdout)
+        self.assertIn("WAKE_SESSION_ID is a placeholder", proc.stdout)
+        self.assertEqual([], self._shim_calls())
 
     def test_pi_with_the_recorded_id_passes_session_id(self):
         self._plan(2)
@@ -2454,7 +2647,8 @@ class TestSessionWakeStep(unittest.TestCase):
     def test_owned_rearm_and_close_use_the_recorded_identity(self):
         self._plan(2)
         owned = {"WAKE_SHIM": self.shim, "WAKE_OWNED": "1", "WAKE_HOST": "claude",
-                 "WAKE_ID": "sid-s1", "RESUME_STATE_PATH": os.path.join(self.root, "r.json")}
+                 "WAKE_ID": "sid-s1", "RESUME_STATE_PATH": os.path.join(self.root, "r.json"),
+                 "SCALARS": self.scalars}
         rearm = _super_block('--ref "$RESUME_STATE_PATH"')
         close = _super_block('done --host "$WAKE_HOST"')
         for block in (rearm, close):
@@ -2468,6 +2662,35 @@ class TestSessionWakeStep(unittest.TestCase):
              ["done", "--host", "claude", "--session-id", "sid-s1"]],
             self._shim_calls(),
         )
+        with open(self.scalars, encoding="utf-8") as handle:  # a later run arms its own wake
+            self.assertEqual("WAKE_OWNED=0", handle.read().splitlines()[-1])
+
+    def _loader(self) -> str:
+        return _super_block("while IFS== read").replace(
+            "<the path the task-paths block printed>", self.scalars)
+
+    def test_arm_block_runs_once_per_plan_when_run_twice(self):
+        """A re-invoked or wake-resumed run follows the skill from the top and runs the block
+        again; the owned wake must stay owned and `arm` must not be called a second time."""
+        self._plan(2)
+        block = self._arm_block()
+        first = self._run(block, {"STUB_HOST": "claude", "STUB_SID": "sid-s1"})
+        self.assertEqual("1", self._value(first.stdout, "WAKE_OWNED"))
+        second = self._run(self._loader() + "\n" + block,
+                           {"STUB_HOST": "claude", "STUB_ARM_OUTPUT": "refreshed claude-sid-s1"})
+        self.assertEqual(0, second.returncode, second.stderr)
+        self.assertIn("arm skipped", second.stdout)
+        self.assertEqual([["arm", "--ref", self.plan]], self._shim_calls())
+        with open(self.scalars, encoding="utf-8") as handle:
+            owned = [ln for ln in handle.read().splitlines() if ln.startswith("WAKE_OWNED=")]
+        self.assertEqual(["WAKE_OWNED=1"], owned)
+        # an unowned plan (a refusal or `refreshed` earlier) still tries again
+        with open(self.scalars, "w", encoding="utf-8") as handle:
+            handle.write("WAKE_OWNED=0\n")
+        third = self._run(self._loader() + "\n" + block,
+                          {"STUB_HOST": "claude", "STUB_SID": "sid-s2"})
+        self.assertEqual("1", self._value(third.stdout, "WAKE_OWNED"))
+        self.assertEqual(2, len(self._shim_calls()))
 
     def test_single_task_run_through_a_stop_and_completion_touches_no_wake(self):
         self._plan(1)
@@ -2486,14 +2709,367 @@ class TestSessionWakeStep(unittest.TestCase):
 
     def test_arm_sits_before_step_two_and_close_after_step_four(self):
         text = _super_text()
-        arm = text.index("## Arm the session wake (plans with two or more tasks, D-23)")
+        arm = text.index("## Arm the session wake (plans with two or more tasks)\n")
         step2 = text.index("## Step 2: Before each task's implementer dispatch")
         step4 = text.index("## Step 4: Task review, fix loop, final review")
-        close = text.index("## Close the session wake (D-23)")
+        close = text.index("## Close the session wake\n")
         self.assertLess(arm, step2)
         self.assertLess(step4, close)
         self.assertEqual(1, text.count("ai-kit-session-wake/ai-kit-session-wake.py"))
-        # D-23: done runs when the job ends: the plan finished, or a stop ended the run
+        # done runs when the job ends: the plan finished, or a stop ended the run
         close_text = text[close:]
         self.assertIn("STOP this wave, or an owner stop", close_text)
         self.assertIn("the final whole-branch review finished", close_text)
+        self.assertNotIn("D-23", text)
+
+    def test_arm_is_once_per_plan_and_pinned_resume_reuses_the_prompt_file(self):
+        flat = " ".join(_super_text().split())
+        self.assertIn("Run this block once per plan, not once per task", flat)
+        self.assertIn("It skips itself on the loaded `WAKE_OWNED=1`", flat)
+        self.assertIn("reusing the existing `$PROMPT_FILE` (switch only its WRITE sentence to "
+                      "APPEND; never recompose the objective)", flat)
+
+    def test_rearm_runs_only_on_the_one_shot_wait_path(self):
+        # An owner stop must not re-arm: the close step runs `done` right after it.
+        text = " ".join(_super_dispatch_ref().split())
+        rearm = text.index('--ref "$RESUME_STATE_PATH"')
+        self.assertLess(text.index("**Schedule-or-stop.**"), rearm)
+        self.assertLess(text.index("On the one-shot wait path only, first re-arm"), rearm)
+        self.assertLess(rearm, text.index("Where `CronCreate` is callable"))
+        self.assertNotRegex(text + _super_text(), r"\bpoint [0-9]\b")
+
+    def test_companion_line_defers_to_the_session_wake_skill(self):
+        flat = " ".join(_super_text().split())
+        self.assertIn("When `arm` prints a `companion:` line", flat)
+        self.assertIn('says under "When `arm` prints a companion time"', flat)
+
+
+class TestSkillStepZero(unittest.TestCase):
+    """Step 0 prints SKILL_DIR (the wake block needs it) and accepts only the sibling review
+    skill, the one directory the shim puts on sys.path."""
+
+    def setUp(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        self.bash_bin: str = bash_bin
+        self.root = tempfile.mkdtemp(prefix="super-step0-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.skill = os.path.join(self.root, "skills", "ai-kit-spec-execute-superpowers")
+        os.makedirs(self.skill)
+        with open(os.path.join(self.skill, "ai-kit-spec-superpowers.py"), "w") as shim:
+            shim.write("")
+        block = _super_block('TOOLS_PY="$REVIEW_SKILL_DIR/ai-kit-spec.py"')
+        self.raw_block = block
+        self.block = block.replace("<absolute path to THIS SKILL.md>",
+                                   os.path.join(self.skill, "SKILL.md"))
+        self.env = session_wake_fakes.doc_block_env(self.root, ["dirname", "printf"])
+
+    def _run(self):
+        return subprocess.run([self.bash_bin, "-c", self.block], cwd=self.root, env=self.env,
+                              capture_output=True, text=True, timeout=60, check=False)
+
+    def test_prints_skill_dir_shim_and_the_sibling_tools_py(self):
+        os.makedirs(os.path.join(self.root, "skills", "ai-kit-spec-review"))
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        lines = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
+        self.assertEqual(self.skill, lines["SKILL_DIR"])
+        self.assertEqual(os.path.join(self.skill, "ai-kit-spec-superpowers.py"), lines["SHIM"])
+        self.assertEqual(os.path.join(self.root, "skills", "ai-kit-spec-review", "ai-kit-spec.py"),
+                         lines["TOOLS_PY"])
+
+    def test_unfilled_skill_md_placeholder_stops_instead_of_resolving_to_cwd(self):
+        # dirname of the literal placeholder is ".", which exists in any cwd
+        os.makedirs(os.path.join(self.root, "skills", "ai-kit-spec-review"))
+        empty = os.path.join(self.root, "empty")
+        os.makedirs(empty)
+        proc = subprocess.run([self.bash_bin, "-c", self.raw_block], cwd=empty, env=self.env,
+                              capture_output=True, text=True, timeout=60, check=False)
+        self.assertEqual(1, proc.returncode, proc.stdout)
+        self.assertIn("could not resolve", proc.stdout)
+        self.assertNotIn("SKILL_DIR=", proc.stdout)
+
+    def test_review_skill_elsewhere_is_refused(self):
+        os.makedirs(os.path.join(self.root, "home", ".claude", "skills", "ai-kit-spec-review"))
+        proc = self._run()
+        self.assertEqual(1, proc.returncode, proc.stdout)
+        self.assertIn("ai-kit-spec-review is not installed beside", proc.stdout)
+        self.assertNotIn("TOOLS_PY=", proc.stdout)
+
+
+_SUPER_REFS = _SUPER_SKILL.parent / "references"
+
+
+class TestFixRoundAndWakeScope(unittest.TestCase):
+    """Fix rounds 1-3 never re-resolve; the quota wake's Step 2 ban covers its re-dispatch only."""
+
+    @staticmethod
+    def _flat(path: pathlib.Path) -> str:
+        return " ".join(path.read_text(encoding="utf-8").split())
+
+    def test_rounds_one_to_three_reuse_the_injection(self):
+        skill = self._flat(_SUPER_SKILL)
+        self.assertIn("Fix rounds 1–3 reuse the task's `$INJECTION_JSON` unchanged", skill)
+        self.assertIn("rounds 1–3 keep `$INJECTION_JSON` and skip Step 2", skill)
+        self.assertNotIn("repeats on every task and fix round", skill)
+        escalation = self._flat(_SUPER_REFS / "escalation.md")
+        self.assertIn("rounds 1–3 run no resolution and reuse `$INJECTION_JSON`", escalation)
+        self.assertNotIn("this round's same `--exclude-keys-json`", escalation)
+
+    def test_unknown_anchor_stop_comes_before_the_floor_script(self):
+        text = (_SUPER_REFS / "escalation.md").read_text(encoding="utf-8")
+        self.assertLess(text.index("**An empty or unknown anchor never dispatches.**"),
+                        text.index("ladder.index(stuck)"))
+
+    def test_wake_prompt_binds_fourteen_placeholders_with_skill_dir_and_tools_py(self):
+        text = (_SUPER_REFS / "quota-wake.md").read_text(encoding="utf-8")
+        match = re.search(r"```text\n(.*?)```", text, re.DOTALL)
+        assert match is not None
+        prompt = match.group(1)
+        placeholders = set(re.findall(r"=<([A-Z_]+)>", prompt))
+        self.assertIn("TOOLS_PY", placeholders)
+        # the task-paths guard exits on an empty SKILL_DIR, so the woken run must be given it
+        self.assertIn("SKILL_DIR", placeholders)
+        self.assertEqual(14, len(placeholders))
+        self.assertIn("Substitute all fourteen placeholders", text)
+        self.assertIn("filling its six placeholder lines from the step 1 and step 2 values",
+                      " ".join(prompt.split()))
+        self.assertIn("its fourteen placeholders",
+                      self._flat(_SUPER_REFS / "dispatch-external-cli.md"))
+        flat_prompt = " ".join(prompt.split())
+        self.assertIn("For this re-dispatch only: do not resolve a candidate", flat_prompt)
+        self.assertIn("redo the ai-kit-spec-execute-superpowers Step 0 and take BRIEF_FILE "
+                      "from the restored ledger", flat_prompt)
+        self.assertNotIn("point 3", flat_prompt)
+
+    def test_no_json_stop_writes_pinned_state_and_design_notes_name_the_rule(self):
+        skill = self._flat(_SUPER_REFS / "dispatch-external-cli.md")
+        self.assertIn("stop exactly as the `real_error` branch does (pinned state write", skill)
+        self.assertNotIn("no result\"; exit 1", _SUPER_SKILL.read_text(encoding="utf-8"))
+        notes = self._flat(_SUPER_REFS / "design-notes.md")
+        self.assertNotIn("predate the owner rule", notes)
+        self.assertIn("never-switch rule (ai-kit-cross-ai section 8)", notes)
+
+
+# ── 26-11: JSON values live in files; the owner-named replacement pair recipe ──────────────
+
+
+def _ref_blocks(name: str) -> list:
+    text = (_SUPER_REFS / name).read_text(encoding="utf-8")
+    return re.findall(r"```bash\n(.*?)```", text, re.DOTALL)
+
+
+def _ref_block(name: str, needle: str) -> str:
+    for block in _ref_blocks(name):
+        if needle in block:
+            return block
+    raise AssertionError(f"no bash block in {name} has {needle!r}")
+
+
+class TestJsonFilesAndOwnerNamedPair(unittest.TestCase):
+    """The docs' own scripts, run for real against a scratch RUN_DIR."""
+
+    def setUp(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        self.bash_bin: str = bash_bin
+        self.root = tempfile.mkdtemp(prefix="super-json-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.run_dir = os.path.join(self.root, "run")
+        os.makedirs(self.run_dir)
+
+    def _put(self, name, value):
+        with open(os.path.join(self.run_dir, name + ".json"), "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(value))
+
+    def _get(self, name):
+        with open(os.path.join(self.run_dir, name + ".json"), encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def _bash(self, block, **env):
+        return subprocess.run(
+            [self.bash_bin, "-c", block], cwd=self.root, capture_output=True, text=True,
+            env={**os.environ, "RUN_DIR": self.run_dir, **env}, timeout=60, check=False)
+
+    def test_no_block_pastes_json_into_a_command(self):
+        for name in ("SKILL.md", "dispatch-external-cli.md", "state-management.md",
+                     "escalation.md"):
+            path = _SUPER_SKILL if name == "SKILL.md" else _SUPER_REFS / name
+            text = path.read_text(encoding="utf-8")
+            for blocks in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
+                self.assertNotRegex(blocks, r"printf '[^']*_JSON=%s", name)
+            self.assertNotIn('--injection-json "$INJECTION_JSON"', text)
+
+    def test_restore_writes_hostile_json_to_files_and_rejects_a_mismatch(self):
+        hostile = {"mode": "external_cli", "key": "codex/terra", "runtime": "codex",
+                   "detail": 'quote " dollar $HOME tick ` $(touch pwned)', "ladder_keys": ["a"]}
+        state = {"framework": "superpowers", "plan_path": "p.md", "task_index": "2",
+                 "fix_round": 4, "excluded_keys": ["x"], "reasons": {"x": "auth", "y": "auth"},
+                 "last_dispatched_key": "a", "escalation_anchor_key": "b",
+                 "injection_json": hostile}
+        path = os.path.join(self.root, "state.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(state, handle)
+        block = _ref_block("state-management.md", "state file does not match")
+        scalars = os.path.join(self.root, "scalars.env")
+        env = {"RESUME_STATE_PATH": path, "PLAN_FILE": "p.md", "TASK_N": "2", "SCALARS": scalars}
+        proc = self._bash(block, **env)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("FIX_ROUND=4", proc.stdout)
+        with open(scalars, encoding="utf-8") as handle:
+            self.assertEqual(proc.stdout, handle.read())
+        self.assertIn("INJECTION_KEY=codex/terra", proc.stdout)
+        self.assertEqual(hostile, self._get("INJECTION_JSON"))
+        self.assertEqual({"x": "auth"}, self._get("PRIOR_REASONS_JSON"))
+        self.assertEqual(["x"], self._get("EXCLUDED_KEYS_JSON"))
+        self.assertEqual([], self._get("WAVE_TRIED_JSON"))
+        self.assertFalse(os.path.exists(os.path.join(self.root, "pwned")))
+        self.assertNotEqual(0, self._bash(block, **{**env, "TASK_N": "3"}).returncode)
+
+    def _seed_pair(self, owner_in_ladder=True):
+        self._put("INJECTION_JSON", {"mode": "external_cli", "key": "a/one",
+                                     "ladder_keys": ["a/one", "b/two", "c/three"]})
+        self._put("PRIOR_EXCLUDED_KEYS_JSON", ["z/old"])
+        self._put("PRIOR_REASONS_JSON", {"z/old": "auth"})
+        self._put("WAVE_TRIED_JSON", [])
+        self._put("WAVE_REASONS_JSON", {})
+
+    def _pair_block(self, owner):
+        block = _ref_block("state-management.md", "OWNER_KEY=")
+        return block.replace("<the ladder key the owner named, exactly as in ladder_keys>", owner
+                             ).replace("<the failed key's real reason from the stop report: auth, "
+                                       "timeout, real_error, ...>", "auth")
+
+    def test_owner_named_pair_excludes_every_other_key_and_folds_the_failed_one(self):
+        self._seed_pair()
+        proc = self._bash(self._pair_block("c/three"))
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(["a/one", "b/two"], self._get("ESCALATION_EXCLUDE_JSON"))
+        self.assertEqual(["a/one"], self._get("WAVE_TRIED_JSON"))
+        self.assertEqual({"a/one": "auth"}, self._get("WAVE_REASONS_JSON"))
+        self.assertEqual(["a/one", "z/old"], self._get("EXCLUDED_KEYS_JSON"))
+
+    def test_owner_named_key_in_the_prior_permanent_set_is_resolved(self):
+        self._seed_pair()
+        self._put("PRIOR_EXCLUDED_KEYS_JSON", ["z/old", "c/three"])
+        self._put("PRIOR_REASONS_JSON", {"z/old": "auth", "c/three": "capacity"})
+        proc = self._bash(self._pair_block("c/three"))
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(["a/one", "z/old"], self._get("EXCLUDED_KEYS_JSON"))
+        self.assertEqual(["z/old"], self._get("PRIOR_EXCLUDED_KEYS_JSON"))
+        self.assertEqual({"z/old": "auth"}, self._get("PRIOR_REASONS_JSON"))
+
+    def test_owner_named_pair_refuses_the_failed_key_and_unknown_keys(self):
+        self._seed_pair()
+        for owner in ("a/one", "nope/x"):
+            self.assertNotEqual(0, self._bash(self._pair_block(owner)).returncode, owner)
+
+    def test_real_error_fold_records_the_dispatch_reason(self):
+        fold = _ref_block("dispatch-external-cli.md", "FOLD_REASON=quota")
+        reason_line = _ref_block("dispatch-external-cli.md", "FOLD_REASON=\"$(python3")
+        self._put("PRIOR_EXCLUDED_KEYS_JSON", [])
+        self._put("WAVE_TRIED_JSON", [])
+        self._put("WAVE_REASONS_JSON", {})
+        result = os.path.join(self.root, "dispatch.json")
+        with open(result, "w", encoding="utf-8") as handle:
+            json.dump({"returncode": 1, "reason": "auth", "stdout": 'say "hi" $x `y`'}, handle)
+        block = fold.replace("FOLD_REASON=quota\n", reason_line)
+        proc = self._bash(block, DISPATCH_BASE=result[:-len(".json")], INJECTION_KEY="a/one")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual({"a/one": "auth"}, self._get("WAVE_REASONS_JSON"))
+        self.assertEqual(["a/one"], self._get("EXCLUDED_KEYS_JSON"))
+
+
+class TestScalarFile(unittest.TestCase):
+    """Scalars live in a file the loader restores; hostile values stay inert."""
+
+    HOSTILE = 'q" s\' d$HOME t` $(touch pwned) a=b= \\n'
+
+    def setUp(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        self.bash_bin: str = bash_bin
+        self.root = tempfile.mkdtemp(prefix="super-scalars-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.scalars = os.path.join(self.root, "scalars.env")
+
+    def _bash(self, block, **env):
+        return subprocess.run(
+            [self.bash_bin, "-c", block], cwd=self.root, capture_output=True, text=True,
+            env={**os.environ, "SCALARS": self.scalars, **env}, timeout=60, check=False)
+
+    def _loader(self):
+        block = _super_block("IFS== read")
+        return block.replace("<the path the task-paths block printed>", self.scalars)
+
+    def test_a_persisted_hostile_value_round_trips_and_stays_inert(self):
+        write = self._bash(
+            'for n in LAST_DISPATCHED_KEY FIX_ROUND; do printf "%s=%s\\n" "$n" '
+            '"${!n}"; done | tee -a "$SCALARS" >/dev/null', LAST_DISPATCHED_KEY=self.HOSTILE,
+            FIX_ROUND="4")
+        self.assertEqual(0, write.returncode, write.stderr)
+        read = self._bash(self._loader() + '\nprintf "%s" "$LAST_DISPATCHED_KEY"; '
+                          'printf "|%s" "$FIX_ROUND"')
+        self.assertEqual(0, read.returncode, read.stderr)
+        self.assertEqual(self.HOSTILE + "|4", read.stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.root, "pwned")))
+
+    def test_the_last_line_wins_and_odd_names_are_skipped(self):
+        with open(self.scalars, "w", encoding="utf-8") as handle:
+            handle.write("FIX_ROUND=1\nbad-name=x\nlower=y\nFIX_ROUND=2\nEMPTY=\n")
+        read = self._bash(self._loader() + '\nprintf "%s|%s|%s" "$FIX_ROUND" "${EMPTY-unset}" '
+                          '"${lower-unset}"')
+        self.assertEqual(0, read.returncode, read.stderr)
+        self.assertEqual("2||unset", read.stdout)
+
+    def test_seed_twice_keeps_a_nonzero_fix_round_but_resets_for_another_task(self):
+        seed = _ref_block("state-management.md", "SEEDED_TASK")
+        run_dir = os.path.join(self.root, "run")
+        os.makedirs(run_dir)
+        env = {"RUN_DIR": run_dir, "TASK_N": "2"}
+        script = self._loader() + "\n" + seed + "\n" + self._loader() + \
+            '\nprintf "R=%s|%s|%s" "$FIX_ROUND" "$LAST_DISPATCHED_KEY" "$ESCALATION_ANCHOR_KEY"'
+        first = self._bash(script, **env)
+        self.assertEqual(0, first.returncode, first.stderr)
+        self.assertTrue(first.stdout.endswith("R=0||"), first.stdout)
+        with open(self.scalars, "a", encoding="utf-8") as handle:  # a stop with no state file
+            handle.write("FIX_ROUND=4\nLAST_DISPATCHED_KEY=a/one\nESCALATION_ANCHOR_KEY=a/one\n")
+        again = self._bash(script, **env)  # last line wins in the loader
+        self.assertEqual(0, again.returncode, again.stderr)
+        self.assertTrue(again.stdout.endswith("R=4|a/one|a/one"), again.stdout)
+        with open(self.scalars, encoding="utf-8") as handle:
+            self.assertEqual(1, handle.read().count("SEEDED_TASK="))
+        other = self._bash(script, **{**env, "TASK_N": "3"})
+        self.assertTrue(other.stdout.endswith("R=0||"), other.stdout)
+        # the close block's WAKE_OWNED=0 line is a different name: the seed leaves it alone
+        with open(self.scalars, "a", encoding="utf-8") as handle:
+            handle.write("WAKE_OWNED=0\n")
+        wake = self._bash(script + '\nprintf "|%s" "$WAKE_OWNED"', **{**env, "TASK_N": "3"})
+        self.assertTrue(wake.stdout.endswith("|0"), wake.stdout)
+
+    def test_every_listing_that_prints_scalars_appends_them(self):
+        for name, needle in (("SKILL.md", "RESUME_FOUND"), ("SKILL.md", "WAKE_OWNED"),
+                             ("dispatch-external-cli.md", "REPORT_MODE=%s"),
+                             ("dispatch-external-cli.md", "RETRY_AFTER_S=%s")):
+            path = _SUPER_SKILL if name == "SKILL.md" else _SUPER_REFS / name
+            blocks = re.findall(r"```bash\n(.*?)```", path.read_text(encoding="utf-8"), re.DOTALL)
+            hits = [b for b in blocks if needle in b and "printf" in b]
+            self.assertTrue(hits, needle)
+            for block in hits:
+                self.assertIn('tee -a "$SCALARS"', block, needle)
+        text = " ".join(_SUPER_SKILL.read_text(encoding="utf-8").split())
+        self.assertNotIn("re-substituted verbatim", text)
+
+    def test_capacity_is_persisted_as_permanent_and_the_docs_say_so(self):
+        from ai_kit_spec_superpowers.dispatch_injection import compute_resume_exclusions
+        self.assertEqual(["cap"], compute_resume_exclusions(["cap", "q"], {"cap": "capacity",
+                                                                          "q": "quota"}, []))
+        skill = " ".join(_SUPER_SKILL.read_text(encoding="utf-8").split())
+        self.assertIn('`"capacity"` included, is saved as a permanent exclusion', skill)
+        self.assertNotIn("later retry on the same lane", skill)
+        for name in ("escalation.md", "state-management.md"):
+            text = " ".join((_SUPER_REFS / name).read_text(encoding="utf-8").split())
+            self.assertIn("permanent exclusion", text, name)

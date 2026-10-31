@@ -23,6 +23,7 @@ _LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 _FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 _SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 _MAX_LINKS = 20
+SKIP_GSD_PROBE_ENV = "AI_KIT_SKIP_GSD_PROBE"
 _BINARY_SNIFF = 8192
 
 
@@ -163,12 +164,18 @@ def _opengsd_presence(
 ) -> dict[str, str]:
     """`opengsd` and `opengsd_reason` for the `opengsd` condition (26 D-17, D-19).
 
-    The identity probe runs only when `.planning/` exists; it runs the repo's own gsd-tools,
-    so its path is printed on stderr for the user.
+    The identity probe runs only when `.planning/` exists; it may run the repo's own gsd-tools,
+    so its path is printed on stderr for the user. `AI_KIT_SKIP_GSD_PROBE` set to a non-empty
+    value skips it (an untrusted target), leaving R18/R19 unverified.
     """
     if not os.path.isdir(os.path.join(repo_root, ".planning")):
         return {"opengsd": "absent", "opengsd_reason": "no .planning/ directory"}
     probe_env = dict(os.environ) if env is None else env
+    if probe_env.get(SKIP_GSD_PROBE_ENV):
+        return {
+            "opengsd": "unverified",
+            "opengsd_reason": f"gsd identity probe skipped ({SKIP_GSD_PROBE_ENV} is set)",
+        }
     status, reason, tools_path = gsd_identity.probe(probe_env, repo_root, run_fn)
     if tools_path:
         print(f"ai-kit: gsd identity probe ran {tools_path}", file=sys.stderr)

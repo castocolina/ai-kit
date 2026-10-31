@@ -16,12 +16,13 @@ def aggregate(domain_results: dict) -> dict:
     """Merge `domain_results` (one entry per `DOMAIN_ORDER` key, each
     either a real `{"remediate": [...], "blocked": [...]}` payload or a
     D-05 failure-entry marker) into `{"remediate": ..., "blocked": ...,
-    "failed": ...}`.
+    "failed": ..., "notices": ...}`.
 
     For each domain in `DOMAIN_ORDER`, a real payload's `remediate` and
     `blocked` entries are folded into two running lists spanning ALL 6
     domains together; a D-05 failure marker (no `"remediate"` key) is
-    appended to a running `failed` list instead -- never folded into
+    appended to a running `failed` list instead, with `domain` set so a
+    passed-through payload still names its domain -- never folded into
     `remediate`/`blocked` (D-02, D-05). After the loop, both `remediate`
     and `blocked` are stable-sorted by `criticality` ascending over the
     WHOLE concatenated list, never per-domain (SC2). Every sorted
@@ -41,7 +42,7 @@ def aggregate(domain_results: dict) -> dict:
             blocked.extend(result.get("blocked", []))
             notices.extend(result.get("notices", []))
         else:
-            failed.append(result)
+            failed.append({**result, "domain": domain})
 
     remediate.sort(key=lambda entry: entry["criticality"])
     blocked.sort(key=lambda entry: entry["criticality"])

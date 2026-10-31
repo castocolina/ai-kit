@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-execute-gsd
-description: "Resolves the best available (runtime, model) pair for a GSD (Get Sh*t Done) phase, prepares GSD's own .planning/config.json (a native-tier pin of runtime plus model_profile_overrides, or workflow.cross_ai_command naming the project's supervised runner), then invokes GSD's own /gsd-execute-phase skill directly to perform the actual execution -- never subprocess-dispatches GSD itself. Use when (1) ai-kit-spec-execute detects a GSD-managed plan (.planning/ directory present) and needs to run a phase with a resolved pair, (2) a GSD phase needs a native-tier model pin (runtime + model_profile_overrides) written before execution, or (3) a GSD plan is opted into cross-AI delegation (frontmatter cross_ai true) and needs workflow.cross_ai_command wired to the project's supervised runner before /gsd-execute-phase runs."
+description: "Resolves the best available, quota-checked (runtime, model) pair for a GSD (Get Sh*t Done) phase, prepares GSD's own .planning/config.json (a native-tier pin, or workflow.cross_ai_command naming the project's supervised runner), then invokes GSD's own /gsd-execute-phase skill directly -- never subprocess-dispatches GSD itself. Use when (1) ai-kit-spec-execute detects a GSD-managed plan (`.planning/PROJECT.md` present) and needs to run a phase with a resolved pair, (2) a GSD phase needs a native-tier model pin written before execution, or (3) a GSD plan is opted into cross-AI delegation (frontmatter cross_ai true) and needs the hook wired before /gsd-execute-phase runs. Claude Code only (it uses the Skill tool and GSD's per-project .claude install); on any other host it stops and names the by-hand /gsd-execute-phase path."
 ---
 
 # ai-kit-spec-execute-gsd
@@ -17,12 +17,13 @@ description: "Resolves the best available (runtime, model) pair for a GSD (Get S
   (`references/dispatch-notes.md`).
 - **Never run `trust-local` without an explicit yes**, and never ask twice in one wave.
 - **Never parse an empty result** — exit 2 from any shim call means STOP and relay stderr.
-- **Never re-resolve to another candidate after a failed dispatch**, and never re-run Step 1 to
-  recover from a cross-AI stop. A fresh `resolve-dispatch` walks the candidate list again and
-  can rewrite `workflow.cross_ai_command` to another pair. The wake re-enters through GSD: answer its pending
-  retry, or run `/gsd-execute-phase` with the hook unchanged. Re-running Step 1 after the owner
-  says yes to `trust-local` is that yes, not a recovery.
-- **Never answer GSD's `skip`.** It falls back to the native executor.
+- **Never re-resolve to another candidate after a failed dispatch, and never re-run Step 1 to
+  recover from a cross-AI stop.** A fresh `resolve-dispatch` walks the candidate list again and
+  can rewrite `workflow.cross_ai_command` to another pair. The wake re-enters through GSD: it
+  answers GSD's pending retry, or runs `/gsd-execute-phase` with the hook unchanged. The one
+  allowed re-run is Step 1's own, after the owner says yes to `trust-local`.
+- **Never answer GSD's `skip`** (it falls back to the native executor), and never switch
+  harness, provider or model.
 - **Only the scheduled wake answers GSD's `retry`.** On any exit 75 carrying `retry_after_s=`,
   answer nothing in that turn; the one-shot wake waits that delay and retries the same lane, CLI
   and model. Every other stop answers `abort` (Step 3).
@@ -30,29 +31,44 @@ description: "Resolves the best available (runtime, model) pair for a GSD (Get S
   continues to GSD's native execution unless the owner explicitly decides to.
 
 **Trust model.** Project-local `.aikit/review-spec.toml` entries count only after `trust-local`.
-The gsd-core tooling does not have that gate: like GSD's own launcher, the shim runs the first
-`gsd-tools.cjs` it finds, project-local first (`<root>/gsd-core`, `<root>/.claude/gsd-core`,
-`<root>/.codex/gsd-core`, where root is `RUNTIME_DIR` or the git top level), with `node` and no
-trust step. So running this skill in a cloned repo executes that repo's JavaScript, the same as
-running its GSD commands; the host's own folder trust is the only gate. `resolve-dispatch` and
-the `*-workflow-keys` calls print `ai-kit: gsd-core <version> at <path>` on stderr; if that path
-is inside a repo you have not reviewed, stop and check it.
+The gsd-core tooling has no such gate: the shim runs the first `gsd-tools.cjs` it finds,
+project-local first (`<root>/gsd-core`, `<root>/.claude/gsd-core`, `<root>/.codex/gsd-core`, root
+being `RUNTIME_DIR` or the git top level), with `node`, so running this skill in a cloned repo
+executes that repo's JavaScript. `resolve-dispatch` and the `*-workflow-keys` calls print
+`ai-kit: gsd-core <version> at <path>` on stderr; if that path is in a repo you have not
+reviewed, stop and check it.
 
 **Cross-AI caller contract:** [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md), a
-MANDATORY read at Step 3's stop handling; if that sibling is missing, STOP. The `Skill` tool and
-the one-shot CronCreate at retry_after_s (Step 3) are Claude Code specific. On another host, use
-its own skill-invocation mechanism or tell the user to run `/gsd-execute-phase` by hand. Never
-switch harness, provider or model.
+MANDATORY read at Step 3's stop handling; if that sibling is missing, STOP.
 
-## Step 0: Resolve the shim path
+## Step 0: Scope, then resolve the shim path
 
-This skill is not guaranteed a `CLAUDE_PLUGIN_ROOT` — take the FIRST existing of, in order (same
-pattern `ai-kit-spec-review/SKILL.md` uses for its own `ai-kit-spec.py`: this skill's own
-directory and its siblings first, so the shims match the `SKILL.md` you loaded, not an older
-install elsewhere), and resolve `ai-kit-spec-review`'s own shim in the SAME call:
+**Claude Code only.** Everything GSD-related here (the `Skill` call, the `.claude/` GSD install
+Step 3 confirms, the Step 3 wake via a one-shot `CronCreate` at `retry_after_s`) is designed for
+Claude Code. Other runtimes can often load Claude Code skills, commands and agents, but this
+skill is not designed for them. On any other host, STOP before the block below and run
+nothing: tell the owner to run `/gsd-execute-phase <phase_id>` by hand with that host's own GSD
+install; never report a missing GSD or ask for a reinstall there.
+
+**Host check.** Claude Code exports `CLAUDECODE` to every process it spawns; it is the variable
+`detect_current_runtime()` in `ai-kit-spec-review`'s `ai_kit_spec/detection.py` reads for
+`claude` (a truthy check, so an empty value counts as absent). The first lines of the block below
+fail closed on it (exit 2, nothing else run). The host's own tool list decides the other half:
+without the `Skill` tool, STOP the same way. A missing scheduler tool is not part of the check;
+it only changes the exit-75 branch (Step 3).
+
+This skill is not guaranteed a `CLAUDE_PLUGIN_ROOT` — take the FIRST existing of, in order (this
+skill's own directory and its siblings first, so the shims match the `SKILL.md` you loaded, not an
+older install elsewhere), and resolve `ai-kit-spec-review`'s own shim in the SAME call:
 
 ```bash
-for d in "$(dirname "<absolute path to THIS SKILL.md>")" \
+[ -n "$CLAUDECODE" ] || {
+  echo "ai-kit-spec-execute-gsd: CLAUDECODE is empty, so this is not Claude Code; STOP, run /gsd-execute-phase by hand"
+  exit 2; }
+SKILL_MD="<absolute path to THIS SKILL.md>"
+case "$SKILL_MD" in */SKILL.md) [ -f "$SKILL_MD" ] ;; *) false ;; esac || {
+  echo "ai-kit-spec-execute-gsd: set SKILL_MD to this SKILL.md's real path; nothing run"; exit 2; }
+for d in "$(dirname "$SKILL_MD")" \
          "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-spec-execute-gsd}" \
          "$HOME/.claude/skills/ai-kit-spec-execute-gsd"; do
   [ -d "$d" ] && { GSD_SKILL_DIR="$d"; break; }
@@ -69,25 +85,28 @@ for d in "$(dirname "$GSD_SKILL_DIR")/ai-kit-gsd-curated-config" \
          "$HOME/.claude/skills/ai-kit-gsd-curated-config"; do
   [ -d "$d" ] && { CURATED_SKILL_DIR="$d"; break; }
 done
-CURATED_PY="$CURATED_SKILL_DIR/ai-kit-gsd-curated-config.py"
+CURATED_PY="${CURATED_SKILL_DIR:+$CURATED_SKILL_DIR/ai-kit-gsd-curated-config.py}"
+[ -n "$GSD_SKILL_DIR" ] && [ -n "$REVIEW_SPEC_SKILL_DIR" ] || {
+  echo "ai-kit-spec-execute-gsd: this skill's or ai-kit-spec-review's directory not found; STOP"
+  exit 2; }
+[ -f "$GSD_SHIM" ] || { echo "ai-kit-spec-execute-gsd: $GSD_SHIM not found; STOP"; exit 2; }
 printf 'GSD_SHIM=%s\nTOOLS_PY=%s\nCURATED_PY=%s\n' "$GSD_SHIM" "$TOOLS_PY" "$CURATED_PY"
 ```
 
-**Record all three printed lines as this wave's own literal values.** Every later step's
-`python3 $GSD_SHIM <subcommand> ...` invocation uses this resolved `$GSD_SHIM` path — never a bare
-`python3 -m ai_kit_spec_gsd.cli`. `$TOOLS_PY` resolves `ai-kit-spec-review`'s own shim for its
-`cache-path --kind quota` subcommand. `$CURATED_PY` resolves `ai-kit-gsd-curated-config`'s shim,
-which Step 2 uses to render or upgrade the project runner.
+**Record all three printed lines as this wave's own literal values.** Every later
+`python3 $GSD_SHIM <subcommand> ...` uses this resolved path, never a bare
+`python3 -m ai_kit_spec_gsd.cli`. `$TOOLS_PY` is `ai-kit-spec-review`'s shim (`cache-path --kind
+quota`). `$CURATED_PY` is `ai-kit-gsd-curated-config`'s shim, which Step 2 uses to render or
+upgrade the project runner; it prints empty when that skill is not installed, which only a
+`cross_ai_hook` run needs. **If the block exits 2, STOP** and relay it.
 
-**Every separate `Bash` tool call in this harness starts a fresh shell** — a variable set in one
-call is gone by the next. Steps 1–3 below are written as separate `Bash` calls; every `$VAR`
-denotes the literal value most recently captured for it via a `printf`, re-substituted verbatim
-into every later command — never an actual persisting shell variable across a call boundary.
+**Every separate `Bash` tool call starts a fresh shell**: a variable set in one call is gone by
+the next. Steps 1–3 are separate `Bash` calls; every `$VAR` denotes the literal value most
+recently captured for it via a `printf`, re-substituted verbatim into later commands.
 
 `$CWD`, `$PHASE_ID`, and `$PHASE_PROMPT_FILE` (bound in Step 1) are **inputs this skill is invoked
-WITH, never values it invents or infers.** If this skill is ever invoked without `cwd`,
-`phase_id` and the exact phase prompt file, STOP and ask the user rather than guessing (a phase
-can hold several plan files).
+WITH, never values it invents or infers.** Invoked without `cwd`, `phase_id` and the exact phase
+prompt file (a phase can hold several plan files), STOP and ask the user.
 
 ## Step 1: Resolve the dispatch decision via the CLI entrypoint
 
@@ -97,32 +116,33 @@ can hold several plan files).
 CWD="<this skill's own entry-precondition project root -- supplied by the caller>"
 PHASE_ID="<this skill's own entry-precondition phase id -- supplied by the caller>"
 PHASE_PROMPT_FILE="<the exact phase prompt/context file path -- supplied by the caller>"
+# GSD's /gsd-execute-phase (Step 3) runs in this session's workspace, never in --cwd.
+[ -n "$CWD" ] && [ "$(cd "$CWD" 2>/dev/null && pwd -P)" = "$(pwd -P)" ] || {
+  echo "ai-kit-spec-execute-gsd: $CWD is not this session's workspace ($(pwd -P))"; exit 2; }
 GSD_CONFIG_PATH="$(python3 "$GSD_SHIM" config-path --cwd "$CWD")" || exit 2  # honors workstreams
+QUOTA_PATH="$(python3 "$TOOLS_PY" cache-path --kind quota)" || exit 2  # never pass an empty path
 RESULT_JSON="$(python3 "$GSD_SHIM" resolve-dispatch --cwd "$CWD" \
   --target-dir "$CWD" \
-  --quota-path "$(python3 "$TOOLS_PY" cache-path --kind quota)" \
+  --quota-path "$QUOTA_PATH" \
   --phase-prompt-file "$PHASE_PROMPT_FILE")"
-[ $? -eq 2 ] && exit 2  # exit 1 is write_failed, which still prints JSON
-RUN_ID="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<< "$RESULT_JSON")"
-RESULT_MODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])' <<< "$RESULT_JSON")"
-RESULT_KEY="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("key") or "")' <<< "$RESULT_JSON")"
-RESULT_RUNTIME="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("runtime") or "")' <<< "$RESULT_JSON")"
-RESULT_PROVENANCE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("provenance") or "")' <<< "$RESULT_JSON")"
-RESULT_REASON="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("reason") or "")' <<< "$RESULT_JSON")"
-RESULT_MESSAGE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("message") or "")' <<< "$RESULT_JSON")"
-RESULT_CROSS_AI_COMMAND="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("cross_ai_command") or "")' <<< "$RESULT_JSON")"
-RESULT_MODEL="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("model") or "")' <<< "$RESULT_JSON")"
-printf 'CWD=%s\nPHASE_ID=%s\nPHASE_PROMPT_FILE=%s\nGSD_CONFIG_PATH=%s\nRUN_ID=%s\nRESULT_MODE=%s\nRESULT_KEY=%s\nRESULT_RUNTIME=%s\nRESULT_MODEL=%s\nRESULT_PROVENANCE=%s\nRESULT_REASON=%s\nRESULT_MESSAGE=%s\nRESULT_CROSS_AI_COMMAND=%s\n' \
-  "$CWD" "$PHASE_ID" "$PHASE_PROMPT_FILE" "$GSD_CONFIG_PATH" "$RUN_ID" "$RESULT_MODE" \
-  "$RESULT_KEY" "$RESULT_RUNTIME" "$RESULT_MODEL" "$RESULT_PROVENANCE" "$RESULT_REASON" "$RESULT_MESSAGE" \
-  "$RESULT_CROSS_AI_COMMAND"
-printf 'RESULT_JSON=%s\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' <<< "$RESULT_JSON")"
+RC=$?  # exit 1 is write_failed, which still prints JSON; a crash prints none
+{ [ "$RC" -eq 2 ] || { [ "$RC" -ne 0 ] && [ -z "$RESULT_JSON" ]; }; } && exit 2
+printf 'CWD=%s\nPHASE_ID=%s\nPHASE_PROMPT_FILE=%s\nGSD_CONFIG_PATH=%s\n' \
+  "$CWD" "$PHASE_ID" "$PHASE_PROMPT_FILE" "$GSD_CONFIG_PATH"
+python3 -c 'import json,sys
+d = json.loads(sys.argv[1])
+for k in ("run_id", "mode", "key", "runtime", "model", "provenance", "reason", "message",
+          "cross_ai_command"):
+    print(("RUN_ID" if k == "run_id" else "RESULT_" + k.upper()) + "=" + str(d.get(k) or ""))
+print("RESULT_JSON=" + json.dumps(d))' "$RESULT_JSON" || exit 2
 ```
 
-**Record every line of that trailing `printf`'s output as this wave's own literal values.**
+**Record every printed `KEY=value` line as this wave's own literal values.**
 
 **If the call exits 2, STOP and relay its stderr verbatim** — nothing was written and there is no
-JSON to parse. The causes: `node` is not on PATH, no `gsd-tools.cjs` was found (project-local
+JSON to parse. The causes: `$CWD` is not the directory this host's shell calls start in (the
+Skill call in Step 3 cannot be pointed at another checkout; the owner re-invokes from `$CWD`),
+a shim crash with no JSON, `node` is not on PATH, no `gsd-tools.cjs` was found (project-local
 gsd-core first, then the host homes), gsd-tools could not resolve a config path for `$CWD`, a
 malformed `review-spec.toml`, or an entry with `purpose = "execute"` that can never execute (a
 custom `command` entry, grok, or claude with a model outside its alias set).
@@ -132,412 +152,247 @@ was made from the global config only, and a `native_tier` result may already hav
 Relay the line verbatim, show `python3 "$TOOLS_PY" trust-local --cwd "$CWD" --show` (each local
 reviewer's argv, the prompt as `<prompt>`; writes nothing), and ask once. On yes, run
 `python3 "$TOOLS_PY" trust-local --cwd "$CWD"` and **re-run this whole Step 1 (new `run_id`)**
-before Step 2 — the re-run overwrites only adapter-owned values. On no, continue with this
-result and do not ask again this wave. Never trust on the user's behalf.
+before Step 2; it overwrites only adapter-owned values. On no, continue with this
+result and do not ask again this wave. Never trust unasked.
 
-If `mode == "write_failed"` (exit 1): a `gsd-tools config-set` failed mid-write. Keys applied
-earlier in that attempt were reverted in reverse order; `reverted` lists them, and
-`revert_failed` lists any whose revert itself failed — those keys still hold the new value and
-need a hand fix. Print the `RESULT_JSON=` line captured above to the user and STOP — do not
-proceed to Step 2/3.
+If `mode == "write_failed"` (exit 1): a `gsd-tools config-set` failed mid-write. Earlier keys were
+reverted in reverse order; `reverted` lists them, `revert_failed` lists any whose revert failed
+(they still hold the new value and need a hand fix). Print the `RESULT_JSON=` line captured above
+and STOP: no Step 2/3.
 
-If `mode == "fallback_notice"` and `reason == "malformed_config"`, print the message and STOP — do
-not proceed to Step 2/3 at all.
+If `mode == "fallback_notice"` and `reason == "malformed_config"`, print the message and STOP: no
+Step 2/3 (the cleanup refuses a malformed config, so none runs).
 
-If `mode == "fallback_notice"` and `reason == "quota_exhausted"`: this is a genuine, time-bound
-exhaustion discovered before any handoff to GSD. Write the resumable state file (below), then
-STOP for this wave and report the probe reasons and the exact state path the block prints
-(`RESUME_STATE_PATH=…`). Nothing is scheduled; the owner re-invokes when quota is back (do not
-proceed to Step 3 — GSD's own default would run with no configuration change).
+If `mode == "fallback_notice"` and `reason == "quota_exhausted"` (genuine, time-bound exhaustion
+found before any handoff to GSD): **MANDATORY: read
+[`references/resumable-state.md`](references/resumable-state.md) and run its block**
+with `RESUME_VIA=skill` to write the resumable state file. Then run the mode-transition cleanup
+(Step 2) and STOP for this wave: report the probe reasons and the exact state path the block
+prints (`RESUME_STATE_PATH=…`). Nothing is scheduled; the owner re-invokes when quota is back
+(do not proceed to Step 3 unless the owner explicitly chooses native execution; then follow
+Step 2's `fallback_notice` bullet — GSD's own default runs, unless an earlier wave left an
+adapter-written pin: read `model_profile` and `model_profile_overrides` in `$GSD_CONFIG_PATH`
+and tell the owner).
 
-**Who reads that file.** This skill never reads it back. Its `resume_via` field says how to
-resume: `skill` (this Step 1 case, `RESUME_VIA=skill`) means the caller re-invokes this skill
-with `cwd` from `project_path`, `phase_id` from `phase_id` and the prompt file from
-`phase_prompt_file`; `gsd-execute-phase` (Step 3's router stop) means the owner runs
-`/gsd-execute-phase <phase_id>` with the hook unchanged (after a hard-tier stop, first deleting
-the state file the runner named) and never re-invokes this skill:
+Every other `fallback_notice` reason is permanent:
 
-```bash
-RESUME_VIA=skill  # Step 3's router stop runs this block with gsd-execute-phase
-PROJECT_KEY="$(python3 -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:12])" "$CWD")"
-RESUME_STATE_PATH="$(dirname "$(python3 "$TOOLS_PY" cache-path --kind quota)")/gsd-resume-${PROJECT_KEY}-${PHASE_ID}.json"
-STATE_JSON="$(python3 -c '
-import json, sys
-print(json.dumps({"framework": "gsd", "project_path": sys.argv[1],
-                   "config_path": sys.argv[2], "phase_id": sys.argv[3],
-                   "phase_prompt_file": sys.argv[4], "resume_via": sys.argv[5]}))' \
-  "$CWD" "$GSD_CONFIG_PATH" "$PHASE_ID" "$PHASE_PROMPT_FILE" "$RESUME_VIA")"
-python3 "$GSD_SHIM" write-resumable-state --path "$RESUME_STATE_PATH" --state-json "$STATE_JSON" >/dev/null || exit 1
-printf 'RESUME_STATE_PATH=%s\n' "$RESUME_STATE_PATH"
-```
+- `no_configured_candidate`: `review-spec.toml` has no `[[reviewers]]` entry at all.
+- `all_candidates_context_rejected`: every candidate's `context_limit` is below this phase's
+  estimated required context.
+- `unsafe_hook_token`: the model id holds a character GSD's unquoted hook cannot carry.
+- `unsupported_model_id`: the model id is outside its runtime's grammar (Step 2).
+- `no_usable_dispatch`: no quota-available candidate has a native GSD tier or a CLI with an
+  execute builder; each skipped one got a stderr warning, and `key` names the top one.
 
-Every other `fallback_notice` reason (`no_configured_candidate`, `all_candidates_context_rejected`,
-`unsafe_hook_token` and `unsupported_model_id` — see Step 2, `no_usable_dispatch` — no candidate has a native GSD tier or a
-CLI with an execute builder, so the execute-CLI screen skipped them all with a stderr warning
-each; `key` names the top one) is permanent. Print the message, run the mode-transition cleanup
-in Step 2, and STOP. Report the reason. Do not proceed to Step 3: that would hand the phase to
-GSD's native executor with no owner decision. Nothing is scheduled for these.
+Print the message, run Step 2's cleanup, and STOP and report the reason.
+Never proceed to Step 3 (GSD's native executor) unless the owner explicitly chooses native
+execution; then follow Step 2's `fallback_notice` bullet. Nothing is scheduled.
 
 ## Step 2: Act on the dispatch mode
 
-A reviewer or executor is a (runtime, model) pair. Each call runs it natively when its runtime is the current host and the host can select that model; otherwise it runs as a subprocess through the supervised runner. An entry with neither a runtime nor a model is the session default, which the host always runs natively. Today only Claude Code selects a model per call (its sonnet, opus, haiku and fable aliases); every other host runs only its session default natively.
+A reviewer or executor is a (runtime, model) pair. Each call runs it natively when its runtime is the current host and the host can select that model; otherwise it runs as a subprocess through the supervised runner. An entry with neither a runtime nor a model is the session default, which the host always runs natively. Today only Claude Code selects a model per call (its sonnet, opus, haiku and fable aliases); every other host runs only its session default natively. Precisely: no runtime and no `command`; a `command` entry is custom.
+GSD's `native_tier` is the exception: GSD's own runtime runs the pin, decided without a host
+check. Only the tiers `opus`, `sonnet` and `haiku` become a pin (a claude alias, or a curated
+`tier`, naming one of them). `fable` is not a GSD tier: that candidate is skipped, and a skipped
+`fable` entry explains an unexpected `fallback_notice` or a later candidate winning.
 
-GSD's `native_tier` is the exception: a session default or a claude alias becomes a tier pin
-that GSD's own runtime runs, decided without a host check.
+**Mindset.** Resolve the mode fresh every run (quota, CLIs, `cross_ai: true` change); run the
+cleanup even for a non-cross-AI mode so a stale hook never keeps dispatching.
 
-**Mindset before writing anything here:**
-- Resolve dispatch mode fresh every run, never reuse a cached decision — quota state, installed
-  CLIs, and per-plan `cross_ai: true` opt-in can all change between runs, and a stale cached mode
-  would silently dispatch through the wrong path.
-- Run the mode-transition cleanup even when this run resolves a non-cross-AI mode — a stale
-  adapter-owned hook from a PRIOR run must never keep dispatching cross-AI just because THIS run
-  didn't touch it.
+**Pending plans.** GSD delegates only plans that have no SUMMARY yet and whose frontmatter
+carries `cross_ai: true`. List them first, in one `Bash` call. It assumes GSD's layout:
+`NN-MM-PLAN.md` beside `NN-MM-SUMMARY.md` in the directory of `$PHASE_PROMPT_FILE`. With no
+`*-PLAN.md` file (plans named another way) it prints `NO_PLANS=1`: the layout
+differs, so STOP and ask, in every mode. With `*-PLAN.md` files that all have a SUMMARY, it prints `NOTHING_PENDING=1`: record it as a
+literal. The phase has nothing to delegate and no executor to configure: write no hook (in
+`cross_ai_hook` mode run only the cleanup below, never the setup reference), and go to Step 3,
+which confirms GSD's skill, skips `prepare-tooling` when it is set, then invokes so GSD only
+verifies the phase.
 
-- `native_tier` (either `written` value): GSD's own runtime runs the pair as a tier pin (no host
-  check), so the resolved mode is NOT cross-AI — run the mode-transition cleanup below
-  before proceeding to Step 3, in case a PRIOR run of this project left an adapter-owned cross-AI
-  hook active that this run's resolution superseded.
-  `written=False`/`provenance="existing_gsd_config"`: GSD's own config already carries a genuine
-  (non-adapter-owned) value at `model_profile_overrides[runtime][tier]` — a real user pin, honored
-  as-is, nothing further to write.
-  `written=True`/`provenance="resolved_candidate"`: the CLI call already wrote the pin, taking a
-  per-run backup first — `model_profile` for a claude tier, else `runtime` (if needed) and
-  `model_profile_overrides[runtime][tier]`.
+```bash
+TOTAL=0 PENDING=0
+for p in "$(dirname "$PHASE_PROMPT_FILE")"/*-PLAN.md; do
+  [ -f "$p" ] || continue
+  TOTAL=1
+  [ ! -f "${p%-PLAN.md}-SUMMARY.md" ] || continue
+  PENDING=1
+  awk 'NR == 1 && /^---/ {f = 1; next} f && /^---/ {exit}
+       f && /^cross_ai:[[:space:]]*true[[:space:]]*$/ {o = 1} END {exit !o}' "$p" && o=1 || o=0
+  printf 'PENDING_PLAN=%s CROSS_AI=%s\n' "$p" "$o"
+done
+case "$TOTAL$PENDING" in 10) echo NOTHING_PENDING=1 ;; 00) echo NO_PLANS=1 ;; esac  # exit 0
+```
+
+- `native_tier`: GSD's own runtime runs the pair as a tier pin (no host check). Run the
+  mode-transition cleanup below before Step 3.
+  The pin is the scalar `model_profile` for claude, else `model_profile_overrides.<runtime>.<tier>`.
+  `RESULT_PROVENANCE=existing_gsd_config`: GSD's own config already carries a genuine
+  (non-adapter-owned) value at that key — a real user pin, honored as-is, nothing further to
+  write. An existing user `model_profile` is kept even when it differs from the resolved tier.
+  `RESULT_PROVENANCE=resolved_candidate`: the CLI call already wrote the pin, taking a
+  per-run backup first — `model_profile` for claude, else `runtime` (if needed) and
+  `model_profile_overrides.<runtime>.<tier>`.
+  The pin persists: no cleanup or subcommand removes it, so a later `cross_ai_hook` or
+  `fallback_notice` wave runs native plans under it.
+  The pin governs only plans GSD does not delegate. When the cleanup prints `USER_HOOK=1`, the
+  project's own hook stays enabled: `cross_ai_command` plus `cross_ai_execution: true`, both
+  user-owned and never cleared. GSD then delegates every pending plan with `CROSS_AI=1` through
+  that hook, not the resolved pin. If any line has `CROSS_AI=1`, tell the owner so and ask once
+  whether to continue. On no, STOP. Never edit their hook.
 - `cross_ai_hook`: the pair runs as a subprocess through the project's own supervised runner.
-  **Check the plan's opt-in before any of the writes below, including `ensure-runner`.** Read the
-  frontmatter of every plan file covering this phase. GSD delegates a plan only when that
-  frontmatter carries `cross_ai: true`. If any plan lacks it, do not write the hook and do not
-  render the runner: print the warning below, run the mode-transition cleanup, and STOP. The
-  owner adds the key, or explicitly decides to run the phase natively. A workflow-level write
-  alone never makes GSD delegate.
-  **Then write GSD's own real, confirmed `workflow.*` keys** in one
-  `write-workflow-keys` call (`--cwd "$CWD"`, `--run-id "$RUN_ID"` — the same `run_id` from
-  Step 1), without threading a config snapshot between calls. Exit 1 means a key failed and
-  earlier keys from that call were reverted (any in `revert_failed` still hold the new value);
-  exit 2 means gsd-tools could not be resolved, as in Step 1. Show the output to the user and STOP.
-  A model id the unquoted hook cannot carry comes back from Step 1 as `fallback_notice` with
-  reason `unsafe_hook_token` instead of a broken hook string, and a model id outside its
-  runtime's grammar (a bare pi or opencode id) comes back with reason `unsupported_model_id`,
-  because the runner would refuse it with exit 2 on every call. That includes a cursor model id
-  carrying brackets (`model[effort=high]`): GSD globs the unquoted hook, so cursor effort/fast
-  brackets are argv-only (ai-kit's own Python dispatch), never hook-capable.
+  **Check the opt-in before any write, including `ensure-runner`.** Continue only with at least
+  one `PENDING_PLAN` line. If any `PENDING_PLAN` line has `CROSS_AI=0`, do not write the hook and do not render the runner. Print this warning, run
+  the mode-transition cleanup, and STOP — "plan <path> does not have `cross_ai: true` in its
+  frontmatter — the hook was not written. Add the key, or say explicitly to run this phase on
+  GSD's native executor." Never write the hook and warn afterwards, and never treat the warning
+  as permission to continue. A workflow-level write alone never makes GSD delegate.
+  **MANDATORY: then read [`references/cross-ai-hook-setup.md`](references/cross-ai-hook-setup.md)
+  in full and run its block as one `Bash` call.** It renders or upgrades the runner and the
+  guidance file, writes GSD's own `workflow.*` keys in one `write-workflow-keys` call (the same
+  `run_id` as Step 1), and lists what each exit means. Its `RESULT_MODE=` line replaces the
+  Step 1 value; a `fallback_notice` there STOPS after its cleanup.
 
-  **`workflow.cross_ai_command` is NOT the raw external CLI command — it names the project's own
-  supervised runner**, and the guidance file is tracked next to it under `.planning/scripts/`.
-  GSD's own `cross_ai_delegation` step keeps doing its own real, unmodified bookkeeping (writing
-  the plan's SUMMARY.md, updating STATE.md/ROADMAP.md, marking the plan handled) and still owns
-  the piping/capture/retry mechanics — this only changes WHAT command that hook names, not who
-  calls it or when. The runner is rendered or upgraded here, so the hook works without a prior
-  curated-config apply:
-  ```bash
-  # RESULT_MODEL is the value Step 1 printed; never re-parse RESULT_JSON here.
-  # NO manual quoting around the stored command's tokens -- this is deliberate, required by how
-  # GSD expands this value. Read only if you need to know why:
-  # references/dispatch-notes.md#why-no-manual-quoting-around-workflowcross_ai_commands-values
-  # The producer runs first and its status is checked before anything is written: a failure or
-  # empty guidance must never reach ensure-runner, and a not-ready runner writes nothing.
-  # clear-workflow-keys always prints revert_failed (an empty list on success): parse the JSON,
-  # never grep for the field name.
-  clear_hook() {
-    CLEAR="$(python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
-      --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout)"
-    CLEAR_RC=$?
-    if [ "$CLEAR_RC" -ne 0 ] || \
-      ! python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.exit(1 if d.get("failed") or d.get("revert_failed") else 0)' "$CLEAR" 2>/dev/null; then
-      echo "$CLEAR"
-      echo "ai-kit-spec-execute-gsd: cleanup failed; an old hook may still be active"
-      exit 1
-    fi
-  }
-  GUIDANCE="$(python3 "$GSD_SHIM" print-dispatch-guidance --runtime "$RESULT_RUNTIME" --model "$RESULT_MODEL")"
-  GUIDANCE_RC=$?
-  if [ "$GUIDANCE_RC" -ne 0 ] || [ -z "$GUIDANCE" ] || [ ! -f "$CURATED_PY" ]; then
-    echo "ai-kit-spec-execute-gsd: dispatch guidance unavailable (exit $GUIDANCE_RC); nothing written"
-    clear_hook
-    RESULT_MODE="fallback_notice"
-  else
-    mkdir -p "$CWD/tmp"
-    ENSURE_FILE="$(mktemp "$CWD/tmp/ensure.XXXXXX")"
-    printf '%s\n' "$GUIDANCE" | python3 "$CURATED_PY" ensure-runner --cwd "$CWD" --guidance-file - > "$ENSURE_FILE"
-    ENSURE_RC=${PIPESTATUS[1]}
-    ENSURE="$(cat "$ENSURE_FILE")"
-    rm -f "$ENSURE_FILE"
-    if [ "$ENSURE_RC" -eq 0 ]; then
-      [ -n "$ENSURE" ] && echo "$ENSURE"  # a kept, user-edited runner reports notes on success too
-      WRITE="$(python3 "$GSD_SHIM" write-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
-        --set "cross_ai_command=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$RESULT_CROSS_AI_COMMAND")" \
-        --set cross_ai_execution=true \
-        --min cross_ai_timeout=1800)"
-      WRITE_RC=$?
-      if [ "$WRITE_RC" -ne 0 ]; then
-        echo "$WRITE"
-        echo "ai-kit-spec-execute-gsd: writing the hook failed (exit $WRITE_RC)"
-        exit 1
-      fi
-    else
-      echo "ai-kit-spec-execute-gsd: the project runner is not ready (exit $ENSURE_RC); nothing written"
-      echo "$ENSURE"
-      clear_hook
-      RESULT_MODE="fallback_notice"
-    fi
-  fi
-  printf 'RESULT_MODE=%s\n' "$RESULT_MODE"
-  ```
-  A non-zero producer exit, empty guidance, a missing curated shim, or an `ensure-runner` exit of
-  1 (not ready: a user-edited runner on an older or foreign template gets a `.new` file plus the
-  printed notes) or 2 (error) writes nothing. Run the cleanup in the block. When it exits 0, STOP
-  and report the notes: a runner-setup failure never continues into Step 3, because Step 3 would
-  hand the phase to GSD's native executor. Continue only when the owner explicitly says to run
-  this phase natively. If the cleanup exits non-zero, or its JSON reports a failed key or a
-  non-empty `revert_failed` (the field is always present, empty on success), STOP and show it: an
-  old hook may still be active. Exit 0 with `RESULT_MODE=cross_ai_hook` writes the hook, raises `cross_ai_timeout` to
-  1800 seconds (curated-config's runner floor) unless it already holds an int of at least that,
-  and relays any notes `ensure-runner` printed. A user value of at least 1800 is left as is and
-  stays theirs; a lower one is raised and owned, so a later cleanup removes it (the per-run
-  backup holds the original). The `RESULT_MODE=` line this block prints replaces
-  the Step 1 value for every later step, so Step 3 follows the mode that was actually set up.
+  **`workflow.cross_ai_command` names the project's own supervised runner, never the raw
+  vendor CLI.** GSD's `cross_ai_delegation` step still owns the piping, capture, retry and
+  bookkeeping (the plan's SUMMARY.md, STATE.md, ROADMAP.md); only the command changes, and no
+  prior curated-config apply is needed. `ensure-runner` never overwrites a user-edited runner: on
+  the current template it is kept, and a pending upgrade gets a `.new` file plus notes. The hook
+  stays unquoted on purpose (GSD word-splits and globs it; `references/dispatch-notes.md`).
 
-  **Hook setup.** This skill renders or upgrades the runner and the guidance file through
-  curated-config `ensure-runner`; a user-edited runner is never overwritten: on the current
-  template it is kept and ready, and when an upgrade is pending it gets a `.new` file instead,
-  with the printed notes. The guidance file goes before the prompt and the runner's own
-  preamble is off, so nothing is said twice. The hook stays unquoted because GSD expands the stored
-  value by word splitting and pathname expansion, never as shell syntax — see `references/dispatch-notes.md`.
-
-  **Exec confinement.** Codex runs under `--codex-sandbox workspace-write`: the runner uses
-  `--sandbox workspace-write` instead of the bypass, so writes stay inside the project dir plus
-  `/tmp` and `$TMPDIR`, which workspace-write always allows. Whether that sandbox also allows
-  writes inside `.git` is unverified. Every other exec target runs with full permissions; the
-  guidance file tells it to write only inside the project dir, and that prose is guidance, not a
-  boundary. `claude` is review-only and never a hook target. pi exec uses the runner's pi formula,
-  verified by its hermetic self-test only; live verification is still open, and stderr prints that
-  note before the hook is written. A copilot hook gets the same kind of note: its error rows are
-  unverified, it runs with all tools allowed, and the task prompt is visible on argv.
-
-  **Node.** Subprocess dispatch needs Node 24 (GSD's declared floor); older versions untested.
-  The hook starts with `node .planning/scripts/cross-ai.mjs`, so without Node it cannot launch and
-  never reaches the runner's `dispatch_unavailable` path. Step 1 already stops when `node` is not
-  on PATH. If Node disappears between Step 1 and the hook, do not claim a native fallback: run the
-  mode-transition cleanup below and STOP. Hand the phase to GSD with no hook only when the owner
-  explicitly decides to run it natively. If the cleanup fails, STOP and show its output.
-
-  **Plan opt-in, checked before the write above.** The warning for a plan that lacks it:
-  "plan <path> does not have `cross_ai: true` in its frontmatter — the hook was not written. Add
-  the key, or say explicitly to run this phase on GSD's native executor." Never write the hook and
-  warn afterwards, and never treat the warning as permission to continue.
+  **Exec confinement.** Codex runs under `--codex-sandbox workspace-write` (writes stay in the
+  project dir plus `/tmp` and `$TMPDIR`). Every other exec target runs with full permissions; the
+  guidance file's project-dir-only sentence is guidance, not a boundary. pi exec is verified by
+  the runner's hermetic self-test only, and live verification is still open. stderr prints the pi
+  and copilot notes before the hook is written; relay them. Per-runtime detail and the Node floor:
+  `references/dispatch-notes.md` and the setup reference.
 - `fallback_notice`: already handled in Step 1 (a probe-time `quota_exhausted` STOP, or one of the
   permanent reasons). Run the mode-transition cleanup below, then STOP and report. Do not continue
-  to Step 3. Reaching Step 3's `fallback_notice` branch below happens only after the owner
-  explicitly chose native execution for this phase; it is never the normal route.
+  to Step 3. Only when the owner explicitly says to run this phase natively, go straight to
+  Step 3 with `RESULT_MODE=fallback_notice`: never re-run Step 1 or 2 for it (the cleanup
+  already ran).
 
 **Mode-transition cleanup** — run this whenever the resolved `mode` is `native_tier` or
-`fallback_notice` (i.e. NOT `cross_ai_hook`), before any later step, so a stale adapter-owned
-cross-AI hook from a PRIOR run never stays silently active once a LATER run resolves a different
-dispatch mode. It never touches a value the user set by hand (`clear-workflow-keys` is a no-op
-unless the key is adapter-owned), except a `cross_ai_timeout` below 1800 that Step 2 raised. For `native_tier`, a successful cleanup continues to Step 3. For
+`fallback_notice` (i.e. NOT `cross_ai_hook`), and when the `cross_ai_hook` opt-in check or the
+nothing-pending case above stops or skips the setup, before any later step. It never touches a value
+the user set by hand (`clear-workflow-keys` is a no-op unless the key is adapter-owned, and
+reports what it kept), except a `cross_ai_timeout` below 1800 that Step 2 raised: that key is
+deleted and the user's lower value is not restored (`references/cross-ai-hook-setup.md`). For
+`native_tier`, a successful cleanup continues to Step 3 (after the `USER_HOOK` check above). For
 `fallback_notice`, a successful cleanup STOPS and reports: continuing would run GSD's native
 executor, which takes an explicit owner decision:
 
 ```bash
+[ -n "$RUN_ID" ] && [ -d "$CWD" ] && [ -f "$GSD_SHIM" ] || {
+  echo "ai-kit-spec-execute-gsd: set RUN_ID, CWD, GSD_SHIM; nothing cleared"; exit 2; }
 CLEAR="$(python3 "$GSD_SHIM" clear-workflow-keys --cwd "$CWD" --run-id "$RUN_ID" \
   --key cross_ai_command --key cross_ai_execution --key cross_ai_timeout)"
-CLEAR_RC=$?
-if [ "$CLEAR_RC" -ne 0 ] || \
-  ! python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.exit(1 if d.get("failed") or d.get("revert_failed") else 0)' "$CLEAR" 2>/dev/null; then
+if [ $? -ne 0 ]; then  # exit 1 also covers a non-empty revert_failed (only after a failed key)
   echo "$CLEAR"
   echo "ai-kit-spec-execute-gsd: cleanup failed; an old hook may still be active -- not running Step 3"
   exit 1
 fi
+python3 -c 'import json,sys; k = json.loads(sys.argv[1]).get("kept") or {}
+on = k.get("cross_ai_command") and str(k.get("cross_ai_execution")).lower() == "true"
+print("USER_HOOK=%d" % bool(on))' "$CLEAR"
 ```
 
-**Only a successful cleanup reaches Step 3.** Exit 1 (or a JSON `failed`/non-empty
-`revert_failed`) means a clear failed and was rolled back, so an adapter-owned hook from a prior
-run can still be active: STOP, show the output to the user, and name the keys still holding a
-value (`failed`, `revert_failed`) — never hand the phase to GSD with that hook possibly live.
-Exit 2 means gsd-tools could not be resolved or the config is malformed, as in Step 1: STOP too.
+**Only a successful cleanup reaches Step 3.** Exit 1 means a clear failed and was rolled back,
+so a prior run's adapter-owned hook can still be active: STOP, show the output, and name the keys
+still holding a value (`failed`, `revert_failed`); never hand the phase to GSD with that hook
+possibly live. Exit 2 (no `node` or `gsd-tools.cjs`, no config path, or a malformed config): STOP.
 
 ## Step 3: Prepare confirmed-only tooling guidance, then invoke GSD's own `/gsd-execute-phase` skill
 
+**Confirm GSD's skill before any write or arming.** Check, in order:
+`$CWD/.claude/commands/gsd-execute-phase.md`, then
+`$CWD/.claude/skills/gsd-execute-phase/SKILL.md` (GSD installs per project), and only as
+a last fallback `$HOME/.claude/skills/gsd-execute-phase/SKILL.md`. Read the first that exists
+for its `name`. If none exists or none is readable,
+that is an environment problem, not a dispatch failure: STOP before `prepare-tooling` and the wake
+(the cleanup already ran), do not retry, and report the error with every path checked so the
+owner can repair GSD.
+When `RESULT_MODE` is not `native_tier`, report a pin an earlier wave left at every stop.
+
 Resolve the runtime to prepare tooling guidance for:
-- `native_tier`: use `--runtime "$RESULT_RUNTIME"` (the adapter fills the native Claude alias).
-- `cross_ai_hook`: use `--runtime "$RESULT_RUNTIME"` directly (the runtime the hook runs).
-- `fallback_notice`: omit `--runtime` entirely (no candidate was resolved — generic detection
-  only). This branch is reached only after the owner explicitly chose native execution; a
-  `fallback_notice` never flows here on its own.
+- `native_tier` or `cross_ai_hook`: use `--runtime "$RESULT_RUNTIME"`.
+- `fallback_notice`: omit `--runtime` (nothing resolved; reached only after the owner chose native).
 
 ```bash
+NOTHING_PENDING="<1 if Step 2 recorded NOTHING_PENDING=1, else 0>"
+case "$NOTHING_PENDING" in 0|1) ;; *)
+  echo "ai-kit-spec-execute-gsd: set NOTHING_PENDING to 1 or 0; nothing written"; exit 2;; esac
+case "$RESULT_MODE:$RESULT_RUNTIME" in fallback_notice:*|native_tier:?*|cross_ai_hook:?*) ;; *)
+  echo "ai-kit-spec-execute-gsd: set RESULT_MODE and RESULT_RUNTIME; nothing written"; exit 2;; esac
+[ -d "$CWD" ] && [ -f "$GSD_SHIM" ] || { echo "ai-kit-spec-execute-gsd: set CWD, GSD_SHIM;" \
+  "nothing written"; exit 2; }
 if [ "$RESULT_MODE" = "fallback_notice" ]; then
   CLI_ARGS=()
 else
   CLI_ARGS=(--runtime "$RESULT_RUNTIME")
 fi
-GUIDANCE="$(python3 "$GSD_SHIM" prepare-tooling "${CLI_ARGS[@]}" --target-dir "$CWD")"
-GUIDANCE_RC=$?
-if [ "$GUIDANCE_RC" -ne 0 ] || [ -z "$GUIDANCE" ]; then
-  echo "ai-kit-spec-execute-gsd: prepare-tooling failed (exit $GUIDANCE_RC); phase file untouched"
-  exit 2
-fi
-START="<!-- ai-kit-spec-execute-gsd:tooling-guidance:start -->"
-END="<!-- ai-kit-spec-execute-gsd:tooling-guidance:end -->"
-LEGACY="<!-- ai-kit-spec-execute-gsd:tooling-guidance -->"  # an older release's single marker
-python3 -c 'import os,pathlib,sys,tempfile
-p,s,e,g,old=sys.argv[1:]
-try:
-    t=pathlib.Path(p).read_text()
-except OSError as x:
-    sys.exit(f"cannot read {p}: {x}")
-if old in t:
-    sys.exit(3)
-b,a=t.find(s),t.find(e)
-if (t.count(s),t.count(e))==(1,1) and b<a:
-    t=t[:b]+t[a+len(e):]
-elif s in t or e in t:  # orphan, reversed or duplicated markers
-    sys.exit(2)
-fd,tmp=tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(p)))
-try:
-    with os.fdopen(fd,"w") as f:
-        f.write(t.rstrip("\n")+"\n\n"+s+"\n"+g+"\n"+e+"\n")
-    os.chmod(tmp,os.stat(p).st_mode&0o7777)
-    os.replace(tmp,p)
-except OSError as x:
-    pathlib.Path(tmp).unlink(missing_ok=True)
-    sys.exit(f"cannot write {p}: {x}")' \
-  "$PHASE_PROMPT_FILE" "$START" "$END" "$GUIDANCE" "$LEGACY"
-case $? in
-  0) ;;
-  3) echo "ai-kit-spec-execute-gsd: $PHASE_PROMPT_FILE still has the old single-marker guidance"
-     echo "block ($LEGACY plus the text after it); delete that block by hand, then re-run"
-     exit 2 ;;
-  2) echo "ai-kit-spec-execute-gsd: guidance markers are malformed (need none, or exactly one"
-     echo "start before one end); fix them by hand; phase file untouched"
-     exit 2 ;;
-  *) echo "ai-kit-spec-execute-gsd: could not read or write $PHASE_PROMPT_FILE (see the error"
-     echo "above); phase file unchanged"
-     exit 2 ;;
-esac
-```
-
-This `prepare-tooling` subcommand runs `detect_tool_availability()`,
-`resolve_agents_tooling_path()`, then `probe_codegraph(cli)` (report-only, 15 s timeout; skipped
-when `--runtime` is omitted). When codegraph is missing or unhealthy, the shim prints the exact install
-command on stderr — relay that line to the user verbatim and never run it on their behalf
-(installing is the user's call through their own tooling). Only when the probe finds codegraph
-registered and not known unhealthy (codex health is unknown, so it gets a stderr note) does it run
-`run_codegraph_index(target_dir)` (`codegraph sync`, then `codegraph init` on failure), in that
-order. Writing the guidance into the phase file itself (idempotently,
-marker-guarded) means it reaches GSD's own execution regardless of which dispatch mode Step 2
-chose — GSD's own `/gsd-execute-phase` skill reads this same phase content whether it's running a
-native subagent or delegating through `cross_ai_command`.
-
-**`RESULT_MODE = "cross_ai_hook"` needs no separate guidance-append step here anymore**: Step 2
-writes the guidance into the tracked file the hook places before the prompt. Read only if you
-need the history of why this step used to append guidance here and why that changed:
-`references/dispatch-notes.md#history-the-guidance-file-supersedes-the-old-guidance-append-step`.
-
-**Session wake (multi-plan phases, D-23).** Before the invoke below, arm the session wake only
-when the phase holds two or more plan files. A single-plan phase arms nothing. The wake is
-owned by this run only when this block itself prints `armed`; a refusal, exit 3 or `refreshed`
-(a wake that existed before this run) leaves `WAKE_OWNED=0`, and the stop re-arm and the close
-step then call nothing. Never fail the run on the wake. Run this one `Bash` call:
-
-```bash
-PLAN_COUNT=$(find "$(dirname "$PHASE_PROMPT_FILE")" -maxdepth 1 -name '*-PLAN.md' | wc -l)
-WAKE_OWNED=0
-WAKE_SHIM="$(dirname "$GSD_SKILL_DIR")/ai-kit-session-wake/ai-kit-session-wake.py"
-if [ "$PLAN_COUNT" -lt 2 ]; then
-  echo "single-plan phase: no session wake"
-elif [ ! -f "$WAKE_SHIM" ]; then
-  echo "ai-kit-session-wake not installed; no session wake"
+if [ "$NOTHING_PENDING" = 1 ]; then
+  echo "nothing pending: prepare-tooling skipped, phase file untouched"
+elif [ "$RESULT_MODE" = "cross_ai_hook" ]; then
+  # GSD delegates every pending plan, so no native executor reads a phase-file block:
+  # index codegraph and write nothing.
+  python3 "$GSD_SHIM" prepare-tooling "${CLI_ARGS[@]}" --target-dir "$CWD" >/dev/null || exit 2
 else
-  WAKE_OUT="$(python3 "$WAKE_SHIM" arm ${WAKE_SESSION_ID:+--session-id "$WAKE_SESSION_ID"} --ref "$CWD/.planning/STATE.md" 2>&1)"
-  WAKE_RC=$?
-  echo "$WAKE_OUT"
-  echo "session wake arm exit $WAKE_RC"
-  WAKE_LINE="$(printf '%s\n' "$WAKE_OUT" | grep '^armed ' | head -n 1)"
-  if [ "$WAKE_RC" -eq 0 ] && [ -n "$WAKE_LINE" ]; then
-    WAKE_HOST_ID="${WAKE_LINE#armed }"
-    WAKE_HOST="${WAKE_HOST_ID%%-*}"
-    WAKE_ID="${WAKE_HOST_ID#*-}"
-    WAKE_OWNED=1
-  fi
+  python3 "$GSD_SHIM" prepare-tooling "${CLI_ARGS[@]}" --target-dir "$CWD" \
+    --phase-file "$PHASE_PROMPT_FILE" || exit 2
 fi
-printf 'WAKE_SHIM=%s\nWAKE_OWNED=%s\nWAKE_HOST=%s\nWAKE_ID=%s\n' \
-  "$WAKE_SHIM" "$WAKE_OWNED" "${WAKE_HOST:-}" "${WAKE_ID:-}"
 ```
 
-**Record the printed `WAKE_SHIM`, `WAKE_OWNED`, `WAKE_HOST` and `WAKE_ID` as literal values.**
-The identity: on claude the shim reads the session itself; on pi and opencode the recorded
-`WAKE_SESSION_ID` must hold this session's exact id (the ai-kit-session-wake skill's Arm
-section), never a guess from the newest session file. Without it `arm` refuses (exit 2): the
-refusal is printed above and the run goes on with no wake.
+**If it exits 2, STOP and relay its stderr**; the phase file is untouched. Causes: a failed or
+empty producer, an older release's single-marker block (delete it by hand), malformed markers
+(none, or one start before one end), or a read/write error.
+
+`prepare-tooling` probes codegraph for that runtime (report-only, 15 s timeout; skipped without
+`--runtime`); when it is missing or unhealthy the install command lands on stderr: relay it
+verbatim, never run it. With `--phase-file` it writes a marker-guarded block atomically. That
+block reaches only GSD's native executor, best-effort (GSD reads CONTEXT.md and RESEARCH.md only
+at `context_window` 500000 or more, and in worktree mode from a commit without this uncommitted
+edit), so never report it as delivered. A delegated plan gets guidance from
+`.planning/scripts/cross-ai-guidance.md` (Step 2).
+
+**Session wake (multi-plan phases).** **MANDATORY before the invoke when the phase holds two
+or more pending `*-PLAN.md` files (no SUMMARY):** read
+[`references/session-wake.md`](references/session-wake.md) "Arm" and run its block as written
+(fewer than two pending plans arm nothing). It records `WAKE_SHIM`, `WAKE_OWNED`, `WAKE_HOST` and `WAKE_ID` as literal values; the wake is
+this run's only when it printed `armed` (`WAKE_OWNED=1`). Never fail the run on the wake.
 
 **Then invoke GSD's own `/gsd-execute-phase` skill directly, via the `Skill` tool, for `$PHASE_ID`
-— this is the entire remaining job of this skill.** There is no subprocess to run, no stdout to
-capture, no heartbeat to route — GSD's own workflow performs the actual
-dispatch, heartbeating, and completion end-to-end in-session, using whichever mechanism Step 2 just
-configured. Concretely, the executing agent calls the `Skill` tool with the skill name confirmed
-by checking, in order: `<project>/.claude/commands/gsd-execute-phase.md` (GSD is installed per
-project), then `$HOME/.claude/skills/gsd-execute-phase/SKILL.md` — use whichever exists first and
-read its frontmatter for the skill name (typically `gsd-execute-phase`), passing `$PHASE_ID` as its
-argument. This is a tool call the agent makes directly, not a shell command this document can show
-as a `bash` fence. The job continues while GSD's cross-AI step runs: the rules below govern every
-answer to its retry/skip/abort prompt.
+— this is the entire remaining job of this skill.** GSD's workflow does the dispatch,
+heartbeating and completion in-session, through whatever Step 2 configured. Call the `Skill`
+tool with the name confirmed above and `$PHASE_ID` as its argument. If that call still fails to resolve, report the error, run the close step and STOP; do
+not retry. The rules below govern every answer to GSD's retry/skip/abort prompt.
 
 **MANDATORY on any cross-AI stop:** read [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md)
 sections 4 and 6-8 before answering GSD's prompt. Relay the runner's `cross-ai: report`,
 `cross-ai: upstream` and `AIKIT-XAI` lines verbatim from GSD's `$ERROR_LOG` (the hook's stderr,
-read in full, never a truncated tail), then run the Step 1 `write-resumable-state` block with
-`RESUME_VIA=gsd-execute-phase` so the owner has a durable record. Then re-arm the session wake
-with that state file (D-36), only when this run owns it (`WAKE_OWNED=1`, Session wake above):
+read in full, never a truncated tail), then run the block in
+[`references/resumable-state.md`](references/resumable-state.md) with
+`RESUME_VIA=gsd-execute-phase` so the owner has a durable record.
 
-```bash
-if [ "$WAKE_OWNED" = 1 ]; then
-  python3 "$WAKE_SHIM" arm --host "$WAKE_HOST" --session-id "$WAKE_ID" --ref "$RESUME_STATE_PATH"
-fi
-```
+Every stop other than an exit 75 carrying `retry_after_s=` (a bare 75, any 69 including
+`stopped=hard-waits` or `stopped=cap`, 1, 2, 124, 127, or exit 0 with an invalid summary, which
+GSD also offers retry/skip/abort for) gets the notice and the answer `abort`, schedules nothing
+and re-arms nothing. `abort` ends only that plan's prompt: stay inside the `Skill` call, answer
+any further prompt by these same rules, and go to the close step only once `/gsd-execute-phase`
+itself has returned. Never answer `skip` (NEVER list).
 
 For an exit 75 carrying `retry_after_s=` (transient ladder exhausted or confirmed-router quota),
-answer nothing to GSD's prompt in that turn and schedule the wake below; it retries the same
-lane, CLI and model. Every other stop (a bare 75, any 69 including `stopped=hard-waits` or
-`stopped=cap`, 1, 2, 124, 127) gets the notice and the answer `abort`, and schedules nothing.
-Never answer `skip`. Never switch harness, provider or model.
+answer nothing to GSD's prompt in that turn and **MANDATORY: read
+[`references/session-wake.md`](references/session-wake.md) "Quota wake"**: it re-arms the session
+wake when `WAKE_OWNED=1` and schedules one one-shot `CronCreate` wake at `retry_after_s` that
+retries the same lane, CLI and model (variant A when `WAKE_OWNED=1`, B when 0). With a
+scheduler this branch continues the run and never closes the wake. Without it nothing can
+retry in-session: the run stops here with the handoff printed, and an owned OS-timer wake
+(`WAKE_OWNED=1`) is deliberately left armed, because it resumes the session only after the host
+exits. Do not run the close step there either. After a session exit the owner runs
+`/gsd-execute-phase <PHASE_ID>` and never re-invokes this skill (that re-runs Step 1).
 
-Where `CronCreate` is callable (load it if deferred), schedule one one-shot wake at `retry_after_s`
-(whole-minute rounding and the under-60 s case: ai-kit-cross-ai section 6) whose prompt is
-exactly this text. The job lives only as long as the session. After a session exit the owner runs `/gsd-execute-phase
-<PHASE_ID>` from the state file's `project_path` with the hook unchanged, and never re-invokes
-this skill (that re-runs Step 1, which can rewrite the hook):
-
-```text
-Quota wake for phase <PHASE_ID> (ai-kit-spec-execute-gsd; state at <RESUME_STATE_PATH>).
-Do not re-run Step 1 and do not change the hook. Two branches:
-GSD's retry/skip/abort prompt is still pending: answer retry, and nothing else.
-GSD already exited: run /gsd-execute-phase <PHASE_ID> with the hook unchanged.
-```
-
-Each subsequent exit 75 carrying `retry_after_s=` gets one new one-shot wake at its own delay.
-Never schedule before the current invocation exits, and never use a repeated or fixed-interval
-job. Whether a wake fires while GSD's prompt is pending is unverified, which is why the prompt's
-first branch exists. A host without that scheduler prints `retry_after_s`, the
-`RESUME_STATE_PATH=` and the wake prompt, labels the printed re-invoke unverified, and lets the
-owner run it. A `stopped=hard-waits` or `stopped=cap` exit 69 is a terminal owner stop: the
-runner refuses that lane until the owner deletes the state file it names, which starts a new
-episode.
-
-If the `Skill` tool call itself fails to resolve — e.g. `gsd-execute-phase` isn't installed or its
-definition is missing/unreadable — that is a genuine environment problem, not a dispatch failure:
-STOP, do not retry, and report the exact resolution error to the user along with both paths
-checked: `<project>/.claude/commands/gsd-execute-phase.md` and
-`$HOME/.claude/skills/gsd-execute-phase/SKILL.md` so they can reinstall or repair GSD.
-
-**Close the session wake (D-23).** When this skill's job ends (the phase completed, or a stop
-answered `abort`) and only when `WAKE_OWNED=1`, run:
-
-```bash
-if [ "$WAKE_OWNED" = 1 ]; then
-  python3 "$WAKE_SHIM" done --host "$WAKE_HOST" --session-id "$WAKE_ID"
-fi
-```
-
-Never run it on the exit-75 `retry_after_s=` branch: that branch continues the run, and its
-one-shot wake still needs the session. When `WAKE_OWNED=0`, call nothing.
+**Close the session wake.** **MANDATORY at every end of this skill's job:** the phase completed;
+`/gsd-execute-phase` returned after a stop answered `abort`; `/gsd-execute-phase` ended any other way (a checkpoint or verification
+gap left for the owner, a non-cross-AI failure); or the `Skill` call failed after arming. Run the "Close" block of [`references/session-wake.md`](references/session-wake.md); it calls
+nothing when `WAKE_OWNED=0`. Never run it on the exit-75 `retry_after_s=` branch above, with or
+without a scheduler.

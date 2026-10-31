@@ -75,8 +75,17 @@ def resolve_entrypoint(skill_name: str) -> str | None:
 
     for candidate in candidates:
         entry = os.path.join(candidate, f"{skill_name}.py")
-        if os.path.isfile(entry):
-            return entry
+        if not os.path.isfile(entry):
+            continue
+        # The agents sibling imports `_shared/ai_kit_rules_common` from beside its
+        # real directory; a plain copy-install lacks it, so skip it (mirrors the
+        # agents SKILL.md resolve loop).
+        shared = os.path.join(os.path.dirname(os.path.realpath(candidate)), "_shared")
+        if skill_name == SKILL_NAMES["agents"] and not os.path.isdir(
+            os.path.join(shared, "ai_kit_rules_common")
+        ):
+            continue
+        return entry
     return None
 
 
@@ -84,11 +93,11 @@ def run_domain(domain: str, repo_root: str) -> dict:
     """Resolve `domain`'s entrypoint and subprocess-invoke its `remediate`
     subcommand (D-04), returning its parsed JSON payload.
 
-    D-02: every failure mode -- an unresolvable entrypoint, a non-zero
-    exit, a timeout past `DOMAIN_TIMEOUT_SECONDS`, or stdout that is not
-    valid JSON -- degrades to D-05's failure-entry shape instead of
-    raising, so one sibling's crash never aborts `dispatch_all`'s run of
-    the other 5 domains.
+    D-02: every failure mode -- an unresolvable entrypoint, a launch error,
+    a non-zero exit, a timeout past `DOMAIN_TIMEOUT_SECONDS`, undecodable
+    output, or stdout that is not a JSON object -- degrades to D-05's
+    failure-entry shape instead of raising, so one sibling's crash never
+    aborts `dispatch_all`'s run of the other 5 domains.
     """
     skill_name = SKILL_NAMES[domain]
     entrypoint = resolve_entrypoint(skill_name)
@@ -115,6 +124,13 @@ def run_domain(domain: str, repo_root: str) -> dict:
             "error": f"timed out after {DOMAIN_TIMEOUT_SECONDS}s",
             "returncode": None,
         }
+    except (OSError, UnicodeDecodeError) as exc:
+        return {
+            "domain": domain,
+            "status": "failed",
+            "error": f"could not run or decode output: {exc}",
+            "returncode": None,
+        }
 
     if result.returncode != 0:
         stderr_tail = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else ""
@@ -129,14 +145,19 @@ def run_domain(domain: str, repo_root: str) -> dict:
         }
 
     try:
-        return json.loads(result.stdout)
+        payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        return {
-            "domain": domain,
-            "status": "failed",
-            "error": f"invalid JSON on stdout: {exc}",
-            "returncode": result.returncode,
-        }
+        payload, error = None, f"invalid JSON on stdout: {exc}"
+    else:
+        error = "stdout JSON is not an object"
+    if isinstance(payload, dict):
+        return payload
+    return {
+        "domain": domain,
+        "status": "failed",
+        "error": error,
+        "returncode": result.returncode,
+    }
 
 
 def dispatch_all(repo_root: str) -> dict:

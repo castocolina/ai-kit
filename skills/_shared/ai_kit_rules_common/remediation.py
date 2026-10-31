@@ -30,9 +30,33 @@ from __future__ import annotations
 # derives from `category`.
 STRUCTURAL_KINDS = ("makefile", "precommit", "arch", "docker", "cicd")
 
-# Workflow-finding flags a `remediate` entry carries forward when present: `verbatim` (the
-# summary is inserted unchanged, 26 D-34), and the per-stack fields of the R-series checkers.
-_CARRIED_WORKFLOW_KEYS = ("verbatim", "stacks", "unverified_stacks", "hardcoded_counts")
+# Workflow-finding fields a `remediate` entry carries forward when present: `verbatim` (the
+# summary is inserted unchanged, 26 D-34), `signals` (the literal phrases an inserted clause
+# must contain to classify `present`), `missing_tools` (R06: installed tools whose phrase is
+# absent), and the per-stack fields of the R-series checkers.
+_CARRIED_WORKFLOW_KEYS = (
+    "verbatim",
+    "signals",
+    "missing_tools",
+    "stacks",
+    "unverified_stacks",
+    "hardcoded_counts",
+)
+
+# Structural-finding location fields a `remediate` entry carries forward when present. Without
+# them, same-type findings on different targets (two services, two CI jobs) are identical on
+# `(kind, id, issue)`.
+_CARRIED_STRUCTURAL_KEYS = (
+    "service",
+    "compose_file",
+    "depends_on",
+    "ci_file",
+    "job",
+    "command",
+    "hook_id",
+    "tools",
+    "config_path",
+)
 
 
 def build_remediation(report: dict) -> dict:
@@ -67,13 +91,13 @@ def build_remediation(report: dict) -> dict:
 
     Every structural-kind `remediate` entry also carries `issue`
     (`finding.get("issue")`, `None` when the finding has none) forward
-    verbatim. `id` is a human-readable LABEL, not a unique key -- `remediate`
-    has always been one heterogeneous list in which a `workflow` entry and a
-    structural entry can share an `id`, and two DIFFERENT structural
-    findings (e.g. the inherited `chain_incomplete` and an alias-family
-    `alias_chain_incomplete` finding) can legitimately both identify as the
-    same target. `(kind, id, issue)` is what tells two entries apart, not
-    `id` alone.
+    verbatim, plus any location field the finding sets (`_CARRIED_STRUCTURAL_KEYS`:
+    service, compose_file, ci_file, job, command, ...). `id` is a human-readable LABEL,
+    not a unique key -- `remediate` has always been one heterogeneous list in which a
+    `workflow` entry and a structural entry can share an `id`, and two structural findings
+    of the same type on different targets share `(kind, id, issue)`. `(kind, id, issue)`
+    groups findings of one type; it does not identify one finding. Dedupe, if ever, on the
+    full entry, never on those three keys alone.
 
     Every kind's `remediate` entries are built into ONE list, then sorted by
     `criticality` ascending, spanning every kind present in `report`
@@ -120,16 +144,18 @@ def build_remediation(report: dict) -> dict:
             identifier = finding.get("target", finding.get("category"))
             recommendation = finding.get("recommendation")
             if recommendation is not None:
-                remediate.append(
-                    {
-                        "kind": kind,
-                        "id": identifier,
-                        "criticality": finding["criticality"],
-                        "summary": finding["summary"],
-                        "issue": finding.get("issue"),
-                        "auto_apply": not finding.get("advisory", False),
-                    }
-                )
+                entry = {
+                    "kind": kind,
+                    "id": identifier,
+                    "criticality": finding["criticality"],
+                    "summary": finding["summary"],
+                    "issue": finding.get("issue"),
+                    "auto_apply": not finding.get("advisory", False),
+                }
+                for carried in _CARRIED_STRUCTURAL_KEYS:
+                    if carried in finding:
+                        entry[carried] = finding[carried]
+                remediate.append(entry)
             elif finding.get("needs_research"):
                 blocked.append(
                     {

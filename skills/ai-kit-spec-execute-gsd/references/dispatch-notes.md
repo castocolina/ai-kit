@@ -10,9 +10,11 @@ deliberate, not an oversight:
 
 GSD's own `cross_ai_delegation` step expands `workflow.cross_ai_command`'s stored value as a bare
 `${CROSS_AI_CMD}` (word-split by whitespace only, never re-parsed as shell syntax, no `eval`),
-so only word splitting and globbing apply to it. A quote character embedded in the stored string
-is NOT a quoting boundary at that point — it is just another literal character stuck onto
-whichever word it falls inside.
+so only word splitting and globbing apply to it. That is read from gsd-core's own
+`workflows/execute-phase/detail/elaboration.md` § 2 (`-- ${CROSS_AI_CMD}`), not from a
+documented contract; the token allowlist below keeps a later change from turning a token into
+shell syntax. A quote character embedded in the stored string is NOT a quoting boundary at that
+point — it is just another literal character stuck onto whichever word it falls inside.
 
 The hook therefore carries only tokens from an allowlist (letters, digits and `._:/@+=,#-`). A
 model id or any other token outside that allowlist never becomes a hook: the adapter returns
@@ -25,8 +27,18 @@ cursor effort/fast brackets stay argv-only (ai-kit's own Python dispatch), never
 
 The hook passes `--codex-sandbox workspace-write` for a codex executor, the same confinement the
 old direct-dispatch path used. The open question it leaves is `.git`: whether GSD's own git
-commits succeed under `workspace-write` is unverified. The current per-runtime exec notes (codex,
-the full-permission targets, pi, copilot) are in SKILL.md's "Exec confinement" paragraph.
+commits succeed under `workspace-write` is unverified. Per-runtime exec notes (the
+`SKILL.md` Step 2 "Exec confinement" paragraph holds the pinned summary):
+
+- codex: writes stay in the project dir plus `/tmp` and `$TMPDIR`; writes inside `.git` are
+  unverified.
+- Every other exec target runs with full permissions; the guidance file's project-dir-only
+  sentence is guidance, not a boundary.
+- `claude` is review-only, never a hook target.
+- pi exec is verified by the runner's hermetic self-test only.
+- copilot: its hook's error rows are unverified, it allows all tools, and its prompt is visible
+  on argv.
+- Node: see `cross-ai-hook-setup.md` (## Node).
 
 ## History: the guidance file supersedes the old guidance-append step
 
@@ -61,3 +73,9 @@ The underlying guidance functions still live in `ai_kit_spec.dispatch_guidance`
 `ai_kit_spec_gsd.cross_ai_guidance` (GSD's own real SUMMARY.md shape) — only WHERE they get
 composed changed, not what they say or that they stay out of GSD's own workflow/skill files
 entirely.
+
+## gsd-tools search order
+
+Like GSD's own launcher, the shim runs the first `gsd-tools.cjs` it finds, project-local first
+(`<root>/gsd-core`, `<root>/.claude/gsd-core`, `<root>/.codex/gsd-core`, root being `RUNTIME_DIR`
+or the git top level), with `node` and no trust step. The host's folder trust is the only gate.

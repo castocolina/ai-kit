@@ -8,9 +8,11 @@ tool by Task 5's SKILL.md, never subprocess-invoked here (Task 1 finding 3)."""
 import argparse
 import json
 import os
+import pathlib
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from typing import Any, NamedTuple, TextIO
 
@@ -255,12 +257,14 @@ def _cmd_clear_workflow_keys(args: argparse.Namespace, deps: CliDeps) -> int:
         print(f"ai-kit-spec-execute-gsd: {ctx.config_path} is malformed -- refusing to "
               f"clear workflow keys over it", file=sys.stderr)
         return 2
-    changes = [
-        ("workflow." + key, None) for key in args.key
-        if is_adapter_owned(gsd_config, ctx.config_path, "workflow." + key)
-    ]
+    owned = {key: is_adapter_owned(gsd_config, ctx.config_path, "workflow." + key)
+             for key in args.key}
+    changes = [("workflow." + key, None) for key in args.key if owned[key]]
+    # `kept`: user-owned values left in place, so the caller sees a hook that stays enabled.
+    kept = {key: dotted_get(gsd_config, "workflow." + key) for key in args.key
+            if not owned[key] and dotted_get(gsd_config, "workflow." + key) is not None}
     result = apply_changes(ctx, changes)
-    deps.stdout.write(json.dumps(result._asdict()))
+    deps.stdout.write(json.dumps({**result._asdict(), "kept": kept}))
     return 1 if result.failed else 0
 
 
@@ -282,15 +286,59 @@ def _codegraph_registered_for_cli(cli_name: str | None, target_dir: str, deps: C
     return deps.run_codegraph_index_fn(target_dir)
 
 
+_GUIDANCE_START = "<!-- ai-kit-spec-execute-gsd:tooling-guidance:start -->"
+_GUIDANCE_END = "<!-- ai-kit-spec-execute-gsd:tooling-guidance:end -->"
+_GUIDANCE_LEGACY = "<!-- ai-kit-spec-execute-gsd:tooling-guidance -->"  # an older single marker
+
+
+def _write_phase_guidance(path: str, guidance: str) -> str | None:
+    """Replaces or appends the marker-guarded guidance block atomically; None on success,
+    else the reason the file was left untouched."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError as exc:
+        return f"cannot read {path}: {exc}"
+    if _GUIDANCE_LEGACY in text:
+        return (f"{path} still has the old single-marker guidance block ({_GUIDANCE_LEGACY} "
+                f"plus the text after it); delete that block by hand, then re-run")
+    begin, end = text.find(_GUIDANCE_START), text.find(_GUIDANCE_END)
+    if (text.count(_GUIDANCE_START), text.count(_GUIDANCE_END)) == (1, 1) and begin < end:
+        text = text[:begin] + text[end + len(_GUIDANCE_END):]
+    elif _GUIDANCE_START in text or _GUIDANCE_END in text:
+        return ("guidance markers are malformed (need none, or exactly one start before one "
+                "end); fix them by hand")
+    body = f"{text.rstrip(chr(10))}\n\n{_GUIDANCE_START}\n{guidance}\n{_GUIDANCE_END}\n"
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(body)
+        os.chmod(tmp, os.stat(path).st_mode & 0o7777)
+        os.replace(tmp, path)
+    except OSError as exc:
+        pathlib.Path(tmp).unlink(missing_ok=True)
+        return f"cannot write {path}: {exc}"
+    return None
+
+
 def _cmd_prepare_tooling(args: argparse.Namespace, deps: CliDeps) -> int:
     tool_availability = deps.detect_tool_availability_fn()
     agents_tooling_path = deps.resolve_agents_tooling_path_fn()
     codegraph_registered = _codegraph_registered_for_cli(args.runtime, args.target_dir, deps)
     guidance_cli = args.runtime if args.runtime is not None else "claude"
-    guidance = build_tooling_guidance(
+    # The guidance lands in a tracked phase file, so no absolute path goes into it.
+    guidance = _tracked_tooling_guidance(
         guidance_cli, tool_availability, agents_tooling_path, codegraph_registered,
         shared_reference_path=resolve_shared_tooling_reference_path())
-    deps.stdout.write(guidance)
+    if args.phase_file is None:
+        deps.stdout.write(guidance)
+        return 0
+    error = (_write_phase_guidance(args.phase_file, guidance) if guidance
+             else "prepare-tooling produced no guidance")
+    if error:
+        print(f"ai-kit-spec-execute-gsd: {error}; phase file untouched", file=sys.stderr)
+        return 2
+    deps.stdout.write(f"tooling guidance written to {args.phase_file}\n")
     return 0
 
 
@@ -346,8 +394,8 @@ def _tracked_tooling_guidance(cli, tool_availability, agents_tooling_path, codeg
             continue
         relative = _home_relative(value, home)
         if relative is None:
-            print(f"print-dispatch-guidance: {name} is outside the home directory; "
-                  f"omitted from the tracked guidance file", file=sys.stderr)
+            print(f"ai-kit-spec-execute-gsd: {name} is outside the home directory; "
+                  f"omitted from the tracked guidance", file=sys.stderr)
         mapped.append(relative)
     return build_tooling_guidance(
         cli, tool_availability, mapped[1], codegraph_registered, shared_reference_path=mapped[0],
@@ -436,6 +484,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_prepare.add_argument("--runtime", "--cli", dest="runtime", default=None,
                             help="omit (or pass 'claude') for native/current-runtime dispatch")
     p_prepare.add_argument("--target-dir", required=True)
+    p_prepare.add_argument("--phase-file", default=None,
+                            help="write the guidance into this file's marker-guarded block "
+                                 "instead of printing it")
 
     p_guidance = sub.add_parser("prepare-cross-ai-guidance")
     p_guidance.add_argument("--resolved-label", required=True,

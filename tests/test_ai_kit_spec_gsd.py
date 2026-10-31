@@ -1064,6 +1064,7 @@ class TestCliClearWorkflowKeys(unittest.TestCase):
             self.assertEqual(fake.config["workflow.user_key"], "user-set")  # user value kept
             with open(os.path.join(planning, "ai-kit-gsd-owned.json"), encoding="utf-8") as f:
                 self.assertEqual(json.load(f), {})  # cleared key dropped from the sidecar
+            self.assertEqual(result["kept"], {"user_key": "user-set"})
 
 
 class FakeGsdTools:
@@ -1352,6 +1353,12 @@ class _FakeCompletedProcess:
 
 
 class TestCliPrepareTooling(unittest.TestCase):
+    def setUp(self):
+        # prepare-tooling writes into a tracked file, so paths under HOME become `~/`.
+        patcher = mock.patch.dict(os.environ, {"HOME": "/home/u", "AGENTS_TOOLING_PATH": ""})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_prepare_tooling_runs_index_after_healthy_probe(self):
         import io
         index_dirs = []
@@ -1430,6 +1437,98 @@ class TestCliPrepareTooling(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertNotIn("codegraph_explore", stdout.getvalue())
         self.assertIn("AGENTS-TOOLING.md", stdout.getvalue())
+
+    def test_prepare_tooling_writes_no_absolute_home_path(self):
+        import contextlib
+        import io
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code = cli.main(
+                ["prepare-tooling", "--target-dir", "/repo"],
+                detect_tool_availability_fn=lambda **k: {"codegraph": False, "rg": True},
+                resolve_agents_tooling_path_fn=lambda **k: "/home/u/.agents/AGENTS-TOOLING.md",
+                stdout=stdout)
+        self.assertEqual(exit_code, 0)
+        self.assertIn("~/.agents/AGENTS-TOOLING.md", stdout.getvalue())
+        self.assertNotIn("/home/u/", stdout.getvalue())
+
+
+class TestCliPrepareToolingPhaseFile(unittest.TestCase):
+    """`prepare-tooling --phase-file`: the marker-guarded, atomic guidance write."""
+
+    START = "<!-- ai-kit-spec-execute-gsd:tooling-guidance:start -->"
+    END = "<!-- ai-kit-spec-execute-gsd:tooling-guidance:end -->"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.phase = os.path.join(self.tmp, "PLAN.md")
+
+    def _run(self, text, guidance="GUIDE"):
+        import contextlib
+        import io
+        if text is not None:
+            with open(self.phase, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        stderr = io.StringIO()
+        with (mock.patch.object(cli, "_tracked_tooling_guidance", lambda *a, **k: guidance),
+              contextlib.redirect_stderr(stderr)):
+            rc = cli.main(
+                ["prepare-tooling", "--target-dir", self.tmp, "--phase-file", self.phase],
+                detect_tool_availability_fn=lambda **k: {},
+                resolve_agents_tooling_path_fn=lambda **k: None,
+                stdout=io.StringIO())
+        return rc, stderr.getvalue()
+
+    def _read(self):
+        with open(self.phase, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_appends_once_and_replaces_its_own_block(self):
+        self.assertEqual(self._run("# plan\n")[0], 0)
+        self.assertEqual(self._run(None)[0], 0)
+        self.assertEqual(self._read(), f"# plan\n\n{self.START}\nGUIDE\n{self.END}\n")
+
+    def test_replaces_a_block_mid_file_and_keeps_the_mode(self):
+        os.makedirs(self.tmp, exist_ok=True)
+        with open(self.phase, "w", encoding="utf-8") as handle:
+            handle.write(f"# plan\n{self.START}\nold\n{self.END}\ntail\n")
+        os.chmod(self.phase, 0o644)
+        self.assertEqual(self._run(None)[0], 0)
+        self.assertEqual(self._read(), f"# plan\n\ntail\n\n{self.START}\nGUIDE\n{self.END}\n")
+        self.assertEqual(os.stat(self.phase).st_mode & 0o777, 0o644)
+
+    def test_refuses_the_legacy_single_marker(self):
+        legacy = "# plan\n\n<!-- ai-kit-spec-execute-gsd:tooling-guidance -->\nold\n"
+        rc, err = self._run(legacy)
+        self.assertEqual(rc, 2)
+        self.assertIn("old single-marker", err)
+        self.assertEqual(self._read(), legacy)
+
+    def test_rejects_malformed_markers_untouched(self):
+        start, end = self.START, self.END
+        malformed = {
+            "reversed": f"# plan\n{end}\nbody\n{start}\n",
+            "orphan end": f"# plan\n{end}\n",
+            "orphan start": f"# plan\n{start}\n",
+            "duplicated": f"# plan\n{start}\na\n{end}\n{start}\nb\n{end}\n",
+        }
+        for label, text in malformed.items():
+            with self.subTest(label):
+                rc, err = self._run(text)
+                self.assertEqual(rc, 2)
+                self.assertIn("markers are malformed", err)
+                self.assertEqual(self._read(), text)
+
+    def test_empty_guidance_or_a_missing_file_writes_nothing(self):
+        rc, err = self._run("# plan\n", guidance="")
+        self.assertEqual(rc, 2)
+        self.assertEqual(self._read(), "# plan\n")
+        os.remove(self.phase)
+        rc, err = self._run(None)
+        self.assertEqual(rc, 2)
+        self.assertIn("cannot read", err)
+        self.assertFalse(os.path.exists(self.phase))
 
 
 class TestCliWriteResumableState(unittest.TestCase):
@@ -1559,16 +1658,15 @@ class TestHomeRelative(unittest.TestCase):
 
 
 def _step2_hook_block() -> str:
-    """The fenced bash block of SKILL.md that captures the guidance producer."""
-    skill = os.path.join(
-        os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute-gsd", "SKILL.md"
-    )
-    with open(skill, encoding="utf-8") as handle:
+    """The fenced bash block of the hook-setup reference that captures the guidance producer."""
+    ref = os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute-gsd",
+                       "references", "cross-ai-hook-setup.md")
+    with open(ref, encoding="utf-8") as handle:
         text = handle.read()
     for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
         if "print-dispatch-guidance" in block:
             return block
-    raise AssertionError("SKILL.md has no bash block that runs print-dispatch-guidance")
+    raise AssertionError("cross-ai-hook-setup.md has no bash block running print-dispatch-guidance")
 
 
 class TestStep2HookSnippet(unittest.TestCase):
@@ -1639,11 +1737,13 @@ class TestStep2HookSnippet(unittest.TestCase):
             "import sys\n"
             "open({log!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n' + sys.stdin.read())\n"
         )
-        _proc, logged = self._run(producer, consumer)
+        proc, logged = self._run(producer, consumer)
         self.assertIn("ensure-runner --cwd", logged)
         self.assertIn("--guidance-file -", logged)
         self.assertIn("GUIDE\n", logged)
         self.assertIn("cross_ai_command=", logged)
+        # The block runs in a fresh shell, so it must set the success mode itself.
+        self.assertIn("RESULT_MODE=cross_ai_hook\n", proc.stdout)
 
     def test_a_not_ready_consumer_writes_no_hook(self):
         producer = "import sys\nsys.stdout.write('GUIDE')\n"
@@ -1709,18 +1809,120 @@ class TestCleanupAndGuidanceSnippets(unittest.TestCase):
             self.skipTest("bash not found")
         self.bash_bin: str = bash_bin
 
-    def _run(self, marker, shim_body, extra_env=None):
+    def _run(self, marker, shim_body, extra_env=None, block=None):
         with tempfile.TemporaryDirectory() as tmp:
             shim = os.path.join(tmp, "shim.py")
             with open(shim, "w", encoding="utf-8") as handle:
                 handle.write(shim_body)
             env = {"PATH": os.environ.get("PATH", ""), "GSD_SHIM": shim, "CWD": tmp,
-                   "RUN_ID": "run-1", **(extra_env or {})}
+                   "RUN_ID": "run-1", "CLAUDECODE": "1", **(extra_env or {})}
+            if env["CLAUDECODE"] == "unset":
+                del env["CLAUDECODE"]
             proc = subprocess.run(
-                [self.bash_bin, "-c", _skill_bash_block(marker)], cwd=tmp, env=env,
+                [self.bash_bin, "-c", block or _skill_bash_block(marker)], cwd=tmp, env=env,
                 capture_output=True, text=True, timeout=30, check=False,
             )
             return proc
+
+    def test_cleanup_reports_a_user_owned_hook_that_stays_enabled(self):
+        kept = ('{"applied": [], "failed": null, "error": null, "reverted": [], '
+                '"revert_failed": [], "kept": {"cross_ai_command": "node x", '
+                '"cross_ai_execution": true}}')
+        proc = self._run("not running Step 3", "import sys\nsys.stdout.write(" + repr(kept) + ")\n")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("USER_HOOK=1", proc.stdout)
+        noop = "import sys\nsys.stdout.write(" + repr(TestStep2HookSnippet._NOOP_CLEAR) + ")\n"
+        self.assertIn("USER_HOOK=0", self._run("not running Step 3", noop).stdout)
+
+    def test_step1_stops_when_cwd_is_not_the_session_workspace(self):
+        block = _skill_bash_block("resolve-dispatch --cwd")
+        block = re.sub(r'^(CWD|PHASE_ID|PHASE_PROMPT_FILE)="<[^"\n]*>"$', "", block,
+                       flags=re.MULTILINE)
+        with tempfile.TemporaryDirectory() as other:
+            proc = self._run("resolve-dispatch --cwd",
+                             "import sys\nprint('SHIM CALLED')\n",
+                             {"CWD": other, "PHASE_ID": "1", "PHASE_PROMPT_FILE": "p"},
+                             block=block)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("is not this session's workspace", proc.stdout)
+        self.assertNotIn("SHIM CALLED", proc.stdout)
+
+    def _step0_block(self, skill_md):
+        block = _skill_bash_block("REVIEW_SPEC_SKILL_DIR")
+        return block.replace("<absolute path to THIS SKILL.md>", skill_md)
+
+    def test_step0_fails_closed_when_the_host_is_not_claude_code(self):
+        with tempfile.TemporaryDirectory() as home:
+            skill_dir = os.path.join(home, "skills", "ai-kit-spec-execute-gsd")
+            os.makedirs(skill_dir)
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            open(skill_md, "w", encoding="utf-8").close()
+            block = self._step0_block(skill_md)
+            for claudecode in ("", "unset"):
+                with self.subTest(claudecode=claudecode):
+                    proc = self._run("REVIEW_SPEC_SKILL_DIR", "",
+                                     {"HOME": home, "CLAUDECODE": claudecode}, block=block)
+                    self.assertEqual(proc.returncode, 2)
+                    self.assertIn("not Claude Code", proc.stdout)
+                    self.assertNotIn("GSD_SHIM=", proc.stdout)
+
+    def test_step0_names_the_host_check_the_detection_module_uses(self):
+        text = _gsd_skill_text()
+        step0 = text[text.index("## Step 0:"):text.index("## Step 1:")]
+        detection = (_GSD_SKILL.parent / "ai-kit-spec-review" / "ai_kit_spec"
+                     / "detection.py").read_text(encoding="utf-8")
+        self.assertIn('(("CLAUDECODE", _LABEL_CLAUDE),)', detection)
+        flat = " ".join(step0.split())
+        self.assertIn("`CLAUDECODE`", flat)
+        self.assertIn("detect_current_runtime()", flat)
+        self.assertIn("without the `Skill` tool, STOP", flat)
+
+    def test_exit_75_without_a_scheduler_leaves_the_os_timer_wake_armed(self):
+        text = " ".join(_gsd_skill_text().split())
+        ref = " ".join(_gsd_wake_ref_text().split())
+        for doc in (text, ref):
+            self.assertIn("deliberately left armed", doc)
+            self.assertIn("only after the host", doc)
+            self.assertIn("handoff", doc)
+        self.assertIn("Without it nothing can retry in-session", text)
+        self.assertIn("Do not run the Close block there", ref)
+        self.assertIn("with or without a scheduler", text)
+
+    def test_step0_stops_when_a_required_skill_dir_is_missing(self):
+        with tempfile.TemporaryDirectory() as home:
+            skill_dir = os.path.join(home, "skills", "ai-kit-spec-execute-gsd")
+            os.makedirs(skill_dir)
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+            open(skill_md, "w", encoding="utf-8").close()
+            proc = self._run("REVIEW_SPEC_SKILL_DIR", "", {"HOME": home},
+                             block=self._step0_block(skill_md))
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("directory not found; STOP", proc.stdout)
+        self.assertNotIn("GSD_SHIM=", proc.stdout)
+
+    def test_step0_rejects_an_unsubstituted_skill_path_and_a_missing_shim(self):
+        with tempfile.TemporaryDirectory() as home:
+            proc = self._run("REVIEW_SPEC_SKILL_DIR", "", {"HOME": home})  # verbatim copy
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("set SKILL_MD", proc.stdout)
+            self.assertNotIn("GSD_SHIM=", proc.stdout)
+            tree = os.path.join(home, "skills")
+            for name in ("ai-kit-spec-execute-gsd", "ai-kit-spec-review"):
+                os.makedirs(os.path.join(tree, name))
+            skill_md = os.path.join(tree, "ai-kit-spec-execute-gsd", "SKILL.md")
+            open(skill_md, "w", encoding="utf-8").close()
+            proc = self._run("REVIEW_SPEC_SKILL_DIR", "", {"HOME": home},
+                             block=self._step0_block(skill_md))
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("ai-kit-spec-gsd.py not found; STOP", proc.stdout)
+
+    def test_step3_rejects_an_unsubstituted_nothing_pending_flag(self):
+        proc = self._run('NOTHING_PENDING="<', "import sys\nprint('SHIM CALLED')\n",
+                         {"RESULT_MODE": "native_tier", "RESULT_RUNTIME": "claude",
+                          "PHASE_PROMPT_FILE": "p"})  # verbatim copy of the block
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("set NOTHING_PENDING to 1 or 0", proc.stdout)
+        self.assertNotIn("SHIM CALLED", proc.stdout)
 
     def test_cleanup_success_and_failure(self):
         ok = "import sys\nsys.stdout.write(" + repr(TestStep2HookSnippet._NOOP_CLEAR) + ")\n"
@@ -1730,57 +1932,6 @@ class TestCleanupAndGuidanceSnippets(unittest.TestCase):
         proc = self._run("not running Step 3", failed)
         self.assertEqual(proc.returncode, 1)
         self.assertIn("not running Step 3", proc.stdout)
-
-    def test_guidance_block_refuses_the_legacy_marker_and_replaces_its_own(self):
-        shim = "import sys\nsys.stdout.write('GUIDE')\n"
-        with tempfile.TemporaryDirectory() as tmp:
-            phase = os.path.join(tmp, "PLAN.md")
-            legacy = "# plan\n\n<!-- ai-kit-spec-execute-gsd:tooling-guidance -->\nold\n"
-            with open(phase, "w", encoding="utf-8") as handle:
-                handle.write(legacy)
-            env = {"PHASE_PROMPT_FILE": phase, "RESULT_MODE": "fallback_notice"}
-            proc = self._run("tooling-guidance:start", shim, env)
-            self.assertEqual(proc.returncode, 2)
-            self.assertIn("old single-marker", proc.stdout)
-            with open(phase, encoding="utf-8") as handle:
-                self.assertEqual(handle.read(), legacy)
-            with open(phase, "w", encoding="utf-8") as handle:
-                handle.write("# plan\n")
-            for _ in range(2):
-                self.assertEqual(self._run("tooling-guidance:start", shim, env).returncode, 0)
-            with open(phase, encoding="utf-8") as handle:
-                text = handle.read()
-            self.assertEqual(text.count("GUIDE"), 1)
-
-    def test_guidance_block_rejects_malformed_markers_and_keeps_the_mode(self):
-        shim = "import sys\nsys.stdout.write('GUIDE')\n"
-        start = "<!-- ai-kit-spec-execute-gsd:tooling-guidance:start -->"
-        end = "<!-- ai-kit-spec-execute-gsd:tooling-guidance:end -->"
-        malformed = {
-            "reversed": f"# plan\n{end}\nbody\n{start}\n",
-            "orphan end": f"# plan\n{end}\n",
-            "orphan start": f"# plan\n{start}\n",
-            "duplicated": f"# plan\n{start}\na\n{end}\n{start}\nb\n{end}\n",
-        }
-        with tempfile.TemporaryDirectory() as tmp:
-            phase = os.path.join(tmp, "PLAN.md")
-            env = {"PHASE_PROMPT_FILE": phase, "RESULT_MODE": "fallback_notice"}
-            for label, text in malformed.items():
-                with self.subTest(label):
-                    with open(phase, "w", encoding="utf-8") as handle:
-                        handle.write(text)
-                    proc = self._run("tooling-guidance:start", shim, env)
-                    self.assertEqual(proc.returncode, 2)
-                    self.assertIn("markers are malformed", proc.stdout)
-                    with open(phase, encoding="utf-8") as handle:
-                        self.assertEqual(handle.read(), text)
-            with open(phase, "w", encoding="utf-8") as handle:
-                handle.write(f"# plan\n{start}\nold\n{end}\ntail\n")
-            os.chmod(phase, 0o644)
-            self.assertEqual(self._run("tooling-guidance:start", shim, env).returncode, 0)
-            with open(phase, encoding="utf-8") as handle:
-                self.assertEqual(handle.read(), f"# plan\n\ntail\n\n{start}\nGUIDE\n{end}\n")
-            self.assertEqual(os.stat(phase).st_mode & 0o777, 0o644)
 
 
 class TestMainCli(unittest.TestCase):
@@ -1954,16 +2105,17 @@ _WAKE_COMMANDS = ["dirname", "find", "wc", "grep", "head", "printf", "cat", "sed
 
 
 def _wake_block(marker: str) -> str:
-    """The first fenced bash block of this SKILL.md that contains `marker`."""
+    """The first fenced bash block of references/session-wake.md that contains `marker`."""
     skill = os.path.join(
-        os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute-gsd", "SKILL.md"
+        os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute-gsd", "references",
+        "session-wake.md",
     )
     with open(skill, encoding="utf-8") as handle:
         text = handle.read()
     for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
         if marker in block:
             return block
-    raise AssertionError(f"SKILL.md has no bash block containing {marker!r}")
+    raise AssertionError(f"session-wake.md has no bash block containing {marker!r}")
 
 
 _GSD_SKILL = pathlib.Path(__file__).resolve().parent.parent / "skills" / "ai-kit-spec-execute-gsd"
@@ -1973,12 +2125,90 @@ def _gsd_skill_text() -> str:
     return (_GSD_SKILL / "SKILL.md").read_text(encoding="utf-8")
 
 
+def _gsd_wake_ref_text() -> str:
+    return (_GSD_SKILL / "references" / "session-wake.md").read_text(encoding="utf-8")
+
+
 def _fenced_block_containing(needle: str) -> str:
-    """The SKILL.md's own fenced bash block that holds `needle` (the step as written)."""
-    for block in re.findall(r"```bash\n(.*?)```", _gsd_skill_text(), re.DOTALL):
+    """The fenced bash block of SKILL.md or references/session-wake.md that holds `needle`."""
+    text = _gsd_skill_text() + "\n" + _gsd_wake_ref_text()
+    for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
         if needle in block:
             return block
-    raise AssertionError(f"SKILL.md has no bash block containing {needle!r}")
+    raise AssertionError(f"no SKILL.md or session-wake.md bash block contains {needle!r}")
+
+
+class TestPendingPlansBlock(unittest.TestCase):
+    """Step 2's pending-plans block: plans with no SUMMARY, and their frontmatter opt-in."""
+
+    def test_lists_only_open_plans_with_their_frontmatter_opt_in(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None or shutil.which("awk") is None:
+            self.skipTest("bash or awk not found")
+        with tempfile.TemporaryDirectory() as phase:
+            plans = {
+                "26-01": "---\ncross_ai: true\n---\n",  # done: has a SUMMARY
+                "26-02": "---\nwave: 1\ncross_ai: true\n---\n",
+                "26-03": "---\nwave: 1\n---\ncross_ai: true\n",  # body only, not frontmatter
+            }
+            for stem, text in plans.items():
+                pathlib.Path(phase, f"{stem}-PLAN.md").write_text(text, encoding="utf-8")
+            pathlib.Path(phase, "26-01-SUMMARY.md").write_text("done\n", encoding="utf-8")
+            prompt = os.path.join(phase, "26-CONTEXT.md")
+            pathlib.Path(prompt).write_text("# context\n", encoding="utf-8")
+            proc = subprocess.run(
+                [bash_bin, "-c", _fenced_block_containing("PENDING_PLAN=")],
+                env={"PATH": os.environ.get("PATH", ""), "PHASE_PROMPT_FILE": prompt},
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(
+            [f"PENDING_PLAN={phase}/26-02-PLAN.md CROSS_AI=1",
+             f"PENDING_PLAN={phase}/26-03-PLAN.md CROSS_AI=0"],
+            proc.stdout.splitlines(),
+        )
+
+
+    def _run_block(self, plans: dict[str, bool]) -> list[str]:
+        """Run the block on a phase dir holding `plans` ({stem: has_summary}); its lines."""
+        bash_bin = shutil.which("bash")
+        if bash_bin is None or shutil.which("awk") is None:
+            self.skipTest("bash or awk not found")
+        with tempfile.TemporaryDirectory() as phase:
+            for stem, done in plans.items():
+                pathlib.Path(phase, f"{stem}-PLAN.md").write_text("---\ncross_ai: true\n---\n")
+                if done:
+                    pathlib.Path(phase, f"{stem}-SUMMARY.md").write_text("done\n")
+            proc = subprocess.run(
+                [bash_bin, "-c", _fenced_block_containing("PENDING_PLAN=")],
+                env={"PATH": os.environ.get("PATH", ""),
+                     "PHASE_PROMPT_FILE": os.path.join(phase, "26-CONTEXT.md")},
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return [line.replace(phase, "<phase>") for line in proc.stdout.splitlines()]
+
+    def test_no_plan_file_prints_no_plans_and_never_a_literal_glob(self):
+        self.assertEqual(["NO_PLANS=1"], self._run_block({}))
+
+    def test_one_open_plan_prints_one_pending_line(self):
+        self.assertEqual(["PENDING_PLAN=<phase>/26-01-PLAN.md CROSS_AI=1"],
+                         self._run_block({"26-01": False}))
+
+    def test_one_done_plan_is_nothing_pending(self):
+        self.assertEqual(["NOTHING_PENDING=1"], self._run_block({"26-01": True}))
+
+    def test_two_plans_with_and_without_summaries(self):
+        self.assertEqual(["NOTHING_PENDING=1"], self._run_block({"26-01": True, "26-02": True}))
+        self.assertEqual(["PENDING_PLAN=<phase>/26-02-PLAN.md CROSS_AI=1"],
+                         self._run_block({"26-01": True, "26-02": False}))
+        self.assertEqual(2, len(self._run_block({"26-01": False, "26-02": False})))
+
+    def test_hook_branch_needs_a_pending_plan_line_and_no_plans_stops(self):
+        text = _gsd_skill_text()
+        self.assertIn("Continue only with at least\n  one `PENDING_PLAN` line", text)
+        self.assertIn("`NO_PLANS=1`", text)
+        self.assertIn("STOP and ask, in every mode", text)
 
 
 class TestSessionWakeStep(unittest.TestCase):
@@ -2014,8 +2244,9 @@ class TestSessionWakeStep(unittest.TestCase):
         env = {
             **self.env,
             "AI_KIT_FAKE_LOG": self.log,
-            "GSD_SKILL_DIR": self.gsd_skill,
+            "GSD_SHIM": os.path.join(self.gsd_skill, "ai-kit-spec-gsd.py"),
             "CWD": self.cwd,
+            "GSD_CONFIG_PATH": os.path.join(self.cwd, ".planning", "config.json"),
             "PHASE_PROMPT_FILE": self.prompt,
             **(extra or {}),
         }
@@ -2040,50 +2271,56 @@ class TestSessionWakeStep(unittest.TestCase):
         self._plans(1)
         proc = self._run(_wake_block(_WAKE_MARKER))
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertIn("single-plan phase: no session wake", proc.stdout)
+        self.assertIn("fewer than two pending plans: no session wake", proc.stdout)
+        self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
+        self.assertEqual([], self._shim_calls())
+
+    def test_two_plans_with_one_summary_arm_nothing(self):
+        self._plans(2)
+        pathlib.Path(self.phase, "26-01-SUMMARY.md").write_text("done\n", encoding="utf-8")
+        proc = self._run(_wake_block(_WAKE_MARKER))
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("fewer than two pending plans: no session wake", proc.stdout)
         self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
         self.assertEqual([], self._shim_calls())
 
     def test_two_plans_on_claude_arm_once_and_record_the_identity(self):
         self._plans(2)
-        proc = self._run(_wake_block(_WAKE_MARKER), {"STUB_HOST": "claude", "STUB_SID": "sid-c1"})
+        proc = self._run(
+            _wake_block(_WAKE_MARKER),
+            {"STUB_HOST": "claude", "CLAUDE_CODE_SESSION_ID": "sid-c1"},
+        )
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertEqual(self.shim, self._value(proc.stdout, "WAKE_SHIM"))
         self.assertEqual("1", self._value(proc.stdout, "WAKE_OWNED"))
         self.assertEqual("claude", self._value(proc.stdout, "WAKE_HOST"))
         self.assertEqual("sid-c1", self._value(proc.stdout, "WAKE_ID"))
         self.assertEqual(
-            [["arm", "--ref", os.path.join(self.cwd, ".planning", "STATE.md")]],
+            [["arm", "--host", "claude", "--session-id", "sid-c1",
+              "--ref", os.path.join(self.cwd, ".planning", "STATE.md")]],
             self._shim_calls(),
         )
 
-    def test_two_plans_on_pi_without_an_id_relays_the_refusal_and_goes_on(self):
+    def test_two_plans_without_a_session_id_env_arm_nothing(self):
+        """No CLAUDE_CODE_SESSION_ID: the wake CLI would refuse (exit 2), so the block skips it."""
         self._plans(2)
-        proc = self._run(_wake_block(_WAKE_MARKER), {"STUB_HOST": "pi"})
+        proc = self._run(_wake_block(_WAKE_MARKER), {"STUB_HOST": "claude"})
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertIn("no session id: pass --session-id", proc.stdout)
-        self.assertIn("session wake arm exit 2", proc.stdout)
+        self.assertIn("CLAUDE_CODE_SESSION_ID is empty", proc.stdout)
         self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
+        self.assertEqual([], self._shim_calls())
 
-    def test_pi_with_the_recorded_id_passes_session_id(self):
-        self._plans(2)
-        proc = self._run(
-            _wake_block(_WAKE_MARKER),
-            {"STUB_HOST": "pi", "WAKE_SESSION_ID": "pi-exact-id"},
-        )
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual("1", self._value(proc.stdout, "WAKE_OWNED"))
-        self.assertEqual("pi", self._value(proc.stdout, "WAKE_HOST"))
-        self.assertEqual("pi-exact-id", self._value(proc.stdout, "WAKE_ID"))
-        self.assertIn(["arm", "--session-id", "pi-exact-id",
-                       "--ref", os.path.join(self.cwd, ".planning", "STATE.md")],
-                      self._shim_calls())
+    def test_arm_block_passes_the_env_session_id_not_a_shim_guess(self):
+        block = _wake_block(_WAKE_MARKER)
+        self.assertIn('WAKE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"', block)
+        self.assertNotIn("reads the session itself", _gsd_wake_ref_text())
 
     def test_refreshed_wake_is_not_owned(self):
         self._plans(2)
         proc = self._run(
             _wake_block(_WAKE_MARKER),
-            {"STUB_HOST": "claude", "STUB_ARM_OUTPUT": "refreshed claude-old"},
+            {"STUB_HOST": "claude", "STUB_ARM_OUTPUT": "refreshed claude-old",
+             "CLAUDE_CODE_SESSION_ID": "sid-c1"},
         )
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
@@ -2092,7 +2329,8 @@ class TestSessionWakeStep(unittest.TestCase):
         self._plans(2)
         proc = self._run(
             _wake_block(_WAKE_MARKER),
-            {"STUB_HOST": "claude", "STUB_ARM_RC": "3", "STUB_ARM_OUTPUT": "armed claude-x"},
+            {"STUB_HOST": "claude", "STUB_ARM_RC": "3", "STUB_ARM_OUTPUT": "armed claude-x",
+             "CLAUDE_CODE_SESSION_ID": "sid-c1"},
         )
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertEqual("0", self._value(proc.stdout, "WAKE_OWNED"))
@@ -2148,13 +2386,185 @@ class TestSessionWakeStep(unittest.TestCase):
 
     def test_skill_text_orders_arm_before_invoke_and_close_after(self):
         text = _gsd_skill_text()
-        arm = text.index("Session wake (multi-plan phases, D-23)")
+        ref = _gsd_wake_ref_text()
+        arm = text.index("**Session wake (multi-plan phases).**")
         invoke = text.index("**Then invoke GSD's own `/gsd-execute-phase` skill directly")
-        close = text.index("**Close the session wake (D-23).**")
+        close = text.index("**Close the session wake.**")
         self.assertLess(arm, invoke)
         self.assertLess(invoke, close)
-        self.assertIn("Never run it on the exit-75 `retry_after_s=` branch", text)
-        close_text = text[close:]
+        # GSD's skill is confirmed before arming, so a missing GSD never leaves a wake armed.
+        self.assertLess(text.index("**Confirm GSD's skill before any write or arming.**"), arm)
+        self.assertIn("STOP before `prepare-tooling` and the wake", text)
+        # SKILL.md carries the MANDATORY triggers; the blocks live in the reference.
+        self.assertIn("MANDATORY before the invoke", text[arm:invoke])
+        self.assertIn("references/session-wake.md", text[arm:invoke])
+        self.assertIn('"Quota wake"', text[invoke:close])
+        close_text = " ".join(text[close:].split())  # joins wrapped lines
+        self.assertIn('"Close" block', close_text)
+        self.assertIn("`Skill` call failed after arming", close_text)
+        self.assertIn("a checkpoint or verification gap", close_text)
+        self.assertIn("Never run it on the exit-75 `retry_after_s=` branch", close_text)
         self.assertIn("answered `abort`", close_text)
         self.assertIn("the phase completed", close_text)
-        self.assertEqual(1, text.count("ai-kit-session-wake/ai-kit-session-wake.py"))
+        flat = " ".join(text[invoke:close].split())
+        self.assertIn("re-arms nothing. `abort` ends only that plan's prompt", flat)
+        self.assertIn("only once `/gsd-execute-phase` itself has returned", flat)
+        self.assertIn("exit 0 with an invalid summary", flat)
+        self.assertEqual(0, text.count("ai-kit-session-wake/ai-kit-session-wake.py"))
+        self.assertEqual(1, ref.count("ai-kit-session-wake/ai-kit-session-wake.py"))
+        rearm = ref.index('--ref "$RESUME_STATE_PATH"')
+        self.assertLess(ref.index("## Arm"), ref.index("## Quota wake"))
+        self.assertLess(ref.index("## Quota wake"), rearm)
+        self.assertLess(rearm, ref.index("Where `CronCreate` is callable"))
+        self.assertLess(rearm, ref.index("## Close"))
+        self.assertNotRegex(text + ref, r"\bD-\d+\b")
+
+    def test_quota_wake_prompt_carries_the_close_step(self):
+        ref = _gsd_wake_ref_text()
+        prompt = re.search(r"```text\nQuota wake for phase(.*?)```", ref, re.DOTALL)
+        assert prompt is not None
+        self.assertIn("python3 <WAKE_SHIM> done --host <WAKE_HOST> --session-id <WAKE_ID>",
+                      prompt.group(1))
+        bare = re.findall(r"```text\n(Quota wake for phase.*?)```", ref, re.DOTALL)
+        self.assertEqual(2, len(bare))
+        self.assertNotIn("done", bare[1])
+        self.assertTrue(bare[0].startswith(bare[1].rstrip("\n")))
+
+    def test_skill_is_scoped_to_claude_code(self):
+        text = _gsd_skill_text()
+        self.assertIn("Claude Code only", text.split("---", 2)[1])
+        step0 = text[text.index("## Step 0:"):text.index("```bash", text.index("## Step 0:"))]
+        self.assertIn("**Claude Code only.**", step0)
+        self.assertIn("never report a missing GSD", step0)
+
+    def test_hook_mode_prepare_tooling_writes_no_phase_file(self):
+        block = _fenced_block_containing('prepare-tooling "${CLI_ARGS[@]}"')
+        start = block.index('"cross_ai_hook" ]')
+        hook_branch = block[start:block.index("else", start)]
+        self.assertNotIn("--phase-file", hook_branch)
+        self.assertIn("--phase-file", block)
+
+
+class TestResumableStateBlock(unittest.TestCase):
+    """references/resumable-state.md: a verbatim copy fails closed, a set value is recorded."""
+
+    def setUp(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        self.bash_bin: str = bash_bin
+        ref = _GSD_SKILL / "references" / "resumable-state.md"
+        blocks = re.findall(r"```bash\n(.*?)```", ref.read_text(encoding="utf-8"), re.DOTALL)
+        self.block: str = blocks[0]
+        self.tmp = tempfile.mkdtemp(prefix="gsd-resume-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.cache_py = os.path.join(self.tmp, "cache.py")
+        pathlib.Path(self.cache_py).write_text(
+            f"print({os.path.join(self.tmp, 'quota.json')!r})\n", encoding="utf-8")
+        self.shim_py = os.path.join(self.tmp, "shim.py")
+        pathlib.Path(self.shim_py).write_text(
+            f"import sys\nopen({os.path.join(self.tmp, 'state.json')!r}, 'w')"
+            ".write(sys.argv[sys.argv.index('--state-json') + 1])\n", encoding="utf-8")
+
+    def _run(self, block: str):
+        env = {"PATH": os.environ.get("PATH", ""), "GSD_SHIM": self.shim_py,
+               "TOOLS_PY": self.cache_py, "CWD": self.tmp, "GSD_CONFIG_PATH": "c.json",
+               "PHASE_ID": "26", "PHASE_PROMPT_FILE": "p.md"}
+        return subprocess.run([self.bash_bin, "-c", block], env=env, capture_output=True,
+                              text=True, timeout=30, check=False)
+
+    def test_verbatim_copy_writes_nothing(self):
+        proc = self._run(self.block)
+        self.assertEqual(2, proc.returncode)
+        self.assertIn("nothing written", proc.stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "state.json")))
+
+    def test_each_documented_value_is_recorded(self):
+        first = self.block.splitlines()[0]
+        for value in ("skill", "gsd-execute-phase"):
+            with self.subTest(value=value):
+                proc = self._run(self.block.replace(first, f"RESUME_VIA={value}", 1))
+                self.assertEqual(0, proc.returncode, proc.stderr)
+                state = json.loads(pathlib.Path(self.tmp, "state.json").read_text("utf-8"))
+                self.assertEqual(value, state["resume_via"])
+
+
+def _description(skill_md: pathlib.Path) -> str:
+    """The frontmatter `description`, whether plain, quoted, or folded/literal across lines."""
+    lines = skill_md.read_text(encoding="utf-8").split("\n")
+    block = lines[1:lines.index("---", 1)]
+    for i, line in enumerate(block):
+        if not line.startswith("description:"):
+            continue
+        value = line.partition(":")[2].strip()
+        rest = []
+        for follow in block[i + 1:]:
+            if follow and not follow[0].isspace():
+                break
+            rest.append(follow.strip())
+        if value[:1] in ("|", ">"):
+            return " ".join(part for part in rest if part)
+        if value[:1] in ('"', "'"):
+            return json.loads(value) if value[0] == '"' else value[1:-1]
+        return " ".join([value, *rest]).strip()
+    raise AssertionError("no description in frontmatter")
+
+
+class TestSkillShape(unittest.TestCase):
+    def test_description_fits_the_agent_skills_cap(self):
+        description = _description(_GSD_SKILL / "SKILL.md")
+        self.assertGreater(len(description), 0)
+        self.assertLessEqual(len(description), 1024)
+        self.assertIn("Claude Code only", description)
+
+
+class TestStepBlockGuards(unittest.TestCase):
+    """An unsubstituted hand-filled value stops the Step 3 and cleanup blocks before any call."""
+
+    def _run(self, needle: str, env: dict):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        with tempfile.TemporaryDirectory() as tmp:
+            shim = os.path.join(tmp, "shim.py")
+            pathlib.Path(shim).write_text("import sys\nsys.exit(9)\n", encoding="utf-8")
+            base = {"PATH": os.environ.get("PATH", ""), "GSD_SHIM": shim, "CWD": tmp,
+                    "RUN_ID": "r1", "RESULT_MODE": "native_tier", "RESULT_RUNTIME": "claude"}
+            return subprocess.run(
+                [bash_bin, "-c", re.sub(r'^NOTHING_PENDING="<.*$', 'NOTHING_PENDING="1"',
+                                        _fenced_block_containing(needle), flags=re.MULTILINE)],
+                cwd=tmp, env={**base, **env},
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+
+    def test_step3_block_refuses_empty_values(self):
+        needle = 'NOTHING_PENDING="<1 if'
+        self.assertEqual(0, self._run(needle, {}).returncode)
+        for env in ({"RESULT_MODE": ""}, {"RESULT_RUNTIME": ""}, {"GSD_SHIM": ""}):
+            proc = self._run(needle, env)
+            self.assertEqual(2, proc.returncode, env)
+            self.assertIn("nothing written", proc.stdout)
+
+    def test_step3_block_allows_fallback_notice_without_a_runtime(self):
+        env = {"RESULT_MODE": "fallback_notice", "RESULT_RUNTIME": ""}
+        self.assertEqual(0, self._run('NOTHING_PENDING="<1 if', env).returncode)
+
+    def test_cleanup_block_refuses_empty_values(self):
+        for env in ({"RUN_ID": ""}, {"GSD_SHIM": ""}, {"CWD": ""}):
+            proc = self._run("nothing cleared", env)
+            self.assertEqual(2, proc.returncode, env)
+            self.assertIn("nothing cleared", proc.stdout)
+
+
+class TestSkillTextPinPersistence(unittest.TestCase):
+    def test_native_pin_persistence_is_documented_not_denied(self):
+        skill = os.path.join(
+            os.path.dirname(__file__), "..", "skills", "ai-kit-spec-execute-gsd", "SKILL.md"
+        )
+        with open(skill, encoding="utf-8") as handle:
+            text = " ".join(handle.read().split())
+        self.assertIn("The pin persists: no cleanup or subcommand removes it", text)
+        self.assertIn("unless an earlier wave left an adapter-written pin", text)
+        self.assertNotIn("would run with no configuration change", text)
+        self.assertIn("report a pin an earlier wave left at every stop", text)
+        self.assertIn("`$CWD/.claude/commands/gsd-execute-phase.md`", text)

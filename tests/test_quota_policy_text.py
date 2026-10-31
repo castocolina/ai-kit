@@ -12,12 +12,14 @@ import unittest
 REPO = pathlib.Path(__file__).resolve().parent.parent
 REFERENCE = REPO / "skills/ai-kit-cross-ai/references/subprocess-quota-policy.md"
 GSD_SKILL = REPO / "skills/ai-kit-spec-execute-gsd/SKILL.md"
+GSD_WAKE_REF = REPO / "skills/ai-kit-spec-execute-gsd/references/session-wake.md"
 REVIEW_SKILL = REPO / "skills/ai-kit-spec-review/SKILL.md"
 DISPATCH_REF = REPO / "skills/ai-kit-spec-review/references/cross-ai-dispatch.md"
 SUPER_DIR = REPO / "skills/ai-kit-spec-execute-superpowers"
 SUPER_SKILL = SUPER_DIR / "SKILL.md"
 SUPER_REFS = (
     SUPER_DIR / "references/state-management.md",
+    SUPER_DIR / "references/dispatch-external-cli.md",
     SUPER_DIR / "references/escalation.md",
     SUPER_DIR / "references/design-notes.md",
 )
@@ -101,6 +103,7 @@ class ReviewSkill(unittest.TestCase):
 class GsdExecuteSkill(unittest.TestCase):
     def test_skill_points_to_cross_ai_and_schedules_only_the_one_shot(self):
         text = GSD_SKILL.read_text(encoding="utf-8")
+        text += "\n" + GSD_WAKE_REF.read_text(encoding="utf-8")
         self.assertIn("../ai-kit-cross-ai/SKILL.md", text)
         self.assertEqual(wake_lines(text), [])
         hits = cron_lines(text)
@@ -115,6 +118,35 @@ class GsdExecuteSkill(unittest.TestCase):
         text = GSD_SKILL.read_text(encoding="utf-8")
         self.assertIn("Never answer `skip`", text)
         self.assertRegex(text, r"gets the notice and the answer `abort`")
+
+
+class GsdExecuteSkillGuards(unittest.TestCase):
+    """Verbatim-copy guards and the native-tier wording of the execute-gsd SKILL.md."""
+
+    def setUp(self):
+        self.text = GSD_SKILL.read_text(encoding="utf-8")
+
+    def test_nothing_pending_flag_has_a_placeholder_guard(self):
+        self.assertIn('NOTHING_PENDING="<1 if Step 2 recorded NOTHING_PENDING=1, else 0>"',
+                      self.text)
+        self.assertIn('case "$NOTHING_PENDING" in 0|1) ;; *)', self.text)
+        self.assertIn('if [ "$NOTHING_PENDING" = 1 ]; then', self.text)
+
+    def test_step0_skill_path_is_guarded(self):
+        self.assertIn('SKILL_MD="<absolute path to THIS SKILL.md>"', self.text)
+        self.assertIn('case "$SKILL_MD" in */SKILL.md) [ -f "$SKILL_MD" ]', self.text)
+        self.assertIn('[ -f "$GSD_SHIM" ] ||', self.text)
+
+    def test_native_tier_wording_matches_the_adapter(self):
+        self.assertIn("Only the tiers `opus`, `sonnet` and `haiku` become a pin", self.text)
+        self.assertIn("`fable` is not a GSD tier", self.text)
+        self.assertIn("An existing user `model_profile` is kept even when it differs", self.text)
+        self.assertIn("`model_profile` for claude, else `model_profile_overrides.<runtime>.<tier>`",
+                      self.text)
+
+    def test_tooling_waits_for_the_gsd_skill_check(self):
+        self.assertLess(self.text.index("**Confirm GSD's skill before any write"),
+                        self.text.index('NOTHING_PENDING="<'))
 
 
 class SuperpowersExecuteSkill(unittest.TestCase):

@@ -293,6 +293,7 @@ def _stack_form_finding(rule: dict, text: str, presence: dict) -> dict:
         "matched_signals": sorted(set(generic_matched) | row_matched),
         "criticality": rule["criticality"],
         "summary": "\n".join([rule["summary"], *clauses]),
+        "signals": rule["signals"],
         "stacks": stacks,
         "unverified_stacks": unverified,
         "hardcoded_counts": counts,
@@ -346,6 +347,7 @@ def check_rules(
             "matched_signals": matched,
             "criticality": rule["criticality"],
             "summary": rule["summary"],
+            "signals": signals,
         }
         if missing_tools is not None:
             finding["missing_tools"] = missing_tools

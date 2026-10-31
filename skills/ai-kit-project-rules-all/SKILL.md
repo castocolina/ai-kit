@@ -1,20 +1,18 @@
 ---
 name: ai-kit-project-rules-all
-description: Use when a target repo needs a whole-repo "check everything"/"run all the rules checkers" pass, never a single-domain question: this skill subprocess-fans-out to all 6 sibling `ai-kit-project-rules-*` checkers (agents, makefile, precommit, arch, docker, cicd) and merges their `check`/`remediate` findings into one cross-domain, criticality-ordered report, preserving the AGENTS.md-only `/agent-md-refactor` hand-off for `workflow`-kind findings and leaving every other domain's findings inline and report-only. Route a single-domain question (e.g. "does my Makefile have a validate alias", "is my CI duplicating a hook") to that one sibling directly instead of here.
+description: Use when a target repo needs a whole-repo "check everything"/"run all the rules checkers"/"full rules audit"/"audit all repo conventions" pass (agents file, Makefile, pre-commit, arch test, Docker, CI together), never a single-domain question. It subprocess-fans-out to all 6 sibling `ai-kit-project-rules-*` checkers (agents, makefile, precommit, arch, docker, cicd) and merges their `remediate` findings and a separate AGENTS.md broken-link check step into one cross-domain, criticality-ordered report. Route a single-domain question (e.g. "does my Makefile have a validate alias", "is my CI duplicating a hook") to that one sibling directly instead of here.
 ---
 
 # ai-kit-project-rules-all
 
 ## Scope
 
-This skill DETECTS AND REPORTS across all 6 sibling domains at once. It never edits the target
-repo; never runs any sibling's checker logic itself (it subprocess-invokes each sibling's own real
-entry script); and never re-derives a classification a sibling's own `remediate` subcommand already
-made -- every `remediate`/`blocked` entry this skill's report carries keeps every field value that
-sibling produced exactly as it produced it, with the ONE documented exception of the `hand_off` key
-aggregate() adds to `workflow`-kind entries (see Hand-off mechanism below); this skill never
-overwrites, reclassifies, or drops a field a sibling set. Per-domain rule logic belongs entirely to
-the six siblings, never to this skill:
+This skill DETECTS AND REPORTS across all 6 sibling domains at once. Its script never edits the
+target repo; the only edit path is the agents sibling's Wrap mechanism for `hand_off` entries, and
+only when the user asked to fix or remediate (see "Act on the report"). It subprocess-invokes each
+sibling's own real entry script and passes every `remediate`/`blocked` entry through with the
+sibling's field values untouched; the one addition is the `hand_off` key `aggregate()` puts on
+`workflow`-kind entries. Per-domain rule logic belongs to the siblings, never to this skill:
 
 - `ai-kit-project-rules-agents` -- the AGENTS.md/CLAUDE.md house-ruleset checker (`workflow` kind).
 - `ai-kit-project-rules-makefile` -- Makefile target-shape checker (`makefile` kind).
@@ -24,71 +22,115 @@ the six siblings, never to this skill:
 - `ai-kit-project-rules-docker` -- local-dev Docker Compose convention checker (`docker` kind).
 - `ai-kit-project-rules-cicd` -- CI-config command-reuse checker (`cicd` kind).
 
-This skill's own original logic is limited to three things: the subprocess fan-out, the per-domain
-failure isolation, and the cross-domain criticality merge (including the AGENTS.md hand-off tag).
-Nothing else. A question about one domain's own rule shape, tooling taxonomy, or conventions is
-that sibling's business, never this skill's.
+This skill's own logic is the subprocess fan-out, the per-domain failure isolation, and the
+cross-domain criticality merge (including the AGENTS.md hand-off tag). A question about one
+domain's own rules is that sibling's business.
 
 ## Resolve the entrypoint
 
 Resolve once per invocation, in one Bash call, and record the printed path as a literal absolute
-path. The directory containing this `SKILL.md` comes first, so a checkout runs its own copy rather
-than an installed one that may be on another branch:
+path. Set `SKILL_DIR` to the directory that contains this `SKILL.md` (the host's skill base
+directory; the one line to edit). An unedited block aborts with a message instead of guessing.
+`SKILL_DIR` is tried first so a checkout runs its own copy rather than an installed one that may be
+on another branch:
 
 ```bash
-for d in "$(dirname "<absolute path to THIS SKILL.md>")" \
+SKILL_DIR='<directory containing this SKILL.md>'
+[ -f "$SKILL_DIR/SKILL.md" ] \
+  || { echo "set SKILL_DIR to the directory containing this SKILL.md" >&2; exit 2; }
+for d in "$SKILL_DIR" \
          "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-project-rules-all}" \
          "$HOME/.claude/skills/ai-kit-project-rules-all" \
          "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-project-rules-all" \
          "$HOME/.agents/skills/ai-kit-project-rules-all"; do
-  [ -f "$d/ai-kit-project-rules-all.py" ] && { printf '%s\n' "$d/ai-kit-project-rules-all.py"; break; }
+  [ -f "$d/ai-kit-project-rules-all.py" ] \
+    && { printf '%s\n' "$(cd "$d" && pwd -P)/ai-kit-project-rules-all.py"; break; }
 done
 ```
 
-If no candidate exists, stop and report that the skill is not installed. Substitute the directory
-actually containing this `SKILL.md` into the first candidate.
+If no candidate exists, stop and report that the skill is not installed.
 
 That resolves THIS skill's own entrypoint. Internally, once invoked, `dispatch.py` resolves each
 of the six siblings (`ai-kit-project-rules-agents`/`-makefile`/`-precommit`/`-arch`/`-docker`/
 `-cicd`) the same way, checkout first: the sibling next to the running copy of this skill (from
 `dispatch.py`'s own real path), then the plugin root, `~/.claude/skills`, the opencode skills
 directory and `~/.agents/skills`. It looks for `<name>/<name>.py` and never searches `$PATH`. A sibling
-installed somewhere this walk does not know about produces a D-05 failure entry (see Limits below),
-never a silent skip.
+installed somewhere this walk does not know about produces a `failed` entry, never a silent skip.
+
+## Resolve the agents sibling
+
+"Act on the report" steps 2 and 3 use the `ai-kit-project-rules-agents` skill, which can be installed
+away from this skill (a split install). Resolve it once, in one Bash call, with the same candidate
+walk as above and with the agents sibling's name (the from-checkout sibling next to `SKILL_DIR`
+first), and record the printed path as the literal `<AGENTS_ENTRYPOINT>`. Its `SKILL.md` is in the
+same directory. Set `SKILL_DIR` exactly as above:
+
+```bash
+SKILL_DIR='<directory containing this SKILL.md>'
+[ -f "$SKILL_DIR/SKILL.md" ] \
+  || { echo "set SKILL_DIR to the directory containing this SKILL.md" >&2; exit 2; }
+for d in "$SKILL_DIR/../ai-kit-project-rules-agents" \
+         "${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/ai-kit-project-rules-agents}" \
+         "$HOME/.claude/skills/ai-kit-project-rules-agents" \
+         "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-project-rules-agents" \
+         "$HOME/.agents/skills/ai-kit-project-rules-agents"; do
+  [ -f "$d/ai-kit-project-rules-agents.py" ] \
+    && [ -d "$(cd "$d" && pwd -P)/../_shared/ai_kit_rules_common" ] \
+    && { printf '%s\n' "$(cd "$d" && pwd -P)/ai-kit-project-rules-agents.py"; break; }
+done
+```
+
+The second test skips a candidate that cannot import (the agents sibling's own loop applies it): its package needs `skills/_shared/` beside the skill's real (symlink-resolved) directory, which a checkout and a symlink install have and a plain copy-install does not. A plain copy ahead of a working later candidate is skipped, not bound.
+
+If nothing prints, the agents sibling is not installed: steps 2 and 3 cannot run, so say so.
 
 ## Run the check
 
+**Trust gate.** When `.planning/` exists, the agents sibling's GSD identity probe can run the
+target repo's own gsd-tools (see its "Trust gate"), and this skill captures that sibling's stderr,
+so the line naming the probed path never reaches you on success. Unless the user has already said
+they trust that repo's code, ask before running. If they decline, or no one can be asked, prefix
+the command with `AI_KIT_SKIP_GSD_PROBE=1`; the siblings inherit it, nothing from the repo runs,
+and the rules that need the probe (R18/R19) come back as `notices`.
+
+Substitute the recorded path for `<ENTRYPOINT>` and run `check`; `remediate` is an alias with the
+same output:
+
 ```bash
-python3 "$ENTRYPOINT" check <repo_root>
-python3 "$ENTRYPOINT" remediate <repo_root>
+python3 <ENTRYPOINT> check <repo_root>
 ```
 
-Both subcommands return the SAME four-key shape: `{"remediate": [...], "blocked": [...], "failed":
+Give this command a host tool timeout of at least 210 seconds, or run it in the background: the
+six siblings run one after another, up to 30 seconds each (180 seconds, plus interpreter startup). A single sibling that overruns its own 30 seconds is not a host kill: it becomes a `failed` entry with `error: timed out after 30s` and the other five domains still return. If the host kills the whole command, no JSON
+comes back, so report a whole-run failure with every domain unchecked, never a clean run.
+
+`<repo_root>` defaults to `.`. With no argument or `-h`/`--help` the script prints `usage:
+ai-kit-project-rules-all.py check|remediate [repo_root]` and exits `0`; an unknown subcommand
+prints `unknown subcommand: <name>` on stderr and exits `2`.
+
+The output has four keys (every classification already happened inside each sibling's own
+`remediate`): `{"remediate": [...], "blocked": [...], "failed":
 [...], "notices": [...]}`.
 
-- `notices` -- every domain's `notices` (rules skipped because a condition could not be verified,
-  each with its `reason`), concatenated in domain order (the `DOMAIN_ORDER` sequence), never
-  re-sorted and never inserted as a remediation.
-
 - `remediate` -- every domain's `remediate` entries, concatenated across all 6 domains and then
-  globally sorted by `criticality` ascending (never grouped per-domain) -- the **cross-domain**
-  criticality merge (SC2).
+  globally sorted by `criticality` ascending (never grouped per domain): the **cross-domain**
+  criticality merge.
 - `blocked` -- every domain's `blocked` entries (findings a sibling could not classify without
   research), concatenated the same way, also globally sorted.
-- `failed` -- one D-05 entry per domain whose subprocess invocation itself failed (non-zero exit,
-  timeout, malformed JSON on stdout, or an unresolvable entrypoint): `{"domain": ..., "status":
-  "failed", "error": ..., "returncode": ...}`. A domain here never appears in `remediate` or
-  `blocked` too -- the two are mutually exclusive per domain.
+- `failed` -- one entry per domain whose subprocess invocation itself failed (unresolvable
+  entrypoint, launch error, non-zero exit, timeout, undecodable output, stdout that is not a JSON
+  object), normally `{"domain": ..., "status": "failed", "error": ..., "returncode": ...}`; a
+  sibling that prints a JSON object without a `remediate` key is passed through with its `domain`
+  added. Any object that contains a `remediate` key is merged as a real result, even if it also
+  has `status: failed`. A domain here never appears in `remediate` or `blocked` too.
+- `notices` -- workflow-only: the agents sibling emits one per workflow finding flagged
+  `unverified: true` (a rule whose condition could not be proven; R18/R19 are the probe example),
+  as `{kind, id, status, unverified, reason, criticality, summary}`. Structural siblings report
+  `notices: []`. They are concatenated in domain order, never re-sorted and never inserted as a
+  remediation.
 
-`check` and `remediate` return byte-identical output (D-04). Every per-finding classification
-already happened inside each sibling's own `remediate` subprocess call before this skill ever sees
-it (each sibling's `remediate` already runs that sibling's own `check` internally, then its own
-`build_remediation()` builder); this skill's only original work is the fan-out, the failure
-isolation, and the cross-domain merge described above -- there is no further per-orchestrator
-classification step for `remediate` to do that `check` does not already do.
-
-One complete example finding WITH a `hand_off` key (from a real run against a fixture repo whose
-AGENTS.md is missing house rules):
+One complete example finding WITH a `hand_off` key (a fixture repo whose AGENTS.md is missing house
+rules):
 
 ```json
 {
@@ -99,11 +141,12 @@ AGENTS.md is missing house rules):
   "summary": "All written project artifacts (docs, commits, comments, planning files) are English-only, regardless of the conversation's language.",
   "matched_signals": [],
   "auto_apply": true,
+  "signals": ["english only", "english-only", "non-negotiable"],
   "hand_off": "agent-md-refactor"
 }
 ```
 
-One complete example finding WITHOUT a `hand_off` key, from the same real run (a non-`workflow`
+One complete example finding WITHOUT a `hand_off` key, from the same run (a non-`workflow`
 domain):
 
 ```json
@@ -111,109 +154,87 @@ domain):
   "kind": "arch",
   "id": "arch-test-target",
   "criticality": 2,
-  "summary": "This repo has no arch-test-shaped Makefile target (a target named e.g. 'arch-test', 'arch', 'arch-check', or 'architecture-test'). Add one that runs this repo's architecture-fitness checks, and chain it into 'test' -- as a direct or transitive prerequisite, or by invoking it from 'test''s recipe -- so it actually runs. No language-stack marker file was detected in this repo, so this skill has no per-stack canonical architecture-fitness-tool recommendation to add.",
+  "summary": "This repo has no arch-test-shaped Makefile target ... (trimmed)",
   "issue": "arch_test_target_missing",
   "auto_apply": true
 }
 ```
 
-`python3 "$ENTRYPOINT" bogus <repo_root>` prints `usage: ai-kit-project-rules-all.py
-check|remediate [repo_root]` and exits `0` for a missing/help argument, or `unknown subcommand:
-bogus` on stderr and exits `2` for an unrecognized one -- confirmed against the shipped `cli.py`.
+## Act on the report
 
-## What it checks
+1. **`failed` and `notices`** -- always report every entry. A failed domain was not checked; a
+   notice is a rule whose condition could not be proven. A `failed` entry whose `error` reads
+   `entrypoint not found for '<sibling>'` means that sibling is not installed where the walk in
+   "Resolve the entrypoint" looks: report the domain as not installed and name those locations.
+2. **`hand_off: agent-md-refactor` entries** (`workflow` kind, the AGENTS.md domain) -- on a
+   check-only request, report them and offer the hand-off; do not edit. Only when the user asked to
+   fix or remediate (or accepts the offer), it is MANDATORY to read the "Wrap mechanism" section of
+   the `ai-kit-project-rules-agents` skill (load it by name, or read the `SKILL.md` in the directory
+   of `<AGENTS_ENTRYPOINT>`) and follow its Steps A-D. This skill has no CLI or importable path into
+   `/agent-md-refactor` and does not restate those steps.
+   Do not load the other five siblings' SKILL.md files; their payloads carry what you report.
+3. **AGENTS.md broken links** -- the merged report never carries them (see Limits), so always run
+   the agents sibling's `check` once more and report its `links` list (empty means none broken).
+   `<AGENTS_ENTRYPOINT>` is the literal path recorded from "Resolve the agents sibling" (shell
+   variables do not persist between Bash calls, so substitute it):
 
-All 6 domains at once, merged into one **cross-domain** criticality-ordered report (SC2). A real
-`check` run against this repo itself returns `remediate` and `blocked` entries from several
-domains (the counts drift as the repo changes) -- sorted as one list by `criticality`, not grouped
-by domain. The `hand_off: agent-md-refactor` tag (SC3) is
-set on every `remediate` entry whose `kind == "workflow"` (the AGENTS.md domain) and on no other
-entry -- see the Hand-off mechanism section below for what a caller does with it.
+   ```bash
+   AI_KIT_SKIP_GSD_PROBE=1 python3 "<AGENTS_ENTRYPOINT>" check <repo_root>
+   ```
 
-## Hand-off mechanism (SC3)
-
-For `workflow`-kind entries ONLY (the AGENTS.md domain), this skill's report is the SAME
-`hand_off: agent-md-refactor`-tagged payload `ai-kit-project-rules-agents/SKILL.md` itself
-documents. That sibling's own "Wrap mechanism" section names the concrete sequence this document
-points at BY NAME rather than restating it:
-
-- **Step A** (confirm near-misses first, owned by `ai-kit-project-rules-agents` itself) -- for
-  every `workflow` entry with `auto_apply: false`, stop and ask the user to confirm or decline
-  individually before `/agent-md-refactor` is invoked at all.
-- **Step B** (assemble one ordered list) -- every `auto_apply: true` `workflow` entry plus every
-  user-confirmed near-miss, in the same most-critical-first order `remediate` already returned.
-- **Step C** (one invocation, named injection point) -- invoke `/agent-md-refactor` against the
-  target file EXACTLY ONCE, treating the Step B list's `summary` strings as additional "essential
-  content" candidates for that skill's own Phase 2/Phase 3.
-
-This is a documentation cross-reference, never new code: this skill has no CLI or importable path
-into `/agent-md-refactor` and does not re-implement Step A/B/C itself -- it only produces the
-`hand_off`-tagged `workflow` entries that make Step A/B/C's input possible.
-
-Every OTHER domain's findings (`makefile`, `precommit`, `arch`, `docker`, `cicd`) are inline and
-**report-only**, with no auto-apply, no matter how confident a `hand_off`-less entry's `auto_apply`
-field reads. `auto_apply: true` on a non-`workflow` entry means it is safe for the CALLER to apply
-automatically, never that this skill -- or any of its 6 siblings -- has already applied it.
+   The probe skip is deliberate: link checking never needs the GSD probe, so this run executes
+   nothing from the target repo and needs no trust answer. Read only the `links` key from its
+   output. If that command cannot run (the agents sibling did not resolve, or it exits non-zero), say
+   explicitly that broken links were NOT checked; never leave the report silent on links.
+4. **`blocked` entries** -- a structural finding with `needs_research` and no recommendation.
+   Today only the makefile and precommit siblings emit those, but any structural kind can. Each
+   entry carries `kind`, `id`, `criticality`, `summary` and `stacks` (no `issue`). Report each as
+   needing research and route the user to the sibling that owns its `kind` for its research and
+   `cache-update` flow. This skill never runs that flow itself.
+5. **Every other `remediate` entry** (`makefile`, `precommit`, `arch`, `docker`, `cicd`) is
+   **report-only**: present it inline and do not edit the target repo in this flow, whatever its
+   `auto_apply` says. `auto_apply` is passed through for that sibling or the user to act on later;
+   it never means anything was applied. When the user asks to fix them, invoke the sibling that owns
+   that `kind` (a single-domain request), not this skill.
 
 ## Limits
 
-At least 8 places this skill knows less than it might appear to, stated here rather than left to be
-discovered, per this family's own lesson that a document stating what it cannot do is more useful
-than one implying it can do everything. Each is its own standalone sentence a reader can act on.
-This is a floor: an honestly-discovered 9th or later limit is added here, never trimmed back to
-force the count to exactly 8.
-
-1. **Dispatch is sequential, with a 30-second per-domain timeout (D-06).** All 6 siblings run one
-   at a time, never in parallel, so a full run's worst case is roughly 180 seconds (6 x 30s) even
-   when every domain is slow -- accepted in exchange for zero completion-order non-determinism.
-2. **There is no cross-run caching.** Every invocation re-runs all 6 siblings' full `check` from
-   scratch; this skill never calls a sibling's own caching-refresh subcommand where one exists, so
-   two consecutive runs against an unchanged repo pay the same cost twice.
-3. **Entrypoint resolution trusts only the 5 known install-location candidates (checkout sibling
-   first) -- it never searches `$PATH`.** A sibling installed somewhere outside
-   those 5 candidates reports a D-05 `failed` entry, not a silent skip -- see "Resolve the
-   entrypoint" above for the **entrypoint-resolution** mechanism itself.
-4. **`(kind, id, issue)` together, never `id` alone, distinguish two entries anywhere in the
-   combined report.** This is the shared builder's own documented meaning, inherited verbatim and
-   never re-derived here -- an `id` alone can repeat across domains (e.g. two different domains
-   both using an `id` like `format`).
-5. **The AGENTS.md hand-off is a documentation cross-reference, never new code.** This skill has no
-   CLI and no importable path into `/agent-md-refactor` -- Step A/B/C above belongs entirely to
-   `ai-kit-project-rules-agents`.
-6. **Same-criticality findings across different domains tie-break by a pinned, fixed-order domain
-   sequence: agents, makefile, precommit, arch, docker, cicd.** This **fixed-order** tie-break is
-   deterministic but arbitrary -- it is never a claim that one domain's findings are inherently more
-   urgent than another's at equal criticality, only that the merge needs a stable order and this is
-   the one it uses.
-7. **A domain in the `failed` list is never folded into `remediate`/`blocked`, but a caller reading
-   only `remediate` and ignoring `failed` can still mistake "couldn't check this domain" for
-   "nothing to report" if it does not read the whole payload.** The three lists are mutually
-   exclusive per domain, but nothing about the shape forces a caller to read all three.
-8. **Zero re-implementation of any sibling's own classification logic anywhere in this skill.**
-   Every field in a `remediate`/`blocked` entry -- `criticality`, `auto_apply`, `issue`, and every
-   other key -- arrives exactly as that sibling's own `remediate` subcommand already produced it;
-   the ONE addition this skill's own `aggregate()` ever makes is the `hand_off` key on `workflow`-kind
-   entries, documented in full above, never a change to a value a sibling already set.
-
-`SKILL-SHAPE-OK`-style keyword checks on this section are a DELETION DETECTOR and nothing more:
-they confirm a limit's keyword survived, not that the sentence still states something a reader
-would act on.
+1. **Dispatch is sequential, with a 30-second per-domain timeout**, so a full run can take up to
+   180 seconds plus interpreter startup. Runs are not cached: every invocation re-runs all 6 siblings and never calls their
+   `cache-update` subcommands.
+2. **Entrypoint resolution trusts only the 5 known install-location candidates (checkout sibling
+   first) -- it never searches `$PATH`.** A sibling installed elsewhere reports a `failed` entry,
+   not a silent skip.
+3. **`(kind, id, issue)` groups `remediate` findings of one type; it does not identify one
+   finding.** An `id` alone can repeat across domains, and two same-type findings on different
+   targets share all three keys. `blocked` entries have no `issue`, so `(kind, id)` is all they
+   share. Structural entries carry their location fields (`service`, `compose_file`,
+   `depends_on`, `ci_file`, `job`, `command`, `hook_id`, ...) and `summary` names the target:
+   dedupe only on the full entry, never on those three keys alone.
+4. **AGENTS.md broken-link findings are not in the merged output.** The agents sibling reports
+   them only from its `check` (`links`), and this skill calls each sibling's `remediate`; "Act on
+   the report" step 3 runs that `check` separately.
+5. **Same-criticality findings across different domains tie-break by a pinned, fixed-order domain
+   sequence: agents, makefile, precommit, arch, docker, cicd.** This is deterministic but
+   arbitrary, never a claim that one domain is more urgent at equal criticality.
 
 ## Anti-patterns (NEVER)
 
+- **NEVER summarize the run as clean while `failed` or `notices` is non-empty.** An unchecked
+  domain or an unproven rule is not a pass. Nor call the audit complete without the AGENTS.md
+  `links` result (or an explicit "links not checked").
 - **NEVER auto-apply anything for a non-`workflow`-kind domain**, whatever its `auto_apply` field
   says -- **report-only** applies to every domain except the AGENTS.md hand-off.
-- **NEVER abort the whole run because one sibling crashed or timed out.** One domain's D-05 failure
-  entry must never prevent the other 5 domains' real results from being aggregated and reported.
-- **NEVER build the cross-domain merge input from anything but the fixed `DOMAIN_ORDER`
-  sequence.** Iterating domains in any other order breaks both the dispatch order and the
-  **fixed-order** tie-break the aggregator depends on.
-- **NEVER re-implement a sibling's own `build_remediation` branching inside this skill.** Every
-  classification decision belongs to the sibling that made it; this skill only fans out, isolates
-  failures, and merges.
+- **NEVER start the Wrap steps on a check-only request.** They edit AGENTS.md; a "check
+  everything" request gets the report and an offer to fix, not a refactor.
+- **NEVER act on a `hand_off` entry from this document alone.** Its insertion rules (verbatim
+  blocks, signal phrases, the single refactor pass, the re-check) live in the agents sibling's
+  Wrap mechanism.
+- **NEVER abort the whole run because one sibling crashed or timed out.** One domain's `failed`
+  entry must never prevent the other 5 domains' real results from being reported. A host kill of
+  the whole command is the opposite case: nothing was checked.
 - **NEVER hardcode a host-specific absolute path when resolving this skill's own entrypoint, or any
-  sibling's.** Always walk the host-neutral candidate list, both for this skill's own resolution and
-  for the internal per-domain **entrypoint-resolution** dispatch.py performs.
+  sibling's.** Always walk the host-neutral candidate list.
 
 ## Reporting rule
 

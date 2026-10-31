@@ -295,6 +295,28 @@ class TestRemediation(unittest.TestCase):
         self.assertEqual(ids, {"X01": True, "X02": False})
         self.assertEqual(result["blocked"], [])
 
+    def test_workflow_signals_carried_forward(self):
+        signals = ("english only", "english-only")
+        report = {
+            "workflow": [
+                {"id": "X01", "status": "missing", "criticality": 1, "summary": "s1",
+                 "signals": signals},
+            ]
+        }
+        self.assertEqual(build_remediation(report)["remediate"][0]["signals"], signals)
+
+    def test_missing_tools_carried_forward(self):
+        # R06's tool-scoped groups: the installed tools whose phrase is absent.
+        report = {
+            "workflow": [
+                {"id": "X06", "status": "near_miss", "criticality": 3, "summary": "s",
+                 "missing_tools": ["bat"]},
+            ]
+        }
+        self.assertEqual(
+            build_remediation(report)["remediate"][0]["missing_tools"], ["bat"]
+        )
+
     def test_returns_dict_never_bare_list(self):
         result = build_remediation({"workflow": []})
         self.assertIsInstance(result, dict)
@@ -464,6 +486,44 @@ class TestRemediation(unittest.TestCase):
         result_without = build_remediation(without_issue)
         self.assertEqual(result_with["remediate"][0]["issue"], "chain_incomplete")
         self.assertIsNone(result_without["remediate"][0]["issue"])
+
+    def test_structural_location_fields_carried_forward(self):
+        # Same-type findings on different targets must stay distinguishable on the entry itself.
+        def finding(**location):
+            return {
+                "category": "docker-depends-on",
+                "issue": "docker_depends_on_bare",
+                "criticality": 2,
+                "summary": "s",
+                "recommendation": "r",
+                "needs_research": False,
+                **location,
+            }
+
+        report = {
+            "docker": [
+                finding(service="api", compose_file="a.yml", depends_on="db"),
+                finding(service="web", compose_file="a.yml", depends_on="db"),
+            ],
+            "cicd": [finding(ci_file="ci.yml", job="lint", command="ruff check .")],
+            "precommit": [finding(hook_id="h1"), finding(tools=["a", "b"], config_path="p")],
+        }
+        entries = build_remediation(report)["remediate"]
+        by_kind = {}
+        for entry in entries:
+            by_kind.setdefault(entry["kind"], []).append(entry)
+        self.assertEqual([e["service"] for e in by_kind["docker"]], ["api", "web"])
+        self.assertEqual(by_kind["docker"][0]["compose_file"], "a.yml")
+        self.assertEqual(by_kind["docker"][0]["depends_on"], "db")
+        self.assertEqual(by_kind["cicd"][0]["job"], "lint")
+        self.assertEqual(by_kind["cicd"][0]["ci_file"], "ci.yml")
+        self.assertEqual(by_kind["cicd"][0]["command"], "ruff check .")
+        self.assertEqual(by_kind["precommit"][0]["hook_id"], "h1")
+        self.assertEqual(by_kind["precommit"][1]["tools"], ["a", "b"])
+        self.assertEqual(by_kind["precommit"][1]["config_path"], "p")
+        # A finding without location fields gets no such keys (no None padding).
+        bare = build_remediation({"arch": [finding()]})["remediate"][0]
+        self.assertNotIn("service", bare)
 
 
 # The classes below are re-homed here from

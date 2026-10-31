@@ -106,14 +106,15 @@ def permission_from_cmdline(host: str, argv: list[str] | None) -> str:
 
 def resume_argv(state: dict, prompt: str) -> list[str]:
     """The single resume of the recorded id (D-03, D-15): the recorded
-    cli_path first, then the row's tokens, the mode flags (empty for
-    `default` and `unknown`), then the prompt. Claude takes it after `-p`;
+    cli_path first, then the row's tokens, the mode flags (claude only;
+    empty for `default` and `unknown`), then the prompt. Claude takes it after `-p`;
     pi, opencode and codex take it as the final positional (D-15, spike 003)."""
     row = HOSTS[state["host"]]
     tokens = [token.replace("{id}", state["session_id"]) for token in row.resume]
     argv = [state["cli_path"], *tokens]
     mode = state.get("permission_mode", "unknown")
-    if mode not in ("default", "unknown"):
+    # only claude has a verified permission flag; arm says "not applied" for the rest
+    if state["host"] == "claude" and mode not in ("default", "unknown"):
         argv += ["--permission-mode", mode]
     if state["host"] == "claude":
         return [*argv, "-p", prompt]

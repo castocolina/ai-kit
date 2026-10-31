@@ -68,10 +68,10 @@ partial report on disk.
 The implementer contract is: detailed evidence in the report file, a short status reply returned
 separately. That reply is `$DISPATCH_RESULT_JSON["stdout"]`. The report is free-form prose, and
 `dispatch-task` never inspects it when the CLI wrote it, so scanning it for a status word misfires
-whenever the prose mentions one in passing. In the extraction regex, the longer words come before
-`DONE` so the alternation cannot stop at the `DONE` prefix, and `tail -1` takes the final status
-when the reply echoes the allowed-values list first. `rg` is used because tool detection already
-confirms it on every supported environment.
+whenever the prose mentions one in passing. The same holds inside the reply: taking the last
+status word anywhere in it once read `BLOCKED: checks failed; task is not DONE` as `DONE`. So
+`implementer-status` (unit-tested Python, no `rg` or other optional tool) counts only a line that
+is itself a declaration, and reads a missing or conflicting declaration as `BLOCKED`.
 
 ## Why exec confinement differs by runtime
 
@@ -85,8 +85,8 @@ live verification, which is still open.
 ## Why `--timeout 1800` is a fixed constant
 
 It is the budget for the whole runner call: every same-session and new-session retry rung runs
-inside it, so it matches curated-config's runner floor of 1800 s (it was 900 s before Phase 25,
-when one call was one attempt).
+inside it, so it matches curated-config's runner floor of 1800 s (it was 900 s when one call was
+one attempt).
 
 `ai-kit-spec-config` can write a per-entry `timeout_tiers`, but `assemble_candidates` does not
 carry it onto a candidate dict, and nothing like `ai_kit_spec.config_io.resolve_timeout_tiers` is
@@ -122,18 +122,13 @@ would be a second walk the runner is not allowed to take.
 The runner owns the soft ladder. A spent transient ladder and confirmed-router quota stop both
 carry the caller-owned hard tier in `retry_after_s`; the caller waits that interval and re-dispatches
 the persisted `injection_json` unchanged. The `hard_waits_s` values are configurable (see the
-policy reference of [`../../ai-kit-cross-ai/SKILL.md`](../../ai-kit-cross-ai/SKILL.md)). This is a one-shot re-invoke of the same task, lane and model, not another candidate
-resolution. A hard-tier stop ends the sequence for the owner.
+policy reference of [`../../ai-kit-cross-ai/SKILL.md`](../../ai-kit-cross-ai/SKILL.md)). This is a one-shot re-invoke of the same task, lane and model (NEVER index: no re-resolve). A hard-tier stop ends the sequence for the owner.
 
-## Why the pre-dispatch choice and the Rounds 4–5 escalation are rules
+## Why the pre-dispatch choice and the Rounds 4–5 escalation are allowed
 
-Both behaviors predate the owner rule. They stay as the shipped behavior while the owner's
-confirmation is open (assumption A1 in the Phase 25 owner captures). Pre-dispatch selection
-along the owner-configured ladder runs here as follows: the
-candidate `resolve-injection` picks before a dispatch, and the Rounds 4–5 stronger-model
-re-resolution, both run before any run has failed, and both stay inside the ladder the owner
-configured. Nothing after a failure is authorized. A failed or unusable run never switches
-harness, provider or model and never moves the work to the native session on its own; the runner
-owns the ladder and the owner decides. Neither behavior was ever a recovery from a failed run.
-The executable steps state them as current behavior, not as open questions, so an agent acts
-on them consistently until the owner rules.
+The never-switch rule (ai-kit-cross-ai section 8) forbids a change after a failed or unusable run.
+Two key choices come before any failure and stay inside the ladder the owner configured: the
+candidate `resolve-injection` picks before a task's first dispatch, and the Rounds 4–5
+stronger-model re-resolution before a fix round's dispatch. Nothing after a failure is
+authorized (NEVER index), and a failed run never moves the work to the native session; the runner
+owns the soft retry ladder and the owner decides.

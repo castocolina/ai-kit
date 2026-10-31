@@ -1,17 +1,17 @@
-"""CLI entrypoint for ai-kit-spec-execute-superpowers -- invoked via the
-ai-kit-spec-superpowers.py shim. Mirrors ai_kit_spec_gsd.cli's own subcommand pattern (Plan 2) so
-Task 4's SKILL.md gives an executing agent one concrete, runnable command for every operation:
-resolve-injection (live-quota candidate resolution), dispatch-task (the actual write-capable
-dispatch, which preserves an implementer-authored report file rather than overwriting it with
-stdout -- CRITICAL finding), classify-dispatch-failure, resume-exclusions (computes what's safe
-to PERSIST as a resumable-state exclusion set without permanently excluding a merely
-quota-exhausted candidate -- CRITICAL finding), write-resumable-state. There is no native
-dispatch subcommand -- that mode is dispatched in-process via the Agent tool, by Task 4's
-SKILL.md directly, never subprocess-invoked here (same native/cross-AI split ai_kit_spec_gsd.cli
-already uses). No separate prepare-tooling subcommand either (removed a prior revision, CRITICAL
-finding) -- dispatch-task already computes and passes tooling guidance inputs itself; a
-standalone subcommand whose output nothing read was dead code invoking a subcommand that never
-actually existed."""
+"""CLI entrypoint for ai-kit-spec-execute-superpowers -- invoked via the ai-kit-spec-superpowers.py
+shim. Mirrors ai_kit_spec_gsd.cli's own subcommand pattern (Plan 2) so Task 4's SKILL.md gives an
+executing agent one concrete, runnable command for every operation: resolve-injection (live-quota
+candidate resolution), dispatch-task (the actual write-capable dispatch, which preserves an
+implementer-authored report file rather than overwriting it with stdout -- CRITICAL finding),
+classify-dispatch-failure, implementer-status (the status the reply declares on a line of its own),
+resume-exclusions (computes what's safe to PERSIST as a resumable-state exclusion set without
+permanently excluding a merely quota-exhausted candidate -- CRITICAL finding),
+write-resumable-state. There is no native dispatch subcommand -- that mode is dispatched in-process
+via the Agent tool, by Task 4's SKILL.md directly, never subprocess-invoked here (same
+native/cross-AI split ai_kit_spec_gsd.cli already uses). No separate prepare-tooling subcommand
+either (removed a prior revision, CRITICAL finding) -- dispatch-task already computes and passes
+tooling guidance inputs itself; a standalone subcommand whose output nothing read was dead code
+invoking a subcommand that never actually existed."""
 import argparse
 import json
 import os
@@ -54,6 +54,7 @@ from ai_kit_spec_superpowers.dispatch_injection import (
     compute_resume_exclusions,
     derive_files_touched_sizes,
     dispatch_superpowers_task,
+    implementer_status,
     reasons_summary,
 )
 from ai_kit_spec_superpowers.task_classification import classify_task
@@ -359,6 +360,12 @@ def _cmd_classify_dispatch_failure(args: argparse.Namespace, deps: CliDeps) -> i
     return 0
 
 
+def _cmd_implementer_status(args: argparse.Namespace, deps: CliDeps) -> int:
+    result = json.loads(args.dispatch_result_json)
+    deps.stdout.write(implementer_status(result.get("stdout") or ""))
+    return 0
+
+
 def _cmd_resume_exclusions(args: argparse.Namespace, deps: CliDeps) -> int:
     result = deps.compute_resume_exclusions_fn(
         json.loads(args.tried_json), json.loads(args.reasons_json),
@@ -438,6 +445,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_classify = sub.add_parser("classify-dispatch-failure")
     p_classify.add_argument("--dispatch-result-json", required=True)
 
+    p_status = sub.add_parser(
+        "implementer-status",
+        help="the status the dispatch result's stdout declares on a line of its own, else BLOCKED")
+    p_status.add_argument("--dispatch-result-json", required=True)
+
     p_resume_excl = sub.add_parser(
         "resume-exclusions",
         help="CRITICAL finding, recurrence guard: computes the exclusion set safe to PERSIST "
@@ -460,6 +472,7 @@ _COMMANDS = {
     "resolve-injection": _cmd_resolve_injection,
     "dispatch-task": _cmd_dispatch_task,
     "classify-dispatch-failure": _cmd_classify_dispatch_failure,
+    "implementer-status": _cmd_implementer_status,
     "resume-exclusions": _cmd_resume_exclusions,
     "write-resumable-state": _cmd_write_resumable_state,
 }

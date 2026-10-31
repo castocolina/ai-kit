@@ -558,6 +558,10 @@ def arm(opts: ArmOptions, seams: Seams, shim_path: str) -> int:
     fields, refusal = _reset_fields(opts.reset, seams)
     if refusal is not None:
         print(f"reset refused: {refusal}; the hourly wake stands")
+    if old_state is None:
+        # a `.done` with no state is stale; left in place, the first fire would disarm unresumed
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(target.paths.done)
     payload = _arm_payload(target, seams, env, fields)
     refreshed = old_state is not None
     if refreshed:

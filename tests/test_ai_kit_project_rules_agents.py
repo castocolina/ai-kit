@@ -1,11 +1,13 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 
 sys.path.insert(
     0,
@@ -41,6 +43,32 @@ def _write(path, content):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(content)
+
+
+def _skill_resolve_block(skill_name):
+    """The fenced bash block of `SKILL.md` that resolves the entrypoint."""
+    path = os.path.join(_REPO, "skills", skill_name, "SKILL.md")
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
+        if "SKILL_DIR=" in block and "for d in" in block:
+            return block
+    raise AssertionError(f"{skill_name}/SKILL.md has no entrypoint resolve block")
+
+
+def _run_block(block, root, skill_dir=None, cwd=None):
+    """Run a resolve block under a scratch HOME; `skill_dir` fills its placeholder."""
+    if skill_dir is not None:
+        block = block.replace("<directory containing this SKILL.md>", skill_dir)
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.path.join(root, "home"),
+        "XDG_CONFIG_HOME": os.path.join(root, "xdg"),
+    }
+    return subprocess.run(
+        ["bash", "-c", block], capture_output=True, text=True, env=env, check=False, timeout=30,
+        cwd=cwd,
+    )
 
 
 def fake_bin(root, names, body):
@@ -518,6 +546,30 @@ class TestRemediation(unittest.TestCase):
         self.assertEqual(set(result.keys()), {"remediate", "blocked", "notices"})
         self.assertEqual(result["notices"], [])
 
+    def test_entry_signals_are_what_a_clause_must_contain_to_classify_present(self):
+        # The SKILL.md hand-off writes each clause around its entry's `signals`; the bare
+        # summary alone classifies near_miss/missing for several rules (R01, R12, ...).
+        presence = {"gsd": True, "rtk": True, "modern-cli": True, "codegraph": True,
+                    "graphify": True, "opengsd": "ok"}
+        presence.update({f"modern-cli:{t}": True for t in tool_presence.MODERN_CLI_TOOLS})
+        entries = remediation.build_remediation(
+            {"workflow": rule_checker.check_workflow_rules("", presence)}
+        )["remediate"]
+        self.assertTrue(entries)
+
+        def phrases(signals):
+            for item in signals:
+                if isinstance(item, str):
+                    yield item
+                else:
+                    yield from phrases(item)
+
+        for entry in entries:
+            text = entry["summary"] + "\n" + "; ".join(phrases(entry["signals"]))
+            found = rule_checker.check_workflow_rules(text, presence, include_present=True)
+            by_id = {finding["id"]: finding["status"] for finding in found}
+            self.assertEqual(by_id[entry["id"]], "present", msg=entry["id"])
+
 
 class TestGateRegistration(unittest.TestCase):
     def test_makefile_lists_module(self):
@@ -748,6 +800,34 @@ class TestOpenGsdRules(unittest.TestCase):
             )
             self.assertEqual(report["notices"], [])
 
+    def test_skip_env_runs_no_target_code_and_reports_notices(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo, bin_dir = self._project(root)
+            env = self._env(root, bin_dir)
+            env["AI_KIT_SKIP_GSD_PROBE"] = "1"
+            calls = []
+            report = cli.remediate(
+                repo, env=env, run_fn=self._run(self.IDENTITY, record=calls)
+            )
+            self.assertEqual(
+                [argv for argv, _kw in calls if "runtime-identity" in argv], []
+            )
+            self.assertEqual([n["id"] for n in report["notices"]], ["R18", "R19"])
+            self.assertIn("AI_KIT_SKIP_GSD_PROBE", report["notices"][0]["reason"])
+
+    def test_skip_env_executes_nothing_at_all(self):
+        # SKILL.md claims "nothing from the repo runs": tool presence only stats paths
+        with tempfile.TemporaryDirectory() as root:
+            repo, bin_dir = self._project(root)
+            env = self._env(root, bin_dir)
+            env["AI_KIT_SKIP_GSD_PROBE"] = "1"
+            calls = []
+            boom = mock.Mock(side_effect=AssertionError("subprocess executed"))
+            with mock.patch("subprocess.run", boom), mock.patch("subprocess.Popen", boom):
+                cli.check(repo, env=env, run_fn=self._run(self.IDENTITY, record=calls))
+            self.assertEqual(calls, [])
+            boom.assert_not_called()
+
     def test_probe_env_and_findings_carry_no_caller_secret(self):
         with tempfile.TemporaryDirectory() as root:
             repo, bin_dir = self._project(root)
@@ -848,6 +928,231 @@ class TestOpenGsdRuleText(unittest.TestCase):
             if finding["id"] == rule_id:
                 return finding["status"]
         return None
+
+
+class TestEntrypointResolveBlock(unittest.TestCase):
+    """The SKILL.md entrypoint block is robust to a missing or unusable skill directory."""
+
+    _SKILL = "ai-kit-project-rules-agents"
+
+    def _skill_dir(self):
+        return os.path.join(_REPO, "skills", self._SKILL)
+
+    def test_block_with_skill_dir_prints_that_entrypoint(self):
+        with tempfile.TemporaryDirectory() as root:
+            result = _run_block(_skill_resolve_block(self._SKILL), root, self._skill_dir())
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            os.path.realpath(self._skill_dir()) + "/" + self._SKILL + ".py",
+        )
+
+    def test_relative_skill_dir_prints_an_absolute_entrypoint(self):
+        with tempfile.TemporaryDirectory() as root:
+            result = _run_block(
+                _skill_resolve_block(self._SKILL), root, self._SKILL,
+                cwd=os.path.join(_REPO, "skills"),
+            )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        printed = result.stdout.strip()
+        self.assertTrue(os.path.isabs(printed), printed)
+        self.assertEqual(printed, os.path.realpath(self._skill_dir()) + "/" + self._SKILL + ".py")
+
+    def test_unedited_block_fails_loudly_and_prints_nothing(self):
+        with tempfile.TemporaryDirectory() as root:
+            result = _run_block(_skill_resolve_block(self._SKILL), root)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("SKILL_DIR", result.stderr)
+
+    def test_plain_copy_without_shared_is_skipped(self):
+        with tempfile.TemporaryDirectory() as root:
+            copy = os.path.join(root, "copy", self._SKILL)
+            shutil.copytree(self._skill_dir(), copy, ignore=shutil.ignore_patterns("__pycache__"))
+            result = _run_block(_skill_resolve_block(self._SKILL), root, copy)
+        self.assertEqual(result.stdout, "")
+
+    def test_skill_md_paths_to_rules_and_classification_exist(self):
+        with open(os.path.join(self._skill_dir(), "SKILL.md"), encoding="utf-8") as handle:
+            text = handle.read()
+        for rel in (
+            "ai_kit_project_rules_agents/rules.py",
+            "../_shared/ai_kit_rules_common/classification.py",
+        ):
+            self.assertIn(rel, text)
+            self.assertTrue(os.path.isfile(os.path.join(self._skill_dir(), rel)), rel)
+
+
+class TestRefactorSafetyPreflight(unittest.TestCase):
+    """Step C's pre-flight block runs as written; a missing refactor skill does not block."""
+
+    _SKILL = "ai-kit-project-rules-agents"
+
+    def _text(self):
+        path = os.path.join(_REPO, "skills", self._SKILL, "SKILL.md")
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+
+    def _run(self, repo, files=("AGENTS.md",)):
+        blocks = [b for b in re.findall(r"```bash\n(.*?)```", self._text(), re.DOTALL)
+                  if "mktemp -d" in b]
+        self.assertEqual(len(blocks), 1)
+        listed = " ".join(f"'{f}'" for f in files)
+        block = blocks[0].replace("<repo_root>", repo).replace(
+            "'<target file>' '<linked file>'", listed
+        )
+        env = {"PATH": os.environ.get("PATH", ""), "HOME": os.path.join(repo, "..", "home"),
+               "TMPDIR": os.path.join(repo, "..")}
+        return subprocess.run(
+            ["bash", "-c", block], capture_output=True, text=True, env=env, check=False, timeout=30
+        )
+
+    def _git(self, repo, *args):
+        subprocess.run(
+            ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+            check=True, capture_output=True,
+        )
+
+    def test_clean_tracked_file_needs_no_backup(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = os.path.join(root, "repo")
+            _write(os.path.join(repo, "AGENTS.md"), "a\n")
+            self._git(repo, "init", "-q")
+            self._git(repo, "add", "AGENTS.md")
+            self._git(repo, "commit", "-q", "-m", "x")
+            result = self._run(repo)
+        self.assertEqual(result.stdout.strip(), "clean: AGENTS.md", msg=result.stderr)
+
+    def test_dirty_file_is_backed_up(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = os.path.join(root, "repo")
+            _write(os.path.join(repo, "AGENTS.md"), "a\n")
+            self._git(repo, "init", "-q")
+            self._git(repo, "add", "AGENTS.md")
+            self._git(repo, "commit", "-q", "-m", "x")
+            _write(os.path.join(repo, "AGENTS.md"), "a\nedited\n")
+            result = self._run(repo)
+            self.assertTrue(result.stdout.startswith("backup: "), msg=result.stderr)
+            backup = result.stdout.strip().removeprefix("backup: ")
+            with open(backup, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "a\nedited\n")
+
+    def test_ignored_file_is_backed_up(self):
+        # An ignored file has an empty `git status`, so tracked state must decide.
+        with tempfile.TemporaryDirectory() as root:
+            repo = os.path.join(root, "repo")
+            _write(os.path.join(repo, ".gitignore"), "AGENTS.md\n")
+            _write(os.path.join(repo, "AGENTS.md"), "a\n")
+            self._git(repo, "init", "-q")
+            self._git(repo, "add", ".gitignore")
+            self._git(repo, "commit", "-q", "-m", "x")
+            result = self._run(repo)
+        self.assertTrue(result.stdout.startswith("backup: "), msg=result.stderr)
+
+    def test_linked_files_are_backed_up_individually(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = os.path.join(root, "repo")
+            for name in ("AGENTS.md", "docs/a.md"):
+                _write(os.path.join(repo, name), "a\n")
+            self._git(repo, "init", "-q")
+            self._git(repo, "add", "AGENTS.md")
+            self._git(repo, "commit", "-q", "-m", "x")
+            result = self._run(repo, files=("AGENTS.md", "docs/a.md"))
+            lines = result.stdout.strip().splitlines()
+            self.assertEqual(lines[0], "clean: AGENTS.md", msg=result.stderr)
+            self.assertTrue(lines[1].startswith("backup: "), msg=result.stderr)
+            self.assertTrue(lines[1].endswith("/docs/a.md"))
+            self.assertTrue(os.path.isfile(lines[1].removeprefix("backup: ")))
+
+    def test_non_git_repo_is_backed_up(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = os.path.join(root, "repo")
+            _write(os.path.join(repo, "AGENTS.md"), "a\n")
+            result = self._run(repo)
+        self.assertTrue(result.stdout.startswith("backup: "), msg=result.stderr)
+
+    def test_step_c_and_d_text(self):
+        text = self._text()
+        self.assertNotIn("stop and report that `agent-md-refactor` is not installed", text)
+        self.assertIn("offer the Step B clauses by direct edit", text)
+        self.assertIn("Confirm that nothing outside the Step B clauses", text)
+        self.assertIn("**Mechanism available:**", text)
+        self.assertIn("**Skill not found:**", text)
+        self.assertIn("**No dispatch mechanism:**", text)
+        self.assertIn("pre-flight backup is still required on this direct-edit path", text)
+        self.assertIn("EVERY file of the pre-flight `FILES` set", text)
+        self.assertIn('diff -u "$BACKUP/<file>"', text)
+        self.assertIn("Near-misses the user declined in Step A stay declined", text)
+
+    def test_preflight_runs_before_any_edit_and_step_d_is_a_checklist(self):
+        text = self._text()
+        pre_match = re.search(r"\*\*Pre-flight backup \(own step: before ANY edit", text)
+        assert pre_match
+        step_b = text.index("**Step B (assemble one ordered list)")
+        step_c = text.index("**Step C (one invocation")
+        self.assertLess(step_b, pre_match.start())
+        self.assertLess(pre_match.start(), step_c)
+        # the pre-flight section owns the backup block; Step C does not
+        self.assertLess(pre_match.start(), text.index("mktemp -d"))
+        self.assertLess(text.index("mktemp -d"), step_c)
+        empty_match = re.search(r"- \*\*List empty:\*\*(.*)", text)
+        assert empty_match
+        self.assertIn("run the pre-flight backup FIRST", empty_match.group(1))
+        step_d = text[text.index("**Step D (re-check"):text.index("## Anti-patterns")]
+        for n in range(1, 6):
+            self.assertIn(f"\n{n}. **", step_d)
+        self.assertIn("List the files the run created", step_d)
+        self.assertIn("never delete them", step_d)
+
+    def test_status_vocabulary_and_step_a_bullets(self):
+        text = self._text()
+        self.assertIn("`not_applicable` finding is a flag, not a status", text)
+        self.assertIn("the CLI omits `present` findings", text)
+        self.assertIn("Every accepted Step B id must now be absent from `workflow`", text)
+        leads = ("**Confirmation:**", "**Unattended:**", "**R20 rewrite",
+                 "**`unverified_stacks`:**", "**Why not its contradiction phase:**")
+        for lead in leads:
+            self.assertIn(lead, text)
+        self.assertIn("R20 stays `near_miss` while any such line is left", text)
+        self.assertIn("that printed path is the one to carry", text)
+
+    def test_trust_gate_and_external_refactor_text(self):
+        text = self._text()
+        self.assertIn("the probe is the only step that executes anything from the repo", text)
+        self.assertIn("without running a binary", text)
+        self.assertIn("is an external, optional skill", text)
+        self.assertIn("name a phase only after reading that file", text)
+        self.assertNotIn("Phase 2", text)
+        self.assertNotIn("Phase 3", text)
+        self.assertIn("do not insert the R20 block again", text)
+
+    def test_description_and_unattended_branch(self):
+        text = self._text()
+        desc_match = re.search(r"^description: (.*)$", text, re.MULTILINE)
+        assert desc_match
+        desc = desc_match.group(1)
+        self.assertLessEqual(len(desc), 1024)
+        for phrase in ("or to fix it", "insert missing house rules", "repair broken links",
+                       "/agent-md-refactor"):
+            self.assertIn(phrase, desc)
+        self.assertIn("apply only the Step B clauses by direct edit", text)
+        self.assertIn("Unattended, if the diff shows any change outside the Step B clauses", text)
+        self.assertNotIn("plus any linked file containing a `hardcoded_counts` line", text)
+        for phrase in ("house rules", "agent instructions", "workflow-rule audit"):
+            self.assertIn(phrase, desc)
+        self.assertNotIn("general rules engine", desc)
+        self.assertNotIn("files named in any R20", text)
+        self.assertLessEqual(text.count("\n"), 170)
+
+    def test_output_shapes_and_disjoint_dispatch_cases(self):
+        text = self._text()
+        for key in ("`check.workflow`", "`check.links`", "`remediate.remediate`",
+                    "`remediate.notices`", "`remediate.blocked`"):
+            self.assertIn(key, text)
+        mech_match = re.search(r"\*\*Mechanism available:\*\*(.*)", text)
+        assert mech_match
+        mechanism = mech_match.group(1)
+        self.assertNotIn("into context", mechanism)
 
 
 _COUNT_FILES = (

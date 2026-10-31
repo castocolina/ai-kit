@@ -1595,6 +1595,15 @@ class TestResumeRows(_Scratch):
             resume_argv({"host": "claude", **common}, "prompt"),
         )
 
+    def test_permission_mode_reaches_only_the_claude_resume(self):
+        common = {"session_id": "sid-1", "cli_path": "cli", "permission_mode": "plan"}
+        for host in ("pi", "opencode", "codex"):
+            with self.subTest(host=host):
+                self.assertNotIn(
+                    "--permission-mode", resume_argv({"host": host, **common}, "prompt")
+                )
+        self.assertIn("--permission-mode", resume_argv({"host": "claude", **common}, "prompt"))
+
     def test_codex_arm_prints_unverified_and_cursor_refused(self):
         sid = uuid.uuid4().hex
         fakes.fake_host(self.bin_dir, "codex")
@@ -1847,6 +1856,11 @@ def _skill_text() -> str:
         return handle.read()
 
 
+def _reference_text(name: str) -> str:
+    with open(os.path.join(_SKILL_ROOT, "references", name), encoding="utf-8") as handle:
+        return handle.read()
+
+
 def _resolve_block(text: str) -> str:
     """The fenced bash block that resolves the shim (found by the candidate loop)."""
     for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL):
@@ -1871,14 +1885,57 @@ class TestSessionWakeSkillText(_Scratch):
         assert desc is not None
         self.assertLessEqual(len(desc.group(1)), 1024)
         self.assertIn("not for cross-ai subprocess limits", desc.group(1).lower())
+        self.assertTrue(desc.group(1).startswith("Resume a session after a usage limit or rate"))
+
+    def test_exit_two_taxonomy_lives_in_the_reference_with_three_actions(self):
+        text = " ".join(_skill_text().split())
+        ref = " ".join(_reference_text("arm-exit-codes.md").split())
+        self.assertIn("MANDATORY on exit 2: load `references/arm-exit-codes.md`", text)
+        self.assertIn(
+            "The only follow-ups are continue, `status`, `disarm` (plus one re-`arm` after an "
+            "invalid state)",
+            text,
+        )
+        self.assertNotIn("always one of three", ref)
+        for moved in ("previous wake restored", "rollback failed", "A timer step failed"):
+            self.assertNotIn(moved, text)
+        # the facts the table states are the strings arm.py emits
+        for needle in ("previous wake restored", "rollback failed: ",
+                       "run disarm first", "enable --now"):
+            self.assertIn(needle.rstrip(": "), ref)
+        self.assertIn("MANDATORY when `arm` exits 2", ref)
+        self.assertIn("Do NOT load it for exit 0 or 3", ref)
+        self.assertIn("the timer may still be enabled or running", ref)
+
+    def test_companion_duplicate_check_has_a_checkable_marker(self):
+        companion = " ".join(_reference_text("companion.md").split())
+        self.assertIn("prompt text names this shim path and session id (the marker)", companion)
+        self.assertNotIn("remember", companion)
+        self.assertNotIn("you have not yet created", companion)
 
     def test_text_names_contract_terms(self):
         text = _skill_text()
         for token in ("--session-id", "AI_KIT_CROSS_AI_CHILD", "subagent", "one-shot",
-                      "unverified", "StopFailure", "spike 004"):
+                      "unverified", "StopFailure"):
             self.assertIn(token, text)
+        self.assertIn("spike 004", _reference_text("companion.md"))
         for code in ("0", "2", "3"):
             self.assertRegex(text, rf"(?m)^- {code}:")
+
+    def test_references_are_linked_with_triggers_and_keep_the_locked_rules(self):
+        text = _skill_text()
+        for name in ("wake-cap.md", "companion.md", "unverified.md", "arm-options.md",
+                     "reset-time.md", "arm-exit-codes.md"):
+            self.assertIn(f"references/{name}", text)
+            self.assertIn("Do NOT load", " ".join(_reference_text(name).split()))
+        self.assertIn("MANDATORY when `arm` prints `companion:", text)
+        self.assertIn("24 counted fires", text)
+        self.assertIn("references/wake-cap.md", text)
+        companion = _reference_text("companion.md")
+        self.assertIn("CronList", companion)
+        self.assertIn("only thing that can resume that live stall", " ".join(companion.split()))
+        self.assertIn("a refresh keeps the count", _reference_text("wake-cap.md").lower())
+        self.assertIn("host process has exited", text)
 
     def test_doc_block_env_raises_on_an_unresolved_command_and_keeps_systemctl_fake(self):
         """26-10 Task 1 step 4: an unresolved name raises; systemctl, loginctl and notify-send

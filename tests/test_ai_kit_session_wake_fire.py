@@ -1001,6 +1001,49 @@ class TestDisarm(_Scratch):
         self.assertTrue(os.path.exists(os.path.join(units.unit_dir(env), timer)))
         helper.wait(timeout=60)
 
+    def test_done_with_nothing_armed_writes_no_marker(self):
+        paths = session_paths(self.env, "claude", "never-armed")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cli.main(
+                ["done", "--host", "claude", "--session-id", "never-armed"],
+                seams=fakes.fixed_seams(self.env, FIRE_AT),
+            )
+        self.assertEqual(0, code)
+        self.assertIn("nothing armed; no done marker written", out.getvalue())
+        self.assertNotIn("a wake resume is running", out.getvalue())
+        self.assertFalse(os.path.exists(paths.done), paths.done)
+
+    def test_done_with_lock_file_gone_removes_the_wake_by_name(self):
+        sid = uuid.uuid4().hex
+        env, paths, _host = self._armed(sid)
+        os.unlink(paths.lock)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = cli.main(
+                ["done", "--host", "claude", "--session-id", sid],
+                seams=fakes.fixed_seams(env, FIRE_AT),
+            )
+        self.assertEqual(0, code)
+        self.assertNotIn("a wake resume is running", out.getvalue())
+        self.assert_no_wake_files(env, paths)
+
+    def test_first_arm_clears_a_stale_done_marker_and_its_fire_resumes(self):
+        from ai_kit_session_wake.state import touch_marker
+
+        sid = uuid.uuid4().hex
+        stale = session_paths(self.env, "claude", sid).done
+        os.makedirs(os.path.dirname(stale), exist_ok=True)
+        touch_marker(stale)
+        env, paths, host = self._armed(sid)
+        self.assertFalse(os.path.exists(paths.done), paths.done)
+        host.kill()
+        host.wait()
+        self.arm_window_open(paths)
+        code, _out = self.fire_claude(sid, env)
+        self.assertEqual(0, code)
+        self.assertEqual(1, len(self.host_calls()))
+
     def test_done_inside_fire_child_stops_after_marker(self):
         sid = uuid.uuid4().hex
         env, paths, _host = self._armed(sid)

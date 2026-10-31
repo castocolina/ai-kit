@@ -395,6 +395,30 @@ def dispatch_superpowers_task(request: DispatchTaskRequest,
     )
 
 
+# A whole line declaring one status: `STATUS: DONE`, or the bare word, optionally followed by
+# `:`, `.` or a dash and prose. Longer words come first so `DONE` never stops at a prefix.
+_STATUS_DECLARATION = re.compile(
+    r"(?:(?i:status)\s*:?\s*)?(DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED|DONE)"
+    r"(?:\s*[:.\u2013\u2014-].*)?"
+)
+
+
+def implementer_status(stdout: str) -> str:
+    """The one status the implementer's reply declares, else ``BLOCKED``.
+
+    Only a line that is itself a declaration counts (markdown emphasis, list, quote and heading
+    markers ignored), so a status word inside prose, or an echoed allowed-values list, never does.
+    No declaration, or two different ones, reads as ``BLOCKED``.
+    """
+    found = set()
+    for line in stdout.splitlines():
+        bare = line.replace("*", "").replace("`", "").strip().lstrip("#>-+ ").strip()
+        match = _STATUS_DECLARATION.fullmatch(bare)
+        if match:
+            found.add(match.group(1))
+    return found.pop() if len(found) == 1 else "BLOCKED"
+
+
 def classify_dispatch_failure(dispatch_result: dict) -> str:
     """Classify runner outcomes without authorizing a candidate switch.
 
