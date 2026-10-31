@@ -135,7 +135,8 @@ def built_sections(detect=None, answers=None):
     numbers = answers["work_set"]["numbers"]
     selected = [p for p in detect["scope"]["phases"] if p["number"] in numbers]
     scope_desc = "phases " + ", ".join(p["number"] for p in selected)
-    return gp_sections.rail_sections(detect, answers, scope_desc, selected)
+    work = gp_sections.Work("opengsd", scope_desc, selected)
+    return gp_sections.rail_sections(detect, answers, work)
 
 
 class TestTemplateAndSections(unittest.TestCase):
@@ -718,11 +719,11 @@ class TestRenderOpenGsd(unittest.TestCase):
             gp_render.render(make_detect(), answers, self._ctx())
         self.assertFalse(Path(self.repo, ".planning").exists())
 
-    def test_scopes_other_than_opengsd_wait_for_plan_27_07(self):
-        detect = make_detect()
-        detect["scope"]["kind"] = "superpowers"
-        with self.assertRaisesRegex(NotImplementedError, "27-07"):
-            gp_render.render(detect, make_answers(), self._ctx())
+    def test_plans_work_set_needs_a_superpowers_scope(self):
+        answers = make_answers(work_set={"kind": "plans", "files": ["docs/superpowers/plans/a.md"]})
+        with self.assertRaisesRegex(GuardError, "superpowers plans"):
+            gp_render.render(make_detect(), answers, self._ctx())
+        self.assertFalse(Path(self.repo, ".planning").exists())
 
 
 if __name__ == "__main__":

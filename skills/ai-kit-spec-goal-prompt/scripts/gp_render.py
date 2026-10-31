@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Prompt renderer for the goal-prompt skill (GPS-02..04; SPEC R3; D-12..D-15, D-25..D-28).
+"""Prompt renderer for the goal-prompt skill (GPS-01..04; SPEC R2, R3; D-12..D-15, D-25..D-28).
 
 The template lives in ../assets/prompt-template.md, split into named sections by `=== NAME ===`
 lines. `PromptTemplate` uses the rare delimiter `§§` so `$?`, `${PIPESTATUS[0]}` and JSON braces
 stay literal, and `fill` substitutes strictly: a missing key is a GuardError, never a blank.
+A file holds one block per ranked strategy, the recommended first. An autonomous block carries
+the rails inline; every other block shares one `## Rails` section after the COPY TO HERE marker.
 stdlib only.
 """
 
@@ -15,15 +17,30 @@ import re
 import string
 import subprocess
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, NamedTuple
 
 from gp_common import GuardError, is_machine_path, phase_key, scan_text, slugify, unique_path
-from gp_sections import assemble_rails, rail_sections
+from gp_scope import Plan
+from gp_sections import (
+    GSD_FAMILIES,
+    TURN_CAP,
+    Work,
+    assemble_rails,
+    goal_block,
+    loop_block,
+    objective_lines,
+    plain_block,
+    rail_sections,
+    strategy_heading,
+)
 
 __all__ = [
+    "Block",
+    "BlockView",
     "PromptTemplate",
     "RenderContext",
+    "build_blocks",
     "check_condition",
     "check_fields",
     "check_text",
@@ -54,6 +71,9 @@ HEADINGS = (
 DELIMITER = "§§"
 FENCE = "````"
 OPEN_MARKER = "▼▼▼ COPY FROM HERE ▼▼▼"
+CLOSE_MARKER = "▲▲▲ COPY TO HERE ▲▲▲"
+SHARED_HEADING = "## Rails"
+AUTONOMOUS_PREFIX = "/gsd-autonomous"
 GOAL_CAP = 4000
 GOAL_BUDGET = 1800
 INLINE_CAP = 7000
@@ -68,11 +88,22 @@ JEV_RE = re.compile(r"\bjev", re.IGNORECASE)
 SKIP_RE = re.compile(r"skip.*test tier", re.IGNORECASE)
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 GSD_KINDS = ("gsd", "opengsd", "gsd-unproven")
+GSD_SCOPE_KINDS = ("opengsd", "gsd-unproven", "both")
 GIT_TIMEOUT = 20
 WRAPPER_OPENGSD = (
     "This project is OpenGSD, so the run uses /gsd-autonomous with convergence. Paste the block "
     "between the markers into a fresh session in this repository."
 )
+WRAPPER_UNPROVEN = (
+    "This project has GSD but no verified OpenGSD identity, so /gsd-autonomous is unverified "
+    "here. Paste one block between the markers into a fresh session in this repository."
+)
+WRAPPER_BY_ID = {
+    "goal": "The recommended block is one /goal condition that stops when DONE WHEN holds.",
+    "loop": "The recommended block is a loop that keeps the work going until DONE WHEN holds.",
+    "plain": "The recommended block is a plain paragraph that relies on the QUOTA A wake.",
+}
+PASTE_ONE = "Paste one block between the markers into a fresh session in this repository."
 
 
 class PromptTemplate(string.Template):
@@ -162,24 +193,18 @@ def _rule_lines(body: list[str]) -> list[str]:
     return [line for line in body if line.strip() and line not in HEADINGS]
 
 
-def _block_problems(lines: list[str], opengsd_block: bool) -> list[str]:
-    body = lines[1:]
+def _rule_problems(lines: list[str]) -> list[str]:
+    rules = _rule_lines(lines)
     problems: list[str] = []
-    if opengsd_block:
-        if len("\n".join(lines)) > INLINE_CAP:
-            problems.append(f"OpenGSD block over {INLINE_CAP} characters")
-        if any(FLAG_RE.search(line) for line in body):
-            problems.append("flag-like token after line 1 of the block")
-        rules = _rule_lines(body)
-        if len(rules) > RULE_CAP:
-            problems.append(f"more than {RULE_CAP} rule lines")
-        if any(len(line) > LINE_CAP for line in rules):
-            problems.append(f"rule line over {LINE_CAP} characters")
-    if lines and lines[0].startswith(GOAL_PREFIX):
-        problems += _goal_problems("\n".join([lines[0][len(GOAL_PREFIX) :], *body]))
-    sections = _sections(body)
-    if opengsd_block:
-        problems += [f"section missing: {name}" for name in HEADINGS if name not in sections]
+    if len(rules) > RULE_CAP:
+        problems.append(f"more than {RULE_CAP} rule lines")
+    if any(len(line) > LINE_CAP for line in rules):
+        problems.append(f"rule line over {LINE_CAP} characters")
+    return problems
+
+
+def _section_problems(sections: dict[str, list[str]]) -> list[str]:
+    problems: list[str] = []
     done = sections.get("DONE WHEN")
     if done is not None and not any(UNIT_SENTENCE in line for line in done):
         problems.append(f"DONE WHEN lacks '{UNIT_SENTENCE}'")
@@ -187,6 +212,45 @@ def _block_problems(lines: list[str], opengsd_block: bool) -> list[str]:
     if any(JEV_RE.search(line) for line in gated):
         problems.append("jev inside DONE WHEN or STOP IF")
     return problems
+
+
+def _inline_problems(lines: list[str], opengsd_block: bool) -> list[str]:
+    """The inline autonomous block: size, flags-only line 1, the rule caps and, for GSD scopes,
+    all eleven sections."""
+    body = lines[1:]
+    problems: list[str] = []
+    if len("\n".join(lines)) > INLINE_CAP:
+        problems.append(f"OpenGSD block over {INLINE_CAP} characters")
+    if any(FLAG_RE.search(line) for line in body):
+        problems.append("flag-like token after line 1 of the block")
+    problems += _rule_problems(body)
+    if opengsd_block:
+        sections = _sections(body)
+        problems += [f"section missing: {name}" for name in HEADINGS if name not in sections]
+    return problems
+
+
+def _block_problems(lines: list[str], opengsd_block: bool) -> list[str]:
+    problems: list[str] = []
+    if lines and lines[0].startswith(AUTONOMOUS_PREFIX):
+        problems += _inline_problems(lines, opengsd_block)
+    if lines and lines[0].startswith(GOAL_PREFIX):
+        problems += _goal_problems("\n".join([lines[0][len(GOAL_PREFIX) :], *lines[1:]]))
+    return problems + _section_problems(_sections(lines[1:]))
+
+
+def _shared_rails(text: str) -> list[str]:
+    """Lines of the shared `## Rails` section after the COPY TO HERE marker; [] when absent."""
+    _, found, after = text.partition(CLOSE_MARKER)
+    _, heading, rails = after.partition(f"\n{SHARED_HEADING}\n")
+    return rails.split("\n") if found and heading else []
+
+
+def _rails_problems(text: str) -> list[str]:
+    lines = _shared_rails(text)
+    if not lines:
+        return []
+    return _rule_problems(lines) + _section_problems(_sections(lines))
 
 
 def _wrapper_problems(text: str) -> list[str]:
@@ -211,13 +275,18 @@ def check_text(
     home: str = "",
     secrets: tuple[str, ...] | list[str] = (),
 ) -> list[str]:
-    """Problem kinds in a generated file; [] when it may be written. Never echoes a value."""
+    """Problem kinds in a generated file; [] when it may be written. Never echoes a value.
+
+    `opengsd_block` requires every inline autonomous block to carry all eleven sections.
+    """
     lines = text.split("\n")
     problems = scan_text(text, home=home, secrets=secrets)
     if "--no-verify" in text:
         problems.append("contains --no-verify")
     if DELIMITER in text:
         problems.append("template delimiter left in the output")
+    if text.count(OPEN_MARKER) != 1 or text.count(CLOSE_MARKER) != 1:
+        problems.append("copy markers not exactly once each")
     for line in lines:
         if SKIP_RE.search(line):
             problems.append("skipped test tier")
@@ -230,6 +299,7 @@ def check_text(
         problems.append("unclosed four-backtick fence")
     for block in blocks:
         problems += _block_problems(block, opengsd_block)
+    problems += _rails_problems(text)
     problems += _wrapper_problems(text)
     return list(dict.fromkeys(problems))
 
@@ -242,6 +312,63 @@ class RenderContext(NamedTuple):
     home: str
     secrets: tuple[str, ...]
     out_dir: str | None
+
+
+class BlockView(NamedTuple):
+    """What the blocks need: the file's repo-relative path, the objective clause for a `/goal`
+    condition, the flags-only `/gsd-autonomous` line ("" when there is none), and the rails."""
+
+    path: str
+    objective: str
+    first_line: str
+    rails: str
+
+
+class Block(NamedTuple):
+    """One strategy's block: its heading, the fenced text, its `/goal` condition ("" when none),
+    and whether the rails travel inline."""
+
+    heading: str
+    text: str
+    condition: str
+    inline: bool
+
+
+def _unverified_note(strategy: Mapping[str, Any]) -> str:
+    """Says in the paste text that a primitive is unverified; "" when the strategy is verified."""
+    if strategy.get("label") != "unverified":
+        return ""
+    return f" Primitive unverified on this host: {strategy.get('primitive') or strategy['id']}."
+
+
+def _one_block(strategy: Mapping[str, Any], heading: str, view: BlockView) -> Block:
+    kind = strategy["id"]
+    if kind == "autonomous":
+        # The first line stays flags-only (D-12), so the label lives in the heading alone.
+        text = fill("BLOCK_INLINE", {"FIRST_LINE": view.first_line, "RAILS": view.rails})
+        return Block(heading, text, "", True)
+    if kind == "goal":
+        lines = goal_block(view.path, view.objective, TURN_CAP)
+    elif kind == "loop":
+        lines = loop_block(view.path, strategy.get("primitive"))
+    elif kind == "plain":
+        lines = plain_block(view.path)
+    else:
+        raise GuardError(f"unknown strategy: {kind}")
+    lines[-1] += _unverified_note(strategy)
+    condition = lines[0][len(GOAL_PREFIX) :] if kind == "goal" else ""
+    return Block(heading, fill("BLOCK_PLAIN", {"BODY": "\n".join(lines)}), condition, False)
+
+
+def build_blocks(
+    strategies: Sequence[Mapping[str, Any]], view: BlockView
+) -> list[Block]:
+    """One block per strategy, the recommended first; each heading numbers its position."""
+    ordered = sorted(strategies, key=lambda strategy: not strategy.get("recommended"))
+    return [
+        _one_block(strategy, strategy_heading(strategy, index), view)
+        for index, strategy in enumerate(ordered, start=1)
+    ]
 
 
 def _ignored(repo: str, relpath: str) -> bool:
@@ -302,51 +429,154 @@ def _readiness_warnings(readiness: Mapping[str, Any]) -> list[str]:
     return [message for key, message in checks.items() if readiness.get(key) is False]
 
 
-def render(
-    detect: Mapping[str, Any], answers: Mapping[str, Any], ctx: RenderContext
-) -> dict[str, Any]:
-    """Write the OpenGSD goal file and return the stdout contract. Guard failures write nothing."""
-    check_fields(answers, ctx.home)
-    scope = detect["scope"]
-    work_set = answers["work_set"]
-    if scope["kind"] != "opengsd" or work_set["kind"] != "phases":
-        raise NotImplementedError("only the OpenGSD phases case renders; plan 27-07 adds more")
-    numbers = sorted({str(n) for n in work_set["numbers"]}, key=phase_key)
-    selected = [p for p in scope["phases"] if p["number"] in numbers]
-    if sorted(p["number"] for p in selected) != sorted(numbers):
+def _plan(entry: Mapping[str, Any]) -> Plan:
+    return Plan(
+        file=str(entry["file"]),
+        title=str(entry.get("title") or ""),
+        depends_on=tuple(entry.get("depends_on") or ()),
+        free_text=tuple(entry.get("free_text") or ()),
+        tasks=int(entry.get("tasks") or 0),
+    )
+
+
+def _phase_work(scope: Mapping[str, Any], work_set: Mapping[str, Any]) -> Work:
+    if scope["kind"] not in GSD_SCOPE_KINDS:
+        raise GuardError("phases work set needs a GSD scope in the detect result")
+    numbers = sorted({str(n) for n in work_set.get("numbers") or []}, key=phase_key)
+    selected = [p for p in scope["phases"] if str(p["number"]) in numbers]
+    if not numbers or {str(p["number"]) for p in selected} != set(numbers):
         raise GuardError("a phase in the work set is not in the detected scope")
+    selected.sort(key=lambda p: phase_key(str(p["number"])))
+    family = "opengsd" if scope.get("identity") == "opengsd" else "gsd-unproven"
+    return Work(family, "phases " + ", ".join(numbers), selected, ())
+
+
+def _plan_work(scope: Mapping[str, Any], work_set: Mapping[str, Any]) -> Work:
+    if scope["kind"] not in ("superpowers", "both"):
+        raise GuardError("plans work set needs superpowers plans in the detect result")
+    names = {os.path.basename(str(path)) for path in work_set.get("files") or []}
+    if not names:
+        raise GuardError("plans work set names no plan files")
+    known = {entry["file"]: entry for entry in scope["plans"]}
+    if not all(name in known for name in names):
+        raise GuardError("a plan in the work set is not in the detected scope")
+    plans = [_plan(known[name]) for name in sorted(names)]
+    count = len(plans)
+    titles = ", ".join(plan.title or plan.file for plan in plans)
+    desc = f"{count} plan{'' if count == 1 else 's'}: {titles}"
+    return Work("superpowers", desc, (), tuple(plans))
+
+
+def _free_work(work_set: Mapping[str, Any]) -> Work:
+    text = " ".join(str(work_set.get("text") or "").split())
+    if not text:
+        raise GuardError("free work set holds no text")
+    return Work("none", text)
+
+
+def _work(detect: Mapping[str, Any], answers: Mapping[str, Any]) -> Work:
+    work_set = answers.get("work_set") or {}
+    kind = work_set.get("kind")
+    if kind == "phases":
+        return _phase_work(detect["scope"], work_set)
+    if kind == "plans":
+        return _plan_work(detect["scope"], work_set)
+    if kind == "free":
+        return _free_work(work_set)
+    raise GuardError("work_set kind must be phases, plans or free")
+
+
+def _autonomous_line(work: Work) -> str:
+    numbers = [str(p["number"]) for p in work.phases]
+    if work.family not in GSD_FAMILIES or not numbers:
+        return ""
     if len(numbers) == 1:
         flags = f"--only {numbers[0]}"
     else:
         flags = f"--from {numbers[0]} --to {numbers[-1]}"
-    scope_desc = "phases " + ", ".join(numbers)
-    rails = assemble_rails(rail_sections(detect, answers, scope_desc, selected))
-    block = fill(
-        "BLOCK_INLINE",
-        {"FIRST_LINE": f"/gsd-autonomous {flags} --converge", "RAILS": rails},
-    )
+    return f"/gsd-autonomous {flags} --converge"
+
+
+def _wrapper(family: str, first_id: str) -> str:
+    """The prose before the markers: at most three sentences, naming the recommended block."""
+    if first_id == "autonomous":
+        return WRAPPER_OPENGSD if family == "opengsd" else WRAPPER_UNPROVEN
+    return f"{WRAPPER_BY_ID[first_id]} {PASTE_ONE}"
+
+
+def _compose(title: str, wrapper: str, blocks: Sequence[Block], rails: str) -> str:
+    body = "\n\n".join(f"{block.heading}\n\n{block.text}" for block in blocks)
+    shared = f"{SHARED_HEADING}\n\n{rails}" if any(not b.inline for b in blocks) else ""
     text = fill(
         "FILE",
-        {
-            "TITLE": f"Goal prompt: {scope_desc}",
-            "WRAPPER": WRAPPER_OPENGSD,
-            "BLOCKS": block,
-            "SHARED_RAILS": "",
-        },
+        {"TITLE": title, "WRAPPER": wrapper, "BLOCKS": body, "SHARED_RAILS": shared},
     )
-    text = text.rstrip("\n") + "\n"
-    problems = check_text(text, opengsd_block=True, home=ctx.home, secrets=ctx.secrets)
+    return text.rstrip("\n") + "\n"
+
+
+def _check_strategies(strategies: Sequence[Mapping[str, Any]], family: str) -> None:
+    if not strategies:
+        raise GuardError("the detect result holds no strategy")
+    if family not in GSD_FAMILIES and any(s["id"] == "autonomous" for s in strategies):
+        raise GuardError("autonomous needs a GSD phases work set")
+
+
+def render(
+    detect: Mapping[str, Any], answers: Mapping[str, Any], ctx: RenderContext
+) -> dict[str, Any]:
+    """Write one goal file (a block per ranked strategy) and return the stdout contract.
+
+    Guard failures write nothing.
+    """
+    check_fields(answers, ctx.home)
+    work = _work(detect, answers)
+    strategies = sorted(detect["strategies"], key=lambda s: not s.get("recommended"))
+    _check_strategies(strategies, work.family)
+    relpath = choose_path(
+        ctx.repo,
+        work.family,
+        ctx.today,
+        slugify(work.scope_desc),
+        answers.get("output_dir") or ctx.out_dir,
+    )
+    sections = rail_sections(detect, answers, work)
+    rails = assemble_rails(sections)
+    view = BlockView(
+        path=relpath,
+        objective=" ".join(objective_lines(answers, work.scope_desc)),
+        first_line=_autonomous_line(work),
+        rails=rails,
+    )
+    blocks = build_blocks(strategies, view)
+    text = _compose(
+        f"Goal prompt: {work.scope_desc}",
+        _wrapper(work.family, strategies[0]["id"]),
+        blocks,
+        rails,
+    )
+    problems = check_text(
+        text,
+        opengsd_block=work.family in GSD_FAMILIES,
+        home=ctx.home,
+        secrets=ctx.secrets,
+    )
     if problems:
         raise GuardError("; ".join(problems))
-    out_dir = answers.get("output_dir") or ctx.out_dir
-    relpath = choose_path(ctx.repo, scope["kind"], ctx.today, slugify(scope_desc), out_dir)
     write_atomic(ctx.repo, relpath, text)
     return {
         "path": relpath,
-        "strategies": [{"id": "autonomous", "recommended": True}],
-        "conditions": [],
-        "sections": list(HEADINGS),
-        "paste_chars": len(block),
-        "rails_lines": len(_rule_lines(block.split("\n")[1:])),
-        "warnings": _readiness_warnings(detect["readiness"]),
+        "strategies": [
+            {"id": s["id"], "recommended": bool(s.get("recommended"))} for s in strategies
+        ],
+        "conditions": [
+            {"strategy": "goal", "chars": len(block.condition)}
+            for block in blocks
+            if block.condition
+        ],
+        "sections": [heading for heading, _ in sections],
+        "paste_chars": sum(len(block.text) for block in blocks),
+        "rails_lines": len(_rule_lines(rails.split("\n"))),
+        "warnings": (
+            _readiness_warnings(detect["readiness"]) if work.family in GSD_FAMILIES else []
+        ),
     }

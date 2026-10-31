@@ -17,3 +17,8 @@
 
 §§RAILS
 ````
+
+=== BLOCK_PLAIN ===
+````
+§§BODY
+````

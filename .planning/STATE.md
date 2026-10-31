@@ -5,16 +5,16 @@ milestone_name: GSD Curated Config v2
 current_phase: 27
 current_phase_name: One-shot goal and loop prompt skill
 status: executing
-stopped_at: Completed 27-06-PLAN.md
-last_updated: "2026-10-31T14:33:04.105Z"
+stopped_at: Completed 27-07-PLAN.md
+last_updated: "2026-10-31T14:45:27.983Z"
 last_activity: 2026-10-24
 last_activity_desc: Phase 23 execution started
-state_head: 518697ed0569b1adbaba0bbacc15120e38d7c4d7
+state_head: 902a6b446c3088868a6603106b40edc38320d50b
 progress:
   total_phases: 18
   completed_phases: 1
   total_plans: 212
-  completed_plans: 204
+  completed_plans: 205
   percent: 6
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 ## Current Position
 
 Phase: 27 (One-shot goal and loop prompt skill) — READY TO EXECUTE
-Plan: 7 of 13
+Plan: 8 of 13
 Status: Ready to execute
 Last activity: 2026-10-24 - Completed quick task 261024-ryk: agent_skills references gsd-core resolves
 
@@ -317,6 +317,7 @@ Progress: [█░░░░░░░░░] 6%
 | Phase 27 P04 | unmeasured | 2 tasks | 4 files |
 | Phase 27 P05 | unmeasured | 2 tasks | 4 files |
 | Phase 27 P06 | unmeasured | 3 tasks | 6 files |
+| Phase 27 P07 | unmeasured | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -449,6 +450,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 27]: Over-200-character fixed rule text is split across rule lines; wording otherwise verbatim (27-06)
 - [Phase 27]: D-28 supersedes D-25 1,500-character figure for the OpenGSD block; 1,800 applies to /goal conditions only (27-06)
 - [Phase 27]: Readiness problems are render warnings in stdout, never written into the goal file (27-06)
+- [Phase 27]: Plan 27-07: a goal, loop or plain block names its unverified primitive in the paste text; the autonomous block carries its label in the heading only (flags-only first line, D-12)
+- [Phase 27]: Plan 27-07: the work family (opengsd, gsd-unproven, superpowers, none) decides the rails and ORDER; free text needs work_set {kind: free, text}
 
 ### Pending Todos
 
@@ -615,6 +618,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-31T14:32:56.365Z
-Stopped at: Completed 27-06-PLAN.md
+Last session: 2026-10-31T14:45:27.127Z
+Stopped at: Completed 27-07-PLAN.md
 Resume file: None

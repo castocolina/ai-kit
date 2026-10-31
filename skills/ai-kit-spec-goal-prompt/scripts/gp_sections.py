@@ -10,19 +10,26 @@ stdlib only; gp_e2e and gp_common are the only siblings used.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 
 import gp_e2e
 from gp_common import phase_key
+from gp_scope import Plan, dependents, execution_order
 
 __all__ = [
+    "GSD_FAMILIES",
     "TURN_CAP",
+    "Work",
     "assemble_rails",
     "cleanup_lines",
     "decision_lines",
     "done_lines",
+    "generic_rule_lines",
+    "goal_block",
+    "loop_block",
     "objective_lines",
     "order_lines",
+    "plain_block",
     "plan_rule_lines",
     "quota_lines",
     "rail_sections",
@@ -30,9 +37,28 @@ __all__ = [
     "role_lines",
     "safety_lines",
     "stop_lines",
+    "strategy_heading",
+    "superpowers_order_lines",
+    "superpowers_rule_lines",
 ]
 
 TURN_CAP = 200
+GSD_FAMILIES = ("opengsd", "gsd-unproven")
+GOAL_EVIDENCE = "exit code and count line"
+UNIT_CLAUSE = "Unit tests alone never count as done."
+# Loop primitives that are typed as a `/loop` command; the rest of the loop rows fall to plain.
+LOOP_COMMANDS = ("/loop", "CronCreate one-shot", "CronCreate recurring", "ScheduleWakeup")
+PLAIN_FLAG = "flagged: no goal, loop or schedule primitive"
+
+
+class Work(NamedTuple):
+    """What the prompt covers: a family (opengsd | gsd-unproven | superpowers | none), the scope
+    text the objective names, and the selected phases (GSD) or plans (superpowers)."""
+
+    family: str
+    scope_desc: str
+    phases: Sequence[Mapping[str, Any]] = ()
+    plans: Sequence[Plan] = ()
 CROSS_AI_RULE = (
     "Every PLAN.md frontmatter carries cross_ai: true, so GSD delegates it to cross-AI."
 )
@@ -107,6 +133,93 @@ def plan_rule_lines(candidate_skills: Sequence[str], native: bool) -> list[str]:
         "it.",
     ]
     return lines
+
+
+def superpowers_rule_lines(candidate_skills: Sequence[str]) -> list[str]:
+    """Superpowers plans: one subagent per plan in dependency order, verified by the orchestrator"""
+    skills = ", ".join(candidate_skills) or "none"
+    return [
+        "Dispatch each plan's work to a subagent, one plan at a time. Reuse a subagent or start a "
+        "fresh one as you judge best; no two plans share the working tree at once.",
+        "You own AGENTS.md compliance and the deterministic rails; read AGENTS.md first. The "
+        "subagent implements, you verify.",
+        "After each plan, run its done checks yourself and print their output before starting "
+        "the next plan.",
+        "A failed plan stops only the plans that depend on it; every independent plan still runs.",
+        f"Read a skill only when the task needs it. Candidate skills: {skills}.",
+        "Pre-commit hooks always run on every commit; fix a real failure at its root, never skip "
+        "it.",
+    ]
+
+
+def generic_rule_lines(candidate_skills: Sequence[str]) -> list[str]:
+    """Free-text work with no plan files: the same verification and skill rules, no plan loop."""
+    skills = ", ".join(candidate_skills) or "none"
+    return [
+        "Work the task in order and verify each step yourself; never accept a reported pass.",
+        "You own AGENTS.md compliance; read AGENTS.md first.",
+        f"Read a skill only when the task needs it. Candidate skills: {skills}.",
+        "Pre-commit hooks always run on every commit; fix a real failure at its root, never skip "
+        "it.",
+    ]
+
+
+def superpowers_order_lines(plans: Sequence[Plan], order: Sequence[str]) -> list[str]:
+    """Order and stop scope. A single plan with no free text has no lines at all."""
+    by_file = {plan.file: plan for plan in plans}
+    lines: list[str] = []
+    if len(plans) > 1:
+        lines.append(f"Plans in order: {', '.join(order)}.")
+        for name in order:
+            children = dependents(plans, name)
+            if children:
+                lines.append(f"If {name} fails, skip its dependents: {', '.join(children)}.")
+    for name in order:
+        for text in by_file[name].free_text:
+            lines.append(f"Dependency to confirm before starting: {_one_line(text).rstrip('.')}.")
+    return lines
+
+
+def goal_block(
+    path: str, objective: str, turn_cap: int, evidence: str = GOAL_EVIDENCE
+) -> list[str]:
+    """One `/goal` line: the objective, the rails section and DONE WHEN, evidence, a turn cap."""
+    condition = _one_line(
+        f"{objective} Done when every DONE WHEN item in {path} section Rails holds, with the "
+        f"{evidence} of "
+        f"every command printed. {UNIT_CLAUSE} If it does not hold, stop and report after "
+        f"{turn_cap} turns."
+    )
+    return [f"/goal {condition}"]
+
+
+def _continue(path: str) -> str:
+    return f"Continue the work described in {path} section Rails"
+
+
+def plain_block(path: str) -> list[str]:
+    """A paragraph that relies on the QUOTA A wake (an OS timer or no primitive at all)."""
+    return [
+        f"{_continue(path)}; stop and report once DONE WHEN holds. The OS-timer wake of QUOTA A "
+        "re-enters this session."
+    ]
+
+
+def loop_block(path: str, primitive: str | None, interval: str = "30m") -> list[str]:
+    """A `/loop` line for a command primitive; the plain paragraph for an OS timer or none."""
+    if primitive not in LOOP_COMMANDS:
+        return plain_block(path)
+    return [f"/loop {interval} {_continue(path)}; stop and report once DONE WHEN holds."]
+
+
+def strategy_heading(strategy: Mapping[str, Any], index: int) -> str:
+    """`## Strategy N (recommended): id`, with the plain flag and any unverified label."""
+    recommended = " (recommended)" if strategy.get("recommended") else ""
+    flag = f" ({PLAIN_FLAG})" if strategy["id"] == "plain" else ""
+    label = ""
+    if strategy.get("label") == "unverified":
+        label = f" [unverified: {strategy.get('primitive') or strategy['id']}]"
+    return f"## Strategy {index}{recommended}: {strategy['id']}{flag}{label}"
 
 
 def order_lines(phases: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -255,25 +368,40 @@ def assemble_rails(sections: Sequence[tuple[str, Sequence[str]]]) -> str:
     return "\n\n".join(parts)
 
 
+def _rules_and_order(
+    detect: Mapping[str, Any], answers: Mapping[str, Any], work: Work
+) -> tuple[list[str], list[str]]:
+    """The rule lines and the ORDER lines (empty when the work has no order) for one family."""
+    skills = detect["candidate_skills"]
+    if work.family in GSD_FAMILIES:
+        native = bool(answers.get("native_execution"))
+        return plan_rule_lines(skills, native), order_lines(work.phases)
+    if work.family == "superpowers":
+        return superpowers_rule_lines(skills), superpowers_order_lines(
+            work.plans, execution_order(work.plans)
+        )
+    return generic_rule_lines(skills), []
+
+
 def rail_sections(
-    detect: Mapping[str, Any],
-    answers: Mapping[str, Any],
-    scope_desc: str,
-    phases: Sequence[Mapping[str, Any]],
+    detect: Mapping[str, Any], answers: Mapping[str, Any], work: Work
 ) -> list[tuple[str, list[str]]]:
-    """The eleven labeled sections of D-28, built from detect, answers and the selected phases."""
-    native = bool(answers.get("native_execution"))
-    opengsd = detect["scope"]["kind"] == "opengsd"
-    return [
-        ("OBJECTIVE", objective_lines(answers, scope_desc)),
+    """The labeled sections of D-28 for one work family; ORDER is present only when it has lines."""
+    rules, order = _rules_and_order(detect, answers, work)
+    sections: list[tuple[str, list[str]]] = [
+        ("OBJECTIVE", objective_lines(answers, work.scope_desc)),
         ("ROLE", role_lines()),
-        ("RULES FOR EVERY PLAN", plan_rule_lines(detect["candidate_skills"], native)),
-        ("ORDER", order_lines(phases)),
+        ("RULES FOR EVERY PLAN", rules),
+    ]
+    if order:
+        sections.append(("ORDER", order))
+    return [
+        *sections,
         ("QUOTA", quota_lines(detect["wake"], detect["runner"])),
         ("DECISIONS", decision_lines()),
         ("SAFETY", safety_lines()),
         ("DONE WHEN", done_lines(detect["e2e"], answers.get("mockups") or [])),
         ("CLEANUP", cleanup_lines()),
-        ("STOP IF", stop_lines(TURN_CAP, opengsd)),
+        ("STOP IF", stop_lines(TURN_CAP, work.family == "opengsd")),
         ("REPORT", report_lines(detect["jev"])),
     ]
