@@ -83,7 +83,9 @@ if SUMMARY:  # percentage and grade per skill, from the skill-judge scale (A 90%
             pct = round(sc * 100 / 120)
             grade = "A" if sc * 100 >= 90 * 120 else "B" if sc * 100 >= 80 * 120 else "C" if sc * 100 >= 70 * 120 else "D" if sc * 100 >= 60 * 120 else "F"
             bs = num(b, "Base score")
-            print("%s: %d/120 = %d%% grade %s; base %d/120 = %d%%; %s" % (n, sc, pct, grade, bs, round(bs * 100 / 120), re.search(r"^Verdict: (\S+)$", b, re.M).group(1)))
+            v = re.search(r"^Verdict: (\S+)$", b, re.M).group(1)
+            dec = " (decided/deferred)" if re.search(r"^Owner-decision: " + n + " accepts " + v + r" \(", t, re.M) else ""
+            print("%s: %d/120 = %d%% grade %s; base %d/120 = %d%%; %s%s" % (n, sc, pct, grade, bs, round(bs * 100 / 120), v, dec))
 if GATE:
     owner = set(re.findall(r"^Owner-decision: (\S+) accepts (PASS|UNRESOLVED|FAIL|BLOCKED) \(.+\)$", t.split("\n## Owner decisions\n", 1)[1].split("\n## ", 1)[0] if "\n## Owner decisions\n" in t else "", re.M))
     pend = []

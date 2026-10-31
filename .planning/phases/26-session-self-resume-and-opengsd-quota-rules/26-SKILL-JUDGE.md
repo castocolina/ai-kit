@@ -15,7 +15,7 @@ The makefile skill's SKILL.md changed only a count string in this phase and is n
 
 ## Rounds
 
-Eighteen rounds ran; every fix is a `fix(26-11)` commit. Only rounds 1, 2, 15, 16 and 18 keep their reports in
+Twenty-four rounds ran; every fix is a `fix(26-11)` commit. Only rounds 1, 2, 15, 16, 18 and 24 keep their reports in
 `skill-judge/` (the others live in the ignored scratch directory).
 
 - Round 1 (Opus, referee-one, referee-two; 15 lanes): all five below the bar. Fixes 71a3db0, 16ddc7f, 4ece930, 8414319.
@@ -27,6 +27,7 @@ Eighteen rounds ran; every fix is a `fix(26-11)` commit. Only rounds 1, 2, 15, 1
 - Round 15 (referee-two alone): fixes 28a3c70, 36fec9c, aa81a27 precede it.
 - Round 16 (referee-two, execute-superpowers only, requested by the owner for SJ-2): fix dd7b004 precedes it; the score rose from 94 to 98 and the verdict from FAIL to UNRESOLVED. The other four skills keep their round 15 verdicts.
 - Rounds 17 and 18 (referee-two, execute-superpowers only, owner goal: grade A, i.e. 90% or 108/120): fixes 7f1df6c and b264799 (SKILL.md cut from 381 to 290 lines, arm/close and resolution stops moved to references). Round 17 scored 103/120 (86%, grade B, 1 Important); round 18 scored 104/120 (87%, grade B, 2 Important, both wording contradictions). The owner's cap of three rounds ended the series; grade A was not reached.
+- Rounds 19-24 (referee-two, execute-superpowers only, owner-requested): each round surfaced a new edge case in one of the several resume paths (pinned resume, escalation re-entry, wake, owner stop). Real defects found were fixed in 79edce6, ff1429f, 8a1ec6f, 034f05e and 36ee536, and their tests pass. Scores for rounds 18-24 with the same judge: 104, 89, 96, 97, 96, (round 23 invalid: judged without its rubric, discarded), 86. During the run the installed skill-judge was replaced by a percent-based version (max 125, not comparable), so round 24 uses the original skill-judge rubric (120 points) and scored 86/120 (72%, grade C), 1 Critical, 2 Important. The judge varies about 8 points on an unchanged package, so this skill is noise-limited; the owner deferred it to the refactor todo (2026-10-31).
 
 The judge is not deterministic: the session-wake package, unchanged between rounds 13 and 14, went from
 115 with 0 Important to 108 with 1 Important under the same judge. Iterating further does not converge,
@@ -59,16 +60,16 @@ Rule: lowest score 101 (referee-two 101); ((C0 and I2) -> False) or 101 >= 96 ->
 Reports: skill-judge/r15/ai-kit-spec-execute-gsd-my-referee-two.md
 
 Skill: ai-kit-spec-execute-superpowers
-Verdict: UNRESOLVED
-Round: 18
-Reviewed-sha256: 35f2ccd9681d61563642bded80f66bce63378c741719b6ca7613d8058a565823
+Verdict: FAIL
+Round: 24
+Reviewed-sha256: ac7532f867529b8cb1e0e8a420a2931430aafc3e2abe3cf2a0d89beb38d8e86b
 Base score: 110
 Base source: 25.1-SKILL-JUDGE.md, carried from Phase 18.1
-Score: 104
-Critical findings: 0
+Score: 86
+Critical findings: 1
 Important findings: 2
-Rule: lowest score 104 (referee-two 104); ((C0 and I2) -> False) or 104 >= 96 -> True; 104 >= 110 -> False.
-Reports: skill-judge/r18/ai-kit-spec-execute-superpowers-my-referee-two.md
+Rule: lowest score 86 (referee-two 86); ((C1 and I2) -> False) or 86 >= 96 -> False; 86 >= 110 -> False.
+Reports: skill-judge/r24/ai-kit-spec-execute-superpowers-my-referee-two.md
 
 Skill: ai-kit-project-rules-agents
 Verdict: FAIL
@@ -108,7 +109,8 @@ rules-agents Critical in round 15 claims an unattended `git restore` can discard
 
 Owner-decision: ai-kit-spec-execute-gsd accepts UNRESOLVED (2026-10-30, owner message, deferred to the refactor todo)
 Owner-decision: ai-kit-project-rules-agents accepts FAIL (2026-10-30, owner message, deferred to backlog 999.16)
+Owner-decision: ai-kit-spec-execute-superpowers accepts FAIL (2026-10-31, owner message, deferred to .planning/todos/pending/2026-10-31-refactor-execute-gsd-and-rules-agents-sj-1-sj-3.md)
 
 ## Pending acceptance
 
-- ai-kit-spec-execute-superpowers: UNRESOLVED (round 18 score 104/120 = 87%, grade B, below the base 110; 2 Important open: a pinned-injection resume that also re-enters Step 2 at FIX_ROUND >= 4, and return code 69 pointing at the wait branch)
+None.
