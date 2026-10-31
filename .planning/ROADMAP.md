@@ -1008,7 +1008,7 @@ tests. Source: the same todo (part 2).
   4. jev is used only for advisory, text-based checks (e.g. how close the delivered work is to
      the stated objectives); never as a gate and never to judge UI quality or mockup fidelity,
      since it answers typed questions on text. The skill passes `/skill-judge`.
-**Plans**: 12/14 plans executed *(planned 2026-10-31; 27-14 added 2026-10-31 for the new skill-judge)* *(amended 2026-10-31, 27 execution: plans 27-01..27-14 executed; the skill-judge gate is `gate ok` (PASS 92.0%, one judge) and the unverifiable items are the open owner captures in `27-OWNER-CAPTURES.md`)*
+**Plans**: 14/14 plans executed *(planned 2026-10-31; 27-14 added 2026-10-31 for the new skill-judge)* *(amended 2026-10-31, 27 execution: plans 27-01..27-14 executed; the skill-judge gate was `gate ok` (PASS 92.0%, one judge) at the 27-13 tip and is stale after the code-review and secure fixes (a re-judge round is pending) and the unverifiable items are the open owner captures in `27-OWNER-CAPTURES.md`)*
 **Wave 1**
 - [x] 27-01-PLAN.md - shared helpers with parity tests, fixtures, skill stub
 
