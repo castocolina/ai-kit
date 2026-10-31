@@ -2,10 +2,11 @@
 phase: "26"
 slug: "session-self-resume-and-opengsd-quota-rules"
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
-status: draft
+status: validated
 nyquist_compliant: true
 wave_0_complete: true
 created: "2026-10-25"
+validated: "2026-10-30"
 ---
 
 # Phase 26 — Validation Strategy
@@ -76,6 +77,30 @@ created: "2026-10-25"
 
 ---
 
+## Validation Audit 2026-10-30
+
+| Metric | Count |
+|--------|-------|
+| Rows in the map | 29 |
+| Green (automated command re-run, passing) | 28 |
+| Pending (owner) | 1 (26-11-2) |
+| Gaps found / tests added | 0 / 0 |
+
+- Re-run: self-test `child-marker-env` ok; unit modules 15/15 (incl. `tests.test_ai_kit_rules_common`
+  with `TestParallelTestTable.test_a_very_long_line_scans_in_bounded_time`, and
+  `tests.test_phase26_owner_captures`); arch group 1/1 (66 tests); `uv run` modules 3/3
+  (`test_wizard_pty`, `test_hook_registry_e2e`, `test_ai_kit_project_rules_all_e2e`).
+- 26-12-1 `make e2e-docker` was not re-run; the recorded green in `26-OWNER-CAPTURES.md` is trusted.
+- 26-11-2 stays `pending (owner)`: `check_verdicts.py --gate` prints `verdicts ok` then three
+  `gate pending:` lines (execute-gsd UNRESOLVED, execute-superpowers FAIL, project-rules-agents FAIL).
+  The gate is not weakened.
+- Requirements QTA-04, QTA-05, QTA-06 each have automated rows (3/3). SPEC acceptance criteria: 9 of 11
+  automated; "skill-judge" is the pending owner row, "make test/validate green" is the 26-12-1 gate run.
+- `check_verdicts.py` has no unit test by decision: it reads the real `skills/` tree and judge reports, so a
+  faithful synthetic fixture would copy most of its logic; its own `--gate` run is the check.
+
+---
+
 ## Wave 0 Requirements
 
 - [x] `tests/test_ai_kit_session_wake.py` and `tests/test_ai_kit_session_wake_reset.py` (QTA-04)
@@ -106,4 +131,4 @@ created: "2026-10-25"
 - [x] Feedback latency < 60s
 - [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending (validate-phase sets `status`; skill-judge acceptance is pending the owner)
+**Approval:** validated 2026-10-30 for automated coverage; skill-judge acceptance (26-11-2) is pending the owner
