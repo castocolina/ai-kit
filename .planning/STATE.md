@@ -5,16 +5,16 @@ milestone_name: GSD Curated Config v2
 current_phase: 27
 current_phase_name: One-shot goal and loop prompt skill
 status: executing
-stopped_at: Completed 27-04-PLAN.md
-last_updated: "2026-10-31T14:12:38.247Z"
+stopped_at: Completed 27-05-PLAN.md
+last_updated: "2026-10-31T14:20:26.331Z"
 last_activity: 2026-10-24
 last_activity_desc: Phase 23 execution started
-state_head: 6272d70602bd21e3387fda2c69a44cbf3799fd20
+state_head: c4f685df05aca5d4d5b08a4d31f8947774f5286f
 progress:
   total_phases: 18
   completed_phases: 1
   total_plans: 212
-  completed_plans: 202
+  completed_plans: 203
   percent: 6
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 ## Current Position
 
 Phase: 27 (One-shot goal and loop prompt skill) — READY TO EXECUTE
-Plan: 5 of 13
+Plan: 6 of 13
 Status: Ready to execute
 Last activity: 2026-10-24 - Completed quick task 261024-ryk: agent_skills references gsd-core resolves
 
@@ -315,6 +315,7 @@ Progress: [█░░░░░░░░░] 6%
 | Phase 27 P02 | unmeasured | 3 tasks | 4 files |
 | Phase 27 P03 | unmeasured | 3 tasks | 4 files |
 | Phase 27 P04 | unmeasured | 2 tasks | 4 files |
+| Phase 27 P05 | unmeasured | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -441,6 +442,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 27]: 27-03: ready_for_cross_ai needs runner_ok, a listed CLI, reviewers_ok and no native choice; a non-ai-kit runner is never ready
 - [Phase 27]: E2E PTY drivers map only to e2e Makefile targets; others stay inferred (27-04)
 - [Phase 27]: Package script names must match a safe charset before entering a command (27-04 T-27-09)
+- [Phase 27]: Matrix rows are data with plain-value predicates; select dedupes by strategy id (lower rank wins), sorts by (rank, matrix order) and keeps at most three
+- [Phase 27]: A requested goal or loop with no primitive is reported in dropped, never emitted; M09 plain fires only when no other row fired
+- [Phase 27]: must_outlive and provable are derived from the work (count, unattended, e2e, mockups), never asked (D-11)
 
 ### Pending Todos
 
@@ -607,6 +611,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-31T14:12:37.406Z
-Stopped at: Completed 27-04-PLAN.md
+Last session: 2026-10-31T14:20:25.484Z
+Stopped at: Completed 27-05-PLAN.md
 Resume file: None
