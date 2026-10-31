@@ -101,7 +101,8 @@
     "default": "high",
     "agent_overrides": {
       "gsd-planner": "xhigh",
-      "gsd-code-reviewer": "high"
+      "gsd-code-reviewer": "high",
+      "gsd-executor": "high"
     },
     "routing_tier_defaults": {
       "heavy": "high",
