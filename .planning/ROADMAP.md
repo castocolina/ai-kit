@@ -1349,3 +1349,32 @@ siblings.
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.17: Lite or strong executor choice through jev-fast-decision (BACKLOG)
+
+**Priority:** major. Depends on the todo "Refactor execute-gsd and rules-agents (SJ-1, SJ-3)" (same skills, resume paths).
+**Goal:** [Captured for future planning] Let the executor of a plan be chosen between a lighter
+local combo (`my-coding-lite`), `my-coding`, or a model the user names explicitly, in
+`ai-kit-spec-execute` and its `-gsd` and `-superpowers` adapters, deciding by asking the
+`jev-fast-decision` skill; and let `ai-kit-spec-review` adapt the writing-plans instructions to a
+lighter executor (`EXECUTOR_PROFILE=lite`). Requested by the llm-env project.
+**Hard rule (owner):** `jev-fast-decision` is a black box. ai-kit text says only: ask that skill,
+follow its own `SKILL.md`, the answer is advisory, and `needs_fallback` or no answer means the
+rule-based default decides. No text about how it picks local versus remote, consent, TypeSafe,
+environment variables or probes; the call line is re-read from the jev skill's own `SKILL.md`
+when built, never copied.
+**Reference input (not to be applied blindly):** six patches against the old main (f669709), an
+implementation plan and a JEV-NOTES file listing the jev wording to strip, kept in the llm-env
+project (its `tmp/ai-kit-lite-executor-patches` folder and
+`docs/superpowers/plans/2026-10-30-ai-kit-lite-executor-routing.md`).
+**Timing:** after the v1.3 milestone is merged to main (the patches must be re-made against the
+new main); build it on the refactored execute-gsd and execute-superpowers resume paths (see the
+SJ-1/SJ-2/SJ-3 refactor todo).
+**Gates:** skill-judge with the current percent-based judge (needs `README.md` and `evals/` in
+each changed skill), arch and unit tests, and a GSD-first waiver note recorded by the owner.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)

@@ -51,3 +51,5 @@ it cites in the judge prompt; the old prompt builder embedded only `SKILL.md`.
 
 Proposal (not applied): replace the AGENTS.md pass rule `score >= 96/120` with a percent-based one,
 since the installed rubric no longer has a 120-point maximum.
+
+Dependency: backlog item 999.17 (lite or strong executor choice through jev-fast-decision) changes the same skills (`ai-kit-spec-execute`, `-gsd`, `-superpowers`, `ai-kit-spec-review`) and is built on the resume paths this refactor leaves.
