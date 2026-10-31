@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 1
+open_count: 2
 waived_count: 0
 fixed_count: 0
-total_count: 1
-last_updated: 2026-10-31T13:34:32.748Z
+total_count: 2
+last_updated: 2026-10-31T13:43:40.051Z
 ---
 
 # Broken Windows Ledger
@@ -16,6 +16,7 @@ last_updated: 2026-10-31T13:34:32.748Z
 | id | phase | kind | file | line | description | status | reason | recorded_at | resolved_at |
 |----|-------|------|------|------|-------------|--------|--------|-------------|-------------|
 | 1 | 27 | stub | skills/ai-kit-spec-goal-prompt/SKILL.md |  | Intentional stub SKILL.md; plan 27-10 writes the real skill | open |  | 2026-10-31T13:34:32.748Z |  |
+| 2 | 27 | deviation | skills/ai-kit-spec-goal-prompt/scripts/gp_scope.py |  | detect_scope does not restrict plan files to a requested plans work set (ScopeInputs has no file list); the caller restricts until the CLI plan wires the answers | open |  | 2026-10-31T13:43:40.051Z |  |
 
 ````json
 [
@@ -29,6 +30,19 @@ last_updated: 2026-10-31T13:34:32.748Z
     "status": "open",
     "reason": "",
     "recorded_at": "2026-10-31T13:34:32.748Z",
+    "resolved_at": null,
+    "milestone": "v1.3"
+  },
+  {
+    "id": 2,
+    "kind": "deviation",
+    "phase": "27",
+    "file": "skills/ai-kit-spec-goal-prompt/scripts/gp_scope.py",
+    "line": null,
+    "description": "detect_scope does not restrict plan files to a requested plans work set (ScopeInputs has no file list); the caller restricts until the CLI plan wires the answers",
+    "status": "open",
+    "reason": "",
+    "recorded_at": "2026-10-31T13:43:40.051Z",
     "resolved_at": null,
     "milestone": "v1.3"
   }
