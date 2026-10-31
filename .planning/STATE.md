@@ -5,16 +5,16 @@ milestone_name: GSD Curated Config v2
 current_phase: 27
 current_phase_name: One-shot goal and loop prompt skill
 status: executing
-stopped_at: Completed 27-08-PLAN.md
-last_updated: "2026-10-31T14:54:07.367Z"
+stopped_at: Completed 27-09-PLAN.md
+last_updated: "2026-10-31T15:12:35.936Z"
 last_activity: 2026-10-24
 last_activity_desc: Phase 23 execution started
-state_head: c2c7fb10b24666967c1ef99bf2aa67e265b05b4f
+state_head: 5f686c666826b0e7217f2606064206718dd6658a
 progress:
   total_phases: 18
   completed_phases: 1
   total_plans: 212
-  completed_plans: 206
+  completed_plans: 207
   percent: 6
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 ## Current Position
 
 Phase: 27 (One-shot goal and loop prompt skill) — READY TO EXECUTE
-Plan: 9 of 13
+Plan: 10 of 13
 Status: Ready to execute
 Last activity: 2026-10-24 - Completed quick task 261024-ryk: agent_skills references gsd-core resolves
 
@@ -454,6 +454,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 27]: Plan 27-07: a goal, loop or plain block names its unverified primitive in the paste text; the autonomous block carries its label in the heading only (flags-only first line, D-12)
 - [Phase 27]: Plan 27-07: the work family (opengsd, gsd-unproven, superpowers, none) decides the rails and ORDER; free text needs work_set {kind: free, text}
 - [Phase 27]: Native execution suppresses the cross_ai gap line; the turn cap is max(60, 40 * items)
+- [Phase 27]: 27-09 detect re-selects nothing: render re-selects strategies from the explicit answers request and reports drops; a requested autonomous on a non-GSD scope is reported in dropped (closes WINDOWS #3)
+- [Phase 27]: 27-09 plans work set is restricted in the CLI (detect_scope unchanged; closes WINDOWS #2); unattended is not asked, so derive() sees must_outlive from the item count alone
+- [Phase 27]: 27-09 R18/R19 parity runs through check_rules on the generated QUOTA text and the golden pins the recommended OpenGSD case (closes WINDOWS #6)
 
 ### Pending Todos
 
@@ -620,6 +623,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-31T14:54:06.515Z
-Stopped at: Completed 27-08-PLAN.md
+Last session: 2026-10-31T15:12:35.101Z
+Stopped at: Completed 27-09-PLAN.md
 Resume file: None

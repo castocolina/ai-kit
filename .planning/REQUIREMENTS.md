@@ -142,8 +142,8 @@ Host facts (live-verified 2026-10-15): gsd-core: 1.16.0; GSD installs missing on
 
 ### Goal-Prompt Skill
 
-- [ ] **GPS-01**: A skill detects the host, its goal/loop/schedule primitives (tools, not only slash commands) and the GSD/OpenGSD or superpowers scope, and picks one to three strategies from a selection matrix (`/goal`, schedule or `/loop`, `/gsd-autonomous`)
-- [ ] **GPS-02**: It emits a `.md` with a ready-to-paste prompt carrying rails (AGENTS.md first, candidate skills, pre-commit, done checks, stop-if, final summary), one subagent per superpowers plan, cross-AI convergence declared per OpenGSD plan, and the QTA quota directives
+- [x] **GPS-01**: A skill detects the host, its goal/loop/schedule primitives (tools, not only slash commands) and the GSD/OpenGSD or superpowers scope, and picks one to three strategies from a selection matrix (`/goal`, schedule or `/loop`, `/gsd-autonomous`)
+- [x] **GPS-02**: It emits a `.md` with a ready-to-paste prompt carrying rails (AGENTS.md first, candidate skills, pre-commit, done checks, stop-if, final summary), one subagent per superpowers plan, cross-AI convergence declared per OpenGSD plan, and the QTA quota directives
 - [x] **GPS-03**: The definition of done requires the project's real e2e tests (app launch, PTY/TUI drive, browser for web) to pass, with the evidence printed into the transcript; with no e2e suite, creating one comes first
 - [x] **GPS-04**: jev is advisory and text-only (objective closeness), never a gate and never a UI-quality or mockup-fidelity judge; the skill passes `/skill-judge`
 
@@ -240,8 +240,8 @@ None deferred beyond v1.3 at definition time.
 | QTA-12 | Phase 25.1 | Pending |
 | QTA-13 | Phase 25.1 | Pending |
 | QTA-14 | Phase 25.1 | Pending |
-| GPS-01 | Phase 27 | Pending |
-| GPS-02 | Phase 27 | Pending |
+| GPS-01 | Phase 27 | Complete |
+| GPS-02 | Phase 27 | Complete |
 | GPS-03 | Phase 27 | Complete |
 | GPS-04 | Phase 27 | Complete |
 

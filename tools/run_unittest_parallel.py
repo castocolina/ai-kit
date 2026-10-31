@@ -66,6 +66,8 @@ E2E_MODULES = frozenset({
     # real dispatch of the six checkers; the agents domain runs the project-local gsd-core
     # through node (26-08)
     "tests.test_ai_kit_project_rules_all_e2e",
+    # real goal_prompt.py subprocess runs on temp git repos with a fake node; dogfood detect (27-09)
+    "tests.test_ai_kit_spec_goal_prompt_e2e",
 })
 EXPLICIT_GROUPS = {
     "arch": ARCH_MODULES,
