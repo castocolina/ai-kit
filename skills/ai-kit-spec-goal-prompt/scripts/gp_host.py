@@ -36,6 +36,12 @@ VERSION_RE = re.compile(r"(?<![\d.])(\d+\.\d+\.\d+)(?![\d.])")
 HELP_KEYWORD = re.compile(r"\b(goal|loop|schedule|cron)\b", re.IGNORECASE)
 
 
+# The repo's own runner script runs in a probe child: variables whose name looks like a credential
+# are dropped. shortcut: name-based, so an oddly named secret still passes; an allowlist needs the
+# real gsd-tools environment verified first.
+SECRET_NAME_RE = re.compile(r"KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH|COOKIE|SESSION", re.IGNORECASE)
+
+
 class HostSeams(NamedTuple):
     """Injected side effects. `run(argv, timeout, cwd)` returns (rc, stdout)."""
 
@@ -57,6 +63,7 @@ def _run(argv: list[str], timeout: int, cwd: str | None) -> tuple[int, str]:
             timeout=timeout,
             check=False,
             cwd=cwd,
+            env={k: v for k, v in os.environ.items() if not SECRET_NAME_RE.search(k)},
         )
     except subprocess.TimeoutExpired:
         return 124, ""
@@ -314,9 +321,12 @@ CLI_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 def _load_config(repo: str) -> dict:
     """The repo's .planning/config.json as a dict; a missing or invalid file is no config."""
+    path = os.path.join(repo, ".planning", "config.json")
+    if os.path.islink(path):
+        return {}
     try:
-        with open(os.path.join(repo, ".planning", "config.json"), encoding="utf-8") as handle:
-            data = json.load(handle)
+        with open(path, encoding="utf-8") as handle:
+            data = json.loads(handle.read(1 << 20))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
@@ -351,6 +361,10 @@ def _listing(seams: HostSeams, repo: str, tokens: list[str]) -> tuple[bool | Non
     # Only `node <path>/cross-ai.mjs` is probed: any other leading token would run repo-chosen code.
     shaped = len(tokens) == 2 and tokens[0] in RUNNER_LAUNCHERS
     if not shaped or os.path.basename(tokens[1]) != AI_KIT_RUNNER:
+        return None, []
+    root = os.path.realpath(repo)
+    script = os.path.realpath(os.path.join(repo, tokens[1]))
+    if os.path.commonpath([root, script]) != root:  # a link or absolute path out of the repo
         return None, []
     rc, out = seams.run([*tokens, "--print-argv"], PROBE_TIMEOUT, repo)
     if rc != 0:

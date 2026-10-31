@@ -77,9 +77,12 @@ def _entry(command: str, source: str, kind: str, confidence: str) -> dict[str, s
 
 
 def _read(path: str) -> str:
+    """At most 1 MiB of text; "" for a link or an unreadable file."""
+    if os.path.islink(path):
+        return ""
     try:
         with open(path, encoding="utf-8") as handle:
-            return handle.read()
+            return handle.read(1 << 20)
     except (OSError, UnicodeDecodeError):
         return ""
 

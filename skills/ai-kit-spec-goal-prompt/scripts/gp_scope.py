@@ -34,11 +34,16 @@ class Phase(NamedTuple):
     cross_ai_plans: int
 
 
+READ_CAP = 1 << 20  # characters read from any scanned project file
+
+
 def _read_text(path: str) -> str:
-    """File text as UTF-8, or "" when it cannot be read or decoded."""
+    """File text as UTF-8 (at most READ_CAP characters); "" for a link or an unreadable file."""
+    if os.path.islink(path):
+        return ""
     try:
         with open(path, encoding="utf-8") as handle:
-            return handle.read()
+            return handle.read(READ_CAP)
     except (OSError, UnicodeDecodeError):
         return ""
 
@@ -172,7 +177,8 @@ def _parse_depends(text: str, known: frozenset[str]) -> tuple[tuple[str, ...], t
 def load_plans(repo: str) -> list[Plan]:
     """Superpowers plans under docs/superpowers/plans, sorted by filename. Read-only."""
     pattern = os.path.join(glob.escape(repo), "docs", "superpowers", "plans", "*.md")
-    paths = sorted((p for p in glob.glob(pattern) if os.path.isfile(p)), key=os.path.basename)
+    found = (p for p in glob.glob(pattern) if os.path.isfile(p) and not os.path.islink(p))
+    paths = sorted(found, key=os.path.basename)
     texts = {os.path.basename(path): _read_text(path) for path in paths}
     known = frozenset(texts)
     loaded = []

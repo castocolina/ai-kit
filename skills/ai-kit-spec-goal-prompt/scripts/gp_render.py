@@ -418,22 +418,34 @@ def choose_path(repo: str, kind: str, today: str, slug: str, out_dir: str | None
         directory = "tmp"
     else:
         raise GuardError(f"unknown goal kind: {kind}")
+    _require_inside(repo, os.path.join(repo, directory))
     path = unique_path(os.path.join(repo, directory), f"{today}-{slug}.md")
     return os.path.relpath(path, repo).replace(os.sep, "/")
 
 
+def _require_inside(repo: str, directory: str) -> None:
+    """Refuse a directory whose resolved path (symlinks followed) leaves the repository."""
+    root = os.path.realpath(repo)
+    if os.path.commonpath([root, os.path.realpath(directory)]) != root:
+        raise GuardError("output directory resolves outside the repository")
+
+
 def write_atomic(repo: str, relpath: str, text: str) -> None:
-    """Write through a temp file in the target directory, then os.replace; never overwrites."""
+    """Write a temp file beside the target, then hard-link it into place; never overwrites."""
     target = os.path.join(repo, relpath)
     if os.path.exists(target):
         raise GuardError(f"refusing to overwrite {relpath}")
     directory = os.path.dirname(target)
+    _require_inside(repo, directory)
     os.makedirs(directory, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".goal-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
-        os.replace(tmp_path, target)
+        # os.link fails when the target appeared since the check; os.replace would overwrite it.
+        os.link(tmp_path, target)
+    except FileExistsError as exc:
+        raise GuardError(f"refusing to overwrite {relpath}") from exc
     finally:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)

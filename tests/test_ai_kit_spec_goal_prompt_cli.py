@@ -270,6 +270,19 @@ class TestCli(unittest.TestCase):
         self.assertEqual(result["runner"]["command"], "node .planning/scripts/cross-ai.mjs")
         self.assertIn("label", result["runner"])
 
+    def test_symlinked_config_is_not_read(self):
+        fx.opengsd_project(self.repo, PHASES)
+        outside = self.root / "outside.json"
+        outside.write_text(
+            json.dumps({"workflow": {"cross_ai_command": "node elsewhere/cross-ai.mjs"}}),
+            encoding="utf-8",
+        )
+        config = self.repo / ".planning" / "config.json"
+        config.unlink(missing_ok=True)
+        config.symlink_to(outside)
+        result = self.detect(*self.captures())
+        self.assertEqual(result["runner"]["command"], "")
+
     def test_candidate_skills_are_the_sibling_directories_present(self):
         siblings = self.root / "siblings"
         (siblings / "ai-kit-cross-ai").mkdir(parents=True)

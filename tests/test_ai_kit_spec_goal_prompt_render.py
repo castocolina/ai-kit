@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "skills" / "ai-kit-spec-goal-prompt" / "scripts"
@@ -627,6 +628,40 @@ class TestPlacement(unittest.TestCase):
         with self.assertRaises(GuardError):
             gp_render.write_atomic(self.repo, "a.md", "second\n")
         self.assertEqual(Path(self.repo, "a.md").read_text(encoding="utf-8"), "first\n")
+
+    def test_symlinked_out_dir_that_leaves_the_repo_is_refused_with_no_write(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        os.symlink(outside.name, os.path.join(self.repo, "linkdir"))
+        with self.assertRaisesRegex(GuardError, "outside the repository"):
+            gp_render.choose_path(self.repo, "none", "2026-10-31", "x", "linkdir")
+        with self.assertRaisesRegex(GuardError, "outside the repository"):
+            gp_render.write_atomic(self.repo, "linkdir/a.md", "text\n")
+        self.assertEqual(os.listdir(outside.name), [])
+
+    def test_symlinked_dir_that_stays_inside_the_repo_is_allowed(self):
+        os.makedirs(os.path.join(self.repo, "real"))
+        os.symlink("real", os.path.join(self.repo, "alias"))
+        gp_render.write_atomic(self.repo, "alias/a.md", "text\n")
+        self.assertTrue(Path(self.repo, "real", "a.md").is_file())
+
+    def test_write_atomic_never_replaces_a_file_that_appears_after_the_check(self):
+        target = Path(self.repo, "a.md")
+        real_exists = os.path.exists
+
+        def late_exists(path):
+            found = real_exists(path)
+            if path == str(target) and not found:
+                target.write_text("rival\n", encoding="utf-8")
+            return found
+
+        with (
+            mock.patch.object(gp_render.os.path, "exists", late_exists),
+            self.assertRaises(GuardError),
+        ):
+            gp_render.write_atomic(self.repo, "a.md", "mine\n")
+        self.assertEqual(target.read_text(encoding="utf-8"), "rival\n")
+        self.assertEqual(sorted(os.listdir(self.repo)), [".git", "a.md"])
 
 
 class TestRenderOpenGsd(unittest.TestCase):

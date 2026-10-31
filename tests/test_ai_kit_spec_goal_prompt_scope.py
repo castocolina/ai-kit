@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "skills" / "ai-kit-spec-goal-prompt" / "scripts"
@@ -286,6 +287,24 @@ class TestPlans(unittest.TestCase):
         self.assertEqual(by_name["bad.md"].title, "")
         self.assertEqual(by_name["bad.md"].tasks, 0)
         self.assertEqual(by_name["good.md"].title, "Good")
+
+    def test_symlinked_plan_is_not_loaded(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            fx.superpowers_project(Path(tmp), {"good.md": fx.plan_text("Good")})
+            secret = Path(outside, "secret.md")
+            secret.write_text("# TOPSECRET\n", encoding="utf-8")
+            plans = Path(tmp) / "docs" / "superpowers" / "plans"
+            os.symlink(secret, plans / "linked.md")
+            loaded = gp_scope.load_plans(tmp)
+        self.assertEqual([p.file for p in loaded], ["good.md"])
+
+    def test_a_plan_is_read_only_up_to_the_cap(self):
+        text = "# Cap\n### Task 1\n" + "x" * 64 + "\n### Task 2\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            fx.superpowers_project(Path(tmp), {"a.md": text})
+            with mock.patch.object(gp_scope, "READ_CAP", 32):
+                loaded = gp_scope.load_plans(tmp)
+        self.assertEqual((loaded[0].title, loaded[0].tasks), ("Cap", 1))
 
 
 def _inputs(roadmap=None, phase_ops=None, identity=None, work_kind=None, numbers=None):

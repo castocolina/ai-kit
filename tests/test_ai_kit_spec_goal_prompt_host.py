@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "skills" / "ai-kit-spec-goal-prompt" / "scripts"
@@ -610,6 +611,20 @@ class TestReadiness(ReadinessBase):
                 _result, run = self.readiness()
                 self.assertTrue(all("--print-argv" not in call for call in run.calls))
 
+    def test_runner_script_resolving_outside_the_repo_is_never_executed(self):
+        outside = os.path.join(self.tmp.name, "elsewhere", "cross-ai.mjs")
+        os.makedirs(os.path.dirname(outside))
+        Path(outside).write_text("// stand-in\n", "utf-8")
+        os.remove(self.script)
+        os.symlink(outside, self.script)
+        _result, run = self.readiness()
+        self.assertTrue(all("--print-argv" not in call for call in run.calls))
+        config = json.loads(json.dumps(READY_CONFIG))
+        config["workflow"]["cross_ai_command"] = f"node {outside}"
+        self.write_config(config)
+        _result, run = self.readiness()
+        self.assertTrue(all("--print-argv" not in call for call in run.calls))
+
     def test_reviewers_need_plan_review_convergence(self):
         config = json.loads(json.dumps(READY_CONFIG))
         config["workflow"]["plan_review_convergence"] = False
@@ -734,3 +749,17 @@ class TestJev(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProbeEnvironment(unittest.TestCase):
+    def test_probe_child_loses_credential_named_variables_only(self):
+        code = "import json, os; print(json.dumps(sorted(os.environ)))"
+        env = {"AIKIT_SECRET_SENTINEL": "x", "SOME_API_KEY": "x", "AIKIT_PLAIN": "x"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            rc, out = gp_host._run([sys.executable, "-c", code], 20, None)
+        self.assertEqual(rc, 0)
+        names = json.loads(out)
+        self.assertNotIn("AIKIT_SECRET_SENTINEL", names)
+        self.assertNotIn("SOME_API_KEY", names)
+        self.assertIn("AIKIT_PLAIN", names)
+        self.assertIn("PATH", names)

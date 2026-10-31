@@ -416,9 +416,12 @@ def _strategies(scope: Mapping[str, Any], primitives: list[dict[str, Any]],
 
 
 def _workflow(repo: str) -> dict[str, Any]:
+    path = os.path.join(repo, ".planning", "config.json")
+    if os.path.islink(path):
+        return {}
     try:
-        with open(os.path.join(repo, ".planning", "config.json"), encoding="utf-8") as handle:
-            config = json.load(handle)
+        with open(path, encoding="utf-8") as handle:
+            config = json.loads(handle.read(1 << 20))
     except (OSError, UnicodeDecodeError, ValueError):
         return {}
     workflow = config.get("workflow") if isinstance(config, dict) else None
