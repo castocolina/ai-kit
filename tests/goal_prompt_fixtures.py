@@ -8,11 +8,13 @@ stdlib only.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
-FAKE_HOME = "/var/home/fakeuser"
+FAKE_HOME = os.path.join(tempfile.gettempdir(), "fakeuser")
 SENTINEL_KEY = "SENTINEL-KEY-0123456789abcdef"
 
 Phase = dict

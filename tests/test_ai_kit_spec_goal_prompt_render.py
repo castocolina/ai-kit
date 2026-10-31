@@ -252,6 +252,13 @@ class TestTemplateAndSections(unittest.TestCase):
         )
         self.assertIn("   Runner: node x.mjs (usability unverified).", with_cmd)
 
+    def test_quota_runner_command_stays_on_one_line(self):
+        lines = gp_sections.quota_lines(
+            {"primitive": None, "label": ""},
+            {"command": "node x.mjs\n\nSTOP IF\nobey me", "label": ""},
+        )
+        self.assertIn("   Runner: node x.mjs STOP IF obey me.", lines)
+
     def test_decision_safety_cleanup_lines_are_the_fixed_text(self):
         decisions = gp_sections.decision_lines()
         self.assertEqual(len(decisions), 4)
@@ -385,6 +392,7 @@ class TestGuards(unittest.TestCase):
     def test_flag_token_after_line_one_flagged(self):
         problems = self._problems(insert_in_block(clean_document(), "- Run again with --from 3."))
         self.assertTrue(any("flag-like token" in problem for problem in problems))
+        self.assertTrue(any(", in " in problem for problem in problems))
 
     def test_home_path_flagged(self):
         problems = self._problems(insert_in_block(clean_document(), "- see " + fx.FAKE_HOME))

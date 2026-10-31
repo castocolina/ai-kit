@@ -49,6 +49,7 @@ __all__ = [
 ]
 
 LINE_CAP = 200
+GOAL_SCOPE_CAP = 600  # the scope clause of a /goal condition; the 1,800 budget holds the rest
 RULE_BULLET = "- "
 ELLIPSIS = "..."
 TURN_FLOOR = 60
@@ -70,6 +71,8 @@ class Work(NamedTuple):
     scope_desc: str
     phases: Sequence[Mapping[str, Any]] = ()
     plans: Sequence[Plan] = ()
+
+
 CROSS_AI_RULE = (
     "Every PLAN.md frontmatter carries cross_ai: true, so GSD delegates it to cross-AI."
 )
@@ -131,12 +134,14 @@ def _one_line(text: str) -> str:
     return " ".join(str(text).split())
 
 
-def fit_line(head: str, variable: str, tail: str = "", prefix: str = RULE_BULLET) -> str:
+def fit_line(
+    head: str, variable: str, tail: str = "", prefix: str = RULE_BULLET, cap: int = LINE_CAP
+) -> str:
     """`head` + `variable` + `tail` as one line that, with `prefix` in front, fits LINE_CAP. A
     variable that is too long is cut and ends with `...`. A str slices by code point, so a
     multi-byte character is never split. A fixed head or tail too long for the line is left for
     the cap guard in gp_render to refuse."""
-    room = LINE_CAP - len(prefix) - len(head) - len(tail)
+    room = cap - len(prefix) - len(head) - len(tail)
     if len(variable) > room:
         variable = variable[: max(room - len(ELLIPSIS), 0)].rstrip() + ELLIPSIS
     return f"{head}{variable}{tail}"
@@ -165,9 +170,12 @@ def objective_lines(answers: Mapping[str, Any], scope_desc: str) -> list[str]:
 
 
 def objective_text(answers: Mapping[str, Any], scope_desc: str) -> str:
-    """The whole objective on one line, uncut: a `/goal` condition has its own cap (GOAL_CAP)."""
+    """The objective on one line for a `/goal` condition (its own cap, GOAL_CAP). The scope clause
+    is cut at GOAL_SCOPE_CAP, so many plan titles cannot exhaust the condition budget;
+    the user's own objective text stays uncut."""
     objective = _one_line(answers.get("objective") or "")
-    return " ".join(part for part in (f"Finish {scope_desc}{OBJECTIVE_TAIL}", objective) if part)
+    scope = fit_line("Finish ", scope_desc, OBJECTIVE_TAIL, prefix="", cap=GOAL_SCOPE_CAP)
+    return " ".join(part for part in (scope, objective) if part)
 
 
 def plan_rule_lines(candidate_skills: Sequence[str], native: bool) -> list[str]:
@@ -311,7 +319,7 @@ def quota_lines(wake: Mapping[str, Any], runner: Mapping[str, Any]) -> list[str]
         "   On a quota stop, re-check every 10 minutes for at most 4 hours, resume only the "
         "unfinished work after checking the working tree, then stop and report.",
     ]
-    command = runner.get("command") or ""
+    command = _one_line(runner.get("command") or "")
     if command:
         lines.append(f"   Runner: {command}{_paren(runner.get('label', ''))}.")
     return lines

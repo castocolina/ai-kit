@@ -224,6 +224,7 @@ class ScopeInputs(NamedTuple):
     identity: Any
     work_kind: str | None
     numbers: Sequence[str] | None
+    plan_files: Sequence[str] | None = None
 
 
 _ASK = {
@@ -251,11 +252,17 @@ def detect_scope(repo: str, inputs: ScopeInputs) -> dict[str, Any]:
     has_planning = os.path.isfile(os.path.join(repo, ".planning", "PROJECT.md"))
     identity = opengsd_identity(inputs.identity)
     plans = load_plans(repo)
+    if inputs.plan_files is not None:
+        plans = [plan for plan in plans if plan.file in set(inputs.plan_files)]
     kind = scope_kind(has_planning=has_planning, identity=identity, plans_count=len(plans),
                       work_kind=inputs.work_kind)
     phases: list[Phase] = []
+    roadmap_order: list[str] = []
     if has_planning and inputs.work_kind != "plans" and inputs.roadmap is not None:
         phases = load_phases(repo, inputs.roadmap, inputs.phase_ops, inputs.numbers)
+        roadmap_order = sorted(
+            {str(e["number"]) for e in _roadmap_entries(inputs.roadmap)}, key=phase_key
+        )
     shown_plans = plans if inputs.work_kind != "phases" else []
     if kind in ("opengsd", "gsd-unproven"):
         order = [phase.number for phase in phases]
@@ -270,6 +277,7 @@ def detect_scope(repo: str, inputs: ScopeInputs) -> dict[str, Any]:
         "phases": [phase._asdict() for phase in phases],
         "plans": [plan._asdict() for plan in shown_plans],
         "order": order,
+        "roadmap_order": roadmap_order,
     }
 
 

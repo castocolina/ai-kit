@@ -219,6 +219,17 @@ def _section_problems(sections: dict[str, list[str]]) -> list[str]:
     return problems
 
 
+def _flag_section(body: list[str]) -> str:
+    """The heading above the first flag-like line ("" when none), so the refusal names a field."""
+    heading = "the lines before the first heading"
+    for line in body:
+        if line in HEADINGS:
+            heading = line
+        elif FLAG_RE.search(line):
+            return heading
+    return ""
+
+
 def _inline_problems(lines: list[str], opengsd_block: bool) -> list[str]:
     """The inline autonomous block: size, flags-only line 1, the rule caps and, for GSD scopes,
     all eleven sections."""
@@ -226,8 +237,9 @@ def _inline_problems(lines: list[str], opengsd_block: bool) -> list[str]:
     problems: list[str] = []
     if len("\n".join(lines)) > INLINE_CAP:
         problems.append(f"OpenGSD block over {INLINE_CAP} characters")
-    if any(FLAG_RE.search(line) for line in body):
-        problems.append("flag-like token after line 1 of the block")
+    flagged = _flag_section(body)
+    if flagged:
+        problems.append(f"flag-like token after line 1 of the block, in {flagged}")
     problems += _rule_problems(body)
     if opengsd_block:
         sections = _sections(body)
@@ -442,6 +454,15 @@ def _plan(entry: Mapping[str, Any]) -> Plan:
     )
 
 
+def _check_contiguous(roadmap_order: Sequence[str] | None, numbers: Sequence[str]) -> None:
+    """/gsd-autonomous takes one --from/--to range, so a gapped set would run unselected phases."""
+    if not roadmap_order or len(numbers) < 2:
+        return
+    start = roadmap_order.index(numbers[0])
+    if list(roadmap_order[start : start + len(numbers)]) != list(numbers):
+        raise GuardError("the phases are not a contiguous roadmap run; select a range")
+
+
 def _phase_work(scope: Mapping[str, Any], work_set: Mapping[str, Any]) -> Work:
     if scope["kind"] not in GSD_SCOPE_KINDS:
         raise GuardError("phases work set needs a GSD scope in the detect result")
@@ -453,6 +474,7 @@ def _phase_work(scope: Mapping[str, Any], work_set: Mapping[str, Any]) -> Work:
     if not numbers or {str(p["number"]) for p in selected} != set(numbers):
         raise GuardError("a phase in the work set is not in the detected scope")
     selected.sort(key=lambda p: phase_key(str(p["number"])))
+    _check_contiguous(scope.get("roadmap_order"), numbers)
     family = "opengsd" if scope.get("identity") == "opengsd" else "gsd-unproven"
     return Work(family, "phases " + ", ".join(numbers), selected, ())
 

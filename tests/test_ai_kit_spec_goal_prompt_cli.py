@@ -192,6 +192,22 @@ class TestCli(unittest.TestCase):
         self.assertEqual([p["file"] for p in result["scope"]["plans"]], ["a.md", "b.md"])
         self.assertEqual(result["scope"]["order"], ["a.md", "b.md"])
 
+    def test_a_plan_cycle_is_named_and_does_not_block_an_unrelated_selection(self):
+        fx.superpowers_project(
+            self.repo,
+            {
+                "a.md": fx.plan_text("Plan A", depends_on="`b.md`"),
+                "b.md": fx.plan_text("Plan B", depends_on="`a.md`"),
+                "c.md": fx.plan_text("Plan C"),
+            },
+        )
+        code, _out, err = self.call("detect", "--repo", str(self.repo))
+        self.assertEqual(code, 2)
+        self.assertIn("dependency cycle", json.loads(err)["error"])
+        self.assertNotIn("roadmap", json.loads(err)["error"])
+        result = self.detect("--work-set", "plans:c.md")
+        self.assertEqual(result["scope"]["order"], ["c.md"])
+
     def test_neither_framework_detects_none_and_asks_for_free_text(self):
         result = self.detect()
         self.assertEqual(result["scope"]["kind"], "none")
@@ -392,6 +408,65 @@ class TestCli(unittest.TestCase):
         for key in ("strategies", "conditions", "sections", "paste_chars", "rails_lines",
                     "warnings", "dropped"):
             self.assertIn(key, payload)
+
+    def test_render_refuses_a_gapped_phase_set_that_autonomous_would_widen(self):
+        fx.opengsd_project(self.repo, PHASES)
+        detect_doc = self.detect(*self.captures())
+        gapped = answers(work_set={"kind": "phases", "numbers": ["16", "17"]})
+        code, _out, err = self.render(detect_doc, gapped)
+        self.assertEqual(code, 2)
+        self.assertIn("contiguous", json.loads(err)["error"])
+        self.assertFalse((self.repo / ".planning" / "goals").exists())
+
+    def test_many_long_plan_titles_still_fit_the_goal_condition(self):
+        long = "long title " * 14
+        titles = {f"p{i:02d}.md": fx.plan_text(f"Plan {i} {long}") for i in range(14)}
+        fx.superpowers_project(self.repo, titles)
+        detect_doc = self.detect()
+        doc = answers(strategy="goal", work_set={"kind": "plans", "files": sorted(titles)})
+        code, out, err = self.render(detect_doc, doc)
+        self.assertEqual(code, 0, err)
+        conditions = json.loads(out)["conditions"]
+        self.assertTrue(conditions and conditions[0]["chars"] <= 1800)
+
+    def test_render_rejects_an_absolute_out_dir_without_writing(self):
+        fx.opengsd_project(self.repo, PHASES)
+        detect_doc = self.detect(*self.captures())
+        outside = self.root / "outside"
+        code, _out, err = self.render(detect_doc, answers(), "--out-dir", str(outside))
+        self.assertEqual(code, 2)
+        self.assertIn("inside the repository", json.loads(err)["error"])
+        self.assertFalse(outside.exists())
+
+    def test_render_write_failure_exits_two_with_a_json_error(self):
+        fx.opengsd_project(self.repo, PHASES)
+        detect_doc = self.detect(*self.captures())
+        with mock.patch("gp_render.write_atomic", side_effect=PermissionError("denied")):
+            code, _out, err = self.render(detect_doc, answers())
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(err), {"error": "cannot read or write a file"})
+
+    def test_missing_repo_exits_two_for_detect_and_render(self):
+        missing = str(self.root / "nope")
+        code, _out, err = self.call("detect", "--repo", missing)
+        self.assertEqual(code, 2)
+        self.assertIn("--repo", json.loads(err)["error"])
+        fx.opengsd_project(self.repo, PHASES)
+        detect_doc = self.detect(*self.captures())
+        detect_path = self.write_json("detect.json", detect_doc)
+        answers_path = self.write_json("answers.json", answers())
+        code, _out, err = self.call(
+            "render", "--repo", missing, "--detect", str(detect_path),
+            "--answers", str(answers_path),
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("--repo", json.loads(err)["error"])
+
+    def test_empty_phase_list_is_not_reported_as_plan_files(self):
+        code, _out, err = self.call("detect", "--repo", str(self.repo), "--work-set", "phases:,")
+        self.assertEqual(code, 2)
+        self.assertIn("phase", json.loads(err)["error"])
+        self.assertNotIn("plan files", json.loads(err)["error"])
 
     def test_render_bad_answers_exit_two_naming_the_field_never_the_value(self):
         fx.opengsd_project(self.repo, PHASES)

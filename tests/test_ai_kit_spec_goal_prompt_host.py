@@ -597,6 +597,19 @@ class TestReadiness(ReadinessBase):
         self.assertTrue(result["runner_ok"])
         self.assertTrue(all("--print-argv" not in call for call in run.calls))
 
+    def test_runner_command_with_a_foreign_launcher_is_never_executed(self):
+        for command in (
+            'sh -c "touch PWNED" cross-ai.mjs',
+            "node -e x .planning/scripts/cross-ai.mjs",
+            "node .planning/scripts/cross-ai.mjs --cli x",
+        ):
+            with self.subTest(command=command):
+                config = json.loads(json.dumps(READY_CONFIG))
+                config["workflow"]["cross_ai_command"] = command
+                self.write_config(config)
+                _result, run = self.readiness()
+                self.assertTrue(all("--print-argv" not in call for call in run.calls))
+
     def test_reviewers_need_plan_review_convergence(self):
         config = json.loads(json.dumps(READY_CONFIG))
         config["workflow"]["plan_review_convergence"] = False

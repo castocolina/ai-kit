@@ -308,6 +308,7 @@ def unrecognized_tools(names: list[str], rows: list | None) -> list[str]:
 # ─── cross-AI readiness (D-16) and jev usability (D-21) ──────────────────────
 
 AI_KIT_RUNNER = "cross-ai.mjs"
+RUNNER_LAUNCHERS = ("node", "nodejs")
 CLI_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -347,7 +348,9 @@ def _runner_problems(seams: HostSeams, repo: str, workflow: dict) -> tuple[list[
 
 def _listing(seams: HostSeams, repo: str, tokens: list[str]) -> tuple[bool | None, list[str]]:
     """(cli_listed, names) from `--print-argv`; only the exit code and CLI names are kept."""
-    if not tokens or os.path.basename(tokens[-1]) != AI_KIT_RUNNER:
+    # Only `node <path>/cross-ai.mjs` is probed: any other leading token would run repo-chosen code.
+    shaped = len(tokens) == 2 and tokens[0] in RUNNER_LAUNCHERS
+    if not shaped or os.path.basename(tokens[1]) != AI_KIT_RUNNER:
         return None, []
     rc, out = seams.run([*tokens, "--print-argv"], PROBE_TIMEOUT, repo)
     if rc != 0:

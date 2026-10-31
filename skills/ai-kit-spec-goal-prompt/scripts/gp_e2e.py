@@ -21,6 +21,7 @@ class E2EResult(TypedDict):
     gates: list[str]
     none: bool
 
+
 E2E_TARGET_RE = re.compile(r"e2e(?:[-_.].*)?")
 SAFE_NAME_RE = re.compile(r"[A-Za-z0-9_.:/@-]+")
 BROWSER_RE = re.compile(r"\b(playwright|cypress)\b")

@@ -24,7 +24,7 @@ import gp_common
 
 from tests import goal_prompt_fixtures as fx
 
-FAKE_HOME = "/var/home/fakeuser"
+FAKE_HOME = fx.FAKE_HOME
 SENTINEL = "SENTINEL-KEY-0123456789abcdef"
 _COUNTER = itertools.count()
 

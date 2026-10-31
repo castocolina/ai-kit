@@ -317,6 +317,7 @@ class TestScopeKind(unittest.TestCase):
         self.assertIsNone(scope["ask"])
         self.assertEqual([p["number"] for p in scope["phases"]], ["16"])
         self.assertEqual(scope["order"], ["16"])
+        self.assertEqual(scope["roadmap_order"], ["16"])
 
     def test_original_gsd_fixture_is_gsd_unproven(self):
         with tempfile.TemporaryDirectory() as tmp:

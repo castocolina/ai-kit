@@ -168,10 +168,10 @@ def _checked(number: str) -> str:
     return number
 
 
-def _names(value: str) -> list[str]:
+def _names(value: str, noun: str = "plan files") -> list[str]:
     names = [part.strip() for part in value.split(",") if part.strip()]
     if not names:
-        raise UsageError("--work-set names no plan files")
+        raise UsageError(f"--work-set names no {noun}")
     return names
 
 
@@ -209,7 +209,7 @@ def _phase_range(value: str, roadmap_numbers: Sequence[str] | None) -> list[str]
 def _phase_numbers(value: str, roadmap_numbers: Sequence[str] | None) -> list[str]:
     if "-" in value:
         return _phase_range(value, roadmap_numbers)
-    numbers = [_checked(part) for part in _names(value)]
+    numbers = [_checked(part) for part in _names(value, "phase numbers")]
     return sorted(dict.fromkeys(numbers), key=phase_key)
 
 
@@ -341,10 +341,15 @@ def _scope(repo: str, work: Mapping[str, Any] | None, captures: Captures) -> dic
         identity=captures.identity,
         work_kind=kind,
         numbers=numbers,
+        plan_files=(
+            [os.path.basename(f) for f in work["files"]] if work and kind == "plans" else None
+        ),
     )
     try:
         scope = gp_scope.detect_scope(repo, inputs)
     except ValueError as exc:
+        if str(exc).startswith("dependency cycle"):
+            raise UsageError(f"superpowers plans {exc}") from exc
         raise UsageError(
             "the roadmap lacks a phase named in --work-set or has a bad shape"
         ) from exc
@@ -425,7 +430,7 @@ def _runner_command(repo: str, home: str) -> str:
     command = _workflow(repo).get("cross_ai_command")
     if not isinstance(command, str) or any(is_machine_path(tok, home) for tok in command.split()):
         return ""
-    return command.strip()
+    return " ".join(command.split())
 
 
 def _candidate_skills(skills_dir: str) -> list[str]:
@@ -435,9 +440,15 @@ def _candidate_skills(skills_dir: str) -> list[str]:
 # ─── detect ──────────────────────────────────────────────────────────────────
 
 
+def _checked_repo(repo: str) -> str:
+    if not os.path.isdir(repo):
+        raise UsageError("--repo is not a directory")
+    return repo
+
+
 def build_detect(args: argparse.Namespace, seams: CliSeams) -> dict[str, Any]:
     """The contract object for `args.repo`. Read-only: nothing is written to the project."""
-    repo = args.repo
+    repo = _checked_repo(args.repo)
     gsd = _gsd_work(args)
     tokens = _gsd_tokens(args.gsd_cmd)
     roadmap = _roadmap(args, seams, tokens) if gsd else None
@@ -495,7 +506,8 @@ def _check_output_dir(value: Any) -> None:
     if value is None:
         return
     _require(isinstance(value, str), "output_dir", "a string or null")
-    if ".." in value.replace("\\", "/").split("/"):
+    parts = value.replace("\\", "/").split("/")
+    if ".." in parts or os.path.isabs(value) or value.startswith("~"):
         raise UsageError("field output_dir must stay inside the repository")
 
 
@@ -537,6 +549,7 @@ def run_render(args: argparse.Namespace, seams: CliSeams) -> dict[str, Any]:
     answers = _read_json(args.answers, "--answers")
     _check_answers(answers)
     _check_output_dir(args.out_dir)
+    _checked_repo(args.repo)
     derived = _derived(_count(detect["scope"]), detect["e2e"]["none"],
                        len(answers.get("mockups") or []))
     strategies, dropped = _strategies(
@@ -573,6 +586,9 @@ def main(argv: Sequence[str] | None = None, seams: CliSeams | None = None) -> in
         return 2
     except (AttributeError, KeyError, TypeError, ValueError):
         print(json.dumps({"error": "input does not match the expected shape"}), file=sys.stderr)
+        return 2
+    except OSError:
+        print(json.dumps({"error": "cannot read or write a file"}), file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2))
     return 0
