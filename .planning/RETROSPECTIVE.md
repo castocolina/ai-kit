@@ -42,6 +42,45 @@
 
 ---
 
+## Milestone: v1.3 — GSD Curated Config v2
+
+**Shipped:** 2026-10-31
+**Phases:** 18 (16-27, with inserted 16.1, 18.1, 21.1-21.3, 25.1) | **Plans:** 212 | **Sessions:** not tracked
+
+### What Was Built
+- The curated-config v2 pipeline (inventory, recommend, plan, apply) on one (runtime, model) vocabulary, evaluated on claude and smoke-validated headless on codex, opencode, cursor and pi.
+- Decision-system skills, a PreCompact pre-summary hook and visible tool-advisory hooks as setup knobs.
+- A host-split status line (Claude Code and Cursor CLI) with AST architecture guards.
+- A quota-aware cross-AI runner with a configurable retry ladder, plus `ai-kit-cross-ai`, `ai-kit-session-wake`, `ai-kit-gsd-spec-discuss` and `ai-kit-spec-goal-prompt`.
+
+### What Worked
+- An audit before the close found three real integration defects (a wait-policy contradiction, a broken relative link, missing README rows) and all three were fixed in-milestone.
+- Recording owner-only steps as `*-OWNER-CAPTURES.md` kits kept `human_needed` phases honest instead of forcing a green status.
+- Spikes before plans (21, 21.2, 22, 23, 26) stopped several plans from resting on untested assumptions.
+
+### What Was Inefficient
+- Bookkeeping drifted: REQUIREMENTS traceability, ROADMAP checkboxes and STATE.md frontmatter were stale for most of the milestone and needed a dedicated refresh before the audit.
+- Skill-judge rounds repeated on the same skills across phases 25, 25.1 and 26; two verdicts ended UNRESOLVED and three were deferred to a refactor todo.
+- Most phase verifications read `stale` after later phases touched covered files, so the close was an `override_closeout` again (as in v1.2).
+- The milestone grew from phases 16-22 to 16-27 plus six inserted phases while the header still read "Phases 16-22".
+
+### Patterns Established
+- Owner-pending work is a named capture file per phase, listed in the milestone entry, never silently closed.
+- Cross-AI failures are classified and reported; the runner never switches harness, provider or model on its own.
+- Status-line role modules follow banner-delimited blocks, enforced by `tests/test_arch.py` with non-vacuity tests.
+
+### Key Lessons
+1. **Update the milestone header and traceability as phases are inserted.** A late refresh costs a whole audit pass.
+2. **Decide skill-judge deferrals in the phase that finds them.** An UNRESOLVED verdict carried across three phases is rework.
+3. **Plan the live-host steps as owner kits from the start.** The phases that did this (25, 25.1, 26, 27) closed cleaner than the ones that discovered the need at verification.
+
+### Cost Observations
+- Model mix: not tracked for this milestone
+- Sessions: not tracked
+- Notable: cross-AI review lanes used the owner's router-backed referees; direct Zen and Cursor API billing errors did not recover and were classified by route.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -51,6 +90,7 @@
 | v1.0 | n/a | 6 | Autonomous-run infra first (convergence + clean-room E2E) |
 | v1.1 | n/a | 4 | Skill-authoring pipeline (writing-skills → skill-judge → naming-analyzer) |
 | v1.2 | n/a | 9 | Strict phase chain on a shared package; audit → cleanup → close |
+| v1.3 | n/a | 18 | Spikes before plans; owner-capture kits for live steps; audit gaps closed before the close |
 
 ### Cumulative Quality
 
@@ -58,6 +98,7 @@
 |-----------|-------|----------|-------------------|
 | v1.1 | 1682 | n/a | stdlib-only skills |
 | v1.2 | 2535 | n/a | stdlib-only checkers (YAML/TOML readers hand-rolled) |
+| v1.3 | 5644 (unit + arch groups) | n/a | stdlib-only runtime modules; Textual stays wizard-only |
 
 ### Top Lessons (Verified Across Milestones)
 
