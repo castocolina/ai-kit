@@ -318,8 +318,10 @@ class TestRenderedRunner(unittest.TestCase):
             with open(script_path, "rb") as f:
                 written = f.read()
             self.assertEqual(cross_ai_script.script_state(written), "pristine")
+            # The self-test alone takes about 175 s and about 480 s beside the other e2e modules
+            # on a host under memory pressure; 300 s timed out there (27-13 gate runs).
             proc = run_group(
-                [node_bin, script_path, "--self-test"], 300, cwd=tmp, env=runner_env(tmp)
+                [node_bin, script_path, "--self-test"], 900, cwd=tmp, env=runner_env(tmp)
             )
             self.assertEqual(proc.returncode, 0, msg=proc.stderr)
 
