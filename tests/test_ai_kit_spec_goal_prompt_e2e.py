@@ -48,12 +48,23 @@ ANSWERS = {
 
 
 def git_status(repo: Path) -> set[str]:
-    """Every porcelain line of `repo`, untracked files listed one by one."""
+    """Every porcelain line of `repo`, untracked files listed one by one. A checkout without
+    `.git` (the clean-room image copies the tree without it) gets a file snapshot instead."""
     proc = subprocess.run(
         ["git", "-C", str(repo), "status", "--porcelain", "--untracked-files=all"],
-        capture_output=True, text=True, check=True, timeout=TIMEOUT,
+        capture_output=True, text=True, check=False, timeout=TIMEOUT,
     )
-    return set(proc.stdout.splitlines())
+    if proc.returncode == 0:
+        return set(proc.stdout.splitlines())
+    skip = {".git", ".venv", "tmp", "__pycache__"}
+    lines = set()
+    for base, dirs, names in os.walk(repo):
+        dirs[:] = [d for d in dirs if d not in skip]
+        for name in names:
+            path = Path(base, name)
+            stat = path.stat()
+            lines.add(f"{path.relative_to(repo)} {stat.st_size} {stat.st_mtime_ns}")
+    return lines
 
 
 class TestRealCli(unittest.TestCase):
@@ -135,6 +146,17 @@ class TestRealCli(unittest.TestCase):
         self.assertEqual(run.returncode, 2)
         self.assertEqual(run.stdout, "")
         self.assertIn("error", json.loads(run.stderr))
+
+
+class TestStatusSnapshot(unittest.TestCase):
+    def test_checkout_without_git_still_detects_a_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "a.txt").write_text("a", encoding="utf-8")
+            before = git_status(repo)
+            self.assertTrue(before)
+            (repo / "b.txt").write_text("b", encoding="utf-8")
+            self.assertNotEqual(git_status(repo), before)
 
 
 class TestDogfood(unittest.TestCase):
