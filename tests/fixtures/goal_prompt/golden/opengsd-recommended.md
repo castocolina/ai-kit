@@ -40,7 +40,9 @@ QUOTA
    Wake primitive on this host: systemd user timer.
 - B. Cross-AI children (a child CLI hits its limit): follow the ai-kit-cross-ai skill. The runner cross-ai.mjs owns the retry ladder and never switches CLI, provider or model.
    Read its last AIKIT-XAI status line before acting.
-   On a quota stop, re-check every 10 minutes for at most 4 hours, resume only the unfinished work after checking the working tree, then stop and report.
+   A quota stop whose AIKIT-XAI line has a whole-number retry_after_s: wait that exact time once (one one-shot job, never a fixed-interval re-check), then re-invoke the same lane.
+   Check the working tree and resume only the unfinished work. After stopped=hard-waits or stopped=cap schedule nothing more.
+   A quota stop without retry_after_s is an owner stop: report the evidence and stop. Whether this host can run a one-shot job is unverified.
    Runner: node .planning/scripts/cross-ai.mjs (usability unverified).
 
 DECISIONS

@@ -7,9 +7,12 @@ wording, and every CronCreate line is the ruled one-shot re-invoke.
 
 import pathlib
 import re
+import sys
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
+CROSS_AI_SKILL = REPO / "skills/ai-kit-cross-ai/SKILL.md"
+GOAL_SCRIPTS = REPO / "skills/ai-kit-spec-goal-prompt/scripts"
 REFERENCE = REPO / "skills/ai-kit-cross-ai/references/subprocess-quota-policy.md"
 GSD_SKILL = REPO / "skills/ai-kit-spec-execute-gsd/SKILL.md"
 GSD_WAKE_REF = REPO / "skills/ai-kit-spec-execute-gsd/references/session-wake.md"
@@ -220,6 +223,38 @@ class ExitTableScan(unittest.TestCase):
     def test_exact_first_cell_match_only(self):
         self.assertEqual(len(self.rows("| `75` | retry |")), 1)
         self.assertEqual(self.rows("| any other, including `69` and `75` | real_error |"), [])
+
+
+class GoalPromptQuotaRule(unittest.TestCase):
+    """INT-1: the generated quota rule says what the policy says, no older fixed-interval poll."""
+
+    def setUp(self):
+        sys.path.insert(0, str(GOAL_SCRIPTS))
+        self.addCleanup(sys.path.remove, str(GOAL_SCRIPTS))
+        import gp_sections
+
+        lines = gp_sections.quota_lines({"primitive": None, "label": ""}, {"command": ""})
+        self.lines = lines
+        self.rule = " ".join(line.strip() for line in lines)
+
+    def test_policy_text_carries_the_tokens_the_rule_must_echo(self):
+        policy = CROSS_AI_SKILL.read_text(encoding="utf-8")
+        policy += REFERENCE.read_text(encoding="utf-8")
+        for token in ("retry_after_s", "one-shot", "fixed-interval", "stopped=hard-waits"):
+            self.assertIn(token, policy)
+
+    def test_rule_waits_once_for_retry_after_s_and_stops_without_it(self):
+        for token in ("retry_after_s", "once", "one-shot", "fixed-interval", "owner stop"):
+            self.assertIn(token, self.rule)
+        self.assertRegex(self.rule, r"never a fixed-interval re-check")
+        self.assertRegex(self.rule, r"without retry_after_s is an owner stop")
+
+    def test_rule_drops_the_superseded_poll(self):
+        for old in ("10 minutes", "4 hours", "every 10"):
+            self.assertNotIn(old, self.rule)
+
+    def test_no_line_exceeds_the_cap(self):
+        self.assertTrue(all(len(line) <= 200 for line in self.lines))
 
 
 class NonVacuity(unittest.TestCase):
