@@ -747,10 +747,6 @@ class TestJev(unittest.TestCase):
         self.assertNotIn("shell=True", source)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestProbeEnvironment(unittest.TestCase):
     def test_probe_child_loses_credential_named_variables_only(self):
         code = "import json, os; print(json.dumps(sorted(os.environ)))"
@@ -763,3 +759,7 @@ class TestProbeEnvironment(unittest.TestCase):
         self.assertNotIn("SOME_API_KEY", names)
         self.assertIn("AIKIT_PLAIN", names)
         self.assertIn("PATH", names)
+
+
+if __name__ == "__main__":
+    unittest.main()
