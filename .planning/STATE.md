@@ -5,17 +5,17 @@ milestone_name: GSD Curated Config v2
 current_phase: 27
 current_phase_name: One-shot goal and loop prompt skill
 status: executing
-stopped_at: Completed 26-12-PLAN.md
-last_updated: "2026-10-31T03:41:44.365Z"
+stopped_at: Completed 27-01-PLAN.md
+last_updated: "2026-10-31T13:34:41.695Z"
 last_activity: 2026-10-24
 last_activity_desc: Phase 23 execution started
-state_head: 9fd258015fefc4082631b3d727913f3297c7be29
+state_head: f74e626810a7d69ac94b705fc904e97e266e71ca
 progress:
   total_phases: 18
   completed_phases: 1
   total_plans: 211
-  completed_plans: 198
-  percent: 0
+  completed_plans: 199
+  percent: 6
 ---
 
 # Project State
@@ -30,11 +30,11 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 ## Current Position
 
 Phase: 27 (One-shot goal and loop prompt skill) — READY TO EXECUTE
-Plan: 0 of 13
+Plan: 1 of 13
 Status: Ready to execute
 Last activity: 2026-10-24 - Completed quick task 261024-ryk: agent_skills references gsd-core resolves
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 6%
 
 ## Performance Metrics
 
@@ -427,6 +427,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
   standalone phases, each depending only on Phase 19 (not on each other or
   on Phase 20), per the spec's explicit "own phase, may run later, nothing
   depends on it" framing for both hosts.
+- [Phase 27]: Goal-prompt shared helpers are copied from their three siblings (not imported) and each copy has a parity test against the original loaded by path
+- [Phase 27]: scan_text checks only the home string (2+ chars), non-empty secrets and the sk-/ghp_ key shapes; problem strings never echo the match
 
 ### Pending Todos
 
@@ -593,6 +595,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-31T01:26:24.299Z
-Stopped at: Completed 26-12-PLAN.md
+Last session: 2026-10-31T13:34:40.877Z
+Stopped at: Completed 27-01-PLAN.md
 Resume file: None

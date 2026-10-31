@@ -122,6 +122,7 @@ extraPaths = [
     "skills/ai-kit-spec-execute",
     "skills/ai-kit-spec-execute-gsd",
     "skills/ai-kit-spec-execute-superpowers",
+    "skills/ai-kit-spec-goal-prompt",
     "skills/ai-kit-spec-review",
     "skills/ai-kit-spec-review-checklist",
     "skills/ai-kit-spec-review-fixer",
@@ -134,4 +135,5 @@ extraPaths = [
     "skills/markdown-to-pdf/scripts",
     "skills/mermaid-audit/scripts",
     "skills/ai-kit-gsd-spec-discuss/scripts",
+    "skills/ai-kit-spec-goal-prompt/scripts",
 ]
