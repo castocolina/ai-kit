@@ -89,8 +89,8 @@ inside it, so it matches curated-config's runner floor of 1800 s (it was 900 s w
 one attempt).
 
 `ai-kit-spec-config` can write a per-entry `timeout_tiers`, but `assemble_candidates` does not
-carry it onto a candidate dict, and nothing like `ai_kit_spec.config_io.resolve_timeout_tiers` is
-wired into this adapter. Honoring it would mean threading a per-candidate timeout through
+carry it onto a candidate dict and `dispatch-task` reads no tiers (it takes one fixed `--timeout`);
+`ai_kit_spec.config_io.resolve_timeout_tiers` exists for review dispatch only. Honoring it would mean threading a per-candidate timeout through
 `resolve-injection`'s JSON, `dispatch-task`'s arguments and the Step 3 call. That per-entry
 override exists for review dispatch; this adapter's execute budget is a separate axis. Add the
 plumbing explicitly if a known-slow execute candidate needs more time; do not assume it works.

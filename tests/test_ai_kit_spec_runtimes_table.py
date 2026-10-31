@@ -814,7 +814,8 @@ REWRITTEN = [
 ]
 # The canonical paragraph describes dispatch, so only the skills that do dispatch carry it.
 # curated-config and opencode-providers are checked for forbidden tokens only.
-PAIR_RULE_SKILLS = REWRITTEN[:4]
+# The superpowers adapter points at the contract instead of restating it.
+PAIR_RULE_SKILLS = [path for path in REWRITTEN[:4] if "execute-superpowers" not in path]
 REFERENCES = [
     "skills/ai-kit-spec-review/references/cross-ai-dispatch.md",
     "skills/ai-kit-spec-review/references/reviewer-prompts.md",

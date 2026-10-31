@@ -2380,9 +2380,14 @@ def _super_dispatch_ref() -> str:
         encoding="utf-8")
 
 
+def _super_wake_ref() -> str:
+    return (_SUPER_SKILL.parent / "references" / "session-wake.md").read_text(encoding="utf-8")
+
+
 def _super_block(needle: str) -> str:
-    """The first fenced bash block of SKILL.md or the external_cli reference with `needle`."""
-    for block in re.findall(r"```bash\n(.*?)```", _super_text() + "\n" + _super_dispatch_ref(),
+    """The first fenced bash block of SKILL.md or its dispatch/wake references with `needle`."""
+    for block in re.findall(r"```bash\n(.*?)```",
+                            _super_text() + "\n" + _super_dispatch_ref() + "\n" + _super_wake_ref(),
                             re.DOTALL):
         if needle in block:
             return block
@@ -2546,7 +2551,7 @@ class TestSessionWakeStep(unittest.TestCase):
             later.stdout.splitlines())
 
     def test_wake_id_wording_names_no_verified_pi_or_opencode_session_variable(self):
-        flat = " ".join(_super_text().split())
+        flat = " ".join(_super_wake_ref().split())
         self.assertNotIn("this session's exact id", flat)
         self.assertIn("pi and opencode have no verified session variable", flat)
         self.assertIn("never a guess or the newest session file", flat)
@@ -2580,8 +2585,9 @@ class TestSessionWakeStep(unittest.TestCase):
         text = " ".join(_super_text().split())
         self.assertIn("new rounds only, never on a resume, a re-invoke that kept its "
                       "scalars or a Step-2 re-entry", text)
-        self.assertLess(text.index("**MANDATORY: read `references/escalation.md` now**"),
-                        text.index("**Clear the resume state when a dispatch succeeds**"))
+        self.assertLess(
+            text.index("**MANDATORY: read `references/escalation.md` in full before composing"),
+            text.index("**Clear the resume state when a dispatch succeeds**"))
 
     def test_single_task_plan_arms_nothing(self):
         self._plan(1)
@@ -2709,23 +2715,27 @@ class TestSessionWakeStep(unittest.TestCase):
 
     def test_arm_sits_before_step_two_and_close_after_step_four(self):
         text = _super_text()
+        wake = _super_wake_ref()
         arm = text.index("## Arm the session wake (plans with two or more tasks)\n")
         step2 = text.index("## Step 2: Before each task's implementer dispatch")
         step4 = text.index("## Step 4: Task review, fix loop, final review")
         close = text.index("## Close the session wake\n")
         self.assertLess(arm, step2)
         self.assertLess(step4, close)
-        self.assertEqual(1, text.count("ai-kit-session-wake/ai-kit-session-wake.py"))
+        self.assertEqual(0, text.count("ai-kit-session-wake/ai-kit-session-wake.py"))
+        self.assertEqual(1, wake.count("ai-kit-session-wake/ai-kit-session-wake.py"))
+        self.assertIn("MANDATORY: read [`references/session-wake.md`]", text[arm:step2])
         # done runs when the job ends: the plan finished, or a stop ended the run
-        close_text = text[close:]
+        close_text = text[close:] + wake
         self.assertIn("STOP this wave, or an owner stop", close_text)
         self.assertIn("the final whole-branch review finished", close_text)
         self.assertNotIn("D-23", text)
 
     def test_arm_is_once_per_plan_and_pinned_resume_reuses_the_prompt_file(self):
         flat = " ".join(_super_text().split())
-        self.assertIn("Run this block once per plan, not once per task", flat)
-        self.assertIn("It skips itself on the loaded `WAKE_OWNED=1`", flat)
+        wake = " ".join(_super_wake_ref().split())
+        self.assertIn("Run this block once per plan, not once per task", wake)
+        self.assertIn("It skips itself on the loaded `WAKE_OWNED=1`", wake)
         self.assertIn("reusing the existing `$PROMPT_FILE` (switch only its WRITE sentence to "
                       "APPEND; never recompose the objective)", flat)
 
@@ -2739,7 +2749,7 @@ class TestSessionWakeStep(unittest.TestCase):
         self.assertNotRegex(text + _super_text(), r"\bpoint [0-9]\b")
 
     def test_companion_line_defers_to_the_session_wake_skill(self):
-        flat = " ".join(_super_text().split())
+        flat = " ".join(_super_wake_ref().split())
         self.assertIn("When `arm` prints a `companion:` line", flat)
         self.assertIn('says under "When `arm` prints a companion time"', flat)
 
@@ -2811,7 +2821,7 @@ class TestFixRoundAndWakeScope(unittest.TestCase):
     def test_rounds_one_to_three_reuse_the_injection(self):
         skill = self._flat(_SUPER_SKILL)
         self.assertIn("Fix rounds 1–3 reuse the task's `$INJECTION_JSON` unchanged", skill)
-        self.assertIn("rounds 1–3 keep `$INJECTION_JSON` and skip Step 2", skill)
+        self.assertIn("Rounds 1–3 keep `$INJECTION_JSON` and skip Step 2", skill)
         self.assertNotIn("repeats on every task and fix round", skill)
         escalation = self._flat(_SUPER_REFS / "escalation.md")
         self.assertIn("rounds 1–3 run no resolution and reuse `$INJECTION_JSON`", escalation)
@@ -2822,7 +2832,9 @@ class TestFixRoundAndWakeScope(unittest.TestCase):
         self.assertIn('Only a classified `"quota"` with `RETURNCODE` 75', flat)
         self.assertIn("both matching `[0-9]+`", flat)
         skill = " ".join((_SUPER_REFS.parent / "SKILL.md").read_text(encoding="utf-8").split())
+        stops = " ".join((_SUPER_REFS / "resolution-stops.md").read_text(encoding="utf-8").split())
         self.assertIn("`ai-kit-spec: ignoring untrusted project-local config <path>;", skill)
+        self.assertIn("ai-kit-spec: ignoring untrusted project-local config", stops)
 
     def test_unknown_anchor_stop_comes_before_the_floor_script(self):
         text = (_SUPER_REFS / "escalation.md").read_text(encoding="utf-8")
@@ -2857,6 +2869,95 @@ class TestFixRoundAndWakeScope(unittest.TestCase):
         notes = self._flat(_SUPER_REFS / "design-notes.md")
         self.assertNotIn("predate the owner rule", notes)
         self.assertIn("never-switch rule (ai-kit-cross-ai section 8)", notes)
+
+
+class TestPinnedResumeAndReturnCode69OneRule(unittest.TestCase):
+    """r18: one rule for a pinned resume at any round, and 69 is always an owner stop."""
+
+    @staticmethod
+    def _flat(path) -> str:
+        return " ".join(path.read_text(encoding="utf-8").split())
+
+    def test_pinned_injection_never_re_enters_step_two_at_any_round(self):
+        skill = " ".join(_super_text().split())
+        esc = self._flat(_SUPER_REFS / "escalation.md")
+        state = self._flat(_SUPER_REFS / "state-management.md")
+        self.assertIn("`injection_json` is pinned: it re-dispatches unchanged at any "
+                      "`$FIX_ROUND`", skill)
+        self.assertIn("a resume with no pinned `injection_json`", skill)
+        self.assertNotIn("a resume that re-enters Step 2", skill)
+        self.assertIn(
+            "a restored `injection_json` always re-dispatches unchanged at any round", esc
+        )
+        self.assertIn("with a restored `$FIX_ROUND >= 4` and no `injection_json`", state)
+        self.assertIn("that always goes to Step 3, at any `$FIX_ROUND`", state)
+
+    def test_return_code_69_is_an_owner_stop_never_a_wait(self):
+        dispatch = self._flat(_SUPER_REFS / "dispatch-external-cli.md")
+        self.assertNotIn("reaches it as an owner stop", dispatch)
+        self.assertIn("is classified `quota` but is an owner stop: relay, write pinned state, "
+                      "schedule nothing", dispatch)
+        self.assertIn("every `RETURNCODE` 69", " ".join(_super_text().split()))
+
+    def test_cross_ai_contract_has_a_do_not_load_clause_and_pair_rule_is_a_pointer(self):
+        skill = " ".join(_super_text().split())
+        self.assertIn("Do NOT load it at any other point", skill)
+        self.assertNotIn("A reviewer or executor is a (runtime, model) pair", skill)
+        self.assertIn("`ai-kit-spec-config` and `ai-kit-spec-review`", skill)
+
+
+class TestRound21OneRule(unittest.TestCase):
+    """r20: one rule for the rounds 4-5 re-entry, quoting, the quota wake order."""
+
+    @staticmethod
+    def _flat(path) -> str:
+        return " ".join(path.read_text(encoding="utf-8").split())
+
+    def test_rounds_four_five_re_entry_has_one_rule_in_all_three_files(self):
+        pick = "is only the source of `ladder_keys`: never act on its mode or dispatch it"
+        floor = "before any dispatch, compute the floor from the restored `$ESCALATION_ANCHOR_KEY`"
+        for path in (_SUPER_SKILL, _SUPER_REFS / "state-management.md",
+                     _SUPER_REFS / "escalation.md"):
+            flat = self._flat(path)
+            self.assertIn(pick, flat, path.name)
+            self.assertIn(floor, flat, path.name)
+        self.assertIn("yet at 4 or more still take the floor below", self._flat(_SUPER_SKILL))
+
+    def test_quoted_expansion_keeps_hostile_json_whole(self):
+        hostile = json.dumps({"k/m": 'a"b`c$d\ne;\' rm'})
+        with tempfile.TemporaryDirectory(prefix="super-quote-") as root:
+            path = os.path.join(root, "P.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(hostile)
+            block = _super_block("a.update(json.loads(sys.argv[2]))")
+            merge = re.search(r"^EXCLUDED_REASONS_JSON=.*?\)\"$", block, re.DOTALL | re.MULTILINE)
+            assert merge is not None
+            script = (f'PRIOR_REASONS_JSON="$(cat {shlex.quote(path)})"\n'
+                      f'WAVE_REASONS_JSON="{{}}"\n{merge.group(0)}\n'
+                      'printf "%s" "$EXCLUDED_REASONS_JSON"\n')
+            proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                                  timeout=60, check=False)
+            self.assertEqual(0, proc.returncode, proc.stderr)
+            self.assertEqual(json.loads(hostile), json.loads(proc.stdout))
+        self.assertIn("a double-quoted expansion is never re-parsed", self._flat(_SUPER_SKILL))
+
+    def test_quota_wake_prompt_order_is_bind_paths_resume_found_scalars_restore(self):
+        text = (_SUPER_REFS / "quota-wake.md").read_text(encoding="utf-8")
+        prompt = " ".join(re.search(r"```text\n(.*?)```", text, re.DOTALL).group(1).split())
+        order = ["read that state file", "task-paths block", "never executes Step 2 or the Seed",
+                 "if RESUME_FOUND is not 1", "Record the printed SCALARS path",
+                 'the "Restore" script']
+        positions = [prompt.index(item) for item in order]
+        self.assertEqual(sorted(positions), positions)
+        self.assertNotIn("Step 2 included", prompt)
+        self.assertIn("a later fix round of this task starts at Step 3 with the restored pin, "
+                      "and Step 2 runs only for a later task or an owner-named pair", prompt)
+
+    def test_node_crash_and_companion_skill_clauses(self):
+        self.assertIn("that crash is a `real_error` of the pair, never a reason to switch pairs",
+                      self._flat(_SUPER_SKILL))
+        self.assertIn("Do NOT load the rest of ai-kit-session-wake",
+                      self._flat(_SUPER_REFS / "session-wake.md"))
 
 
 # ── 26-11: JSON values live in files; the owner-named replacement pair recipe ──────────────
@@ -2968,21 +3069,51 @@ class TestJsonFilesAndOwnerNamedPair(unittest.TestCase):
         self.assertEqual(["z/old"], self._get("PRIOR_EXCLUDED_KEYS_JSON"))
         self.assertEqual({"z/old": "auth"}, self._get("PRIOR_REASONS_JSON"))
 
+    def test_owner_named_second_key_is_the_one_resolve_injection_picks(self):
+        # The recipe's files, fed to the real resolve-injection with a 3-key ladder: the owner's
+        # second key must survive (an excluded owner key would yield quota_exhausted).
+        keys = ["a/one", "b/two", "c/three"]
+        self._seed_pair()
+        self.assertEqual(0, self._bash(self._pair_block("b/two")).returncode)
+        candidates = [{"key": k, "model": k.split("/")[1], "runtime": "codex", "vendor": "v",
+                       "task_affinity": None, "context_limit": None} for k in keys]
+        task_file = os.path.join(self.root, "task-1-brief.md")
+        with open(task_file, "w", encoding="utf-8") as handle:
+            handle.write("### Task 1\n**Files:**\n- Create: `README.md`\n")
+        reasons = {**self._get("PRIOR_REASONS_JSON"), **self._get("WAVE_REASONS_JSON")}
+        out = io.StringIO()
+        rc = superpowers_cli.main(
+            ["resolve-injection", "--cwd", self.root, "--task-file", task_file,
+             "--quota-path", os.path.join(self.root, "quota.json"),
+             "--exclude-keys-json", json.dumps(self._get("EXCLUDED_KEYS_JSON")),
+             "--excluded-reasons-json", json.dumps(reasons),
+             "--escalation-excluded-keys-json", json.dumps(self._get("ESCALATION_EXCLUDE_JSON"))],
+            assemble_candidates_fn=lambda cwd, env: (candidates, keys),
+            cache_read_json_fn=lambda path: {}, cache_write_json_fn=lambda path, data: None,
+            refresh_quota_cache_fn=lambda config, ks, existing, _ttl: {},
+            route_all_fn=_session_routes, stdout=out)
+        self.assertEqual(0, rc)
+        result = json.loads(out.getvalue())
+        self.assertEqual(("external_cli", "b/two"), (result["mode"], result["key"]))
+
     def test_owner_named_pair_refuses_the_failed_key_and_unknown_keys(self):
         self._seed_pair()
         for owner in ("a/one", "nope/x"):
             self.assertNotEqual(0, self._bash(self._pair_block(owner)).returncode, owner)
 
     def test_real_error_fold_records_the_dispatch_reason(self):
-        fold = _ref_block("dispatch-external-cli.md", "FOLD_REASON=quota")
-        reason_line = _ref_block("dispatch-external-cli.md", "FOLD_REASON=\"$(python3")
+        block = _ref_block("dispatch-external-cli.md", "FOLD_REASON=\"$(python3")
+        self.assertNotIn("FOLD_REASON=quota", block)
+        quota_fold = _ref_block("dispatch-external-cli.md", "FOLD_REASON=quota")
+        self.assertTrue(quota_fold.startswith("FOLD_REASON=quota\n"))
+        self.assertNotIn("first line replaced", " ".join(
+            (_SUPER_REFS / "dispatch-external-cli.md").read_text(encoding="utf-8").split()))
         self._put("PRIOR_EXCLUDED_KEYS_JSON", [])
         self._put("WAVE_TRIED_JSON", [])
         self._put("WAVE_REASONS_JSON", {})
         result = os.path.join(self.root, "dispatch.json")
         with open(result, "w", encoding="utf-8") as handle:
             json.dump({"returncode": 1, "reason": "auth", "stdout": 'say "hi" $x `y`'}, handle)
-        block = fold.replace("FOLD_REASON=quota\n", reason_line)
         proc = self._bash(block, DISPATCH_BASE=result[:-len(".json")], INJECTION_KEY="a/one")
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertEqual({"a/one": "auth"}, self._get("WAVE_REASONS_JSON"))
@@ -3058,7 +3189,7 @@ class TestScalarFile(unittest.TestCase):
         self.assertTrue(wake.stdout.endswith("|0"), wake.stdout)
 
     def test_every_listing_that_prints_scalars_appends_them(self):
-        for name, needle in (("SKILL.md", "RESUME_FOUND"), ("SKILL.md", "WAKE_OWNED"),
+        for name, needle in (("SKILL.md", "RESUME_FOUND"), ("session-wake.md", "WAKE_OWNED"),
                              ("dispatch-external-cli.md", "REPORT_MODE=%s"),
                              ("dispatch-external-cli.md", "RETRY_AFTER_S=%s")):
             path = _SUPER_SKILL if name == "SKILL.md" else _SUPER_REFS / name
@@ -3074,9 +3205,128 @@ class TestScalarFile(unittest.TestCase):
         from ai_kit_spec_superpowers.dispatch_injection import compute_resume_exclusions
         self.assertEqual(["cap"], compute_resume_exclusions(["cap", "q"], {"cap": "capacity",
                                                                           "q": "quota"}, []))
-        skill = " ".join(_SUPER_SKILL.read_text(encoding="utf-8").split())
+        skill = " ".join((_SUPER_REFS / "resolution-stops.md").read_text(encoding="utf-8").split())
         self.assertIn('`"capacity"` included, is saved as a permanent exclusion', skill)
         self.assertNotIn("later retry on the same lane", skill)
         for name in ("escalation.md", "state-management.md"):
             text = " ".join((_SUPER_REFS / name).read_text(encoding="utf-8").split())
             self.assertIn("permanent exclusion", text, name)
+
+
+class TestProgressiveDisclosure(unittest.TestCase):
+    """SKILL.md stays a decision flow; every reference has an explicit load trigger."""
+
+    def test_skill_is_short_and_every_reference_has_a_trigger(self):
+        text = _super_text()
+        self.assertLessEqual(len(text.splitlines()), 300)
+        refs = sorted(p.name for p in (_SUPER_SKILL.parent / "references").glob("*.md"))
+        for name in refs:
+            body = (_SUPER_SKILL.parent / "references" / name).read_text(encoding="utf-8")
+            if name != "design-notes.md":  # optional background, no mandatory read
+                self.assertIn("MANDATORY", body.split("\n## ")[0], name)
+            if name != "state-management.md":
+                self.assertIn("Do NOT load", body + text, name)
+            self.assertIn(f"references/{name}", text + _super_dispatch_ref(), name)
+
+    def test_empty_anchor_stop_is_named_in_step_three(self):
+        flat = " ".join(_super_text().split())
+        self.assertIn("An empty anchor, or one missing from `ladder_keys`, dispatches nothing",
+                      flat)
+
+
+
+class TestRound22Wording(unittest.TestCase):
+    """r21: restore never dispatches the plain pick, wake binds, Step 0 placeholder, design note."""
+
+    @staticmethod
+    def _flat(path) -> str:
+        return " ".join(path.read_text(encoding="utf-8").split())
+
+    def test_step2_end_and_restore_never_dispatch_the_plain_pick_at_round_four(self):
+        skill = self._flat(_SUPER_SKILL)
+        restore = self._flat(_SUPER_REFS / "state-management.md")
+        self.assertIn("dispatch only the result of `references/escalation.md`'s resolve block, "
+                      "never this pick", skill)
+        self.assertIn("Step 3 dispatches that result, never the plain pick", restore)
+
+    def test_step0_placeholder_dirname_dot_is_skipped(self):
+        block = _super_block('case "$d" in')
+        self.assertIn('""|.|*"<"*', block)
+        self.assertIn("Replace `<absolute path to THIS SKILL.md>` with the absolute path",
+                      self._flat(_SUPER_SKILL))
+
+    def test_quota_wake_names_the_state_file_and_the_scalar_file_holds_the_paths(self):
+        wake = self._flat(_SUPER_REFS / "quota-wake.md")
+        self.assertIn("at RESUME_STATE_PATH from step 1", wake)
+        self.assertIn("PLAN_FILE and TASK_N are then in the file too", wake)
+        block = " ".join(_super_block("PROJECT_KEY RESUME_STATE_PATH").split())
+        self.assertIn("PLAN_FILE TASK_N QUOTA_PATH", block)
+
+    def test_injection_json_quotes_are_mandatory_and_design_note_is_exact(self):
+        self.assertIn("The quotes around", self._flat(_SUPER_REFS / "dispatch-external-cli.md"))
+        notes = self._flat(_SUPER_REFS / "design-notes.md")
+        self.assertIn("`dispatch-task` reads no tiers", notes)
+        self.assertNotIn("nothing like `ai_kit_spec.config_io.resolve_timeout_tiers`", notes)
+
+
+class TestRound23OnePath(unittest.TestCase):
+    """Round 23: the Seed, anchor, fold and floor rules each have one path."""
+
+    def setUp(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        self.bash_bin: str = bash_bin
+        self.root = tempfile.mkdtemp(prefix="super-r23-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def _bash(self, block, **env):
+        return subprocess.run(
+            [self.bash_bin, "-c", block], cwd=self.root, capture_output=True, text=True,
+            env={**os.environ, **env}, timeout=60, check=False)
+
+    @staticmethod
+    def _flat(path) -> str:
+        return " ".join(path.read_text(encoding="utf-8").split())
+
+    def test_seed_is_never_run_from_the_quota_wake(self):
+        self.assertIn("never from the quota-wake prompt", self._flat(_SUPER_SKILL))
+        self.assertIn("This run never executes Step 2 or the Seed block",
+                      self._flat(_SUPER_REFS / "quota-wake.md"))
+
+    def test_only_an_ok_dispatch_records_the_last_dispatched_key(self):
+        text = (_SUPER_REFS / "dispatch-external-cli.md").read_text(encoding="utf-8")
+        after = _ref_block("dispatch-external-cli.md", "REPORT_MODE=%s")
+        self.assertNotIn("LAST_DISPATCHED_KEY", after)
+        ok = " ".join(text[text.index('- **`"ok"`**'):].split()[:40])
+        line = re.search(r"`(printf 'LAST_DISPATCHED_KEY=.*?)`", ok).group(1)
+        scalars = os.path.join(self.root, "s.env")
+        proc = self._bash(line, INJECTION_KEY="a/one", SCALARS=scalars)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        with open(scalars, encoding="utf-8") as handle:
+            self.assertEqual("LAST_DISPATCHED_KEY=a/one\n", handle.read())
+
+    def test_real_error_fold_loads_the_result_file_first_and_survives_a_missing_one(self):
+        block = _ref_block("dispatch-external-cli.md", 'FOLD_REASON="$(python3')
+        self.assertNotIn("$(cat \"$DISPATCH_BASE.json\")\")", block)
+        head = "\n".join(block.splitlines()[:2])
+        proc = self._bash(head + '\nprintf "%s" "$FOLD_REASON"',
+                          DISPATCH_BASE=os.path.join(self.root, "none"))
+        self.assertEqual("real_error", proc.stdout)
+
+    def test_the_floor_script_stops_on_an_empty_or_unknown_anchor(self):
+        block = _ref_block("escalation.md", "ESCALATION_EXCLUDE_JSON saved")
+        run_dir = os.path.join(self.root, "run")
+        os.makedirs(run_dir)
+        with open(os.path.join(run_dir, "INJECTION_JSON.json"), "w", encoding="utf-8") as handle:
+            json.dump({"ladder_keys": ["a/one", "b/two", "c/three"]}, handle)
+        target = os.path.join(run_dir, "ESCALATION_EXCLUDE_JSON.json")
+        for anchor in ("", "z/gone"):
+            proc = self._bash(block, RUN_DIR=run_dir, ESCALATION_ANCHOR_KEY=anchor)
+            self.assertEqual(1, proc.returncode, anchor)
+            self.assertIn("STOP", proc.stderr)
+            self.assertFalse(os.path.exists(target))
+        proc = self._bash(block, RUN_DIR=run_dir, ESCALATION_ANCHOR_KEY="b/two")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        with open(target, encoding="utf-8") as handle:
+            self.assertEqual(["b/two", "c/three"], json.load(handle))

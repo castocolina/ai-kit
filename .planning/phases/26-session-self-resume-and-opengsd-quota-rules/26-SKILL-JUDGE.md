@@ -15,7 +15,7 @@ The makefile skill's SKILL.md changed only a count string in this phase and is n
 
 ## Rounds
 
-Sixteen rounds ran; every fix is a `fix(26-11)` commit. Only rounds 1, 2, 15 and 16 keep their reports in
+Eighteen rounds ran; every fix is a `fix(26-11)` commit. Only rounds 1, 2, 15, 16 and 18 keep their reports in
 `skill-judge/` (the others live in the ignored scratch directory).
 
 - Round 1 (Opus, referee-one, referee-two; 15 lanes): all five below the bar. Fixes 71a3db0, 16ddc7f, 4ece930, 8414319.
@@ -26,6 +26,7 @@ Sixteen rounds ran; every fix is a `fix(26-11)` commit. Only rounds 1, 2, 15 and
 - Rounds 12-14 (referee-two): the judge now checks claims against the code; several Critical findings were real (a missing backup on the links-only path, an invented wake session id, the zero-plan scan) and were fixed; others were refuted with evidence in the fix logs (a quoted-glob loop that does expand, `RC=$?` after a command substitution, `check_tool_presence` running repo binaries). Fixes 58bec82, 69bccc0, 76d2a06, b560ddd, 93101a8, d9f7c5a, a8b2f79, 399ea68, 33cbc80, ecb715f, 66c6c79.
 - Round 15 (referee-two alone): fixes 28a3c70, 36fec9c, aa81a27 precede it.
 - Round 16 (referee-two, execute-superpowers only, requested by the owner for SJ-2): fix dd7b004 precedes it; the score rose from 94 to 98 and the verdict from FAIL to UNRESOLVED. The other four skills keep their round 15 verdicts.
+- Rounds 17 and 18 (referee-two, execute-superpowers only, owner goal: grade A, i.e. 90% or 108/120): fixes 7f1df6c and b264799 (SKILL.md cut from 381 to 290 lines, arm/close and resolution stops moved to references). Round 17 scored 103/120 (86%, grade B, 1 Important); round 18 scored 104/120 (87%, grade B, 2 Important, both wording contradictions). The owner's cap of three rounds ended the series; grade A was not reached.
 
 The judge is not deterministic: the session-wake package, unchanged between rounds 13 and 14, went from
 115 with 0 Important to 108 with 1 Important under the same judge. Iterating further does not converge,
@@ -59,15 +60,15 @@ Reports: skill-judge/r15/ai-kit-spec-execute-gsd-my-referee-two.md
 
 Skill: ai-kit-spec-execute-superpowers
 Verdict: UNRESOLVED
-Round: 16
-Reviewed-sha256: 683e3a0c9be177ab0ff81ec767451f1e17a1d6cb7e81730e143ef8ee71fd8e58
+Round: 18
+Reviewed-sha256: 35f2ccd9681d61563642bded80f66bce63378c741719b6ca7613d8058a565823
 Base score: 110
 Base source: 25.1-SKILL-JUDGE.md, carried from Phase 18.1
-Score: 98
+Score: 104
 Critical findings: 0
-Important findings: 4
-Rule: lowest score 98 (referee-two 98); ((C0 and I4) -> False) or 98 >= 96 -> True; 98 >= 110 -> False.
-Reports: skill-judge/r16/ai-kit-spec-execute-superpowers-my-referee-two.md
+Important findings: 2
+Rule: lowest score 104 (referee-two 104); ((C0 and I2) -> False) or 104 >= 96 -> True; 104 >= 110 -> False.
+Reports: skill-judge/r18/ai-kit-spec-execute-superpowers-my-referee-two.md
 
 Skill: ai-kit-project-rules-agents
 Verdict: FAIL
@@ -110,4 +111,4 @@ Owner-decision: ai-kit-project-rules-agents accepts FAIL (2026-10-30, owner mess
 
 ## Pending acceptance
 
-- ai-kit-spec-execute-superpowers: UNRESOLVED (score 98 >= 96 but below the base 110; 4 Important open)
+- ai-kit-spec-execute-superpowers: UNRESOLVED (round 18 score 104/120 = 87%, grade B, below the base 110; 2 Important open: a pinned-injection resume that also re-enters Step 2 at FIX_ROUND >= 4, and return code 69 pointing at the wait branch)

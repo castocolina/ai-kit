@@ -6,8 +6,9 @@ MANDATORY read before computing `$ESCALATION_EXCLUDE_JSON` or re-running `resolv
 ## When it applies
 
 Right after a fix round's `$FIX_ROUND` increment, before composing that round's prompt, and on a
-resume that re-enters Step 2 with a restored `$FIX_ROUND` (no increment then, so the rule must be
-applied here before any dispatch), whenever `$FIX_ROUND >= 4` and the stuck dispatch cannot raise
+resume with no pinned `injection_json` that re-enters Step 2 with a restored `$FIX_ROUND` (no
+increment then; that plain Step 2 result (any mode) is only the source of `ladder_keys`: never act on its mode or dispatch it; before any dispatch, compute the floor from the restored `$ESCALATION_ANCHOR_KEY` and run the resolve block here; a restored `injection_json`
+always re-dispatches unchanged at any round), whenever `$FIX_ROUND >= 4` and the stuck dispatch cannot raise
 its own model:
 
 - `external_cli` (a subprocess through the supervised runner), always;
@@ -55,17 +56,17 @@ LADDER_KEYS_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys
 ESCALATION_EXCLUDE_JSON="$(python3 -c '
 import json, sys
 ladder = json.loads(sys.argv[1]); stuck = sys.argv[2]
-idx = ladder.index(stuck) if stuck in ladder else len(ladder)
-print(json.dumps(sorted(set(ladder[idx:]) | {stuck})))
-' "$LADDER_KEYS_JSON" "$ESCALATION_ANCHOR_KEY")"
+if stuck not in ladder:
+    sys.exit("STOP: empty or unknown ESCALATION_ANCHOR_KEY; ask the owner, do not resolve")
+print(json.dumps(sorted(set(ladder[ladder.index(stuck):]))))
+' "$LADDER_KEYS_JSON" "$ESCALATION_ANCHOR_KEY")" || exit 1
 printf '%s' "$ESCALATION_EXCLUDE_JSON" > "$RUN_DIR/ESCALATION_EXCLUDE_JSON.json"
 echo "ESCALATION_EXCLUDE_JSON saved to $RUN_DIR/ESCALATION_EXCLUDE_JSON.json"
 ```
 
 `ladder_keys` is in every `resolve-injection` result (every mode, `quota_exhausted` included): the
-full ranked candidate list before any exclusion. `{stuck}` is unioned in explicitly, so the stuck
-key is excluded even when it is missing from `ladder_keys`; the not-found fallback is
-`len(ladder)` (exclude nothing else), never `0` (which would exclude the whole ladder).
+full ranked candidate list before any exclusion. The block exits 1 without saving anything when the
+anchor is empty or missing from it (the STOP above); the floor is the stuck key and every key ranked below it.
 
 ## Re-running resolve-injection with the floor
 
@@ -97,8 +98,8 @@ INJECTION_MODE="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["mo
 printf 'INJECTION_MODE=%s\n' "$INJECTION_MODE" | tee -a "$SCALARS"
 ```
 
-Then handle the result exactly as Step 2 does (the `resolve-injection exit 2` stop, the untrusted
-config line, the `INJECTION_KEY`/`INJECTION_RUNTIME` block). A real candidate (`native` or
+Then handle the result exactly as Step 2 does (the `resolve-injection exit 2` stop and the untrusted
+config line in `references/resolution-stops.md`, the `INJECTION_KEY`/`INJECTION_RUNTIME` block). A real candidate (`native` or
 `external_cli`) is this round's bumped implementer: dispatch it without reassigning
 `$EXCLUDED_KEYS_JSON`, framed as subagent-driven-development requires: "A prior implementer
 attempted this task [N] times; you own it now. Read the report file for what was tried." Report
@@ -113,16 +114,16 @@ candidate, ranked above round 4's stuck key, so round 5's floor is at least as s
 
 ## If the re-resolution reports quota_exhausted or no_candidate
 
-Read `any_quota_recoverable` exactly as Step 2 does:
+Read `any_quota_recoverable` exactly as `references/resolution-stops.md` does:
 
-- **`True`** — a more-capable candidate is only temporarily out of quota. Follow Step 2's
-  recoverable branch: merge this result's `tried`/`reasons` into the wave sets, compute
+- **`True`** — a more-capable candidate is only temporarily out of quota. Follow the
+  recoverable branch there: merge this result's `tried`/`reasons` into the wave sets, compute
   `$RESUME_EXCLUDED_KEYS_JSON` with `resume-exclusions`, write `$STATE_JSON` (with this round's
   `$FIX_ROUND`, `$LAST_DISPATCHED_KEY` and `$ESCALATION_ANCHOR_KEY`) via `write-resumable-state`,
-  then stop the wave for a later re-run by the owner (which keys come back, and the permanent exclusion of the rest: Step 2). Never
+  then stop the wave for a later re-run by the owner (which keys come back, and the permanent exclusion of the rest: that file). Never
   dispatch a same-or-weaker candidate as a substitute.
 - **`False`, or `no_candidate`** — no more-capable candidate is eligible for automatic quota
-  recovery (Step 2's `False` branch: this stop writes no resumable-state file; the round and anchor scalars persist, so the re-invoke keeps the floor). Do not fall through to a same-or-weaker one. Nothing is scheduled. STOP and
+  recovery (the `False` branch there: this stop writes no resumable-state file; the round and anchor scalars persist, so the re-invoke keeps the floor). Do not fall through to a same-or-weaker one. Nothing is scheduled. STOP and
   tell the user that rounds 4–5 cannot honor the capability bump with the current ladder, reading
   `reasons`/`detail` for which candidates failed and why. When the pool was narrowed only by the
   floor (the stuck key is top-ranked), `reasons`/`detail` are empty by design: name the keys in

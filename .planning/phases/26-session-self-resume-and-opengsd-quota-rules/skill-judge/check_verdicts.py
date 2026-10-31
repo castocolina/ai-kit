@@ -3,6 +3,7 @@ sys.path.insert(0, "skills/ai-kit-spec-review")
 from ai_kit_spec.runner_dispatch import parse_status_line
 J = sys.argv[1]
 GATE = "--gate" in sys.argv[2:]
+SUMMARY = "--summary" in sys.argv[2:]
 SKILLS = ["ai-kit-session-wake", "ai-kit-spec-execute-gsd", "ai-kit-spec-execute-superpowers", "ai-kit-project-rules-agents", "ai-kit-project-rules-all"]
 # Judge sets differ by round (owner changes of 2026-10-30): rounds 1-3 ran the native Opus
 # subagent plus referee-one and referee-two through opencode; later rounds ran referee-two
@@ -75,6 +76,14 @@ for n, b in blocks.items():
     want = "FAIL" if not rule else ("PASS" if sc >= BASE[n] else "UNRESOLVED")
     assert v == want, "verdict " + n + ": " + v + ", reports give " + want
 print("verdicts ok")
+if SUMMARY:  # percentage and grade per skill, from the skill-judge scale (A 90%+, B 80-89, C 70-79, D 60-69, F <60)
+    for n, b in blocks.items():
+        if re.search(r"^Score: (\d+)$", b, re.M):
+            sc = num(b, "Score")
+            pct = round(sc * 100 / 120)
+            grade = "A" if sc * 100 >= 90 * 120 else "B" if sc * 100 >= 80 * 120 else "C" if sc * 100 >= 70 * 120 else "D" if sc * 100 >= 60 * 120 else "F"
+            bs = num(b, "Base score")
+            print("%s: %d/120 = %d%% grade %s; base %d/120 = %d%%; %s" % (n, sc, pct, grade, bs, round(bs * 100 / 120), re.search(r"^Verdict: (\S+)$", b, re.M).group(1)))
 if GATE:
     owner = set(re.findall(r"^Owner-decision: (\S+) accepts (PASS|UNRESOLVED|FAIL|BLOCKED) \(.+\)$", t.split("\n## Owner decisions\n", 1)[1].split("\n## ", 1)[0] if "\n## Owner decisions\n" in t else "", re.M))
     pend = []

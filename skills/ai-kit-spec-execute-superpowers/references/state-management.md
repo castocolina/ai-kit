@@ -43,9 +43,8 @@ locked out after a resume. Track the inputs separately for the task's whole life
   already cover every candidate discovers no reasons of its own, and a resumed wave would lose
   every earlier wave's real reason.
 - `$FIX_ROUND` — the fix round the task is on.
-- `$LAST_DISPATCHED_KEY` — the key of the most recent `dispatch-task` for this task (empty before
-  the first). A failed dispatch is not retried in the same round, so this records the dispatch
-  that ran, not a retry.
+- `$LAST_DISPATCHED_KEY` — the key of the most recent dispatch for this task that returned `ok` (empty
+  before the first). A `quota` or `real_error` dispatch never sets it.
 - `$ESCALATION_ANCHOR_KEY` — `$LAST_DISPATCHED_KEY` copied when a fix round starts, unchanged by a
   resume. The Rounds 4–5 floor is computed from it, never from a fresh pick.
 
@@ -75,8 +74,8 @@ the path, never restore it). It writes `excluded_keys` to `PRIOR_EXCLUDED_KEYS_J
 file may hold more) to `PRIOR_REASONS_JSON`; empties `WAVE_TRIED_JSON`/`WAVE_REASONS_JSON`; writes
 `INJECTION_JSON` when the file holds `injection_json`; and prints the scalars, appending the same
 lines to `$SCALARS` (`FIX_ROUND`, `LAST_DISPATCHED_KEY` and `ESCALATION_ANCHOR_KEY`, each empty when
-absent); then re-enter Step 2 (the printed `INJECTION_MODE`, `INJECTION_KEY` and `INJECTION_RUNTIME`
-mean it holds a pinned injection: go to Step 3 instead).
+absent); then re-enter Step 2 (at a restored `$FIX_ROUND >= 4` it ends in `references/escalation.md`'s resolve block, and Step 3 dispatches that result, never the plain pick), unless the printed `INJECTION_MODE`, `INJECTION_KEY` and
+`INJECTION_RUNTIME` show a pinned injection: that always goes to Step 3, at any `$FIX_ROUND`.
 
 ```bash
 python3 - "$RESUME_STATE_PATH" "$RUN_DIR" "$PLAN_FILE" "$TASK_N" "$SCALARS" <<'PY'
@@ -109,16 +108,15 @@ with open(scalars, "a", encoding="utf-8") as f:
 PY
 ```
 
-A resume does not increment the round, so with a restored `$FIX_ROUND >= 4` apply the Rounds 4–5
-rule (`references/escalation.md`) to that Step 2 result, with the floor computed from the restored
-`$ESCALATION_ANCHOR_KEY`, before any dispatch. A candidate that was only quota-exhausted when the
+A resume does not increment the round, so with a restored `$FIX_ROUND >= 4` and no `injection_json`
+that plain Step 2 result (any mode) is only the source of `ladder_keys`: never act on its mode or dispatch it; before any dispatch, compute the floor from the restored `$ESCALATION_ANCHOR_KEY` and run `references/escalation.md`'s resolve block. A candidate that was only quota-exhausted when the
 state was written is eligible again: the next `resolve-injection`
 refreshes quota, so it gets a real chance to have recovered. A permanently excluded one is never
 retried, and the task keeps its fix round and its escalation anchor.
 
-That Step 2 re-entry applies only when the file holds no `injection_json` (a stop before any
-dispatch, where selection along the ladder is still pre-dispatch). When it holds `injection_json`,
-a dispatch on that pair already failed: both the one-shot wake after a `RETURNCODE` 75 carrying
+That Step 2 re-entry, escalation included, applies only when the file holds no `injection_json` (a
+stop before any dispatch, where selection along the ladder is still pre-dispatch). When it holds
+`injection_json`, a dispatch on that pair already failed, so at any `$FIX_ROUND`: both the one-shot wake after a `RETURNCODE` 75 carrying
 `retry_after_s=` and `cycle=` (router quota or a spent transient ladder) and an owner's plain
 "resume" re-dispatch that object unchanged through Step 3's `dispatch-task` and skip
 `resolve-injection`, so no recovered or different candidate replaces the lane. Only an owner
@@ -261,7 +259,8 @@ PY
 ```
 
 Then run `references/escalation.md`'s "Re-running resolve-injection with the floor" block unchanged
-(it reads `ESCALATION_EXCLUDE_JSON` from the file), handle the result as Step 2 does, and confirm
+(it reads `ESCALATION_EXCLUDE_JSON` from the file; at any `$FIX_ROUND` that set is just every key but the
+owner's, so no capability floor applies and the owner's key is excluded from neither channel), handle the result as Step 2 does, and confirm
 `$INJECTION_KEY` equals `$OWNER_KEY`. A different key, `quota_exhausted` or `no_candidate` means
 the owner's pair is not eligible right now: STOP and report `reasons`/`detail`, never dispatch
 another key. The fix round, `$LAST_DISPATCHED_KEY` and `$ESCALATION_ANCHOR_KEY` stay as they are,

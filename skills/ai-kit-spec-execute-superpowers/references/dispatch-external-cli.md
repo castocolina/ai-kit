@@ -36,8 +36,8 @@ back to `write` for this task.
 
 ## Compose
 
-Compose the prompt from subagent-driven-development's implementer-prompt.md template (brief
-path, context, report-file path, the "you do not dispatch subagents" contract) into
+Compose the prompt from subagent-driven-development's implementer-prompt.md template (the controller
+holds it from Step 1's loaded skill; brief path, context, report-file path, the "you do not dispatch subagents" contract) into
 `$PROMPT_FILE`. It must tell the CLI to put its detailed report in `$REPORT_FILE` and return
 only a short status line. Put everything the implementer is asked to do inside one
 `<objective>…</objective>` block, and keep the WRITE/APPEND report sentence below outside it:
@@ -77,13 +77,14 @@ python3 "$SHIM" dispatch-task --injection-json "$(cat "$RUN_DIR/INJECTION_JSON.j
 echo "$?" > "$DISPATCH_BASE.exit"
 ```
 
+The quotes around `"$(cat ...)"` are mandatory: they keep the JSON one argv.
+
 Then, in a new call once `$DISPATCH_BASE.exit` exists (the file only marks completion; the shim
 exits 0 after a dispatch and the outcome is in the JSON):
 
 ```bash
 REPORT_MODE=append
-LAST_DISPATCHED_KEY="$INJECTION_KEY"
-printf 'REPORT_MODE=%s\nLAST_DISPATCHED_KEY=%s\n' "$REPORT_MODE" "$LAST_DISPATCHED_KEY" | tee -a "$SCALARS"
+printf 'REPORT_MODE=%s\n' "$REPORT_MODE" | tee -a "$SCALARS"
 ```
 
 `DISPATCH_RESULT_JSON` is the file `$DISPATCH_BASE.json`; every block below that needs it starts with
@@ -99,8 +100,7 @@ The runner's evidence lines (`cross-ai: report`, `cross-ai: upstream`, `AIKIT-XA
 `cross-ai: state` or `cross-ai: lane stopped=` path) are in `$DISPATCH_BASE.err`.
 `--heartbeat-interval` is required but unused (the runner prints its own heartbeat).
 
-The second block records `$LAST_DISPATCHED_KEY` for the next round's escalation anchor. If the
-CLI wrote `$REPORT_FILE` itself, `dispatch-task` leaves it untouched; otherwise it writes or
+If the CLI wrote `$REPORT_FILE` itself, `dispatch-task` leaves it untouched; otherwise it writes or
 appends the captured stdout behind a marker line. Review and the fix loop read `$REPORT_FILE`
 like a native report either way.
 
@@ -112,7 +112,9 @@ CLASSIFICATION="$(python3 "$SHIM" classify-dispatch-failure --dispatch-result-js
 printf 'CLASSIFICATION=%s\n' "$CLASSIFICATION"
 ```
 
-- **`"ok"`** — clear the resume state (`SKILL.md` Step 3, "Clear the resume state"), then continue
+- **`"ok"`** — run `printf 'LAST_DISPATCHED_KEY=%s\n' "$INJECTION_KEY" | tee -a "$SCALARS"` (only an
+  `ok` dispatch sets the next round's escalation anchor; `quota` and `real_error` never do), clear
+  the resume state (`SKILL.md` Step 3, "Clear the resume state"), then continue
   with subagent-driven-development's "2. Handle the report", reading the status from `stdout`,
   never from `$REPORT_FILE`:
 
@@ -138,7 +140,7 @@ printf 'STATUS=%s\n' "$STATUS"
   from `$DISPATCH_BASE.err` before folding, reading tokens or writing state: a later step must
   not act on a stop it has not relayed. Then fold this key in as a wave-tried key WITH the
   `"quota"` reason, never straight into `$EXCLUDED_KEYS_JSON` without one. The `real_error` branch
-  runs this same block with its first line replaced (see there):
+  has its own complete fold block (never this one):
 
 ```bash
 FOLD_REASON=quota
@@ -168,7 +170,8 @@ CYCLE="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); s=d.get("status
 printf 'RETURNCODE=%s\nRETRY_AFTER_S=%s\nCYCLE=%s\n' "$RETURNCODE" "$RETRY_AFTER_S" "$CYCLE" | tee -a "$SCALARS"
 ```
 
-  **Write state.** This branch already folded this key into the wave sets, so run the pinned
+  **Write state.** Runs for every classified `"quota"`, owner stops included, so each stop has a
+  `$RESUME_STATE_PATH` to report. This branch already folded this key into the wave sets, so run the pinned
   variant of the resumable-state bash, shown in full in `references/state-management.md` under
   "Pinned-injection state write": it uses the loaded `RESUME_STATE_PATH` and persists
   `INJECTION_JSON.json` as `injection_json`, so the wake re-dispatches this exact injection. Do not
@@ -177,8 +180,8 @@ printf 'RETURNCODE=%s\nRETRY_AFTER_S=%s\nCYCLE=%s\n' "$RETURNCODE" "$RETRY_AFTER
   **Schedule-or-stop.** Only a classified `"quota"` with `RETURNCODE` 75 and `RETRY_AFTER_S` and
   `CYCLE` both matching `[0-9]+` gets the one-shot wait and re-dispatch of the same task, lane and
   model (a hint such as `600s` classifies `real_error` and never reaches this branch). A tokenless
-  runner `RETURNCODE` 69 or 75 whose status is `transient` or `quota` reaches it as an owner stop;
-  a `RETURNCODE` 69
+  runner `RETURNCODE` 69 or 75 whose status is `transient` or `quota` is classified `quota` but is
+  an owner stop: relay, write pinned state, schedule nothing. A `RETURNCODE` 69
   (`stopped=hard-waits`, `stopped=cap`, or a `cross-ai: lane stopped=` refusal) is an owner stop
   after relaying the evidence, including that line's state path, whose deletion is the owner's
   reset; schedule nothing and re-arm nothing. A bare `RETURNCODE` 75 is also an owner stop.
@@ -194,7 +197,8 @@ fi
   Where `CronCreate` is callable, schedule one one-shot wake at `retry_after_s` (`RETRY_AFTER_S`;
   whole-minute rounding and the under-60 s case: ai-kit-cross-ai section 6) with the wake
   prompt; the job lives only as long as the session. **MANDATORY: read
-  `references/quota-wake.md` in full before scheduling or printing a wake** — it holds the
+  `references/quota-wake.md` in full before scheduling or printing a wake** (Do NOT load it on an
+  owner stop) — it holds the
   prompt, its fourteen placeholders and the woken run's resume rules. A host without that
   scheduler, or a wait it cannot represent, schedules nothing: it prints `retry_after_s`,
   `$RESUME_STATE_PATH` and that same prompt, marks the printed row unverified, and the owner
@@ -206,14 +210,28 @@ fi
   `references/state-management.md` for a pair the owner names.
 - **`"real_error"`** — a failed external dispatch stops for the owner (NEVER index). Relay the runner's report, upstream and `AIKIT-XAI` lines from `$DISPATCH_BASE.err`
   verbatim first (a pre-spawn refusal has none: relay its `ai-kit-spec:` line), then read
-  `$DISPATCH_RESULT_JSON`'s `reason` and report its fix with `SKILL.md` Step 2's reason-to-fix
-  list. Only a `real_error` reason proper (a crash, an empty answer, no change) offers the owner
+  `$DISPATCH_RESULT_JSON`'s `reason` and report its fix with the reason-to-fix list in
+  `references/resolution-stops.md`. Only a `real_error` reason proper (a crash, an empty answer, no change) offers the owner
   more context and a retry, a split of the task, or a ruling on a plan defect. Before stopping,
-  fold the failed key into the wave sets with its real reason: run the Relay fold block above with
-  its first line replaced by this one, so a replacement pair the owner names cannot re-pick it:
+  fold the failed key into the wave sets with its real reason, so a replacement pair the owner
+  names cannot re-pick it. Run this complete block as printed (not the quota block above):
 
 ```bash
-FOLD_REASON="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1] or "{}").get("reason") or "real_error")' "$(cat "$DISPATCH_BASE.json")")"
+DISPATCH_RESULT_JSON="$(cat "$DISPATCH_BASE.json")"
+FOLD_REASON="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1] or "{}").get("reason") or "real_error")' "$DISPATCH_RESULT_JSON")"
+PRIOR_EXCLUDED_KEYS_JSON="$(cat "$RUN_DIR/PRIOR_EXCLUDED_KEYS_JSON.json")"
+WAVE_TRIED_JSON="$(cat "$RUN_DIR/WAVE_TRIED_JSON.json")"
+WAVE_REASONS_JSON="$(cat "$RUN_DIR/WAVE_REASONS_JSON.json")"
+WAVE_TRIED_JSON="$(python3 -c 'import json,sys; print(json.dumps(sorted(set(json.loads(sys.argv[1])) | {sys.argv[2]})))' \
+  "$WAVE_TRIED_JSON" "$INJECTION_KEY")"
+WAVE_REASONS_JSON="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d[sys.argv[2]]=sys.argv[3]; print(json.dumps(d))' \
+  "$WAVE_REASONS_JSON" "$INJECTION_KEY" "$FOLD_REASON")"
+EXCLUDED_KEYS_JSON="$(python3 -c 'import json,sys; print(json.dumps(sorted(set(json.loads(sys.argv[1])) | set(json.loads(sys.argv[2])))))' \
+  "$PRIOR_EXCLUDED_KEYS_JSON" "$WAVE_TRIED_JSON")"
+printf '%s' "$WAVE_TRIED_JSON" > "$RUN_DIR/WAVE_TRIED_JSON.json"
+printf '%s' "$WAVE_REASONS_JSON" > "$RUN_DIR/WAVE_REASONS_JSON.json"
+printf '%s' "$EXCLUDED_KEYS_JSON" > "$RUN_DIR/EXCLUDED_KEYS_JSON.json"
+printf 'FOLD_REASON=%s\n' "$FOLD_REASON"
 ```
 
   Then run the "Pinned-injection state write" block (`references/state-management.md`) and report

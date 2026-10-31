@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-execute-superpowers
-description: Resolves a live-quota-checked (runtime, model) pair for each task of a superpowers implementation plan and injects it at superpowers:subagent-driven-development's implementer-dispatch point, leaving that harness's TDD enforcement, agent identity/resume, task review, fix-loop and final review intact. Use when ai-kit-spec-execute detects a superpowers-generated plan (docs/superpowers/plans/*.md) being run under subagent-driven-development and needs a pair for a task. Not for superpowers:executing-plans, which runs every task inline and has no subagent-dispatch point to inject into.
+description: Resolves a live-quota-checked (runtime, model) pair for each task of a superpowers implementation plan and injects it at superpowers:subagent-driven-development's implementer-dispatch point, leaving that harness's TDD enforcement, agent identity/resume, task review, fix-loop and final review intact. Use when ai-kit-spec-execute detects a superpowers-generated plan (docs/superpowers/plans/*.md) being run under subagent-driven-development and needs a pair for a task, or when asked to execute or run a superpowers plan that way. Not for superpowers:executing-plans, which runs every task inline and has no subagent-dispatch point to inject into.
 ---
 
 # ai-kit-spec-execute-superpowers
@@ -12,8 +12,8 @@ mechanism, an `external_cli` pair is dispatched through the shim's `dispatch-tas
 supervised runner (Step 3). That skill keeps full ownership of TDD enforcement,
 fresh-subagent-per-task, agent identity and resume, task review, fix loops, and the final
 whole-branch review. `superpowers:executing-plans` is out of scope: no dispatch point to inject into.
-Rationale for each rule lives in `references/design-notes.md`; read it only when one looks
-arbitrary.
+Rationale for each rule lives in `references/design-notes.md`: read it when one looks arbitrary,
+Do NOT load it otherwise.
 
 ## NEVER
 
@@ -43,7 +43,7 @@ Schedule-or-stop step's print path (`references/dispatch-external-cli.md`).
 
 **Cross-AI caller contract:** [`../ai-kit-cross-ai/SKILL.md`](../ai-kit-cross-ai/SKILL.md).
 MANDATORY: read it before the first `dispatch-task` and again before acting on any non-zero runner
-`returncode` in `$DISPATCH_RESULT_JSON` (sections 4, 6 and 8).
+`returncode` in `$DISPATCH_RESULT_JSON` (sections 4, 6, 8). Do NOT load it at any other point.
 The only key changes are pre-dispatch selection, the Rounds 4–5 bump (Step 3) and a pair the owner
 names after a stop (`references/state-management.md`, "Owner-named replacement pair").
 
@@ -57,7 +57,7 @@ for d in "$(dirname "<absolute path to THIS SKILL.md>")" \
          "$HOME/.claude/skills/ai-kit-spec-execute-superpowers" \
          "$(git rev-parse --show-toplevel 2>/dev/null)/skills/ai-kit-spec-execute-superpowers" \
          "$(pwd)/skills/ai-kit-spec-execute-superpowers"; do
-  case "$d" in ""|*"<"*) continue ;; esac  # an unfilled placeholder is never a path
+  case "$d" in ""|.|*"<"*) continue ;; esac  # an unfilled placeholder (dirname gives ".") is never a path
   [ -f "$d/ai-kit-spec-superpowers.py" ] && { SKILL_DIR="$d"; break; }
 done
 if [ -z "$SKILL_DIR" ]; then
@@ -74,6 +74,7 @@ TOOLS_PY="$REVIEW_SKILL_DIR/ai-kit-spec.py"
 printf 'SKILL_DIR=%s\nSHIM=%s\nTOOLS_PY=%s\n' "$SKILL_DIR" "$SHIM" "$TOOLS_PY"
 ```
 
+Replace `<absolute path to THIS SKILL.md>` with the absolute path of the SKILL.md you just loaded.
 This skill's own directory is tried first, so the shims match the `SKILL.md` you follow; the
 review skill must be its sibling (the shim puts both on `sys.path`). **Record all three printed
 lines**: the task-paths block below feeds them into the scalar file. Every later call uses
@@ -90,7 +91,8 @@ SCALARS="<the path the task-paths block printed>"
 while IFS== read -r k v; do [[ $k =~ ^[A-Z][A-Z0-9_]*$ ]] || continue; printf -v "$k" '%s' "$v"; done < "$SCALARS"
 ```
 
-The loader only assigns, never `source`s or `eval`s, so quotes, `$` and backticks stay inert; scalar values are single-line. **Quoting rule: never paste JSON text into a command.**
+The loader only assigns, never `source`s or `eval`s, so quotes, `$` and backticks stay inert; scalar values are single-line. **Quoting rule: never paste JSON text into a command.** Passing `"$NAME"` or
+`"$(cat file)"` as an argv is safe: a double-quoted expansion is never re-parsed, so quotes, `$`, backticks and newlines stay inert.
 `INJECTION_JSON`, `PRIOR_*`, `WAVE_*`, `EXCLUDED_KEYS_JSON` and `ESCALATION_EXCLUDE_JSON` live in
 `$RUN_DIR/<NAME>.json`, `DISPATCH_RESULT_JSON` is `$DISPATCH_BASE.json`; a call loads one with
 `NAME="$(cat "$RUN_DIR/NAME.json")"` and saves a change with `printf '%s' "$NAME" > "$RUN_DIR/NAME.json"`.
@@ -127,49 +129,10 @@ for n in SCALARS SKILL_DIR SHIM TOOLS_PY CWD PLAN_FILE TASK_N QUOTA_PATH PROJECT
 
 ## Arm the session wake (plans with two or more tasks)
 
-Run this block once per plan, not once per task: before the first task's implementer dispatch, only
-when `$PLAN_FILE` holds two or more `### Task <n>` headings. It skips itself on the loaded
-`WAKE_OWNED=1`, so every later task and any re-invoked or wake-resumed run leaves the wake alone
-(`arm` would print `refreshed` and overwrite `WAKE_OWNED`). The wake is owned by this run only when
-this block itself prints `armed`; a refusal, exit 3 or `refreshed` (a wake that existed before this
-run) leaves `WAKE_OWNED=0`, and the stop re-arm and the close step then call nothing. Never fail the
-run on the wake. Fill the first line (the id is not in the scalar file yet): on claude leave it
-empty. pi and opencode have no verified session variable: put an id there only when the owner or
-the host gave one or the wake state file a resume prompt names holds it (the ai-kit-session-wake
-skill's Arm section), never a guess or the newest session file. Otherwise leave it empty: `arm`
-refuses (exit 2), the block prints it and the run goes on with `WAKE_OWNED=0`. One `Bash` call:
-
-```bash
-WAKE_SESSION_ID="<an id the owner, host or resume state gave, else empty>"
-if [ "${WAKE_OWNED:-0}" = 1 ]; then echo "session wake already owned by this plan: arm skipped"; exit 0; fi
-case "$WAKE_SESSION_ID" in *"<"*)
-  echo "ERROR: WAKE_SESSION_ID is a placeholder -- fill it with a given id or empty it"; exit 1 ;; esac
-TASK_COUNT=$(grep -cE '^### Task [0-9]' "$PLAN_FILE")
-WAKE_OWNED=0
-WAKE_SHIM="$(dirname "$SKILL_DIR")/ai-kit-session-wake/ai-kit-session-wake.py"
-if [ "$TASK_COUNT" -lt 2 ]; then
-  echo "single-task plan: no session wake"
-elif [ ! -f "$WAKE_SHIM" ]; then
-  echo "ai-kit-session-wake not installed; no session wake"
-else
-  WAKE_OUT="$(python3 "$WAKE_SHIM" arm ${WAKE_SESSION_ID:+--session-id "$WAKE_SESSION_ID"} --ref "$PLAN_FILE" 2>&1)"
-  WAKE_RC=$?
-  echo "$WAKE_OUT"
-  echo "session wake arm exit $WAKE_RC"
-  WAKE_LINE="$(printf '%s\n' "$WAKE_OUT" | grep '^armed ' | head -n 1)"
-  if [ "$WAKE_RC" -eq 0 ] && [ -n "$WAKE_LINE" ]; then
-    WAKE_HOST_ID="${WAKE_LINE#armed }"
-    WAKE_HOST="${WAKE_HOST_ID%%-*}"
-    WAKE_ID="${WAKE_HOST_ID#*-}"
-    WAKE_OWNED=1
-  fi
-fi
-for n in WAKE_SHIM WAKE_OWNED WAKE_HOST WAKE_ID; do printf '%s=%s\n' "$n" "${!n:-}"; done | tee -a "$SCALARS"
-```
-
-The `WAKE_*` values now persist for every later task. When `arm` prints a `companion:` line (here
-or at the re-arm below), act on it as [`../ai-kit-session-wake/SKILL.md`](../ai-kit-session-wake/SKILL.md)
-says under "When `arm` prints a companion time".
+**MANDATORY: read [`references/session-wake.md`](references/session-wake.md) in full, once per plan,
+before the first task's implementer dispatch**, and run its arm block only when `$PLAN_FILE` holds two
+or more `### Task <n>` headings. Do NOT load it for a single-task plan. It sets `WAKE_OWNED`,
+`WAKE_HOST` and `WAKE_ID` for every later task; a failed or refused arm never fails the run.
 
 ## Step 2: Before each task's implementer dispatch — resolve the injection
 
@@ -183,19 +146,15 @@ The state is three sets (permanent exclusions, this wave's tried keys, the deriv
 resumable-state file, read `references/state-management.md` in full** — it names every variable,
 its initial and resume values, and the exact resumable-state bash.
 
-Step 2 runs once per task, before its first dispatch, and again only for a resume without a
-pinned `injection_json`, a trust-local yes, or the Rounds 4–5 re-resolution (Step 3). Fix rounds
-1–3 reuse the task's `$INJECTION_JSON` unchanged: no lane or model change between rounds.
+Step 2 runs once per task, before its first dispatch, and again only for a resume without a pinned `injection_json`, a trust-local yes, or the Rounds 4–5 re-resolution (Step 3). A restored `injection_json` is pinned: it re-dispatches unchanged at any `$FIX_ROUND`. Fix rounds 1–3 reuse the task's `$INJECTION_JSON` unchanged.
 
-**Resume check — before any resolution.** A re-invoke after a stop starts here with no memory: the task-paths block above already looked for the task's state file and printed `RESUME_FOUND`.
-`RESUME_FOUND=0`: a new task, or a re-invoke after a stop that wrote no state; run "Seed a new task"
-in `references/state-management.md` (it keeps an already-seeded task's `$FIX_ROUND` and anchor), then
-the rest of this step. `RESUME_FOUND=1`: run that file's "Restore" script (it checks `framework`,
-`plan_path` and `task_index`, writes the JSON files). If it held `injection_json`,
-it prints `INJECTION_MODE`, `INJECTION_KEY` and `INJECTION_RUNTIME`: go straight to Step 3, reusing
-the existing `$PROMPT_FILE` (switch only its WRITE sentence to APPEND; never recompose the objective);
-otherwise run the rest of this step on the restored values. A finished task's file is stale: Step 3 deletes it on a successful dispatch, an owner
-restarting the plan deletes any other.
+**Resume check — before any resolution** (a re-invoke starts here with no memory; the task-paths
+block printed `RESUME_FOUND`). `RESUME_FOUND=0`: run "Seed a new task" in
+`references/state-management.md` (never from the quota-wake prompt; it keeps an already-seeded task's `$FIX_ROUND` and anchor), then
+the rest of this step. `RESUME_FOUND=1`: run that file's "Restore" script. If the file held
+`injection_json`, it prints `INJECTION_MODE`, `INJECTION_KEY` and `INJECTION_RUNTIME`: go straight
+to Step 3, reusing the existing `$PROMPT_FILE` (switch only its WRITE sentence to APPEND; never
+recompose the objective); otherwise run the rest of this step on the restored values. **Either branch, with a restored `$FIX_ROUND >= 4` and no pinned `injection_json`:** that plain result (any mode) is only the source of `ladder_keys`: never act on its mode or dispatch it; before any dispatch, compute the floor from the restored `$ESCALATION_ANCHOR_KEY` and run `references/escalation.md`'s resolve block (Step 3). Step 3 deletes a finished task's file on a successful dispatch; an owner restarting the plan deletes any other.
 
 Right after that skill's `scripts/task-brief PLAN_FILE N` writes `$BRIEF_FILE`:
 
@@ -219,19 +178,10 @@ for n in BRIEF_FILE INJECTION_MODE; do printf '%s=%s\n' "$n" "${!n}"; done | tee
 `--excluded-reasons-json` always gets the merge of `$PRIOR_REASONS_JSON` and `$WAVE_REASONS_JSON`,
 never `$WAVE_REASONS_JSON` alone.
 
-**If the block prints `resolve-injection exit 2`**: a malformed `review-spec.toml`, or an
-entry with `purpose = "execute"` that can never execute (a custom `command` entry, grok, or a
-claude pair that does not run natively). STOP and relay its stderr verbatim; any other non-zero
-exit stops the same way.
-
-**If its stderr prints `ai-kit-spec: ignoring untrusted project-local config <path>; review its
-commands with ...`** (match on the whole `ai-kit-spec: ignoring untrusted project-local config` prefix), this resolution used the global
-config only. Ask **once per run**: relay the line verbatim, show
-`python3 "$TOOLS_PY" trust-local --cwd "$CWD" --show` (one JSON line per local reviewer with the
-argv it would run, the prompt shown as `<prompt>`; writes nothing), and ask whether to trust it.
-On yes, run `python3 "$TOOLS_PY" trust-local --cwd "$CWD"` and re-run this step's
-`resolve-injection` before dispatching. On no, continue on the global-only result and do not ask
-again this run, though the line repeats on every later resolution. Never trust unasked.
+**Non-zero exit or an untrusted-project-config line** (`resolve-injection exit 2`; stderr
+`ai-kit-spec: ignoring untrusted project-local config <path>; ...`): **MANDATORY: read
+[`references/resolution-stops.md`](references/resolution-stops.md)** for the stop, the one-per-run
+`trust-local` ask and the re-run. Never run `trust-local` unasked.
 
 **Branch on `$INJECTION_MODE` before reading any other field.** Only `native` and `external_cli`
 carry `key`/`runtime` (`$INJECTION_KEY` is the ladder key such as `codex/terra`, `$INJECTION_RUNTIME`
@@ -249,58 +199,37 @@ if [ "$INJECTION_MODE" != "quota_exhausted" ] && [ "$INJECTION_MODE" != "no_cand
 fi
 ```
 
-- **`no_candidate`** — nothing configured for this task survives affinity/context narrowing (read
-  `detail`, e.g. every `context_limit` is below the task's `required_context`). A curation gap, not
-  quota. STOP this wave and report `detail`. Nothing is scheduled.
-- **`quota_exhausted`** — read `any_quota_recoverable`
-  (`python3 -c 'import json,sys; print(json.loads(sys.argv[1])["any_quota_recoverable"])' "$(cat "$RUN_DIR/INJECTION_JSON.json")"`).
-  It, not `all_auth_failures`, is the gate. `reasons` holds `"quota"`, `"auth"`,
-  `"billing_or_access"`, `"capacity"`, `"git_timeout"`, `"timeout"`, `"configuration"`,
-  `"dispatch_unavailable"`, `"real_error"`, `"no_usable_dispatch"` (a prior wave's permanent
-  failure), or a skip-route name (`"bad_model"`, `"review_only"`, `"not_installed"`,
-  `"no_inventory"`, `"unknown_runtime"`, `"no_model"`; never picked). Only `"quota"` is worth
-  waiting for.
-  - **`any_quota_recoverable == False`** — no candidate is eligible for automatic quota recovery
-    (only `"quota"` is). Some reasons may clear on their own (`"capacity"`), others need a fix first
-    (credentials, configuration). STOP this wave and tell the user which key needs what fix, read
-    off `reasons`: `"auth"` needs login or entitlement, `"billing_or_access"` credits or model
-    access, `"configuration"` a fixed model id, prompt or flag (the runner refused it), `"capacity"`
-    a later re-invoke (this stop writes no resumable-state file, so a key not already saved as
-    permanent is tried again; the scalars persist), `"git_timeout"` a look at the repo (the work-tree
-    check timed out, not the CLI), `"timeout"`/`"dispatch_unavailable"` an investigation of the CLI,
-    `"real_error"` its own diagnosis (pinned state: dispatch-external-cli.md). Nothing is scheduled. This
-    stop is the adapter's own call, not one of subagent-driven-development's four stop-and-ask conditions
-    (`references/design-notes.md`).
-  - **`any_quota_recoverable == True`** — at least one candidate is quota-exhausted, which is
-    time-bound. Write resumable state, then STOP this wave and report the reasons per key and the
-    state path; the owner re-invokes to resume. Nothing is scheduled. Only `"quota"` keys come back:
-    every other co-tried key, `"capacity"` included, is saved as a permanent exclusion. **MANDATORY: read
-    `references/state-management.md`'s "Resumable state" sections first** — they give the exact bash
-    for merging `tried`/`reasons` into the wave sets, computing `$RESUME_EXCLUDED_KEYS_JSON` with the
-    `resume-exclusions` subcommand (never inline set arithmetic), the `STATE_JSON` passed to
-    `write-resumable-state`.
+- **`no_candidate`, `quota_exhausted`** — **MANDATORY: read `references/resolution-stops.md`** (reason-to-fix
+  list, the `any_quota_recoverable` gate, the resumable-state write); both STOP this wave and
+  schedule nothing. Do NOT load it for any other mode.
 - **Otherwise** `$INJECTION_JSON` carries `mode`, `key`, `runtime`, `model`, `ladder_keys`, and for
-  `external_cli` also `effort`, `service_tier`. Go to Step 3.
+  `external_cli` also `effort`, `service_tier`. Go to Step 3 (a restored `$FIX_ROUND >= 4` with no pinned
+  `injection_json`: dispatch only the result of `references/escalation.md`'s resolve block, never this pick).
 
 ## Step 3: Dispatch the implementer — apply the injection
 
-A reviewer or executor is a (runtime, model) pair. Each call runs it natively when its runtime is the current host and the host can select that model; otherwise it runs as a subprocess through the supervised runner. An entry with neither a runtime nor a model is the session default, which the host always runs natively. Today only Claude Code selects a model per call (its sonnet, opus, haiku and fable aliases); every other host runs only its session default natively.
+The (runtime, model) pair contract and the native-versus-subprocess routing are defined in `ai-kit-spec-config` and `ai-kit-spec-review`; `$INJECTION_MODE` is that routing's result, never re-decided here.
 
 **At the start of every fix round, in either mode, increment `$FIX_ROUND` and set
 `ESCALATION_ANCHOR_KEY="$LAST_DISPATCHED_KEY"` first** (block below; new rounds only, never on a resume,
-a re-invoke that kept its scalars or a Step-2 re-entry, which keep the round and anchor), then, before
-composing or dispatching, apply the Rounds 4–5 rule below (rounds 1–3 keep `$INJECTION_JSON` and skip
-Step 2; at `$FIX_ROUND >= 4` **MANDATORY: read `references/escalation.md` now**). A resume without
-`injection_json` runs Step 2 again and, at `$FIX_ROUND >= 4`, applies the same floor from the restored
-`$ESCALATION_ANCHOR_KEY` after Step 2; a pinned resume re-dispatches its injection unchanged. A failed
-dispatch gets no same-round re-dispatch.
+a re-invoke that kept its scalars or a Step-2 re-entry, which keep the round and anchor, yet at 4 or more still take the floor below). Rounds 1–3 keep `$INJECTION_JSON` and skip Step 2. A failed dispatch gets no same-round re-dispatch.
+
+**Rounds 4–5 capability escalation (`external_cli`, and `native` on every host but Claude Code).**
+At `$FIX_ROUND >= 4` after the increment, or restored at 4 or more by a resume with no pinned
+`injection_json` (a pin always re-dispatches unchanged), subagent-driven-development requires "a MORE
+CAPABLE model". **MANDATORY: read `references/escalation.md` in full before composing or dispatching
+the round and before computing `$ESCALATION_EXCLUDE_JSON`**: the floor is relative to
+`$ESCALATION_ANCHOR_KEY` (the dispatch that got stuck), never to the key Step 2 just picked, and is
+applied before the round's dispatch, never after a failed one. An empty anchor, or one missing from
+`ladder_keys`, dispatches nothing: STOP and ask the owner ("An empty or unknown anchor never
+dispatches"). Do NOT load it at rounds 1–3.
 
 ```bash
 FIX_ROUND=$((FIX_ROUND + 1)); ESCALATION_ANCHOR_KEY="$LAST_DISPATCHED_KEY"
 printf 'FIX_ROUND=%s\nESCALATION_ANCHOR_KEY=%s\n' "$FIX_ROUND" "$ESCALATION_ANCHOR_KEY" | tee -a "$SCALARS"
 ```
 
-**Clear the resume state when a dispatch succeeds** (a native dispatch that returned, or an
+**Clear the resume state when a dispatch succeeds** (only after it, never before dispatching: a native dispatch that returned, or an
 `external_cli` one classified `"ok"`), so a re-invoke never restores a stale round or pinned
 injection; a later stop rewrites it from the live values. It removes only this task's own file,
 never the runner's lane file:
@@ -315,9 +244,7 @@ fix-loop rounds 1–3 resume that same agent. Its round 4/5 model bump follows t
 more capable model) and happens before the round's dispatch, after a review returned findings. On any other host the native case is
 only the session default, so omit `model` and let the host use its current session. Either way, after
 the dispatch run `printf 'LAST_DISPATCHED_KEY=%s\n' "$INJECTION_KEY" | tee -a "$SCALARS"` and clear the
-resume state. A non-Claude native dispatch cannot raise its own model, so rounds 4–5 take the ladder
-escalation below; when it finds nothing higher, it stops and asks for a more capable routable pair above
-it in `policy.ladder`. A failed native dispatch (for example an `Agent` model error) is
+resume state. A non-Claude native dispatch cannot raise its own model, so rounds 4–5 take the ladder escalation above. A failed native dispatch (for example an `Agent` model error) is
 subagent-driven-development's own (NEVER index); stop for the owner when that skill has no route.
 
 **`mode == "external_cli"`:** a subprocess through the supervised runner. A CLI process exits when
@@ -334,8 +261,8 @@ Dispatch steps, the **Classify** step (`ok`, `quota`, `real_error`) and, inside 
 - **`"ok"`** — clear the resume state (block above), read the status from `stdout` only, and
   continue with subagent-driven-development's "2. Handle the report".
 - **`"quota"`** — only `RETURNCODE` 75 with whole-number `retry_after_s` and `cycle` gets one
-  one-shot wait and a re-dispatch of the same injection (Schedule-or-stop); a `RETURNCODE` 69
-  (`stopped=hard-waits`, `stopped=cap`), a bare 75 and any other quota class are owner stops.
+  one-shot wait and a re-dispatch of the same injection (Schedule-or-stop); every `RETURNCODE` 69
+  (`stopped=hard-waits`, `stopped=cap`, or tokenless), a bare 75 and any other quota class are owner stops.
 - **`"real_error"`** — stop for the owner with the pinned state written.
 
 **Exec confinement** (reasoning: `references/design-notes.md`). Codex runs under
@@ -344,17 +271,9 @@ writes unverified). Every other exec target has full permissions, and its stay-i
 guidance is not a boundary. `claude` is review-only and never runs here. pi exec is verified by the
 runner's hermetic self-test only and live verification is still open (stderr prints that note); a copilot target gets a similar note:
 unverified error rows, all tools allowed, the task prompt visible on argv. **Node:** subprocess
-dispatch needs Node 24 (`@opengsd/gsd-core` declares `engines.node >=24.0.0`; older untested). The runner fails closed as
-`dispatch_unavailable` (a `real_error` stop) only when `node` is absent; an older Node may crash.
-
-**Rounds 4–5 capability escalation (`external_cli`, and `native` on every host but Claude
-Code).** When `$FIX_ROUND >= 4` after the increment, or restored at 4 or more by a resume that
-re-enters Step 2, subagent-driven-development requires "a MORE CAPABLE model". The floor is
-relative to `$ESCALATION_ANCHOR_KEY` (the dispatch that got stuck, persisted across resumes),
-never to the key Step 2 just picked, and is applied before the round's dispatch, never after a
-failed one. **MANDATORY: before computing `$ESCALATION_EXCLUDE_JSON` or passing
-`--escalation-excluded-keys-json`, read `references/escalation.md` in full**: the ladder-position
-proxy, the computation, the full resolve block and the `quota_exhausted`/`no_candidate` branches.
+dispatch needs Node 24 (GSD's declared floor, `@opengsd/gsd-core` 1.17.0 `engines.node >=24.0.0` per
+`.planning/phases/18.1-one-runtime-model/18.1-RESEARCH.md:231`, not declared in this tree; older untested).
+The runner fails closed as `dispatch_unavailable` (a `real_error` stop) only when `node` is absent; an older Node may crash, and that crash is a `real_error` of the pair, never a reason to switch pairs.
 
 ## Step 4: Task review, fix loop, final review — unaffected
 
@@ -365,17 +284,6 @@ skill's scope ends at Step 3 and never touches review, adjudication, or the ledg
 
 ## Close the session wake
 
-When this skill's job ends (the final whole-branch review finished, which the caller runs and
-this skill never does, or a stop ended the run: STOP this wave, or an owner stop) and only when
-`WAKE_OWNED=1`, run:
-
-```bash
-if [ "$WAKE_OWNED" = 1 ]; then
-  python3 "$WAKE_SHIM" done --host "$WAKE_HOST" --session-id "$WAKE_ID"
-  echo 'WAKE_OWNED=0' >> "$SCALARS"  # a later run of this plan arms its own wake
-fi
-```
-
-Never run it on the one-shot wait branch of Schedule-or-stop, which continues the run, nor for a
-task still waiting on its wake. When `WAKE_OWNED=0`, call nothing: a `refreshed` arm left the earlier
-wake to its owner, who runs `done` or `disarm` by hand.
+When the job ends (the final whole-branch review finished, which the caller runs, or a stop ended the
+run) and only when `WAKE_OWNED=1`, run the close block in `references/session-wake.md` (never on the
+one-shot wait branch of Schedule-or-stop). When `WAKE_OWNED=0`, call nothing.
