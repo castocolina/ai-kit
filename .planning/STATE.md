@@ -5,16 +5,16 @@ milestone_name: GSD Curated Config v2
 current_phase: 27
 current_phase_name: One-shot goal and loop prompt skill
 status: executing
-stopped_at: Completed 27-09-PLAN.md
-last_updated: "2026-10-31T15:12:35.936Z"
+stopped_at: Completed 27-10-PLAN.md
+last_updated: "2026-10-31T15:21:02.293Z"
 last_activity: 2026-10-24
 last_activity_desc: Phase 23 execution started
-state_head: 5f686c666826b0e7217f2606064206718dd6658a
+state_head: b1ff8df20a0326f5e1e23872b3697334764a571d
 progress:
   total_phases: 18
   completed_phases: 1
   total_plans: 212
-  completed_plans: 207
+  completed_plans: 208
   percent: 6
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-09-23)
 ## Current Position
 
 Phase: 27 (One-shot goal and loop prompt skill) — READY TO EXECUTE
-Plan: 10 of 13
+Plan: 11 of 13
 Status: Ready to execute
 Last activity: 2026-10-24 - Completed quick task 261024-ryk: agent_skills references gsd-core resolves
 
@@ -319,6 +319,7 @@ Progress: [█░░░░░░░░░] 6%
 | Phase 27 P06 | unmeasured | 3 tasks | 6 files |
 | Phase 27 P07 | unmeasured | 2 tasks | 7 files |
 | Phase 27 P08 | unmeasured | 2 tasks | 6 files |
+| Phase 27 P10 | unmeasured | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -457,6 +458,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 27]: 27-09 detect re-selects nothing: render re-selects strategies from the explicit answers request and reports drops; a requested autonomous on a non-GSD scope is reported in dropped (closes WINDOWS #3)
 - [Phase 27]: 27-09 plans work set is restricted in the CLI (detect_scope unchanged; closes WINDOWS #2); unattended is not asked, so derive() sees must_outlive from the item count alone
 - [Phase 27]: 27-09 R18/R19 parity runs through check_rules on the generated QUOTA text and the golden pins the recommended OpenGSD case (closes WINDOWS #6)
+- [Phase 27]: Skill passes --gsd-cmd: detect exits 2 on a .planning project without a GSD capture (observed)
+- [Phase 27]: Drift tests pin SKILL.md prose to the RULES ids, ZERO_TEST_MARKERS labels, the parser flags and the golden excerpt
 
 ### Pending Todos
 
@@ -623,6 +626,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-10-31T15:12:35.101Z
-Stopped at: Completed 27-09-PLAN.md
+Last session: 2026-10-31T15:21:01.422Z
+Stopped at: Completed 27-10-PLAN.md
 Resume file: None

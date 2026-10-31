@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 3
+open_count: 2
 waived_count: 0
-fixed_count: 5
+fixed_count: 6
 total_count: 8
-last_updated: 2026-10-31T15:11:25.511Z
+last_updated: 2026-10-31T15:20:53.069Z
 ---
 
 # Broken Windows Ledger
@@ -15,7 +15,7 @@ last_updated: 2026-10-31T15:11:25.511Z
 
 | id | phase | kind | file | line | description | status | reason | recorded_at | resolved_at |
 |----|-------|------|------|------|-------------|--------|--------|-------------|-------------|
-| 1 | 27 | stub | skills/ai-kit-spec-goal-prompt/SKILL.md |  | Intentional stub SKILL.md; plan 27-10 writes the real skill | open |  | 2026-10-31T13:34:32.748Z |  |
+| 1 | 27 | stub | skills/ai-kit-spec-goal-prompt/SKILL.md |  | Intentional stub SKILL.md; plan 27-10 writes the real skill | fixed |  | 2026-10-31T13:34:32.748Z | 2026-10-31T15:20:53.069Z |
 | 2 | 27 | deviation | skills/ai-kit-spec-goal-prompt/scripts/gp_scope.py |  | detect_scope does not restrict plan files to a requested plans work set (ScopeInputs has no file list); the caller restricts until the CLI plan wires the answers | fixed |  | 2026-10-31T13:43:40.051Z | 2026-10-31T15:11:25.372Z |
 | 3 | 27 | deviation | skills/ai-kit-spec-goal-prompt/scripts/gp_matrix.py |  | A user request for autonomous on a superpowers or none scope has no matrix row (M08 covers gsd-unproven only); the request is ignored, not listed in dropped. Decide: strategy or dropped request | fixed |  | 2026-10-31T14:20:32.696Z | 2026-10-31T15:11:25.447Z |
 | 4 | 27 | stub | skills/ai-kit-spec-goal-prompt/scripts/gp_render.py |  | render raises NotImplementedError for non-OpenGSD scopes and plans work sets until plan 27-07 | fixed |  | 2026-10-31T14:33:12.924Z | 2026-10-31T14:44:15.030Z |
@@ -33,10 +33,10 @@ last_updated: 2026-10-31T15:11:25.511Z
     "file": "skills/ai-kit-spec-goal-prompt/SKILL.md",
     "line": null,
     "description": "Intentional stub SKILL.md; plan 27-10 writes the real skill",
-    "status": "open",
+    "status": "fixed",
     "reason": "",
     "recorded_at": "2026-10-31T13:34:32.748Z",
-    "resolved_at": null,
+    "resolved_at": "2026-10-31T15:20:53.069Z",
     "milestone": "v1.3"
   },
   {
