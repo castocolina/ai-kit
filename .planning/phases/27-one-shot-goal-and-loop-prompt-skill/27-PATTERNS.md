@@ -115,6 +115,11 @@ Exit 0 ok; 2 bad input or a guard failure (message names the field, never echoes
 - Rails placement: inline in the block iff the ranked strategy list is exactly `autonomous`; otherwise one shared `## Rails` section follows the `COPY TO HERE` marker and each block names the file by its own repo-relative path.
 - Template delimiter is `\u00a7\u00a7`; if `string.Template` rejects a two-character delimiter on this Python the single `\u00a7` is used (noted in the 27-06 SUMMARY).
 
+- `detect` also prints `"candidate_skills": [str]` (sibling skill names among `ai-kit-cross-ai`, `ai-kit-session-wake`, `ai-kit-gsd-spec-discuss`, `ai-kit-spec-execute-superpowers` that exist next to this skill, sorted; `[]` when none), `"wake": {"primitive": str|null, "label": ""|"unverified"}` (`gp_matrix.wake_primitive`: the loop-capable row with the highest survival rank) and `"runner": {"command": str, "label": str}` (the `workflow.cross_ai_command` text and the readiness label). `render` reads these three.
+- `free:<text>` and `plans:<files>` work sets need no GSD capture; only a `phases:` work set on a project with `.planning/` does.
+- The block fence is a line of exactly four backticks; no other line may contain that token (`check_text` enforces it) so a block can be extracted by its fences.
+- An `autonomous` block always carries the rails inline; every other block names the shared `## Rails` section, emitted only when a non-autonomous block exists.
+
 ### File format
 Wrapper (at most three sentences), then `▼▼▼ COPY FROM HERE ▼▼▼`, one fenced block per ranked strategy (recommended first and marked), `▲▲▲ COPY TO HERE ▲▲▲`. OpenGSD: one block; line 1 `/gsd-autonomous --from N --to M --converge` (or `--only N`); the labeled sections OBJECTIVE, ROLE, RULES FOR EVERY PLAN, ORDER, QUOTA, DECISIONS, SAFETY, DONE WHEN, CLEANUP, STOP IF, REPORT. Non-OpenGSD blocks use the same sections minus the autonomous first line; a `/goal` block is `/goal <condition>` where the condition (at most 4,000 code points) names the rails file (`§Rails` section of the same file, by repo-relative path) and the evidence to print.
 

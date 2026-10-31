@@ -67,14 +67,14 @@ created: "2026-10-31"
 | 27-10-1 | 10 | 8 | GPS-01..GPS-04 | T-27-24, T-27-25 | SKILL.md within 300 lines, NEVER, MANDATORY, four questions | doc check | Task 1 verify | no (created by the plan) | pending |
 | 27-10-2 | 10 | 8 | GPS-01, GPS-03 | T-27-24 | Four references mirror the data in code | doc check | Task 2 verify | no (created by the plan) | pending |
 | 27-10-3 | 10 | 8 | GPS-01..GPS-04 | T-27-24, T-27-26 | Drift tests tie prose to matrix, markers and golden | unit | `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_skilltext` | no (created by the plan) | pending |
-| 27-11-1 | 11 | 8 | GPS-04 | T-27-27 | README row and installer smoke in a scratch HOME | install smoke | Task 1 verify | no (created by the plan) | pending |
-| 27-11-2 | 11 | 8 | GPS-04 | T-27-28 | Wizard PTY with 26 skills; whole-repo static gates | integration, static | `uv run python tools/run_unittest_parallel.py --group integration` | no (created by the plan) | pending |
-| 27-12-1 | 12 | 9 | GPS-04 | T-27-29 | Skill-judge round 1 (cap 3 rounds), triage, fixes | evidence | Task 1 verify | no (created by the plan) | pending |
-| 27-12-2 | 12 | 9 | GPS-04 | T-27-29 | Rounds 2 and 3 only if needed, then stop | evidence | Task 2 verify | no (created by the plan) | pending |
-| 27-12-3 | 12 | 9 | GPS-04 | T-27-30 | Verdict file reproduced by the checker; pending acceptance | evidence, checker | `python3 .planning/phases/27-one-shot-goal-and-loop-prompt-skill/skill-judge/check_verdicts.py .planning/phases/27-one-shot-goal-and-loop-prompt-skill` | no (created by the plan) | pending |
-| 27-13-1 | 13 | 10 | GPS-01..GPS-04 | T-27-32 | make test validate e2e-docker; live CLI checks on this repo | gates, live | `make test validate e2e-docker` | no (created by the plan) | pending |
-| 27-13-2 | 13 | 10 | GPS-01..GPS-04 | T-27-33 | Owner captures and filled validation map | doc check | Task 2 verify | no (created by the plan) | pending |
-| 27-13-3 | 13 | 10 | GPS-01..GPS-04 | T-27-33 | Dated amendments to REQUIREMENTS, ROADMAP and SPEC | doc check | Task 3 verify | no (created by the plan) | pending |
+| 27-11-1 | 11 | 9 | GPS-04 | T-27-27 | README row and installer smoke in a scratch HOME | install smoke | Task 1 verify | no (created by the plan) | pending |
+| 27-11-2 | 11 | 9 | GPS-04 | T-27-28 | Wizard PTY with one more skill; whole-repo static gates | integration, static | `uv run python tools/run_unittest_parallel.py --group integration` | no (created by the plan) | pending |
+| 27-12-1 | 12 | 10 | GPS-04 | T-27-29 | Skill-judge round 1 (cap 3 rounds), triage, fixes | evidence | Task 1 verify | no (created by the plan) | pending |
+| 27-12-2 | 12 | 10 | GPS-04 | T-27-29 | Rounds 2 and 3 only if needed, then stop | evidence | Task 2 verify | no (created by the plan) | pending |
+| 27-12-3 | 12 | 10 | GPS-04 | T-27-30 | Verdict file reproduced by the checker; pending acceptance | evidence, checker | `python3 .planning/phases/27-one-shot-goal-and-loop-prompt-skill/skill-judge/check_verdicts.py .planning/phases/27-one-shot-goal-and-loop-prompt-skill` | no (created by the plan) | pending |
+| 27-13-1 | 13 | 11 | GPS-01..GPS-04 | T-27-32 | make test validate e2e-docker; live CLI checks on this repo | gates, live | `make test validate e2e-docker` | no (created by the plan) | pending |
+| 27-13-2 | 13 | 11 | GPS-01..GPS-04 | T-27-33 | Owner captures and filled validation map | doc check | Task 2 verify | no (created by the plan) | pending |
+| 27-13-3 | 13 | 11 | GPS-01..GPS-04 | T-27-33 | Dated amendments to REQUIREMENTS, ROADMAP and SPEC | doc check | Task 3 verify | no (created by the plan) | pending |
 
 ---
 

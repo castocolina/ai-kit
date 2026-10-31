@@ -1034,12 +1034,14 @@ tests. Source: the same todo (part 2).
 
 **Wave 8** *(blocked on Wave 7 completion)*
 - [ ] 27-10-PLAN.md - SKILL.md, references and drift tests
-- [ ] 27-11-PLAN.md - README, installer smoke, wizard PTY
 
 **Wave 9** *(blocked on Wave 8 completion)*
-- [ ] 27-12-PLAN.md - skill-judge (cap 3 rounds)
+- [ ] 27-11-PLAN.md - README, installer smoke, wizard PTY
 
 **Wave 10** *(blocked on Wave 9 completion)*
+- [ ] 27-12-PLAN.md - skill-judge (cap 3 rounds)
+
+**Wave 11** *(blocked on Wave 10 completion)*
 - [ ] 27-13-PLAN.md - final gate, owner captures, amendments
 
 ## Backlog
