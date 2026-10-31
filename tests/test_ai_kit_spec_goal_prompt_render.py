@@ -737,5 +737,93 @@ class TestRenderOpenGsd(unittest.TestCase):
         self.assertFalse(Path(self.repo, ".planning").exists())
 
 
+class TestLongTitles(unittest.TestCase):
+    """A long plan title or objective is cut to fit its rule line; it never refuses generation."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.repo = self._tmp.name
+        fx.git_init(Path(self.repo))
+
+    def _render(self, title, objective="", strategy_id="plain"):
+        plan = {"file": "a.md", "title": title, "depends_on": [], "free_text": [], "tasks": 2}
+        detect = make_detect(
+            scope={
+                "kind": "superpowers",
+                "identity": None,
+                "ask": None,
+                "phases": [],
+                "plans": [plan],
+                "order": ["a.md"],
+            },
+            strategies=[
+                {"id": strategy_id, "rank": 1, "recommended": True, "reason": "", "primitive": None}
+            ],
+        )
+        answers = make_answers(
+            work_set={"kind": "plans", "files": ["docs/superpowers/plans/a.md"]},
+            objective=objective,
+        )
+        ctx = RenderContext(
+            repo=self.repo,
+            today="2026-10-31",
+            home=fx.FAKE_HOME,
+            secrets=(fx.SENTINEL_KEY,),
+            out_dir=None,
+        )
+        result = gp_render.render(detect, answers, ctx)
+        return Path(self.repo, result["path"]).read_text(encoding="utf-8")
+
+    @staticmethod
+    def _bullets(text):
+        return [line for line in text.split("\n") if line.startswith("- ")]
+
+    def _objective_line(self, text):
+        return next(line for line in self._bullets(text) if line.startswith("- Finish "))
+
+    def test_a_300_character_title_renders_and_every_rule_line_fits(self):
+        title = "Plan " + "x" * 295
+        self.assertEqual(len(title), 300)
+        text = self._render(title)
+        self.assertTrue(all(len(line) <= gp_render.LINE_CAP for line in self._bullets(text)))
+        self.assertLessEqual(len(text.split("\n")[0]), gp_render.LINE_CAP)
+        objective = self._objective_line(text)
+        self.assertTrue(objective.endswith("..., each verified. Then leave the repository clean."))
+        self.assertNotIn(title, text)
+
+    def test_a_multibyte_title_of_200_plus_characters_is_cut_between_characters(self):
+        title = "日本語のタイトル-é" * 21
+        self.assertGreaterEqual(len(title), 200)
+        text = self._render(title)
+        objective = self._objective_line(text)
+        match = re.match(r"- Finish 1 plan: (.+)\.\.\., each verified\.", objective)
+        assert match is not None, objective
+        self.assertTrue(title.startswith(match.group(1)))
+        self.assertLessEqual(len(objective), gp_render.LINE_CAP)
+        self.assertNotIn("\ufffd", text)
+
+    def test_a_short_title_is_untouched(self):
+        text = self._render("Short plan")
+        self.assertIn(
+            "\n- Finish 1 plan: Short plan, each verified. Then leave the repository clean.\n",
+            text,
+        )
+
+    def test_a_long_objective_is_cut_to_its_own_rule_line(self):
+        text = self._render("Short plan", objective="Ship the goal prompt " + "y" * 300)
+        self.assertTrue(all(len(line) <= gp_render.LINE_CAP for line in self._bullets(text)))
+        self.assertTrue(
+            any(line.startswith("- Ship the goal prompt y") and line.endswith("...")
+                for line in self._bullets(text))
+        )
+
+    def test_a_goal_condition_keeps_the_whole_objective(self):
+        title = "Plan " + "x" * 295
+        text = self._render(title, strategy_id="goal")
+        self.assertIn("/goal Finish 1 plan: " + title + ", each verified.", text)
+        self.assertTrue(all(len(line) <= gp_render.LINE_CAP for line in self._bullets(text)))
+
+
 if __name__ == "__main__":
     unittest.main()

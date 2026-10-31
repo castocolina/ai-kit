@@ -3,7 +3,9 @@
 
 Each builder returns plain rule lines: no bullets, no headings. `assemble_rails` adds the `- `
 bullets and the section headings. A line that starts with three spaces is a sub-line and keeps
-its text unprefixed. Every fixed line stays at most 200 characters (guards are in gp_render).
+its text unprefixed. Every fixed line stays at most LINE_CAP characters (guards are in gp_render).
+Variable text (a plan title, the objective, a free-text dependency) is cut by `fit_line` so its
+line fits; a list of work items is never cut, because a cut list would hide work from the run.
 stdlib only; gp_e2e and gp_common are the only siblings used.
 """
 
@@ -18,15 +20,18 @@ from gp_scope import Plan, dependents, execution_order
 
 __all__ = [
     "GSD_FAMILIES",
+    "LINE_CAP",
     "Work",
     "assemble_rails",
     "cleanup_lines",
     "decision_lines",
     "done_lines",
+    "fit_line",
     "generic_rule_lines",
     "goal_block",
     "loop_block",
     "objective_lines",
+    "objective_text",
     "order_lines",
     "plain_block",
     "plan_rule_lines",
@@ -43,11 +48,15 @@ __all__ = [
     "work_items",
 ]
 
+LINE_CAP = 200
+RULE_BULLET = "- "
+ELLIPSIS = "..."
 TURN_FLOOR = 60
 TURN_PER_ITEM = 40
 GSD_FAMILIES = ("opengsd", "gsd-unproven")
 GOAL_EVIDENCE = "exit code and count line"
 UNIT_CLAUSE = "Unit tests alone never count as done."
+OBJECTIVE_TAIL = ", each verified. Then leave the repository clean."
 # Loop primitives that are typed as a `/loop` command; the rest of the loop rows fall to plain.
 LOOP_COMMANDS = ("/loop", "CronCreate one-shot", "CronCreate recurring", "ScheduleWakeup")
 PLAIN_FLAG = "flagged: no goal, loop or schedule primitive"
@@ -122,6 +131,17 @@ def _one_line(text: str) -> str:
     return " ".join(str(text).split())
 
 
+def fit_line(head: str, variable: str, tail: str = "", prefix: str = RULE_BULLET) -> str:
+    """`head` + `variable` + `tail` as one line that, with `prefix` in front, fits LINE_CAP. A
+    variable that is too long is cut and ends with `...`. A str slices by code point, so a
+    multi-byte character is never split. A fixed head or tail too long for the line is left for
+    the cap guard in gp_render to refuse."""
+    room = LINE_CAP - len(prefix) - len(head) - len(tail)
+    if len(variable) > room:
+        variable = variable[: max(room - len(ELLIPSIS), 0)].rstrip() + ELLIPSIS
+    return f"{head}{variable}{tail}"
+
+
 def _paren(label: str) -> str:
     return f" ({label})" if label else ""
 
@@ -135,12 +155,19 @@ def role_lines() -> list[str]:
 
 
 def objective_lines(answers: Mapping[str, Any], scope_desc: str) -> list[str]:
-    """`scope_desc` is `phases 16, 16.1, 17` or `3 plans: <titles>`; the objective follows."""
-    lines = [f"Finish {scope_desc}, each verified. Then leave the repository clean."]
+    """OBJECTIVE rule lines. `scope_desc` is `phases 16, 16.1, 17` or `3 plans: <titles>`; each
+    line is cut to fit LINE_CAP, so a long title or objective never refuses generation."""
+    lines = [fit_line("Finish ", scope_desc, OBJECTIVE_TAIL)]
     objective = _one_line(answers.get("objective") or "")
     if objective:
-        lines.append(objective)
+        lines.append(fit_line("", objective))
     return lines
+
+
+def objective_text(answers: Mapping[str, Any], scope_desc: str) -> str:
+    """The whole objective on one line, uncut: a `/goal` condition has its own cap (GOAL_CAP)."""
+    objective = _one_line(answers.get("objective") or "")
+    return " ".join(part for part in (f"Finish {scope_desc}{OBJECTIVE_TAIL}", objective) if part)
 
 
 def plan_rule_lines(candidate_skills: Sequence[str], native: bool) -> list[str]:
@@ -200,7 +227,8 @@ def superpowers_order_lines(plans: Sequence[Plan], order: Sequence[str]) -> list
                 lines.append(f"If {name} fails, skip its dependents: {', '.join(children)}.")
     for name in order:
         for text in by_file[name].free_text:
-            lines.append(f"Dependency to confirm before starting: {_one_line(text).rstrip('.')}.")
+            note = _one_line(text).rstrip(".")
+            lines.append(fit_line("Dependency to confirm before starting: ", note, "."))
     return lines
 
 
@@ -344,7 +372,7 @@ def report_lines(jev: Mapping[str, Any]) -> list[str]:
         )
     else:
         reason = _one_line(jev.get("reason") or "no usable backend")
-        lines.append(f"The advisory closeness check was omitted: {reason}.")
+        lines.append(fit_line("The advisory closeness check was omitted: ", reason, "."))
     return lines
 
 

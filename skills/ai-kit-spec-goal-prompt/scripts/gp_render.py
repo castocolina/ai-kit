@@ -24,12 +24,14 @@ from gp_common import GuardError, is_machine_path, phase_key, scan_text, slugify
 from gp_scope import Plan
 from gp_sections import (
     GSD_FAMILIES,
+    LINE_CAP,
     TURN_FLOOR,
     Work,
     assemble_rails,
+    fit_line,
     goal_block,
     loop_block,
-    objective_lines,
+    objective_text,
     plain_block,
     rail_sections,
     strategy_heading,
@@ -80,7 +82,6 @@ GOAL_CAP = 4000
 GOAL_BUDGET = 1800
 INLINE_CAP = 7000
 RULE_CAP = 60
-LINE_CAP = 200
 WRAPPER_SENTENCES = 3
 WRAPPER_SHARE = 0.15
 UNIT_SENTENCE = "Unit tests alone never count as done."
@@ -548,14 +549,14 @@ def render(
     rails = assemble_rails(sections)
     view = BlockView(
         path=relpath,
-        objective=" ".join(objective_lines(answers, work.scope_desc)),
+        objective=objective_text(answers, work.scope_desc),
         first_line=_autonomous_line(work),
         rails=rails,
         turn_cap=turn_cap(work_items(work)),
     )
     blocks = build_blocks(strategies, view)
     text = _compose(
-        f"Goal prompt: {work.scope_desc}",
+        fit_line("Goal prompt: ", work.scope_desc, prefix="# "),
         _wrapper(work.family, strategies[0]["id"]),
         blocks,
         rails,

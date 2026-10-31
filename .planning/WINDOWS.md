@@ -1,10 +1,10 @@
 ---
 schema_version: 1
-open_count: 2
+open_count: 1
 waived_count: 0
-fixed_count: 6
+fixed_count: 7
 total_count: 8
-last_updated: 2026-10-31T15:20:53.069Z
+last_updated: 2026-10-31T15:36:52.014Z
 ---
 
 # Broken Windows Ledger
@@ -22,7 +22,7 @@ last_updated: 2026-10-31T15:20:53.069Z
 | 5 | 27 | stub | skills/ai-kit-spec-goal-prompt/scripts/gp_sections.py |  | done_lines raises NotImplementedError for an e2e none result and for mockups until plan 27-08 | fixed |  | 2026-10-31T14:33:13.001Z | 2026-10-31T14:53:15.996Z |
 | 6 | 27 | todo | tests/test_ai_kit_spec_goal_prompt_render.py |  | R18/R19 parity through check_rules is not run in 27-06; owned by 27-09 Task 2 | fixed |  | 2026-10-31T14:33:13.067Z | 2026-10-31T15:11:25.511Z |
 | 7 | 27 | deviation | skills/ai-kit-spec-goal-prompt/scripts/gp_render.py |  | Autonomous block names an unverified primitive in its heading only; its first line must stay flags-only (D-12), so the paste text does not say unverified | open |  | 2026-10-31T14:44:20.838Z |  |
-| 8 | 27 | deviation | skills/ai-kit-spec-goal-prompt/scripts/gp_render.py |  | A rule line over 200 characters (a long plan title in OBJECTIVE or a long objective) refuses generation instead of wrapping; no wrapped-title test exists | open |  | 2026-10-31T14:44:20.909Z |  |
+| 8 | 27 | deviation | skills/ai-kit-spec-goal-prompt/scripts/gp_render.py |  | A rule line over 200 characters (a long plan title in OBJECTIVE or a long objective) refuses generation instead of wrapping; no wrapped-title test exists | fixed |  | 2026-10-31T14:44:20.909Z | 2026-10-31T15:36:52.014Z |
 
 ````json
 [
@@ -124,10 +124,10 @@ last_updated: 2026-10-31T15:20:53.069Z
     "file": "skills/ai-kit-spec-goal-prompt/scripts/gp_render.py",
     "line": null,
     "description": "A rule line over 200 characters (a long plan title in OBJECTIVE or a long objective) refuses generation instead of wrapping; no wrapped-title test exists",
-    "status": "open",
+    "status": "fixed",
     "reason": "",
     "recorded_at": "2026-10-31T14:44:20.909Z",
-    "resolved_at": null,
+    "resolved_at": "2026-10-31T15:36:52.014Z",
     "milestone": "v1.3"
   }
 ]
