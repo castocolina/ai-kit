@@ -8,44 +8,32 @@ standard, so beyond Claude Code they also load unmodified in any conformant
 tool (opencode, Codex CLI, Gemini CLI, Cursor, Copilot CLI, Kiro, and others).
 It has widened from "a Claude Code installer with some skills" into a
 multi-CLI toolkit. It ships runtime detection, opencode provider management,
-cross-runtime config diagnostics, a local usage-metrics dashboard, and a family
-of project-rules checker skills.
+cross-runtime config diagnostics, a local usage-metrics dashboard, a family
+of project-rules checker skills, and (since v1.3) a host-aware curated GSD
+config wizard with a quota-aware cross-AI runner, a decision-system client, a
+session-wake skill and a goal-prompt skill. Claude, opencode and pi are the
+primary hosts; codex and cursor are secondary.
 
 ## Current State
 
-**Shipped:** v1.2 ai-kit Rules Skill Family (2026-09-23). v1.0 and v1.1 were
-archived retroactively during the same close. See `.planning/MILESTONES.md`.
-Phase history lives in `.planning/milestones/v1.{0,1,2}-phases/`.
+**Shipped:** v1.3 GSD Curated Config v2 (2026-10-31), closed with
+`override_closeout`: automated evidence is complete, but many live, interactive
+and owner steps are carried to the owner, not done. v1.2 ai-kit Rules Skill
+Family shipped 2026-09-23; v1.0 and v1.1 were archived retroactively during that
+close. See `.planning/MILESTONES.md` (the v1.3 entry lists every carried item).
+Phase history lives in `.planning/milestones/v1.{0,1,2}-phases/`; the v1.3 phase directories stay in `.planning/phases/` because owner kits and tests read them.
 
 The rules-checker family (`ai-kit-project-rules-{agents,makefile,precommit,arch,docker,cicd}`
 plus the `ai-kit-project-rules-all` orchestrator) shares
 `skills/_shared/ai_kit_rules_common/`. The usage-metrics dashboard handles the
-real ~85k-row refined store without freezing.
+real ~85k-row refined store without freezing. The curated-config pipeline
+(inventory, recommend, plan, apply) resolves one (runtime, model) pair per role
+and renders a cross-AI runner (template 8) that runs one CLI per call under a
+configurable retry ladder.
 
-## Current Milestone: v1.3 GSD Curated Config v2
-
-**Goal:** Rewrite `ai-kit-gsd-curated-config` into a host-aware, role-scored GSD config wizard
-that configures a target project's `.planning/config.json` in four questions plus one
-review-and-adjust pass, so every GSD agent runs on the model that best fits its role on the
-runtime hosting the session. Source spec (approved 2026-09-23):
-`docs/superpowers/specs/2026-09-23-gsd-curated-config-v2-design.md`.
-
-**Target features:**
-- `ai_kit_spec` extensions — host detection pi > opencode > cursor > codex > claude;
-  pi/codex/claude model enumeration; `image_input`/`reasoning_modes` catalog data;
-  planning/general/mechanical/execution/review ranker purposes
-- Hardening (Phase 16.1) — gate scope, sibling-first imports, security and correctness fixes
-  from the 2026-10-13 audit; closes Phase 16
-- Curated-config rewrite — inventory → recommend → `plan.json` → plan-set → apply
-  (dry-run, backup/restore); three model layers plus an execution override; rigor
-  (MVP/Standard/Rigorous) × profile presets; counterpart cross-AI review and cheap
-  cross-AI execution through a generated `.planning/scripts/cross-ai.mjs`
-  (pi > cursor > opencode); curated `skill_affinity.json`
-- One runtime model (Phase 18.1) — model candidates as (runtime, model) pairs
-- Evaluation on claude — writing-skills RED/GREEN, `/skill-judge` in code review,
-  real-gsd-tools `resolve-model` check for all 35 agents, live smoke
-- Live validation on codex and opencode; cursor (Phase 21) and pi (Phase 22) as independent
-  phases that may run any time after Phase 19
+**Next milestone:** not started (`/gsd-new-milestone`). Open candidates are the
+carried owner items and backlog 999.14 (skills as real copies) first, then 999.15,
+999.16 and 999.17.
 
 ## Core Value
 
@@ -96,14 +84,29 @@ verified live rather than assumed from a catalog.
 - ✓ Project-rules checker family (makefile, precommit, arch, docker, cicd)
   plus the `ai-kit-project-rules-all` orchestrator — v1.2
 
+- ✓ `ai_kit_spec` host detection, enumeration and catalog/ranker extensions;
+  `ai-kit-gsd-curated-config` v2 (inventory, recommend, plan, apply; rigor ×
+  profile presets; cross-AI review and execution; skill affinity); evaluated on
+  claude; headless-validated on codex, opencode, cursor and pi — v1.3
+- ✓ Host-split status line (Claude and Cursor CLI) with AST architecture guards
+  — v1.3
+- ✓ Quota-aware cross-AI runner, retry ladder and upstream error pass-through;
+  `ai-kit-cross-ai`, `ai-kit-session-wake`, `ai-kit-gsd-spec-discuss`,
+  `ai-kit-spec-goal-prompt`, `jev-fast-decision` — v1.3 (script-level; live
+  steps below)
+
 ### Active
 
-<!-- v1.3 scope; checkable requirements live in REQUIREMENTS.md. -->
+<!-- Carried to the owner at the v1.3 close; checkable requirements are in
+     milestones/v1.3-REQUIREMENTS.md (the unchecked rows). -->
 
-- [ ] `ai_kit_spec` host detection, enumeration and catalog/ranker extensions
-- [ ] `ai-kit-gsd-curated-config` v2 — inventory/recommend/plan/apply pipeline,
-      rigor × profile presets, cross-AI review/execution, skill affinity
-- [ ] v2 evaluated on claude and live-validated on codex and opencode
+- [ ] Owner capture files for phases 25, 25.1, 26 and 27, and the interactive or
+      live runs for phases 20-23 (EVAL-05/07/08, ADV-04, PCH-01/02, STL-03/04)
+- [ ] Phase 24 chain dry run on a fixture project (SDC-01..04 are script-level only)
+- [ ] Deferred skill-judge verdicts: `ai-kit-spec-goal-prompt` and
+      `ai-kit-spec-config` UNRESOLVED; SJ-1, SJ-2, SJ-3 (refactor todo, backlog 999.16)
+- [ ] `.planning/WINDOWS.md` entry 7 (autonomous block primitive) design decision
+- [ ] EVAL-04 (backlog 999.6) and AGT-02 (backlog 999.7), deferred as secondary-runtime work
 
 ### Out of Scope
 
@@ -143,12 +146,11 @@ verified live rather than assumed from a catalog.
 ai-kit is a solo-maintainer (uz) toolkit that started as a Claude-Code-only
 installer + status line and grew a family of spec-review/execute skills.
 
-**State after v1.2 (2026-09-23):**
-- The unit suite has about 2535 tests.
-- The only failing test is `TestRenderRealMmdc`, caused by an environment problem (an incomplete pnpm-global mermaid-cli install).
-- Pyright reports 0 errors.
-- Known debt: pre-v1.2 ruff/pylint findings in `tools/wizard_app.py` and `tests/test_ai_kit_spec_superpowers.py` (the status line's share was cleared by the v1.3 Phase 23 split, whose modules are ruff/pylint clean).
-- No v1.2 phase has a Nyquist VALIDATION.md.
+**State after v1.3 (2026-10-31):**
+- v1.3 changed 428 files outside `.planning/` (about +149k/-18k lines) over 18 phases and 212 plans.
+- All 18 phases have a VALIDATION.md; 4 are partial (16.1, 19, 21.1, 24), none missing.
+- Verification: 6 phases `passed`, 11 `human_needed`, Phase 25 `gaps_found`; several read `stale` after later phases touched covered files.
+- Known debt: runner-capable runtime lists are hand-copied with no drift test against the `RUNTIMES` table; AGENTS.md links the gitignored `.claude/cli-environment.md`.
 
 v1.0's scope came from 5 PRDs ingested from `docs/prds/` — all framed
 by their authors as **proposals**, not yet-accepted decisions (no ADRs exist
@@ -210,6 +212,11 @@ introduced without an explicit, justified exception.
 | Split the AGENTS.md checker into a single-domain rules family sharing `ai_kit_rules_common` (v1.2) | One checker was accumulating Makefile, pre-commit and prose domains; a shared package prevents divergent copies | ✓ Good — 6 checkers plus an orchestrator, no divergent copies (v1.2 integration check) |
 | Rate-limit coloring by burn pace, not remaining fraction (v1.1, Phase 8.1) | Phase 8's formula flagged early-window light usage as RED | Superseded 2026-10-09 by absolute gap coloring (`docs/superpowers/specs/2026-10-09-statusline-quota-window-gap-design.md`): the pace ratio treated low usage late in a window as healthy |
 | Close milestones with a cleanup phase before archiving, not with accepted debt (v1.2, Phase 15.2) | The audit found in-milestone defects (pyright error, sort-key asymmetry) that were cheap to fix | ✓ Good — closed at pyright 0 errors |
+| One runtime model: candidates are (runtime, model) pairs; native versus subprocess is decided per call and never stored (v1.3, Phase 18.1) | One vocabulary for hosts, ranker and runner | ✓ Good — shipped, carried through phases 20-27 |
+| Claude, opencode and pi are primary hosts; codex and cursor are secondary (owner, 2026-10-18) | Limits live-validation cost; codex and cursor models stay usable as reviewers and executors | — Pending: codex TUI (999.6) and cursor subagent linking (999.7) stay in the backlog |
+| The cross-AI runner spawns one CLI per call and never switches harness, provider or model on its own (v1.3, Phases 25 and 25.1) | Failures are classified and reported; recovery is a retry ladder, not a silent fallback | — Pending: live router and copilot captures are owner items (25 and 25.1 OWNER-CAPTURES) |
+| `jev-fast-decision` is an advisory black box, never a gate (v1.3, Phases 21.1 and 24) | A cheap judgment must not be trusted beyond its sourcing | — Pending: live TypeSafe and Zen calls and the Laya accuracy floor are owner decisions |
+| Close v1.3 with `override_closeout` and carry owner items by name (2026-10-31) | The audit found no code gap; the open items need live hosts or owner decisions | ⚠️ Revisit — 24 audit items stay open until the owner works through them |
 | Track `.planning/` in git from 2026-09-16 | Earlier milestones lost their start-date history | ⚠️ Revisit — v1.0 dates are only partially recoverable |
 
 ## Evolution
@@ -230,4 +237,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-23 after starting milestone v1.3*
+*Last updated: 2026-10-31 after v1.3 milestone*

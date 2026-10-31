@@ -2,14 +2,12 @@
 gsd_state_version: "1.0"
 milestone: v1.3
 milestone_name: GSD Curated Config v2
-current_phase: 27
-current_phase_name: One-shot goal and loop prompt skill
-status: completed
+status: Awaiting next milestone
 stopped_at: Completed 27-14-PLAN.md
-last_updated: "2026-10-31T20:43:50.966Z"
+last_updated: "2026-10-31T21:00:57.801Z"
 last_activity: 2026-10-31
-last_activity_desc: Milestone audit gaps INT-1..3 closed; bookkeeping refreshed
-state_head: d07dec05a9d1f2e7bef3265c12cb64d59b3e036c
+last_activity_desc: Milestone v1.3 completed and archived
+state_head: 072894dd5b3788c5887781aa951e898b26d382f5
 progress:
   total_phases: 18
   completed_phases: 18
@@ -22,19 +20,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-09-23)
+See: .planning/PROJECT.md (updated 2026-10-31)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** v1.3 close-out (all 18 phases executed; owner-pending items carried)
+**Current focus:** Planning next milestone (v1.3 shipped 2026-10-31; owner-pending items carried to the owner)
 
 ## Current Position
 
-Phase: 27 (One-shot goal and loop prompt skill) — EXECUTED (human_needed)
-Plan: 14 of 14
-Status: All 18 phases executed; audit gaps INT-1..3 closed, owner items pending
-Last activity: 2026-10-31 - Milestone audit gaps closed and bookkeeping refreshed
-
-Progress: [██████████] 100%
+Phase: Milestone v1.3 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-10-31 — Milestone v1.3 completed and archived
 
 ## Performance Metrics
 
@@ -369,7 +365,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
   plus the Phase 9-pruned agents checker to exist before it can aggregate
   them.
 - v1.2: Phase 12 (`ai-kit-project-rules-arch`) promotes and resolves
-  ROADMAP.md's backlog entry "Phase 999.3: Architecture-layer test suite
+  ROADMAP.md's former backlog entry "999.3: Architecture-layer test suite
   (BACKLOG)" at this milestone's scoped-down, form/convention-only ambition
   (arch-test Makefile target existence/chaining/AST-only verification) — NOT
   the backlog note's full dependency-direction/layering-boundary enforcement
@@ -466,7 +462,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 ### Pending Todos
 
 - [2026-10-11] [skills] Execute the System One decision-skill plan (jev-fast-decision, 3 backends) — [todo file](.planning/todos/pending/2026-10-11-execute-system-one-decision-skill-plan.md)
-- [2026-10-12] [statusline] Promote Cursor statusline POC spike into Phase 999.4 discuss/plan — [todo file](.planning/todos/pending/2026-10-12-promote-cursor-statusline-poc-into-999-4.md)
+- [2026-10-12] [statusline] Promote Cursor statusline POC spike into former backlog 999.4 discuss/plan (now Phase 23) — [todo file](.planning/todos/pending/2026-10-12-promote-cursor-statusline-poc-into-999-4.md)
 - [2026-10-13] [agents] Add Cursor subagents pinned to non-fast composer-2.5 and grok — [todo file](.planning/todos/pending/2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md)
 - [2026-10-14] [tooling] AGENTS.md quota-schedule rules and one-shot goal-prompt skill — [todo file](.planning/todos/pending/2026-10-14-agents-md-quota-schedule-rules-and-goal-prompt-skill.md)
 - [2026-10-14] [skills] Wire jev-fast-decision cross-host discovery scaffolding — [todo file](.planning/todos/pending/2026-10-14-wire-jev-fast-decision-cross-host-discovery-scaffolding.md)
@@ -626,8 +622,57 @@ Items acknowledged and deferred at milestone close, most recent first:
 | deferred_items | Phase 15.1 code review: flat-mode sort-key guard + regression test (fixed in 15.2) | acknowledged | 2026-09-23 | v1.2 |
 | deferred_items | Phase 01.1 (archived v1.0): pre-existing ruff E501/RUF012 in status-line.py / wizard_app.py | acknowledged | 2026-09-23 | v1.2 |
 
+### Carried to the owner at the v1.3 close (disclosed, not acknowledged)
+
+The v1.3 close used `override_closeout`. These items are NOT done and were not suppressed through
+`audit-open acknowledge`, so the next `audit-open` scan still lists them. Paths are under
+`.planning/phases/`; the full explanation is in the v1.3 entry of `.planning/MILESTONES.md`.
+
+| Category | Item | Status | Deferred At | Milestone |
+|----------|------|--------|-------------|-----------|
+| verification_gaps | 20/20-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
+| verification_gaps | 21/21-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
+| verification_gaps | 21.1/21.1-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
+| verification_gaps | 21.2/21.2-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
+| verification_gaps | 21.3/21.3-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
+| verification_gaps | 22/22-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
+| verification_gaps | 23/23-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
+| verification_gaps | 24/24-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
+| verification_gaps | 25/25-VERIFICATION.md | gaps_found | 2026-10-31 | v1.3 |
+| verification_gaps | 25.1/25.1-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
+| verification_gaps | 26/26-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
+| verification_gaps | 27/27-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
+| uat_gaps | 16/16-UAT.md | testing (1 pending scenario) | 2026-10-31 | v1.3 |
+| todos | 2026-10-11-execute-system-one-decision-skill-plan.md | (presence-only) | 2026-10-31 | v1.3 |
+| todos | 2026-10-12-promote-cursor-statusline-poc-into-999-4.md | (presence-only) | 2026-10-31 | v1.3 |
+| todos | 2026-10-13-add-cursor-subagents-pinned-to-non-fast-composer-2-5-and-grok.md | (presence-only) | 2026-10-31 | v1.3 |
+| todos | 2026-10-14-agents-md-quota-schedule-rules-and-goal-prompt-skill.md | (presence-only) | 2026-10-31 | v1.3 |
+| todos | 2026-10-14-wire-jev-fast-decision-cross-host-discovery-scaffolding.md | (presence-only) | 2026-10-31 | v1.3 |
+| todos | 2026-10-18-atomic-reusable-decision-system-skills.md | (presence-only) | 2026-10-31 | v1.3 |
+| todos | 2026-10-18-precompact-hook-pre-summarizes-chunks-via-decision-system.md | (presence-only) | 2026-10-31 | v1.3 |
+| todos | 2026-10-18-visible-tool-advisory-hooks-pre-and-post-tool-use.md | (presence-only) | 2026-10-31 | v1.3 |
+| todos | 2026-10-24-make-the-ai-kit-session-hooks-dynamic-worktree-indexing-advi.md | (presence-only) | 2026-10-31 | v1.3 |
+| todos | 2026-10-29-unify-review-execute-lane-toml-effort-escalation-and-jev-classification.md | (presence-only) | 2026-10-31 | v1.3 |
+| todos | 2026-10-31-refactor-execute-gsd-and-rules-agents-sj-1-sj-3.md | (presence-only) | 2026-10-31 | v1.3 |
+| owner_captures | 25/25-OWNER-CAPTURES.md (C1-C7) | owner-pending | 2026-10-31 | v1.3 |
+| owner_captures | 25.1/25.1-OWNER-CAPTURES.md (O1-O10) | owner-pending | 2026-10-31 | v1.3 |
+| owner_captures | 26/26-OWNER-CAPTURES.md (captures 1-11) | owner-pending | 2026-10-31 | v1.3 |
+| owner_captures | 27/27-OWNER-CAPTURES.md (A1-A5, PI_SKILLS, 27-10 items a-g) | owner-pending | 2026-10-31 | v1.3 |
+| skill_judge | ai-kit-spec-goal-prompt 111/125 = 88.8% vs base 90.4% | UNRESOLVED (needs Owner-decision line) | 2026-10-31 | v1.3 |
+| skill_judge | ai-kit-spec-config 99 vs base 105 | UNRESOLVED (no Owner-decision line) | 2026-10-31 | v1.3 |
+| skill_judge | SJ-1 execute-gsd 101 vs 105; SJ-2 execute-superpowers FAIL 86/120; SJ-3 project-rules-agents FAIL 93 | deferred by Owner-decision to the refactor todo and backlog 999.16 | 2026-10-31 | v1.3 |
+| owner_decision | Phase 20 WR-12, fix-cap accounting, RUN-106, IN-07; Phase 21.1 Laya accuracy 0.5 < 0.95, opencode judge lane 11/15, live TypeSafe/Zen calls | owner decision | 2026-10-31 | v1.3 |
+| dry_run | Phase 24 chain dry run on a fixture project (SC1/R3/R4, SC2/R6, SC3/R8) never produced | not done | 2026-10-31 | v1.3 |
+| windows | WINDOWS.md entry 7 (autonomous block names an unverified primitive) | open design decision | 2026-10-31 | v1.3 |
+| backlog | 999.16 event-keyed playbook skill (feasibility check first) | open on purpose | 2026-10-31 | v1.3 |
+| backlog | 999.17 lite or strong executor choice via jev-fast-decision | open on purpose | 2026-10-31 | v1.3 |
+
 ## Session Continuity
 
 Last session: 2026-10-31T16:03:46.722Z
 Stopped at: Completed 27-14-PLAN.md
 Resume file: None
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

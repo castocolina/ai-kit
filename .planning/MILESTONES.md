@@ -1,5 +1,40 @@
 # Milestones
 
+## v1.3 GSD Curated Config v2 (Shipped: 2026-10-31)
+
+**Phases completed:** 18 phases (16, 16.1, 17, 18, 18.1, 19, 20, 21, 21.1-21.3, 22-27, plus inserted 25.1), 212 plans, 230 tasks
+**Timeline:** 2026-09-23 → 2026-10-31
+**Closeout type:** override_closeout (6 phases verified `passed`, 11 `human_needed`, Phase 25 `gaps_found`; most read `stale` after later phases touched covered files)
+**Audit:** `milestones/v1.3-MILESTONE-AUDIT.md` — tech_debt, requirements 65/80 satisfied (13 owner-pending, 2 deferred to backlog, 0 unsatisfied), gaps INT-1..3 closed
+**Archive:** `milestones/v1.3-ROADMAP.md`, `milestones/v1.3-REQUIREMENTS.md`. The v1.3 phase directories stay in `.planning/phases/` (not moved to `milestones/v1.3-phases/`): the owner kits and several tests (`tests/test_pi_live_tools.py`, `tests/test_tool_advisor_core.py`) read files in them, and the carried owner items below live there.
+
+**Key accomplishments:**
+
+- Curated-config v2 (16-19): cross-AI skills and apply pipeline, one-runtime model, inventory and recommendation engine, evaluation on Claude.
+- Live validation per host (20-22): codex and opencode headless, cursor, pi. Codex and cursor are secondary; the labels read "validated headless ... interactive confirmation pending".
+- Decision-system skills (21.1-21.3): `jev-fast-decision` client, PreCompact pre-summary hook, visible tool-advisory hooks as setup knobs.
+- Host-split status line for Claude Code and Cursor CLI (23), with AST guards in `tests/test_arch.py`.
+- `ai-kit-gsd-spec-discuss` (24), the quota-aware cross-AI runner with a configurable retry ladder and upstream error pass-through (25, 25.1), `ai-kit-session-wake` (26) and `ai-kit-spec-goal-prompt` (27).
+- Audit gaps INT-1..3 (goal-prompt versus cross-AI wait wording, a broken session-wake link, README rows) closed before the close.
+
+### Carried to the owner (not done)
+
+Known verification overrides: 24 open items shown by the pre-close audit were disclosed, not suppressed (no `audit-open acknowledge`); 8 earlier acknowledgements carry forward. Each item stays visible in `.planning/STATE.md` (Deferred Items) and the milestone archive.
+
+- **Owner capture files** (all under `.planning/phases/`): `25-quota-aware-cross-ai-subprocess-supervision/25-OWNER-CAPTURES.md` (C1-C7), `25.1-configurable-cross-ai-retry-ladder-and-upstream-error-propag/25.1-OWNER-CAPTURES.md` (O1-O10), `26-session-self-resume-and-opengsd-quota-rules/26-OWNER-CAPTURES.md` (captures 1-11), `27-one-shot-goal-and-loop-prompt-skill/27-OWNER-CAPTURES.md` (A1-A5, PI_SKILLS, 27-10 items a-g).
+- **Interactive and live runs:** `20-.../20-INTERACTIVE-CODEX.md` and `20-INTERACTIVE-OPENCODE.md` (EVAL-04 deferred to 999.6, EVAL-05), `21-.../21-INTERACTIVE-CURSOR.md` (EVAL-07), `22-.../22-INTERACTIVE-PI.md` (C1 real pi capture, S1-S5, EVAL-08), `21.3-.../21.3-LIVE.md` (ADV-04), the Phase 21.2 spike steps S2-S5 and R9 measurement (PCH-01/02; the hook stays off), the Phase 23 spikes S1-S7 (STL-03/04) and the credential-bearing POC `cli-config.json.bak` delete (D-12).
+- **human_needed / human_verification:** `*-VERIFICATION.md` of phases 20, 21, 21.1, 21.2, 21.3, 22, 23, 24, 25.1, 26, 27 and `16-UAT.md` (1 pending scenario); Phase 25 reads `gaps_found` (stale; its only gap is the skill-judge gate, superseded by owner deferrals).
+- **Deferred skill-judge verdicts and owner decisions:** `ai-kit-spec-goal-prompt` UNRESOLVED (111/125 = 88.8%, base 90.4%, awaiting an Owner-decision line); `ai-kit-spec-config` UNRESOLVED (99 vs base 105); SJ-1 (execute-gsd 101 vs 105), SJ-2 (execute-superpowers, FAIL 86/120) and SJ-3 (project-rules-agents, FAIL 93) deferred by Owner-decision lines to the refactor todo and backlog 999.16; Phase 20 owner decisions (WR-12, fix-cap accounting, RUN-106, IN-07); Phase 21.1 Laya accuracy 0.5 below the 0.95 floor, opencode judge lane 11/15, live TypeSafe/Zen calls.
+- **Phase 24 chain dry run:** never produced on a fixture project (SC1/R3/R4, SC2/R6, SC3/R8); SDC-01..04 are script-level satisfied only. ROADMAP SC2, SDC-02 and SPEC R5/R10 wording is stale against 21.1 and still needs a formal amendment.
+- **WINDOWS #7** (`.planning/WINDOWS.md`): the autonomous block names an unverified primitive in its heading only; an open design decision.
+- **Backlog open on purpose:** 999.16 (event-keyed playbook skill for the rules family, feasibility check first) and 999.17 (lite or strong executor choice through jev-fast-decision). No 999.x item was completed by a v1.3 phase, so none was removed; the remaining list is in `.planning/ROADMAP.md` § Backlog.
+
+### Known Gaps
+
+Unchecked at close (`milestones/v1.3-REQUIREMENTS.md`): EVAL-04 (deferred to 999.6), AGT-02 (deferred to 999.7), and owner-pending EVAL-05, EVAL-07, EVAL-08, SDC-01..04, PCH-01, PCH-02, ADV-04, STL-03, STL-04, GPS-04. Automated evidence is complete for each; the open part is the live or owner step named above.
+
+---
+
 ## v1.2 ai-kit Rules Skill Family (Shipped: 2026-09-23)
 
 **Phases completed:** 9 phases (9–15, plus inserted 15.1 and 15.2), 28 plans
