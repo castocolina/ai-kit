@@ -1008,7 +1008,39 @@ tests. Source: the same todo (part 2).
   4. jev is used only for advisory, text-based checks (e.g. how close the delivered work is to
      the stated objectives); never as a gate and never to judge UI quality or mockup fidelity,
      since it answers typed questions on text. The skill passes `/skill-judge`.
-**Plans**: TBD
+**Plans**: 0/13 plans executed *(planned 2026-10-31)*
+**Wave 1**
+- [ ] 27-01-PLAN.md - shared helpers with parity tests, fixtures, skill stub
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 27-02-PLAN.md - scope detection: phases, identity, superpowers order
+- [ ] 27-03-PLAN.md - host primitives, readiness and jev usability
+- [ ] 27-04-PLAN.md - e2e command detection and zero-test markers
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 27-05-PLAN.md - strategy matrix
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 27-06-PLAN.md - template, guards, placement and the OpenGSD render
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 27-07-PLAN.md - goal, loop and plain blocks, superpowers rails
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 27-08-PLAN.md - done-when variants, advisory jev step, cross_ai gaps
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 27-09-PLAN.md - CLI, property sweep, golden, parity, e2e tier
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 27-10-PLAN.md - SKILL.md, references and drift tests
+- [ ] 27-11-PLAN.md - README, installer smoke, wizard PTY
+
+**Wave 9** *(blocked on Wave 8 completion)*
+- [ ] 27-12-PLAN.md - skill-judge (cap 3 rounds)
+
+**Wave 10** *(blocked on Wave 9 completion)*
+- [ ] 27-13-PLAN.md - final gate, owner captures, amendments
 
 ## Backlog
 
