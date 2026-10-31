@@ -105,10 +105,9 @@ rules-agents Critical in round 15 claims an unattended `git restore` can discard
 
 ## Owner decisions
 
-(none given)
+Owner-decision: ai-kit-spec-execute-gsd accepts UNRESOLVED (2026-10-30, owner message, deferred to the refactor todo)
+Owner-decision: ai-kit-project-rules-agents accepts FAIL (2026-10-30, owner message, deferred to backlog 999.16)
 
 ## Pending acceptance
 
-- ai-kit-spec-execute-gsd: UNRESOLVED (score 101 >= 96 but below the base 105)
 - ai-kit-spec-execute-superpowers: UNRESOLVED (score 98 >= 96 but below the base 110; 4 Important open)
-- ai-kit-project-rules-agents: FAIL (score 93 < 96 with 1 Critical and 2 Important)

@@ -11,13 +11,13 @@ gaps: []
 human_verification:
   - test: "SJ-1: ai-kit-spec-execute-gsd skill-judge verdict UNRESOLVED (round 15 score 101, 0 Critical, 2 Important, carried base 105)"
     expected: "Owner records `Owner-decision:` in 26-SKILL-JUDGE.md: accept 101, or keep base 105 and run another round"
-    why_human: "Pending owner acceptance; `check_verdicts.py --gate` prints `gate pending`. Not passed."
+    why_human: "DECIDED and DEFERRED (owner message, 2026-10-30): accepted as UNRESOLVED, deferred to the todo `Refactor execute-gsd and rules-agents (SJ-1, SJ-3)`. Not passed; the refactor is pending."
   - test: "SJ-2: ai-kit-spec-execute-superpowers skill-judge verdict UNRESOLVED (round 16 score 98 >= 96, 0 Critical, 4 Important, carried base 110)"
     expected: "Owner accepts 98 against the base 110, or another round runs"
     why_human: "Pending owner acceptance; the phase-25.1 O9 base-bar decision is still open. Not passed."
   - test: "SJ-3: ai-kit-project-rules-agents skill-judge verdict FAIL (score 93 < 96, 1 Critical, 2 Important, base 99)"
     expected: "Owner accepts with the Critical refuted (the `git restore` claim concerns tracked, unmodified files only), or clarifies the text and re-judges"
-    why_human: "Pending owner acceptance; the refutation is the executor's own claim, not independently confirmed. Not passed."
+    why_human: "DECIDED and DEFERRED (owner message, 2026-10-30): accepted as FAIL, deferred to backlog 999.16 and the same refactor todo. The refutation is still the executor's own claim, not independently confirmed. Not passed."
   - test: "Capture 1: persistent unit lifecycle (first fire after enable, oneshot self-removal, reboot survival with linger, auth after reboot, restart reschedule)"
     expected: "Matrix rows 0, 7, 8, 9 and the SKILL.md `## Unverified` sentence flip to verified"
     why_human: "Needs a real armed unit and a reboot; the phase never arms anything real"
@@ -77,7 +77,7 @@ that survives the stall, and OpenGSD projects get both quota directives in their
 | 8  | R20 parallel tests at 40% CPU share per stack, table-driven | VERIFIED | `rules.py:295`; `TestParallelTestRule` in the agents module passes; doc-only forms flagged `unverified` (Capture 10) |
 | 9  | Executors arm and disarm (`done`) the session wake; mechanisms never share state | VERIFIED | `ai-kit-spec-execute-gsd/SKILL.md:359-396` and `ai-kit-spec-execute-superpowers/SKILL.md:138-171`; `TestSessionWakeStep` in both spec test modules pass (156 and 133 tests ok); AST isolation `TestSessionWakeIsolation` in `tests/test_arch.py:1825` |
 | 10 | No key or token in unit or state files | VERIFIED | `test_secret_sentinels_never_reach_any_written_file_or_systemctl_log` (`tests/test_ai_kit_session_wake.py:568`) |
-| 11 | Touched SKILL.md files pass `/skill-judge` | NOT YET ACCEPTED | `check_verdicts.py` prints `verdicts ok`; `--gate` prints 3 `gate pending:` lines. Session-wake PASS 108, rules-all PASS 102; execute-gsd UNRESOLVED 101 vs base 105; execute-superpowers UNRESOLVED 98 vs base 110; rules-agents FAIL 93 (1 Critical) vs base 99. No `Owner-decision:` recorded. Reported as pending owner acceptance, not passed |
+| 11 | Touched SKILL.md files pass `/skill-judge` | NOT YET ACCEPTED | `check_verdicts.py` prints `verdicts ok`; `--gate` prints 1 `gate pending:` line (execute-superpowers, SJ-2); SJ-1 and SJ-3 are decided and deferred (owner message, 2026-10-30). Session-wake PASS 108, rules-all PASS 102; execute-gsd UNRESOLVED 101 vs base 105; execute-superpowers UNRESOLVED 98 vs base 110; rules-agents FAIL 93 (1 Critical) vs base 99. Owner-decision lines recorded for execute-gsd and rules-agents (deferred to the refactor todo and backlog 999.16, not passed); SJ-2 pending owner acceptance |
 | 12 | `make test` and `make validate` green | VERIFIED (per record) | Recorded green at the phase tip in `26-VALIDATION.md` / `26-OWNER-CAPTURES.md`; this verification re-ran only the 7 targeted modules (all pass), not the full 7-minute suite |
 
 **Score:** 10/12 verified; truth 11 is pending owner acceptance and truth 12 rests on the recorded gate run.
@@ -96,7 +96,7 @@ that survives the stall, and OpenGSD projects get both quota directives in their
 | Requirement | Description | Status | Evidence |
 | ----------- | ----------- | ------ | -------- |
 | QTA-04 | Session wake, matrix, spike, executors | SATISFIED in code; skill-judge acceptance pending | Truths 1-6, 9, 10; truth 11 pending |
-| QTA-05 | Two OpenGSD rules, strict identity | SATISFIED | Truth 7 (agents skill itself pending SJ-3) |
+| QTA-05 | Two OpenGSD rules, strict identity | SATISFIED | Truth 7 (agents skill itself: SJ-3 decided and deferred to backlog 999.16) |
 | QTA-06 | Parallel tests at a 40% CPU share | SATISFIED | Truth 8 |
 
 No orphaned requirements.
@@ -114,7 +114,7 @@ None blocking. 26-REVIEW.md: 0 Critical, 0 High; M1, M2, L1, L2 fixed with red-f
 
 ### Human Verification Required
 
-See the frontmatter list: SJ-1..SJ-3 (pending skill-judge acceptance, not passed) and owner captures 1-11. Every captured behavior is labelled `unverified` in the matrix and SKILL.md until captured.
+See the frontmatter list: SJ-2 (pending skill-judge acceptance, not passed) and SJ-1, SJ-3 (decided and deferred, not passed) and owner captures 1-11. Every captured behavior is labelled `unverified` in the matrix and SKILL.md until captured.
 
 ### Gaps Summary
 

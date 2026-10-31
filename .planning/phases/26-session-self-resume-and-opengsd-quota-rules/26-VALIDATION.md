@@ -91,8 +91,9 @@ validated: "2026-10-30"
   `tests.test_phase26_owner_captures`); arch group 1/1 (66 tests); `uv run` modules 3/3
   (`test_wizard_pty`, `test_hook_registry_e2e`, `test_ai_kit_project_rules_all_e2e`).
 - 26-12-1 `make e2e-docker` was not re-run; the recorded green in `26-OWNER-CAPTURES.md` is trusted.
-- 26-11-2 stays `pending (owner)`: `check_verdicts.py --gate` prints `verdicts ok` then three
-  `gate pending:` lines (execute-gsd UNRESOLVED, execute-superpowers UNRESOLVED, project-rules-agents FAIL).
+- 26-11-2 stays `pending (owner)`: `check_verdicts.py --gate` prints `verdicts ok` then one
+  `gate pending:` line (execute-superpowers UNRESOLVED, SJ-2); execute-gsd and project-rules-agents are
+  decided and deferred by `Owner-decision:` lines (owner message, 2026-10-30).
   The gate is not weakened.
 - Requirements QTA-04, QTA-05, QTA-06 each have automated rows (3/3). SPEC acceptance criteria: 9 of 11
   automated; "skill-judge" is the pending owner row, "make test/validate green" is the 26-12-1 gate run.
@@ -118,7 +119,7 @@ validated: "2026-10-30"
 |----------|-------------|------------|-------------------|
 | A persistent user timer survives a reboot; a fresh enable fires; a running oneshot removes its own unit | QTA-04 | needs a reboot and a real armed wake | owner capture items 1 and 8 in `26-OWNER-CAPTURES.md` |
 | Headless `claude -p` exit during a usage limit; `StopFailure` payload | QTA-04 | cannot induce a limit safely | owner capture items 2 and 3 in `26-OWNER-CAPTURES.md` |
-| Skill-judge verdicts | QTA-04 | real model calls by the judge lanes | orchestrator judge loop; three pending verdicts are owner captures SJ-1..SJ-3 |
+| Skill-judge verdicts | QTA-04 | real model calls by the judge lanes | orchestrator judge loop; SJ-2 is the one pending owner capture; SJ-1 and SJ-3 are decided and deferred |
 
 ---
 

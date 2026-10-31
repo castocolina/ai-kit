@@ -1285,3 +1285,30 @@ the ten ranked recommendations: `.planning/phases/999.15-cross-ai-chain-skill-fo
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.16: Evaluate one event-keyed playbook skill for the ai-kit-project-rules-* family (BACKLOG)
+
+**Priority:** major. Decide it together with the todo "Refactor execute-gsd and rules-agents (SJ-1, SJ-3)".
+**Goal:** [Captured for future planning] Owner request (2026-10-30): evaluate whether the rules should
+become a single skill with several event-keyed playbooks or runbooks, so AGENTS.md is not
+overloaded and the agent knows what to do in each case. The events: a new project (create
+Makefiles, pre-commit hooks, tests, verifications); a new worktree is created; a plan or phase
+finishes in open-gsd; a worktree is closed; a subagent is delegated; quota errors appear.
+**Problem:** AGENTS.md carries too many workflow rules. The family today is seven sibling checkers
+(agents, makefile, precommit, arch, docker, cicd, plus `ai-kit-project-rules-all` as the wrapper),
+and skill-judge kept finding new detail in the big skills (Phase 26: execute-gsd and
+rules-agents were accepted as-is and deferred).
+**First step (mandatory):** a feasibility check against the already confirmed architecture, before
+anything is built. Questions: is one skill with event-keyed runbooks better than the siblings (what
+does it gain and lose for routing, skill-judge size, host portability); what would the trigger be
+for each event on each host (a skill description, a hook, a manual call; claude, opencode and pi
+are primary, codex and cursor secondary); how does it relate to `ai-kit-session-wake` (quota
+events) and the execute skills (`ai-kit-spec-execute-gsd`, `ai-kit-spec-execute-superpowers`: phase
+finish, subagent delegation). Nothing is built before this check; its result may be to keep the
+siblings.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
