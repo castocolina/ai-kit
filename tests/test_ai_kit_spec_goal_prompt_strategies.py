@@ -310,8 +310,8 @@ class TestBlocks(_RepoCase):
         self.assertIn(f"{result['path']} section Rails", text)
         self.assertEqual(self.problems(text), [])
         self.assertEqual(result["strategies"], [
-            {"id": "goal", "recommended": True},
-            {"id": "loop", "recommended": False},
+            {"id": "goal", "recommended": True, "reason": "test", "label": ""},
+            {"id": "loop", "recommended": False, "reason": "test", "label": ""},
         ])
         goal_line = next(line for line in text.split("\n") if line.startswith("/goal "))
         self.assertEqual(result["conditions"], [{"strategy": "goal",

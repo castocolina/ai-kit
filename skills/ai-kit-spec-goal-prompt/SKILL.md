@@ -61,6 +61,9 @@ python3 "$S/goal_prompt.py" detect --repo . --target-host <host> --tools "<names
   --roadmap or --gsd-cmd" (observed).
 - Exit 2 prints a JSON `error` on stderr. Relay the message, fix the input, rerun. Never guess.
 
+**MANDATORY: read [references/host-primitives.md](references/host-primitives.md) before relaying any primitive label.**
+**MANDATORY: read [references/strategy-matrix.md](references/strategy-matrix.md) before overriding or explaining a strategy.**
+
 Read the result back in four lines:
 1. Scope: `scope.kind` and `scope.identity`.
 2. E2E: the `e2e.commands` list, or "none" when `e2e.none` is true.
@@ -70,11 +73,8 @@ Read the result back in four lines:
 If `needs` is non-empty, supply the capture and rerun: `--identity <file>` for `identity`,
 `--phase-op <dir>` holding `<number>.json` files for `phase_op`. The GSD queries behind these
 (`runtime-identity`, `init.phase-op`) are named in the CLI source; whether a given gsd-tools build
-answers them is unverified. If `scope.ask` is set, ask that question and rerun detect with the
-answer.
-
-**MANDATORY: read [references/host-primitives.md](references/host-primitives.md) before relaying any primitive label.**
-**MANDATORY: read [references/strategy-matrix.md](references/strategy-matrix.md) before overriding or explaining a strategy.**
+answers them is unverified. If `scope.ask` is set, ask that question (it replaces question 1, it is
+not a fifth) and rerun detect with the answer; do not render before detect returns strategies.
 
 ## 3. Render
 
@@ -95,8 +95,9 @@ Write `tmp/goal-answers.json`. Use repository-relative paths only:
   `{"kind": "free", "text": "..."}`.
 - `strategy`: `"goal"`, `"loop"` or `"autonomous"` only when the user explicitly asked for that
   one; otherwise `null`.
-- `output_dir`: `null` (default: `.planning/goals` for OpenGSD, `docs/superpowers/goals` otherwise),
-  or a repository-relative directory with no `..`.
+- `output_dir`: `null` (default: `.planning/goals` for OpenGSD, `docs/superpowers/goals` for
+  superpowers plans, and `tmp/` for a free-text work set, which must be git-ignored), or a
+  repository-relative directory with no `..`.
 - `objective`: the user's own words for the OBJECTIVE lines, or `""`. `skills`: extra skill names.
 
 Then run:
@@ -105,10 +106,11 @@ python3 "$S/goal_prompt.py" render --repo . --detect tmp/goal-detect.json --answ
 ```
 Relay, from the render stdout and the detect output:
 - `path`: the file written.
-- Each strategy with its `reason` and `label` (these come from detect's `strategies`; render
-  prints only `id` and `recommended`).
+- Each `strategies` entry of the render output with its `reason` and `label`. Explain the choice
+  from this list, not from detect's: render re-selects when `strategy` is set in the answers.
 - Each `conditions` entry: the `/goal` condition length in characters. Render refuses a condition
-  over the 4,000 code-point cap.
+  over 1,800 characters, and over the 4,000 code-point cap; on exit 2 for either, shorten
+  `objective` and render again.
 - Every `warnings` entry (readiness problems; stdout only, never written into the file).
 - Every `dropped` entry: a requested strategy the host cannot run.
 

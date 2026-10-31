@@ -643,7 +643,10 @@ class TestRenderOpenGsd(unittest.TestCase):
     def test_opengsd_fixture_renders_the_contract_stdout(self):
         result = gp_render.render(make_detect(), make_answers(), self._ctx())
         self.assertEqual(result["path"], ".planning/goals/2026-10-31-phases-16-16-1-17.md")
-        self.assertEqual(result["strategies"], [{"id": "autonomous", "recommended": True}])
+        self.assertEqual(
+            result["strategies"],
+            [{"id": "autonomous", "recommended": True, "reason": "OpenGSD scope", "label": ""}],
+        )
         self.assertEqual(result["conditions"], [])
         self.assertEqual(result["sections"], list(gp_render.HEADINGS))
         self.assertGreater(result["paste_chars"], 0)

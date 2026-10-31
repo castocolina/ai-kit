@@ -573,7 +573,13 @@ def render(
     return {
         "path": relpath,
         "strategies": [
-            {"id": s["id"], "recommended": bool(s.get("recommended"))} for s in strategies
+            {
+                "id": s["id"],
+                "recommended": bool(s.get("recommended")),
+                "reason": s.get("reason", ""),
+                "label": s.get("label", ""),
+            }
+            for s in strategies
         ],
         "conditions": [
             {"strategy": "goal", "chars": len(block.condition)}
