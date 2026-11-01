@@ -421,7 +421,7 @@ class TestRealApply(_RealGsdTestCase):
             node_bin,
             real,
         )
-        self.assertEqual((code, report["applied"]), (0, True))
+        self.assertEqual((code, report["applied"]), (0, True), report)
         runner = os.path.join(project, ".planning", "scripts", "cross-ai.mjs")
         with open(runner, "rb") as handle:
             runner_bytes = handle.read()
