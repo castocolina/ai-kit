@@ -20,8 +20,9 @@ KEYS = {"skill", "judge", "rubric_version", "spec_sha", "scores", "max", "total"
         "percent", "grade", "findings"}
 FINDING_KEYS = {"id", "dimension", "severity", "file", "line", "evidence", "fix"}
 SEVERITIES = {"critical", "high", "medium", "low"}
-# Both judges run through pi; there is no Opus entry (owner rule, 2026-10-31).
-JUDGES = {"my-referee-two": "router-env/my-referee-two",
+# Every judge runs through pi; there is no Opus entry (owner rule, 2026-10-31).
+JUDGES = {"my-referee-one": "router-env/my-referee-one",
+          "my-referee-two": "router-env/my-referee-two",
           "my-referee-three": "router-env/my-referee-three"}
 _STATUS_PREFIX = "AIKIT-XAI "
 
@@ -156,9 +157,9 @@ def main(argv):
 
     rounds = sorted(int(os.path.basename(p)[1:]) for p in glob.glob(j_dir + "/skill-judge/r*")
                     if os.path.basename(p)[1:].isdigit())
-    # The original loop is capped at three rounds. Rounds 4 and 5 exist only as the single post-review
-    # confirmation (orchestrator decision, at most one fix-and-recheck), and must be labelled so.
-    assert rounds == list(range(1, len(rounds) + 1)) and len(rounds) <= 5, "rounds must be r1..r<=5"
+    # The original loop is capped at three rounds. Rounds 4 to 6 exist only as post-review
+    # confirmations (orchestrator decision; round 6 adds a second judge), and must be labelled so.
+    assert rounds == list(range(1, len(rounds) + 1)) and len(rounds) <= 6, "rounds must be r1..r<=6"
     extra = ",".join(str(n) for n in rounds if n > 3)
     lab = re.search(r"^Post-review confirmation rounds: (\S+)$", t, re.M)
     assert (lab.group(1) if lab else "") == extra, "rounds above 3 need the label line: " + extra
