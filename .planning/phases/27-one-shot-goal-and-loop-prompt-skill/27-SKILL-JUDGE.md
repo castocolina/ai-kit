@@ -115,7 +115,7 @@ scored it higher (94.4), while referee-three scored it lower with medium and low
 
 ## Owner decisions
 
-none
+Owner-decision: ai-kit-spec-goal-prompt accepts UNRESOLVED (2026-11-02, owner message: fine for now, will judge it by trying it in use)
 
 ## Pending acceptance
 
