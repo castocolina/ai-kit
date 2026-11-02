@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -18,8 +19,10 @@ SKILL = REPO / "skills" / "ai-kit-spec-goal-prompt"
 SCRIPT = SKILL / "scripts" / "goal_prompt.py"
 EVALS = SKILL / "evals"
 sys.path.insert(0, str(SKILL / "scripts"))
+sys.path.insert(0, str(REPO / "skills" / "ai-kit-spec-review"))
 import goal_prompt
 import gp_common
+from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 
 from tests import goal_prompt_fixtures as fx
 
@@ -153,16 +156,27 @@ def _evals() -> dict:
     return json.loads(EVALS_FILE.read_text(encoding="utf-8"))
 
 
-def run_cli(*args: str, home: str) -> subprocess.CompletedProcess:
-    """Run the real CLI with a fake HOME and XDG dir; never the owner's home."""
-    env = dict(os.environ)
+def eval_env(home: str) -> dict[str, str]:
+    """The CLI's env: a fake HOME and XDG dir, and Claude Code as the current host.
+
+    The evals say "target host is the current one" and expect Claude's primitives, so the
+    caller's host signals are replaced: a plain-terminal `git push` would otherwise detect no
+    host and drop the goal strategy.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in HOST_SIGNAL_ENV_VARS}
+    env["CLAUDECODE"] = "1"
     env["HOME"] = home
     env["XDG_CONFIG_HOME"] = home + "/.config"
     env["AI_KIT_REFUSE_REAL_HOME"] = "1"
+    return env
+
+
+def run_cli(*args: str, home: str) -> subprocess.CompletedProcess:
+    """Run the real CLI under `eval_env`; never the owner's home."""
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
-        check=False, env=env,
+        check=False, env=eval_env(home),
     )
 
 
@@ -283,6 +297,20 @@ class TestFixtureDetect(unittest.TestCase):
     def _json(self, proc: subprocess.CompletedProcess) -> dict:
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout)
+
+    def test_current_host_does_not_follow_the_caller(self):
+        """A plain-terminal caller (no host signal) still detects Claude Code as current."""
+        plain = {k: v for k, v in os.environ.items() if k not in HOST_SIGNAL_ENV_VARS}
+        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.dict(
+            os.environ, plain, clear=True
+        ):
+            home = Path(tmp) / "home"
+            home.mkdir()
+            repo = stage_project("opengsd-mixed", Path(tmp) / "repo")
+            result = self._json(run_cli("detect", "--repo", str(repo), "--tools", "",
+                                        home=str(home)))
+        self.assertEqual(result["host"]["current"], "claude")
+        self.assertIn("goal", [s["id"] for s in result["strategies"]])
 
     def test_opengsd_mixed(self):
         with tempfile.TemporaryDirectory() as tmp:
