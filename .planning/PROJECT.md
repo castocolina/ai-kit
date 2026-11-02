@@ -31,9 +31,30 @@ real ~85k-row refined store without freezing. The curated-config pipeline
 and renders a cross-AI runner (template 8) that runs one CLI per call under a
 configurable retry ladder.
 
-**Next milestone:** not started (`/gsd-new-milestone`). Open candidates are the
-carried owner items and backlog 999.14 (skills as real copies) first, then 999.15,
-999.16 and 999.17.
+## Current Milestone: v2.0 Skill Refactor
+
+**Goal:** Turn ai-kit's skills into a smaller, re-judged and portable set: shared config, resilient review and
+execute loops, one project-rules skill of event playbooks, and installs from a committed `dist/`; every phase
+ends with something the owner can see.
+
+**Target features:**
+- Fast, trustworthy gates first: changed-file tests at pre-commit, full suite at pre-push, no test calling a
+  real host binary; commits compacted by logical feature (jev proposes the grouping), push per finished plan.
+- Remove `ai-kit-spec-execute-gsd`, `ai-kit-opencode-providers` and `mermaid-audit`.
+- Re-judge every skill with the new judge, then batch phases that improve groups of skills, each with
+  new-shape evals and tests.
+- One config design for every skill that keeps settings, replacing `review-spec.toml` with migration.
+- `ai-kit-spec-config` as the hub: discovery on every host, a model catalog with tiers, capabilities and
+  usability, separate reviewers and executors with opt-in escalation.
+- Resilient review and execute loops with jev, lens skills and capability blocks; code review after
+  implementation in the superpowers adapter; one shared runner with session ids and jev-sized review lanes.
+- `ai-kit-project-rules`: one skill of event playbooks plus kept check scripts, AGENTS.md only, vertical
+  slices, host hooks in setup, and the 5-hour quota wake grid.
+- curated-config fixes, `dist/` with `npx skills` setup per host, orphaned scripts, rtk removal, a shared
+  secret scanner, Laya calibration.
+
+Input: `.planning/milestones/NEXT-MILESTONE-INPUTS.md` (rounds 1-9 and "Decisions by skill") and the research
+in `.planning/research/2026-11-02-next-milestone/`.
 
 ## Core Value
 
@@ -97,8 +118,17 @@ verified live rather than assumed from a catalog.
 
 ### Active
 
-<!-- Carried to the owner at the v1.3 close; checkable requirements are in
-     milestones/v1.3-REQUIREMENTS.md (the unchecked rows). -->
+Milestone v2.0 (checkable requirements in `.planning/REQUIREMENTS.md`):
+
+- [ ] Fast gates, logical-feature commit compaction and push per finished plan
+- [ ] Three skills removed; every kept skill re-judged by the new judge with evals and tests
+- [ ] One config design for all skills; spec-config as the hub with the model catalog
+- [ ] Resilient review and execute loops, code review after execution, one shared runner
+- [ ] One `ai-kit-project-rules` skill of event playbooks, host hooks in setup, the 5-hour quota grid
+- [ ] curated-config fixes, `dist/` with `npx skills` setup, cleanups
+
+Carried to the owner at the v1.3 close (checkable rows in `milestones/v1.3-REQUIREMENTS.md`; open checks in
+the 2026-11-02 live-checks todo):
 
 - [ ] Owner capture files for phases 25, 25.1, 26 and 27, and the interactive or
       live runs for phases 20-23 (EVAL-05/07/08, ADV-04, PCH-01/02, STL-03/04)
@@ -193,8 +223,10 @@ introduced without an explicit, justified exception.
   officially documented behavior.
 - **Skill-quality gate**: Any new or materially updated `SKILL.md` produced
   by this milestone's phases passes the `skill-judge` review loop (no
-  remaining Critical/Important finding, or score ≥ 96/120, no regression vs.
-  baseline) before being marked complete.
+  remaining critical or high finding, or grade B or better on the rubric's
+  percent bands, no regression beyond judge variation) before being marked
+  complete. Only the current judge's verdicts count; old /120 scores are history.
+- **Platforms**: Windows is out of scope (owner, 2026-11-02).
 - **Runtime dependency discipline**: Shipped/runtime code stays stdlib-only
   (Python 3.11+ where TOML parsing is needed); `uv`/`textual`-class
   dependencies stay dev- or wizard-only, per existing project convention.
@@ -217,6 +249,8 @@ introduced without an explicit, justified exception.
 | The cross-AI runner spawns one CLI per call and never switches harness, provider or model on its own (v1.3, Phases 25 and 25.1) | Failures are classified and reported; recovery is a retry ladder, not a silent fallback | — Pending: live router and copilot captures are owner items (25 and 25.1 OWNER-CAPTURES) |
 | `jev-fast-decision` is an advisory black box, never a gate (v1.3, Phases 21.1 and 24) | A cheap judgment must not be trusted beyond its sourcing | — Pending: live TypeSafe and Zen calls and the Laya accuracy floor are owner decisions |
 | Close v1.3 with `override_closeout` and carry owner items by name (2026-10-31) | The audit found no code gap; the open items need live hosts or owner decisions | ⚠️ Revisit — 24 audit items stay open until the owner works through them |
+| Best implementation beats the easy one; MVP only shifts weight to simplicity; decide with jev when present (owner, 2026-11-02) | A rule for every skill, homed in the generated AGENTS.md top rules | — Pending: v2.0 rules skill |
+| AGENTS.md and AGENTS.local.md are the only instruction files; CLAUDE.md is migrated away (owner, 2026-11-02) | Every primary host reads AGENTS.md; one file avoids drift | — Pending: v2.0 rules skill |
 | Track `.planning/` in git from 2026-09-16 | Earlier milestones lost their start-date history | ⚠️ Revisit — v1.0 dates are only partially recoverable |
 
 ## Evolution
@@ -237,4 +271,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-31 after v1.3 milestone*
+*Last updated: 2026-11-02 at the start of milestone v2.0*

@@ -1,103 +1,12 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v1.3 — GSD Curated Config v2",
-  "phases": [
-    {
-      "number": "16",
-      "name": "ai_kit_spec Extensions",
-      "status": "complete"
-    },
-    {
-      "number": "16.1",
-      "name": "Hardening",
-      "status": "complete"
-    },
-    {
-      "number": "17",
-      "name": "Curated-Config Inventory & Recommendation Engine",
-      "status": "complete"
-    },
-    {
-      "number": "18",
-      "name": "Cross-AI, Skills & Apply Pipeline",
-      "status": "complete"
-    },
-    {
-      "number": "18.1",
-      "name": "One runtime model",
-      "status": "complete"
-    },
-    {
-      "number": "19",
-      "name": "Evaluation on Claude",
-      "status": "complete"
-    },
-    {
-      "number": "20",
-      "name": "Live Validation on Codex + Opencode",
-      "status": "complete"
-    },
-    {
-      "number": "21",
-      "name": "Cursor Live Validation",
-      "status": "complete"
-    },
-    {
-      "number": "21.1",
-      "name": "Atomic reusable decision-system skills",
-      "status": "complete"
-    },
-    {
-      "number": "21.2",
-      "name": "PreCompact pre-summary hook",
-      "status": "complete"
-    },
-    {
-      "number": "21.3",
-      "name": "Visible tool-advisory hooks",
-      "status": "complete"
-    },
-    {
-      "number": "22",
-      "name": "Pi Live Validation",
-      "status": "complete"
-    },
-    {
-      "number": "23",
-      "name": "Host-split status line for Claude Code and Cursor CLI",
-      "status": "complete"
-    },
-    {
-      "number": "24",
-      "name": "Spec-and-discuss chain skill",
-      "status": "complete"
-    },
-    {
-      "number": "25",
-      "name": "Quota-aware cross-AI subprocess supervision",
-      "status": "complete"
-    },
-    {
-      "number": "25.1",
-      "name": "Configurable cross-AI retry ladder and upstream error propagation",
-      "status": "complete"
-    },
-    {
-      "number": "26",
-      "name": "Session self-resume and OpenGSD quota rules",
-      "status": "complete"
-    },
-    {
-      "number": "27",
-      "name": "One-shot goal and loop prompt skill",
-      "status": "complete"
-    }
-  ],
+  "milestone": "v2.0",
+  "phases": [],
   "next": {
-    "command": "/gsd-progress",
-    "label": "Show progress",
-    "reason": "Unsure of state — showing progress"
+    "command": "/gsd-discuss-phase",
+    "label": "Discuss the first phase",
+    "reason": "Project initialized — plan your first phase"
   },
-  "updated_at": "2026-10-31T21:00:57.808Z"
+  "updated_at": "2026-11-02T23:45:33.216Z"
 }

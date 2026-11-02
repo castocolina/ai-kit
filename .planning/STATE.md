@@ -1,19 +1,16 @@
 ---
 gsd_state_version: "1.0"
-milestone: v1.3
-status: Awaiting next milestone
-stopped_at: Completed 27-14-PLAN.md
-last_updated: "2026-11-02T22:25:39.010Z"
-last_activity: 2026-10-31
-last_activity_desc: Milestone v1.3 completed and archived
-state_head: 8e1bef6af9b413867007e0fbd244ec3953587059
+milestone: v2.0
+milestone_name: Skill Refactor
+status: planning
+last_updated: "2026-11-02T23:45:33.214Z"
+last_activity: 2026-11-02
 progress:
-  total_phases: 18
-  completed_phases: 18
-  total_plans: 212
-  completed_plans: 212
-  percent: 100
-milestone_name: GSD Curated Config v2
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -27,11 +24,10 @@ See: .planning/PROJECT.md (updated 2026-10-31)
 
 ## Current Position
 
-Phase: Milestone v1.3 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-11-02 - Completed quick task 261102-qrx: spec-discuss interactive path runs discuss with --analyze --all --batch
-Phase directories: v1.3 phases 16-27 archived 2026-11-02 to `.planning/milestones/v1.3-phases/`, quick tasks to `.planning/milestones/v1.3-quick/`; `.planning/phases/` holds only the backlog directories (999.x).
+Status: Defining requirements
+Last activity: 2026-11-02 — Milestone v2.0 started
 
 ## Performance Metrics
 
