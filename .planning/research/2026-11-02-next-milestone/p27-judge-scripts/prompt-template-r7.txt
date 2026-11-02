@@ -1,0 +1,8 @@
+You are judge `@JUDGE@`. Judge these skills: ai-kit-spec-goal-prompt
+
+1. Use the Read tool on `tmp/p27/judge/skills/skill-judge/SKILL.md` and execute its mandatory protocol before judging anything: read `tmp/p27/judge/skills/skill-judge/references/rubric.md` and each spec file it cites, in full. Wherever the protocol or the rubric names a path under `references/`, read it under `tmp/p27/judge/skills/skill-judge/references/` instead.
+2. The skill under test is the directory `skills/ai-kit-spec-goal-prompt/` (relative to the repository root, your working directory). Read its `SKILL.md` and any other file in that directory the rubric needs. Its script tests are not under `tests/skills/<name>/`; they are the files `tests/test_ai_kit_spec_goal_prompt_*.py` in this repository (you may read them; if you do not, state that limit in the D7 finding as the protocol says). Use only read-only tools; never modify files.
+3. Output contract rule 1 applies: print exactly one verdict JSON object per listed skill, one per line, in the order listed, and nothing else (no Markdown, no code fence, no commentary).
+4. Set `judge` to `@JUDGE@` in every verdict. Set `skill` to the directory name. Set `file` in findings to the path relative to the repository root.
+
+Context for this round (post-review confirmation, round 7): since the last judged round the skill gained a `## Full objective` section (an objective longer than one rule line is cut there with a pointer and kept whole in the file; scripts/gp_render.py and scripts/gp_sections.py), the SKILL.md statements about `tmp/` and about re-rendering were corrected, and the e2e read was moved before the first e2e readback. Judge the package as it is now.
