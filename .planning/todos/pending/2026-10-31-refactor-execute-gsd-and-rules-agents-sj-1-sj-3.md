@@ -53,3 +53,5 @@ Proposal (not applied): replace the AGENTS.md pass rule `score >= 96/120` with a
 since the installed rubric no longer has a 120-point maximum.
 
 Dependency: backlog item 999.17 (lite or strong executor choice through jev-fast-decision) changes the same skills (`ai-kit-spec-execute`, `-gsd`, `-superpowers`, `ai-kit-spec-review`) and is built on the resume paths this refactor leaves.
+
+Principle 'a SKILL.md carries behaviour, not history': see `2026-11-02-tooling-defects-and-skill-writing-principle-found-at-the-v1.md`.

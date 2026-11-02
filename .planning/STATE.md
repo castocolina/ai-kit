@@ -472,6 +472,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [2026-10-24] [tooling] Make the ai-kit session hooks dynamic (worktree indexing advice, install-relative docs, compact metr… — [todo file](.planning/todos/pending/2026-10-24-make-the-ai-kit-session-hooks-dynamic-worktree-indexing-advi.md)
 - [2026-10-30] [tooling] Unify the review/execute lane TOML, add effort and escalation, classify with jev — [todo file](.planning/todos/pending/2026-10-29-unify-review-execute-lane-toml-effort-escalation-and-jev-classification.md)
 - [2026-10-31] [skills] Refactor execute-gsd and rules-agents (SJ-1, SJ-3) — [todo file](.planning/todos/pending/2026-10-31-refactor-execute-gsd-and-rules-agents-sj-1-sj-3.md)
+- [2026-11-02] [tooling] Tooling defects and skill-writing principle found at the v1.3 close-out — [todo file](.planning/todos/pending/2026-11-02-tooling-defects-and-skill-writing-principle-found-at-the-v1.md)
 
 ### Blockers/Concerns
 
