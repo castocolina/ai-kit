@@ -146,3 +146,14 @@ None of these is taken. Each shows the options and what happens if nothing chang
   Phase 23 split) and the one named loop polish (1 commit of June 2026: a branch icon and an install flag for the
   branch). Decide for each: port the idea onto the current split status line, or drop it. Default: both stay on
   the remote untouched, and each is also preserved locally by an archive tag.
+- [ ] Optional idea left by the old Cursor proof of concept: a status line segment that shows the memory used by the
+  cursor-agent process (today only the external system-memory example exists for both hosts). Cursor is a
+  secondary runtime. Default: not built.
+- [ ] The todo about promoting the Cursor status line proof of concept (dated 2026-10-12) looks obsolete because
+  Phase 23 delivered the real Cursor status line. It was left open on purpose; decide whether to close it.
+- [ ] The GitLab remote still holds two old branches (the installer registry work and an old copy of the v1.3
+  branch) that were not compared by content because GitLab is skipped for now. Compare them by content before
+  deleting anything there when GitLab is used again. Default: untouched.
+- [ ] Archive tags kept locally after the branch clean-up: two are no longer needed (the single-commit agent
+  worktree summary and the already-merged rate-burn fix) and could be deleted; the Cursor proof of concept and
+  the host-split spec tags are kept until the Cursor memory idea above is decided.
