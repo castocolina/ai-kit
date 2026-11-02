@@ -7,7 +7,7 @@ files:
   - skills/ai-kit-spec-execute-gsd/SKILL.md
   - skills/ai-kit-project-rules-agents/SKILL.md
   - skills/ai-kit-spec-execute-superpowers/SKILL.md
-  - .planning/phases/26-session-self-resume-and-opengsd-quota-rules/26-SKILL-JUDGE.md
+  - .planning/milestones/v1.3-phases/26-session-self-resume-and-opengsd-quota-rules/26-SKILL-JUDGE.md
 ---
 
 ## Problem
@@ -30,9 +30,9 @@ Refactor both skills so a re-judge passes without a carried exception. Decide th
 refactor together with backlog item 999.16 (one event-keyed playbook skill for the
 `ai-kit-project-rules-*` family), since that item may change where its content lives.
 
-Evidence: `.planning/phases/26-session-self-resume-and-opengsd-quota-rules/26-SKILL-JUDGE.md`
+Evidence: `.planning/milestones/v1.3-phases/26-session-self-resume-and-opengsd-quota-rules/26-SKILL-JUDGE.md`
 (verdicts, rounds, owner decisions), the judge reports under
-`.planning/phases/26-session-self-resume-and-opengsd-quota-rules/skill-judge/r15/`, and the
+`.planning/milestones/v1.3-phases/26-session-self-resume-and-opengsd-quota-rules/skill-judge/r15/`, and the
 owner captures SJ-1 and SJ-3 in `26-OWNER-CAPTURES.md` in the same phase directory.
 
 ## SJ-2: ai-kit-spec-execute-superpowers (deferred by the owner, 2026-10-31)

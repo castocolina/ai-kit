@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PHASE = ROOT / ".planning" / "phases" / "22-pi-live-validation"
+PHASE = ROOT / ".planning" / "milestones" / "v1.3-phases" / "22-pi-live-validation"
 LIVE = PHASE / "live"
 # Commit cleanliness, tmp/ cleanup and full make gates are execution-time-only checks.
 TRIMMER = LIVE / "trim_pi_capture.py"

@@ -1,19 +1,19 @@
 ---
 gsd_state_version: "1.0"
 milestone: v1.3
-milestone_name: GSD Curated Config v2
 status: Awaiting next milestone
 stopped_at: Completed 27-14-PLAN.md
-last_updated: "2026-10-31T21:00:57.801Z"
+last_updated: "2026-11-02T15:43:22.889Z"
 last_activity: 2026-10-31
 last_activity_desc: Milestone v1.3 completed and archived
-state_head: 072894dd5b3788c5887781aa951e898b26d382f5
+state_head: e07e6ab8dffa034b9908c62932d2b24a382e8f5b
 progress:
   total_phases: 18
   completed_phases: 18
   total_plans: 212
   completed_plans: 212
   percent: 100
+milestone_name: GSD Curated Config v2
 ---
 
 # Project State
@@ -31,6 +31,7 @@ Phase: Milestone v1.3 complete
 Plan: —
 Status: Awaiting next milestone
 Last activity: 2026-10-31 — Milestone v1.3 completed and archived
+Phase directories: v1.3 phases 16-27 archived 2026-11-02 to `.planning/milestones/v1.3-phases/`, quick tasks to `.planning/milestones/v1.3-quick/`; `.planning/phases/` holds only the backlog directories (999.x).
 
 ## Performance Metrics
 
@@ -573,7 +574,6 @@ any order, or deferred, without blocking anything else in this milestone.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
-| 261024-ryk | Fix agent_skills references gsd-core skips (symlink escape) in config, curated-config and spec-discuss | 2026-10-24 | ce6984e | [261024-ryk-fix-agent-skills-references-gsd-core-ski](./quick/261024-ryk-fix-agent-skills-references-gsd-core-ski/) |
 
 ### Roadmap Evolution
 
@@ -627,7 +627,7 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 The v1.3 close used `override_closeout`. These items were NOT acknowledged through
 `audit-open acknowledge`, so the next `audit-open` scan still lists them. Paths are under
-`.planning/phases/`. After the owner review of 2026-11-02, `.planning/milestones/v1.3-OWNER-FOLLOWUP.md` records each item as closed
+`.planning/milestones/v1.3-phases/`. After the owner review of 2026-11-02, `.planning/milestones/v1.3-OWNER-FOLLOWUP.md` records each item as closed
 (from history or live), decided or discarded; every still-open check and owner decision is tracked in the todo named in the last todo row below.
 
 | Category | Item | Status | Deferred At | Milestone |

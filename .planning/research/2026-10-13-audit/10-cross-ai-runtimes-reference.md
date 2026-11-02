@@ -461,4 +461,4 @@ None of the six unset `CLAUDECODE` (16-HANDOFF:193). None of them have a retry, 
 - pi: [CLI](https://pi.dev/docs/latest/cli), [usage](https://pi.dev/docs/latest/usage), report 06.
 - Codex: [non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode), [sandboxing](https://learn.chatgpt.com/docs/sandboxing).
 - GSD: `~/.claude/gsd-core/workflows/execute-phase/detail/elaboration.md` (1.16.0) and `bin/gsd-tools.cjs` `run-with-timeout`.
-- ai-kit review tree: `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_build.py`, `.planning/REQUIREMENTS.md:40`, `.planning/phases/18-cross-ai-skills-apply-pipeline/18-CONTEXT.md`, `docs/superpowers/specs/2026-09-23-gsd-curated-config-v2-design.md:197-207`.
+- ai-kit review tree: `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_build.py`, `.planning/REQUIREMENTS.md:40`, `.planning/milestones/v1.3-phases/18-cross-ai-skills-apply-pipeline/18-CONTEXT.md`, `docs/superpowers/specs/2026-09-23-gsd-curated-config-v2-design.md:197-207`.

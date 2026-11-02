@@ -21,7 +21,7 @@ primary hosts; codex and cursor are secondary.
 and owner steps are carried to the owner, not done. v1.2 ai-kit Rules Skill
 Family shipped 2026-09-23; v1.0 and v1.1 were archived retroactively during that
 close. See `.planning/MILESTONES.md` (the v1.3 entry lists every carried item).
-Phase history lives in `.planning/milestones/v1.{0,1,2}-phases/`; the v1.3 phase directories stay in `.planning/phases/` because owner kits and tests read them.
+Phase history lives in `.planning/milestones/v1.{0,1,2,3}-phases/`; `.planning/phases/` holds only the backlog directories (999.x).
 
 The rules-checker family (`ai-kit-project-rules-{agents,makefile,precommit,arch,docker,cicd}`
 plus the `ai-kit-project-rules-all` orchestrator) shares

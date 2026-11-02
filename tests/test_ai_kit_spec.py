@@ -109,7 +109,7 @@ from ai_kit_spec.vendor import infer_vendor_from_model
 # - Source command: `codex debug models` (CLI version codex-cli 0.147.0, the real binary
 #   resolved via PATH -- a volta shim, i.e. a real executable, not an alias/function).
 # - Captured 2026-09-23 on the maintainer's machine
-#   (.planning/phases/16-ai-kit-spec-extensions/16-RESEARCH.md, Pattern 2).
+#   (.planning/milestones/v1.3-phases/16-ai-kit-spec-extensions/16-RESEARCH.md, Pattern 2).
 # - Kept verbatim: the six slugs and their order, display_name, description,
 #   default_reasoning_level, every supported_reasoning_levels effort and description,
 #   visibility, and priority.
@@ -148,7 +148,7 @@ OPENCODE_VERBOSE_FIXTURE_PATH = os.path.join(
 )
 
 # Source: `GET /api/model` on a scratch-HOME `opencode serve`, opencode v2.0.29,
-# 2026-10-15 (.planning/phases/17-curated-config-inventory-recommendation-engine/
+# 2026-10-15 (.planning/milestones/v1.3-phases/17-curated-config-inventory-recommendation-engine/
 # 17-SPIKE-opencode-image-input.md).
 # Kept verbatim: the spike sample's first 4 Model.Info objects (id, modelID, providerID,
 #   capabilities, status, enabled), in spike order.

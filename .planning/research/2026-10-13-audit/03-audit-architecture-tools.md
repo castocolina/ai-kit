@@ -105,7 +105,7 @@ The installer symlinks the skills into `~/.claude/skills`. The runtime is stdlib
      - Pylint covers only 3 files (`:26`). Pyright and vulture leave out `ai_kit_spec`, `ai_kit_spec_gsd`, `ai_kit_spec_superpowers` and `opencode-providers`.
 
      I computed these by matching each hook's regex against `git ls-files '*.py'`.
-   - **Concrete case:** Phase 16's WR-02..WR-04 lint findings reached a commit because of exactly this gap (`.planning/phases/16-ai-kit-spec-extensions/16-REVIEW-FIX.md:30`).
+   - **Concrete case:** Phase 16's WR-02..WR-04 lint findings reached a commit because of exactly this gap (`.planning/milestones/v1.3-phases/16-ai-kit-spec-extensions/16-REVIEW-FIX.md:30`).
    - **Fix:** Change the ruff hook to `files: \.py$` with `exclude: ^(docs|\.planning)/`.
      - Only 2 new errors appear in shipped skill code: `ai_kit_spec/dispatch.py:158` SIM105 and `ai_kit_spec_superpowers/task_classification.py:11` I001.
      - `markdown-to-pdf` and `mermaid-audit` add 16 more (6, 5 and 5). Fix them, or exclude those two folders for now.

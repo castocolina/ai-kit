@@ -5,10 +5,10 @@ area: verification
 severity: minor
 files:
   - .planning/milestones/v1.3-OWNER-FOLLOWUP.md
-  - .planning/phases/25-quota-aware-cross-ai-subprocess-supervision/25-OWNER-CAPTURES.md
-  - .planning/phases/25.1-configurable-cross-ai-retry-ladder-and-upstream-error-propag/25.1-OWNER-CAPTURES.md
-  - .planning/phases/26-session-self-resume-and-opengsd-quota-rules/26-OWNER-CAPTURES.md
-  - .planning/phases/27-one-shot-goal-and-loop-prompt-skill/27-OWNER-CAPTURES.md
+  - .planning/milestones/v1.3-phases/25-quota-aware-cross-ai-subprocess-supervision/25-OWNER-CAPTURES.md
+  - .planning/milestones/v1.3-phases/25.1-configurable-cross-ai-retry-ladder-and-upstream-error-propag/25.1-OWNER-CAPTURES.md
+  - .planning/milestones/v1.3-phases/26-session-self-resume-and-opengsd-quota-rules/26-OWNER-CAPTURES.md
+  - .planning/milestones/v1.3-phases/27-one-shot-goal-and-loop-prompt-skill/27-OWNER-CAPTURES.md
 ---
 
 ## Problem

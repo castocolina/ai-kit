@@ -84,7 +84,7 @@ deferred skill-judge verdicts (`ai-kit-spec-goal-prompt` and `ai-kit-spec-config
 SJ-2, SJ-3 deferred), the Phase 24 chain dry run, and `.planning/WINDOWS.md` entry 7. The full list
 with paths is in the v1.3 entry of `MILESTONES.md`.
 
-Full details: `milestones/v1.3-ROADMAP.md` · phase dirs: `phases/` (not moved: owner kits and tests read them)
+Full details: `milestones/v1.3-ROADMAP.md` · phase dirs: `milestones/v1.3-phases/`
 
 </details>
 

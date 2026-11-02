@@ -333,7 +333,7 @@ class AdvisorCoreTests(unittest.TestCase):
         self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "{}", ""))
 
 
-_LIVE_DIR = os.path.join(_ROOT, ".planning", "phases",
+_LIVE_DIR = os.path.join(_ROOT, ".planning", "milestones", "v1.3-phases",
                          "21.3-visible-tool-advisory-hooks-as-setup-knobs")
 _LIVE_MD = os.path.join(_LIVE_DIR, "21.3-LIVE.md")
 

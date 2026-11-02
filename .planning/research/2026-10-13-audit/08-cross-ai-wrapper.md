@@ -127,7 +127,7 @@ python3 $TOOLS_PY dispatch-execute --cli $RESULT_CLI --model $RESULT_MODEL --tar
 
 ### 1.5 Phase 16 real-run scripts and lessons [V]
 
-`.planning/phases/16-ai-kit-spec-extensions/cross-ai-scripts/xai_exec.sh`:
+`.planning/milestones/v1.3-phases/16-ai-kit-spec-extensions/cross-ai-scripts/xai_exec.sh`:
 - Runs `env -u CLAUDECODE node gsd-tools run-with-timeout "$TO" -- $CMD < prompt` (`:44-47`).
 - On a nonzero exit it greps stderr for `temporarily unavailable|cooling down|is locked|rate limit` and retries up to 6 times with a 90 s sleep. Each retry **resumes** the session with `-s $SID` and a "continue from where you stopped; inspect git status/diff/log first" message (`:40,52-61`).
 - It finds the SID with `opencode session list | awk '/^ses_/...'`, which is fragile: it picks the newest session (`:50`).
@@ -470,7 +470,7 @@ Live checks (cheap, in a throwaway git repo outside `/tmp`, because codex's `/tm
 
 ## Sources
 
-- Code (review tree): `skills/ai-kit-spec-review/ai_kit_spec/{commands.py,dispatch.py,execute_dispatch.py,cli.py,detection.py,config_io.py}`, `skills/ai-kit-spec-execute-gsd/{SKILL.md,references/dispatch-notes.md,ai_kit_spec_gsd/*.py}`, `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/{cross_ai_build.py,cli.py,model_detect.py,workflow_defaults.py}`, `.planning/phases/16-*/cross-ai-scripts/*.sh`, `16-HANDOFF.md`, `18-CONTEXT.md`, `REQUIREMENTS.md`, `docs/superpowers/specs/2026-09-23-gsd-curated-config-v2-design.md`.
+- Code (review tree): `skills/ai-kit-spec-review/ai_kit_spec/{commands.py,dispatch.py,execute_dispatch.py,cli.py,detection.py,config_io.py}`, `skills/ai-kit-spec-execute-gsd/{SKILL.md,references/dispatch-notes.md,ai_kit_spec_gsd/*.py}`, `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/{cross_ai_build.py,cli.py,model_detect.py,workflow_defaults.py}`, `.planning/milestones/v1.3-phases/16-*/cross-ai-scripts/*.sh`, `16-HANDOFF.md`, `18-CONTEXT.md`, `REQUIREMENTS.md`, `docs/superpowers/specs/2026-09-23-gsd-curated-config-v2-design.md`.
 - GSD: `~/.claude/gsd-core/workflows/{execute-phase.md,execute-phase/detail/elaboration.md,review.md,settings-advanced.md}`, `bin/gsd-tools.cjs` (run-with-timeout), `bin/lib/{review-lane-descriptor.cjs,review-reviewer-selection.cjs,config.cjs,init.cjs}`.
 - Local CLIs: `cursor-agent --help`, `opencode run --help`, `codex exec --help`, `codex --help`, `codex features list`, `claude --help`, `pi --help`, pi `README.md` and `dist/` source.
 - Official docs:

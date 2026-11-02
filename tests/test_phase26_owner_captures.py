@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PHASE = next((ROOT / ".planning" / "phases").glob("26-session-self-resume*"), None)
+PHASES = ROOT / ".planning" / "milestones" / "v1.3-phases"
+PHASE = next(PHASES.glob("26-session-self-resume*"), None)
 
 
 @unittest.skipUnless(PHASE and (PHASE / "26-OWNER-CAPTURES.md").is_file(), "phase 26 dir absent")
