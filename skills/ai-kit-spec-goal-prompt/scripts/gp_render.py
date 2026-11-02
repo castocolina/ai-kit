@@ -17,6 +17,7 @@ import re
 import string
 import subprocess
 import tempfile
+import textwrap
 from collections.abc import Mapping, Sequence
 from typing import Any, NamedTuple
 
@@ -40,6 +41,9 @@ from gp_sections import (
 )
 
 __all__ = [
+    "FULL_GOAL_HEADING",
+    "GOAL_POINTER_THRESHOLD",
+    "GOAL_STYLES",
     "Block",
     "BlockView",
     "PromptTemplate",
@@ -80,12 +84,25 @@ SHARED_HEADING = "## Rails"
 AUTONOMOUS_PREFIX = "/gsd-autonomous"
 GOAL_CAP = 4000
 GOAL_BUDGET = 1800
+GOAL_POINTER_THRESHOLD = 1000  # an inline condition longer than this moves to `## Full goal`
+GOAL_STYLES = ("auto", "inline", "pointer")
+FULL_GOAL_HEADING = "## Full goal"
+FULL_GOAL_WIDTH = 100
 INLINE_CAP = 7000
 RULE_CAP = 60
 WRAPPER_SENTENCES = 3
 WRAPPER_SHARE = 0.15
 UNIT_SENTENCE = "Unit tests alone never count as done."
 GOAL_PREFIX = "/goal "
+POINTER_PREFIX = "/goal read document `"
+POINTER_LINE = (
+    "/goal read document `{path}` at section `Full goal` and finish only when that section's "
+    "DONE WHEN conditions hold"
+)
+POINTER_WARNING = (
+    "goal form pointer: the /goal line points at section Full goal of the file; that the host "
+    "follows /goal read document ... at section ... is unverified"
+)
 FLAG_RE = re.compile(r"--[A-Za-z]")
 JEV_RE = re.compile(r"\bjev", re.IGNORECASE)
 SKIP_RE = re.compile(r"skip.*test tier", re.IGNORECASE)
@@ -247,11 +264,18 @@ def _inline_problems(lines: list[str], opengsd_block: bool) -> list[str]:
     return problems
 
 
+def _full_goal_lines(text: str) -> list[str] | None:
+    """Lines of the `## Full goal` section after the COPY TO HERE marker; None when absent."""
+    _, found, after = text.partition(CLOSE_MARKER)
+    _, heading, body = after.partition(f"\n{FULL_GOAL_HEADING}\n")
+    return body.split("\n") if found and heading else None
+
+
 def _block_problems(lines: list[str], opengsd_block: bool) -> list[str]:
     problems: list[str] = []
     if lines and lines[0].startswith(AUTONOMOUS_PREFIX):
         problems += _inline_problems(lines, opengsd_block)
-    if lines and lines[0].startswith(GOAL_PREFIX):
+    if lines and lines[0].startswith(GOAL_PREFIX) and not lines[0].startswith(POINTER_PREFIX):
         problems += _goal_problems("\n".join([lines[0][len(GOAL_PREFIX) :], *lines[1:]]))
     return problems + _section_problems(_sections(lines[1:]))
 
@@ -260,6 +284,7 @@ def _shared_rails(text: str) -> list[str]:
     """Lines of the shared `## Rails` section after the COPY TO HERE marker; [] when absent."""
     _, found, after = text.partition(CLOSE_MARKER)
     _, heading, rails = after.partition(f"\n{SHARED_HEADING}\n")
+    rails = rails.split(f"\n{FULL_GOAL_HEADING}\n")[0]
     return rails.split("\n") if found and heading else []
 
 
@@ -285,6 +310,14 @@ def _wrapper_problems(text: str) -> list[str]:
     return problems
 
 
+def _scan_lines(text: str) -> list[str]:
+    """The lines the per-line checks read. The wrapped `## Full goal` body counts as one line, as
+    the inline `/goal` condition it replaces did, so a wrap cannot split a phrase past a check."""
+    head, heading, body = text.partition(f"\n{FULL_GOAL_HEADING}\n")
+    lines = head.split("\n")
+    return [*lines, FULL_GOAL_HEADING, " ".join(body.split())] if heading else lines
+
+
 def check_text(
     text: str,
     *,
@@ -298,13 +331,15 @@ def check_text(
     """
     lines = text.split("\n")
     problems = scan_text(text, home=home, secrets=secrets)
+    if any(line.startswith(POINTER_PREFIX) for line in lines) and _full_goal_lines(text) is None:
+        problems.append("/goal pointer without a Full goal section")
     if "--no-verify" in text:
         problems.append("contains --no-verify")
     if DELIMITER in text:
         problems.append("template delimiter left in the output")
     if text.count(OPEN_MARKER) != 1 or text.count(CLOSE_MARKER) != 1:
         problems.append("copy markers not exactly once each")
-    for line in lines:
+    for line in _scan_lines(text):
         if SKIP_RE.search(line):
             problems.append("skipped test tier")
         if JEV_RE.search(line) and "advisory" not in line.lower():
@@ -341,16 +376,19 @@ class BlockView(NamedTuple):
     first_line: str
     rails: str
     turn_cap: int = TURN_FLOOR
+    goal_style: str = "auto"
 
 
 class Block(NamedTuple):
-    """One strategy's block: its heading, the fenced text, its `/goal` condition ("" when none),
-    and whether the rails travel inline."""
+    """One strategy's block: its heading, the fenced text, the text after `/goal ` ("" when
+    none), whether the rails travel inline, and the full condition when the `/goal` line is a
+    pointer to the `## Full goal` section ("" otherwise)."""
 
     heading: str
     text: str
     condition: str
     inline: bool
+    full_goal: str = ""
 
 
 def _unverified_note(strategy: Mapping[str, Any]) -> str:
@@ -358,6 +396,18 @@ def _unverified_note(strategy: Mapping[str, Any]) -> str:
     if strategy.get("label") != "unverified":
         return ""
     return f" Primitive unverified on this host: {strategy.get('primitive') or strategy['id']}."
+
+
+def _use_pointer(style: str, condition: str) -> bool:
+    """`pointer` always, `inline` never, `auto` when the inline condition is over the threshold."""
+    return style == "pointer" or (style == "auto" and len(condition) > GOAL_POINTER_THRESHOLD)
+
+
+def _goal_style(answers: Mapping[str, Any]) -> str:
+    style = answers.get("goal_style") or "auto"
+    if style not in GOAL_STYLES:
+        raise GuardError(f"field goal_style must be one of {', '.join(GOAL_STYLES)}")
+    return str(style)
 
 
 def _one_block(strategy: Mapping[str, Any], heading: str, view: BlockView) -> Block:
@@ -376,7 +426,13 @@ def _one_block(strategy: Mapping[str, Any], heading: str, view: BlockView) -> Bl
         raise GuardError(f"unknown strategy: {kind}")
     lines[-1] += _unverified_note(strategy)
     condition = lines[0][len(GOAL_PREFIX) :] if kind == "goal" else ""
-    return Block(heading, fill("BLOCK_PLAIN", {"BODY": "\n".join(lines)}), condition, False)
+    full_goal = ""
+    if kind == "goal" and _use_pointer(view.goal_style, condition):
+        full_goal = condition
+        lines = [POINTER_LINE.format(path=view.path) + _unverified_note(strategy)]
+        condition = lines[0][len(GOAL_PREFIX) :]
+    text = fill("BLOCK_PLAIN", {"BODY": "\n".join(lines)})
+    return Block(heading, text, condition, False, full_goal)
 
 
 def build_blocks(
@@ -544,6 +600,17 @@ def _wrapper(family: str, first_id: str) -> str:
     return f"{WRAPPER_BY_ID[first_id]} {PASTE_ONE}"
 
 
+def _full_goal_section(blocks: Sequence[Block]) -> str:
+    """The `## Full goal` section at the bottom of the file; "" when no block points to it."""
+    full = next((block.full_goal for block in blocks if block.full_goal), "")
+    if not full:
+        return ""
+    body = textwrap.fill(
+        full, width=FULL_GOAL_WIDTH, break_long_words=False, break_on_hyphens=False
+    )
+    return f"\n\n{FULL_GOAL_HEADING}\n\n{body}"
+
+
 def _compose(title: str, wrapper: str, blocks: Sequence[Block], rails: str) -> str:
     body = "\n\n".join(f"{block.heading}\n\n{block.text}" for block in blocks)
     shared = f"{SHARED_HEADING}\n\n{rails}" if any(not b.inline for b in blocks) else ""
@@ -551,7 +618,7 @@ def _compose(title: str, wrapper: str, blocks: Sequence[Block], rails: str) -> s
         "FILE",
         {"TITLE": title, "WRAPPER": wrapper, "BLOCKS": body, "SHARED_RAILS": shared},
     )
-    return text.rstrip("\n") + "\n"
+    return text.rstrip("\n") + _full_goal_section(blocks) + "\n"
 
 
 def _check_strategies(strategies: Sequence[Mapping[str, Any]], family: str) -> None:
@@ -587,6 +654,7 @@ def render(
         first_line=_autonomous_line(work),
         rails=rails,
         turn_cap=turn_cap(work_items(work)),
+        goal_style=_goal_style(answers),
     )
     blocks = build_blocks(strategies, view)
     text = _compose(
@@ -604,6 +672,8 @@ def render(
     if problems:
         raise GuardError("; ".join(problems))
     write_atomic(ctx.repo, relpath, text)
+    pointer = [block for block in blocks if block.full_goal]
+    goal_blocks = [block for block in blocks if block.condition]
     return {
         "path": relpath,
         "strategies": [
@@ -615,17 +685,26 @@ def render(
             }
             for s in strategies
         ],
+        "goal_form": (
+            None if not goal_blocks else "pointer" if pointer else "inline"
+        ),
         "conditions": [
-            {"strategy": "goal", "chars": len(block.condition)}
-            for block in blocks
-            if block.condition
+            {
+                "strategy": "goal",
+                "chars": len(block.condition),
+                **({"full_chars": len(block.full_goal)} if block.full_goal else {}),
+            }
+            for block in goal_blocks
         ],
         "sections": [heading for heading, _ in sections],
         "paste_chars": sum(len(block.text) for block in blocks),
         "rails_lines": len(_rule_lines(rails.split("\n"))),
-        "warnings": (
-            _readiness_warnings(detect["readiness"])
-            if work.family in GSD_FAMILIES and not answers.get("native_execution")
-            else []
-        ),
+        "warnings": [
+            *(
+                _readiness_warnings(detect["readiness"])
+                if work.family in GSD_FAMILIES and not answers.get("native_execution")
+                else []
+            ),
+            *([POINTER_WARNING] if pointer else []),
+        ],
     }

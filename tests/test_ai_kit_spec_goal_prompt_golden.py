@@ -21,6 +21,11 @@ from typing import Any, NamedTuple
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "skills" / "ai-kit-spec-goal-prompt" / "scripts"
 GOLDEN = REPO / "tests" / "fixtures" / "goal_prompt" / "golden" / "opengsd-recommended.md"
+GOLDEN_POINTER = REPO / "tests" / "fixtures" / "goal_prompt" / "golden" / "opengsd-goal-pointer.md"
+LONG_OBJECTIVE = (
+    "Ship phases 16 to 17 with the curated config checks green, keep every migration "
+    "reversible, and leave a short note per phase on what changed and why. "
+) * 8
 sys.path.insert(0, str(SCRIPTS))
 for rules_dir in (REPO / "skills" / "_shared", REPO / "skills" / "ai-kit-project-rules-agents"):
     sys.path.insert(0, str(rules_dir))
@@ -136,6 +141,9 @@ SCENARIOS = (
              {"from": "16", "to": "17", "only": ""}),
     Scenario("opengsd-user-goal", _gsd_e2e, (PHASES, True), ("--work-set", "phases:16-17"),
              {**GSD_ANSWERS, "strategy": "goal"}, None, True,
+             {"from": "16", "to": "17", "only": ""}),
+    Scenario("opengsd-goal-pointer", _gsd_e2e, (PHASES, True), ("--work-set", "phases:16-17"),
+             {**GSD_ANSWERS, "strategy": "goal", "objective": LONG_OBJECTIVE.strip()}, None, True,
              {"from": "16", "to": "17", "only": ""}),
     Scenario("opengsd-mockup", _gsd_e2e, (PHASES, True), ("--work-set", "phases:16-17"),
              {**GSD_ANSWERS, "mockups": ["docs/mockups/home.png"]}, None, True,
@@ -260,9 +268,13 @@ def _blocks(text: str) -> list[list[str]]:
 
 
 def _rails(text: str) -> list[str]:
-    """Lines of the shared `## Rails` section, [] when the file has none."""
+    """Lines of the shared `## Rails` section (up to `## Full goal`), [] when the file has none."""
     lines = text.split("\n")
-    return lines[lines.index(SHARED) + 1:] if SHARED in lines else []
+    if SHARED not in lines:
+        return []
+    rails = lines[lines.index(SHARED) + 1:]
+    return rails[:rails.index(gp_render.FULL_GOAL_HEADING)] if (
+        gp_render.FULL_GOAL_HEADING in rails) else rails
 
 
 def _upstream_flags(block_with_fences: list[str]) -> dict[str, Any]:
@@ -424,6 +436,22 @@ class TestGolden(unittest.TestCase):
             GOLDEN.write_text(outcome.text, encoding="utf-8")
         self.assertEqual(
             GOLDEN.read_text(encoding="utf-8"), outcome.text,
+            "golden drift; regenerate with: UPDATE_GOLDEN=1 "
+            "python3 -m unittest tests.test_ai_kit_spec_goal_prompt_golden",
+        )
+
+
+class TestGoldenPointer(unittest.TestCase):
+    def test_long_goal_pointer_form_matches_the_committed_golden(self):
+        scn = next(s for s in SCENARIOS if s.name == "opengsd-goal-pointer")
+        with tempfile.TemporaryDirectory() as tmp:
+            outcome, _, _, _, _ = run_scenario(scn, Path(tmp))
+        self.assertEqual(outcome.payload["goal_form"], "pointer")
+        if os.environ.get("UPDATE_GOLDEN") == "1":
+            GOLDEN_POINTER.parent.mkdir(parents=True, exist_ok=True)
+            GOLDEN_POINTER.write_text(outcome.text, encoding="utf-8")
+        self.assertEqual(
+            GOLDEN_POINTER.read_text(encoding="utf-8"), outcome.text,
             "golden drift; regenerate with: UPDATE_GOLDEN=1 "
             "python3 -m unittest tests.test_ai_kit_spec_goal_prompt_golden",
         )

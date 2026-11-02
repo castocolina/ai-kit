@@ -179,6 +179,32 @@
         "If `render` was called with an absolute `output_dir`, it exited with code 2 and the error named the field `output_dir` without echoing the value",
         "The final message tells the user the file stays inside the repository and can be copied to the home folder by hand"
       ]
+    },
+    {
+      "id": "precise-long-goal-pointer",
+      "prompt": "I want a /goal prompt for phases 16 to 18, and I want my requirements carried in full, word for word, as the objective: Phase 16 (alpha) must keep every existing command working while the new option parser lands, with a regression test for each command that changes and a short migration note listing every renamed flag. Phase 17 (beta) must add the reporting screen, show the empty state, the loading state and the error state, wire it to the existing data source without a second cache, and capture a screenshot of each state for review. Phase 18 (gamma) must remove the old code paths only after beta is verified, update every document that mentions them, keep the changelog in the same commit as the removal, and leave the working tree clean with nothing pushed. Between phases, stop and report if any gate fails, never skip a hook, and never touch my real configuration files. Report each phase with the commands run, their exit codes and their count lines. Native execution is not allowed, no mockups, target host is the current one. The project is evals/files/opengsd-mixed/project (planning/ is .planning/) and the gsd-tools output is in evals/files/opengsd-mixed/captures (@REPO@ is the repo root).",
+      "expected_output": "A file whose first block line is a short `/goal read document` pointer to the file's own section `Full goal`, with the full condition in `## Full goal` at the bottom of the file and `goal_form` equal to `pointer` in the render output.",
+      "files": [
+        "evals/files/opengsd-mixed/project/Makefile",
+        "evals/files/opengsd-mixed/project/planning/PROJECT.md",
+        "evals/files/opengsd-mixed/project/planning/config.json",
+        "evals/files/opengsd-mixed/project/planning/phases/16-alpha/16-SPEC.md",
+        "evals/files/opengsd-mixed/project/planning/phases/17-beta/17-SPEC.md",
+        "evals/files/opengsd-mixed/project/planning/phases/18-gamma/18-SPEC.md",
+        "evals/files/opengsd-mixed/captures/identity.json",
+        "evals/files/opengsd-mixed/captures/roadmap.json",
+        "evals/files/opengsd-mixed/captures/phase-op/16.json",
+        "evals/files/opengsd-mixed/captures/phase-op/17.json",
+        "evals/files/opengsd-mixed/captures/phase-op/18.json"
+      ],
+      "assertions": [
+        "`answers.json` sets `strategy` to `goal`, holds the user's requirements in `objective`, and leaves `goal_style` unset or `auto`",
+        "The `render` output has `goal_form` equal to `pointer`, a `conditions` entry with `full_chars` above 1000 and `chars` below 200, and exit code 0",
+        "The first line of the first fenced block starts with `/goal read document` and names the same `path` that `render` printed, and ends with `DONE WHEN conditions hold`",
+        "The rendered file ends with a `## Full goal` section whose text contains the user's requirements and the sentence `Unit tests alone never count as done.`, wrapped at about 100 columns",
+        "No line of the shared `## Rails` section is longer than 200 characters and no `/goal` line in the file is longer than 400 characters",
+        "The final message says in one clause that whether the host follows `/goal read document ... at section ...` is unverified, and relays the `warnings` entry about the pointer form"
+      ]
     }
   ]
 }

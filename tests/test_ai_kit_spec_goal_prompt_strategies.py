@@ -184,7 +184,7 @@ class TestBlocks(_RepoCase):
     def test_goal_objective_of_5000_chars_fails_generation_naming_the_length(self):
         write_plans(self.repo, [("a.md", "Plan A", None)])
         detect = make_detect(plans_scope(self.repo), [strategy("goal", recommended=True)])
-        answers = plan_answers(["a.md"], objective="y" * 5000)
+        answers = plan_answers(["a.md"], objective="y" * 5000, goal_style="inline")
         with self.assertRaisesRegex(GuardError, r"/goal condition is \d{4} code points"):
             gp_render.render(detect, answers, self.ctx())
         self.assertFalse(Path(self.repo, "docs/superpowers/goals").exists())

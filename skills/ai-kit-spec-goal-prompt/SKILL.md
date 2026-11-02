@@ -30,8 +30,7 @@ file. Never claim more certainty than the labels say. A primitive labelled `unve
    a plans or free-text work set. Never install or update GSD.
 3. **Build the `--tools` list** from the tool names you can see in your own tool list, plus one
    `ToolSearch` keyword query (`cron schedule wakeup loop`) when your host has a `ToolSearch`
-   tool (unverified on hosts other than Claude). Pass only names you saw. A name you did not see
-   is reported as `not seen`, never `absent`.
+   tool. Pass only names you saw. A name you did not see is reported as `not seen`, never `absent`.
 
 ## 1. Ask four questions in one batch
 
@@ -72,9 +71,9 @@ Read the result back in four lines:
 
 If `needs` is non-empty, supply the capture and rerun: `--identity <file>` for `identity`,
 `--phase-op <dir>` holding `<number>.json` files for `phase_op`. The GSD queries behind these
-(`runtime-identity`, `init.phase-op`) are named in the CLI source; whether a given gsd-tools build
-answers them is unverified. If `scope.ask` is set, ask that question (it replaces question 1, it is
-not a fifth) and rerun detect with the answer; do not render before detect returns strategies.
+(`runtime-identity`, `init.phase-op`) are named in the CLI source. If `scope.ask` is set, ask that
+question (it replaces question 1, it is not a fifth) and rerun detect with the answer; do not
+render before detect returns strategies.
 
 ## 3. Render
 
@@ -88,6 +87,7 @@ Write `tmp/goal-answers.json`. Use repository-relative paths only:
   "strategy": null,
   "objective": "",
   "skills": [],
+  "goal_style": "auto",
   "output_dir": null
 }
 ```
@@ -99,6 +99,10 @@ Write `tmp/goal-answers.json`. Use repository-relative paths only:
   superpowers plans, and `tmp/` for a free-text work set, which must be git-ignored), or a
   repository-relative directory with no `..`.
 - `objective`: the user's own words for the OBJECTIVE lines, or `""`. `skills`: extra skill names.
+- `goal_style`: `auto` (default), `inline` or `pointer`; it only changes a `/goal` block. `auto`
+  keeps the condition on the `/goal` line up to 1,000 characters; a longer one becomes a pointer
+  line and the condition moves to a `## Full goal` section at the bottom of the file. Set
+  `inline` or `pointer` only when the user asks for that form.
 
 Then run:
 ```bash
@@ -108,9 +112,11 @@ Relay, from the render stdout and the detect output:
 - `path`: the file written.
 - Each `strategies` entry of the render output with its `reason` and `label`. Explain the choice
   from this list, not from detect's: render re-selects when `strategy` is set in the answers.
-- Each `conditions` entry: the `/goal` condition length in characters. Render refuses a condition
-  over 1,800 characters, and over the 4,000 code-point cap; on exit 2 for either, shorten
-  `objective` and render again.
+- `goal_form`: `inline`, `pointer` or `null` (no `/goal` block). Each `conditions` entry: the
+  characters on the `/goal` line (`chars`) and, for the pointer form, the length of the full
+  condition (`full_chars`). An inline condition over 1,800 characters, or over the 4,000
+  code-point cap, is refused (exit 2): drop `goal_style` back to `auto` or shorten `objective`.
+  The pointer form has no such refusal.
 - Every `warnings` entry (readiness problems; stdout only, never written into the file).
 - Every `dropped` entry: a requested strategy the host cannot run.
 
@@ -125,7 +131,10 @@ For the shape of one whole run, from answers to hand-off, see [references/worked
 - Give the path.
 - At most three sentences on why this strategy, taken from its reason.
 - Tell the user to paste the block between the markers into a **new** session at the repository
-  root. Name any strategy whose label is `unverified`.
+  root. Name any strategy whose label is `unverified`. For the pointer form (`goal_form` is
+  `pointer`) say that the file must stay at its printed path and that the host following the
+  pointer is `unverified`. The first line of a `/gsd-autonomous` block keeps its ASCII `--`, never
+  a typographic dash.
 - Offer to commit the file; the goals folder is committable.
 - Stop. Never run the prompt and never start the phases yourself.
 
@@ -151,15 +160,23 @@ For the shape of one whole run, from answers to hand-off, see [references/worked
 
 ## Unverified
 
-Each item stays unverified until observed; the linked reference says why.
+Each item stays `unverified` until observed; the linked reference says why.
 
-- Codex `/goal` usage text: taken from binary strings only ([host primitives](references/host-primitives.md)).
-- Every non-current host's primitives: no live check of those hosts ([host primitives](references/host-primitives.md)).
+- Every non-current host's primitives ([host primitives](references/host-primitives.md)).
+- Community goal, loop or schedule wrappers for opencode, pi and cursor ([host primitives](references/host-primitives.md)).
 - Original GSD's `/gsd-autonomous`, `runtime-identity` and `verification.status` ([strategy matrix](references/strategy-matrix.md)).
 - Zero-test markers for pytest, jest, vitest, Playwright, Cypress and cargo ([e2e and evidence](references/e2e-and-evidence.md)).
-- Whether a 4,000-code-point `/goal` condition is accepted by the host ([strategy matrix](references/strategy-matrix.md)).
-- Whether `ToolSearch` exists on any host other than Claude.
+- Whether the host follows `/goal read document ... at section ...`; render warns each time ([strategy matrix](references/strategy-matrix.md)).
+- The flag parse of a pasted multi-line `/gsd-autonomous` block (simulated only).
 - Whether the rendered wording changes with `native_execution` in a live run.
+
+## Evidence and limits
+
+- A 4,000-character `/goal` is accepted; the 1,800 budget is a margin, and an emoji counts as two characters.
+- A pasted multi-line block arrives whole.
+- Only Claude has `ToolSearch`; opencode, pi and cursor show no goal, loop or schedule primitive.
+
+Load [references/evidence.md](references/evidence.md) when a rule looks arbitrary or you must re-verify a claim.
 
 ## When something is missing
 

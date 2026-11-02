@@ -18,6 +18,7 @@ SCRIPTS = SKILL / "scripts"
 REFS = SKILL / "references"
 SKILL_MD = SKILL / "SKILL.md"
 GOLDEN = REPO / "tests" / "fixtures" / "goal_prompt" / "golden" / "opengsd-recommended.md"
+GOLDEN_POINTER = REPO / "tests" / "fixtures" / "goal_prompt" / "golden" / "opengsd-goal-pointer.md"
 sys.path.insert(0, str(SCRIPTS))
 for shared in (REPO / "skills" / "_shared", REPO / "skills" / "ai-kit-project-rules-agents"):
     sys.path.insert(0, str(shared))
@@ -25,6 +26,7 @@ for shared in (REPO / "skills" / "_shared", REPO / "skills" / "ai-kit-project-ru
 import goal_prompt
 import gp_e2e
 import gp_matrix
+import gp_render
 
 MACHINE_PATH = re.compile(r"(?<![\w.])/(?:var/home|home/[A-Za-z0-9_.-]+|Users/[A-Za-z0-9_.-]+)")
 FENCE = re.compile(r"^```")
@@ -204,6 +206,49 @@ class TestSkillText(unittest.TestCase):
         self.assertEqual(len(excerpts), 1)
         self.assertLessEqual(len(excerpts[0]), 25)
         self.assertTrue(_excerpt_is_golden(excerpts[0], golden))
+
+    def test_pointer_form_prose_matches_the_code_constants(self):
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        matrix = (REFS / "strategy-matrix.md").read_text(encoding="utf-8")
+        threshold = f"{gp_render.GOAL_POINTER_THRESHOLD:,}"
+        for text in (skill, matrix):
+            self.assertIn(threshold, text)
+            self.assertIn(gp_render.FULL_GOAL_HEADING, text)
+            self.assertIn("goal_form", text)
+        for style in gp_render.GOAL_STYLES:
+            self.assertIn(f"`{style}`", skill)
+            self.assertIn(f"`{style}`", matrix)
+        self.assertIn("GOAL_POINTER_THRESHOLD", matrix)
+        self.assertIn(f"{gp_render.GOAL_BUDGET:,}", skill)
+
+    def test_pointer_form_is_labelled_unverified_in_skill_and_matrix(self):
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        unverified = "\n".join(_section(skill, "Unverified"))
+        self.assertIn("/goal read document", unverified)
+        matrix = "\n".join(_section((REFS / "strategy-matrix.md").read_text(encoding="utf-8"),
+                                    "Unverified"))
+        self.assertIn("/goal read document", matrix)
+        self.assertIn("unverified", gp_render.POINTER_WARNING)
+
+    def test_worked_example_pointer_line_is_a_golden_line(self):
+        text = (REFS / "worked-example.md").read_text(encoding="utf-8")
+        golden = GOLDEN_POINTER.read_text(encoding="utf-8")
+        excerpts = [b for b in _fenced_blocks(text) if b and b[0].startswith("/goal read")]
+        self.assertEqual(len(excerpts), 1)
+        self.assertTrue(_excerpt_is_golden(excerpts[0], golden))
+
+    def test_sources_of_closed_checks_live_in_the_evidence_reference(self):
+        evidence = (REFS / "evidence.md").read_text(encoding="utf-8")
+        for needle in ("2.1.314", "4000 UTF-16 units", "ARGUMENTS", "ASCII `--`",
+                       "thread_goal_updated", "tool_search", "1.17.0", "1.16.0", "3.12.12"):
+            self.assertIn(needle, evidence)
+
+    def test_skill_md_main_flow_pins_no_version_or_observation_date(self):
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"\d+\.\d+\.\d+|20\d\d-\d\d-\d\d", skill))
+        section = "\n".join(_section(skill, "Evidence and limits"))
+        self.assertIn("references/evidence.md", section)
+        self.assertIn("Load", section)
 
     def test_excerpt_check_fails_on_a_mutated_copy(self):
         golden = GOLDEN.read_text(encoding="utf-8")

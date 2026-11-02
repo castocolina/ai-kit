@@ -55,12 +55,33 @@ strategy. Its first line carries only the flags, because the workflow greps all 
 - `loop` uses M06, M07 or M11l, depending on whether the work outlives the session and on
   provability.
 
+## Inline and pointer form of a `/goal` block
+
+Only the `goal` strategy has two forms; loop, autonomous and plain blocks never change.
+
+- Inline: the whole condition is on the `/goal` line. The renderer refuses an inline condition
+  over `GOAL_BUDGET` (1,800 characters) and over `GOAL_CAP` (4,000 code points).
+- Pointer: the `/goal` line is `/goal read document` + the file's own repository-relative path
+  (the final unique path from `choose_path`) + `at section` + `Full goal` + `and finish only when
+  that section's DONE WHEN conditions hold`. The condition moves, unchanged, to a `## Full goal`
+  section at the bottom of the file, wrapped at about 100 columns with no per-line cap. The
+  1,800 and 4,000 refusals do not apply to it. The `## Rails` line caps still do.
+- `goal_style` in the answers picks the form: `auto` (default) uses the pointer when the inline
+  condition is longer than `GOAL_POINTER_THRESHOLD` (1,000 characters: below the 1,800 budget, and above the fixed text of about 300
+  characters plus the scope clause cut at 600, so only a long objective crosses it); `inline` and
+  `pointer` force one.
+- Render prints `goal_form` (`inline`, `pointer` or `null` when no `/goal` block exists) and, in the
+  pointer form, `full_chars` in the `conditions` entry and a warning that the host's behaviour is
+  unverified.
+
 ## Unverified
 
 - Original GSD (`gsd-unproven`): `/gsd-autonomous` may not exist on that install. M08 offers it
   last, labelled `unverified`.
-- Whether a `/goal` condition of exactly 4,000 code points is accepted by the host. The renderer
-  refuses a condition over 4,000 code points. The owner can test the boundary once with a real
-  4,000-character goal.
+- Whether the host follows `/goal read document ... at section ...` (the pointer form). No live
+  run has shown it. Render prints a warning for it each time and the paste text stays valid
+  without it: the pointer names the file and the section.
+- Whether a multi-line `/gsd-autonomous` paste is parsed by its flags as intended. That the paste
+  arrives whole is observed (see evidence.md); the flag parse is simulated from the workflow's own grep.
 - The `native_execution` answer: its wording effect is coded for OpenGSD cross-AI and not checked
   in a live run.

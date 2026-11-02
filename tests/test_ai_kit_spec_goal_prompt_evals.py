@@ -309,6 +309,47 @@ class TestFixtureDetect(unittest.TestCase):
                              ["make e2e-test"])
             self.assertNotIn(str(repo), proc.stdout)
 
+    def test_long_goal_eval_renders_the_pointer_form(self):
+        """The assertions of `precise-long-goal-pointer` hold on the real CLI output."""
+        item = next(e for e in _evals()["evals"] if e["id"] == "precise-long-goal-pointer")
+        objective = item["prompt"].split("as the objective: ")[1].split(" Native execution")[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            home.mkdir()
+            repo = stage_project("opengsd-mixed", root / "repo")
+            caps = stage_captures(root / "caps", repo)
+            detect = run_cli(
+                "detect", "--repo", str(repo), "--work-set", "phases:16-18",
+                "--roadmap", str(caps / "roadmap.json"),
+                "--identity", str(caps / "identity.json"),
+                "--phase-op", str(caps / "phase-op"), "--tools", "", home=str(home),
+            )
+            self._json(detect)
+            (root / "detect.json").write_text(detect.stdout, encoding="utf-8")
+            answers = {"work_set": {"kind": "phases", "numbers": ["16", "17", "18"]},
+                       "target_host": "claude", "native_execution": False, "mockups": [],
+                       "strategy": "goal", "objective": objective, "output_dir": None}
+            (root / "answers.json").write_text(json.dumps(answers), encoding="utf-8")
+            proc = run_cli("render", "--repo", str(repo), "--detect", str(root / "detect.json"),
+                           "--answers", str(root / "answers.json"), home=str(home))
+            result = self._json(proc)
+            text = (repo / result["path"]).read_text(encoding="utf-8")
+        self.assertEqual(result["goal_form"], "pointer")
+        (entry,) = result["conditions"]
+        self.assertGreater(entry["full_chars"], 1000)
+        self.assertLess(entry["chars"], 200)
+        goal_lines = [line for line in text.split("\n") if line.startswith("/goal ")]
+        self.assertEqual(len(goal_lines), 1)
+        self.assertTrue(goal_lines[0].startswith("/goal read document"))
+        self.assertIn(f"`{result['path']}`", goal_lines[0])
+        self.assertTrue(goal_lines[0].endswith("DONE WHEN conditions hold"))
+        tail = text.partition("\n## Full goal\n")[2]
+        self.assertIn("Unit tests alone never count as done.", " ".join(tail.split()))
+        self.assertIn("never touch my real configuration files", " ".join(tail.split()))
+        self.assertTrue(all(len(line) <= 100 for line in tail.split("\n")))
+        self.assertTrue(any("unverified" in warning for warning in result["warnings"]))
+
     def test_opengsd_without_captures_exits_two(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

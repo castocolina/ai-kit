@@ -35,13 +35,15 @@ python3 skills/ai-kit-spec-goal-prompt/scripts/goal_prompt.py detect --repo . --
 python3 skills/ai-kit-spec-goal-prompt/scripts/goal_prompt.py render --repo . --detect tmp/detect.json --answers tmp/answers.json
 ```
 
-`tmp/answers.json` holds `{"work_set": {"kind": "phases", "numbers": ["16", "17", "18"]}, "target_host": "claude", "native_execution": false, "mockups": [], "strategy": null, "objective": "one plain sentence", "output_dir": null}`.
+`tmp/answers.json` holds `{"work_set": {"kind": "phases", "numbers": ["16", "17", "18"]}, "target_host": "claude", "native_execution": false, "mockups": [], "strategy": null, "objective": "one plain sentence", "goal_style": "auto", "output_dir": null}`.
+
+A `/goal` condition over 1,000 characters does not go on the `/goal` line. The first block line is then a short pointer (`/goal read document <this file> at section Full goal ...`) and the file ends with a `## Full goal` section that holds the condition. `goal_style` is `auto` (default), `inline` or `pointer`; `render` prints the chosen `goal_form`. That the host follows the pointer is unverified.
 
 Tests: `python3 -m unittest tests.test_ai_kit_spec_goal_prompt_evals` checks that the evals and trigger queries are well formed and that the scripts behave as documented. It calls no model.
 
 ## Links
 
 - [SKILL.md](SKILL.md) - the skill itself
-- [references/host-primitives.md](references/host-primitives.md), [references/strategy-matrix.md](references/strategy-matrix.md), [references/e2e-and-evidence.md](references/e2e-and-evidence.md), [references/worked-example.md](references/worked-example.md) - loaded on demand
+- [references/host-primitives.md](references/host-primitives.md), [references/strategy-matrix.md](references/strategy-matrix.md), [references/e2e-and-evidence.md](references/e2e-and-evidence.md), [references/worked-example.md](references/worked-example.md), [references/evidence.md](references/evidence.md) - loaded on demand
 - [evals/evals.json](evals/evals.json) and [evals/trigger-queries.json](evals/trigger-queries.json) - output evals and trigger queries
 - [tests/test_ai_kit_spec_goal_prompt_evals.py](../../tests/test_ai_kit_spec_goal_prompt_evals.py) - structure and script smoke tests

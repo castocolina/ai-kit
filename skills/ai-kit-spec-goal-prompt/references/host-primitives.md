@@ -35,16 +35,17 @@ Detect's target is one of `claude`, `codex`, `opencode`, `pi`, `cursor`. Facts p
   (binary strings). Tool rows (`CronCreate`, `ScheduleWakeup`, `Monitor`, `RemoteTrigger`,
   `PushNotification`) are `available` only when their names are in `--tools`, else `not seen`.
   `/loop` is a bundled skill with no version floor, so it reads `unverified`.
-- `codex`: `/goal [<objective>|clear|edit|pause|resume]` is taken from binary strings only, and
-  its syntax is reverse-engineered. Research ran `codex features list`, which printed
+- `codex`: `/goal [<objective>|clear|edit|pause|resume]` (reverse-engineered syntax; sources in
+  [evidence](evidence.md)). Research ran `codex features list`, which printed
   `goals stable true`; detect still labels codex rows `unverified`, because codex is not the
   current host. No schedule or loop keyword was found.
 - `opencode`: research read `opencode --help` and `opencode run --help`; neither carries a goal,
-  loop, schedule, cron or ralph keyword (live). Community wrappers are unverified.
-- `pi`: `pi --help` carries no such keyword (live). Third-party schedulers are unverified.
+  loop, schedule, cron or ralph keyword (live). Community wrappers are unchecked.
+- `pi`: `pi --help` carries no such keyword (live). Third-party schedulers are
+  unchecked.
 - `cursor`: detect maps this target to the `agent` binary (`HOST_BINARY`). Research probed
-  `cursor-agent --help` and found no such keyword (live). Its name differs from the binary name,
-  so check the binary name before you cite it.
+  `cursor-agent --help` and found no such keyword (live). Its name differs from
+  the binary name, so check the binary name before you cite it.
 
 A non-current target host is `unverified` in every row. That is a rule of the detect code, not a
 finding about the host.
@@ -63,8 +64,6 @@ data from the session-wake matrix. This skill does not re-measure them on a host
 
 ## Unverified
 
-- Codex `/goal` usage text: binary strings only.
 - Every non-current host's rows: `unverified` by rule, with no live check of that host here.
 - Community wrappers for opencode, pi and cursor: not checked.
-- `ToolSearch` on any host other than Claude: not checked.
 - The survival flags of each row: taken from data, not measured per host.

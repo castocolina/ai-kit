@@ -91,7 +91,22 @@ two named files and ordered by their dependencies.
 - If the user asks for `autonomous`, the request is dropped with the reason that `/gsd-autonomous`
   needs a GSD phases work set. Nothing is emitted for it.
 - If the host has a `goal` primitive that reads `available`, and the work is provable, row M04 fires
-  and the file gets a `/goal` block. Render prints the condition's length in characters. A condition
-  over 4,000 code points is refused.
+  and the file gets a `/goal` block. Render prints the condition's length in characters and
+  `goal_form`. An inline condition over 1,800 characters or 4,000 code points is refused; a
+  condition over 1,000 characters becomes the pointer form instead (see the strategy matrix).
 - If the work must outlive the session and a loop primitive is available, rows M06 or M07 fire
   instead. The file is then a loop prompt, and its label carries whatever the primitive table says.
+
+## A long goal, in the pointer form
+
+The user asked for `strategy: "goal"` with a long `objective` (about 1,000 characters or more).
+With `goal_style` left at `auto`, render prints `"goal_form": "pointer"`. The first block line is a
+short pointer to the file's own section, copied from the committed pointer golden:
+
+```
+/goal read document `.planning/goals/2026-01-02-phases-16-16-1-17.md` at section `Full goal` and finish only when that section's DONE WHEN conditions hold
+```
+
+The file ends with a `## Full goal` section that holds the whole condition, wrapped at about 100
+columns. Tell the user the file must stay at that path, and that whether the host follows the
+pointer is unverified.

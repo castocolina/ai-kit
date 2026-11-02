@@ -43,3 +43,23 @@ Items marked `owner_decision`: proposals only. Nothing below is applied.
 - (b) Unverified inferences (nothing in the phase proves them): items 1 to 6 and 8 above.
 - (c) REQUIREMENTS.md already shows GPS-01..GPS-04 as complete (set by an earlier plan's tooling); this plan did not change a status. Whether GPS-04 stays complete while owner items 1-7 are open is the verifier's call.
 - (d) Judge non-determinism: an unchanged-but-for-one-fix package moved from 88.8% to 92.0% between rounds 2 and 3, and 88.8% to 92.0% again between rounds 4 and 5.
+
+## Follow-up 2026-11-02
+
+Disposition of the eight owner captures above, from the evidence found in past runs. "Closed from history" means a one-line conclusion now sits in `SKILL.md` `## Evidence and limits` and its sources in `skills/ai-kit-spec-goal-prompt/references/evidence.md`; none of it was run live in the goal-prompt session. No secrets or real paths are recorded.
+
+- Item 1, the 4,000-code-point `/goal` limit: closed from history. Source: the installed Claude Code 2.1.314 binary strings show a refusal when the condition length is greater than 4000 UTF-16 units (JavaScript `length`), so 4,000 is accepted. Read from binary strings, not run live; the 1,800 budget stays as the margin and an emoji counts as two units. The live 4,000/4,001 test is no longer needed.
+- Item 2, the pasted multi-line `/gsd-autonomous` block: closed from history for arrival. Source: two real past sessions (runtime kind not recorded here) in which the whole pasted block arrived as `ARGUMENTS`. The flag parse stays simulated (the upstream `grep` lines applied to the generated block); no live step is queued. New warning in the skill: the first line must use ASCII `--`, never a typographic dash.
+- Item 3, the codex `/goal` usage and the other hosts' primitives: closed from history. Source: the usage text `/goal [<objective>|clear|edit|pause|resume]` in the codex binary strings, and real use in a codex session (`thread_goal_updated` events). opencode, pi and cursor show no goal, loop or schedule primitive in `--help` today. Community wrappers stay unchecked and the non-current-host rule stays.
+- Item 4, original GSD's `/gsd-autonomous`, `runtime-identity` and `verification.status`: discarded by the owner's choice (original GSD is not used). The `## Unverified` sentence stays as written.
+- Item 5, the zero-test markers of jest, vitest, Playwright, Cypress and cargo: discarded by the owner's choice. The table keeps its `unverified` flags.
+- Item 6, the `PI_SKILLS` decision: discarded as a capture; it becomes a plain yes/no owner decision (add `ai-kit-spec-goal-prompt` to `PI_SKILLS`, or leave it out). Nothing was changed.
+- Item 7, accepting the skill-judge result: discarded as a capture; accepting the judge result is a plain owner decision. No `Owner-decision` line was written. The judge rounds run on 2026-11-02 are recorded in `27-SKILL-JUDGE.md`.
+- Item 8, the remaining 27-10 unverified items, per sub-item:
+  - Native-execution wording (a): still open. Live step: render once with `native_execution` true and once with false in a real OpenGSD cross-AI run and read the runner rule.
+  - `ToolSearch` on other hosts (b): closed from history. `ToolSearch` exists only on Claude; codex has a lowercase `tool_search` for MCP apps; the opencode and pi tool lists have none.
+  - `runtime-identity` and `init.phase-op` in other repositories (c): closed from history. Both answered in other OpenGSD projects (gsd-tools 1.17.0 and 1.16.0).
+  - `--gsd-cmd` output as JSON only, no `@file:` indirection (d): still open. Live step: run the gsd-tools roadmap query on a large roadmap and check whether the output arrives inline.
+  - Quota-checked task on the cross-AI runner's one listed CLI (e): still open. Live step: run one small task through the runner's listed CLI and read its status line.
+  - The `§§` delimiter under the repo's ruff target (f): closed from history. It works under Python 3.12.12 (the goal-prompt tests pass there).
+  - The DONE WHEN wording against a real e2e run of a generated prompt (g): still open. Live step: paste a generated block into a scratch OpenGSD project and read whether the run ends only when the e2e count is above zero.
