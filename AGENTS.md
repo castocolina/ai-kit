@@ -43,8 +43,11 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   flagged, never shown at the same confidence as officially documented
   behavior.
 - Any new or materially updated `SKILL.md` passes the `skill-judge` review
-  loop (no remaining Critical/Important finding, or score ≥ 96/120, no
-  regression vs. baseline) before being marked complete.
+  loop before being marked complete: no remaining critical or high-severity
+  finding, or a grade of B or better on the skill's own percent bands (the
+  `skill-judge` rubric defines the bands and the total, so this rule carries no
+  absolute score), and no regression against the previous judged result of the
+  same skill beyond the judge's run-to-run variation.
 - Commit one coherent, buildable logical change (a logical commit) with its
   tests and documentation together. Let pre-commit hooks run; never use
   `--no-verify` to skip pre-commit checks or dodge a real failure. The one
