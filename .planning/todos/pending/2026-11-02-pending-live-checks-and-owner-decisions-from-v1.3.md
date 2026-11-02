@@ -140,7 +140,9 @@ None of these is taken. Each shows the options and what happens if nothing chang
   trips on a version banner, clean-tree checks that ignore the owner's config file, a progress counter
   mismatch); (d) executor oddities (agent-branch allow-list applied unevenly, architecture test left red by
   one executor). Default: all stay proposals, nothing applied.
-- [ ] Two old unmerged branches exist on the GitHub remote and were kept on purpose at the v1.3 close: the one named
+- [ ] Two old unmerged branches were kept on purpose at the v1.3 close (a live listing of the GitHub remote on
+  2026-11-02 shows only the main branch now, so they survive only as local archive tags; the wording that
+  follows is the original one): the one named
   external segments for the status line (4 commits of June 2026: provider discovery, header parser, output
   sanitization and execution with a time-limited cache; it only touches the old single-file status line that
   Phase 23 split) and the one named loop polish (1 commit of June 2026: a branch icon and an install flag for the
@@ -157,3 +159,23 @@ None of these is taken. Each shows the options and what happens if nothing chang
 - [ ] Archive tags kept locally after the branch clean-up: two are no longer needed (the single-commit agent
   worktree summary and the already-merged rate-burn fix) and could be deleted; the Cursor proof of concept and
   the host-split spec tags are kept until the Cursor memory idea above is decided.
+- [ ] After the phase directories were archived (milestones/v1.3-phases), two shipped skill files still name a moved
+  path: the Laya backend note of the jev skill (it points at the Phase 21.1 evaluation results file) and the
+  execute-superpowers skill text (it points at the Phase 18.1 research file for the Node requirement). Either
+  edit the two paths to the archive location, or rewrite the sentences so they no longer depend on a planning
+  path (preferred: shipped skill text should not point into a planning folder). Skills were left untouched on
+  purpose at the close.
+- [ ] The skill-judge evidence of Phase 26 for the execute-superpowers skill is stale: the package changed after its
+  last judged round because the audit fixed a dead link in one of its references (a link depth, no behaviour).
+  The checker therefore reports a stale verdict for that skill (the Phase 27 checker is fine). The verdict is
+  already deferred to the skill refactor; re-judge it there and the evidence becomes current again.
+- [ ] The end-to-end test that checks a checkout without git fails when the temporary directory sits inside a git
+  repository (it only passes with the system temporary directory). Make the test build its temporary folder
+  outside any repository, or have the code under test tolerate it.
+- [ ] The local tag for v1.3 exists, but the GitHub remote has no tags. Decide whether to push the tag
+  (pushing needs the owner's consent). Default: the tag stays local.
+- [ ] Stale wording and stale evidence left in archived v1.3 documents: the roadmap success criterion for the
+  no-backend case, the matching requirement and two lines of the Phase 24 spec still describe the ladder before
+  the decision-skill rework; the verification files of Phases 24 and 25 predate later fixes and read stale.
+  Options: amend the wording and re-run verification for both, or leave the archive as history. Default: left
+  as is (found by the v1.3 audit).

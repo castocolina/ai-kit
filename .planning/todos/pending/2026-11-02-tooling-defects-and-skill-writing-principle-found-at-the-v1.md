@@ -81,6 +81,14 @@ Checklist:
 - [ ] Fix-up idea: the OmniRoute container logs do not contain the router error codes the catalogue matches
   on; the full bodies live in its database. Decide whether to match on the log wording that does exist
   ("all N active accounts cooling down for model X (reset after ...)").
+- [ ] Runtime lists copied by hand with no test that compares them with the runtime table: the runner-capable
+  list, the host list, the host-binary map and the error text of the plan editor. The JavaScript template list
+  is only tested as a superset. Add one drift test (found by the v1.3 audit).
+- [ ] The project `AGENTS.md` links `.claude/cli-environment.md`, but that file is gitignored, so the link
+  dangles in a clean checkout. Either track the file or remove the link (found by the v1.3 audit).
+- [ ] One goal-prompt test depends on the length of the checkout path because of a separate test of the
+  tool-substitution hook; it passes only from a short path. Make the pair independent of path length
+  (noted in the v1.3 close handoff).
 
 ### Skill-writing principle (owner, 2026-11-02): a SKILL.md carries behaviour, not history
 

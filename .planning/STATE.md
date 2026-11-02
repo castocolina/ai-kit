@@ -648,6 +648,7 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 | todos | 2026-10-31-refactor-execute-gsd-and-rules-agents-sj-1-sj-3.md | (presence-only) | 2026-10-31 | v1.3 |
 | owner_captures | 25, 25.1, 26, 27 `*-OWNER-CAPTURES.md` | partly closed or discarded on 2026-11-02; remaining open items and owner decisions in the follow-up file | 2026-10-31 | v1.3 |
 | todos | 2026-11-02-pending-live-checks-and-owner-decisions-from-v1.3.md | open: 21 live checks and 9 owner decisions, all deferred here (nothing decided) | 2026-11-02 | v1.3 |
+| planning | `.planning/milestones/NEXT-MILESTONE-INPUTS.md` | classifies every open item above into nine themes as input for the next milestone (nothing decided; the owner's own topics are added before `/gsd-new-milestone`) | 2026-11-02 | v1.3 |
 | skill_judge | ai-kit-spec-goal-prompt round 7: referee-one 94.4% A, referee-three 87.2% B, 0 critical | UNRESOLVED against a 90.4 base; owner decides (accept, or lower the base) | 2026-10-31 | v1.3 |
 | skill_judge | ai-kit-spec-config 99 vs base 105 | UNRESOLVED (no Owner-decision line) | 2026-10-31 | v1.3 |
 | skill_judge | SJ-1 execute-gsd 101 vs 105; SJ-2 execute-superpowers FAIL 86/120; SJ-3 project-rules-agents FAIL 93 | deferred by Owner-decision to the refactor todo and backlog 999.16 | 2026-10-31 | v1.3 |
