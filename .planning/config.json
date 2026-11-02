@@ -126,5 +126,9 @@
     },
     "escalate_on_failure": true,
     "max_escalations": 1
+  },
+  "graphify": {
+    "enabled": true,
+    "auto_update": true
   }
 }

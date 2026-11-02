@@ -680,6 +680,18 @@ one. When the environment has jev, use it to classify and to decide on certainty
 one line in the generated AGENTS.md top rules (every session and host reads it), detailed in the decisions
 runbook the line points to.
 
+**When to use codegraph and when graphify.** No clear rule exists today: AGENTS.md sends every code
+question to codegraph, and graphify has only a one-line "use proactively for doc-aware indexing" note in the
+gitignored `.claude/cli-environment.md`. Owner wish: when both are available, codegraph for questions about
+sources only (symbols, callers, blast radius) and graphify for questions that span sources and
+documentation; graphify is not limited to the ship of a phase or milestone. Set up 2026-11-02:
+`graphify.enabled` and `graphify.auto_update` are on in `.planning/config.json` (the GSD hook rebuilds
+after commits on main; planner and phase researcher already read `.planning/graphs/graph.json`), and
+`graphify-out/` and `.planning/graphs/` are gitignored. Gap found: `graphify update .` rebuilds only the
+code graph (34,675 nodes from 2,181 files); documentation needs graphify's semantic extraction through the
+`/graphify` skill, so the doc side of the rule needs a spike on cost and how to keep it fresh. The rule
+belongs in the generated AGENTS.md block and ai-kit's own AGENTS.md.
+
 **Milestone version:** v2.0.
 
 ### Round 1 (2026-11-02)
