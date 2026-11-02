@@ -349,6 +349,11 @@ class TestFixtureDetect(unittest.TestCase):
         self.assertIn("never touch my real configuration files", " ".join(tail.split()))
         self.assertTrue(all(len(line) <= 100 for line in tail.split("\n")))
         self.assertTrue(any("unverified" in warning for warning in result["warnings"]))
+        self.assertTrue(result["full_objective"])
+        self.assertIn("section Full objective)", text)
+        self.assertLess(text.index("\n## Full objective\n"), text.index("\n## Full goal\n"))
+        full_objective = text.partition("\n## Full objective\n")[2].partition("\n## Full goal\n")[0]
+        self.assertIn(objective, " ".join(full_objective.split()))
 
     def test_opengsd_without_captures_exits_two(self):
         with tempfile.TemporaryDirectory() as tmp:

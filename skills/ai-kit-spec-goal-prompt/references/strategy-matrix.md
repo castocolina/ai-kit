@@ -74,6 +74,15 @@ Only the `goal` strategy has two forms; loop, autonomous and plain blocks never 
   pointer form, `full_chars` in the `conditions` entry and a warning that the host's behaviour is
   unverified.
 
+## A long objective
+
+The OBJECTIVE rule line holds at most one 200-character line. When the user's `objective` is
+longer, the line is cut with `...` and ends with `(full text: <path> section Full objective)`,
+where `<path>` is the file's final unique path. The file then ends with a `## Full objective`
+section (before `## Full goal`) that holds the whole objective, wrapped at about 100 columns
+with no line cap. Render prints `full_objective` as `true` in that case. A cut scope clause
+(many plan titles) does not add the section: the titles are in the plan files.
+
 ## Unverified
 
 - Original GSD (`gsd-unproven`): `/gsd-autonomous` may not exist on that install. M08 offers it

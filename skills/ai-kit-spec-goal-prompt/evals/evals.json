@@ -203,6 +203,7 @@
         "The first line of the first fenced block starts with `/goal read document` and names the same `path` that `render` printed, and ends with `DONE WHEN conditions hold`",
         "The rendered file ends with a `## Full goal` section whose text contains the user's requirements and the sentence `Unit tests alone never count as done.`, wrapped at about 100 columns",
         "No line of the shared `## Rails` section is longer than 200 characters and no `/goal` line in the file is longer than 400 characters",
+        "The `render` output has `full_objective` equal to `true`, the OBJECTIVE rule line of the user's requirements ends with `section Full objective)`, and a `## Full objective` section holding the whole requirements text comes before `## Full goal`",
         "The final message says in one clause that whether the host follows `/goal read document ... at section ...` is unverified, and relays the `warnings` entry about the pointer form"
       ]
     }

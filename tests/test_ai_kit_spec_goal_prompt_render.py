@@ -860,7 +860,8 @@ class TestLongTitles(unittest.TestCase):
         text = self._render("Short plan", objective="Ship the goal prompt " + "y" * 300)
         self.assertTrue(all(len(line) <= gp_render.LINE_CAP for line in self._bullets(text)))
         self.assertTrue(
-            any(line.startswith("- Ship the goal prompt y") and line.endswith("...")
+            any(line.startswith("- Ship the goal prompt y") and "... (full text: " in line
+                and line.endswith("section Full objective)")
                 for line in self._bullets(text))
         )
 

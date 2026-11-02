@@ -49,8 +49,9 @@ shown, never asked.
 
 ## 2. Detect
 
-Run from the repository root; the output goes to `tmp/`, which is git-ignored:
+Run from the repository root. Create the scratch folder first and do not commit its files:
 ```bash
+mkdir -p tmp
 python3 "$S/goal_prompt.py" detect --repo . --target-host <host> --tools "<names, comma-separated>" \
   --gsd-cmd "node .claude/gsd-core/bin/gsd-tools.cjs" --work-set "<KIND:VALUE>" > tmp/goal-detect.json
 ```
@@ -62,6 +63,7 @@ python3 "$S/goal_prompt.py" detect --repo . --target-host <host> --tools "<names
 
 **MANDATORY: read [references/host-primitives.md](references/host-primitives.md) before relaying any primitive label.**
 **MANDATORY: read [references/strategy-matrix.md](references/strategy-matrix.md) before overriding or explaining a strategy.**
+**MANDATORY: read [references/e2e-and-evidence.md](references/e2e-and-evidence.md) before reporting any e2e fact.**
 
 Read the result back in four lines:
 1. Scope: `scope.kind` and `scope.identity`.
@@ -96,9 +98,11 @@ Write `tmp/goal-answers.json`. Use repository-relative paths only:
 - `strategy`: `"goal"`, `"loop"` or `"autonomous"` only when the user explicitly asked for that
   one; otherwise `null`.
 - `output_dir`: `null` (default: `.planning/goals` for OpenGSD, `docs/superpowers/goals` for
-  superpowers plans, and `tmp/` for a free-text work set, which must be git-ignored), or a
-  repository-relative directory with no `..`.
-- `objective`: the user's own words for the OBJECTIVE lines, or `""`. `skills`: extra skill names.
+  superpowers plans, and `tmp/` for a free-text work set), or a repository-relative directory
+  with no `..`. Render creates the folder; for `tmp/` it does so only when git ignores `tmp/`,
+  otherwise it exits 2 with `tmp/ is not git-ignored: add it to .gitignore or pass output_dir`.
+- `objective`: the user's own words for the OBJECTIVE lines, or `""`; one longer than a rule line
+  is cut there and kept whole in a `## Full objective` section. `skills`: extra skill names.
 - `goal_style`: `auto` (default), `inline` or `pointer`; it only changes a `/goal` block. `auto`
   keeps the condition on the `/goal` line up to 1,000 characters; a longer one becomes a pointer
   line and the condition moves to a `## Full goal` section at the bottom of the file. Set
@@ -117,10 +121,9 @@ Relay, from the render stdout and the detect output:
   condition (`full_chars`). An inline condition over 1,800 characters, or over the 4,000
   code-point cap, is refused (exit 2): drop `goal_style` back to `auto` or shorten `objective`.
   The pointer form has no such refusal.
+- `full_objective`: `true` when the objective was cut and the file carries `## Full objective`.
 - Every `warnings` entry (readiness problems; stdout only, never written into the file).
 - Every `dropped` entry: a requested strategy the host cannot run.
-
-**MANDATORY: read [references/e2e-and-evidence.md](references/e2e-and-evidence.md) before reporting any e2e fact.**
 
 Never edit the rendered file by hand. Fix the answers and render again.
 
@@ -143,7 +146,7 @@ For the shape of one whole run, from answers to hand-off, see [references/worked
 - Never run the generated prompt — this skill ends at the file; the run belongs to a session the user starts.
 - Never ask a fifth question — the four-question batch is the agreed interface, and more questions stall the run.
 - Never put an absolute path or a secret into `answers.json` — render refuses machine paths in `output_dir` and `work_set.files`, and the file may be committed.
-- Never edit the rendered file by hand — the next render would overwrite it, and the file would then no longer match its own contract.
+- Never edit the rendered file by hand — render never overwrites: the next render writes a new `-2` file beside it, so a hand edit is orphaned and skips the render checks (line caps, secrets).
 - Never present a primitive as available when its label is `unverified` or `not seen` — a false "available" sends the user into a run that depends on a primitive the host may not have.
 - Never treat jev as a gate or as a UI or mockup judge — its answers are advisory and it has no say over the file.
 - Never put anything but `--from`, `--to`, `--only` or `--converge` on the `/gsd-autonomous` line — the workflow greps all of its arguments, so any other token changes the run.

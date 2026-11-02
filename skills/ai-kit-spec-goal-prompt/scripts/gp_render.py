@@ -32,6 +32,7 @@ from gp_sections import (
     fit_line,
     goal_block,
     loop_block,
+    objective_cut,
     objective_text,
     plain_block,
     rail_sections,
@@ -42,6 +43,7 @@ from gp_sections import (
 
 __all__ = [
     "FULL_GOAL_HEADING",
+    "FULL_OBJECTIVE_HEADING",
     "GOAL_POINTER_THRESHOLD",
     "GOAL_STYLES",
     "Block",
@@ -87,6 +89,9 @@ GOAL_BUDGET = 1800
 GOAL_POINTER_THRESHOLD = 1000  # an inline condition longer than this moves to `## Full goal`
 GOAL_STYLES = ("auto", "inline", "pointer")
 FULL_GOAL_HEADING = "## Full goal"
+FULL_OBJECTIVE_HEADING = "## Full objective"
+FULL_SECTION_RE = re.compile(r"\n(## Full (?:objective|goal))\n")
+OBJECTIVE_POINTER_MARK = "section Full objective)"
 FULL_GOAL_WIDTH = 100
 INLINE_CAP = 7000
 RULE_CAP = 60
@@ -284,7 +289,7 @@ def _shared_rails(text: str) -> list[str]:
     """Lines of the shared `## Rails` section after the COPY TO HERE marker; [] when absent."""
     _, found, after = text.partition(CLOSE_MARKER)
     _, heading, rails = after.partition(f"\n{SHARED_HEADING}\n")
-    rails = rails.split(f"\n{FULL_GOAL_HEADING}\n")[0]
+    rails = FULL_SECTION_RE.split(rails)[0]
     return rails.split("\n") if found and heading else []
 
 
@@ -311,11 +316,14 @@ def _wrapper_problems(text: str) -> list[str]:
 
 
 def _scan_lines(text: str) -> list[str]:
-    """The lines the per-line checks read. The wrapped `## Full goal` body counts as one line, as
-    the inline `/goal` condition it replaces did, so a wrap cannot split a phrase past a check."""
-    head, heading, body = text.partition(f"\n{FULL_GOAL_HEADING}\n")
-    lines = head.split("\n")
-    return [*lines, FULL_GOAL_HEADING, " ".join(body.split())] if heading else lines
+    """The lines the per-line checks read. A wrapped `## Full goal` or `## Full objective` body
+    counts as one line, as the text it replaces did, so a wrap cannot split a phrase past a
+    check."""
+    parts = FULL_SECTION_RE.split(text)
+    lines = parts[0].split("\n")
+    for heading, body in zip(parts[1::2], parts[2::2], strict=True):
+        lines += [heading, " ".join(body.split())]
+    return lines
 
 
 def check_text(
@@ -333,6 +341,8 @@ def check_text(
     problems = scan_text(text, home=home, secrets=secrets)
     if any(line.startswith(POINTER_PREFIX) for line in lines) and _full_goal_lines(text) is None:
         problems.append("/goal pointer without a Full goal section")
+    if OBJECTIVE_POINTER_MARK in text and f"\n{FULL_OBJECTIVE_HEADING}\n" not in text:
+        problems.append("objective pointer without a Full objective section")
     if "--no-verify" in text:
         problems.append("contains --no-verify")
     if DELIMITER in text:
@@ -600,25 +610,35 @@ def _wrapper(family: str, first_id: str) -> str:
     return f"{WRAPPER_BY_ID[first_id]} {PASTE_ONE}"
 
 
-def _full_goal_section(blocks: Sequence[Block]) -> str:
-    """The `## Full goal` section at the bottom of the file; "" when no block points to it."""
-    full = next((block.full_goal for block in blocks if block.full_goal), "")
-    if not full:
+def _wrapped_section(heading: str, text: str) -> str:
+    """`heading` and `text` wrapped at FULL_GOAL_WIDTH, no line cap; "" when `text` is empty."""
+    if not text:
         return ""
     body = textwrap.fill(
-        full, width=FULL_GOAL_WIDTH, break_long_words=False, break_on_hyphens=False
+        text, width=FULL_GOAL_WIDTH, break_long_words=False, break_on_hyphens=False
     )
-    return f"\n\n{FULL_GOAL_HEADING}\n\n{body}"
+    return f"\n\n{heading}\n\n{body}"
 
 
-def _compose(title: str, wrapper: str, blocks: Sequence[Block], rails: str) -> str:
+def _full_sections(blocks: Sequence[Block], full_objective: str) -> str:
+    """`## Full objective` then `## Full goal` at the bottom of the file; "" when neither is
+    needed."""
+    full_goal = next((block.full_goal for block in blocks if block.full_goal), "")
+    return _wrapped_section(FULL_OBJECTIVE_HEADING, full_objective) + _wrapped_section(
+        FULL_GOAL_HEADING, full_goal
+    )
+
+
+def _compose(
+    title: str, wrapper: str, blocks: Sequence[Block], rails: str, full_objective: str = ""
+) -> str:
     body = "\n\n".join(f"{block.heading}\n\n{block.text}" for block in blocks)
     shared = f"{SHARED_HEADING}\n\n{rails}" if any(not b.inline for b in blocks) else ""
     text = fill(
         "FILE",
         {"TITLE": title, "WRAPPER": wrapper, "BLOCKS": body, "SHARED_RAILS": shared},
     )
-    return text.rstrip("\n") + _full_goal_section(blocks) + "\n"
+    return text.rstrip("\n") + _full_sections(blocks, full_objective) + "\n"
 
 
 def _check_strategies(strategies: Sequence[Mapping[str, Any]], family: str) -> None:
@@ -646,7 +666,7 @@ def render(
         slugify(work.scope_desc),
         answers.get("output_dir") or ctx.out_dir,
     )
-    sections = rail_sections(detect, answers, work)
+    sections = rail_sections(detect, answers, work, relpath)
     rails = assemble_rails(sections)
     view = BlockView(
         path=relpath,
@@ -662,6 +682,7 @@ def render(
         _wrapper(work.family, strategies[0]["id"]),
         blocks,
         rails,
+        " ".join(str(answers.get("objective") or "").split()) if objective_cut(answers) else "",
     )
     problems = check_text(
         text,
@@ -685,6 +706,7 @@ def render(
             }
             for s in strategies
         ],
+        "full_objective": objective_cut(answers),
         "goal_form": (
             None if not goal_blocks else "pointer" if pointer else "inline"
         ),

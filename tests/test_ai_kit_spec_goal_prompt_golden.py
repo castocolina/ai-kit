@@ -145,6 +145,9 @@ SCENARIOS = (
     Scenario("opengsd-goal-pointer", _gsd_e2e, (PHASES, True), ("--work-set", "phases:16-17"),
              {**GSD_ANSWERS, "strategy": "goal", "objective": LONG_OBJECTIVE.strip()}, None, True,
              {"from": "16", "to": "17", "only": ""}),
+    Scenario("opengsd-long-objective", _gsd_e2e, (PHASES, True), ("--work-set", "phases:16-17"),
+             {**GSD_ANSWERS, "objective": LONG_OBJECTIVE.strip()}, None, True,
+             {"from": "16", "to": "17", "only": ""}),
     Scenario("opengsd-mockup", _gsd_e2e, (PHASES, True), ("--work-set", "phases:16-17"),
              {**GSD_ANSWERS, "mockups": ["docs/mockups/home.png"]}, None, True,
              {"from": "16", "to": "17", "only": ""}),
@@ -273,8 +276,9 @@ def _rails(text: str) -> list[str]:
     if SHARED not in lines:
         return []
     rails = lines[lines.index(SHARED) + 1:]
-    return rails[:rails.index(gp_render.FULL_GOAL_HEADING)] if (
-        gp_render.FULL_GOAL_HEADING in rails) else rails
+    ends = [rails.index(h) for h in (gp_render.FULL_OBJECTIVE_HEADING, gp_render.FULL_GOAL_HEADING)
+            if h in rails]
+    return rails[:min(ends)] if ends else rails
 
 
 def _upstream_flags(block_with_fences: list[str]) -> dict[str, Any]:

@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -24,9 +25,11 @@ for shared in (REPO / "skills" / "_shared", REPO / "skills" / "ai-kit-project-ru
     sys.path.insert(0, str(shared))
 
 import goal_prompt
+import gp_common
 import gp_e2e
 import gp_matrix
 import gp_render
+import gp_sections
 
 MACHINE_PATH = re.compile(r"(?<![\w.])/(?:var/home|home/[A-Za-z0-9_.-]+|Users/[A-Za-z0-9_.-]+)")
 FENCE = re.compile(r"^```")
@@ -249,6 +252,42 @@ class TestSkillText(unittest.TestCase):
         section = "\n".join(_section(skill, "Evidence and limits"))
         self.assertIn("references/evidence.md", section)
         self.assertIn("Load", section)
+
+    def test_never_edit_bullet_matches_the_unique_path_behaviour(self):
+        bullets = [b for b in _section(SKILL_MD.read_text(encoding="utf-8"), "NEVER")
+                   if b.startswith("- Never edit the rendered file by hand")]
+        self.assertEqual(len(bullets), 1)
+        self.assertNotIn("overwrite it", bullets[0])
+        self.assertIn("render never overwrites", bullets[0])
+        self.assertIn("new `-2` file", bullets[0])
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "a.md").write_text("x", encoding="utf-8")
+            self.assertTrue(gp_common.unique_path(tmp, "a.md").endswith("a-2.md"))
+            with self.assertRaises(gp_common.GuardError):
+                gp_render.write_atomic(tmp, "a.md", "y")
+
+    def test_tmp_prose_matches_what_render_does_without_an_ignored_tmp(self):
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        self.assertIn("mkdir -p tmp", skill)
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(["git", "init", "-q", tmp], check=True, timeout=30)
+            with self.assertRaises(gp_common.GuardError) as caught:
+                gp_render.choose_path(tmp, "none", "2026-01-02", "x", None)
+            self.assertFalse(Path(tmp, "tmp").exists())
+            Path(tmp, ".gitignore").write_text("tmp/\n", encoding="utf-8")
+            path = gp_render.choose_path(tmp, "none", "2026-01-02", "x", None)
+            self.assertEqual(path, "tmp/2026-01-02-x.md")
+        self.assertIn(str(caught.exception), skill)
+
+    def test_full_objective_prose_matches_the_code(self):
+        skill = SKILL_MD.read_text(encoding="utf-8")
+        matrix = (REFS / "strategy-matrix.md").read_text(encoding="utf-8")
+        shown = gp_sections.OBJECTIVE_POINTER.format(path="<path> ").strip()
+        for text in (skill, matrix):
+            self.assertIn(gp_render.FULL_OBJECTIVE_HEADING, text)
+            self.assertIn("full_objective", text)
+        self.assertIn(shown, matrix)
+        self.assertIn(f"{gp_sections.LINE_CAP}-character", matrix)
 
     def test_excerpt_check_fails_on_a_mutated_copy(self):
         golden = GOLDEN.read_text(encoding="utf-8")

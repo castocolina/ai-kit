@@ -17,7 +17,7 @@ The recommended block is one /goal condition that stops when DONE WHEN holds. Pa
 
 OBJECTIVE
 - Finish phases 16, 16.1, 17, each verified. Then leave the repository clean.
-- Ship phases 16 to 17 with the curated config checks green, keep every migration reversible, and leave a short note per phase on what changed and why. Ship phases 16 to 17 with the curated config...
+- Ship phases 16 to 17 with the curated config checks green, keep every migration reversible, and leave a short n... (full text: .planning/goals/2026-01-02-phases-16-16-1-17.md section Full objective)
 
 ROLE
 - You are the orchestrator: the session that received this prompt. Dispatch plan work to subagents, reusing one or starting a fresh one, as you judge best.
@@ -98,7 +98,7 @@ REPORT
 
 OBJECTIVE
 - Finish phases 16, 16.1, 17, each verified. Then leave the repository clean.
-- Ship phases 16 to 17 with the curated config checks green, keep every migration reversible, and leave a short note per phase on what changed and why. Ship phases 16 to 17 with the curated config...
+- Ship phases 16 to 17 with the curated config checks green, keep every migration reversible, and leave a short n... (full text: .planning/goals/2026-01-02-phases-16-16-1-17.md section Full objective)
 
 ROLE
 - You are the orchestrator: the session that received this prompt. Dispatch plan work to subagents, reusing one or starting a fresh one, as you judge best.
@@ -171,6 +171,22 @@ REPORT
 - Per item: status, verification, the evidence printed, the cross-AI CLI used.
 - The ledger of your decisions, the commits made, nothing pushed.
 - The advisory closeness check was omitted: no usable backend.
+
+## Full objective
+
+Ship phases 16 to 17 with the curated config checks green, keep every migration reversible, and
+leave a short note per phase on what changed and why. Ship phases 16 to 17 with the curated config
+checks green, keep every migration reversible, and leave a short note per phase on what changed and
+why. Ship phases 16 to 17 with the curated config checks green, keep every migration reversible, and
+leave a short note per phase on what changed and why. Ship phases 16 to 17 with the curated config
+checks green, keep every migration reversible, and leave a short note per phase on what changed and
+why. Ship phases 16 to 17 with the curated config checks green, keep every migration reversible, and
+leave a short note per phase on what changed and why. Ship phases 16 to 17 with the curated config
+checks green, keep every migration reversible, and leave a short note per phase on what changed and
+why. Ship phases 16 to 17 with the curated config checks green, keep every migration reversible, and
+leave a short note per phase on what changed and why. Ship phases 16 to 17 with the curated config
+checks green, keep every migration reversible, and leave a short note per phase on what changed and
+why.
 
 ## Full goal
 

@@ -30,6 +30,7 @@ __all__ = [
     "generic_rule_lines",
     "goal_block",
     "loop_block",
+    "objective_cut",
     "objective_lines",
     "objective_text",
     "order_lines",
@@ -58,6 +59,7 @@ GSD_FAMILIES = ("opengsd", "gsd-unproven")
 GOAL_EVIDENCE = "exit code and count line"
 UNIT_CLAUSE = "Unit tests alone never count as done."
 OBJECTIVE_TAIL = ", each verified. Then leave the repository clean."
+OBJECTIVE_POINTER = " (full text: {path}section Full objective)"
 # Loop primitives that are typed as a `/loop` command; the rest of the loop rows fall to plain.
 LOOP_COMMANDS = ("/loop", "CronCreate one-shot", "CronCreate recurring", "ScheduleWakeup")
 PLAIN_FLAG = "flagged: no goal, loop or schedule primitive"
@@ -159,13 +161,24 @@ def role_lines() -> list[str]:
     ]
 
 
-def objective_lines(answers: Mapping[str, Any], scope_desc: str) -> list[str]:
+def objective_cut(answers: Mapping[str, Any]) -> bool:
+    """True when the user's objective is too long for one rule line, so the file keeps its full
+    text in a `## Full objective` section."""
+    objective = _one_line(answers.get("objective") or "")
+    return len(RULE_BULLET) + len(objective) > LINE_CAP
+
+
+def objective_lines(answers: Mapping[str, Any], scope_desc: str, path: str = "") -> list[str]:
     """OBJECTIVE rule lines. `scope_desc` is `phases 16, 16.1, 17` or `3 plans: <titles>`; each
-    line is cut to fit LINE_CAP, so a long title or objective never refuses generation."""
+    line is cut to fit LINE_CAP, so a long title or objective never refuses generation. A cut
+    objective ends with a pointer to the file's `## Full objective` section (`path` names it)."""
     lines = [fit_line("Finish ", scope_desc, OBJECTIVE_TAIL)]
     objective = _one_line(answers.get("objective") or "")
-    if objective:
-        lines.append(fit_line("", objective))
+    if objective_cut(answers):
+        tail = OBJECTIVE_POINTER.format(path=f"{path} " if path else "")
+        lines.append(fit_line("", objective, tail))
+    elif objective:
+        lines.append(objective)
     return lines
 
 
@@ -466,12 +479,12 @@ def _rules_and_order(
 
 
 def rail_sections(
-    detect: Mapping[str, Any], answers: Mapping[str, Any], work: Work
+    detect: Mapping[str, Any], answers: Mapping[str, Any], work: Work, path: str = ""
 ) -> list[tuple[str, list[str]]]:
     """The labeled sections of D-28 for one work family; ORDER is present only when it has lines."""
     rules, order = _rules_and_order(detect, answers, work)
     sections: list[tuple[str, list[str]]] = [
-        ("OBJECTIVE", objective_lines(answers, work.scope_desc)),
+        ("OBJECTIVE", objective_lines(answers, work.scope_desc, path)),
         ("ROLE", role_lines()),
         ("RULES FOR EVERY PLAN", rules),
     ]
