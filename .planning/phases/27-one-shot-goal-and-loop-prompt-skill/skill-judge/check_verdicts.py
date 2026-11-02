@@ -157,9 +157,9 @@ def main(argv):
 
     rounds = sorted(int(os.path.basename(p)[1:]) for p in glob.glob(j_dir + "/skill-judge/r*")
                     if os.path.basename(p)[1:].isdigit())
-    # The original loop is capped at three rounds. Rounds 4 to 6 exist only as post-review
-    # confirmations (orchestrator decision; round 6 adds a second judge), and must be labelled so.
-    assert rounds == list(range(1, len(rounds) + 1)) and len(rounds) <= 6, "rounds must be r1..r<=6"
+    # The original loop is capped at three rounds. Rounds 4 to 7 exist only as post-review
+    # confirmations (orchestrator decision; rounds 6 and 7 use two judges), and must be labelled so.
+    assert rounds == list(range(1, len(rounds) + 1)) and len(rounds) <= 7, "rounds must be r1..r<=7"
     extra = ",".join(str(n) for n in rounds if n > 3)
     lab = re.search(r"^Post-review confirmation rounds: (\S+)$", t, re.M)
     assert (lab.group(1) if lab else "") == extra, "rounds above 3 need the label line: " + extra

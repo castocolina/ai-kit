@@ -18,7 +18,7 @@ A `/goal` condition over 1,000 characters no longer sits on the `/goal` line. Th
 - 5c8d4fb: eval `precise-long-goal-pointer` and a test that reproduces its assertions on the real CLI.
 - ce8ad9f: SKILL.md, README, references (new `references/evidence.md` holds the sources of the closed checks), drift tests, the Phase 27 capture follow-up.
 - bfe6ec7: generated test listings (`tools/gen_test_groups.py`) register the new test module.
-- 1bbcc7d: the skill-judge checker takes round 6 and a referee-one report.
+- 1bbcc7d: the skill-judge checker takes round 6 and a referee-one report. Later: 7b61f3c (Full objective section), bb364f7 (eval), 3577128 (docs), the round 7 checker and report commits.
 - The round 6 reports and the verdict update are in the last docs commit.
 
 ## Decisions
@@ -30,5 +30,8 @@ A `/goal` condition over 1,000 characters no longer sits on the `/goal` line. Th
 - `python3 tools/run_unittest_parallel.py --group unit --group arch`: 76/76 modules. `make validate`: ruff, pylint, pyright, vulture, shellcheck, py-compile, unittest (core) and unittest (wizard) passed.
 - The host following `/goal read document ... at section ...` stays unverified; render warns each time.
 
+## Follow-up (owner decision)
+- A shortened objective now ends with `(full text: <path> section Full objective)` and the file keeps the whole text in `## Full objective` (before `## Full goal`); the false re-render sentence and the `tmp/` statements in SKILL.md are corrected and tied to the code by drift tests.
+
 ## Known open
-- Skill-judge round 6 left one real high finding of referee-one open on purpose (long objective cut to one rule line in the autonomous, loop and plain blocks; owner_decision P4) and several medium and low findings; see `27-SKILL-JUDGE.md`.
+- Skill-judge round 7: referee-one 94.4%, referee-three 87.2%, verdict UNRESOLVED (87.2 is below the 90.4 base); `--gate` is pending until an owner decision. Medium and low findings are listed in `27-SKILL-JUDGE.md`.

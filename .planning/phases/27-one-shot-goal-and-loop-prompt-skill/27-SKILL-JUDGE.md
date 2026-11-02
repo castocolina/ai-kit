@@ -13,18 +13,19 @@ not probed because referee-two answered. No native Opus judge ran. One finished 
 `scripts/`, `evals/` with `evals/files/`) plus a note listing `tests/test_ai_kit_spec_goal_prompt_*.py`; the
 rubric looks for script tests in `tests/skills/<name>/`, so the D7 finding states that limit and the smoke test it
 could not see was not deducted.
-**Round 6 judges (2026-11-02):** `router-env/my-referee-one` and `router-env/my-referee-three` through pi
-(`--route-pi router --mode review`), one lane each. `my-referee-two` answered a PONG probe with `503 ... service_unavailable`
-in each of four probes during the round and was replaced by referee-three (owner rule: referee-three only as a replacement).
+**Round 6 and 7 judges (2026-11-02):** `router-env/my-referee-one` and `router-env/my-referee-three` through pi
+(`--route-pi router --mode review`), one lane each in both rounds. `my-referee-two` answered every PONG probe (four in round 6,
+one in round 7) with `503 ... service_unavailable` and was replaced by referee-three (owner rule: referee-three only as a replacement).
 The skill-judge files were read once from the installed skill into `tmp/` (nine files); the prompt names those copies and
 the repository's `tests/test_ai_kit_spec_goal_prompt_*.py`. No native Opus judge ran.
-**Rounds:** the original loop ran at most three; rounds 4 to 6 are the post-review confirmations allowed by the
+**Rounds:** the original loop ran at most three; rounds 4 to 7 are the post-review confirmations allowed by the
 orchestrator (round 4 after code review and a security audit changed the scripts, round 5 after the milestone audit
 fix INT-1 changed the generated quota rule in scripts/gp_sections.py, round 6 after the pointer form of the `/goal`
-block and the evidence reference; round 6 is the last, there is no round 7).
+block and the evidence reference, round 7 after the `## Full objective` section and the corrected SKILL.md statements;
+round 8 would run only after a real critical or high finding was fixed).
 The verdict is the last judged round whose digest equals the committed package.
 
-Post-review confirmation rounds: 4,5,6
+Post-review confirmation rounds: 4,5,6,7
 **Pass rule:** `((Critical 0 and Important 0) or percent >= 80) and percent >= base`; Critical = findings with
 severity `critical`, Important = severity `high`; base = lowest finished percent of round 1 (a new skill has no
 earlier baseline). `skill-judge/check_verdicts.py` reproduces the verdict, the digest and the arithmetic from the
@@ -64,41 +65,53 @@ reports; `--gate` lists a non-PASS verdict as pending unless the owner accepted 
   4 low, 140 s. Both digests equal the committed package. The three high findings of referee-one were triaged against
   the code: two are refuted (see Refuted findings) and one (D8-1) is real, older than this change and a deliberate
   design choice that the owner told this change to leave alone, so it is recorded under Pending acceptance and not
-  fixed. No critical or high finding was a defect of this change, so no fix and no round 7 ran. Probes: referee-one and
+  fixed then. The owner afterwards told this change to fix it (see round 7). Probes: referee-one and
   referee-three answered PONG; referee-two returned 503 each time. Verdict PASS: the lowest percent is 91.2 (referee-three),
-  which is above 80 and above the base 90.4.
+  which is above 80 and above the base 90.4. That digest is now stale.
+- Post-review confirmation, round 7 (2026-11-02, start commit 65aa32f plus commits 7b61f3c, bb364f7, 3577128 and
+  the checker commit; two judges; the prompt adds a note on the `## Full objective` section, the corrected `tmp/` and re-render
+  statements and the moved e2e read): referee-one 118/125, 94.4%, grade A, 0 critical, 2 high (D6-1 and D8-2, the same two
+  findings refuted in round 6), 1 medium and 0 low, 458 s; referee-three 109/125, 87.2%, grade B, 0 critical, 0 high, 3
+  medium and 7 low, 103 s. Both digests equal the committed package. The objective-loss finding (high in round 6) and the false
+  re-render sentence did not come back. No new critical or high finding, so no round 8 ran. Probes: referee-one and
+  referee-three answered PONG; referee-two returned 503. The lowest percent is 87.2 (referee-three): above 80 but below the
+  base 90.4, so the verdict is UNRESOLVED, as in round 4. referee-three moved from 91.2 to 87.2 between rounds 6 and 7 with
+  only medium and low findings, within the noise recorded below.
 
 ## Verdicts
 
 Skill: ai-kit-spec-goal-prompt
-Verdict: PASS
-Round: 6
+Verdict: UNRESOLVED
+Round: 7
 Round kind: post-review confirmation
-Reviewed-sha256: c3f5572f493a3c01c69dfe2b3d497e95e86532adb70bbe2959e07711db894bde
+Reviewed-sha256: 1651b906d996fcfbec97e2bd17b4a0a089ce55d835a23ecbbd0a32ba885e7a72
 Base percent: 90.4
 Base source: lowest finished percent of its first finished round (round 1, referee-two); a new skill has no earlier baseline
-Score: 114/125
-Percent: 91.2
-Grade: A
+Score: 109/125
+Percent: 87.2
+Grade: B
 Critical findings: 0
-Important findings: 3
-Rule: lowest percent 91.2 (referee-one 92.8, referee-three 91.2); ((C0 and I3) -> False) or 91.2 >= 80 -> True; 91.2 >= 90.4 -> True.
-Reports: skill-judge/r6/ai-kit-spec-goal-prompt-my-referee-one.md, skill-judge/r6/ai-kit-spec-goal-prompt-my-referee-three.md
+Important findings: 2
+Rule: lowest percent 87.2 (referee-one 94.4, referee-three 87.2); ((C0 and I2) -> False) or 87.2 >= 80 -> True; 87.2 >= 90.4 -> False.
+Reports: skill-judge/r7/ai-kit-spec-goal-prompt-my-referee-one.md, skill-judge/r7/ai-kit-spec-goal-prompt-my-referee-three.md
 
 ## Refuted findings
 
 Round 2's high finding was real and fixed. Round 6 (referee-one) reported three high findings:
 
-- D6-1 (CLEANUP merges into the main checkout and removes worktrees without authorization): refuted as a defect. The cleanup is a locked owner decision (27-CONTEXT.md:229, "the branch merged into the main checkout (never pushed)") and the generated lines are scripts/gp_sections.py:356; the owner's rule also forbids a push in the same lines.
-- D8-2 (`/loop` rendered for CronCreate and ScheduleWakeup rows): refuted as unlabelled. scripts/gp_sections.py:62 lists the primitives typed as a `/loop` command on purpose, and the heading and the paste text carry the label (`[unverified: ScheduleWakeup]` from scripts/gp_sections.py:273 and the sentence from scripts/gp_render.py:394).
-The third, D8-1 (a long objective is cut to one capped rule line outside the `/goal` block), is not refuted: it is real. See Pending acceptance.
+- D6-1 (CLEANUP merges into the main checkout and removes worktrees without authorization): refuted as a defect. The cleanup is a locked owner decision (27-CONTEXT.md:229, "the branch merged into the main checkout (never pushed)") and the generated lines are scripts/gp_sections.py:369; the owner's rule also forbids a push in the same lines.
+- D8-2 (`/loop` rendered for CronCreate and ScheduleWakeup rows): refuted as unlabelled. scripts/gp_sections.py:64 lists the primitives typed as a `/loop` command on purpose, and the heading and the paste text carry the label (`[unverified: ScheduleWakeup]` from scripts/gp_sections.py:286 and the sentence from scripts/gp_render.py:404). Round 7 (referee-one) repeated both findings
+  (D6-1 at scripts/gp_sections.py:369, D8-2 at scripts/gp_sections.py:283); the refutations stand..
+The third, D8-1 (a long objective is cut to one capped rule line outside the `/goal` block), was real and is fixed since: the
+line now ends with a pointer and the file keeps the whole text in `## Full objective` (scripts/gp_sections.py:171).
 
 ## Owner decision needed
 
-none for the verdict (PASS). Context for the owner: the same skill scored 88.8, 92.0, 88.8 and 92.0 in rounds 2 to 5
-(round 4 was UNRESOLVED against the 90.4 base), so one judge's result has about 3 points of noise. Round 6 had two
-judges (referee-one 92.8, referee-three 91.2; referee-two returned 503) and the verdict takes the lower one, 91.2,
-only 0.8 above the 90.4 base. One real high finding of referee-one is left open on purpose (see Pending acceptance).
+The verdict is UNRESOLVED (87.2 is above 80 but below the 90.4 base); the checker's `--gate` lists it as pending until an
+owner decision exists. Context for the owner: the same skill scored 88.8, 92.0, 88.8 and 92.0 in rounds 2 to 5 with one
+judge, and in rounds 6 and 7 two judges gave 92.8 and 91.2, then 94.4 and 87.2, so one judge's result has about 4 points of
+noise. The package improved since round 6 (a real information-loss defect and a false sentence were fixed) and referee-one
+scored it higher (94.4), while referee-three scored it lower with medium and low findings only. No Owner-decision line was written.
 
 ## Owner decisions
 
@@ -106,18 +119,16 @@ none
 
 ## Pending acceptance
 
-Open findings of round 6 (judged, not fixed; the owner told this change to leave the autonomous, loop and plain blocks
-as they are, and only critical or high defects of the change itself get a fix):
+Open findings of round 7 (judged, not fixed; no critical or high finding of the change is open):
 
-- ai-kit-spec-goal-prompt: PASS (D8-1 high, referee-one: the OBJECTIVE rule line cut to one capped line in the
-  autonomous, loop and plain blocks, scripts/gp_sections.py:168; deliberate since dbb32f9 and listed as owner_decision P4 in
-  27-OWNER-CAPTURES.md; the `/goal` block no longer loses it because the pointer form keeps the full text)
-- ai-kit-spec-goal-prompt: PASS (D4-1 medium both judges: the description's boundary against running the phases now, SKILL.md:3; D8-3 medium
-  referee-one and D8-1 medium referee-three: `tmp/` is assumed to exist and be git-ignored, SKILL.md:52; D3-1 medium referee-three: the NEVER
-  reason "the next render would overwrite it" is false because render writes a new `-2` file, SKILL.md:146)
-- ai-kit-spec-goal-prompt: PASS (D1-1, D2-1, D5-1, D7-1 low, referee-three: the two Unverified-style sections repeat reference text, no
-  fit check of the strategy against the user's intent, the e2e MANDATORY read comes after the first e2e readback, no eval with mockups
-  or with `native_execution` true)
+- ai-kit-spec-goal-prompt: UNRESOLVED (D8-1 medium, referee-one: a plan work set names plans by title only, so a single plan
+  without a dependency has no file name in the prompt, scripts/gp_render.py:571)
+- ai-kit-spec-goal-prompt: UNRESOLVED (D2-1 and D4-1 medium, referee-three: the mindset paragraph gives no fit check of the strategy
+  against the user's intent, SKILL.md:13; the description has no boundary against running the phases now, SKILL.md:3)
+- ai-kit-spec-goal-prompt: UNRESOLVED (D1-1, D1-2, D3-1, D5-1, D6-1, D7-1, D8-1, D8-2, low or medium, referee-three: Unverified section
+  repeats reference text, a generic NEVER line, no Gotchas section, the worked-example pointer, the `--tools` step, no eval for a
+  free-text work set or the `tmp/` refusal, the hand-edit sentence, the stop-run wording)
 
-Fixed after the last round, unjudged: none. The judge is non-deterministic, so the verdict is that of the last judged round,
-whose digest equals the committed package; earlier reports (r1-r5) are kept.
+Fixed after round 6 and judged in round 7: the objective cut (a `## Full objective` section), the false re-render sentence, the
+`tmp/` statements, the e2e read order. Fixed after round 7: none. The judge is non-deterministic, so the verdict is that of the
+last judged round, whose digest equals the committed package; earlier reports (r1-r6) are kept.
