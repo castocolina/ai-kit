@@ -66,7 +66,7 @@ requirement. Edge Coverage rows: `~~old resolution~~ *(superseded, D-NN)* new re
 
 ```markdown
 # Phase NN: <name> - Discussion Log (<run mode: Assumptions Mode for the auto path, standard
-# discuss mode for the interactive path>)
+# discuss mode (`--analyze --all --batch`) for the interactive path>)
 
 > **Audit trail only.** Do not use as input to planning, research, or execution agents.
 > Decisions captured in CONTEXT.md — this log preserves the analysis.
@@ -74,7 +74,7 @@ requirement. Edge Coverage rows: `~~old resolution~~ *(superseded, D-NN)* new re
 **Date:** YYYY-MM-DD
 **Phase:** NN-slug
 **Mode:** <run mode — auto path: assumptions (`--analyze --all --batch`); interactive path:
-standard discuss mode with the user>, decision ladder, <quality rule> — add
+standard discuss mode (`--analyze --all --batch`) with the user>, decision ladder, <quality rule> — add
 ", CodeGraph" only when the brief included the CodeGraph block.
 **Areas analyzed:** <areas>
 

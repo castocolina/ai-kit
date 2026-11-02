@@ -11,7 +11,7 @@ yourself with advisory help. It never plans or executes. Backend order on the la
 consented remotes in the client's table order, then your own reasoning (§3). Two run modes,
 picked once in §0:
 **auto** (spec `--auto`, discuss assumptions-mode) and **interactive** (spec without `--auto`,
-discuss in its standard discuss mode with the user answering).
+discuss in standard mode with `--analyze --all --batch`, the user answering).
 
 **The mindset:** you are the decider. Laya and TypeSafe are cheap typed screens, not verdicts.
 Your own reasoning against verified evidence is the last rung and the most important one:
@@ -81,7 +81,7 @@ decided provisionally and shown at the end.
    default (`interactive`) — then **ask the user once**: recommend the **auto path** when
    `mode` is `yolo` or the phase's `mvp-mode` is active (step 6's value, first phase of the
    range), the **interactive path** otherwise (interactive = spec-phase without `--auto`,
-   discuss-phase in its standard discuss mode with the user answering). Never flip config
+   discuss-phase with `--analyze --all --batch`, the user answering). Never flip config
    keys to pick a path.
 
 8. **Check the agents' skill wiring** (after step 7, which decides the agents that run):
@@ -126,8 +126,9 @@ file; do not delegate to another skill — skill-to-skill calls are unreliable o
 The **auto path** runs assumptions mode: read and execute `<workflows>/discuss-phase-assumptions.md`
 with argument `N` — **never** pass `--assumptions` (routes to `list-phase-assumptions.md`, which
 writes no files) and **never** pass `--auto` (it chains into plan-phase and auto-accepts Unclear
-items). The **interactive path** runs `<workflows>/discuss-phase.md` instead, with the user
-answering its prompts.
+items). The **interactive path** runs `<workflows>/discuss-phase.md` instead, with arguments
+`N --analyze --all --batch` (every gray area, 2–5 questions per turn, a trade-off table before
+each group) and with the user answering its prompts.
 
 **Rules that hold in both paths:**
 - Skip the workflow's `auto_advance` step regardless of config — the skill never plans or
@@ -258,7 +259,7 @@ strictly in sequence (flag that gap in the log).
   writes nothing; the run looks complete and produces no CONTEXT.
 - **NEVER pass `--auto` to discuss in assumptions mode** — it auto-advances into plan-phase
   and accepts the analyzer's default for Unclear items, bypassing the ladder and the log
-  (the interactive path runs standard discuss mode instead).
+  (the interactive path runs standard discuss mode with `--analyze --all --batch` instead).
 - **NEVER hand-batch items into one Laya question** — one item's context changes another's answer.
 - **NEVER treat a Laya, TypeSafe or OpenCode Zen answer as the decision** — log it as
   advisory; the decision column is yours, with its reason.

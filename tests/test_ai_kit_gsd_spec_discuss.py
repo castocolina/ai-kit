@@ -1187,6 +1187,17 @@ class TestSkillContract(unittest.TestCase):
         self.assertIn("arguments `N --auto` (auto path) or plain `N` (interactive path)", skill)
         self.assertIn("The **interactive path** runs `<workflows>/discuss-phase.md` instead", skill)
         self.assertIn("with the user answering its prompts", skill)
+        # owner decision 2026-11-02: interactive discuss runs all gray areas, grouped
+        # questions and trade-off tables
+        self.assertIn("with arguments `N --analyze --all --batch`", skill)
+        self.assertIn("read and execute `<workflows>/discuss-phase-assumptions.md` "
+                      "with argument `N` — **never** pass `--assumptions`", skill)
+        # every description of the interactive mode names the same three flags
+        self.assertIn("discuss in standard mode with `--analyze --all --batch`, "
+                      "the user answering", skill)
+        self.assertIn("discuss-phase with `--analyze --all --batch`, the user answering", skill)
+        self.assertIn("runs standard discuss mode with `--analyze --all --batch` instead", skill)
+        self.assertNotIn("its standard discuss mode with the user answering", skill)
         # NEVER list keeps both guards
         self.assertIn("NEVER pass `--auto` to discuss in assumptions mode", skill)
         self.assertIn("`workflow.discuss_mode`, `mode` or `workflow.mvp_mode`", skill)
@@ -1268,10 +1279,15 @@ class TestSkillContract(unittest.TestCase):
         logs = self.read("references/log-formats.md")
         self.assertIn("<Run mode and rounds:", logs)
         self.assertIn("<run mode: Assumptions Mode for the auto path", logs)
+        self.assertIn("standard discuss mode (`--analyze --all --batch`) with the user",
+                      " ".join(logs.split()))
 
     def test_readme_registers_the_skill(self):
         readme = (self.ROOT.parent.parent / "README.md").read_text(encoding="utf-8")
         self.assertIn("skills/ai-kit-gsd-spec-discuss/SKILL.md", readme)
+        row = next(ln for ln in readme.splitlines()
+                   if "skills/ai-kit-gsd-spec-discuss/SKILL.md" in ln)
+        self.assertIn("interactive (discuss with `--analyze --all --batch`", row)
 
 
 if __name__ == "__main__":
