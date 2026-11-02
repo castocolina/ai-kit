@@ -624,24 +624,15 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ### Carried to the owner at the v1.3 close (disclosed, not acknowledged)
 
-The v1.3 close used `override_closeout`. These items are NOT done and were not suppressed through
+The v1.3 close used `override_closeout`. These items were NOT acknowledged through
 `audit-open acknowledge`, so the next `audit-open` scan still lists them. Paths are under
-`.planning/phases/`; the full explanation is in the v1.3 entry of `.planning/MILESTONES.md`.
+`.planning/phases/`. After the owner review of 2026-11-02, `.planning/milestones/v1.3-OWNER-FOLLOWUP.md` records each item as closed
+(from history or live), decided, discarded or still open; the rows below point to it.
 
 | Category | Item | Status | Deferred At | Milestone |
 |----------|------|--------|-------------|-----------|
-| verification_gaps | 20/20-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
-| verification_gaps | 21/21-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
-| verification_gaps | 21.1/21.1-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
-| verification_gaps | 21.2/21.2-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
-| verification_gaps | 21.3/21.3-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
-| verification_gaps | 22/22-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
-| verification_gaps | 23/23-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
-| verification_gaps | 24/24-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
-| verification_gaps | 25/25-VERIFICATION.md | gaps_found | 2026-10-31 | v1.3 |
-| verification_gaps | 25.1/25.1-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
-| verification_gaps | 26/26-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
-| verification_gaps | 27/27-VERIFICATION.md | human_needed | 2026-10-31 | v1.3 |
+| verification_gaps | 20, 21, 21.1, 21.2, 21.3, 22, 23, 24, 25.1, 26, 27 `*-VERIFICATION.md` | human_needed (file status unchanged; per-item dispositions in the follow-up file) | 2026-10-31 | v1.3 |
+| verification_gaps | 25/25-VERIFICATION.md | gaps_found (stale; only gap is the skill-judge gate) | 2026-10-31 | v1.3 |
 | uat_gaps | 16/16-UAT.md | testing (1 pending scenario) | 2026-10-31 | v1.3 |
 | todos | 2026-10-11-execute-system-one-decision-skill-plan.md | (presence-only) | 2026-10-31 | v1.3 |
 | todos | 2026-10-12-promote-cursor-statusline-poc-into-999-4.md | (presence-only) | 2026-10-31 | v1.3 |
@@ -654,15 +645,12 @@ The v1.3 close used `override_closeout`. These items are NOT done and were not s
 | todos | 2026-10-24-make-the-ai-kit-session-hooks-dynamic-worktree-indexing-advi.md | (presence-only) | 2026-10-31 | v1.3 |
 | todos | 2026-10-29-unify-review-execute-lane-toml-effort-escalation-and-jev-classification.md | (presence-only) | 2026-10-31 | v1.3 |
 | todos | 2026-10-31-refactor-execute-gsd-and-rules-agents-sj-1-sj-3.md | (presence-only) | 2026-10-31 | v1.3 |
-| owner_captures | 25/25-OWNER-CAPTURES.md (C1-C7) | owner-pending | 2026-10-31 | v1.3 |
-| owner_captures | 25.1/25.1-OWNER-CAPTURES.md (O1-O13) | owner-pending | 2026-10-31 | v1.3 |
-| owner_captures | 26/26-OWNER-CAPTURES.md (captures 1-11) | owner-pending | 2026-10-31 | v1.3 |
-| owner_captures | 27/27-OWNER-CAPTURES.md (A1-A5, PI_SKILLS, 27-10 items a-g) | owner-pending | 2026-10-31 | v1.3 |
-| skill_judge | ai-kit-spec-goal-prompt 115/125 = 92.0% (round 5, grade A) | PASS; nine medium/low findings pending owner acceptance | 2026-10-31 | v1.3 |
+| owner_captures | 25, 25.1, 26, 27 `*-OWNER-CAPTURES.md` | partly closed or discarded on 2026-11-02; remaining open items and owner decisions in the follow-up file | 2026-10-31 | v1.3 |
+| skill_judge | ai-kit-spec-goal-prompt round 7: referee-one 94.4% A, referee-three 87.2% B, 0 critical | UNRESOLVED against a 90.4 base; owner decides (accept, or lower the base) | 2026-10-31 | v1.3 |
 | skill_judge | ai-kit-spec-config 99 vs base 105 | UNRESOLVED (no Owner-decision line) | 2026-10-31 | v1.3 |
 | skill_judge | SJ-1 execute-gsd 101 vs 105; SJ-2 execute-superpowers FAIL 86/120; SJ-3 project-rules-agents FAIL 93 | deferred by Owner-decision to the refactor todo and backlog 999.16 | 2026-10-31 | v1.3 |
-| owner_decision | Phase 20 WR-12, fix-cap accounting, RUN-106, IN-07; Phase 21.1 Laya accuracy 0.5 < 0.95, opencode judge lane 11/15, live TypeSafe/Zen calls | owner decision | 2026-10-31 | v1.3 |
-| dry_run | Phase 24 chain dry run on a fixture project (SC1/R3/R4, SC2/R6, SC3/R8) never produced | not done | 2026-10-31 | v1.3 |
+| owner_decision | Phase 20 WR-12, Phase 26 item 11 (R18/R19/R20), Phase 27 `PI_SKILLS`, base-score re-baseline | owner to decide; the other Phase 20 and 21.1 items are kept as is (follow-up file, section 3) | 2026-10-31 | v1.3 |
+| dry_run | Phase 24 chain dry run | two of three scenarios ran on 2026-10-24; the no-backend scenario is covered by unit test only | 2026-10-31 | v1.3 |
 | windows | WINDOWS.md entry 7 (autonomous block names an unverified primitive) | open design decision | 2026-10-31 | v1.3 |
 | backlog | 999.16 event-keyed playbook skill (feasibility check first) | open on purpose | 2026-10-31 | v1.3 |
 | backlog | 999.17 lite or strong executor choice via jev-fast-decision | open on purpose | 2026-10-31 | v1.3 |

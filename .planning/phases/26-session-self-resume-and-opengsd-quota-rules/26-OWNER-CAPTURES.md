@@ -1,5 +1,7 @@
 # Phase 26 - gates and owner captures
 
+Follow-up 2026-11-02: see .planning/milestones/v1.3-OWNER-FOLLOWUP.md
+
 ## Gates
 
 Phase tip after 26-11 plus the 26-12 vulture fix (2026-10-30). Logs lived under `tmp/p26/12/` and are summarized in `26-12-SUMMARY.md`.

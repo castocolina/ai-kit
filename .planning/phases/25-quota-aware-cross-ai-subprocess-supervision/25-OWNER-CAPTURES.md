@@ -1,5 +1,7 @@
 # Phase 25 owner capture kit
 
+Follow-up 2026-11-02: see .planning/milestones/v1.3-OWNER-FOLLOWUP.md
+
 ## Purpose
 
 Turn the `unverified` pattern rows of the runner's failure ladder into evidence. Each item below
