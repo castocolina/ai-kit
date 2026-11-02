@@ -140,3 +140,9 @@ None of these is taken. Each shows the options and what happens if nothing chang
   trips on a version banner, clean-tree checks that ignore the owner's config file, a progress counter
   mismatch); (d) executor oddities (agent-branch allow-list applied unevenly, architecture test left red by
   one executor). Default: all stay proposals, nothing applied.
+- [ ] Two old unmerged branches exist on the GitHub remote and were kept on purpose at the v1.3 close: the one named
+  external segments for the status line (4 commits of June 2026: provider discovery, header parser, output
+  sanitization and execution with a time-limited cache; it only touches the old single-file status line that
+  Phase 23 split) and the one named loop polish (1 commit of June 2026: a branch icon and an install flag for the
+  branch). Decide for each: port the idea onto the current split status line, or drop it. Default: both stay on
+  the remote untouched, and each is also preserved locally by an archive tag.
