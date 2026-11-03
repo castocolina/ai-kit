@@ -3,6 +3,7 @@ created: 2026-10-13T17:14:21.797Z
 title: Add Cursor subagents pinned to non-fast composer-2.5 and grok
 area: agents
 severity: minor
+resolves_phase: 54
 files:
   - ~/.cursor/agents/
   - ~/.local/share/cursor-agent/versions/2026.10.01-e373342/1623.index.js

@@ -3,6 +3,7 @@ created: 2026-10-12T12:50:00.000Z
 title: Promote Cursor statusline POC spike into Phase 999.4 discuss/plan
 area: statusline
 severity: major
+resolves_phase: 54
 files:
   - .planning/ROADMAP.md
   - .claude/worktrees/poc-cursor-statusline/

@@ -3,6 +3,7 @@ created: 2026-10-24T21:47:44.799Z
 title: Make the ai-kit session hooks dynamic (worktree indexing advice, install-relative docs, compact metrics)
 area: tooling
 severity: minor
+resolves_phase: 49
 files:
   - tools/hooks/detect.py:45-90
   - tools/hooks/claude_session_start.py

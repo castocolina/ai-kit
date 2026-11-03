@@ -3,6 +3,7 @@ created: 2026-10-11T22:50:00.000Z
 title: Execute the System One decision-skill plan (jev-fast-decision, 3 backends)
 area: skills
 severity: major
+resolves_phase: 54
 files:
   - .planning/docs/system-one-decision-skill/PLAN.md
   - .planning/docs/system-one-decision-skill/README.md

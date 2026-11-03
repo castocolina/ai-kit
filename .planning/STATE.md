@@ -4,9 +4,9 @@ milestone: v2.0
 milestone_name: Skill Refactor
 status: planning
 last_updated: "2026-11-02T23:45:33.214Z"
-last_activity: 2026-11-02
+last_activity: 2026-11-03
 progress:
-  total_phases: 0
+  total_phases: 35
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,17 +17,19 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-10-31)
+See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Planning next milestone (v1.3 shipped 2026-10-31; owner-pending items carried to the owner)
+**Current focus:** Milestone v2.0 Skill Refactor, Phase 28 (Fast, environment-proof gates)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 28, first of 35 v2.0 phases (Fast, environment-proof gates)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-11-02 — Milestone v2.0 started
+Status: Ready to plan
+Last activity: 2026-11-03 — v2.0 roadmap remapped (Phase 30.1 inserted, 100/100 requirements mapped, code anchors per phase)
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
@@ -589,6 +591,10 @@ any order, or deferred, without blocking anything else in this milestone.
 - Phase 21.2 inserted after Phase 21: PreCompact pre-summary hook via the decision system (PCH-01..02); from the 2026-10-18 todos, owner-prioritized ahead of 22/23
 - Phase 21.3 inserted after Phase 21: Visible tool-advisory hooks as setup knobs (ADV-01..04); from the 2026-10-18 todos, owner-prioritized ahead of 22/23
 - Phase 25.1 inserted after Phase 25: Configurable soft backoff, session-reset ladder, upstream error pass-through and an evidence-based error catalog (owner request 2026-10-24)
+- v2.0 roadmap created 2026-11-02: Phases 28-54 (31 phases, decimal 32.1-32.4 are the skill batches after
+  the re-judge baseline) from 96 v2.0 requirements; order follows the owner's constraints in the
+  milestone inputs (gates and flow first, removals before the baseline, rules before dist, hooks after
+  playbooks, wake after the shared quota decision).
 
 ## Deferred Verification
 
@@ -657,10 +663,10 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-10-31T16:03:46.722Z
-Stopped at: Completed 27-14-PLAN.md
+Last session: 2026-11-02
+Stopped at: v2.0 roadmap created; awaiting owner approval
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Spec and discuss phases 28-32 (`/gsd-spec-phase`, `/gsd-discuss-phase`), then `/gsd-autonomous`

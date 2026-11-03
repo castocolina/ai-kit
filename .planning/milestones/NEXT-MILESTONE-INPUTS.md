@@ -605,6 +605,27 @@ are decided in discussion.
   AGENTS.md generated or hand-written; PR review loop consent; extra stacks and CI platforms; commit
   `.aikit/hooks.toml` or keep it personal.
 
+### Round 10 (2026-11-03): setup wizard wishes and the roadmap remap
+
+- The first spec-and-discuss round may stop at Phase 31 instead of 32; it is a checkpoint to test the flow.
+- The wizard's first screen becomes one card per component kind (skills, agents, commands, hooks), shown only when
+  the kind has something to show; this split belongs in an early phase, before more components arrive.
+- Status-line panes in setup: Claude as today with an orange accent background and "Claude Code" in bold; Cursor
+  with a gray accent, optional, with a toggle that keeps Cursor's default; Cursor segments that are not available
+  on Cursor are removed instead of shown disabled.
+- `gsd-roadmapper` runs on opus at xhigh in this project (set through gsd-tools), and the roadmap is remapped so
+  each requirement's phase and the code it touches are clear.
+- Lens skills: `impeccable` for TUI UI/UX work and `ponytail` across planning and code review. ai-kit enforces on
+  itself what curated-config sets for GSD projects and what the `ai-kit-spec*` skills do for superpowers.
+- The six wording fixes from the remap were accepted (defect list without the two gate items, the card-view
+  scheduling sentence dropped, an on/off Cursor toggle, the rules wording before the generated block exists,
+  evals written per batch, and the polish items and tags named).
+- Ponytail and the owner's own rule: simple does not always mean easy, nor not worth doing. Agents too often
+  recommend the easiest option over the one that gives the user more value, to avoid two more steps that are
+  not even hard. Choose simple over complex, but never deliver a half-done feature or mediocre value. This
+  becomes its own requirement, in ai-kit's AGENTS.md and in the generated rules. Ponytail is read as reuse:
+  existing components and software design patterns before building from scratch.
+
 ### Round 9 (2026-11-02): owner answers at the milestone start
 
 Asked during `/gsd-new-milestone` questioning. Answers are the owner's; "for jev" items are settled in the
@@ -684,13 +705,54 @@ runbook the line points to.
 question to codegraph, and graphify has only a one-line "use proactively for doc-aware indexing" note in the
 gitignored `.claude/cli-environment.md`. Owner wish: when both are available, codegraph for questions about
 sources only (symbols, callers, blast radius) and graphify for questions that span sources and
-documentation; graphify is not limited to the ship of a phase or milestone. Set up 2026-11-02:
-`graphify.enabled` and `graphify.auto_update` are on in `.planning/config.json` (the GSD hook rebuilds
-after commits on main; planner and phase researcher already read `.planning/graphs/graph.json`), and
-`graphify-out/` and `.planning/graphs/` are gitignored. Gap found: `graphify update .` rebuilds only the
-code graph (34,675 nodes from 2,181 files); documentation needs graphify's semantic extraction through the
-`/graphify` skill, so the doc side of the rule needs a spike on cost and how to keep it fresh. The rule
-belongs in the generated AGENTS.md block and ai-kit's own AGENTS.md.
+documentation; graphify is not limited to the ship of a phase or milestone.
+Checked 2026-11-02 on a real build (`graphify update .`, graphify 0.9.54, 34,675 nodes from 2,181 files):
+documents are indexed (17,573 Markdown nodes) but only as their own heading tree; there are zero
+document-to-code edges (32,090 code-code, 15,995 document-document, 3,339 code-rationale), so the graph cannot
+say which document describes a symbol without graphify's LLM extraction through the `/graphify` skill.
+Head-to-head on four discovery queries: codegraph (391 files of Python, TS, JS and YAML, 19,189 symbols,
+no Markdown) returns about 20 KB of verbatim source and call paths per query; graphify returns about 5 KB of
+nodes and is the only one that surfaces documents and planning files next to code (for example the skill
+reference `session-wake.md`), but its document hits are keyword-noisy and often stale (a v1.2 UI spec for
+"AGENTS.md rules checker"). GSD's phase researcher (and less so the planner and intel updater) queries the
+graph 2-3 times per phase for cross-document discovery.
+Owner decision: agents explore code with codegraph; graphify stays for GSD's discovery, tuned: archived
+milestones excluded from its index, rebuilt at every phase boundary on the phase branch, and the project
+rules say how to build it, when to refresh it and how. GSD's flags stay on (`graphify.enabled`,
+`graphify.auto_update`); leaving them off would make the graph useless. The rule goes into the AGENTS.md
+rules (the generated block and ai-kit's own file) and the tool-advisor hook's advice (today the hook mentions
+neither tool); curated-config turns the flags on when graphify is installed.
+Owner goal that stays: the next phase's researcher, planner and executor must see the new symbols to hook
+into and the documents to update, at every phase boundary and on whatever branch the work is on (not only
+after commits to main), which matters most in an autonomous run. Replacement: run `codegraph sync` at each
+phase boundary and give the next phase's brief the list of documents that mention the symbols the previous
+phase changed (found by plain-text search).
+
+**Scope of the older themes and the backlog (owner, 2026-11-02).** In v2.0: runner hardening (idle
+watchdog, the Phase 25 cleanup), dynamic session hooks (with the Cursor hooks path fix), spec-discuss polish,
+trustworthy wake notices, the limit capture hook, the agent-run live checks, macOS parity, config doctor in
+the wizard, Cursor subagent linking, jev backends by host and key sources, jev cross-host discovery, jev
+image and box questions, housekeeping, and the small agent-alone defects of Theme 2. Rule from the owner:
+backlog items move up to this milestone, but no invented features; an entry that was written wrong is
+reviewed and dropped if it is wrong.
+- Dropped as written: registering `workflow.cross_ai_retry` with gsd-core. Checked 2026-11-02: it is not a
+  GSD key (gsd-core 1.18.0 `config-set` answers "Unknown config key"; GSD documents only
+  `cross_ai_execution`, `cross_ai_command` and `cross_ai_timeout`). ai-kit's runner invented it in Phase
+  25.1 and reads it from GSD's `config.json`, which forces hand edits. It moves into ai-kit's own unified
+  config, with the runner reading the old location once to migrate it.
+- The cross-AI chain skill is not a new skill: the shared `cross-ai.mjs` gains options and flags to run each
+  host with dynamic settings, from the fixed TOML in some cases or from the review and execute skills'
+  decisions at run time.
+- jev chooses the executor per plan input: router lite or strong coding models when present, or another
+  external model; on native Claude haiku or sonnet at low, medium or high effort; composer in Cursor; a cheap
+  Copilot model. The same approach picks the best reviewer for a plan by files touched, complexity, task
+  count and category. This absorbs the lite-or-strong executor backlog entry and the review-sizing wish.
+- jev: drop OpenCode Zen from the jev-fast-decision skill entirely (it was already removed as a backend).
+
+**Chained PRs per phase (new, 2026-11-02; not found in earlier planning or chat history).** Each phase works
+on its own branch stacked on the previous phase's branch, with a PR per phase opened against the previous
+one, so main moves only when the chain merges. It shapes the push and merge rule above (push per finished
+plan to the phase branch), the end-of-phase playbook, and the graph rebuild at each phase boundary.
 
 **Milestone version:** v2.0.
 

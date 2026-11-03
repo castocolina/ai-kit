@@ -3,6 +3,7 @@ created: 2026-10-18T17:21:10.347Z
 title: Visible tool-advisory hooks (SessionStart, PreToolUse, PostToolUse) as setup knobs
 area: tooling
 severity: major
+resolves_phase: 54
 files:
   - tools/hooks/claude_session_start.py
   - tools/hooks/detect.py

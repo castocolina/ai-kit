@@ -3,6 +3,7 @@ created: 2026-10-14T13:26:53Z
 title: AGENTS.md quota-schedule rules and one-shot goal-prompt skill
 area: tooling
 severity: major
+resolves_phase: 54
 files:
   - skills/ai-kit-project-rules-agents
   - skills/ai-kit-spec-review

@@ -3,6 +3,7 @@ created: 2026-10-18T17:21:10.347Z
 title: Atomic, reusable decision-system skills on Jev
 area: skills
 severity: major
+resolves_phase: 54
 files:
   - .planning/docs/system-one-decision-skill/PLAN.md (main checkout)
   - .planning/todos/pending/2026-10-11-execute-system-one-decision-skill-plan.md (main checkout)

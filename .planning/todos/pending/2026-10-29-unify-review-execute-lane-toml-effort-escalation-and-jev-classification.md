@@ -3,6 +3,7 @@ created: 2026-10-30T02:03:59Z
 title: Unify the review/execute lane TOML, add effort and escalation, classify with jev
 area: tooling
 severity: major
+resolves_phase: 36
 files:
   - skills/ai-kit-spec-review/ai_kit_spec/config_io.py
   - skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py

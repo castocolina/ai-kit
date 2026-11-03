@@ -3,6 +3,7 @@ created: 2026-10-18T17:21:10.347Z
 title: PreCompact hook pre-summarizes transcript chunks via the decision system
 area: tooling
 severity: major
+resolves_phase: 54
 files:
   - tools/hooks/
   - .planning/todos/pending/2026-10-18-atomic-reusable-decision-system-skills.md

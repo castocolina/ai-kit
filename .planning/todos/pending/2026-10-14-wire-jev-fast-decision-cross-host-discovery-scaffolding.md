@@ -3,6 +3,7 @@ created: 2026-10-14T20:54:03.000Z
 title: Wire jev-fast-decision cross-host discovery scaffolding
 area: skills
 severity: major
+resolves_phase: 54
 files:
   - ~/.claude/skills/jev-fast-decision/SKILL.md
   - .planning/docs/system-one-decision-skill/PLAN.md
