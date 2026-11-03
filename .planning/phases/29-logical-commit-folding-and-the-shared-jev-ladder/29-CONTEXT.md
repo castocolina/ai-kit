@@ -69,10 +69,12 @@ Downstream agents MUST read `29-SPEC.md` before planning or implementing. Requir
   - The adapter's SKILL.md changes materially, so it meets the judge bar here (D-16).
   - Owner choice (recommended option) plus the owner's two additions; the "adapter makes sure the step is there"
     mechanism is own reasoning, open to the planner's shape.
+  - **Refined 2026-11-03 (29.1 spec):** the adapter step hands the finished plan to ai-kit's unit flow (fold, push, stacked draft PR); superpowers' finishing step is not used to merge, push or open a PR for a unit (29.1 R1, R4). superpowers governs none of these rules.
 - **D-04: A plan's range is identified per plan, inside the wave.** For GSD: the plan's own commits (scope
   `({phase}-{plan})`, its `docs({phase}-{plan})` commit) plus GSD's merge-back of that plan's worktree; plans of
   one wave fold in plan order so a later plan's fold sits on the earlier plan's folded tip. For superpowers: the
   plan branch's commits after its merge-base with the base branch.
+  - **Refined 2026-11-03 (29.1 spec):** both ranges are what each adapter supplies as a checkpoint of the framework-neutral unit contract (29.1 R1, FLOW-10); the fold engine reads only the contract.
 - **D-05: GSD's own worktree merge-back is part of the plan's range** (SPEC R5 amended, edge row superseded).
   - Live: worktree mode (`workflow.use_worktrees`, default true) merges each executor branch with
     `git merge --no-ff --no-edit -m "chore: merge executor worktree (<branch>)"` (`bin/lib/worktree-safety.cjs`).
@@ -84,6 +86,7 @@ Downstream agents MUST read `29-SPEC.md` before planning or implementing. Requir
 - **D-06: The rule-based grouping comes from the plan's tasks.** Each GSD task (its files) or superpowers task
   (its heading and files) is a candidate feature; tasks that touch the same files merge, so a change and its tests
   stay together; a commit that matches no task joins the feature whose files it touches. Owner choice (recommended).
+  - **Refined 2026-11-03 (29.1 spec):** "the plan's tasks" are the feature candidates an adapter supplies through the unit contract; a later system (grill-me, spec-kit) supplies its own.
 - **D-07: jev gets one `choice` item per commit, with the rule-based candidate features as options**, through the
   documented entry point (D-12), one item per call. The answers form a partition only if every commit is placed
   exactly once and no code change is split from its tests; otherwise the rule-based grouping decides. The log

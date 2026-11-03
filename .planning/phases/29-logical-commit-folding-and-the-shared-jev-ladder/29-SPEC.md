@@ -18,7 +18,7 @@ same rules. Every requirement below is **general**. The ai-kit-only items are do
 Phase 29.1: ai-kit's own GSD config (FLOW-05; general counterpart: curated-config writing branch per phase,
 CUR-04, Phase 44) and AGENTS.md's ship rule (FLOW-07; general counterpart: the end-of-phase playbook, RULE-17,
 Phase 47). The fixture tests use one GSD fixture project and one superpowers fixture project, never ai-kit's own
-repo.
+repo. *(amended 2026-11-03, 29.1 spec: ai-kit's flow is framework-neutral: the fold engine takes a unit's checkpoint (commit range, tested tip, feature candidates) through the unit contract of Phase 29.1 (FLOW-10); GSD and superpowers are its first two thin adapters, and another spec-driven system plugs in through the same contract; superpowers itself governs none of the fold, branch or PR rules, which are ai-kit's own)*
 
 ## Background
 
@@ -70,12 +70,14 @@ scripts and notes under the gitignored `tmp/p29/`):
    - Current: a plan ends as one commit per task plus one docs commit.
    - Target: the folding step takes the plan's commit range (from the commit before the plan's first commit to the plan's tip) and writes one commit per logical feature, each with a message that names the feature and the plan.
    - Acceptance: a fixture GSD plan whose task commits build two features ends as exactly two commits; every changed path of the original range appears in exactly one folded commit, except a path that two features both change.
+   - *Amended 2026-11-03 (29.1 spec):* the GSD plan reaches the fold as a checkpoint supplied by the GSD adapter of the unit contract (29.1 R1, FLOW-10); the fold engine itself names no framework.
    - Scope: general.
 
 3. **Fold a finished superpowers plan**: At the end of a finished superpowers plan its commits are folded by the same step and the same policy.
    - Current: no end-of-plan step exists on the superpowers side.
    - Target: a finished superpowers plan's branch is folded the same way before superpowers' finishing step offers to merge or push it.
    - Acceptance: a fixture superpowers plan branch with commits for two features ends as exactly two commits under the same policy checks as a GSD plan.
+   - *Amended 2026-11-03 (29.1 spec):* the superpowers plan reaches the fold as the single checkpoint of its unit, supplied by the superpowers adapter (29.1 R1); after the fold the unit flow pushes and opens the stacked draft PR, and superpowers' own merge and PR options are not used for a unit (29.1 R1, R4).
    - Scope: general.
 
 4. **Tree proof and backup before the swap**: The branch moves to the folded tip only after the folded tip's tree is proven identical to the tested tree and the old tip is tagged.

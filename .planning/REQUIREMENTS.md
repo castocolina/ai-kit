@@ -37,7 +37,15 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   and never uses `reset --hard`.
 - [ ] **FLOW-02**: Each phase runs on its own branch stacked on the previous phase's branch, with one PR per phase
   opened against the previous one (chained PRs), and each finished plan is pushed to its phase branch.
+  *(amended 2026-11-03, 29.1 spec: the stack is one per repository and made of framework-neutral units (FLOW-10): a GSD phase or a
+  superpowers plan is a unit, each finished plan a checkpoint that is pushed; a unit's PR opens as a draft at its
+  first push and turns ready when the unit finishes and verification passes; gh-stack when installed, plain `gh`
+  otherwise; an owner-started merge chain merges ready PRs bottom-up with merge commits; hotfixes stay outside
+  the stack, FLOW-11)*
 - [ ] **FLOW-03**: In MVP mode on a main-only project, the same point merges into main without review.
+  *(amended 2026-11-03, 29.1 spec: still a unit branch, fast-forwarded into its target and pushed after each checkpoint with no PR, only
+  when nothing unmerged sits below the unit; otherwise the flow refuses with a named reason and stays on the PR
+  path)*
 - [ ] **FLOW-04**: At every phase boundary, on the current branch, the codegraph index is synced, the graphify
   graph is rebuilt, and the next phase's brief lists the new or changed symbols to hook into and the documents
   that mention them, so its researcher, planner and executor know what to attach to and which docs to update;
@@ -64,6 +72,15 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   to end a turn with a waiting message while independent work remains; and to give the local time, the running step
   and when it started in every progress or resume ping. A doc-contract test pins each rail, and the generated prompt
   stays within its length caps.
+- [ ] **FLOW-10**: The branch, push, PR and merge-chain flow is ai-kit's own and framework-neutral: it knows only
+  units, checkpoints and target branches through one documented unit contract, and each spec-driven system reaches
+  it through a thin adapter (GSD and superpowers now; grill-me, spec-kit or others later); a synthetic third
+  adapter drives the whole flow in a fixture with no change to the flow's code. *(added 2026-11-03, 29.1 spec)*
+- [ ] **FLOW-11**: A hotfix unit branches off a configurable target branch (the base branch by default; a sandbox
+  or staging branch when configured), gets its own PR or MVP fast path to that target and is never stacked; once
+  it merges into the trunk of an open stack, the unmerged stack is rebased onto the updated trunk and pushed with
+  `--force-with-lease`, and a conflict restores every branch and stops. *(added 2026-11-03, 29.1 spec)*
+  *(amended 2026-11-03, 29.1 D-07: a conflict is first resolved by an agent keeping both sides' intent, GSD's planning files merged by content, and the gates run on the result; every branch is restored and the flow stops only when the resolution or the gates fail; the report names every resolved file and how)*
 
 ### Removals
 
@@ -603,6 +620,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | FLOW-07 | Phase 29.1 | Pending |
 | FLOW-08 | Phase 32.4 | Pending |
 | FLOW-09 | Phase 32.4 | Pending |
+| FLOW-10 | Phase 29.1 | Pending |
+| FLOW-11 | Phase 29.1 | Pending |
 | RMV-01 | Phase 31 | Pending |
 | RMV-02 | Phase 31 | Pending |
 | RMV-03 | Phase 31 | Pending |
@@ -742,11 +761,12 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | DEF-07 | Phase 32.4 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 151 total
-- Mapped to phases: 151
+- v2.0 requirements: 153 total
+- Mapped to phases: 153
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-11-02*
 *Last updated: 2026-11-03 after the ideas and rules audit: 41 new requirements (GATE-05, FLOW-07..09, JDG-08, HUB-08, REV-07, EXE-07..08, RUN-07..11, RULE-10..25, JEV-07, CUR-08..10, DIST-06..07, ARCH-01..02, FEAT-04..06), 38 amended, decimal phases 38.1, 45.1 and 47.1 split out; JDG-04 to Phase 32, RUN-05 to 38.1, RULE-03 and DESIGN-02 to 45.1*
 *Amended 2026-11-03 by Phase 29's spec and discuss: FLOW-02, FLOW-03, FLOW-05 and FLOW-07 to the new Phase 29.1; FLOW-01 and RULE-17 amended; RULE-27 (Phase 45) and REV-08 (Phase 40) added.*
+*Amended 2026-11-03 by Phase 29.1's spec: FLOW-02 and FLOW-03 amended; FLOW-10 (neutral unit contract) and FLOW-11 (hotfix path) added to Phase 29.1; FLOW-11 amended by its discuss (conflicts resolved before any restore).*
