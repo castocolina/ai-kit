@@ -29,7 +29,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 - [ ] **FLOW-01**: At the end of each plan the work is folded into logical-feature commits (a plan with two features
   gives two commits, never one squash per phase); jev proposes the grouping, the agent decides when jev is absent,
-  and nothing already pushed is rewritten. The folding runs in a subagent that reports in five lines or fewer,
+  and nothing already pushed is rewritten *(amended 2026-11-03, 29 spec: owner rule — commits already pushed to a phase or plan
+  branch whose PR has not merged may be folded again and pushed with `--force-with-lease`; main and any branch
+  whose PR has merged are never rewritten; the folding rules are written once as a policy the folding step
+  implements and the RULE-17 playbook carries)*. The folding runs in a subagent that reports in five lines or fewer,
   checks that the folded tip's tree equals the tested tree before the swap, tags the old tip before replacing it,
   and never uses `reset --hard`.
 - [ ] **FLOW-02**: Each phase runs on its own branch stacked on the previous phase's branch, with one PR per phase
@@ -156,6 +159,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **REV-07**: Before a review or judge round, spec-review pings each chosen lane with a short probe, replaces
   only the blocked ones from the user's preference order, continues with at least one, and records which lanes
   judged; a fake-lane test covers one blocked lane.
+- [ ] **REV-08**: spec-review reports a superpowers plan that has no explicit fold step at its end as a finding.
+  *(added 2026-11-03, 29 D-03: owner decision; the fold step itself is Phase 29)*
 
 ### Execute
 
@@ -294,6 +299,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **RULE-17**: The end-of-task, plan and phase playbook runs the gates and the commit folding (FLOW-01), flags
   stray untracked files, and re-reads the latest verdict and summary files before writing any close-out text; a
   check flags a count or verdict that differs from the current files, shown by a fixture with a stale count.
+  *(amended 2026-11-03, 29 spec: the generated playbook carries Phase 29's folding policy in full — logical-feature grouping, never
+  one squash per plan or phase, the tree check before the swap, a local backup tag deleted when the PR merges,
+  `--force-with-lease` only on unmerged branches, the primary remote only — so a project without ai-kit's folding
+  step still follows it; the owner wants these rules part of project-rules, not ai-kit-only)*
 - [ ] **RULE-18**: The delegation playbook splits work into pieces of about 20 to 30 minutes with one verifiable
   result each, forbids extra spawned reviewers unless the brief asks, and says how to tell the owner what each
   running agent and shell is. It ships a brief header with five rails (never kill a process the subagent did not
@@ -341,6 +350,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **RULE-26**: The generated top rules say that a choice question lists the option the rule or the verified
   evidence recommends first, labelled `(Recommended)`, and that a host capability limit (for example whether a
   subagent can spawn subagents or ask the user) is verified before it is stated.
+- [ ] **RULE-27**: The commit-fold engine moves from the temporary `ai-kit-commit-fold` skill (Phase 29) into
+  `ai-kit-project-rules`; the standalone skill is deleted, and its callers (the GSD wave-end extension and the
+  superpowers adapter) find the engine in its new home through the installed-skill lookup, with their tests
+  intact. *(added 2026-11-03, 29 D-01: owner decision)*
 
 ### Host hooks
 
@@ -582,12 +595,12 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | GATE-04 | Phase 28 | Pending |
 | GATE-05 | Phase 28 | Pending |
 | FLOW-01 | Phase 29 | Pending |
-| FLOW-02 | Phase 29 | Pending |
-| FLOW-03 | Phase 29 | Pending |
+| FLOW-02 | Phase 29.1 | Pending |
+| FLOW-03 | Phase 29.1 | Pending |
 | FLOW-04 | Phase 30 | Pending |
-| FLOW-05 | Phase 29 | Pending |
+| FLOW-05 | Phase 29.1 | Pending |
 | FLOW-06 | Phase 30 | Pending |
-| FLOW-07 | Phase 29 | Pending |
+| FLOW-07 | Phase 29.1 | Pending |
 | FLOW-08 | Phase 32.4 | Pending |
 | FLOW-09 | Phase 32.4 | Pending |
 | RMV-01 | Phase 31 | Pending |
@@ -621,6 +634,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | REV-05 | Phase 39 | Pending |
 | REV-06 | Phase 40 | Pending |
 | REV-07 | Phase 40 | Pending |
+| REV-08 | Phase 40 | Pending |
 | EXE-01 | Phase 41 | Pending |
 | EXE-02 | Phase 42 | Pending |
 | EXE-03 | Phase 42 | Pending |
@@ -665,6 +679,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RULE-23 | Phase 47.1 | Pending |
 | RULE-24 | Phase 45.1 | Pending |
 | RULE-26 | Phase 45.1 | Pending |
+| RULE-27 | Phase 45 | Pending |
 | RULE-25 | Phase 46 | Pending |
 | HOOK-01 | Phase 48 | Pending |
 | HOOK-02 | Phase 49 | Pending |
@@ -727,10 +742,11 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | DEF-07 | Phase 32.4 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 149 total
-- Mapped to phases: 149
+- v2.0 requirements: 151 total
+- Mapped to phases: 151
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-11-02*
 *Last updated: 2026-11-03 after the ideas and rules audit: 41 new requirements (GATE-05, FLOW-07..09, JDG-08, HUB-08, REV-07, EXE-07..08, RUN-07..11, RULE-10..25, JEV-07, CUR-08..10, DIST-06..07, ARCH-01..02, FEAT-04..06), 38 amended, decimal phases 38.1, 45.1 and 47.1 split out; JDG-04 to Phase 32, RUN-05 to 38.1, RULE-03 and DESIGN-02 to 45.1*
+*Amended 2026-11-03 by Phase 29's spec and discuss: FLOW-02, FLOW-03, FLOW-05 and FLOW-07 to the new Phase 29.1; FLOW-01 and RULE-17 amended; RULE-27 (Phase 45) and REV-08 (Phase 40) added.*

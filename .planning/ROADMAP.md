@@ -98,14 +98,17 @@ every phase ends with something the owner can see.
 Phases 28-32 are self-contained and meant to be specced and discussed before `/gsd-autonomous` runs the rest.
 Decimal phases 32.1-32.4 are the skill batches that follow the re-judge baseline. Phase 30.1 was inserted on
 2026-11-03 (Round 10) so the wizard's component cards exist before Phase 31 and later phases change the
-component list. Phases 38.1, 45.1 and 47.1 were split out on 2026-11-03, when the ideas and rules audit added requirements that overloaded 38, 45 and 47. Every phase that adds or changes a SKILL.md carries a judge-bar criterion citing JDG-04.
+component list. Phase 29.1 was split out of Phase 29 on 2026-11-03, during Phase 29's spec, when the owner
+added superpowers plans and both PR-chaining backends: Phase 29 keeps the local folding step and the jev ladder,
+29.1 the branches, pushes, PRs and merge chain. Phases 38.1, 45.1 and 47.1 were split out on 2026-11-03, when the ideas and rules audit added requirements that overloaded 38, 45 and 47. Every phase that adds or changes a SKILL.md carries a judge-bar criterion citing JDG-04.
 
 Each phase lists **Code anchors**: the existing files and symbols it changes or hooks into, the new files it
 creates (`new:`), and the docs it must update (`docs:`). They were found with `codegraph explore` on
 2026-11-03; "unknown until research" marks what the phase researcher must locate first.
 
 - [ ] **Phase 28: Fast, environment-proof gates** - Commit runs only the covering tests; push runs the full suites fast with fakes only
-- [ ] **Phase 29: Logical commits, chained PRs and the shared jev client** - Each finished plan becomes logical-feature commits pushed to a stacked phase branch
+- [ ] **Phase 29: Logical-commit folding and the shared jev ladder** - Each finished GSD or superpowers plan becomes logical-feature commits; every caller chains jev as a black box
+- [ ] **Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)** - Stacked branches, a push per plan, chained PRs and an owner-started merge chain
 - [ ] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph sync, graphify rebuild and a changed-symbols brief at every phase boundary
 - [ ] **Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)** - One card per component kind, host-styled status-line panes, config doctor reachable from the wizard
 - [ ] **Phase 31: Removals and small defects** - Three skills and rtk gone, nine small known defects fixed
@@ -156,24 +159,38 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 **Optional, not a requirement**: ai-kit is a desktop and CLI tool, so concurrency tests on its shared state (candidates: status-line caches and state files, the wake schedule, the jev answer log, two setup runs at once) are nice to have, never required (RULE-24's project-kind rule). The run lock (Phase 38) and the wake grid's no-double-arm check (Phase 50) keep their concurrency tests.
 **Plans**: TBD
 
-### Phase 29: Logical commits, chained PRs and the shared jev client
-**Goal**: Every finished plan lands as logical-feature commits on its own phase branch, each phase has one PR chained on the previous one, and every skill reaches jev through one shared client.
+### Phase 29: Logical-commit folding and the shared jev ladder
+**Goal**: Every finished GSD or superpowers plan is folded into logical-feature commits by one reusable step that follows one written folding policy, and every caller reaches jev by chaining the `jev-fast-decision` skill as a black box.
 **Depends on**: Phase 28
-**Requirements**: FLOW-01, FLOW-02, FLOW-03, FLOW-05, FLOW-07, JEV-06
-**Code anchors**: new: logical-commit grouping step and phase-branch push (home unknown until research); `.planning/config.json` `git.*` branching keys, written through `.claude/gsd-core/bin/gsd-tools.cjs config-set`; jev ladder client now in `skills/ai-kit-gsd-spec-discuss/scripts/decide.py` (`ladder`, `decide`) -> new: shared client home (unknown until research); `tests/test_ai_kit_gsd_spec_discuss.py`; AGENTS.md Workflow ship rule with a new doc-contract test; the folding subagent's tree-equality check and old-tip tag (new, with the grouping step); docs: `skills/ai-kit-gsd-spec-discuss/SKILL.md`, `references/decision-table.md`, AGENTS.md Workflow
+**Requirements**: FLOW-01, JEV-06
+**Scope**: general — the folding step, its policy and the jev ladder serve any GSD or superpowers project through ai-kit's skills; ai-kit is the first user; fixtures are one GSD and one superpowers fixture project.
+**Code anchors**: new: the folding step and its written folding policy (home unknown until research), its tree-equality check and old-tip backup tag; GSD plan end (`.claude/gsd-core/workflows/execute-plan.md`, executor task commits and the `docs({phase}-{plan})` commit) and superpowers plan end (`skills/ai-kit-spec-execute-superpowers/`, superpowers' finishing step); jev ladder caller now in `skills/ai-kit-gsd-spec-discuss/scripts/decide.py` (`ladder`, `detect`, `client_candidates`, `find_client`) -> owned by `skills/jev-fast-decision/` with one documented entry point; callers: `skills/ai-kit-spec-goal-prompt/scripts/gp_host.py` (`DECIDE_CLI`, `jev_status`), `gp_sections.py` (gray-area and report text), `tools/hooks/precompact_core.py` (`find_client`), `tools/hooks/claude_decision_probe.py`; tests `tests/test_ai_kit_gsd_spec_discuss.py`, `tests/test_jev_fast_decision.py`, goal-prompt tests; docs: `skills/jev-fast-decision/SKILL.md`, `reference.md`, `skills/ai-kit-gsd-spec-discuss/SKILL.md`, `references/decision-table.md`, `skills/ai-kit-spec-goal-prompt/SKILL.md`
 **Success Criteria** (what must be TRUE):
-  1. A finished plan with two features ends as two commits, grouped by jev's proposal or by the agent when jev is absent, and nothing already pushed is rewritten. The folding runs in a subagent that reports in five lines or fewer; before the swap the folded tip's tree equals the tested tree and the old tip is tagged, and no step uses `reset --hard` (fixture test).
-  2. A phase runs on its own branch stacked on the previous phase's branch; each finished plan is pushed to it, and the phase has one PR opened against the previous phase's branch (the owner consents once to pushes and PRs from this flow).
-  3. In MVP mode on a main-only fixture project, the same point merges into main without a review step.
-  4. ai-kit's `.planning/config.json` reads branch per phase, set through the project's `gsd-tools`, and the planning health check stays clean.
-  5. The jev ladder client runs from a shared home outside spec-discuss; spec-discuss and the commit grouping both call it and still finish when no decision backend is present; skill text treats jev as a black box (ask that skill and follow its SKILL.md; no backend, consent or probe detail; `needs_fallback` or no answer means the rule-based default decides).
-  6. AGENTS.md's Workflow section states how a finished phase ships: gates green on the phase branch, an installer dry run and the new hooks against a scratch HOME, then the install and a live re-check from the phase branch's tip; local main moves only when the stacked PRs merge; a doc-contract test pins it.
+  1. A finished GSD plan with two features, and a finished superpowers plan with two features, each end as two commits, grouped by jev's proposal or by the agent when jev is absent. Commits on main or on a branch whose PR has merged are never rewritten. The folding runs in a subagent that reports in five lines or fewer; before the swap the folded tip's tree equals the tested tree and the old tip carries a local backup tag, and no step uses `reset --hard` (fixture tests). *(amended 2026-11-03, 29 spec: commits already pushed to an unmerged phase or plan branch may be folded again; the push itself, with `--force-with-lease`, is Phase 29.1)*
+  2. The folding policy is written once (logical-feature grouping, never one squash per plan or phase, the tree check before the swap, a local backup tag deleted when the PR merges, `--force-with-lease` only on unmerged branches, the primary remote only), the folding step implements it, and a doc-contract test pins each rule.
+  3. The jev ladder is owned by `jev-fast-decision` and reached through one documented entry point; spec-discuss, the folding step, goal-prompt and the two hooks that use jev chain that skill and still finish when the skill or every decision backend is missing; no caller imports another skill's code or files; skill text treats jev as a black box (ask that skill and follow its SKILL.md; no backend, consent or probe detail; `needs_fallback` or no answer means the rule-based default decides).
+  4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+**Plans**: TBD
+
+### Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)
+**Goal**: Each GSD phase, and each superpowers plan, runs on its own branch stacked on the previous one, each finished plan is pushed, each unit has one PR chained on the previous one, and an owner-started merge chain moves main.
+**Depends on**: Phase 29 (the folding step). Inserted 2026-11-03 when Phase 29's spec split the remote half out of Phase 29.
+**Requirements**: FLOW-02, FLOW-03, FLOW-05, FLOW-07
+**Scope**: the branch, push, PR and merge-chain flow is general (any GSD or superpowers project, through ai-kit's skills), tested on one GSD fixture project and one superpowers fixture project; FLOW-05 and FLOW-07 are ai-kit dogfood, each with a general counterpart (CUR-04 in Phase 44; RULE-17 in Phase 47).
+**Code anchors**: new: phase-branch stacking and per-plan push (home unknown until research); GSD branch creation in `.claude/gsd-core/workflows/execute-phase.md` (`handle_branching`: a new phase branch forks off `origin/<git.base-branch>`, an existing one is reused) and PR creation in `workflows/ship.md` (`--base`); `.planning/config.json` `git.*` branching keys, written through `.claude/gsd-core/bin/gsd-tools.cjs config-set`; `gh stack` (github/gh-stack) when installed, plain `gh pr create/edit --base` otherwise; new: merge-chain command; one-time push and PR consent in the personal `.aikit/` settings; `.planning/INGEST-CONFLICTS.md` (archived so `validate health` is clean); AGENTS.md Workflow ship rule with a new doc-contract test; docs: AGENTS.md Workflow, README
+**Success Criteria** (what must be TRUE):
+  1. A GSD phase runs on its own branch stacked on the previous phase's branch, and a superpowers plan on its own branch stacked on the previous plan's branch; each finished plan is pushed to it, and each unit has one PR opened against the previous unit's branch, through `gh stack` when it is installed and plain `gh` otherwise (the owner consents once per project to pushes and PRs from this flow, recorded in the personal ai-kit settings until revoked).
+  2. Pushes go to the primary remote only and use `--force-with-lease`; main and any branch whose PR has merged are never force-pushed.
+  3. An owner-started merge chain merges the PRs bottom-up with merge commits (never squash), retargets the next PR, fast-forwards local main and deletes the merged unit's local backup tags.
+  4. In MVP mode on a main-only fixture project, the phase branch fast-forwards into main and main is pushed after each finished plan, with no PR and no review step.
+  5. (ai-kit dogfood of CUR-04) ai-kit's `.planning/config.json` reads branch per phase, set through the project's `gsd-tools`, and the planning health check is clean (the v1.2 `INGEST-CONFLICTS.md` archived into the milestones archive).
+  6. (ai-kit dogfood of RULE-17) AGENTS.md's Workflow section states how a finished phase ships: gates green on the phase branch, an installer dry run and the new hooks against a scratch HOME, then the install and a live re-check from the phase branch's tip; local main moves only when the stacked PRs merge; a doc-contract test pins it.
   7. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 **Plans**: TBD
 
 ### Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring
 **Goal**: At every phase boundary the next phase's researcher, planner and executor see the symbols that changed and the documents that mention them, on whatever branch the work is on.
-**Depends on**: Phase 29
+**Depends on**: Phase 29.1 *(amended 2026-11-03, 29 spec: the phase branches now arrive in 29.1)*
 **Requirements**: FLOW-04, FLOW-06, DESIGN-01, LENS-01
 **Code anchors**: new: phase-boundary step (`codegraph sync`, graphify rebuild, changed-symbols brief; hook point in GSD's phase transition unknown until research); `graphify-out/` and a graphify exclude for `.planning/milestones/` (mechanism unknown until research); house rules in `skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/rules.py`; tool-advisor advice in `tools/hooks/advisor_core.py`, `tools/hooks/claude_tool_advisor.py`; new: graphify runbook (`docs/run-book/graphify.md`); lens wiring in `.planning/config.json` `agent_skills` and `workflow.ui_review` (set through `gsd-tools config-set`); docs: AGENTS.md Code Exploration, `.claude/cli-environment.md`
 **Success Criteria** (what must be TRUE):
@@ -379,13 +396,14 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 ### Phase 40: Resilient review sized by jev
 **Goal**: A review survives a failing lane, and jev sizes the review and classifies disagreements before the owner is asked.
 **Depends on**: Phase 39
-**Requirements**: REV-01, REV-02, REV-06, REV-07
+**Requirements**: REV-01, REV-02, REV-06, REV-07, REV-08 *(REV-08 added 2026-11-03, 29 D-03)*
 **Code anchors**: `skills/ai-kit-spec-review/SKILL.md` loop, `ai_kit_spec/reviewer_dispatch.py`, `quota.py`, `routing.py` (`route_all`); `skills/ai-kit-spec-review-fixer/SKILL.md`; jev through the shared client; new: lane ping before a round, beside `route_all` in `routing.py` and `dispatch_reviewer`; docs: `references/apply-findings.md`, `references/loop-diagram.md`
 **Success Criteria** (what must be TRUE):
   1. When a lane fails mid-review, spec-review switches to the next lane in the user's preference order and the review finishes.
   2. jev classifies reviewer-fixer disagreements and gray areas before the owner is asked; without jev the owner is asked as before.
   3. jev picks the reviewer and one or two lanes for a plan from files touched, complexity, task count and category, on top of deterministic signals (security, data, irreversible operations), and the review log shows why.
   4. Before a review or judge round each chosen lane is pinged; a fake blocked lane is replaced from the owner's order, the round continues with at least one lane, and the log records which lanes judged.
+  6. A superpowers plan fixture without an explicit fold step at its end gets a spec-review finding, and the same plan with the step gets none. *(added 2026-11-03, 29 D-03)*
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 **Plans**: TBD
 
@@ -447,7 +465,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 ### Phase 45: Project rules, one skill and AGENTS.md only
 **Goal**: One `ai-kit-project-rules` skill replaces the seven rules skills, reproduces today's audit on ai-kit, adapts to the model it runs on, and turns a Claude-only project into an AGENTS.md project that every host loads.
 **Depends on**: Phase 39 (role-keyed skill table for the vertical-slices runbook)
-**Requirements**: RULE-01, RULE-02, RULE-04, RULE-10, RULE-11
+**Requirements**: RULE-01, RULE-02, RULE-04, RULE-10, RULE-11, RULE-27 *(RULE-27 added 2026-11-03, 29 D-01)*
 **Code anchors**: `skills/ai-kit-project-rules-{agents,makefile,precommit,arch,docker,cicd,all}/` and `skills/_shared/ai_kit_rules_common/` -> new: `skills/ai-kit-project-rules/` (library inside), `docs/run-book/<topic>.md` writer, model-strength modes (strong, delegated, weak) in its orchestrator; host instruction wiring through ai-kit's atomic writers (`tools/config_doctor_appliers.py` `set_jsonc_value`, `atomic_write_json`; `tools/setup.py` `_atomic_write_json`); their `tests/test_ai_kit_project_rules_*.py`, `tests/test_ai_kit_rules_common.py`, `pyproject.toml`, `tests/test_gate_scope.py` entries; `tools/setup.py` component list (wizard skills card); docs: README skills table, new SKILL.md
 **Success Criteria** (what must be TRUE):
   1. `ai-kit-project-rules` replaces the seven `ai-kit-project-rules-*` skills with the shared library inside it, and its audit on ai-kit reproduces today's findings.
@@ -456,6 +474,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   4. Bootstrap wires every detected host that does not load AGENTS.md and AGENTS.local.md natively (for example opencode's `instructions`) through the atomic writers, a fixture test per host shows both files loaded, and a recorded owner decision settles AGENTS.local.md precedence on Claude.
   5. On a strong model the skill applies its rules itself or delegates areas to subagents with only the orchestrator writing; without subagents it runs the areas in sequence; on a weak model it writes templates only with pending items labeled (a fixture test per mode).
   6. The new skill has evals, trigger queries and tests and passes the judge bar (JDG-04).
+  7. The commit-fold engine from Phase 29's temporary `ai-kit-commit-fold` skill lives inside `ai-kit-project-rules`; `skills/ai-kit-commit-fold/` is gone, and the GSD wave-end extension and the superpowers adapter reach the engine in its new home with their tests unchanged in what they assert. *(added 2026-11-03, 29 D-01)*
 **Plans**: TBD
 
 ### Phase 45.1: Project rules, generated top rules and never list (INSERTED)
@@ -530,6 +549,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 
 ### Phase 49: Host hooks, dispatcher and session hooks
 **Goal**: One dispatcher hook per host decides at fire time what to run, so switching a hook never rewrites a host config, and session hooks adapt to worktrees.
+**Coupling (2026-11-03, from Phase 29's spec)**: the owner wants the commit-folding policy (Phase 29, carried by the Phase 47 playbook) to reach any environment where ai-kit's advisory hook is installed; whether the dispatcher reminds of it at commit or push time is this phase's discuss to decide.
 **Depends on**: Phase 48
 **Requirements**: HOOK-02, HOOK-03
 **Code anchors**: new: one dispatcher per host in `tools/hooks/` and an event catalogue; `tools/setup.py` (`wire_claude_rows`, `wire_hook_cursor`, `apply_hook_selection`, `wire_hook_rows`); `tools/hooks/claude_session_start.py`, `cursor_session_start.py`, `precompact_core.py`, `claude_precompact.py`; the wizard hooks card from Phase 30.1; layered settings from the Phase 33 design; docs: `tools/hooks/README.md`
@@ -607,12 +627,13 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 
 ## Progress
 
-**Execution Order:** 28 → 29 → 30 → 30.1 → 31 → 32 → 32.1 → 32.2 → 32.3 → 32.4 → 33 → ... → 38 → 38.1 → 39 → ... → 45 → 45.1 → 46 → 47 → 47.1 → 48 → ... → 54
+**Execution Order:** 28 → 29 → 29.1 → 30 → 30.1 → 31 → 32 → 32.1 → 32.2 → 32.3 → 32.4 → 33 → ... → 38 → 38.1 → 39 → ... → 45 → 45.1 → 46 → 47 → 47.1 → 48 → ... → 54
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 28. Fast, environment-proof gates | 0/TBD | Not started | - |
-| 29. Logical commits, chained PRs and the shared jev client | 0/TBD | Not started | - |
+| 29. Logical-commit folding and the shared jev ladder | 0/TBD | Not started | - |
+| 29.1. Stacked phase branches, chained PRs and the merge chain | 0/TBD | Not started | - |
 | 30. Phase-boundary index refresh and code-exploration rules | 0/TBD | Not started | - |
 | 30.1. Setup wizard, component cards and host status-line panes | 0/TBD | Not started | - |
 | 31. Removals and small defects | 0/TBD | Not started | - |
