@@ -3,12 +3,16 @@ created: 2026-10-12T12:50:00.000Z
 title: Promote Cursor statusline POC spike into Phase 999.4 discuss/plan
 area: statusline
 severity: major
-resolves_phase: 54
+resolves_phase: 30.2
 files:
   - .planning/ROADMAP.md
   - .claude/worktrees/poc-cursor-statusline/
   - .claude/worktrees/host-split-statusline-spec/.planning/specs/
 ---
+
+> *Re-pointed 2026-11-03 (Phase 30.1 discuss): the `resolves_phase: 54` tag ("delivered by v1.3") was wrong — the owner
+> saw the proof of concept in Cursor and the shipped host split diverged from it. Phase 30.2 starts from this
+> proof of concept (branch `archive/poc/cursor-statusline`) and closes the gap.*
 
 ## Problem
 

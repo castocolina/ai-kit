@@ -98,7 +98,7 @@ every phase ends with something the owner can see.
 Phases 28-32 are self-contained and meant to be specced and discussed before `/gsd-autonomous` runs the rest.
 Decimal phases 32.1-32.4 are the skill batches that follow the re-judge baseline. Phase 30.1 was inserted on
 2026-11-03 (Round 10) so the wizard's component cards exist before Phase 31 and later phases change the
-component list. Phase 29.1 was split out of Phase 29 on 2026-11-03, during Phase 29's spec, when the owner
+component list. Phase 30.2 was split out of 30.1 on 2026-11-03, during 30.1's spec, for Cursor status-line parity. Phase 29.1 was split out of Phase 29 on 2026-11-03, during Phase 29's spec, when the owner
 added superpowers plans and both PR-chaining backends: Phase 29 keeps the local folding step and the jev ladder,
 29.1 the branches, pushes, PRs and merge chain. Phases 38.1, 45.1 and 47.1 were split out on 2026-11-03, when the ideas and rules audit added requirements that overloaded 38, 45 and 47. Every phase that adds or changes a SKILL.md carries a judge-bar criterion citing JDG-04.
 
@@ -111,6 +111,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [ ] **Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)** - Stacked branches, a push per plan, chained PRs and an owner-started merge chain
 - [ ] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph sync, graphify rebuild and a changed-symbols brief at every phase boundary
 - [ ] **Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)** - One card per component kind, host-styled status-line panes, config doctor reachable from the wizard
+- [ ] **Phase 30.2: Cursor status-line parity (INSERTED)** - Cursor status line brought back to the approved proof of concept and to Claude's look where the data allows
 - [ ] **Phase 31: Removals and small defects** - Three skills and rtk gone, nine small known defects fixed
 - [ ] **Phase 32: Re-judge baseline** - One current-judge report for every kept skill, plus strict frontmatter and text checks
 - [ ] **Phase 32.1: Batch 1, general small skills** - cst-refactor, markdown-to-pdf, jev-fast-decision, spec-review-fixer and usage-metrics reach the bar
@@ -210,21 +211,35 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 ### Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)
 **Goal**: The owner opens the setup wizard and sees one card per component kind and a styled pane per status-line host, before later phases add or remove skills, agents, commands and hooks.
 **Depends on**: Phase 28 (fast wizard suite). Inserted before Phase 31 because the removals, the project-rules merge (45), the host hooks (48-49) and dist (52-53) all change the component list.
-**Requirements**: FEAT-01, FEAT-06, WIZ-01, WIZ-02, WIZ-03, WIZ-04
+**Requirements**: FEAT-01, FEAT-06, WIZ-01, WIZ-02, WIZ-03, WIZ-05 *(amended 2026-11-03, 30.1 spec: WIZ-04 moved to Phase 30.2; WIZ-05 added)*
 **Code anchors**: `tools/wizard_app.py` (`WizardApp._compose_choose`, `_render_choose`, `_choose_category_groups`, `_choose_component_row`, `_key_choose`, `_review_component_rows`, `WizardApp.CSS`, `_host_pane`, `_render_arrange_board`, `_chip`, `_adoption_gate_markup`, `_render_done`, `HostView`); `tools/setup.py` (`CATEGORIES`, `Selection`, `_build_wizard_context`, `_hook_selection_items`, `_host_view`, `_HOST_LABELS`, `current_segments`, `load_segment_inventory`, `cmd_config_doctor`, `launch_wizard`); `tools/segments_inventory.toml` (`hosts`); Cursor defaults `SPEC` in `tools/cursor_host.py` (source of the disabled chips unknown until research); `tools/config_doctor_app.py` (`ConfigDoctorApp`, `run_config_doctor`); tests `tests/test_wizard_app.py`, `tests/test_wizard_pty.py`, `tests/wizard_fixtures.py`, `tests/test_setup.py`; config doctor rows in `tools/config_doctor_checks.py` (Playwright MCP Chrome path decision); docs: README "The install wizard", `docs/wizard-redesign/mockup-textual.html`
 **Success Criteria** (what must be TRUE):
   1. Run under `uv run` with a scratch HOME, the first screen shows one card per component kind (skills, agents, commands, hooks); a kind with nothing to install shows no card, and toggling and the Review counts work per card.
   2. The Claude status-line pane keeps today's layout with an orange accent background and "Claude Code" in bold; the Cursor pane uses a gray accent.
-  3. The Cursor pane has a toggle that keeps Cursor's own default status line; confirming with it on leaves the scratch `cli-config.json` without ai-kit's status line.
-  4. Cursor's board shows no chip for a segment the Cursor status line cannot show, while a segment that is only switched off stays in the tray.
-  5. The config doctor opens from the wizard, reusing `ConfigDoctorApp` and the existing engine with no second implementation.
-  6. A recorded owner decision says whether the config doctor gets a Playwright MCP Chrome path row; an added row uses the existing engine and its confidence labels.
+  3. ~~The Cursor pane has a toggle that keeps Cursor's own default status line; confirming with it on leaves the scratch `cli-config.json` without ai-kit's status line.~~ *(amended 2026-11-03, 30.1 spec: the state was backwards and the toggle is on both hosts)* Both host panes have an on/off toggle that starts at what is wired now; confirming with it off leaves the scratch host config without any `statusLine` (a foreign one removed only after it is shown, backed up and confirmed), and with it on wires ai-kit's.
+  4. ~~Cursor's board shows no chip for a segment the Cursor status line cannot show, while a segment that is only switched off stays in the tray.~~ *(amended 2026-11-03, 30.1 spec: parity moved to Phase 30.2 as WIZ-04)* Each host's board preview is a real render through that host's renderer, titled with the host on screen, and the tray title does not say "disabled" (WIZ-05).
+  5. The config doctor opens from the wizard, reusing `ConfigDoctorApp` and the existing engine with no second implementation. *(amended 2026-11-03, 30.1 spec: `d` on Done, Esc back to Done, one screen class; every apply refuses an unparseable file and backs up first)*
+  6. A recorded owner decision says whether the config doctor gets a Playwright MCP Chrome path row; an added row uses the existing engine and its confidence labels. *(amended 2026-11-03, 30.1 spec: decided — the row and its apply write `env.PLAYWRIGHT_MCP_EXECUTABLE_PATH` to the flatpak Chrome wrapper in a scratch `settings.json` with a backup)*
 **Plans**: TBD
 **UI hint**: yes
 
+### Phase 30.2: Cursor status-line parity (INSERTED)
+**Goal**: The Cursor status line looks like the proof of concept the owner approved and like Claude's on every aspect the hosts share. The phase starts from the proof of concept as the visual reference, traces why Phase 23's host-split implementation diverged from it (each difference lost, decided otherwise or never ported), and closes the gap; real data differences are flagged, never faked.
+**Depends on**: Phase 30.1 (its real-render board preview shows this phase's icons and samples in the wizard). Inserted 2026-11-03 by Phase 30.1's spec, when the owner's "disabled chips" complaint turned out to be the Cursor preview not matching Claude's.
+**Requirements**: WIZ-04
+**Code anchors**: `tools/cursor_host.py` (`SEGMENTS`, `LAYOUT`, `SPEC`), `tools/cursor_segments.py` (`seg_cursor_included`, `seg_cursor_api`, `seg_cursor_extra`, `seg_cursor_reset`, `_colored`), `tools/cursor_payload.py` (`core_cursor_context`), `tools/cursor_quota.py`; `tools/common_segments.py` (`seg_path`, `seg_git_dirty`, `seg_model`, `seg_alt_term_dimensions`), `tools/common_probe.py` (RSS helpers), `tools/common_types.py` (`util_icon`, `util_gap_color`); Claude's reference `tools/claude_segments.py` (`util_rate_group_str`, `seg_alt_process_memory`, `seg_alt_time_ago`) and `tools/claude_probes.py` (`probe_rss_bytes`); `tools/segments_inventory.toml` (icons, Cursor samples); `tools/statusline-doctor.py`; the proof of concept on branch `archive/poc/cursor-statusline`: `tools/cursor-status-line-poc.py`, `tools/cursor-statusline-poc.toml.sample`, `tests/test_cursor_status_line_poc.py`, `docs/superpowers/plans/2026-10-11-cursor-statusline-poc.md`; the design `.planning/specs/2026-10-10-host-split-statusline-design.md` and its `-REVIEW.md`; Phase 23 archive `.planning/milestones/v1.3-phases/23-host-split-status-line-for-claude-code-and-cursor-cli/` (`23-CONTEXT.md` D-12 "the POC is reference only", `23-SPIKE.md`, `live/`); `tests/fixtures/cursor/payload_poc_redacted.json`, `tests/fixtures/sample-input-cursor.json`; todo `.planning/todos/pending/2026-10-12-promote-cursor-statusline-poc-into-999-4.md`; tests `tests/test_cursor_*.py`, `tests/test_arch.py` (host-family rules); no screenshots of the proof of concept were found in the branch or the archive (unknown until research); docs: README status-line section
+**Success Criteria** (what must be TRUE):
+  1. A recorded trace lists each visual difference between the proof of concept and the shipped Cursor status line, classes it as lost, decided otherwise (naming the Phase 23 decision) or never ported, and records whether it is closed or kept.
+  2. Every Cursor segment shows an icon in the real render and in the wizard preview; the five shared segments carry the same icon on both hosts.
+  3. A Cursor process-memory segment uses Claude's calculation and finds the Cursor CLI process by its program path; its label says unverified until a live Cursor session confirms it.
+  4. Cursor's quota segments use Claude's ramp and window format where Cursor's data allows; each real data difference (one monthly billing cycle, no hourly window) is flagged visibly on the line or in the doctor, never filled with invented values.
+  5. `alt_term_dimensions` never shows a 0 row count on Cursor.
+  6. Cursor's inventory samples match its renderer (no borrowed Claude samples), so the wizard's fallback preview agrees with the real render.
+**Plans**: TBD
+
 ### Phase 31: Removals and small defects
 **Goal**: `ai-kit-spec-execute-gsd`, `ai-kit-opencode-providers`, `mermaid-audit` and rtk are gone and the known small defects are fixed, so the baseline judges and later vendors only kept skills.
-**Depends on**: Phase 28, Phase 30.1 (the component cards are in place before the component list changes)
+**Depends on**: Phase 28, Phase 30.1 (the component cards are in place before the component list changes), Phase 30.2 *(amended 2026-11-03, 30.1 spec: 30.2 inserted before 31)*
 **Requirements**: RMV-01, RMV-02, RMV-03, RMV-04, DEF-01
 **Code anchors**: remove `skills/ai-kit-spec-execute-gsd/`, `skills/ai-kit-opencode-providers/`, `skills/mermaid-audit/` with `tests/test_ai_kit_spec_gsd*.py`, `tests/test_ai_kit_opencode_providers.py`, `tests/test_mermaid_style.py`, `pyproject.toml` and `tests/test_gate_scope.py` entries; execute router `skills/ai-kit-spec-execute/` (`SKILL.md`, `detect_framework.py`); stale links via `tools/setup.py` (`stale_link_candidates`, `prune_stale`); providers references in `tools/setup.py`, `tools/config_doctor_readers.py`, `tools/config_doctor_appliers.py`, `skills/ai-kit-usage-metrics/ai_kit_usage_metrics/{paths,raw_store}.py`; `skills/markdown-to-pdf/scripts/render_mermaid.py`; rtk in `ai_kit_usage_metrics/{capture_rtk,cli,dashboard,refiner,refined_store,paths}.py`, `tools/config_doctor_{checks,readers}.py`, `skills/_shared/ai_kit_rules_common/tool_presence.py`, `ai_kit_project_rules_agents/rules.py`; DEF-01 targets `tools/setup.py` `PI_SKILLS`/`_pi_entries`, `skills/ai-kit-gsd-spec-discuss/scripts/edge_floor.py`, `skills/ai-kit-spec-goal-prompt/scripts/goal_prompt.py` (detect), `ai_kit_spec/routing.py` docstring, `ai_kit_spec/detection.py` `RUNTIMES` drift; new: rtk-mention test, runtime-list drift test; code only the removed adapter used: `ai_kit_spec/runner_dispatch.py` (`project_runner_command` guidance prepend, `PROJECT_GUIDANCE_PATH`), curated-config `cross_ai_build.py` (the `cross-ai-guidance.md` it writes), `ai_kit_spec/gsd_tools.py` (`prior_value`); the rtk mention in AGENTS.md Tools and Stack; docs: README skills table, AGENTS.md (`.claude/cli-environment.md` link), `skills/ai-kit-spec-execute/SKILL.md`, `skills/ai-kit-spec-config/SKILL.md`, `skills/ai-kit-usage-metrics/SKILL.md`
 **Success Criteria** (what must be TRUE):
@@ -625,14 +640,14 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   3. With the owner's consent, a short jev marker block reaches the four global instruction files through ai-kit's atomic writers. *(amended 2026-11-03, 30 spec: through the marked-block editor Phase 30 builds for FLOW-12)*
   4. After a TypeSafe spike with a key and consent, jev answers image and bounding-box questions; a named caller judges a delivered screen against a mockup, the request limits are recorded as live facts, and the Laya cell is re-checked.
   5. Housekeeping is done: the six delivered v1.3 todos are closed, the two unneeded tags dropped, the stale archived wording decided, Windows ledger entry 7 waived, and the v1.3 tag pushed with the owner's consent; the remaining archive tags are kept or dropped by recorded decision.
-  6. The owner-attended live checks are recorded (the next real Claude limit's payload, output channel and resume behaviour; reboot survival of the wake and notices; the Cursor status line after login; the Phase 21.2 PreCompact delivery; the Phase 21.3 hook matrix on opencode; optionally pi steering), each flipping or keeping its unverified label.
+  6. The owner-attended live checks are recorded (the next real Claude limit's payload, output channel and resume behaviour; reboot survival of the wake and notices; the Cursor status line after login; the Phase 21.2 PreCompact delivery; the Phase 21.3 hook matrix on opencode; optionally pi steering), each flipping or keeping its unverified label. *(amended 2026-11-03, 30.1 D-20: plus whether `env.PLAYWRIGHT_MCP_EXECUTABLE_PATH` reaches the Playwright plugin's MCP process and whether a headed launch through the flatpak Chrome wrapper works)*
   7. A recorded owner decision ports or drops each of the two June ideas; a port lands on the split status line with tests.
   8. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 **Plans**: TBD
 
 ## Progress
 
-**Execution Order:** 28 → 29 → 29.1 → 30 → 30.1 → 31 → 32 → 32.1 → 32.2 → 32.3 → 32.4 → 33 → ... → 38 → 38.1 → 39 → ... → 45 → 45.1 → 46 → 47 → 47.1 → 48 → ... → 54
+**Execution Order:** 28 → 29 → 29.1 → 30 → 30.1 → 30.2 → 31 → 32 → 32.1 → 32.2 → 32.3 → 32.4 → 33 → ... → 38 → 38.1 → 39 → ... → 45 → 45.1 → 46 → 47 → 47.1 → 48 → ... → 54
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -641,6 +656,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 | 29.1. Stacked phase branches, chained PRs and the merge chain | 0/TBD | Not started | - |
 | 30. Phase-boundary index refresh and code-exploration rules | 0/TBD | Not started | - |
 | 30.1. Setup wizard, component cards and host status-line panes | 0/TBD | Not started | - |
+| 30.2. Cursor status-line parity | 0/TBD | Not started | - |
 | 31. Removals and small defects | 0/TBD | Not started | - |
 | 32. Re-judge baseline | 0/TBD | Not started | - |
 | 32.1. Batch 1, general small skills | 0/TBD | Not started | - |
