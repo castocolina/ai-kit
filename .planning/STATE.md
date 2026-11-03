@@ -2,11 +2,16 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
+current_phase: 28
+current_phase_name: Fast, environment-proof gates
 status: planning
-last_updated: "2026-11-02T23:45:33.214Z"
+stopped_at: "Spec and discuss done for phases 28, 29, 29.1, 30, 30.1, 30.2 and 31 (interactive); next: gsd-autonomous over that range"
+last_updated: "2026-11-03T19:08:45.147Z"
 last_activity: 2026-11-03
+last_activity_desc: v2.0 roadmap remapped (Phase 30.1 inserted, 100/100 requirements mapped, code anchors per phase)
+state_head: 3e881ac58f6196af62cdedcf6c52ce716008232f
 progress:
-  total_phases: 35
+  total_phases: 37
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -663,9 +668,9 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 
 ## Session Continuity
 
-Last session: 2026-11-02
-Stopped at: v2.0 roadmap created; awaiting owner approval
-Resume file: None
+Last session: 2026-11-03T19:08:45.122Z
+Stopped at: Spec and discuss done for phases 28, 29, 29.1, 30, 30.1, 30.2 and 31 (interactive); next: gsd-autonomous over that range
+Resume file: .planning/phases/31-removals-and-small-defects/31-CONTEXT.md
 
 ## Operator Next Steps
 
