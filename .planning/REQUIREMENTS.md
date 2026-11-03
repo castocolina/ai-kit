@@ -397,7 +397,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **HOOK-01**: `setup.py hooks status` shows which ai-kit hooks are on for each host.
 - [ ] **HOOK-02**: One dispatcher hook per host reads layered settings when it fires, so switching a hook on or off
   never rewrites a host config, and it knows the launch mode (direct, herdr, subagent, subprocess). A hook advises
-  and never blocks: it prints one line naming the playbook to load, and agentless events such as the git hook run
+  and never blocks, except the opt-in guard rules of HOOK-07 (amended 2026-11-03): it prints one line naming
+  the playbook to load, and agentless events such as the git hook run
   only commands from an opt-in list.
 - [ ] **HOOK-03**: Session hooks give indexing advice for new worktrees and checkouts naming only installed tools;
   doc paths are install-relative and reach the model context as well as the user line (where a long path is cut),
@@ -408,6 +409,19 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **HOOK-05**: The host-hook spikes (reset time in Claude's stop-failure event, pi's briefing, opencode child
   sessions, codex trust under `codex exec`, copilot running `.claude` hooks, background rewake) are recorded before
   the event catalogue is built.
+- [ ] **HOOK-06**: A spike records, per host, whether a guard can force the user's confirmation even when
+  the session bypasses permissions: on Claude, whether a PreToolUse hook answering `permissionDecision: "ask"`
+  still prompts under `bypassPermissions` (the docs confirm it for explicit ask rules and for auto mode, not for
+  hooks under bypass) and whether a `permissions.ask` rule can match a heredoc command; and the equivalent
+  mechanism, or its absence, on opencode, pi and Cursor. Each answer is marked verified or documented-only.
+- [ ] **HOOK-07**: Opt-in guard rules run through the dispatcher: each rule matches a tool call, carries an
+  action (`ask` the user, `deny` with the reason shown to the agent, or `advise`) and a message, and is switched
+  on through layered ai-kit settings, never by rewriting a host config. The first rule is the heredoc guard:
+  a shell command with an unquoted heredoc (reusing `has_heredoc` from the shared command-text module) gets
+  `CRITICAL: avoid heredocs; write the script to a file under tmp/ and run it`, with `ask` as its action on
+  ai-kit's own checkout. Where a host has no mechanism that survives bypass (HOOK-06), the rule falls back to
+  the strongest one it has and says so in `setup.py hooks status`. Tests cover a heredoc, a quoted `<<` that is
+  not a heredoc, a here-string, and each action.
 
 ### Quota and wake
 
@@ -740,6 +754,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | HOOK-03 | Phase 49 | Pending |
 | HOOK-04 | Phase 48 | Pending |
 | HOOK-05 | Phase 48 | Pending |
+| HOOK-06 | Phase 48 | Pending |
+| HOOK-07 | Phase 49 | Pending |
 | WAKE-01 | Phase 50 | Pending |
 | WAKE-02 | Phase 50 | Pending |
 | WAKE-03 | Phase 47 | Pending |
@@ -797,8 +813,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | DEF-07 | Phase 32.4 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 156 total
-- Mapped to phases: 156
+- v2.0 requirements: 158 total
+- Mapped to phases: 158
 - Unmapped: 0
 
 ---

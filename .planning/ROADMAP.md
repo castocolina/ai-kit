@@ -562,24 +562,26 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 ### Phase 48: Host hooks, spikes and status
 **Goal**: The owner can see which ai-kit hooks are on for each host, and the host-hook facts the event catalogue needs are recorded.
 **Depends on**: Phase 47.1
-**Requirements**: HOOK-01, HOOK-04, HOOK-05
+**Requirements**: HOOK-01, HOOK-04, HOOK-05, HOOK-06
 **Code anchors**: `tools/setup.py` (`HOOK_REGISTRY`, `HOOK_IDS`, `hook_rows`, CLI parser in `main` for new `hooks status`, `Paths` `cursor_hooks`, `wire_hook_cursor`); `tools/hooks/` (`README.md`, `pi/`, `opencode/`); new: spike records; docs: `tools/hooks/README.md`, README hooks section
 **Success Criteria** (what must be TRUE):
   1. The spike results are recorded: reset time in Claude's stop-failure event, pi's briefing, opencode child sessions, codex trust under `codex exec`, copilot running `.claude` hooks, background rewake (the owner runs any spike that needs an interactive login).
   2. `setup.py hooks status` on this machine shows which ai-kit hooks are on for each host.
   3. Cursor hooks respect `CURSOR_CONFIG_DIR` as re-verified against current Cursor docs, shown in a scratch-home test; the `cursor-agents` destination is checked against the same split.
+  4. The guard spike is recorded per host: whether a hook's `ask` prompts under `bypassPermissions` on Claude, whether a `permissions.ask` rule can match a heredoc, and the equivalent (or its absence) on opencode, pi and Cursor.
 **Plans**: TBD
 
 ### Phase 49: Host hooks, dispatcher and session hooks
 **Goal**: One dispatcher hook per host decides at fire time what to run, so switching a hook never rewrites a host config, and session hooks adapt to worktrees.
 **Coupling (2026-11-03, from Phase 29's spec)**: the owner wants the commit-folding policy (Phase 29, carried by the Phase 47 playbook) to reach any environment where ai-kit's advisory hook is installed; whether the dispatcher reminds of it at commit or push time is this phase's discuss to decide.
 **Depends on**: Phase 48
-**Requirements**: HOOK-02, HOOK-03
+**Requirements**: HOOK-02, HOOK-03, HOOK-07
 **Code anchors**: new: one dispatcher per host in `tools/hooks/` and an event catalogue; `tools/setup.py` (`wire_claude_rows`, `wire_hook_cursor`, `apply_hook_selection`, `wire_hook_rows`); `tools/hooks/claude_session_start.py`, `cursor_session_start.py`, `precompact_core.py`, `claude_precompact.py`; the wizard hooks card from Phase 30.1; layered settings from the Phase 33 design; docs: `tools/hooks/README.md`
 **Success Criteria** (what must be TRUE):
   1. Switching a hook on or off changes layered ai-kit settings only; a test shows the host config bytes unchanged, and the dispatcher reads the new state the next time it fires.
   2. The dispatcher reports its launch mode (direct, herdr, subagent, subprocess); a hook advises and never blocks, printing one line naming the playbook to load, and agentless events such as the git hook run only commands from an opt-in list.
   3. Session hooks give indexing advice in a new worktree or checkout naming only installed tools; doc paths are install-relative and reach the model context as well as the user line, tested from a scratch `XDG_DATA_HOME/ai-kit` install; compaction metrics record window size and compaction duration, with inferred numbers flagged.
+  4. With the heredoc guard on, a shell command containing an unquoted heredoc stops for the owner's confirmation with `CRITICAL: avoid heredocs; write the script to a file under tmp/ and run it` (or the strongest fallback the host offers, reported by `hooks status`); a quoted `<<` passes; switching the guard off changes ai-kit settings only.
 **Plans**: TBD
 
 ### Phase 50: The 5-hour wake grid and limit capture
