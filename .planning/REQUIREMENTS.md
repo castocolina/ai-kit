@@ -50,6 +50,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   graph is rebuilt, and the next phase's brief lists the new or changed symbols to hook into and the documents
   that mention them, so its researcher, planner and executor know what to attach to and which docs to update;
   none of this depends on commits to main.
+  *(amended 2026-11-03, 30 spec: the step runs for every unit inside the unit-flow engine, at the unit's start, before its planning and before its first execution wave, on the unit's own branch; codegraph and graphify are created or refreshed automatically whenever their CLI is installed; the brief also lists removed symbols and searches tracked documents outside `.planning/`)*
 - [ ] **FLOW-05**: ai-kit's own GSD config is set for this flow (branch per phase, the boundary step above) through
   the project's `gsd-tools`.
 - [ ] **FLOW-06**: ai-kit's own AGENTS.md, the current house rules and the tool-advisor hook's advice (the generated
@@ -59,6 +60,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   with no document-to-code links and keyword-noisy hits). A runbook says how to build the graphify index
   (archived milestones excluded), when to refresh it (every phase boundary, plus GSD's auto-update after commits)
   and how.
+  *(amended 2026-11-03, 30 spec: the rule also says to index and sync automatically whenever the CLI is present, to search Markdown with rg, that on stacked branches GSD's auto-update never fires so the indexes go stale unless refreshed, and to refresh before GSD research; ai-kit also indexes every new worktree)*
 - [ ] **FLOW-07**: Shipping a finished phase: its gates pass on the phase branch, an installer dry run and the new
   hooks run against a scratch HOME, then the work is installed on this machine and re-checked live from the tip of
   the phase branch; local main moves only when the stacked PRs merge. AGENTS.md's Workflow section states this rule
@@ -81,6 +83,20 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   it merges into the trunk of an open stack, the unmerged stack is rebased onto the updated trunk and pushed with
   `--force-with-lease`, and a conflict restores every branch and stops. *(added 2026-11-03, 29.1 spec)*
   *(amended 2026-11-03, 29.1 D-07: a conflict is first resolved by an agent keeping both sides' intent, GSD's planning files merged by content, and the gates run on the result; every branch is restored and the flow stops only when the resolution or the gates fail; the report names every resolved file and how)*
+- [ ] **FLOW-12**: ai-kit's setup (`tools/setup.py`, headless and in the wizard) finds codegraph's installer block
+  (`<!-- CODEGRAPH_START -->` … `<!-- CODEGRAPH_END -->`) in every global instruction file codegraph's installer
+  writes (Claude, Codex, Gemini, opencode) and replaces only its "skip CodeGraph entirely — indexing is the user's
+  decision" sentence with ai-kit's rule (create the index with `codegraph init -y` when the CLI is installed and
+  there is none; `codegraph sync` first when `codegraph status --json` shows pending changes): a backup first, an
+  atomic write, every other byte untouched, no diff on a second run, a dry run that shows the change, a one-line
+  note when the file, block or sentence is missing; the config doctor reports the installer's wording when it is
+  back and install re-applies ai-kit's; tests use synthetic files in a scratch HOME only. The marked-block editor is
+  shared with JEV-04. *(added 2026-11-03, 30 spec)*
+- [ ] **FLOW-13**: ai-kit's `make setup-dev` runs `setup-env`, installs the pre-commit hooks including the
+  `post-checkout` stage, and installs each missing flow tool (the codegraph and graphify CLIs, pre-commit, gh, the
+  gh-stack extension) through a guarded step: an installed tool is left alone, a tool that cannot install is
+  reported by name with its manual command, the target still succeeds and the flow degrades without that tool;
+  `dev` and `setup-env` keep working until RULE-05 settles the aliases. *(added 2026-11-03, 30 D-04)*
 
 ### Removals
 
@@ -255,7 +271,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **RULE-03**: The generated AGENTS.md block carries the top rules (AGENTS.md is the only instructions file;
   vertical slices with something visible at the end of phase 1; bypass mode means scripts in files; done means the
   gates pass; talk in the user's language and write in English; simplicity over complexity but the best
-  implementation over the easy one, deciding with jev on certainty and criteria; codegraph for code exploration) and
+  implementation over the easy one, deciding with jev on certainty and criteria; codegraph for code exploration *(amended 2026-11-03, 30 spec: the general form of Phase 30's tool-use rule: codegraph first for code, rg for Markdown, graphify for documents and planning, index and sync automatically whenever the CLI is present, refresh before research on stacked branches; and `.codegraph/`, `graphify-out/` and `.planning/graphs/` gitignored when those tools are present)* *(amended 2026-11-03, 30 D-16: `graphify-out/` is always ignored and is the graph agents query in a non-GSD project, which never gets a `.planning/` folder; `.planning/graphs/` is ignored and fed by a copy of the same build only in a GSD project)*) and
   the general never list, placed below the owner's hand-written sections without collision, repetition or
   contradiction. The vertical-slices rule points to a runbook that names, per stage (mocks, front, backend,
   database, real data, security, infra, observability, accessibility), the lens skills from the role-keyed table,
@@ -265,7 +281,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   overwritten.
 - [ ] **RULE-05**: Makefile rules: `setup-dev` and `setup-docker` (with `setup-env` as an alias for one milestone),
   `validate-<category>` aliases only for a category with more than one tool and a cap on categories, and recipes of
-  three lines or fewer.
+  three lines or fewer. *(amended 2026-11-03, 30 D-04: `setup-dev` also installs the tools the project's flow needs when they are missing (codegraph and graphify when the project uses them, pre-commit, gh and gh-stack for the unit flow), each through a guarded step that reports a failed install and degrades instead of failing; ai-kit's own target ships in Phase 30, FLOW-13)*
 - [ ] **RULE-06**: Event playbooks cover session start, worktree created, end of task, plan or phase, CI wait, the
   PR review loop (reusing an existing feedback skill first), delegation and quota, each reachable from one pointer
   line in the generated AGENTS.md block. The worktree-created playbook runs `setup-dev` through a git
@@ -273,6 +289,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   when it cannot (ai-kit never installs GSD itself). RULE-17 to RULE-19 set what the end-of-unit, delegation and
   quota playbooks contain; RULE-20 to RULE-23 add the requirement-intake, audit, milestone-close and worktree-closed
   playbooks.
+  *(amended 2026-11-03, 30 spec: the worktree-created playbook also runs `codegraph init` (or `sync` when the worktree has its own index) and `graphify update .` in the new worktree whenever the CLI is installed, without blocking git; a missing CLI prints one line; ai-kit's own hook ships in Phase 30)* *(amended 2026-11-03, 30 D-16: the copy into `.planning/graphs/` happens only in a GSD project; a non-GSD project keeps `graphify-out/` only)*
 - [ ] **RULE-07**: The skill chains `crafting-effective-readmes` for the README, a diagram skill for README diagrams,
   and `agent-md-refactor` through a wrapper.
 - [ ] **RULE-08**: Per-stack research at invocation is time-boxed and cached per category for the five known stacks;
@@ -475,7 +492,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **JEV-03**: Laya is calibrated against its accuracy floor, the opencode judge lane is re-judged, and the
   calibration script is documented.
 - [ ] **JEV-04**: A short jev marker block reaches the four global instruction files through ai-kit's atomic writers,
-  with the owner's consent.
+  with the owner's consent. *(amended 2026-11-03, 30 spec: it reuses the marked-block editor FLOW-12 builds in Phase 30; the four files are the global ones codegraph's installer also writes: `~/.claude/CLAUDE.md`, `$CODEX_HOME/AGENTS.md`, `~/.gemini/GEMINI.md`, `${XDG_CONFIG_HOME:-~/.config}/opencode/AGENTS.md`)*
 - [ ] **JEV-05**: jev answers image and bounding-box questions after a TypeSafe spike, with a key and consent; a
   named caller uses it to judge a delivered screen against a supplied mockup, the request limits are recorded as
   live facts, and the Laya capability cell is re-checked.
@@ -533,6 +550,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   to the code reviewer. Skills are named as `global:` entries (plugin skills as `global:<plugin>:<skill>`), never
   an absolute path, and UI review is on because ai-kit ships a TUI. An agent whose lens is missing runs without it
   and says so, and ponytail's smallest-change bias yields to the design rule (DESIGN-01).
+  *(amended 2026-11-03, 30 spec: `global:impeccable` resolves on this machine only with `agent_skills_security.trusted_global_roots` holding `~/.agents/skills`, set through gsd-tools; GSD emits plugin lenses without an existence check, so the agent itself names a lens it could not load)*
 - [ ] **LENS-02**: In the superpowers flow, the code review after execution loads `ponytail-review`, and
   `impeccable` when the diff touches UI, from the shared role-keyed table, on the same lanes as spec review; a
   missing lens is skipped with a note.
@@ -622,6 +640,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | FLOW-09 | Phase 32.4 | Pending |
 | FLOW-10 | Phase 29.1 | Pending |
 | FLOW-11 | Phase 29.1 | Pending |
+| FLOW-12 | Phase 30 | Pending |
+| FLOW-13 | Phase 30 | Pending |
 | RMV-01 | Phase 31 | Pending |
 | RMV-02 | Phase 31 | Pending |
 | RMV-03 | Phase 31 | Pending |
@@ -761,8 +781,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | DEF-07 | Phase 32.4 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 153 total
-- Mapped to phases: 153
+- v2.0 requirements: 155 total
+- Mapped to phases: 155
 - Unmapped: 0
 
 ---
@@ -770,3 +790,5 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *Last updated: 2026-11-03 after the ideas and rules audit: 41 new requirements (GATE-05, FLOW-07..09, JDG-08, HUB-08, REV-07, EXE-07..08, RUN-07..11, RULE-10..25, JEV-07, CUR-08..10, DIST-06..07, ARCH-01..02, FEAT-04..06), 38 amended, decimal phases 38.1, 45.1 and 47.1 split out; JDG-04 to Phase 32, RUN-05 to 38.1, RULE-03 and DESIGN-02 to 45.1*
 *Amended 2026-11-03 by Phase 29's spec and discuss: FLOW-02, FLOW-03, FLOW-05 and FLOW-07 to the new Phase 29.1; FLOW-01 and RULE-17 amended; RULE-27 (Phase 45) and REV-08 (Phase 40) added.*
 *Amended 2026-11-03 by Phase 29.1's spec: FLOW-02 and FLOW-03 amended; FLOW-10 (neutral unit contract) and FLOW-11 (hotfix path) added to Phase 29.1; FLOW-11 amended by its discuss (conflicts resolved before any restore).*
+*Amended 2026-11-03 by Phase 30's spec: FLOW-04, FLOW-06, LENS-01, RULE-03, RULE-06 and JEV-04 amended; FLOW-12 (global codegraph sentence rewrite) added to Phase 30.*
+*Amended 2026-11-03 by Phase 30's discuss: FLOW-13 (ai-kit's `setup-dev` installs the flow's tools) added to Phase 30; RULE-05 amended (coupling, Phase 46).*

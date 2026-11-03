@@ -68,3 +68,10 @@ Approach hints, all to be confirmed in research:
   inferred.
 - Keep the hooks stdlib-only, keep the output within the existing size caps, and stay silent
   when nothing is installed.
+
+## Note 2026-11-03 (Phase 30 discuss)
+
+Phase 30 now indexes automatically: a new worktree gets `codegraph init -y` or `codegraph sync` and
+`graphify update .` through ai-kit's `post-checkout` hook, and every unit boundary refreshes both. Item 1
+here shrinks to advice: the session-start line reports what was indexed (or which CLI is missing), and no
+longer tells the agent how to index. Not folded into Phase 30.
