@@ -13,6 +13,9 @@ files:
 > *Re-pointed 2026-11-03 (Phase 30.1 discuss): the `resolves_phase: 54` tag ("delivered by v1.3") was wrong — the owner
 > saw the proof of concept in Cursor and the shipped host split diverged from it. Phase 30.2 starts from this
 > proof of concept (branch `archive/poc/cursor-statusline`) and closes the gap.*
+>
+> *Amended 2026-11-03 (30.2 D-11): folded into Phase 30.2; this todo, the branch and its archive tag close after
+> 30.2's verification, with owner confirmation for the deletion.*
 
 ## Problem
 

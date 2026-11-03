@@ -231,10 +231,12 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 **Success Criteria** (what must be TRUE):
   1. A recorded trace lists each visual difference between the proof of concept and the shipped Cursor status line, classes it as lost, decided otherwise (naming the Phase 23 decision) or never ported, and records whether it is closed or kept.
   2. Every Cursor segment shows an icon in the real render and in the wizard preview; the five shared segments carry the same icon on both hosts.
-  3. A Cursor process-memory segment uses Claude's calculation and finds the Cursor CLI process by its program path; its label says unverified until a live Cursor session confirms it.
+  3. A Cursor process-memory segment uses Claude's calculation and finds the Cursor CLI process by its program path; its label says unverified until a live Cursor session confirms it. *(amended 2026-11-03, 30.2 D-02: by its command line or its program path; live, the process is named `MainThread`, runs `<cursor-agent>/versions/<v>/node`, with `cursor-agent` in its command line)*
   4. Cursor's quota segments use Claude's ramp and window format where Cursor's data allows; each real data difference (one monthly billing cycle, no hourly window) is flagged visibly on the line or in the doctor, never filled with invented values.
   5. `alt_term_dimensions` never shows a 0 row count on Cursor.
   6. Cursor's inventory samples match its renderer (no borrowed Claude samples), so the wizard's fallback preview agrees with the real render.
+  7. With the Cursor CLI installed and logged in, an owner-attended live Cursor run from the phase branch tip is recorded and closes Phase 23's S7 visual check; without it, the check and the wizard render Cursor's sample data through the real renderer, labelled sample data; nothing installs Cursor. *(added 2026-11-03, 30.2 SPEC R11 and D-08)*
+  8. The extra-spend alert (amount in bold red) is set from the wizard with a toggle and a dollar threshold, stored in the Cursor TOML, invalid values refused. *(added 2026-11-03, 30.2 SPEC R12 and D-03)*
 **Plans**: TBD
 
 ### Phase 31: Removals and small defects

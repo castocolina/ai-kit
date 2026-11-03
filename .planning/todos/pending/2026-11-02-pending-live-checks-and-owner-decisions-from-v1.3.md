@@ -47,7 +47,8 @@ spawned for a check once it is done. Each item says what it is, why it is open, 
   seen. Next step: arm from a throwaway real session, let it fire, and check that the session continues.
 - [ ] Cursor status line once logged in to Cursor. Open because the check stopped at the login screen on
   2026-11-02. Next step: log in, then capture one status-line payload, one quota response and the wired status
-  line in a live `agent` session, and flip the matching unverified flags.
+  line in a live `agent` session, and flip the matching unverified flags. *(amended 2026-11-03, 30.2 D-08: the
+  live status-line check is Phase 30.2's verification, from its branch tip; closes with it)*
 - [ ] Long-goal pointer form in a real Claude session. Open because only the length rule was read from the
   binary. Next step: with one tiny model call driven through herdr, type the generated `/goal` pointer and
   read whether the host accepts it.
@@ -150,9 +151,11 @@ None of these is taken. Each shows the options and what happens if nothing chang
   the remote untouched, and each is also preserved locally by an archive tag.
 - [ ] Optional idea left by the old Cursor proof of concept: a status line segment that shows the memory used by the
   cursor-agent process (today only the external system-memory example exists for both hosts). Cursor is a
-  secondary runtime. Default: not built.
+  secondary runtime. Default: not built. *(amended 2026-11-03, 30.2 D-02: decided, built in Phase 30.2)*
 - [ ] The todo about promoting the Cursor status line proof of concept (dated 2026-10-12) looks obsolete because
   Phase 23 delivered the real Cursor status line. It was left open on purpose; decide whether to close it.
+  *(amended 2026-11-03, 30.2 D-11: not obsolete — Phase 30.2 resolves it; it closes, and the proof-of-concept
+  branch and tag are deleted after owner confirmation, when 30.2's verification closes)*
 - [ ] The GitLab remote still holds two old branches (the installer registry work and an old copy of the v1.3
   branch) that were not compared by content because GitLab is skipped for now. Compare them by content before
   deleting anything there when GitLab is used again. Default: untouched.
