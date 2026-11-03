@@ -61,6 +61,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   (archived milestones excluded), when to refresh it (every phase boundary, plus GSD's auto-update after commits)
   and how.
   *(amended 2026-11-03, 30 spec: the rule also says to index and sync automatically whenever the CLI is present, to search Markdown with rg, that on stacked branches GSD's auto-update never fires so the indexes go stale unless refreshed, and to refresh before GSD research; ai-kit also indexes every new worktree)*
+  *(amended 2026-11-03, owner: the tool-use rule also says the shell's working directory persists between
+  calls, so never prefix a command with `cd` into the project folder; use absolute paths, and put anything
+  longer than a couple of steps into a script under `tmp/` and run it. The generated counterpart in Phase
+  45.1 carries the same text.)*
 - [ ] **FLOW-07**: Shipping a finished phase: its gates pass on the phase branch, an installer dry run and the new
   hooks run against a scratch HOME, then the work is installed on this machine and re-checked live from the tip of
   the phase branch; local main moves only when the stacked PRs merge. AGENTS.md's Workflow section states this rule
@@ -409,19 +413,28 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **HOOK-05**: The host-hook spikes (reset time in Claude's stop-failure event, pi's briefing, opencode child
   sessions, codex trust under `codex exec`, copilot running `.claude` hooks, background rewake) are recorded before
   the event catalogue is built.
-- [ ] **HOOK-06**: A spike records, per host, whether a guard can force the user's confirmation even when
-  the session bypasses permissions: on Claude, whether a PreToolUse hook answering `permissionDecision: "ask"`
-  still prompts under `bypassPermissions` (the docs confirm it for explicit ask rules and for auto mode, not for
-  hooks under bypass) and whether a `permissions.ask` rule can match a heredoc command; and the equivalent
-  mechanism, or its absence, on opencode, pi and Cursor. Each answer is marked verified or documented-only.
+- [ ] **HOOK-06**: A spike records, per host, which shell commands still stop the flow for the owner's
+  confirmation and why, using the session history and the docs: `cd` (the owner sees it most, even a `cd` into
+  the project's own folder), chains of `&&`, `||` and `;`, several pipes, `<<` and `>>`, subshells, the
+  `rm` checks, untraceable commands, and auto mode's evaluator. It also records whether a PreToolUse hook's
+  `ask` prompts under `bypassPermissions` on Claude and whether a `permissions.ask` rule can match these
+  shapes, plus the equivalent mechanism or its absence on opencode, pi and Cursor, and compares the guard
+  actions (deny with guidance to the agent, ask the owner, advise) by how often the flow stops. Each answer is
+  marked verified or documented-only. *(amended 2026-11-03: widened from heredocs to complex inline commands and
+  `cd`; the owner asked to explore which action is best.)*
 - [ ] **HOOK-07**: Opt-in guard rules run through the dispatcher: each rule matches a tool call, carries an
-  action (`ask` the user, `deny` with the reason shown to the agent, or `advise`) and a message, and is switched
-  on through layered ai-kit settings, never by rewriting a host config. The first rule is the heredoc guard:
-  a shell command with an unquoted heredoc (reusing `has_heredoc` from the shared command-text module) gets
-  `CRITICAL: avoid heredocs; write the script to a file under tmp/ and run it`, with `ask` as its action on
-  ai-kit's own checkout. Where a host has no mechanism that survives bypass (HOOK-06), the rule falls back to
-  the strongest one it has and says so in `setup.py hooks status`. Tests cover a heredoc, a quoted `<<` that is
-  not a heredoc, a here-string, and each action.
+  action (`deny` with guidance shown to the agent, `ask` the owner, or `advise`) and a message, and is switched
+  on through layered ai-kit settings, never by rewriting a host config. The first rule set covers complex
+  inline commands: always a heredoc, a subshell or command substitution, or a `cd` (including into the current
+  folder, since the shell's working directory already persists); otherwise three or more segments joined by
+  `&&`, `||`, `;` or `|`, or a `>>` inside a chain. A single `cmd | head` or `a && b` passes; the thresholds live
+  in ai-kit settings. A denial never leaves the agent without options: its message says why and names them
+  (drop a `cd` into the current folder, use absolute paths, write the steps to a script under `tmp/` and run
+  it, or split the call). The default action is chosen from HOOK-06's comparison, so that the flow stops as
+  little as possible. Detection reuses the shared command-text module (`has_heredoc`, the segment splitter).
+  Where a host has no mechanism that works under bypass, the rule falls back to the strongest it has and
+  `setup.py hooks status` says so. Tests cover each shape, the passing shapes, and each action.
+  *(amended 2026-11-03: widened from the heredoc guard; a denial must carry guidance.)*
 
 ### Quota and wake
 
