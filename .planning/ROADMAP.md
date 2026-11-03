@@ -112,7 +112,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [ ] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph sync, graphify rebuild and a changed-symbols brief at every phase boundary
 - [ ] **Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)** - One card per component kind, host-styled status-line panes, config doctor reachable from the wizard
 - [ ] **Phase 30.2: Cursor status-line parity (INSERTED)** - Cursor status line brought back to the approved proof of concept and to Claude's look where the data allows
-- [ ] **Phase 31: Removals and small defects** - Three skills and rtk gone, nine small known defects fixed
+- [ ] **Phase 31: Removals and small defects** - Three skills and rtk gone, seven small known defects fixed *(amended 2026-11-03, 31 spec: seven items per DEF-01)*
 - [ ] **Phase 32: Re-judge baseline** - One current-judge report for every kept skill, plus strict frontmatter and text checks
 - [ ] **Phase 32.1: Batch 1, general small skills** - cst-refactor, markdown-to-pdf, jev-fast-decision, spec-review-fixer and usage-metrics reach the bar
 - [ ] **Phase 32.2: Batch 2, spec review family** - spec-review, checklist, spec-config and spec-execute reach the bar
@@ -249,6 +249,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   2. spec-config reports a stale opencode provider the way the removed providers skill did.
   3. A test fails on any rtk mention outside history files, and the tree passes it (tool lists, guidance, house rules, config-doctor advice and usage-metrics sources), including the house rule that recommends rtk and AGENTS.md's Tools and Stack section.
   4. Each of the seven listed small defects has a fix and a regression test (for example: pi's install includes the wake and cross-AI skills, a drift test ties the hand-copied runtime lists to the runtime table, AGENTS.md no longer links a gitignored file).
+  *(amended 2026-11-03, 31 spec: code anchors corrected — only the `prior_value` and execute-gsd SKILL.md cases of `tests/test_ai_kit_spec_gsd_tools.py` go, since it tests the kept `gsd_tools`; the guidance file is written by curated-config `cross_ai_script.py` and `cli.py --guidance-file`, not `cross_ai_build.py`; `.pre-commit-config.yaml` also lists the removed tests; criterion 3's rtk test exempts usage-metrics' rtk reader, which keeps reading existing data; the installer fix also covers alias spellings and checkout runs (DEF-01 amended))*
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 **Plans**: TBD
 

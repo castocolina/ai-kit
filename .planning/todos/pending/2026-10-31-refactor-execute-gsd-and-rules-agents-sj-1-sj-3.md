@@ -16,7 +16,7 @@ Phase 26 closed with two skills whose skill-judge verdicts the owner accepted as
 (owner message, 2026-10-30), because the judge kept finding new detail in these large skills
 round after round:
 
-- `ai-kit-spec-execute-gsd` (SJ-1): UNRESOLVED, round 15 score 101 against the carried base 105,
+- ~~`ai-kit-spec-execute-gsd` (SJ-1)~~ *(closed 2026-11-03: Phase 31 removes the skill, 31-SPEC R1)*: UNRESOLVED, round 15 score 101 against the carried base 105,
   0 Critical and 2 Important open.
 - `ai-kit-project-rules-agents` (SJ-3): FAIL, round 15 score 93, 1 Critical and 2 Important open.
   The Critical (an unattended `git restore` could discard uncommitted edits) was refuted by
@@ -34,6 +34,8 @@ Evidence: `.planning/milestones/v1.3-phases/26-session-self-resume-and-opengsd-q
 (verdicts, rounds, owner decisions), the judge reports under
 `.planning/milestones/v1.3-phases/26-session-self-resume-and-opengsd-quota-rules/skill-judge/r15/`, and the
 owner captures SJ-1 and SJ-3 in `26-OWNER-CAPTURES.md` in the same phase directory.
+
+*Status 2026-11-03 (Phase 31 discuss): SJ-1 closed by the removal; SJ-3 stays open and moves with the project-rules merge (Phase 45, 31 D-01); SJ-2 stays open.*
 
 ## SJ-2: ai-kit-spec-execute-superpowers (deferred by the owner, 2026-10-31)
 

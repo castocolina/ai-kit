@@ -109,7 +109,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **RMV-03**: `mermaid-audit` is gone with every reference.
 - [ ] **RMV-04**: rtk appears in no tool list, guidance text, house rule (today one house rule recommends it),
   AGENTS.md section (today Tools and Stack mentions it), config-doctor advice or usage-metrics source; a test fails
-  on an rtk mention outside history files.
+  on an rtk mention outside history files. *(amended 2026-11-03, 31 spec: the ban covers recommending, installing or
+  wiring rtk; usage-metrics keeps reading rtk data that already exists, as optional input, and nothing deletes
+  stored data; the test's named exemptions are `.planning/`, `docs/prds/`, `docs/superpowers/`, the test itself and
+  usage-metrics' rtk reader with its test; house rule R05 is retired with its id left unused)*
 
 ### Skill quality and judging
 
@@ -584,7 +587,11 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   nonexistent pi environment variables in the interactive guide, the Phase 25.1 edge floor, goal-prompt detect with
   file indirection, a stale routing docstring, a drift test between hand-copied runtime lists and the runtime
   table, and the AGENTS.md link to a gitignored file (seven items; the path-length test and the no-git e2e test
-  belong to GATE-03).
+  belong to GATE-03). *(amended 2026-11-03, 31 spec: the pi-install item has two causes, both fixed portably —
+  link targets and the kit dir are compared after resolving both, so an alias spelling of the same folder is never
+  foreign, and `setup.py` run from a checkout uses that checkout unless `AI_KIT_DIR` is set; the pi variables item
+  is reworded — pi 1.3.0 sets `PI_PROVIDER` and `PI_MODEL` only for the agent's own bash-tool commands, so the fix
+  is the wording plus a herdr live check; the edge-floor item fixes 25.1 and adds a current-milestone guard)*
 - [ ] **DEF-02**: One shared secret-shape scanner with more key shapes replaces the four copies.
 - [ ] **DEF-03**: goal-prompt wraps long lists and commands instead of refusing them.
 - [ ] **DEF-04**: The eight spec-discuss polish items are fixed, each with a pinned doc-contract test: a forced
