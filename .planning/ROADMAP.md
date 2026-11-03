@@ -194,7 +194,8 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 ### Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring
 **Goal**: At every phase boundary the next phase's researcher, planner and executor see the symbols that changed and the documents that mention them, on whatever branch the work is on.
 **Depends on**: Phase 29.1 *(amended 2026-11-03, 29 spec: the phase branches now arrive in 29.1)*
-**Requirements**: FLOW-04, FLOW-06, DESIGN-01, LENS-01, FLOW-12, FLOW-13 *(amended 2026-11-03, 30 spec: FLOW-12 added; 30 D-04: FLOW-13 added, code anchors `Makefile` `setup-env`/`dev`, AGENTS.md Commands)*
+**Requirements**: FLOW-04, FLOW-06, DESIGN-01, LENS-01, FLOW-12, FLOW-13
+*(Amended 2026-11-03: the global-sentence rewrite came from the 30 spec; the setup-dev tool installs came from 30 D-04, with code anchors `Makefile` `setup-env`/`dev` and AGENTS.md Commands.)*
 **Code anchors**: new: phase-boundary step (`codegraph sync`, graphify rebuild, changed-symbols brief; hook point in GSD's phase transition unknown until research); `graphify-out/` and a graphify exclude for `.planning/milestones/` (mechanism unknown until research); house rules in `skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/rules.py`; tool-advisor advice in `tools/hooks/advisor_core.py`, `tools/hooks/claude_tool_advisor.py`; new: graphify runbook (`docs/run-book/graphify.md`); lens wiring in `.planning/config.json` `agent_skills` and `workflow.ui_review` (set through `gsd-tools config-set`); docs: AGENTS.md Code Exploration, `.claude/cli-environment.md` *(amended 2026-11-03, 30 spec: the step lives in the unit-flow engine of Phase 29.1 and runs at the unit's start, `plan:pre` and `execute:wave:pre` of wave 1, since GSD's transition dispatches no hook; the exclude is a committed root `.graphifyignore`; new: ai-kit's worktree-created indexing hook (`post-checkout`); `agent_skills_security.trusted_global_roots`; the superpowers adapter `skills/ai-kit-spec-execute-superpowers/` carries the brief; `.claude/cli-environment.md` is gitignored and local-only, so it is not a deliverable)*
 **Success Criteria** (what must be TRUE):
   1. Closing a phase on its branch syncs the codegraph index and rebuilds the graphify graph with archived milestones excluded, with no commit to main needed. *(amended 2026-11-03, 30 spec: for every unit, at its start, before its planning and before its first execution wave, on its own branch; codegraph and graphify are created or refreshed automatically whenever their CLI is installed, and every new ai-kit worktree is indexed the same way without blocking git)*
@@ -211,7 +212,8 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 ### Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)
 **Goal**: The owner opens the setup wizard and sees one card per component kind and a styled pane per status-line host, before later phases add or remove skills, agents, commands and hooks.
 **Depends on**: Phase 28 (fast wizard suite). Inserted before Phase 31 because the removals, the project-rules merge (45), the host hooks (48-49) and dist (52-53) all change the component list.
-**Requirements**: FEAT-01, FEAT-06, WIZ-01, WIZ-02, WIZ-03, WIZ-05 *(amended 2026-11-03, 30.1 spec: WIZ-04 moved to Phase 30.2; WIZ-05 added)*
+**Requirements**: FEAT-01, FEAT-06, WIZ-01, WIZ-02, WIZ-03, WIZ-05
+*(Requirements amended 2026-11-03 in the 30.1 spec: the Cursor parity requirement moved to Phase 30.2; the real-render preview requirement was added.)*
 **Code anchors**: `tools/wizard_app.py` (`WizardApp._compose_choose`, `_render_choose`, `_choose_category_groups`, `_choose_component_row`, `_key_choose`, `_review_component_rows`, `WizardApp.CSS`, `_host_pane`, `_render_arrange_board`, `_chip`, `_adoption_gate_markup`, `_render_done`, `HostView`); `tools/setup.py` (`CATEGORIES`, `Selection`, `_build_wizard_context`, `_hook_selection_items`, `_host_view`, `_HOST_LABELS`, `current_segments`, `load_segment_inventory`, `cmd_config_doctor`, `launch_wizard`); `tools/segments_inventory.toml` (`hosts`); Cursor defaults `SPEC` in `tools/cursor_host.py` (source of the disabled chips unknown until research); `tools/config_doctor_app.py` (`ConfigDoctorApp`, `run_config_doctor`); tests `tests/test_wizard_app.py`, `tests/test_wizard_pty.py`, `tests/wizard_fixtures.py`, `tests/test_setup.py`; config doctor rows in `tools/config_doctor_checks.py` (Playwright MCP Chrome path decision); docs: README "The install wizard", `docs/wizard-redesign/mockup-textual.html`
 **Success Criteria** (what must be TRUE):
   1. Run under `uv run` with a scratch HOME, the first screen shows one card per component kind (skills, agents, commands, hooks); a kind with nothing to install shows no card, and toggling and the Review counts work per card.
@@ -419,7 +421,8 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 ### Phase 40: Resilient review sized by jev
 **Goal**: A review survives a failing lane, and jev sizes the review and classifies disagreements before the owner is asked.
 **Depends on**: Phase 39
-**Requirements**: REV-01, REV-02, REV-06, REV-07, REV-08 *(REV-08 added 2026-11-03, 29 D-03)*
+**Requirements**: REV-01, REV-02, REV-06, REV-07, REV-08
+*(The superpowers fold-step finding was added 2026-11-03 from Phase 29's decision D-03.)*
 **Code anchors**: `skills/ai-kit-spec-review/SKILL.md` loop, `ai_kit_spec/reviewer_dispatch.py`, `quota.py`, `routing.py` (`route_all`); `skills/ai-kit-spec-review-fixer/SKILL.md`; jev through the shared client; new: lane ping before a round, beside `route_all` in `routing.py` and `dispatch_reviewer`; docs: `references/apply-findings.md`, `references/loop-diagram.md`
 **Success Criteria** (what must be TRUE):
   1. When a lane fails mid-review, spec-review switches to the next lane in the user's preference order and the review finishes.
@@ -488,7 +491,8 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 ### Phase 45: Project rules, one skill and AGENTS.md only
 **Goal**: One `ai-kit-project-rules` skill replaces the seven rules skills, reproduces today's audit on ai-kit, adapts to the model it runs on, and turns a Claude-only project into an AGENTS.md project that every host loads.
 **Depends on**: Phase 39 (role-keyed skill table for the vertical-slices runbook)
-**Requirements**: RULE-01, RULE-02, RULE-04, RULE-10, RULE-11, RULE-27 *(RULE-27 added 2026-11-03, 29 D-01)*
+**Requirements**: RULE-01, RULE-02, RULE-04, RULE-10, RULE-11, RULE-27
+*(The fold-engine move was added 2026-11-03 from Phase 29's decision D-01.)*
 **Code anchors**: `skills/ai-kit-project-rules-{agents,makefile,precommit,arch,docker,cicd,all}/` and `skills/_shared/ai_kit_rules_common/` -> new: `skills/ai-kit-project-rules/` (library inside), `docs/run-book/<topic>.md` writer, model-strength modes (strong, delegated, weak) in its orchestrator; host instruction wiring through ai-kit's atomic writers (`tools/config_doctor_appliers.py` `set_jsonc_value`, `atomic_write_json`; `tools/setup.py` `_atomic_write_json`); their `tests/test_ai_kit_project_rules_*.py`, `tests/test_ai_kit_rules_common.py`, `pyproject.toml`, `tests/test_gate_scope.py` entries; `tools/setup.py` component list (wizard skills card); docs: README skills table, new SKILL.md
 **Success Criteria** (what must be TRUE):
   1. `ai-kit-project-rules` replaces the seven `ai-kit-project-rules-*` skills with the shared library inside it, and its audit on ai-kit reproduces today's findings.
