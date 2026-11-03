@@ -14,9 +14,9 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 ### Fast gates
 
 - [ ] **GATE-01**: A commit runs, in parallel, only the test modules that cover the staged files (mapped through
-  imports and the runner's test lists) and is refused when one of them fails.
+  imports and the runner's test lists) and is refused when one of them fails. *(amended 2026-11-03, 28 D-01: 81 of 95 test modules reach code through path strings, `sys.path` inserts or subprocesses, not imports; the mapper is a name index over tests and their helpers, which includes imports)*
 - [ ] **GATE-02**: A push runs the full unit, arch and wizard suites in clearly less wall time than the 2.5 minutes
-  measured on 2026-11-02, because no test calls a real host binary (fakes only).
+  measured on 2026-11-02, because no test calls a real host binary (fakes only). *(amended 2026-11-03, 28 SPEC R3: re-measured at 184 s (core 162.9 s, wizard 21.0 s, 24 CPUs); the target is 60 s or less for both test hooks)*
 - [ ] **GATE-03**: No test depends on the caller's environment: host signals, binaries on PATH, checkout path length,
   TMPDIR and whether the caller's directory is a git repository are pinned per test (this covers the goal-prompt
   test that depends on path length and the no-git e2e test that ran inside a repository), and a structural test fails when a test calls a real host CLI.
