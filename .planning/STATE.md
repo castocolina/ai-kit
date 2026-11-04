@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 28
-current_phase_name: Fast, environment-proof gates
-status: executing
-stopped_at: "Spec and discuss done for phases 28, 29, 29.1, 30, 30.1, 30.2 and 31 (interactive); next: gsd-autonomous over that range"
-last_updated: "2026-11-04T13:36:11.269Z"
+current_phase: 29
+current_phase_name: Logical-commit folding and the shared jev ladder
+status: planning
+stopped_at: Phase 28 complete, ready to plan Phase 29
+last_updated: "2026-11-04T14:27:57.734Z"
 last_activity: 2026-11-04
-last_activity_desc: Phase 28 wave 5 complete (28-05)
-state_head: 5109f8058001a9b7bd3123cbfb6646750da1e25a
+last_activity_desc: Phase 28 complete, transitioned to Phase 29
+state_head: 1c2e5fcacf2284cb7cf6dda280e75d0c8a71b53d
 progress:
   total_phases: 37
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 9
-  completed_plans: 2
-  percent: 0
+  completed_plans: 9
+  percent: 3
 ---
 
 # Project State
@@ -29,18 +29,18 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 28 (Fast, environment-proof gates) — EXECUTING
-Plan: 1 of 9
-Status: Executing Phase 28
-Last activity: 2026-11-04 - Completed quick task 261104-cxr: split cross-ai runner e2e self-test into logic and runtime shards
+Phase: 29 — Logical-commit folding and the shared jev ladder
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-11-04 — Phase 28 complete, transitioned to Phase 29
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [░░░░░░░░░░] 3%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 154
+- Total plans completed: 163
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -82,6 +82,7 @@ Progress: [░░░░░░░░░░] 0%
 | 18 | 22 | - | - |
 | 18.1 | 22 | - | - |
 | 19 | 10 | - | - |
+| 28 | 9 | - | - |
 
 **Recent Trend:**
 
@@ -670,7 +671,7 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 ## Session Continuity
 
 Last session: 2026-11-03T19:08:45.122Z
-Stopped at: Spec and discuss done for phases 28, 29, 29.1, 30, 30.1, 30.2 and 31 (interactive); next: gsd-autonomous over that range
+Stopped at: Phase 28 complete, ready to plan Phase 29
 Resume file: .planning/phases/31-removals-and-small-defects/31-CONTEXT.md
 
 ## Operator Next Steps

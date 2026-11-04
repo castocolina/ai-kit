@@ -106,7 +106,7 @@ Each phase lists **Code anchors**: the existing files and symbols it changes or 
 creates (`new:`), and the docs it must update (`docs:`). They were found with `codegraph explore` on
 2026-11-03; "unknown until research" marks what the phase researcher must locate first.
 
-- [ ] **Phase 28: Fast, environment-proof gates** - Commit runs only the covering tests; push runs the full suites fast with fakes only
+- [x] **Phase 28: Fast, environment-proof gates** - Commit runs only the covering tests; push runs the full suites fast with fakes only (completed 2026-11-04)
 - [ ] **Phase 29: Logical-commit folding and the shared jev ladder** - Each finished GSD or superpowers plan becomes logical-feature commits; every caller chains jev as a black box
 - [ ] **Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)** - Stacked branches, a push per plan, chained PRs and an owner-started merge chain
 - [ ] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph sync, graphify rebuild and a changed-symbols brief at every phase boundary
@@ -160,7 +160,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   5. A structural test fails when a test module reads a path under `.planning/`, and every test's data lives under `tests/`.
 
 **Optional, not a requirement**: ai-kit is a desktop and CLI tool, so concurrency tests on its shared state (candidates: status-line caches and state files, the wake schedule, the jev answer log, two setup runs at once) are nice to have, never required (RULE-24's project-kind rule). The run lock (Phase 38) and the wake grid's no-double-arm check (Phase 50) keep their concurrency tests.
-**Plans**: 9/9 plans executed in 8 waves *(revised 2026-11-03 per cross-AI review cycle 1: the stress run and the all-tier convergence run alone in wave 2; 28-06 lands before 28-05; revised 2026-11-03 per plan check iteration 2: commit budget for covering e2e modules in 28-07, which moves to its own wave after 28-05; revised 2026-11-03 per cross-AI review cycle 3: the push proof leaves local tags out, 28-02 and 28-07 split into four tasks each)*
+**Plans**: 9/9 plans complete in 8 waves *(revised 2026-11-03 per cross-AI review cycle 1: the stress run and the all-tier convergence run alone in wave 2; 28-06 lands before 28-05; revised 2026-11-03 per plan check iteration 2: commit budget for covering e2e modules in 28-07, which moves to its own wave after 28-05; revised 2026-11-03 per cross-AI review cycle 3: the push proof leaves local tags out, 28-02 and 28-07 split into four tasks each)*
 
 Plans:
 **Wave 1**
@@ -766,7 +766,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 28. Fast, environment-proof gates | 9/9 | In Progress | - |
+| 28. Fast, environment-proof gates | 9/9 | Complete    | 2026-11-04 |
 | 29. Logical-commit folding and the shared jev ladder | 0/TBD | Not started | - |
 | 29.1. Stacked phase branches, chained PRs and the merge chain | 0/TBD | Not started | - |
 | 30. Phase-boundary index refresh and code-exploration rules | 0/TBD | Not started | - |

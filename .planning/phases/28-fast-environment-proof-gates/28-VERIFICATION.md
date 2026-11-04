@@ -1,7 +1,7 @@
 ---
 phase: 28-fast-environment-proof-gates
 verified: 2026-11-04T11:10:00Z
-status: human_needed
+status: passed
 score: 5/5 must-haves verified
 covered_files:
   - ".planning/phases/28-fast-environment-proof-gates/28-01-PLAN.md"
@@ -100,3 +100,7 @@ No gaps. The six-environment matrix was not re-run (about 45 min); the recorded 
 
 _Verified: 2026-11-04_
 _Verifier: Claude (gsd-verifier)_
+
+## Human verification results (2026-11-04)
+
+Both items passed; evidence in 28-UAT.md (real push to GitHub origin with every pre-push hook, and `make test` inside a real pi session).
