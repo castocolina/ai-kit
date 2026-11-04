@@ -13,7 +13,8 @@ amended, which ran at their own commit.
 
 shortcut: a test that reaches files only through a glob or directory walk (skills/*/SKILL.md)
 is not selected for them; the push stage's full suites cover it; upgrade if a commit-stage
-miss is ever observed.
+miss is ever observed. A tool that another tool loads by path is selected only when the
+loader's test names it.
 """
 import argparse
 import importlib.util

@@ -157,7 +157,7 @@ def _result_for(results: dict[str, tuple[str, str]], test_id: str) -> tuple[str,
 
 def _guard_report(results: dict[str, tuple[str, str]]) -> tuple[list[str], list[str]]:
     """Problems and notes from the child's parsed results; a skipped test is counted as
-    skipped, never as executed."""
+    skipped, never as executed, and a skipped guard other than the apply guard is a problem."""
     problems, notes = [], []
     executed = skipped = 0
     for test_id in GUARD_TESTS:
@@ -167,6 +167,8 @@ def _guard_report(results: dict[str, tuple[str, str]]) -> tuple[list[str], list[
         elif found[0] == "skipped":
             skipped += 1
             notes.append(f"no-write guard skipped: {test_id}: {found[1]}")
+            if test_id != APPLY_GUARD:  # only the apply guard's skip is the documented exception
+                problems.append(f"no-write guard skipped: {test_id}; the live project is unguarded")
         else:
             executed += 1
             if found[0] != "ok":

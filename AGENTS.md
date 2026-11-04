@@ -168,7 +168,8 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   the `=== <module>: ok in <s>` lines of `make e2e-test` when an e2e module's time
   changes. Known limit: a test that reaches files only through a glob (for example
   `skills/*/SKILL.md`) is not selected for them at commit; the push stage still
-  runs it.
+  runs it. A tool that another tool loads by path is selected only when the
+  loader's test names it.
 - Push stage: the pre-push hooks are `unittest` (unit and arch, under python3),
   `unittest-wizard` (unit-uv and integration, under uv), `pyright`, `vulture`,
   `check-dogfood` (the live-project check) and `deferred-e2e`. `deferred-e2e` runs

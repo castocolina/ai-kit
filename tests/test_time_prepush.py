@@ -41,6 +41,13 @@ def write_report(folder: pathlib.Path, module: str, ran: int = 1, skips=(), rc: 
     (folder / (name or f"{module}.json")).write_text(json.dumps(data), encoding="utf-8")
 
 
+class TestMatrixHelper(unittest.TestCase):
+    def test_the_matrix_helper_is_loaded_from_tools_env_matrix_py(self) -> None:
+        # Names tools/env_matrix.py so the staged mapper selects this module for that file.
+        module = load_timing().env_matrix
+        self.assertEqual(pathlib.Path(module.__file__), REPO / "tools" / "env_matrix.py")
+
+
 class TestVerdict(unittest.TestCase):
     def setUp(self) -> None:
         self.t = load_timing()

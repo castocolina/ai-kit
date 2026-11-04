@@ -232,6 +232,15 @@ class TestNoWrite(unittest.TestCase):
             "the live project are unguarded until it runs",
         ])
 
+    def test_every_guard_skipped_is_a_problem_for_each_non_apply_guard(self):
+        output = "".join(_line(i, f"skipped '{_SKIP_REASON}'") for i in (_ID_A, _ID_B, _ID_APPLY))
+        problems, notes = self.check(output=output)
+        self.assertEqual(problems, [
+            f"no-write guard skipped: {_ID_A}; the live project is unguarded",
+            f"no-write guard skipped: {_ID_B}; the live project is unguarded",
+        ])
+        self.assertIn("no-write guard: 3 attempted, 0 executed, 3 skipped", notes)
+
     def test_class_level_skip_covers_the_class_tests(self):
         cls_id = _ID_APPLY.rsplit(".", 1)[0]
         output = _line(_ID_A) + _line(_ID_B) + f"setUpClass ({cls_id}) ... skipped 'no node'\n"

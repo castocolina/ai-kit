@@ -18,11 +18,11 @@ interrupted.
 tools/staged_mapper.py picks them. Unit and arch modules run under this interpreter; unit-uv,
 integration and the covering e2e modules within COMMIT_E2E_BUDGET_SECS run in one
 `uv run python <this runner> <modules>` child after them. The full unit and arch groups run when
-the mapper says so (shared machinery, a shared helper or fixture, any mapper failure), and the
-covering e2e modules within the budget run with them. An e2e module over the budget, or with no
-recorded time in E2E_RECORDED_SECS, is not run at commit: the notice names it and the pre-push
-`deferred-e2e` hook runs it. No PATH means the paths from `git diff --cached`. It excludes --group
-and module names.
+the mapper says so (shared machinery, a shared helper or fixture, any mapper failure), and every
+covering unit-uv, integration and in-budget e2e module runs with them. An e2e module over the
+budget, or with no recorded time in E2E_RECORDED_SECS, is not run at commit: the notice names it
+and the pre-push `deferred-e2e` hook runs it. No PATH means the paths from `git diff --cached`.
+It excludes --group and module names.
 
 --pushed runs, under uv, every over-budget covering e2e module for the pushed range. It narrows to
 that range only when the proof holds: the checkout is the pushed commit and no commit that a local
@@ -600,8 +600,9 @@ def _deferral_line(module: str) -> str:
 
 
 def _staged_selection(paths: list[str], cwd: Path) -> tuple[int, list[str], str | None]:
-    """(staged file count, covering modules, full-run reason). A full run keeps the e2e modules
-    the index found; a mapper failure has no covering set, so it names every e2e module."""
+    """(staged file count, covering modules, full-run reason). A full run keeps every
+    covering module the index found (unit-uv, integration and e2e too); a mapper failure has no
+    covering set, so it names every e2e module."""
     try:
         mapper = _load_mapper()
         staged = paths or mapper.staged_paths(cwd)
@@ -683,7 +684,7 @@ def _staged_main(argv: list[str], cwd: Path) -> int:
     if reason is not None:
         print(f"staged: full unit+arch run: {reason}")
         groups = group_modules(discover_modules())
-        modules = groups["unit"] + groups["arch"] + [m for m in covering if m in E2E_MODULES]
+        modules = sorted({*groups["unit"], *groups["arch"], *covering})
     elif not covering:
         print(f"staged: {files} files -> 0 modules" if files
               else "staged: no staged files; 0 modules")

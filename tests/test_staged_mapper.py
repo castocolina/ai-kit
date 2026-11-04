@@ -389,7 +389,8 @@ class RunnerStagedTest(unittest.TestCase):
         code, out = self.main("--staged", "tools/run_unittest_parallel.py", "tools/beta.py")
         self.assertEqual(code, 0, out)
         self.assertIn("staged: full unit+arch run: shared test machinery:", out)
-        self.assertEqual(self.ran, [self.full_groups()])
+        groups = self.runner.group_modules(sorted({*self.full_groups(), "tests.test_beta"}))
+        self.assertEqual(self.ran, [groups["unit"] + groups["arch"]])
         self.assertGreater(len(self.ran[0]), 10)
 
     def test_a_mapper_exception_runs_the_full_groups_never_zero(self) -> None:
@@ -547,6 +548,21 @@ class RunnerStagedTest(unittest.TestCase):
         self.assertEqual(self.ran, [self.full_groups()])
         self.assertEqual(popen.call_args.args[0][4:], [under])
         self.assertIn(f"{over} (recorded 361 s)", out)
+
+    def test_a_full_run_keeps_a_covering_uv_and_integration_module(self) -> None:
+        uv_mod = sorted(self.runner.UNIT_UV_MODULES)[0]
+        integ = sorted(self.runner.INTEGRATION_MODULES)[0]
+        decision = self.mapper.Decision(
+            (uv_mod, integ), {}, False, "shared test machinery: tools/run_unittest_parallel.py",
+        )
+        with self.stand_in(decision), unittest.mock.patch.object(
+            self.runner, "_run_staged_modules", return_value=0
+        ) as run:
+            code, _out = self.main("--staged", "tools/run_unittest_parallel.py")
+        self.assertEqual(code, 0)
+        modules = run.call_args.args[0]
+        self.assertTrue({uv_mod, integ} <= set(modules))
+        self.assertGreater(len(modules), 10)
 
     def test_a_mapper_error_runs_within_budget_e2e_and_names_every_other(self) -> None:
         under = "tests.test_precompact_shims_e2e"
