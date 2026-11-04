@@ -260,6 +260,109 @@ def dogfood_hook_errors(text: str) -> list[str]:
     return errors
 
 
+MAPPER = REPO_ROOT / "tools" / "staged_mapper.py"
+# D-03: the files whose change runs the full unit and arch groups. The runner's SHARED_MACHINERY
+# must be exactly this set, so removing one entry fails the gate as surely as a stale one does.
+REQUIRED_SHARED_MACHINERY = frozenset({
+    "tools/run_unittest_parallel.py", "tools/staged_mapper.py", "tools/gen_test_groups.py",
+    ".pre-commit-config.yaml", "Makefile", "pyproject.toml", "uv.lock",
+})
+# SPEC R3's push target for the two test hooks: the commit budget may never exceed it.
+PUSH_TARGET_SECS = 60
+
+
+def _flag_errors(block: str, hook_id: str, settings: tuple[str, ...]) -> list[str]:
+    return [
+        f"{hook_id} lacks {setting}" for setting in settings
+        if not re.search(rf"^\s*{setting}\s*$", block, re.MULTILINE)
+    ]
+
+
+def staged_hook_errors(text: str) -> list[str]:
+    """What the staged-tests hook must be: the commit stage's covering-module runner, its stage
+    stated (an omitted stages: line runs at every installed hook type), verbose, always-run, with
+    no fixed group, between pylint and unittest."""
+    block = hook_block(text, "staged-tests")
+    if block is None:
+        return ["missing staged-tests hook"]
+    errors = []
+    stage = hook_stage(text, "staged-tests")
+    if stage is None:
+        errors.append("staged-tests has no stages: line, so an omitted stage runs at every "
+                      "installed hook type")
+    elif stage != "pre-commit":
+        errors.append(f"staged-tests stages are [{stage}], not [pre-commit]")
+    entry = hook_entries(text).get("staged-tests", "")
+    if not entry.startswith("python3 tools/run_unittest_parallel.py --staged"):
+        errors.append("staged-tests entry is not python3 tools/run_unittest_parallel.py --staged")
+    if "--group" in entry:
+        errors.append("staged-tests entry names a --group")
+    errors += _flag_errors(block, "staged-tests",
+                           ("pass_filenames: false", "always_run: true", "verbose: true"))
+    ids = hook_ids(text)
+    if not all(name in ids for name in ("pylint", "staged-tests", "unittest")) or not (
+            ids.index("pylint") < ids.index("staged-tests") < ids.index("unittest")):
+        errors.append("staged-tests does not sit between pylint and unittest")
+    return errors
+
+
+def deferred_hook_errors(text: str) -> list[str]:
+    """What the deferred-e2e hook must be: the pre-push runner of the over-budget e2e modules,
+    its stage stated, verbose, always-run, no fixed group, after unittest-wizard and
+    check-dogfood."""
+    block = hook_block(text, "deferred-e2e")
+    if block is None:
+        return ["missing deferred-e2e hook"]
+    errors = []
+    stage = hook_stage(text, "deferred-e2e")
+    if stage is None:
+        errors.append("deferred-e2e has no stages: line, so an omitted stage runs at every "
+                      "installed hook type")
+    elif stage != "pre-push":
+        errors.append(f"deferred-e2e stages are [{stage}], not [pre-push]")
+    entry = hook_entries(text).get("deferred-e2e", "")
+    if not entry.startswith("python3 tools/run_unittest_parallel.py --pushed"):
+        errors.append("deferred-e2e entry is not python3 tools/run_unittest_parallel.py --pushed")
+    if "--group" in entry:
+        errors.append("deferred-e2e entry names a --group")
+    errors += _flag_errors(block, "deferred-e2e",
+                           ("pass_filenames: false", "always_run: true", "verbose: true"))
+    ids = hook_ids(text)
+    earlier = ("unittest-wizard", "check-dogfood")
+    if not all(name in ids for name in (*earlier, "deferred-e2e")) or not all(
+            ids.index(name) < ids.index("deferred-e2e") for name in earlier):
+        errors.append("deferred-e2e does not follow unittest-wizard and check-dogfood")
+    return errors
+
+
+def shared_machinery_errors(names) -> list[str]:
+    """SHARED_MACHINERY must be exactly the seven required files: a missing one and an extra one are
+    each named. (Staleness, an entry whose file is gone, is the runner's own check.)"""
+    listed = set(names)
+    missing = sorted(REQUIRED_SHARED_MACHINERY - listed)
+    extra = sorted(listed - REQUIRED_SHARED_MACHINERY)
+    return ([f"shared machinery lacks {name}" for name in missing]
+            + [f"shared machinery has an unexpected entry {name}" for name in extra])
+
+
+def recorded_secs_errors(table, e2e_modules, budget) -> list[str]:
+    """The duration table names only e2e modules, with positive whole seconds, and the commit
+    budget is a whole number from 1 to the push target (it may never exceed SPEC R3's target)."""
+    errors = []
+    for module in sorted(table):
+        value = table[module]
+        if module not in e2e_modules:
+            errors.append(f"E2E_RECORDED_SECS names {module}, which is not an e2e module")
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            errors.append(f"E2E_RECORDED_SECS[{module}] is {value!r}, not a positive whole "
+                          "number of seconds")
+    is_whole = isinstance(budget, int) and not isinstance(budget, bool)
+    if not is_whole or not 1 <= budget <= PUSH_TARGET_SECS:
+        errors.append(f"COMMIT_E2E_BUDGET_SECS is {budget!r}; it must be a whole number from 1 "
+                      f"to {PUSH_TARGET_SECS} (SPEC R3's push target)")
+    return errors
+
+
 def pylint_disable_drift(disable_list: list[str]) -> list[str]:
     """Report pylint disables outside the pinned set."""
     errors: list[str] = []
@@ -398,6 +501,7 @@ class TestGateScope(unittest.TestCase):
         self.assertEqual(hardcoded_worker_counts(self.makefile), [])
         self.assertEqual(hardcoded_worker_counts(entries), [])
         self.assertEqual(hardcoded_worker_counts(RUNNER.read_text()), [])
+        self.assertEqual(hardcoded_worker_counts(MAPPER.read_text()), [])
 
     def test_generated_listings_name_every_discovered_module(self) -> None:
         # The listings are a projection of discovery, so gate-registration tests
@@ -470,9 +574,25 @@ class TestGateScope(unittest.TestCase):
         design = tool["pylint"]["design"]
         self.assertEqual(pylint_design_drift(design), [])
 
+    def test_staged_hook_is_commit_stage(self) -> None:
+        self.assertEqual(staged_hook_errors(self.hooks), [])
+
+    def test_shared_machinery_is_pinned(self) -> None:
+        self.assertEqual(shared_machinery_errors(self.runner.SHARED_MACHINERY), [])
+
+    def test_deferred_hook_is_push_stage(self) -> None:
+        self.assertEqual(deferred_hook_errors(self.hooks), [])
+
+    def test_commit_budget_is_pinned(self) -> None:
+        self.assertEqual(recorded_secs_errors(self.runner.E2E_RECORDED_SECS,
+                                              self.runner.E2E_MODULES,
+                                              self.runner.COMMIT_E2E_BUDGET_SECS), [])
+
     def test_hook_order_and_serial_runs(self) -> None:
         ids = hook_ids(self.hooks)
         self.assertLess(ids.index("ruff"), ids.index("pylint"))
+        self.assertLess(ids.index("pylint"), ids.index("staged-tests"))
+        self.assertLess(ids.index("staged-tests"), ids.index("unittest"))
         self.assertLess(ids.index("pylint"), ids.index("unittest"))
         self.assertLess(ids.index("unittest"), ids.index("unittest-wizard"))
         self.assertTrue(hook_require_serial(self.hooks, "ruff"))
@@ -598,6 +718,112 @@ class TestGateScopeNonVacuity(unittest.TestCase):
             "extra-key": "x",
         }}}
         self.assertTrue(lint_config_drift(bad))
+
+    @staticmethod
+    def _without(text: str, hook_id: str, old: str, new: str = "") -> str:
+        """`text` with the first `old` in the hook's own block replaced, from its id on"""
+        at = text.index(f"- id: {hook_id}\n")
+        return text[:at] + text[at:].replace(old, new, 1)
+
+    def test_flags_a_staged_hook_without_a_stage(self) -> None:
+        good = HOOKS.read_text()
+        self.assertEqual(staged_hook_errors(good), [])
+        broken = self._without(good, "staged-tests", "        stages: [pre-commit]\n")
+        self.assertNotEqual(broken, good)
+        errors = staged_hook_errors(broken)
+        self.assertTrue(any("omitted stage runs at every installed hook type" in e for e in errors),
+                        errors)
+
+    def test_flags_a_staged_hook_with_a_push_stage(self) -> None:
+        good = HOOKS.read_text()
+        for stages in ("[pre-push]", "[pre-commit, pre-push]"):
+            broken = self._without(good, "staged-tests", "stages: [pre-commit]",
+                                   f"stages: {stages}")
+            self.assertIn(f"staged-tests stages are [{stages[1:-1]}], not [pre-commit]",
+                          staged_hook_errors(broken), stages)
+
+    def test_flags_a_staged_hook_without_verbose(self) -> None:
+        good = HOOKS.read_text()
+        broken = self._without(good, "staged-tests", "verbose: true", "verbose: false")
+        self.assertIn("staged-tests lacks verbose: true", staged_hook_errors(broken))
+
+    def test_flags_a_staged_hook_with_a_group(self) -> None:
+        good = HOOKS.read_text()
+        broken = self._without(good, "staged-tests", "--staged", "--staged --group unit")
+        self.assertIn("staged-tests entry names a --group", staged_hook_errors(broken))
+
+    def test_flags_a_missing_staged_hook(self) -> None:
+        good = HOOKS.read_text()
+        without = good.replace("- id: staged-tests", "- id: staged-tests-gone")
+        self.assertEqual(staged_hook_errors(without), ["missing staged-tests hook"])
+
+    def test_flags_a_staged_hook_out_of_order(self) -> None:
+        good = HOOKS.read_text()
+        block = hook_block(good, "staged-tests")
+        without = good.replace(block + "\n", "", 1)
+        moved = without.replace("      - id: pylint\n", block + "\n      - id: pylint\n", 1)
+        self.assertNotEqual(moved, good)
+        self.assertIn("staged-tests does not sit between pylint and unittest",
+                      staged_hook_errors(moved))
+
+    def test_flags_a_shared_machinery_entry_removed_or_added(self) -> None:
+        self.assertEqual(shared_machinery_errors(REQUIRED_SHARED_MACHINERY), [])
+        for entry in sorted(REQUIRED_SHARED_MACHINERY):
+            short = REQUIRED_SHARED_MACHINERY - {entry}
+            self.assertEqual(shared_machinery_errors(short),
+                             [f"shared machinery lacks {entry}"], entry)
+        extra = REQUIRED_SHARED_MACHINERY | {"tools/other.py"}
+        self.assertEqual(shared_machinery_errors(extra),
+                         ["shared machinery has an unexpected entry tools/other.py"])
+
+    def test_flags_a_deferred_hook_without_a_stage_or_at_pre_commit(self) -> None:
+        good = HOOKS.read_text()
+        self.assertEqual(deferred_hook_errors(good), [])
+        bare = self._without(good, "deferred-e2e", "        stages: [pre-push]\n")
+        self.assertTrue(any("omitted stage runs at every installed hook type" in e
+                            for e in deferred_hook_errors(bare)))
+        commit = self._without(good, "deferred-e2e", "stages: [pre-push]",
+                               "stages: [pre-commit]")
+        self.assertIn("deferred-e2e stages are [pre-commit], not [pre-push]",
+                      deferred_hook_errors(commit))
+
+    def test_flags_a_deferred_hook_without_verbose_or_with_a_group(self) -> None:
+        good = HOOKS.read_text()
+        quiet = self._without(good, "deferred-e2e", "verbose: true", "verbose: false")
+        self.assertIn("deferred-e2e lacks verbose: true", deferred_hook_errors(quiet))
+        grouped = self._without(good, "deferred-e2e", "--pushed", "--pushed --group e2e")
+        self.assertIn("deferred-e2e entry names a --group", deferred_hook_errors(grouped))
+
+    def test_flags_a_deferred_hook_placed_before_the_wizard_hook(self) -> None:
+        good = HOOKS.read_text()
+        at = good.index("- id: deferred-e2e")
+        head, tail = good[:at], good[at:]
+        wizard = head.index("      - id: unittest-wizard\n")
+        early = head[:wizard] + "      " + tail + head[wizard:]
+        self.assertNotEqual(early, good)
+        self.assertIn("deferred-e2e does not follow unittest-wizard and check-dogfood",
+                      deferred_hook_errors(early))
+
+    def test_flags_a_missing_deferred_hook(self) -> None:
+        good = HOOKS.read_text()
+        without = good.replace("- id: deferred-e2e", "- id: deferred-e2e-gone")
+        self.assertEqual(deferred_hook_errors(without), ["missing deferred-e2e hook"])
+
+    def test_flags_a_recorded_table_entry_outside_the_e2e_set_or_not_positive(self) -> None:
+        modules = frozenset({"tests.test_a_e2e"})
+        self.assertEqual(recorded_secs_errors({"tests.test_a_e2e": 3}, modules, 60), [])
+        self.assertIn("E2E_RECORDED_SECS names tests.test_stray, which is not an e2e module",
+                      recorded_secs_errors({"tests.test_stray": 3}, modules, 60))
+        for bad in (0, 1.5, "3", True):
+            with self.subTest(value=bad):
+                self.assertTrue(recorded_secs_errors({"tests.test_a_e2e": bad}, modules, 60))
+
+    def test_flags_a_commit_budget_above_the_push_target(self) -> None:
+        modules = frozenset()
+        self.assertEqual(recorded_secs_errors({}, modules, 60), [])
+        for bad in (61, 0, 60.0):
+            with self.subTest(budget=bad):
+                self.assertTrue(recorded_secs_errors({}, modules, bad))
 
 
 if __name__ == "__main__":

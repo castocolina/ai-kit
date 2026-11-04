@@ -92,3 +92,14 @@ repos:
         always_run: true
         verbose: true
         stages: [pre-push]
+      # Runs the covering e2e modules the commit stage deferred (over COMMIT_E2E_BUDGET_SECS): the
+      # pushed range when the proof holds, otherwise every over-budget module. Not part of the 60 s
+      # figure for the two test hooks.
+      - id: deferred-e2e
+        name: deferred e2e (over the commit budget)
+        entry: python3 tools/run_unittest_parallel.py --pushed
+        language: system
+        pass_filenames: false
+        always_run: true
+        verbose: true
+        stages: [pre-push]

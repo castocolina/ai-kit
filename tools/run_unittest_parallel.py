@@ -5,6 +5,7 @@ Usage:
     run_unittest_parallel.py MODULE [MODULE ...]
     run_unittest_parallel.py --group NAME [--group NAME ...] [-- MODULE ...]
     run_unittest_parallel.py --staged [PATH ...]
+    run_unittest_parallel.py --pushed
     run_unittest_parallel.py --list-groups
 
 Each module runs under the same interpreter as this script, so the caller picks
@@ -13,11 +14,20 @@ Output is buffered per module and printed whole, so failures never interleave.
 Exits 1 if any module fails or exceeds its deadline (module_timeout_secs); exits 130 when
 interrupted.
 
---staged runs exactly the modules that cover the staged files (tools/staged_mapper.py), each
-under the interpreter its group needs: unit and arch under this one, then unit-uv, integration
-and e2e modules in one `uv run python <this runner> <modules>` child. No PATH means the paths
-from `git diff --cached`. A mapper failure runs every unit and arch module, never zero. It
-excludes --group and module names.
+--staged runs exactly the modules that cover the staged files: the name index in
+tools/staged_mapper.py picks them. Unit and arch modules run under this interpreter; unit-uv,
+integration and the covering e2e modules within COMMIT_E2E_BUDGET_SECS run in one
+`uv run python <this runner> <modules>` child after them. The full unit and arch groups run when
+the mapper says so (shared machinery, a shared helper or fixture, any mapper failure), and the
+covering e2e modules within the budget run with them. An e2e module over the budget, or with no
+recorded time in E2E_RECORDED_SECS, is not run at commit: the notice names it and the pre-push
+`deferred-e2e` hook runs it. No PATH means the paths from `git diff --cached`. It excludes --group
+and module names.
+
+--pushed runs, under uv, every over-budget covering e2e module for the pushed range. It narrows to
+that range only when the proof holds: the checkout is the pushed commit and no commit that a local
+branch or worktree HEAD holds lies outside it (local tags and the stash are left out). Otherwise it
+runs every over-budget e2e module and prints why. Like every push hook, it tests the checkout.
 
 Names after `--` are ignored: they are the generated listing that keeps a hook
 entry searchable by module (tools/gen_test_groups.py). `--list-groups` prints
@@ -28,7 +38,8 @@ Groups (each discovered tests/test_*.py lands in exactly one):
     arch        ARCH_MODULES
     unit-uv     UNIT_UV_MODULES (needs the uv env)
     integration INTEGRATION_MODULES (Textual app and PTY-driven, under uv)
-    e2e         E2E_MODULES (make e2e-test only; the one set kept out of validate)
+    e2e         E2E_MODULES (make e2e-test; kept out of validate, its over-budget covering
+                modules run at push)
 
 Each module runs with a tripwire first on PATH: one stub per host CLI name that logs the call
 and exits 127, and a non-empty log fails the module. It sees PATH lookups only (a call through
@@ -106,6 +117,31 @@ E2E_MODULES = frozenset({
     # real git commits through the real pre-commit hook in a temp repo (28-06)
     "tests.test_staged_commit_e2e",
 })
+# Commit budget (SPEC R1, amended 2026-11-03): an e2e module recorded above this runs at push, not
+# at commit. It equals SPEC R3's push target for the two test hooks (the 2026-11-02 e2e run split
+# there: 57.7 s at most, against 360.5 s for tests.test_cross_ai_runner_e2e).
+COMMIT_E2E_BUDGET_SECS = 60
+# Whole seconds per e2e module, rounded up from the `=== <module>: ok in <s>` lines of one
+# `--group e2e` run on the frozen tree (2026-11-04, 24 CPUs, one-minute load 1.80 at start). These
+# are this machine's times and are not scaled by CPU count. Refresh on a quiet machine with that
+# command. A module missing from this table is over the budget.
+E2E_RECORDED_SECS = {
+    "tests.test_ai_kit_gsd_curated_config_matrix": 1,
+    "tests.test_ai_kit_gsd_spec_discuss_e2e": 1,
+    "tests.test_ai_kit_project_rules_all_e2e": 26,
+    "tests.test_ai_kit_spec_e2e": 1,
+    "tests.test_ai_kit_spec_goal_prompt_e2e": 1,
+    "tests.test_cross_ai_runner_e2e": 366,
+    "tests.test_curated_config_apply_e2e": 1,
+    "tests.test_curated_config_e2e": 6,
+    "tests.test_hook_registry_e2e": 2,
+    "tests.test_jev_skill_install_e2e": 1,
+    "tests.test_markdown_to_pdf_e2e": 2,
+    "tests.test_precompact_shims_e2e": 58,
+    "tests.test_staged_commit_e2e": 4,
+    "tests.test_system_memory_e2e": 1,
+    "tests.test_worktree_e2e": 1,
+}
 # Files whose change can alter how any module runs or is selected: staging one runs the full
 # unit and arch groups. A tests/ helper or fixture covering two or more modules counts too, but
 # the mapper computes those from the index.
@@ -476,23 +512,55 @@ def _load_mapper() -> ModuleType:
     return module
 
 
+def split_e2e(modules: list[str]) -> tuple[list[str], list[str]]:
+    """(within the commit budget, deferred to push). A module is within when its recorded
+    whole-second time is at most COMMIT_E2E_BUDGET_SECS; an unrecorded one is deferred."""
+    within, deferred = [], []
+    for module in sorted(modules):
+        recorded = E2E_RECORDED_SECS.get(module)
+        if recorded is not None and recorded <= COMMIT_E2E_BUDGET_SECS:
+            within.append(module)
+        else:
+            deferred.append(module)
+    return within, deferred
+
+
+def _deferral_line(module: str) -> str:
+    recorded = E2E_RECORDED_SECS.get(module)
+    when = "no recorded time" if recorded is None else f"recorded {recorded} s"
+    return (f"staged: deferred to push (over the {COMMIT_E2E_BUDGET_SECS} s commit budget): "
+            f"{module} ({when}); run now: uv run python tools/run_unittest_parallel.py {module}")
+
+
 def _staged_selection(paths: list[str], cwd: Path) -> tuple[int, list[str], str | None]:
-    """(staged file count, modules to run, full-run reason). Any failure is a full-run reason."""
+    """(staged file count, covering modules, full-run reason). A full run keeps the e2e modules
+    the index found; a mapper failure has no covering set, so it names every e2e module."""
     try:
         mapper = _load_mapper()
         staged = paths or mapper.staged_paths(cwd)
         if not staged:
             return 0, [], None
         decision = mapper.decide(cwd, staged, SHARED_MACHINERY)
+        if not decision.index_built:
+            return len(set(staged)), sorted(E2E_MODULES), decision.full_reason
         arch = sorted(ARCH_MODULES & set(discover_modules())) if decision.arch else []
         return len(set(staged)), sorted({*decision.modules, *arch}), decision.full_reason
     except Exception as exc:  # pylint: disable=broad-exception-caught
-        return 0, [], f"mapper error: {type(exc).__name__}: {exc}"
+        return 0, sorted(E2E_MODULES), f"mapper error: {type(exc).__name__}: {exc}"
 
 
-def _run_uv_child(modules: list[str], cwd: Path) -> list[str]:
-    """Run `modules` as one `uv run python <this runner> <modules>` child; the names that failed."""
-    print(f"staged: under uv: {' '.join(modules)}")
+def _uv_missing(modules: list[str], prefix: str) -> bool:
+    """True (and a `make setup-env` pointer printed) when uv is absent and modules need it."""
+    if shutil.which("uv") is not None:
+        return False
+    print(f"{prefix} uv not found; the modules {' '.join(modules)} need it; run make setup-env")
+    return True
+
+
+def _run_under_uv(modules: list[str], cwd: Path, prefix: str) -> list[str]:
+    """Run `modules` as one `uv run python <this runner> <modules>` child; the names that failed.
+    The caller checks uv first with `_uv_missing`."""
+    print(f"{prefix} under uv: {' '.join(modules)}")
     _STOPPING.clear()
     argv = ["uv", "run", "python", str(Path(__file__).resolve()), *modules]
     proc = _start_registered(argv, cwd, os.environ)
@@ -513,15 +581,20 @@ def _run_uv_child(modules: list[str], cwd: Path) -> list[str]:
 
 def _run_staged_modules(modules: list[str], cwd: Path) -> int:
     groups = group_modules(modules)
+    within, deferred = split_e2e(groups["e2e"])
+    for module in deferred:
+        print(_deferral_line(module))
     core = groups["unit"] + groups["arch"]
-    heavy = groups["unit-uv"] + groups["integration"] + groups["e2e"]
-    if heavy and shutil.which("uv") is None:
-        print(f"staged: uv not found; the modules {' '.join(heavy)} need it; run make setup-env")
+    heavy = groups["unit-uv"] + groups["integration"] + within
+    ran = core + heavy
+    if not ran:
+        return 0
+    if heavy and _uv_missing(heavy, "staged:"):
         return 1
     failed = _run_all(core, cwd) if core else []
     if heavy:
-        failed += _run_uv_child(heavy, cwd)
-    print(f"{len(modules) - len(failed)}/{len(modules)} modules passed")
+        failed += _run_under_uv(heavy, cwd, "staged:")
+    print(f"{len(ran) - len(failed)}/{len(ran)} modules passed")
     if failed:
         print("failed: " + " ".join(sorted(failed)))
     return 1 if failed else 0
@@ -539,16 +612,17 @@ def _staged_main(argv: list[str], cwd: Path) -> int:
     if stale:
         print("error: stale shared machinery names: " + " ".join(stale), file=sys.stderr)
         return 2
-    files, modules, reason = _staged_selection(argv[1:], cwd)
+    files, covering, reason = _staged_selection(argv[1:], cwd)
     if reason is not None:
         print(f"staged: full unit+arch run: {reason}")
         groups = group_modules(discover_modules())
-        modules = groups["unit"] + groups["arch"]
-    elif not modules:
+        modules = groups["unit"] + groups["arch"] + [m for m in covering if m in E2E_MODULES]
+    elif not covering:
         print(f"staged: {files} files -> 0 modules" if files
               else "staged: no staged files; 0 modules")
         return 0
     else:
+        modules = covering
         print(f"staged: {files} files -> {len(modules)} modules")
         for module in modules:
             print(f"staged: {module}")
@@ -561,11 +635,114 @@ def _staged_main(argv: list[str], cwd: Path) -> int:
         return 130
 
 
-def main(argv: list[str], cwd: Path = REPO_ROOT) -> int:
+def _fallback(reason: str) -> list[str]:
+    """Print why every over-budget e2e module runs at push, and return those modules."""
+    print(f"{reason}; running every e2e module over the commit budget")
+    return split_e2e(sorted(E2E_MODULES))[1]
+
+
+# The proof that the pushed range is the whole push. pre-commit hands a pre-push hook one ref's
+# range only, so the range is trusted only when the checkout is the pushed commit and no commit a
+# local branch or worktree HEAD holds lies outside it (every such commit is then in the range or
+# already on a remote). Like every push hook, this tests the checkout: a ref pushed alongside it is
+# covered by the selection but run through the checkout's code.
+# shortcut: local tags are left out of the proof (unpushed archive and backup tags would defeat it
+# on every push); a tag pushed by name, --tags or --mirror together with the checked-out branch and
+# pointing outside it, or a commit no branch or worktree HEAD reaches (a sha typed from the reflog)
+# pushed as a second ref, is not seen; push such a ref on its own, which takes the fallback unless
+# it points at the checkout.
+def _proof_refusal(cwd: Path, mapper: ModuleType, to_ref: str) -> str | None:
+    """Why the pushed range is not the whole push, or None when the proof holds."""
+    if mapper.commit_sha(cwd, "HEAD") != mapper.commit_sha(cwd, to_ref):
+        return f"pushed: the checkout HEAD is not the pushed commit {to_ref}"
+    unpushed = mapper.outside_commits(cwd, to_ref)
+    if unpushed:
+        return (f"pushed: {len(unpushed)} unpushed local commits lie outside {to_ref}"
+                " (another ref may be in this push)")
+    return None
+
+
+def _range_deferred(
+    cwd: Path, mapper: ModuleType, from_ref: str, to_ref: str
+) -> tuple[int, list[str]]:
+    """(files in the range, over-budget e2e modules covering them). Raises when no covering set
+    is known, so the caller falls back to every over-budget module."""
+    paths = mapper.pushed_paths(cwd, from_ref, to_ref)
+    decision = mapper.decide(cwd, paths, SHARED_MACHINERY)
+    if not decision.index_built:
+        raise RuntimeError(f"no covering set ({decision.full_reason})")
+    covered = [module for module in decision.modules if module in E2E_MODULES]
+    return len(paths), split_e2e(covered)[1]
+
+
+def _range_problem(from_ref: str, to_ref: str) -> str | None:
+    """Why pre-commit's range cannot be used, or None when both refs are usable."""
+    if not from_ref or not to_ref:
+        return "pushed: no push range"
+    bad = next((ref for ref in (from_ref, to_ref) if ref.startswith("-")), None)
+    return None if bad is None else f"pushed: bad ref {bad}"
+
+
+def _pushed_modules(cwd: Path) -> list[str]:
+    """The over-budget e2e modules this push runs: the pushed range's when the proof holds,
+    otherwise every over-budget module with the reason printed."""
+    from_ref = os.environ.get("PRE_COMMIT_FROM_REF", "")
+    to_ref = os.environ.get("PRE_COMMIT_TO_REF", "")
+    problem = _range_problem(from_ref, to_ref)
+    if problem is not None:
+        return _fallback(problem)
+    try:
+        mapper = _load_mapper()
+        refusal = _proof_refusal(cwd, mapper, to_ref)
+        if refusal is not None:
+            return _fallback(refusal)
+        count, deferred = _range_deferred(cwd, mapper, from_ref, to_ref)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        return _fallback(f"pushed: mapper error: {type(exc).__name__}: {exc}")
+    print(f"pushed: {count} files in {from_ref}...{to_ref} -> {len(deferred)} deferred e2e modules")
+    return deferred
+
+
+def _pushed_main(argv: list[str], cwd: Path) -> int:
+    if argv != ["--pushed"]:
+        print("usage: run_unittest_parallel.py --pushed (takes no other argument)", file=sys.stderr)
+        return 2
+    modules = _pushed_modules(cwd)
+    if not modules:
+        print("pushed: no deferred e2e modules")
+        return 0
+    for module in modules:
+        print(f"pushed: {module}")
+    if _uv_missing(modules, "pushed:"):
+        return 1
+    try:
+        failed = _run_under_uv(modules, cwd, "pushed:")
+    except KeyboardInterrupt:
+        _STOPPING.set()
+        _stop_live_groups()
+        print("interrupted: every module was stopped", file=sys.stderr)
+        return 130
+    print(f"{len(modules) - len(failed)}/{len(modules)} modules passed")
+    if failed:
+        print("failed: " + " ".join(sorted(failed)))
+    return 1 if failed else 0
+
+
+def _mode_main(argv: list[str], cwd: Path) -> int | None:
+    """The --list-groups, --pushed and --staged modes; None for a run of test modules."""
     if argv == ["--list-groups"]:
         return _emit_group_listing()
+    if "--pushed" in argv:
+        return _pushed_main(argv, cwd)
     if "--staged" in argv:
         return _staged_main(argv, cwd)
+    return None
+
+
+def main(argv: list[str], cwd: Path = REPO_ROOT) -> int:
+    mode_code = _mode_main(argv, cwd)
+    if mode_code is not None:
+        return mode_code
     # Names after `--` are the generated listing: discovery decides what runs,
     # and the names keep the hook entry searchable by module.
     if "--" in argv:

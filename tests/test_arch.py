@@ -1202,6 +1202,9 @@ _BROAD_EXCEPT_BACKSTOPS = frozenset(
         ("tools/statusline-doctor.py", "cmd_doctor"),
         ("tools/config_doctor_checks.py", "apply_row"),
         ("tools/run_unittest_parallel.py", "_staged_selection"),
+        # (pushed-tests) from skipping an over-budget e2e module at push: any failure of the
+        # proof or the mapper runs every over-budget module, so the catch-all is the fail-safe.
+        ("tools/run_unittest_parallel.py", "_pushed_modules"),
     }
 )
 

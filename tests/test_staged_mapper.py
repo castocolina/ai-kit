@@ -8,6 +8,7 @@ import pathlib
 import shutil
 import subprocess
 import tempfile
+import types
 import unittest
 import unittest.mock
 
@@ -31,6 +32,18 @@ def make_tree(root: pathlib.Path, files: dict[str, str]) -> pathlib.Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
     return root
+
+
+@contextlib.contextmanager
+def fake_uv_child(runner, uv: str | None = "/usr/bin/uv", returncode: int = 0,
+                  output: str = "1/1 modules passed\n"):
+    """uv is `uv` (None: absent); the `uv run` child exits `returncode`. Yields the Popen mock."""
+    proc = unittest.mock.MagicMock()
+    proc.communicate.return_value = (output, "")
+    proc.returncode = returncode
+    with unittest.mock.patch.object(runner.shutil, "which", lambda _name: uv), \
+            unittest.mock.patch.object(runner.subprocess, "Popen", return_value=proc) as popen:
+        yield popen
 
 
 def snapshot(root: pathlib.Path) -> dict[str, tuple[int, int]]:
@@ -86,6 +99,22 @@ class CoveringTest(MapperCase):
         self.assertIn("shared.dat", index.reach["tests.test_alpha"])
         self.assertEqual(self.mapper.covering_modules(index, "shared.dat"),
                          frozenset({"tests.test_alpha", "tests.test_zeta"}))
+
+    def test_a_tight_skill_is_read_by_path_or_join_others_keep_the_bare_name(self) -> None:
+        # A synthetic tight folder: a fixture naming the real one by path would select this module.
+        make_tree(self.root, {
+            "tests/test_path.py": "P = 'skills/tight-skill/x'\n",
+            "tests/test_join.py": "J = ('skills', 'tight-skill')\n",
+            "tests/test_bare.py": "CANDIDATES = ['tight-skill', 'plain-skill']\n",
+        })
+        index = self.mapper.build_index(self.root)
+        with unittest.mock.patch.object(self.mapper, "TIGHT_SKILL_FOLDERS",
+                                        frozenset({"tight-skill"})):
+            self.assertEqual(
+                self.mapper.covering_modules(index, "skills/tight-skill/run.py"),
+                frozenset({"tests.test_path", "tests.test_join"}))
+            self.assertIn("tests.test_bare",
+                          self.mapper.covering_modules(index, "skills/plain-skill/run.py"))
 
     def test_a_skill_folder_name_is_a_whole_token(self) -> None:
         make_tree(self.root, {"tests/test_other.py": "X = 'skills/my-skill-extra'\n"})
@@ -151,7 +180,15 @@ class CodeFormsTest(MapperCase):
         "quoted_double": 'NAME = "detect"\n',
         "quoted_single": "NAME = 'detect'\n",
         "dotted": "PATH = 'tools.hooks.detect'\n",
+        "helper_attr": "value = setup._detect()\n",
     }
+
+    def test_a_private_helper_attribute_selects_its_tool(self) -> None:
+        make_tree(self.root, {"tests/test_helper_attr.py": "value = setup._zed_probe()\n",
+                              "tools/zed_probe.py": ""})
+        index = self.mapper.build_index(self.root)
+        self.assertEqual(self.mapper.covering_modules(index, "tools/zed_probe.py"),
+                         frozenset({"tests.test_helper_attr"}))
 
     def test_each_code_form_selects_and_prose_does_not(self) -> None:
         files = {f"tests/test_{name}.py": text for name, text in self.FORMS.items()}
@@ -227,6 +264,20 @@ class FailSafeTest(MapperCase):
         self.decide(["tools/alpha.py", "tests/util.py", "Makefile"], self.SHARED)
         self.assertEqual(snapshot(self.root), before)
 
+    def test_a_full_run_still_names_its_covering_modules(self) -> None:
+        decision = self.decide(["tests/util.py"])
+        self.assertEqual(decision.full_reason,
+                         "shared test helper or fixture: tests/util.py (2 modules)")
+        self.assertEqual(len(decision.modules), 2)
+
+    def test_shared_machinery_keeps_its_reason_when_the_index_cannot_be_built(self) -> None:
+        (self.root / "tests" / "test_bad.py").write_bytes(b"\xff\xfe")
+        decision = self.decide(["Makefile", "tools/alpha.py"], self.SHARED)
+        self.assertEqual((decision.full_reason, decision.index_built),
+                         ("shared test machinery: Makefile", False))
+        with self.assertRaises(self.mapper.MapperError):
+            self.decide(["tools/alpha.py"], self.SHARED)
+
 
 @unittest.skipUnless(shutil.which("git"), "git not available")
 class StagedPathsTest(MapperCase):
@@ -272,6 +323,12 @@ class RunnerStagedTest(unittest.TestCase):
         patcher = unittest.mock.patch.object(self.runner, "_run_all", self.record)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # A fixed table, so these cases do not move when the measured table is refreshed.
+        table = unittest.mock.patch.object(self.runner, "E2E_RECORDED_SECS", {
+            "tests.test_precompact_shims_e2e": 58, "tests.test_cross_ai_runner_e2e": 361,
+        })
+        table.start()
+        self.addCleanup(table.stop)
 
     def record(self, modules, cwd=None):
         self.ran.append(list(modules))
@@ -336,17 +393,18 @@ class RunnerStagedTest(unittest.TestCase):
 
     def test_a_mapper_exception_runs_the_full_groups_never_zero(self) -> None:
         patch = self.stand_in(error=RuntimeError("boom"))
-        with patch:
+        with patch, self.fake_uv() as popen:
             code, out = self.main("--staged", "tools/alpha.py")
         self.assertEqual(code, 0)
         self.assertIn("staged: full unit+arch run: mapper error: RuntimeError: boom", out)
         self.assertEqual(self.ran, [self.full_groups()])
+        self.assertEqual(popen.call_args.args[0][4:], ["tests.test_precompact_shims_e2e"])
 
     def test_a_mapper_that_cannot_be_imported_runs_the_full_groups(self) -> None:
         def broken():
             raise ImportError("no mapper")
 
-        with unittest.mock.patch.object(self.runner, "_load_mapper", broken):
+        with unittest.mock.patch.object(self.runner, "_load_mapper", broken), self.fake_uv():
             code, out = self.main("--staged", "tools/alpha.py")
         self.assertIn("mapper error: ImportError: no mapper", out)
         self.assertEqual(self.ran, [self.full_groups()])
@@ -354,7 +412,8 @@ class RunnerStagedTest(unittest.TestCase):
 
     def test_unreadable_mapper_input_runs_the_full_groups(self) -> None:
         (self.root / "tests" / "test_bad.py").write_bytes(b"\xff\xfe")
-        code, out = self.main("--staged", "tools/beta.py")
+        with self.fake_uv():
+            code, out = self.main("--staged", "tools/beta.py")
         self.assertIn("full unit+arch run: mapper error: MapperError", out)
         self.assertEqual(self.ran, [self.full_groups()])
         self.assertEqual(code, 0)
@@ -374,6 +433,10 @@ class RunnerStagedTest(unittest.TestCase):
 
     def decision(self, *modules: str):
         return self.mapper.Decision(modules, {}, False, None)
+
+    def fake_uv(self, uv: str | None = "/usr/bin/uv", returncode: int = 0,
+                output: str = "1/1 modules passed\n"):
+        return fake_uv_child(self.runner, uv=uv, returncode=returncode, output=output)
 
     def run_with_uv(self, *modules: str, uv: str | None):
         patch = self.stand_in(self.decision(*modules))
@@ -399,10 +462,12 @@ class RunnerStagedTest(unittest.TestCase):
         argv = popen.call_args.args[0]
         self.assertEqual(argv[:3], ["uv", "run", "python"])
         self.assertEqual(pathlib.Path(argv[3]).name, "run_unittest_parallel.py")
-        self.assertEqual(argv[4:], ["tests.test_wizard_app", "tests.test_worktree_e2e"])
+        self.assertEqual(argv[4:], ["tests.test_wizard_app"])
         self.assertNotIn("--staged", argv)
         self.assertIs(popen.call_args.kwargs["start_new_session"], True)
-        self.assertIn("staged: under uv: tests.test_wizard_app tests.test_worktree_e2e", out)
+        self.assertIn("staged: under uv: tests.test_wizard_app", out)
+        self.assertIn("staged: deferred to push (over the 60 s commit budget): "
+                      "tests.test_worktree_e2e (no recorded time)", out)
 
     def test_a_uv_only_selection_never_reaches_the_pool(self) -> None:
         with unittest.mock.patch.object(
@@ -412,9 +477,13 @@ class RunnerStagedTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         popen.assert_called_once()
 
-    def test_a_chosen_e2e_module_is_never_dropped(self) -> None:
-        _code, _out, popen = self.run_with_uv("tests.test_worktree_e2e", uv="/usr/bin/uv")
-        self.assertIn("tests.test_worktree_e2e", popen.call_args.args[0])
+    def test_a_chosen_e2e_module_is_run_or_named_never_dropped(self) -> None:
+        code, out, popen = self.run_with_uv(
+            "tests.test_precompact_shims_e2e", "tests.test_worktree_e2e", uv="/usr/bin/uv",
+        )
+        self.assertEqual(code, 0, out)
+        self.assertIn("tests.test_precompact_shims_e2e", popen.call_args.args[0])
+        self.assertIn("tests.test_worktree_e2e (no recorded time); run now:", out)
 
     def test_without_uv_the_commit_is_refused_with_a_pointer(self) -> None:
         code, out, popen = self.run_with_uv("tests.test_alpha", "tests.test_wizard_app", uv=None)
@@ -435,6 +504,289 @@ class RunnerStagedTest(unittest.TestCase):
             code, out = self.main("--staged", "tools/alpha.py")
         self.assertEqual(code, 1)
         self.assertIn("failed: tests.test_wizard_app", out)
+
+    def test_split_e2e_defers_unrecorded_and_over_budget_modules(self) -> None:
+        table = {"tests.test_a_e2e": 60, "tests.test_b_e2e": 61}
+        with unittest.mock.patch.object(self.runner, "E2E_RECORDED_SECS", table):
+            within, deferred = self.runner.split_e2e(
+                ["tests.test_b_e2e", "tests.test_c_e2e", "tests.test_a_e2e"])
+        self.assertEqual(within, ["tests.test_a_e2e"])
+        self.assertEqual(deferred, ["tests.test_b_e2e", "tests.test_c_e2e"])
+
+    def test_the_commit_budget_splits_the_e2e_part_of_a_covering_set(self) -> None:
+        under, over, unrecorded = (
+            "tests.test_precompact_shims_e2e", "tests.test_cross_ai_runner_e2e",
+            "tests.test_worktree_e2e",
+        )
+        patch = self.stand_in(self.decision("tests.test_alpha", under, over, unrecorded))
+        table = {under: 60, over: 61}
+        with patch, unittest.mock.patch.object(self.runner, "E2E_RECORDED_SECS", table), \
+                self.fake_uv() as popen:
+            code, out = self.main("--staged", "tools/alpha.py")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.ran, [["tests.test_alpha"]])
+        self.assertEqual(popen.call_args.args[0][4:], [under])
+        self.assertIn(f"staged: deferred to push (over the 60 s commit budget): {over}"
+                      f" (recorded 61 s); run now: uv run python tools/run_unittest_parallel.py"
+                      f" {over}", out)
+        self.assertIn(f"{unrecorded} (no recorded time); run now:", out)
+        self.assertNotIn(f"=== {over}", out)
+
+    def test_a_full_run_still_runs_its_within_budget_e2e_modules(self) -> None:
+        under, over = "tests.test_precompact_shims_e2e", "tests.test_cross_ai_runner_e2e"
+        decision = self.mapper.Decision(
+            (under, over), {}, False, "shared test machinery: tools/run_unittest_parallel.py",
+        )
+        with self.stand_in(decision), \
+                unittest.mock.patch.object(self.runner, "E2E_RECORDED_SECS",
+                                           {under: 58, over: 361}), \
+                self.fake_uv() as popen:
+            code, out = self.main("--staged", "tools/run_unittest_parallel.py")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.ran, [self.full_groups()])
+        self.assertEqual(popen.call_args.args[0][4:], [under])
+        self.assertIn(f"{over} (recorded 361 s)", out)
+
+    def test_a_mapper_error_runs_within_budget_e2e_and_names_every_other(self) -> None:
+        under = "tests.test_precompact_shims_e2e"
+        with self.stand_in(error=RuntimeError("boom")), \
+                unittest.mock.patch.object(self.runner, "E2E_RECORDED_SECS", {under: 58}), \
+                self.fake_uv() as popen:
+            code, out = self.main("--staged", "tools/alpha.py")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.ran, [self.full_groups()])
+        self.assertEqual(popen.call_args.args[0][4:], [under])
+        for module in sorted(self.runner.E2E_MODULES - {under}):
+            self.assertIn(f"{module} (no recorded time); run now:", out)
+
+
+STATS_TREE = {
+    # tools/alpha.py: 1 module; tools/beta.py: 2 (one of them e2e); skills/s3: 4; tools/gamma.py: 0.
+    "tests/test_one.py": "# covers tools/alpha.py\nNAME = 'alpha.py'\n",
+    "tests/test_two.py": "NAME = 'beta.py'\n",
+    "tests/test_a.py": "NAMES = ['skills/s3/SKILL.md', 'README.md']\n",
+    "tests/test_b.py": "NAME = 'skills/s3'\nREADME = 'README.md'\n",
+    "tests/test_c.py": "NAME = 'skills/s3'\nREADME = 'README.md'\n",
+    "tests/test_d.py": "NAME = 'skills/s3'\n",
+    "tests/test_e2e_x.py": "NAMES = ['beta.py', 'AGENTS.md']\n",
+    "skills/s3/SKILL.md": "",
+    "tools/alpha.py": "",
+    "tools/beta.py": "",
+    "tools/gamma.py": "",
+}
+STATS_TRACKED = [
+    "AGENTS.md", "README.md", "docs/x.md", "skills/s3/SKILL.md", "tests/test_a.py",
+    "tools/alpha.py",
+]
+
+
+class StatsTest(MapperCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.stats_root = make_tree(self.tmp / "stats", STATS_TREE)
+
+    def test_unit_stats_reports_medians_max_uncovered_e2e_and_data_files(self) -> None:
+        index = self.mapper.build_index(self.stats_root)
+        stats = self.mapper.unit_stats(index, self.stats_root, STATS_TRACKED,
+                                       {"tests.test_e2e_x"})
+        self.assertEqual(stats.unit_count, 4)
+        self.assertEqual(stats.median_all, 1.5)  # over 0, 1, 2, 4
+        self.assertEqual(stats.median_covered, 2)  # over 1, 2, 4
+        self.assertEqual((stats.max_count, stats.max_unit), (4, "skills/s3"))
+        self.assertEqual(stats.uncovered, ("tools/gamma.py",))
+        self.assertEqual(stats.e2e_sets, 1)
+        self.assertEqual(stats.top_data_files[:2], (("README.md", 3), ("AGENTS.md", 1)))
+
+    def test_stats_and_path_decisions_print_their_lines(self) -> None:
+        root = str(self.stats_root)
+        out = io.StringIO()
+        tables = (frozenset({"tests.test_e2e_x"}), frozenset())
+        with unittest.mock.patch.object(self.mapper, "tracked_paths",
+                                        lambda _root: STATS_TRACKED), \
+                unittest.mock.patch.object(self.mapper, "_runner_tables", lambda: tables), \
+                contextlib.redirect_stdout(out):
+            code = self.mapper.main(["--stats", "--root", root])
+            decided = self.mapper.main(["--root", root, "tools/alpha.py"])
+        self.assertEqual((code, decided), (0, 0))
+        text = out.getvalue()
+        self.assertIn("mapper: 4 units; covering modules per unit: median 1.5 (all units),"
+                      " median 2 (covered units), max 4 (skills/s3); 1 covering sets hold"
+                      " an e2e module", text)
+        self.assertIn("mapper: uncovered unit tools/gamma.py", text)
+        self.assertIn("mapper: data file README.md: 3 modules", text)
+        self.assertIn("modules: tests.test_one", text)
+
+    def test_usage_and_mapper_errors_exit_2_and_1(self) -> None:
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.mapper.main([]), 2)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mapper.main(["--root", str(self.tmp / "missing"), "tools/alpha.py"])
+        self.assertEqual(code, 1)
+        self.assertIn("mapper error:", out.getvalue())
+
+
+class PushedGitTest(MapperCase):
+    """The argv lists of the push proof, with subprocess.run patched."""
+
+    def completed(self, stdout: bytes = b"", returncode: int = 0):
+        return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr=b"fatal")
+
+    def test_pushed_paths_runs_the_three_dot_diff_argv(self) -> None:
+        run_result = self.completed(b"tools/a.py\0tests/b.py\0")
+        with unittest.mock.patch.object(self.mapper.subprocess, "run",
+                                        return_value=run_result) as run:
+            got = self.mapper.pushed_paths(self.root, "aaa", "bbb")
+        self.assertEqual(got, ["tools/a.py", "tests/b.py"])
+        self.assertEqual(run.call_args.args[0],
+                         ["git", "diff", "--name-only", "-z", "--no-renames", "aaa...bbb"])
+
+    def test_outside_commits_leaves_tags_and_the_stash_out_before_all(self) -> None:
+        with unittest.mock.patch.object(self.mapper.subprocess, "run",
+                                        return_value=self.completed(b"abc\ndef\n")) as run:
+            got = self.mapper.outside_commits(self.root, "HEAD")
+        self.assertEqual(got, ["abc", "def"])
+        self.assertEqual(run.call_args.args[0], [
+            "git", "rev-list", "--exclude=refs/stash", "--exclude=refs/tags/*", "--all",
+            "--not", "--remotes", "HEAD",
+        ])
+
+    def test_a_ref_starting_with_dash_is_refused_before_git_runs(self) -> None:
+        calls = (
+            lambda: self.mapper.pushed_paths(self.root, "-x", "b"),
+            lambda: self.mapper.outside_commits(self.root, "-x"),
+            lambda: self.mapper.commit_sha(self.root, "-x"),
+        )
+        with unittest.mock.patch.object(self.mapper.subprocess, "run",
+                                        side_effect=AssertionError("git must not run")):
+            for call in calls:
+                with self.assertRaises(self.mapper.MapperError):
+                    call()
+
+    def test_a_non_zero_git_exit_is_a_mapper_error(self) -> None:
+        with unittest.mock.patch.object(self.mapper.subprocess, "run",
+                                        return_value=self.completed(returncode=128)):
+            with self.assertRaises(self.mapper.MapperError):
+                self.mapper.pushed_paths(self.root, "a", "b")
+            with self.assertRaises(self.mapper.MapperError):
+                self.mapper.outside_commits(self.root, "b")
+
+
+class PushedModeTest(unittest.TestCase):
+    """The runner's --pushed mode, with the mapper, the refs and the uv child faked."""
+
+    REFS = ("PRE_COMMIT_FROM_REF", "PRE_COMMIT_TO_REF")
+    WITHIN = "tests.test_precompact_shims_e2e"  # recorded at 58 s: within the budget
+    OVER = "tests.test_cross_ai_runner_e2e"  # recorded at 361 s: over it
+
+    def setUp(self) -> None:
+        self.runner = load_tool(RUNNER)
+        self.mapper = load_tool(MAPPER)
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="aikit-pushed-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        pool = unittest.mock.patch.object(
+            self.runner, "_run_all", side_effect=AssertionError("the pool must not start"))
+        pool.start()
+        self.addCleanup(pool.stop)
+        table = unittest.mock.patch.object(
+            self.runner, "E2E_RECORDED_SECS", {self.WITHIN: 58, self.OVER: 361})
+        table.start()
+        self.addCleanup(table.stop)
+
+    def refs(self, from_ref: str | None, to_ref: str | None):
+        env = {k: v for k, v in os.environ.items() if k not in self.REFS}
+        if from_ref is not None:
+            env[self.REFS[0]] = from_ref
+        if to_ref is not None:
+            env[self.REFS[1]] = to_ref
+        return unittest.mock.patch.dict(os.environ, env, clear=True)
+
+    def covering(self, *modules: str):
+        return self.mapper.Decision(modules, {}, False, None)
+
+    def mapper_stub(self, head="h1", to="h1", outside=(), paths=("tools/alpha.py",),
+                    decision=None, error=None):
+        def decide(_root, _paths, _shared):
+            if error is not None:
+                raise error
+            return decision
+
+        return types.SimpleNamespace(
+            commit_sha=lambda _root, ref: head if ref == "HEAD" else to,
+            outside_commits=lambda _root, _to: list(outside),
+            pushed_paths=lambda _root, _from, _to: list(paths),
+            decide=decide,
+        )
+
+    def push(self, mapper, from_ref: str | None = "a", to_ref: str | None = "b",
+             uv: str | None = "/usr/bin/uv"):
+        out = io.StringIO()
+        with self.refs(from_ref, to_ref), \
+                unittest.mock.patch.object(self.runner, "_load_mapper", lambda: mapper), \
+                fake_uv_child(self.runner, uv=uv) as popen, \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = self.runner.main(["--pushed"], cwd=self.tmp)
+        return code, out.getvalue(), popen
+
+    def test_a_narrowed_push_runs_only_the_over_budget_covering_modules(self) -> None:
+        mapper = self.mapper_stub(
+            decision=self.covering(self.WITHIN, self.OVER, "tests.test_alpha"),
+            paths=("tools/alpha.py", "tools/beta.py", "tools/gamma.py"),
+        )
+        code, out, popen = self.push(mapper)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(popen.call_args.args[0][4:], [self.OVER])
+        self.assertIn("pushed: 3 files in a...b -> 1 deferred e2e modules", out)
+        self.assertIn(f"pushed: {self.OVER}", out)
+
+    def test_an_empty_narrowed_result_prints_no_deferred_and_starts_nothing(self) -> None:
+        code, out, popen = self.push(self.mapper_stub(decision=self.covering("tests.test_alpha")))
+        self.assertEqual(code, 0, out)
+        self.assertIn("pushed: no deferred e2e modules", out)
+        popen.assert_not_called()
+
+    def test_every_fallback_reason_runs_every_over_budget_module(self) -> None:
+        every_over_budget = sorted(self.runner.E2E_MODULES - {self.WITHIN})
+        cases = (
+            ("pushed: no push range", {}, {"from_ref": None}),
+            ("pushed: no push range", {}, {"to_ref": None}),
+            ("pushed: bad ref -x", {}, {"from_ref": "-x"}),
+            ("pushed: the checkout HEAD is not the pushed commit b",
+             {"head": "h1", "to": "h2"}, {}),
+            ("pushed: 1 unpushed local commits lie outside b"
+             " (another ref may be in this push)", {"outside": ["c1"]}, {}),
+            ("pushed: mapper error: RuntimeError: boom", {"error": RuntimeError("boom")}, {}),
+        )
+        for reason, stub, refs in cases:
+            with self.subTest(reason=reason, refs=refs):
+                mapper = self.mapper_stub(decision=self.covering(self.WITHIN, self.OVER), **stub)
+                code, out, popen = self.push(mapper, **{"from_ref": "a", "to_ref": "b"} | refs)
+                self.assertEqual(code, 0, out)
+                self.assertIn(f"{reason}; running every e2e module over the commit budget", out)
+                self.assertEqual(popen.call_args.args[0][4:], every_over_budget)
+
+    def test_a_decision_without_a_covering_set_falls_back(self) -> None:
+        decision = self.mapper.Decision((), {}, False, "shared test machinery: Makefile",
+                                        index_built=False)
+        code, out, popen = self.push(self.mapper_stub(decision=decision))
+        self.assertEqual(code, 0, out)
+        self.assertIn("pushed: mapper error: RuntimeError: no covering set"
+                      " (shared test machinery: Makefile); running every e2e module", out)
+        self.assertIn(self.OVER, popen.call_args.args[0])
+
+    def test_no_uv_with_a_chosen_module_is_refused_with_the_pointer(self) -> None:
+        mapper = self.mapper_stub(decision=self.covering(self.WITHIN, self.OVER))
+        code, out, popen = self.push(mapper, uv=None)
+        self.assertEqual(code, 1)
+        self.assertIn(f"pushed: uv not found; the modules {self.OVER} need it; run make setup-env",
+                      out)
+        popen.assert_not_called()
+
+    def test_pushed_takes_no_other_argument(self) -> None:
+        for argv in (["--pushed", "--group", "unit"], ["--pushed", "--staged"],
+                     ["--pushed", self.OVER]):
+            with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(self.runner.main(argv, cwd=self.tmp), 2)
 
 
 if __name__ == "__main__":
