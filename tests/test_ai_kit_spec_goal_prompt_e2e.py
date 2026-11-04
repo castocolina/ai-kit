@@ -9,6 +9,7 @@ subprocess has a timeout, and none outlives its test.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -49,24 +50,76 @@ ANSWERS = {
 }
 
 
+# Directories a walk over a checkout skips (the same set for the status snapshot and the copy).
+WALK_SKIP = frozenset({".git", ".venv", "tmp", "__pycache__"})
+
+
+def _clean_env() -> dict[str, str]:
+    """The environment without GIT_* variables: a commit hook exports GIT_INDEX_FILE, which
+    would point these git calls at the outer repository's index instead of the one they name."""
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+
 def git_status(repo: Path) -> set[str]:
     """Every porcelain line of `repo`, untracked files listed one by one. A checkout without
     `.git` (the clean-room image copies the tree without it) gets a file snapshot instead."""
     proc = subprocess.run(
         ["git", "-C", str(repo), "status", "--porcelain", "--untracked-files=all"],
-        capture_output=True, text=True, check=False, timeout=TIMEOUT,
+        capture_output=True, text=True, check=False, timeout=TIMEOUT, env=_clean_env(),
     )
     if proc.returncode == 0:
         return set(proc.stdout.splitlines())
-    skip = {".git", ".venv", "tmp", "__pycache__"}
     lines = set()
     for base, dirs, names in os.walk(repo):
-        dirs[:] = [d for d in dirs if d not in skip]
+        dirs[:] = [d for d in dirs if d not in WALK_SKIP]
         for name in names:
             path = Path(base, name)
             stat = path.stat()
             lines.add(f"{path.relative_to(repo)} {stat.st_size} {stat.st_mtime_ns}")
     return lines
+
+
+def source_files(repo: Path) -> list[Path]:
+    """The checkout's files a copy takes, relative to `repo`, never anything under `.planning/`
+    (SPEC R9). Tracked files from `git ls-files` when the checkout has git; otherwise a walk
+    that skips the git_status set plus `.planning` (the clean-room image has no `.git`)."""
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "ls-files", "-z"],
+        capture_output=True, check=False, timeout=TIMEOUT, env=_clean_env(),
+    )
+    if proc.returncode == 0:
+        names = [name for name in proc.stdout.decode("utf-8").split("\0") if name]
+    else:
+        skip = WALK_SKIP | {".planning"}
+        names = []
+        for base, dirs, files in os.walk(repo):
+            dirs[:] = [d for d in dirs if d not in skip]
+            names += [os.path.relpath(os.path.join(base, name), repo) for name in files]
+    return [Path(name) for name in names
+            if name != ".planning" and not name.startswith(".planning/")]
+
+
+def copy_checkout(dest: Path) -> None:
+    """Copy this checkout minus `.planning/` into `dest` and make it a git repo with one commit,
+    so the dogfood detect reads the copy and the copy's status can be compared before and after."""
+    for rel in source_files(REPO):
+        src, out = REPO / rel, dest / rel
+        if not os.path.lexists(src):  # tracked but deleted in the work tree
+            continue
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_symlink():
+            os.symlink(os.readlink(src), out)
+        elif src.is_file():
+            shutil.copy2(src, out)
+    commands = (
+        ["init", "-q"],
+        ["add", "--all"],
+        ["-c", "user.name=ai-kit-test", "-c", "user.email=test@example.invalid",
+         "commit", "-q", "-m", "copy of the checkout without .planning"],
+    )
+    for args in commands:
+        subprocess.run(["git", "-C", str(dest), *args], check=True, capture_output=True,
+                       timeout=TIMEOUT, env=_clean_env())
 
 
 class TestRealCli(unittest.TestCase):
@@ -165,24 +218,40 @@ class TestStatusSnapshot(unittest.TestCase):
 
 
 class TestDogfood(unittest.TestCase):
-    def test_detect_on_this_repo(self):
-        with tempfile.TemporaryDirectory() as home:
+    def test_detect_on_a_copy_of_this_repo(self):
+        # The live .planning/ is never read: detect runs on a copy without it (SPEC R9).
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as work:
             env = {
                 "PATH": host_fakes.host_path(host_fakes.write_host_fakes(Path(home) / "host-bin")),
                 "HOME": home,
                 "AI_KIT_REFUSE_REAL_HOME": "1",
             }
-            before = git_status(REPO)
+            copy = Path(work) / "checkout"
+            copy.mkdir()
+            copy_checkout(copy)
+            before = git_status(copy)
             run = subprocess.run(
-                [sys.executable, str(CLI), "detect", "--repo", str(REPO),
+                [sys.executable, str(CLI), "detect", "--repo", str(copy),
                  "--tools", "", "--work-set", "free:dogfood"],
                 capture_output=True, text=True, env=env, timeout=TIMEOUT, check=False,
             )
             self.assertEqual(run.returncode, 0, run.stderr)
-            self.assertEqual(git_status(REPO), before, "dogfood detect must not write")
+            self.assertEqual(git_status(copy), before, "dogfood detect must not write")
         commands = [c["command"] for c in json.loads(run.stdout)["e2e"]["commands"]]
         self.assertIn("make e2e-test", commands)
         self.assertIn("make e2e-docker", commands)
+
+    def test_source_files_without_git(self):
+        # The clean-room image has no .git: the walk fallback lists files, minus .planning.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in ("a.py", "pkg/b.py", ".planning/STATE.md", "tmp/scratch.txt",
+                        "__pycache__/c.pyc"):
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text("x", encoding="utf-8")
+            self.assertEqual(
+                sorted(source_files(root)), [Path("a.py"), Path("pkg/b.py")]
+            )
 
 
 if __name__ == "__main__":

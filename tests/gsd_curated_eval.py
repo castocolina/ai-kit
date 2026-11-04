@@ -398,7 +398,9 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     if not args.out and not args.check:  # before any read of the home (review WR-06)
         print("snapshot needs --out F or --check F")
         return 2
-    repo_root, home = _abs(REPO_ROOT), _abs(args.home or pathlib.Path.home())
+    # Owner runs protect this checkout; the tests pass a scratch repo (SPEC R9, D-11).
+    repo_root = _abs(getattr(args, "repo_root", None) or REPO_ROOT)
+    home = _abs(args.home or pathlib.Path.home())
     current = snapshot(repo_root, home, args.scratch_root)
     if args.out:
         _write_json(_abs(args.out), current)
@@ -4154,7 +4156,13 @@ def _step(name: str, fn) -> dict:
 
 
 def _scratch_project(work: str, label: str, with_planning: bool, host: str = "claude") -> str:
-    """A git repo with the host-specific gsd-core layout; copy config when asked."""
+    """A git repo with the host-specific gsd-core layout; copy config when asked.
+
+    The config is `tests/fixtures/curated_config_v2/repo-config.json`: a copy of the committed
+    `.planning/config.json` (`git show HEAD:.planning/config.json`) taken 2026-11-03. JSON cannot
+    hold a frozen-history header line, so the source and date live here. The working copy is
+    never read (SPEC R9, D-11).
+    """
     project = os.path.join(work, label)
     os.makedirs(project)
     subprocess.run(["git", "init", "-q", project], check=True)
@@ -4165,7 +4173,7 @@ def _scratch_project(work: str, label: str, with_planning: bool, host: str = "cl
     if with_planning:
         os.makedirs(os.path.join(project, ".planning"))
         shutil.copyfile(
-            REPO_ROOT / ".planning" / "config.json",
+            REPO_ROOT / "tests" / "fixtures" / "curated_config_v2" / "repo-config.json",
             os.path.join(project, ".planning", "config.json"),
         )
     return project
@@ -5117,6 +5125,9 @@ def _build_parser() -> argparse.ArgumentParser:
     snap.add_argument("--out", help="write the snapshot JSON to this file")
     snap.add_argument("--check", help="compare the protected set against this snapshot file")
     snap.add_argument("--home", help="home directory to protect (default: this process's)")
+    snap.add_argument(
+        "--repo-root", help="repo whose .planning/ is protected (default: this checkout)"
+    )
     snap.add_argument(
         "--scratch-root", action="append", default=[], help="exclude this root's Codex trust rows"
     )

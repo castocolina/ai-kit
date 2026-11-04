@@ -556,14 +556,26 @@ class TestSnapshot(_ScratchPaths):
         out = os.path.join(self.scratch, "snapshot.json")
         with contextlib.redirect_stdout(io.StringIO()):
             ev._cmd_snapshot(
-                Namespace(out=out, check=None, home=pathlib.Path(self.home), scratch_root=[])
+                Namespace(
+                    out=out,
+                    check=None,
+                    home=pathlib.Path(self.home),
+                    scratch_root=[],
+                    repo_root=self.repo,
+                )
             )
         root = os.path.join(self.scratch, "owned")
         self.write(
             os.path.join(self.home, ".codex", "config.toml"),
             f'model = "gpt"\n[projects."{root}/project-a"]\ntrust_level = "trusted"\n',
         )
-        args = Namespace(out=None, check=out, home=pathlib.Path(self.home), scratch_root=[root])
+        args = Namespace(
+            out=None,
+            check=out,
+            home=pathlib.Path(self.home),
+            scratch_root=[root],
+            repo_root=self.repo,
+        )
         with contextlib.redirect_stdout(io.StringIO()) as sink:
             self.assertEqual(ev._cmd_snapshot(args), 0)
         self.assertEqual(sink.getvalue().strip(), "snapshot ok")
@@ -698,14 +710,26 @@ class TestSnapshot(_ScratchPaths):
         out = os.path.join(self.scratch, "snap.json")
         with contextlib.redirect_stdout(io.StringIO()) as sink:
             code = ev._cmd_snapshot(
-                Namespace(out=out, check=None, home=pathlib.Path(self.home), scratch_root=[])
+                Namespace(
+                    out=out,
+                    check=None,
+                    home=pathlib.Path(self.home),
+                    scratch_root=[],
+                    repo_root=self.repo,
+                )
             )
             self.assertEqual(code, 0)
             self.assertNotIn(self.home, sink.getvalue())
             text = pathlib.Path(out).read_text(encoding="utf-8")
             self.assertNotIn(self.scratch, text)
             code = ev._cmd_snapshot(
-                Namespace(out=None, check=out, home=pathlib.Path(self.home), scratch_root=[])
+                Namespace(
+                    out=None,
+                    check=out,
+                    home=pathlib.Path(self.home),
+                    scratch_root=[],
+                    repo_root=self.repo,
+                )
             )
         self.assertEqual(code, 0)
         self.assertIn("snapshot ok", sink.getvalue())
@@ -714,12 +738,24 @@ class TestSnapshot(_ScratchPaths):
         out = os.path.join(self.scratch, "snap.json")
         with contextlib.redirect_stdout(io.StringIO()):
             ev._cmd_snapshot(
-                Namespace(out=out, check=None, home=pathlib.Path(self.home), scratch_root=[])
+                Namespace(
+                    out=out,
+                    check=None,
+                    home=pathlib.Path(self.home),
+                    scratch_root=[],
+                    repo_root=self.repo,
+                )
             )
         self.write(os.path.join(self.home, ".gsd", "defaults.json"), '{"z": 9}\n')
         with contextlib.redirect_stdout(io.StringIO()) as sink:
             code = ev._cmd_snapshot(
-                Namespace(out=None, check=out, home=pathlib.Path(self.home), scratch_root=[])
+                Namespace(
+                    out=None,
+                    check=out,
+                    home=pathlib.Path(self.home),
+                    scratch_root=[],
+                    repo_root=self.repo,
+                )
             )
         self.assertEqual(code, 1)
         self.assertEqual(sink.getvalue().strip(), f"changed {ev.HOME_LABEL}/.gsd/defaults.json")
@@ -729,7 +765,13 @@ class TestSnapshot(_ScratchPaths):
         out = os.path.join(self.scratch, "snap.json")
         with contextlib.redirect_stdout(io.StringIO()):
             ev._cmd_snapshot(
-                Namespace(out=out, check=None, home=pathlib.Path(self.home), scratch_root=[])
+                Namespace(
+                    out=out,
+                    check=None,
+                    home=pathlib.Path(self.home),
+                    scratch_root=[],
+                    repo_root=self.repo,
+                )
             )
         label = ev.CURSOR_CLI_CONFIG_LABEL
         self.write(os.path.join(self.home, ".cursor", "cli-config.json"), '{"model":"y"}\n')
@@ -744,6 +786,7 @@ class TestSnapshot(_ScratchPaths):
                     check=out,
                     home=pathlib.Path(self.home),
                     scratch_root=[],
+                    repo_root=self.repo,
                     host_rewrite=[label],
                 )
             )
@@ -762,6 +805,7 @@ class TestSnapshot(_ScratchPaths):
                     check=out,
                     home=pathlib.Path(self.home),
                     scratch_root=[],
+                    repo_root=self.repo,
                     host_rewrite=[label],
                 )
             )
@@ -778,7 +822,13 @@ class TestSnapshot(_ScratchPaths):
         out = os.path.join(self.scratch, "snap.json")
         with contextlib.redirect_stdout(io.StringIO()):
             ev._cmd_snapshot(
-                Namespace(out=out, check=None, home=pathlib.Path(self.home), scratch_root=[])
+                Namespace(
+                    out=out,
+                    check=None,
+                    home=pathlib.Path(self.home),
+                    scratch_root=[],
+                    repo_root=self.repo,
+                )
             )
         self.write(os.path.join(self.home, ".claude", "plugins", "marketplaces.json"), "[1]\n")
         label = ev.CURSOR_CLI_CONFIG_LABEL
@@ -790,6 +840,7 @@ class TestSnapshot(_ScratchPaths):
                         check=out,
                         home=pathlib.Path(self.home),
                         scratch_root=[],
+                        repo_root=self.repo,
                         host_rewrite=host_rewrite,
                     )
                 )

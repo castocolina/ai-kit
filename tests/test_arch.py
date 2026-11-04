@@ -29,6 +29,7 @@ import importlib.util
 import io
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tokenize
@@ -772,6 +773,329 @@ def check_no_shell_true(tree):
     return violations
 
 
+# SPEC R9 / D-13: no test builds a path into the repo's .planning/. A repo root is a name (or
+# self/cls attribute) assigned from __file__ or from the cwd, the runner's cwd being the checkout.
+# A temp project's own .planning/ is never flagged, because its root is not a repo root.
+# This list must stay empty: a reader is moved to a temp copy or a frozen fixture, never listed.
+PLANNING_READER_EXCEPTIONS: dict[str, str] = {}
+_PLANNING_TEXT = re.compile(r"/?\.planning(/|$)")
+_RELATIVE_PLANNING = re.compile(r"\.planning(/|$)")
+_CWD_CALLS = frozenset({"Path.cwd", "pathlib.Path.cwd", "os.getcwd"})
+_PATH_CALLS = frozenset({"Path", "pathlib.Path", "PurePath", "pathlib.PurePath"})
+_JOIN_CALLS = frozenset({"os.path.join", "posixpath.join"})
+_ROOT_WRAPPERS = _PATH_CALLS | _JOIN_CALLS | frozenset({
+    "str", "os.fspath", "os.path.abspath", "os.path.realpath", "os.path.dirname",
+    "os.path.normpath", "os.path.expanduser",
+})
+_FS_CALLS = _PATH_CALLS | frozenset({
+    "open", "os.listdir", "os.scandir", "os.walk", "os.path.exists", "os.path.isfile",
+    "os.path.isdir", "glob.glob", "glob.iglob", "shutil.copy", "shutil.copy2",
+    "shutil.copyfile", "shutil.copytree",
+})
+_FS_METHODS = frozenset({
+    "read_text", "read_bytes", "open", "exists", "is_file", "is_dir", "iterdir", "glob",
+    "rglob", "stat", "write_text", "write_bytes", "unlink",
+})
+
+
+def _dotted_name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted_name(node.value)
+        return f"{base}.{node.attr}" if base else None
+    return None
+
+
+def _is_str_const(node, pattern):
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and pattern.match(node.value) is not None
+    )
+
+
+def _is_repo_rooted(node, roots, attrs):
+    """True when the expression is a repo root or a path expression built on one."""
+    if isinstance(node, ast.Name):
+        return node.id in roots or node.id == "__file__"
+    if isinstance(node, ast.Attribute):
+        is_self_attr = (
+            isinstance(node.value, ast.Name)
+            and node.value.id in ("self", "cls")
+            and node.attr in attrs
+        )
+        if is_self_attr:
+            return True
+        return _is_repo_rooted(node.value, roots, attrs)
+    if isinstance(node, ast.Subscript):
+        return _is_repo_rooted(node.value, roots, attrs)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _is_repo_rooted(node.left, roots, attrs)
+    if isinstance(node, ast.Call):
+        dotted = _dotted_name(node.func)
+        if dotted in _CWD_CALLS:
+            return True
+        if dotted in _ROOT_WRAPPERS:
+            return any(_is_repo_rooted(arg, roots, attrs) for arg in node.args)
+        # a method on a rooted receiver: Path(__file__).resolve(), REPO_ROOT.joinpath("x")
+        return isinstance(node.func, ast.Attribute) and _is_repo_rooted(
+            node.func.value, roots, attrs
+        )
+    return False
+
+
+def _is_relative_planning(node):
+    """True for a relative .planning path expression (it resolves against the cwd)."""
+    if _is_str_const(node, _RELATIVE_PLANNING):
+        return True
+    if isinstance(node, ast.Call) and _dotted_name(node.func) in _PATH_CALLS | _JOIN_CALLS:
+        return bool(node.args) and _is_str_const(node.args[0], _RELATIVE_PLANNING)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _is_relative_planning(node.left)
+    return False
+
+
+def _planning_path_offence(node, roots, attrs):
+    """True when this expression joins a repo root with a .planning part (any join form)."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _is_repo_rooted(node.left, roots, attrs) and _is_str_const(
+            node.right, _PLANNING_TEXT
+        )
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return (
+            _is_repo_rooted(node.left, roots, attrs) and _is_str_const(node.right, _PLANNING_TEXT)
+        ) or (
+            _is_repo_rooted(node.right, roots, attrs) and _is_str_const(node.left, _PLANNING_TEXT)
+        )
+    if isinstance(node, ast.JoinedStr):
+        return any(
+            isinstance(prev, ast.FormattedValue)
+            and _is_repo_rooted(prev.value, roots, attrs)
+            and _is_str_const(nxt, _PLANNING_TEXT)
+            for prev, nxt in zip(node.values, node.values[1:], strict=False)
+        )
+    if not isinstance(node, ast.Call):
+        return False
+    dotted = _dotted_name(node.func)
+    joins_root = dotted in _JOIN_CALLS | _PATH_CALLS and bool(node.args)
+    if joins_root and _is_repo_rooted(node.args[0], roots, attrs):
+        return any(_is_str_const(arg, _PLANNING_TEXT) for arg in node.args[1:])
+    if isinstance(node.func, ast.Attribute) and node.func.attr == "joinpath":
+        return _is_repo_rooted(node.func.value, roots, attrs) and any(
+            _is_str_const(arg, _PLANNING_TEXT) for arg in node.args
+        )
+    return False
+
+
+def _relative_planning_use(node):
+    """True when a filesystem call (or a Path method) takes a relative .planning path."""
+    if not isinstance(node, ast.Call):
+        return False
+    if _dotted_name(node.func) in _FS_CALLS:
+        return bool(node.args) and _is_relative_planning(node.args[0])
+    if isinstance(node.func, ast.Attribute) and node.func.attr in _FS_METHODS:
+        return _is_relative_planning(node.func.value)
+    return False
+
+
+def _rooted_bindings(nodes, roots, attrs):
+    """Names bound by plain assignment to a repo-rooted value (two passes: chained names)."""
+    found = set(roots)
+    assigns = [node for node in nodes if isinstance(node, ast.Assign)]
+    for _ in range(2):
+        for node in assigns:
+            if _is_repo_rooted(node.value, found, attrs):
+                found.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return frozenset(found)
+
+
+def _class_repo_attrs(classdef, roots):
+    """self.X / cls.X attributes a class assigns from a repo-rooted value (setUpClass too)."""
+    attrs = set()
+    for node in ast.walk(classdef):
+        if not isinstance(node, ast.Assign) or not _is_repo_rooted(node.value, roots, attrs):
+            continue
+        for target in node.targets:
+            if not isinstance(target, ast.Attribute) or not isinstance(target.value, ast.Name):
+                continue
+            if target.value.id in ("self", "cls"):
+                attrs.add(target.attr)
+    return frozenset(attrs)
+
+
+def _scan_planning_scope(node, roots, attrs, violations):
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            local = _rooted_bindings(ast.walk(child), roots, attrs)
+            _scan_planning_scope(child, local, attrs, violations)
+            continue
+        if isinstance(child, ast.ClassDef):
+            _scan_planning_scope(child, roots, attrs | _class_repo_attrs(child, roots), violations)
+            continue
+        if isinstance(child, ast.expr) and (
+            _planning_path_offence(child, roots, attrs) or _relative_planning_use(child)
+        ):
+            violations.append(f"line {child.lineno}: {ast.unparse(child)[:80]}")
+        _scan_planning_scope(child, roots, attrs, violations)
+
+
+def planning_reader_exception_problems(exceptions):
+    """SPEC R9: the exception list stays empty; each entry is a problem by itself."""
+    return [f"{path}: {reason}" for path, reason in sorted(exceptions.items())]
+
+
+def check_no_planning_reader(tree):
+    """SPEC R9 / D-13: flag a path expression that joins a repo root (or the cwd) with the
+    repo's .planning/, or a relative .planning path passed to a filesystem call. It sees literal
+    path forms only; its run-time backstop is plan 28-08's long-path matrix environment, whose
+    clone has no .planning/, so a reader this rule misses shows as a matrix difference."""
+    module_roots = set()
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom):
+            module_roots.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if re.search(r"ROOT|REPO", alias.name)
+            )
+    module_roots = _rooted_bindings(tree.body, module_roots, frozenset())
+    violations = []
+    _scan_planning_scope(tree, module_roots, frozenset(), violations)
+    return violations
+
+
+# SPEC R5 / D-05 static layer: no test names a host CLI as the program of a process-spawning call
+# outside tests/host_fakes.py. Where each spawning API keeps its program: "argv" (subprocess
+# family: element 0 of an argv list or tuple, or the first shlex word of a string), "arg0" or
+# "arg1" (a string constant at that argument), "cmd" (the first shlex word of a command string).
+HOST_FAKES_PATH = "tests/host_fakes.py"
+_RUNNER_PATH = os.path.join(_REPO_ROOT, "tools", "run_unittest_parallel.py")
+_SUBPROCESS_EXECUTABLE_CALLS = frozenset({
+    "subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_call",
+    "subprocess.check_output", "asyncio.create_subprocess_exec",
+    "asyncio.create_subprocess_shell",
+})
+SPAWN_PROGRAM_POSITION = {
+    **dict.fromkeys(
+        ("subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_call",
+         "subprocess.check_output"),
+        "argv",
+    ),
+    **dict.fromkeys(
+        (f"os.{name}" for name in (
+            "execv", "execve", "execvp", "execvpe", "execl", "execle", "execlp", "execlpe",
+            "posix_spawn", "posix_spawnp")),
+        "arg0",
+    ),
+    "asyncio.create_subprocess_exec": "arg0",
+    **dict.fromkeys(
+        (f"os.{name}" for name in (
+            "spawnv", "spawnve", "spawnvp", "spawnvpe", "spawnl", "spawnle", "spawnlp",
+            "spawnlpe")),
+        "arg1",
+    ),
+    **dict.fromkeys(("os.system", "os.popen", "asyncio.create_subprocess_shell"), "cmd"),
+}
+
+
+def _host_cli_names():
+    """The runner's HOST_CLI_NAMES set, read with ast so the runner is never imported here."""
+    with open(_RUNNER_PATH, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read(), filename=_RUNNER_PATH)
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "HOST_CLI_NAMES" for t in node.targets):
+            continue
+        call = node.value
+        if (isinstance(call, ast.Call) and _dotted_name(call.func) == "frozenset"
+                and len(call.args) == 1):
+            return frozenset(ast.literal_eval(call.args[0]))
+        raise AssertionError(f"{_RUNNER_PATH}: HOST_CLI_NAMES must be frozenset({{literal set}})")
+    raise AssertionError(f"{_RUNNER_PATH} has no module-level HOST_CLI_NAMES assignment")
+
+
+def _constant_str(node):
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _shell_program(text):
+    """Basename of the first word of a command string; None when it is not a command."""
+    try:
+        words = shlex.split(text)
+    except ValueError:
+        return None
+    return os.path.basename(words[0]) if words else None
+
+
+def _program_argument(call, position):
+    """The AST node holding the program of a spawning call, or None when it is not fixed."""
+    if position == "argv":
+        if call.args:
+            return call.args[0]
+        return next((kw.value for kw in call.keywords if kw.arg == "args"), None)
+    index = 1 if position == "arg1" else 0
+    return call.args[index] if len(call.args) > index else None
+
+
+def _program_name(node, position):
+    if position == "argv" and isinstance(node, (ast.List, ast.Tuple)):
+        first = _constant_str(node.elts[0]) if node.elts else None
+        return os.path.basename(first) if first else None
+    text = _constant_str(node)
+    if text is None:
+        return None
+    if position in ("argv", "cmd"):
+        return _shell_program(text)
+    return os.path.basename(text)
+
+
+def _spawned_programs(call, bare_which):
+    """(form, program basename) pairs that one call spawns, in the forms the rule names."""
+    found = []
+    callee = _dotted_name(call.func) or ""
+    position = SPAWN_PROGRAM_POSITION.get(callee)
+    if position is not None:
+        program = _program_name(_program_argument(call, position), position)
+        if program:
+            found.append(("program", program))
+    if callee in _SUBPROCESS_EXECUTABLE_CALLS:
+        for kw in call.keywords:
+            executable = _constant_str(kw.value) if kw.arg == "executable" else None
+            if executable:
+                found.append(("executable=", os.path.basename(executable)))
+    if callee == "shutil.which" or (bare_which and callee == "which"):
+        target = _constant_str(call.args[0]) if call.args else None
+        if target:
+            found.append(("shutil.which", os.path.basename(target)))
+    return found
+
+
+def check_no_host_cli_calls(tree, names):
+    """SPEC R5 / D-05 static layer: flag a call that spawns a host CLI (basename in `names`) at
+    its program position, through a literal `executable=` keyword, or through shutil.which.
+
+    Only these call shapes are checked, so a host name in a data list or an assertion argument is
+    never flagged. Known gap: an argv or an `executable=` value built in a variable is not seen
+    statically; the run-time tripwire catches it when it resolves through PATH. An absolute host
+    path built at run time is caught by neither, and tests/host_fakes.py is the sanctioned way to
+    get host behaviour.
+    """
+    bare_which = any(
+        isinstance(node, ast.ImportFrom) and node.module == "shutil"
+        and any(alias.name == "which" for alias in node.names)
+        for node in ast.walk(tree)
+    )
+    violations = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for form, program in _spawned_programs(node, bare_which):
+            if program in names:
+                violations.append(f"line {node.lineno}: {form} {program}")
+    return violations
+
+
 # D-25: AST isolation between the session wake (Phase 26) and Phase 25's
 # subprocess ladder. The wake package never imports the ladder's modules nor
 # names its state writer or wait paths; the ladder's code never imports the
@@ -1153,6 +1477,43 @@ class TestArchitecture(unittest.TestCase):
             guarded += any(_is_main_guard(node) for node in tree.body)
         self.assertEqual([], violations)
         self.assertGreater(guarded, 0)
+
+    def test_no_test_reads_planning(self):
+        # SPEC R9: every direct tests/*.py file; tests/fixtures/ is data and is not walked.
+        tests_root = os.path.dirname(os.path.abspath(__file__))
+        violations, still_reading = [], set()
+        for filename in sorted(os.listdir(tests_root)):
+            if not filename.endswith(".py"):
+                continue
+            relpath = f"tests/{filename}"
+            with open(os.path.join(tests_root, filename), encoding="utf-8") as handle:
+                tree = ast.parse(handle.read(), filename=filename)
+            found = check_no_planning_reader(tree)
+            if found and relpath in PLANNING_READER_EXCEPTIONS:
+                still_reading.add(relpath)
+            elif found:
+                violations.extend(f"{relpath} {problem}" for problem in found)
+        self.assertEqual([], violations)
+        # A listed file that no longer reads .planning/ is a stale entry; remove it.
+        self.assertEqual(sorted(PLANNING_READER_EXCEPTIONS), sorted(still_reading))
+
+    def test_planning_reader_exceptions_stay_empty(self):
+        self.assertEqual([], planning_reader_exception_problems(PLANNING_READER_EXCEPTIONS))
+
+    def test_no_test_calls_a_host_cli(self):
+        # SPEC R5 / D-05: no test spawns a host CLI by name; tests/host_fakes.py is exempt.
+        tests_root = os.path.dirname(os.path.abspath(__file__))
+        names = _host_cli_names()
+        violations = []
+        for filename in sorted(os.listdir(tests_root)):
+            relpath = f"tests/{filename}"
+            if not filename.endswith(".py") or relpath == HOST_FAKES_PATH:
+                continue
+            with open(os.path.join(tests_root, filename), encoding="utf-8") as handle:
+                tree = ast.parse(handle.read(), filename=filename)
+            violations.extend(f"{relpath} {problem}"
+                              for problem in check_no_host_cli_calls(tree, names))
+        self.assertEqual([], violations)
 
     def test_rule9_broad_except_only_in_listed_backstops(self):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -1640,6 +2001,10 @@ class TestArchNonVacuity(unittest.TestCase):
         ).stdout.splitlines()
         pairs = []
         for relpath in tracked:
+            # SPEC R9: .planning/ is history that check_legacy_references never reads (it is in
+            # the history prefixes), so it is skipped before the open, not after.
+            if relpath.startswith(".planning/"):
+                continue
             path = os.path.join(repo_root, relpath)
             if not os.path.isfile(path) or os.path.islink(path):
                 continue
@@ -1803,6 +2168,108 @@ class TestArchNonVacuity(unittest.TestCase):
         renamed = src.replace("apply_row", "helper")
         flagged = check_broad_except_allowlist("tools/config_doctor_checks.py", renamed)
         self.assertEqual(1, len(flagged))
+
+    def test_planning_reader_flags_each_join_form(self):
+        # One synthetic offender per join form (SPEC R9 encoding); each must fail.
+        setup = (
+            "import os\nfrom pathlib import Path\n"
+            "REPO_ROOT = Path(__file__).resolve().parent.parent\n"
+        )
+        offenders = (
+            'open(REPO_ROOT / ".planning" / "STATE.md")\n',
+            'open(os.path.join(REPO_ROOT, ".planning", "STATE.md"))\n',
+            'Path(REPO_ROOT, ".planning")\n',
+            'p = f"{REPO_ROOT}/.planning/STATE.md"\n',
+            'p = str(REPO_ROOT) + "/.planning/STATE.md"\n',
+            'open(".planning/STATE.md")\n',
+            '(Path(".planning") / "STATE.md").read_text()\n',
+            'open(os.path.join(".planning", "STATE.md"))\n',
+            'p = Path.cwd() / ".planning"\n',
+            'p = os.path.join(os.getcwd(), ".planning", "STATE.md")\n',
+        )
+        for body in offenders:
+            with self.subTest(body=body):
+                self.assertNotEqual([], check_no_planning_reader(ast.parse(setup + body)))
+
+    def test_planning_reader_tracks_class_and_function_roots(self):
+        class_case = (
+            "from pathlib import Path\n"
+            "class T:\n"
+            "    @classmethod\n"
+            "    def setUpClass(cls):\n"
+            "        cls.repo = Path(__file__).resolve().parent.parent\n"
+            "    def test_read(self):\n"
+            '        open(self.repo / ".planning" / "STATE.md")\n'
+        )
+        function_case = (
+            "from pathlib import Path\n"
+            "def read():\n"
+            "    root = Path(__file__).resolve().parent\n"
+            '    return open(root / ".planning" / "STATE.md")\n'
+        )
+        self.assertNotEqual([], check_no_planning_reader(ast.parse(class_case)))
+        self.assertNotEqual([], check_no_planning_reader(ast.parse(function_case)))
+
+    def test_host_cli_flags_each_spawning_family_and_form(self):
+        # SPEC R5 / D-05: one synthetic caller per form and per spawning family; each must fail.
+        names = _host_cli_names()
+        self.assertIn("claude", names)
+        offenders = (
+            'subprocess.run(["claude", "--version"])\n',
+            'subprocess.run(args=["/usr/bin/claude", "--version"])\n',
+            'subprocess.check_output(["claude", "--version"])\n',
+            'subprocess.run("claude --version", shell=False)\n',
+            'subprocess.Popen("claude --version", shell=True)\n',
+            'os.system("claude --version")\n',
+            'os.popen("claude --version")\n',
+            'os.execvp("claude", ["claude", "--version"])\n',
+            'os.execv("/usr/bin/claude", ["claude", "--version"])\n',
+            'os.posix_spawnp("claude", ["claude"], {})\n',
+            'os.spawnvp(os.P_WAIT, "claude", ["claude", "--version"])\n',
+            'os.spawnl(os.P_WAIT, "/usr/bin/claude", "claude")\n',
+            'asyncio.create_subprocess_exec("claude", "--version")\n',
+            'asyncio.create_subprocess_shell("claude --version")\n',
+            'shutil.which("claude")\n',
+            'subprocess.run(["innocent-name", "--version"], executable="/usr/bin/claude")\n',
+            'subprocess.Popen("x --version", shell=True, executable="claude")\n',
+            'asyncio.create_subprocess_exec("x", executable="/usr/bin/claude")\n',
+        )
+        for source in offenders:
+            with self.subTest(source=source):
+                self.assertNotEqual([], check_no_host_cli_calls(ast.parse(source), names))
+
+    def test_host_cli_bare_which_import_is_flagged(self):
+        source = "from shutil import which\nwhich('claude')\n"
+        self.assertNotEqual([], check_no_host_cli_calls(ast.parse(source), _host_cli_names()))
+
+    def test_host_cli_clean_forms_are_not_flagged(self):
+        # Data lists, assertion arguments, variable programs and a non-constant executable pass.
+        names = _host_cli_names()
+        clean = (
+            'ARGV = ["claude", "codex"]\n',
+            'self.assertEqual(argv, ["codex", "exec"])\n',
+            "subprocess.run([program, '--version'])\n",
+            "subprocess.run(cmd)\n",
+            'subprocess.run([sys.executable, "-c", "pass"], executable=sys.executable)\n',
+        )
+        for source in clean:
+            with self.subTest(source=source):
+                self.assertEqual([], check_no_host_cli_calls(ast.parse(source), names))
+
+    def test_planning_reader_exception_list_rejects_an_entry(self):
+        self.assertNotEqual(
+            [], planning_reader_exception_problems({"tests/test_x.py": "reads the live project"})
+        )
+        self.assertEqual([], planning_reader_exception_problems({}))
+
+    def test_planning_reader_allows_temp_projects_and_other_paths(self):
+        clean = (
+            "import os, tempfile\nfrom pathlib import Path\n"
+            'temp = Path(tempfile.mkdtemp()) / ".planning"\n'
+            'ok = path.endswith(os.path.join(".planning", "config.json"))\n'
+            'def f(project):\n    return open(project / ".planning" / "x")\n'
+        )
+        self.assertEqual([], check_no_planning_reader(ast.parse(clean)))
 
     def test_wake_isolation_flags_phase25_reach(self):
         # Each shape the D-25 rule exists to catch, including the two real

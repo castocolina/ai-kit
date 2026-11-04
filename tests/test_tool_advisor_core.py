@@ -1,5 +1,6 @@
 """SPEC R3/R4 tests for D-06..D-08 advisor parsing, output safety and read reports."""
 import contextlib
+import importlib.machinery
 import importlib.util
 import io
 import json
@@ -333,14 +334,17 @@ class AdvisorCoreTests(unittest.TestCase):
         self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "{}", ""))
 
 
-_LIVE_DIR = os.path.join(_ROOT, ".planning", "milestones", "v1.3-phases",
-                         "21.3-visible-tool-advisory-hooks-as-setup-knobs")
+# Frozen copies of the phase-21.3 live evidence and its checker (SPEC R9): the live project is
+# never read; the checker is a .py.txt, so it loads through an explicit SourceFileLoader.
+_LIVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "archived",
+                         "21.3")
 _LIVE_MD = os.path.join(_LIVE_DIR, "21.3-LIVE.md")
 
 
 def _load_live_checker():
-    spec = importlib.util.spec_from_file_location(
-        "check_live_test", os.path.join(_LIVE_DIR, "live", "check_live.py"))
+    path = os.path.join(_LIVE_DIR, "live", "check_live.py.txt")
+    loader = importlib.machinery.SourceFileLoader("check_live_test", path)
+    spec = importlib.util.spec_from_file_location("check_live_test", path, loader=loader)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

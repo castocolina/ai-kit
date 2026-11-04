@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PHASE = ROOT / ".planning" / "milestones" / "v1.3-phases" / "22-pi-live-validation"
+# Frozen copies of the phase-22 evidence and scripts (SPEC R9): the live project is never read.
+PHASE = Path(__file__).resolve().parent / "fixtures" / "archived" / "22"
 LIVE = PHASE / "live"
 # Commit cleanliness, tmp/ cleanup and full make gates are execution-time-only checks.
-TRIMMER = LIVE / "trim_pi_capture.py"
+TRIMMER = LIVE / "trim_pi_capture.py.txt"
 
 MODEL = {
     "id": "claude-sonnet-x",
@@ -177,7 +180,8 @@ def _digest_at_judged_commit(phase: Path, judge_text: str) -> bool:
         )
         if archive.returncode != 0:
             return False
-        subprocess.run(["tar", "-x", "-C", tmp], input=archive.stdout, check=True)
+        with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as bundle:
+            bundle.extractall(tmp, filter="data")
         return "digests ok" in subprocess.run(
             [
                 sys.executable,
@@ -403,10 +407,10 @@ class TestLiveSelfTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
     def test_pi_mock_provider_self_test_passes(self):
-        self._self_test("pi_mock_provider.py")
+        self._self_test("pi_mock_provider.py.txt")
 
     def test_check_pi_live_self_test_passes(self):
-        self._self_test("check_pi_live.py")
+        self._self_test("check_pi_live.py.txt")
 
 
 if __name__ == "__main__":
