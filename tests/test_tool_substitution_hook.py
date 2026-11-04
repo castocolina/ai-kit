@@ -1180,7 +1180,9 @@ class TestCompose(unittest.TestCase):
             self.assertEqual(detect.compose_message(malformed), ("", ""))
 
     def test_compose_has_guidance_flags(self):
-        user_line, context = detect.compose_message(_detection("rg", "bat", "fd", "sd"))
+        # A short synthetic hook path keeps the Usage suffix whatever the checkout length is.
+        with mock.patch.object(detect, "__file__", "/r/tools/hooks/detect.py"):
+            user_line, context = detect.compose_message(_detection("rg", "bat", "fd", "sd"))
         self.assertIn("rg", user_line)
         self.assertIn("Usage: ", user_line)
         self.assertIn("Prefer these installed modern tools over their legacy counterparts "
@@ -1197,13 +1199,17 @@ class TestCompose(unittest.TestCase):
 
     def test_usage_path_collapses_a_symlinked_home(self):
         # Fedora atomic: HOME=/home/u while realpaths live under /var/home/u.
-        real_home = os.path.dirname(os.path.realpath(_REPO))
+        # A short synthetic repo keeps the Usage suffix whatever the checkout is called.
         with tempfile.TemporaryDirectory() as scratch:
+            real = os.path.join(os.path.realpath(scratch), "real")
+            os.makedirs(os.path.join(real, "r", "tools", "hooks"))
             link = os.path.join(scratch, "home")
-            os.symlink(real_home, link)
-            with mock.patch.object(detect.os.path, "expanduser", return_value=link):
+            os.symlink(real, link)
+            hook = os.path.join(real, "r", "tools", "hooks", "detect.py")
+            with (mock.patch.object(detect, "__file__", hook),
+                  mock.patch.object(detect.os.path, "expanduser", return_value=link)):
                 user_line, _context = detect.compose_message(_detection("rg"))
-        self.assertIn(" Usage: ~/", user_line)
+        self.assertIn(" Usage: ~/r/", user_line)
 
     def test_usage_suffix_dropped_if_line_would_exceed_limit(self):
         detection = _detection("rg", "bat", "fd", "sd", "eza")

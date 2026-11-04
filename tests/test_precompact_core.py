@@ -109,7 +109,23 @@ class CoreEnvMixin(unittest.TestCase):
                 "config_home": os.path.join(directory, ".no-config")}
 
 
-class TestTracerCorePresummarize(CoreEnvMixin, unittest.TestCase):
+class FrozenClockMixin(CoreEnvMixin):
+    """The classify clock frozen at 0.0, so machine speed cannot change classification.
+
+    The deadline never passes; only the product's per-spawn caps remain as real timeouts,
+    so a hung stub costs at most 3 s + 40 x 2 s = 83 s per presummarize, inside the
+    runner's 900 s module deadline. 0.0 keeps ``(started + budget) - now`` exact (at
+    1000.0 it is 0.20000000000004547). ``elapsed_ms`` reads 0 here; assert it elsewhere.
+    """
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(core, "_monotonic", return_value=0.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class TestTracerCorePresummarize(FrozenClockMixin, unittest.TestCase):
     """Task 1 tracer: six host-neutral messages through the stub's label cycle."""
 
     def _messages(self):
@@ -146,7 +162,7 @@ class TestTracerCorePresummarize(CoreEnvMixin, unittest.TestCase):
         self.assertIn("delta request", document)
 
 
-class TestHeaderCounts(CoreEnvMixin, unittest.TestCase):
+class TestHeaderCounts(FrozenClockMixin, unittest.TestCase):
     """Header counts equal the classified chunks per label exactly (SPEC R1)."""
 
     CYCLE = ("keep", "summarize", "discard")
@@ -169,6 +185,37 @@ class TestHeaderCounts(CoreEnvMixin, unittest.TestCase):
         self.assertEqual(counts["unclassified"], 0)
         for label in self.CYCLE:
             self.assertEqual(counts[label], expected[label], label)
+
+    def test_header_counts_hold_on_a_tiny_budget(self):
+        # No client process starts: a real stub under a 0.2 s spawn timeout would turn
+        # slow spawns into unclassified chunks, which is the flake this class guards.
+        timeouts = []
+        report = {"backends": [{"name": "laya", "remote": False, "usable": True,
+                                "host": "127.0.0.1"}]}
+
+        def fake_probe(_client, _env, timeout):
+            timeouts.append(timeout)
+            return report
+
+        def fake_classify(_client, env, item_id, _text, _head):
+            timeouts.append(float(env["GSD_PATH_JEV_TIMEOUT_SECONDS"]))
+            return self.CYCLE[int(item_id[1:]) % 3]
+
+        env = self.make_env(STUB_LOG=os.path.join(tempfile.mkdtemp(), "stub.log"))
+        messages = self._chunk_messages(40)
+        with mock.patch.object(core, "CLASSIFY_SECONDS", 0.2), \
+                mock.patch.object(core, "run_probe", fake_probe), \
+                mock.patch.object(core, "classify_chunk", fake_classify):
+            document = core.presummarize(messages, self.make_meta(env=env), env)
+        counts = self.header_counts(document)
+        self.assertEqual((counts["total"], counts["classified"], counts["unclassified"]),
+                         (40, 40, 0))
+        for index, label in enumerate(self.CYCLE):
+            self.assertEqual(counts[label], sum(1 for i in range(40) if i % 3 == index))
+        self.assertEqual(len(timeouts), 41)
+        for timeout in timeouts:
+            self.assertLessEqual(timeout, 0.2 + 1e-9)
+        self.assertFalse(os.path.exists(env["STUB_LOG"]), "no client process may start")
 
     def test_header_counts_property(self):
         rng = random.Random(42)
@@ -260,7 +307,7 @@ class TestChunking(CoreEnvMixin, unittest.TestCase):
         self.assertIn("RESULT-B output", chunks[1])
 
 
-class TestCoreEdges(CoreEnvMixin, unittest.TestCase):
+class TestCoreEdges(FrozenClockMixin, unittest.TestCase):
     """Empty, encoding, ordering, concurrency and budget edges of the core."""
 
     def test_zero_messages_no_file(self):
@@ -335,7 +382,7 @@ class TestCoreEdges(CoreEnvMixin, unittest.TestCase):
         self.assertEqual(labels, [None, None, None])
 
 
-class TestCap(CoreEnvMixin, unittest.TestCase):
+class TestCap(FrozenClockMixin, unittest.TestCase):
     """The 9,500-character cap: newest kept whole, no model call (SPEC R4)."""
 
     def test_cap_newest_kept_whole_and_no_model_call(self):
@@ -537,7 +584,7 @@ class TestPrivateDir(CoreEnvMixin, unittest.TestCase):
                          {"s3-fresh-compact.md", "notes.txt"})
 
 
-class TestRealClientContract(CoreEnvMixin, unittest.TestCase):
+class TestRealClientContract(FrozenClockMixin, unittest.TestCase):
     """The unmodified repo client through find_client's realpath branch, against an
     in-process JevStub on loopback only (SPEC R3; D-01, D-02)."""
 

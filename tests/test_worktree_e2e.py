@@ -39,9 +39,13 @@ class TestWorktreeDisplayE2E(unittest.TestCase):
         os.makedirs(cls.home, exist_ok=True)
         cls.repo = os.path.join(cls.tmp, "repo")
 
+        # git never climbs out of this temp root, so `outside` is outside any repository
+        # wherever TMPDIR sits.
+        git_env = {**os.environ, "GIT_CEILING_DIRECTORIES": cls.tmp}
+
         def git(*args, cwd=None):
             subprocess.run(["git", *args], cwd=cwd, check=True,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, env=git_env)
 
         git("init", "-q", cls.repo)
         # Deterministic identity + an initial commit so worktrees can be added.
@@ -82,6 +86,7 @@ class TestWorktreeDisplayE2E(unittest.TestCase):
         env = {
             **os.environ,
             "HOME": self.home,
+            "GIT_CEILING_DIRECTORIES": self.tmp,  # see setUpClass
             "XDG_CACHE_HOME": os.path.join(self.home, ".cache"),
             # alt_git_worktree defaults OFF since edfe690; this config explicitly
             # turns it on for the test via [segments] alt_git_worktree = true.
