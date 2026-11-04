@@ -24,6 +24,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from tests import gsd_curated_eval as ev
+from tests import host_fakes
 
 
 def _tables() -> dict:
@@ -1193,7 +1194,10 @@ class TestLabels(unittest.TestCase):
             ev.label_path(ev.REPO_ROOT / "tools" / "setup.py"), "<worktree>/tools/setup.py"
         )
         self.assertEqual(ev.label_path(ev.REPO_ROOT), "<worktree>")
-        self.assertEqual(ev.label_path(str(pathlib.Path.home())), "<home>")
+        # the runner pins HOME inside the temp dir, which reads as scratch: use a home outside it
+        outside = pathlib.Path(scratch).anchor + "label-home"
+        with mock.patch.dict(os.environ, {"HOME": outside}):
+            self.assertEqual(ev.label_path(str(pathlib.Path.home())), "<home>")
         # an explicit scratch root reads as `<scratch>` itself; a bare mkdtemp path under the
         # system temp dir reads as a `<scratch>` child - never a machine path
         self.assertEqual(ev.label_path(scratch, scratch), "<scratch>")
@@ -1832,8 +1836,12 @@ class TestFixture(unittest.TestCase):
                     + "".join(f"echo {m!r}\n" for m in models)
                 )
             os.chmod(target, 0o755)
+        # Fakes for every other host name sit behind the decoys, so a python dir that holds a
+        # real host CLI (linuxbrew, ~/.local/bin) is never reached.
+        fakes = host_fakes.write_host_fakes(os.path.join(self._tmp, "host-bin"))
         base = {
-            "PATH": decoy + os.pathsep + os.path.dirname(sys.executable),
+            "PATH": decoy + os.pathsep
+            + host_fakes.host_path(fakes, os.path.dirname(sys.executable)),
             "HOME": os.path.join(self._tmp, "home"),
             "TMPDIR": self._tmp,
             "RUNTIME_DIR": str(ev.REPO_ROOT),

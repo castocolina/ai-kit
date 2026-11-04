@@ -1,9 +1,10 @@
 """Real-CLI run for the goal-prompt skill: the e2e tier (GPS-01..04; D-22).
 
 Spawns the real `goal_prompt.py` as a subprocess on a temporary git repository. A fake `node` on
-PATH answers only the three read-only gsd-tools queries and the runner's `--print-argv`. HOME is a
-temporary directory and AI_KIT_REFUSE_REAL_HOME=1 is exported. The dogfood run detects this
-repository read-only. Every subprocess has a timeout, and none outlives its test.
+PATH answers only the three read-only gsd-tools queries and the runner's `--print-argv`; host CLI
+probes reach the `tests/host_fakes.py` fakes, never a real host. HOME is a temporary directory and
+AI_KIT_REFUSE_REAL_HOME=1 is exported. The dogfood run detects this repository read-only. Every
+subprocess has a timeout, and none outlives its test.
 """
 
 import json
@@ -15,6 +16,7 @@ import unittest
 from pathlib import Path
 
 from tests import goal_prompt_fixtures as fx
+from tests import host_fakes
 
 REPO = Path(__file__).resolve().parent.parent
 CLI = REPO / "skills" / "ai-kit-spec-goal-prompt" / "scripts" / "goal_prompt.py"
@@ -91,7 +93,10 @@ class TestRealCli(unittest.TestCase):
         home = self.root / "home"
         home.mkdir()
         self.env = {
-            "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            "PATH": os.pathsep.join([
+                str(bin_dir), host_fakes.write_host_fakes(self.root / "host-bin"),
+                os.environ.get("PATH", ""),
+            ]),
             "HOME": str(home),
             "AI_KIT_REFUSE_REAL_HOME": "1",
             "GOAL_FIXTURE": str(self.fixture),
@@ -163,7 +168,7 @@ class TestDogfood(unittest.TestCase):
     def test_detect_on_this_repo(self):
         with tempfile.TemporaryDirectory() as home:
             env = {
-                "PATH": os.environ.get("PATH", ""),
+                "PATH": host_fakes.host_path(host_fakes.write_host_fakes(Path(home) / "host-bin")),
                 "HOME": home,
                 "AI_KIT_REFUSE_REAL_HOME": "1",
             }

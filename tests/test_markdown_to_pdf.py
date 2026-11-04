@@ -1,6 +1,5 @@
 # tests/test_markdown_to_pdf.py
 import os
-import shutil
 import sys
 import tempfile
 import unittest
@@ -70,16 +69,6 @@ class TestRenderAll(unittest.TestCase):
         # to avoid relying on /tmp existing and to be safe against future changes
         # that call _puppeteer_config(work_dir) before the early-return check.
         self.assertEqual(rm.render_all("plain\n", tempfile.mkdtemp()), "plain\n")
-
-
-class TestRenderRealMmdc(unittest.TestCase):
-    @unittest.skipUnless(shutil.which("mmdc"), "mmdc not installed")
-    def test_real_render_produces_image(self):
-        md = "```mermaid\nflowchart TD\n  A-->B\n```\n"
-        work = tempfile.mkdtemp()
-        out = rm.render_all(md, work, fmt="png")
-        self.assertIn("![diagram](", out)
-        self.assertTrue(os.path.exists(os.path.join(work, "diagram-0.png")))
 
 
 class TestBackendSelection(unittest.TestCase):

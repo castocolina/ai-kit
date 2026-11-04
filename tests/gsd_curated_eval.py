@@ -94,6 +94,8 @@ HOME_LABEL = "<home>"
 SCRATCH_LABEL = "<scratch>"
 GSD_CORE_LABEL = f"{WORKTREE_LABEL}/.claude/gsd-core"
 SKILL_DIR = REPO_ROOT / "skills" / "ai-kit-gsd-curated-config"
+# The live claude binary by bare name: the subprocess resolves PATH at spawn.
+LIVE_CLAUDE_BIN = "claude"
 GSD_TOOLS_PATH = str(REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs")
 
 # The Claude credentials file is in no snapshot set and is never read, not even to hash it
@@ -3858,7 +3860,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     scenario_path = SKILL_DIR / "evals" / EVAL_FILES[args.scenario]
     scenario_text = scenario_path.read_text(encoding="utf-8")
     seams = RunSeams(
-        claude_bin=shutil.which("claude") or "claude",
+        claude_bin=LIVE_CLAUDE_BIN,
         home=os.path.expanduser("~"),
         ps_fn=_default_ps,
     )

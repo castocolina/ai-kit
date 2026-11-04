@@ -910,7 +910,11 @@ _RETIRED_CURSOR = "cursor" + "-agent"
 _RETIRED_FIELD = "native" + "_runtime"
 _RETIRED_MODE = "native" + "_claude"
 _RETIRED_LITERALS = {
-    _RETIRED_CURSOR: frozenset({"skills/ai-kit-spec-review/ai_kit_spec/detection.py"}),
+    _RETIRED_CURSOR: frozenset({
+        "skills/ai-kit-spec-review/ai_kit_spec/detection.py",
+        # the tripwire stubs every host binary name, cursor-agent included
+        "tools/run_unittest_parallel.py",
+    }),
     _RETIRED_FIELD: frozenset({"skills/ai-kit-spec-review/ai_kit_spec/config_io.py"}),
     _RETIRED_MODE: frozenset(),
 }

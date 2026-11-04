@@ -25,6 +25,7 @@ import gp_common
 from ai_kit_spec.detection import HOST_SIGNAL_ENV_VARS
 
 from tests import goal_prompt_fixtures as fx
+from tests import host_fakes
 
 MACHINE_PATH_RE = re.compile(r"/var/home|/home/[A-Za-z]|/Users/|~/")
 LINK_RE = re.compile(r"\]\(([^)#\s]+)\)")
@@ -168,6 +169,8 @@ def eval_env(home: str) -> dict[str, str]:
     env["HOME"] = home
     env["XDG_CONFIG_HOME"] = home + "/.config"
     env["AI_KIT_REFUSE_REAL_HOME"] = "1"
+    # Fakes for every host name ahead of the runner's tripwire: no real host CLI is called.
+    env["PATH"] = host_fakes.host_path(host_fakes.write_host_fakes(Path(home) / "host-bin"))
     return env
 
 

@@ -22,16 +22,29 @@ Groups (each discovered tests/test_*.py lands in exactly one):
     integration INTEGRATION_MODULES (Textual app and PTY-driven, under uv)
     e2e         E2E_MODULES (make e2e-test only; the one set kept out of validate)
 
+Each module runs with a tripwire first on PATH: one stub per host CLI name that logs the call
+and exits 127, and a non-empty log fails the module. It sees PATH lookups only (a call through
+an absolute path is not seen; the arch rule covers literal commands). Host behaviour comes from
+tests/host_fakes.py. Because the stubs sit on PATH, PATH-based detection such as
+`shutil.which("claude")` finds every host inside a module; a test that needs a host to be
+absent sets its own PATH.
+
+Each module also gets a baseline env (baseline_env): no host signals, no inherited git state,
+no host config, status-line, credential or backend-URL overrides, a temporary HOME with
+AI_KIT_REFUSE_REAL_HOME=1, and the caller's tool caches forwarded by tool_cache_forwards.
+
 Workers are a share of the available CPUs, capped at 40 percent
 (os.process_cpu_count(), then the affinity mask, then os.cpu_count()).
 AI_KIT_TEST_CPU_SHARE may lower that share, never raise it.
 """
 import math
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -68,6 +81,9 @@ E2E_MODULES = frozenset({
     "tests.test_ai_kit_project_rules_all_e2e",
     # real goal_prompt.py subprocess runs on temp git repos with a fake node; dogfood detect (27-09)
     "tests.test_ai_kit_spec_goal_prompt_e2e",
+    # real mmdc and headless Chrome from the caller's Puppeteer cache; named skips decided by
+    # a probe render (28-01)
+    "tests.test_markdown_to_pdf_e2e",
 })
 EXPLICIT_GROUPS = {
     "arch": ARCH_MODULES,
@@ -75,6 +91,43 @@ EXPLICIT_GROUPS = {
     "integration": INTEGRATION_MODULES,
     "e2e": E2E_MODULES,
 }
+
+# Host CLI binary names the tripwire stubs: copied from the RUNTIMES binaries plus the
+# goal-prompt HOST_BINARY values (cursor-agent comes from the table); pinned by a drift test.
+HOST_CLI_NAMES = frozenset({
+    "agent", "claude", "codex", "copilot", "cursor-agent", "grok", "opencode", "pi",
+})
+TRIPWIRE_MAX_LINES = 20
+# Copied from detection.HOST_SIGNAL_ENV_VARS (pinned by a drift test): a caller's host marker
+# must not make a module believe it runs inside a host.
+HOST_SIGNAL_VARS = frozenset({
+    "AI_AGENT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CODEX_SANDBOX",
+    "CODEX_THREAD_ID", "CODEX_VERSION", "CURSOR_AGENT", "GROK_AGENT", "OPENCODE",
+    "PI_CODING_AGENT",
+})
+# Env names product code reads as a host config dir, XDG home, credential file, tooling path or
+# install dir (found by the drift scan): a caller's value would point a test at owner state.
+HOME_OVERRIDE_VARS = frozenset({
+    "ANTIGRAVITY_CONFIG_DIR", "AUGMENT_CONFIG_DIR", "CLAUDE_CONFIG_DIR", "CLINE_CONFIG_DIR",
+    "CODEBUDDY_CONFIG_DIR", "CODEX_HOME", "COPILOT_CONFIG_DIR", "COPILOT_HOME",
+    "CURSOR_CONFIG_DIR", "GROK_AGENTS_HOME", "GSD_HOME", "HERMES_HOME", "KILO_CONFIG_DIR",
+    "KIMI_CODE_HOME", "KIMI_CONFIG_DIR", "OPENCODE_CONFIG_DIR", "PI_CODING_AGENT_DIR",
+    "QWEN_CONFIG_DIR", "TRAE_CONFIG_DIR", "WINDSURF_CONFIG_DIR", "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR", "ZCODE_CONFIG_DIR",
+    "AGENTS_TOOLING_PATH", "SHARED_TOOLING_PATH", "AI_KIT_DIR", "CLAUDE_JOB_DIR",
+    "CLAUDE_PLUGIN_ROOT", "RUNTIME_DIR", "JEV_API_KEY_FILE",
+})
+# API keys and backend URLs product code reads: no test makes a credentialed call through the
+# caller's key.
+CREDENTIAL_ENV_VARS = frozenset({
+    "JEV_API_KEY", "JEV_API_URL", "TYPESAFE_API_KEY", "LAYA_API_KEY", "OPENCODE_ZEN_API_KEY",
+    "ARTIFICIAL_ANALYSIS_API_KEY", "JEV_LAYA_URL", "JEV_OPENCODE_URL", "JEV_TYPESAFE_URL",
+    "AI_KIT_LAYA_URL",
+})
+# The status-line ConfigSpec env prefixes: <prefix>CONFIG_FILE is read before HOME and
+# <prefix>EXTERNAL_DIR selects an executable provider folder.
+HOST_CONFIG_ENV_PREFIXES = ("CC_AI_KIT_", "AI_KIT_CURSOR_")
+GIT_KEPT_VARS = frozenset({"GIT_EXEC_PATH"})
 
 MAX_CPU_SHARE = 0.40
 # A hung module fails the gate instead of hanging it; generous for slow machines.
@@ -142,11 +195,106 @@ def worker_count(n_modules: int, cpus: int | None, share_env: str | None = None)
     return min(n_modules, max(1, math.floor(share * cpus)))
 
 
+_STUB = """#!/bin/sh
+printf '%s %s\\n' {name} "$*" >> {log}
+echo 'ai-kit tripwire: real host CLI {name} called from a test; use tests/host_fakes.py' >&2
+exit 127
+"""
+
+
+def write_tripwire(directory: Path) -> Path:
+    """Create `directory/bin/<host>` stubs (log, message, exit 127) and an empty
+    `directory/calls.log`; return the log path. The log path is baked into each stub."""
+    bin_dir = directory / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    log = directory / "calls.log"
+    log.write_text("", encoding="utf-8")
+    for name in sorted(HOST_CLI_NAMES):
+        stub = bin_dir / name
+        stub.write_text(
+            _STUB.format(name=shlex.quote(name), log=shlex.quote(str(log))), encoding="utf-8"
+        )
+        stub.chmod(0o755)
+    return log
+
+
+def _tripwire_report(log_path: Path) -> str:
+    """The `tripwire:` block for a non-empty calls log (at most TRIPWIRE_MAX_LINES calls)."""
+    calls = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if not calls:
+        return ""
+    lines = ["tripwire: real host CLI calls (fakes only, tests/host_fakes.py):"]
+    lines += calls[:TRIPWIRE_MAX_LINES]
+    if len(calls) > TRIPWIRE_MAX_LINES:
+        lines.append(f"... and {len(calls) - TRIPWIRE_MAX_LINES} more calls")
+    return "\n".join(lines) + "\n"
+
+
+def _with_tripwire(rc: int, output: str, log_path: Path) -> tuple[int, str]:
+    """A non-empty tripwire log fails the module: rc 0 becomes 1, the calls are appended."""
+    report = _tripwire_report(log_path)
+    if not report:
+        return rc, output
+    return rc or 1, output + ("" if output.endswith("\n") or not output else "\n") + report
+
+
+def tool_cache_forwards(source: Mapping[str, str]) -> dict[str, str]:
+    """Tool caches and toolchains the pinned HOME would hide, from the caller's `source`.
+
+    Never host configuration. A caller-set value is kept; an unset one is computed from the
+    caller's HOME (the two folders only when they exist). Plans that replace HOME call this
+    on the caller's env first.
+    shortcut: other version managers (asdf, mise, nvm) resolve their shims under HOME too and
+    are not forwarded; forward their data-dir variable the day a caller needs one."""
+    home = source.get("HOME")
+    defaults = {}
+    if home:
+        defaults = {
+            "PUPPETEER_CACHE_DIR": os.path.join(home, ".cache", "puppeteer"),
+            "UV_CACHE_DIR": os.path.join(home, ".cache", "uv"),
+        }
+        for name, rel in (("UV_PYTHON_INSTALL_DIR", ".local/share/uv/python"),
+                          ("VOLTA_HOME", ".volta")):
+            if os.path.isdir(os.path.join(home, rel)):
+                defaults[name] = os.path.join(home, rel)
+    names = ("PUPPETEER_CACHE_DIR", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "VOLTA_HOME")
+    forwards = {name: source[name] for name in names if source.get(name)}
+    for name, value in defaults.items():
+        forwards.setdefault(name, value)
+    return forwards
+
+
+def baseline_env(
+    source: Mapping[str, str], temp_dir: Path, tripwire_bin: Path
+) -> dict[str, str]:
+    """The module's pinned environment: `source` without host signals, git state, host config,
+    status-line and credential overrides, a temporary HOME, the tripwire first on PATH."""
+    forwards = tool_cache_forwards(source)
+    env = {
+        name: value for name, value in source.items()
+        if name not in HOST_SIGNAL_VARS | HOME_OVERRIDE_VARS | CREDENTIAL_ENV_VARS
+        and not name.startswith(HOST_CONFIG_ENV_PREFIXES)
+        and not (name.startswith("GIT_") and name not in GIT_KEPT_VARS)
+    }
+    home = temp_dir / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    env.update(forwards)
+    env.update({
+        "TMPDIR": str(temp_dir), "TEMP": str(temp_dir), "TMP": str(temp_dir),
+        "HOME": str(home), "AI_KIT_REFUSE_REAL_HOME": "1",
+        "GIT_CEILING_DIRECTORIES": str(temp_dir.parent), "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_AUTHOR_NAME": "ai-kit test", "GIT_COMMITTER_NAME": "ai-kit test",
+        "GIT_AUTHOR_EMAIL": "test@ai-kit.invalid", "GIT_COMMITTER_EMAIL": "test@ai-kit.invalid",
+        "PATH": os.pathsep.join([str(tripwire_bin), source.get("PATH", "")]),
+    })
+    return env
+
+
 def run_module(module: str, cwd: Path = REPO_ROOT) -> tuple[str, int, str, float]:
     start = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="aikit-ut-", ignore_cleanup_errors=True) as temp_dir:
-        env = os.environ.copy()
-        env.update({"TMPDIR": temp_dir, "TEMP": temp_dir, "TMP": temp_dir})
+        log_path = write_tripwire(Path(temp_dir) / "tripwire")
+        env = baseline_env(os.environ, Path(temp_dir), log_path.parent / "bin")
         try:
             proc = subprocess.run(
                 [sys.executable, "-m", "unittest", module],
@@ -154,9 +302,10 @@ def run_module(module: str, cwd: Path = REPO_ROOT) -> tuple[str, int, str, float
                 timeout=MODULE_TIMEOUT_SECS,
             )
         except subprocess.TimeoutExpired:
-            output = f"timed out after {MODULE_TIMEOUT_SECS}s"
-            return module, 124, output, time.monotonic() - start
-        return module, proc.returncode, proc.stdout + proc.stderr, time.monotonic() - start
+            rc, output = _with_tripwire(124, f"timed out after {MODULE_TIMEOUT_SECS}s", log_path)
+            return module, rc, output, time.monotonic() - start
+        rc, output = _with_tripwire(proc.returncode, proc.stdout + proc.stderr, log_path)
+        return module, rc, output, time.monotonic() - start
 
 
 def _parse_groups(argv: list[str]) -> tuple[list[str] | None, str | None]:
