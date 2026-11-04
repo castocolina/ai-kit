@@ -186,13 +186,22 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 - Push timing: the 60 s target covers the two test hooks only, their subtotal,
   measured back to back by `python3 tools/time_prepush.py` at the default 40 %
   share. Before this phase they took 183.9 s (2026-11-03: 24 CPUs, 9 workers,
-  one-minute load 1.86 at start); after this phase they took 55.5 s (2026-11-04:
-  24 CPUs, 9 and 5 workers, share 0.40, one-minute load 0.97 at start; unit and
-  arch 34.6 s, wizard 20.9 s). The pyright (9.9 s), vulture (1.9 s), check-dogfood
-  (0.5 s) and deferred-e2e (352.4 s, no push range) times are recorded beside the
-  subtotal, never inside the 60 s figure, with `push-worst` (all six pre-push hooks
-  timed alone, deferred-e2e at its no-range worst case) as the worst-case whole
-  push: 420.2 s.
+  one-minute load 1.86 at start); after this phase and the runner self-test split
+  they took 55.4 s (2026-11-04: 24 CPUs, 9 and 5 workers, share 0.40, one-minute
+  load 4.48 at start; unit and arch 34.4 s, wizard 21.0 s). The pyright (9.6 s),
+  vulture (1.9 s), check-dogfood (0.5 s) and deferred-e2e (0.0 s, no push range;
+  no e2e module is over the commit budget) times are recorded beside the subtotal,
+  never inside the 60 s figure, with `push-worst` (all six pre-push hooks timed
+  alone, deferred-e2e at its no-range worst case) as the worst-case whole push:
+  67.3 s.
+- Runner self-test shards: `cross-ai.mjs --self-test-list` prints every self-test
+  case as `name<TAB>kind`, `logic` or `runtime` (a case that waits on or measures
+  a real clock is `runtime`). `tests/cross_ai_selftest.py` deals each kind,
+  longest first by the generated `tests/fixtures/cross_ai_selftest_secs.json`,
+  into the `tests/test_cross_ai_selftest_<kind>_<i>_e2e.py` shard modules, so each
+  fits the commit budget and a template change runs its shards at commit. Refresh
+  that file with `python3 tests/cross_ai_selftest.py --record-times` on a quiet
+  machine after adding or slowing a case.
 - Isolation: every module runs behind a tripwire. A stub for each host CLI sits
   first on its PATH, and a real host call fails the module with a `tripwire:`
   block; host behaviour comes from `tests/host_fakes.py`. The stubs make

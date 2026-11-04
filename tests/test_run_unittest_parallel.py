@@ -642,6 +642,29 @@ _DRIVER = (
 )
 
 
+class RunAllOrderTest(unittest.TestCase):
+    """The pool starts the longest recorded e2e module first; the others keep their order."""
+
+    def test_the_longest_recorded_module_is_submitted_first(self) -> None:
+        runner = load_runner()
+        seen: list[str] = []
+
+        def fake_run(module, _cwd):
+            seen.append(module)
+            return module, 0, "", 0.0
+
+        table = {"tests.b": 5, "tests.c": 50}
+        with (
+            unittest.mock.patch.object(runner, "run_module", fake_run),
+            unittest.mock.patch.object(runner, "worker_count", return_value=1),
+            unittest.mock.patch.object(runner, "E2E_RECORDED_SECS", table),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            failed = runner._run_all(["tests.a", "tests.b", "tests.c", "tests.d"])
+        self.assertEqual(failed, [])
+        self.assertEqual(seen, ["tests.c", "tests.b", "tests.a", "tests.d"])
+
+
 class ModuleDeadlineTest(unittest.TestCase):
     """A module that overruns its deadline or is interrupted leaves no process behind (D-10)."""
 
@@ -664,15 +687,10 @@ class ModuleDeadlineTest(unittest.TestCase):
         ):
             return self.runner.run_module(module, cwd=self.tmp)
 
-    def test_self_test_module_gets_the_long_deadline_others_the_global(self) -> None:
-        r = self.runner
-        self.assertEqual(r.SELF_TEST_MODULE_TIMEOUT_SECS, 5400)
-        self.assertEqual(
-            r.module_timeout_secs("tests.test_cross_ai_runner_e2e"), r.SELF_TEST_MODULE_TIMEOUT_SECS
-        )
-        self.assertEqual(r.module_timeout_secs("tests.test_arch"), r.MODULE_TIMEOUT_SECS)
-        with unittest.mock.patch.object(r, "MODULE_TIMEOUT_SECS", 0.01):
-            self.assertEqual(r.module_timeout_secs("tests.test_arch"), 0.01)
+    def test_every_module_gets_the_one_global_deadline(self) -> None:
+        # The self-test shards size their hang guards under this one deadline
+        # (DeadlineCouplingTest in tests/test_cross_ai_runner_e2e.py); no module has its own.
+        self.assertEqual(self.runner.MODULE_TIMEOUT_SECS, 900)
 
     def test_grandchild_in_the_module_group_dies_with_the_module(self) -> None:
         pid_file = self.tmp / "grand.pid"

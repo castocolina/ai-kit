@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=35e7cb64d25ae383287d96801fc63e8a0233c61f7fc7b53fd76c14d6bb9a660c
+// ai-kit-cross-ai generator=ai-kit-gsd-curated-config template=8 sha256=d9239f0f7c92009adb98f01c4a3cb6ee5627ab2d50ee35197f717df2e2c9ef19
 /*
  * cross-ai.mjs: the GSD `workflow.cross_ai_command` dispatcher (template v8).
  *
@@ -50,6 +50,8 @@
  *   --cursor-mode ask|plan                   review mode only (replaces cursor --mode)
  *   --self-test                              hermetic black-box checks (no real CLIs); its ceilings scale
  *                                            with load per CPU up to 4x, AIKIT_XAI_SELFTEST_LOAD overrides the reading
+ *   --self-test-list                         print each self-test case as name<TAB>kind (logic or runtime);
+ *                                            AIKIT_XAI_SELFTEST_CASES=a,b runs only the named cases
  *
  * CONFIG.effort pins the selected effort per runner: pi --thinking (skipped when the model
  * has a :level suffix) and codex model_reasoning_effort.
@@ -2460,6 +2462,7 @@ function pureClassify(entry) {
 function classifyCases() {
   const generated = CLASSIFY_CASES.map((entry) => ({
     name: `pure-classify-${entry.name}`,
+    kind: 'logic',
     pure: () => pureClassify(entry),
   }));
   const pinned = CLASSIFY_CASES.find((entry) => entry.name === 'edge-billing-and-quota');
@@ -2468,6 +2471,7 @@ function classifyCases() {
     ...generated,
     {
       name: 'pure-classify-order-mutation',
+      kind: 'logic',
       pure: () => {
         const forward = classifyOne(pinned);
         const reversed = classifyOne(pinned, [...PATTERNS].reverse());
@@ -2477,6 +2481,7 @@ function classifyCases() {
     },
     {
       name: 'pure-classify-idempotent',
+      kind: 'logic',
       pure: () => {
         const first = classifyOne(twice);
         const second = classifyOne(twice);
@@ -2488,6 +2493,7 @@ function classifyCases() {
       // Without the tier-0 reason rows the same body matches a later provider row, so the
       // reason-code row is what decides it.
       name: 'pure-catalog-reason-code-wins',
+      kind: 'logic',
       pure: () => {
         const entry = CLASSIFY_CASES.find((item) => item.name === 'evidence-all-targets-skipped-router');
         const withReason = classifyOne(entry);
@@ -2499,6 +2505,7 @@ function classifyCases() {
     },
     {
       name: 'pure-catalog-tier-order',
+      kind: 'logic',
       pure: () => {
         let prev = -1;
         for (const row of TABLE) {
@@ -2510,6 +2517,7 @@ function classifyCases() {
     },
     {
       name: 'pure-catalog-shipped-valid',
+      kind: 'logic',
       pure: () => {
         const seen = new Set();
         for (const row of PATTERNS) {
@@ -2523,6 +2531,7 @@ function classifyCases() {
     },
     {
       name: 'pure-catalog-bad-rows',
+      kind: 'logic',
       pure: () => {
         const base = {
           id: 'user-row', tier: 3, cli: '*', route: '*', provider: '*', input: 'any',
@@ -2548,6 +2557,7 @@ function classifyCases() {
     },
     {
       name: 'pure-catalog-route-provider',
+      kind: 'logic',
       pure: () => {
         const routerRow = { route: 'router' };
         if (!routeAdmits(routerRow, 'router') || routeAdmits(routerRow, 'unknown') ||
@@ -2564,6 +2574,7 @@ function classifyCases() {
     },
     {
       name: 'pure-overlay-regex-timeout',
+      kind: 'runtime',
       pure: () => {
         const row = {
           id: 'user-catastrophic', tier: 3, cli: '*', route: '*', provider: '*', input: 'any',
@@ -2595,6 +2606,7 @@ function classifyCases() {
     },
     {
       name: 'pure-overlay-budget',
+      kind: 'runtime',
       pure: () => {
         const rows = [];
         for (let i = 0; i < 40; i += 1) {
@@ -2632,6 +2644,7 @@ function classifyCases() {
     },
     {
       name: 'pure-overlay-call-budget',
+      kind: 'runtime',
       pure: () => {
         const row = {
           id: 'user-slow', tier: 3, cli: '*', route: '*', provider: '*', input: 'any',
@@ -2677,6 +2690,7 @@ function classifyCases() {
       // Live matching sees one line; a multi-line fixture is out of scope because post-hoc
       // matching sees the whole text.
       name: 'pure-live-agrees-posthoc',
+      kind: 'logic',
       pure: () => {
         for (const entry of CLASSIFY_CASES) {
           if (entry.stderr === undefined || String(entry.stderr).includes('\n')) continue;
@@ -2693,6 +2707,7 @@ function classifyCases() {
     },
     {
       name: 'pure-redact-json-tail',
+      kind: 'logic',
       pure: () => {
         const got = redactSecrets('{"message":"x","token":"abc","retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z"}');
         return got === '{"message":"x","token":"<redacted>","retry_after":120,"reset_at":"2026-10-23T04:01:04.472Z"}' ? null : got;
@@ -2700,6 +2715,7 @@ function classifyCases() {
     },
     {
       name: 'pure-redact-shapes',
+      kind: 'logic',
       pure: () => {
         const source = 'conn:ab12cd34 12345678-1234-abcd-1234-1234567890ab "connectionId":"x1" account_id=x2 "requestId": "x3" ghp_' + 'a'.repeat(36) + ' github_pat_' + 'b'.repeat(40) + ' retry_after":340954 reset_at":"2026-10-23T04:01:04.472Z"';
         const got = redactSecrets(source);
@@ -2709,6 +2725,7 @@ function classifyCases() {
     },
     {
       name: 'pure-redact-escaped-json',
+      kind: 'logic',
       pure: () => {
         const input = '{"error":{"response":{"body":"{\\"accountId\\":\\"acct-123\\",\\"api_key\\":\\"sentinel\\",\\"requestId\\": \\"req-9\\",\\"retry_after\\":120}"}}}';
         const got = redactSecrets(input);
@@ -2718,6 +2735,7 @@ function classifyCases() {
     },
     {
       name: 'pure-redact-quoted-values',
+      kind: 'logic',
       pure: () => {
         const inputs = [
           '{"secret":"alpha,beta","retry_after":120}',
@@ -2733,6 +2751,7 @@ function classifyCases() {
     },
     {
       name: 'pure-upstream-fields-redacted',
+      kind: 'logic',
       pure: () => {
         const token = 'ghp_' + 'a'.repeat(36);
         const raw = `{"accountId":"acct-77","reset_at":"acct-77","token":"sentinel","retry_after":"sentinel","retry_after_seconds":"${token}","resetsAt":1761170400}`;
@@ -2743,6 +2762,7 @@ function classifyCases() {
     },
     {
       name: 'pure-events-with-raw',
+      kind: 'logic',
       pure: () => {
         const raw = ocError({ message: 'first', response: { body: '{"message":"nested"}' } });
         const got = eventsWithRaw('opencode', raw);
@@ -2752,6 +2772,7 @@ function classifyCases() {
     {
       // Each event keeps its own stdout line as its raw text, never the whole multi-line output.
       name: 'pure-events-with-raw-per-line',
+      kind: 'logic',
       pure: () => {
         const first = ocError({ message: 'first' });
         const second = ocError({ message: 'second' });
@@ -2762,6 +2783,7 @@ function classifyCases() {
     },
     {
       name: 'pure-capture-cap',
+      kind: 'logic',
       pure: () => {
         const buf = { chunks: [], bytes: 0, dropped: false };
         for (const s of ['aaaa', 'bbbb', 'cccc']) pushCapped(buf, Buffer.from(s), 8);
@@ -2772,6 +2794,7 @@ function classifyCases() {
     {
       // A copied value is matched literally, metacharacters included, and never throws.
       name: 'pure-replace-copies-literal',
+      kind: 'logic',
       pure: () => {
         const values = ['a(b', 'q[1]', 'x.y', 'c\\d'];
         let got;
@@ -2783,6 +2806,7 @@ function classifyCases() {
       // 25.1 CR-02 (D-17): the relay strips ANSI before matching, and a value redacted on one
       // line (either stream) stays redacted on every later line and in the upstream body.
       name: 'pure-relay-redacts-copies-and-ansi',
+      kind: 'logic',
       pure: () => {
         const out = [];
         const saved = log;
@@ -2811,6 +2835,7 @@ function classifyCases() {
     {
       // 25.1 WR-03: password keys, Basic auth, a Google `?key=` URL and a wide Bearer token.
       name: 'pure-redact-credential-shapes',
+      kind: 'logic',
       pure: () => {
         const cases = [
           ['password=hunter2hunter2', 'hunter2hunter2'],
@@ -2833,6 +2858,7 @@ function classifyCases() {
       // A mid-line credential keeps its line intact: the scheme word stays, no stray offset is
       // printed, and a hyperlink escape or an `=>` separator does not shield a key.
       name: 'pure-redact-mid-line-and-escapes',
+      kind: 'logic',
       pure: () => {
         const tok = ['abcd', 'efgh', 'ijkl', 'mnop'].join('');
         const cases = [
@@ -2850,6 +2876,7 @@ function classifyCases() {
     },
     {
       name: 'pure-redact-idempotent',
+      kind: 'logic',
       pure: () => {
         const once = redactSecrets('{"accountId":"acct-77","token":"secret"}');
         return redactSecrets(once) === once ? null : redactSecrets(once);
@@ -2857,6 +2884,7 @@ function classifyCases() {
     },
     {
       name: 'pure-upstream-cap',
+      kind: 'logic',
       pure: () => {
         const capped = capCodePoints('😀'.repeat(2500), 2000);
         return Array.from(capped).length === 2000 && !/[\\uD800-\\uDBFF]$/.test(capped) ? null : `codepoints=${Array.from(capped).length}`;
@@ -2864,6 +2892,7 @@ function classifyCases() {
     },
     {
       name: 'pure-upstream-fields',
+      kind: 'logic',
       pure: () => {
         const cases = [
           ['429: {"retry_after":340954,"reset_at":"2026-10-19T00:00:00.000Z"}', '{"retry_after":340954,"reset_at":"2026-10-19T00:00:00.000Z"}'],
@@ -4391,7 +4420,7 @@ function parseArgs(argv) {
   const o = {
     runtime: null, prefer: null, model: null, toolsProfile: null,
     models: {}, routes: {}, mode: 'exec', timeout: null, outerTimeout: null,
-    printArgv: false, preamble: true, selfTest: false, classifyOnly: null,
+    printArgv: false, preamble: true, selfTest: false, selfTestList: false, classifyOnly: null,
     codexEffort: null, codexServiceTier: null, cursorMode: null,
     prependFile: null, codexSandbox: null, childPgidFile: null,
   };
@@ -4444,6 +4473,7 @@ function parseArgs(argv) {
       o.cursorMode = v();
       if (!CURSOR_MODES.has(o.cursorMode)) throw new Error('--cursor-mode must be ask or plan');
     } else if (a === '--self-test') o.selfTest = true;
+    else if (a === '--self-test-list') { o.selfTest = true; o.selfTestList = true; }
     else throw new Error(`unknown argument: ${a}`);
   }
   if (o.mode === 'exec' && o.cursorMode) throw new Error('--cursor-mode is review-only');
@@ -5514,7 +5544,7 @@ function selfTestAbort(code) {
   process.exit(code);
 }
 
-async function blackBoxSelfTest() {
+async function blackBoxSelfTest(listOnly = false) {
   OVERLAY_IDS = new Set();
   TABLE = mergeCatalog(PATTERNS, []);
   const gitBin = which('git');
@@ -5566,6 +5596,7 @@ async function blackBoxSelfTest() {
     const cases = [
       {
         name: 'ok',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
@@ -5573,6 +5604,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'empty_stdin',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: '',
         exit: 2,
@@ -5580,6 +5612,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'no_model',
+        kind: 'logic',
         args: ['--prefer', 'pi'],
         exit: 2,
         status: /^AIKIT-XAI status=no_model .* action=stop$/,
@@ -5587,18 +5620,21 @@ async function blackBoxSelfTest() {
       // U-4: a model id must not read as an option or carry shell/space characters.
       ...['--yolo', 'a b', 'x;rm'].map((model, i) => ({
         name: `bad-model-id-${i}`,
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', model],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* action=stop$/,
       })),
       ...['--yolo', 'a b', 'x;rm'].map((model, i) => ({
         name: `bad-model-flag-${i}`,
+        kind: 'logic',
         args: ['--runtime', 'pi', '--model', model],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* action=stop$/,
       })),
       {
         name: 'model-flag-cursor-bracket',
+        kind: 'logic',
         args: ['--runtime', 'cursor', '--model', 'fake-ok-cursor[effort=high]', '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -5611,6 +5647,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'model-flag-cursor-bracket-order',
+        kind: 'logic',
         args: ['--model', 'fake-ok-cursor[effort=high]', '--runtime', 'cursor', '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -5623,6 +5660,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'model-flag-pi-thinking',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--model', 'fake/ok:high', '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -5637,6 +5675,7 @@ async function blackBoxSelfTest() {
       {
         // One case, three runtimes: --model works for opencode, codex and claude review.
         name: 'model-flag-each',
+        kind: 'logic',
         args: ['--print-argv', '--runtime', 'opencode', '--model', 'fake/ok#fast'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -5665,6 +5704,7 @@ async function blackBoxSelfTest() {
         ['claude', 'opus', 'review'],
       ].map(([rt, model, mode]) => ({
         name: `model-flag-each-${rt}`,
+        kind: 'logic',
         args: ['--print-argv', '--runtime', rt, '--mode', mode, '--model', model],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -5677,6 +5717,7 @@ async function blackBoxSelfTest() {
       })),
       {
         name: 'model-and-alias',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--model', 'fake/ok', '--model-pi', 'fake/other', '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -5692,6 +5733,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'model-invalid-pi-bare',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--model', 'glm'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
@@ -5703,6 +5745,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'model-invalid-bracket-pi',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--model', 'fake/ok[x=1]'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
@@ -5710,6 +5753,7 @@ async function blackBoxSelfTest() {
       {
         // 25.1 WR-05: a colon that is not a thinking level is part of pi's model id.
         name: 'model-pi-colon-id',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--model', 'fake/ok:free', '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -5721,18 +5765,21 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'model-opencode-colon',
+        kind: 'logic',
         args: ['--runtime', 'opencode', '--model', 'or/meta/llama:free', '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
       },
       {
         name: 'model-opencode-two-variants',
+        kind: 'logic',
         args: ['--runtime', 'opencode', '--model', 'fake/ok#a#b', '--print-argv'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
       },
       {
         name: 'model-other-runtime-not-checked',
+        kind: 'logic',
         args: [
           '--runtime', 'cursor', '--model-cursor', 'fake-ok-cursor', '--model-pi', 'glm',
           '--print-argv',
@@ -5748,6 +5795,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'pure-review-extras',
+        kind: 'logic',
         pure: () => {
           const ctx = {
             cwd: '/tmp/x', sid: 'sid', outFile: '/tmp/x/out.md', cursorMode: 'ask',
@@ -5793,6 +5841,7 @@ async function blackBoxSelfTest() {
         // A check of the table itself. --trust is deliberately absent: cursor's review
         // baseline carries it, and it trusts the workspace rather than granting a tool.
         name: 'pure-profiles-read-only',
+        kind: 'logic',
         pure: () => {
           const granting = ['--force', '--auto', '--yolo', '--allow-all', '--allow-all-paths',
             '--allow-all-urls', '--allow-all-tools', '--allow-tool', '--approve-mcps',
@@ -5835,6 +5884,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'pure-model-grammar',
+        kind: 'logic',
         pure: () => {
           const accept = [
             [PI_MODEL_ID, 'fake/ok:high'], [PI_MODEL_ID, 'router-env/my-coding:high'],
@@ -5863,6 +5913,7 @@ async function blackBoxSelfTest() {
         // SPEC R6: --prefer reads only its first entry; an ignored entry is a notice, never a
         // usage error, whatever it names.
         name: 'prefer-ignored-unknown-entry',
+        kind: 'logic',
         args: ['--prefer', 'pi,nosuchcli', '--model-pi', 'fake/ok', '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -5873,6 +5924,7 @@ async function blackBoxSelfTest() {
         // With HOME and XDG_CONFIG_HOME unset, the user retry file is the account's own
         // ~/.config/ai-kit/cross-ai.json, never one relative to the working directory.
         name: 'pure-retry-user-config-without-home',
+        kind: 'logic',
         pure: () => {
           const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-home-'));
           const home = path.join(root, 'home');
@@ -5903,6 +5955,7 @@ async function blackBoxSelfTest() {
         // A CLI that cannot be executed at spawn time (its interpreter is gone) is not_installed
         // with exit 127, as when it is missing from PATH, never a crash.
         name: 'spawn-enoent-not-installed',
+        kind: 'logic',
         setup: (c) => {
           const dir = path.join(c.tmp, 'bin-enoent');
           fs.mkdirSync(dir);
@@ -5921,6 +5974,7 @@ async function blackBoxSelfTest() {
         // A multi-byte character split across two pipe chunks is decoded whole (StringDecoder),
         // never as two U+FFFD.
         name: 'utf8-split-across-chunks',
+        kind: 'logic',
         setup: (c) => {
           const dir = path.join(c.tmp, 'bin-utf8');
           fs.mkdirSync(dir);
@@ -5946,6 +6000,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'unknown_prefer',
+        kind: 'logic',
         args: ['--prefer', 'nosuchcli', '--model-nosuchcli', 'x'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* action=stop$/,
@@ -5956,6 +6011,7 @@ async function blackBoxSelfTest() {
         return [
           {
             name: `argv-exec-${rt}`,
+            kind: 'logic',
             args: ['--print-argv', '--mode', 'exec', '--prefer', rt, flag, model],
             exit: 0,
             status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -5975,6 +6031,7 @@ async function blackBoxSelfTest() {
           },
           {
             name: `argv-review-${rt}`,
+            kind: 'logic',
             args: ['--print-argv', '--mode', 'review', '--prefer', rt, flag, model],
             exit: 0,
             status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -5998,6 +6055,7 @@ async function blackBoxSelfTest() {
       }),
       {
         name: 'parser-cursor',
+        kind: 'logic',
         args: ['--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=dirty action=stop$/,
@@ -6005,6 +6063,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'parser-opencode',
+        kind: 'logic',
         args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=dirty action=stop$/,
@@ -6018,6 +6077,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'parser-codex',
+        kind: 'logic',
         args: ['--prefer', 'codex', '--model-codex', 'fake-ok-codex'],
         config: { prefer: ['codex'] },
         exit: 0,
@@ -6033,6 +6093,7 @@ async function blackBoxSelfTest() {
       {
         // A recovered stream error before turn.completed is not a failure.
         name: 'parser-codex-recovered',
+        kind: 'logic',
         args: ['--prefer', 'codex', '--model-codex', 'fake-retry-codex'],
         config: { prefer: ['codex'] },
         exit: 0,
@@ -6040,6 +6101,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'parser-pi-ansi',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ansi'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=dirty action=stop$/,
@@ -6047,12 +6109,14 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'quote',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quote'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/quote exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
       },
       {
         name: 'okwarn',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/okwarn'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/okwarn exit=0 cli_rc=0 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
@@ -6061,6 +6125,7 @@ async function blackBoxSelfTest() {
       {
         // WR-01: a large answer and stderr through pipes arrive whole, status line last.
         name: 'big-pipe',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/big'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/big exit=0 .* tree=dirty action=stop$/,
@@ -6069,6 +6134,7 @@ async function blackBoxSelfTest() {
       {
         // WR-02: the stderr reader goes away mid-run; the runner must still finish the run.
         name: 'stderr-closed',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/slowok'],
         config: { heartbeatS: 1 },
         closeStderr: (c) => fs.existsSync(path.join(c.repo, 'started')),
@@ -6077,18 +6143,21 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'empty-auth',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/emptyauth'],
         exit: 69,
         status: /^AIKIT-XAI status=auth cli=pi model=fake\/emptyauth exit=69 cli_rc=0 .* tree=clean action=stop$/,
       },
       {
         name: 'billing',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
         exit: 69,
         status: /^AIKIT-XAI status=billing cli=pi model=fake\/billing exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'billing-router',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
         config: { routerBacked: { pi: true } },
         exit: 75,
@@ -6097,6 +6166,7 @@ async function blackBoxSelfTest() {
       {
         // routerBacked covers only the CLI's pinned model: a direct model on it stops on billing.
         name: 'billing-unpinned-model-on-router-cli',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
         config: { routerBacked: { pi: true }, models: { pi: 'fake/pinned-router' } },
         exit: 69,
@@ -6106,6 +6176,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'billing-403-router',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/spend403'],
         config: { routerBacked: { pi: true } },
         exit: 75,
@@ -6113,24 +6184,28 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'billing-free-tier',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/freetier'],
         exit: 69,
         status: /^AIKIT-XAI status=billing cli=pi model=fake\/freetier exit=69 cli_rc=1 .* tree=clean action=stop$/,
       },
       {
         name: 'auth',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/auth'],
         exit: 69,
         status: /^AIKIT-XAI status=auth cli=pi model=fake\/auth exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'perm',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/perm'],
         exit: 69,
         status: /^AIKIT-XAI status=permission_blocked cli=pi model=fake\/perm exit=69 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'quota',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/quota exit=75 cli_rc=1 elapsed=\d+s out=\d+ tree=clean action=stop$/,
@@ -6146,6 +6221,7 @@ async function blackBoxSelfTest() {
       {
         // One cycle of a confirmed router lane: the soft series, exit 75, cycle 0 persisted.
         name: 'router-quota-one-cycle',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8'],
         config: { routerBacked: { pi: true }, retry: { max_retries: 2, session_resets: 1 } },
         exit: 75,
@@ -6169,6 +6245,7 @@ async function blackBoxSelfTest() {
       {
         // The second invocation resumes the same session and the fake answers on call 8.
         name: 'router-quota-second-cycle',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8'],
         config: {
           routerBacked: { pi: true }, capS: 3600,
@@ -6205,6 +6282,7 @@ async function blackBoxSelfTest() {
       {
         // A different prompt never joins the previous task's session.
         name: 'router-quota-second-cycle-new-task',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota-until-8', '--no-preamble'],
         config: {
           routerBacked: { pi: true }, capS: 3600,
@@ -6234,6 +6312,7 @@ async function blackBoxSelfTest() {
       {
         // The hard wait is the re-entry gate: a re-entry inside it spawns nothing.
         name: 'router-quota-early-reentry',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
         config: {
           routerBacked: { pi: true }, capS: 3600,
@@ -6259,6 +6338,7 @@ async function blackBoxSelfTest() {
       {
         // Both timestamps past the cap: the file is stale and a fresh cycle starts.
         name: 'stale-state-fresh-start',
+        kind: 'logic',
         setup: (c) => {
           const file = caseCycleFile(c, 'pi', 'fake/quota');
           const old = Date.now() - 5 * 3600 * 1000;
@@ -6284,6 +6364,7 @@ async function blackBoxSelfTest() {
       {
         // An active episode past the cap stops before any child.
         name: 'expired-state-cap-stop',
+        kind: 'logic',
         setup: (c) => {
           const file = caseCycleFile(c, 'pi', 'fake/quota');
           writeCycleState(file, {
@@ -6317,6 +6398,7 @@ async function blackBoxSelfTest() {
         // A quota-class deadline stop still starts the cycle accounting. The first attempt
         // fails at once so a retry is admitted; the second hangs until the deadline refuses it.
         name: 'quota-deadline-cycle',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/slowquota', '--timeout', '4'],
         config: { routerBacked: { pi: true } },
         exit: 75,
@@ -6332,6 +6414,7 @@ async function blackBoxSelfTest() {
       {
         // About 90 s of cap left: the admitted child is stopped at the cap.
         name: 'quota-cap-clamp-child',
+        kind: 'runtime',
         stdin: 'clamp-probe\n',
         setup: (c) => {
           const file = caseCycleFile(c, 'pi', 'fake/capclamp');
@@ -6358,6 +6441,7 @@ async function blackBoxSelfTest() {
       {
         // 300 s of cap left, hard wait 600 s: a deadline stop becomes the cap's exit 69.
         name: 'quota-deadline-near-cap',
+        kind: 'runtime',
         setup: (c) => {
           const file = caseCycleFile(c, 'pi', 'fake/slowquota');
           writeCycleState(file, {
@@ -6380,6 +6464,7 @@ async function blackBoxSelfTest() {
         // An unconfirmed call on the router lane's CLI and model neither inherits nor deletes
         // its cycle state.
         name: 'unconfirmed-route-ignores-state',
+        kind: 'logic',
         setup: (c) => {
           const file = caseCycleFile(c, 'pi', 'fake/ok');
           writeCycleState(file, {
@@ -6398,6 +6483,7 @@ async function blackBoxSelfTest() {
       {
         // A terminal stderr line from a child that then exits 0 with an answer is a success.
         name: 'live-hit-then-success',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/stderr-then-ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/stderr-then-ok exit=0 .* action=stop$/,
@@ -6405,6 +6491,7 @@ async function blackBoxSelfTest() {
       {
         // An unwritable state dir keeps the quota class: a bare 75, never a crash.
         name: 'quota-state-unwritable',
+        kind: 'logic',
         setup: (c) => {
           const blocker = path.join(c.home, 'state-is-a-file');
           fs.writeFileSync(blocker, 'x');
@@ -6426,6 +6513,7 @@ async function blackBoxSelfTest() {
         // The lane is the checkout, CLI, model and route kind, not the task: a different
         // prompt on a lane with a pending due_at is refused without a model call too.
         name: 'hard-tier-other-task-refused',
+        kind: 'logic',
         setup: (c) => {
           writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0, {
             due_at: Date.now() + 5 * 60 * 1000,
@@ -6453,6 +6541,7 @@ async function blackBoxSelfTest() {
         // Once due_at has passed, a different task starts in a fresh session and never
         // resumes the record's last_sid.
         name: 'hard-tier-other-task-fresh-session',
+        kind: 'logic',
         setup: (c) => {
           writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0, {
             last_sid: 'old-sid',
@@ -6481,6 +6570,7 @@ async function blackBoxSelfTest() {
         // The route kind keys the file: a pending router record neither refuses, deletes nor
         // steers an unconfirmed spend on the same CLI and model; it keeps its bytes.
         name: 'hard-tier-route-files-separate',
+        kind: 'logic',
         setup: (c) => {
           const router = writePriorRecord(c, 'pi', 'fake/event400', 'router', 'quota', 1, {
             due_at: Date.now() + 5 * 60 * 1000,
@@ -6515,6 +6605,7 @@ async function blackBoxSelfTest() {
         // one hint (hard_waits_s[0]), the state line naming the `other` file, and a record
         // with the class, the cycle and the wait (D-07, route-keyed files).
         name: 'hard-tier-transient-cycle0',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
         config: { retry: { max_retries: 1, session_resets: 0, hard_waits_s: [600, 900, 1800] } },
         exit: 75,
@@ -6548,6 +6639,7 @@ async function blackBoxSelfTest() {
       {
         // A transient series cut by the call deadline gets the same hint, never a bare 75.
         name: 'hard-tier-transient-deadline',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400', '--timeout', '3'],
         config: { retry: { max_retries: 1, session_resets: 0, hard_waits_s: [600, 900, 1800] } },
         exit: 75,
@@ -6569,6 +6661,7 @@ async function blackBoxSelfTest() {
       {
         // After a record at cycle 0 the next hard wait is hard_waits_s[1].
         name: 'hard-tier-cycle1',
+        kind: 'logic',
         setup: (c) => {
           writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0);
           return null;
@@ -6594,6 +6687,7 @@ async function blackBoxSelfTest() {
       {
         // After a record at cycle 1 the next hard wait is hard_waits_s[2].
         name: 'hard-tier-cycle2',
+        kind: 'logic',
         setup: (c) => {
           writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 1);
           return null;
@@ -6615,6 +6709,7 @@ async function blackBoxSelfTest() {
       {
         // The list's end is terminal: exit 69, the stop on the report line and on disk.
         name: 'hard-tier-stop',
+        kind: 'logic',
         setup: (c) => {
           writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 2);
           return null;
@@ -6641,6 +6736,7 @@ async function blackBoxSelfTest() {
       {
         // 900 s of wait against 600 s of cap: the cap wins over the list entry.
         name: 'hard-tier-cap-first',
+        kind: 'logic',
         setup: (c) => {
           writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0, {
             first_seen: Date.now() - (3 * 3600 + 50 * 60) * 1000,
@@ -6663,6 +6759,7 @@ async function blackBoxSelfTest() {
         // A stopped record refuses every call on the lane without a model call, logs the state
         // path and the owner reset line, and holds its bytes until stale or deleted (D-08).
         name: 'hard-tier-stopped-refused',
+        kind: 'logic',
         setup: (c) => {
           const file = writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 2, {
             stopped: 'hard-waits', stopped_at: Date.now() - 60000,
@@ -6697,6 +6794,7 @@ async function blackBoxSelfTest() {
       {
         // 25.1 IN-01: a hand-edited stopped record with no stopped_at still refuses (69), no crash.
         name: 'hard-tier-stopped-no-stop-time',
+        kind: 'logic',
         setup: (c) => {
           writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 2, {
             stopped: 'hard-waits', retry_after_s: null, due_at: null,
@@ -6719,6 +6817,7 @@ async function blackBoxSelfTest() {
         // The stale rule is the owner's time-based reset: a stopped record older than the cap
         // is deleted and the lane starts a fresh episode.
         name: 'hard-tier-stopped-stale',
+        kind: 'logic',
         setup: (c) => {
           writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 2, {
             stopped: 'hard-waits', stopped_at: Date.now() - 5 * 3600 * 1000,
@@ -6745,6 +6844,7 @@ async function blackBoxSelfTest() {
       {
         // The hard_waits list itself is project config: precedence over the rendered copy.
         name: 'hard-tier-config-waits',
+        kind: 'logic',
         planningConfig: { workflow: { cross_ai_retry: { hard_waits_s: [60] } } },
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
         config: { retry: { max_retries: 1, session_resets: 0 } },
@@ -6763,6 +6863,7 @@ async function blackBoxSelfTest() {
       {
         // A confirmed router quota starts its own ladder at cycle 0 in the router file.
         name: 'hard-tier-router-quota-cycle0',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota', '--route-pi', 'router'],
         config: { retry: { ...HARD_TIER_RETRY } },
         exit: 75,
@@ -6785,6 +6886,7 @@ async function blackBoxSelfTest() {
         // A pending due_at refuses the re-entry with the seconds left, the record's class and
         // Phase 25's stopped=rungs, and spawns nothing (SPEC R1 idempotency).
         name: 'hard-tier-early-reentry',
+        kind: 'logic',
         setup: (c) => {
           writePriorRecord(c, 'pi', 'fake/event400', 'other', 'transient', 0, {
             due_at: Date.now() + 5 * 60 * 1000,
@@ -6815,6 +6917,7 @@ async function blackBoxSelfTest() {
         // An unwritable state file never leaves a hint the runner cannot track: a spent
         // transient ladder is a bare 75 with the notice, no state line, no retry_after_s.
         name: 'hard-tier-transient-unwritable',
+        kind: 'logic',
         setup: (c) => {
           const blocker = path.join(c.home, 'state-is-a-file');
           fs.writeFileSync(blocker, 'x');
@@ -6835,6 +6938,7 @@ async function blackBoxSelfTest() {
       {
         // Off a router lane a quota stops after one call and writes no state.
         name: 'plain-quota-no-retry',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/quota'],
         exit: 75,
         status: /^AIKIT-XAI status=quota .* exit=75 .* action=stop$/,
@@ -6848,6 +6952,7 @@ async function blackBoxSelfTest() {
       {
         // An inferred lane keeps the base billing class and never cycles.
         name: 'inferred-quota-no-cycle',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/router-env-billing'],
         config: { routerBacked: {} },
         exit: 69,
@@ -6864,6 +6969,7 @@ async function blackBoxSelfTest() {
       {
         // An inferred route's own quota text stops at once with no cycle state.
         name: 'inferred-quota-stop',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/router-env-quota'],
         config: { routerBacked: {} },
         exit: 75,
@@ -6882,6 +6988,7 @@ async function blackBoxSelfTest() {
       {
         // The key is built here and handed to the fake: the fake's pid is not this one.
         name: 'sentinel-evidence',
+        kind: 'logic',
         setup: (c) => {
           c.env.AIKIT_XAI_CASE_SENTINEL = 'sk-aikit-SENTINEL-' + process.pid;
           return null;
@@ -6908,6 +7015,7 @@ async function blackBoxSelfTest() {
       {
         // Off a router lane a quota over edits stops after the one call.
         name: 'dirty-quota',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/dirtyquota'],
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/dirtyquota exit=75 cli_rc=1 .* tree=dirty action=stop$/,
@@ -6920,6 +7028,7 @@ async function blackBoxSelfTest() {
       {
         // A router quota over edits finishes its first series, then the dirty tree stops the reset.
         name: 'dirty-billing-router',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/dirtybilling'],
         config: { routerBacked: { pi: true }, retry: { max_retries: 2, session_resets: 1 } },
         exit: 75,
@@ -6934,6 +7043,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'sentinel-failed-line',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/sentinelquota'],
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/sentinelquota exit=75 .* action=stop$/,
@@ -6946,6 +7056,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'sentinelsplit',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/sentinelsplit'],
         exit: 1,
         status: /^AIKIT-XAI status=crash cli=pi model=fake\/sentinelsplit exit=1 .* action=stop$/,
@@ -6961,6 +7072,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'sentinel-overlong',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/sentineloverlong'],
         exit: 1,
         status: /^AIKIT-XAI status=crash cli=pi model=fake\/sentineloverlong exit=1 .* action=stop$/,
@@ -6974,6 +7086,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'git-after-quota',
+        kind: 'logic',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/gitfailquota', '--model-cursor', 'fake-ok-cursor'],
         exit: 1,
         status: new RegExp('^AIKIT-XAI status=git_error cli=pi model=fake/gitfailquota ' +
@@ -6982,6 +7095,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'upstream-opencode-event',
+        kind: 'logic',
         fakeOpencodeMode: 'upstream-event',
         args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok', '--route-opencode', 'router'],
         config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [600] } },
@@ -6998,6 +7112,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'upstream-two-events',
+        kind: 'logic',
         fakeOpencodeMode: 'two-events',
         args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok', '--route-opencode', 'router'],
         config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [600] } },
@@ -7012,6 +7127,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'upstream-live-kill',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/auth-then-noise', '--timeout', '8'],
         exit: 69,
         status: /^AIKIT-XAI status=auth .* action=stop$/,
@@ -7022,6 +7138,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'upstream-pi-session-masked',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/session-echo'],
         exit: 69,
         status: /^AIKIT-XAI status=auth .* action=stop$/,
@@ -7035,6 +7152,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'upstream-waits-identical',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/router402', '--route-pi', 'router'],
         config: { retry: { base_s: 0.02, factor: 1.5, max_retries: 2, session_resets: 0, hard_waits_s: [600] } },
         exit: 75,
@@ -7063,6 +7181,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'upstream-none',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/crash'],
         exit: 1,
         status: /^AIKIT-XAI status=crash .* action=stop$/,
@@ -7071,6 +7190,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'crash',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/crash'],
         exit: 1,
         status: /^AIKIT-XAI status=crash cli=pi model=fake\/crash exit=1 cli_rc=7 elapsed=\d+s out=\d+ tree=clean action=stop$/,
@@ -7084,18 +7204,21 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'nochange',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/nochange'],
         exit: 1,
         status: /^AIKIT-XAI status=no_change cli=pi model=fake\/nochange exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'empty',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/empty'],
         exit: 1,
         status: /^AIKIT-XAI status=empty_answer cli=pi model=fake\/empty exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
       },
       {
         name: 'upstream-cursor-result',
+        kind: 'logic',
         args: ['--prefer', 'cursor', '--model-cursor', 'fake-err-cursor'],
         exit: 69,
         status: /^AIKIT-XAI status=auth .* action=stop$/,
@@ -7105,6 +7228,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'cursor-error',
+        kind: 'logic',
         args: ['--prefer', 'cursor', '--model-cursor', 'fake-err-cursor'],
         exit: 69,
         status: /^AIKIT-XAI status=auth cli=cursor model=fake-err-cursor exit=69 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
@@ -7117,6 +7241,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'dirtycrash',
+        kind: 'logic',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/dirtycrash', '--model-cursor', 'fake-ok-cursor'],
         exit: 1,
         status: /^AIKIT-XAI status=crash cli=pi model=fake\/dirtycrash exit=1 cli_rc=7 elapsed=\d+s out=\d+ tree=dirty action=stop$/,
@@ -7124,6 +7249,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'no-change-no-fallback',
+        kind: 'logic',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/nochange', '--model-cursor', 'fake-ok-cursor'],
         exit: 1,
         status: /^AIKIT-XAI status=no_change cli=pi model=fake\/nochange exit=1 cli_rc=0 elapsed=\d+s out=\d+ tree=clean action=stop$/,
@@ -7131,6 +7257,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'reedit',
+        kind: 'logic',
         setup: (ctx) => { fs.writeFileSync(path.join(ctx.repo, 'dirty.txt'), 'seed\n'); return null; },
         args: ['--prefer', 'pi', '--model-pi', 'fake/reedit'],
         exit: 0,
@@ -7138,6 +7265,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'hang',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '2'],
         exit: 124,
         status: /^AIKIT-XAI status=timeout cli=pi model=fake\/hang exit=124 cli_rc=.* elapsed=\d+s out=\d+ tree=.* action=stop$/,
@@ -7146,6 +7274,7 @@ async function blackBoxSelfTest() {
       {
         // SPEC R4: a terminal usage-limit line, then the child stays alive. Stopped at the grace.
         name: 'live-limit-kill',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/limit-mid', '--timeout', '60'],
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/limit-mid exit=75 .* action=stop$/,
@@ -7157,6 +7286,7 @@ async function blackBoxSelfTest() {
         // An unterminated `quota exceeded` matches the terminal rows before the buffer trim,
         // so the grace stops the child well inside the deadline (a live kill, not post-hoc).
         name: 'live-partial-kill',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/limit-partial', '--timeout', '3'],
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/limit-partial exit=75 .* action=stop$/,
@@ -7167,6 +7297,7 @@ async function blackBoxSelfTest() {
       {
         // A limit phrase in the answer alone is ignored (SPEC R4 precision).
         name: 'answer-only-ok',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/answer-only-limit'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/answer-only-limit exit=0 .* action=stop$/,
@@ -7179,6 +7310,7 @@ async function blackBoxSelfTest() {
       {
         // A 503 retry notice is not a terminal signal.
         name: 'retry-notice-no-kill',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/retry-notice', '--timeout', '60'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/retry-notice exit=0 .* action=stop$/,
@@ -7191,6 +7323,7 @@ async function blackBoxSelfTest() {
         // The reason-code row is not terminal, so a child that prints it and stays alive past
         // the grace is not killed. Post-hoc classification still names that row.
         name: 'live-reason-code-no-kill',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/reason-code-hang', '--timeout', '60'],
         config: { retry: { max_retries: 1, session_resets: 0 } },
         exit: 75,
@@ -7206,6 +7339,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'overlay-expensive-rows-signal',
+        kind: 'runtime',
         setup: (c) => {
           const rows = [];
           for (let i = 0; i < 40; i += 1) {
@@ -7230,6 +7364,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'overlay-sub-timeout-lines-signal',
+        kind: 'runtime',
         setup: (c) => {
           const dir = path.join(c.home, '.config', 'ai-kit');
           fs.mkdirSync(dir, { recursive: true });
@@ -7255,6 +7390,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'overlay-row-used',
+        kind: 'logic',
         setup: (c) => {
           const dir = path.join(c.home, '.config', 'ai-kit');
           fs.mkdirSync(dir, { recursive: true });
@@ -7280,6 +7416,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'overlay-router-row-live',
+        kind: 'runtime',
         setup: (c) => {
           const dir = path.join(c.home, '.config', 'ai-kit');
           fs.mkdirSync(dir, { recursive: true });
@@ -7303,6 +7440,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'overlay-router-row-unconfirmed',
+        kind: 'runtime',
         setup: (c) => {
           const dir = path.join(c.home, '.config', 'ai-kit');
           fs.mkdirSync(dir, { recursive: true });
@@ -7323,6 +7461,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'overlay-bad-row-refused',
+        kind: 'logic',
         setup: (c) => {
           const dir = path.join(c.home, '.config', 'ai-kit');
           fs.mkdirSync(dir, { recursive: true });
@@ -7361,6 +7500,7 @@ async function blackBoxSelfTest() {
       {
         // A FIFO overlay is refused by type before any read, so it can never block the runner.
         name: 'overlay-fifo-refused',
+        kind: 'runtime',
         setup: (c) => {
           const dir = path.join(c.home, '.config', 'ai-kit');
           fs.mkdirSync(dir, { recursive: true });
@@ -7378,6 +7518,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'overlay-malformed',
+        kind: 'logic',
         setup: (c) => {
           const dir = path.join(c.home, '.config', 'ai-kit');
           fs.mkdirSync(dir, { recursive: true });
@@ -7398,6 +7539,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'overlay-position',
+        kind: 'logic',
         setup: (c) => {
           const dir = path.join(c.home, '.config', 'ai-kit');
           fs.mkdirSync(dir, { recursive: true });
@@ -7435,6 +7577,7 @@ async function blackBoxSelfTest() {
       {
         // A 429 inside a retry notice never kills: the bare-code rows are not terminal.
         name: 'retry-notice-429-no-kill',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/retry-notice-429', '--timeout', '60'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/retry-notice-429 exit=0 .* action=stop$/,
@@ -7447,6 +7590,7 @@ async function blackBoxSelfTest() {
         // A completed transient line on a timed-out attempt is a transient rung, and a
         // deadline this short cannot admit one, so the run stops before any rung.
         name: 'post-hoc-timeout-transient-stays',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/transient-hang', '--timeout', '3'],
         config: { backoffS: [30, 60] },
         exit: 124,
@@ -7457,6 +7601,7 @@ async function blackBoxSelfTest() {
       {
         // An unterminated quota line plus a newline-free flood: the pre-trim match kills live.
         name: 'live-partial-flood',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/limit-partial-flood', '--timeout', '3'],
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=quota cli=pi model=fake/limit-partial-flood ' +
@@ -7468,6 +7613,7 @@ async function blackBoxSelfTest() {
       {
         // A complete non-terminal 429 line never kills live; the post-hoc pass still labels quota.
         name: 'post-hoc-timeout-429',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/bare-429-hang', '--timeout', '3'],
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/bare-429-hang exit=75 .* action=stop$/,
@@ -7479,6 +7625,7 @@ async function blackBoxSelfTest() {
       {
         // A flood after a terminal line cannot hide the signal recorded at first sight.
         name: 'live-limit-flood',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/limit-flood', '--timeout', '60'],
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/limit-flood exit=75 .* action=stop$/,
@@ -7487,6 +7634,7 @@ async function blackBoxSelfTest() {
       {
         // turn.failed carrying limit text is terminal; the grace stops the child.
         name: 'live-codex-turn-failed',
+        kind: 'runtime',
         args: ['--prefer', 'codex', '--model-codex', 'fake-limit-codex', '--timeout', '60'],
         config: { prefer: ['codex'] },
         exit: 75,
@@ -7498,6 +7646,7 @@ async function blackBoxSelfTest() {
       {
         // Ruling Q1: a bare codex error event is recorded, never a kill.
         name: 'live-codex-bare-error-no-kill',
+        kind: 'runtime',
         args: ['--prefer', 'codex', '--model-codex', 'fake-error-then-ok-codex', '--timeout', '60'],
         config: { prefer: ['codex'] },
         exit: 0,
@@ -7507,6 +7656,7 @@ async function blackBoxSelfTest() {
       {
         // A bare codex error is never terminal, so the deadline passes and post-hoc labels quota.
         name: 'post-hoc-timeout-codex-error',
+        kind: 'runtime',
         args: [
           '--prefer', 'codex', '--model-codex', 'fake-bare-error-hang-codex', '--timeout', '3',
         ],
@@ -7521,6 +7671,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'not-installed-codex',
+        kind: 'logic',
         args: ['--prefer', 'codex', '--model-codex', 'x'],
         env: { PATH: `${path.join(tmp, 'bin-nocodex')}` },
         exit: 127,
@@ -7528,6 +7679,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'sigterm-hang',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '60'],
         signal: { when: (c) => fs.existsSync(path.join(c.repo, 'gc.pid')), sig: 'SIGTERM' },
         exit: 143,
@@ -7539,6 +7691,7 @@ async function blackBoxSelfTest() {
         // CR-03/CR-04: a CLI that ignores SIGTERM after editing; the runner must report the
         // real tree and SIGKILL the group well inside run-with-timeout's 3 s grace.
         name: 'sigterm-stubborn',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/stubborn', '--timeout', '60'],
         signal: { when: (c) => fs.existsSync(path.join(c.repo, 'cli.ready')), sig: 'SIGTERM', withinMs: SELF_TEST_SIGNAL_EXIT_MS },
         exit: 143,
@@ -7547,6 +7700,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'sigterm-twice',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/stubborn', '--timeout', '60'],
         signal: { when: (c) => fs.existsSync(path.join(c.repo, 'cli.ready')), sig: 'SIGTERM', again: 'SIGINT', withinMs: SELF_TEST_SIGNAL_EXIT_MS },
         exit: 143,
@@ -7555,6 +7709,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'sigterm-backoff',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded', '--timeout', '200'],
         config: { retry: { base_s: 20 } },
         signal: { when: (c) => readOr(c.calls, '').includes('pi overloaded'), sig: 'SIGTERM', withinMs: SELF_TEST_SIGNAL_EXIT_MS },
@@ -7565,6 +7720,7 @@ async function blackBoxSelfTest() {
         // The harness itself: a runner killed mid-case leaves its CLI group behind; the
         // per-case reaper must still kill it.
         name: 'reap-after-failure',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '60'],
         signal: { when: (c) => fs.existsSync(path.join(c.repo, 'gc.pid')), sig: 'SIGKILL' },
         exit: 0,
@@ -7579,6 +7735,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'gcescape',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/gcescape', '--timeout', '2'],
         exit: 124,
         status: /^AIKIT-XAI status=timeout cli=pi model=fake\/gcescape exit=124 .* action=stop$/,
@@ -7594,6 +7751,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'gcpipe',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/gcpipe', '--timeout', '60'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/gcpipe exit=0 .* action=stop$/,
@@ -7601,6 +7759,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'gcterm',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/gcterm', '--timeout', '60'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/gcterm exit=0 .* action=stop$/,
@@ -7608,6 +7767,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'git-before-fail',
+        kind: 'logic',
         setup: (ctx) => { fs.writeFileSync(path.join(ctx.home, '.fake-git-fail'), '1'); return null; },
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/ok', '--model-cursor', 'fake-ok-cursor'],
         exit: 1,
@@ -7620,6 +7780,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'git-after-fail',
+        kind: 'logic',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/gitfail', '--model-cursor', 'fake-ok-cursor'],
         exit: 1,
         status: new RegExp('^AIKIT-XAI status=git_error cli=pi model=fake/gitfail exit=1 cli_rc=0' +
@@ -7628,6 +7789,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'git-hang',
+        kind: 'runtime',
         setup: (ctx) => { fs.writeFileSync(path.join(ctx.home, '.fake-git-hang'), '1'); return null; },
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok', '--timeout', '3'],
         exit: 1,
@@ -7638,6 +7800,7 @@ async function blackBoxSelfTest() {
       {
         // D-34: outside any git work tree the CLI still runs, once, with tree=unknown.
         name: 'non-git-exec',
+        kind: 'logic',
         setup: (c) => {
           fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true });
           c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo);
@@ -7657,6 +7820,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'non-git-review',
+        kind: 'logic',
         setup: (c) => {
           fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true });
           c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo);
@@ -7672,6 +7836,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'non-git-no-fallback',
+        kind: 'logic',
         setup: (c) => {
           fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true });
           c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo);
@@ -7690,6 +7855,7 @@ async function blackBoxSelfTest() {
       {
         // WR-12: git add records a nested repo as its HEAD only; an edit inside it still counts.
         name: 'submodule-edit',
+        kind: 'logic',
         setup: nestedRepoSetup,
         args: ['--prefer', 'pi', '--model-pi', 'fake/subedit'],
         exit: 0,
@@ -7698,6 +7864,7 @@ async function blackBoxSelfTest() {
       {
         // U-3: an edit only to a gitignored file still reads dirty.
         name: 'ignored-edit',
+        kind: 'logic',
         setup: ignoredFileSetup,
         args: ['--prefer', 'pi', '--model-pi', 'fake/ignorededit'],
         exit: 0,
@@ -7706,6 +7873,7 @@ async function blackBoxSelfTest() {
       {
         // ...but a write inside a fully ignored dir (a cache) does not.
         name: 'ignored-dir-write',
+        kind: 'logic',
         setup: ignoredFileSetup,
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/cachewrite'],
         exit: 0,
@@ -7713,6 +7881,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'ignored-review-ok',
+        kind: 'logic',
         setup: ignoredFileSetup,
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-ok'],
         exit: 0,
@@ -7720,6 +7889,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'submodule-review-ok',
+        kind: 'logic',
         setup: nestedRepoSetup,
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-ok'],
         exit: 0,
@@ -7727,6 +7897,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'unborn-head-l10n',
+        kind: 'logic',
         setup: (c) => {
           fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true });
           spawnSync('git', ['init', '-q'], { cwd: c.repo, env: c.env });
@@ -7739,6 +7910,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'bad-model',
+        kind: 'logic',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/missing', '--model-cursor', 'fake-ok-cursor'],
         exit: 69,
         status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing exit=69 .* tree=clean action=stop$/,
@@ -7752,6 +7924,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'model-suffix-pi',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok:high'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok:high exit=0 .* tree=dirty action=stop$/,
@@ -7759,24 +7932,28 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'model-suffix-opencode',
+        kind: 'logic',
         args: ['--prefer', 'opencode', '--model-opencode', 'fake/ok#high'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=opencode model=fake\/ok#high exit=0 .* tree=dirty action=stop$/,
       },
       {
         name: 'model-suffix-bad-base',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/missing:high'],
         exit: 69,
         status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing:high exit=69 .* action=stop$/,
       },
       {
         name: 'bad-model-only',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/missing'],
         exit: 69,
         status: /^AIKIT-XAI status=bad_model cli=pi model=fake\/missing exit=69 .* action=stop$/,
       },
       {
         name: 'list-broken',
+        kind: 'logic',
         env: { FAKE_PI_LIST: 'broken' },
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         exit: 0,
@@ -7785,6 +7962,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'list-fail',
+        kind: 'logic',
         env: { FAKE_PI_LIST: 'fail' },
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         exit: 0,
@@ -7793,6 +7971,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'list-zero',
+        kind: 'logic',
         env: { FAKE_CURSOR_LIST: 'empty' },
         args: ['--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
         exit: 0,
@@ -7801,6 +7980,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'print-argv-no-preflight',
+        kind: 'logic',
         env: { FAKE_PI_LIST: 'fail' },
         args: ['--print-argv', '--model-pi', 'fake/ok'],
         exit: 0,
@@ -7813,6 +7993,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'list-hang',
+        kind: 'runtime',
         env: { FAKE_PI_LIST: 'hang' },
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok', '--timeout', '4'],
         exit: 124,
@@ -7828,6 +8009,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'flaky',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/flaky'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/flaky exit=0 .* action=stop$/,
@@ -7848,6 +8030,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'overloaded',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded'],
         exit: 75,
         status: /^AIKIT-XAI status=transient cli=pi model=fake\/overloaded exit=75 .* action=stop$/,
@@ -7858,6 +8041,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'backoff-deadline',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded', '--timeout', '3'],
         config: { backoffS: [30, 60] },
         exit: 75,
@@ -7876,6 +8060,7 @@ async function blackBoxSelfTest() {
       {
         // A quota-free timeout is a transient rung when the deadline still admits one.
         name: 'ladder-timeout-then-ok',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/hangonce', '--timeout', '120'],
         config: { attemptTimeoutS: 10, backoffS: [0, 0] },
         exit: 0,
@@ -7889,6 +8074,7 @@ async function blackBoxSelfTest() {
       {
         // After the attempt fewer than 60 s remain, so no rung is admitted.
         name: 'ladder-timeout-no-budget',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/hang', '--timeout', '15'],
         config: { attemptTimeoutS: 8 },
         exit: 124,
@@ -7902,6 +8088,7 @@ async function blackBoxSelfTest() {
       {
         // One series of 6, one session reset, a second series of 6. Same model every call.
         name: 'ladder-transient-exhausted',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
@@ -7929,6 +8116,7 @@ async function blackBoxSelfTest() {
       {
         // Every changed path is named by the prompt, so the reset continues with the resume message.
         name: 'ladder-dirty-inside',
+        kind: 'logic',
         stdin: '<tasks>\n<task>\n<files>a.txt</files>\n</task>\n</tasks>\n',
         args: ['--prefer', 'pi', '--model-pi', 'fake/dirtyevent400', '--no-preamble'],
         config: { retry: { max_retries: 1, session_resets: 1 } },
@@ -7947,6 +8135,7 @@ async function blackBoxSelfTest() {
       {
         // A change the prompt never names stops the ladder at the first fresh session.
         name: 'ladder-dirty-outside',
+        kind: 'logic',
         stdin: 'prompt\n',
         args: ['--prefer', 'pi', '--model-pi', 'fake/dirtyevent400', '--no-preamble'],
         config: { retry: { max_retries: 1, session_resets: 1 } },
@@ -7963,6 +8152,7 @@ async function blackBoxSelfTest() {
         // The failed attempt's own edit is judged before a fresh session opens: cursor has no
         // session, so its next rung is new, and an edit the prompt never names stops it.
         name: 'ladder-new-dirty-cursor',
+        kind: 'logic',
         stdin: 'prompt\n',
         args: ['--runtime', 'cursor', '--model', 'fake-dirty400-cursor', '--no-preamble'],
         config: { retry: { max_retries: 2, session_resets: 0, base_s: 0 } },
@@ -7979,6 +8169,7 @@ async function blackBoxSelfTest() {
         // Every fresh session is gated, not only the first: an edit made by a later failed
         // attempt stops the next one.
         name: 'ladder-later-dirty-cursor',
+        kind: 'logic',
         stdin: 'prompt\n',
         args: ['--runtime', 'cursor', '--model', 'fake-latedirty-cursor', '--no-preamble'],
         config: { retry: { max_retries: 3, session_resets: 0, base_s: 0 } },
@@ -7994,6 +8185,7 @@ async function blackBoxSelfTest() {
       {
         // Outside a git work tree nothing can account for an edit, so no fresh session starts.
         name: 'ladder-non-git',
+        kind: 'logic',
         setup: (c) => {
           fs.rmSync(path.join(c.repo, '.git'), { recursive: true, force: true });
           c.env.GIT_CEILING_DIRECTORIES = path.dirname(c.repo);
@@ -8014,6 +8206,7 @@ async function blackBoxSelfTest() {
         // Cursor never prints a session id, so every soft retry is a new session and the
         // reset count does nothing (D-10). Rewritten with its edge cases in Task 3.
         name: 'ladder-no-session-cursor',
+        kind: 'logic',
         args: ['--prefer', 'cursor', '--model-cursor', 'fake-event400-cursor'],
         exit: 75,
         status: new RegExp('^AIKIT-XAI status=transient cli=cursor ' +
@@ -8029,6 +8222,7 @@ async function blackBoxSelfTest() {
       {
         // No same-session retry: the first failure goes straight to the reset.
         name: 'soft-ladder-zero-retries',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
         config: { retry: { max_retries: 0 } },
         exit: 75,
@@ -8046,6 +8240,7 @@ async function blackBoxSelfTest() {
       {
         // No session reset: one series, then the hard step.
         name: 'soft-ladder-zero-resets',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
         config: { retry: { session_resets: 0 } },
         exit: 75,
@@ -8061,6 +8256,7 @@ async function blackBoxSelfTest() {
       {
         // The 7th call is the reset, a new session with the task, never a 7th resume.
         name: 'soft-ladder-adjacency',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
         exit: 75,
         status: /^AIKIT-XAI status=transient cli=pi model=fake\/event400 exit=75 .* action=stop$/,
@@ -8077,6 +8273,7 @@ async function blackBoxSelfTest() {
       {
         // Codex review has no read-only resume, so every retry is a fresh review run.
         name: 'ladder-codex-review-fresh',
+        kind: 'logic',
         args: ['--mode', 'review', '--prefer', 'codex', '--model-codex', 'fake-event400-codex'],
         config: { prefer: ['codex'], retry: { max_retries: 2, session_resets: 1 } },
         exit: 75,
@@ -8092,6 +8289,7 @@ async function blackBoxSelfTest() {
       {
         // Codex exec captures thread.started: one series resumes it, the reset starts another.
         name: 'ladder-codex-exec-resume',
+        kind: 'logic',
         args: ['--prefer', 'codex', '--model-codex', 'fake-event400-codex'],
         config: { prefer: ['codex'], retry: { max_retries: 2, session_resets: 1 } },
         exit: 75,
@@ -8107,6 +8305,7 @@ async function blackBoxSelfTest() {
       {
         // Review mode resumes pi with its read-only flags, then the reset starts a new session.
         name: 'ladder-review-resume',
+        kind: 'logic',
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-event400'],
         config: { retry: { max_retries: 2, session_resets: 1 } },
         exit: 75,
@@ -8126,6 +8325,7 @@ async function blackBoxSelfTest() {
         // Defaults with a resumable session: same x5, one reset, same x5, then the hard step,
         // for both soft classes.
         name: 'pure-ladder-sequence',
+        kind: 'logic',
         pure: () => {
           const lim = {
             maxRetries: 5, sessionResets: 1, deadlineMs: 100000000, waitMs: 0, capMs: 14400000,
@@ -8151,6 +8351,7 @@ async function blackBoxSelfTest() {
       {
         // The shared episode cap and the deadline admission apply to both soft classes.
         name: 'pure-ladder-cap-both-classes',
+        kind: 'logic',
         pure: () => {
           const first = 1000000;
           const capMs = 14400000;
@@ -8183,6 +8384,7 @@ async function blackBoxSelfTest() {
         // The resolved soft series, logged: 5 same, the reset, 5 same, each within +-10% + 1 ms
         // and never under 0.9 x the previous wait of its series.
         name: 'soft-ladder-waits',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
         config: { retry: { base_s: 0.02 } },
         exit: 75,
@@ -8216,6 +8418,7 @@ async function blackBoxSelfTest() {
       {
         // The ladder reads the values resolveRetry resolved: 1 retry, no reset, 2 calls.
         name: 'retry-config-drives-ladder',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
         planningConfig: { workflow: { cross_ai_retry: { max_retries: 1, session_resets: 0 } } },
         exit: 75,
@@ -8229,6 +8432,7 @@ async function blackBoxSelfTest() {
       {
         // A transient episode near the cap gets one attempt and the cap stop, no soft series.
         name: 'soft-ladder-transient-cap',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/event400'],
         config: { capS: 2, retry: { base_s: 0.5 } },
         exit: 69,
@@ -8247,6 +8451,7 @@ async function blackBoxSelfTest() {
       {
         // No session to continue: every soft retry is a new session, and no reset is offered.
         name: 'pure-ladder-no-resume',
+        kind: 'logic',
         pure: () => {
           const lim = {
             maxRetries: 5, sessionResets: 1, deadlineMs: 100000000, waitMs: 0, capMs: 14400000,
@@ -8266,6 +8471,7 @@ async function blackBoxSelfTest() {
         // Hand-checked boundary: nowMs + waitMs + 60000 passes the deadline at +59999 and is
         // inside it at +60000 (waitMs 0).
         name: 'pure-ladder-deadline',
+        kind: 'logic',
         pure: () => {
           const st = { retry: 0, resets: 0, canResume: true, firstMs: 0, cycle: 0 };
           const now = 1000000;
@@ -8283,6 +8489,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'pure-ladder-clamps',
+        kind: 'logic',
         pure: () => {
           if (clampCapS(99999) !== 14400) return `99999 -> ${clampCapS(99999)}`;
           if (clampCapS(-1) !== 0) return `-1 -> ${clampCapS(-1)}`;
@@ -8294,6 +8501,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'load-factor-math',
+        kind: 'logic',
         pure: () => {
           const want = [[0, 1], [0.5, 1], [1, 1], [2.5, 2.5], [4, 4], [10, 4], [NaN, 1], [Infinity, 1]];
           for (const [reading, f] of want) {
@@ -8308,6 +8516,7 @@ async function blackBoxSelfTest() {
         // A timeout class walks the soft series; a spent series ends transient, a pre-series
         // deadline stop stays a timeout.
         name: 'pure-ladder-timeout',
+        kind: 'logic',
         pure: () => {
           const lim = {
             maxRetries: 5, sessionResets: 1, deadlineMs: 100000000, waitMs: 0, capMs: 14400000,
@@ -8325,6 +8534,7 @@ async function blackBoxSelfTest() {
       {
         // A router quota walks the same soft series and ends on the hard step, never a cooldown.
         name: 'pure-ladder-quota-cycle',
+        kind: 'logic',
         pure: () => {
           const lim = {
             maxRetries: 5, sessionResets: 1, deadlineMs: 100000000, waitMs: 0, capMs: 14400000,
@@ -8347,6 +8557,7 @@ async function blackBoxSelfTest() {
       {
         // Exactly 60 s of cap headroom is inside; one millisecond less is past it.
         name: 'pure-ladder-cap-boundary',
+        kind: 'logic',
         pure: () => {
           const first = 1000000;
           const capMs = 14400000;
@@ -8362,6 +8573,7 @@ async function blackBoxSelfTest() {
       {
         // The cap never exceeds 14400 s and a negative one is 0.
         name: 'pure-ladder-cap-clamp',
+        kind: 'logic',
         pure: () => {
           if (clampCapS(99999) !== 14400) return `capS=${clampCapS(99999)}`;
           return clampCapS(-5) === 0 ? null : `capS=${clampCapS(-5)}`;
@@ -8371,6 +8583,7 @@ async function blackBoxSelfTest() {
         // The caller's hard tier, pure: one wait per cycle from the list, the list's end and a
         // wait past the cap left both stop, and the boundary sits on the wait itself.
         name: 'pure-hard-wait',
+        kind: 'logic',
         pure: () => {
           const waits = [600, 900, 1800];
           const seq = [0, 1, 2].map((c) => hardWaitFor(c, waits, 14400));
@@ -8394,6 +8607,7 @@ async function blackBoxSelfTest() {
       {
         // An off-router quota and an inferred route never start a cycle.
         name: 'pure-ladder-plain-quota',
+        kind: 'logic',
         pure: () => {
           const step = ladderNext(
             { retry: 0, resets: 0, canResume: true, firstMs: 0, cycle: 0 }, 'stop', 0,
@@ -8405,6 +8619,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'pure-ladder-inferred-no-cycle',
+        kind: 'logic',
         pure: () => {
           const step = ladderNext(
             { retry: 0, resets: 0, canResume: true, firstMs: 0, cycle: 0 }, 'stop', 0,
@@ -8415,6 +8630,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'pure-prompt-files',
+        kind: 'logic',
         pure: () => {
           const text = '<files>`a.txt`, "./b.txt", c.txt</files>\n' +
             '<files>d.txt, </files>\nnotes <files>e.txt</files>';
@@ -8426,12 +8642,14 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'review-ok',
+        kind: 'logic',
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/review-ok exit=0 .* tree=clean action=stop$/,
       },
       {
         name: 'review-commit',
+        kind: 'logic',
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-commit'],
         exit: 1,
         status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/review-commit exit=1 .* action=stop$/,
@@ -8439,12 +8657,14 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'review-edit',
+        kind: 'logic',
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-edit'],
         exit: 1,
         status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/review-edit exit=1 .* action=stop$/,
       },
       {
         name: 'review-edit-no-fallback',
+        kind: 'logic',
         args: ['--mode', 'review', '--prefer', 'pi,cursor', '--model-pi', 'fake/review-edit', '--model-cursor', 'fake-ok-cursor'],
         exit: 1,
         status: /^AIKIT-XAI status=contract_violation .* action=stop$/,
@@ -8452,6 +8672,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'review-gitfail',
+        kind: 'logic',
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-gitfail'],
         exit: 1,
         status: new RegExp('^AIKIT-XAI status=git_error cli=pi model=fake/review-gitfail exit=1 ' +
@@ -8459,6 +8680,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'review-git-before-fail',
+        kind: 'logic',
         setup: (ctx) => { fs.writeFileSync(path.join(ctx.home, '.fake-git-fail'), '1'); return null; },
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-ok'],
         exit: 1,
@@ -8467,6 +8689,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'review-flaky-edit',
+        kind: 'logic',
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-flaky-edit'],
         exit: 1,
         status: /^AIKIT-XAI status=contract_violation cli=pi model=fake\/review-flaky-edit exit=1 .* action=stop$/,
@@ -8478,6 +8701,7 @@ async function blackBoxSelfTest() {
       {
         // A review-mode same-session retry carries the runtime's own resume flag, never a widening.
         name: 'review-resume-cursor',
+        kind: 'logic',
         args: ['--mode', 'review', '--runtime', 'cursor', '--model', 'fake-flaky-cursor'],
         config: { retry: { max_retries: 1, session_resets: 0, base_s: 0 } },
         exit: 0,
@@ -8489,6 +8713,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'claude-exec-usage',
+        kind: 'logic',
         args: ['--prefer', 'claude', '--mode', 'exec', '--model-claude', 'fake-ok'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
@@ -8497,6 +8722,7 @@ async function blackBoxSelfTest() {
       {
         // A later review-only entry is ignored, never started, and never rejects the first.
         name: 'review-only-later-menu-ok',
+        kind: 'logic',
         args: ['--prefer', 'pi,claude', '--mode', 'exec', '--model-pi', 'fake/ok', '--model-claude', 'fake-ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
@@ -8509,18 +8735,21 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'prefer-proto-key',
+        kind: 'logic',
         args: ['--prefer', 'constructor', '--model-constructor', 'x'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
       },
       {
         name: 'claude-review-ok',
+        kind: 'logic',
         args: ['--prefer', 'claude', '--mode', 'review', '--model-claude', 'fake-ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=claude model=fake-ok exit=0 .* tree=clean action=stop$/,
       },
       {
         name: 'no-preamble-len',
+        kind: 'logic',
         args: ['--mode', 'review', '--no-preamble', '--prefer', 'pi', '--model-pi', 'fake/echo-len'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -8531,6 +8760,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'preamble-len',
+        kind: 'logic',
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/echo-len'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -8542,6 +8772,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'argv-retry-codex-review',
+        kind: 'logic',
         args: ['--print-argv', '--mode', 'review', '--prefer', 'codex', '--model-codex', 'x'],
         config: { prefer: ['codex'] },
         exit: 0,
@@ -8563,6 +8794,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'argv-retry-codex-exec',
+        kind: 'logic',
         args: ['--print-argv', '--mode', 'exec', '--prefer', 'codex', '--model-codex', 'x',
           '--codex-effort', 'high', '--codex-service-tier', 'flex'],
         config: { prefer: ['codex'] },
@@ -8583,6 +8815,7 @@ async function blackBoxSelfTest() {
       {
         // Rung 1 reopens the same pi session; rung 2 differs only by the session id.
         name: 'argv-retry-pi-review',
+        kind: 'logic',
         args: ['--print-argv', '--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -8610,6 +8843,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'argv-retry-cursor-review',
+        kind: 'logic',
         args: ['--print-argv', '--mode', 'review', '--prefer', 'cursor', '--model-cursor', 'x'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -8634,6 +8868,7 @@ async function blackBoxSelfTest() {
       {
         // Nominal series at the defaults, then the 10% ordering rule at factors near 1.
         name: 'pure-soft-waits',
+        kind: 'logic',
         pure: () => {
           const mid = { base_s: 1, factor: 1.5 };
           const series = [1, 2, 3, 4, 5].map((k) => softWaitMs(mid, k, () => 0.5));
@@ -8678,6 +8913,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'pure-retry-defaults',
+        kind: 'logic',
         pure: () => {
           const want = { base_s: 1, factor: 1.5, max_retries: 5, session_resets: 1 };
           for (const [k, v] of Object.entries(want)) {
@@ -8700,6 +8936,7 @@ async function blackBoxSelfTest() {
       {
         // Inclusive limits pass; one step outside, a wrong type and an unknown key are refused.
         name: 'pure-retry-validate',
+        kind: 'logic',
         pure: () => {
           const cap = 14400;
           const ok = [
@@ -8730,6 +8967,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'retry-config-project',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         planningConfig: { workflow: { cross_ai_retry: { max_retries: 1, session_resets: 0 } } },
@@ -8745,6 +8983,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'retry-config-user',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         exit: 0,
@@ -8762,6 +9001,7 @@ async function blackBoxSelfTest() {
       {
         // The project key wins where both set it; the user key fills a key the project lacks.
         name: 'retry-config-per-key',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         planningConfig: { workflow: { cross_ai_retry: { max_retries: 1 } } },
@@ -8779,6 +9019,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'retry-config-workstream',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         env: { GSD_WORKSTREAM: 'ws1' },
@@ -8791,6 +9032,7 @@ async function blackBoxSelfTest() {
       {
         // A scoped file without the key falls through to the root config.
         name: 'retry-config-workstream-fallback',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         env: { GSD_WORKSTREAM: 'ws1' },
@@ -8802,6 +9044,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'retry-config-refused',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         planningConfig: { workflow: { cross_ai_retry: { base_s: 61, max_retries: '1' } } },
@@ -8827,6 +9070,7 @@ async function blackBoxSelfTest() {
       {
         // A FIFO user retry file is refused by type before any read and the run goes on.
         name: 'retry-config-fifo',
+        kind: 'runtime',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         exit: 0,
@@ -8841,6 +9085,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'retry-config-malformed',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         exit: 0,
@@ -8859,6 +9104,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'retry-config-unknown-key',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         planningConfig: { workflow: { cross_ai_retry: { cap_s: 99999 } } },
@@ -8872,6 +9118,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'retry-config-caps-clamp',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         config: { capS: 99999 },
@@ -8885,6 +9132,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'retry-config-read-only',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         planningConfig: { workflow: { cross_ai_retry: { max_retries: 1 } } },
@@ -8937,6 +9185,7 @@ async function blackBoxSelfTest() {
       {
         // A CONFIG hard wait above capS is refused; the defaults stay whole as the last source.
         name: 'retry-config-small-cap',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         config: { capS: 300, retry: { hard_waits_s: [600] } },
@@ -8957,6 +9206,7 @@ async function blackBoxSelfTest() {
       {
         // The retry read refuses a symlink out of .planning; the timeout read still follows it.
         name: 'retry-config-outside',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok'],
         stdin: 'do the thing\n',
         exit: 0,
@@ -8988,6 +9238,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'deadline-default',
+        kind: 'logic',
         args: ['--print-argv', '--model-pi', 'fake/ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -8995,6 +9246,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'deadline-1800',
+        kind: 'logic',
         args: ['--print-argv', '--model-pi', 'fake/ok'],
         planningConfig: { workflow: { cross_ai_timeout: 1800 } },
         exit: 0,
@@ -9003,6 +9255,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'deadline-config-cap',
+        kind: 'logic',
         args: ['--print-argv', '--model-pi', 'fake/ok'],
         planningConfig: { workflow: { cross_ai_timeout: 3600 } },
         exit: 0,
@@ -9011,6 +9264,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'deadline-20',
+        kind: 'logic',
         args: ['--print-argv', '--model-pi', 'fake/ok'],
         planningConfig: { workflow: { cross_ai_timeout: 20 } },
         exit: 0,
@@ -9019,6 +9273,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'deadline-workstream',
+        kind: 'logic',
         args: ['--print-argv', '--model-pi', 'fake/ok'],
         env: { GSD_WORKSTREAM: 'ws' },
         workstream: { ws: 'ws', config: { workflow: { cross_ai_timeout: 600 } } },
@@ -9029,6 +9284,7 @@ async function blackBoxSelfTest() {
       {
         // config-get rejects the segment, so GSD falls back to its 300 s default too.
         name: 'deadline-workstream-bad',
+        kind: 'logic',
         args: ['--print-argv', '--model-pi', 'fake/ok'],
         env: { GSD_WORKSTREAM: '../x' },
         planningConfig: { workflow: { cross_ai_timeout: 600 } },
@@ -9045,6 +9301,7 @@ async function blackBoxSelfTest() {
           { '.planning/p/workstreams/ws/config.json': { workflow: { cross_ai_timeout: 900 } } }, '870s (outer 900s)'],
       ].map(([name, env, files, want]) => ({
         name,
+        kind: 'logic',
         args: ['--print-argv', '--model-pi', 'fake/ok'],
         env,
         files,
@@ -9055,6 +9312,7 @@ async function blackBoxSelfTest() {
       })),
       {
         name: 'deadline-outer-min',
+        kind: 'logic',
         args: ['--print-argv', '--model-pi', 'fake/ok'],
         planningConfig: { workflow: { cross_ai_timeout: 1 } },
         exit: 2,
@@ -9062,6 +9320,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'deadline-timeout-cap',
+        kind: 'logic',
         args: ['--print-argv', '--timeout', '5', '--model-pi', 'fake/ok'],
         planningConfig: { workflow: { cross_ai_timeout: 1800 } },
         exit: 0,
@@ -9070,6 +9329,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'deadline-timeout-above-inner',
+        kind: 'logic',
         args: ['--print-argv', '--timeout', '5000', '--model-pi', 'fake/ok'],
         planningConfig: { workflow: { cross_ai_timeout: 1800 } },
         exit: 0,
@@ -9079,6 +9339,7 @@ async function blackBoxSelfTest() {
       {
         // D-18: an explicit outer deadline replaces both the GSD lookup and the CONFIG cap.
         name: 'outer-timeout-flag',
+        kind: 'logic',
         args: [
           '--print-argv', '--outer-timeout', '1830', '--timeout', '1800', '--model-pi', 'fake/ok',
         ],
@@ -9091,12 +9352,14 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'outer-timeout-bad',
+        kind: 'logic',
         args: ['--print-argv', '--outer-timeout', '0', '--model-pi', 'fake/ok'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
       },
       {
         name: 'codex-knobs',
+        kind: 'logic',
         args: ['--print-argv', '--prefer', 'codex', '--model-codex', 'x', '--codex-effort', 'high', '--codex-service-tier', 'flex'],
         config: { prefer: ['codex'] },
         exit: 0,
@@ -9120,6 +9383,7 @@ async function blackBoxSelfTest() {
       ].map(([name, rt, model, config, extra, want]) => ({
         // WR-06: the plan's baked effort reaches the CLI (exec and review argv alike).
         name,
+        kind: 'logic',
         args: ['--print-argv', '--prefer', rt, `--model-${rt}`, model, ...extra],
         config,
         exit: 0,
@@ -9135,6 +9399,7 @@ async function blackBoxSelfTest() {
       })),
       {
         name: 'codex-effort-bogus',
+        kind: 'logic',
         args: ['--codex-effort', 'bogus', '--prefer', 'codex', '--model-codex', 'x'],
         config: { prefer: ['codex'] },
         exit: 2,
@@ -9142,6 +9407,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'cursor-mode-plan',
+        kind: 'logic',
         args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'x', '--mode', 'review', '--cursor-mode', 'plan'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -9154,6 +9420,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'cursor-mode-exec-usage',
+        kind: 'logic',
         args: ['--mode', 'exec', '--cursor-mode', 'plan', '--prefer', 'pi', '--model-pi', 'fake/ok'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
@@ -9161,6 +9428,7 @@ async function blackBoxSelfTest() {
       {
         // D-18: a cursor bracket id is preflighted without the suffix, then run whole.
         name: 'cursor-bracket-model',
+        kind: 'logic',
         args: [
           '--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor[effort=high,fast=false]',
         ],
@@ -9179,6 +9447,7 @@ async function blackBoxSelfTest() {
       {
         // Brackets are cursor-only; every other --model-<rt> keeps the template-2 charset.
         name: 'cursor-bracket-other-rt',
+        kind: 'logic',
         args: ['--print-argv', '--model-pi', 'fake/ok[x=1]'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
@@ -9186,6 +9455,7 @@ async function blackBoxSelfTest() {
       {
         // D-02: a bare `agent` whose real path is not cursor-agent is not cursor.
         name: 'bare-agent-guard',
+        kind: 'logic',
         args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -9211,6 +9481,7 @@ async function blackBoxSelfTest() {
       {
         // The same bare name is cursor when its real path is cursor-agent.
         name: 'agent-cursor-realpath',
+        kind: 'logic',
         args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -9233,6 +9504,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'agent-other-first-then-cursor',
+        kind: 'logic',
         args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -9252,6 +9524,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'agent-other-first-then-cursor-cwd',
+        kind: 'logic',
         args: ['--print-argv', '--prefer', 'cursor', '--model-cursor', 'fake-ok-cursor'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -9268,6 +9541,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'agent-other-first-then-cursor-cwd-spawn',
+        kind: 'logic',
         args: ['--mode', 'exec', '--prefer', 'cursor', '--model-cursor', 'composer-2.5'],
         stdin: 'exercise guarded cwd dispatch',
         exit: 0,
@@ -9288,6 +9562,7 @@ async function blackBoxSelfTest() {
       {
         // CR-01: a nameless, ANSI-wrapped `auto (current, default)` line is a listed model.
         name: 'cursor-nameless-listing-preflight',
+        kind: 'logic',
         env: { FAKE_CURSOR_LIST: 'nameless' },
         args: ['--prefer', 'cursor', '--model-cursor', 'auto'],
         exit: 0,
@@ -9301,6 +9576,7 @@ async function blackBoxSelfTest() {
       {
         // 26 D-24: every child carries AI_KIT_CROSS_AI_CHILD=1, even when the parent holds another value.
         name: 'child-marker-env',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--model', 'fake/envmarker'],
         env: { AI_KIT_CROSS_AI_CHILD: '0' },
         exit: 0,
@@ -9314,6 +9590,7 @@ async function blackBoxSelfTest() {
         // D-30: a file's content goes before the stdin prompt, and nothing else with --no-preamble;
         // its leading HTML-comment lines (the guidance file's stamp) never reach the model.
         name: 'prepend-file',
+        kind: 'logic',
         args: [
           '--prefer', 'pi', '--model-pi', 'fake/echoprompt', '--no-preamble',
           '--prepend-file', 'guide.md',
@@ -9340,6 +9617,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'prepend-file-missing',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/ok', '--prepend-file', 'nope.md'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
@@ -9350,6 +9628,7 @@ async function blackBoxSelfTest() {
       {
         // D-27: workspace-write replaces the bypass, and a retry stays a fresh sandboxed run.
         name: 'codex-sandbox-exec',
+        kind: 'logic',
         args: [
           '--print-argv', '--prefer', 'codex', '--model-codex', 'x', '--mode', 'exec',
           '--codex-sandbox', 'workspace-write',
@@ -9378,6 +9657,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'codex-sandbox-default',
+        kind: 'logic',
         args: ['--print-argv', '--prefer', 'codex', '--model-codex', 'x', '--mode', 'exec'],
         config: { prefer: ['codex'] },
         exit: 0,
@@ -9392,6 +9672,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'codex-sandbox-bad',
+        kind: 'logic',
         args: [
           '--print-argv', '--prefer', 'codex', '--model-codex', 'x', '--mode', 'exec',
           '--codex-sandbox', 'danger-full-access',
@@ -9402,6 +9683,7 @@ async function blackBoxSelfTest() {
       {
         // The runner records each detached CLI child so a supervisor can reap a wedged run.
         name: 'child-pgid-file',
+        kind: 'runtime',
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
         setup: (c) => {
@@ -9426,6 +9708,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'child-pgid-file-unwritable',
+        kind: 'logic',
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
         setup: (c) => {
@@ -9443,6 +9726,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'extra-args-pi',
+        kind: 'logic',
         args: ['--print-argv', '--prefer', 'pi', '--model-pi', 'fake/ok'],
         config: { extraArgs: { pi: ['--skill', 'skills/x/SKILL.md'] } },
         exit: 0,
@@ -9456,6 +9740,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'profile-pi-review-argv',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--mode', 'review', '--model', 'fake/ok', '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -9472,6 +9757,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'profile-pi-none-argv',
+        kind: 'logic',
         args: [
           '--runtime', 'pi', '--mode', 'review', '--tools-profile', 'none',
           '--model', 'fake/ok', '--print-argv',
@@ -9489,6 +9775,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'profile-pi-exec-default',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--mode', 'exec', '--model', 'fake/ok', '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -9502,6 +9789,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'profile-review-widen-refused',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--mode', 'review', '--tools-profile', 'exec', '--model', 'fake/ok'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
@@ -9509,6 +9797,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'profile-unsupported-cursor',
+        kind: 'logic',
         args: ['--runtime', 'cursor', '--tools-profile', 'none', '--model', 'fake-ok-cursor'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
@@ -9516,18 +9805,21 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'profile-bad-name',
+        kind: 'logic',
         args: ['--tools-profile', 'write'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
       },
       {
         name: 'no-passthrough',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--model', 'fake/ok', '--', '--yolo'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
       },
       {
         name: 'no-passthrough-extra-arg',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--model', 'fake/ok', '--extra-arg', 'x'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
@@ -9535,6 +9827,7 @@ async function blackBoxSelfTest() {
       {
         // One case, three widening extras: each exits 2 before any fake call.
         name: 'review-extra-args-widen-refused',
+        kind: 'logic',
         config: { extraArgs: { pi: ['--tools', 'bash'] }, prefer: ['pi'], retry: { max_retries: 1 } },
         args: ['--mode', 'review', '--model-pi', 'fake/ok'],
         exit: 2,
@@ -9567,6 +9860,7 @@ async function blackBoxSelfTest() {
         { opencode: ['--agent', 'build'] },
       ].map((extraArgs, i) => ({
         name: `review-extra-args-widen-refused-${i}`,
+        kind: 'logic',
         args: ['--mode', 'review', '--model-pi', 'fake/ok', '--model-opencode', 'fake/ok'],
         config: { extraArgs, prefer: [Object.keys(extraArgs)[0]] },
         exit: 2,
@@ -9582,6 +9876,7 @@ async function blackBoxSelfTest() {
       })),
       {
         name: 'review-extra-args-skill-ok',
+        kind: 'logic',
         args: ['--mode', 'review', '--prefer', 'pi', '--model-pi', 'fake/review-ok'],
         config: { extraArgs: { pi: ['--skill', 'skills/x/SKILL.md'] } },
         exit: 0,
@@ -9616,6 +9911,7 @@ async function blackBoxSelfTest() {
         { mode: 'missing', exit: 69, status: 'bad_model', tree: 'clean' },
       ].map((row) => ({
         name: `no-second-cli-${row.mode}`,
+        kind: row.mode === 'hang' ? 'runtime' : 'logic',
         ...(row.setup ? { setup: row.setup } : {}),
         args: [
           '--prefer', 'pi,cursor,opencode', '--model-pi', `fake/${row.model || row.mode}`,
@@ -9637,6 +9933,7 @@ async function blackBoxSelfTest() {
       })),
       {
         name: 'no-second-cli-review-edit',
+        kind: 'logic',
         args: [
           '--mode', 'review', '--prefer', 'pi,cursor,opencode', '--model-pi', 'fake/review-edit',
           '--model-cursor', 'fake-ok-cursor', '--model-opencode', 'fake/ok',
@@ -9654,6 +9951,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'config-prefer-first-only',
+        kind: 'logic',
         config: {
           runtime: null,
           prefer: ['pi', 'cursor'],
@@ -9674,6 +9972,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'runtime-flag',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--model-pi', 'fake/ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
@@ -9681,6 +9980,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'runtime-and-prefer',
+        kind: 'logic',
         args: ['--runtime', 'pi', '--prefer', 'cursor', '--model-pi', 'fake/ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
@@ -9693,6 +9993,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'prefer-first-only-notice',
+        kind: 'logic',
         args: ['--prefer', 'pi,cursor', '--model-pi', 'fake/ok'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/ok exit=0 .* tree=dirty action=stop$/,
@@ -9705,6 +10006,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'config-runtime',
+        kind: 'logic',
         config: { runtime: 'pi', prefer: ['cursor'], models: { pi: 'fake/ok', cursor: 'fake-ok-cursor' } },
         args: [],
         exit: 0,
@@ -9713,12 +10015,14 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'runtime-unknown',
+        kind: 'logic',
         args: ['--runtime', 'nosuch'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
       },
       {
         name: 'runtime-none',
+        kind: 'logic',
         config: { prefer: null },
         args: [],
         exit: 2,
@@ -9727,6 +10031,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'not-installed-first',
+        kind: 'logic',
         setup: (c) => {
           const dir = path.join(c.tmp, `bin-nopi-${c.repo.split('/').pop()}`);
           fs.mkdirSync(dir);
@@ -9750,6 +10055,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'no-model-first',
+        kind: 'logic',
         args: ['--prefer', 'pi,cursor', '--model-cursor', 'fake-ok-cursor'],
         exit: 2,
         status: /^AIKIT-XAI status=no_model cli=pi .* exit=2 .* action=stop$/,
@@ -9757,6 +10063,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'review-only-first-refused',
+        kind: 'logic',
         args: [
           '--mode', 'exec', '--prefer', 'claude,pi', '--model-claude', 'fake-ok',
           '--model-pi', 'fake/ok',
@@ -9772,6 +10079,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'outer-race',
+        kind: 'runtime',
         config: { outerTimeoutS: 40 },
         args: ['--prefer', 'pi', '--model-pi', 'fake/outer-race', '--timeout', '8'],
         exit: 124,
@@ -9791,6 +10099,7 @@ async function blackBoxSelfTest() {
       ...classifyCases(),
       {
         name: 'classify-only-fixtures',
+        kind: 'logic',
         setup: (c) => {
           const rows = CLASSIFY_CASES.map((entry) => {
             const row = { name: entry.name, cli: entry.cli };
@@ -9829,6 +10138,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'classify-only-no-spawn',
+        kind: 'logic',
         setup: (c) => {
           fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify([
             { name: 'x', cli: 'pi', stderr: '402 payment required' },
@@ -9843,6 +10153,7 @@ async function blackBoxSelfTest() {
       {
         // 25.1 WR-02: an uncaptured runtime reads unverified here too, as on a live run.
         name: 'classify-only-copilot-unverified',
+        kind: 'logic',
         setup: (c) => {
           fs.writeFileSync(path.join(c.repo, 'fixtures.json'), JSON.stringify([
             { name: 'x', cli: 'copilot', stderr: 'Error: quota exceeded' },
@@ -9859,12 +10170,14 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'classify-only-bad-file',
+        kind: 'logic',
         args: ['--classify-only', 'missing.json'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* action=stop$/,
       },
       {
         name: 'route-config',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/billing'],
         config: { routerBacked: { pi: true } },
         exit: 75,
@@ -9876,6 +10189,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'route-flag-wins',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/billing', '--route-pi', 'unknown'],
         config: { routerBacked: { pi: true } },
         exit: 69,
@@ -9887,6 +10201,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'route-heuristic',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/router-env-billing'],
         config: { routerBacked: {} },
         exit: 69,
@@ -9898,6 +10213,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'upstream-router-402',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--model-pi', 'fake/router402', '--route-pi', 'router'],
         config: { retry: { max_retries: 0, session_resets: 0, hard_waits_s: [600] } },
         exit: 75,
@@ -9924,12 +10240,14 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'route-flag-bad',
+        kind: 'logic',
         args: ['--prefer', 'pi', '--route-pi', 'maybe'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* action=stop$/,
       },
       {
         name: 'copilot-exec-ok',
+        kind: 'logic',
         args: ['--runtime', 'copilot', '--model', 'fake-ok'],
         env: {
           COPILOT_GITHUB_TOKEN: 'github_pat_' + 'selftest'.padEnd(22, 'x'),
@@ -9959,6 +10277,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'copilot-argv-exec',
+        kind: 'logic',
         args: ['--runtime', 'copilot', '--model', 'fake-ok', '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -9973,6 +10292,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'copilot-token-passthrough',
+        kind: 'logic',
         args: ['--runtime', 'copilot', '--model', 'fake-ok'],
         env: {
           COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40),
@@ -10015,6 +10335,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'copilot-no-token-auth',
+        kind: 'logic',
         args: ['--runtime', 'copilot', '--model', 'fake-ok'],
         config: { retry: { max_retries: 1 } },
         exit: 69,
@@ -10033,6 +10354,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'pure-argv-prompt-guard',
+        kind: 'logic',
         pure: () => {
           const reserve = Buffer.byteLength(`${RESUME_MSG}\n\n`);
           const room = ARGV_PROMPT_MAX - reserve;
@@ -10050,6 +10372,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'copilot-oversize',
+        kind: 'logic',
         args: ['--runtime', 'copilot', '--model', 'fake-ok'],
         stdin: 'x'.repeat(110000),
         env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
@@ -10064,6 +10387,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'copilot-large-prompt',
+        kind: 'logic',
         args: ['--runtime', 'copilot', '--model', 'fake-ok'],
         stdin: 'y'.repeat(90000),
         env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
@@ -10085,6 +10409,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'copilot-none-profile-refused',
+        kind: 'logic',
         args: ['--runtime', 'copilot', '--tools-profile', 'none', '--model', 'fake-ok'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
@@ -10092,6 +10417,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'copilot-review-widen-refused',
+        kind: 'logic',
         args: ['--runtime', 'copilot', '--mode', 'review', '--tools-profile', 'exec', '--model', 'fake-ok'],
         exit: 2,
         status: /^AIKIT-XAI status=usage .* exit=2 .* action=stop$/,
@@ -10099,6 +10425,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'copilot-review-extra-refused',
+        kind: 'logic',
         config: { extraArgs: { copilot: ['--available-tools=bash'] }, retry: { max_retries: 1 } },
         args: ['--runtime', 'copilot', '--mode', 'review', '--model', 'fake-ok'],
         env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
@@ -10122,6 +10449,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'copilot-transient-new-sessions',
+        kind: 'logic',
         args: ['--runtime', 'copilot', '--model', 'fake-event400'],
         config: { retry: { max_retries: 2, session_resets: 1 } },
         env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
@@ -10135,6 +10463,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'copilot-dash-prompt',
+        kind: 'logic',
         args: ['--runtime', 'copilot', '--model', 'fake-ok'],
         stdin: '---\nrest\n',
         env: { COPILOT_GITHUB_TOKEN: 'github_pat_' + 'a'.repeat(40) },
@@ -10152,6 +10481,7 @@ async function blackBoxSelfTest() {
       },
       {
         name: 'copilot-argv-review',
+        kind: 'logic',
         args: ['--runtime', 'copilot', '--mode', 'review', '--model', 'fake-ok', '--print-argv'],
         exit: 0,
         status: /^AIKIT-XAI status=ok .* tree=clean action=stop$/,
@@ -10170,6 +10500,20 @@ async function blackBoxSelfTest() {
 
     ];
 
+    const unkinded = cases.filter((c) => c.kind !== 'logic' && c.kind !== 'runtime').map((c) => c.name);
+    if (unkinded.length) {
+      process.stderr.write(`self-test: case without a logic or runtime kind: ${unkinded.join(',')}\n`);
+      return 2;
+    }
+    const dupes = cases.map((c) => c.name).filter((n, i, all) => all.indexOf(n) !== i);
+    if (dupes.length) {
+      process.stderr.write(`self-test: duplicate case name: ${[...new Set(dupes)].join(',')}\n`);
+      return 2;
+    }
+    if (listOnly) {
+      for (const c of cases) process.stdout.write(`${c.name}\t${c.kind}\n`);
+      return 0;
+    }
     const only = (process.env.AIKIT_XAI_SELFTEST_CASES || '').split(',').filter(Boolean);
     const selected = only.length ? cases.filter((c) => only.includes(c.name)) : cases;
     if (selected.length !== (only.length || cases.length)) {
@@ -10208,7 +10552,7 @@ async function main(argv) {
   }
   OVERLAY_IDS = new Set();
   // The self-test never reads the owner's real overlay; each case builds its own.
-  if (o.selfTest) return blackBoxSelfTest();
+  if (o.selfTest) return blackBoxSelfTest(o.selfTestList);
   TABLE = mergeCatalog(PATTERNS, loadOverlay(process.env));
   if (o.classifyOnly !== null) return runClassifyOnly(o.classifyOnly);
   childPgidFile = o.childPgidFile;

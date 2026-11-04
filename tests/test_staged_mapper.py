@@ -693,8 +693,8 @@ class PushedModeTest(unittest.TestCase):
     """The runner's --pushed mode, with the mapper, the refs and the uv child faked."""
 
     REFS = ("PRE_COMMIT_FROM_REF", "PRE_COMMIT_TO_REF")
-    WITHIN = "tests.test_precompact_shims_e2e"  # recorded at 58 s: within the budget
-    OVER = "tests.test_cross_ai_runner_e2e"  # recorded at 361 s: over it
+    WITHIN = "tests.test_precompact_shims_e2e"  # patched to 58 s below: within the budget
+    OVER = "tests.test_cross_ai_runner_e2e"  # patched to 361 s below: over it
 
     def setUp(self) -> None:
         self.runner = load_tool(RUNNER)

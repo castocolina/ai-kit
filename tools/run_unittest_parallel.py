@@ -11,7 +11,7 @@ Usage:
 Each module runs under the same interpreter as this script, so the caller picks
 the runtime (system python3 or `uv run python`), with the repo root as its cwd.
 Output is buffered per module and printed whole, so failures never interleave.
-Exits 1 if any module fails or exceeds its deadline (module_timeout_secs); exits 130 when
+Exits 1 if any module fails or exceeds its deadline (MODULE_TIMEOUT_SECS); exits 130 when
 interrupted.
 
 --staged runs exactly the modules that cover the staged files: the name index in
@@ -58,7 +58,7 @@ never carry the variable, so a nested runner a test starts writes nothing.
 
 Each module starts in its own session. Stopping a module (its deadline, or SIGINT/SIGTERM to this
 runner) sends SIGTERM to its process group first and SIGKILL after MODULE_STOP_GRACE_SECS; a
-test that starts its own session must forward SIGTERM to it (tests/test_cross_ai_runner_e2e.py
+test that starts its own session must forward SIGTERM to it (tests/cross_ai_selftest.py
 does). An interrupted run starts no queued module and stops every live one.
 
 Workers are a share of the available CPUs, capped at 40 percent
@@ -83,7 +83,7 @@ import time
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from types import FrameType, MappingProxyType, ModuleType
+from types import FrameType, ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
@@ -112,6 +112,15 @@ E2E_MODULES = frozenset({
     "tests.test_jev_skill_install_e2e",  # R8: real setup.py runs under a temp HOME
     "tests.test_hook_registry_e2e",  # R10: real setup.py hook runs under a temp HOME
     "tests.test_cross_ai_runner_e2e",
+    # the runner template's self-test, split by kind into timed shards (quick 261104-cxr)
+    "tests.test_cross_ai_selftest_logic_1_e2e",
+    "tests.test_cross_ai_selftest_logic_2_e2e",
+    "tests.test_cross_ai_selftest_logic_3_e2e",
+    "tests.test_cross_ai_selftest_logic_4_e2e",
+    "tests.test_cross_ai_selftest_runtime_1_e2e",
+    "tests.test_cross_ai_selftest_runtime_2_e2e",
+    "tests.test_cross_ai_selftest_runtime_3_e2e",
+    "tests.test_cross_ai_selftest_runtime_4_e2e",
     "tests.test_precompact_shims_e2e",  # node runs of the pi and opencode shims (D-18)
     # real dispatch of the six checkers; the agents domain runs the project-local gsd-core
     # through node (26-08)
@@ -129,7 +138,7 @@ E2E_MODULES = frozenset({
 # there: 57.7 s at most, against 360.5 s for tests.test_cross_ai_runner_e2e).
 COMMIT_E2E_BUDGET_SECS = 60
 # Whole seconds per e2e module, rounded up from the `=== <module>: ok in <s>` lines of one
-# `--group e2e` run on the frozen tree (2026-11-04, 24 CPUs, one-minute load 1.80 at start). These
+# `--group e2e` run on the frozen tree (2026-11-04, 24 CPUs, one-minute load 3.73 at start). These
 # are this machine's times and are not scaled by CPU count. Refresh on a quiet machine with that
 # command. A module missing from this table is over the budget.
 E2E_RECORDED_SECS = {
@@ -138,7 +147,15 @@ E2E_RECORDED_SECS = {
     "tests.test_ai_kit_project_rules_all_e2e": 26,
     "tests.test_ai_kit_spec_e2e": 1,
     "tests.test_ai_kit_spec_goal_prompt_e2e": 1,
-    "tests.test_cross_ai_runner_e2e": 366,
+    "tests.test_cross_ai_runner_e2e": 18,
+    "tests.test_cross_ai_selftest_logic_1_e2e": 26,
+    "tests.test_cross_ai_selftest_logic_2_e2e": 26,
+    "tests.test_cross_ai_selftest_logic_3_e2e": 26,
+    "tests.test_cross_ai_selftest_logic_4_e2e": 26,
+    "tests.test_cross_ai_selftest_runtime_1_e2e": 24,
+    "tests.test_cross_ai_selftest_runtime_2_e2e": 25,
+    "tests.test_cross_ai_selftest_runtime_3_e2e": 24,
+    "tests.test_cross_ai_selftest_runtime_4_e2e": 23,
     "tests.test_curated_config_apply_e2e": 1,
     "tests.test_curated_config_e2e": 6,
     "tests.test_hook_registry_e2e": 2,
@@ -201,16 +218,9 @@ HOST_CONFIG_ENV_PREFIXES = ("CC_AI_KIT_", "AI_KIT_CURSOR_")
 GIT_KEPT_VARS = frozenset({"GIT_EXEC_PATH"})
 
 MAX_CPU_SHARE = 0.40
-# A hung module fails the gate instead of hanging it; generous for slow machines.
+# A hung module fails the gate instead of hanging it; generous for slow machines. It is the one
+# deadline for every module; the runner self-test shards size their guards under it.
 MODULE_TIMEOUT_SECS = 900
-# The self-test module runs the full runner self-test twice, each guarded by a hang guard sized
-# from one load reading (300 s and 900 s at idle, times the 1..4 load factor): 4 x (300 + 900) s
-# plus 600 s for the rest of the module. Its own guards fire first. A real hang of this module can
-# therefore hold `make e2e-test` for up to 5400 s at the 4x cap (1200 s plus the rest at idle).
-SELF_TEST_MODULE_TIMEOUT_SECS = 5400
-MODULE_TIMEOUT_OVERRIDES = MappingProxyType({
-    "tests.test_cross_ai_runner_e2e": SELF_TEST_MODULE_TIMEOUT_SECS,
-})
 # SIGTERM to a module's group, this long to clean up, then SIGKILL.
 MODULE_STOP_GRACE_SECS = 15
 REAP_SECS = 5
@@ -433,11 +443,6 @@ def _unittest_argv(module: str) -> list[str]:
     return [sys.executable, "-m", "unittest", *verbose, module]
 
 
-def module_timeout_secs(module: str) -> int:
-    """The deadline of `module`; the global is read at call time so a test can patch it."""
-    return MODULE_TIMEOUT_OVERRIDES.get(module, MODULE_TIMEOUT_SECS)
-
-
 _LOCK = threading.Lock()
 _LIVE: set[subprocess.Popen[str]] = set()
 _STOPPING = threading.Event()
@@ -518,7 +523,7 @@ def run_module(module: str, cwd: Path = REPO_ROOT) -> tuple[str, int, str, float
         if proc is None:
             return module, 130, "not started: the run was interrupted", 0.0
         try:
-            rc, output = _communicate(proc, module_timeout_secs(module))
+            rc, output = _communicate(proc, MODULE_TIMEOUT_SECS)
         finally:
             with _LOCK:
                 _LIVE.discard(proc)
@@ -635,7 +640,7 @@ def _run_under_uv(modules: list[str], cwd: Path, prefix: str) -> list[str]:
     if proc is None:
         return list(modules)
     try:
-        rc, output = _communicate(proc, sum(module_timeout_secs(m) for m in modules))
+        rc, output = _communicate(proc, MODULE_TIMEOUT_SECS * len(modules))
     finally:
         with _LOCK:
             _LIVE.discard(proc)
@@ -854,8 +859,10 @@ def _run_all(modules: list[str], cwd: Path = REPO_ROOT) -> list[str]:
     workers = worker_count(len(modules), available_cpus(), os.environ.get(CPU_SHARE_ENV))
     failed: list[str] = []
     _STOPPING.clear()
+    # Longest recorded e2e module first, so a slow one never starts last (a stable sort).
+    ordered = sorted(modules, key=lambda m: -E2E_RECORDED_SECS.get(m, 0))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(run_module, m, cwd) for m in modules]
+        futures = [pool.submit(run_module, m, cwd) for m in ordered]
         try:
             for fut in as_completed(futures):
                 module, rc, output, secs = fut.result()

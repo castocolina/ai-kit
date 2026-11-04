@@ -142,6 +142,17 @@ def pick_e2e(runner) -> tuple[str, str]:
     return within, over_budget(runner)[0]
 
 
+def defer_one(path: pathlib.Path) -> None:
+    """Drop the largest recorded time from the copied runner at `path`: the copy then always
+    defers one e2e module to push, whatever the real table holds."""
+    table = load_by_path(path).E2E_RECORDED_SECS
+    module = max(sorted(table), key=table.__getitem__)
+    line = f'    "{module}": {table[module]},\n'
+    text = path.read_text(encoding="utf-8")
+    assert text.count(line) == 1, line
+    path.write_text(text.replace(line, ""), encoding="utf-8")
+
+
 def build_repo(root: pathlib.Path) -> Repo:
     """A git repo at `root` with the real runner, mapper and staged-tests hook block, one trivial
     module per explicit group, the delta.py pair and the initial commit; the hook is installed."""
@@ -156,6 +167,7 @@ def build_repo(root: pathlib.Path) -> Repo:
     root.mkdir()
     (root / "tools").mkdir()
     shutil.copy(RUNNER, root / "tools" / RUNNER.name)
+    defer_one(root / "tools" / RUNNER.name)
     shutil.copy(MAPPER, root / "tools" / MAPPER.name)
     runner = load_by_path(root / "tools" / RUNNER.name)
     within, over = pick_e2e(runner)
