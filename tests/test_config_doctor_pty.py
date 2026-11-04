@@ -17,10 +17,15 @@ from tests.test_wizard_pty import (
     drive_until,
     spawn_pty,
     spawn_pty_piped_stdin,
+    warm_setup_env,
 )
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _MARKER = b"3650"
+
+
+def setUpModule():
+    warm_setup_env()
 
 
 def _uv_cache_dir():

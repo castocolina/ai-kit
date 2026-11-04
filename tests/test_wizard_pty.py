@@ -122,6 +122,36 @@ def _env_calls_missing_roots(source):
     return bad
 
 
+def warm_setup_env():
+    """Build setup.py's ephemeral uv environment once, under a cross-process lock on setup.py.
+
+    Two modules that cold-start `uv run --script tools/setup.py` in the same uv cache at the
+    same time race inside uv ("failed to remove directory ... Directory not empty"), which
+    fails whichever PTY test lost. The first run after a new checkout path hits it; once the
+    environment exists, later runs only read it. Both PTY modules call this from setUpModule.
+    """
+    uv = _uv_cmd()
+    config_dir = _tmp_config_dir()
+    try:
+        env = dict(
+            os.environ, AI_KIT_UV_REEXEC="1", CLAUDE_CONFIG_DIR=config_dir,
+            **_scratch_roots(config_dir),
+        )
+        with open(SETUP, "rb") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            subprocess.run(
+                [uv, "run", "--script", SETUP, "--help"], env=env, stdin=subprocess.DEVNULL,
+                capture_output=True, timeout=600, check=False,
+            )
+    finally:
+        shutil.rmtree(config_dir, ignore_errors=True)
+
+
+def setUpModule():
+    warm_setup_env()
+
+
+
 # ---------------------------------------------------------------------------
 # Shared PTY helpers (seam for both Phase-1 and Phase-2 tests)
 # ---------------------------------------------------------------------------

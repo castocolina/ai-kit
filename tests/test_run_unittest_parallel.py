@@ -6,9 +6,12 @@ import io
 import os
 import pathlib
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock
 
@@ -491,6 +494,176 @@ class DriftTest(unittest.TestCase):
             self.assertTrue(reason.startswith(KEPT_REASON_KINDS), f"{name}: {reason}")
         forwards = {n for n, r in self.KEPT_ENV_NAMES.items() if r.startswith("approved forward:")}
         self.assertEqual(forwards, set(BaselineEnvTest.PINNED_FORWARDS))
+
+
+def pid_gone(pid: int, wait: float = 5.0) -> bool:
+    """True once `pid` is absent or a zombie (polled for up to `wait` seconds)."""
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        try:
+            if pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z":
+                return True
+        except (OSError, IndexError):
+            pass
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
+def wait_for_file(path: pathlib.Path, wait: float = 30.0) -> str:
+    deadline = time.monotonic() + wait
+    while not path.exists() or not path.read_text().strip():
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"{path} never appeared")
+        time.sleep(0.05)
+    return path.read_text().strip()
+
+
+_HANG_BODY = "import time\ntime.sleep(300)"
+# A module that is stopped must forward SIGTERM to the session it started, as run_group does.
+_OWNER = (
+    "import os, signal, subprocess, sys, time\n"
+    "grand = subprocess.Popen(['sleep', '300'], start_new_session=True)\n"
+    "def stop(*_):\n"
+    "    os.killpg(grand.pid, signal.SIGKILL)\n"
+    "    os._exit(0)\n"
+    "signal.signal(signal.SIGTERM, stop)\n"
+    "open(sys.argv[1], 'w').write(str(os.getpid()))\n"
+    "open(sys.argv[2], 'w').write(str(grand.pid))\n"
+    "time.sleep(300)\n"
+)
+_DRIVER = (
+    "import importlib.util, pathlib, sys\n"
+    "spec = importlib.util.spec_from_file_location('rup', sys.argv[1])\n"
+    "m = importlib.util.module_from_spec(spec)\n"
+    "spec.loader.exec_module(m)\n"
+    "m.install_signal_handlers()\n"
+    "sys.exit(m.main(sys.argv[3:], pathlib.Path(sys.argv[2])))\n"
+)
+
+
+class ModuleDeadlineTest(unittest.TestCase):
+    """A module that overruns its deadline or is interrupted leaves no process behind (D-10)."""
+
+    def setUp(self) -> None:
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="aikit-dl-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        (self.tmp / "tests").mkdir()
+        (self.tmp / "tests" / "__init__.py").write_text("")
+        self.runner = load_runner()
+
+    def module(self, name: str, body: str) -> str:
+        source = _PASSING.format(body="\n".join("        " + ln for ln in body.splitlines()))
+        (self.tmp / "tests" / f"{name}.py").write_text(source)
+        return f"tests.{name}"
+
+    def run_stopped(self, module: str, deadline: float, grace: float = 1.0):
+        with (
+            unittest.mock.patch.object(self.runner, "MODULE_TIMEOUT_SECS", deadline),
+            unittest.mock.patch.object(self.runner, "MODULE_STOP_GRACE_SECS", grace),
+        ):
+            return self.runner.run_module(module, cwd=self.tmp)
+
+    def test_self_test_module_gets_the_long_deadline_others_the_global(self) -> None:
+        r = self.runner
+        self.assertEqual(r.SELF_TEST_MODULE_TIMEOUT_SECS, 5400)
+        self.assertEqual(
+            r.module_timeout_secs("tests.test_cross_ai_runner_e2e"), r.SELF_TEST_MODULE_TIMEOUT_SECS
+        )
+        self.assertEqual(r.module_timeout_secs("tests.test_arch"), r.MODULE_TIMEOUT_SECS)
+        with unittest.mock.patch.object(r, "MODULE_TIMEOUT_SECS", 0.01):
+            self.assertEqual(r.module_timeout_secs("tests.test_arch"), 0.01)
+
+    def test_grandchild_in_the_module_group_dies_with_the_module(self) -> None:
+        pid_file = self.tmp / "grand.pid"
+        module = self.module("test_grand", (
+            "import subprocess, time\n"
+            "g = subprocess.Popen(['sleep', '300'])\n"
+            f"open({str(pid_file)!r}, 'w').write(str(g.pid))\n"
+            "time.sleep(300)"
+        ))
+        _, rc, output, _ = self.run_stopped(module, 6)
+        self.assertEqual(rc, 124, output)
+        self.assertIn("timed out after 6s", output)
+        self.assertTrue(pid_gone(int(wait_for_file(pid_file))))
+
+    def test_a_module_that_ignores_sigterm_is_killed_after_the_grace(self) -> None:
+        pid_file = self.tmp / "ignore.pid"
+        module = self.module("test_ignore", (
+            "import os, signal, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+            "time.sleep(300)"
+        ))
+        _, rc, _, secs = self.run_stopped(module, 6, grace=1)
+        self.assertEqual(rc, 124)
+        self.assertLess(secs, 30)
+        self.assertTrue(pid_gone(int(wait_for_file(pid_file))))
+
+    def test_nested_sessions_are_reaped_through_the_forwarded_sigterm(self) -> None:
+        owner_script = self.tmp / "owner.py"
+        owner_script.write_text(_OWNER)
+        owner_pid, grand_pid = self.tmp / "owner.pid", self.tmp / "grand.pid"
+        module = self.module("test_nested", (
+            "import os, signal, subprocess, sys\n"
+            f"owner = subprocess.Popen([sys.executable, {str(owner_script)!r}, "
+            f"{str(owner_pid)!r}, {str(grand_pid)!r}], start_new_session=True)\n"
+            "def forward(*_):\n"
+            "    owner.terminate()\n"
+            "    owner.wait(timeout=10)\n"
+            "    os._exit(143)\n"
+            "signal.signal(signal.SIGTERM, forward)\n"
+            "owner.wait()"
+        ))
+        _, rc, _, _ = self.run_stopped(module, 8, grace=5)
+        self.assertEqual(rc, 124)
+        self.assertTrue(pid_gone(int(wait_for_file(owner_pid))))
+        self.assertTrue(pid_gone(int(wait_for_file(grand_pid))))
+
+    def interrupted_run(self, sig: int) -> None:
+        names = ["test_q1", "test_q2", "test_q3"]
+        for name in names:
+            self.module(name, (
+                "import os, time\n"
+                f"open({str(self.tmp / ('started-' + name))!r}, 'w').write(str(os.getpid()))\n"
+                "time.sleep(300)"
+            ))
+        driver = self.tmp / "driver.py"
+        driver.write_text(_DRIVER)
+        env = {**os.environ, "AI_KIT_TEST_CPU_SHARE": "0.01"}
+        proc = subprocess.Popen(
+            [sys.executable, str(driver), str(RUNNER), str(self.tmp),
+             *(f"tests.{n}" for n in names)],
+            env=env, cwd=self.tmp, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            start_new_session=True,
+        )
+        first_pid = 0
+        try:
+            first_pid = int(wait_for_file(self.tmp / "started-test_q1"))
+            proc.send_signal(sig)
+            rc = proc.wait(timeout=30)
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+            if first_pid and not pid_gone(first_pid, 0.0):
+                os.kill(first_pid, signal.SIGKILL)
+        out = proc.stdout.read() if proc.stdout else ""
+        self.assertNotEqual(rc, 0, out)
+        self.assertTrue(pid_gone(first_pid), out)
+        time.sleep(0.5)
+        self.assertFalse((self.tmp / "started-test_q2").exists())
+        self.assertFalse((self.tmp / "started-test_q3").exists())
+
+    def test_sigint_with_queued_modules_starts_nothing_more(self) -> None:
+        self.interrupted_run(signal.SIGINT)
+
+    def test_sigterm_with_queued_modules_starts_nothing_more(self) -> None:
+        self.interrupted_run(signal.SIGTERM)
 
 
 if __name__ == "__main__":

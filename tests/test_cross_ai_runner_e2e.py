@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import contextlib
 import glob
+import importlib.util
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -98,24 +100,107 @@ def runner_env(tmp: str) -> dict[str, str]:
     }
 
 
-def run_group(argv: list[str], timeout: int, **kwargs) -> subprocess.CompletedProcess:
-    """`subprocess.run` in a new session; a timeout kills the whole group, not just the
-    leader, so no fake CLI outlives the test."""
-    with subprocess.Popen(
+# The full self-test runs are guarded by these hard limits. Each guard and the ceilings it guards
+# are sized from ONE load reading (`load_reading`, passed to Node as AIKIT_XAI_SELFTEST_LOAD): a
+# second, independently sampled reading (or Python's CPU count against Node's availableParallelism
+# under an affinity mask) could differ, so the guard could fire before the ceilings it guards.
+SELF_TEST_GUARD_SECS = 300
+RENDER_SELF_TEST_GUARD_SECS = 900
+MAX_LOAD_FACTOR = 4
+_RUNNER_PATH = os.path.join(REPO_ROOT, "tools", "run_unittest_parallel.py")
+
+
+def _load_runner():
+    spec = importlib.util.spec_from_file_location("run_unittest_parallel", _RUNNER_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_reading() -> float:
+    """One-minute load per CPU over the runner's own CPU count; 0.0 when unreadable."""
+    cpus = _load_runner().available_cpus()
+    try:
+        load = os.getloadavg()[0]
+    except OSError:
+        return 0.0
+    return load / cpus if cpus else 0.0
+
+
+def load_factor(reading: float) -> float:
+    """The reading clamped to 1..MAX_LOAD_FACTOR; 1 for a non-finite or non-positive reading."""
+    if not math.isfinite(reading) or reading <= 0:
+        return 1.0
+    return min(float(MAX_LOAD_FACTOR), max(1.0, reading))
+
+
+def guard_secs(base: int, factor: float) -> int:
+    return math.ceil(base * factor)
+
+
+def assert_factor_printed(case: unittest.TestCase, stderr: str, reading: float) -> None:
+    match = re.search(r"self-test load factor (\S+)\n", stderr)
+    assert match is not None, stderr
+    case.assertAlmostEqual(float(match.group(1)), load_factor(reading), delta=1e-9)
+
+
+# The runner stops this module with SIGTERM to its process group (MODULE_STOP_GRACE_SECS = 15 s).
+# Each session started here is stopped the same way, so the self-test's selfTestAbort() reaps its
+# detached case runners before any hard kill. STOP_GRACE_SECS must stay below the runner's grace.
+STOP_GRACE_SECS = 10
+_LIVE_GROUPS: set[subprocess.Popen] = set()
+
+
+def stop_group(proc: subprocess.Popen, grace: float) -> None:
+    """SIGTERM to the group of `proc`, up to `grace` seconds to exit, then SIGKILL to the group."""
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGTERM)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=grace)
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGKILL)
+
+
+def _forward_sigterm(_signum, _frame) -> None:
+    for proc in list(_LIVE_GROUPS):
+        stop_group(proc, STOP_GRACE_SECS)
+    os._exit(128 + signal.SIGTERM)
+
+
+def setUpModule() -> None:
+    signal.signal(signal.SIGTERM, _forward_sigterm)
+
+
+def start_group(argv: list[str], **kwargs) -> subprocess.Popen:
+    """Start `argv` in a new session and register it for SIGTERM forwarding."""
+    proc = subprocess.Popen(
         argv,
         start_new_session=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         **kwargs,
-    ) as proc:
-        try:
-            out, err = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            out, err = proc.communicate()
-            raise
-        return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+    )
+    _LIVE_GROUPS.add(proc)
+    return proc
+
+
+def run_group(argv: list[str], timeout: int, **kwargs) -> subprocess.CompletedProcess:
+    """`subprocess.run` in a new session; a timeout stops the whole group (SIGTERM, then SIGKILL),
+    not just the leader, so no fake CLI outlives the test."""
+    proc = start_group(argv, **kwargs)
+    try:
+        with proc:
+            try:
+                out, err = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                stop_group(proc, STOP_GRACE_SECS)
+                out, err = proc.communicate()
+                raise
+            return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+    finally:
+        _LIVE_GROUPS.discard(proc)
 
 
 _FAKE_OPENCODE = """\
@@ -226,12 +311,18 @@ class TestRunnerTemplate(unittest.TestCase):
     def test_self_test(self):
         node_bin = _real_node_executable()
         assert node_bin is not None
+        reading = load_reading()
         with tempfile.TemporaryDirectory() as tmp:
+            env = {**runner_env(tmp), "AIKIT_XAI_SELFTEST_LOAD": repr(reading)}
             proc = run_group(
-                [node_bin, TEMPLATE, "--self-test"], 300, cwd=REPO_ROOT, env=runner_env(tmp)
+                [node_bin, TEMPLATE, "--self-test"],
+                guard_secs(SELF_TEST_GUARD_SECS, load_factor(reading)),
+                cwd=REPO_ROOT,
+                env=env,
             )
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         self.assertIn("self-test ok", proc.stdout)
+        assert_factor_printed(self, proc.stderr, reading)
 
     @unittest.skipUnless(os.path.isdir("/proc/self"), "needs /proc to find survivors")
     def test_interrupted_self_test_leaves_nothing(self):
@@ -270,6 +361,174 @@ class TestRunnerTemplate(unittest.TestCase):
             self.assertEqual(rc, 128 + signal.SIGTERM)
             self.assertEqual(survivors, [])
             self.assertEqual(os.listdir(st_tmp), [])
+
+
+class SelfTestLoadFactorTest(unittest.TestCase):
+    """The self-test reads one load factor per run: injected readings give 1, in between, 4."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._skip = None
+        if _real_node_executable() is None:
+            cls._skip = "no node executable"
+        elif shutil.which("git") is None:
+            cls._skip = "git not on PATH"
+
+    def setUp(self):
+        if self._skip:
+            self.skipTest(self._skip)
+
+    def _run(self, reading: str | None) -> subprocess.CompletedProcess:
+        node_bin = _real_node_executable()
+        assert node_bin is not None
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {**runner_env(tmp), "AIKIT_XAI_SELFTEST_CASES": "load-factor-math"}
+            if reading is not None:
+                env["AIKIT_XAI_SELFTEST_LOAD"] = reading
+            return run_group([node_bin, TEMPLATE, "--self-test"], 120, cwd=REPO_ROOT, env=env)
+
+    def test_injected_readings(self):
+        for reading, expected in (
+            ("0", "1"), ("0.5", "1"), ("1", "1"), ("2.5", "2.5"), ("4", "4"), ("10", "4"),
+            ("junk", "1"),
+        ):
+            with self.subTest(reading=reading):
+                proc = self._run(reading)
+                self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+                self.assertIn("self-test ok", proc.stdout)
+                self.assertIn(f"self-test load factor {expected}\n", proc.stderr)
+
+    def test_measured_factor_is_in_range(self):
+        proc = self._run(None)
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        match = re.search(r"self-test load factor (\S+)\n", proc.stderr)
+        assert match is not None, proc.stderr
+        self.assertTrue(1.0 <= float(match.group(1)) <= 4.0, msg=match.group(0))
+
+
+class GuardFactorTest(unittest.TestCase):
+    """The hang guards follow one load factor from the runner's CPU count (Python 3.12 safe)."""
+
+    def test_reading_is_load_over_the_runners_cpu_count(self):
+        runner = mock.Mock(available_cpus=lambda: 8)
+        with (
+            mock.patch(f"{__name__}._load_runner", return_value=runner),
+            mock.patch("os.getloadavg", return_value=(12.0, 0.0, 0.0)),
+        ):
+            self.assertEqual(load_reading(), 1.5)
+
+    def test_reading_is_zero_without_a_load_average_or_cpu_count(self):
+        runner = mock.Mock(available_cpus=lambda: 8)
+        with (
+            mock.patch(f"{__name__}._load_runner", return_value=runner),
+            mock.patch("os.getloadavg", side_effect=OSError),
+        ):
+            self.assertEqual(load_reading(), 0.0)
+        runner = mock.Mock(available_cpus=lambda: None)
+        with (
+            mock.patch(f"{__name__}._load_runner", return_value=runner),
+            mock.patch("os.getloadavg", return_value=(3.0, 0.0, 0.0)),
+        ):
+            self.assertEqual(load_reading(), 0.0)
+
+    def test_factor_is_clamped(self):
+        for reading, expected in (
+            (0.0, 1.0), (0.5, 1.0), (1.0, 1.0), (2.5, 2.5), (4.0, 4.0), (9.0, 4.0),
+            (float("nan"), 1.0), (float("inf"), 1.0), (-1.0, 1.0),
+        ):
+            with self.subTest(reading=reading):
+                self.assertEqual(load_factor(reading), expected)
+
+    def test_guard_rounds_up(self):
+        self.assertEqual(guard_secs(300, 1.0), 300)
+        self.assertEqual(guard_secs(300, 2.5), 750)
+        self.assertEqual(guard_secs(7, 1.5), 11)
+
+
+def _proc_fields(pid: int) -> list[str] | None:
+    """The stat fields after the command name: state, ppid, pgrp, session, ..."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
+            return handle.read().rsplit(")", 1)[1].split()
+    except (OSError, IndexError):
+        return None
+
+
+def _case_runner_pids(node_pid: int) -> list[int]:
+    found = []
+    for name in os.listdir("/proc"):
+        fields = _proc_fields(int(name)) if name.isdigit() else None
+        if fields and int(fields[1]) == node_pid:
+            try:
+                with open(f"/proc/{name}/cmdline", "rb") as handle:
+                    cmdline = handle.read()
+            except OSError:
+                continue
+            if b".mjs" in cmdline:
+                found.append(int(name))
+    return found
+
+
+def _pids_in_session(sid: int) -> list[int]:
+    out = []
+    for name in os.listdir("/proc"):
+        fields = _proc_fields(int(name)) if name.isdigit() else None
+        if fields and fields[0] != "Z" and int(fields[3]) == sid:
+            out.append(int(name))
+    return out
+
+
+class DeadlineCouplingTest(unittest.TestCase):
+    """The runner's deadline for this module covers the load-scaled guards (D-10)."""
+
+    def test_runner_deadline_covers_scaled_guards(self):
+        runner = _load_runner()
+        need = MAX_LOAD_FACTOR * (SELF_TEST_GUARD_SECS + RENDER_SELF_TEST_GUARD_SECS) + 600
+        self.assertGreaterEqual(runner.module_timeout_secs(__name__), need)
+        self.assertGreater(runner.MODULE_STOP_GRACE_SECS, STOP_GRACE_SECS)
+
+
+@unittest.skipUnless(os.path.isdir("/proc/self"), "needs /proc to find the case runner's session")
+class StopGroupTest(unittest.TestCase):
+    """stop_group reaches the self-test's detached case runners through selfTestAbort()."""
+
+    def test_stopping_the_self_test_leaves_no_case_runner_session(self):
+        node_bin = _real_node_executable()
+        if node_bin is None or shutil.which("git") is None:
+            self.skipTest("needs node and git")
+        with tempfile.TemporaryDirectory() as tmp:
+            st_tmp = os.path.join(tmp, "st")
+            os.makedirs(st_tmp)
+            sentinel = os.path.join(tmp, "outside.txt")
+            with open(sentinel, "w", encoding="utf-8") as handle:
+                handle.write("keep")
+            env = {**runner_env(tmp), "TMPDIR": st_tmp, "AIKIT_XAI_SELFTEST_CASES": "hang"}
+            proc = start_group([node_bin, TEMPLATE, "--self-test"], cwd=REPO_ROOT, env=env)
+            sid = 0
+            try:
+                deadline = time.monotonic() + 60
+                while not sid:
+                    runners = _case_runner_pids(proc.pid)
+                    if runners:
+                        fields = _proc_fields(runners[0])
+                        sid = int(fields[3]) if fields else 0
+                    self.assertLess(time.monotonic(), deadline, "no case runner appeared")
+                    time.sleep(0.02)
+                self.assertNotEqual(sid, proc.pid)  # detached: its own session
+                stop_group(proc, STOP_GRACE_SECS)
+                proc.communicate(timeout=30)
+            finally:
+                _LIVE_GROUPS.discard(proc)
+                if proc.poll() is None:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.communicate()
+            survivors = _pids_in_session(sid)
+            for pid in survivors:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)
+            self.assertEqual(survivors, [])
+            self.assertEqual(os.listdir(st_tmp), [])
+            self.assertTrue(os.path.exists(sentinel))
 
 
 class TestRenderedRunner(unittest.TestCase):
@@ -320,10 +579,15 @@ class TestRenderedRunner(unittest.TestCase):
             self.assertEqual(cross_ai_script.script_state(written), "pristine")
             # The self-test alone takes about 175 s and about 480 s beside the other e2e modules
             # on a host under memory pressure; 300 s timed out there (27-13 gate runs).
+            reading = load_reading()
             proc = run_group(
-                [node_bin, script_path, "--self-test"], 900, cwd=tmp, env=runner_env(tmp)
+                [node_bin, script_path, "--self-test"],
+                guard_secs(RENDER_SELF_TEST_GUARD_SECS, load_factor(reading)),
+                cwd=tmp,
+                env={**runner_env(tmp), "AIKIT_XAI_SELFTEST_LOAD": repr(reading)},
             )
             self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+            assert_factor_printed(self, proc.stderr, reading)
 
     def test_rendered_deadline_below_timeout(self):
         node_bin = _real_node_executable()

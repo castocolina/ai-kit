@@ -9,7 +9,8 @@ Usage:
 Each module runs under the same interpreter as this script, so the caller picks
 the runtime (system python3 or `uv run python`), with the repo root as its cwd.
 Output is buffered per module and printed whole, so failures never interleave.
-Exits 1 if any module fails or exceeds MODULE_TIMEOUT_SECS.
+Exits 1 if any module fails or exceeds its deadline (module_timeout_secs); exits 130 when
+interrupted.
 
 Names after `--` are ignored: they are the generated listing that keeps a hook
 entry searchable by module (tools/gen_test_groups.py). `--list-groups` prints
@@ -33,20 +34,29 @@ Each module also gets a baseline env (baseline_env): no host signals, no inherit
 no host config, status-line, credential or backend-URL overrides, a temporary HOME with
 AI_KIT_REFUSE_REAL_HOME=1, and the caller's tool caches forwarded by tool_cache_forwards.
 
+Each module starts in its own session. Stopping a module (its deadline, or SIGINT/SIGTERM to this
+runner) sends SIGTERM to its process group first and SIGKILL after MODULE_STOP_GRACE_SECS; a
+test that starts its own session must forward SIGTERM to it (tests/test_cross_ai_runner_e2e.py
+does). An interrupted run starts no queued module and stops every live one.
+
 Workers are a share of the available CPUs, capped at 40 percent
 (os.process_cpu_count(), then the affinity mask, then os.cpu_count()).
 AI_KIT_TEST_CPU_SHARE may lower that share, never raise it.
 """
+import contextlib
 import math
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from types import FrameType, MappingProxyType
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
@@ -132,6 +142,17 @@ GIT_KEPT_VARS = frozenset({"GIT_EXEC_PATH"})
 MAX_CPU_SHARE = 0.40
 # A hung module fails the gate instead of hanging it; generous for slow machines.
 MODULE_TIMEOUT_SECS = 900
+# The self-test module runs the full runner self-test twice, each guarded by a hang guard sized
+# from one load reading (300 s and 900 s at idle, times the 1..4 load factor): 4 x (300 + 900) s
+# plus 600 s for the rest of the module. Its own guards fire first. A real hang of this module can
+# therefore hold `make e2e-test` for up to 5400 s at the 4x cap (1200 s plus the rest at idle).
+SELF_TEST_MODULE_TIMEOUT_SECS = 5400
+MODULE_TIMEOUT_OVERRIDES = MappingProxyType({
+    "tests.test_cross_ai_runner_e2e": SELF_TEST_MODULE_TIMEOUT_SECS,
+})
+# SIGTERM to a module's group, this long to clean up, then SIGKILL.
+MODULE_STOP_GRACE_SECS = 15
+REAP_SECS = 5
 CPU_SHARE_ENV = "AI_KIT_TEST_CPU_SHARE"
 
 
@@ -290,21 +311,96 @@ def baseline_env(
     return env
 
 
+def module_timeout_secs(module: str) -> int:
+    """The deadline of `module`; the global is read at call time so a test can patch it."""
+    return MODULE_TIMEOUT_OVERRIDES.get(module, MODULE_TIMEOUT_SECS)
+
+
+_LOCK = threading.Lock()
+_LIVE: set[subprocess.Popen[str]] = set()
+_STOPPING = threading.Event()
+
+
+def _signal_group(proc: subprocess.Popen[str], sig: int) -> None:
+    with contextlib.suppress(ProcessLookupError):  # the group is already gone
+        os.killpg(proc.pid, sig)
+
+
+def stop_process_group(proc: subprocess.Popen[str], grace: float | None = None) -> None:
+    """Stop `proc` and everything in its group: SIGTERM, up to `grace` seconds for the leader to
+    exit, SIGKILL to the group, then a bounded reap that never blocks on a pipe a descendant in
+    another session still holds. Call it from the thread that reads the pipes of `proc`.
+    shortcut: a pid reused between the leader's exit and the SIGKILL is not guarded, upgrade
+    to waitid(WNOWAIT) if a stop ever hits an unrelated group."""
+    _signal_group(proc, signal.SIGTERM)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=MODULE_STOP_GRACE_SECS if grace is None else grace)
+    _signal_group(proc, signal.SIGKILL)
+    try:
+        proc.communicate(timeout=REAP_SECS)
+    except subprocess.TimeoutExpired:
+        for pipe in (proc.stdout, proc.stderr):
+            if pipe:
+                pipe.close()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=REAP_SECS)
+
+
+def _stop_live_groups() -> None:
+    """Interrupt path: stop every registered group (SIGTERM, grace, SIGKILL). The pipes stay with
+    their worker threads, which finish once the groups are dead.
+    shortcut: a stray in another session that holds a module's pipe delays the pool shutdown
+    until it exits; modules forward SIGTERM to their sessions so none is left."""
+    with _LOCK:
+        procs = list(_LIVE)
+    for proc in procs:
+        _signal_group(proc, signal.SIGTERM)
+    deadline = time.monotonic() + MODULE_STOP_GRACE_SECS
+    while time.monotonic() < deadline and any(proc.poll() is None for proc in procs):
+        time.sleep(0.05)
+    for proc in procs:
+        _signal_group(proc, signal.SIGKILL)
+
+
+def _start_registered(
+    argv: list[str], cwd: Path, env: Mapping[str, str]
+) -> subprocess.Popen[str] | None:
+    """Start a module in its own session and register it, unless the run is being stopped. The
+    stop flag is read under the lock that registers, so no process starts after a stop."""
+    with _LOCK:
+        if _STOPPING.is_set():
+            return None
+        proc = subprocess.Popen(  # pylint: disable=consider-using-with
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd,
+            env=dict(env), start_new_session=True,
+        )
+        _LIVE.add(proc)
+        return proc
+
+
+def _communicate(proc: subprocess.Popen[str], timeout: float) -> tuple[int, str]:
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        stop_process_group(proc)
+        return 124, f"timed out after {timeout}s"
+    return proc.returncode, out + err
+
+
 def run_module(module: str, cwd: Path = REPO_ROOT) -> tuple[str, int, str, float]:
     start = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="aikit-ut-", ignore_cleanup_errors=True) as temp_dir:
         log_path = write_tripwire(Path(temp_dir) / "tripwire")
         env = baseline_env(os.environ, Path(temp_dir), log_path.parent / "bin")
+        proc = _start_registered([sys.executable, "-m", "unittest", module], cwd, env)
+        if proc is None:
+            return module, 130, "not started: the run was interrupted", 0.0
         try:
-            proc = subprocess.run(
-                [sys.executable, "-m", "unittest", module],
-                capture_output=True, text=True, check=False, cwd=cwd, env=env,
-                timeout=MODULE_TIMEOUT_SECS,
-            )
-        except subprocess.TimeoutExpired:
-            rc, output = _with_tripwire(124, f"timed out after {MODULE_TIMEOUT_SECS}s", log_path)
-            return module, rc, output, time.monotonic() - start
-        rc, output = _with_tripwire(proc.returncode, proc.stdout + proc.stderr, log_path)
+            rc, output = _communicate(proc, module_timeout_secs(module))
+        finally:
+            with _LOCK:
+                _LIVE.discard(proc)
+        rc, output = _with_tripwire(rc, output, log_path)
         return module, rc, output, time.monotonic() - start
 
 
@@ -346,7 +442,7 @@ def _emit_group_listing() -> int:
     return 0
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], cwd: Path = REPO_ROOT) -> int:
     if argv == ["--list-groups"]:
         return _emit_group_listing()
     # Names after `--` are the generated listing: discovery decides what runs,
@@ -364,27 +460,55 @@ def main(argv: list[str]) -> int:
     if not modules:
         print("usage: run_unittest_parallel.py MODULE [MODULE ...]", file=sys.stderr)
         return 2
-    failed = _run_all(modules)
+    try:
+        failed = _run_all(modules, cwd)
+    except KeyboardInterrupt:
+        _STOPPING.set()
+        _stop_live_groups()  # also a child started outside the pool
+        print("interrupted: every module was stopped", file=sys.stderr)
+        return 130
     print(f"{len(modules) - len(failed)}/{len(modules)} modules passed")
     if failed:
         print("failed: " + " ".join(sorted(failed)))
     return 1 if failed else 0
 
 
-def _run_all(modules: list[str]) -> list[str]:
+def _raise_interrupt(_signum: int, _frame: FrameType | None) -> None:
+    raise KeyboardInterrupt
+
+
+def install_signal_handlers() -> None:
+    """SIGINT and SIGTERM both stop the run (only valid in the main thread). SIGINT is set
+    explicitly: a runner started from a background job inherits it ignored."""
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    signal.signal(signal.SIGTERM, _raise_interrupt)
+
+
+def _run_all(modules: list[str], cwd: Path = REPO_ROOT) -> list[str]:
     workers = worker_count(len(modules), available_cpus(), os.environ.get(CPU_SHARE_ENV))
     failed: list[str] = []
+    _STOPPING.clear()
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for fut in as_completed([pool.submit(run_module, m) for m in modules]):
-            module, rc, output, secs = fut.result()
-            ran = next((ln for ln in output.splitlines() if ln.startswith("Ran ")), "")
-            status = "ok" if rc == 0 else f"FAILED (rc={rc})"
-            print(f"=== {module}: {status} in {secs:.1f}s  {ran}")
-            if rc != 0:
-                failed.append(module)
-                print(output)
+        futures = [pool.submit(run_module, m, cwd) for m in modules]
+        try:
+            for fut in as_completed(futures):
+                module, rc, output, secs = fut.result()
+                ran = next((ln for ln in output.splitlines() if ln.startswith("Ran ")), "")
+                status = "ok" if rc == 0 else f"FAILED (rc={rc})"
+                print(f"=== {module}: {status} in {secs:.1f}s  {ran}")
+                if rc != 0:
+                    failed.append(module)
+                    print(output)
+        except KeyboardInterrupt:
+            _STOPPING.set()
+            for fut in futures:
+                fut.cancel()
+            _stop_live_groups()
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
     return failed
 
 
 if __name__ == "__main__":
+    install_signal_handlers()
     sys.exit(main(sys.argv[1:]))

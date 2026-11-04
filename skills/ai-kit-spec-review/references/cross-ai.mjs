@@ -48,7 +48,8 @@
  *   --codex-effort minimal|low|medium|high|xhigh   overrides CONFIG.effort.codex
  *   --codex-service-tier <id>                codex -c service_tier=
  *   --cursor-mode ask|plan                   review mode only (replaces cursor --mode)
- *   --self-test                              hermetic black-box checks (no real CLIs)
+ *   --self-test                              hermetic black-box checks (no real CLIs); its ceilings scale
+ *                                            with load per CPU up to 4x, AIKIT_XAI_SELFTEST_LOAD overrides the reading
  *
  * CONFIG.effort pins the selected effort per runner: pi --thinking (skipped when the model
  * has a :level suffix) and codex model_reasoning_effort.
@@ -2561,7 +2562,7 @@ function classifyCases() {
           const first = classifyStop({ cli: 'pi', route: 'unknown', stderr: text });
           const second = classifyStop({ cli: 'pi', route: 'unknown', stderr: text });
           const elapsed = Date.now() - started;
-          if (elapsed >= 1000) return `elapsed ${elapsed}`;
+          if (elapsed >= scaledMs(1000)) return `elapsed ${elapsed}`;
           const notices = logs.filter((line) => line === 'cross-ai: overlay disabled: match exceeded 50 ms');
           if (notices.length !== 1) return `notices ${notices.length}: ${logs.join('|')}`;
           if (first.rule === row.id || second.rule === row.id) return `matched overlay ${first.rule}`;
@@ -2635,7 +2636,7 @@ function classifyCases() {
           TABLE = mergeCatalog(PATTERNS, [row]);
           for (let i = 0; i < 1000; i += 1) overlayHits(sample);
           const elapsed = Date.now() - started;
-          if (elapsed >= 600) return `elapsed ${elapsed}`;
+          if (elapsed >= scaledMs(600)) return `elapsed ${elapsed}`;
           const timeouts = logs.filter((line) => line.includes('match exceeded'));
           if (timeouts.length) return `timeout notice: ${timeouts[0]}`;
           const notices = logs.filter((line) => line.startsWith('cross-ai: overlay disabled: matching used '));
@@ -5205,9 +5206,30 @@ function pidAlive(pid) {
   try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, 'utf8')); } catch { return true; }
 }
 
+// Self-test load scaling (D-10): every ceiling is multiplied by one factor read once per run
+// (load per CPU clamped to 1..4); floors and the real run limits are never scaled.
+let selfTestLoadFactor = 1;
+// The signal-to-exit ceiling of a case, before scaling.
+const SELF_TEST_SIGNAL_EXIT_MS = 2900;
+
+function loadFactor(perCpu) {
+  return Number.isFinite(perCpu) && perCpu > 0 ? Math.min(4, Math.max(1, perCpu)) : 1;
+}
+
+function measuredLoadPerCpu() {
+  // An injected load per CPU, read only by the self-test.
+  if (process.env.AIKIT_XAI_SELFTEST_LOAD !== undefined) return Number(process.env.AIKIT_XAI_SELFTEST_LOAD);
+  const cpus = typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length;
+  return os.loadavg()[0] / cpus;
+}
+
+function scaledMs(ms, factor = selfTestLoadFactor) {
+  return Math.ceil(ms * factor);
+}
+
 // A SIGKILLed descendant can outlive the runner by a few ms under load (or sit as an unreaped
 // zombie), so "still alive" means alive after a bounded wait, not at the first probe.
-function pidLingers(pid, ms = 3000) {
+function pidLingers(pid, ms = scaledMs(3000)) {
   const deadline = Date.now() + ms;
   while (pidAlive(pid)) {
     if (Date.now() >= deadline) return true;
@@ -5287,16 +5309,17 @@ function runCaseProcess(spec, c) {
       caseRunners.delete(child);
       resolve({ reason, status: code, stdout, stderr, elapsedMs: Date.now() - t0, sinceSignalMs: sigMs === null ? null : Date.now() - sigMs });
     };
-    const hard = setTimeout(() => end('case hung past 30s'), 30000);
+    const hardMs = scaledMs(30000);
+    const hard = setTimeout(() => end(`case hung past ${hardMs}ms`), hardMs);
     child.stdout.on('data', (d) => { stdout += d.toString('utf8'); });
     child.stderr.on('data', (d) => {
       stderr += d.toString('utf8');
     });
     child.stdin.on('error', () => { /* runner exited early */ });
     child.stdin.end(spec.stdin ?? 'prompt\n');
-    if (spec.closeStderr) waitFor(() => spec.closeStderr(c), 10000).then(() => child.stderr.destroy());
+    if (spec.closeStderr) waitFor(() => spec.closeStderr(c), scaledMs(10000)).then(() => child.stderr.destroy());
     if (spec.signal) {
-      waitFor(() => spec.signal.when(c, stderr), 10000).then((ready) => {
+      waitFor(() => spec.signal.when(c, stderr), scaledMs(10000)).then((ready) => {
         if (done) return;
         if (!ready) { end('signal precondition never met'); return; }
         sigMs = Date.now();
@@ -5306,7 +5329,7 @@ function runCaseProcess(spec, c) {
     }
     child.on('exit', (exitCode) => {
       code = exitCode;
-      Promise.race([new Promise((r) => child.on('close', r)), sleep(2000)]).then(() => end(null));
+      Promise.race([new Promise((r) => child.on('close', r)), sleep(scaledMs(2000))]).then(() => end(null));
     });
   });
 }
@@ -5345,7 +5368,7 @@ async function checkCase(spec, c) {
     const err = statusLineOk(r.stderr || '', spec.status);
     if (err) return err;
   }
-  if (spec.signal && r.sinceSignalMs > (spec.signal.withinMs ?? 2900)) return `exit ${r.sinceSignalMs}ms after the signal`;
+  if (spec.signal && r.sinceSignalMs > scaledMs(spec.signal.withinMs ?? SELF_TEST_SIGNAL_EXIT_MS)) return `exit ${r.sinceSignalMs}ms after the signal`;
   const callLines = fs.existsSync(c.calls) ? fs.readFileSync(c.calls, 'utf8').trim().split('\n').filter(Boolean) : [];
   const ctx = { ...c, calls: callLines, elapsedMs: r.elapsedMs, pids: recordedPids(c.pidFile) };
   return spec.check ? spec.check(r, ctx) : null;
@@ -5480,6 +5503,8 @@ async function blackBoxSelfTest() {
     process.stderr.write('self-test: git not found\n');
     return 1;
   }
+  selfTestLoadFactor = loadFactor(measuredLoadPerCpu());
+  process.stderr.write(`self-test load factor ${selfTestLoadFactor}\n`);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xai-st-'));
   selfTestRoot = tmp;
   try {
@@ -6202,7 +6227,10 @@ async function blackBoxSelfTest() {
           const all = [...both.calls1, ...both.calls2].filter((l) => l === 'pi quota');
           if (all.length !== 6) return `calls=${all.length}`;
           const tail = statusTail(both.again.stderr || '');
-          if (!tail || tail.retry_after_s !== '600' || tail.cycle !== '0') {
+          // The re-entry reports what is left of the 600 s wait, so it shrinks by the gap between
+          // the two runs; that gap is a load-scaled ceiling, not an exact 600.
+          const left = tail ? Number(tail.retry_after_s) : NaN;
+          if (!tail || tail.cycle !== '0' || !(left <= 600 && left >= 600 - Math.ceil(scaledMs(10000) / 1000))) {
             return `tail=${JSON.stringify(tail)}`;
           }
           const spawned = both.calls2.filter((l) => l !== 'pi rpc');
@@ -6303,7 +6331,7 @@ async function blackBoxSelfTest() {
         exit: 69,
         status: /^AIKIT-XAI status=quota .* exit=69 .* action=stop$/,
         check: (r, ctx) => {
-          if (ctx.elapsedMs >= 80000) return `elapsed ${ctx.elapsedMs}`;
+          if (ctx.elapsedMs >= scaledMs(80000)) return `elapsed ${ctx.elapsedMs}`;
           if (!(r.stderr || '').includes('stopped=cap')) return 'missing stopped=cap';
           return deadCheck(ctx, ['pi']);
         },
@@ -6507,7 +6535,7 @@ async function blackBoxSelfTest() {
         status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/event400 ' +
           'exit=75 .* action=stop$'),
         check: (r, ctx) => {
-          if (ctx.elapsedMs >= 5000) return `elapsed ${ctx.elapsedMs}ms`;
+          if (ctx.elapsedMs >= scaledMs(5000)) return `elapsed ${ctx.elapsedMs}ms`;
           const n = ctx.calls.filter((l) => l === 'pi event400').length;
           if (n !== 1) return `calls=${n}`;
           const err = r.stderr || '';
@@ -7103,7 +7131,7 @@ async function blackBoxSelfTest() {
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/limit-mid exit=75 .* action=stop$/,
         check: (_r, ctx) => (
-          ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['pi'])
+          ctx.elapsedMs >= scaledMs(15000) ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['pi'])
         ),
       },
       {
@@ -7114,7 +7142,7 @@ async function blackBoxSelfTest() {
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=pi model=fake\/limit-partial exit=75 .* action=stop$/,
         check: (_r, ctx) => (
-          ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['pi'])
+          ctx.elapsedMs >= scaledMs(15000) ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['pi'])
         ),
       },
       {
@@ -7176,7 +7204,7 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/catastrophic-flood', '--timeout', '60'],
         signal: {
           when: (c) => readOr(c.calls, '').includes('pi catastrophic-flood'),
-          sig: 'SIGTERM', withinMs: 2900,
+          sig: 'SIGTERM', withinMs: SELF_TEST_SIGNAL_EXIT_MS,
         },
         exit: 143,
         status: /^AIKIT-XAI status=signal .* exit=143 .* action=stop$/,
@@ -7196,7 +7224,7 @@ async function blackBoxSelfTest() {
         signal: {
           // Signal only after the runner spent its overlay budget; signalling at the fake's start raced the first chunk.
           when: (c, err) => err.includes('cross-ai: overlay disabled:'),
-          sig: 'SIGTERM', withinMs: 2900,
+          sig: 'SIGTERM', withinMs: SELF_TEST_SIGNAL_EXIT_MS,
         },
         exit: 143,
         status: /^AIKIT-XAI status=signal .* exit=143 .* action=stop$/,
@@ -7249,7 +7277,7 @@ async function blackBoxSelfTest() {
         exit: 75,
         status: /^AIKIT-XAI status=quota .* exit=75 .* action=stop$/,
         check: (r, ctx) => {
-          if (ctx.elapsedMs >= 10000) return `not killed at ${ctx.elapsedMs}`;
+          if (ctx.elapsedMs >= scaledMs(10000)) return `not killed at ${ctx.elapsedMs}`;
           const tail = statusTail(r.stderr || '');
           return tail && tail.rule === 'user-router-stop' ? null : `rule=${tail && tail.rule}`;
         },
@@ -7415,7 +7443,7 @@ async function blackBoxSelfTest() {
         status: new RegExp('^AIKIT-XAI status=quota cli=pi model=fake/limit-partial-flood ' +
           'exit=75 .* action=stop$'),
         check: (_r, ctx) => (
-          ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['pi'])
+          ctx.elapsedMs >= scaledMs(15000) ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['pi'])
         ),
       },
       {
@@ -7445,7 +7473,7 @@ async function blackBoxSelfTest() {
         exit: 75,
         status: /^AIKIT-XAI status=quota cli=codex model=fake-limit-codex exit=75 .* action=stop$/,
         check: (_r, ctx) => (
-          ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['codex'])
+          ctx.elapsedMs >= scaledMs(15000) ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['codex'])
         ),
       },
       {
@@ -7493,7 +7521,7 @@ async function blackBoxSelfTest() {
         // real tree and SIGKILL the group well inside run-with-timeout's 3 s grace.
         name: 'sigterm-stubborn',
         args: ['--prefer', 'pi', '--model-pi', 'fake/stubborn', '--timeout', '60'],
-        signal: { when: (c) => fs.existsSync(path.join(c.repo, 'cli.ready')), sig: 'SIGTERM', withinMs: 2900 },
+        signal: { when: (c) => fs.existsSync(path.join(c.repo, 'cli.ready')), sig: 'SIGTERM', withinMs: SELF_TEST_SIGNAL_EXIT_MS },
         exit: 143,
         status: /^AIKIT-XAI status=signal cli=pi model=fake\/stubborn exit=143 .* tree=dirty action=stop$/,
         check: (_r, ctx) => deadCheck(ctx, ['pi']),
@@ -7501,7 +7529,7 @@ async function blackBoxSelfTest() {
       {
         name: 'sigterm-twice',
         args: ['--prefer', 'pi', '--model-pi', 'fake/stubborn', '--timeout', '60'],
-        signal: { when: (c) => fs.existsSync(path.join(c.repo, 'cli.ready')), sig: 'SIGTERM', again: 'SIGINT', withinMs: 2900 },
+        signal: { when: (c) => fs.existsSync(path.join(c.repo, 'cli.ready')), sig: 'SIGTERM', again: 'SIGINT', withinMs: SELF_TEST_SIGNAL_EXIT_MS },
         exit: 143,
         status: /^AIKIT-XAI status=signal cli=pi model=fake\/stubborn exit=143 .* action=stop$/,
         check: (_r, ctx) => deadCheck(ctx, ['pi']),
@@ -7510,7 +7538,7 @@ async function blackBoxSelfTest() {
         name: 'sigterm-backoff',
         args: ['--prefer', 'pi', '--model-pi', 'fake/overloaded', '--timeout', '200'],
         config: { retry: { base_s: 20 } },
-        signal: { when: (c) => readOr(c.calls, '').includes('pi overloaded'), sig: 'SIGTERM', withinMs: 2900 },
+        signal: { when: (c) => readOr(c.calls, '').includes('pi overloaded'), sig: 'SIGTERM', withinMs: SELF_TEST_SIGNAL_EXIT_MS },
         exit: 143,
         status: /^AIKIT-XAI status=signal cli=pi model=fake\/overloaded exit=143 .* tree=clean action=stop$/,
       },
@@ -7536,7 +7564,7 @@ async function blackBoxSelfTest() {
         exit: 124,
         status: /^AIKIT-XAI status=timeout cli=pi model=fake\/gcescape exit=124 .* action=stop$/,
         check: (r, ctx) => {
-          if (ctx.elapsedMs >= 10000) return `elapsed ${ctx.elapsedMs}`;
+          if (ctx.elapsedMs >= scaledMs(10000)) return `elapsed ${ctx.elapsedMs}`;
           const lines = (r.stderr || '').split('\n');
           const late = lines.filter((l) => l.includes('gc-late'));
           const statusIdx = lines.findIndex((l) => l.startsWith('AIKIT-XAI '));
@@ -7550,14 +7578,14 @@ async function blackBoxSelfTest() {
         args: ['--prefer', 'pi', '--model-pi', 'fake/gcpipe', '--timeout', '60'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/gcpipe exit=0 .* action=stop$/,
-        check: (_r, ctx) => (ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['gc'])),
+        check: (_r, ctx) => (ctx.elapsedMs >= scaledMs(15000) ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['gc'])),
       },
       {
         name: 'gcterm',
         args: ['--prefer', 'pi', '--model-pi', 'fake/gcterm', '--timeout', '60'],
         exit: 0,
         status: /^AIKIT-XAI status=ok cli=pi model=fake\/gcterm exit=0 .* action=stop$/,
-        check: (_r, ctx) => (ctx.elapsedMs >= 15000 ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['gc'])),
+        check: (_r, ctx) => (ctx.elapsedMs >= scaledMs(15000) ? `elapsed ${ctx.elapsedMs}` : deadCheck(ctx, ['gc'])),
       },
       {
         name: 'git-before-fail',
@@ -7586,7 +7614,7 @@ async function blackBoxSelfTest() {
         exit: 1,
         status: new RegExp('^AIKIT-XAI status=git_timeout cli=pi model=fake/ok exit=1 cli_rc=- ' +
           'elapsed=\\d+s out=0 tree=unknown action=stop$'),
-        check: (_r, ctx) => (ctx.elapsedMs >= 10000 ? `elapsed ${ctx.elapsedMs}` : null),
+        check: (_r, ctx) => (ctx.elapsedMs >= scaledMs(10000) ? `elapsed ${ctx.elapsedMs}` : null),
       },
       {
         // D-34: outside any git work tree the CLI still runs, once, with tree=unknown.
@@ -7773,7 +7801,7 @@ async function blackBoxSelfTest() {
         status: /^AIKIT-XAI status=timeout cli=pi model=fake\/ok exit=124 cli_rc=- .* action=stop$/,
         check: (r, ctx) => {
           if (!(r.stderr || '').includes('model list unavailable (timeout)')) return 'missing timeout note';
-          if (ctx.elapsedMs >= 10000) return `elapsed ${ctx.elapsedMs}`;
+          if (ctx.elapsedMs >= scaledMs(10000)) return `elapsed ${ctx.elapsedMs}`;
           if (!ctx.calls.includes('pi rpc')) return 'missing pi rpc';
           if (ctx.calls.some((l) => l === 'pi ok')) return 'pi ok should not run';
           return null;
@@ -7817,7 +7845,7 @@ async function blackBoxSelfTest() {
         status: new RegExp('^AIKIT-XAI status=transient cli=pi model=fake/overloaded ' +
           'exit=75 cli_rc=1 .* tree=clean action=stop$'),
         check: (r, ctx) => {
-          if (ctx.elapsedMs >= 5000) return `elapsed ${ctx.elapsedMs}ms`;
+          if (ctx.elapsedMs >= scaledMs(5000)) return `elapsed ${ctx.elapsedMs}ms`;
           const n = ctx.calls.filter((l) => l === 'pi overloaded').length;
           if (n !== 1) return `calls=${n}`;
           // 25.1-03: a deadline-cut transient series carries the caller's hint, not a bare 75.
@@ -8242,6 +8270,18 @@ async function blackBoxSelfTest() {
           if (clampAttemptTimeout(0) !== 0) return `0 -> ${clampAttemptTimeout(0)}`;
           if (clampAttemptTimeout(5) !== 10) return `5 -> ${clampAttemptTimeout(5)}`;
           if (clampAttemptTimeout(1801) !== 1800) return `1801 -> ${clampAttemptTimeout(1801)}`;
+          return null;
+        },
+      },
+      {
+        name: 'load-factor-math',
+        pure: () => {
+          const want = [[0, 1], [0.5, 1], [1, 1], [2.5, 2.5], [4, 4], [10, 4], [NaN, 1], [Infinity, 1]];
+          for (const [reading, f] of want) {
+            if (loadFactor(reading) !== f) return `loadFactor(${reading}) -> ${loadFactor(reading)} expected ${f}`;
+          }
+          if (scaledMs(1001, 1.5) !== 1502) return `scaledMs(1001, 1.5) -> ${scaledMs(1001, 1.5)}`;
+          if (scaledMs(1000, 1) !== 1000) return `scaledMs(1000, 1) -> ${scaledMs(1000, 1)}`;
           return null;
         },
       },
@@ -9718,7 +9758,7 @@ async function blackBoxSelfTest() {
         exit: 124,
         status: /^AIKIT-XAI status=timeout cli=pi model=fake\/outer-race exit=124 .* action=stop$/,
         check: (r, ctx) => {
-          if (ctx.elapsedMs >= 30000) return `elapsed ${ctx.elapsedMs}`;
+          if (ctx.elapsedMs >= scaledMs(30000)) return `elapsed ${ctx.elapsedMs}`;
           const lines = (r.stderr || '').split('\n');
           const statusIdx = lines.findIndex((l) => l.startsWith('AIKIT-XAI '));
           if (statusIdx < 0) return 'no status';

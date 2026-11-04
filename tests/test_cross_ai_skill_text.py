@@ -347,5 +347,90 @@ class PolicyContent(unittest.TestCase):
                         self.assertIn("=", token, msg=line)
 
 
+# The 13 real cross-AI run limits (not the self-test's ceilings). The file holds 18
+# `const NAME = <int>;` lines; INPUT_CAP, SEEN_MIN_CHARS, SEEN_MAX, ARGV_PROMPT_MAX and
+# MAX_NESTED_REPOS are not time limits and are not pinned.
+REAL_LIMITS = {
+    "FINALIZE_CAP_MS": 10000,
+    "KILL_GRACE_MS": 2000,
+    "LIMIT_GRACE_MS": 1500,
+    "PIPE_DRAIN_MS": 2000,
+    "SIGNAL_BUDGET_MS": 2500,
+    "SIGNAL_GRACE_MS": 1000,
+    "SIGNAL_DRAIN_MS": 500,
+    "GIT_CAP_MS": 10000,
+    "LIST_CAP_MS": 15000,
+    "OVERLAY_MATCH_MS": 50,
+    "OVERLAY_CALL_BUDGET_MS": 200,
+    "GSD_DEFAULT_TIMEOUT_S": 300,
+    "TIMEOUT_MARGIN_S": 30,
+}
+BUDGET_MS_TEXT = """\
+function budgetMs(capMs, limit) {
+  const end = aborting ? Math.min(limit, signalBy) : limit;
+  return Math.max(0, Math.min(capMs, end - Date.now()));
+}"""
+UNSCALED_CEILING = re.compile(r"\belapsed\w*\s*>=?\s*\d", re.IGNORECASE)
+
+
+def unscaled_ceilings(text):
+    """Every comparison of an elapsed value against a bare number with > or >=."""
+    return [line.strip() for line in text.splitlines() if UNSCALED_CEILING.search(line)]
+
+
+class SelfTestCeilingPins(unittest.TestCase):
+    """Self-test ceilings scale with load; floors and the real run limits do not (D-10)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = TEMPLATE.read_text(encoding="utf-8")
+
+    def test_every_elapsed_ceiling_is_scaled(self):
+        self.assertEqual(unscaled_ceilings(self.text), [])
+        self.assertEqual(len(re.findall(r"\belapsed\w*\s*>=\s*scaledMs\(", self.text)), 16)
+
+    def test_floors_stay_unscaled_literals(self):
+        self.assertEqual(len(re.findall(r"elapsedMs < 2500\b", self.text)), 3)
+
+    def test_signal_exit_ceiling_has_one_definition(self):
+        self.assertEqual(len(re.findall(r"withinMs:\s*\d", self.text)), 0)
+        self.assertEqual(self.text.count("const SELF_TEST_SIGNAL_EXIT_MS = 2900;"), 1)
+
+    def test_harness_waits_are_scaled(self):
+        calls = [
+            line for line in self.text.splitlines()
+            if re.search(r"\bwaitFor\(", line) and not line.lstrip().startswith("function")
+        ]
+        self.assertTrue(calls)
+        for line in calls:
+            self.assertIn("scaledMs(", line)
+        self.assertIn("sleep(scaledMs(2000))", self.text)
+        self.assertIn("function pidLingers(pid, ms = scaledMs(3000))", self.text)
+
+    def test_real_limits_are_unchanged(self):
+        self.assertEqual(len(REAL_LIMITS), 13)
+        for name, value in REAL_LIMITS.items():
+            with self.subTest(name=name):
+                found = re.findall(rf"^const {name} = (\d+);", self.text, re.MULTILINE)
+                self.assertEqual(found, [str(value)])
+
+    def test_budget_ms_and_outer_timeout_are_unchanged(self):
+        self.assertIn(BUDGET_MS_TEXT, self.text)
+        self.assertIn('"outerTimeoutS": 1800', self.text)
+
+    def test_early_reentry_wait_is_a_scaled_range_not_an_exact_600(self):
+        # The re-entry reports what is left of the wait, so it shrinks by the gap between the two
+        # runs; an exact '600' failed under CPU stress (28-02 stress run).
+        start = self.text.index("name: 'router-quota-early-reentry'")
+        block = self.text[start:self.text.index("name:", start + 10)]
+        self.assertNotIn("retry_after_s !== '600'", block)
+        self.assertIn("scaledMs(10000)", block)
+
+    def test_pin_flags_an_unscaled_ceiling_in_both_forms(self):
+        self.assertEqual(len(unscaled_ceilings("if (ctx.elapsedMs >= 5000) return 1;")), 1)
+        self.assertEqual(len(unscaled_ceilings("if (elapsed > 600) return 1;")), 1)
+        self.assertEqual(unscaled_ceilings("if (ctx.elapsedMs >= scaledMs(5000)) return 1;"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -948,6 +948,10 @@ _START_NEW_SESSION_ALLOWED = frozenset(
         # The StopFailure hook's `arm --only-if-armed` child runs in its own session so the
         # hook can kill the whole group at its 8 s deadline (26-07; the same pattern as fire).
         "tools/hooks/claude_session_wake.py",
+        # The test runner starts each module in its own session so a deadline or an interrupt
+        # stops the module's whole group (SIGTERM, then SIGKILL); it supervises tests, not a
+        # cross-AI run (28-02).
+        "tools/run_unittest_parallel.py",
     }
 )
 _SUPERVISOR_OWNER = "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py"
