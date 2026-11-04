@@ -160,33 +160,33 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   5. A structural test fails when a test module reads a path under `.planning/`, and every test's data lives under `tests/`.
 
 **Optional, not a requirement**: ai-kit is a desktop and CLI tool, so concurrency tests on its shared state (candidates: status-line caches and state files, the wake schedule, the jev answer log, two setup runs at once) are nice to have, never required (RULE-24's project-kind rule). The run lock (Phase 38) and the wake grid's no-double-arm check (Phase 50) keep their concurrency tests.
-**Plans**: 9 plans in 8 waves *(revised 2026-11-03 per cross-AI review cycle 1: the stress run and the all-tier convergence run alone in wave 2; 28-06 lands before 28-05; revised 2026-11-03 per plan check iteration 2: commit budget for covering e2e modules in 28-07, which moves to its own wave after 28-05; revised 2026-11-03 per cross-AI review cycle 3: the push proof leaves local tags out, 28-02 and 28-07 split into four tasks each)*
+**Plans**: 9/9 plans executed in 8 waves *(revised 2026-11-03 per cross-AI review cycle 1: the stress run and the all-tier convergence run alone in wave 2; 28-06 lands before 28-05; revised 2026-11-03 per plan check iteration 2: commit budget for covering e2e modules in 28-07, which moves to its own wave after 28-05; revised 2026-11-03 per cross-AI review cycle 3: the push proof leaves local tags out, 28-02 and 28-07 split into four tasks each)*
 
 Plans:
 **Wave 1**
-- [ ] 28-01-PLAN.md — host-CLI tripwire, shared host fakes, baseline module env (prefix-built overrides scrubbed, tool caches forwarded); real Mermaid render to e2e (wave 1)
-- [ ] 28-03-PLAN.md — no-git e2e, long-path compose test and precompact clock pinned at their cause (wave 1)
+- [x] 28-01-PLAN.md — host-CLI tripwire, shared host fakes, baseline module env (prefix-built overrides scrubbed, tool caches forwarded); real Mermaid render to e2e (wave 1)
+- [x] 28-03-PLAN.md — no-git e2e, long-path compose test and precompact clock pinned at their cause (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 28-02-PLAN.md — runner self-test ceilings scale with load per CPU (1..4x); floors and real limits pinned; runner deadline and process groups; exclusive stress run; all four tiers converge (wave 2)
+- [x] 28-02-PLAN.md — runner self-test ceilings scale with load per CPU (1..4x); floors and real limits pinned; runner deadline and process groups; exclusive stress run; all four tiers converge (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 28-04-PLAN.md — `make check-dogfood` live-project check (runner copy, both no-write guards), pre-push hook; curated-config tests and the matrix off the live project (wave 3)
+- [x] 28-04-PLAN.md — `make check-dogfood` live-project check (runner copy, both no-write guards), pre-push hook; curated-config tests and the matrix off the live project (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 28-06-PLAN.md — commit stage: staged-file mapper, `staged-tests` hook (commit stage only, e2e covering modules included), fail-safe full run (wave 4)
+- [x] 28-06-PLAN.md — commit stage: staged-file mapper, `staged-tests` hook (commit stage only, e2e covering modules included), fail-safe full run (wave 4)
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 28-05-PLAN.md — archived test data to tests/fixtures; `.planning/` and host-CLI structural rules (wave 5)
+- [x] 28-05-PLAN.md — archived test data to tests/fixtures; `.planning/` and host-CLI structural rules (wave 5)
 
 **Wave 6** *(blocked on Wave 5 completion)*
-- [ ] 28-07-PLAN.md — commit budget for covering e2e modules (over-budget ones deferred to the pre-push `deferred-e2e` hook); mapper selectivity and worst commit wait measured; both hooks' shape and shared machinery pinned (wave 6)
+- [x] 28-07-PLAN.md — commit budget for covering e2e modules (over-budget ones deferred to the pre-push `deferred-e2e` hook); mapper selectivity and worst commit wait measured; both hooks' shape and shared machinery pinned (wave 6)
 
 **Wave 7** *(blocked on Wave 6 completion)*
-- [ ] 28-08-PLAN.md — `make test-env-matrix` six-environment proof, sequential, report provenance checked, run identical (wave 7)
+- [x] 28-08-PLAN.md — `make test-env-matrix` six-environment proof, sequential, report provenance checked, run identical (wave 7)
 
 **Wave 8** *(blocked on Wave 7 completion)*
-- [ ] 28-09-PLAN.md — push timing (60 s target for the two test hooks) measured last on the final docs; AGENTS.md and README updated (wave 8)
+- [x] 28-09-PLAN.md — push timing (60 s target for the two test hooks) measured last on the final docs; AGENTS.md and README updated (wave 8)
 
 **Cross-cutting constraints:**
 - The core hook still runs before the wizard hook (test_core_hook_precedes_wizard_hook keeps holding)
@@ -766,7 +766,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 28. Fast, environment-proof gates | 0/TBD | Not started | - |
+| 28. Fast, environment-proof gates | 9/9 | In Progress | - |
 | 29. Logical-commit folding and the shared jev ladder | 0/TBD | Not started | - |
 | 29.1. Stacked phase branches, chained PRs and the merge chain | 0/TBD | Not started | - |
 | 30. Phase-boundary index refresh and code-exploration rules | 0/TBD | Not started | - |

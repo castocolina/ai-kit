@@ -6,15 +6,15 @@ current_phase: 28
 current_phase_name: Fast, environment-proof gates
 status: executing
 stopped_at: "Spec and discuss done for phases 28, 29, 29.1, 30, 30.1, 30.2 and 31 (interactive); next: gsd-autonomous over that range"
-last_updated: "2026-11-03T20:46:48.381Z"
-last_activity: 2026-11-03
-last_activity_desc: v2.0 roadmap remapped (Phase 30.1 inserted, 100/100 requirements mapped, code anchors per phase)
-state_head: 761e776a207c121a16dfbbbfe72e1b5193fc3d4b
+last_updated: "2026-11-04T13:36:11.269Z"
+last_activity: 2026-11-04
+last_activity_desc: Phase 28 wave 5 complete (28-05)
+state_head: 5109f8058001a9b7bd3123cbfb6646750da1e25a
 progress:
   total_phases: 37
   completed_phases: 0
   total_plans: 9
-  completed_plans: 0
+  completed_plans: 2
   percent: 0
 ---
 
@@ -25,14 +25,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Milestone v2.0 Skill Refactor, Phase 28 (Fast, environment-proof gates)
+**Current focus:** Phase 28 — Fast, environment-proof gates
 
 ## Current Position
 
-Phase: 28 (Fast, environment-proof gates) — READY TO EXECUTE
-Plan: —
-Status: Ready to execute
-Last activity: 2026-11-03 — v2.0 roadmap remapped (Phase 30.1 inserted, 100/100 requirements mapped, code anchors per phase)
+Phase: 28 (Fast, environment-proof gates) — EXECUTING
+Plan: 1 of 9
+Status: Executing Phase 28
+Last activity: 2026-11-04 - Completed quick task 261104-cxr: split cross-ai runner e2e self-test into logic and runtime shards
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -578,6 +578,7 @@ any order, or deferred, without blocking anything else in this milestone.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 261102-qrx | spec-discuss interactive path runs discuss with --analyze --all --batch | 2026-11-02 | 8e1bef6 | [261102-qrx-spec-discuss-interactive-path-runs-discu](./quick/261102-qrx-spec-discuss-interactive-path-runs-discu/) |
+| 261104-cxr | split cross-ai runner e2e self-test into logic and runtime shards | 2026-11-04 | 5109f80 | [261104-cxr-split-cross-ai-runner-e2e-self-test-into](./quick/261104-cxr-split-cross-ai-runner-e2e-self-test-into/) |
 
 ### Roadmap Evolution
 
