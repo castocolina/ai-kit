@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -397,8 +398,10 @@ class TestSkillMdActions(unittest.TestCase):
             os.makedirs(repo)
             with open(os.path.join(repo, "AGENTS.md"), "w", encoding="utf-8") as handle:
                 handle.write("See [missing](docs/nope.md).\n")
-            command = match.group(1).replace("<AGENTS_ENTRYPOINT>", entry)
-            command = command.replace("<repo_root>", repo)
+            # The command runs under `bash -c`: a substituted path must be shell-quoted, or a
+            # TMPDIR with a space splits it into words.
+            command = match.group(1).replace("<AGENTS_ENTRYPOINT>", shlex.quote(entry))
+            command = command.replace("<repo_root>", shlex.quote(repo))
             env = {"PATH": os.environ.get("PATH", ""), "HOME": os.path.join(root, "home")}
             result = subprocess.run(
                 ["bash", "-c", command], capture_output=True, text=True, env=env, check=False

@@ -363,6 +363,22 @@ def recorded_secs_errors(table, e2e_modules, budget) -> list[str]:
     return errors
 
 
+def env_matrix_gate_errors(makefile: str, hooks: str) -> list[str]:
+    """The six-environment target runs its tool and no gate or hook depends on it (SPEC R7)."""
+    if make_target_line(makefile, "test-env-matrix") is None:
+        return ["test-env-matrix target is missing"]
+    errors = []
+    if "tools/env_matrix.py" not in "\n".join(recipe_lines(makefile, "test-env-matrix")):
+        errors.append("test-env-matrix does not run tools/env_matrix.py")
+    for gate in ("test", "validate"):
+        line = make_target_line(makefile, gate) or ""
+        if "test-env-matrix" in line.split(":", 1)[-1].split():
+            errors.append(f"{gate} depends on test-env-matrix")
+    if "tools/env_matrix.py" in hooks or "test-env-matrix" in hooks:
+        errors.append("a pre-commit hook runs the six-environment matrix")
+    return errors
+
+
 def pylint_disable_drift(disable_list: list[str]) -> list[str]:
     """Report pylint disables outside the pinned set."""
     errors: list[str] = []
@@ -495,6 +511,9 @@ class TestGateScope(unittest.TestCase):
             [part.strip() for part in recipe_lines(self.makefile, "check-dogfood") if part.strip()],
             ["uv run pre-commit run check-dogfood --all-files --hook-stage pre-push"],
         )
+
+    def test_env_matrix_stays_out_of_gates(self) -> None:
+        self.assertEqual(env_matrix_gate_errors(self.makefile, self.hooks), [])
 
     def test_no_hardcoded_worker_counts(self) -> None:
         entries = "\n".join(hook_entries(self.hooks).values())
@@ -760,6 +779,7 @@ class TestGateScopeNonVacuity(unittest.TestCase):
     def test_flags_a_staged_hook_out_of_order(self) -> None:
         good = HOOKS.read_text()
         block = hook_block(good, "staged-tests")
+        assert block is not None  # the good hooks file always carries staged-tests
         without = good.replace(block + "\n", "", 1)
         moved = without.replace("      - id: pylint\n", block + "\n      - id: pylint\n", 1)
         self.assertNotEqual(moved, good)
@@ -824,6 +844,18 @@ class TestGateScopeNonVacuity(unittest.TestCase):
         for bad in (61, 0, 60.0):
             with self.subTest(budget=bad):
                 self.assertTrue(recorded_secs_errors({}, modules, bad))
+
+    def test_flags_env_matrix_under_validate_or_in_a_hook(self) -> None:
+        makefile = ("test-env-matrix:\n\tpython3 tools/env_matrix.py\n"
+                    "validate: ruff test-env-matrix\n")
+        self.assertIn("validate depends on test-env-matrix",
+                      env_matrix_gate_errors(makefile, ""))
+        self.assertIn("a pre-commit hook runs the six-environment matrix",
+                      env_matrix_gate_errors(makefile.replace("validate: ruff test-env-matrix",
+                                                              "validate: ruff"),
+                                             "entry: python3 tools/env_matrix.py"))
+        self.assertEqual(env_matrix_gate_errors(
+            makefile.replace("validate: ruff test-env-matrix", "validate: ruff"), ""), [])
 
 
 if __name__ == "__main__":

@@ -56,8 +56,11 @@ WALK_SKIP = frozenset({".git", ".venv", "tmp", "__pycache__"})
 
 def _clean_env() -> dict[str, str]:
     """The environment without GIT_* variables: a commit hook exports GIT_INDEX_FILE, which
-    would point these git calls at the outer repository's index instead of the one they name."""
-    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    would point these git calls at the outer repository's index instead of the one they name.
+    GIT_CEILING_DIRECTORIES stays: it bounds repository discovery to the test's temp root, so a
+    temp root under a TMPDIR that sits inside another repository is not read as part of it."""
+    return {key: value for key, value in os.environ.items()
+            if not key.startswith("GIT_") or key == "GIT_CEILING_DIRECTORIES"}
 
 
 def git_status(repo: Path) -> set[str]:

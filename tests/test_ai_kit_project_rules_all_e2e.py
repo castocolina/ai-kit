@@ -142,23 +142,34 @@ class TestAgentsProbe(unittest.TestCase):
         _scoped_env_setup(self)
 
     def test_agents_probe_runs_the_checkout_gsd_tools(self):
-        result = subprocess.run(
-            [sys.executable, _AGENTS_ENTRY, "check", _REPO],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, msg=result.stderr)
-        probe_lines = [
-            line for line in result.stderr.splitlines()
-            if line.startswith("ai-kit: gsd identity probe ran ")
-        ]
-        self.assertEqual(len(probe_lines), 1, msg=result.stderr)
-        probed = probe_lines[0][len("ai-kit: gsd identity probe ran "):]
-        self.assertEqual(
-            os.path.realpath(probed), os.path.realpath(_CHECKOUT_GSD_TOOLS)
-        )
+        # The probe runs only where `<repo>/.planning/` exists, and the long-path clone has none
+        # (SPEC R9). So probe a scratch repo with a `.planning/` marker whose gsd-core is a link to
+        # the checkout's: the probe resolves to the same tools, and no live `.planning/` is read.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = os.path.join(tmp, "probe-repo")
+            os.makedirs(os.path.join(repo, ".planning"))
+            os.makedirs(os.path.join(repo, ".claude"))
+            os.symlink(os.path.dirname(os.path.dirname(_CHECKOUT_GSD_TOOLS)),
+                       os.path.join(repo, ".claude", "gsd-core"))
+            subprocess.run(["git", "init", "-q", repo], check=True, capture_output=True)
+            result = subprocess.run(
+                [sys.executable, _AGENTS_ENTRY, "check", repo],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            probe_lines = [
+                line for line in result.stderr.splitlines()
+                if line.startswith("ai-kit: gsd identity probe ran ")
+            ]
+            self.assertEqual(len(probe_lines), 1, msg=result.stderr)
+            probed = probe_lines[0][len("ai-kit: gsd identity probe ran "):]
+            # realpath must run while the scratch link exists: it resolves through it.
+            self.assertEqual(
+                os.path.realpath(probed), os.path.realpath(_CHECKOUT_GSD_TOOLS)
+            )
 
 if __name__ == "__main__":
     unittest.main()

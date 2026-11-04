@@ -2223,7 +2223,9 @@ def wire_statusline(settings, status_line, tty, dry, assume_overwrite=False):
     Returns True when statusLine now points at ai-kit, False when left
     untouched (foreign command declined/refused headless, unsupported
     statusLine shape, unreadable settings.json, or a write failure)."""
-    desired = "python3 -S " + status_line
+    # Quoted as the cursor writer quotes its entry: a path with a space (a TMPDIR or install dir
+    # with one) must reach the shell as one argument. shlex.quote is a no-op for a plain path.
+    desired = "python3 -S " + shlex.quote(status_line)
     data, cur_cmd = _statusline_state(settings)
     if data is None:
         return False

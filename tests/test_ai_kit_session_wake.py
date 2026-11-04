@@ -636,7 +636,10 @@ class TestArmSafety(_Scratch):
 
     def test_missing_absolute_shebang_interpreter_refused(self):
         sid = uuid.uuid4().hex
-        absent = os.path.join(self.root, "missing-interpreter")
+        # A fixed space-free path, not under self.root: a shebang is read up to the first space,
+        # so a TMPDIR with a space would test a different path in that environment.
+        absent = f"/ai-kit-absent-interpreter-{sid}/python3"
+        self.assertFalse(os.path.exists(absent))
         fakes.write_fake(self.bin_dir, "claude", "pass\n", shebang=f"#!{absent}")
         fakes.claude_session(self.env["HOME"], sid)
         err = io.StringIO()

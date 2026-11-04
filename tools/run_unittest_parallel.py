@@ -52,6 +52,10 @@ Each module also gets a baseline env (baseline_env): no host signals, no inherit
 no host config, status-line, credential or backend-URL overrides, a temporary HOME with
 AI_KIT_REFUSE_REAL_HOME=1, and the caller's tool caches forwarded by tool_cache_forwards.
 
+With AI_KIT_TEST_REPORT_DIR set, a top-level run also writes one JSON report per module into
+that folder (`module`, `rc`, `skips`, `ran`; see report_text and publish_report). Module envs
+never carry the variable, so a nested runner a test starts writes nothing.
+
 Each module starts in its own session. Stopping a module (its deadline, or SIGINT/SIGTERM to this
 runner) sends SIGTERM to its process group first and SIGKILL after MODULE_STOP_GRACE_SECS; a
 test that starts its own session must forward SIGTERM to it (tests/test_cross_ai_runner_e2e.py
@@ -61,10 +65,13 @@ Workers are a share of the available CPUs, capped at 40 percent
 (os.process_cpu_count(), then the affinity mask, then os.cpu_count()).
 AI_KIT_TEST_CPU_SHARE may lower that share, never raise it.
 """
+import ast
 import contextlib
 import importlib.util
+import json
 import math
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -208,6 +215,11 @@ MODULE_TIMEOUT_OVERRIDES = MappingProxyType({
 MODULE_STOP_GRACE_SECS = 15
 REAP_SECS = 5
 CPU_SHARE_ENV = "AI_KIT_TEST_CPU_SHARE"
+# The folder a top-level run writes per-module reports into (tools/env_matrix.py reads them).
+# baseline_env drops it, so only the top-level runner writes reports.
+REPORT_DIR_ENV = "AI_KIT_TEST_REPORT_DIR"
+_SKIP_RE = re.compile(r" \.\.\. skipped (.*)$", re.MULTILINE)
+_RAN_RE = re.compile(r"^Ran (\d+) tests? in ", re.MULTILINE)
 
 
 def discover_modules(tests_dir: Path = TESTS_DIR) -> list[str]:
@@ -355,6 +367,7 @@ def baseline_env(
         if name not in HOST_SIGNAL_VARS | HOME_OVERRIDE_VARS | CREDENTIAL_ENV_VARS
         and not name.startswith(HOST_CONFIG_ENV_PREFIXES)
         and not (name.startswith("GIT_") and name not in GIT_KEPT_VARS)
+        and name != REPORT_DIR_ENV
     }
     home = temp_dir / "home"
     home.mkdir(parents=True, exist_ok=True)
@@ -368,6 +381,56 @@ def baseline_env(
         "PATH": os.pathsep.join([str(tripwire_bin), source.get("PATH", "")]),
     })
     return env
+
+
+def parse_skips(output: str, temp_dir: str, checkout: str) -> list[str]:
+    """Sorted skip reasons of a verbose unittest run. The module's temp dir and the checkout path
+    become `<tmp>` and `<checkout>`, so one skip compares equal across environments."""
+    reasons = []
+    for raw in _SKIP_RE.findall(output):
+        try:
+            text = str(ast.literal_eval(raw))
+        except (ValueError, SyntaxError):
+            text = raw
+        if temp_dir:
+            text = text.replace(temp_dir, "<tmp>")
+        if checkout:
+            text = text.replace(checkout, "<checkout>")
+        reasons.append(text)
+    return sorted(reasons)
+
+
+def report_text(module: str, rc: int, output: str, temp_dir: str, checkout: str) -> str:
+    """The JSON text of one module's report: module, rc, normalized skips and the Ran count."""
+    ran = _RAN_RE.search(output)
+    report = {
+        "module": module,
+        "rc": rc,
+        "skips": parse_skips(output, temp_dir, checkout),
+        "ran": int(ran.group(1)) if ran else 0,
+    }
+    return json.dumps(report, sort_keys=True, indent=2) + "\n"
+
+
+def publish_report(folder: Path, module: str, text: str) -> None:
+    """Create `<module>.json` exclusively. A second report for the same module is written as
+    `<module>.<n>.json` beside the first, so the matrix flags it and nothing is overwritten."""
+    folder.mkdir(parents=True, exist_ok=True)
+    index = 1
+    while True:
+        name = f"{module}.json" if index == 1 else f"{module}.{index}.json"
+        try:
+            with (folder / name).open("x", encoding="utf-8") as handle:
+                handle.write(text)
+            return
+        except FileExistsError:
+            index += 1
+
+
+def _unittest_argv(module: str) -> list[str]:
+    """The unittest command; a reporting run adds -v so skip reasons appear in the output."""
+    verbose = ["-v"] if os.environ.get(REPORT_DIR_ENV) else []
+    return [sys.executable, "-m", "unittest", *verbose, module]
 
 
 def module_timeout_secs(module: str) -> int:
@@ -451,7 +514,7 @@ def run_module(module: str, cwd: Path = REPO_ROOT) -> tuple[str, int, str, float
     with tempfile.TemporaryDirectory(prefix="aikit-ut-", ignore_cleanup_errors=True) as temp_dir:
         log_path = write_tripwire(Path(temp_dir) / "tripwire")
         env = baseline_env(os.environ, Path(temp_dir), log_path.parent / "bin")
-        proc = _start_registered([sys.executable, "-m", "unittest", module], cwd, env)
+        proc = _start_registered(_unittest_argv(module), cwd, env)
         if proc is None:
             return module, 130, "not started: the run was interrupted", 0.0
         try:
@@ -460,6 +523,10 @@ def run_module(module: str, cwd: Path = REPO_ROOT) -> tuple[str, int, str, float
             with _LOCK:
                 _LIVE.discard(proc)
         rc, output = _with_tripwire(rc, output, log_path)
+        report_dir = os.environ.get(REPORT_DIR_ENV)
+        if report_dir:
+            text = report_text(module, rc, output, temp_dir, str(cwd.resolve()))
+            publish_report(Path(report_dir), module, text)
         return module, rc, output, time.monotonic() - start
 
 

@@ -11,6 +11,7 @@ import tempfile
 import types
 import unittest
 import unittest.mock
+from typing import Any
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / "tools" / "run_unittest_parallel.py"
@@ -747,7 +748,7 @@ class PushedModeTest(unittest.TestCase):
 
     def test_every_fallback_reason_runs_every_over_budget_module(self) -> None:
         every_over_budget = sorted(self.runner.E2E_MODULES - {self.WITHIN})
-        cases = (
+        cases: tuple[tuple[str, dict[str, Any], dict[str, Any]], ...] = (
             ("pushed: no push range", {}, {"from_ref": None}),
             ("pushed: no push range", {}, {"to_ref": None}),
             ("pushed: bad ref -x", {}, {"from_ref": "-x"}),

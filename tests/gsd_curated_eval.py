@@ -3423,7 +3423,9 @@ def _reap_strays(run_dir: pathlib.Path, seams: RunSeams, cli_pid: int, reaped: l
         if not names_run.search(args) or pid == cli_pid or pid in spared or pgid in spared_groups:
             continue
         _signal_group(seams, pgid, signal.SIGKILL)
-        reaped.append([pid, args[:80].replace(needle, "<run>")])
+        # Label first, then truncate: a long run dir (a long checkout or TMPDIR) would otherwise be
+        # cut before its needle and the record would show the raw path.
+        reaped.append([pid, args.replace(needle, "<run>")[:80]])
 
 
 def _turn_argv(
@@ -3659,6 +3661,23 @@ def _claude_json_projects_failure(home: str, project: str) -> list[str]:
     return []
 
 
+_CD_ABS_RE = re.compile(r"""\bcd\s+(?:"(/[^"]+)"|'(/[^']+)'|(/[^\s;&|"']+))""")
+
+
+def _command_tokens(command: str) -> list[str]:
+    """Shell words of a Bash command, so a quoted path with a space stays one token."""
+    try:
+        return shlex.split(command)
+    except ValueError:  # unbalanced quotes: fall back to whitespace words
+        return command.split()
+
+
+def _last_absolute_cd(command: str) -> str | None:
+    """The absolute directory of the command's last `cd`, quoted or not."""
+    found = [next(g for g in m.groups() if g) for m in _CD_ABS_RE.finditer(command)]
+    return found[-1] if found else None
+
+
 def _shadow_failures(cell: str, evs: list[dict], fixture: dict) -> list[str]:
     """An entrypoint outside the cell's own skill copy (red-b: the run dir's v1 copy; green: the
     worktree skill) is a harness failure, not a verdict (T-19-42)."""
@@ -3668,7 +3687,7 @@ def _shadow_failures(cell: str, evs: list[dict], fixture: dict) -> list[str]:
     for event in evs:
         if event["kind"] != "bash" or not isinstance(event.get("command"), str):
             continue
-        for token in event["command"].split():
+        for token in _command_tokens(event["command"]):
             if "ai-kit-gsd-curated-config.py" not in token:
                 continue
             # `E=<path>` assignments and shell quotes wrap the path the agent actually runs.
@@ -3676,8 +3695,8 @@ def _shadow_failures(cell: str, evs: list[dict], fixture: dict) -> list[str]:
             if "$" in path:
                 continue  # unexpanded (the resolve loop `$d/...`); literal runs are checked
             if not os.path.isabs(path):  # relative to the command's last absolute `cd`
-                cds = re.findall(r"\bcd\s+[\"']?(/[^\s;&|\"']+)", event["command"])
-                path = os.path.join(cds[-1] if cds else str(fixture.get("project", "")), path)
+                cd = _last_absolute_cd(event["command"])
+                path = os.path.join(cd or str(fixture.get("project", "")), path)
             resolved, root = os.path.normpath(path), os.path.normpath(str(allowed))
             if os.path.commonpath([resolved, root]) != root:
                 return [f"entrypoint_shadowed: {resolved}"]

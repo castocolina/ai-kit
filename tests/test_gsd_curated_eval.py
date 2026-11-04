@@ -14,6 +14,7 @@ import io
 import json
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1740,7 +1741,7 @@ class TestRun(unittest.TestCase):
     def _run_red_b(self, fixture, command_path):
         spawner = _Spawner(
             [
-                _fake_stream(extra_bash=f"python3 {command_path} --help"),
+                _fake_stream(extra_bash=f"python3 {shlex.quote(command_path)} --help"),
                 _fake_stream(),
                 _fake_stream(),
             ]
@@ -1882,7 +1883,7 @@ class TestFixture(unittest.TestCase):
             with open(target, "w", encoding="utf-8") as fh:
                 fh.write(
                     '#!/bin/sh\necho "$0" >> '
-                    + hits
+                    + shlex.quote(hits)
                     + "\n"
                     + "".join(f"echo {m!r}\n" for m in models)
                 )
@@ -3617,10 +3618,15 @@ class TestSmoke(unittest.TestCase):
         self.assertEqual(os.listdir(inside), [])
 
     def test_smoke_work_dir_outside_the_repo_is_kept(self) -> None:
-        with mock.patch.object(ev.tempfile, "tempdir", self.tmp):
+        # A directory beside the checkout, not under it: TMPDIR itself may sit inside a repository
+        # (the custom-tmpdir matrix environment), so self.tmp cannot stand for "outside".
+        beside = tempfile.mkdtemp(prefix="smoke-beside-",
+                                  dir=os.path.dirname(str(ev.REPO_ROOT)))
+        self.addCleanup(shutil.rmtree, beside, True)
+        with mock.patch.object(ev.tempfile, "tempdir", beside):
             work = ev._smoke_work_dir()
         self.assertTrue(os.path.isdir(work))
-        self.assertEqual(os.path.dirname(work), self.tmp)
+        self.assertEqual(os.path.dirname(work), beside)
 
     def test_refuses_symlink_to_repo_root(self) -> None:
         link = os.path.join(self.tmp, "link")
@@ -3777,20 +3783,24 @@ class TestSmoke(unittest.TestCase):
             return [{"kind": "bash", "command": command}]
 
         self.assertEqual(
-            ev._shadow_failures("red-b", bash(f'E={inside}; python3 "$E" apply'), fixture), []
+            ev._shadow_failures("red-b", bash(f'E={shlex.quote(inside)}; python3 "$E" apply'),
+                                fixture), []
         )
         self.assertEqual(
             ev._shadow_failures("red-b", bash(f"python3 '{inside}' apply"), fixture), []
         )
         loop = '[ -f "$d/ai-kit-gsd-curated-config.py" ] && printf x'
-        rel = "cd " + run_dir + "; E=v1-skill/x/ai-kit-gsd-curated-config.py; python3 $E apply"
+        rel = (
+            f"cd {shlex.quote(run_dir)}; E=v1-skill/x/ai-kit-gsd-curated-config.py; "
+            "python3 $E apply"
+        )
         self.assertEqual(ev._shadow_failures("red-b", bash(rel), fixture), [])
         rel_out = "cd /elsewhere; python3 v1-skill/x/ai-kit-gsd-curated-config.py"
         self.assertTrue(ev._shadow_failures("red-b", bash(rel_out), fixture))
         self.assertEqual(ev._shadow_failures("red-b", bash(loop), fixture), [])
         outside = os.path.join(self.tmp, "other", "ai-kit-gsd-curated-config.py")
         self.assertEqual(
-            ev._shadow_failures("red-b", bash(f"E={outside}; python3 $E"), fixture),
+            ev._shadow_failures("red-b", bash(f"E={shlex.quote(outside)}; python3 $E"), fixture),
             [f"entrypoint_shadowed: {outside}"],
         )
 
@@ -3858,9 +3868,17 @@ class TestSmoke(unittest.TestCase):
             ev._scripted_turns("green", text, {**fixture, "inventory": ""})
 
     def test_placeholders_label_worktree_before_home(self) -> None:
-        text = f"{ev.REPO_ROOT}/x {pathlib.Path.home()}/y {pathlib.Path.home().resolve()}/z"
-        out = ev._placeholders(text, pathlib.Path(self.tmp))
-        self.assertEqual(out, "<worktree>/x <home>/y <home>/z")
+        # Both homes are fixed here, so the labels do not depend on where TMPDIR sits: a home
+        # beside the checkout is labelled <home>, a home inside the checkout is <worktree>.
+        beside = tempfile.mkdtemp(prefix="home-beside-", dir=os.path.dirname(str(ev.REPO_ROOT)))
+        self.addCleanup(shutil.rmtree, beside, True)
+        with mock.patch.object(pathlib.Path, "home", return_value=pathlib.Path(beside)):
+            out = ev._placeholders(f"{ev.REPO_ROOT}/x {beside}/y", pathlib.Path(self.tmp))
+        self.assertEqual(out, "<worktree>/x <home>/y")
+        inside_home = pathlib.Path(ev.REPO_ROOT) / "home-inside"
+        with mock.patch.object(pathlib.Path, "home", return_value=inside_home):
+            out = ev._placeholders(f"{inside_home}/z", pathlib.Path(self.tmp))
+        self.assertEqual(out, "<worktree>/home-inside/z")
 
     def test_chained_command_segments(self) -> None:
         """19-07 regression: `--plan plan.json; echo` read `plan.json;`, and a chained
@@ -3881,7 +3899,8 @@ class TestSmoke(unittest.TestCase):
         os.makedirs(work)
         with open(os.path.join(work, "dry.json"), "w", encoding="utf-8") as handle:
             handle.write('{"dry_run": true, "diff": []}')
-        cmd = f"W={work}; python3 x.py apply --plan $W/p.json --dry-run > $W/dry.json; echo exit=$?"
+        cmd = (f"W={shlex.quote(work)}; python3 x.py apply --plan $W/p.json --dry-run "
+               "> $W/dry.json; echo exit=$?")
         evs = [
             {"kind": "bash", "id": "t1", "command": cmd, "run": self.tmp},
             {"kind": "tool_result", "tool_use_id": "t1", "text": "exit=0"},

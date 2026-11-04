@@ -3,6 +3,7 @@ import ast
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import pathlib
 import re
@@ -387,6 +388,100 @@ class BaselineEnvTest(unittest.TestCase):
         lines = [ln for ln in output.splitlines() if ln.startswith(("HOME=", "CFG="))]
         values = dict(ln.split("=", 1) for ln in lines)
         self.assertTrue(values["CFG"].startswith(values["HOME"] + os.sep), output)
+
+
+class ReportTest(unittest.TestCase):
+    """Only a top-level run with AI_KIT_TEST_REPORT_DIR writes per-module reports (the matrix
+    reads them): exclusive creation, duplicates beside the first, nothing from nested runners."""
+
+    SYNTH = (
+        "import tempfile, unittest\n"
+        "class TestSynthetic(unittest.TestCase):\n"
+        "    def test_ok(self):\n"
+        "        pass\n"
+        "    def test_skip(self):\n"
+        "        self.skipTest('scratch ' + tempfile.gettempdir())\n"
+    )
+
+    def setUp(self) -> None:
+        self.runner = load_runner()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.parent = pathlib.Path(self._tmp.name)
+        self.tests = self.parent / "tests"
+        self.tests.mkdir()
+        (self.tests / "__init__.py").write_text("")
+        self.reports = self.parent / "reports"
+
+    def _module(self, name: str, text: str) -> None:
+        (self.tests / f"test_{name}.py").write_text(text)
+
+    def _run(self, name: str) -> tuple[int, str]:
+        _, rc, output, _ = self.runner.run_module(f"tests.test_{name}", cwd=self.parent)
+        return rc, output
+
+    def _names(self) -> list[str]:
+        return sorted(path.name for path in self.reports.iterdir())
+
+    def test_report_holds_rc_normalized_skips_and_ran(self) -> None:
+        self._module("rep", self.SYNTH)
+        with unittest.mock.patch.dict(os.environ, {self.runner.REPORT_DIR_ENV: str(self.reports)}):
+            rc, output = self._run("rep")
+        self.assertEqual(rc, 0, output)
+        report = json.loads((self.reports / "tests.test_rep.json").read_text(encoding="utf-8"))
+        self.assertEqual(report, {"module": "tests.test_rep", "rc": 0,
+                                  "skips": ["scratch <tmp>"], "ran": 2})
+
+    def test_without_the_variable_nothing_is_written(self) -> None:
+        self._module("plain", self.SYNTH)
+        with unittest.mock.patch.dict(os.environ):
+            os.environ.pop(self.runner.REPORT_DIR_ENV, None)
+            rc, output = self._run("plain")
+        self.assertEqual(rc, 0, output)
+        self.assertFalse(self.reports.exists())
+
+    def test_a_nested_runner_publishes_nothing(self) -> None:
+        self._module("nest", (
+            "import subprocess, sys, unittest\n"
+            f"RUNNER = {str(RUNNER)!r}\n"
+            f"CWD = {str(self.parent)!r}\n"
+            "class TestSynthetic(unittest.TestCase):\n"
+            "    def test_nested(self):\n"
+            "        proc = subprocess.run([sys.executable, RUNNER, 'tests.no_such_module'],\n"
+            "                              capture_output=True, text=True, check=False, cwd=CWD)\n"
+            "        self.assertIn('failed: tests.no_such_module', proc.stdout)\n"
+        ))
+        with unittest.mock.patch.dict(os.environ, {self.runner.REPORT_DIR_ENV: str(self.reports)}):
+            rc, output = self._run("nest")
+        self.assertEqual(rc, 0, output)
+        self.assertEqual(self._names(), ["tests.test_nest.json"])
+        report = json.loads((self.reports / "tests.test_nest.json").read_text(encoding="utf-8"))
+        self.assertEqual((report["module"], report["rc"]), ("tests.test_nest", 0))
+
+    def test_a_second_report_for_a_module_is_a_duplicate_not_an_overwrite(self) -> None:
+        self._module("dup", self.SYNTH)
+        with unittest.mock.patch.dict(os.environ, {self.runner.REPORT_DIR_ENV: str(self.reports)}):
+            self._run("dup")
+            self._run("dup")
+        self.assertEqual(self._names(), ["tests.test_dup.2.json", "tests.test_dup.json"])
+
+    def test_parse_skips_reads_both_quote_forms_and_normalizes_paths(self) -> None:
+        output = (
+            "t1 (m.A.t1) ... skipped 'no host at /scratch/aikit-ut-1'\n"
+            "t2 (m.A.t2) ... skipped \"it's /scratch/aikit-ut-1/z\"\n"
+            "t3 (m.A.t3) ... skipped 'needs /repo/root/file'\n"
+            "t4 (m.A.t4) ... ok\n"
+        )
+        self.assertEqual(
+            self.runner.parse_skips(output, "/scratch/aikit-ut-1", "/repo/root"),
+            ["it's <tmp>/z", "needs <checkout>/file", "no host at <tmp>"],
+        )
+
+    def test_baseline_env_drops_the_report_variable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = _baseline(self.runner, {self.runner.REPORT_DIR_ENV: "/reports", "HOME": tmp,
+                                          "PATH": "/usr/bin"}, pathlib.Path(tmp))
+        self.assertNotIn(self.runner.REPORT_DIR_ENV, env)
 
 
 ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*_(HOME|DIR|FILE|PATH|ROOT|KEY|TOKEN|URL|SECRET)$")

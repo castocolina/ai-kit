@@ -2021,8 +2021,9 @@ class TestWireStatusline(unittest.TestCase):
         # A dry run reads settings before the migration rewrote them: the pre-rename
         # entry must not be reported as foreign (live check, 2026-10-24).
         legacy = os.path.join(os.path.dirname(self.sl), "status-line.py")
+        command = f"python3 -S {shlex.quote(legacy)}"
         with open(self.settings, "w") as f:
-            json.dump({"statusLine": {"type": "command", "command": f"python3 -S {legacy}"}}, f)
+            json.dump({"statusLine": {"type": "command", "command": command}}, f)
         err, out = io.StringIO(), io.StringIO()
         with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
             ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=True)
@@ -2033,8 +2034,9 @@ class TestWireStatusline(unittest.TestCase):
 
     def test_legacy_suffix_copy_stays_foreign(self):
         backup = os.path.join(os.path.dirname(self.sl), "status-line.py.bak")
+        command = f"python3 -S {shlex.quote(backup)}"
         with open(self.settings, "w") as f:
-            json.dump({"statusLine": {"type": "command", "command": f"python3 -S {backup}"}}, f)
+            json.dump({"statusLine": {"type": "command", "command": command}}, f)
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertFalse(setup.wire_statusline(self.settings, self.sl, tty=None, dry=True))
 
@@ -2045,10 +2047,16 @@ class TestWireStatusline(unittest.TestCase):
         self.assertIn(self.sl, cmd)
         self.assertIn("python3 -S", cmd)
 
+    def test_a_status_line_path_with_a_space_is_written_as_one_argument(self):
+        spaced = os.path.join(os.path.dirname(self.sl), "with space", "claude-status-line.py")
+        self.assertTrue(setup.wire_statusline(self.settings, spaced, tty=None, dry=False))
+        self.assertEqual(shlex.split(self.read()["statusLine"]["command"]),
+                         ["python3", "-S", spaced])
+
     def test_already_ai_kit_refreshes_silently(self):
         with open(self.settings, "w") as f:
             json.dump({"statusLine": {"type": "command",
-                                      "command": "python3 -S " + self.sl}}, f)
+                                      "command": "python3 -S " + shlex.quote(self.sl)}}, f)
         ok = setup.wire_statusline(self.settings, self.sl, tty=None, dry=False)
         self.assertTrue(ok)
 
@@ -2270,10 +2278,10 @@ class TestRecipeAndUnwire(unittest.TestCase):
     def test_unwire_only_when_ai_kit(self):
         settings = os.path.join(self.tmp, "settings.json")
         install_dir = os.path.join(self.tmp, "ai-kit")
+        status_line = os.path.join(install_dir, "tools", "claude-status-line.py")
+        command = "python3 -S " + shlex.quote(status_line)
         with open(settings, "w") as f:
-            json.dump({"statusLine": {"type": "command",
-                                      "command": "python3 -S " + install_dir
-                                      + "/tools/claude-status-line.py"},
+            json.dump({"statusLine": {"type": "command", "command": command},
                        "theme": "dark"}, f)
         setup.unwire_statusline(settings, install_dir, dry=False)
         with open(settings) as f:
@@ -2294,9 +2302,9 @@ class TestRecipeAndUnwire(unittest.TestCase):
     # --- D-22: uninstall writes atomically, never clobbers unreadable files ---
 
     def _ai_kit_settings(self, settings, install_dir, extra=None):
-        data = {"statusLine": {"type": "command",
-                               "command": "python3 -S " + install_dir
-                                          + "/tools/claude-status-line.py"}}
+        status_line = os.path.join(install_dir, "tools", "claude-status-line.py")
+        command = "python3 -S " + shlex.quote(status_line)
+        data = {"statusLine": {"type": "command", "command": command}}
         if extra:
             data.update(extra)
         with open(settings, "w", encoding="utf-8") as f:
@@ -2473,7 +2481,7 @@ class TestCmdUninstall(unittest.TestCase):
         self.assertIn(settings, err.getvalue())
         self.assertIn("statusLine left as is", err.getvalue())
         with open(settings, "w", encoding="utf-8") as f:
-            command = "python3 " + self.install + "/tools/claude-status-line.py"
+            command = "python3 " + shlex.quote(self.install + "/tools/claude-status-line.py")
             json.dump({"statusLine": {"type": "command", "command": command}}, f)
         err = io.StringIO()
         with mock.patch.object(setup.os, "replace", side_effect=OSError("boom")), \
@@ -3705,7 +3713,7 @@ class TestExternalSegmentToggle(unittest.TestCase):
         self.assertTrue(result["ok"], result["log"])
         with open(paths.settings, encoding="utf-8") as handle:
             self.assertEqual(json.load(handle)["statusLine"]["command"],
-                             "python3 -S " + paths.status_line)
+                             "python3 -S " + shlex.quote(paths.status_line))
 
     def test_wizard_commit_first_host_filesystem_failure_still_commits_second(self):
         paths = self._paths_for_wizard_commit()
@@ -3736,7 +3744,7 @@ class TestExternalSegmentToggle(unittest.TestCase):
         self.assertTrue(result["hosts"]["cursor"]["ok"], result["hosts"]["cursor"]["log"])
         with open(paths.cursor_cli_config, encoding="utf-8") as handle:
             self.assertEqual(json.load(handle)["statusLine"]["command"],
-                             "python3 -S " + paths.cursor_status_line)
+                             "python3 -S " + shlex.quote(paths.cursor_status_line))
 
     def test_offline_dry_render_rejects_renderer_reported_failures(self):
         paths = self._paths_for_wizard_commit()
@@ -4164,7 +4172,7 @@ class TestStatusLineDetection(unittest.TestCase):
 
     def test_ours_when_command_invokes_resolved_status_line(self):
         paths = self._paths(None)
-        cmd = "python3 -S " + paths.status_line
+        cmd = "python3 -S " + shlex.quote(paths.status_line)
         with open(paths.settings, "w", encoding="utf-8") as f:
             json.dump({"statusLine": {"type": "command", "command": cmd}}, f)
         d = setup.detect_statusline(paths)
@@ -4179,7 +4187,7 @@ class TestStatusLineDetection(unittest.TestCase):
 
     def test_string_form_statusline_ours(self):
         paths = self._paths(None)
-        cmd = "python3 -S " + paths.status_line
+        cmd = "python3 -S " + shlex.quote(paths.status_line)
         with open(paths.settings, "w", encoding="utf-8") as f:
             json.dump({"statusLine": cmd}, f)
         d = setup.detect_statusline(paths)
@@ -4304,7 +4312,8 @@ class TestConditionalPersistence(unittest.TestCase):
             sample=os.path.join(repo, "tools", "claude-statusline.toml.sample"))
         import shutil as _sh
         _sh.copy(paths.sample, paths.config_toml)
-        ours_cmd = "python3 -S " + paths.status_line   # already ours, possibly hand-edited
+        # already ours, possibly hand-edited
+        ours_cmd = "python3 -S " + shlex.quote(paths.status_line)
         with open(paths.settings, "w", encoding="utf-8") as f:
             json.dump({"statusLine": {"type": "command", "command": ours_cmd},
                        "other": 1}, f)
@@ -4918,16 +4927,17 @@ class TestStatuslineMigration(unittest.TestCase):
                 rewritten = rewrite(f"python3 -S {shlex.quote(old_lit)}", old_lit, new_lit)
                 self.assertEqual(shlex.split(rewritten), ["python3", "-S", new_lit])
                 self.assertNotIn('"', rewritten)
-        for command in (f"python3 {old}.backup", f"python3 {old}.bak",
+        q = shlex.quote(old)  # the script path as a shell argument: a space must not split it
+        for command in (f"python3 {q}.backup", f"python3 {q}.bak",
                         f"python3 -c 'print({old})'", f"bash -c '{old}'",
-                        f"python3 /other/script.py {old}",
+                        f"python3 /other/script.py {q}",
                         # Option values are not the script: -X/-W consume the
                         # next token, -c/-m run no file at all, and any option
                         # outside the no-argument allowlist is foreign.
-                        f"python3 -X {old} -c 'print(123)'",
-                        f"python3 -W ignore {old}",
-                        f"python3 -m mod {old}", f"python3 --check {old}",
-                        f"python3 -v {old}", f"python3 - {old}",
+                        f"python3 -X {q} -c 'print(123)'",
+                        f"python3 -W ignore {q}",
+                        f"python3 -m mod {q}", f"python3 --check {q}",
+                        f"python3 -v {q}", f"python3 - {q}",
                         "python3 -S"):
             self.assertIsNone(rewrite(command, old, new), command)
 
@@ -5008,7 +5018,7 @@ class TestStatuslineMigration(unittest.TestCase):
     def test_dry_run_reports_both_actions_without_mutation(self):
         old = os.path.join(self.paths.install_dir, "tools", setup._LEGACY_ENTRY)
         with open(self.paths.settings, "w", encoding="utf-8") as handle:
-            json.dump({"statusLine": f"python3 {old}"}, handle)
+            json.dump({"statusLine": f"python3 {shlex.quote(old)}"}, handle)
         old_config = os.path.join(self.paths.config_dir, setup._LEGACY_TOML)
         with open(old_config, "wb") as handle:
             handle.write(b"legacy\n")
@@ -5028,7 +5038,8 @@ class TestStatuslineMigration(unittest.TestCase):
     def test_publication_failure_keeps_source_and_command_write_precedes_it(self):
         old = os.path.join(self.paths.install_dir, "tools", setup._LEGACY_ENTRY)
         with open(self.paths.settings, "w", encoding="utf-8") as handle:
-            json.dump({"statusLine": {"command": f"python3 {old}", "keep": 1}}, handle)
+            json.dump({"statusLine": {"command": f"python3 {shlex.quote(old)}", "keep": 1}},
+                      handle)
         old_config = os.path.join(self.paths.config_dir, setup._LEGACY_TOML)
         with open(old_config, "wb") as handle:
             handle.write(b"legacy\n")
@@ -5469,9 +5480,8 @@ class TestHeadlessCursorStatusline(unittest.TestCase):
         entry = self._config()["statusLine"]
         self.assertEqual(set(entry), {"type", "command"})
         self.assertEqual(entry["type"], "command")
-        self.assertEqual(
-            entry["command"],
-            f"python3 -S {os.path.join(self.install_dir, 'tools', 'cursor-status-line.py')}")
+        status_line = os.path.join(self.install_dir, "tools", "cursor-status-line.py")
+        self.assertEqual(entry["command"], f"python3 -S {shlex.quote(status_line)}")
         # SPEC R11 encoding edge: re-serialized with 2-space indent.
         self.assertEqual(self._raw(), json.dumps({"statusLine": entry}, indent=2).encode() + b"\n")
 
@@ -5608,7 +5618,7 @@ class TestHeadlessCursorStatusline(unittest.TestCase):
         os.makedirs(self.cursor_dir)
         config = os.path.join(self.cursor_dir, "cli-config.json")
         entry = self._paths().cursor_status_line
-        ours = json.dumps({"type": "command", "command": f"python3 -S {entry}"})
+        ours = json.dumps({"type": "command", "command": f"python3 -S {shlex.quote(entry)}"})
         with open(config, "w", encoding="utf-8") as f:
             f.write(f'{{\n  // keep me\n  "statusLine": {ours}\n}}\n')
         with open(config, "rb") as f:
@@ -5707,8 +5717,8 @@ class TestStatuslineOwnershipCounterexamples(unittest.TestCase):
                     self.assertEqual(f.read(), claude_before)
                 with open(self.paths.cursor_cli_config, encoding="utf-8") as f:
                     self.assertEqual(json.load(f)["statusLine"]["command"], command)
-        self._claude(f"python3 -S {self.paths.status_line}")
-        self._cursor(f"python3 -S {self.paths.cursor_status_line}")
+        self._claude(f"python3 -S {shlex.quote(self.paths.status_line)}")
+        self._cursor(f"python3 -S {shlex.quote(self.paths.cursor_status_line)}")
         with contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(setup.cmd_uninstall(self.env, dry=False), 0)
@@ -5731,15 +5741,16 @@ class TestStatuslineOwnershipCounterexamples(unittest.TestCase):
                     self.assertFalse(setup.migrate_statusline(self.paths, False))
                 with open(self.paths.settings, "rb") as f:
                     self.assertEqual(f.read(), before)
-        self._claude(f"python3 -S {self.legacy}")
+        self._claude(f"python3 -S {shlex.quote(self.legacy)}")
         with contextlib.redirect_stdout(io.StringIO()), \
                 contextlib.redirect_stderr(io.StringIO()):
             self.assertTrue(setup.migrate_statusline(self.paths, False))
         self.assertEqual(setup.detect_statusline(self.paths)["state"], "ours")
 
     def test_ownership_helper_is_the_parser_not_a_substring(self):
+        quoted = shlex.quote(self.paths.cursor_status_line)
         self.assertTrue(setup._command_is_ours(
-            f"python3 -S {self.paths.cursor_status_line}", self.paths.cursor_status_line))
+            f"python3 -S {quoted}", self.paths.cursor_status_line))
         self.assertTrue(setup._command_is_ours(
             f"python3 -S '{self.paths.cursor_status_line}'", self.paths.cursor_status_line))
         self.assertFalse(setup._command_is_ours(
@@ -5784,7 +5795,7 @@ class TestStatuslineHostMatrix(unittest.TestCase):
 
     def _command(self, host, entry=None):
         entry = self._entry(host) if entry is None else entry
-        quoted = shlex.quote(entry) if host == "cursor" else entry
+        quoted = shlex.quote(entry)
         return f"python3 -S {quoted}"
 
     def _ours(self, host):
@@ -5866,7 +5877,7 @@ class TestStatuslineHostMatrix(unittest.TestCase):
         # A command the parser owns but renders differently (quoted path): the
         # refresh normalizes `command` and touches nothing else in the object.
         entry = self._entry("cursor")
-        seeded = f"python3 -S '{entry}'"
+        seeded = f'python3 -S "{entry}"'  # the same argv as the canonical form, another rendering
         with open(self.paths.cursor_cli_config, "w", encoding="utf-8") as handle:
             json.dump({"statusLine": {"type": "command", "command": seeded,
                                       "padding": 1, "updateIntervalMs": 500,
@@ -5930,7 +5941,7 @@ class TestStatuslineHostMatrix(unittest.TestCase):
         # host's own reader, so this proves the re-read ran and acted.
         entry = self._entry("cursor")
         config = self.paths.cursor_cli_config
-        ours = {"type": "command", "command": f"python3 -S {entry}"}
+        ours = {"type": "command", "command": f"python3 -S {shlex.quote(entry)}"}
         other = {"type": "command", "command": "/usr/bin/other"}
         rows = [
             ("unset became foreign", {"theme": "dark"}, {"theme": "dark", "statusLine": other},
@@ -6030,7 +6041,7 @@ class TestStatuslineUninstallPerHost(unittest.TestCase):
         entry = (self.paths.status_line if host == "claude"
                  else self.paths.cursor_status_line)
         return {"theme": "dark",
-                "statusLine": {"type": "command", "command": f"python3 -S {entry}"}}
+                "statusLine": {"type": "command", "command": f"python3 -S {shlex.quote(entry)}"}}
 
     def _foreign(self, host):
         return {"theme": "dark", "statusLine": {"type": "command", "command": "/usr/bin/mybar"}}
@@ -6224,8 +6235,9 @@ class TestStatuslineHostSelection(unittest.TestCase):
         self.assertEqual((first, second), (0, 0))
         self.assertEqual(after_first, _tree_snapshot(self.tmp))
         entry = self.paths.cursor_status_line
+        expected = f"python3 -S {shlex.quote(entry)}"
         with open(self.paths.cursor_cli_config, encoding="utf-8") as handle:
-            self.assertEqual(json.load(handle)["statusLine"]["command"], f"python3 -S {entry}")
+            self.assertEqual(json.load(handle)["statusLine"]["command"], expected)
 
     def test_explicit_selection_wires_only_that_host(self):
         os.makedirs(self.claude_dir)
@@ -6274,9 +6286,10 @@ class TestStatuslineSelectionBeforeAnyWrite(unittest.TestCase):
         self.paths = setup.resolve_paths(self.env)
         os.makedirs(self.paths.config_dir, exist_ok=True)
         legacy = os.path.join(tools, setup._LEGACY_ENTRY)
+        command = f"python3 -S {shlex.quote(legacy)}"
         with open(self.paths.settings, "w", encoding="utf-8") as handle:
             json.dump({"theme": "dark",
-                       "statusLine": {"type": "command", "command": f"python3 -S {legacy}"}},
+                       "statusLine": {"type": "command", "command": command}},
                       handle)
         with open(os.path.join(self.paths.config_dir, setup._LEGACY_TOML), "w",
                   encoding="utf-8") as handle:
@@ -6448,7 +6461,7 @@ class TestWizardCommitPerHost(unittest.TestCase):
         self.assertTrue(result["hosts"]["cursor"]["ok"])
         self.assertIn("cursor_api = true", self._text(self.paths.cursor_config_toml))
         wired = self._json(self.paths.cursor_cli_config)["statusLine"]["command"]
-        self.assertEqual(wired, f"python3 -S {self.paths.cursor_status_line}")
+        self.assertEqual(wired, f"python3 -S {shlex.quote(self.paths.cursor_status_line)}")
         # Claude was not part of this commit, so Claude saw nothing at all: no
         # Claude TOML, no settings.json, and no Claude-only host outcome invented.
         self.assertNotIn("claude", result["hosts"])

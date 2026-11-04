@@ -408,8 +408,9 @@ class TestExistingBriefing(unittest.TestCase):
         row = next(row for row in setup.HOOK_REGISTRY
                    if row.id == "session-briefing" and row.host == "claude")
         script = os.path.join(install, *row.script.split("/"))
+        # The canonical written form: a path with a space is quoted, as the installer writes it.
         entry = {"matcher": "startup|compact", "hooks": [{"type": "command",
-                 "command": "python3 -S " + script}]}
+                 "command": "python3 -S " + shlex.quote(script)}]}
         settings = os.path.join(claude, "settings.json")
         setup._atomic_write_json(settings, {"hooks": {"SessionStart": [entry]}})
         paths = setup.resolve_paths({"HOME": tmp, "AI_KIT_DIR": install,
