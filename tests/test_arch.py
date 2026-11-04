@@ -864,7 +864,8 @@ def _iter_skill_python(rel_skill):
 
 # Rule 9: the only places allowed to swallow every exception. Each is a documented
 # backstop that keeps one failure from blanking the status line or killing a TUI, or
-# (curated-config apply) from crashing a committed apply, where SPEC R13 says only warn.
+# (curated-config apply) from crashing a committed apply, where SPEC R13 says only warn, or
+# (staged-tests) from passing a commit on zero tests: a mapper failure runs the full groups.
 _CURATED_APPLY = "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/apply.py"
 _BROAD_EXCEPT_BACKSTOPS = frozenset(
     {
@@ -876,6 +877,7 @@ _BROAD_EXCEPT_BACKSTOPS = frozenset(
         ("tools/common_render.py", "core_render_checked"),
         ("tools/statusline-doctor.py", "cmd_doctor"),
         ("tools/config_doctor_checks.py", "apply_row"),
+        ("tools/run_unittest_parallel.py", "_staged_selection"),
     }
 )
 

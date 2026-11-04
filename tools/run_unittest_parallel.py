@@ -4,6 +4,7 @@
 Usage:
     run_unittest_parallel.py MODULE [MODULE ...]
     run_unittest_parallel.py --group NAME [--group NAME ...] [-- MODULE ...]
+    run_unittest_parallel.py --staged [PATH ...]
     run_unittest_parallel.py --list-groups
 
 Each module runs under the same interpreter as this script, so the caller picks
@@ -11,6 +12,12 @@ the runtime (system python3 or `uv run python`), with the repo root as its cwd.
 Output is buffered per module and printed whole, so failures never interleave.
 Exits 1 if any module fails or exceeds its deadline (module_timeout_secs); exits 130 when
 interrupted.
+
+--staged runs exactly the modules that cover the staged files (tools/staged_mapper.py), each
+under the interpreter its group needs: unit and arch under this one, then unit-uv, integration
+and e2e modules in one `uv run python <this runner> <modules>` child. No PATH means the paths
+from `git diff --cached`. A mapper failure runs every unit and arch module, never zero. It
+excludes --group and module names.
 
 Names after `--` are ignored: they are the generated listing that keeps a hook
 entry searchable by module (tools/gen_test_groups.py). `--list-groups` prints
@@ -44,9 +51,11 @@ Workers are a share of the available CPUs, capped at 40 percent
 AI_KIT_TEST_CPU_SHARE may lower that share, never raise it.
 """
 import contextlib
+import importlib.util
 import math
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -56,7 +65,7 @@ import time
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from types import FrameType, MappingProxyType
+from types import FrameType, MappingProxyType, ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
@@ -94,6 +103,15 @@ E2E_MODULES = frozenset({
     # real mmdc and headless Chrome from the caller's Puppeteer cache; named skips decided by
     # a probe render (28-01)
     "tests.test_markdown_to_pdf_e2e",
+    # real git commits through the real pre-commit hook in a temp repo (28-06)
+    "tests.test_staged_commit_e2e",
+})
+# Files whose change can alter how any module runs or is selected: staging one runs the full
+# unit and arch groups. A tests/ helper or fixture covering two or more modules counts too, but
+# the mapper computes those from the index.
+SHARED_MACHINERY = frozenset({
+    "tools/run_unittest_parallel.py", "tools/staged_mapper.py", "tools/gen_test_groups.py",
+    ".pre-commit-config.yaml", "Makefile", "pyproject.toml", "uv.lock",
 })
 EXPLICIT_GROUPS = {
     "arch": ARCH_MODULES,
@@ -186,6 +204,11 @@ def stale_exception_names(discovered: list[str]) -> list[str]:
     return sorted(
         name for modules in EXPLICIT_GROUPS.values() for name in modules if name not in found
     )
+
+
+def stale_machinery_names(root: Path = REPO_ROOT) -> list[str]:
+    """SHARED_MACHINERY entries that do not exist under root."""
+    return sorted(name for name in SHARED_MACHINERY if not (root / name).exists())
 
 
 def available_cpus() -> int | None:
@@ -442,9 +465,107 @@ def _emit_group_listing() -> int:
     return 0
 
 
+def _load_mapper() -> ModuleType:
+    """tools/staged_mapper.py, loaded by path so the runner works the same however it is loaded."""
+    path = Path(__file__).resolve().with_name("staged_mapper.py")
+    spec = importlib.util.spec_from_file_location("staged_mapper", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _staged_selection(paths: list[str], cwd: Path) -> tuple[int, list[str], str | None]:
+    """(staged file count, modules to run, full-run reason). Any failure is a full-run reason."""
+    try:
+        mapper = _load_mapper()
+        staged = paths or mapper.staged_paths(cwd)
+        if not staged:
+            return 0, [], None
+        decision = mapper.decide(cwd, staged, SHARED_MACHINERY)
+        arch = sorted(ARCH_MODULES & set(discover_modules())) if decision.arch else []
+        return len(set(staged)), sorted({*decision.modules, *arch}), decision.full_reason
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        return 0, [], f"mapper error: {type(exc).__name__}: {exc}"
+
+
+def _run_uv_child(modules: list[str], cwd: Path) -> list[str]:
+    """Run `modules` as one `uv run python <this runner> <modules>` child; the names that failed."""
+    print(f"staged: under uv: {' '.join(modules)}")
+    _STOPPING.clear()
+    argv = ["uv", "run", "python", str(Path(__file__).resolve()), *modules]
+    proc = _start_registered(argv, cwd, os.environ)
+    if proc is None:
+        return list(modules)
+    try:
+        rc, output = _communicate(proc, sum(module_timeout_secs(m) for m in modules))
+    finally:
+        with _LOCK:
+            _LIVE.discard(proc)
+    print(output, end="" if output.endswith("\n") else "\n")
+    if rc == 0:
+        return []
+    named = [ln.removeprefix("failed: ").split() for ln in output.splitlines()
+             if ln.startswith("failed: ")]
+    return named[-1] if named else list(modules)
+
+
+def _run_staged_modules(modules: list[str], cwd: Path) -> int:
+    groups = group_modules(modules)
+    core = groups["unit"] + groups["arch"]
+    heavy = groups["unit-uv"] + groups["integration"] + groups["e2e"]
+    if heavy and shutil.which("uv") is None:
+        print(f"staged: uv not found; the modules {' '.join(heavy)} need it; run make setup-env")
+        return 1
+    failed = _run_all(core, cwd) if core else []
+    if heavy:
+        failed += _run_uv_child(heavy, cwd)
+    print(f"{len(modules) - len(failed)}/{len(modules)} modules passed")
+    if failed:
+        print("failed: " + " ".join(sorted(failed)))
+    return 1 if failed else 0
+
+
+def _staged_main(argv: list[str], cwd: Path) -> int:
+    if argv[0] != "--staged" or any(arg.startswith("--") for arg in argv[1:]):
+        print("usage: run_unittest_parallel.py --staged [PATH ...]", file=sys.stderr)
+        return 2
+    stale = stale_exception_names(discover_modules())
+    if stale:
+        print("error: stale exception names: " + " ".join(stale), file=sys.stderr)
+        return 2
+    stale = stale_machinery_names()
+    if stale:
+        print("error: stale shared machinery names: " + " ".join(stale), file=sys.stderr)
+        return 2
+    files, modules, reason = _staged_selection(argv[1:], cwd)
+    if reason is not None:
+        print(f"staged: full unit+arch run: {reason}")
+        groups = group_modules(discover_modules())
+        modules = groups["unit"] + groups["arch"]
+    elif not modules:
+        print(f"staged: {files} files -> 0 modules" if files
+              else "staged: no staged files; 0 modules")
+        return 0
+    else:
+        print(f"staged: {files} files -> {len(modules)} modules")
+        for module in modules:
+            print(f"staged: {module}")
+    try:
+        return _run_staged_modules(modules, cwd)
+    except KeyboardInterrupt:
+        _STOPPING.set()
+        _stop_live_groups()
+        print("interrupted: every module was stopped", file=sys.stderr)
+        return 130
+
+
 def main(argv: list[str], cwd: Path = REPO_ROOT) -> int:
     if argv == ["--list-groups"]:
         return _emit_group_listing()
+    if "--staged" in argv:
+        return _staged_main(argv, cwd)
     # Names after `--` are the generated listing: discovery decides what runs,
     # and the names keep the hook entry searchable by module.
     if "--" in argv:

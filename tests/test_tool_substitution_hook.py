@@ -1168,8 +1168,10 @@ class TestCompose(unittest.TestCase):
                 user_line, context = detect.compose_message(_detection(*moderns))
                 self.assertLessEqual(len(user_line), 200)
                 self.assertTrue(all(c.isascii() and c.isprintable() for c in user_line))
+                # The usage suffix holds the checkout path, which may contain "fd" or "bat".
+                tools_part = user_line.split(":", 1)[-1].split(" Usage:")[0]
                 named = [modern for _, modern in detect.CURATED_SUBSTITUTIONS
-                         if modern in user_line.split(":", 1)[-1]]
+                         if modern in tools_part]
                 self.assertEqual(set(named), set(moderns))
                 self.assertIn("ai-kit: prefer these modern tools:", user_line)
                 self.assertLessEqual(len(context), 2000)
