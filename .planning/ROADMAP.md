@@ -625,7 +625,7 @@ Plans:
 
 **Goal**: An agent knows what to do at each development-loop event because the rules skill's playbooks say so, starting from one pointer in AGENTS.md, and where the shared quota logic lives is decided before the quota playbook is written.
 **Depends on**: Phase 46, Phase 41 (the superpowers adapter calls the end-of-unit playbook)
-**Requirements**: RULE-06, RULE-17, RULE-18, RULE-19, WAKE-03
+**Requirements**: RULE-06, RULE-17, RULE-18, RULE-19, RULE-28, RULE-29, WAKE-03
 **Code anchors**: new: playbooks under `skills/ai-kit-project-rules/`, git `post-checkout` hook writer, quota decision record, delegation brief header; end-of-plan call from `skills/ai-kit-spec-execute-superpowers/` (`SKILL.md`, `dispatch_injection.py`); brief builders that take the header: `ai_kit_spec/reviewer_dispatch.py` (`_reviewer_full_prompt`), `execute_dispatch.py` (`build_execute_guidance`), goal-prompt `gp_sections.py` (`rail_sections`); worktree gsd-tools check reusing `ai_kit_spec/gsd_tools.py` (`gsd_tools_candidates`, `local_gsd_core_roots`); `skills/ai-kit-session-wake/` (possible move into a playbook); docs: generated AGENTS.md block pointer, session-wake `SKILL.md`
 **Success Criteria** (what must be TRUE):
   1. `git worktree add` on a fixture runs `setup-dev` through the git `post-checkout` hook the skill writes, and a fixture worktree that cannot run its project `gsd-tools` gets a message naming the install step.
@@ -633,7 +633,9 @@ Plans:
   3. Playbooks for session start, CI wait and the PR review loop (reusing an existing feedback skill first) exist and are reachable from the generated block's pointer.
   4. The delegation playbook time-boxes pieces to about 20-30 minutes with one verifiable result each, forbids extra spawned reviewers unless asked and says how to report running agents and shells; its brief header appears in every brief that spec-review, the superpowers adapter and goal-prompt generate.
   5. A recorded decision says where the shared quota logic lives (library, playbook or skill) for session-wake, the rules playbook and the runner; the quota playbook follows it, arms a wake at the reset before stopping, removes it when the run ends, and its pings give the local time, the running step and its start time.
-  6. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+  6. After a seeded hook failure on a fixture, the playbook re-runs only the failed check's target before the next commit, never `make validate`, and the hook output names that target (RULE-28). *(added 2026-11-04)*
+  7. On a fixture plan that starts a background process group, a container, a browser instance, a held lock and temporary files, plus an untracked, non-ignored scratch file in the working tree, the end-of-plan playbook lists each leftover against the start-of-unit snapshot with its owner and removal command, removes only what the run started, and reports the rest (RULE-29). *(added 2026-11-04)*
+  8. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 
 **Plans**: TBD
 
@@ -670,6 +672,7 @@ Plans:
 
 **Goal**: One dispatcher hook per host decides at fire time what to run, so switching a hook never rewrites a host config, and session hooks adapt to worktrees.
 **Coupling (2026-11-03, from Phase 29's spec)**: the owner wants the commit-folding policy (Phase 29, carried by the Phase 47 playbook) to reach any environment where ai-kit's advisory hook is installed; whether the dispatcher reminds of it at commit or push time is this phase's discuss to decide.
+**Coupling (2026-11-04, owner request)**: the dispatcher advises at a failed git hook which single target re-runs the failed check (RULE-28), and at a session or subagent stop it advises the leftover-resource check of RULE-29; advice only, never a block.
 **Depends on**: Phase 48
 **Requirements**: HOOK-02, HOOK-03, HOOK-07
 **Code anchors**: new: one dispatcher per host in `tools/hooks/` and an event catalogue; `tools/setup.py` (`wire_claude_rows`, `wire_hook_cursor`, `apply_hook_selection`, `wire_hook_rows`); `tools/hooks/claude_session_start.py`, `cursor_session_start.py`, `precompact_core.py`, `claude_precompact.py`; the wizard hooks card from Phase 30.1; layered settings from the Phase 33 design; docs: `tools/hooks/README.md`

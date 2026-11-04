@@ -167,6 +167,15 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 - Kill/stop any ephemeral process or window spawned for e2e verification (a
   dev server, a spawned terminal, a background listener) once verification
   is done — never leave it orphaned after the task ends.
+- Don't run `make validate` before each commit or push: the hooks run the same checks. After a
+  hook fails, fix the cause, re-run only the failed check's target (`make test-unit`,
+  `make pyright`, ...) until it passes, then commit again so the hooks re-run everything.
+- Closing a plan, phase or spike leaves nothing behind that the run started: no background
+  process, container, browser or Playwright instance, held lock, temp files in `/tmp` (size or
+  inode count), large scratch files outside `tmp/` or swap pressure, and no untracked,
+  non-ignored ephemeral file in the working tree (move it under `tmp/`, remove, ignore or
+  commit it). Leftovers that predate the run are reported, never removed. Phases 47 and 49
+  turn both rules into a playbook and a hook advisory.
 - **Deferred**: a whole-tree architecture-layer test suite across `tools/` and `skills/` remains
   backlog 999.3. Status-line modules now have focused dependency-direction, host-import and
   networking-boundary rules in `tests/test_arch.py`; these do not replace that broader suite.

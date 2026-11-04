@@ -395,6 +395,21 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   `ai-kit-project-rules`; the standalone skill is deleted, and its callers (the GSD wave-end extension and the
   superpowers adapter) find the engine in its new home through the installed-skill lookup, with their tests
   intact. *(added 2026-11-03, 29 D-01: owner decision)*
+- [ ] **RULE-28**: The rules tell an agent not to run `make validate` before each commit or push when the
+  pre-commit and pre-push hooks run the same checks. After a hook fails, the agent fixes the cause, re-runs
+  only the failed check through its own target (for example `make test-unit` when a unit test failed, `make
+  pyright` when the type check failed), confirms it passes, and commits again so the hooks re-run every check.
+  The failing hook's output names the target that re-runs it. *(added 2026-11-04: owner request)*
+- [ ] **RULE-29**: Closing a plan or a phase (GSD or superpowers) leaves no leftover resources: no background
+  process or process group the run started, no container, no browser or Playwright instance, no held file lock,
+  no temporary files or directories in `/tmp` or the system temp dir (counted by size and by inode), no large
+  scratch file outside `tmp/`, and no swap pressure the run caused. The end-of-plan playbook takes a resource
+  snapshot at the start of the unit, compares it at the close, lists each leftover with its owner and a removal
+  command, and removes only what the run itself started; anything else is reported to the owner. A spike gets
+  the same check when it ends. The same snapshot covers the working tree: an ephemeral file the run created that
+  git neither tracks nor ignores (a log, a report, a scratch script, a generated output) is moved under `tmp/`,
+  removed, ignored or committed before the close, and untracked files that predate the unit are left untouched
+  and only reported. *(added 2026-11-04: owner request)*
 
 ### Host hooks
 
@@ -762,6 +777,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RULE-26 | Phase 45.1 | Pending |
 | RULE-27 | Phase 45 | Pending |
 | RULE-25 | Phase 46 | Pending |
+| RULE-28 | Phase 47 | Pending |
+| RULE-29 | Phase 47 | Pending |
 | HOOK-01 | Phase 48 | Pending |
 | HOOK-02 | Phase 49 | Pending |
 | HOOK-03 | Phase 49 | Pending |
@@ -826,8 +843,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | DEF-07 | Phase 32.4 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 158 total
-- Mapped to phases: 158
+- v2.0 requirements: 160 total
+- Mapped to phases: 160
 - Unmapped: 0
 
 ---
