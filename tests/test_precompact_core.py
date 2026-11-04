@@ -218,10 +218,13 @@ class TestHeaderCounts(FrozenClockMixin, unittest.TestCase):
         self.assertFalse(os.path.exists(env["STUB_LOG"]), "no client process may start")
 
     def test_header_counts_property(self):
+        # Twelve chunks per trial: every trial still spans the three labels and 0-3 errors, and
+        # each stub call is a process start, so 40 chunks x 50 trials cost 24 s for no new case.
+        # The 40-chunk path is covered by test_header_counts_match_stub_labels.
         rng = random.Random(42)
-        messages = self._chunk_messages(40)
+        messages = self._chunk_messages(12)
         chunks = core.chunk_messages(messages)
-        self.assertEqual(len(chunks), 40)
+        self.assertEqual(len(chunks), 12)
         ids = [f"c{i:04d}" for i in range(len(chunks))]
         for _trial in range(50):
             mapping = {identifier: rng.choice(self.CYCLE) for identifier in ids}

@@ -681,19 +681,37 @@ make dev        # uv sync + install pre-commit hooks (sets up the dev env)
 make test       # full suite in parallel, one subprocess per module, through tools/run_unittest_parallel.py (system python3 for the unit group)
 make lint       # shellcheck + py-compile hooks (pre-commit, all files)
 make validate   # the full quality gate (see below)
+make check-dogfood    # live-project check: dogfood runner copy and curated-config guards (also a pre-push hook)
+make test-env-matrix  # six-environment proof, about six make test runs; not part of make test or validate
 ```
 
-**The quality gate is pre-commit.** `.pre-commit-config.yaml` is the single
-source of truth: `make validate` runs each hook via the Makefile's per-tool
-targets (same hooks as commit-time: ruff, pylint, pyright, vulture, shellcheck,
-py-compile, unittest). Ruff, py-compile, pyright and vulture cover every shipped
-Python file under `tools/`, `skills/` and `tests/`; pylint covers `tools/` and
-`skills/`. Tool versions are pinned in `uv.lock`; `make dev` installs the hooks
-so commits are gated even if you skip `make validate`. Run it once after cloning:
+**The quality gate runs at commit and at push.** `.pre-commit-config.yaml` is the
+single source of truth: `make validate` runs each of its hooks via the Makefile's
+per-tool targets (ruff, pylint, pyright, vulture, shellcheck, py-compile,
+unittest, unittest-wizard, check-dogfood). Ruff, py-compile, pyright and vulture
+cover every shipped Python file under `tools/`, `skills/` and `tests/`; pylint
+covers `tools/` and `skills/`. Tool versions are pinned in `uv.lock`; `make dev`
+installs both hook stages so commits and pushes are gated even if you skip
+`make validate`. Run it once after cloning:
 
 ```bash
-make dev        # then commits are automatically gated
+make dev        # then commits and pushes are automatically gated
 ```
+
+**Commits run only the tests that cover the staged files.** A covering e2e module
+over the 60 s commit budget is named in the output and runs at push instead. The
+full unit and arch suites run when shared test machinery is staged.
+
+**Pushes run the full unit, arch and wizard suites, the live-project check and the
+deferred e2e modules.** The deferred modules are only the pushed range's, for a
+push of the checked-out branch from its own checkout with no other unpushed local
+branch or worktree HEAD outside it; every over-budget one otherwise. The 60 s
+target covers the two test hooks alone (their subtotal, measured with
+`python3 tools/time_prepush.py`): before this phase they took 183.9 s (2026-11-03),
+after it 55.5 s (2026-11-04). pyright (9.9 s), vulture (1.9 s), check-dogfood (0.5 s)
+and deferred-e2e (352.4 s, no push range) are recorded beside that subtotal, and the
+worst-case whole push (`push-worst`, every pre-push hook timed alone) is 420.2 s.
+Tests never call a real host CLI or read `.planning/`.
 
 ## Compatibility notes
 

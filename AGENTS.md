@@ -145,13 +145,83 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   `AI_KIT_TEST_CPU_SHARE` may lower the share, never raise it. Never
   hardcode a worker or core count.
 - `make lint` — the shellcheck and py-compile hooks (pre-commit, all files),
-  aggregated like `validate`. `make validate` — the same pre-commit hooks that
-  gate commits, run across all files via the per-hook single-tool targets
-  (`ruff`, `pylint`, `pyright`, `vulture`, `shellcheck`, `py-compile`,
-  `unittest`, `unittest-wizard`). Ruff, py-compile, pyright and vulture cover
+  aggregated like `validate`. `make validate` — the commit and push hooks, run
+  across all files via the per-hook single-tool targets (`ruff`, `pylint`,
+  `pyright`, `vulture`, `shellcheck`, `py-compile`, `unittest`,
+  `unittest-wizard`, `check-dogfood`). Ruff, py-compile, pyright and vulture cover
   `tools/`, `skills/` and `tests/`; pylint covers `tools/` and `skills/`.
   `security-scanner` and `duplicate-code` are informational-only Makefile
   targets, not wired into `validate`.
+- Commit stage: the `staged-tests` hook (pre-commit, verbose) runs
+  `tools/run_unittest_parallel.py --staged`, which runs only the modules that
+  cover the staged files. The name index (`tools/staged_mapper.py`) is rebuilt on
+  every commit; `python3 tools/staged_mapper.py --stats` shows its selectivity.
+  Unit and arch modules run under python3; the modules that need uv (unit-uv,
+  integration, and the covering e2e modules within budget) run under uv after
+  them. A covering e2e module over the 60 s commit budget
+  (`COMMIT_E2E_BUDGET_SECS`), or with no recorded time (`E2E_RECORDED_SECS`), is
+  not run at commit: the hook prints `staged: deferred to push` with its run-now
+  command, and the pre-push `deferred-e2e` hook runs it. The full unit and arch
+  groups run instead when a `SHARED_MACHINERY` file is staged, a tests/ helper or
+  fixture covers two or more modules, a staged file that the test sources name
+  has no covering module, or the mapper fails. Refresh `E2E_RECORDED_SECS` from
+  the `=== <module>: ok in <s>` lines of `make e2e-test` when an e2e module's time
+  changes. Known limit: a test that reaches files only through a glob (for example
+  `skills/*/SKILL.md`) is not selected for them at commit; the push stage still
+  runs it.
+- Push stage: the pre-push hooks are `unittest` (unit and arch, under python3),
+  `unittest-wizard` (unit-uv and integration, under uv), `pyright`, `vulture`,
+  `check-dogfood` (the live-project check) and `deferred-e2e`. `deferred-e2e` runs
+  the covering e2e modules the commit stage deferred. It narrows to the pushed
+  range only when the proof holds: the push is the checked-out branch, pushed from
+  its own checkout, and no other unpushed local branch or worktree HEAD holds a
+  commit outside it. Local tags are left out of that check, so unpushed archive or
+  backup tags do not force the slow path; a tag pushed by name, or with `--tags`
+  beside the branch and pointing outside it, is not seen, so push such a tag on its
+  own. Every other push (several refs, a branch other than the checkout, an
+  unpushed side branch, no range, a mapper error) runs every over-budget e2e module,
+  the worst case below. Like every push hook, the checks test the checkout, so push
+  a branch from its own checkout to test that branch's code.
+- Push timing: the 60 s target covers the two test hooks only, their subtotal,
+  measured back to back by `python3 tools/time_prepush.py` at the default 40 %
+  share. Before this phase they took 183.9 s (2026-11-03: 24 CPUs, 9 workers,
+  one-minute load 1.86 at start); after this phase they took 55.5 s (2026-11-04:
+  24 CPUs, 9 and 5 workers, share 0.40, one-minute load 0.97 at start; unit and
+  arch 34.6 s, wizard 20.9 s). The pyright (9.9 s), vulture (1.9 s), check-dogfood
+  (0.5 s) and deferred-e2e (352.4 s, no push range) times are recorded beside the
+  subtotal, never inside the 60 s figure, with `push-worst` (all six pre-push hooks
+  timed alone, deferred-e2e at its no-range worst case) as the worst-case whole
+  push: 420.2 s.
+- Isolation: every module runs behind a tripwire. A stub for each host CLI sits
+  first on its PATH, and a real host call fails the module with a `tripwire:`
+  block; host behaviour comes from `tests/host_fakes.py`. The stubs make
+  `shutil.which` find every host inside a module, so a test that needs a host
+  absent sets its own PATH. Every module also runs under a baseline env: no host
+  signals or inherited git state, no host config, status-line, credential or
+  backend-URL overrides, a temporary HOME with `AI_KIT_REFUSE_REAL_HOME=1`, and
+  the caller's tool caches forwarded. The tripwire sees PATH lookups only; a host
+  CLI called through an absolute path is not seen at run time, and the arch rule
+  in `tests/test_arch.py` catches a test that names a host CLI as the program it
+  spawns. No test reads the repo's `.planning/`: archived data lives under
+  `tests/fixtures/archived/`, pinned by an arch rule with no exceptions.
+- `make check-dogfood`: the live-project check. It verifies that the project's own
+  cross-AI runner copy is a pristine render of the shipped template, and that the
+  curated-config write flows leave the live `.planning/` config and runner files
+  untouched. It is the only reader of `.planning/`, part of `make validate`, and a
+  pre-push hook.
+- `make test-env-matrix`: the six-environment proof (SPEC R7). It runs `make test`
+  in plain, host-session, no-host-cli, long-path (a checkout path of 200+
+  characters), custom-tmpdir (a TMPDIR with a space inside a repo) and outside-git
+  (started from outside any repository) environments, one after another, for about
+  six `make test` durations (about 45 minutes here). Each environment is compared
+  module by module with the plain run, which must itself be green with one report
+  per module. It is not part of `make test`, `validate` or any hook; run it when
+  test infrastructure changes. Because the runner baseline already strips host
+  signals, stubs host CLIs and fixes the cwd, the host-session, no-host-cli and
+  outside-git environments mainly check make, uv and `tests/test_install.sh`; the
+  long-path and custom-tmpdir environments carry most of the module-level evidence.
+  The long-path clone has no `.planning/`, so a test that still reads it shows as a
+  difference there.
 - `tests/*` gets a lighter ruff bar than runtime code (idiomatic test
   patterns are fine there even where they'd fail elsewhere).
 - `tests/test_arch.py` is a structural-fitness test (parses source with
@@ -249,7 +319,9 @@ unavailable or insufficient.
 - `make test` — aggregate of `test-unit`, `test-integration`, `e2e-test`, `arch-test`
 - `make test-unit` / `test-integration` / `e2e-test` / `arch-test` — individual pyramid tiers
 - `make lint` — shellcheck + py-compile hooks (pre-commit, all files)
-- `make validate` — the same pre-commit hooks that gate commits, all files (via per-hook targets)
+- `make validate` — the commit and push hooks, all files (via per-hook targets)
+- `make check-dogfood` — the live-project check (dogfood runner copy, curated-config guards); also a pre-push hook
+- `make test-env-matrix` — the six-environment proof (about six `make test` durations); not part of `make test`, `validate` or any hook
 - `make format` — `ruff format .` (dev-only, mutates files, not wired into validate)
 - `make security-scanner` / `make duplicate-code` — informational/non-gating checks, not wired into `validate`
 - `make doctor` / `make check` — installer diagnostics

@@ -42,13 +42,14 @@ def run(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
 
 
 class RunUnittestParallelTest(unittest.TestCase):
+    # A fast real module keeps these CLI checks cheap; the arch module is covered by its own run.
     def test_all_pass_exits_zero(self) -> None:
-        proc = run("tests.test_arch")
+        proc = run("tests.test_mermaid_style")
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertIn("1/1 modules passed", proc.stdout)
 
     def test_one_failure_exits_nonzero_and_names_it(self) -> None:
-        proc = run("tests.test_arch", "tests.no_such_module")
+        proc = run("tests.test_mermaid_style", "tests.no_such_module")
         self.assertEqual(proc.returncode, 1, proc.stdout)
         self.assertIn("failed: tests.no_such_module", proc.stdout)
 
@@ -167,7 +168,7 @@ class GroupModeTest(unittest.TestCase):
     def test_runs_from_a_foreign_cwd(self) -> None:
         # Modules resolve against the repo root, not the caller's cwd (C-WR-07).
         with tempfile.TemporaryDirectory() as tmp:
-            proc = run("--group", "arch", cwd=tmp)
+            proc = run("tests.test_mermaid_style", cwd=tmp)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("1/1 modules passed", proc.stdout)
 
@@ -681,9 +682,9 @@ class ModuleDeadlineTest(unittest.TestCase):
             f"open({str(pid_file)!r}, 'w').write(str(g.pid))\n"
             "time.sleep(300)"
         ))
-        _, rc, output, _ = self.run_stopped(module, 6)
+        _, rc, output, _ = self.run_stopped(module, 3)
         self.assertEqual(rc, 124, output)
-        self.assertIn("timed out after 6s", output)
+        self.assertIn("timed out after 3s", output)
         self.assertTrue(pid_gone(int(wait_for_file(pid_file))))
 
     def test_a_module_that_ignores_sigterm_is_killed_after_the_grace(self) -> None:
@@ -694,7 +695,7 @@ class ModuleDeadlineTest(unittest.TestCase):
             f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
             "time.sleep(300)"
         ))
-        _, rc, _, secs = self.run_stopped(module, 6, grace=1)
+        _, rc, _, secs = self.run_stopped(module, 3, grace=1)
         self.assertEqual(rc, 124)
         self.assertLess(secs, 30)
         self.assertTrue(pid_gone(int(wait_for_file(pid_file))))
@@ -714,7 +715,7 @@ class ModuleDeadlineTest(unittest.TestCase):
             "signal.signal(signal.SIGTERM, forward)\n"
             "owner.wait()"
         ))
-        _, rc, _, _ = self.run_stopped(module, 8, grace=5)
+        _, rc, _, _ = self.run_stopped(module, 4, grace=5)
         self.assertEqual(rc, 124)
         self.assertTrue(pid_gone(int(wait_for_file(owner_pid))))
         self.assertTrue(pid_gone(int(wait_for_file(grand_pid))))
