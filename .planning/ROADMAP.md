@@ -147,20 +147,52 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 ## Phase Details
 
 ### Phase 28: Fast, environment-proof gates
+
 **Goal**: The owner can commit and push without waiting on slow tests or tests that pass or fail depending on the caller's environment.
 **Depends on**: Nothing (first v2.0 phase; it runs before the phase-branch flow of Phase 29 exists)
 **Requirements**: GATE-01, GATE-02, GATE-03, GATE-04, GATE-05
-**Code anchors**: `.pre-commit-config.yaml` (`unittest`, `unittest-wizard` hook stages); `tools/run_unittest_parallel.py` (`group_modules`, `hook_groups`, `main`, `worker_count`); `tools/gen_test_groups.py`; `Makefile`; `tests/test_gate_scope.py`; real host-binary callers `tests/test_ai_kit_spec_goal_prompt_host.py`, `tests/gsd_curated_eval.py`; runner self-test budgets in `skills/ai-kit-spec-review/references/cross-ai.mjs` (`budgetMs`, self-test cases); new: staged-file to test-module mapper (home unknown until research), structural test for real host-CLI calls; new: structural test that fails when a test reads a `.planning/` path (beside `tests/test_gate_scope.py`; home unknown until research); docs: AGENTS.md Testing, README testing section
+**Code anchors**: `.pre-commit-config.yaml` (`unittest`, `unittest-wizard` hook stages); `tools/run_unittest_parallel.py` (`group_modules`, `hook_groups`, `main`, `worker_count`); `tools/gen_test_groups.py`; `Makefile`; `tests/test_gate_scope.py`; real host-binary callers `tests/test_ai_kit_spec_goal_prompt_evals.py`, `tests/gsd_curated_eval.py` *(amended 2026-11-03, 28 plan: the spec-step host trace found the evals module, not `_host`, making the 80 calls)*; runner self-test budgets in `skills/ai-kit-spec-review/references/cross-ai.mjs` (`budgetMs`, self-test cases); new: staged-file to test-module mapper (home unknown until research), structural test for real host-CLI calls; new: structural test that fails when a test reads a `.planning/` path (beside `tests/test_gate_scope.py`; home unknown until research); docs: AGENTS.md Testing, README testing section
 **Success Criteria** (what must be TRUE):
-  1. Committing a change to one module runs, in parallel, only the test modules that cover it (through imports and the runner's test lists), and the commit is refused when one of them fails. *(amended 2026-11-03, 28 D-01: 81 of 95 test modules reach code through path strings, `sys.path` inserts or subprocesses, not imports; the mapper is a name index over tests and their helpers, which includes imports)*
+  1. Committing a change to one module runs, in parallel, only the test modules that cover it (through imports and the runner's test lists), and the commit is refused when one of them fails. *(amended 2026-11-03, 28 D-01: 81 of 95 test modules reach code through path strings, `sys.path` inserts or subprocesses, not imports; the mapper is a name index over tests and their helpers, which includes imports)* *(amended 2026-11-03, 28 plan check iteration 2; decided 2026-11-03 by the autonomous run's orchestrator under the run prompt's gray-area rule (jev ladder low-confidence, own reasoning); the owner reviews it in the run report and may revert: a covering e2e module over the 60 s commit budget, or unrecorded, is named in a notice and run by a pre-push hook for the pushed commits instead)*
   2. The pre-push stage runs the full unit, arch and wizard suites in clearly less wall time than the 2.5 minutes measured on 2026-11-02; the before and after times are recorded, and no test calls a real host binary. *(amended 2026-11-03, 28 SPEC R3: re-measured at 184 s (core 162.9 s, wizard 21.0 s, 24 CPUs); the target is 60 s or less for both test hooks)*
   3. The suites give the same result from a plain terminal, from inside a host session, with no host CLI on PATH, from a long checkout path, with a custom TMPDIR and from outside a git repository; a structural test fails when a test calls a real host CLI.
   4. The runner's self-test passes under simulated host load because its budgets scale with load, while the real run limits are unchanged.
   5. A structural test fails when a test module reads a path under `.planning/`, and every test's data lives under `tests/`.
+
 **Optional, not a requirement**: ai-kit is a desktop and CLI tool, so concurrency tests on its shared state (candidates: status-line caches and state files, the wake schedule, the jev answer log, two setup runs at once) are nice to have, never required (RULE-24's project-kind rule). The run lock (Phase 38) and the wake grid's no-double-arm check (Phase 50) keep their concurrency tests.
-**Plans**: TBD
+**Plans**: 9 plans in 8 waves *(revised 2026-11-03 per cross-AI review cycle 1: the stress run and the all-tier convergence run alone in wave 2; 28-06 lands before 28-05; revised 2026-11-03 per plan check iteration 2: commit budget for covering e2e modules in 28-07, which moves to its own wave after 28-05; revised 2026-11-03 per cross-AI review cycle 3: the push proof leaves local tags out, 28-02 and 28-07 split into four tasks each)*
+
+Plans:
+**Wave 1**
+- [ ] 28-01-PLAN.md — host-CLI tripwire, shared host fakes, baseline module env (prefix-built overrides scrubbed, tool caches forwarded); real Mermaid render to e2e (wave 1)
+- [ ] 28-03-PLAN.md — no-git e2e, long-path compose test and precompact clock pinned at their cause (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 28-02-PLAN.md — runner self-test ceilings scale with load per CPU (1..4x); floors and real limits pinned; runner deadline and process groups; exclusive stress run; all four tiers converge (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 28-04-PLAN.md — `make check-dogfood` live-project check (runner copy, both no-write guards), pre-push hook; curated-config tests and the matrix off the live project (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 28-06-PLAN.md — commit stage: staged-file mapper, `staged-tests` hook (commit stage only, e2e covering modules included), fail-safe full run (wave 4)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 28-05-PLAN.md — archived test data to tests/fixtures; `.planning/` and host-CLI structural rules (wave 5)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [ ] 28-07-PLAN.md — commit budget for covering e2e modules (over-budget ones deferred to the pre-push `deferred-e2e` hook); mapper selectivity and worst commit wait measured; both hooks' shape and shared machinery pinned (wave 6)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 28-08-PLAN.md — `make test-env-matrix` six-environment proof, sequential, report provenance checked, run identical (wave 7)
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 28-09-PLAN.md — push timing (60 s target for the two test hooks) measured last on the final docs; AGENTS.md and README updated (wave 8)
+
+**Cross-cutting constraints:**
+- The core hook still runs before the wizard hook (test_core_hook_precedes_wizard_hook keeps holding)
 
 ### Phase 29: Logical-commit folding and the shared jev ladder
+
 **Goal**: Every finished GSD or superpowers plan is folded into logical-feature commits by one reusable step that follows one written folding policy, and every caller reaches jev by chaining the `jev-fast-decision` skill as a black box.
 **Depends on**: Phase 28
 **Requirements**: FLOW-01, JEV-06
@@ -171,9 +203,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   2. The folding policy is written once (logical-feature grouping, never one squash per plan or phase, the tree check before the swap, a local backup tag deleted when the PR merges, `--force-with-lease` only on unmerged branches, the primary remote only), the folding step implements it, and a doc-contract test pins each rule.
   3. The jev ladder is owned by `jev-fast-decision` and reached through one documented entry point; spec-discuss, the folding step, goal-prompt and the two hooks that use jev chain that skill and still finish when the skill or every decision backend is missing; no caller imports another skill's code or files; skill text treats jev as a black box (ask that skill and follow its SKILL.md; no backend, consent or probe detail; `needs_fallback` or no answer means the rule-based default decides).
   4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)
+
 **Goal**: Each GSD phase, and each superpowers plan, runs on its own branch stacked on the previous one, each finished plan is pushed, each unit has one PR chained on the previous one, and an owner-started merge chain moves main. *(amended 2026-11-03, 29.1 spec: through one framework-neutral unit contract with thin adapters; a hotfix reaches its target without entering the stack)*
 **Depends on**: Phase 29 (the folding step). Inserted 2026-11-03 when Phase 29's spec split the remote half out of Phase 29.
 **Requirements**: FLOW-02, FLOW-03, FLOW-05, FLOW-07, FLOW-10, FLOW-11
@@ -189,9 +223,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   7. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
   8. (added 2026-11-03, 29.1 spec) The flow knows only units, checkpoints and target branches through one documented contract; the GSD and superpowers adapters are thin, and a synthetic third adapter drives the whole flow in a fixture with no change to the flow's code (FLOW-10).
   9. (added 2026-11-03, 29.1 spec) A hotfix to a configured target branch merges ahead of an open stack without entering it; the stack is then rebased onto the updated trunk and pushed with `--force-with-lease`, and a conflict restores every branch *(amended 2026-11-03, 29.1 D-07: a conflict is first resolved by an agent keeping both sides' intent, GSD's planning files merged by content, and the gates run on the result; every branch is restored and the flow stops only when the resolution or the gates fail; the report names every resolved file and how)*; an owner-attended live check on a throwaway private GitHub repo proves both PR backends and the hotfix (FLOW-11).
+
 **Plans**: TBD
 
 ### Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring
+
 **Goal**: At every phase boundary the next phase's researcher, planner and executor see the symbols that changed and the documents that mention them, on whatever branch the work is on.
 **Depends on**: Phase 29.1 *(amended 2026-11-03, 29 spec: the phase branches now arrive in 29.1)*
 **Requirements**: FLOW-04, FLOW-06, DESIGN-01, LENS-01, FLOW-12, FLOW-13
@@ -207,9 +243,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   7. In a scratch HOME, install rewrites only codegraph's "indexing is the user's decision" sentence in the four synthetic global instruction files with a backup, a second run gives no diff, `--dry-run` writes nothing, and the config doctor reports the installer's wording when it is back. *(amended 2026-11-03, 30 spec: added, FLOW-12; code anchors `tools/setup.py`, `tools/config_doctor_checks.py`, `tools/config_doctor_appliers.py`, new: shared marked-block editor)*
   8. With the five flow tools missing and fake installers in a scratch HOME, `make setup-dev` installs the four that can install, reports the one that cannot and exits 0, and a worktree made with hooks uninstalled is still indexed at the next boundary point. *(amended 2026-11-03, 30 D-04: added, FLOW-13 and the resilient-indexing rule)*
   9. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04). *(amended 2026-11-03, 30 spec: added, renumbered 9 after FLOW-12 and FLOW-13; the superpowers adapter changes to carry the brief)*
+
 **Plans**: TBD
 
 ### Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)
+
 **Goal**: The owner opens the setup wizard and sees one card per component kind and a styled pane per status-line host, before later phases add or remove skills, agents, commands and hooks.
 **Depends on**: Phase 28 (fast wizard suite). Inserted before Phase 31 because the removals, the project-rules merge (45), the host hooks (48-49) and dist (52-53) all change the component list.
 **Requirements**: FEAT-01, FEAT-06, WIZ-01, WIZ-02, WIZ-03, WIZ-05
@@ -222,10 +260,12 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   4. ~~Cursor's board shows no chip for a segment the Cursor status line cannot show, while a segment that is only switched off stays in the tray.~~ *(amended 2026-11-03, 30.1 spec: parity moved to Phase 30.2 as WIZ-04)* Each host's board preview is a real render through that host's renderer, titled with the host on screen, and the tray title does not say "disabled" (WIZ-05).
   5. The config doctor opens from the wizard, reusing `ConfigDoctorApp` and the existing engine with no second implementation. *(amended 2026-11-03, 30.1 spec: `d` on Done, Esc back to Done, one screen class; every apply refuses an unparseable file and backs up first)*
   6. A recorded owner decision says whether the config doctor gets a Playwright MCP Chrome path row; an added row uses the existing engine and its confidence labels. *(amended 2026-11-03, 30.1 spec: decided — the row and its apply write `env.PLAYWRIGHT_MCP_EXECUTABLE_PATH` to the flatpak Chrome wrapper in a scratch `settings.json` with a backup)*
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 30.2: Cursor status-line parity (INSERTED)
+
 **Goal**: The Cursor status line looks like the proof of concept the owner approved and like Claude's on every aspect the hosts share. The phase starts from the proof of concept as the visual reference, traces why Phase 23's host-split implementation diverged from it (each difference lost, decided otherwise or never ported), and closes the gap; real data differences are flagged, never faked.
 **Depends on**: Phase 30.1 (its real-render board preview shows this phase's icons and samples in the wizard). Inserted 2026-11-03 by Phase 30.1's spec, when the owner's "disabled chips" complaint turned out to be the Cursor preview not matching Claude's.
 **Requirements**: WIZ-04
@@ -239,9 +279,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   6. Cursor's inventory samples match its renderer (no borrowed Claude samples), so the wizard's fallback preview agrees with the real render.
   7. With the Cursor CLI installed and logged in, an owner-attended live Cursor run from the phase branch tip is recorded and closes Phase 23's S7 visual check; without it, the check and the wizard render Cursor's sample data through the real renderer, labelled sample data; nothing installs Cursor. *(added 2026-11-03, 30.2 SPEC R11 and D-08)*
   8. The extra-spend alert (amount in bold red) is set from the wizard with a toggle and a dollar threshold, stored in the Cursor TOML, invalid values refused. *(added 2026-11-03, 30.2 SPEC R12 and D-03)*
+
 **Plans**: TBD
 
 ### Phase 31: Removals and small defects
+
 **Goal**: `ai-kit-spec-execute-gsd`, `ai-kit-opencode-providers`, `mermaid-audit` and rtk are gone and the known small defects are fixed, so the baseline judges and later vendors only kept skills.
 **Depends on**: Phase 28, Phase 30.1 (the component cards are in place before the component list changes), Phase 30.2 *(amended 2026-11-03, 30.1 spec: 30.2 inserted before 31)*
 **Requirements**: RMV-01, RMV-02, RMV-03, RMV-04, DEF-01
@@ -253,9 +295,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   4. Each of the seven listed small defects has a fix and a regression test (for example: pi's install includes the wake and cross-AI skills, a drift test ties the hand-copied runtime lists to the runtime table, AGENTS.md no longer links a gitignored file).
   *(amended 2026-11-03, 31 spec: code anchors corrected — only the `prior_value` and execute-gsd SKILL.md cases of `tests/test_ai_kit_spec_gsd_tools.py` go, since it tests the kept `gsd_tools`; the guidance file is written by curated-config `cross_ai_script.py` and `cli.py --guidance-file`, not `cross_ai_build.py`; `.pre-commit-config.yaml` also lists the removed tests; criterion 3's rtk test exempts usage-metrics' rtk reader, which keeps reading existing data; the installer fix also covers alias spellings and checkout runs (DEF-01 amended))*
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 32: Re-judge baseline
+
 **Goal**: The owner has one current-judge report for every kept skill, which sets the work of the batch phases, and every SKILL.md passes strict frontmatter and history-free text checks.
 **Depends on**: Phase 31, Phase 29 (shared jev client, used for JDG-06's judge count)
 **Requirements**: JDG-01, JDG-02, JDG-04, JDG-05, JDG-06, JDG-07, JDG-08
@@ -268,9 +312,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   5. A text check fails on tool versions, dates or observation logs in a skill's main flow, a hardcoded referee name, or shipped text pointing into a planning folder; every kept skill passes it, with provenance in a trailing evidence section; ai-kit's AGENTS.md states the rule in one line.
   6. AGENTS.md's skill-judge rule caps a judge loop at a stated number of rounds and requires a disputed finding to be refuted by running the code; the verdict checker flags a loop past the cap.
   7. The judge bar (JDG-04) is recorded per judged skill, and every later phase that adds or changes a SKILL.md has a success criterion that cites it.
+
 **Plans**: TBD
 
 ### Phase 32.1: Batch 1, general small skills
+
 **Goal**: `cst-refactor`, `markdown-to-pdf`, `jev-fast-decision`, `ai-kit-spec-review-fixer` and `ai-kit-usage-metrics` reach the judge bar with new-shape evals and tests.
 **Depends on**: Phase 32
 **Requirements**: JEV-02
@@ -279,9 +325,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   1. Each of the five skills has `evals/evals.json`, about 20 trigger queries (half near-misses) and tests that run in the unit tier.
   2. The re-judge report shows each of the five with no critical or high finding, or grade B or better, and no regression beyond judge variation.
   3. `jev-fast-decision`'s skill text, scripts and tests no longer mention OpenCode Zen.
+
 **Plans**: TBD
 
 ### Phase 32.2: Batch 2, spec review family
+
 **Goal**: `ai-kit-spec-review`, `ai-kit-spec-review-checklist`, `ai-kit-spec-config` and `ai-kit-spec-execute` reach the judge bar with new-shape evals and tests, and the cheap-execution ranking works again.
 **Depends on**: Phase 32
 **Requirements**: HUB-04
@@ -290,9 +338,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   1. Each of the four skills has `evals/evals.json`, about 20 trigger queries (half near-misses) and tests that run in the unit tier.
   2. The re-judge report shows each of the four with no critical or high finding, or grade B or better, and no regression beyond judge variation.
   3. The cheap-execution ranking returns candidates from a catalog fixture where Artificial Analysis gives null coding and agentic indexes.
+
 **Plans**: TBD
 
 ### Phase 32.3: Batch 3, execution and session skills
+
 **Goal**: `ai-kit-spec-execute-superpowers`, `ai-kit-cross-ai` and `ai-kit-session-wake` reach the judge bar with new-shape evals and tests, and the four secret-scanner copies become one.
 **Depends on**: Phase 32, Phase 29 (shared jev client)
 **Requirements**: DEF-02
@@ -301,9 +351,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   1. Each of the three skills has `evals/evals.json`, about 20 trigger queries (half near-misses) and tests that run in the unit tier.
   2. The re-judge report shows each of the three with no critical or high finding, or grade B or better, and no regression beyond judge variation.
   3. One shared secret-shape scanner with more key shapes replaces the four copies; tests show every former caller catches the new shapes, and a copy install of each caller still works.
+
 **Plans**: TBD
 
 ### Phase 32.4: Batch 4, planning skills and the closing report
+
 **Goal**: `ai-kit-spec-goal-prompt`, `ai-kit-gsd-spec-discuss` and `ai-kit-gsd-curated-config` reach the judge bar with their known fixes, and the refreshed report shows every kept skill with evals and tests.
 **Depends on**: Phase 32.1, Phase 32.2, Phase 32.3
 **Requirements**: FLOW-08, FLOW-09, JDG-03, CUR-06, DEF-03, DEF-04, DEF-06, DEF-07
@@ -316,9 +368,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   5. In auto mode spec-discuss ends by preparing the autonomous-run prompt for the discussed range through goal-prompt, which stops only on a blocker; without goal-prompt it says so and stops.
   6. goal-prompt's rails say when a run may ask the owner, forbid ending a turn with a waiting message while independent work remains, and require the local time, running step and start time in every progress ping, each pinned by a doc-contract test within the prompt's length caps.
   7. spec-discuss lists the recommended run mode first with `(Recommended)`, and its text documents the one-subagent-per-phase interactive relay (questions out in batches, answers back to the same subagent); doc-contract tests pin both.
+
 **Plans**: TBD
 
 ### Phase 33: One config design
+
 **Goal**: Every setting ai-kit keeps follows one recorded config design under neutral names, and existing `review-spec.toml` files migrate on their own.
 **Depends on**: Phase 32.4
 **Requirements**: CFG-01, CFG-02, CFG-03, CFG-04
@@ -329,9 +383,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   3. The runner reads its retry settings from ai-kit's config; a GSD `config.json` carrying a `workflow.cross_ai_retry` block is migrated once and not read again.
   4. Tests show every config write is atomic and keeps comments, formatting and unrelated entries.
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 34: jev backends by host and Laya calibration
+
 **Goal**: jev picks its backend per host from ai-kit's config, with the home-file key strictly last, and Laya's accuracy is measured against its floor.
 **Depends on**: Phase 33
 **Requirements**: JEV-01, JEV-03, JEV-07
@@ -341,9 +397,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   2. A calibration run records Laya's accuracy against its floor and the re-judged opencode judge lane, and the calibration script has a documented how-to.
   3. `jev-fast-decision` keeps its judge result with no regression beyond judge variation.
   4. With the jev knob off every skill behaves as if jev were not installed, and the knob is asked once when absent (scratch-home tests).
+
 **Plans**: TBD
 
 ### Phase 35: Model discovery and catalog
+
 **Goal**: spec-config shows every model the machine can reach, with where it was listed from, whether it is usable, and catalog facts labeled by how sure they are.
 **Depends on**: Phase 33
 **Requirements**: HUB-02, HUB-03, HUB-06, HUB-08
@@ -354,9 +412,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   3. Removed models and providers no longer configured are flagged as stale in the output.
   4. The opencode CLI profile and the runner comments match the installed opencode's own `--help` (providers, effort levels, `opencode models` flags), and a test fails on a flag the recorded help lacks.
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 36: spec-config as the hub
+
 **Goal**: Every `ai-kit-spec-*` skill reaches its config through spec-config, and the config keeps reviewers and executors apart with opt-in escalation.
 **Depends on**: Phase 35
 **Requirements**: HUB-01, HUB-05, HUB-07
@@ -366,9 +426,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   2. The written config separates reviewers from executors, each with priorities, effort per model and runtime and model escalation flags that are off by default; an effort is passed only when the model supports it, in the runtime's own form, and never dropped silently.
   3. jev ranks the candidates (flagship-class models for review and coding-class models for execution by default) and the owner picks; a test fails when a skill, rail or default hardcodes a referee name.
   4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 37: Shared runner options and session ids
+
 **Goal**: One runner serves open-gsd cross-AI and ai-kit review and execute, with settings per call and sessions a lane can resume.
 **Depends on**: Phase 36
 **Requirements**: RUN-01, RUN-02, RUN-06
@@ -378,9 +440,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   2. A call accepts a session id and prints the one it used, and a second round with that id resumes the session (shown with a fake CLI).
   3. A test fails when the rendered project copy drifts from the runner template.
   4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 38: Runner hardening and run safety
+
 **Goal**: A hung lane no longer burns the whole window, the Phase 25 review cleanup lands, and an execute run neither starts on a checkout another run holds nor counts as done when its commits do not match its plan.
 **Depends on**: Phase 37
 **Requirements**: RUN-03, RUN-04, RUN-07, RUN-08
@@ -391,9 +455,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   3. An execute run records a start-of-run tree baseline and takes a run lock: two runs started at once on the same checkout leave one running and the other refused with a clear message, and a stale lock from a dead process is reported and cleared.
   4. A fake execute lane whose commits miss a planned task, that exits early, whose summary admits skipped work, or whose diff touches a forbidden file is reported as partial or failed, never done.
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 38.1: Runner error classification and retry policy (INSERTED)
+
 **Goal**: Every real-run failure the runner sees gets the right class from either output channel, and the retry policy the owner chose sets the runner's defaults.
 **Depends on**: Phase 38 (quota-cycle class), Phase 33 (retry settings in ai-kit's config)
 **Requirements**: RUN-05, RUN-09, RUN-10, RUN-11
@@ -404,9 +470,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   3. The router's cooldown wording is classified as a quota cycle with its reset time from a captured log line, or a recorded owner decision says why not.
   4. A recorded owner decision sets the retry policy (soft retries for transient faults, periodic retries for 5xx and quota errors with early-reset checks, the 10-minute and 4-hour ladder against the shipped single wait); the runner's defaults in ai-kit's config follow it, with a test per policy branch.
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 39: Lane capability blocks and lens skills
+
 **Goal**: Every review or execute lane is told exactly the tools and skills it can use, and lens skills present on the machine reach reviewers.
 **Depends on**: Phase 37
 **Requirements**: REV-03, REV-04, REV-05
@@ -416,9 +484,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   2. Each lane's prompt carries a capability block built from its final argv (read-only or write, shell or not, the tools found on the child's PATH, codegraph only with an index); a lane without a shell is told about no shell tool.
   3. Lens skills present in the environment (the ponytail family, reducing-entropy, naming-analyzer, simplify, impeccable for UI) reach reviewers by path, and file-editing lenses run as a pass after approval; a lens is inlined where the lane cannot load it by path (Claude built-ins, pi through an allow-listed `--skill`).
   4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 40: Resilient review sized by jev
+
 **Goal**: A review survives a failing lane, and jev sizes the review and classifies disagreements before the owner is asked.
 **Depends on**: Phase 39
 **Requirements**: REV-01, REV-02, REV-06, REV-07, REV-08
@@ -431,9 +501,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   4. Before a review or judge round each chosen lane is pinged; a fake blocked lane is replaced from the owner's order, the round continues with at least one lane, and the log records which lanes judged.
   6. A superpowers plan fixture without an explicit fold step at its end gets a spec-review finding, and the same plan with the step gets none. *(added 2026-11-03, 29 D-03)*
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 41: Superpowers adapter refactor with spec-config handoff
+
 **Goal**: The superpowers execute adapter has one resume path and one stop path, hands off to spec-config when unconfigured, and every executor brief carries the gates.
 **Depends on**: Phase 36, Phase 37
 **Requirements**: EXE-01, EXE-04, EXE-05, EXE-08
@@ -444,9 +516,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   3. Every executor brief lists the unit and arch gates and the commit guard block, and its verify lines pass when a tool prints a version banner; clean-tree checks ignore the owner's config file, the progress counter matches the tasks done, and the agent-branch allow-list applies the same way on every path.
   4. In an ai-kit checkout every executor lane runs with `AI_KIT_REFUSE_REAL_HOME=1`, and a fake lane that touches a real host config is reported from the before-and-after modification times.
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 42: Code review after execution and jev-picked executors
+
 **Goal**: Implementation is reviewed and fixed in a capped loop with the same lanes as spec review, jev picks each executor, and lanes reuse their transport.
 **Depends on**: Phase 40, Phase 41
 **Requirements**: EXE-02, EXE-03, EXE-06, EXE-07, LENS-02
@@ -458,9 +532,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   4. The post-execution code review loads `ponytail-review`, and `impeccable` when the diff touches UI, from the role-keyed table on the same lanes as spec review; with a lens absent the review still runs and notes it.
   5. jev classifies each lane result (execute: done, partial or another round; review: severity fit by kind, test tier, reproducibility, end-user reach, MVP versus production) before the loop continues; without jev a deterministic default decides and the log says which did.
   6. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 43: curated-config reads docs at the installed tag
+
 **Goal**: curated-config reasons from the open-gsd docs of the installed version and asks its questions as one grouped cascade.
 **Depends on**: Phase 32.4
 **Requirements**: CUR-01, CUR-02, CUR-10
@@ -470,9 +546,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   2. Questions come grouped in a cascade: MVP, UI, granularity beside MVP, runtime (Claude preferred, asking when another host is detected), base branch detected from the merge flow.
   3. A recorded run of each v1 curated-config subcommand on a fixture project backs an owner decision to keep, merge or remove each one; no v1 code is removed before its run is recorded.
   4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 44: curated-config writes the agreed settings
+
 **Goal**: On a fixture project, curated-config writes the agreed profile, routing, models, effort, skills and graph flags through `gsd-tools` and removes nothing it did not plan.
 **Depends on**: Phase 43, Phase 39 (shared role-keyed skill table)
 **Requirements**: CUR-03, CUR-04, CUR-05, CUR-07, CUR-08, CUR-09, LENS-03
@@ -486,9 +564,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   6. After an effort change it runs `effort sync --apply` for the checkout and a worktree session's launch directory and reports any agent file left with the old effort (fixture with two agents directories).
   7. It sets the GSD keys that make the plan checker re-read a plan amended by review before execution, citing the installed GSD docs, or records that GSD already does this and writes nothing.
   8. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 45: Project rules, one skill and AGENTS.md only
+
 **Goal**: One `ai-kit-project-rules` skill replaces the seven rules skills, reproduces today's audit on ai-kit, adapts to the model it runs on, and turns a Claude-only project into an AGENTS.md project that every host loads.
 **Depends on**: Phase 39 (role-keyed skill table for the vertical-slices runbook)
 **Requirements**: RULE-01, RULE-02, RULE-04, RULE-10, RULE-11, RULE-27
@@ -502,9 +582,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   5. On a strong model the skill applies its rules itself or delegates areas to subagents with only the orchestrator writing; without subagents it runs the areas in sequence; on a weak model it writes templates only with pending items labeled (a fixture test per mode).
   6. The new skill has evals, trigger queries and tests and passes the judge bar (JDG-04).
   7. The commit-fold engine from Phase 29's temporary `ai-kit-commit-fold` skill lives inside `ai-kit-project-rules`; `skills/ai-kit-commit-fold/` is gone, and the GSD wave-end extension and the superpowers adapter reach the engine in its new home with their tests unchanged in what they assert. *(added 2026-11-03, 29 D-01)*
+
 **Plans**: TBD
 
 ### Phase 45.1: Project rules, generated top rules and never list (INSERTED)
+
 **Goal**: The block the rules skill writes into a project's AGENTS.md tells every agent how to build, test, talk to the owner and run unattended, and what never to do, with the reasons.
 **Depends on**: Phase 45
 **Requirements**: RULE-03, RULE-12, RULE-13, RULE-14, RULE-15, RULE-24, RULE-26, DESIGN-02
@@ -518,9 +600,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   6. The block carries the test-run rules with their reasons (parallel by default to save time on large or slow suites, a commented exception set, CPU-share workers a setting may only lower) and requires concurrency tests on shared state for an API or multi-user fixture, while a desktop or CLI fixture gets them as optional.
   7. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
   8. The generated top rules carry the recommended-option-first rule and the verify-host-limits-first rule.
+
 **Plans**: TBD
 
 ### Phase 46: Project rules, area runbooks
+
 **Goal**: The rules skill writes working Makefile, CI, README and per-stack setup into a project, and ai-kit itself follows it.
 **Depends on**: Phase 45.1
 **Requirements**: RULE-05, RULE-07, RULE-08, RULE-09, RULE-16, RULE-25
@@ -533,10 +617,12 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   5. A fresh Node fixture gets `pnpm-lock.yaml`, while a project with another lockfile keeps it.
   6. The testing runbook configures parallel unit runs by default (integration and e2e where the stack allows) with a commented exception set and CPU-share workers a setting may only lower; an API or multi-user fixture gets a required concurrency test template on shared state, and a CLI fixture gets it as optional.
   7. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Open question (for the phase researcher)**: how to enforce the test-run and concurrency rules (RULE-24, RULE-25), for example a planning-time check, a gate test or a plan-checker criterion; evaluate during planning.
 **Plans**: TBD
 
 ### Phase 47: Project rules, development-loop playbooks and the quota decision
+
 **Goal**: An agent knows what to do at each development-loop event because the rules skill's playbooks say so, starting from one pointer in AGENTS.md, and where the shared quota logic lives is decided before the quota playbook is written.
 **Depends on**: Phase 46, Phase 41 (the superpowers adapter calls the end-of-unit playbook)
 **Requirements**: RULE-06, RULE-17, RULE-18, RULE-19, WAKE-03
@@ -548,9 +634,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   4. The delegation playbook time-boxes pieces to about 20-30 minutes with one verifiable result each, forbids extra spawned reviewers unless asked and says how to report running agents and shells; its brief header appears in every brief that spec-review, the superpowers adapter and goal-prompt generate.
   5. A recorded decision says where the shared quota logic lives (library, playbook or skill) for session-wake, the rules playbook and the runner; the quota playbook follows it, arms a wake at the reset before stopping, removes it when the run ends, and its pings give the local time, the running step and its start time.
   6. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 47.1: Project rules, lifecycle playbooks (INSERTED)
+
 **Goal**: Requirement intake, audits, milestone close and worktree close each have a playbook, so no owner idea or rule is lost, no live check is asked for that the logs already answer, and no branch or open item is dropped at a close.
 **Depends on**: Phase 47, Phase 32.3 (shared secret scanner)
 **Requirements**: RULE-20, RULE-21, RULE-22, RULE-23
@@ -561,9 +649,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   3. The milestone-close playbook writes one inputs file of every open item by theme with size, dependencies and who acts, fails the close on an item that lives only in a review note, and moves planning folders dry run first with every reference repointed in one commit.
   4. The worktree-closed and milestone-close playbooks classify a fixture's branches by content, tag a branch that is not hash-merged before deleting it, and run the shared secret scanner and a home-path check before any push.
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 48: Host hooks, spikes and status
+
 **Goal**: The owner can see which ai-kit hooks are on for each host, and the host-hook facts the event catalogue needs are recorded.
 **Depends on**: Phase 47.1
 **Requirements**: HOOK-01, HOOK-04, HOOK-05, HOOK-06
@@ -573,9 +663,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   2. `setup.py hooks status` on this machine shows which ai-kit hooks are on for each host.
   3. Cursor hooks respect `CURSOR_CONFIG_DIR` as re-verified against current Cursor docs, shown in a scratch-home test; the `cursor-agents` destination is checked against the same split.
   4. The guard spike is recorded per host: which command shapes still stop the flow and why (`cd` first, including into the project folder, then chains, pipes, heredocs and subshells), whether a hook's `ask` prompts under `bypassPermissions` on Claude, and how each guard action compares in stopped-flow count, plus the equivalent (or its absence) on opencode, pi and Cursor.
+
 **Plans**: TBD
 
 ### Phase 49: Host hooks, dispatcher and session hooks
+
 **Goal**: One dispatcher hook per host decides at fire time what to run, so switching a hook never rewrites a host config, and session hooks adapt to worktrees.
 **Coupling (2026-11-03, from Phase 29's spec)**: the owner wants the commit-folding policy (Phase 29, carried by the Phase 47 playbook) to reach any environment where ai-kit's advisory hook is installed; whether the dispatcher reminds of it at commit or push time is this phase's discuss to decide.
 **Depends on**: Phase 48
@@ -586,9 +678,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   2. The dispatcher reports its launch mode (direct, herdr, subagent, subprocess); a hook advises and never blocks, printing one line naming the playbook to load, and agentless events such as the git hook run only commands from an opt-in list.
   3. Session hooks give indexing advice in a new worktree or checkout naming only installed tools; doc paths are install-relative and reach the model context as well as the user line, tested from a scratch `XDG_DATA_HOME/ai-kit` install; compaction metrics record window size and compaction duration, with inferred numbers flagged.
   4. With the complex-command guard on, a heredoc, a subshell, a `cd` or a chain of three or more segments gets the action HOOK-06's comparison picked (by default the one that stops the flow least), and a denial tells the agent why and what to do instead (drop the `cd`, use absolute paths, write a script under `tmp/`, or split the call); `cmd | head` and `a && b` pass; switching the guard off changes ai-kit settings only.
+
 **Plans**: TBD
 
 ### Phase 50: The 5-hour wake grid and limit capture
+
 **Goal**: Wakes are armed on the 5-hour grid and just before a session runs out, built where Phase 47's quota decision put the shared logic, and the next real usage limit is captured.
 **Depends on**: Phase 49
 **Requirements**: WAKE-01, WAKE-02, WAKE-06
@@ -598,9 +692,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   2. A wake is armed just before a session is known to run out.
   3. An opt-in capture hook records the field names and a redacted payload of a usage-limit event (tested with a fake; the real capture happens at the next real Claude limit).
   4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 51: Trustworthy notices and macOS
+
 **Goal**: Desktop notices are checked and readable, and macOS either works through launchd or refuses clearly.
 **Depends on**: Phase 50
 **Requirements**: WAKE-04, WAKE-05
@@ -609,9 +705,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   1. Desktop notices check paths before firing, say what was checked, show the host, a short session id, the reason and the journal command long enough to read, and are tested with fake notifiers; a missing session store gets its own text, and a failed notice never fails the wake.
   2. On macOS the wake and notice work through launchd, or arming refuses with a clear "unsupported" message; macOS behaviour stays labeled unverified until the owner runs it on a Mac.
   3. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ### Phase 52: Script ownership and a committed dist
+
 **Goal**: Every script belongs to the skill or tool that uses it, and a committed `dist/` holds what each skill ships.
 **Depends on**: Phase 47.1 (the seven rules skills are gone and every playbook exists before dist vendors anything)
 **Requirements**: DIST-01, DIST-03, DIST-05, ARCH-01, ARCH-02
@@ -622,9 +720,11 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   3. A copy install of each skill into a scratch home works, with code-sharing skills installed as a group or vendored.
   4. A whole-tree layering test over `tools/` and `skills/` fails on a cross-layer import, a non-vacuity check proves each rule catches its violation, and AGENTS.md and PROJECT.md point to it instead of backlog 999.3.
   5. The JSONC scanner and the atomic JSON writer each have one shared implementation that survives copy installs, and a test fails on a new copy.
+
 **Plans**: TBD
 
 ### Phase 53: Install through npx skills and the README
+
 **Goal**: Setup syncs the selected hosts from `dist/` through `npx skills`, and the README documents both install routes.
 **Depends on**: Phase 52
 **Requirements**: DIST-02, DIST-04, DIST-06, DIST-07
@@ -635,10 +735,12 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   3. The wizard's skills card commits through the same `npx skills` sync, confirmed by a run of the wizard under `uv run` with a scratch HOME.
   4. After sync, each host lists every skill once and pi keeps its own list beside codex's shared `~/.agents/skills` (scratch-home test; the config doctor reports duplicates on this machine).
   5. AGENTS.md states that ai-kit installs only its own skills, and an installer test fails when setup writes a skill ai-kit does not own.
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 54: Owner-attended live checks and consent items
+
 **Goal**: The items that need the owner, a live host or consent are done and recorded.
 **Depends on**: Phase 53
 **Requirements**: JEV-04, JEV-05, FEAT-02, FEAT-03, FEAT-04, FEAT-05, DEF-05
@@ -652,6 +754,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
   6. The owner-attended live checks are recorded (the next real Claude limit's payload, output channel and resume behaviour; reboot survival of the wake and notices; the Cursor status line after login; the Phase 21.2 PreCompact delivery; the Phase 21.3 hook matrix on opencode; optionally pi steering), each flipping or keeping its unverified label. *(amended 2026-11-03, 30.1 D-20: plus whether `env.PLAYWRIGHT_MCP_EXECUTABLE_PATH` reaches the Playwright plugin's MCP process and whether a headed launch through the flatpak Chrome wrapper works)*
   7. A recorded owner decision ports or drops each of the two June ideas; a port lands on the split status line with tests.
   8. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
+
 **Plans**: TBD
 
 ## Progress
@@ -1028,6 +1131,27 @@ new main); build it on the refactored execute-gsd and execute-superpowers resume
 SJ-1/SJ-2/SJ-3 refactor todo).
 **Gates:** skill-judge with the current percent-based judge (needs `README.md` and `evals/` in
 each changed skill), arch and unit tests, and a GSD-first waiver note recorded by the owner.
+**Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.18: Run the curated-config apply no-write guard on the gsd-core line in use (BACKLOG)
+
+**Goal:** [Captured for future planning] Make the live-project `apply` no-write guard of
+`make check-dogfood` (Phase 28, plan 28-04) actually run. It skips today because the checkout-local
+gsd-core is 1.18.0 and `GSD_CORE_PREFIXES` in `tests/test_curated_config_apply_e2e.py` lists only
+`1.16.` and `1.17.`, so `TestRealApply.test_apply_golden_plan` and the resolve-model matrix
+(`tests/test_ai_kit_gsd_curated_config_matrix.py`) skip, and `check-dogfood` prints
+`no-write guard: 3 attempted, 2 executed, 1 skipped` with an unguarded-apply warning on every push.
+Re-check the curated-config tables of the gsd-core line in use (`MODEL_PROFILES`,
+`AGENT_TO_PHASE_TYPE`, `config-new-project`'s key copying) against 1.17.0 the way the constant's
+comment describes, then widen `GSD_CORE_PREFIXES` and its pin in `tests/test_gsd_curated_eval.py`
+together, so the guard reports `3 attempted, 3 executed, 0 skipped`. If the tables differ, adapt the
+curated-config skill first; never widen the prefixes without the check. Found by the Phase 28
+cross-AI review, cycle 3 (2026-11-03).
 **Requirements:** (none yet)
 **Plans:** 0 plans
 

@@ -14,7 +14,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 ### Fast gates
 
 - [ ] **GATE-01**: A commit runs, in parallel, only the test modules that cover the staged files (mapped through
-  imports and the runner's test lists) and is refused when one of them fails. *(amended 2026-11-03, 28 D-01: 81 of 95 test modules reach code through path strings, `sys.path` inserts or subprocesses, not imports; the mapper is a name index over tests and their helpers, which includes imports)*
+  imports and the runner's test lists) and is refused when one of them fails. *(amended 2026-11-03, 28 D-01: 81 of 95 test modules reach code through path strings, `sys.path` inserts or subprocesses, not imports; the mapper is a name index over tests and their helpers, which includes imports)* *(amended 2026-11-03, 28 plan check iteration 2; decided 2026-11-03 by the autonomous run's orchestrator under the run prompt's gray-area rule (jev ladder low-confidence, own reasoning); the owner reviews it in the run report and may revert: a covering e2e module whose recorded duration is over the 60 s commit budget, or unrecorded, is named in a notice and run by a pre-push hook for the pushed commits instead; `tests.test_cross_ai_runner_e2e` took 360.5 s on 2026-11-02)*
 - [ ] **GATE-02**: A push runs the full unit, arch and wizard suites in clearly less wall time than the 2.5 minutes
   measured on 2026-11-02, because no test calls a real host binary (fakes only). *(amended 2026-11-03, 28 SPEC R3: re-measured at 184 s (core 162.9 s, wizard 21.0 s, 24 CPUs); the target is 60 s or less for both test hooks)*
 - [ ] **GATE-03**: No test depends on the caller's environment: host signals, binaries on PATH, checkout path length,

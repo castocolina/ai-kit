@@ -1,12 +1,198 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v2.0",
-  "phases": [],
+  "milestone": "v2.0 — Skill Refactor",
+  "phases": [
+    {
+      "number": "28",
+      "name": "Fast, environment-proof gates",
+      "status": "pending"
+    },
+    {
+      "number": "29",
+      "name": "Logical-commit folding and the shared jev ladder",
+      "status": "pending"
+    },
+    {
+      "number": "29.1",
+      "name": "Stacked phase branches, chained PRs and the merge chain",
+      "status": "pending"
+    },
+    {
+      "number": "30",
+      "name": "Phase-boundary index refresh and code-exploration rules",
+      "status": "pending"
+    },
+    {
+      "number": "30.1",
+      "name": "Setup wizard, component cards and host status-line panes",
+      "status": "pending"
+    },
+    {
+      "number": "30.2",
+      "name": "Cursor status-line parity",
+      "status": "pending"
+    },
+    {
+      "number": "31",
+      "name": "Removals and small defects",
+      "status": "pending"
+    },
+    {
+      "number": "32",
+      "name": "Re-judge baseline",
+      "status": "pending"
+    },
+    {
+      "number": "32.1",
+      "name": "Batch 1, general small skills",
+      "status": "pending"
+    },
+    {
+      "number": "32.2",
+      "name": "Batch 2, spec review family",
+      "status": "pending"
+    },
+    {
+      "number": "32.3",
+      "name": "Batch 3, execution and session skills",
+      "status": "pending"
+    },
+    {
+      "number": "32.4",
+      "name": "Batch 4, planning skills and the closing report",
+      "status": "pending"
+    },
+    {
+      "number": "33",
+      "name": "One config design",
+      "status": "pending"
+    },
+    {
+      "number": "34",
+      "name": "jev backends by host and Laya calibration",
+      "status": "pending"
+    },
+    {
+      "number": "35",
+      "name": "Model discovery and catalog",
+      "status": "pending"
+    },
+    {
+      "number": "36",
+      "name": "spec-config as the hub",
+      "status": "pending"
+    },
+    {
+      "number": "37",
+      "name": "Shared runner options and session ids",
+      "status": "pending"
+    },
+    {
+      "number": "38",
+      "name": "Runner hardening and run safety",
+      "status": "pending"
+    },
+    {
+      "number": "38.1",
+      "name": "Runner error classification and retry policy",
+      "status": "pending"
+    },
+    {
+      "number": "39",
+      "name": "Lane capability blocks and lens skills",
+      "status": "pending"
+    },
+    {
+      "number": "40",
+      "name": "Resilient review sized by jev",
+      "status": "pending"
+    },
+    {
+      "number": "41",
+      "name": "Superpowers adapter refactor with spec-config handoff",
+      "status": "pending"
+    },
+    {
+      "number": "42",
+      "name": "Code review after execution and jev-picked executors",
+      "status": "pending"
+    },
+    {
+      "number": "43",
+      "name": "curated-config reads docs at the installed tag",
+      "status": "pending"
+    },
+    {
+      "number": "44",
+      "name": "curated-config writes the agreed settings",
+      "status": "pending"
+    },
+    {
+      "number": "45",
+      "name": "Project rules, one skill and AGENTS.md only",
+      "status": "pending"
+    },
+    {
+      "number": "45.1",
+      "name": "Project rules, generated top rules and never list",
+      "status": "pending"
+    },
+    {
+      "number": "46",
+      "name": "Project rules, area runbooks",
+      "status": "pending"
+    },
+    {
+      "number": "47",
+      "name": "Project rules, development-loop playbooks and the quota decision",
+      "status": "pending"
+    },
+    {
+      "number": "47.1",
+      "name": "Project rules, lifecycle playbooks",
+      "status": "pending"
+    },
+    {
+      "number": "48",
+      "name": "Host hooks, spikes and status",
+      "status": "pending"
+    },
+    {
+      "number": "49",
+      "name": "Host hooks, dispatcher and session hooks",
+      "status": "pending"
+    },
+    {
+      "number": "50",
+      "name": "The 5-hour wake grid and limit capture",
+      "status": "pending"
+    },
+    {
+      "number": "51",
+      "name": "Trustworthy notices and macOS",
+      "status": "pending"
+    },
+    {
+      "number": "52",
+      "name": "Script ownership and a committed dist",
+      "status": "pending"
+    },
+    {
+      "number": "53",
+      "name": "Install through npx skills and the README",
+      "status": "pending"
+    },
+    {
+      "number": "54",
+      "name": "Owner-attended live checks and consent items",
+      "status": "pending"
+    }
+  ],
   "next": {
-    "command": "/gsd-discuss-phase",
-    "label": "Discuss the first phase",
-    "reason": "Project initialized — plan your first phase"
+    "command": "/gsd-progress --next",
+    "label": "Advance to the next step",
+    "reason": "Phase 1 of 37 · 0% · executing"
   },
-  "updated_at": "2026-11-02T23:45:33.216Z"
+  "updated_at": "2026-11-03T20:46:48.393Z"
 }

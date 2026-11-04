@@ -66,10 +66,11 @@ Live-verified on 2026-11-03 in the ai-kit checkout (24 CPUs, so 9 workers at the
 
 ## Requirements
 
-1. **Commit runs the covering tests**: A commit runs, in parallel at the runner's CPU share, only the test modules that cover the staged files, and the commit is refused when any of them fails.
+1. **Commit runs the covering tests**: A commit runs, in parallel at the runner's CPU share, only the test modules that cover the staged files, and the commit is refused when any of them fails. A covering e2e module over the commit budget runs at push instead.
    - Current: the commit stage runs no tests; tests run only at push.
-   - Target: a pre-commit-stage test step maps each staged file to the test modules that cover it (through imports, the path strings and `sys.path` inserts tests use to reach code, files tests read as data, and the runner's group lists) and runs exactly those modules, each module under the interpreter its group needs (system python3, or uv for the wizard groups).
-   - Acceptance: a fixture commit touching one module runs only the modules the mapper lists for it, in parallel, and exits non-zero (commit refused) when one of them fails; a change to a file read only as data by one test module runs that module.
+   - Target: a pre-commit-stage test step maps each staged file to the test modules that cover it (through imports, the path strings and `sys.path` inserts tests use to reach code, files tests read as data, and the runner's group lists) and runs exactly those modules, each module under the interpreter its group needs (system python3, or uv for the wizard and e2e groups). The one exception is a covering e2e module whose recorded duration is over the commit budget (one named constant in the runner, 60 s), or that has no recorded duration: the commit stage does not run it and prints a notice naming it and how to run it, and a pre-push hook runs every covering e2e module deferred this way for the commits being pushed, so every covering module runs at commit or at push. pre-commit hands a pre-push hook the range of the first pushed ref only, so the hook narrows to that range only when it can prove the push holds nothing else (the checkout is the pushed commit and every unpushed commit of a local branch or worktree HEAD lies in its history; local tags are left out, amended 2026-11-03 at review cycle 3, because this checkout's unpushed archive and backup tags would otherwise defeat the proof on every push); otherwise it runs every e2e module over the budget. Like every push hook, it tests the checkout.
+   - Acceptance: a fixture commit touching one module runs only the modules the mapper lists for it, in parallel, and exits non-zero (commit refused) when one of them fails; a change to a file read only as data by one test module runs that module; a covering set holding an e2e module over the budget prints the notice naming it, does not run it at commit, and the pre-push hook runs it for the pushed commits and refuses the push when it fails; a real push of two refs runs every e2e module over the budget.
+   - *(amended 2026-11-03, 28 plan check iteration 2: commit time budget for covering e2e modules; decided 2026-11-03 by the autonomous run's orchestrator under the run prompt's gray-area rule (jev ladder low-confidence, own reasoning); the owner reviews it in the run report and may revert. Reason: `tests.test_cross_ai_runner_e2e` covers `skills/ai-kit-spec-review/**` and took 360.5 s in the 2026-11-02 e2e run, while the other 12 e2e modules took 0.1-57.7 s; running it at every such commit contradicts the phase goal of committing without waiting on slow tests. Amended again 2026-11-03, cross-AI review cycle 2: the single-range narrowing needs the proof above, because pre-commit 4.6.0 `_pre_push_ns` returns the first pushed ref's range only.)*
 
 2. **Commit fallback is fail-safe**: A staged file that no test covers runs no tests, while a change to shared test machinery or any mapper failure runs the full unit and arch suites.
    - Current: no mapping exists.
@@ -78,7 +79,7 @@ Live-verified on 2026-11-03 in the ai-kit checkout (24 CPUs, so 9 workers at the
 
 3. **Push suites finish in 60 s**: The two pre-push test hooks together finish in 60 s or less on the owner's machine, with the before and after times recorded.
    - Current: 184 s (core 162.9 s, wizard 21.0 s) on 2026-11-03, 24 CPUs, load average 1.9 at start.
-   - Target: the `unittest` and `unittest-wizard` hooks run back to back in 60 s or less of wall time on the same machine at the same 40 % CPU share.
+   - Target: the `unittest` and `unittest-wizard` hooks run back to back in 60 s or less of wall time on the same machine at the same 40 % CPU share. *(amended 2026-11-03, R1 amendment: the pre-push hook that runs the deferred e2e modules runs after these two and is timed and recorded separately; it is not part of the 60 s figure.)*
    - Acceptance: the phase records the before time and the after time of both hooks, each with the CPU count, the worker count and the load average at start, and the after time is 60 s or less.
 
 4. **No test calls a host CLI**: No test in any tier (unit, arch, wizard, e2e) runs a real host CLI; host behaviour comes from fakes only.
@@ -155,6 +156,7 @@ Live-verified on 2026-11-03 in the ai-kit checkout (24 CPUs, so 9 workers at the
 
 - [ ] A fixture commit touching one module runs only its covering modules, in parallel, and is refused when one fails.
 - [ ] A change to a file read only as data by one test module runs that module at commit.
+- [ ] A covering e2e module over the commit budget, or with no recorded duration, is not run at commit and is named in a notice; the pre-push hook runs it for the pushed commits. *(added 2026-11-03)*
 - [ ] A planning-only commit runs zero test modules and passes.
 - [ ] A commit touching the runner, a shared `tests/` helper or fixture, or the hook config runs the full `unit` and `arch` groups.
 - [ ] A forced mapper failure runs the full `unit` and `arch` groups, never zero modules.
@@ -171,7 +173,7 @@ Live-verified on 2026-11-03 in the ai-kit checkout (24 CPUs, so 9 workers at the
 
 ## Edge Coverage
 
-**Coverage:** 40/40 applicable edges resolved · 0 unresolved
+**Coverage:** 42/42 applicable edges resolved · 0 unresolved (40 from the floor, 2 added 2026-11-03 with the R1 amendment)
 
 | Category | Requirement | Status | Resolution / Reason |
 |----------|-------------|--------|---------------------|
@@ -179,6 +181,8 @@ Live-verified on 2026-11-03 in the ai-kit checkout (24 CPUs, so 9 workers at the
 | empty | R1 | ✅ covered | A commit with no staged files (amend of the message only) runs zero modules and passes |
 | ordering | R1 | 🧪 backstop | The selected module set does not depend on the order files are staged (held-out edge test) |
 | concurrency | R1 | 🧪 backstop | Selected modules run through the existing one-subprocess-per-module runner, each with its own TMPDIR |
+| boundary | R1 | ✅ covered | A covering e2e module recorded at exactly the commit budget runs at commit; one recorded over it is deferred to the pre-push hook (added 2026-11-03) |
+| empty | R1 | ✅ covered | An e2e module with no recorded duration counts as over the budget; a push with no known range, a push the hook cannot prove holds only the checked-out commit's history (another local branch or worktree HEAD with unpushed commits, or a checkout that is not the pushed commit), or a mapper failure at push, runs every e2e module over the budget; unpushed local tags do not count (added 2026-11-03, widened at review cycle 2, tags left out at review cycle 3) |
 | adjacency | R2 | ✅ covered | A commit mixing an uncovered file and a shared-machinery file runs the full `unit` and `arch` groups |
 | empty | R2 | ✅ covered | A mapper that returns an empty answer for a covered file is treated as a failure and runs the full groups |
 | ordering | R2 | 🧪 backstop | The fallback decision is the same whichever staged file triggers it first (held-out edge test) |

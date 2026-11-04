@@ -4,16 +4,16 @@ milestone: v2.0
 milestone_name: Skill Refactor
 current_phase: 28
 current_phase_name: Fast, environment-proof gates
-status: planning
+status: executing
 stopped_at: "Spec and discuss done for phases 28, 29, 29.1, 30, 30.1, 30.2 and 31 (interactive); next: gsd-autonomous over that range"
-last_updated: "2026-11-03T19:08:45.147Z"
+last_updated: "2026-11-03T20:46:48.381Z"
 last_activity: 2026-11-03
 last_activity_desc: v2.0 roadmap remapped (Phase 30.1 inserted, 100/100 requirements mapped, code anchors per phase)
-state_head: 3e881ac58f6196af62cdedcf6c52ce716008232f
+state_head: 761e776a207c121a16dfbbbfe72e1b5193fc3d4b
 progress:
   total_phases: 37
   completed_phases: 0
-  total_plans: 0
+  total_plans: 9
   completed_plans: 0
   percent: 0
 ---
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 28, first of 35 v2.0 phases (Fast, environment-proof gates)
+Phase: 28 (Fast, environment-proof gates) — READY TO EXECUTE
 Plan: —
-Status: Ready to plan
+Status: Ready to execute
 Last activity: 2026-11-03 — v2.0 roadmap remapped (Phase 30.1 inserted, 100/100 requirements mapped, code anchors per phase)
 
 Progress: [░░░░░░░░░░] 0%
