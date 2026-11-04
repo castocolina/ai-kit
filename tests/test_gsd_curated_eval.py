@@ -4355,7 +4355,7 @@ class TestSmoke(unittest.TestCase):
 class TestMatrixModuleCollection(unittest.TestCase):
     """20-REVIEW WR-02 / ponytail M4: a collected mixin re-ran the full claude matrix."""
 
-    def test_matrix_module_collects_six_host_classes_only(self) -> None:
+    def test_matrix_module_collects_the_host_classes_and_the_hash_case_only(self) -> None:
         suite = unittest.TestLoader().loadTestsFromName(  # never the -k-filtered default
             "tests.test_ai_kit_gsd_curated_config_matrix"
         )
@@ -4364,6 +4364,7 @@ class TestMatrixModuleCollection(unittest.TestCase):
         self.assertEqual(
             classes,
             [
+                "TestCoreTreeHash",
                 "TestPiHookProbe",
                 "TestResolveModelMatrix",
                 "TestResolveModelMatrixCodex",
@@ -4372,7 +4373,7 @@ class TestMatrixModuleCollection(unittest.TestCase):
                 "TestResolveModelMatrixPi",
             ],
         )
-        self.assertEqual(suite.countTestCases(), 47)
+        self.assertEqual(suite.countTestCases(), 43)
 
 
 class TestReviewFixes(unittest.TestCase):

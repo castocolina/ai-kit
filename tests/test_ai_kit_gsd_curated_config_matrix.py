@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import shutil
 import tempfile
 import unittest
 
 from tests import gsd_curated_eval as ev
-from tests.test_curated_config_apply_e2e import _REPO_CONFIG, _REPO_RUNNER, _gsd16_or_skip, _sha256
+from tests.test_curated_config_apply_e2e import _gsd16_or_skip
 from tests.test_curated_config_e2e import REPO_ROOT, _real_node_executable, _RealGsdTestCase
 
 _TOOLS = str(REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs")
@@ -28,9 +29,15 @@ class TestResolveModelMatrix(_RealGsdTestCase):
         node_bin = _gsd16_or_skip(unittest.TestCase())
         cls.core_root = os.path.dirname(os.path.dirname(_TOOLS))
         cls.tables = ev.live_tables(node_bin, cls.core_root)
-        cls.before = (_sha256(_REPO_CONFIG), _sha256(_REPO_RUNNER))
+        # The snapshot root is an empty folder: this module no longer reads the live project
+        # (`make check-dogfood` does). The gsd-core install it runs against is hashed by content
+        # instead; `_tree_sha` never walks a symlinked root, so it gets the resolved folder.
+        cls.snap_root = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, cls.snap_root, ignore_errors=True)
         cls.home_dir = str(pathlib.Path.home())
-        cls.snap_before = ev.snapshot(REPO_ROOT, cls.home_dir)
+        cls.snap_before = ev.snapshot(cls.snap_root, cls.home_dir)
+        cls.core_sha_before = ev._tree_sha(pathlib.Path(cls.core_root).resolve())
+        unittest.TestCase().assertIsNotNone(cls.core_sha_before, "gsd-core folder missing")
         cls.result = ev.run_matrix(node_bin, _TOOLS, cls.home_dir, host=cls.HOST)
 
     def rows(self) -> list[dict]:
@@ -91,12 +98,14 @@ class TestResolveModelMatrix(_RealGsdTestCase):
                 self.assertNotIn(root, text)
         self.assertIn(ev.GSD_CORE_LABEL, text)
 
-    def test_repo_config_untouched(self) -> None:
-        self.assertEqual((_sha256(_REPO_CONFIG), _sha256(_REPO_RUNNER)), self.before)
-
     def test_snapshot_strict_set_unchanged_across_the_run(self) -> None:
-        strict, _host = ev.snapshot_diff(self.snap_before, ev.snapshot(REPO_ROOT, self.home_dir))
+        strict, _host = ev.snapshot_diff(
+            self.snap_before, ev.snapshot(self.snap_root, self.home_dir)
+        )
         self.assertEqual(strict, [])
+        self.assertEqual(
+            ev._tree_sha(pathlib.Path(self.core_root).resolve()), self.core_sha_before
+        )
 
 
 class TestResolveModelMatrixCodex(TestResolveModelMatrix):
@@ -128,6 +137,22 @@ class TestResolveModelMatrixPi(TestResolveModelMatrix):
                 self.assertTrue(probe["ok"])
                 self.assertEqual(probe["planned"], "claude-sonnet-5")
                 self.assertEqual(probe["wire"], probe["planned"])
+
+
+class TestCoreTreeHash(unittest.TestCase):
+    """Pure (runs on any gsd-core): why the matrix hashes the resolved folder, not the link."""
+
+    def test_resolved_folder_is_hashed_by_content_the_link_is_not_followed(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            target = pathlib.Path(scratch, "target")
+            target.mkdir()
+            (target / "file.txt").write_text("one", encoding="utf-8")
+            link = pathlib.Path(scratch, "link")
+            link.symlink_to(target)
+            link_before, folder_before = ev._tree_sha(link), ev._tree_sha(link.resolve())
+            (target / "file.txt").write_text("two", encoding="utf-8")
+            self.assertEqual(ev._tree_sha(link), link_before)
+            self.assertNotEqual(ev._tree_sha(link.resolve()), folder_before)
 
 
 class TestPiHookProbe(unittest.TestCase):

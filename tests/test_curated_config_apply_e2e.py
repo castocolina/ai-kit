@@ -51,9 +51,6 @@ from tests.test_curated_config_plan_edit import _run_plan_set
 from tests.test_curated_config_recommend import run_recommend
 from tests.test_curated_config_skills import add_plugin, add_skill
 
-_REPO_CONFIG = REPO_ROOT / ".planning" / "config.json"
-_REPO_RUNNER = REPO_ROOT / ".planning" / "scripts" / "cross-ai.mjs"
-
 # The gsd-core lines whose live behavior this repo's real-node tests verified. The checkout-local
 # install is gitignored and shared by every worktree, so its version is a fact of the moment, not
 # of a plan (19 SPEC R-7): 1.16.0 was verified when these tests were written, and 1.17.0 when the
@@ -267,12 +264,20 @@ class TestRealApply(_RealGsdTestCase):
     def test_apply_golden_plan(self) -> None:
         node_bin = _gsd16_or_skip(self)
         tools = REPO_ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs"
-        before_cfg = _sha256(_REPO_CONFIG)
-        before_runner = _sha256(_REPO_RUNNER)
 
         scratch = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
-        project = os.path.join(scratch, "project")
+        # A parent project above the scratch project: its config and runner must stay byte-equal.
+        parent_config = os.path.join(scratch, "parent", ".planning", "config.json")
+        parent_runner = os.path.join(scratch, "parent", ".planning", "scripts", "cross-ai.mjs")
+        os.makedirs(os.path.dirname(parent_runner))
+        with open(parent_config, "w", encoding="utf-8") as handle:
+            json.dump({"model_profile": "quality"}, handle)
+        with open(os.path.join(REPO_ROOT, "skills", "ai-kit-spec-review", "references",
+                               "cross-ai.mjs"), "rb") as src, open(parent_runner, "wb") as dst:
+            dst.write(src.read())
+        before_cfg, before_runner = _sha256(parent_config), _sha256(parent_runner)
+        project = os.path.join(scratch, "parent", "project")
         home = os.path.join(scratch, "home")
         gsd_home = os.path.join(scratch, "gsd_home")
         xdg = os.path.join(scratch, "xdg")
@@ -355,8 +360,8 @@ class TestRealApply(_RealGsdTestCase):
         snap_path = config_path + config_backup.SNAPSHOT_SUFFIX
         self.assertFalse(os.path.isfile(snap_path))
 
-        self.assertEqual(_sha256(_REPO_CONFIG), before_cfg)
-        self.assertEqual(_sha256(_REPO_RUNNER), before_runner)
+        self.assertEqual(_sha256(parent_config), before_cfg)
+        self.assertEqual(_sha256(parent_runner), before_runner)
 
     def test_nth_key_failure_restores_bytes(self) -> None:
         node_bin = _gsd16_or_skip(self)

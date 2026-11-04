@@ -127,18 +127,28 @@ class TestRealIntegration(_RealGsdTestCase):
             config = json.load(f)
         self.assertEqual(config.get("model_profile"), "budget")
 
-    def test_this_repos_own_config_is_never_touched(self):
-        repo_config_path = os.path.join(_REPO_ROOT, ".planning", "config.json")
-        with open(repo_config_path, "rb") as f:
-            before = f.read()
+    def test_parent_project_config_is_never_touched(self):
+        """A project nested in another project never writes the parent's config. The child
+        holds its own `.planning/` (GSD resolves a start dir with one to itself)."""
         scratch = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
-        self.require_real_gsd(scratch)
-        self.run_cli(["ensure-project", "--project-dir", scratch])
-        self.run_cli(["apply-profile", "--project-dir", scratch, "--profile", "budget"])
-        with open(repo_config_path, "rb") as f:
-            after = f.read()
-        self.assertEqual(before, after)
+        parent_config = os.path.join(scratch, "parent", ".planning", "config.json")
+        child = os.path.join(scratch, "parent", "project")
+        os.makedirs(os.path.dirname(parent_config))
+        os.makedirs(os.path.join(child, ".planning"))
+        with open(parent_config, "w", encoding="utf-8") as f:
+            json.dump({"model_profile": "quality", "workflow": {"parent": True}}, f)
+        with open(parent_config, "rb") as f:
+            before = f.read()
+        self.require_real_gsd(child)
+        self.assertEqual(self.run_cli(["ensure-project", "--project-dir", child]), 0)
+        self.assertEqual(
+            self.run_cli(["apply-profile", "--project-dir", child, "--profile", "budget"]), 0
+        )
+        with open(os.path.join(child, ".planning", "config.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f).get("model_profile"), "budget")
+        with open(parent_config, "rb") as f:
+            self.assertEqual(f.read(), before)
 
 class TestMergeModeEndToEnd(_RealGsdTestCase):
     """D-09 (07-CONTEXT.md): proves merge mode's two contracts end-to-end against a REAL

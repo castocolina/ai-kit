@@ -222,6 +222,44 @@ def hook_require_serial(text: str, hook_id: str) -> bool | None:
     return None
 
 
+def hook_block(text: str, hook_id: str) -> str | None:
+    """The lines of one hook, from its `- id:` line to the next hook; None when absent."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if re.match(rf"\s*- id: {hook_id}$", line)),
+                 None)
+    if start is None:
+        return None
+    end = next((i for i in range(start + 1, len(lines))
+                if re.match(r"\s*- id: ", lines[i])), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def hook_stage(text: str, hook_id: str) -> str | None:
+    """The inside of a hook's `stages: [...]` value, or None when absent."""
+    match = re.search(r"^\s*stages: \[(.*)\]\s*$", hook_block(text, hook_id) or "", re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
+def dogfood_hook_errors(text: str) -> list[str]:
+    """What the check-dogfood hook must be: a verbose, always-run, pre-push hook running
+    tools/check_dogfood.py, listed after unittest-wizard."""
+    block = hook_block(text, "check-dogfood")
+    if block is None:
+        return ["check-dogfood hook missing"]
+    errors = []
+    if hook_stage(text, "check-dogfood") != "pre-push":
+        errors.append("check-dogfood lacks the pre-push stage")
+    for setting in ("pass_filenames: false", "always_run: true", "verbose: true"):
+        if not re.search(rf"^\s*{setting}\s*$", block, re.MULTILINE):
+            errors.append(f"check-dogfood lacks {setting}")
+    if not hook_entries(text).get("check-dogfood", "").startswith("python3 tools/check_dogfood.py"):
+        errors.append("check-dogfood entry is not python3 tools/check_dogfood.py")
+    ids = hook_ids(text)
+    if "unittest-wizard" not in ids or ids.index("check-dogfood") < ids.index("unittest-wizard"):
+        errors.append("check-dogfood does not follow unittest-wizard")
+    return errors
+
+
 def pylint_disable_drift(disable_list: list[str]) -> list[str]:
     """Report pylint disables outside the pinned set."""
     errors: list[str] = []
@@ -341,6 +379,19 @@ class TestGateScope(unittest.TestCase):
 
     def test_core_hook_precedes_wizard_hook(self) -> None:
         self.assertEqual(hook_order_errors(hook_ids(self.hooks)), [])
+
+    def test_check_dogfood_hook_gates_push(self) -> None:
+        self.assertEqual(dogfood_hook_errors(self.hooks), [])
+        self.assertEqual(hook_stage(self.hooks, "check-dogfood"), "pre-push")
+
+    def test_validate_runs_check_dogfood(self) -> None:
+        line = make_target_line(self.makefile, "validate")
+        self.assertIsNotNone(line)
+        self.assertEqual((line or "").split()[-1], "check-dogfood")
+        self.assertEqual(
+            [part.strip() for part in recipe_lines(self.makefile, "check-dogfood") if part.strip()],
+            ["uv run pre-commit run check-dogfood --all-files --hook-stage pre-push"],
+        )
 
     def test_no_hardcoded_worker_counts(self) -> None:
         entries = "\n".join(hook_entries(self.hooks).values())
@@ -471,6 +522,21 @@ class TestGateScopeNonVacuity(unittest.TestCase):
         self.assertNotEqual(stale, makefile)
         rendered, _ = generator.render(stale, HOOKS.read_text(), generator.groups())
         self.assertNotEqual(rendered, stale)
+
+    def test_flags_a_dogfood_hook_without_the_push_stage(self) -> None:
+        good = HOOKS.read_text()
+        self.assertEqual(dogfood_hook_errors(good), [])
+        at = good.index("- id: check-dogfood")
+        broken = good[:at] + good[at:].replace("stages: [pre-push]", "stages: [pre-commit]")
+        self.assertNotEqual(broken, good)
+        self.assertIn("check-dogfood lacks the pre-push stage", dogfood_hook_errors(broken))
+
+    def test_flags_a_dogfood_hook_without_verbose(self) -> None:
+        good = HOOKS.read_text()
+        at = good.index("- id: check-dogfood")
+        broken = good[:at] + good[at:].replace("verbose: true", "verbose: false")
+        self.assertNotEqual(broken, good)
+        self.assertIn("check-dogfood lacks verbose: true", dogfood_hook_errors(broken))
 
     def test_flags_wizard_hook_first(self) -> None:
         self.assertEqual(hook_order_errors(["unittest-wizard", "unittest"]),

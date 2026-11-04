@@ -952,6 +952,9 @@ _START_NEW_SESSION_ALLOWED = frozenset(
         # stops the module's whole group (SIGTERM, then SIGKILL); it supervises tests, not a
         # cross-AI run (28-02).
         "tools/run_unittest_parallel.py",
+        # check-dogfood runs its three guard tests in one child session so a timeout stops the
+        # whole group; it supervises tests, not a cross-AI run (28-04).
+        "tools/check_dogfood.py",
     }
 )
 _SUPERVISOR_OWNER = "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py"
