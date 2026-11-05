@@ -1062,6 +1062,7 @@ class TestFindClientLookup(CoreEnvMixin, unittest.TestCase):
         target = os.path.join(hooks, "precompact_core.py")
         shutil.copy(CORE_PATH, target)
         spec = importlib.util.spec_from_file_location("precompact_core_elsewhere", target)
+        assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module

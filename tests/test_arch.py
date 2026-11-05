@@ -37,7 +37,7 @@ import sys
 import textwrap
 import tokenize
 import unittest
-from typing import NamedTuple
+from typing import NamedTuple, TypeGuard
 
 _TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
 if os.path.abspath(_TOOLS) not in sys.path:
@@ -1347,7 +1347,8 @@ def _cross_skill_skip(tree):
     return skip
 
 
-def _is_text(node):
+def _is_text(node: object) -> TypeGuard[ast.Constant]:
+    """A string constant; the guard lets callers read `.value` and `.lineno` as typed."""
     return isinstance(node, ast.Constant) and isinstance(node.value, str)
 
 
@@ -1372,9 +1373,9 @@ _IMPORT_CALLS = {"importlib.import_module", "import_module", "__import__"}
 def _leading_literal(node):
     """The literal text a string argument starts with: a plain string, or an f-string's head."""
     if _is_text(node):
-        return node.value
+        return str(node.value)
     if isinstance(node, ast.JoinedStr) and node.values and _is_text(node.values[0]):
-        return node.values[0].value
+        return str(node.values[0].value)
     return None
 
 
@@ -1403,7 +1404,7 @@ def check_cross_skill_refs(relpath, tree, modules, skills):
             if owner is not None and owner != own:
                 hits.append((relpath, owner, node.lineno))
         if _is_text(node):
-            if _DECIDE_NAME in node.value:
+            if _DECIDE_NAME in str(node.value):
                 hits.append((relpath, _DECIDE_NAME, node.lineno))
             for other in others:
                 if _mentions_skill(node.value, other):
@@ -1424,7 +1425,7 @@ def check_cross_skill_refs(relpath, tree, modules, skills):
             candidates = []
         for cand in candidates:
             if id(cand) not in skip and _is_text(cand) and cand.value in others:
-                hits.append((relpath, cand.value, node.lineno))
+                hits.append((relpath, cand.value, getattr(node, "lineno", 0)))
     return hits
 
 
@@ -1635,7 +1636,9 @@ def documented_roots(text):
         if braced:
             roots.append((braced.group(1), braced.group(2), braced.group(3)))
         else:
-            fallback, suffix = _DOC_ROOT_PLAIN.match(root).group(1).rsplit("/", 1)
+            plain = _DOC_ROOT_PLAIN.match(root)
+            assert plain is not None, root
+            fallback, suffix = plain.group(1).rsplit("/", 1)
             roots.append((None, fallback, suffix))
     return roots
 

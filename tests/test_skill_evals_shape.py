@@ -33,7 +33,7 @@ def evals_problems(data, skill_dir):
     if not isinstance(evals, list) or len(evals) < 5:
         return [*problems, "fewer than 5 evals"]
     ids = [item.get("id") for item in evals if isinstance(item, dict)]
-    for duplicate in sorted({i for i in ids if ids.count(i) > 1}):
+    for duplicate in sorted({str(i) for i in ids if ids.count(i) > 1}):
         problems.append(f"duplicate id {duplicate}")
     for prefix in PREFIXES:
         if not any(isinstance(i, str) and i.startswith(prefix + "-") for i in ids):
