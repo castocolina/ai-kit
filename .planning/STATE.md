@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: "29.1"
-current_phase_name: Stacked phase branches, chained PRs and the merge chain
+current_phase: 30
+current_phase_name: Phase-boundary index refresh, code-exploration rules and lens wiring
 status: planning
-stopped_at: Phase 29 complete, ready to plan Phase 29.1
-last_updated: "2026-11-05T01:16:31.785Z"
-last_activity: 2026-11-04
-last_activity_desc: Phase 29 complete, transitioned to Phase 29.1
-state_head: e29d787679148cb0e07fab497274b458755e8e8c
+stopped_at: Phase 29.1 complete, ready to plan Phase 30
+last_updated: "2026-11-05T12:01:49.392Z"
+last_activity: 2026-11-05
+last_activity_desc: Phase 29.1 complete, transitioned to Phase 30
+state_head: 5404e9a93464bf3b010315103c603f1ff9627fda
 progress:
   total_phases: 37
-  completed_phases: 2
-  total_plans: 25
-  completed_plans: 25
-  percent: 5
+  completed_phases: 3
+  total_plans: 31
+  completed_plans: 31
+  percent: 8
 ---
 
 # Project State
@@ -25,22 +25,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 29 — Logical-commit folding and the shared jev ladder
+**Current focus:** Phase 29.1 — stacked-phase-branches-chained-prs-and-the-merge-chain-inserted
 
 ## Current Position
 
-Phase: 29.1 — Stacked phase branches, chained PRs and the merge chain
+Phase: 30 — Phase-boundary index refresh, code-exploration rules and lens wiring
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-11-04 — Phase 29 complete, transitioned to Phase 29.1
+Last activity: 2026-11-05 — Phase 29.1 complete, transitioned to Phase 30
 
-Progress: [█░░░░░░░░░] 5%
+Progress: [█░░░░░░░░░] 8%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 179
+- Total plans completed: 185
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -84,6 +84,7 @@ Progress: [█░░░░░░░░░] 5%
 | 19 | 10 | - | - |
 | 28 | 9 | - | - |
 | 29 | 16 | - | - |
+| 29.1 | 6 | - | - |
 
 **Recent Trend:**
 
@@ -673,7 +674,7 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 ## Session Continuity
 
 Last session: 2026-11-03T19:08:45.122Z
-Stopped at: Phase 29 complete, ready to plan Phase 29.1
+Stopped at: Phase 29.1 complete, ready to plan Phase 30
 Resume file: .planning/phases/31-removals-and-small-defects/31-CONTEXT.md
 
 ## Operator Next Steps

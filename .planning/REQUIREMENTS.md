@@ -35,14 +35,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   implements and the RULE-17 playbook carries)*. The folding runs in a subagent that reports in five lines or fewer,
   checks that the folded tip's tree equals the tested tree before the swap, tags the old tip before replacing it,
   and never uses `reset --hard`.
-- [ ] **FLOW-02**: Each phase runs on its own branch stacked on the previous phase's branch, with one PR per phase
+- [x] **FLOW-02**: Each phase runs on its own branch stacked on the previous phase's branch, with one PR per phase
   opened against the previous one (chained PRs), and each finished plan is pushed to its phase branch.
   *(amended 2026-11-03, 29.1 spec: the stack is one per repository and made of framework-neutral units (FLOW-10): a GSD phase or a
   superpowers plan is a unit, each finished plan a checkpoint that is pushed; a unit's PR opens as a draft at its
   first push and turns ready when the unit finishes and verification passes; gh-stack when installed, plain `gh`
   otherwise; an owner-started merge chain merges ready PRs bottom-up with merge commits; hotfixes stay outside
   the stack, FLOW-11)*
-- [ ] **FLOW-03**: In MVP mode on a main-only project, the same point merges into main without review.
+- [x] **FLOW-03**: In MVP mode on a main-only project, the same point merges into main without review.
   *(amended 2026-11-03, 29.1 spec: still a unit branch, fast-forwarded into its target and pushed after each checkpoint with no PR, only
   when nothing unmerged sits below the unit; otherwise the flow refuses with a named reason and stays on the PR
   path)*
@@ -51,7 +51,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   that mention them, so its researcher, planner and executor know what to attach to and which docs to update;
   none of this depends on commits to main.
   *(amended 2026-11-03, 30 spec: the step runs for every unit inside the unit-flow engine, at the unit's start, before its planning and before its first execution wave, on the unit's own branch; codegraph and graphify are created or refreshed automatically whenever their CLI is installed; the brief also lists removed symbols and searches tracked documents outside `.planning/`)*
-- [ ] **FLOW-05**: ai-kit's own GSD config is set for this flow (branch per phase, the boundary step above) through
+- [x] **FLOW-05**: ai-kit's own GSD config is set for this flow (branch per phase, the boundary step above) through
   the project's `gsd-tools`.
 - [ ] **FLOW-06**: ai-kit's own AGENTS.md, the current house rules and the tool-advisor hook's advice (the generated
   rules block carries the same rule once RULE-03 builds it)
@@ -65,7 +65,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   calls, so never prefix a command with `cd` into the project folder; use absolute paths, and put anything
   longer than a couple of steps into a script under `tmp/` and run it. The generated counterpart in Phase
   45.1 carries the same text.)*
-- [ ] **FLOW-07**: Shipping a finished phase: its gates pass on the phase branch, an installer dry run and the new
+- [x] **FLOW-07**: Shipping a finished phase: its gates pass on the phase branch, an installer dry run and the new
   hooks run against a scratch HOME, then the work is installed on this machine and re-checked live from the tip of
   the phase branch; local main moves only when the stacked PRs merge. AGENTS.md's Workflow section states this rule
   (it replaces the owner's earlier "merge every phase into local main" rule), ai-kit's GSD config (FLOW-05) matches
@@ -78,11 +78,11 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   to end a turn with a waiting message while independent work remains; and to give the local time, the running step
   and when it started in every progress or resume ping. A doc-contract test pins each rail, and the generated prompt
   stays within its length caps.
-- [ ] **FLOW-10**: The branch, push, PR and merge-chain flow is ai-kit's own and framework-neutral: it knows only
+- [x] **FLOW-10**: The branch, push, PR and merge-chain flow is ai-kit's own and framework-neutral: it knows only
   units, checkpoints and target branches through one documented unit contract, and each spec-driven system reaches
   it through a thin adapter (GSD and superpowers now; grill-me, spec-kit or others later); a synthetic third
   adapter drives the whole flow in a fixture with no change to the flow's code. *(added 2026-11-03, 29.1 spec)*
-- [ ] **FLOW-11**: A hotfix unit branches off a configurable target branch (the base branch by default; a sandbox
+- [x] **FLOW-11**: A hotfix unit branches off a configurable target branch (the base branch by default; a sandbox
   or staging branch when configured), gets its own PR or MVP fast path to that target and is never stacked; once
   it merges into the trunk of an open stack, the unmerged stack is rebased onto the updated trunk and pushed with
   `--force-with-lease`, and a conflict restores every branch and stops. *(added 2026-11-03, 29.1 spec)*
@@ -726,16 +726,16 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | GATE-04 | Phase 28 | Complete |
 | GATE-05 | Phase 28 | Complete |
 | FLOW-01 | Phase 29 | Complete |
-| FLOW-02 | Phase 29.1 | Pending |
-| FLOW-03 | Phase 29.1 | Pending |
+| FLOW-02 | Phase 29.1 | Complete |
+| FLOW-03 | Phase 29.1 | Complete |
 | FLOW-04 | Phase 30 | Pending |
-| FLOW-05 | Phase 29.1 | Pending |
+| FLOW-05 | Phase 29.1 | Complete |
 | FLOW-06 | Phase 30 | Pending |
-| FLOW-07 | Phase 29.1 | Pending |
+| FLOW-07 | Phase 29.1 | Complete |
 | FLOW-08 | Phase 32.4 | Pending |
 | FLOW-09 | Phase 32.4 | Pending |
-| FLOW-10 | Phase 29.1 | Pending |
-| FLOW-11 | Phase 29.1 | Pending |
+| FLOW-10 | Phase 29.1 | Complete |
+| FLOW-11 | Phase 29.1 | Complete |
 | FLOW-12 | Phase 30 | Pending |
 | FLOW-13 | Phase 30 | Pending |
 | RMV-01 | Phase 31 | Pending |

@@ -16,7 +16,7 @@
     {
       "number": "29.1",
       "name": "Stacked phase branches, chained PRs and the merge chain",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "30",
@@ -191,8 +191,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (plan phase 29.1)",
-    "reason": "Phase 3 of 37 — needs a plan"
+    "label": "Advance to the next step (plan phase 30)",
+    "reason": "Phase 4 of 37 — needs a plan"
   },
-  "updated_at": "2026-11-05T01:16:31.794Z"
+  "updated_at": "2026-11-05T12:01:49.404Z"
 }

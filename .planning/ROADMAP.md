@@ -108,7 +108,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 
 - [x] **Phase 28: Fast, environment-proof gates** - Commit runs only the covering tests; push runs the full suites fast with fakes only (completed 2026-11-04)
 - [x] **Phase 29: Logical-commit folding and the shared jev ladder** - Each finished GSD or superpowers plan becomes logical-feature commits; every caller chains jev as a black box (completed 2026-11-04)
-- [ ] **Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)** - Stacked branches, a push per plan, chained PRs and an owner-started merge chain
+- [x] **Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)** - Stacked branches, a push per plan, chained PRs and an owner-started merge chain (completed 2026-11-05)
 - [ ] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph sync, graphify rebuild and a changed-symbols brief at every phase boundary
 - [ ] **Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)** - One card per component kind, host-styled status-line panes, config doctor reachable from the wizard
 - [ ] **Phase 30.2: Cursor status-line parity (INSERTED)** - Cursor status line brought back to the approved proof of concept and to Claude's look where the data allows
@@ -258,7 +258,20 @@ Plans:
   8. (added 2026-11-03, 29.1 spec) The flow knows only units, checkpoints and target branches through one documented contract; the GSD and superpowers adapters are thin, and a synthetic third adapter drives the whole flow in a fixture with no change to the flow's code (FLOW-10).
   9. (added 2026-11-03, 29.1 spec) A hotfix to a configured target branch merges ahead of an open stack without entering it; the stack is then rebased onto the updated trunk and pushed with `--force-with-lease`, and a conflict restores every branch *(amended 2026-11-03, 29.1 D-07: a conflict is first resolved by an agent keeping both sides' intent, GSD's planning files merged by content, and the gates run on the result; every branch is restored and the flow stops only when the resolution or the gates fail; the report names every resolved file and how)*; an owner-attended live check on a throwaway private GitHub repo proves both PR backends and the hotfix (FLOW-11).
 
-**Plans**: TBD
+**Plans**: 6/6 plans complete
+
+Plans:
+**Wave 1**
+- [x] 29.1-01-PLAN.md — unit-flow engine core: contract, stack record, consent, start on the stack top, fold-then-push with bounds, draft PR and ready; forge fake and the four new test modules (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 29.1-02-PLAN.md — push at every checkpoint, both PR backends with one base rule, ready after verification, MVP fast path (wave 2)
+- [x] 29.1-03-PLAN.md — stack cascade with agent conflict resolution, gated push and full restore, hotfix, owner-started merge chain (wave 2)
+- [x] 29.1-04-PLAN.md — GSD hooks (guard and ship gates, start/checkpoint/ready steps), ai-kit's branching_strategy and clean health, check-dogfood (wave 2)
+- [x] 29.1-05-PLAN.md — unit contract and adapter guide, the three skill texts, AGENTS.md ship rule with its doc-contract test, judge record (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 29.1-06-PLAN.md — synthetic third adapter full flow, structural rules, live-check script; owner-attended live check (wave 3)
 
 ### Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring
 
@@ -802,7 +815,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 28. Fast, environment-proof gates | 9/9 | Complete    | 2026-11-04 |
 | 29. Logical-commit folding and the shared jev ladder | 16/16 | Complete    | 2026-11-04 |
-| 29.1. Stacked phase branches, chained PRs and the merge chain | 0/TBD | Not started | - |
+| 29.1. Stacked phase branches, chained PRs and the merge chain | 6/6 | Complete    | 2026-11-05 |
 | 30. Phase-boundary index refresh and code-exploration rules | 0/TBD | Not started | - |
 | 30.1. Setup wizard, component cards and host status-line panes | 0/TBD | Not started | - |
 | 30.2. Cursor status-line parity | 0/TBD | Not started | - |
