@@ -344,6 +344,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   one squash per plan or phase, the tree check before the swap, a local backup tag deleted when the PR merges,
   `--force-with-lease` only on unmerged branches, the primary remote only — so a project without ai-kit's folding
   step still follows it; the owner wants these rules part of project-rules, not ai-kit-only)*
+  *(amended 2026-11-04, owner: the fold runs unattended before every push of a unit's branch and never asks
+  for confirmation; the generated rules and the hook advisory say so in every project that uses them)*
 - [ ] **RULE-18**: The delegation playbook splits work into pieces of about 20 to 30 minutes with one verifiable
   result each, forbids extra spawned reviewers unless the brief asks, and says how to tell the owner what each
   running agent and shell is. It ships a brief header with five rails (never kill a process the subagent did not
@@ -400,6 +402,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   only the failed check through its own target (for example `make test-unit` when a unit test failed, `make
   pyright` when the type check failed), confirms it passes, and commits again so the hooks re-run every check.
   The failing hook's output names the target that re-runs it. *(added 2026-11-04: owner request)*
+  *(amended 2026-11-04, owner: a general rule, generated into every project that uses ai-kit's project rules and stressed by ai-kit's hook advisory there, not ai-kit-only)*
 - [ ] **RULE-29**: Closing a plan or a phase (GSD or superpowers) leaves no leftover resources: no background
   process or process group the run started, no container, no browser or Playwright instance, no held file lock,
   no temporary files or directories in `/tmp` or the system temp dir (counted by size and by inode), no large
@@ -410,6 +413,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   git neither tracks nor ignores (a log, a report, a scratch script, a generated output) is moved under `tmp/`,
   removed, ignored or committed before the close, and untracked files that predate the unit are left untouched
   and only reported. *(added 2026-11-04: owner request)*
+  *(amended 2026-11-04, owner: a general rule, generated into every project that uses ai-kit's project rules and stressed by ai-kit's hook advisory there, not ai-kit-only)*
 
 ### Host hooks
 

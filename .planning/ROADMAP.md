@@ -706,7 +706,7 @@ Plans:
 
 **Goal**: One dispatcher hook per host decides at fire time what to run, so switching a hook never rewrites a host config, and session hooks adapt to worktrees.
 **Coupling (2026-11-03, from Phase 29's spec)**: the owner wants the commit-folding policy (Phase 29, carried by the Phase 47 playbook) to reach any environment where ai-kit's advisory hook is installed; whether the dispatcher reminds of it at commit or push time is this phase's discuss to decide.
-**Coupling (2026-11-04, owner request)**: the dispatcher advises at a failed git hook which single target re-runs the failed check (RULE-28), and at a session or subagent stop it advises the leftover-resource check of RULE-29; advice only, never a block.
+**Coupling (2026-11-04, owner request)**: the dispatcher advises at a failed git hook which single target re-runs the failed check (RULE-28), and at a session or subagent stop it advises the leftover-resource check of RULE-29; advice only, never a block. These advisories and the folding reminder ship to every project where ai-kit's hooks are installed, and the folding reminder says the fold runs without asking (amended 2026-11-04, owner).
 **Depends on**: Phase 48
 **Requirements**: HOOK-02, HOOK-03, HOOK-07
 **Code anchors**: new: one dispatcher per host in `tools/hooks/` and an event catalogue; `tools/setup.py` (`wire_claude_rows`, `wire_hook_cursor`, `apply_hook_selection`, `wire_hook_rows`); `tools/hooks/claude_session_start.py`, `cursor_session_start.py`, `precompact_core.py`, `claude_precompact.py`; the wizard hooks card from Phase 30.1; layered settings from the Phase 33 design; docs: `tools/hooks/README.md`

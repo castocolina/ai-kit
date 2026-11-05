@@ -803,6 +803,7 @@ POLICY_RULES = {
     "FOLD-8": r"reachable from main .* never rewritten",
     "FOLD-9": r"only with `?--force-with-lease`?",
     "FOLD-10": r"primary remote only",
+    "FOLD-11": r"needs no confirmation",
 }
 
 

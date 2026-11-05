@@ -298,7 +298,7 @@ unavailable or insufficient.
   `skills/ai-kit-commit-fold/references/folding-policy.md` (one buildable commit
   per logical feature; this compaction covers the whole plan's history, and the
   per-commit rule in Non-Negotiable Rules above still applies to each folded
-  commit).
+  commit). Fold before every push without asking for confirmation.
 - Update READMEs and other nested docs (submodule READMEs, diagrams,
   docstrings) after any significant feature change — stale docs are a
   defect, not a follow-up.
