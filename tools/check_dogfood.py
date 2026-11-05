@@ -5,7 +5,9 @@ Run as `make check-dogfood` (also a pre-push hook). It checks that the project's
 runner copy is a pristine render of the shipped template, and that the curated-config write
 flows leave the live `.planning/config.json*` and runner files untouched (they run in a child
 process under the test runner's baseline env and tripwire). It prints only relative paths, test
-ids and short reasons, never file contents or hashes.
+ids and short reasons, never file contents or hashes. When the project has a gsd-core, it also
+checks the GSD flow config (branch per phase, healthy, the capability and its hook points)
+through read-only gsd-tools calls.
 """
 from __future__ import annotations
 
@@ -236,6 +238,122 @@ def check_no_write(root: Path, run: GuardRun | None = None) -> tuple[list[str], 
     return problems, notes
 
 
+GSD_TOOLS_REL = ".claude/gsd-core/bin/gsd-tools.cjs"
+FLOW_CAP = "ai-kit-commit-fold"
+# point -> (hook kind, the text the hook must run). Only the points GSD dispatches with a step
+# or gate that can start or guard the unit; FLOW_EMPTY_POINTS must hold no entry at all.
+FLOW_EXPECT = {
+    "discuss:pre": ("step", "ai-kit-fold start"),
+    "execute:wave:post": ("step", "ai-kit-fold checkpoint"),
+    "ship:pre": ("gate", "ai-kit-fold ship"),
+}
+FLOW_EMPTY_POINTS = ("plan:pre", "execute:wave:pre", "verify:post")
+
+FlowRun = Callable[..., subprocess.CompletedProcess[str]]
+
+
+def _run_gsd(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """One project-local gsd-tools call (argv list, no shell)."""
+    return subprocess.run(["node", str(root / GSD_TOOLS_REL), *args], cwd=root,
+                          capture_output=True, text=True, timeout=60, check=False)
+
+
+def _parse_json(text: str) -> object | None:
+    """The first JSON object or array in `text` (gsd-tools may print a line before it)."""
+    starts = [i for i in (text.find("{"), text.find("[")) if i >= 0]
+    if not starts:
+        return None
+    try:
+        return json.JSONDecoder().raw_decode(text[min(starts):])[0]
+    except ValueError:
+        return None
+
+
+def _active_hooks(root: Path, run: FlowRun, point: str) -> list[dict] | None:
+    proc = run(root, "loop", "render-hooks", point, "--raw")
+    report = _parse_json(proc.stdout) if proc.returncode == 0 else None
+    if not isinstance(report, dict) or not isinstance(report.get("activeHooks"), list):
+        return None
+    return [hook for hook in report["activeHooks"] if isinstance(hook, dict)]
+
+
+def _sub_command(hook: dict, *keys: str) -> object:
+    """The value at `keys` inside one hook entry, or None when any level is absent."""
+    value: object = hook
+    for key in keys:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return value
+
+
+def _hook_text(hook: dict) -> str:
+    return f"{_sub_command(hook, 'ref', 'command') or ''} " \
+           f"{_sub_command(hook, 'check', 'predicate', 'command') or ''}"
+
+
+def _fold_entries(hooks: list[dict]) -> list[dict]:
+    return [hook for hook in hooks
+            if hook.get("capId") == FLOW_CAP or "ai-kit-fold" in _hook_text(hook)]
+
+
+def _check_point(point: str, hooks: list[dict] | None) -> list[str]:
+    """The one named problem for the first drift found at an expected point, or none."""
+    kind, expected = FLOW_EXPECT[point]
+    if hooks is None:
+        return [f"{point}: loop render-hooks gave no hook list"]
+    entries = _fold_entries(hooks)
+    if len(entries) != 1:
+        return [f"{point}: expected one {FLOW_CAP} {kind}, found {len(entries)}"]
+    hook = entries[0]
+    command = _sub_command(hook, "ref", "command")
+    checks = [
+        (hook.get("capId") == FLOW_CAP, f"entry capId {hook.get('capId')} is not {FLOW_CAP}"),
+        (hook.get("kind") == kind, f"entry kind {hook.get('kind')} is not {kind}"),
+        (kind != "step" or command == expected,
+         f"step command {command!r} is not {expected!r}"),
+        (kind != "gate" or expected in _hook_text(hook), f"gate does not run {expected}"),
+        (kind != "gate" or hook.get("blocking") is True, "gate is not blocking"),
+    ]
+    failed = [message for ok, message in checks if not ok]
+    return [f"{point}: {failed[0]}"] if failed else []
+
+
+def check_flow_config(root: Path, run: FlowRun = _run_gsd) -> tuple[list[str], list[str]]:
+    """(problems, notes) for ai-kit's own GSD flow: branch per phase, clean health, the capability
+    installed, and the hook points of the capability (read-only; `run` is the test seam)."""
+    if not (root / GSD_TOOLS_REL).is_file():
+        return [], ["flow config not checked: no project-local gsd-core"]
+    problems = []
+    branching = run(root, "config-get", "git.branching_strategy", "--raw").stdout.strip()
+    if branching != "phase":
+        problems.append(f"git.branching_strategy is {branching or 'unset'}, not phase")
+    health = _parse_json(run(root, "validate", "health", "--raw").stdout)
+    if not isinstance(health, dict):
+        problems.append("validate health printed no JSON report")
+    else:
+        codes = [str(w.get("code", "?")) for w in health.get("warnings") or []
+                 if isinstance(w, dict)]
+        if health.get("status") != "healthy" or codes:
+            warned = f" with warnings {', '.join(codes)}" if codes else ""
+            problems.append(f"validate health is {health.get('status')}{warned}")
+    caps = _parse_json(run(root, "capability", "list", "--raw").stdout)
+    installed = isinstance(caps, list) and any(
+        isinstance(cap, dict) and cap.get("id") == FLOW_CAP for cap in caps)
+    if not installed:
+        problems.append(f"capability {FLOW_CAP} is not installed")
+        return problems, []
+    for point in FLOW_EXPECT:
+        problems += _check_point(point, _active_hooks(root, run, point))
+    for point in FLOW_EMPTY_POINTS:
+        hooks = _active_hooks(root, run, point)
+        if hooks is None:
+            problems.append(f"{point}: loop render-hooks gave no hook list")
+        elif _fold_entries(hooks):
+            problems.append(f"{point} lists a {FLOW_CAP} entry; GSD never dispatches it there")
+    return problems, []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--root", type=Path, default=REPO_ROOT,
@@ -250,6 +368,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{PREFIX} --root applies to the runner-copy check only; add --skip-no-write")
         return 2
     problems, notes = check_runner_copy(root, args.template)
+    flow_problems, flow_notes = check_flow_config(root)
+    problems, notes = problems + flow_problems, notes + flow_notes
     if not args.skip_no_write:
         write_problems, write_notes = check_no_write(root)
         problems, notes = problems + write_problems, notes + write_notes

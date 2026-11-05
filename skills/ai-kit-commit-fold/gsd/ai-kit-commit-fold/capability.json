@@ -1,7 +1,7 @@
 {
   "id": "ai-kit-commit-fold",
   "role": "feature",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "title": "ai-kit commit fold",
   "description": "Folds each finished plan of a phase into logical-feature commits after every wave.",
   "tier": "full",
@@ -17,13 +17,33 @@
   ],
   "steps": [
     {
+      "point": "discuss:pre",
+      "ref": {"command": "ai-kit-fold start"},
+      "produces": [],
+      "consumes": [],
+      "onError": "skip"
+    },
+    {
       "point": "execute:wave:post",
-      "ref": {"command": "ai-kit-fold run"},
+      "ref": {"command": "ai-kit-fold checkpoint"},
       "produces": [],
       "consumes": [],
       "onError": "skip"
     }
   ],
   "contributions": [],
-  "gates": []
+  "gates": [
+    {
+      "point": "ship:pre",
+      "blocking": true,
+      "onError": "halt",
+      "check": {
+        "predicate": {
+          "kind": "command-exit-zero",
+          "command": "node .claude/gsd-core/bin/gsd-tools.cjs ai-kit-fold ship --phase ${PHASE_NUMBER}",
+          "timeout": 20
+        }
+      }
+    }
+  ]
 }

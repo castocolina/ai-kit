@@ -8,10 +8,13 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
-from tests.fold_fixtures import ROOT, SKILL, git_env, gsd_project, run_git
+from tests.fold_fixtures import ROOT, SKILL, commit, git_env, gsd_project, make_remote, run_git
+
+COMMAND_GRAMMAR = r"^[a-z][a-z0-9-]*( [a-z][a-z0-9-]*)*$"
 
 GSD_TOOLS = ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs"
 BUNDLE = SKILL / "gsd" / "ai-kit-commit-fold"
@@ -101,7 +104,7 @@ class TestCapabilityE2E(unittest.TestCase):
                  if hook.get("capId") == "ai-kit-commit-fold"]
         self.assertEqual(len(hooks), 1)
         self.assertEqual(hooks[0]["kind"], "step")
-        self.assertEqual(hooks[0]["ref"], {"command": "ai-kit-fold run"})
+        self.assertEqual(hooks[0]["ref"], {"command": "ai-kit-fold checkpoint"})
 
     def test_fold_run_folds_the_fixture_plan_into_two_commits(self):
         self.assertEqual(self.fold.returncode, 0, self.fold.stderr)
@@ -141,6 +144,210 @@ class TestCapabilityE2E(unittest.TestCase):
             os.path.join("/h", ".cursor", "skills"),
             os.path.join("/h", ".pi", "agent", "skills"),
         ])
+
+
+def _predicate_eval(repo, env, predicate):
+    """Evaluate a gate's check.predicate the way ship.md step 1 does (gsd_run check predicate)."""
+    return _gsd(repo, env, "check", "predicate", "--predicate", json.dumps(predicate),
+                "--phase-dir", ".planning/phases/07-demo", "--phase-number", "07", "--raw")
+
+
+@unittest.skipUnless(shutil.which("node") and GSD_TOOLS.is_file()
+                     and (ROOT / ".claude" / "scripts").is_dir(),
+                     "node or the checkout's project-local gsd-core is missing")
+class TestShipGate(unittest.TestCase):
+    # One install and one started phase; each state the gate sees is set on the record.
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p29.1-gate-"))
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, ignore_errors=True)
+        cls.home = cls.tmp / "home"
+        cls.home.mkdir()
+        cls.env = _gsd_env(cls.home, cls.tmp / "gsd-home")
+        cls.repo = _fixture(cls.tmp / "fixture", cls.env)
+        make_remote(cls.tmp / "fixture", cls.env, cls.repo)
+        shutil.copytree(SKILL, cls.home / ".claude" / "skills" / "ai-kit-commit-fold",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        cls.install = _gsd(cls.repo, cls.env, "capability", "install", str(BUNDLE),
+                           "--scope", "project", "--yes")
+        cls.hooks = _gsd(cls.repo, cls.env, "loop", "render-hooks", "ship:pre", "--raw")
+        cls.start = _gsd(cls.repo, cls.env, "ai-kit-fold", "start", "--phase", "07", "--raw")
+
+    def _record_state(self, state):
+        sys.path.insert(0, str(SKILL / "scripts"))
+        import flow_record  # pylint: disable=import-outside-toplevel
+        record = flow_record.read_record(self.repo)
+        for unit in record["units"]:
+            unit["state"] = state
+        flow_record.write_record(self.repo, record)
+
+    def _gate(self):
+        hooks = [hook for hook in _json(self.hooks.stdout)["activeHooks"]
+                 if hook.get("capId") == "ai-kit-commit-fold"]
+        self.assertEqual(len(hooks), 1)
+        return hooks[0]
+
+    def test_ship_gate_is_listed_blocking_with_a_command_predicate(self):
+        self.assertEqual(self.install.returncode, 0, self.install.stderr)
+        self.assertEqual(self.hooks.returncode, 0, self.hooks.stderr)
+        gate = self._gate()
+        self.assertEqual(gate["kind"], "gate")
+        self.assertTrue(gate["blocking"])
+        self.assertEqual(gate["onError"], "halt")
+        self.assertEqual(gate["check"]["predicate"]["kind"], "command-exit-zero")
+
+    def test_open_unit_blocks_the_gate_with_not_ready(self):
+        self.assertEqual(self.start.returncode, 0, self.start.stderr)
+        verdict = _json(_predicate_eval(self.repo, self.env,
+                                        self._gate()["check"]["predicate"]).stdout)
+        self.assertTrue(verdict["block"])
+        self.assertIn("not_ready", verdict["message"])
+        self.assertNotIn("ship_redirect", verdict["message"])
+
+    def test_ready_unit_still_blocks_the_gate_with_ship_redirect(self):
+        self._record_state("ready")
+        verdict = _json(_predicate_eval(self.repo, self.env,
+                                        self._gate()["check"]["predicate"]).stdout)
+        self.assertTrue(verdict["block"])
+        self.assertIn("ship_redirect", verdict["message"])
+        self.assertIn("fold.py merge-chain", verdict["message"])
+
+    def test_ship_verb_exits_1_with_the_reason_for_each_state(self):
+        self._record_state("open")
+        open_run = _gsd(self.repo, self.env, "ai-kit-fold", "ship", "--phase", "07", "--raw")
+        self.assertEqual(open_run.returncode, 1)
+        self.assertIn("refused not_ready", open_run.stdout)
+        self._record_state("ready")
+        ready_run = _gsd(self.repo, self.env, "ai-kit-fold", "ship", "--phase", "07")
+        self.assertEqual(ready_run.returncode, 1)
+        self.assertIn("refused ship_redirect", ready_run.stdout)
+        self.assertIn("fold.py merge-chain", ready_run.stdout)
+
+    def test_verbs_outside_the_allow_list_and_extra_arguments_are_refused(self):
+        bogus = _gsd(self.repo, self.env, "ai-kit-fold", "merge", "--phase", "07")
+        self.assertEqual(bogus.returncode, 2)
+        self.assertIn("usage", bogus.stderr)
+        extra = _gsd(self.repo, self.env, "ai-kit-fold", "ship", "--phase", "07", "--force")
+        self.assertEqual(extra.returncode, 2)
+        self.assertIn("usage", extra.stderr)
+
+
+def _installed_fixture(root, env):
+    """A phase-07 fixture with a bare origin and the capability installed (tests read the hooks)."""
+    repo = _fixture(root, env)
+    make_remote(root, env, repo)
+    shutil.copytree(SKILL, pathlib.Path(env["HOME"]) / ".claude" / "skills" / "ai-kit-commit-fold",
+                    ignore=shutil.ignore_patterns("__pycache__"), dirs_exist_ok=True)
+    _gsd(repo, env, "capability", "install", str(BUNDLE), "--scope", "project", "--yes")
+    return repo
+
+
+def _fold_hooks(proc):
+    return [hook for hook in _json(proc.stdout)["activeHooks"]
+            if hook.get("capId") == "ai-kit-commit-fold"]
+
+
+@unittest.skipUnless(shutil.which("node") and GSD_TOOLS.is_file()
+                     and (ROOT / ".claude" / "scripts").is_dir(),
+                     "node or the checkout's project-local gsd-core is missing")
+class TestHookPoints(unittest.TestCase):
+    # Hooks at the three points GSD dispatches, and no entry at the three it never runs them at.
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p29.1-points-"))
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, ignore_errors=True)
+        home = cls.tmp / "home"
+        home.mkdir()
+        cls.env = _gsd_env(home, cls.tmp / "gsd-home")
+        cls.repo = _installed_fixture(cls.tmp / "fixture", cls.env)
+        cls.points = {point: _gsd(cls.repo, cls.env, "loop", "render-hooks", point, "--raw")
+                      for point in ("discuss:pre", "plan:pre", "execute:wave:pre",
+                                    "execute:wave:post", "verify:post")}
+
+    def test_discuss_pre_and_wave_post_list_their_steps(self):
+        discuss = _fold_hooks(self.points["discuss:pre"])
+        self.assertEqual(len(discuss), 1)
+        self.assertEqual(discuss[0]["kind"], "step")
+        self.assertEqual(discuss[0]["ref"], {"command": "ai-kit-fold start"})
+        wave = _fold_hooks(self.points["execute:wave:post"])
+        self.assertEqual(len(wave), 1)
+        self.assertEqual(wave[0]["kind"], "step")
+        self.assertEqual(wave[0]["ref"], {"command": "ai-kit-fold checkpoint"})
+
+    def test_plan_pre_wave_pre_and_verify_post_list_no_fold_entry(self):
+        for point in ("plan:pre", "execute:wave:pre", "verify:post"):
+            with self.subTest(point=point):
+                self.assertEqual(self.points[point].returncode, 0, self.points[point].stderr)
+                self.assertEqual(_fold_hooks(self.points[point]), [])
+
+    def test_step_commands_match_the_dispatch_grammar(self):
+        for point in ("discuss:pre", "execute:wave:post"):
+            with self.subTest(point=point):
+                command = _fold_hooks(self.points[point])[0]["ref"]["command"]
+                self.assertRegex(command, COMMAND_GRAMMAR)
+
+
+@unittest.skipUnless(shutil.which("node") and GSD_TOOLS.is_file()
+                     and (ROOT / ".claude" / "scripts").is_dir(),
+                     "node or the checkout's project-local gsd-core is missing")
+class TestStartLifecycle(unittest.TestCase):
+    # The discuss:pre command, run as loop-hook-dispatch.md runs it: create, reuse, worktrees.
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p29.1-life-"))
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, ignore_errors=True)
+        home = cls.tmp / "home"
+        home.mkdir()
+        cls.env = _gsd_env(home, cls.tmp / "gsd-home")
+        cls.repo = _installed_fixture(cls.tmp / "fixture", cls.env)
+        # The phase directory must exist where start runs: seed it on the pushed trunk, then drop
+        # the local phase branch so the first start creates it from the trunk tip.
+        run_git(cls.repo, cls.env, "checkout", "-q", "main")
+        commit(cls.repo, cls.env, {".planning/phases/07-demo/07-SEED.md": b"seed\n"},
+               "docs(07): seed phase dir on trunk")
+        run_git(cls.repo, cls.env, "push", "-q", "origin", "main")
+        run_git(cls.repo, cls.env, "branch", "-D", "gsd/phase-07-demo")
+        cls.trunk = run_git(cls.repo, cls.env, "rev-parse", "origin/main").strip()
+
+    def _start_command(self):
+        proc = _gsd(self.repo, self.env, "loop", "render-hooks", "discuss:pre", "--raw")
+        command = _fold_hooks(proc)[0]["ref"]["command"]
+        self.assertRegex(command, COMMAND_GRAMMAR)
+        return command.split()
+
+    def _branch(self):
+        return run_git(self.repo, self.env, "rev-parse", "--abbrev-ref", "HEAD").strip()
+
+    def test_start_creates_the_unit_branch_at_the_trunk_tip_and_planning_commits_land_on_it(self):
+        argv = self._start_command()
+        first = _gsd(self.repo, self.env, *argv, "--phase", "07", "--raw")
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertEqual(self._branch(), "gsd/phase-07-demo")
+        self.assertEqual(run_git(self.repo, self.env, "rev-parse", "HEAD").strip(), self.trunk)
+        commit(self.repo, self.env, {".planning/phases/07-demo/07-CONTEXT.md": b"context\n"},
+               "docs(07): capture phase context")
+        self.assertEqual(run_git(self.repo, self.env, "rev-parse", "HEAD^").strip(), self.trunk)
+        again = _gsd(self.repo, self.env, *argv, "--phase", "07", "--raw")
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertEqual(self._branch(), "gsd/phase-07-demo")
+        self.assertEqual(run_git(self.repo, self.env, "rev-parse", "HEAD^").strip(), self.trunk)
+        sys.path.insert(0, str(SKILL / "scripts"))
+        import flow_record  # pylint: disable=import-outside-toplevel
+        self.assertEqual(len(flow_record.read_record(self.repo)["units"]), 1)
+
+    def test_use_worktrees_true_sets_the_base_ref_to_head(self):
+        _gsd(self.repo, self.env, "config-set", "workflow.use_worktrees", "true")
+        proc = _gsd(self.repo, self.env, *self._start_command(), "--phase", "07", "--raw")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        settings = json.loads((self.repo / ".claude" / "settings.local.json").read_text())
+        self.assertEqual(settings["worktree"]["baseRef"], "head")
+
+    def test_use_worktrees_false_writes_no_settings_file(self):
+        plain = _installed_fixture(self.tmp / "plain", self.env)
+        _gsd(plain, self.env, "config-set", "workflow.use_worktrees", "false")
+        proc = _gsd(plain, self.env, *self._start_command(), "--phase", "07", "--raw")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse((plain / ".claude" / "settings.local.json").exists())
 
 
 if __name__ == "__main__":

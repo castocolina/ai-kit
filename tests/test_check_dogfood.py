@@ -6,6 +6,8 @@ import contextlib
 import importlib.util
 import io
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -257,6 +259,101 @@ class TestNoWrite(unittest.TestCase):
         self.assertEqual(
             out, "check-dogfood: --root applies to the runner-copy check only; "
             "add --skip-no-write\n")
+
+
+def _step(command: str) -> dict:
+    return {"capId": "ai-kit-commit-fold", "kind": "step", "ref": {"command": command},
+            "onError": "skip"}
+
+
+def _gate(blocking: bool = True, command: str = "node .claude/gsd-core/bin/gsd-tools.cjs "
+          "ai-kit-fold ship --phase ${PHASE_NUMBER}") -> dict:
+    return {"capId": "ai-kit-commit-fold", "kind": "gate", "blocking": blocking,
+            "onError": "halt",
+            "check": {"predicate": {"kind": "command-exit-zero", "command": command}}}
+
+
+def _healthy_hooks() -> dict:
+    return {"discuss:pre": [_step("ai-kit-fold start")],
+            "execute:wave:post": [_step("ai-kit-fold checkpoint")],
+            "ship:pre": [_gate()], "plan:pre": [], "execute:wave:pre": [], "verify:post": []}
+
+
+class _FakeGsd:
+    """Answers the gsd-tools calls check_flow_config makes; records each argv tail."""
+
+    def __init__(self, branching="phase", health=None, caps=None, hooks=None):
+        self.branching = branching
+        healthy = {"status": "healthy", "errors": [], "warnings": []}
+        self.health = healthy if health is None else health
+        self.caps = [{"id": "ai-kit-commit-fold"}] if caps is None else caps
+        self.hooks = _healthy_hooks() if hooks is None else hooks
+        self.calls = []
+
+    def __call__(self, root, *args):
+        self.calls.append(args)
+        if args[:2] == ("config-get", "git.branching_strategy"):
+            out = self.branching
+        elif args[:2] == ("validate", "health"):
+            out = json.dumps(self.health)
+        elif args[:2] == ("capability", "list"):
+            out = json.dumps(self.caps)
+        else:
+            out = json.dumps({"activeHooks": self.hooks.get(args[2], [])})
+        return subprocess.CompletedProcess(args=list(args), returncode=0, stdout=out)
+
+
+class TestFlowConfig(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        (self.root / ".claude" / "gsd-core" / "bin").mkdir(parents=True)
+        (self.root / check_dogfood.GSD_TOOLS_REL).write_text("", encoding="utf-8")
+
+    def check(self, fake):
+        return check_dogfood.check_flow_config(self.root, fake)
+
+    def test_healthy_flow_has_no_problem(self):
+        self.assertEqual(self.check(_FakeGsd()), ([], []))
+
+    def test_each_drift_form_is_one_named_problem(self):
+        hooks = _healthy_hooks()
+        cases = {
+            "branching": (_FakeGsd(branching="none"), "git.branching_strategy is none"),
+            "health": (_FakeGsd(health={"status": "degraded", "errors": [],
+                                        "warnings": [{"code": "W019"}]}),
+                       "validate health is degraded with warnings W019"),
+            "capability": (_FakeGsd(caps=[]), "capability ai-kit-commit-fold is not installed"),
+            "capId": (_FakeGsd(hooks={**hooks, "discuss:pre": [
+                {**_step("ai-kit-fold start"), "capId": "ai-kit-commit-fold-old"}]}),
+                "entry capId ai-kit-commit-fold-old is not ai-kit-commit-fold"),
+            "kind": (_FakeGsd(hooks={**hooks, "discuss:pre": [
+                {**_step("ai-kit-fold start"), "kind": "gate"}]}),
+                "entry kind gate is not step"),
+            "command": (_FakeGsd(hooks={**hooks, "execute:wave:post": [
+                _step("ai-kit-fold run")]}),
+                "step command 'ai-kit-fold run' is not 'ai-kit-fold checkpoint'"),
+            "non-blocking ship gate": (_FakeGsd(hooks={**hooks, "ship:pre": [_gate(False)]}),
+                                       "ship:pre: gate is not blocking"),
+            "entry at plan:pre": (
+                _FakeGsd(hooks={**hooks, "plan:pre": [_step("ai-kit-fold start")]}),
+                "plan:pre lists a ai-kit-commit-fold entry"),
+        }
+        for label, (fake, fragment) in cases.items():
+            with self.subTest(drift=label):
+                problems, _notes = self.check(fake)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn(fragment, problems[0])
+
+    def test_absent_gsd_core_is_only_a_note(self):
+        def boom(root, *args):
+            raise AssertionError("gsd-tools must not run without a project-local gsd-core")
+
+        empty = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, empty, True)
+        self.assertEqual(check_dogfood.check_flow_config(empty, boom),
+                         ([], ["flow config not checked: no project-local gsd-core"]))
 
 
 def missing_guard_tests(test_ids) -> list[str]:
