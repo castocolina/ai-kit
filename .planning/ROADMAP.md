@@ -623,7 +623,7 @@ Plans:
 
 **Goal**: The block the rules skill writes into a project's AGENTS.md tells every agent how to build, test, talk to the owner and run unattended, and what never to do, with the reasons.
 **Depends on**: Phase 45
-**Requirements**: RULE-03, RULE-12, RULE-13, RULE-14, RULE-15, RULE-24, RULE-26, DESIGN-02
+**Requirements**: RULE-03, RULE-12, RULE-13, RULE-14, RULE-15, RULE-24, RULE-26, RULE-32, DESIGN-02
 **Code anchors**: generated-block writer in `skills/ai-kit-project-rules/` (new in Phase 45); report formatting carried over from `skills/ai-kit-project-rules-agents/ai_kit_project_rules_agents/rule_checker.py` (`check_workflow_rules`) and `rules.py`; the Phase 39 role-keyed table for the vertical-slices runbook; the Phase 29 shared jev client; new: `docs/run-book/` vertical-slices and decisions runbook templates, the project-kind record (API or multi-user, desktop or CLI), fixture projects of each kind; docs: the skill's SKILL.md and references
 **Success Criteria** (what must be TRUE):
   1. The generated block carries the top rules and the general never list, placed below the owner's hand-written sections with no collision, repetition or contradiction.
@@ -659,7 +659,7 @@ Plans:
 
 **Goal**: An agent knows what to do at each development-loop event because the rules skill's playbooks say so, starting from one pointer in AGENTS.md, and where the shared quota logic lives is decided before the quota playbook is written.
 **Depends on**: Phase 46, Phase 41 (the superpowers adapter calls the end-of-unit playbook)
-**Requirements**: RULE-06, RULE-17, RULE-18, RULE-19, RULE-28, RULE-29, WAKE-03
+**Requirements**: RULE-06, RULE-17, RULE-18, RULE-19, RULE-28, RULE-29, RULE-30, RULE-31, WAKE-03
 **Code anchors**: new: playbooks under `skills/ai-kit-project-rules/`, git `post-checkout` hook writer, quota decision record, delegation brief header; end-of-plan call from `skills/ai-kit-spec-execute-superpowers/` (`SKILL.md`, `dispatch_injection.py`); brief builders that take the header: `ai_kit_spec/reviewer_dispatch.py` (`_reviewer_full_prompt`), `execute_dispatch.py` (`build_execute_guidance`), goal-prompt `gp_sections.py` (`rail_sections`); worktree gsd-tools check reusing `ai_kit_spec/gsd_tools.py` (`gsd_tools_candidates`, `local_gsd_core_roots`); `skills/ai-kit-session-wake/` (possible move into a playbook); docs: generated AGENTS.md block pointer, session-wake `SKILL.md`
 **Success Criteria** (what must be TRUE):
   1. `git worktree add` on a fixture runs `setup-dev` through the git `post-checkout` hook the skill writes, and a fixture worktree that cannot run its project `gsd-tools` gets a message naming the install step.
