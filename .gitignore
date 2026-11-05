@@ -21,3 +21,5 @@ tmp/
 
 # GSD runtime lock (written while a milestone workflow runs)
 .planning/milestone.lock
+# GSD capability lock, local like .gsd/ (each checkout installs the fold capability itself)
+.gsd-capabilities.json

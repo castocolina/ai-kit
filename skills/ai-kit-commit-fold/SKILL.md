@@ -113,7 +113,9 @@ where the host has one, otherwise do it yourself:
 Install the fold into a GSD project with the project's own gsd-tools:
 
 1. `node .claude/gsd-core/bin/gsd-tools.cjs capability install <this skill>/gsd/ai-kit-commit-fold --scope project`.
-   It asks for approval, because the capability loads a command module into the GSD CLI. Ask the owner.
+   The path must start with `./`, `../` or `/`: gsd-tools reads a bare relative path as a registry name
+   and refuses it. It asks for approval, because the capability loads a command module into the GSD CLI.
+   Ask the owner.
 2. After a yes, run the same command with `--yes`, then commit `.gsd/capabilities/ai-kit-commit-fold/`
    and `.gsd-capabilities.json`. A fresh clone repeats `--yes`. Never use `--scope global`.
 
