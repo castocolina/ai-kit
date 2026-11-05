@@ -1,0 +1,31 @@
+{
+  "status": "consent_required_for_remote",
+  "selected": null,
+  "candidates": [],
+  "unavailable": {
+    "laya": "network_error",
+    "typesafe": "consent_required_for_remote"
+  },
+  "remote_available": ["typesafe"],
+  "backends": [
+    {
+      "name": "laya",
+      "remote": false,
+      "batch": false,
+      "host": "127.0.0.1",
+      "usable": false,
+      "key_source": "missing_api_key",
+      "reason": "network_error"
+    },
+    {
+      "name": "typesafe",
+      "remote": true,
+      "batch": true,
+      "host": "api.typesafe.ai",
+      "usable": false,
+      "key_source": "env",
+      "consent": null,
+      "reason": "consent_required_for_remote"
+    }
+  ]
+}

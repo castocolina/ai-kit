@@ -19,6 +19,18 @@ Each item needs a unique, non-empty `id` plus one of:
 
 Write `instructions`/`context` or `criterion`/`evidence` as self-contained English text — the model sees only what is in `state`, not the conversation. Put the material being judged in that item's own `context` (or inline in `instructions`); a question with nothing to judge against still gets a confident-looking, meaningless answer.
 
+### Screen example
+
+```bash
+GSD_PATH_JEV=1 GSD_PATH_JEV_TIMEOUT_SECONDS=20 \
+python3 -B scripts/jev_review.py <<'JSON'
+{"reviewed_head": "<git rev-parse HEAD>", "items": [
+ {"id": "F1", "criterion": "This finding is a real bug.", "evidence": "summary of the hits"},
+ {"id": "sev", "type": "score", "instructions": "How severe?", "context": "crash on launch",
+  "criteria": ["cosmetic","minor","major","critical"]}]}
+JSON
+```
+
 ## Response shape
 
 An `ok` result carries `status`, `backend` and `model` (the rung that gave every final answer, `null` when answers came from different rungs), `answers`, plus `trail` (per-item ordered rung entries, each with `request_sha256`), `attempts`, `unavailable`, `usage`, `request_sha256` (over every body sent), `reviewed_head`, `backends` (the probe entries), `remote_available` and `consent_used` where relevant, and `errors` for item-level failures.
@@ -123,6 +135,27 @@ Every cell is `verified-live`, `documented`, `unsupported` or `unverified`, with
 - **pi** reads `${PI_CODING_AGENT_DIR:-~/.pi/agent}/skills` — ai-kit setup links it there too.
 - **codex** is a documented gap: its only user dir is `~/.agents/skills`, which opencode, pi and Cursor also read, so a link there would duplicate the name (learn.chatgpt.com/docs/build-skills, cited 2026-10-18; not live-verified). Nothing is linked.
 - **cursor** is reached through its compatibility read of `~/.claude/skills` (cursor.com/docs/context/skills, cited 2026-10-18; not live-verified). Nothing extra is linked.
+
+## Installed-skill lookup
+
+| Order | Skills root |
+| --- | --- |
+| 1 | the caller's own skills root (the directory that holds the calling skill; a hook uses the checkout's `skills/`; the GSD capability copy has none) |
+| 2 | `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills` |
+| 3 | `$HOME/.agents/skills` |
+| 4 | `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills` |
+| 5 | `${CURSOR_CONFIG_DIR:-$HOME/.cursor}/skills` |
+| 6 | `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/skills` |
+
+In each root the entry point is `jev-fast-decision/scripts/jev_review.py`; the first that exists wins. `AI_KIT_JEV_CLIENT` or `--client` overrides the lookup for jev's own ladder.
+
+## Ladder output
+
+`ladder` prints one JSON object. `items` is keyed by item id in input order (`order` lists the ids). Each item carries one column per backend the client's table names: `{choice, top, fallback, forced, model}` when that rung answered, `{error}` when it failed, or null when it was not called. `decided_by` is the last confident rung, or `own_reasoning`. The object also carries `backends`, `consent_used`, `remote_available` and `advisory: true`. An empty item list returns an empty result.
+
+## Second opinion
+
+`ladder --second-opinion` skips the local rungs: every valid item goes to the remote rung only. Use it once, when a confident local answer contradicts verified evidence or a locked decision. The remote rung needs the same consent as any remote call.
 
 ## Red Flags (full text)
 

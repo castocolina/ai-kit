@@ -2372,6 +2372,103 @@ class TestDocs(unittest.TestCase):
         self.assertIn("not live-verified", self.reference_text)
 
 
+def parse_lookup_table(reference_text):
+    """The installed-skill lookup rows as `(variable, fallback, suffix)` tuples, in table order.
+
+    Row 1 (the caller's own root) names no path, so no pattern matches it and it is skipped.
+    """
+    section = reference_text.split("## Installed-skill lookup", 1)[1].split("\n## ", 1)[0]
+    rows = []
+    for line in section.splitlines():
+        if not line.startswith("| "):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        path = cells[1].strip("`") if len(cells) > 1 else ""
+        braced = re.match(r"^\$\{(\w+):-\$HOME/([^}]+)\}/(.+)$", path)
+        plain = re.match(r"^\$HOME/([^/]+)/(.+)$", path)
+        if braced:
+            rows.append((braced.group(1), braced.group(2), braced.group(3)))
+        elif plain:
+            rows.append((None, plain.group(1), plain.group(2)))
+    return tuple(rows)
+
+
+def _section(text, heading):
+    """The body of one `## ` section: from its heading to the next `## ` heading."""
+    return text.split(heading, 1)[1].split("\n## ", 1)[0]
+
+
+class TestEntryPointDocs(unittest.TestCase):
+    """The documented entry point, lookup and consent flow match the code (D-12, D-13, D-15)."""
+
+    SKILL_DIR = SCRIPT.parents[1]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.skill_text = (cls.SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        cls.reference_text = (cls.SKILL_DIR / "reference.md").read_text(encoding="utf-8")
+
+    def test_lookup_table_equals_skills_roots(self):
+        self.assertEqual(parse_lookup_table(self.reference_text),
+                         tuple(jev_ladder.SKILLS_ROOTS))
+
+    def test_swapped_rows_break_the_comparison(self):
+        # non-vacuity: rows 3 and 4 (.agents and opencode) swapped must not match the code
+        lines = self.reference_text.splitlines()
+        three = next(i for i, line in enumerate(lines) if line.startswith("| 3 |"))
+        lines[three], lines[three + 1] = lines[three + 1], lines[three]
+        swapped = parse_lookup_table("\n".join(lines))
+        self.assertEqual(len(swapped), len(jev_ladder.SKILLS_ROOTS))
+        self.assertNotEqual(swapped, tuple(jev_ladder.SKILLS_ROOTS))
+
+    def test_reference_sections_exist_once(self):
+        found = re.findall(r"^## (Installed-skill lookup|Ladder output|Second opinion)$",
+                           self.reference_text, re.M)
+        self.assertEqual(sorted(found), ["Installed-skill lookup", "Ladder output",
+                                         "Second opinion"])
+
+    def test_skill_md_names_the_entry_point_forms(self):
+        callers = _section(self.skill_text, "## Callers (other skills and hooks)")
+        for needle in ("scripts/jev_review.py", "`ladder", "`detect`", "consent grant",
+                       "reference.md", "Installed-skill lookup", "invalid choice",
+                       "re-run the ai-kit installer"):
+            self.assertIn(needle, callers)
+
+    def test_consent_is_asked_in_the_skill_not_by_callers(self):
+        consent = _section(self.skill_text, "## Consent (asked here, never by the caller)")
+        for needle in ("consent_required_for_remote", "host", "summaries only, never code or "
+                       "secrets", "consent revoke <backend>", "consent grant <backend>",
+                       "consent_used"):
+            self.assertIn(needle, consent)
+
+    def test_ladder_example_runs_through_the_client(self):
+        blocks = re.findall(r"```[^\n]*\n(.*?)```", self.skill_text, re.S)
+        block = next(text for text in blocks if "ladder" in text)
+        self.assertIn("python3 -B scripts/jev_review.py ladder", block)
+        payload = block.split("<<'JSON'\n", 1)[1].split("\nJSON", 1)[0]
+        home = Path(tempfile.mkdtemp(prefix="ai-kit-p29-"))
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        env = {"HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config"),
+               "XDG_STATE_HOME": str(home / ".local" / "state"),
+               "PATH": os.environ.get("PATH", ""), "GSD_PATH_JEV": "1",
+               "GSD_PATH_JEV_TIMEOUT_SECONDS": "5", "JEV_LAYA_URL": closed_port_url()}
+        out = subprocess.run([sys.executable, "-B", str(SCRIPT), "ladder"], input=payload,
+                             capture_output=True, text=True, check=False, env=env, cwd=home,
+                             timeout=120)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        result = json.loads(out.stdout)
+        self.assertIn("items", result)
+        self.assertEqual(result["items"]["c1"]["decided_by"], "own_reasoning")
+
+    def test_unknown_subcommand_exits_two_with_invalid_choice(self):
+        # The older-copy case SKILL.md names: an entry point without `ladder` rejects it with
+        # argparse's `invalid choice`, exit 2; this pins that the current client does the same.
+        out = subprocess.run([sys.executable, "-B", str(SCRIPT), "bogus-command"],
+                             capture_output=True, text=True, check=False, timeout=60)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("invalid choice", out.stderr)
+
+
 TABLE_SOURCE = '''TABLE = (
     {
         "name": "laya",

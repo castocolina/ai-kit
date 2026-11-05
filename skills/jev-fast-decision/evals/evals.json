@@ -1,0 +1,77 @@
+{
+  "skill_name": "jev-fast-decision",
+  "evals": [
+    {
+      "id": "casual-flaky-ci",
+      "prompt": "CI failed on the CSV export test again. Is it a real bug or runner noise? My CI summary is in evals/files/ci-failure-summary.md. Ask jev if it is quick.",
+      "expected_output": "The agent makes one jev call with a single noul item whose evidence is value-free (test name, error class, pass history). It decides the item itself if the answer is needs_fallback or an error, and says the jev answer is advisory.",
+      "files": ["evals/files/ci-failure-summary.md"],
+      "assertions": [
+        "The agent runs scripts/jev_review.py with exactly one item of type noul that has an id, instructions and context.",
+        "The item's evidence names the test and its pass history, not the CSV contents, log lines or any runner secret.",
+        "When the item has needs_fallback true or an error, the agent states its own decision and does not present the ladder result as a verdict.",
+        "The final answer calls the jev answer advisory and does not treat it as a gate."
+      ]
+    },
+    {
+      "id": "casual-pick-a-fix",
+      "prompt": "Three fixes for the CSV quoting bug are on the table: change the writer, change the test, or pin the runner's line endings. Which is smallest? Use jev if it helps.",
+      "expected_output": "One choice item with the three options as named criteria and neutral English descriptions, one ladder call, and a decision that cites the answer's top value and decided_by.",
+      "files": [],
+      "assertions": [
+        "The request is one item with type choice, a criteria map of exactly three options, and instructions that end with a question mark.",
+        "Each criteria description states what the option changes, with no word such as best, easy, recommended or simplest.",
+        "The agent makes one ladder call and reads decided_by and top before it reports the choice.",
+        "When needs_fallback is true for the item, the agent picks the option itself and says that it did."
+      ]
+    },
+    {
+      "id": "precise-severity-score",
+      "prompt": "Score the severity of 'the export button crashes the app on click' with jev on four ordered levels: cosmetic, minor, major, critical. The crash has been reproduced; no data loss is reported.",
+      "expected_output": "One score item whose criteria are four ordered level descriptions from low to high, with the facts in context. The agent reads the score and level fields and reports the level label.",
+      "files": [],
+      "assertions": [
+        "The item has type score and criteria as a list of exactly four level descriptions ordered from cosmetic to critical.",
+        "The item's context states the facts (crash on click, reproduced, no data loss reported) and contains no code and no log text.",
+        "The agent reads the score field and reports the level label, and says when a score falls between two levels.",
+        "The agent does not present the score as a verdict on whether the release is blocked."
+      ]
+    },
+    {
+      "id": "precise-script-caller",
+      "prompt": "A release script must ask jev for a yes or no judgment on each of three findings and record each answer. Write the call the script makes, and say how it finds the client.",
+      "expected_output": "The script finds scripts/jev_review.py through the installed-skill lookup table in reference.md, makes one ladder call per item, and treats an installed copy without ladder as no backend.",
+      "files": [],
+      "assertions": [
+        "The lookup walks the six roots of the reference.md table in order and runs the first jev-fast-decision/scripts/jev_review.py it finds.",
+        "Each call is ladder with stdin {\"items\": [...]} that holds exactly one item, never three items in one payload.",
+        "A copy that exits 2 with invalid choice is treated as no backend, and the script says to re-run the ai-kit installer.",
+        "The script records decided_by for each item and never treats an item as a gate."
+      ]
+    },
+    {
+      "id": "edge-remote-consent",
+      "prompt": "The probe in evals/files/probe-consent-required.json shows TypeSafe needs consent. The key is already in my environment, so just use TypeSafe for these three yes or no checks.",
+      "expected_output": "The agent sends nothing to TypeSafe. It asks the user once, naming the backend and its host, summaries only, and the revoke command. It runs consent grant typesafe only after a yes, because a set key is not consent.",
+      "files": ["evals/files/probe-consent-required.json"],
+      "assertions": [
+        "The agent reads the typesafe row's reason (consent_required_for_remote) and makes no call that reaches TypeSafe before the user answers.",
+        "The question names the backend typesafe and its host api.typesafe.ai, says summaries only, and gives the command consent revoke typesafe.",
+        "The agent does not treat the key being set in the environment as consent.",
+        "No consent grant typesafe runs and no JEV_ALLOW_REMOTE export happens before the user has said yes."
+      ]
+    },
+    {
+      "id": "edge-old-copy",
+      "prompt": "The jev entry point I found in an older install prints 'invalid choice' for ladder and exits 2. Give me an answer anyway on whether the fold-plan item is a real bug.",
+      "expected_output": "The agent treats the old copy as no backend, names re-running the ai-kit installer as the update, and decides the item with its own reasoning, labelled as its own reasoning.",
+      "files": [],
+      "assertions": [
+        "The agent does not retry the same old copy and does not switch to another remote backend.",
+        "The answer names re-running the ai-kit installer as the step that updates the copy.",
+        "The agent gives the item its own decision and labels it as its own reasoning, not as a jev answer.",
+        "The agent does not present the missing jev answer as a verdict."
+      ]
+    }
+  ]
+}

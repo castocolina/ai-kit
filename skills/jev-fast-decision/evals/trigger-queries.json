@@ -1,0 +1,22 @@
+[
+  {"query": "Quick yes or no from jev: is this failing export test a real regression or just runner noise? The CI summary is pasted below.", "should_trigger": true},
+  {"query": "Can you ask jev which of these three fix options is the smallest? I do not want to spend a full reasoning pass on it.", "should_trigger": true},
+  {"query": "Use the fast jev client to score how severe this crash on save is on a four level scale, from cosmetic to critical.", "should_trigger": true},
+  {"query": "Screen this finding against the criterion that it breaks the export path, and tell me what jev answers for it.", "should_trigger": true},
+  {"query": "Run a quick typed judgment through the local Laya backend on whether the migration note is accurate: yes or no.", "should_trigger": true},
+  {"query": "Ask TypeSafe to pick between the two naming options for this helper, and ask me for consent first if it needs it.", "should_trigger": true},
+  {"query": "I need a cheap second opinion from the local Laya backend on whether the README claim matches what the code does.", "should_trigger": true},
+  {"query": "Get a rubric score from jev for how risky this schema change is: low, medium, high, or unknown.", "should_trigger": true},
+  {"query": "Before I decide, check with the shared jev ladder whether the flaky test looks like an environment problem.", "should_trigger": true},
+  {"query": "Can jev tell me which of these four error messages is the real root cause? Pick one of the named options.", "should_trigger": true},
+  {"query": "Help me build TypeSafe structured outputs into my Node app so the API returns typed JSON for each order.", "should_trigger": false},
+  {"query": "Refactor this Python module so the parser and the printer live in separate files without changing behavior.", "should_trigger": false},
+  {"query": "Review this implementation plan document and tell me which steps are missing acceptance criteria.", "should_trigger": false},
+  {"query": "Configure the cross-AI reviewers in my project so codex and opencode both review every plan I write from now on.", "should_trigger": false},
+  {"query": "Which GSD model profile should I pick for the planner and the executor on my current subscription?", "should_trigger": false},
+  {"query": "Write a conventional commit message for these staged changes that adds the export button and its unit tests.", "should_trigger": false},
+  {"query": "Read the Laya server source and explain how its HTTP handler validates a request body, for my own notes.", "should_trigger": false},
+  {"query": "Add a new endpoint to the TypeSafe SDK wrapper in my backend, with request validation and a unit test for it.", "should_trigger": false},
+  {"query": "Fix the off-by-one bug in the pagination helper and add a regression test that covers the last page.", "should_trigger": false},
+  {"query": "Summarize what changed in the last three commits on this branch for the release notes I am drafting.", "should_trigger": false}
+]
