@@ -7,6 +7,7 @@ flow_record.render: first line `flow <command> <unit>: <branch>`, last `outcome:
 """
 
 import flow_git
+import flow_mvp
 import flow_pr
 import flow_stack
 from flow_record import (
@@ -200,20 +201,46 @@ def _publish(repo, settings, record, entry, unit):
     new_tip = flow_git.rev(repo, f"refs/heads/{unit.branch}")
     if new_tip is None:
         raise FlowError("git_error", f"branch {unit.branch} does not resolve")
-    if entry["pushed"] == new_tip:
-        return "done", []
     if not consented(repo):
+        if entry["pushed"] == new_tip:
+            return "nothing to do", ["nothing to push"]
         entry["pending"] = new_tip
         return "skipped (no consent)", [f"skipped: {unit.id} push {unit.branch}"]
+    notes = []
+    if unit.mvp:
+        try:
+            outcome, mvp_notes = flow_mvp.fast_forward(repo, settings, record, entry, unit)
+        except FlowError as exc:
+            if exc.reason != "mvp_below_unmerged":
+                raise
+            notes.append(f"{exc.reason}: {exc.detail}; opening a draft PR instead")
+        else:
+            entry["pushed"], entry["pending"] = new_tip, None
+            return outcome, mvp_notes
+    if entry["pushed"] == new_tip:
+        return "nothing to do", [*notes, "nothing to push"]
     flow_git.push(repo, settings, record, [(unit.branch, entry["pushed"], None)])
     entry["pushed"] = new_tip
     entry["pending"] = None
-    notes = [f"pushed {unit.branch} at {new_tip[:12]}"]
+    notes.append(f"pushed {unit.branch} at {new_tip[:12]}")
     if entry["pr"] is None:
-        entry["pr"] = flow_pr.open_draft(repo, settings, unit, entry, record)
-        if entry["pr"] is not None:
-            notes.append(f"draft PR {entry['pr']}")
+        entry["pr"], pr_notes = flow_pr.ensure_pr(repo, settings, record, unit, entry)
+        notes.extend(pr_notes)
+    else:
+        flow_pr.update_pr(repo, settings, unit, entry)
+        notes.append(f"PR {entry['pr']} text updated")
     return "done", notes
+
+
+def _not_ready_below(record, unit_id):
+    """Ids of the unmerged stacked units recorded below this unit that are not ready yet."""
+    below = []
+    for entry in record["units"]:
+        if entry["id"] == unit_id:
+            break
+        if entry["kind"] == "stacked" and entry["state"] not in ("ready", "merged"):
+            below.append(entry["id"])
+    return below
 
 
 def _ready(args, unit):
@@ -226,6 +253,9 @@ def _ready(args, unit):
         return lines, "nothing to do"
     if entry["state"] != "finished":
         raise FlowError("signal_order", "checkpoint --final must come before ready")
+    below = _not_ready_below(record, entry["id"])
+    if below:
+        raise FlowError("signal_order", f"unit {below[-1]} below must be ready first")
     signals = getattr(args, "signals", (None, None))
     if signals[1] is False:
         raise FlowError("not_verified", "phase verification has not passed")
