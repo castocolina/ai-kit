@@ -104,6 +104,11 @@ mechanism; if not, STOP and tell the user (nothing to delegate to). Follow its o
 (workspace, ledger, plan read, pre-flight scan). `$CWD`, `$PLAN_FILE`, `$TASK_N`, and `$BRIEF_FILE`
 are values it already holds at each task's implementer dispatch — read them, never invent them.
 
+Before the first task, after the Task paths block prints `SCALARS`, record the start commit once (later
+tasks keep it, so earlier commits stay outside the fold range):
+`[ -n "$FOLD_BASE" ] || printf 'FOLD_BASE=%s\n' "$(git -C "$CWD" rev-parse HEAD)" | tee -a "$SCALARS"`.
+If the plan's last `### Task` does not name `ai-kit-commit-fold`, add a final todo `Fold the plan's commits (ai-kit-commit-fold)` to subagent-driven-development's task list; never edit the plan file.
+
 ## Task paths (the first action for every task)
 
 Run once per task, before the wake block: it computes the task's paths, checks for a resume
@@ -280,7 +285,11 @@ The runner fails closed as `dispatch_unavailable` (a `real_error` stop) only whe
 Whichever mode Step 3 used, subagent-driven-development's "3. Review the task", "4. The fix loop"
 (rounds 1–5), and the final whole-branch review run unmodified on `$REPORT_FILE` and the real
 commits; fix rounds after successful work are separate from dispatch-failure handling. This
-skill's scope ends at Step 3 and never touches review, adjudication, or the ledger.
+skill's scope ends at Step 3 until Step 5 and never touches review, adjudication, or the ledger.
+
+## Step 5: Fold the finished plan (after the final review, before the finishing step)
+
+**MANDATORY: read [`references/fold-step.md`](references/fold-step.md) in full and run its block once the final whole-branch review passes.** A refusal stops the run and shows the report; never move the branch by hand. After `folded` or `nothing to fold`, superpowers' finishing step does not merge, push or open a PR for this unit: ai-kit's unit flow does.
 
 ## Close the session wake
 

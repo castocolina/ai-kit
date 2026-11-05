@@ -1,0 +1,81 @@
+{
+  "skill_name": "ai-kit-spec-execute-superpowers",
+  "evals": [
+    {
+      "id": "casual-run-superpowers-plan",
+      "prompt": "Run this superpowers plan for me under subagent-driven-development, I want the whole thing done. The plan is at evals/files/plan-two-features.md (repo-relative; treat it as docs/superpowers/plans/2026-11-04-demo.md in the checkout).",
+      "expected_output": "The agent probes that superpowers:subagent-driven-development loads, resolves the shim in Step 0, records the scalars, resolves a (runtime, model) pair for each of the two tasks before each implementer dispatch, and reports the run's progress without dispatching a task that has no resolved pair.",
+      "files": [
+        "evals/files/plan-two-features.md"
+      ],
+      "assertions": [
+        "Before the first implementer dispatch, the agent checks that superpowers:subagent-driven-development loads and follows its own Setup.",
+        "The agent resolves the shim path in Step 0 and records SKILL_DIR, SHIM and TOOLS_PY before any dispatch.",
+        "A pair is resolved for Task 1 and for Task 2 before each implementer dispatch, and no task is dispatched without a resolved pair.",
+        "The agent does not edit the plan file while it runs the plan."
+      ]
+    },
+    {
+      "id": "precise-external-cli-pair",
+      "prompt": "The resolved pair for Task 2 of the plan is an external_cli pair, a Codex model that runs outside this session. Dispatch Task 2's implementer to that pair now and tell me what the runner returned.",
+      "expected_output": "The agent sends the implementer prompt through the shim's dispatch-task subcommand and the supervised runner, reads the implementer status from the dispatch result's stdout, and never runs the implementer as a native subagent for this pair.",
+      "files": [],
+      "assertions": [
+        "The implementer for Task 2 is dispatched through the shim's dispatch-task subcommand, not through the host's native subagent tool.",
+        "Before the first dispatch-task call the agent reads the cross-AI caller contract, as the skill requires.",
+        "The implementer status is read from the DISPATCH_RESULT_JSON stdout, never parsed out of the report file."
+      ]
+    },
+    {
+      "id": "precise-fold-after-review",
+      "prompt": "Both tasks of the plan are done and the final whole-branch review passed. The scalar file records FOLD_BASE as the commit before Task 1. Finish the plan's run now.",
+      "expected_output": "The agent reads references/fold-step.md in full, runs its block once with the superpowers form of fold.py using --plan PLAN_FILE and --base FOLD_BASE, relays the five-line report verbatim, and stops at 'outcome: ... folded (inline)' without using superpowers' finishing step to merge, push or open a PR.",
+      "files": [],
+      "assertions": [
+        "The agent reads references/fold-step.md in full before it runs the fold block.",
+        "The fold block runs fold.py with the superpowers form, --plan \"$PLAN_FILE\" and --base \"$FOLD_BASE\", after the final review and before any finishing step.",
+        "The five-line report from fold.py is relayed verbatim, and its last line is the outcome.",
+        "The agent does not merge, push or open a pull request through superpowers' finishing step for this unit."
+      ]
+    },
+    {
+      "id": "edge-plan-without-fold-step",
+      "prompt": "The plan at evals/files/plan-two-features.md has only two feature tasks and no fold step. Start its run under subagent-driven-development and make sure the commits end up folded when it finishes.",
+      "expected_output": "The agent adds a final in-memory todo named Fold the plan's commits (ai-kit-commit-fold) to the task list, leaves the plan file byte-for-byte unchanged, records FOLD_BASE before the first task, and runs the fold at Step 5.",
+      "files": [
+        "evals/files/plan-two-features.md"
+      ],
+      "assertions": [
+        "The agent adds a final todo named Fold the plan's commits (ai-kit-commit-fold) to subagent-driven-development's task list.",
+        "The agent does not edit, rewrite or re-save the plan file to add the fold task.",
+        "FOLD_BASE is recorded before the first task's implementer dispatch, and later tasks keep the recorded value."
+      ]
+    },
+    {
+      "id": "edge-fold-refused",
+      "prompt": "The fold step printed the report in evals/files/fold-refused-report.txt. Finish the run and get the branch pushed for review so the PR can open.",
+      "expected_output": "The agent shows the refusal report and names the dirty_tree reason, asks the user to commit or discard the tracked changes and re-run, changes nothing on the branch, and does not push, merge or open a PR.",
+      "files": [
+        "evals/files/fold-refused-report.txt"
+      ],
+      "assertions": [
+        "The agent shows the five-line refusal report and names the dirty_tree reason in plain words.",
+        "The agent asks the user to commit or discard the tracked changes and then re-run the fold.",
+        "The agent does not push the branch, merge it or open a pull request through the finishing step, and does not move the branch by hand."
+      ]
+    },
+    {
+      "id": "edge-executing-plans-out-of-scope",
+      "prompt": "Run this plan inline in this session with superpowers:executing-plans, I do not want any subagents. Use the plan at evals/files/plan-two-features.md.",
+      "expected_output": "The agent says that ai-kit-spec-execute-superpowers does not apply to superpowers:executing-plans because that skill has no subagent dispatch point to inject a pair into, and does not resolve pairs, dispatch tasks or run the fold step for this run.",
+      "files": [
+        "evals/files/plan-two-features.md"
+      ],
+      "assertions": [
+        "The agent states that this skill is out of scope for superpowers:executing-plans, which runs every task inline.",
+        "The agent does not resolve a (runtime, model) pair or call the shim's dispatch-task for this run.",
+        "The agent does not run the Step 5 fold block for a run it does not own."
+      ]
+    }
+  ]
+}

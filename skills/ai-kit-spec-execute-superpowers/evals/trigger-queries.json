@@ -1,0 +1,22 @@
+[
+  {"query": "run this superpowers plan with subagent-driven-development and pick a runtime and model for each task", "should_trigger": true},
+  {"query": "execute docs/superpowers/plans/2026-11-04-demo.md task by task through subagent-driven-development", "should_trigger": true},
+  {"query": "pick a runtime and model per task while I run my superpowers implementation plan", "should_trigger": true},
+  {"query": "fold the superpowers plan after the review so its commits become one commit per feature", "should_trigger": true},
+  {"query": "after the final review of my superpowers plan, fold the branch into logical commits", "should_trigger": true},
+  {"query": "run the docs/superpowers/plans/ plan under subagent-driven-development with live quota-checked model pairs", "should_trigger": true},
+  {"query": "inject a resolved runtime and model into each implementer dispatch of my superpowers plan", "should_trigger": true},
+  {"query": "execute this superpowers plan and dispatch an external CLI model for the task that needs one", "should_trigger": true},
+  {"query": "carry out the superpowers plan for the auth feature using subagent-driven-development and quota checks", "should_trigger": true},
+  {"query": "finish my superpowers plan run: fold the commits after the final review, then stop before any merge", "should_trigger": true},
+  {"query": "run the plan inline with superpowers:executing-plans, no subagents please", "should_trigger": false},
+  {"query": "execute the GSD phase 12 plans in waves with gsd-execute-phase", "should_trigger": false},
+  {"query": "write a superpowers implementation plan for the new billing feature from this spec", "should_trigger": false},
+  {"query": "review the superpowers plan document for gaps before I start building anything", "should_trigger": false},
+  {"query": "brainstorm a feature for the reporting dashboard before we write any code at all", "should_trigger": false},
+  {"query": "finish the development branch and open a pull request against main for review", "should_trigger": false},
+  {"query": "configure which cross-AI reviewers ai-kit should use for plan review in this repo", "should_trigger": false},
+  {"query": "check my remaining model quota across the CLIs before the big run tomorrow", "should_trigger": false},
+  {"query": "fold the GSD plan 07-02 into logical commits with ai-kit-commit-fold", "should_trigger": false},
+  {"query": "squash my feature branch into one commit before I rebase it onto main", "should_trigger": false}
+]

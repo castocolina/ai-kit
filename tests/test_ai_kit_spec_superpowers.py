@@ -31,7 +31,7 @@ from ai_kit_spec_superpowers import dispatch_injection, task_classification
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
                                  "ai-kit-session-wake"))
-from tests import session_wake_fakes
+from tests import fold_fixtures, session_wake_fakes
 
 
 class TestClassifyTask(unittest.TestCase):
@@ -2806,6 +2806,91 @@ class TestSkillStepZero(unittest.TestCase):
         self.assertEqual(1, proc.returncode, proc.stdout)
         self.assertIn("ai-kit-spec-review is not installed beside", proc.stdout)
         self.assertNotIn("TOOLS_PY=", proc.stdout)
+
+
+class TestFoldStep(unittest.TestCase):
+    """Step 5 (references/fold-step.md): its first bash block, run as documented on the two-feature
+    superpowers fixture, folds the plan above the pre-plan commit and never moves the branch on a
+    refusal (D-03, D-04, D-13)."""
+
+    def setUp(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        self.bash_bin: str = bash_bin
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p29-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        home = self.root / "home"
+        home.mkdir()
+        self.env = fold_fixtures.git_env(home)
+        self.repo, self.pre_plan, _shas = fold_fixtures.superpowers_project(self.root, self.env)
+        fold_fixtures.isolated_fold(self.root)
+        self.skill = self.root / "skills" / "ai-kit-spec-execute-superpowers"
+        self.skill.mkdir()
+        self.scalars = self.root / "superpowers-run-scalars.env"
+        self.scalars.write_text(
+            f"SKILL_DIR={self.skill}\nPLAN_FILE={fold_fixtures.SP_PLAN}\n"
+            f"FOLD_BASE={self.pre_plan}\nCWD={self.repo}\n",
+            encoding="utf-8",
+        )
+        text = (_SUPER_SKILL.parent / "references" / "fold-step.md").read_text(encoding="utf-8")
+        match = re.search(r"```bash\n(.*?)```", text, re.DOTALL)
+        assert match is not None, "fold-step.md has no bash block"
+        self.block = match.group(1).replace(
+            "<SCALARS path printed by the task-paths block>", str(self.scalars))
+
+    def _git(self, *args):
+        return fold_fixtures.run_git(self.repo, self.env, *args).strip()
+
+    def _run(self, env=None):
+        return subprocess.run([self.bash_bin, "-c", self.block], cwd=self.repo,
+                              env=self.env if env is None else env, capture_output=True,
+                              text=True, timeout=300, check=False)
+
+    def test_documented_block_folds_the_two_features_above_the_pre_plan_commit(self):
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertRegex(proc.stdout.strip().splitlines()[-1],
+                         r"^outcome: \S+ folded \(inline\)$")
+        self.assertEqual("2", self._git("rev-list", "--count", f"{self.pre_plan}..HEAD"))
+        self.assertEqual(self.pre_plan, self._git("rev-parse", "HEAD~2"))
+
+    def test_dirty_tracked_file_refuses_and_leaves_the_branch_where_it_was(self):
+        before = self._git("rev-parse", "HEAD")
+        (self.repo / "design.md").write_text("uncommitted\n", encoding="utf-8")
+        proc = self._run()
+        self.assertNotEqual(0, proc.returncode, proc.stdout)
+        self.assertIn("refused dirty_tree", proc.stdout)
+        self.assertEqual(before, self._git("rev-parse", "HEAD"))
+
+    def test_block_stops_with_an_error_when_no_fold_script_is_installed(self):
+        shutil.rmtree(self.root / "skills" / "ai-kit-commit-fold")
+        isolated = dict(self.env)
+        for key in ("CLAUDE_CONFIG_DIR", "CURSOR_CONFIG_DIR", "PI_CODING_AGENT_DIR",
+                    "XDG_CONFIG_HOME"):
+            isolated[key] = str(self.root / "no-host" / key.lower())
+        proc = self._run(env=isolated)
+        self.assertEqual(1, proc.returncode, proc.stdout)
+        self.assertIn("ai-kit-commit-fold (scripts/fold.py) is not installed", proc.stdout)
+
+    def test_fold_step_never_resets_hard_and_keeps_the_unit_out_of_the_finishing_step(self):
+        text = " ".join((_SUPER_SKILL.parent / "references" / "fold-step.md")
+                        .read_text(encoding="utf-8").split())
+        self.assertNotIn("reset --hard", text.lower())
+        self.assertIn("superpowers' finishing step is not used to merge, push or open a PR for "
+                      "this unit", text)
+
+    def test_step_five_sits_between_step_four_and_close_the_session_wake(self):
+        text = _super_text()
+        self.assertLess(text.index("## Step 4:"), text.index("## Step 5: Fold the finished plan"))
+        self.assertLess(text.index("## Step 5: Fold the finished plan"),
+                        text.index("## Close the session wake"))
+
+    def test_step_one_records_fold_base_and_names_the_fold_task(self):
+        text = _super_text()
+        step_one = text[text.index("## Step 1:"):text.index("## Task paths")]
+        self.assertIn("FOLD_BASE", step_one)
+        self.assertIn("ai-kit-commit-fold", step_one)
 
 
 _SUPER_REFS = _SUPER_SKILL.parent / "references"

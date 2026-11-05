@@ -1,0 +1,5 @@
+fold 2026-11-04-demo: refs/heads/feature/demo
+commits: 0 -> 0 (tracked files have uncommitted changes)
+tree: not checked
+tag: none
+outcome: 2026-11-04-demo refused dirty_tree (inline)

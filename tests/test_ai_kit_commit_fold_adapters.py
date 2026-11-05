@@ -25,6 +25,8 @@ from tests.fold_fixtures import (
     run_git,
     superpowers_project,
 )
+from tests.test_ai_kit_commit_fold import write_fake_jev
+from tests.test_jev_fast_decision import closed_port_url
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "skills" / "ai-kit-commit-fold" / "scripts"
@@ -328,6 +330,88 @@ class TestSuperpowersAdapter(CliCase):
         self.assertEqual(proc.returncode, 1)
         self.assertEqual(proc.stdout.splitlines()[-1],
                          "outcome: 2026-11-04-demo refused detached_head (inline)")
+
+
+# The fake jev answers each commit's subject with the feature's candidate id (t1 or t2).
+JEV_TABLE_GSD = {"feat(07-01): add a": "t1", "test(07-01): test a": "t1",
+                 "feat(07-01): add b": "t2", "test(07-01): test b": "t2"}
+JEV_TABLE_SUPERPOWERS = {"feat: add a": "t1", "test: cover a": "t1",
+                         "feat: add b": "t2", "test: cover b": "t2"}
+
+
+def _install_real_jev(root):
+    shutil.copytree(ROOT / "skills" / "jev-fast-decision", root / "skills" / "jev-fast-decision")
+
+
+def _install_fake_jev(table):
+    return lambda root: write_fake_jev(root / "skills", table, root / "calls.log")
+
+
+class TestAdapterJev(CliCase):
+    """SPEC R7 on both framework fixtures: each adapter form reaches the grouping seam. With no
+    backend the rules keep the two features and the note names jev; with a faked answer the
+    grouping is jev and the fake logs one call per commit that touches code."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.gsd = gsd_project(os.path.join(cls.tmp, "jev-gsd"), cls.env, "sequential",
+                              [{"plan": "01", "stems": ("a", "b")}])
+        cls.sp, cls.pre_plan, _ = superpowers_project(os.path.join(cls.tmp, "jev-sp"), cls.env)
+
+    def fold_copy(self, source, install, args):
+        """Run one adapter form on a fresh copy of `source`. `install(root)` places a jev client
+        beside the copied fold skill, or nothing. HOME, XDG and the host config dirs point into
+        the copy's temp root, so the only jev this run can find is the one installed here."""
+        root, repo = self.copy_of(source)
+        fold_py = isolated_fold(root)
+        install(root)
+        env = dict(self.env, HOME=str(root / "home"), XDG_CONFIG_HOME=str(root / "xdg"),
+                   CLAUDE_CONFIG_DIR=str(root / "claude"), CURSOR_CONFIG_DIR=str(root / "cursor"),
+                   PI_CODING_AGENT_DIR=str(root / "pi"), JEV_LAYA_URL=closed_port_url())
+        proc = subprocess.run([sys.executable, str(fold_py), *args, "--repo", str(repo)],
+                              capture_output=True, text=True, env=env, check=False)
+        return proc, repo, root
+
+    def gsd_base(self, repo):
+        """The GSD plan's base: the phase plan commit that sits below the plan's first commit."""
+        return self.git(repo, "rev-list", "-1", "--grep=create phase plan", "HEAD")
+
+    def test_gsd_form_with_no_backend_keeps_the_rules_and_names_jev(self):
+        proc, repo, _root = self.fold_copy(self.gsd, _install_real_jev,
+                                           ["gsd", "--phase", "7"])
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("grouping: rules", proc.stdout.splitlines()[1])
+        self.assertIn("jev: no answer", proc.stdout.splitlines()[1])
+        assert_two_feature_fold(self, repo, self.gsd_base(repo), self.env)
+
+    def test_gsd_form_with_a_faked_answer_groups_by_jev_once_per_commit(self):
+        proc, repo, root = self.fold_copy(self.gsd, _install_fake_jev(JEV_TABLE_GSD),
+                                          ["gsd", "--phase", "7"])
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("grouping: jev", proc.stdout.splitlines()[1])
+        assert_two_feature_fold(self, repo, self.gsd_base(repo), self.env)
+        calls = (root / "calls.log").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(calls), 4)
+
+    def test_superpowers_form_with_no_backend_keeps_the_rules_and_names_jev(self):
+        proc, repo, _root = self.fold_copy(
+            self.sp, _install_real_jev,
+            ["superpowers", "--plan", SP_PLAN, "--base", self.pre_plan])
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("grouping: rules", proc.stdout.splitlines()[1])
+        self.assertIn("jev: no answer", proc.stdout.splitlines()[1])
+        assert_two_feature_fold(self, repo, self.pre_plan, self.env)
+
+    def test_superpowers_form_with_a_faked_answer_groups_by_jev_once_per_commit(self):
+        proc, repo, root = self.fold_copy(
+            self.sp, _install_fake_jev(JEV_TABLE_SUPERPOWERS),
+            ["superpowers", "--plan", SP_PLAN, "--base", self.pre_plan])
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertIn("grouping: jev", proc.stdout.splitlines()[1])
+        assert_two_feature_fold(self, repo, self.pre_plan, self.env)
+        calls = (root / "calls.log").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(calls), 4)
 
 
 if __name__ == "__main__":
