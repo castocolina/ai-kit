@@ -21,14 +21,22 @@ decided provisionally and shown at the end.
 
 ## 0. Set up once per run
 
-1. **Resolve this skill's scripts dir** (`S`) once, and use the printed literal path:
+1. **Resolve this skill's scripts dir** (`S`), the fold skill's `FOLD_PY` and the project root
+   `REPO` once, and use the printed literals:
    ```bash
-   for d in "$(dirname "<absolute path of THIS SKILL.md>")" "$HOME/.claude/skills" "$HOME/.agents/skills" \
-            "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills" "$HOME/.cursor/skills" "$HOME/.pi/agent/skills"; do
+   HERE="$(dirname "<absolute path of THIS SKILL.md>")"
+   ROOTS=("$(dirname "$HERE")" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" "$HOME/.agents/skills" \
+          "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills" "${CURSOR_CONFIG_DIR:-$HOME/.cursor}/skills" \
+          "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/skills")
+   for d in "$HERE" "${ROOTS[@]}"; do
      for c in "$d/scripts" "$d/ai-kit-gsd-spec-discuss/scripts"; do
-       [ -f "$c/phase_range.py" ] && { printf '%s\n' "$c"; break 2; }; done; done
+       [ -f "$c/phase_range.py" ] && { printf 'S=%s\n' "$c"; break 2; }; done; done
+   FOLD_PY=""; for d in "${ROOTS[@]}"; do
+     [ -f "$d/ai-kit-commit-fold/scripts/fold.py" ] && { FOLD_PY="$d/ai-kit-commit-fold/scripts/fold.py"; break; }; done
+   printf 'FOLD_PY=%s\nREPO=%s\n' "$FOLD_PY" "$(git rev-parse --show-toplevel)"
    ```
-   If it prints nothing, **stop the run** (fail closed, like `edge_floor` exit 2).
+   If it prints no `S=` line, **stop the run** (fail closed, like `edge_floor` exit 2). An empty
+   `FOLD_PY` means the fold skill is not installed.
 2. **Resolve gsd-core** with its standard resolver (`references/gsd-run-resolver.md` inside
    the gsd-core install; it finds the repo's own `.claude/gsd-core/bin/gsd-tools.cjs` before any
    user-level install). The workflows dir is `<dir of gsd-tools.cjs>/../workflows/`. No
@@ -93,7 +101,22 @@ Read and execute `<workflows>/spec-phase.md` end-to-end with arguments `N --auto
 or plain `N` (interactive path) (read the
 file; do not delegate to another skill — skill-to-skill calls are unreliable on some hosts).
 
-- Before the phase's first commit, run `fold.py start --phase <N>` (as `python3 "$FOLD_PY" start --phase <N> --repo "$CWD"`, with `$FOLD_PY` found under the installed-skill directories the superpowers skill's `references/fold-step.md` lists). spec-phase has no hook point, so this skill starts the unit itself (D-01). If the fold skill is not installed, say so and continue on the current branch. If `start` runs and its report ends `refused`, or it exits non-zero, show the report and stop before any write.
+- Before the phase's first commit, run `fold.py start --phase <N>` as
+  `python3 <FOLD_PY> start --phase <N> --repo <REPO>` (the §0 step 1 literals). spec-phase has no
+  hook point, so this skill starts the unit itself. Empty `FOLD_PY`: say so and continue on the
+  current branch. Read the report:
+  - `refused no_trunk`: run `git -C <REPO> fetch` once, then re-run `start`. Same as the fold
+    skill's next step for that reason.
+  - Still `refused no_trunk`, or `refused no_remote`: blocks nothing (the work stays local). Append
+    one ledger line `unit flow off for phase <N>: <reason>` (§4), print it, show it again in the
+    end report, and continue on the current branch.
+  - `bad_checkpoint: phase dir not found` (a proposed phase has no directory yet; exit 2): the
+    spec workflow creates the phase directory before it commits. Let it create the directory
+    (uncommitted), then run `start` again; this does not stop the run. If that run still refuses,
+    handle it by the other rows.
+  - Any other refusal (`dirty_tree`, `wrong_parent`, `plan_not_carried`, ...), or a non-zero exit
+    with no report: show the report and stop before any write: stop the whole run, since a later
+    phase stacks on this one.
 - An existing SPEC is reused, as the workflow does.
 - **Live-verify before you write a claim**: installed versions, real config keys, real CLI
   output in a scratch dir. A SPEC sentence from memory is a defect.

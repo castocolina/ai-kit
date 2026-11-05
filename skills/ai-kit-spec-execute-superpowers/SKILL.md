@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-execute-superpowers
-description: Resolves a live-quota-checked (runtime, model) pair for each task of a superpowers implementation plan and injects it at superpowers:subagent-driven-development's implementer-dispatch point, leaving that harness's TDD enforcement, agent identity/resume, task review, fix-loop and final review intact. Use when ai-kit-spec-execute detects a superpowers-generated plan (docs/superpowers/plans/*.md) being run under subagent-driven-development and needs a pair for a task, or when asked to execute or run a superpowers plan that way. Not for superpowers:executing-plans, which runs every task inline and has no subagent-dispatch point to inject into.
+description: Runs a superpowers implementation plan (docs/superpowers/plans/*.md) under superpowers:subagent-driven-development, resolving a live-quota-checked (runtime, model) pair for each task's implementer dispatch (native or external CLI), with quota waits and fix-round escalation; it starts the plan's unit branch before the first task and folds, pushes and readies it after the final review through ai-kit-commit-fold. Use when ai-kit-spec-execute detects a superpowers plan run under subagent-driven-development, or when asked to execute or run a superpowers plan that way, including its per-task model choice. Not for superpowers:executing-plans (inline, no dispatch point) or for folding a branch on its own (ai-kit-commit-fold).
 ---
 
 # ai-kit-spec-execute-superpowers
@@ -104,11 +104,11 @@ mechanism; if not, STOP and tell the user (nothing to delegate to). Follow its o
 (workspace, ledger, plan read, pre-flight scan). `$CWD`, `$PLAN_FILE`, `$TASK_N`, and `$BRIEF_FILE`
 are values it already holds at each task's implementer dispatch — read them, never invent them.
 
-Before the first task, run `fold.py start --plan "$PLAN_FILE" --repo "$CWD"` (the fold skill's `scripts/fold.py`, found the way `references/fold-step.md` finds it). It creates the plan's unit branch on the stack top and checks it out, or reuses it when it already sits there. Gap (D-01): superpowers' own planning commits come before this step, so the unit branch carries this plan's code from Step 1 on; ai-kit owns no hook in superpowers' planning skills. Run `start` before the record below, so the start commit sits on the unit branch.
+Before the first task, start the plan's unit: **MANDATORY: read [`references/start-step.md`](references/start-step.md) in full and run its block once** (`fold.py start --plan`; it handles every refusal). superpowers' planning skills commit the spec and plan before this step; `start` carries those local-only commits onto the unit branch, so they stay in its PR and below `FOLD_BASE`.
 
-Before the first task, after the Task paths block prints `SCALARS`, record the start commit once (later
-tasks keep it, so earlier commits stay outside the fold range):
-`[ -n "$FOLD_BASE" ] || printf 'FOLD_BASE=%s\n' "$(git -C "$CWD" rev-parse HEAD)" | tee -a "$SCALARS"`.
+After the Task paths block prints `SCALARS`, record the start commit once (later tasks keep it):
+`[ -n "$FOLD_BASE" ] || printf 'FOLD_BASE=%s\n' "$(git -C "$CWD" rev-parse HEAD)" | tee -a "$SCALARS"`;
+after a yes to running without the unit flow, also `printf 'UNIT_FLOW=0\n' | tee -a "$SCALARS"`.
 If the plan's last `### Task` does not name `ai-kit-commit-fold`, add a final todo `Fold the plan's commits (ai-kit-commit-fold)` to subagent-driven-development's task list; never edit the plan file.
 
 ## Task paths (the first action for every task)

@@ -87,6 +87,58 @@ def _switch(repo, branch, parent_tip):
     flow_git.run_git(repo, "switch", branch)
 
 
+def _local_only(repo, record, parent_tip, paths=()):
+    """Commits on HEAD above parent_tip that no remote branch and no recorded unit holds."""
+    units = [ref for ref in (f"refs/heads/{item['branch']}" for item in record["units"])
+             if flow_git.rev(repo, ref) is not None]
+    argv = ["rev-list", "--reverse", "HEAD", "--not", parent_tip, "--remotes", *units]
+    return flow_git.run_git(repo, *argv, *(["--", *paths] if paths else [])).split()
+
+
+def _carry(repo, record, unit, start, paths):
+    """Switch to the unit branch (created when new), keeping the local-only commits that touch
+    the plan paths (start --plan / --phase). Returns (report lines, carried commit count).
+
+    Every commit between parent_tip and HEAD is a local-only plan commit: the branch starts at
+    HEAD. Otherwise only the plan commits are cherry-picked onto parent_tip from a clean tree
+    (unrelated local commits stay off the unit); a failed pick is aborted, HEAD restored, the new
+    branch deleted and the start refused.
+    """
+    parent, parent_tip = start
+    if flow_git.rev(repo, f"refs/heads/{unit.branch}") is not None:
+        paths = ()  # an existing branch is reused as it is
+    tracked = [path for path in paths if flow_git.rev(repo, f"HEAD:./{path}") is not None]
+    local = _local_only(repo, record, parent_tip, tracked) if tracked else []
+    if not local:
+        _switch(repo, unit.branch, parent_tip)
+        return [], 0
+    between = flow_git.run_git(repo, "rev-list", f"{parent_tip}..HEAD").split()
+    head = flow_git.head_branch(repo) or flow_git.rev(repo, "HEAD")
+    if flow_git.is_ancestor(repo, parent_tip, "HEAD") and len(between) == len(local):
+        _switch(repo, unit.branch, flow_git.rev(repo, "HEAD"))
+        return [f"carried {len(local)} local commit(s) from {head}: the plan stays"], len(local)
+    if flow_git.run_git(repo, "status", "--porcelain", "--untracked-files=no").strip():
+        raise FlowError("dirty_tree", "commit or discard the working tree changes, then re-run "
+                                      "start (the plan's local commits must be carried)")
+    back = ["switch", head] if flow_git.head_branch(repo) else ["switch", "--detach", head]
+    _switch(repo, unit.branch, parent_tip)
+    try:
+        flow_git.run_git(repo, "cherry-pick", *local)
+    except FlowError as exc:
+        if flow_git.rev(repo, "CHERRY_PICK_HEAD") is not None:
+            flow_git.run_git(repo, "cherry-pick", "--abort")
+        flow_git.run_git(repo, *back)
+        flow_git.run_git(repo, "branch", "-D", unit.branch)
+        raise FlowError(
+            "plan_not_carried",
+            f"cannot cherry-pick the {len(local)} local commit(s) holding the plan onto {parent} "
+            f"({exc.detail}); nothing changed. Show the owner these commands: "
+            f"git switch -c {unit.branch} {parent_tip[:12]}, "
+            f"git cherry-pick {' '.join(sha[:12] for sha in local)}, resolve, then re-run start"
+        ) from exc
+    return [f"carried {len(local)} local commit(s) from {head} by cherry-pick"], len(local)
+
+
 def _run(command, args, body):
     """Run one command body; refusals become a rendered report with exit 1 (2 for bad input)."""
     unit = args.unit
@@ -131,15 +183,16 @@ def _start(args, unit):
             "wrong_parent",
             f"branch {unit.branch} exists and is not on {parent} "
             f"(expected {parent_tip[:12]}, forks from {fork[:12] or 'nothing'})")
-    _switch(repo, unit.branch, parent_tip)
+    carried_lines, carried = _carry(repo, record, unit, (parent, parent_tip),
+                                    getattr(args, "plan_paths", ()))
     record["units"].append({
         "id": unit.id, "kind": unit.kind, "target": unit.target, "branch": unit.branch,
         "parent": parent, "parent_tip": parent_tip, "pr": None, "state": "open",
         "mvp": unit.mvp, "pushed": None, "pending": None, "tags": [], "title": unit.title,
-        "goal": unit.goal, "checkpoints": 0,
+        "goal": unit.goal, "checkpoints": 0, "carried": carried,
     })
     write_record(repo, record)
-    return [*lines, f"started unit {unit.id} on {parent}"], "done"
+    return [*lines, f"started unit {unit.id} on {parent}", *carried_lines], "done"
 
 
 def _guard(args, unit):

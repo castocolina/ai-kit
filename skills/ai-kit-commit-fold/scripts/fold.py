@@ -17,6 +17,7 @@ import argparse
 import dataclasses
 import importlib
 import json
+import os
 import re
 import sys
 
@@ -282,7 +283,7 @@ def _plan_step(args, unit):
 
     def step(merged_refs):
         entry = flow_record.find_entry(flow_record.read_record(args.repo), unit.id)
-        parent_tip = entry["parent_tip"] if entry is not None else None
+        parent_tip = _fold_base(args.repo, entry) if entry is not None else None
         if (args.base is not None and parent_tip is not None
                 and not flow_git.is_ancestor(args.repo, parent_tip, args.base)):
             raise flow_record.FlowError("bad_value", "--base must descend from parent_tip")
@@ -293,6 +294,14 @@ def _plan_step(args, unit):
         return fold_engine.fold(args.repo, checkpoint, fold_group.group_features, "inline")
 
     return step
+
+
+def _fold_base(repo, entry):
+    """The recorded parent tip, or the last local planning commit start carried above it."""
+    carried = entry.get("carried", 0)
+    chain = flow_git.run_git(repo, "rev-list", "--reverse", "--first-parent",
+                             f"{entry['parent_tip']}..refs/heads/{entry['branch']}").split()
+    return chain[carried - 1] if 0 < carried <= len(chain) else entry["parent_tip"]
 
 
 def _attach(args):
@@ -313,10 +322,13 @@ def _attach(args):
         args.unit = _load_contract(args, fold_adapters.gsd_unit(args.repo, args.phase))
         args.fold_step = _phase_step(args, args.unit)
         args.signals = fold_adapters.gsd_signals(args.repo, args.phase)
+        args.plan_paths = (os.path.relpath(fold_adapters.phase_dir(args.repo, args.phase),
+                                           args.repo),)
     else:
         args.unit = _load_contract(args, fold_adapters.superpowers_unit_contract(args.repo,
                                                                                  args.plan))
         args.fold_step = _plan_step(args, args.unit)
+        args.plan_paths = (os.path.relpath(os.path.join(args.repo, args.plan), args.repo),)
 
 
 def _flow(args):
@@ -328,6 +340,7 @@ def _flow(args):
         return 2
     args.adapter_gates = fold_adapters.adapter_gates(args.repo)
     args.unit, args.fold_step, args.signals = None, None, (None, None)
+    args.plan_paths = ()
     if args.command == "restack" and ((args.note and not args.continue_)
                                       or (args.continue_ and args.abort)):
         return _flow_refusal(args.command, "bad_value", "--note needs --continue; not both")

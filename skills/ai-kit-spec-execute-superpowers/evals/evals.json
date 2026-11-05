@@ -41,13 +41,13 @@
     {
       "id": "precise-start-before-first-task",
       "prompt": "The plan is loaded and no task has run yet. The scalar file has no FOLD_BASE. Get the unit ready to run and then start the first task.",
-      "expected_output": "The agent runs fold.py start --plan PLAN_FILE before the first task, reports its flow report, then records FOLD_BASE from the branch tip and starts the task loop. It does not run the checkpoint or ready commands yet.",
+      "expected_output": "The agent runs fold.py start --plan PLAN_FILE before the first task, relays its flow report, checks the plan file is still in the tree, then records FOLD_BASE from the branch tip and starts the task loop. It does not run the checkpoint or ready commands yet.",
       "files": [],
       "assertions": [
         "The agent runs fold.py start --plan \"$PLAN_FILE\" before the first task's implementer dispatch.",
         "The agent records FOLD_BASE after start, so the start commit sits on the unit branch.",
         "The agent does not run fold.py checkpoint or fold.py ready before the final review passes.",
-        "The final answer names the D-01 gap: superpowers' planning commits come before the unit branch starts at Step 1."
+        "The agent checks that the plan file is still in the tree after start, and on a refusal other than no_remote or no_trunk it shows the report and stops before the first task instead of moving the branch by hand."
       ]
     },
     {

@@ -5,9 +5,12 @@ Each class pins one document against the code or the other document it must agre
 non-vacuity case where the check could otherwise pass on empty text.
 """
 
+import os
 import pathlib
 import re
+import subprocess
 import sys
+import tempfile
 import unittest
 
 _REPO = pathlib.Path(__file__).resolve().parent.parent
@@ -94,7 +97,7 @@ class TestUnitContractDoc(unittest.TestCase):
         positions = [text.find(step) for step in steps]
         self.assertTrue(all(pos >= 0 for pos in positions), positions)
         self.assertEqual(positions, sorted(positions))
-        self.assertIn("gap", text)
+        self.assertIn("plan_not_carried", text)
 
 
 _SKILL = _REPO / "skills" / "ai-kit-commit-fold" / "SKILL.md"
@@ -264,10 +267,9 @@ class TestAdapterSkillText(unittest.TestCase):
         # Non-vacuity: the text without the phrase no longer carries it.
         self.assertNotIn(phrase, flat.replace(phrase, ""))
 
-    def test_superpowers_states_the_d01_gap(self):
-        phrase = "planning commits come before this step"
+    def test_superpowers_states_that_start_carries_the_planning_commits(self):
+        phrase = "carries those local-only commits onto the unit branch"
         flat = " ".join(self.sp.split())
-        self.assertIn("D-01", flat)
         self.assertIn(phrase, flat)
         # Non-vacuity: the text without the gap sentence no longer carries it.
         self.assertNotIn(phrase, flat.replace(phrase, ""))
@@ -284,6 +286,46 @@ class TestAdapterSkillText(unittest.TestCase):
                 "fold.py start --phase"),
             -1,
         )
+
+    def test_spec_discuss_goes_on_after_a_non_blocking_refusal(self):
+        flat = " ".join(_spec_section(self.spec).split())
+        self.assertIn("Still `refused no_trunk`, or `refused no_remote`: blocks nothing", flat)
+        self.assertIn("stop the whole run", flat)
+        self.assertNotIn("$CWD", self.spec)
+        self.assertNotIn("fold-step.md", self.spec)
+
+    def test_spec_discuss_fetches_once_then_ledgers_a_no_trunk_refusal(self):
+        flat = " ".join(_spec_section(self.spec).split())
+        needles = ("`refused no_trunk`: run `git -C <REPO> fetch` once, then re-run `start`",
+                   "Append one ledger line `unit flow off for phase <N>: <reason>`",
+                   "show it again in the end report")
+        for needle in needles:
+            self.assertIn(needle, flat)
+        self.assertTrue(_in_order(flat, needles))
+        # Non-vacuity: the old silent wording carries none of them.
+        self.assertNotIn(needles[0], flat.replace(needles[0], ""))
+
+    def test_spec_discuss_handles_a_proposed_phase_without_a_directory(self):
+        flat = " ".join(_spec_section(self.spec).split())
+        self.assertIn("`bad_checkpoint: phase dir not found`", flat)
+        self.assertIn("then run `start` again; this does not stop the run", flat)
+        self.assertLess(flat.index("phase dir not found"), flat.index("Any other refusal"))
+
+    def test_spec_discuss_setup_block_prints_fold_py_and_repo(self):
+        text = self.spec[self.spec.index("Resolve this skill's scripts dir"):]
+        match = re.search(r"```bash\n(.*?)```", text, re.DOTALL)
+        assert match is not None, "no setup block"
+        block = "\n".join(line[3:] for line in match.group(1).splitlines()).replace(
+            "<absolute path of THIS SKILL.md>", str(_SPEC_DISCUSS))
+        with tempfile.TemporaryDirectory() as home:
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": home}
+            proc = subprocess.run(["bash", "-c", block], cwd=_REPO, env=env, text=True,
+                                  capture_output=True, check=False, timeout=60)
+        lines = dict(line.split("=", 1) for line in proc.stdout.splitlines())
+        self.assertEqual(lines["S"], str(_SPEC_DISCUSS.parent / "scripts"), proc.stderr)
+        self.assertEqual(lines["FOLD_PY"],
+                         str(_REPO / "skills" / "ai-kit-commit-fold" / "scripts" / "fold.py"))
+        self.assertEqual(lines["REPO"], str(_REPO))
 
 
 if __name__ == "__main__":

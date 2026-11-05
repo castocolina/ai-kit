@@ -1,14 +1,16 @@
 ---
 name: ai-kit-commit-fold
-description: "Folds a finished GSD or superpowers plan's commits into one commit per logical feature by one written policy, and runs the unit flow: start a unit branch, push its checkpoints, mark its PR ready, restack a stack, make a hotfix, run the merge chain, ask for push consent. Use when a finished plan should become one commit per logical feature, to start a unit branch, push a checkpoint, mark a PR ready, restack, hotfix, run the merge chain, ask for push consent, or install the GSD hooks. Not for squashing a branch or interactive rebases."
+description: "Folds a finished GSD or superpowers plan's commits into one commit per logical feature (backup tag, tree-equality check), and runs ai-kit's unit flow for stacked phase branches: start a unit branch, fold and push its checkpoints under push consent, mark its draft PR ready, restack, start a hotfix unit, run the owner's merge chain, install the GSD hooks. Use when a plan's task commits should be regrouped or tidied into feature commits, or when a GSD phase or superpowers plan in a repo using the unit flow needs its branch started, pushed, readied, restacked or merged, even without the word fold. Not for squashing a branch, interactive rebases, a plain git push or gh pr create outside a recorded unit, or an ordinary hotfix commit."
 ---
 
 # ai-kit-commit-fold
 
 Folds the commits of one finished plan into one commit per logical feature, and runs the unit flow
-that pushes a unit's checkpoints and opens its PR. The rules live in `references/folding-policy.md`:
-read it before folding by hand. The unit contract and the adapters are in
-`references/unit-contract.md` and `references/adapter-guide.md`. This file does not restate the policy.
+that pushes a unit's checkpoints and opens its PR. Every fold goes through `scripts/fold.py`; the
+rules live in `references/folding-policy.md`, read to explain a grouping, never to fold by hand.
+When a flow report ends `refused <reason>` and the reason is in no table below, or when writing a
+checkpoint file, read `references/unit-contract.md`. Read `references/adapter-guide.md` only when
+wiring a planning system other than GSD or superpowers. Load neither for a plain fold.
 
 ## Run the fold
 
@@ -75,6 +77,20 @@ The stack and settings commands:
   read or set the remote, the target branches and the project's gates.
 - `fold.py consent grant [--add-exclude] | revoke | status`: push consent. See Push consent.
 
+A refused flow command changed nothing. Next steps for the common reasons:
+
+| Reason | Next step |
+|--------|-----------|
+| `settings_not_ignored` | `.aikit/flow.json` is not ignored. Ask the owner: `fold.py consent grant --add-exclude`, or `.aikit/` in `.gitignore`. |
+| `no_remote` | The settings remote is not configured. Ask which remote (`fold.py settings set --remote NAME`), or work on without the flow. |
+| `no_trunk` | The target has no remote-tracking ref. `git fetch` the remote, then re-run. |
+| `wrong_parent` | The branch left its recorded parent. Show the owner; never move it by hand. |
+| `stale_lease` | The remote branch moved since the flow's push. Show the owner; never force. |
+| `plan_not_carried` | Stop and show the owner the commands the report prints; never run them yourself. After the owner carries the commits, re-run `start`. |
+| `restack_pending` | Run `fold.py restack --continue` or `--abort` first. |
+| `chain_locked` | Another merge chain is running. Wait; never delete the lock. |
+| `branch_in_worktree` | Another worktree holds that branch. Ask the owner to switch it away. |
+
 ## Push consent
 
 The flow pushes branches and opens PRs only with push consent, which is granted once per repository.
@@ -82,7 +98,7 @@ The flow pushes branches and opens PRs only with push consent, which is granted 
 1. Before the first push, ask the owner once. Name what is pushed (the unit branches, to the remote,
    with their PRs) and the revoke command, `fold.py consent revoke`.
 2. Never grant push consent yourself. Run `fold.py consent grant` only after the owner says yes.
-   `--add-exclude` also ignores the settings file; use it only when the owner asks.
+   `--add-exclude` also adds `.aikit/` to `.git/info/exclude`; use it only when the owner asks.
 3. Without push consent the flow still folds locally and lists each skipped push as
    `skipped: <unit> push <branch>`; the outcome is `skipped (no consent)`. When push consent is
    granted later, the skipped checkpoints are pushed in stack order.
@@ -143,7 +159,9 @@ report to the owner.
 ## Missed folds
 
 A GSD hook can be skipped. Phase verification runs `fold.py status --phase N` (read-only: it lists
-each plan as folded, unfolded or unfinished). To fold an unfolded plan by hand, run `gsd --phase N`.
+each plan as folded, unfolded or unfinished). For a phase with a started unit, fold an unfolded plan
+with `gsd-tools ai-kit-fold checkpoint --phase N`: only `checkpoint` pushes under push consent and,
+once every plan has its SUMMARY, marks the unit finished. Use `fold.py gsd --phase N` only where no unit was started.
 
 ## Grouping
 
@@ -153,7 +171,7 @@ grouping decides. Nothing needs configuring.
 
 ## NEVER
 
-- Never move a branch by hand after a refusal.
+- Never move a branch or run a printed carry or cherry-pick command after a refusal; the owner decides, because the flow records each unit's parent tip and a hand move breaks it.
 - Never fold the base branch or a branch whose PR has merged.
 - Never push without push consent.
 - Never force-push by hand; the flow pushes with an explicit lease.

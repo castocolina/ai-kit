@@ -31,6 +31,9 @@ if [ -z "$FOLD_PY" ]; then
   printf 'ERROR: ai-kit-commit-fold (scripts/fold.py) is not installed -- STOP and tell the user\n'
   exit 1
 fi
+if [ "${UNIT_FLOW:-1}" = 0 ]; then  # Step 1 ran without the unit flow: fold only, no push, no PR
+  python3 "$FOLD_PY" superpowers --plan "$PLAN_FILE" --base "$FOLD_BASE" --repo "$CWD"; exit $?
+fi
 python3 "$FOLD_PY" checkpoint --plan "$PLAN_FILE" --base "$FOLD_BASE" --final --repo "$CWD" || exit $?
 python3 "$FOLD_PY" ready --plan "$PLAN_FILE" --repo "$CWD"
 exit $?
@@ -49,7 +52,8 @@ exit $?
   fold skill's `SKILL.md`, "Read the report", lists what to tell the user for each one, and
   `references/unit-contract.md` lists the flow's reason codes) and stop the run. Never move the
   branch by hand. A refused `ready` leaves the PR a draft.
+- With `UNIT_FLOW=0` (Step 1's start was refused `no_remote` or `no_trunk` and the user chose to
+  go on), the block folds with `fold.py superpowers --plan` and runs no `ready`; nothing is pushed.
 - superpowers' finishing step is not used to merge, push or open a PR for this unit. A plan run
   inline, without this skill, follows the same three commands: `fold.py start --plan`, then
   `fold.py checkpoint --plan` with `--base` and `--final`, then `fold.py ready --plan`.
-</content>

@@ -2868,6 +2868,14 @@ class TestFoldStep(unittest.TestCase):
         self.assertEqual("2", self._git("rev-list", "--count", f"{self.pre_plan}..HEAD"))
         self.assertEqual(self.pre_plan, self._git("rev-parse", "HEAD~2"))
 
+    def test_unit_flow_off_folds_with_the_plain_form_and_runs_no_ready(self):
+        with self.scalars.open("a", encoding="utf-8") as handle:
+            handle.write("UNIT_FLOW=0\n")
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertNotIn("flow ready", proc.stdout)
+        self.assertEqual("2", self._git("rev-list", "--count", f"{self.pre_plan}..HEAD"))
+
     def test_dirty_tracked_file_refuses_and_leaves_the_branch_where_it_was(self):
         before = self._git("rev-parse", "HEAD")
         (self.repo / "design.md").write_text("uncommitted\n", encoding="utf-8")
@@ -2904,6 +2912,52 @@ class TestFoldStep(unittest.TestCase):
         step_one = text[text.index("## Step 1:"):text.index("## Task paths")]
         self.assertIn("FOLD_BASE", step_one)
         self.assertIn("ai-kit-commit-fold", step_one)
+
+
+class TestStartStep(unittest.TestCase):
+    """Step 1 start block (references/start-step.md): unpushed plan kept; no remote refuses."""
+
+    def setUp(self):
+        bash_bin = shutil.which("bash")
+        if bash_bin is None:
+            self.skipTest("bash not found")
+        self.bash_bin: str = bash_bin
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p29.1-start-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        (self.root / "home").mkdir()
+        self.env = fold_fixtures.git_env(self.root / "home")
+        self.repo = fold_fixtures.make_repo(self.root, self.env)
+        fold_fixtures.isolated_fold(self.root)
+        skill = self.root / "skills" / "ai-kit-spec-execute-superpowers"
+        skill.mkdir()
+        text = (_SUPER_SKILL.parent / "references" / "start-step.md").read_text(encoding="utf-8")
+        match = re.search(r"```bash\n(.*?)```", text, re.DOTALL)
+        assert match is not None, "start-step.md has no bash block"
+        self.block = (match.group(1).replace("<Step 0 SKILL_DIR>", str(skill))
+                      .replace("<Step 1 CWD>", str(self.repo))
+                      .replace("<Step 1 PLAN_FILE>", fold_fixtures.SP_PLAN))
+
+    def _run(self):
+        fold_fixtures.commit(self.repo, self.env, {
+            fold_fixtures.SP_PLAN: fold_fixtures.SP_PLAN_TEXT.encode()}, "docs: add plan")
+        return subprocess.run([self.bash_bin, "-c", self.block], cwd=self.root, env=self.env,
+                              capture_output=True, text=True, timeout=300, check=False)
+
+    def test_unpushed_plan_is_carried_onto_the_unit_branch(self):
+        fold_fixtures.make_remote(self.root, self.env, self.repo, github=False)
+        proc = self._run()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("carried 1 local commit(s)", proc.stdout)
+        self.assertTrue((self.repo / fold_fixtures.SP_PLAN).is_file())
+        self.assertEqual("plan/demo-plan", fold_fixtures.run_git(
+            self.repo, self.env, "branch", "--show-current").strip())
+
+    def test_no_remote_refuses_with_the_reason_step_one_handles(self):
+        proc = self._run()
+        self.assertEqual(1, proc.returncode, proc.stdout)
+        self.assertIn("refused no_remote", proc.stdout)
+        guide = (_SUPER_SKILL.parent / "references" / "start-step.md").read_text(encoding="utf-8")
+        self.assertIn("`refused no_remote`", guide)
 
 
 _SUPER_REFS = _SUPER_SKILL.parent / "references"

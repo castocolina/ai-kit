@@ -17,7 +17,7 @@ sys.path.insert(0, str(_REPO))
 
 from tests import fold_fixtures as f
 from tests import forge_fakes
-from tests.test_flow_contract import _FlowCase
+from tests.test_flow_contract import BRANCH, _FlowCase
 
 PLAN_BRANCH = "plan/demo-plan"
 
@@ -219,6 +219,95 @@ class TestGsdPhase(_GsdCase):
         self.assertEqual(code, 0, text)
         self.assertFalse(forge_fakes.forge_state(self.state)["prs"][0]["isDraft"])
         self.assertEqual(self.record()["units"][0]["state"], "ready")
+
+
+class TestStartKeepsLocalPlan(_FlowCase):
+    """start --plan / --phase keeps a plan committed only locally (the planning skills commit)."""
+
+    def _log(self, ref):
+        return f.run_git(self.repo, self.env, "log", "--format=%s", ref).splitlines()
+
+    def _local_plan(self, text=f.SP_PLAN_TEXT):
+        f.run_git(self.repo, self.env, "switch", "-q", "main")
+        return self.commit({f.SP_PLAN: text.encode()}, "docs: add plan (local)")
+
+    def test_unpushed_plan_on_main_starts_the_unit_at_head_and_stays_outside_the_fold(self):
+        self.grant()
+        plan_commit = self._local_plan()
+        code, text = self.fold("start", "--plan", f.SP_PLAN)
+        self.assertEqual(code, 0, text)
+        self.assertIn("carried 1 local commit(s) from main", text)
+        self.assertTrue((self.repo / f.SP_PLAN).is_file())
+        self.assertEqual(self.record()["units"][0]["carried"], 1)
+        self.assertEqual(self.ref_sha("HEAD"), plan_commit)
+        self.commit({"a.py": b"a\n"}, "feat: add a")
+        self.commit({"tests/test_a.py": b"ta\n"}, "test: cover a")
+        code, text = self.fold("checkpoint", "--plan", f.SP_PLAN, "--final")
+        self.assertEqual(code, 0, text)
+        self.assertIn("docs: add plan (local)", self._log(PLAN_BRANCH))
+        f.run_git(self.repo, self.env, "merge-base", "--is-ancestor", plan_commit, PLAN_BRANCH)
+
+    def test_unpushed_plan_below_a_stacked_unit_is_cherry_picked_and_main_keeps_it(self):
+        self.grant()
+        code, text = self.fold("start", "--unit", self.unit())
+        self.assertEqual(code, 0, text)
+        self.commit({"x.py": b"x\n"}, "feat: unit a")
+        plan_commit = self._local_plan()
+        code, text = self.fold("start", "--plan", f.SP_PLAN)
+        self.assertEqual(code, 0, text)
+        self.assertIn("by cherry-pick", text)
+        self.assertTrue((self.repo / f.SP_PLAN).is_file())
+        self.assertEqual(self.ref_sha("refs/heads/main"), plan_commit)
+        self.assertEqual(self._log(PLAN_BRANCH)[:2], ["docs: add plan (local)", "feat: unit a"])
+        self.assertEqual(self.record()["units"][1]["parent"], BRANCH)
+
+    def test_unrelated_local_commit_stays_off_the_unit_while_the_plan_is_carried(self):
+        self.grant()
+        f.run_git(self.repo, self.env, "switch", "-q", "main")
+        wip = self.commit({"wip.py": b"wip\n"}, "wip: unrelated local work")
+        plan_commit = self._local_plan()
+        code, text = self.fold("start", "--plan", f.SP_PLAN)
+        self.assertEqual(code, 0, text)
+        self.assertIn("by cherry-pick", text)
+        self.assertEqual(self._log(PLAN_BRANCH)[:2], ["docs: add plan (local)", "chore: base"])
+        self.assertFalse((self.repo / "wip.py").exists())
+        self.assertEqual(self.record()["units"][0]["carried"], 1)
+        self.assertEqual(f.run_git(self.repo, self.env, "branch", "--show-current").strip(),
+                         PLAN_BRANCH)
+        self.assertEqual(self.ref_sha("refs/heads/main"), plan_commit)
+        f.run_git(self.repo, self.env, "merge-base", "--is-ancestor", wip, "main")
+
+    def test_plan_that_cannot_be_carried_cleanly_refuses_and_changes_nothing(self):
+        self.grant()
+        self.fold("start", "--unit", self.unit())
+        self.commit({f.SP_PLAN: b"# Other plan\n"}, "docs: other plan on unit a")
+        self._local_plan()
+        before = self.ref_sha("refs/heads/main")
+        code, text = self.fold("start", "--plan", f.SP_PLAN)
+        self.assertEqual(code, 1, text)
+        self.assertIn("refused plan_not_carried", text)
+        self.assertIn("git cherry-pick", text)
+        self.assertEqual(f.run_git(self.repo, self.env, "branch", "--show-current").strip(),
+                         "main")
+        self.assertEqual(self.ref_sha("refs/heads/main"), before)
+        self.assertEqual(f.run_git(self.repo, self.env, "branch", "--list", PLAN_BRANCH), "")
+        self.assertEqual(len(self.record()["units"]), 1)
+
+    def test_unpushed_gsd_phase_dir_on_main_is_kept_and_the_plan_folds(self):
+        self.grant()
+        f.run_git(self.repo, self.env, "switch", "-q", "main")
+        plan = f.gsd_plan_text("01", ["a", "b"]).encode()
+        self.commit({f"{f.PHASE_DIR}/07-01-PLAN.md": plan}, "docs(07): create phase plan")
+        code, text = self.fold("start", "--phase", "07")
+        self.assertEqual(code, 0, text)
+        self.assertIn("carried 1 local commit(s)", text)
+        self.assertTrue((self.repo / f.PHASE_DIR / "07-01-PLAN.md").is_file())
+        for files, message, _author in f.gsd_plan_commits("01", ["a", "b"]):
+            self.commit(files, message)
+        code, text = self.fold("checkpoint", "--phase", "07")
+        self.assertEqual(code, 0, text)
+        self.assertIn("folded", text)
+        self.assertIn("docs(07): create phase plan", self._log(f.PHASE_BRANCH))
 
 
 class TestFetchPushRace(_PlanCase):

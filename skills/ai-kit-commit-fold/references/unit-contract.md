@@ -1,5 +1,8 @@
 # Unit contract
 
+Read this when a flow report ends `refused <reason>` with a reason `SKILL.md` does not list, when
+writing a unit or checkpoint JSON file, or when reading the stack record.
+
 The unit flow takes work from any planning system through one neutral contract. An adapter
 (a planning system's own hook or script) writes the unit JSON, calls `start`, and sends the
 flow its checkpoints and signals. The flow does not know which system produced them. The
@@ -37,12 +40,47 @@ Optional keys:
 An unknown key, a missing required key or a bad value refuses the call (`unknown_field`,
 `missing_field`, `bad_value`) and changes nothing.
 
+## Start and local planning commits
+
+`start` creates the unit branch on the stack top and checks it out. With `--plan` or `--phase`
+the adapter also names the unit's plan paths. When HEAD has commits that touch those paths and
+that no remote branch and no recorded unit holds (a plan committed only locally), `start` keeps
+them on the unit branch: the branch starts at HEAD when HEAD sits on the stack top with only
+such plan commits between; otherwise only those plan commits are cherry-picked onto the stack
+top, from a clean tree only (`dirty_tree` otherwise), so unrelated local commits stay off the
+unit and out of its PR. A pick that fails is aborted, HEAD is restored, the
+new branch is deleted and `start` refuses `plan_not_carried`, naming the commands for the
+owner to run; the agent stops and shows them. The record keeps their count as `carried`; a plan-file checkpoint without
+`--base` folds from above them, so the planning commits are never folded.
+
 ## Checkpoint JSON (`--checkpoint FILE|-`)
 
-The checkpoint file uses the Phase 29 schema: the commit range the checkpoint folds, the
-feature candidates, the merged refs and the docs paths. Its keys and their meaning are in
-`folding-policy.md`. The flow loads it with `fold_engine.load_checkpoint`. A checkpoint whose
-`ref` is not the unit's branch refuses `ref_mismatch` and changes nothing.
+Read this when writing a checkpoint file for `--checkpoint` or for `fold.py fold`. One JSON
+object; unknown keys are ignored. `fold_engine.load_checkpoint` validates it, and a bad value
+refuses `bad_checkpoint`. A checkpoint whose `ref` is not the unit's branch refuses
+`ref_mismatch`. Neither changes anything.
+
+- `schema`: the integer `1`.
+- `unit`: the id (the pattern of the unit JSON `id`); it names the backup tag.
+- `ref`: `refs/heads/<branch>`, the branch to fold.
+- `base`: the full sha below the first commit to fold.
+- `end`: the full sha of the last commit to fold; defaults to `tip`. Commits in `end..tip` are
+  replayed unchanged on top of the folded ones.
+- `tip`: the full sha of the branch tip that was tested.
+- `base_branch`: the branch never rewritten (its local and `origin/` copies).
+- `merged_refs`: optional full ref names whose commits are never rewritten.
+- `own_merge_subjects`: optional subject prefixes of the merges that fold away; any other
+  merge in the range refuses `foreign_merge`.
+- `candidates`: the features, in order: each has `id`, `title`, `files` (paths) and an optional
+  `summary`. Each commit joins the candidate whose files it touches most.
+- `docs_paths`: optional path prefixes that go into the last folded commit.
+
+```json
+{"schema": 1, "unit": "unit-a", "ref": "refs/heads/demo/unit-a",
+ "base": "<40-hex sha>", "tip": "<40-hex sha>", "base_branch": "main",
+ "candidates": [{"id": "t1", "title": "Feature A", "files": ["a.py", "tests/test_a.py"]}],
+ "docs_paths": ["docs/"]}
+```
 
 ## Signals
 
@@ -53,8 +91,8 @@ The adapter sends three signals, in this order. Each maps to one command:
 2. **Unit finished**: `checkpoint --unit FILE --checkpoint FILE --final`. The same fold and
    push as a checkpoint; the unit is marked `finished`.
 3. **Verification passed**: `ready --unit FILE`. The flow marks the unit's draft PR ready
-   for review. It refuses `not_verified` unless the unit is `finished`, and `signal_order`
-   when the signals arrive out of order.
+   for review. It refuses `signal_order` before `checkpoint --final` or while a unit below is
+   not ready, and `not_verified` while the unit's verification has not passed.
 
 What the flow does at each signal:
 
@@ -74,16 +112,17 @@ What the flow does at each signal:
   list in stack order. Each entry holds the unit's id, kind, target, branch, parent, the
   parent tip at start, the PR number, the state (`open`, `finished`, `ready`, `merged`), the
   `mvp` flag, the remote sha last pushed by the flow, any pending sha left by a skipped push,
-  the backup tags of its folds, the title, the goal and the checkpoint count.
+  the backup tags of its folds, the title, the goal, the checkpoint count and `carried` (the
+  local planning commits `start` kept below the fold range).
 - Settings: `.aikit/flow.json` in the main worktree, ignored by git. Keys: `schema`, `repo`,
   push approval (`consent`), `granted`, `remote` (default `origin`), `targets` and `gates`. `gates` holds the
   project's own commands; each command is one argv list.
 
 ## Push consent
 
-- Pushes and PRs need push consent, granted once per repository: `consent grant`
-  (`--add-exclude` also ignores the settings file). `consent revoke` removes it;
-  `consent status` reads it.
+- Pushes and PRs need push consent, granted once per repository: `fold.py consent grant`
+  (`--add-exclude` also adds `.aikit/` to `.git/info/exclude`, so git ignores the settings
+  file). `fold.py consent revoke` removes it; `fold.py consent status` reads it.
 - Without push consent a checkpoint still folds the branch locally and the report lists
   `skipped: <unit> push <branch>` and `outcome: <unit> skipped (no consent)`. The folded sha
   is kept as the unit's pending sha.
@@ -105,6 +144,7 @@ redacted.
 `restack_needed`, `mvp_below_unmerged`, `mvp_diverged`, `mvp_target_checked_out`, `no_gates`,
 `restack_pending`, `bad_resolution`, `gate_failed`, `unknown_target`, `chain_locked`,
 `base_mismatch`, `branch_in_worktree`, `unrecorded_branch`, `not_hotfix`, `bad_checkpoint`,
+`plan_not_carried`,
 and every fold refusal reason, passed through unchanged.
 
 ## Exit codes
