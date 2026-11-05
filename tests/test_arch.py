@@ -1365,9 +1365,22 @@ def _import_roots(node):
     return [name.split(".")[0] for name in names]
 
 
+_IMPORT_CALLS = {"importlib.import_module", "import_module", "__import__"}
+
+
+def _leading_literal(node):
+    """The literal text a string argument starts with: a plain string, or an f-string's head."""
+    if _is_text(node):
+        return node.value
+    if isinstance(node, ast.JoinedStr) and node.values and _is_text(node.values[0]):
+        return node.values[0].value
+    return None
+
+
 def check_cross_skill_refs(relpath, tree, modules, skills):
     """Ruling 2 / SPEC R9: one hit `(relpath, other skill or "decide.py", line)` per literal
-    reach into another skill: an import of its module, a sys.path call naming its folder, any
+    reach into another skill: an import of its module (also `import_module("pkg.x")` or an
+    f-string starting with the module), a sys.path call naming its folder, any
     string holding `<other>/`, a bare folder name passed to a path join or used in a `/`
     expression, or a decide.py name. Docstrings and the JEV_ENTRY_REL lookup are not read."""
     parts = relpath.split("/")
@@ -1383,6 +1396,11 @@ def check_cross_skill_refs(relpath, tree, modules, skills):
                 owner = modules.get(root)
                 if owner is not None and owner != own:
                     hits.append((relpath, owner, node.lineno))
+        if isinstance(node, ast.Call) and _dotted_name(node.func) in _IMPORT_CALLS and node.args:
+            head = _leading_literal(node.args[0])
+            owner = modules.get(head.split(".")[0]) if head else None
+            if owner is not None and owner != own:
+                hits.append((relpath, owner, node.lineno))
         if _is_text(node):
             if _DECIDE_NAME in node.value:
                 hits.append((relpath, _DECIDE_NAME, node.lineno))
@@ -1443,6 +1461,10 @@ CROSS_SKILL_ALLOWLIST: dict[tuple[str, str], str] = {
         "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/preference_match.py",
         "ai-kit-spec-review",
     ): "imports ai_kit_spec.detection after a sys.path shim onto spec-review (backlog 999.19)",
+    (
+        "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/gsd_catalog.py",
+        "ai-kit-spec-review",
+    ): "importlib.import_module of ai_kit_spec.<name> after a sys.path shim (backlog 999.19)",
     (
         "skills/ai-kit-session-wake/ai-kit-session-wake.py",
         "ai-kit-spec-review",
@@ -1523,6 +1545,10 @@ _CROSS_SKILL_FROZEN = frozenset(
         ),
         (
             "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/preference_match.py",
+            "ai-kit-spec-review",
+        ),
+        (
+            "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/gsd_catalog.py",
             "ai-kit-spec-review",
         ),
         ("skills/ai-kit-session-wake/ai-kit-session-wake.py", "ai-kit-spec-review"),
@@ -2913,6 +2939,12 @@ class TestArchNonVacuity(unittest.TestCase):
             "Path segment": ('p = Path(root, "beta")\n', "beta"),
             "slash expression": ('p = Path(root) / "beta"\n', "beta"),
             "decide.py name": ('p = "scripts/decide.py"\n', "decide.py"),
+            "import_module f-string": (
+                'import importlib\nimportlib.import_module(f"beta_pkg.{name}")\n',
+                "beta",
+            ),
+            "import_module string": ('import_module("beta_pkg.sub")\n', "beta"),
+            "__import__ string": ('__import__("beta_pkg")\n', "beta"),
         }
         for form, (source, other) in forms.items():
             with self.subTest(form=form):
@@ -2927,6 +2959,8 @@ class TestArchNonVacuity(unittest.TestCase):
             "docstring": '"""Mentions beta/scripts only in prose."""\n',
             "relative import": "from . import sibling\n",
             "stdlib import": "import json\n",
+            "own-skill import_module": 'import_module(f"alpha_mod.{name}")\n',
+            "computed import_module": "import_module(name)\n",
         }
         for form, source in clean.items():
             with self.subTest(form=form):

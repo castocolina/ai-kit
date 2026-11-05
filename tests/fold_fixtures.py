@@ -11,11 +11,15 @@ from tests.test_jev_fast_decision import closed_port_url
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKILL = ROOT / "skills" / "ai-kit-commit-fold"
 _SCRUBBED = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
+# Host config roots and the jev client override: a fold run must never reach a real install.
+HOST_CONFIG_VARS = ("CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "CURSOR_CONFIG_DIR",
+                    "PI_CODING_AGENT_DIR", "AI_KIT_JEV_CLIENT")
 
 
 def git_env(home):
     """A copy of os.environ for fixture git calls: no global or system config, fixed identity."""
-    env = {key: value for key, value in os.environ.items() if key not in _SCRUBBED}
+    dropped = _SCRUBBED + HOST_CONFIG_VARS
+    env = {key: value for key, value in os.environ.items() if key not in dropped}
     env.update({
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_SYSTEM": os.devnull,

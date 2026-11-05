@@ -196,6 +196,8 @@ def _commit(repo, sha):
     header, _, message = raw.partition(b"\n\n")
     parents = tuple(line[len(b"parent "):].decode() for line in header.split(b"\n")
                     if line.startswith(b"parent "))
+    if not parents:
+        raise FoldError("foreign_merge", f"{sha[:12]} is a root commit")
     ident = _git(repo, "log", "-1", "--format=%an%x00%ae%x00%ad", "--date=raw", sha)
     name, email, date = ident.decode("utf-8", "replace").rstrip("\n").split("\0")
     diff = _git(repo, "diff-tree", "-r", "-z", "--no-commit-id", "--name-only", "--no-renames",

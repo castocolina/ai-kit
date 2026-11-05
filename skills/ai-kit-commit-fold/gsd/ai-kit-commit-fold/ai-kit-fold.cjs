@@ -27,7 +27,7 @@ function findFold(env = process.env) {
 
 function route({ args, cwd }) {
   const [, verb, flag, phase] = args;
-  if (verb !== 'run' || flag !== '--phase' || !/^\d+(\.\d+)*$/.test(phase || '')) {
+  if (verb !== 'run' || flag !== '--phase' || !/^\d+(\.\d+)?$/.test(phase || '')) {
     process.stderr.write('usage: gsd-tools ai-kit-fold run --phase <N>\n');
     process.exitCode = 2;
     return;

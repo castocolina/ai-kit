@@ -16,14 +16,10 @@ from tests.fold_fixtures import ROOT, SKILL, git_env, gsd_project, run_git
 GSD_TOOLS = ROOT / ".claude" / "gsd-core" / "bin" / "gsd-tools.cjs"
 BUNDLE = SKILL / "gsd" / "ai-kit-commit-fold"
 MODULE = BUNDLE / "ai-kit-fold.cjs"
-HOST_CONFIG_VARS = ("CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "CURSOR_CONFIG_DIR",
-                    "PI_CODING_AGENT_DIR")
 
 
 def _gsd_env(home, gsd_home):
     env = git_env(home)
-    for name in HOST_CONFIG_VARS:
-        env.pop(name, None)
     env.update(GSD_HOME=str(gsd_home), AI_KIT_REFUSE_REAL_HOME="1")
     return env
 
@@ -114,6 +110,11 @@ class TestCapabilityE2E(unittest.TestCase):
         self.assertEqual(lines[-1], "outcome: 07-01 folded (inline)")
         subjects = run_git(self.repo, self.env, "log", "--format=%s", "HEAD").splitlines()
         self.assertEqual(subjects.index("docs(07): create phase plan"), 2)
+
+    def test_fold_run_rejects_a_phase_id_with_three_parts(self):
+        proc = _gsd(self.repo, self.env, "ai-kit-fold", "run", "--phase", "1.2.3", "--raw")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("usage", proc.stderr)
 
     def test_fold_run_without_the_skill_refuses_and_moves_nothing(self):
         self.assertNotEqual(self.missing_run.returncode, 0)

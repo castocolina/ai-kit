@@ -17,6 +17,21 @@ from ai_kit_spec import gsd_tools
 from ai_kit_spec_gsd import cli
 
 
+def _scratch_project(parent=None):
+    """A temp project that owns its `.planning/`: gsd-tools' project-root lookup stops at the
+    first `.planning/` it meets, so without one a temp dir inside a checkout (TMPDIR in the repo)
+    resolves to that checkout's real `.planning/config.json`."""
+    project = tempfile.mkdtemp(dir=parent)
+    os.mkdir(os.path.join(project, ".planning"))
+    return project
+
+
+def _assert_inside(test, path, root):
+    """Fails before any write when gsd-tools resolved a config outside the test's temp root."""
+    real, top = os.path.realpath(path), os.path.realpath(root)
+    test.assertTrue(real.startswith(top + os.sep), f"config resolved outside {top}: {real}")
+
+
 class TestRealGsdTools(unittest.TestCase):
     """Pins the real gsd-core 1.16 contract the undo log assumes, against the checkout's own
     `.claude/gsd-core` on a scratch project. gsd-tools never reads the real ~/.gsd: HOME is
@@ -34,7 +49,7 @@ class TestRealGsdTools(unittest.TestCase):
     def setUp(self):
         if self._SKIPPED_BECAUSE:
             self.skipTest(self._SKIPPED_BECAUSE)
-        self.project = tempfile.mkdtemp()
+        self.project = _scratch_project()
         self.addCleanup(shutil.rmtree, self.project, ignore_errors=True)
         self.home = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
@@ -52,6 +67,7 @@ class TestRealGsdTools(unittest.TestCase):
         self.assertTrue(gsd_tools.ensure_config_exists(self.tools, self.project, run_fn=self._run))
         resolved = gsd_tools.config_path(self.tools, self.project, run_fn=self._run)
         assert resolved is not None
+        _assert_inside(self, resolved, self.project)
         self.assertTrue(resolved.endswith(os.path.join(".planning", "config.json")))
 
         ok, output = gsd_tools.config_set(
@@ -102,9 +118,14 @@ class TestRealGsdConfigSet(unittest.TestCase):
         node = shutil.which("node")
         assert node is not None
         tools = gt.GsdTools(node_bin=node, gsd_tools_path=os.path.abspath(self._TOOLS))
-        with (tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as scratch,
+        scratch = _scratch_project()
+        self.addCleanup(shutil.rmtree, scratch, ignore_errors=True)
+        with (tempfile.TemporaryDirectory() as home,
               mock.patch.dict(os.environ, {"HOME": home})):
                 self.assertTrue(gt.ensure_config_exists(tools, scratch, run_fn=subprocess.run))
+                resolved = gt.config_path(tools, scratch, run_fn=subprocess.run)
+                assert resolved is not None
+                _assert_inside(self, resolved, scratch)
                 config_json = os.path.join(scratch, ".planning", "config.json")
                 stdout = io.StringIO()
                 code = cli.main(["write-workflow-keys", "--cwd", scratch, "--run-id", "r1",
@@ -124,6 +145,31 @@ class TestRealGsdConfigSet(unittest.TestCase):
                 with open(config_json, encoding="utf-8") as f:
                     on_disk = json.load(f)
                 self.assertIs(on_disk["workflow"]["cross_ai_execution"], True)
+
+
+class TestRealGsdRunsStayInTheirTempRoot(unittest.TestCase):
+    """Guard: reruns every real gsd-tools case above with TMPDIR inside this checkout, the setup
+    that once let a scratch run write the repo's own `.planning/config.json` plus a `.bak`."""
+
+    _CASES = ("tests.test_ai_kit_spec_e2e.TestRealGsdTools",
+              "tests.test_ai_kit_spec_e2e.TestRealGsdConfigSet")
+
+    # Each case's _assert_inside fails before its first write, so a pass here means no case
+    # resolved a config outside its temp root (tests never read the real .planning/ itself).
+    @unittest.skipUnless(os.path.isfile(TestRealGsdTools._REAL_GSD_TOOLS), "no checkout gsd-core")
+    @unittest.skipUnless(shutil.which("node"), "node not on PATH")
+    def test_real_gsd_cases_pass_with_tmpdir_inside_the_checkout(self):
+        parent = os.path.join(_REPO_ROOT, "tmp")
+        os.makedirs(parent, exist_ok=True)
+        inner_tmp = tempfile.mkdtemp(prefix="hermetic-guard-", dir=parent)
+        self.addCleanup(shutil.rmtree, inner_tmp, ignore_errors=True)
+        proc = subprocess.run(
+            [sys.executable, "-B", "-m", "unittest", *self._CASES],
+            cwd=_REPO_ROOT, env={**os.environ, "TMPDIR": inner_tmp},
+            capture_output=True, text=True, timeout=120, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        self.assertNotIn("skipped=", proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

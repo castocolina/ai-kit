@@ -202,9 +202,11 @@ def gsd_plans(repo, phase):
 
 def _plan_unit(scope, padded):
     match = _PLAN_SCOPE.fullmatch(scope)
-    if match and padded_phase(match.group(1)) == padded:
-        return f"{padded}-{match.group(2)}"
-    return None
+    if not match:
+        return None
+    if padded_phase(match.group(1)) != padded:
+        return "foreign"  # another phase's plan: never fold it into this one
+    return f"{padded}-{match.group(2)}"
 
 
 def _subject_unit(subject, padded):

@@ -515,6 +515,12 @@ class TestFoldMerges(RepoCase):
                 self.assertEqual(result.reason, "foreign_merge")
                 self.assertEqual(self.state(copy), before)
 
+    def test_root_commit_in_the_range_refuses_instead_of_crashing(self):
+        root = self.git(self.merge_repo, "rev-list", "--max-parents=0", "HEAD").split()[0]
+        with self.assertRaises(FoldError) as caught:
+            fold_engine._commit(self.merge_repo, root)
+        self.assertEqual(caught.exception.reason, "foreign_merge")
+
     def test_tracking_commit_after_end_is_replayed_unchanged(self):
         copy = copy_repo(self.track_repo, self.tmp)
         _first, second, tracking = self.track_shas
@@ -842,6 +848,15 @@ class TestJevGrouping(RepoCase):
         self.assertEqual(proc.stdout.splitlines()[1],
                          f"commits: 4 -> 2 (grouping: rules; {OLD_NOTE})")
         self.assertEqual(folded, JEV_TWO_FOLDED)
+
+    def test_a_timed_out_call_is_named_as_a_timeout(self):
+        def slow(argv, **_kwargs):
+            raise subprocess.TimeoutExpired(argv, 1)
+
+        cp = fold_engine.load_checkpoint(checkpoint_fields("a" * 40, "b" * 40, "b" * 40))
+        commits = [_commit_obj("1" * 40, ["a.py"])]
+        _picks, _assignment, note = fold_group._ask_commits("jev.py", commits, cp, {}, slow)
+        self.assertEqual(note, "jev: timeout for c0")
 
     def test_partition_check_names_each_refusal(self):
         cp = fold_engine.load_checkpoint(checkpoint_fields("a" * 40, "b" * 40, "b" * 40))

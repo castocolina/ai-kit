@@ -1746,6 +1746,24 @@ class TestConsent(_ClientCase):
         self.assertEqual(result["consent_used"], [{"backend": "typesafe", "granted": today}])
         self.assertNotIn("remote_available", result)
 
+    def test_consent_used_lists_only_a_backend_that_answered(self):
+        laya, typesafe, zen = self.remotes(laya_top=0.99)
+        with laya, typesafe, zen:
+            self.wire(laya, typesafe, zen)
+            self.assertTrue(JR.consent_command("grant", "typesafe")["ok"])
+            local_only = self.run_screen(payload(noul_item("a1")))
+        self.assertEqual(typesafe.posts, [])
+        self.assertEqual(local_only.get("consent_used", []), [])
+
+    def test_consent_used_omits_a_backend_that_errored(self):
+        laya, _, zen = self.remotes()
+        with laya, zen, JevStub(model="jev-1.13.0", script=[{"status": 500}]) as typesafe:
+            self.wire(laya, typesafe, zen)
+            self.assertTrue(JR.consent_command("grant", "typesafe")["ok"])
+            result = self.run_screen(payload(noul_item("a1")))
+        self.assertEqual(len(typesafe.posts), 1)
+        self.assertEqual(result.get("consent_used", []), [])
+
     def test_consent_revoke_stops_the_next_run(self):
         # SPEC R6 acceptance: after `consent revoke` the next run makes zero remote requests.
         laya, typesafe, zen = self.remotes()

@@ -1152,12 +1152,15 @@ def _keyed_remotes():
             if row["remote"] and not _remote_allowed(row) and row["key"]()[0]]
 
 
-def _consent_used():
-    """`[{backend, granted}]` for remote rows the gate lets through through a record, so the
-    caller can announce that uz's saved consent — not its own flag — opened the rung."""
+def _consent_used(run):
+    """`[{backend, granted}]` for remote rows that answered an item in this run through a
+    record, so the caller can announce that uz's saved consent — not its own flag — opened
+    the rung. A row that never ran, or only errored, is not listed."""
+    answered = {entry.get("backend") for rungs in run.trail.values() for entry in rungs
+                if "error" not in entry}
     used = []
     for row in TABLE:
-        if row["remote"]:
+        if row["remote"] and row["name"] in answered:
             granted = record_consent(row)
             if granted:
                 used.append({"backend": row["name"], "granted": granted})
@@ -1818,7 +1821,7 @@ def _result(run):
         remotes = _keyed_remotes()
         if remotes:
             outcome["remote_available"] = remotes
-    used = _consent_used()
+    used = _consent_used(run)
     if used:
         outcome["consent_used"] = used
     if not run.answers:

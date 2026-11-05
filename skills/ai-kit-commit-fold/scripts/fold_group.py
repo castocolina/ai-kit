@@ -37,7 +37,9 @@ JEV_QUESTION = ("Which feature does this commit belong to? "
                 "Pick the feature whose files and purpose the commit changes.")
 JEV_CONTEXT_CHARS = 1400
 JEV_TITLE_CHARS = 200
-JEV_TIMEOUT_SECONDS = 40
+# One ladder item's own bound, jev_ladder.py: CALL_TIMEOUT_SECONDS (30) * (1 item + 3) + 10 s
+# client margin. Stdlib-only copy: this skill cannot import the sibling.
+JEV_TIMEOUT_SECONDS = 130
 OLD_CLIENT_NOTE = ("jev: entry point missing; update jev-fast-decision "
                    "(re-run the ai-kit installer)")
 
@@ -247,12 +249,13 @@ def jev_item(commit, candidates, index):
 
 def ask_jev(entry, item, env, run=subprocess.run, timeout=JEV_TIMEOUT_SECONDS):
     """One ladder call for one item. Returns (candidate id, ""), or (None, "old") when the
-    client has no `ladder` entry point, or (None, "no answer") otherwise."""
+    client has no `ladder` entry point, or (None, "timeout") when it ran out of time, or
+    (None, "no answer") otherwise."""
     try:
         proc = run([sys.executable, entry, "ladder"], input=json.dumps({"items": [item]}),
                    capture_output=True, text=True, env=env, timeout=timeout, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return None, "no answer"
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, "timeout" if isinstance(error, subprocess.TimeoutExpired) else "no answer"
     if proc.returncode == 2 and "invalid choice" in (proc.stderr or ""):
         return None, "old"
     try:
@@ -313,7 +316,8 @@ def _ask_commits(entry, commits, cp, env, run):
             continue
         choice, why = ask_jev(entry, jev_item(commit, cp.candidates, index), env, run)
         if choice is None:
-            note = OLD_CLIENT_NOTE if why == "old" else f"jev: no answer for c{index}"
+            note = (OLD_CLIENT_NOTE if why == "old"
+                    else f"jev: {'timeout' if why == 'timeout' else 'no answer'} for c{index}")
             return picks, assignment, note
         picks.append(index_of[choice])
         assignment.append((commit.sha, choice))

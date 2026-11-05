@@ -119,6 +119,9 @@ class TestGsdAdapter(CliCase):
         cls.stray = gsd_project(os.path.join(cls.tmp, "stray"), cls.env, "sequential",
                                 [{"plan": "01", "stems": ("a", "b")}],
                                 stray=(2, {"c.py": b"c\n"}, "feat(07-02): add c"))
+        cls.stray_phase = gsd_project(os.path.join(cls.tmp, "stray-phase"), cls.env, "sequential",
+                                      [{"plan": "01", "stems": ("a", "b")}],
+                                      stray=(2, {"c.py": b"c\n"}, "fix(28-03): patch c"))
         cls.merge_other = merge_scoped_fixture(
             os.path.join(cls.tmp, "merge-other"), cls.env,
             [({"c.py": b"c\n"}, "feat(07-02): add c", None)],
@@ -210,6 +213,14 @@ class TestGsdAdapter(CliCase):
         self.assertEqual(self.git(repo, "rev-parse", "HEAD"), head)
         self.assertEqual(self.git(repo, "status", "--porcelain"), "")
         self.assertEqual(self.git(repo, "tag", "--list", "ai-kit-fold/*"), "")
+
+    def test_commit_of_another_phase_inside_the_run_refuses(self):
+        root, repo = self.copy_of(self.stray_phase)
+        head = self.git(repo, "rev-parse", "HEAD")
+        proc = self.run_cli(root, repo, "gsd", "--phase", "7")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("outcome: 07-01 refused plan_not_contiguous (inline)", proc.stdout)
+        self.assertEqual(self.git(repo, "rev-parse", "HEAD"), head)
 
     def test_merge_back_naming_another_plan_refuses(self):
         root, repo = self.copy_of(self.merge_other)

@@ -17,4 +17,4 @@ Commits already pushed to an unmerged branch may be folded again (FLOW-01, amend
 
 Grouping limit: rule grouping merges features only on a shared changed path or a code file with its `test_<stem>.py`. A feature that depends on a file a later feature adds (an import across features) is not detected, so an intermediate folded commit is not proven to build on its own; only the folded tip's tree is proven (FOLD-4). List such features as one candidate.
 
-Enforcement: FOLD-4, FOLD-5, FOLD-7 and FOLD-8 are enforced by this skill's script. FOLD-6, FOLD-9 and FOLD-10 are enforced by ai-kit's unit flow; they are recorded here so that playbooks carry the whole policy.
+Enforcement: FOLD-4, FOLD-5 and FOLD-7 are enforced by this skill's script. FOLD-8 is enforced for the base branch always; its merged-branch half only when the caller supplies merged refs, and the `gsd` and `superpowers` forms check the base branch only. FOLD-6, FOLD-9 and FOLD-10 are enforced by ai-kit's unit flow; they are recorded here so that playbooks carry the whole policy.
