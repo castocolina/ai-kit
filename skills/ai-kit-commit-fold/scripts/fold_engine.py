@@ -15,7 +15,7 @@ import tempfile
 REASONS = frozenset({
     "bad_checkpoint", "policy_missing", "dirty_tree", "branch_moved", "no_base_branch",
     "range_on_base_branch", "range_on_merged_branch", "foreign_merge", "tree_mismatch",
-    "tag_exists", "git_error",
+    "tag_exists", "git_error", "plan_not_contiguous", "detached_head",
 })
 
 _SCRUBBED = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
@@ -366,12 +366,12 @@ def _check_not_reachable(repo, cp, refs, reason):
 
 
 def _check_merges(repo, cp):
-    """Only GSD's own merge-backs may sit in base..end; each folds away (D-05)."""
+    """Only the checkpoint's own merge-backs may sit in base..end; each folds away (D-05)."""
     for sha in _git(repo, "rev-list", "--merges", f"{cp.base}..{cp.end}").decode().split():
         subject = _git(repo, "log", "-1", "--format=%s", sha).decode("utf-8", "replace").strip()
         if not any(prefix and subject.startswith(prefix) for prefix in cp.own_merge_subjects):
             raise FoldError("foreign_merge",
-                            f"merge {sha[:12]} is not one of GSD's own merge-backs")
+                            f"merge {sha[:12]} is not one of the checkpoint's own merge-backs")
 
 
 def _guard(repo, cp):

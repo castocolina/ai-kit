@@ -657,7 +657,7 @@ class TestReport(unittest.TestCase):
                     for reason in sorted(fold_engine.REASONS)]
         cases = [self._result(), self._result(outcome="nothing_to_fold", after=4, tree="",
                                               tag="", grouping=""), *refusals]
-        self.assertEqual(len(refusals), 11)
+        self.assertEqual(len(refusals), 13)
         for result in cases:
             with self.subTest(outcome=result.outcome, reason=result.reason):
                 self.assertTrue(report_shape_ok(fold_engine.render_report(result)))
