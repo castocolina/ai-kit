@@ -42,7 +42,7 @@
     "security_enforcement": true,
     "security_asvs_level": 1,
     "security_block_on": "high",
-    "cross_ai_execution": true,
+    "cross_ai_execution": false,
     "cross_ai_command": "node .planning/scripts/cross-ai.mjs",
     "cross_ai_timeout": 1800,
     "plan_review_convergence": true,
@@ -90,6 +90,96 @@
     ],
     "gsd-advisor-researcher": [
       "skills/jev-fast-decision"
+    ],
+    "gsd-ai-researcher": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-codebase-mapper": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-code-fixer": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-code-reviewer": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-debugger": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-debug-session-manager": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-doc-synthesizer": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-doc-verifier": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-doc-writer": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-domain-researcher": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-eval-auditor": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-eval-planner": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-executor": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-framework-selector": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-integration-checker": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-intel-updater": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-mempalace-curator": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-nyquist-auditor": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-pattern-mapper": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-phase-researcher": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-plan-checker": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-planner": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-project-researcher": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-research-synthesizer": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-roadmapper": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-security-auditor": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-ui-auditor": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-ui-checker": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-ui-researcher": [
+      "skills/jev-fast-decision"
+    ],
+    "gsd-verifier": [
+      "skills/jev-fast-decision"
     ]
   },
   "claude_md_path": "./AGENTS.md",
@@ -115,7 +205,8 @@
     "gsd-planner": "opus",
     "gsd-code-reviewer": "opus",
     "gsd-plan-checker": "sonnet",
-    "gsd-roadmapper": "opus"
+    "gsd-roadmapper": "opus",
+    "gsd-executor": "haiku"
   },
   "runtime": "claude",
   "resolve_model_ids": false,
