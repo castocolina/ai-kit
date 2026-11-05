@@ -96,6 +96,10 @@ Downstream agents MUST read `29-SPEC.md` before planning or implementing. Requir
   so two features give two commits (SPEC R2 literal). Owner choice (recommended).
 - **D-09: Features that cannot be separated cleanly become one commit, and the report says why** (the fold always
   finishes and never writes an unbuildable commit). Owner choice (recommended).
+  *(amended 2026-11-04, 29 plan review cycle 2: the fold proves only the tip's tree, before and after
+  replay; an intermediate folded commit is not built or tested, and an import across features is not
+  detected. The policy text and 29-06 state this limit. "Never unbuildable" holds for the tip only;
+  needs owner confirmation.)*
 
 ### Fold mechanics and the policy text
 
