@@ -1,0 +1,29 @@
+{
+  "id": "ai-kit-commit-fold",
+  "role": "feature",
+  "version": "0.1.0",
+  "title": "ai-kit commit fold",
+  "description": "Folds each finished plan of a phase into logical-feature commits after every wave.",
+  "tier": "full",
+  "requires": [],
+  "engines": {"gsd": ">=1.6.0"},
+  "runtimeCompat": {"supported": ["*"], "unsupported": []},
+  "skills": [],
+  "agents": [],
+  "hooks": [],
+  "config": {},
+  "commands": [
+    {"family": "ai-kit-fold", "module": "ai-kit-fold.cjs", "router": "route"}
+  ],
+  "steps": [
+    {
+      "point": "execute:wave:post",
+      "ref": {"command": "ai-kit-fold run"},
+      "produces": [],
+      "consumes": [],
+      "onError": "skip"
+    }
+  ],
+  "contributions": [],
+  "gates": []
+}

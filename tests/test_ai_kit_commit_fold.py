@@ -897,5 +897,51 @@ class TestJevGrouping(RepoCase):
         self.assertEqual(folded, JEV_TWO_FOLDED)
 
 
+class TestFoldSkillText(unittest.TestCase):
+    """SPEC R1 (the skill points to the policy and never restates it) and R6 (dispatch to a
+    subagent, with a named inline fallback), pinned in the skill text itself."""
+
+    SKILL_TEXT = SCRIPTS.parent / "SKILL.md"
+    POLICY_TEXT = SCRIPTS.parent / "references" / "folding-policy.md"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.skill = cls.SKILL_TEXT.read_text(encoding="utf-8")
+        cls.policy = cls.POLICY_TEXT.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _points_to_policy(text):
+        return "references/folding-policy.md" in text
+
+    @staticmethod
+    def _restated_lines(text, policy):
+        lines = (line.strip() for line in policy.splitlines())
+        return [line for line in lines if len(line) >= 40 and line in text]
+
+    @staticmethod
+    def _dispatches_with_inline_fallback(text):
+        return "--mode subagent" in text and "--mode inline" in text
+
+    def test_points_to_policy(self):
+        self.assertTrue(self._points_to_policy(self.skill))
+        # non-vacuity: the same text without the pointer fails the check
+        self.assertFalse(self._points_to_policy(self.skill.replace("references/folding-policy.md",
+                                                                   "the policy")))
+
+    def test_does_not_restate_policy(self):
+        self.assertEqual(self._restated_lines(self.skill, self.policy), [])
+        # non-vacuity: one long policy line appended to the skill is found
+        long_line = next(line.strip() for line in self.policy.splitlines()
+                         if len(line.strip()) >= 40)
+        self.assertEqual(self._restated_lines(self.skill + "\n" + long_line + "\n",
+                                              self.policy), [long_line])
+
+    def test_dispatches_subagent_with_inline_fallback(self):
+        self.assertTrue(self._dispatches_with_inline_fallback(self.skill))
+        # non-vacuity: the same text without the inline fallback fails the check
+        self.assertFalse(self._dispatches_with_inline_fallback(
+            self.skill.replace("--mode inline", "")))
+
+
 if __name__ == "__main__":
     unittest.main()

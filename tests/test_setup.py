@@ -1709,6 +1709,7 @@ class TestSyncPiLinks(unittest.TestCase):
         self.assertFalse(os.path.lexists(os.path.join(self.pi, "skills", "other-skill")))
         self.assertEqual(c["linked"], 1)
         self.assertIn("ai-kit-session-wake", setup.PI_SKILLS)
+        self.assertIn("ai-kit-commit-fold", setup.PI_SKILLS)
 
 
 class TestBackupEntry(unittest.TestCase):
