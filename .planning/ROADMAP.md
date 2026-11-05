@@ -107,7 +107,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 2026-11-03; "unknown until research" marks what the phase researcher must locate first.
 
 - [x] **Phase 28: Fast, environment-proof gates** - Commit runs only the covering tests; push runs the full suites fast with fakes only (completed 2026-11-04)
-- [ ] **Phase 29: Logical-commit folding and the shared jev ladder** - Each finished GSD or superpowers plan becomes logical-feature commits; every caller chains jev as a black box
+- [x] **Phase 29: Logical-commit folding and the shared jev ladder** - Each finished GSD or superpowers plan becomes logical-feature commits; every caller chains jev as a black box (completed 2026-11-04)
 - [ ] **Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)** - Stacked branches, a push per plan, chained PRs and an owner-started merge chain
 - [ ] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph sync, graphify rebuild and a changed-symbols brief at every phase boundary
 - [ ] **Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)** - One card per component kind, host-styled status-line panes, config doctor reachable from the wizard
@@ -204,7 +204,41 @@ Plans:
   3. The jev ladder is owned by `jev-fast-decision` and reached through one documented entry point; spec-discuss, the folding step, goal-prompt and the two hooks that use jev chain that skill and still finish when the skill or every decision backend is missing; no caller imports another skill's code or files; skill text treats jev as a black box (ask that skill and follow its SKILL.md; no backend, consent or probe detail; `needs_fallback` or no answer means the rule-based default decides).
   4. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 
-**Plans**: TBD
+**Plans**: 16/16 plans complete
+
+Plans:
+**Wave 1**
+- [x] 29-01-PLAN.md — fold engine tracer: checkpoint in, logical-feature commits out through a temp index, tree proof, backup tag, compare-and-swap; five-line report for every outcome (wave 1)
+- [x] 29-02-PLAN.md — the one folding policy, its doc-contract check, the AGENTS.md pointer and the reset-hard arch rule (wave 1)
+- [x] 29-03-PLAN.md — jev ladder moved into jev-fast-decision: `jev_review.py ladder` and `detect`, decide.py's tests re-pointed (wave 1)
+- [x] 29-04-PLAN.md — precompact and decision-probe hooks find jev through the installed-skill lookup (wave 1)
+- [x] 29-05-PLAN.md — tracked judge procedure and new-rubric baselines of the four changed skills on their unchanged text (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 29-06-PLAN.md — fold engine guards, own merge-backs, replay of later commits, full grouping rules, byte-exact messages (wave 2)
+- [x] 29-07-PLAN.md — goal-prompt chains jev as a black box (wave 2)
+- [x] 29-08-PLAN.md — jev-fast-decision documents its entry point, lookup and consent flow; new-shape evals and the generic evals test (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 29-09-PLAN.md — GSD and superpowers adapters and the status backstop (wave 3)
+- [x] 29-10-PLAN.md — jev proposes the grouping through its entry point; the rules decide when it is absent, silent, old or wrong (wave 3)
+- [x] 29-11-PLAN.md — spec-discuss becomes a black-box jev caller; decide.py deleted (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [x] 29-12-PLAN.md — GSD capability at execute:wave:post, the fold SKILL.md, pi mirror (wave 4)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [x] 29-13-PLAN.md — superpowers adapter folds the finished plan before the finishing step; evals (wave 5)
+- [x] 29-14-PLAN.md — new-shape evals for the fold skill and spec-discuss (wave 5)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+- [x] 29-15-PLAN.md — cross-skill structural rule with a frozen allowlist, lookup drift rule, black-box text test (wave 6)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [x] 29-16-PLAN.md — JDG-04 judge of the five final SKILL.md texts and the verdict (wave 7)
+
+**Cross-cutting constraints:** <!-- gsd:generated -->
+- Skills dirs whose path contains a space are found and run (held-out edge test)
 
 ### Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)
 
@@ -767,7 +801,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 28. Fast, environment-proof gates | 9/9 | Complete    | 2026-11-04 |
-| 29. Logical-commit folding and the shared jev ladder | 0/TBD | Not started | - |
+| 29. Logical-commit folding and the shared jev ladder | 16/16 | Complete    | 2026-11-04 |
 | 29.1. Stacked phase branches, chained PRs and the merge chain | 0/TBD | Not started | - |
 | 30. Phase-boundary index refresh and code-exploration rules | 0/TBD | Not started | - |
 | 30.1. Setup wizard, component cards and host status-line panes | 0/TBD | Not started | - |
@@ -1156,6 +1190,23 @@ together, so the guard reports `3 attempted, 3 executed, 0 skipped`. If the tabl
 curated-config skill first; never widen the prefixes without the check. Found by the Phase 28
 cross-AI review, cycle 3 (2026-11-03).
 **Requirements:** (none yet)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.19: Remove the frozen cross-skill reference allowlist (BACKLOG)
+
+**Goal:** [Captured for future planning] Remove every reference in `tests/test_arch.py`
+`CROSS_SKILL_ALLOWLIST` until both that dict and its frozen set `_CROSS_SKILL_FROZEN` are empty. The
+20 keys at the close of Phase 29 are: the `ai_kit_spec` imports and `sys.path` shims of
+ai-kit-gsd-curated-config, ai-kit-session-wake, ai-kit-spec-execute-gsd and
+ai-kit-spec-execute-superpowers into ai-kit-spec-review; goal-prompt's `WAKE_CLI` and `SPEC_CLI` in
+`gp_host.py`; and the session-wake path join in `tools/hooks/claude_session_wake.py`. Each is
+replaced by the installed-skill lookup, or by vendoring that survives copy installs (DIST-03), and
+its key is deleted from both sets. Found by Phase 29's structural rule (ruling 2, 2026-11-04).
+**Requirements:** DIST-03
 **Plans:** 0 plans
 
 Plans:

@@ -11,7 +11,7 @@
     {
       "number": "29",
       "name": "Logical-commit folding and the shared jev ladder",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "29.1",
@@ -191,8 +191,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (plan phase 29)",
-    "reason": "Phase 2 of 37 — needs a plan"
+    "label": "Advance to the next step (plan phase 29.1)",
+    "reason": "Phase 3 of 37 — needs a plan"
   },
-  "updated_at": "2026-11-04T14:27:57.745Z"
+  "updated_at": "2026-11-05T01:16:31.794Z"
 }

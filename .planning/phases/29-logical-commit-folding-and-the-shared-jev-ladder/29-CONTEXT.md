@@ -99,7 +99,7 @@ Downstream agents MUST read `29-SPEC.md` before planning or implementing. Requir
   *(amended 2026-11-04, 29 plan review cycle 2: the fold proves only the tip's tree, before and after
   replay; an intermediate folded commit is not built or tested, and an import across features is not
   detected. The policy text and 29-06 state this limit. "Never unbuildable" holds for the tip only;
-  needs owner confirmation.)*
+  confirmed by the owner on 2026-11-04.)*
 
 ### Fold mechanics and the policy text
 

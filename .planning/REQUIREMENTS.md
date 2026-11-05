@@ -27,7 +27,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### Commit, push and phase flow
 
-- [ ] **FLOW-01**: At the end of each plan the work is folded into logical-feature commits (a plan with two features
+- [x] **FLOW-01**: At the end of each plan the work is folded into logical-feature commits (a plan with two features
   gives two commits, never one squash per phase); jev proposes the grouping, the agent decides when jev is absent,
   and nothing already pushed is rewritten *(amended 2026-11-03, 29 spec: owner rule — commits already pushed to a phase or plan
   branch whose PR has not merged may be folded again and pushed with `--force-with-lease`; main and any branch
@@ -541,7 +541,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **JEV-05**: jev answers image and bounding-box questions after a TypeSafe spike, with a key and consent; a
   named caller uses it to judge a delivered screen against a supplied mockup, the request limits are recorded as
   live facts, and the Laya capability cell is re-checked.
-- [ ] **JEV-06**: The jev ladder client has a shared home that every classifying skill uses, outside spec-discuss;
+- [x] **JEV-06**: The jev ladder client has a shared home that every classifying skill uses, outside spec-discuss;
   skill text treats jev as a black box: it says only to ask that skill and follow its SKILL.md, carries no backend,
   consent or probe detail, and treats `needs_fallback` or no answer as the rule-based default deciding.
 - [ ] **JEV-07**: A knob in ai-kit's config turns jev classification on or off for every skill; it is asked once
@@ -686,7 +686,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | GATE-03 | Phase 28 | Complete |
 | GATE-04 | Phase 28 | Complete |
 | GATE-05 | Phase 28 | Complete |
-| FLOW-01 | Phase 29 | Pending |
+| FLOW-01 | Phase 29 | Complete |
 | FLOW-02 | Phase 29.1 | Pending |
 | FLOW-03 | Phase 29.1 | Pending |
 | FLOW-04 | Phase 30 | Pending |
@@ -816,7 +816,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | JEV-03 | Phase 34 | Pending |
 | JEV-04 | Phase 54 | Pending |
 | JEV-05 | Phase 54 | Pending |
-| JEV-06 | Phase 29 | Pending |
+| JEV-06 | Phase 29 | Complete |
 | JEV-07 | Phase 34 | Pending |
 | FEAT-01 | Phase 30.1 | Pending |
 | FEAT-02 | Phase 54 | Pending |

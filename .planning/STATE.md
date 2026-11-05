@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 29
-current_phase_name: Logical-commit folding and the shared jev ladder
+current_phase: "29.1"
+current_phase_name: Stacked phase branches, chained PRs and the merge chain
 status: planning
-stopped_at: Phase 28 complete, ready to plan Phase 29
-last_updated: "2026-11-04T14:27:57.734Z"
+stopped_at: Phase 29 complete, ready to plan Phase 29.1
+last_updated: "2026-11-05T01:16:31.785Z"
 last_activity: 2026-11-04
-last_activity_desc: Phase 28 complete, transitioned to Phase 29
-state_head: 1c2e5fcacf2284cb7cf6dda280e75d0c8a71b53d
+last_activity_desc: Phase 29 complete, transitioned to Phase 29.1
+state_head: e29d787679148cb0e07fab497274b458755e8e8c
 progress:
   total_phases: 37
-  completed_phases: 1
-  total_plans: 9
-  completed_plans: 9
-  percent: 3
+  completed_phases: 2
+  total_plans: 25
+  completed_plans: 25
+  percent: 5
 ---
 
 # Project State
@@ -25,22 +25,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 28 — Fast, environment-proof gates
+**Current focus:** Phase 29 — Logical-commit folding and the shared jev ladder
 
 ## Current Position
 
-Phase: 29 — Logical-commit folding and the shared jev ladder
+Phase: 29.1 — Stacked phase branches, chained PRs and the merge chain
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-11-04 — Phase 28 complete, transitioned to Phase 29
+Last activity: 2026-11-04 — Phase 29 complete, transitioned to Phase 29.1
 
-Progress: [░░░░░░░░░░] 3%
+Progress: [█░░░░░░░░░] 5%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 163
+- Total plans completed: 179
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -83,6 +83,7 @@ Progress: [░░░░░░░░░░] 3%
 | 18.1 | 22 | - | - |
 | 19 | 10 | - | - |
 | 28 | 9 | - | - |
+| 29 | 16 | - | - |
 
 **Recent Trend:**
 
@@ -580,6 +581,7 @@ any order, or deferred, without blocking anything else in this milestone.
 |---|-------------|------|--------|-----------|
 | 261102-qrx | spec-discuss interactive path runs discuss with --analyze --all --batch | 2026-11-02 | 8e1bef6 | [261102-qrx-spec-discuss-interactive-path-runs-discu](./quick/261102-qrx-spec-discuss-interactive-path-runs-discu/) |
 | 261104-cxr | split cross-ai runner e2e self-test into logic and runtime shards | 2026-11-04 | 5109f80 | [261104-cxr-split-cross-ai-runner-e2e-self-test-into](./quick/261104-cxr-split-cross-ai-runner-e2e-self-test-into/) |
+| 261104-hzc | Apply test-time audit cuts 1-13 and the data-file mapper change | 2026-11-04 | 429bc0d | [261104-hzc-apply-test-time-audit-cuts-1-13-and-the-](./quick/261104-hzc-apply-test-time-audit-cuts-1-13-and-the-/) |
 
 ### Roadmap Evolution
 
@@ -671,7 +673,7 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 ## Session Continuity
 
 Last session: 2026-11-03T19:08:45.122Z
-Stopped at: Phase 28 complete, ready to plan Phase 29
+Stopped at: Phase 29 complete, ready to plan Phase 29.1
 Resume file: .planning/phases/31-removals-and-small-defects/31-CONTEXT.md
 
 ## Operator Next Steps
