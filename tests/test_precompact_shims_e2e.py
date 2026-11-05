@@ -66,6 +66,28 @@ def _node_ready():
     return probe.returncode == 0
 
 
+def _process_gone(pid, deadline_s=2.0):
+    """Whether `pid` stops running within `deadline_s`.
+
+    A killed child reparented to a subreaper is reaped asynchronously: until then it is a
+    zombie that still answers kill(pid, 0). A zombie counts as gone."""
+    end = time.monotonic() + deadline_s
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        try:
+            with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
+                if handle.read().rsplit(")", 1)[1].split()[0] == "Z":
+                    return True
+        except (OSError, IndexError):
+            pass  # no /proc, or the pid vanished between the checks: the next kill decides
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.02)
+
+
 class ShimHarnessMixin(unittest.TestCase):
     """Runs the shared node harness under a scratch env."""
 
@@ -216,8 +238,7 @@ class TestShimsE2E(ShimHarnessMixin, unittest.TestCase):
                     with open(pidfile, encoding="utf-8") as handle:
                         pids = [int(pid) for pid in handle.read().split()]
                     for pid in pids:
-                        with self.assertRaises(ProcessLookupError):
-                            os.kill(pid, 0)
+                        self.assertTrue(_process_gone(pid), f"pid {pid} still running")
                 finally:
                     if os.path.exists(pidfile):
                         try:
@@ -481,8 +502,7 @@ class TestToolAdvisorShims(ShimHarnessMixin, unittest.TestCase):
                     self.assertGreaterEqual(elapsed, TOOL_DEADLINE_S * TIME_SCALE * 0.9)
                     self.assertLess(elapsed, TOOL_DEADLINE_S * TIME_SCALE + 2.0)
                     pid = int(pidfile.read_text(encoding="utf-8"))
-                    with self.assertRaises(ProcessLookupError):
-                        os.kill(pid, 0)
+                    self.assertTrue(_process_gone(pid), f"pid {pid} still running")
                 finally:
                     if pidfile.exists():
                         with contextlib.suppress(OSError, ValueError):
@@ -698,6 +718,22 @@ class TestShimDeadlinePins(unittest.TestCase):
 
     def test_only_the_harness_reads_the_scale(self):
         self.assertIn("process.env.AI_KIT_SHIM_TIME_SCALE", HARNESS.read_text(encoding="utf-8"))
+
+
+class TestProcessGone(unittest.TestCase):
+    """The liveness check the hang tests use: a zombie is gone, a live process is not."""
+
+    @unittest.skipUnless(os.path.isdir("/proc"), "zombie state is read from /proc")
+    def test_unreaped_zombie_counts_as_gone(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        self.addCleanup(child.wait)
+        self.assertTrue(_process_gone(child.pid, deadline_s=5.0))
+
+    def test_live_process_is_not_gone(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        self.assertFalse(_process_gone(child.pid, deadline_s=0.1))
 
 
 def header_of(document):

@@ -44,8 +44,8 @@ for every Likely or Unclear item:
 - Alternatives: 2–3, with the best one and the easy one marked;
 - Jev question: one standalone, summary-only question with neutral option descriptions and a
   non-empty context line (no code, no file contents, no secrets).
-Do NOT call jev or any of its backends (Laya, TypeSafe, OpenCode Zen) yourself: never call jev
-even when `jev-fast-decision` is among your agent skills.
+Do NOT call jev yourself: the orchestrator asks jev; never call jev even when
+`jev-fast-decision` is among your agent skills.
 End with "Needs External Research" (open factual questions only, never guesses) and one line
 on what you skipped.
 ```
@@ -55,7 +55,7 @@ Why each block exists:
   CONTEXT; without them the analyzer re-litigates settled scope.
 - **Quality rule** — analyzers default to the smallest diff.
 - **CodeGraph** — a worktree's index can silently describe another branch.
-- **No jev** — remote calls would bypass consent, the one-item Laya rule and the log. A wired
+- **No jev** — an analyzer call would bypass the one-item rule and the log. A wired
   `jev-fast-decision` skill shapes the question format only. The same prohibition covers
   `gsd-advisor-researcher`: SKILL.md §2 names the one sentence added to the advisor's spawn
   prompt.

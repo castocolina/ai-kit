@@ -1,21 +1,21 @@
 ---
 name: ai-kit-gsd-spec-discuss
-description: "Chains GSD /gsd-spec-phase then /gsd-discuss-phase over a range of phases (SPEC.md, then CONTEXT.md + DISCUSSION-LOG.md), settling gray areas through the `jev-fast-decision` client's decision ladder with logged decisions, a deferred ledger, cross-phase amendments and a best-over-easy design rule. Two run modes, picked once: auto or interactive. Use when asked to spec and discuss several GSD phases unattended or in one run (\"spec/discuss phases 17-24\", \"run spec-phase and discuss-phase for every undiscussed phase\", \"--analyze --all --batch --assumptions\"), or to use jev / Laya / TypeSafe / System One for GSD planning decisions. Works with no decision backend installed. Not for plan-phase or execute-phase."
+description: "Chains GSD /gsd-spec-phase then /gsd-discuss-phase over a range of phases (SPEC.md, then CONTEXT.md + DISCUSSION-LOG.md), settling gray areas with advisory answers from the `jev-fast-decision` skill, with logged decisions, a deferred ledger, cross-phase amendments and a best-over-easy design rule. Two run modes, picked once: auto or interactive. Use when asked to spec and discuss several GSD phases unattended or in one run (\"spec/discuss phases 17-24\", \"run spec-phase and discuss-phase for every undiscussed phase\", \"--analyze --all --batch --assumptions\"), or to use jev for GSD planning decisions. Works without `jev-fast-decision` installed. Not for plan-phase or execute-phase."
 ---
 
 # ai-kit-gsd-spec-discuss
 
 Takes phases N..M through **spec** (the WHAT, `NN-SPEC.md`) then **discuss**
 (the HOW, `NN-CONTEXT.md` + `NN-DISCUSSION-LOG.md`), one phase at a time, deciding gray areas
-yourself with advisory help. It never plans or executes. Backend order on the ladder: the local backend first, then
-consented remotes in the client's table order, then your own reasoning (§3). Two run modes,
+yourself with advisory help. It never plans or executes. Gray areas get an advisory answer from the
+`jev-fast-decision` skill when it is installed; your own reasoning decides (§3). Two run modes,
 picked once in §0:
 **auto** (spec `--auto`, discuss assumptions-mode) and **interactive** (spec without `--auto`,
 discuss in standard mode with `--analyze --all --batch`, the user answering).
 
-**The mindset:** you are the decider. Laya and TypeSafe are cheap typed screens, not verdicts.
-Your own reasoning against verified evidence is the last rung and the most important one:
-Laya is often low-confidence, and sometimes confidently wrong. Stop the run only for a decision
+**The mindset:** you are the decider. jev's answers are cheap typed screens, not verdicts.
+Your own reasoning against verified evidence is the final word and the most important input:
+jev is often low-confidence, and sometimes confidently wrong. Stop the run only for a decision
 that blocks other decisions *and* that nothing settles with high confidence; everything else is
 decided provisionally and shown at the end.
 
@@ -26,7 +26,7 @@ decided provisionally and shown at the end.
    for d in "$(dirname "<absolute path of THIS SKILL.md>")" "$HOME/.claude/skills" "$HOME/.agents/skills" \
             "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills" "$HOME/.cursor/skills" "$HOME/.pi/agent/skills"; do
      for c in "$d/scripts" "$d/ai-kit-gsd-spec-discuss/scripts"; do
-       [ -f "$c/decide.py" ] && { printf '%s\n' "$c"; break 2; }; done; done
+       [ -f "$c/phase_range.py" ] && { printf '%s\n' "$c"; break 2; }; done; done
    ```
    If it prints nothing, **stop the run** (fail closed, like `edge_floor` exit 2).
 2. **Resolve gsd-core** with its standard resolver (`references/gsd-run-resolver.md` inside
@@ -43,13 +43,9 @@ decided provisionally and shown at the end.
    so take the paths from gsd-core, never from a fixed `.planning/`: the first phase's
    `init.phase-op` gives `state_path` and `phase_dir`; pass the parent of `phase_dir` to
    `phase_range.py --phases-root`, and commit the `state_path` file.
-3. **Detect backends:** `python3 "$S/decide.py" detect` — the shared `jev-fast-decision`
-   client's probe table (one entry per backend: `laya`, `typesafe`, `opencode`), labels
-   only (key *source*, never the key). Key names, file modes and endpoint precedence are in
-   the client's `reference.md` (Environment) and `backends/`. A status `no_client` (no client
-   found) or `incompatible_client` (the client beside the skill predates the shared one)
-   means own reasoning only, until the owner runs `python3 tools/setup.py install --headless
-   --skills jev-fast-decision --replace-existing` from the ai-kit checkout.
+3. **Decision help (optional):** ask the `jev-fast-decision` skill and follow its SKILL.md for
+   every gray area; it covers how to call it and any approval it needs. Not installed, an
+   error, `needs_fallback` or no answer → your own reasoning decides (§3).
 4. **Pick the range.** Get the roadmap first, for every case: the resolved GSD command
    `query roadmap analyze > <tmp>.json`. Explicit `--from N --to M` or a list wins:
    `python3 "$S/phase_range.py" --roadmap <tmp>.json --from N --to M` (or `--list a,b`).
@@ -61,14 +57,7 @@ decided provisionally and shown at the end.
    skipped (executed or complete) under an explicit request runs only after the user
    confirms it.
 5. **Ask one question about the range**, only when needed (the run-mode ask in step 7 is
-   separate): confirm or trim the proposed range, and —
-   if a remote backend's `detect` entry has `status: consent_required_for_remote` (a keyed
-   remote this session has not allowed; a keyless one reads `missing_api_key`) — ask for consent
-   in the same question, naming each backend and its host, "summaries only, never code or
-   secrets", and the revoke command (`python3 "$S/decide.py" consent revoke <backend>`). On
-   yes: `python3 "$S/decide.py" consent grant <backend>`. Consent on file asks nothing. After
-   a ladder call, announce `consent_used` only for backends that answered at least one item
-   in the run ("using <backend> (consent recorded <date>)").
+   separate): confirm or trim the proposed range.
 6. **Read MVP mode once, per phase:** the resolved GSD command `query phase.mvp-mode <N>`
    (`active` true → MVP branch). This one query is the single source for both the quality
    rule (§5) and the run-mode recommendation in step 7 — do not read `workflow.mvp_mode` a
@@ -96,7 +85,7 @@ decided provisionally and shown at the end.
      from that agent's prompt). This skill never edits config; the fix is re-running
      `ai-kit-gsd-curated-config`. **Read `references/agent-skills-diagnostics.md` only then.**
 
-**MANDATORY — read `references/decision-table.md` before the first ladder call.**
+**MANDATORY — read `references/decision-table.md` before the first jev request.**
 
 ## 1. Per phase: spec
 
@@ -108,7 +97,7 @@ file; do not delegate to another skill — skill-to-skill calls are unreliable o
 - **Live-verify before you write a claim**: installed versions, real config keys, real CLI
   output in a scratch dir. A SPEC sentence from memory is a defect.
 - Where the workflow says "select the recommended default", run the open items through the
-  ladder (§3) and log them in the Interview Log (**MANDATORY — read
+  jev (§3) and log them in the Interview Log (**MANDATORY — read
   `references/log-formats.md` before writing it**).
 - **Edge Coverage is engine output, never hand-written.** Write the requirements, then
   `python3 "$S/edge_floor.py" floor <SPEC>`; resolve each floor row (✅ covered / 🧪 backstop),
@@ -140,19 +129,19 @@ each group) and with the user answering its prompts.
   file>`. This commit **replaces** the workflow's `git_commit` step (skip it), and the single
   end-of-range `state.record-session` **replaces** its per-phase `update_state` step (skip per
   phase, like `auto_advance`) — never commit or update STATE.md twice per phase.
-- The ladder and analyzer per path: in the interactive path the user answers the workflow's
-  prompts, and the ladder only screens the items the user asks it to screen (§3); in the auto
-  path the ladder runs on every open item, per the rules below.
+- jev and analyzer per path: in the interactive path the user answers the workflow's
+  prompts, and jev only screens the items the user asks it to screen (§3); in the auto
+  path jev is asked about every open item, per the rules below.
 
 **Auto path only** — encode the user's `--analyze --all --batch` intent yourself:
 every analyzer area in one pass; 2–3 alternatives per Likely/Unclear item with best and easy
-marked; all the phase's questions in one ladder run (the client still sends Laya one item per
-call). Pre-answer the workflow's prompts by rule (in the interactive path these are only the
+marked; all the phase's questions in one jev request (its SKILL.md says how items are sent).
+Pre-answer the workflow's prompts by rule (in the interactive path these are only the
 recommended defaults you offer the user):
 - existing CONTEXT → "Update it" (in place, additively — locked decisions stay verbatim);
 - existing plans → "Continue and replan after";
 - todos → fold those scoring ≥ 0.4 (gsd-core's workflow constant for a todo worth folding);
-- assumptions → "Yes, proceed" only after every Unclear item went through the ladder.
+- assumptions → "Yes, proceed" only after every Unclear item got a jev answer or your own reasoning.
 
 **Spawn the analyzer** (`gsd-assumptions-analyzer`) through the host's subagent mechanism when
 the workflow's init output (`init.discuss-phase-assumptions`, like `init.phase-op`) reports it
@@ -165,54 +154,33 @@ in the DISCUSSION-LOG.
 **MANDATORY — read `references/analyzer-brief.md` before spawning; fill every placeholder.**
 The analyzer returns "Jev question" lines. `gsd-assumptions-analyzer` and
 `gsd-advisor-researcher` never call jev, even when `jev-fast-decision` is wired into them.
-The ladder, consent and the log belong to the orchestrator (this skill), through the shared
-client.
+Asking jev and the log belong to the orchestrator (this skill).
 In the interactive path, when discuss-phase spawns `gsd-advisor-researcher`, the orchestrator
-adds this one sentence to the advisor's spawn prompt: "Do NOT call jev or any of its backends
-(Laya, TypeSafe, OpenCode Zen) yourself, even when jev-fast-decision is among your agent
-skills." In the interactive path the analyzer runs only when the user asks for it; otherwise
-the user answers the workflow's prompts directly.
+adds this one sentence to the advisor's spawn prompt: "Do NOT call jev-fast-decision yourself,
+even when it is among your agent skills." In the interactive path the analyzer runs only when
+the user asks for it; otherwise the user answers the workflow's prompts directly.
 
 After the range: the resolved GSD command `query state.record-session --stopped-at "..."
 --resume-file <last CONTEXT>` and a separate `docs(state)` commit of the `state_path` file
 (§0 step 2).
 
-## 3. The ladder
+## 3. Asking jev
 
-```bash
-python3 "$S/decide.py" ladder < items.json        # {"items": [...]}
-python3 "$S/decide.py" ladder --second-opinion < contested.json
-```
+Ask jev with one item per gray area, shaped as jev's SKILL.md documents (a `choice` with neutral
+options, a `noul` or a `score`), summaries only. Each step that has open items (spec and discuss
+separately, §1–§2) is one jev request. Ask the `jev-fast-decision` skill and follow its SKILL.md;
+it covers the item shape, how the request is sent, the answer format and any approval it needs.
 
-Item shape (`choice`, `noul` or `score`), summaries only:
-`{"id": "B07_segments", "type": "choice", "instructions": "<standalone question>",
-"context": "<the facts it turns on, non-empty>", "criteria": {"a": "neutral description",
-"b": "neutral description"}}`. A `choice` item needs `criteria` with two or more options; a
-`noul` item takes no `criteria` or exactly `{"true": "...", "false": "..."}`; a `score` item's
-`criteria` is a list of 2-10 levels. Malformed or code-bearing items are rejected
-alone (`invalid_input` + reason) — fix and resubmit. A repeated `id` is `duplicate_id`; an
-`id` starting with `#` is `reserved_id` (that prefix keys rejections).
-
-The ladder is **one client call per step that has open items** (spec and discuss ladder
-separately, §1–§2), plus an optional `--second-opinion` run for contested items: decide.py
-validates the items and maps the
-client's per-item rung trail onto one column per table backend, each
-`{choice, top, fallback, forced, model}`, `{error}` or null = not called, plus `decided_by`
-(the last confident rung, else `own_reasoning`); each column's `top` is its winning
-probability. What a forced `fallback: true` column (`forced: true`) does in "Which answer
-wins", and when a high local answer gets `--second-opinion`, is defined once in
-`references/decision-table.md` — follow it there. A forced column never settles an item on its
-own: it is advisory evidence for the row that decides, logged `choice 0.NN (forced)`, never
-`(fb)`.
-A detect row with `key_check: unverified` is reachable, not a proven key.
-
+- A confident answer is advisory evidence for the row that decides (`references/decision-table.md`),
+  logged with its confidence. It is never the decision on its own.
+- `needs_fallback`, an error or no answer → **own reasoning** against the SPEC, earlier CONTEXT
+  files and the live facts. Log it, and ledger it when it blocks nothing.
 - Describe options **neutrally**. Labelling one "best" or "easy" just echoes your framing back.
-- A high local answer contradicting verified evidence or a locked decision gets
-  `--second-opinion` (decision-table row 3; worked cases in `references/worked-examples.md`).
-- Laya is not deterministic (one real run: the same item scored 0.74 then 0.67 (fb)); never
-  treat a single Laya number as stable.
-- No high column (each answering column is low, forced or errored) → **own reasoning**
-  against the SPEC, earlier CONTEXT files and the live facts. Log it, and ledger it when it blocks nothing.
+- A confident answer that contradicts verified evidence or a locked decision gets one second
+  opinion (jev's SKILL.md says how; decision-table row 3; worked cases in
+  `references/worked-examples.md`).
+- jev is not deterministic (one real run: the same item scored 0.74, then 0.67). Never treat a
+  single number as stable.
 
 ## 4. Ledger and stop rule
 
@@ -258,13 +226,13 @@ strictly in sequence (flag that gap in the log).
 - **NEVER pass `--assumptions` to the discuss command** — it routes to a listing workflow that
   writes nothing; the run looks complete and produces no CONTEXT.
 - **NEVER pass `--auto` to discuss in assumptions mode** — it auto-advances into plan-phase
-  and accepts the analyzer's default for Unclear items, bypassing the ladder and the log
+  and accepts the analyzer's default for Unclear items, bypassing jev and the log
   (the interactive path runs standard discuss mode with `--analyze --all --batch` instead).
-- **NEVER hand-batch items into one Laya question** — one item's context changes another's answer.
-- **NEVER treat a Laya, TypeSafe or OpenCode Zen answer as the decision** — log it as
-  advisory; the decision column is yours, with its reason.
-- **NEVER send code, diffs, file contents, config values or secrets** — summaries only;
-  `decide.py` rejects fences and key shapes, but it is defense in depth, not a guarantee.
+- **NEVER merge several gray areas into one jev item** — one item's context changes another's answer.
+- **NEVER treat a jev answer as the decision** — log it as advisory; the decision is yours,
+  with its reason.
+- **NEVER send code, diffs, file contents, config values or secrets to jev** — summaries only,
+  never a key, config value or file content in a jev item.
 - **NEVER flip `workflow.discuss_mode`, `mode` or `workflow.mvp_mode` to pick a run path or
   get assumptions mode** — plan-phase and progress read them too, and a crash leaves them
   flipped.
@@ -272,7 +240,7 @@ strictly in sequence (flag that gap in the log).
   interactive discuss are lost silently; amend in place.
 - **NEVER hand-write the Edge Coverage floor** — the engine's floor depends on the exact
   requirement text; prose-derived rows drift from the engine's output.
-- **NEVER print or log a key** — check keys by name; `decide.py detect` shows source labels.
+- **NEVER print or log a key** — any key check is the `jev-fast-decision` skill's job.
 
 ## Host gaps (flagged, not hidden)
 
@@ -283,7 +251,7 @@ strictly in sequence (flag that gap in the log).
 
 ## References — load only at the trigger
 
-- `references/decision-table.md` — before the first ladder call.
+- `references/decision-table.md` — before the first jev request.
 - `references/analyzer-brief.md` — before spawning (or running inline) the analyzer.
 - `references/log-formats.md` — before writing a SPEC Interview Log, CONTEXT, DISCUSSION-LOG,
   an amendment, or the ledger.

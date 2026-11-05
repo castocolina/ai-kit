@@ -3,14 +3,14 @@
 Read before writing a SPEC Interview Log, a CONTEXT, a DISCUSSION-LOG, an amendment or the
 ledger. All artifacts in English.
 
-## Cell format for a backend answer
+## Cell format for a jev answer
 
-- `choice 0.NN` — winning probability `top`, high.
-- `choice 0.NN (fb)` — `fallback` true and `forced` false: low confidence.
-- `choice 0.NN (forced)` — `forced` true (a truncated or oversized request). It is not
-  `(fb)`: see decision-table.md, "Forced columns" — advisory evidence only.
-- `choice 0.NN (second opinion)` — from `--second-opinion`.
-- `–` — not called (an earlier rung was high, or the backend was unavailable).
+- `choice 0.NN` — jev answered confidently (`needs_fallback` false); `0.NN` is its winning
+  probability.
+- `low 0.NN` — jev answered with `needs_fallback` true: low confidence, advisory only.
+- `choice 0.NN (second opinion)` — from a second-opinion request on the same item.
+- `none` — jev was not asked this item.
+- `not installed` — the `jev-fast-decision` skill is not on this host.
 - `error: <code>` — the call failed; say what you did instead.
 
 ## SPEC Interview Log
@@ -19,18 +19,18 @@ ledger. All artifacts in English.
 ## Interview Log
 
 <Run mode and rounds: `--auto`, one round for the auto path; `interactive`, <round count>
-rounds otherwise>. The open items went through the decision ladder (the local backend
-first; `needs_fallback` items go to the first consented remote, a later remote only on an error). Summaries
-only, advisory. Rule: <quality rule branch>.
+rounds otherwise>. The open items went through jev: one advisory answer per item, and
+`needs_fallback` items are decided by your own reasoning. Summaries only, advisory. Rule:
+<quality rule branch>.
 
-| Round | Perspective | Question summary | <backend> (advisory) | <backend> (advisory) | Decision locked |
-|-------|-------------|------------------|-----------------|---------------------|-----------------|
-| 1 | Simplifier | The skill's name? | ai-kit-gsd-phase-prep 0.46 (fb) | ai-kit-gsd-spec-discuss 0.89 | `ai-kit-gsd-spec-discuss` (R1) |
-| 1 | Boundary Keeper | Delete the Claude subprocess inventory? | delete_all 0.75 | keep_for_review 0.74 (fb, second opinion) | **Own reasoning:** no remote answer is high; Phase 18 R2 fills `review.models.claude` from it (R8) |
+| Round | Perspective | Question summary | jev (advisory) | Decision locked |
+|-------|-------------|------------------|----------------|-----------------|
+| 1 | Simplifier | The skill's name? | ai-kit-gsd-spec-discuss 0.89 | `ai-kit-gsd-spec-discuss` (R1) |
+| 1 | Boundary Keeper | Delete the Claude subprocess inventory? | delete_all 0.75; second opinion keep_for_review low 0.74 | **Own reasoning:** no confident second opinion; Phase 18 R2 fills `review.models.claude` from it (R8) |
 ```
 
-Drop a backend column only when that backend was never available for the whole run, and say so
-in the intro line.
+When jev is not installed, keep the jev column and write `not installed` in it, and say so in
+the intro line.
 
 ## CONTEXT decision entry
 
@@ -38,13 +38,12 @@ in the intro line.
 - **D-14: The spike captures the payload under a scratch `CURSOR_CONFIG_DIR`** (SPEC R5
   amended).
   - <evidence, file:line, live check>
-  - **Laya overridden** (edit_real_file 0.72): the CLI rewrites the file during use. TypeSafe
-    second opinion scratch_config_dir 0.98.
+  - **jev overridden** (edit_real_file 0.72): the CLI rewrites the file during use. Second
+    opinion scratch_config_dir 0.98.
 ```
 
-The attribution comes last: one `<backend> <choice> 0.NN[ (fb)| (forced)]` per answering
-backend, or
-`**Own reasoning** (<backend> … , <backend> …): <why>. Ledger.`
+The attribution comes last: one `choice 0.NN` or `low 0.NN` for the jev answer taken, or
+`**Own reasoning** (jev …): <why>. Ledger.`
 
 ## Updating an existing CONTEXT (never regenerate)
 
@@ -74,7 +73,7 @@ requirement. Edge Coverage rows: `~~old resolution~~ *(superseded, D-NN)* new re
 **Date:** YYYY-MM-DD
 **Phase:** NN-slug
 **Mode:** <run mode — auto path: assumptions (`--analyze --all --batch`); interactive path:
-standard discuss mode (`--analyze --all --batch`) with the user>, decision ladder, <quality rule> — add
+standard discuss mode (`--analyze --all --batch`) with the user>, jev screening, <quality rule> — add
 ", CodeGraph" only when the brief included the CodeGraph block.
 **Areas analyzed:** <areas>
 
@@ -88,13 +87,13 @@ what it did not>.
 
 ## jev screening
 
-One local call per item; `needs_fallback` items go to the first consented remote, a later
-remote only on an error. Summaries only.
+One jev request per step that has open items; each item gets one advisory answer, and
+`needs_fallback` items are decided by your own reasoning. Summaries only.
 
-| Item | <backend> | <backend> | Outcome |
-|---|---|---|---|
-| B10 spike capture | edit_real_file 0.72 | scratch_config_dir 0.98 (second opinion) | **Laya overridden**: D-14 |
-| B14 preview | static_samples 0.35 (fb) | static_samples 0.66 (fb) | **Own reasoning:** synthetic cache (D-24, ledger) |
+| Item | jev | Outcome |
+|---|---|---|
+| B10 spike capture | edit_real_file 0.72; second opinion scratch_config_dir 0.98 | **jev overridden**: D-14 |
+| B14 preview | low 0.35 | **Own reasoning:** synthetic cache (D-24, ledger) |
 
 ## Live facts that changed the plan
 ## Corrections Made
@@ -102,8 +101,8 @@ remote only on an error. Summaries only.
 ```
 
 The Outcome column always names the D-id. "Own reasoning" rows always say why, and whether they
-are ledgered. The jev section heading stays "jev screening" even with no backend; then every
-row reads `– | – | **Own reasoning:** …`.
+are ledgered. The jev section heading stays "jev screening" even when jev is not installed; then
+every row reads `not installed` | `**Own reasoning:** …`.
 
 ## DISCUSSION-LOG (existing)
 
