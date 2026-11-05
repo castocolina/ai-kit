@@ -346,8 +346,9 @@ def quota_lines(wake: Mapping[str, Any], runner: Mapping[str, Any]) -> list[str]
 def decision_lines() -> list[str]:
     return [
         "Verifiable questions: check and fix them directly; do not ask.",
-        "Gray areas: use the decide.py ladder of the ai-kit-gsd-spec-discuss skill. Its answers "
-        "are advisory; verify before acting. Prefer the best design over the easiest.",
+        "Gray areas: ask the jev-fast-decision skill and follow its SKILL.md. Advisory only: on "
+        "needs_fallback or no answer you decide; verify before acting. Prefer the best design over "
+        "the easiest.",
         "Never pause for questions or UAT. Put a blocking item in the ledger and continue.",
         "Never remove existing features.",
     ]
@@ -392,9 +393,12 @@ def report_lines(jev: Mapping[str, Any]) -> list[str]:
     ]
     if jev.get("usable"):
         lines.append(
-            "Advisory (not a gate): run one choice item through the decide.py ladder, objectives "
-            "all, mostly, partly or not met, from text summaries only; report the answer under "
-            "that heading."
+            "Advisory (not a gate): ask the jev-fast-decision skill one choice item (follow its "
+            "SKILL.md), objectives all, mostly, partly or not met, from text summaries only."
+        )
+        lines.append(
+            "Report jev's advisory answer under that heading; needs_fallback or no answer means "
+            "you judge it yourself."
         )
     else:
         reason = _one_line(jev.get("reason") or "no usable backend")

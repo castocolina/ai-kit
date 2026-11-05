@@ -148,7 +148,7 @@ For the shape of one whole run, from answers to hand-off, see [references/worked
 - Never put an absolute path or a secret into `answers.json` — render refuses machine paths in `output_dir` and `work_set.files`, and the file may be committed.
 - Never edit the rendered file by hand — render never overwrites: the next render writes a new `-2` file beside it, so a hand edit is orphaned and skips the render checks (line caps, secrets).
 - Never present a primitive as available when its label is `unverified` or `not seen` — a false "available" sends the user into a run that depends on a primitive the host may not have.
-- Never treat jev as a gate or as a UI or mockup judge — its answers are advisory and it has no say over the file.
+- Never treat jev as a gate or as a UI or mockup judge — its answers are advisory and it has no say over the file; ask the jev-fast-decision skill and follow its SKILL.md; `needs_fallback` or no answer means you decide.
 - Never put anything but `--from`, `--to`, `--only` or `--converge` on the `/gsd-autonomous` line — the workflow greps all of its arguments, so any other token changes the run.
 - Never write the rationale for missing tooling into the file — the paste block must hold the run's instructions only.
 - Never import another skill's Python into this skill's scripts — sibling skills are reached only through their CLIs, as the detect step does.
@@ -187,7 +187,7 @@ Load [references/evidence.md](references/evidence.md) when a rule looks arbitrar
 |---|---|---|
 | The wake CLI (`ai-kit-session-wake`) | `matrix_source` reads `missing`; every primitive is `unverified` | Name the missing CLI and that the primitives are unverified |
 | The spec CLI (`ai-kit-spec-review`) | `host.current` is `null`, so every primitive is `unverified` | Name the missing CLI; the current host is unknown |
-| The decide CLI (`ai-kit-gsd-spec-discuss`) | `jev.usable` is `false` with reason `decide.py missing` | Nothing to decide; the file never depends on jev |
+| jev-fast-decision (an installed skill, found through its installed-skill lookup) | `jev.usable` is `false` with reason `jev-fast-decision not installed` or `jev-fast-decision too old: re-run the ai-kit installer` | Nothing to decide; the file never depends on jev |
 | GSD command (no `.claude/gsd-core/bin/gsd-tools.cjs`) | No phase captures; a GSD work set exits 2 | Ask for captured JSON: `--roadmap`, `--identity`, `--phase-op` |
 | E2E suite (`e2e.none` is true) | The file's first task creates one (create-first) | The suite is created by the run; nothing is verified yet |
 | No usable jev backend | The file says the advisory check was omitted | Nothing to decide; the file never depends on jev |

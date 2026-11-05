@@ -125,7 +125,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="read-only gsd-tools command, run as argv without a shell")
     detect.add_argument("--wake-cli", help="path of the ai-kit-session-wake CLI to probe")
     detect.add_argument("--spec-cli", help="path of the ai-kit-spec-review CLI to probe")
-    detect.add_argument("--decide-cli", help="path of the decide CLI (jev, advisory only)")
+    detect.add_argument("--jev-client",
+                        help="path of jev-fast-decision's jev_review.py (advisory only)")
     render = commands.add_parser("render", help="write one goal file, print its contract")
     render.add_argument("--repo", default=".",
                         help="repository root to write into (default: current directory)")
@@ -471,7 +472,7 @@ def build_detect(args: argparse.Namespace, seams: CliSeams) -> dict[str, Any]:
         "scope": scope,
         "e2e": e2e,
         "readiness": readiness,
-        "jev": gp_host.jev_status(seams.host, _sibling(seams, args.decide_cli, gp_host.DECIDE_CLI)),
+        "jev": gp_host.jev_status(seams.host, args.jev_client, own_root=seams.skills_dir),
         "derived": derived,
         "strategies": strategies,
         "dropped": dropped,

@@ -9,6 +9,7 @@ real home or runs a model, and every write lands in a temporary repository.
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -26,7 +27,7 @@ from tests import goal_prompt_fixtures as fx
 TODAY = "2026-01-02"
 WAKE_REL = "ai-kit-session-wake/ai-kit-session-wake.py"
 SPEC_REL = "ai-kit-spec-review/ai-kit-spec.py"
-DECIDE_REL = "ai-kit-gsd-spec-discuss/scripts/decide.py"
+JEV_REL = "jev-fast-decision/scripts/jev_review.py"
 AVAILABILITY = {"available", "not seen", "unverified", "absent"}
 USAGE_SOURCES = {"official docs", "live", "third-party", "binary strings", "unverified"}
 PHASES = [
@@ -121,7 +122,7 @@ class TestCli(unittest.TestCase):
         self.repo.mkdir()
         fx.git_init(self.repo)
         self.skills = self.root / "skills"
-        for rel in (WAKE_REL, SPEC_REL, DECIDE_REL):
+        for rel in (WAKE_REL, SPEC_REL, JEV_REL):
             fx.write(self.skills, rel, "# stand-in sibling CLI; never executed\n")
         self.host_run = FakeRun(host_routes())
         self.seams = cli_seams(self.host_run, str(self.skills))
@@ -310,6 +311,34 @@ class TestCli(unittest.TestCase):
     def test_unknown_tool_names_are_reported(self):
         result = self.detect("--tools", "CronCreate,Bogus")
         self.assertEqual(result["unrecognized_tools"], ["Bogus"])
+
+    def test_jev_absent_from_every_skills_dir_is_named_and_detect_still_writes(self):
+        empty = self.root / "no-jev-skills"
+        empty.mkdir()
+        self.seams = cli_seams(self.host_run, str(empty))
+        # The lookup also searches HOME-based dirs, so a scratch HOME keeps this deterministic.
+        with mock.patch.dict(os.environ, {"HOME": str(self.root / "no-home")}):
+            result = self.detect()
+        self.assertEqual(
+            result["jev"], {"usable": False, "reason": "jev-fast-decision not installed"}
+        )
+
+    def test_detect_takes_jev_client_and_rejects_the_old_flag(self):
+        parser = goal_prompt.build_parser()
+        self.assertEqual(parser.parse_args(["detect", "--jev-client", "x.py"]).jev_client, "x.py")
+        with self.assertRaises(goal_prompt.UsageError):
+            parser.parse_args(["detect", "--decide-cli", "x.py"])
+
+    def test_jev_client_naming_a_file_is_probed_before_the_lookup(self):
+        override = self.root / "override" / "jev_review.py"
+        fx.write(self.root / "override", "jev_review.py", "# stand-in; never executed\n")
+        route = ((str(override), "detect"), 0, json.dumps({"backends": {}}))
+        self.host_run.routes.insert(0, route)
+        code, _out, err = self.call(
+            "detect", "--repo", str(self.repo), "--jev-client", str(override)
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn([sys.executable, str(override), "detect"], self.host_run.calls)
 
     # ─── detect: work sets ───────────────────────────────────────────────────
 

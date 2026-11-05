@@ -283,16 +283,30 @@ class TestTemplateAndSections(unittest.TestCase):
     def test_report_lines_name_jev_only_with_advisory(self):
         usable = gp_sections.report_lines({"usable": True, "reason": ""})
         self.assertIn(
-            "Advisory (not a gate): run one choice item through the decide.py ladder, objectives "
-            "all, mostly, partly or not met, from text summaries only; report the answer under "
-            "that heading.",
+            "Advisory (not a gate): ask the jev-fast-decision skill one choice item (follow its "
+            "SKILL.md), objectives all, mostly, partly or not met, from text summaries only.",
             usable,
         )
+        self.assertIn(
+            "Report jev's advisory answer under that heading; needs_fallback or no answer means "
+            "you judge it yourself.",
+            usable,
+        )
+
         omitted = gp_sections.report_lines({"usable": False, "reason": "no consent on file"})
         self.assertIn("The advisory closeness check was omitted: no consent on file.", omitted)
         for line in usable + omitted:
             if re.search(r"\bjev\b", line, re.IGNORECASE):
                 self.assertIn("advisory", line.lower())
+
+    def test_black_box_jev_lines_stay_under_the_rule_line_cap(self):
+        # The renderer adds "- " and rejects a rule line over 200 characters; these fixed
+        # strings bypass fit_line, so each must already fit, with the fallback clause intact.
+        lines = gp_sections.decision_lines() + gp_sections.report_lines(
+            {"usable": True, "reason": ""}
+        )
+        for line in lines:
+            self.assertLessEqual(len(line), 198, line)
 
     def test_assemble_rails_prefixes_rules_and_keeps_sub_lines(self):
         text = gp_sections.assemble_rails([("A", ["x", "   y"]), ("B", ["z"])])

@@ -27,11 +27,19 @@ HOST_BINARY = {
 }
 WAKE_CLI = "ai-kit-session-wake/ai-kit-session-wake.py"
 SPEC_CLI = "ai-kit-spec-review/ai-kit-spec.py"
-DECIDE_CLI = "ai-kit-gsd-spec-discuss/scripts/decide.py"
+JEV_ENTRY_REL = os.path.join("jev-fast-decision", "scripts", "jev_review.py")
 PROBE_TIMEOUT = 20
 # Three levels up from scripts/gp_host.py is the skills directory. abspath, not realpath: a
 # symlinked skill still finds its siblings beside it.
 SKILLS_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Lookup copy of jev-fast-decision's SKILLS_ROOTS (scripts/jev_ladder.py), same order and values.
+SKILLS_ROOTS = (
+    ("CLAUDE_CONFIG_DIR", ".claude", "skills"),
+    (None, ".agents", "skills"),
+    ("XDG_CONFIG_HOME", ".config", "opencode/skills"),
+    ("CURSOR_CONFIG_DIR", ".cursor", "skills"),
+    ("PI_CODING_AGENT_DIR", ".pi/agent", "skills"),
+)
 VERSION_RE = re.compile(r"(?<![\d.])(\d+\.\d+\.\d+)(?![\d.])")
 HELP_KEYWORD = re.compile(r"\b(goal|loop|schedule|cron)\b", re.IGNORECASE)
 
@@ -463,14 +471,51 @@ def cross_ai_readiness(
     return result
 
 
-def jev_status(seams: HostSeams, decide_cli: str | None = None) -> dict:
-    """D-21: whether `decide.py detect` shows a usable backend. Only detect is ever run here."""
-    cli = sibling_cli(DECIDE_CLI, decide_cli)
-    if not os.path.isfile(cli):
-        return {"usable": False, "reason": "decide.py missing"}
-    rc, out = seams.run([sys.executable, cli, "detect"], PROBE_TIMEOUT, None)
+def skills_roots(env: Mapping[str, str], own_root: str | None) -> list[str]:
+    """Skills dirs to search in lookup order: `own_root` first when given, then SKILLS_ROOTS."""
+    home = env.get("HOME", "~")
+    roots = [own_root] if own_root else []
+    for variable, fallback, suffix in SKILLS_ROOTS:
+        base = (env.get(variable, "").strip() if variable else "") or os.path.join(home, fallback)
+        roots.append(os.path.join(base, suffix))
+    return [os.path.expanduser(root) for root in roots]
+
+
+def find_jev(
+    env: Mapping[str, str], own_root: str | None = SKILLS_DIR, override: str | None = None
+) -> str | None:
+    """The override when it names a file, else the first installed jev entry point."""
+    if override and os.path.isfile(override):
+        return override
+    for root in skills_roots(env, own_root):
+        path = os.path.join(root, JEV_ENTRY_REL)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def jev_status(
+    seams: HostSeams,
+    jev_client: str | None = None,
+    env: Mapping[str, str] | None = None,
+    own_root: str | None = SKILLS_DIR,
+) -> dict:
+    """Whether jev-fast-decision's `detect` shows a usable backend; only detect is run."""
+    entry = find_jev(os.environ if env is None else env, own_root, jev_client)
+    if entry is None:
+        return {"usable": False, "reason": "jev-fast-decision not installed"}
+    rc, out = seams.run([sys.executable, entry, "detect"], PROBE_TIMEOUT, None)
+    # Exit 2 is argparse's unknown-subcommand exit from an old client; its message is on stderr,
+    # which _run never returns, so the code alone identifies it. The new detect never exits 2.
+    if rc == 2:
+        return {"usable": False, "reason": "jev-fast-decision too old: re-run the ai-kit installer"}
     if rc != 0:
         return {"usable": False, "reason": "detect failed"}
+    return _jev_reading(out)
+
+
+def _jev_reading(out: str) -> dict:
+    """The usable flag and a fixed reason from jev's detect JSON; no backend detail survives."""
     try:
         data = json.loads(out)
     except json.JSONDecodeError:

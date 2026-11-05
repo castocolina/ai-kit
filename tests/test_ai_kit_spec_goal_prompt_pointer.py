@@ -25,7 +25,7 @@ from gp_common import GuardError
 
 from tests import goal_prompt_fixtures as fx
 from tests.test_ai_kit_spec_goal_prompt_cli import (
-    DECIDE_REL,
+    JEV_REL,
     PHASES,
     SPEC_REL,
     WAKE_REL,
@@ -287,7 +287,7 @@ class TestCliGoalStyle(unittest.TestCase):
         self.repo.mkdir()
         fx.git_init(self.repo)
         skills = self.root / "skills"
-        for rel in (WAKE_REL, SPEC_REL, DECIDE_REL):
+        for rel in (WAKE_REL, SPEC_REL, JEV_REL):
             fx.write(skills, rel, "# stand-in sibling CLI; never executed\n")
         self.seams = cli_seams(FakeRun(host_routes()), str(skills))
         prompt = mock.patch("builtins.input", side_effect=AssertionError("must never prompt"))

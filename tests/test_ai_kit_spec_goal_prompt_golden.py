@@ -48,7 +48,8 @@ UNIT = "Unit tests alone never count as done."
 OBJECTIVE = "Ship phases 16 to 17 with the curated config checks green."
 WAKE_REL = "ai-kit-session-wake/ai-kit-session-wake.py"
 SPEC_REL = "ai-kit-spec-review/ai-kit-spec.py"
-DECIDE_REL = "ai-kit-gsd-spec-discuss/scripts/decide.py"
+DISCUSS_REL = "ai-kit-gsd-spec-discuss/SKILL.md"
+JEV_REL = "jev-fast-decision/scripts/jev_review.py"
 UPSTREAM = {
     "from": re.compile(r"--from\s+[0-9]+[A-Z]?(?:\.[0-9]+)*"),
     "to": re.compile(r"--to\s+[0-9]+[A-Z]?(?:\.[0-9]+)*"),
@@ -187,7 +188,7 @@ class Outcome(NamedTuple):
 
 def _stand_in_skills(root: Path) -> str:
     skills = root / "skills"
-    for rel in (WAKE_REL, SPEC_REL, DECIDE_REL):
+    for rel in (WAKE_REL, SPEC_REL, DISCUSS_REL, JEV_REL):
         fx.write(skills, rel, "# stand-in sibling CLI; never executed\n")
     return str(skills)
 

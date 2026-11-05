@@ -40,6 +40,9 @@ MOCKUP_TEXT = (
     "them for human review against {mockups}. No automated judge decides it."
 )
 ADVISORY = "Advisory (not a gate):"
+# The DECISIONS gray-area line names the jev-fast-decision skill (black-box instruction); no other
+# non-report line may mention jev.
+GRAY_AREA_LINE = "- Gray areas:"
 JEV_RE = re.compile(r"\bjev", re.IGNORECASE)
 MOCKUP_OR_UI_RE = re.compile(r"mockup|screenshot|\bUI\b", re.IGNORECASE)
 PATH_HEADINGS = gp_render.HEADINGS
@@ -204,11 +207,11 @@ class TestDoneVariants(unittest.TestCase):
 
 
 class TestJevVariants(unittest.TestCase):
-    def test_usable_jev_gives_one_advisory_report_line_naming_the_ladder(self):
+    def test_usable_jev_gives_one_advisory_report_line_naming_the_skill(self):
         lines = gp_sections.report_lines({"usable": True, "reason": "local backend usable"})
         advisory = [line for line in lines if line.startswith(ADVISORY)]
         self.assertEqual(len(advisory), 1)
-        self.assertIn("decide.py ladder", advisory[0])
+        self.assertIn("jev-fast-decision skill", advisory[0])
         self.assertIn("from text summaries only", advisory[0])
 
     def test_unusable_jev_names_the_reason_and_adds_no_advisory_line(self):
@@ -229,7 +232,8 @@ class TestJevVariants(unittest.TestCase):
         self.assertEqual(len(advisory), 1)
         for name, lines in sections.items():
             if name != "REPORT":
-                self.assertFalse(any(JEV_RE.search(line) for line in lines), name)
+                outside = [line for line in lines if not line.startswith(GRAY_AREA_LINE)]
+                self.assertFalse(any(JEV_RE.search(line) for line in outside), name)
 
     def test_rendered_file_with_advisory_jev_passes_the_guards(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -254,7 +258,8 @@ class TestJevVariants(unittest.TestCase):
                 encoding="utf-8"
             )
         self.assertIn("The advisory closeness check was omitted: detect failed.", text)
-        self.assertFalse(any(JEV_RE.search(line) for line in text.split("\n")))
+        lines = [line for line in text.split("\n") if not line.startswith(GRAY_AREA_LINE)]
+        self.assertFalse(any(JEV_RE.search(line) for line in lines))
 
     def test_sweep_usable_jev_and_mockup_never_share_a_line(self):
         with tempfile.TemporaryDirectory() as tmp:

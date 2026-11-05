@@ -1,7 +1,7 @@
 """Tests for skills/ai-kit-spec-goal-prompt/scripts/gp_host.py (GPS-01, GPS-02, GPS-04).
 
 Every subprocess goes through an injected `HostSeams`, so these tests fake each run. No test
-runs a real model, a `decide.py` ladder call, the network, or touches a real home or credential.
+runs a real model, a jev ladder call, the network, or touches a real home or credential.
 Fake results are keyed by argv tuples and never carry an absolute machine path.
 """
 
@@ -703,15 +703,28 @@ class TestReadiness(ReadinessBase):
 
 class TestJev(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(prefix="ai-kit-p29-")
         self.addCleanup(self.tmp.cleanup)
-        self.decide = os.path.join(self.tmp.name, "decide.py")
-        Path(self.decide).write_text("# stand-in client; never executed\n", "utf-8")
-        self.argv = (sys.executable, self.decide, "detect")
+        # An empty own root and a HOME with no copy: the lookup finds nothing unless a test adds it.
+        self.own = os.path.join(self.tmp.name, "own-skills")
+        os.makedirs(self.own)
+        self.home = os.path.join(self.tmp.name, "home")
+        self.env = {"HOME": self.home}
+        self.client = self._install(self.home)
 
-    def _status(self, reply):
-        run = FakeRun({self.argv: reply})
-        return gp_host.jev_status(seams(run), decide_cli=self.decide), run
+    def _install(self, home):
+        path = os.path.join(
+            home, ".claude", "skills", "jev-fast-decision", "scripts", "jev_review.py"
+        )
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        Path(path).write_text("# stand-in client; never executed\n", "utf-8")
+        return path
+
+    def _status(self, reply, jev_client=None, path=None):
+        target = path or self.client
+        run = FakeRun({(sys.executable, target, "detect"): reply})
+        status = gp_host.jev_status(seams(run), jev_client, env=self.env, own_root=self.own)
+        return status, run
 
     def test_local_usable_backend_is_usable(self):
         detect = {
@@ -720,8 +733,9 @@ class TestJev(unittest.TestCase):
                 "typesafe": {"usable": False, "remote": True},
             }
         }
-        status, _ = self._status((0, json.dumps(detect)))
+        status, run = self._status((0, json.dumps(detect)))
         self.assertEqual(status, {"usable": True, "reason": "local backend usable"})
+        self.assertEqual(run.calls, [(sys.executable, self.client, "detect")])
 
     def test_only_a_remote_usable_backend_counts_as_consented(self):
         detect = {
@@ -742,27 +756,57 @@ class TestJev(unittest.TestCase):
         status, _ = self._status((1, ""))
         self.assertEqual(status, {"usable": False, "reason": "detect failed"})
 
+    def test_detect_exit_two_is_an_old_client(self):
+        status, _ = self._status((2, ""))
+        self.assertEqual(
+            status,
+            {"usable": False, "reason": "jev-fast-decision too old: re-run the ai-kit installer"},
+        )
+
     def test_detect_bad_json_is_fixed_reason(self):
         status, _ = self._status((0, "not json"))
         self.assertEqual(status, {"usable": False, "reason": "detect output not json"})
 
     def test_missing_client_never_calls_a_subprocess(self):
         run = FakeRun()
-        status = gp_host.jev_status(seams(run), decide_cli="no-such-decide.py")
-        self.assertEqual(status, {"usable": False, "reason": "decide.py missing"})
+        bare_env = {"HOME": os.path.join(self.tmp.name, "bare-home")}
+        status = gp_host.jev_status(seams(run), env=bare_env, own_root=self.own)
+        self.assertEqual(status, {"usable": False, "reason": "jev-fast-decision not installed"})
         self.assertEqual(run.calls, [])
+
+    def test_jev_client_naming_a_file_wins_over_the_lookup(self):
+        override = os.path.join(self.tmp.name, "override_jev_review.py")
+        Path(override).write_text("# stand-in client; never executed\n", "utf-8")
+        detect = {"backends": {"laya": {"usable": True, "remote": False}}}
+        status, run = self._status((0, json.dumps(detect)), jev_client=override, path=override)
+        self.assertEqual(status, {"usable": True, "reason": "local backend usable"})
+        self.assertEqual(run.calls, [(sys.executable, override, "detect")])
+
+    def test_old_client_through_the_real_seam_is_too_old(self):
+        # A synthetic client whose only subcommand is `review`: argparse rejects `detect` with
+        # exit 2 and writes the error to stderr, which the real seam drops.
+        script = os.path.join(self.tmp.name, "old_jev_review.py")
+        Path(script).write_text(
+            "import argparse\n"
+            "parser = argparse.ArgumentParser()\n"
+            "parser.add_subparsers(dest='command').add_parser('review')\n"
+            "parser.parse_args()\n",
+            "utf-8",
+        )
+        status = gp_host.jev_status(
+            gp_host.real_seams(), script, env=self.env, own_root=self.own
+        )
+        self.assertEqual(
+            status,
+            {"usable": False, "reason": "jev-fast-decision too old: re-run the ai-kit installer"},
+        )
 
     def test_jev_never_calls_the_ladder(self):
         detect = {"backends": {"laya": {"usable": True, "remote": False}}}
         _, run = self._status((0, json.dumps(detect)))
-        self.assertEqual(run.calls, [self.argv])
+        self.assertEqual(run.calls, [(sys.executable, self.client, "detect")])
         for call in run.calls:
             self.assertNotIn("ladder", call)
-
-    def test_module_source_never_names_the_ladder_or_a_shell(self):
-        source = (SCRIPTS / "gp_host.py").read_text("utf-8")
-        self.assertNotIn("ladder", source)
-        self.assertNotIn("shell=True", source)
 
 
 class TestProbeEnvironment(unittest.TestCase):

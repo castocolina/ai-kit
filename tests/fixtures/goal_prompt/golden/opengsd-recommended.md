@@ -47,7 +47,7 @@ QUOTA
 
 DECISIONS
 - Verifiable questions: check and fix them directly; do not ask.
-- Gray areas: use the decide.py ladder of the ai-kit-gsd-spec-discuss skill. Its answers are advisory; verify before acting. Prefer the best design over the easiest.
+- Gray areas: ask the jev-fast-decision skill and follow its SKILL.md. Advisory only: on needs_fallback or no answer you decide; verify before acting. Prefer the best design over the easiest.
 - Never pause for questions or UAT. Put a blocking item in the ledger and continue.
 - Never remove existing features.
 
