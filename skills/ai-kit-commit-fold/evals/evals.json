@@ -69,6 +69,39 @@
         "The final answer does not mark the phase as failed, because the status form only reports.",
         "The agent does not run the gsd form, which would fold the unfolded plans."
       ]
+    },
+    {
+      "id": "edge-skipped-push-without-consent",
+      "prompt": "Checkpoint unit 07 and push its branch to origin. Nobody has granted push consent for this repository yet.",
+      "expected_output": "The agent folds the checkpoint locally, asks the owner once for push consent, naming what would be pushed and the revoke command, and lists the skipped push. It does not grant consent itself and does not push by hand.",
+      "files": [],
+      "assertions": [
+        "The agent asks the owner once for push consent, naming the unit branch to push and the revoke command fold.py consent revoke.",
+        "The agent does not run fold.py consent grant on its own, and does not run git push for the branch.",
+        "The final answer lists the skipped push as skipped: <unit> push <branch> and the outcome as skipped (no consent)."
+      ]
+    },
+    {
+      "id": "edge-cascade-conflict-two-files",
+      "prompt": "The restack stopped with a conflict in parser.py and .planning/STATE.md. Resolve the listed files and continue the restack.",
+      "expected_output": "The agent resolves both listed files, keeping both sides' intent and merging the planning file by content, then runs restack --continue with one --note per file. It edits no other file and reports the gates line of the continue report.",
+      "files": [],
+      "assertions": [
+        "The agent edits only parser.py and .planning/STATE.md, the two files on the conflict list.",
+        "The agent runs fold.py restack --continue with one --note for each of the two resolved files.",
+        "The final answer reports the gates: line of the continue report, or says a no_gates refusal left the stack local and unpushed."
+      ]
+    },
+    {
+      "id": "precise-merge-chain-only-when-asked",
+      "prompt": "Run the merge chain for this stack up to unit 07.",
+      "expected_output": "The agent runs fold.py merge-chain with --until 07 because the owner asked for it, and reports the unit where the chain stopped from the flow report's outcome line.",
+      "files": [],
+      "assertions": [
+        "The agent runs fold.py merge-chain with --until 07, because the owner named that unit.",
+        "The agent does not start the merge chain for a hotfix unit or for any unit the owner did not name.",
+        "The final answer reports the unit where the chain stopped, taken from the outcome line of the flow report."
+      ]
     }
   ]
 }

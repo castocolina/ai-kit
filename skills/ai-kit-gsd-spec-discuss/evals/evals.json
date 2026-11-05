@@ -71,6 +71,28 @@
         "The agent does not start the next phase's spec or discuss step while the blocking question is open.",
         "Items that block no other decision are decided provisionally and listed in the ledger, not asked as questions."
       ]
+    },
+    {
+      "id": "precise-start-before-spec-commit",
+      "prompt": "Spec and discuss phase 12. The fold skill is installed. Its fold.py start --phase 12 refuses, and its report ends with refused.",
+      "expected_output": "The agent runs fold.py start --phase 12 before the phase's first commit, sees the refused report, shows it to the owner and stops the run before any spec-phase write. It does not run the spec workflow or commit the SPEC.",
+      "files": [],
+      "assertions": [
+        "The agent runs fold.py start --phase 12 before it runs the spec-phase workflow or makes any commit.",
+        "The agent shows the refused report to the owner and stops the run when the report ends with refused.",
+        "The agent does not run the spec-phase workflow, discuss-phase or any commit after the refused start."
+      ]
+    },
+    {
+      "id": "edge-start-skill-missing",
+      "prompt": "Spec phase 13 in a project where the commit-fold skill is not installed.",
+      "expected_output": "The agent says the fold skill is not installed, continues the spec step on the current branch, and does not invent a unit branch.",
+      "files": [],
+      "assertions": [
+        "The agent says that the fold skill is not installed and continues the spec step on the current branch.",
+        "The agent does not create a unit branch or call fold.py start when the fold skill is missing.",
+        "The agent still runs the spec-phase workflow for phase 13 as usual."
+      ]
     }
   ]
 }

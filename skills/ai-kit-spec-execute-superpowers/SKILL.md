@@ -104,6 +104,8 @@ mechanism; if not, STOP and tell the user (nothing to delegate to). Follow its o
 (workspace, ledger, plan read, pre-flight scan). `$CWD`, `$PLAN_FILE`, `$TASK_N`, and `$BRIEF_FILE`
 are values it already holds at each task's implementer dispatch — read them, never invent them.
 
+Before the first task, run `fold.py start --plan "$PLAN_FILE" --repo "$CWD"` (the fold skill's `scripts/fold.py`, found the way `references/fold-step.md` finds it). It creates the plan's unit branch on the stack top and checks it out, or reuses it when it already sits there. Gap (D-01): superpowers' own planning commits come before this step, so the unit branch carries this plan's code from Step 1 on; ai-kit owns no hook in superpowers' planning skills. Run `start` before the record below, so the start commit sits on the unit branch.
+
 Before the first task, after the Task paths block prints `SCALARS`, record the start commit once (later
 tasks keep it, so earlier commits stay outside the fold range):
 `[ -n "$FOLD_BASE" ] || printf 'FOLD_BASE=%s\n' "$(git -C "$CWD" rev-parse HEAD)" | tee -a "$SCALARS"`.
@@ -289,7 +291,7 @@ skill's scope ends at Step 3 until Step 5 and never touches review, adjudication
 
 ## Step 5: Fold the finished plan (after the final review, before the finishing step)
 
-**MANDATORY: read [`references/fold-step.md`](references/fold-step.md) in full and run its block once the final whole-branch review passes.** A refusal stops the run and shows the report; never move the branch by hand. After `folded` or `nothing to fold`, superpowers' finishing step does not merge, push or open a PR for this unit: ai-kit's unit flow does.
+**MANDATORY: read [`references/fold-step.md`](references/fold-step.md) in full and run its block once the final whole-branch review passes.** The block runs `fold.py checkpoint --plan "$PLAN_FILE" --base "$FOLD_BASE" --final` (the unit's last checkpoint, with the fold step's range kept), then `fold.py ready --plan "$PLAN_FILE"`. A refusal stops the run and shows the report; never move the branch by hand. superpowers' finishing step does not merge, push or open a PR for this unit: ai-kit's unit flow does, and pushes only with push consent. A plan run inline, without this skill, runs the same three commands from the fold skill's `references/adapter-guide.md`.
 
 ## Close the session wake
 

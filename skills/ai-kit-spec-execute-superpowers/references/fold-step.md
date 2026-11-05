@@ -2,9 +2,11 @@
 
 MANDATORY: read this file in full before running its block; do NOT load it at any other point.
 
-Folds the plan's commits (`FOLD_BASE..HEAD`) into one commit per logical feature, through the
-fold skill's `superpowers` form. Run it once, after the final whole-branch review passes. The
-folding policy is the fold skill's `references/folding-policy.md`.
+Closes the plan's unit: `fold.py checkpoint --plan "$PLAN_FILE" --base "$FOLD_BASE" --final` folds
+the plan's commits (`FOLD_BASE..HEAD`) into one commit per logical feature and marks the unit
+finished, then `fold.py ready --plan "$PLAN_FILE"` marks its PR ready. Run it once, after the final
+whole-branch review passes. The folding policy is the fold skill's `references/folding-policy.md`;
+the unit flow is its `references/adapter-guide.md`.
 
 ## The block
 
@@ -29,21 +31,25 @@ if [ -z "$FOLD_PY" ]; then
   printf 'ERROR: ai-kit-commit-fold (scripts/fold.py) is not installed -- STOP and tell the user\n'
   exit 1
 fi
-python3 "$FOLD_PY" superpowers --plan "$PLAN_FILE" --base "$FOLD_BASE" --repo "$CWD" --mode "${FOLD_MODE:-inline}"
+python3 "$FOLD_PY" checkpoint --plan "$PLAN_FILE" --base "$FOLD_BASE" --final --repo "$CWD" || exit $?
+python3 "$FOLD_PY" ready --plan "$PLAN_FILE" --repo "$CWD"
 exit $?
 ```
 
 ## Running it
 
-- Where the host has a subagent, dispatch the block to it with `FOLD_MODE=subagent` exported in
-  that call, and relay the subagent's report verbatim. Otherwise run the block yourself, as
-  written (`inline`). The report's last line says which mode ran.
-- The report has five lines: the unit, the commit counts with the grouping source, the tree check,
-  the backup tag and the outcome. The outcome is `folded`, `nothing to fold` or `refused <reason>`.
-- A refusal changes nothing, so the branch stays where it was. Show the report, name the reason
-  (the fold skill's `SKILL.md`, "Read the report", lists what to tell the user for each one) and
-  stop the run. Never move the branch by hand.
-- After `folded` or `nothing to fold`, superpowers' finishing step is not used to merge, push or
-  open a PR for this unit. Tell the user the folded branch is ready for ai-kit's unit flow (push and
-  stacked draft PR).
+- Where the host has a subagent, dispatch the block to it and relay both flow reports verbatim.
+  Otherwise run the block yourself, as written.
+- The block runs `fold.py checkpoint --plan "$PLAN_FILE" --base "$FOLD_BASE" --final`, then
+  `fold.py ready --plan "$PLAN_FILE"`. The checkpoint's report is the flow report: its first line is
+  `flow checkpoint <unit>:`. Each report's last line is `outcome: <unit> <done | nothing to do |
+  skipped (no consent) | refused <reason>>`. A `skipped (no consent)` outcome means no push ran: the
+  owner has not granted push consent yet.
+- A refusal changes nothing, so the branch stays where it was. Show the report, name the reason (the
+  fold skill's `SKILL.md`, "Read the report", lists what to tell the user for each one, and
+  `references/unit-contract.md` lists the flow's reason codes) and stop the run. Never move the
+  branch by hand. A refused `ready` leaves the PR a draft.
+- superpowers' finishing step is not used to merge, push or open a PR for this unit. A plan run
+  inline, without this skill, follows the same three commands: `fold.py start --plan`, then
+  `fold.py checkpoint --plan` with `--base` and `--final`, then `fold.py ready --plan`.
 </content>

@@ -33,6 +33,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
                                  "ai-kit-session-wake"))
 from tests import fold_fixtures, session_wake_fakes
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
+                                 "ai-kit-commit-fold", "scripts"))
+import fold_adapters
+
 
 class TestClassifyTask(unittest.TestCase):
     def test_classifies_frontend_from_file_extensions(self):
@@ -2824,7 +2828,15 @@ class TestFoldStep(unittest.TestCase):
         home.mkdir()
         self.env = fold_fixtures.git_env(home)
         self.repo, self.pre_plan, _shas = fold_fixtures.superpowers_project(self.root, self.env)
-        fold_fixtures.isolated_fold(self.root)
+        fold_fixtures.make_remote(self.root, self.env, self.repo, github=False)
+        fold_py = fold_fixtures.isolated_fold(self.root)
+        self.unit = fold_adapters.superpowers_unit_contract(self.repo, fold_fixtures.SP_PLAN)
+        self._git("branch", "-m", "feature/demo", self.unit["branch"])
+        started = subprocess.run(
+            [sys.executable, str(fold_py), "start", "--plan", fold_fixtures.SP_PLAN,
+             "--repo", str(self.repo)],
+            env=self.env, capture_output=True, text=True, check=False, timeout=300)
+        self.assertEqual(0, started.returncode, started.stdout + started.stderr)
         self.skill = self.root / "skills" / "ai-kit-spec-execute-superpowers"
         self.skill.mkdir()
         self.scalars = self.root / "superpowers-run-scalars.env"
@@ -2850,8 +2862,9 @@ class TestFoldStep(unittest.TestCase):
     def test_documented_block_folds_the_two_features_above_the_pre_plan_commit(self):
         proc = self._run()
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertRegex(proc.stdout.strip().splitlines()[-1],
-                         r"^outcome: \S+ folded \(inline\)$")
+        lines = proc.stdout.strip().splitlines()
+        self.assertTrue(lines[0].startswith("flow checkpoint "), proc.stdout)
+        self.assertEqual(f"outcome: {self.unit['id']} skipped (no consent)", lines[-1])
         self.assertEqual("2", self._git("rev-list", "--count", f"{self.pre_plan}..HEAD"))
         self.assertEqual(self.pre_plan, self._git("rev-parse", "HEAD~2"))
 

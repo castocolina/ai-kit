@@ -93,6 +93,7 @@ Read and execute `<workflows>/spec-phase.md` end-to-end with arguments `N --auto
 or plain `N` (interactive path) (read the
 file; do not delegate to another skill — skill-to-skill calls are unreliable on some hosts).
 
+- Before the phase's first commit, run `fold.py start --phase <N>` (as `python3 "$FOLD_PY" start --phase <N> --repo "$CWD"`, with `$FOLD_PY` found under the installed-skill directories the superpowers skill's `references/fold-step.md` lists). spec-phase has no hook point, so this skill starts the unit itself (D-01). If the fold skill is not installed, say so and continue on the current branch. If `start` runs and its report ends `refused`, or it exits non-zero, show the report and stop before any write.
 - An existing SPEC is reused, as the workflow does.
 - **Live-verify before you write a claim**: installed versions, real config keys, real CLI
   output in a scratch dir. A SPEC sentence from memory is a defect.

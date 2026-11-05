@@ -299,6 +299,12 @@ unavailable or insufficient.
   per logical feature; this compaction covers the whole plan's history, and the
   per-commit rule in Non-Negotiable Rules above still applies to each folded
   commit). Fold before every push without asking for confirmation.
+- Ship a finished unit in this order: gates green on the unit branch; an
+  installer dry run and the new hooks against a scratch HOME; then the main
+  checkout on the unit branch's tip for the install and a live re-check, all
+  before verification is marked passed (so the orchestrator's
+  `ai-kit-fold ready` runs after them); local `main` moves only when the
+  stacked PRs merge, through the owner-started `fold.py merge-chain`.
 - Update READMEs and other nested docs (submodule READMEs, diagrams,
   docstrings) after any significant feature change — stale docs are a
   defect, not a follow-up.

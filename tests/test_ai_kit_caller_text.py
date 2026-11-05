@@ -50,6 +50,13 @@ FALLBACK_RULE = re.compile(
     r"needs_fallback[^.]{0,80}no answer|no answer[^.]{0,80}needs_fallback", re.IGNORECASE
 )
 _WRITE_METHODS = frozenset({"write_text", "write_bytes", "unlink", "rmtree", "mkdir", "makedirs"})
+# The unit flow's push consent (commit-fold's per-repository push approval: `consent grant`,
+# `revoke`, `status`, the "no consent" outcome, the settings key) is not the jev backend consent
+# this rule guards. Only these literal forms are cleared; "backend consent" still counts.
+_PUSH_CONSENT = re.compile(
+    r"\bpush consent\b|\bno consent\b|\bconsent (?:grant|revoke|status)\b|`consent`",
+    re.IGNORECASE,
+)
 
 sys.path.insert(0, SCRIPTS)
 
@@ -58,6 +65,7 @@ import gp_sections  # after the path insert, as the golden test does
 
 def scan(text):
     """The forbidden names found in text, in FORBIDDEN order."""
+    text = _PUSH_CONSENT.sub(" ", text)
     return [name for name, pattern in FORBIDDEN.items() if pattern.search(text)]
 
 
@@ -127,6 +135,13 @@ class TestCallerText(unittest.TestCase):
         for label, text in caller_texts():
             with self.subTest(label=label):
                 self.assertEqual([], scan(text))
+
+    def test_push_consent_clearance_is_narrow(self):
+        # Non-vacuity: the flow's push-consent forms are cleared; jev backend consent is not.
+        self.assertEqual([], scan("Pushes need push consent; `consent grant` records it."))
+        self.assertEqual([], scan("outcome: u skipped (no consent)"))
+        self.assertEqual(["consent"], scan("The backend consent step asks first."))
+        self.assertEqual(["consent"], scan("Consent is asked before the consent step."))
 
     def test_every_caller_skill_states_the_default_decides(self):
         for label, text in caller_texts():

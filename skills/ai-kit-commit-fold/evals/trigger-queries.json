@@ -4,7 +4,7 @@
   {"query": "Install the wave-end fold into this GSD project so each wave gets folded after its merge-back.", "should_trigger": true},
   {"query": "Which plans of phase 7 are still unfolded, and which ones already have their feature commits?", "should_trigger": true},
   {"query": "Regroup the task commits from plan 07-01 by feature, and keep the original messages in the trailer.", "should_trigger": true},
-  {"query": "Run the fold for GSD phase 12 so every finished plan ends with one commit per feature.", "should_trigger": true},
+  {"query": "Start the unit branch for GSD phase 12 before its first commit, and record it in the stack.", "should_trigger": true},
   {"query": "My finished plan has five small commits. Collapse them into logical feature commits with a backup tag.", "should_trigger": true},
   {"query": "Check the fold status for phase 9 and tell me which plans still need folding.", "should_trigger": true},
   {"query": "Fold the commits of this superpowers plan file against the base commit 3f9a0c1, please.", "should_trigger": true},
@@ -18,5 +18,8 @@
   {"query": "Cherry-pick the single hotfix commit from the release branch onto the main branch.", "should_trigger": false},
   {"query": "Review the GSD plan for phase 7 and tell me what is missing from its task list.", "should_trigger": false},
   {"query": "Set up the GSD config for this project so it uses the fast model profile for planning.", "should_trigger": false},
-  {"query": "Resolve the merge conflict in the parser file between my branch and the main branch.", "should_trigger": false}
+  {"query": "Resolve the merge conflict in the parser file between my branch and the main branch.", "should_trigger": false},
+  {"query": "Push this checkpoint of the unit branch and open its draft PR, now that the owner agrees to pushes.", "should_trigger": true},
+  {"query": "Mark the PR for the finished unit ready for review, since verification has passed.", "should_trigger": true},
+  {"query": "Rebase my feature branch onto main interactively and squash the fixup commits together.", "should_trigger": false}
 ]
