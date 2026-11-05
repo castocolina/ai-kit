@@ -7,8 +7,11 @@ PR is retargeted to the trunk, and the merged unit's branches and recorded backu
 deleted (checkout-safe: a branch checked out in another worktree is kept and named), then the
 local trunk is fast-forwarded. A run first finishes the cleanup of any unit recorded merged whose
 branch or tags a failed earlier run left behind. A draft, a pending or failing check, or a
-conflict stops the walk by name. With the gh-stack backend one `gh stack merge` merges the ready
-prefix. `--unit-id` merges one recorded hotfix PR into its target and touches no stacked unit.
+conflict stops the walk by name. When the units were linked into a GitHub stack (`linked` in the
+record, set by the gh-stack PR step) GitHub refuses that synchronous merge, so one PUT
+.../pulls/<last ready PR>/merge-async (head pinned by `sha`) merges the ready prefix and its
+result is polled for a bounded time. `--unit-id` merges one recorded hotfix PR into its target and
+touches no stacked unit.
 """
 
 import contextlib
@@ -16,6 +19,7 @@ import fcntl
 import json
 import os
 import subprocess
+import time
 
 import flow_git
 import flow_pr
@@ -34,6 +38,8 @@ from flow_record import (
 
 LOCK_NAME = "ai-kit-flow.lock"
 _FIELDS = "number,state,isDraft,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup"
+MERGE_WAIT, POLL_EVERY = 300, 5  # seconds; the docs give no polling interval
+_now, _sleep = time.monotonic, time.sleep  # test seams
 
 
 @contextlib.contextmanager
@@ -59,9 +65,9 @@ def chain_lock(repo):
 
 
 def _view(repo, settings, number):
-    code, text = flow_pr.pr_cmd(repo, settings, "view", str(number), "--json", _FIELDS)
+    code, text, err = flow_pr.pr_cmd_split(repo, settings, "view", str(number), "--json", _FIELDS)
     if code != 0:
-        raise FlowError("pr_failed", text.strip().splitlines()[0] if text.strip() else "gh pr")
+        raise FlowError("pr_failed", flow_pr.failure_line(text, err, "gh pr view"))
     return json.loads(text)
 
 
@@ -93,10 +99,10 @@ def _stop_reason(view):
 
 def _merge(repo, settings, entry, view):
     tip = flow_git.rev(repo, f"refs/heads/{entry['branch']}")
-    code, text = flow_pr.pr_cmd(repo, settings, "merge", str(view["number"]), "--merge",
-                                "--match-head-commit", tip)
+    code, out, err = flow_pr.pr_cmd_split(repo, settings, "merge", str(view["number"]), "--merge",
+                                          "--match-head-commit", tip)
     if code != 0:
-        raise FlowError("pr_failed", text.strip().splitlines()[0] if text.strip() else "gh pr")
+        raise FlowError("pr_failed", flow_pr.failure_line(out, err, "gh pr merge"))
 
 
 def _confirmed(repo, settings, entry):
@@ -204,20 +210,53 @@ def _fast_forward(repo, settings, targets):
 
 def _retarget(repo, settings, entry, trunk):
     """Point the next PR at the trunk before its parent's branch is deleted (R4 adjacency)."""
-    code, text = flow_pr.pr_cmd(repo, settings, "edit", str(entry["pr"]), "--base", trunk)
+    code, out, err = flow_pr.pr_cmd_split(repo, settings, "edit", str(entry["pr"]), "--base", trunk)
     if code != 0:
-        raise FlowError("pr_failed", text.strip().splitlines()[0] if text.strip()
-                        else "gh pr edit")
+        raise FlowError("pr_failed", flow_pr.failure_line(out, err, "gh pr edit"))
+
+
+def _api_json(repo, *args):
+    code, out, err = flow_pr.run_gh_split(repo, "api", *args)
+    if code != 0:
+        raise FlowError("pr_failed", flow_pr.failure_line(out, err, "gh api merge-async"))
+    try:
+        return json.loads(out)
+    except ValueError:
+        raise FlowError("pr_failed", "gh api merge-async: no JSON answer") from None
+
+
+def _merge_async(repo, settings, top):
+    """PUT .../pulls/<n>/merge-async, the documented merge for a stacked PR: it merges <n> and
+    its open downstack PRs; `sha` pins <n>'s head (T-29.1-10). Polls the uuid result until it
+    leaves `pending` or MERGE_WAIT passes. Returns the last result's status."""
+    slug = flow_git.github_repo(repo, primary_remote(repo, settings))
+    path = f"repos/{slug}/pulls/{top['pr']}/merge-async"
+    result = _api_json(repo, "--method", "PUT", path, "--raw-field", "merge_method=merge",
+                       "--raw-field", f"sha={top['pushed']}")
+    uuid = (result.get("details") or {}).get("uuid")
+    deadline = _now() + MERGE_WAIT
+    while result.get("status") == "pending" and uuid:
+        result = _api_json(repo, f"{path}/{uuid}")
+        if result.get("status") != "pending" or _now() >= deadline:
+            break
+        _sleep(POLL_EVERY)
+    if result.get("status") == "failed":
+        message = (result.get("details") or {}).get("message") or "merge failed"
+        raise FlowError("pr_failed", f"merge-async: {flow_pr.redact(str(message))}")
+    return result.get("status")
 
 
 def _stack_chain(repo, settings, record, unmerged, until):
-    """gh-stack backend: one `gh stack merge <last ready PR> --merge` for the ready prefix."""
+    """Linked GitHub stack: one merge-async on the last ready PR merges the ready prefix."""
     ready, lines = [], []
     for entry in unmerged:
+        if not entry.get("linked"):
+            lines.append(f"stopped at {entry['id']}: not linked into the GitHub stack")
+            break
         view = _view(repo, settings, entry["pr"])
         reason = _stop_reason(view)
         if not reason and view.get("headRefOid") != entry["pushed"]:
-            reason = "PR head differs from the recorded pushed sha"  # `gh stack merge` has no pin
+            reason = "PR head differs from the recorded pushed sha"  # downstack heads: no pin
         if reason:
             lines.append(f"stopped at {entry['id']}: {reason}")
             break
@@ -226,9 +265,9 @@ def _stack_chain(repo, settings, record, unmerged, until):
             break
     if not ready:
         return lines
-    code, text = flow_pr.run_gh(repo, "stack", "merge", str(ready[-1]["pr"]), "--merge")
-    if code != 0:
-        raise FlowError("pr_failed", text.strip().splitlines()[0] if text.strip() else "gh stack")
+    status = _merge_async(repo, settings, ready[-1])
+    if status != "merged":
+        lines.append(f"merge-async for #{ready[-1]['pr']}: {status}")
     _fetch(repo, settings)
     ready = _confirmed_prefix(repo, settings, ready, lines)
     for entry in ready:
@@ -236,6 +275,8 @@ def _stack_chain(repo, settings, record, unmerged, until):
     write_record(repo, record)
     rest = [e for e in unmerged if e["state"] != "merged"]
     next_branch = rest[0]["branch"] if rest else None
+    if ready and rest and not rest[0].get("linked"):
+        _retarget(repo, settings, rest[0], ready[-1]["target"])  # its base branch goes next
     targets = set()
     for entry in ready:
         lines.append(f"merged: {entry['id']} (#{entry['pr']})")
@@ -265,7 +306,7 @@ def _chain(repo, settings, record, until):
         if view["baseRefName"] != expected:
             raise FlowError("base_mismatch",
                             f"{entry['id']} PR base is {view['baseRefName']}, expected {expected}")
-    if settings["stack_backend"] == "gh-stack":
+    if any(entry.get("linked") for entry in unmerged):
         return _stack_chain(repo, settings, record, unmerged, until)
     lines, targets = [], set()
     for index, entry in enumerate(unmerged):

@@ -512,9 +512,8 @@ class TestForgeFake(_FlowCase):
 
     def test_stack_link_of_pr_urls_does_not_push(self):
         self._branch_on("c1", "main", "1")
-        urls = []
-        for name in ("c1",):
-            urls.append(self._pr_create(name, "main"))
+        self._branch_on("c2", "c1", "2")
+        urls = [self._pr_create("c1", "main"), self._pr_create("c2", "c1")]
         proc = subprocess.run(
             ["gh", "stack", "link", *[f"https://github.com/ai-kit-fixture/demo/pull/{n}"
                                       for n in urls]],
@@ -523,6 +522,21 @@ class TestForgeFake(_FlowCase):
         link = [c for c in self.gh_calls() if c["argv"][:2] == ["stack", "link"]]
         self.assertEqual(len(link), 1)
         self.assertNotIn("pushed", link[0])
+
+    def test_stack_link_and_merge_refuse_the_arity_gh_stack_refuses(self):
+        self._branch_on("c3", "main", "1")
+        number = self._pr_create("c3", "main")
+        before = forge_fakes.forge_state(self.state)
+        url = f"https://github.com/ai-kit-fixture/demo/pull/{number}"
+        for argv, message in (
+                (["link", url], "requires at least 2 arg(s), only received 1"),
+                (["link", "--base", "main", url], "requires at least 2 arg(s), only received 1"),
+                (["merge", "1", "2", "--merge"], "accepts at most 1 arg(s), received 2")):
+            proc = subprocess.run(["gh", "stack", *argv], cwd=str(self.repo), env=self.env,
+                                  capture_output=True, text=True, check=False)
+            self.assertEqual(proc.returncode, 1, argv)
+            self.assertEqual(proc.stderr.strip(), message, argv)
+        self.assertEqual(forge_fakes.forge_state(self.state), before)
 
     def test_pr_merge_with_wrong_sha_is_refused_and_right_sha_merges(self):
         self._branch_on("d1", "main", "1")
@@ -1122,7 +1136,14 @@ class TestLiveCheckScript(unittest.TestCase):
              str(self.workdir)],
             capture_output=True, text=True, env=self.env, check=False)
 
+    def heads(self):
+        out = subprocess.run(["git", "--git-dir", str(self.bare), "for-each-ref",
+                              "--format=%(refname) %(objectname)", "refs/heads"],
+                             capture_output=True, text=True, check=True).stdout
+        return dict(line.split() for line in out.splitlines())
+
     def test_both_rounds_pass_with_one_ok_line_per_step_and_the_gh_stack_backend(self):
+        before = self.heads()
         proc = self.run_live()
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         lines = proc.stdout.splitlines()
@@ -1135,6 +1156,18 @@ class TestLiveCheckScript(unittest.TestCase):
         stack_verbs = [c["argv"][1] for c in host_fakes.fake_calls(self.log)
                        if c["argv"][:1] == ["stack"] and c["argv"][1:2] != ["--help"]]
         self.assertTrue(stack_verbs, "round 1 never called a gh stack verb")
+        trunk = next(line.split()[3] for line in lines if line.startswith("ok setup trunk "))
+        self.assertRegex(trunk, r"^flowlive-[0-9a-f]{8}/main$")
+        links = [c["argv"] for c in host_fakes.fake_calls(self.log) if c["argv"][:2] ==
+                 ["stack", "link"]]
+        self.assertTrue(links)
+        self.assertTrue(all(argv[2:4] == ["--base", trunk] for argv in links), links)
+        # GitHub's merge-async lands the whole stack in one merge, so the check counts no commits.
+        puts = [c["argv"] for c in host_fakes.fake_calls(self.log) if c["argv"][:3] ==
+                ["api", "--method", "PUT"]]
+        self.assertEqual(len(puts), 1, puts)
+        # The merges landed on the per-run trunk, which cleanup deleted; main never moved.
+        self.assertEqual(self.heads(), before)
 
     def test_a_refused_merge_stops_the_run_at_that_step_with_exit_1(self):
         self.install_gh(STACK_PROBE,
@@ -1142,7 +1175,16 @@ class TestLiveCheckScript(unittest.TestCase):
         proc = self.run_live()
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertRegex(proc.stdout, r"live-check: failed at gh-stack merge-chain")
+        self.assertIn("refused: pr_failed: fake gh: merge refused", proc.stdout)
         self.assertNotIn("live-check: ok", proc.stdout)
+
+    def test_a_pr_that_is_not_merged_fails_the_remote_check(self):
+        self.install_gh(STACK_PROBE, 'case "$*" in *mergeCommit*) '
+                        'echo \'{"state":"OPEN","mergeCommit":null}\'; exit 0;; esac')
+        proc = self.run_live()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("live-check: failed at gh-stack remote check: PR #", proc.stdout)
+        self.assertIn("is not MERGED with a merge commit", proc.stdout)
 
     def test_a_gh_stack_fallback_in_round_one_fails_the_gh_stack_proof(self):
         self.install_gh(STACK_PROBE, 'if [ "$1" = "stack" ]; then '
@@ -1151,89 +1193,158 @@ class TestLiveCheckScript(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn("live-check: failed at gh-stack", proc.stdout)
         self.assertIn("gh-stack fallback", proc.stdout)
+        self.assertIn("gh-stack failed: fake gh: stack verb refused", proc.stdout)
 
     def test_live_mode_without_the_owner_flag_exits_2_and_names_the_precondition(self):
         proc = subprocess.run([sys.executable, str(LIVE), "--live"], capture_output=True,
                               text=True, env=self.env, check=False)
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
-        self.assertIn("gh auth refresh -s delete_repo", proc.stdout)
-        self.assertIn("ai-kit-flow-live-<8 hex>", proc.stdout)
-        self.assertIn("private", proc.stdout)
+        self.assertIn("precondition: gh signed in with the repo scope", proc.stdout)
+        self.assertNotIn("delete_repo", proc.stdout)
+        self.assertIn("private repo <owner>/ai-kit-flow-live,", proc.stdout)
+        self.assertIn("no repo is ever deleted", proc.stdout)
+
+
+RUN_ID = "flowlive-0000aaaa"
 
 
 class TestLiveCheckOwnership(unittest.TestCase):
-    """Repo ownership of the owner-attended run, offline: subprocess.run is patched in-process,
-    so no gh repo command runs. Only the repo this run created is deleted."""
+    """The persistent repo of the owner-attended run, offline: subprocess.run is patched in-process,
+    so no gh or git command runs. No repo is ever deleted; cleanup touches only this run's PRs,
+    branches and trunk."""
 
     def setUp(self):
         self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p29.1-own-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.work = self.tmp / "work"
 
-    def run_live(self, codes, rounds=None):
-        """main() with the given return-code function for each gh argv; returns (rc, out, calls)."""
+    @staticmethod
+    def answers(**overrides):
+        """An answer function: argv -> (code, stdout). Keys name a gh/git verb pair."""
+        def answer(argv):
+            words = " ".join(item for item in argv if not item.startswith("-")).replace("-", " ")
+            for key, value in overrides.items():
+                if key.replace("_", " ") in words:
+                    return value(argv) if callable(value) else value
+            if argv[:3] == ["gh", "repo", "view"]:
+                return 0, '{"isPrivate": true}'
+            return 0, ""
+        return answer
+
+    def run_live(self, answer, rounds=0, record=None, extra=("--owner", "owner-x")):
+        """main() with the patched runner; returns (rc, out, calls)."""
         import flow_live_check  # pylint: disable=import-outside-toplevel
 
         calls = []
 
         def fake_run(argv, **_kwargs):
             calls.append(list(argv))
-            return subprocess.CompletedProcess(argv, codes(argv), "", "fake gh: refused\n")
+            code, out = answer(argv)
+            return subprocess.CompletedProcess(argv, code, out, "fake: refused\n")
+
+        def fake_rounds(_slug, workdir, _run_id):
+            if record is not None:  # what a run leaves in its clone's flow record
+                git_dir = workdir / "repo" / ".git"
+                git_dir.mkdir(parents=True)
+                (git_dir / "ai-kit-stack.json").write_text(json.dumps({"units": record}),
+                                                           encoding="utf-8")
+            return rounds
 
         out = io.StringIO()
-        patches = [mock.patch("subprocess.run", side_effect=fake_run)]
-        if rounds is not None:
-            patches.append(mock.patch.object(flow_live_check, "_live_rounds", return_value=rounds))
         with contextlib.ExitStack() as stack:
-            for patch in patches:
-                stack.enter_context(patch)
+            stack.enter_context(mock.patch("subprocess.run", side_effect=fake_run))
+            stack.enter_context(mock.patch.object(flow_live_check, "_live_rounds",
+                                                  side_effect=fake_rounds))
+            stack.enter_context(mock.patch.object(flow_live_check, "_new_run_id",
+                                                  return_value=RUN_ID))
             stack.enter_context(contextlib.redirect_stdout(out))
-            rc = flow_live_check.main(["--live", "--yes-owner-attended", "--owner", "owner-x",
-                                       "--workdir", str(self.tmp / "work")])
+            rc = flow_live_check.main(["--live", "--yes-owner-attended", *extra,
+                                       "--workdir", str(self.work)])
         return rc, out.getvalue(), calls
 
     @staticmethod
-    def deletes(calls):
-        return [argv for argv in calls if argv[:3] == ["gh", "repo", "delete"]]
+    def verb(calls, *head):
+        return [argv for argv in calls if argv[:len(head)] == list(head)]
 
-    def test_a_failed_create_makes_no_delete_call_and_exits_1(self):
-        def codes(argv):
-            return 1 if argv[:3] == ["gh", "repo", "create"] else 0
+    def assert_no_repo_delete(self, calls):
+        self.assertEqual(self.verb(calls, "gh", "repo", "delete"), [])
 
-        rc, out, calls = self.run_live(codes)
-        self.assertEqual(rc, 1)
-        self.assertEqual(self.deletes(calls), [])
-        self.assertIn("failed at create", out)
-
-    def test_a_failure_after_the_create_deletes_the_created_repo_and_exits_1(self):
-        def codes(argv):
-            return 1 if argv[:3] == ["gh", "repo", "clone"] else 0
-
-        rc, _out, calls = self.run_live(codes)
-        created = next(argv[3] for argv in calls if argv[:3] == ["gh", "repo", "create"])
-        self.assertEqual(rc, 1)
-        self.assertEqual(self.deletes(calls), [["gh", "repo", "delete", created, "--yes"]])
-
-    def test_a_successful_run_deletes_exactly_the_created_repo_and_ends_ok(self):
-        rc, out, calls = self.run_live(lambda argv: 0, rounds=0)
-        created = next(argv[3] for argv in calls if argv[:3] == ["gh", "repo", "create"])
-        self.assertEqual(rc, 0)
-        self.assertEqual(self.deletes(calls), [["gh", "repo", "delete", created, "--yes"]])
-        self.assertTrue(created.startswith("owner-x/ai-kit-flow-live-"), created)
+    def test_an_existing_private_repo_is_reused_and_never_created_or_deleted(self):
+        rc, out, calls = self.run_live(self.answers())
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.verb(calls, "gh", "repo", "view")[0][3], "owner-x/ai-kit-flow-live")
+        self.assertEqual(self.verb(calls, "gh", "repo", "create"), [])
+        self.assert_no_repo_delete(calls)
+        self.assertIn(f"live-check: run {RUN_ID} in owner-x/ai-kit-flow-live on trunk "
+                      f"{RUN_ID}/main", out)
         self.assertEqual(out.splitlines()[-1], "live-check: ok")
 
-    def test_a_failed_round_still_deletes_the_created_repo(self):
-        rc, _out, calls = self.run_live(lambda argv: 0, rounds=1)
-        self.assertEqual(rc, 1)
-        self.assertEqual(len(self.deletes(calls)), 1)
+    def test_a_missing_repo_is_created_once_private_and_kept(self):
+        rc, out, calls = self.run_live(self.answers(gh_repo_view=(1, "")))
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.verb(calls, "gh", "repo", "create"),
+                         [["gh", "repo", "create", "owner-x/ai-kit-flow-live", "--private",
+                           "--add-readme"]])
+        self.assert_no_repo_delete(calls)
+        self.assertIn("it is kept for later runs", out)
 
-    def test_a_failing_delete_exits_1_and_names_the_repo_even_when_the_rounds_passed(self):
-        def codes(argv):
-            return 1 if argv[:3] == ["gh", "repo", "delete"] else 0
-
-        rc, out, calls = self.run_live(codes, rounds=0)
-        created = next(argv[3] for argv in calls if argv[:3] == ["gh", "repo", "create"])
+    def test_a_failed_create_stops_before_any_round_and_exits_1(self):
+        rc, out, calls = self.run_live(self.answers(gh_repo_view=(1, ""),
+                                                    gh_repo_create=(1, "")))
         self.assertEqual(rc, 1)
-        self.assertIn(f"live-check: cleanup failed {created}", out)
+        self.assertIn("failed at create owner-x/ai-kit-flow-live", out)
+        self.assertEqual(self.verb(calls, "git"), [])
+        self.assert_no_repo_delete(calls)
+
+    def test_a_public_repo_is_refused(self):
+        rc, out, calls = self.run_live(self.answers(gh_repo_view=(0, '{"isPrivate": false}')))
+        self.assertEqual(rc, 1)
+        self.assertIn("is not a private repo", out)
+        self.assertEqual(self.verb(calls, "gh", "repo", "create"), [])
+
+    def test_the_repo_flag_overrides_the_default_without_an_owner_lookup(self):
+        rc, out, calls = self.run_live(self.answers(), extra=("--repo", "someone/flow-box"))
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.verb(calls, "gh", "repo", "view")[0][3], "someone/flow-box")
+        self.assertEqual(self.verb(calls, "gh", "api"), [])
+
+    def test_cleanup_closes_and_deletes_only_what_this_run_recorded(self):
+        record = [
+            {"branch": f"{RUN_ID}/r1/x", "pr": 5},
+            {"branch": f"hotfix/{RUN_ID}-r1-hotfix", "pr": 6},
+            {"branch": f"{RUN_ID}/r1/y", "pr": None},
+            {"branch": "flowlive-ffffffff/r1/x", "pr": 7},  # another run's
+        ]
+
+        def view(argv):
+            return 0, '{"state": "OPEN"}' if argv[3] == "5" else '{"state": "MERGED"}'
+
+        rc, out, calls = self.run_live(self.answers(gh_pr_view=view, ls_remote=(0, "sha ref")),
+                                       record=record)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual([argv[3] for argv in self.verb(calls, "gh", "pr", "view")], ["5", "6"])
+        self.assertEqual(self.verb(calls, "gh", "pr", "close"),
+                         [["gh", "pr", "close", "5", "--repo", "owner-x/ai-kit-flow-live"]])
+        deleted = [argv[-1] for argv in calls if "--delete" in argv]
+        self.assertEqual(deleted, [f"{RUN_ID}/r1/x", f"hotfix/{RUN_ID}-r1-hotfix",
+                                   f"{RUN_ID}/r1/y", f"{RUN_ID}/main"])
+        self.assertFalse(any("flowlive-ffffffff" in " ".join(argv) for argv in calls))
+        self.assert_no_repo_delete(calls)
+
+    def test_a_failed_cleanup_fails_the_check_even_when_the_rounds_passed(self):
+        rc, out, _calls = self.run_live(self.answers(ls_remote=(0, "sha ref"),
+                                                     push_origin=(1, "")),
+                                        record=[])
+        self.assertEqual(rc, 1)
+        self.assertIn(f"live-check: cleanup failed for run {RUN_ID}", out)
+        self.assertIn(f"delete {RUN_ID}/main", out)
+        self.assertNotIn("live-check: ok", out)
+
+    def test_a_failed_round_still_cleans_up_this_run(self):
+        rc, _out, calls = self.run_live(self.answers(ls_remote=(0, "sha ref")), rounds=1,
+                                        record=[])
+        self.assertEqual(rc, 1)
+        self.assertEqual([argv[-1] for argv in calls if "--delete" in argv], [f"{RUN_ID}/main"])
 
 
 if __name__ == "__main__":

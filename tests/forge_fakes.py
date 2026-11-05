@@ -16,13 +16,24 @@ gh-stack 0.3.0 flags (from --help, read-only; captured in tmp/p29.1/01/gh-stack-
   gh stack rebase [--abort] [--continue] [--downstack] [--upstack] [--no-trunk] [--remote string]
   gh stack merge [--merge] [--merge-method string] [--squash] [--rebase] [-y|--yes]
   gh stack view [--json] [-s|--short]
+Misuse as gh-stack 0.3.0 answers it (probed live, read-only): `link` with fewer than two
+branch-or-PR arguments exits 1 with "requires at least 2 arg(s), only received N" on stderr;
+`merge` with two positionals exits 1 with "accepts at most 1 arg(s), received 2"; a second
+`init` on a branch already in a stack exits 5 with "current branch ... is already part of a
+stack".
 gh pr flags (from --help, read-only; captured in tmp/p29.1/01/gh-help.txt):
   pr create -B/--base, -H/--head, -d/--draft, -t/--title, -F/--body-file, -R/--repo
   pr edit -B/--base, -F/--body-file, -t/--title, -R/--repo
-  pr view --json fields, -R/--repo; pr ready, -R/--repo
+  pr view --json fields, -R/--repo; pr ready, -R/--repo; pr close, -R/--repo
 Opt-in PR fields (set with set_pr): `rollup` replaces statusCheckRollup (CheckRun and
 StatusContext shapes), `mergeable` replaces MERGEABLE, `headRefOid` replaces the head sha,
 `hold_merge` makes `pr merge` exit 0 and leave the PR OPEN (a merge queue).
+Stacked-PR merges as GitHub enforces them: `pr merge` on an open PR in the linked stack fails
+with GitHub's GraphQL "part of a stack" message; `api --method PUT
+repos/OWNER/NAME/pulls/N/merge-async --raw-field merge_method=merge --raw-field sha=<head>`
+merges N and its open downstack PRs (sha pins N's head) and answers `pending` with a uuid, and
+`api .../merge-async/<uuid>` answers the result: `merged` with the merge sha, or `failed` with a
+message. Docs: https://docs.github.com/rest/pulls/pulls#merge-a-pull-request-asynchronously
 """
 
 import json
@@ -45,7 +56,11 @@ SIGNED_IN = @SIGNED_IN@
 GH_STACK = @GH_STACK@
 REPO = "ai-kit-fixture/demo"
 REFUSED_WITH_MERGE = ("--squash", "--rebase", "--auto")
-VALUED_STACK_FLAGS = ("--base", "--remote", "--merge-method")
+VALUED_STACK_FLAGS = ("--base", "-b", "--remote", "--merge-method")
+STACKED_SYNC_MERGE = ("GraphQL: This pull request is part of a stack and must be merged using the "
+                      "asynchronous merge REST API. For more information, see "
+                      "https://docs.github.com/rest/pulls/pulls"
+                      "#merge-a-pull-request-asynchronously (mergePullRequest)")
 
 
 def load():
@@ -69,9 +84,9 @@ def done(argv, code, extra=None):
     sys.exit(code)
 
 
-def fail(argv, message):
+def fail(argv, message, code=1):
     sys.stderr.write(message + "\n")
-    done(argv, 1)
+    done(argv, code)
 
 
 def value(flag, args):
@@ -145,8 +160,12 @@ def merge_pr(state, pr, expect=None):
                              text=True, check=True).stdout.strip()
     finally:
         shutil.rmtree(temp, ignore_errors=True)
-    pr["state"] = "MERGED"
+    pr["state"], pr["mergeCommit"] = "MERGED", {"oid": sha}
     return sha
+
+
+def stack_order(state):
+    return [item["pr"] for item in (state.get("stack") or {}).get("branches", [])]
 
 
 def pr_verb(argv, verb, args):
@@ -192,6 +211,12 @@ def pr_verb(argv, verb, args):
         pr["isDraft"] = False
         save(state)
         done(argv, 0)
+    if verb == "close":
+        if pr["state"] != "OPEN":
+            fail(argv, f"fake gh: pull request #{number} is not open")
+        pr["state"] = "CLOSED"
+        save(state)
+        done(argv, 0)
     if verb == "view":
         fields = (value("--json", args) or "").split(",")
         data = {}
@@ -213,6 +238,8 @@ def pr_verb(argv, verb, args):
     if verb == "merge":
         if "--merge" not in args or value("--match-head-commit", args) is None:
             fail(argv, "fake gh: merge needs --merge and --match-head-commit")
+        if pr["number"] in stack_order(state) and pr["state"] == "OPEN":
+            fail(argv, STACKED_SYNC_MERGE)
         if pr.get("hold_merge"):
             save(state)
             done(argv, 0)
@@ -229,7 +256,10 @@ def stack_verb(argv, args):
     state = load()
     verb, rest = (args[0] if args else ""), args[1:]
     if verb == "init":
-        base = value("--base", rest) or "main"
+        current = git("branch", "--show-current").stdout.strip()
+        if current in [item["branch"] for item in (state.get("stack") or {}).get("branches", [])]:
+            fail(argv, f'\u2717 current branch "{current}" is already part of a stack', 5)
+        base = value("--base", rest) or value("-b", rest) or "main"
         state["stack"] = {"base": base, "branches": [
             {"branch": item, "pr": None} for item in positionals(rest)]}
         save(state)
@@ -264,6 +294,8 @@ def stack_verb(argv, args):
         done(argv, 0, {"pushed": names})
     if verb == "link":
         items = positionals(rest)
+        if len(items) < 2:  # cobra MinimumNArgs(2), checked before anything runs
+            fail(argv, f"requires at least 2 arg(s), only received {len(items)}")
         base = value("--base", rest) or stack["base"]
         pushed, chain = [], []
         for item in items:
@@ -314,8 +346,13 @@ def stack_verb(argv, args):
     if verb == "merge":
         if any(flag in rest for flag in REFUSED_WITH_MERGE):
             fail(argv, "fake gh: stack merge only merges")
-        target = int(positionals(rest)[0])
+        targets = positionals(rest)
+        if len(targets) > 1:  # cobra MaximumNArgs(1)
+            fail(argv, f"accepts at most 1 arg(s), received {len(targets)}")
         order = [item["pr"] for item in stack["branches"]]
+        if targets and not targets[0].isdigit():
+            fail(argv, f"invalid stack or pull request number: {targets[0]}")
+        target = int(targets[0]) if targets else (order[-1] if order else None)
         if target not in order:
             fail(argv, "fake gh: target is not in the stack")
         for number in order[:order.index(target) + 1]:
@@ -336,6 +373,62 @@ def stack_verb(argv, args):
     fail(argv, f"fake gh: unknown stack verb {verb}")
 
 
+def api_verb(argv, args):
+    """PUT .../pulls/N/merge-async merges N and its open downstack PRs, returns pending and a
+    uuid; GET .../merge-async/<uuid> returns the stored result (merged, or failed + message)."""
+    method, fields, path, items = "GET", {}, None, iter(args)
+    for item in items:
+        if item in ("--method", "-X"):
+            method = next(items, "")
+        elif item in ("-f", "--raw-field", "-F", "--field"):
+            key, _, val = next(items, "").partition("=")
+            fields[key] = val
+        elif not item.startswith("-"):
+            path = item
+    prefix = f"repos/{REPO}/pulls/"
+    parts = path[len(prefix):].split("/") if path and path.startswith(prefix) else []
+    state = load()
+    pr = find_pr(state, int(parts[0])) if parts and parts[0].isdigit() else None
+    if pr is None or parts[1:2] != ["merge-async"]:
+        fail(argv, "gh: Not Found (HTTP 404)")
+    results = state.setdefault("async", {})
+    if method == "GET" and len(parts) == 3:
+        if parts[2] not in results:
+            fail(argv, "gh: Not Found (HTTP 404)")
+        print(json.dumps(results[parts[2]]))
+        done(argv, 0)
+    if method != "PUT" or len(parts) != 2:
+        fail(argv, "gh: Not Found (HTTP 404)")
+    if fields.get("merge_method", "merge") != "merge":
+        fail(argv, "fake gh: merge-async only merges")
+    order = stack_order(state)
+    chain = order[:order.index(pr["number"]) + 1] if pr["number"] in order else [pr["number"]]
+    chain = [n for n in chain if find_pr(state, n)["state"] == "OPEN"]
+    if any(find_pr(state, n)["isDraft"] for n in chain):
+        fail(argv, "gh: Pull request is in draft state (HTTP 400)")
+    uuid = f"merge-{pr['number']}"
+    refused = [n for n in chain if find_pr(state, n)["checks"] != "SUCCESS"]
+    if refused:  # a stack merge is all-or-nothing
+        result = {"status": "failed", "details": {"message": f"merge of #{refused[0]} refused"}}
+    else:
+        # GitHub merges the PR's head once; its open downstack PRs land inside that one merge.
+        if pr["number"] in order:
+            pr["baseRefName"] = state["stack"]["base"]
+        sha = merge_pr(state, pr, fields.get("sha"))
+        if sha is None:
+            message = f"merge of #{pr['number']} refused"
+            result = {"status": "failed", "details": {"message": message}}
+        else:
+            result = {"status": "merged", "details": {"sha": sha}}
+            for number in chain:
+                member = find_pr(state, number)
+                member["state"], member["mergeCommit"] = "MERGED", {"oid": sha}
+    results[uuid] = result
+    save(state)
+    print(json.dumps({"status": "pending", "details": {"uuid": uuid, "merge_method": "merge"}}))
+    done(argv, 0)
+
+
 argv = sys.argv[1:]
 if argv[:2] == ["auth", "status"]:
     done(argv, 0 if SIGNED_IN else 1)
@@ -343,6 +436,8 @@ if argv and argv[0] == "stack":
     if not GH_STACK:
         fail(argv, 'unknown command "stack" for "gh"')
     stack_verb(argv, argv[1:])
+if argv and argv[0] == "api":
+    api_verb(argv, argv[1:])
 if len(argv) < 2 or argv[0] != "pr":
     fail(argv, "fake gh: unknown command")
 if argv[1] == "merge" and any(flag in argv for flag in REFUSED_WITH_MERGE):

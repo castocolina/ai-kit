@@ -20,6 +20,7 @@ from tests import forge_fakes
 from tests.test_flow_contract import BRANCH, _FlowCase
 
 PLAN_BRANCH = "plan/demo-plan"
+FAKE_TOKEN = "ghp_" + "A" * 36  # token-shaped, never real
 
 
 class TestFlowScriptsImport(unittest.TestCase):
@@ -474,15 +475,18 @@ class TestFetchPushRace(_PlanCase):
 class TestPrBackends(_UnitCase):
     """Two units stacked (demo/unit-a then demo/unit-b): both PR backends give the same bases."""
 
-    def _stack_two(self, env=None):
+    def _stack_one(self):
         self.grant()
         code, text = self.fold("start", "--unit", self.unit("unit-a", "demo/unit-a", "Unit A"))
         self.assertEqual(code, 0, text)
         f.run_git(self.repo, self.env, "switch", "-q", "demo/unit-a")
         self.commit({"a.py": b"a\n"}, "feat: add a")
         self.commit({"tests/test_a.py": b"ta\n"}, "test: cover a")
-        code, text = self._checkpoint_unit("unit-a", "demo/unit-a", "main",
-                                           ["a.py", "tests/test_a.py"])
+        return self._checkpoint_unit("unit-a", "demo/unit-a", "main",
+                                     ["a.py", "tests/test_a.py"])
+
+    def _stack_two(self, env=None):
+        code, text = self._stack_one()
         self.assertEqual(code, 0, text)
         code, text = self.fold("start", "--unit", self.unit("unit-b", "demo/unit-b", "Unit B"))
         self.assertEqual(code, 0, text)
@@ -511,18 +515,25 @@ class TestPrBackends(_UnitCase):
         self.assertEqual(self._bases(), [("main", True), ("demo/unit-a", True)])
         self.assertIn("pr backend: gh", text)
 
-    def test_gh_stack_init_adopts_recorded_branches_and_link_gets_pr_urls_only(self):
+    def test_gh_stack_with_one_unit_calls_no_stack_verb(self):
+        self.env["AI_KIT_FLOW_PR_BACKEND"] = "gh-stack"
+        code, text = self._stack_one()
+        self.assertEqual(code, 0, text)
+        self.assertIn("draft PR 1 (pr backend: gh-stack, nothing to link yet)", text)
+        self.assertEqual([c for c in self.gh_calls() if c["argv"][:1] == ["stack"]], [])
+
+    def test_gh_stack_links_the_chain_by_pr_url_once_a_second_unit_exists(self):
         self.env["AI_KIT_FLOW_PR_BACKEND"] = "gh-stack"
         code, text = self._stack_two()
         self.assertEqual(code, 0, text)
         calls = [c["argv"] for c in self.gh_calls() if c["argv"][:1] == ["stack"]]
-        inits = [argv for argv in calls if argv[1] == "init"]
         links = [argv for argv in calls if argv[1] == "link"]
-        self.assertEqual(inits[-1][-2:], ["demo/unit-a", "demo/unit-b"])
-        self.assertTrue(links[-1][-2].endswith("/pull/1"), links[-1])
-        self.assertTrue(links[-1][-1].endswith("/pull/2"), links[-1])
+        self.assertEqual(len(links), 1, calls)
+        self.assertEqual(links[0][2:4], ["--base", "main"])
+        self.assertTrue(links[0][-2].endswith("/pull/1"), links[0])
+        self.assertTrue(links[0][-1].endswith("/pull/2"), links[0])
         for argv in calls:
-            self.assertNotIn(argv[1], ("submit", "push"), argv)
+            self.assertNotIn(argv[1], ("init", "submit", "push"), argv)
 
     def test_failing_gh_stack_verb_falls_back_to_plain_gh_with_the_same_bases(self):
         real = pathlib.Path(self.bin) / "gh"
@@ -534,7 +545,8 @@ class TestPrBackends(_UnitCase):
             "import subprocess, sys\n"
             "args = sys.argv[1:]\n"
             "if args[:1] == ['stack'] and args[1:2] != ['--help']:\n"
-            "    sys.stderr.write('gh stack: simulated failure\\n')\n"
+            "    print('gh stack: progress on stdout')\n"
+            f"    sys.stderr.write('gh stack: simulated failure {FAKE_TOKEN}\\n')\n"
             "    sys.exit(1)\n"
             f"sys.exit(subprocess.run([{str(real)!r}, *args]).returncode)\n",
             encoding="utf-8")
@@ -544,7 +556,9 @@ class TestPrBackends(_UnitCase):
         code, text = self._stack_two()
         self.assertEqual(code, 0, text)
         self.assertEqual(self._bases(), [("main", True), ("demo/unit-a", True)])
-        self.assertIn("pr backend: gh (gh-stack failed: gh stack: simulated failure)", text)
+        self.assertIn("pr backend: gh (gh-stack failed: gh stack: simulated failure [redacted])",
+                      text)
+        self.assertNotIn(FAKE_TOKEN, text)
 
     def _no_gh_path(self):
         bare_dir = self.dest / "nogh"

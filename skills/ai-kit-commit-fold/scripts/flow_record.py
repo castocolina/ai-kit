@@ -177,8 +177,7 @@ def read_settings(repo):
     """The settings with defaults filled in. Missing, empty, unreadable or non-JSON means
     defaults with consent false."""
     defaults = {"schema": 1, "repo": None, "consent": False, "granted": None,
-                "remote": "origin", "targets": _default_targets(repo), "gates": [],
-                "stack_backend": "plain"}
+                "remote": "origin", "targets": _default_targets(repo), "gates": []}
     data = _read_json(_settings_path(repo))
     if data is None:
         return defaults

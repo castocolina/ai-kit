@@ -31,6 +31,8 @@ import flow_stack
 from tests import fold_fixtures as f
 from tests import forge_fakes, host_fakes
 
+FAKE_TOKEN = "ghp_" + "A" * 36  # token-shaped, never real
+
 FOLD = _REPO / "skills" / "ai-kit-commit-fold" / "scripts" / "fold.py"
 BR_A = "demo/unit-a"
 BR_B = "demo/unit-b"
@@ -132,6 +134,9 @@ class _StackCase(unittest.TestCase):
     def record(self):
         path = self.repo / ".git" / "ai-kit-stack.json"
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def states(self):
+        return {e["id"]: e["state"] for e in self.record()["units"]}
 
     def entry(self, unit_id):
         return next(e for e in self.record()["units"] if e["id"] == unit_id)
@@ -539,9 +544,6 @@ class TestMergeChain(_StackCase):
                 entry["pr"] = number
         path.write_text(json.dumps(data), encoding="utf-8")
 
-    def states(self):
-        return {e["id"]: e["state"] for e in self.record()["units"]}
-
     def test_ready_units_merge_bottom_up_with_merge_commits(self):
         for number in (1, 2, 3):
             forge_fakes.set_pr(self.state, number, isDraft=False)
@@ -752,7 +754,8 @@ class TestMergeChain(_StackCase):
 
 
 class TestMergeChainGhStack(_StackCase):
-    """The gh-stack backend: the ready prefix merges in one `gh stack merge` call."""
+    """PRs linked into a GitHub stack: the ready prefix merges in one merge-async call, since
+    GitHub refuses `gh pr merge` on a stacked PR."""
 
     def setUp(self):
         super().setUp()
@@ -767,23 +770,24 @@ class TestMergeChainGhStack(_StackCase):
             subprocess.run([gh, "pr", "create", "--repo", "ai-kit-fixture/demo", "--base", base,
                             "--head", branch, "--draft", "--title", branch],
                            capture_output=True, text=True, env=self.env, check=False)
-        stack_init = ["stack", "init", BR_A, BR_B, BR_C]
-        stack_submit = ["stack", "submit", "--remote", "origin"]
-        for args in (stack_init, stack_submit):
-            proc = subprocess.run([gh, *args], cwd=str(self.repo), capture_output=True,
-                                  text=True, env=self.env, check=False)
-            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        for unit_id, number in (("unit-a", 1), ("unit-b", 2), ("unit-c", 3)):
-            path = self.repo / ".git" / "ai-kit-stack.json"
-            data = json.loads(path.read_text(encoding="utf-8"))
-            for entry in data["units"]:
-                if entry["id"] == unit_id:
-                    entry["pr"] = number
-            path.write_text(json.dumps(data), encoding="utf-8")
-        settings_path = self.repo / ".aikit" / "flow.json"
-        settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        settings["stack_backend"] = "gh-stack"
-        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        urls = [f"https://github.com/{forge_fakes.REPO}/pull/{n}" for n in (1, 2, 3)]
+        proc = subprocess.run([gh, "stack", "link", "--base", "main", *urls], cwd=str(self.repo),
+                              capture_output=True, text=True, env=self.env, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.link_units({"unit-a": 1, "unit-b": 2, "unit-c": 3})
+
+    def link_units(self, numbers, linked=True):
+        path = self.repo / ".git" / "ai-kit-stack.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for entry in data["units"]:
+            if entry["id"] in numbers:
+                entry["pr"] = numbers[entry["id"]]
+                entry["linked"] = linked
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def merge_async_calls(self):
+        return [c["argv"] for c in host_fakes.fake_calls(self.log)
+                if c["argv"][:3] == ["api", "--method", "PUT"]]
 
     def test_the_ready_stack_merges_in_one_stack_merge_call(self):
         for number in (1, 2, 3):
@@ -796,12 +800,43 @@ class TestMergeChainGhStack(_StackCase):
         self.assertEqual(set(states.values()), {"merged"})
         self.assertEqual(
             {pr["state"] for pr in forge_fakes.forge_state(self.state)["prs"]}, {"MERGED"})
-        stack_merges = [c for c in host_fakes.fake_calls(self.log)
-                        if c["argv"][:2] == ["stack", "merge"]]
         pr_merges = [c for c in host_fakes.fake_calls(self.log)
                      if c["argv"][:2] == ["pr", "merge"]]
-        self.assertEqual(len(stack_merges), 1)
         self.assertEqual(pr_merges, [])
+        top_head = self.entry("unit-c")["pushed"]
+        self.assertEqual(self.merge_async_calls(), [
+            ["api", "--method", "PUT", f"repos/{forge_fakes.REPO}/pulls/3/merge-async",
+             "--raw-field", "merge_method=merge", "--raw-field", f"sha={top_head}"]])
+
+    def test_a_plain_pr_merge_on_a_linked_pr_is_refused_like_github_does(self):
+        forge_fakes.set_pr(self.state, 1, isDraft=False)
+        proc = subprocess.run([str(self.bin / "gh"), "pr", "merge", "1", "--merge",
+                               "--match-head-commit", self.entry("unit-a")["pushed"], "--repo",
+                               forge_fakes.REPO], capture_output=True, text=True, env=self.env,
+                              check=False)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("part of a stack and must be merged using the asynchronous merge REST API",
+                      proc.stderr)
+
+    def test_a_failed_merge_async_result_refuses_and_records_nothing_merged(self):
+        for number in (1, 2, 3):
+            forge_fakes.set_pr(self.state, number, isDraft=False)
+        forge_fakes.set_pr(self.state, 2, checks="FAILURE", rollup=[{"conclusion": "SUCCESS"}])
+        code, text = self.fold("merge-chain")
+        self.assertEqual(code, 1, text)
+        self.assertIn("refused: pr_failed: merge-async: merge of #2 refused", text)
+        self.assertEqual(self.states(), {"unit-a": "open", "unit-b": "open", "unit-c": "open"})
+
+    def test_an_unlinked_unit_caps_the_stack_merge_and_is_retargeted_to_the_trunk(self):
+        for number in (1, 2, 3):
+            forge_fakes.set_pr(self.state, number, isDraft=False)
+        self.link_units({"unit-c": 3}, linked=False)
+        code, text = self.fold("merge-chain")
+        self.assertEqual(code, 0, text)
+        self.assertIn("stopped at unit-c: not linked into the GitHub stack", text)
+        self.assertEqual(self.states(), {"unit-a": "merged", "unit-b": "merged", "unit-c": "open"})
+        pr3 = forge_fakes.forge_state(self.state)["prs"][2]
+        self.assertEqual(pr3["baseRefName"], "main")
 
     def test_a_moved_pr_head_stops_the_stack_merge_before_any_stack_merge_call(self):
         for number in (1, 2, 3):
@@ -810,10 +845,9 @@ class TestMergeChainGhStack(_StackCase):
         code, text = self.fold("merge-chain")
         self.assertEqual(code, 0, text)
         self.assertIn("stopped at unit-b: PR head differs from the recorded pushed sha", text)
-        calls = host_fakes.fake_calls(self.log)
-        merges = [c for c in calls if c["argv"][:2] == ["stack", "merge"]]
+        merges = self.merge_async_calls()
         self.assertEqual(len(merges), 1)
-        self.assertEqual(merges[0]["argv"][2], "1")
+        self.assertEqual(merges[0][3], f"repos/{forge_fakes.REPO}/pulls/1/merge-async")
         states = {e["id"]: e["state"] for e in self.record()["units"]}
         self.assertEqual(states, {"unit-a": "merged", "unit-b": "open", "unit-c": "open"})
 
@@ -825,6 +859,87 @@ class TestMergeChainGhStack(_StackCase):
         self.assertIn("stopped at unit-b: draft", text)
         states = {e["id"]: e["state"] for e in self.record()["units"]}
         self.assertEqual(states, {"unit-a": "merged", "unit-b": "open", "unit-c": "open"})
+
+
+    def _failing_gh(self, verbs, line):
+        """Wrap the fake gh: `verbs` exit 1 with stdout progress and `line` on stderr."""
+        real = self.bin / "gh"
+        wrap = self.dest / "wrap"
+        wrap.mkdir(exist_ok=True)
+        (wrap / "gh").write_text(
+            "#!" + sys.executable + "\nimport subprocess, sys\n"
+            f"if sys.argv[1:3] == {verbs!r}:\n"
+            "    print('stdout progress')\n"
+            f"    sys.stderr.write({line!r} + '\\nsecond line\\n')\n"
+            "    sys.exit(1)\n"
+            f"sys.exit(subprocess.run([{str(real)!r}, *sys.argv[1:]]).returncode)\n",
+            encoding="utf-8")
+        (wrap / "gh").chmod(0o755)
+        self.env["PATH"] = f"{wrap}:{self.env['PATH']}"
+
+    def test_a_failing_merge_async_refusal_carries_the_redacted_first_stderr_line(self):
+        for number in (1, 2, 3):
+            forge_fakes.set_pr(self.state, number, isDraft=False)
+        self._failing_gh(["api", "--method"], f"gh: merge refused {FAKE_TOKEN} (HTTP 422)")
+        code, text = self.fold("merge-chain")
+        self.assertEqual(code, 1, text)
+        self.assertIn("refused: pr_failed: gh: merge refused [redacted] (HTTP 422)", text)
+        self.assertNotIn(FAKE_TOKEN, text)
+        self.assertNotIn("second line", text)
+        self.assertNotIn("stdout progress", text)
+
+
+class TestMergeAsyncPoll(unittest.TestCase):
+    """The merge-async result is polled until it settles, for at most MERGE_WAIT seconds."""
+
+    def run_merge(self, answers):
+        import flow_merge
+
+        clock = {"t": 0.0}
+        calls = []
+
+        def fake_gh(_repo, *args):
+            calls.append(args)
+            return 0, json.dumps(answers.pop(0) if answers else {"status": "pending"}), ""
+
+        def sleep(seconds):
+            clock["t"] += seconds
+
+        with mock.patch.object(flow_merge.flow_pr, "run_gh_split", fake_gh), \
+                mock.patch.object(flow_merge.flow_git, "github_repo", return_value="o/r"), \
+                mock.patch.object(flow_merge, "primary_remote", return_value="origin"), \
+                mock.patch.object(flow_merge, "_now", lambda: clock["t"]), \
+                mock.patch.object(flow_merge, "_sleep", sleep):
+            status = flow_merge._merge_async("repo", {}, {"pr": 7, "pushed": "abc"})
+        return status, calls, clock["t"]
+
+    def test_a_pending_merge_is_polled_until_merged(self):
+        status, calls, _ = self.run_merge([
+            {"status": "pending", "details": {"uuid": "u1"}}, {"status": "pending"},
+            {"status": "merged", "details": {"sha": "m"}}])
+        self.assertEqual(status, "merged")
+        self.assertEqual(calls[0], ("api", "--method", "PUT", "repos/o/r/pulls/7/merge-async",
+                                    "--raw-field", "merge_method=merge", "--raw-field", "sha=abc"))
+        self.assertEqual(calls[1:], [("api", "repos/o/r/pulls/7/merge-async/u1")] * 2)
+
+    def test_a_merge_that_stays_pending_stops_polling_at_the_deadline(self):
+        import flow_merge
+
+        status, calls, elapsed = self.run_merge([{"status": "pending", "details": {"uuid": "u"}}])
+        self.assertEqual(status, "pending")
+        self.assertLessEqual(elapsed, flow_merge.MERGE_WAIT)
+        self.assertEqual(len(calls), 2 + flow_merge.MERGE_WAIT // flow_merge.POLL_EVERY)
+
+    def test_an_already_merged_answer_needs_no_poll(self):
+        status, calls, _ = self.run_merge([{"status": "merged", "details": {"sha": "m"}}])
+        self.assertEqual((status, len(calls)), ("merged", 1))
+
+    def test_a_failed_result_refuses_with_its_redacted_message(self):
+        with self.assertRaises(flow_record.FlowError) as caught:
+            self.run_merge([{"status": "pending", "details": {"uuid": "u"}},
+                            {"status": "failed", "details": {"message": f"no {FAKE_TOKEN}"}}])
+        self.assertEqual(caught.exception.reason, "pr_failed")
+        self.assertEqual(caught.exception.detail, "merge-async: no [redacted]")
 
 
 class TestHotfix(_StackCase):

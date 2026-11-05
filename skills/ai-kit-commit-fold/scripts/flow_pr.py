@@ -131,28 +131,36 @@ def _first_line(text):
     return lines[0] if lines else "gh failed"
 
 
+def failure_line(out, err, default="gh failed"):
+    """First line of a failed gh call: stderr, or stdout when stderr is empty (already redacted)."""
+    return _first_line(err if err.strip() else out) if (err + out).strip() else default
+
+
 def _unit_of_entry(entry):
     return Unit(id=entry["id"], kind=entry["kind"], target=entry["target"],
                 branch=entry["branch"], title=entry["title"])
 
 
+def _stackable(record):
+    return [e for e in record["units"] if e["kind"] == "stacked" and e["state"] != "merged"
+            and e["pr"] is not None]
+
+
 def _stack_adopt(repo, settings, record):
-    """gh-stack adoption (D-04): `stack init` of the recorded unmerged stacked units with PRs,
-    then `stack link` with their PR URLs, bottom to top. Never `submit` or `push` (review HIGH 6:
-    the guarded flow_git.push is the only push). Returns None, or the failing call's first line.
+    """gh-stack adoption (D-04): one `gh stack link --base <trunk>` with the PR URLs of the
+    recorded unmerged stacked units, bottom to top, once there are two (link needs two arguments;
+    a lone PR is already its own). No `stack init`: it checks out the top branch and refuses a
+    second run. PR URLs are never pushed, and never `submit` or `push` (review HIGH 6: the guarded
+    flow_git.push is the only push). Returns None, or the failing call's redacted first stderr line
+    (stdout when stderr is empty), which the fallback report carries.
     """
-    units = [e for e in record["units"] if e["kind"] == "stacked" and e["state"] != "merged"
-             and e["pr"] is not None]
-    if not units:
+    units = _stackable(record)
+    if len(units) < 2:
         return None
-    trunk = units[0]["target"]
-    code, text = run_gh(repo, "stack", "init", "--base", trunk, *[e["branch"] for e in units])
-    if code != 0:
-        return _first_line(text)
     slug = github_repo(repo, primary_remote(repo, settings))
     urls = [f"https://github.com/{slug}/pull/{e['pr']}" for e in units]
-    code, text = run_gh(repo, "stack", "link", "--base", trunk, *urls)
-    return None if code == 0 else _first_line(text)
+    code, out, err = run_gh_split(repo, "stack", "link", "--base", units[0]["target"], *urls)
+    return None if code == 0 else failure_line(out, err)
 
 
 def _plain_bases(repo, settings, record):
@@ -184,7 +192,12 @@ def ensure_pr(repo, settings, record, unit, entry):
     if kind == "gh-stack":
         reason = _stack_adopt(repo, settings, record)
         if reason is None:
-            return number, [f"draft PR {number} (pr backend: gh-stack)"]
+            linked = _stackable(record)
+            if len(linked) > 1:
+                for unit_entry in linked:  # merge-chain merges these through merge-async
+                    unit_entry["linked"] = True
+            note = "" if len(linked) > 1 else ", nothing to link yet"
+            return number, [f"draft PR {number} (pr backend: gh-stack{note})"]
         _plain_bases(repo, settings, record)
         return number, [f"draft PR {number} (pr backend: gh (gh-stack failed: {reason}))"]
     return number, [f"draft PR {number} (pr backend: gh)"]
