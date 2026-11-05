@@ -6,20 +6,42 @@ Usage:
   fold.py gsd --phase N [--repo DIR] [--mode inline|subagent]
   fold.py superpowers --plan FILE [--base SHA] [--base-branch NAME] [--repo DIR] [--mode M]
   fold.py status --phase N [--repo DIR]
+  fold.py start|guard|checkpoint|ready|show <unit selector> [--repo DIR]   (unit flow, plan 29.1-01)
+  fold.py hotfix | restack | merge-chain | consent | settings | gsd-health   (unit flow)
 
 Exit 0 when folded or nothing to fold, 1 when refused, 2 for an unreadable or invalid checkpoint.
 The status subcommand is read-only and always exits 0.
 """
 
 import argparse
+import dataclasses
+import importlib
 import json
 import re
 import sys
 
+import flow_git
+import flow_record
 import fold_adapters
 import fold_engine
 import fold_group
 from fold_engine import FoldError
+
+# command -> (module, function); a module or function that is missing fails closed (exit 2).
+_FLOW_HANDLERS = {
+    "start": ("flow_unit", "cmd_start"),
+    "guard": ("flow_unit", "cmd_guard"),
+    "checkpoint": ("flow_unit", "cmd_checkpoint"),
+    "ready": ("flow_unit", "cmd_ready"),
+    "show": ("flow_unit", "cmd_show"),
+    "consent": ("flow_record", "cmd_consent"),
+    "settings": ("flow_record", "cmd_settings"),
+    "hotfix": ("flow_stack", "cmd_hotfix"),
+    "restack": ("flow_stack", "cmd_restack"),
+    "merge-chain": ("flow_merge", "cmd_merge_chain"),
+}
+_UNIT_COMMANDS = ("start", "guard", "checkpoint", "ready", "show")
+_BAD_INPUT = frozenset({"bad_value", "missing_field", "unknown_field", "bad_checkpoint"})
 
 _PHASE = re.compile(r"\d+(?:\.\d+)?")
 
@@ -52,7 +74,58 @@ def build_parser():
     status = sub.add_parser("status", help="list each plan of a phase as folded or not")
     status.add_argument("--phase", required=True, type=_phase)
     _add_common(status)
+    _add_flow_parsers(sub)
     return parser
+
+
+def _add_repo(parser):
+    parser.add_argument("--repo", default=".", help="repository (default: current directory)")
+
+
+def _add_selector(parser):
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--unit", dest="unit_file", metavar="FILE|-",
+                       help="unit contract JSON, or - for stdin")
+    group.add_argument("--phase", type=_phase, help="GSD phase number (GSD adapter)")
+    group.add_argument("--plan", help="superpowers plan file (superpowers adapter)")
+    group.add_argument("--unit-id", dest="unit_id", help="an already recorded unit")
+
+
+def _add_flow_parsers(sub):
+    for name in _UNIT_COMMANDS:
+        parser = sub.add_parser(name, help=f"unit flow: {name}")
+        _add_selector(parser)
+        _add_repo(parser)
+        if name == "checkpoint":
+            parser.add_argument("--checkpoint", metavar="FILE|-", help="checkpoint JSON")
+            parser.add_argument("--base", default=None, help="fold base for --plan")
+            parser.add_argument("--final", action="store_true", help="unit is finished")
+    hotfix = sub.add_parser("hotfix", help="start a hotfix unit on a target branch")
+    hotfix.add_argument("--target", required=True)
+    hotfix.add_argument("--name", required=True)
+    _add_repo(hotfix)
+    restack = sub.add_parser("restack", help="restack units after a lower unit moved")
+    restack.add_argument("--continue", dest="continue_", action="store_true")
+    restack.add_argument("--abort", action="store_true")
+    restack.add_argument("--note", action="append", default=[], metavar="PATH=HOW")
+    _add_repo(restack)
+    merge = sub.add_parser("merge-chain", help="merge the recorded units in stack order")
+    group = merge.add_mutually_exclusive_group()
+    group.add_argument("--until", dest="until", metavar="UNIT_ID")
+    group.add_argument("--unit-id", dest="hotfix_id", metavar="HOTFIX_ID")
+    _add_repo(merge)
+    consent = sub.add_parser("consent", help="grant, revoke or show consent for this repo")
+    consent.add_argument("action", choices=("grant", "revoke", "status"))
+    consent.add_argument("--add-exclude", action="store_true")
+    _add_repo(consent)
+    settings = sub.add_parser("settings", help="show or set the flow settings")
+    settings.add_argument("action", choices=("show", "set"))
+    settings.add_argument("--remote")
+    settings.add_argument("--target", action="append")
+    settings.add_argument("--gate", action="append")
+    _add_repo(settings)
+    health = sub.add_parser("gsd-health", help="GSD adapter health gate (exit 0 when healthy)")
+    _add_repo(health)
 
 
 def _read(path):
@@ -148,11 +221,142 @@ def _status(args):
     return 0
 
 
+def _flow_refusal(command, reason, detail):
+    print(f"flow {command}: refused: {reason}: {detail}")
+    return 2 if reason in _BAD_INPUT else 1
+
+
+def _load_contract(args, data):
+
+    return flow_record.load_unit(data, flow_record.read_settings(args.repo)["targets"][0])
+
+
+def _checkpoint_step(args, unit):
+    """fold_step for --unit and --unit-id: fold the checkpoint file, bound to the unit branch."""
+
+    def step(merged_refs):
+        if args.checkpoint is None:
+            raise flow_record.FlowError("bad_value", "checkpoint needs --checkpoint FILE|-")
+        try:
+            cp = fold_engine.load_checkpoint(_read(args.checkpoint))
+        except (OSError, ValueError, FoldError) as exc:
+            raise flow_record.FlowError("bad_checkpoint", getattr(exc, "detail", str(exc))) \
+                from exc
+        if cp.ref != f"refs/heads/{unit.branch}":
+            raise flow_record.FlowError("ref_mismatch", f"checkpoint ref {cp.ref} is not the unit")
+        cp = dataclasses.replace(cp, merged_refs=tuple(cp.merged_refs) + tuple(merged_refs),
+                                 base_branch=unit.target)
+        return fold_engine.fold(args.repo, cp, fold_group.group_features, "inline")
+
+    return step
+
+
+def _phase_step(args, unit):
+    """fold_step for --phase: fold every pending GSD checkpoint of the phase, in plan order."""
+
+    def step(merged_refs):
+        skip, last = set(), None
+        while True:
+            plan_unit, checkpoint, error = _next_plan(args.repo, args.phase, skip)
+            if error is not None:
+                raise flow_record.FlowError(error.reason, error.detail)
+            if checkpoint is None:
+                break
+            checkpoint = dataclasses.replace(
+                checkpoint, merged_refs=tuple(checkpoint.merged_refs) + tuple(merged_refs),
+                base_branch=unit.target)
+            result = fold_engine.fold(args.repo, checkpoint, fold_group.group_features, "inline")
+            if result.outcome == "nothing_to_fold":
+                skip.add(plan_unit)
+                continue
+            if result.outcome == "refused":
+                return result
+            last = result
+        return last if last is not None else _no_work(unit.id, args.repo, "inline")
+
+    return step
+
+
+def _plan_step(args, unit):
+    """fold_step for --plan: fold from the recorded parent tip, or from --base when given."""
+
+    def step(merged_refs):
+        entry = flow_record.find_entry(flow_record.read_record(args.repo), unit.id)
+        parent_tip = entry["parent_tip"] if entry is not None else None
+        if (args.base is not None and parent_tip is not None
+                and not flow_git.is_ancestor(args.repo, parent_tip, args.base)):
+            raise flow_record.FlowError("bad_value", "--base must descend from parent_tip")
+        checkpoint = fold_adapters.superpowers_checkpoint(
+            args.repo, args.plan, args.base or parent_tip, unit.target)
+        checkpoint = dataclasses.replace(checkpoint, merged_refs=tuple(merged_refs),
+                                         base_branch=unit.target)
+        return fold_engine.fold(args.repo, checkpoint, fold_group.group_features, "inline")
+
+    return step
+
+
+def _attach(args):
+    """Resolve args.unit, args.fold_step and args.signals from the unit selector."""
+
+    if args.unit_file is not None:
+        args.unit = _load_contract(args, _read(args.unit_file))
+        args.fold_step = _checkpoint_step(args, args.unit)
+    elif args.unit_id is not None:
+        entry = flow_record.find_entry(flow_record.read_record(args.repo), args.unit_id)
+        if entry is None:
+            raise flow_record.FlowError("not_started", f"unit {args.unit_id} is not recorded")
+        args.unit = flow_record.Unit(
+            id=entry["id"], kind=entry["kind"], target=entry["target"], branch=entry["branch"],
+            title=entry["title"], goal=entry.get("goal", ""), mvp=entry.get("mvp", False))
+        args.fold_step = _checkpoint_step(args, args.unit)
+    elif args.phase is not None:
+        args.unit = _load_contract(args, fold_adapters.gsd_unit(args.repo, args.phase))
+        args.fold_step = _phase_step(args, args.unit)
+        args.signals = fold_adapters.gsd_signals(args.repo, args.phase)
+    else:
+        args.unit = _load_contract(args, fold_adapters.superpowers_unit_contract(args.repo,
+                                                                                 args.plan))
+        args.fold_step = _plan_step(args, args.unit)
+
+
+def _flow(args):
+    module_name, function_name = _FLOW_HANDLERS[args.command]
+    try:
+        handler = getattr(importlib.import_module(module_name), function_name)
+    except (ImportError, AttributeError):
+        print(f"fold.py: {args.command} is not available in this install", file=sys.stderr)
+        return 2
+    args.adapter_gates = fold_adapters.adapter_gates(args.repo)
+    args.unit, args.fold_step, args.signals = None, None, (None, None)
+    if args.command == "restack" and ((args.note and not args.continue_)
+                                      or (args.continue_ and args.abort)):
+        return _flow_refusal(args.command, "bad_value", "--note needs --continue; not both")
+    if args.command == "checkpoint" and args.base is not None and args.plan is None:
+        return _flow_refusal(args.command, "bad_value", "--base is only valid with --plan")
+    if args.command in _UNIT_COMMANDS:
+
+        try:
+            _attach(args)
+        except (flow_record.FlowError, FoldError) as exc:
+            return _flow_refusal(args.command, exc.reason, exc.detail)
+        except (OSError, ValueError) as exc:
+            return _flow_refusal(args.command, "bad_value", str(exc))
+    return handler(args)
+
+
+def _gsd_health(args):
+    ok, summary = fold_adapters.gsd_health(args.repo)
+    print(summary)
+    return 0 if ok else 1
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     handlers = {"fold": _fold_checkpoint, "gsd": _gsd, "superpowers": _superpowers,
-                "status": _status}
+                "status": _status, "gsd-health": _gsd_health}
+    if args.command in _FLOW_HANDLERS:
+        return _flow(args)
     if args.command not in handlers:
         parser.print_usage(sys.stderr)
         return 2

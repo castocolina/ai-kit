@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import unicodedata
 
 from fold_engine import Candidate, Checkpoint, FoldError, range_commits
 
@@ -310,3 +311,102 @@ def superpowers_checkpoint(repo, plan_file, base=None, base_branch_name=None):
         base_branch=branch, merged_refs=(), own_merge_subjects=(),
         candidates=parse_superpowers_tasks(plan_text), docs_paths=(),
     )
+
+
+_VERIFIED = re.compile(r"^status:\s*passed\s*$", re.MULTILINE)
+_TITLE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
+_SLUG_BAD = re.compile(r"[^a-z0-9.-]+")
+_GSD_BRANCH_DEFAULT = "gsd/phase-{phase}-{slug}"
+
+
+def _config(repo):
+    try:
+        with open(os.path.join(repo, ".planning", "config.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def gsd_mvp(repo, phase):
+    """Whether the phase runs in MVP mode, from gsd-tools when it is installed; else False."""
+    tools = os.path.join(repo, ".claude", "gsd-core", "bin", "gsd-tools.cjs")
+    if not os.path.isfile(tools):
+        return False
+    proc = subprocess.run(["node", tools, "phase", "mvp-mode", phase, "--raw"],
+                          cwd=str(repo), capture_output=True, text=True, timeout=60,
+                          check=False)
+    try:
+        return bool(json.loads(proc.stdout).get("active"))
+    except (ValueError, AttributeError):
+        return False
+
+
+def gsd_signals(repo, phase):
+    """(finished, verified): every plan of the phase has a SUMMARY; the phase VERIFICATION.md
+    front matter reads status: passed."""
+    plans = gsd_plans(repo, phase)
+    finished = bool(plans) and all(state == "finished" for _unit, state in plans)
+    directory = phase_dir(repo, phase)
+    verified = False
+    for name in os.listdir(directory):
+        if name.endswith("-VERIFICATION.md"):
+            text = _read(os.path.join(directory, name))
+            verified = verified or bool(_VERIFIED.search(text.split("\n---", 1)[0]))
+    return finished, verified
+
+
+def gsd_unit(repo, phase):
+    """The contract dict of one GSD phase (stacked, branch from git.phase_branch_template)."""
+    padded = padded_phase(phase)
+    directory = os.path.basename(phase_dir(repo, phase))
+    slug = directory[len(padded) + 1:]
+    template = (_config(repo).get("git") or {}).get("phase_branch_template")
+    if not isinstance(template, str) or not template:
+        template = _GSD_BRANCH_DEFAULT
+    branch = template.format(phase=padded, slug=slug)
+    return {"schema": 1, "id": f"phase-{padded}", "kind": "stacked", "branch": branch,
+            "title": directory, "mvp": gsd_mvp(repo, phase)}
+
+
+def superpowers_unit_contract(repo, plan_file):
+    """The contract dict of a superpowers plan: branch plan/<slug> from the plan title."""
+    text = _read(os.path.join(repo, plan_file))
+    heading = _TITLE.search(text)
+    title = heading.group(1).strip() if heading else superpowers_unit(plan_file)
+    folded = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii")
+    slug = _SLUG_BAD.sub("-", folded.lower()).strip("-")[:60] or "plan"
+    return {"schema": 1, "id": superpowers_unit(plan_file), "kind": "stacked",
+            "branch": f"plan/{slug}", "title": title}
+
+
+def gsd_health(repo, run=subprocess.run):
+    """(ok, summary) of `gsd-tools validate health --raw`; ok only when status is healthy.
+
+    The exit code is ignored: validate health exits 0 even when degraded.
+    """
+    tools = os.path.join(repo, ".claude", "gsd-core", "bin", "gsd-tools.cjs")
+    if not os.path.isfile(tools):
+        return False, "health: no .claude/gsd-core/bin/gsd-tools.cjs under the repository"
+    proc = run(["node", tools, "validate", "health", "--raw"], cwd=str(repo),
+               capture_output=True, text=True, timeout=60, check=False)
+    try:
+        data = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return False, "health: output is not JSON"
+    if not isinstance(data, dict):
+        return False, "health: output is not a JSON object"
+    status = data.get("status")
+    codes = [item.get("code", "") for item in data.get("warnings", []) if isinstance(item, dict)]
+    codes += [item.get("code", "") for item in data.get("errors", []) if isinstance(item, dict)]
+    summary = f"health: {status}" + (f" ({', '.join(codes)})" if codes else "")
+    return status == "healthy", summary
+
+
+def adapter_gates(repo):
+    """The adapter gates for every flow command: the GSD health gate for a GSD project."""
+    top = os.path.realpath(repo)
+    if not os.path.isfile(os.path.join(top, ".planning", "config.json")):
+        return []
+    fold_py = os.path.join(os.path.dirname(os.path.realpath(__file__)), "fold.py")
+    return [("gsd-tools validate health", ["python3", fold_py, "gsd-health", "--repo", top])]

@@ -5,6 +5,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import tempfile
 
 from tests.test_jev_fast_decision import closed_port_url
 
@@ -95,6 +96,53 @@ def isolated_fold(root):
     dest = pathlib.Path(root) / "skills" / "ai-kit-commit-fold"
     shutil.copytree(SKILL, dest)
     return dest / "scripts" / "fold.py"
+
+
+FIXTURE_URL = "https://github.com/ai-kit-fixture/demo.git"
+
+
+def _bare_insteadof(repo, env, bare, url):
+    """Route `url` to the bare path in the repo's local config (fetch and push both follow it)."""
+    run_git(repo, env, "config", "--local", f"url.{bare}.insteadOf", url)
+
+
+def make_remote(root, env, repo, github=True):
+    """A bare `origin` for `repo` with `main` pushed; returns the bare path.
+
+    github: the remote URL is FIXTURE_URL, rewritten to the bare path by insteadOf; else the
+    bare path itself is the URL.
+    """
+    bare = pathlib.Path(root) / "remote.git"
+    run_git(repo, env, "init", "--bare", "-q", "-b", "main", str(bare))
+    url = FIXTURE_URL if github else str(bare)
+    run_git(repo, env, "remote", "add", "origin", url)
+    if github:
+        _bare_insteadof(repo, env, bare, FIXTURE_URL)
+    run_git(repo, env, "push", "-q", "-u", "origin", "main")
+    return bare
+
+
+def merge_on_remote(root, env, bare, branch, target):
+    """Merge origin/`branch` into `target` on the bare remote from a throwaway clone; return sha."""
+    clone = pathlib.Path(tempfile.mkdtemp(prefix="clone-", dir=root))
+    run_git(root, env, "clone", "-q", str(bare), str(clone))
+    run_git(clone, env, "checkout", "-q", target)
+    run_git(clone, env, "merge", "--no-ff", "-m", f"Merge {branch}", f"origin/{branch}")
+    run_git(clone, env, "push", "-q", "origin", target)
+    return run_git(clone, env, "rev-parse", "HEAD").strip()
+
+
+def rebind(root, env, repo, bare):
+    """Point a copied repo's insteadOf at the copied bare path (drops every other rewrite)."""
+    del root  # the copy's paths are given by `repo` and `bare`
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "config", "--local", "--name-only", "--get-regexp",
+         r"^url\..*\.insteadof$"],
+        capture_output=True, env=env, check=False,
+    ).stdout.decode("utf-8").split()
+    for key in listed:
+        run_git(repo, env, "config", "--local", "--unset-all", key)
+    _bare_insteadof(repo, env, bare, FIXTURE_URL)
 
 
 PHASE_BRANCH = "gsd/phase-07-demo"
