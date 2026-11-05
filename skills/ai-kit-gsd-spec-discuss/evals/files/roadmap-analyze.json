@@ -1,0 +1,25 @@
+{
+  "phases": [
+    {
+      "number": "17",
+      "name": "Sample export format",
+      "disk_status": "not_started",
+      "roadmap_complete": false,
+      "mode": "interactive"
+    },
+    {
+      "number": "18",
+      "name": "Sample retry policy",
+      "disk_status": "not_started",
+      "roadmap_complete": false,
+      "mode": "interactive"
+    },
+    {
+      "number": "19",
+      "name": "Sample audit trail",
+      "disk_status": "not_started",
+      "roadmap_complete": false,
+      "mode": "yolo"
+    }
+  ]
+}

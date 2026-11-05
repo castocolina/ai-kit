@@ -1,0 +1,76 @@
+{
+  "skill_name": "ai-kit-gsd-spec-discuss",
+  "evals": [
+    {
+      "id": "casual-spec-discuss-range",
+      "prompt": "Spec and discuss the GSD phases that still need it. The roadmap analysis is in evals/files/roadmap-analyze.json. Which ones do you suggest?",
+      "expected_output": "The agent runs phase_range.py on the roadmap analysis with no range flags, lists each proposed phase with the reason the script gives, and asks the range question once before it starts the spec step.",
+      "files": ["evals/files/roadmap-analyze.json"],
+      "assertions": [
+        "The agent runs phase_range.py with --roadmap set to the roadmap analysis file and passes no --from, --to or --list flag.",
+        "The final answer lists each proposed phase with the reason that phase_range.py gave for it.",
+        "The agent asks the user one question about the range and does not start the spec step before the answer."
+      ]
+    },
+    {
+      "id": "precise-auto-mode",
+      "prompt": "Spec and discuss phase 18 in auto mode, using the skill's --auto flag.",
+      "expected_output": "The agent runs the spec workflow with --auto, then runs the discuss workflow in assumptions mode with only the phase number. It skips that workflow's auto_advance step.",
+      "files": [],
+      "assertions": [
+        "The spec step runs spec-phase with the arguments 18 and --auto.",
+        "The discuss step runs discuss-phase-assumptions.md with the argument 18 and no other flag.",
+        "The agent never passes --assumptions to the discuss command and never passes --auto to the discuss command.",
+        "The agent skips the auto_advance step of the discuss workflow, whatever the config says."
+      ]
+    },
+    {
+      "id": "precise-interactive-mode",
+      "prompt": "Spec and discuss phase 18 interactively. I will answer the questions myself.",
+      "expected_output": "The agent runs the spec workflow for phase 18 without --auto, then runs the standard discuss workflow with --analyze --all --batch, and leaves the workflow's prompts to the user.",
+      "files": [],
+      "assertions": [
+        "The spec step runs spec-phase with the argument 18 and no --auto flag.",
+        "The discuss step runs discuss-phase.md with the arguments 18, --analyze, --all and --batch.",
+        "The agent leaves the workflow's prompts to the user and does not pre-answer them by rule.",
+        "The agent does not run the discuss workflow in assumptions mode for this request."
+      ]
+    },
+    {
+      "id": "edge-jev-absent",
+      "prompt": "Spec and discuss phase 18 in auto mode. The jev-fast-decision skill is not installed on this machine.",
+      "expected_output": "The agent makes no jev call, decides every gray area with its own reasoning, logs each decision with its reason, and reaches the discuss step for phase 18 unless a blocking unresolved item stops it.",
+      "files": [],
+      "assertions": [
+        "The agent makes no call to any jev entry point, because the skill is not installed.",
+        "Every gray area in the run gets a decision from the agent's own reasoning, and each decision is logged with its reason.",
+        "The run reaches the discuss step for phase 18 unless a blocking unresolved item stops it.",
+        "The final answer says that jev was not installed and that the logged decisions are the agent's own reasoning."
+      ]
+    },
+    {
+      "id": "edge-locked-decision-conflict",
+      "prompt": "While discussing phase 18, jev says with high confidence that a failed send should be retried without limit, capped at 60 seconds. Check that answer against the locked decision in evals/files/locked-context.md and decide the item.",
+      "expected_output": "The agent keeps the locked decision in place, decides the item provisionally, and flags it as needs confirmation in the log and the ledger. It may ask jev for one second opinion first when the first answer contradicts the evidence.",
+      "files": ["evals/files/locked-context.md"],
+      "assertions": [
+        "The agent does not silently override the locked decision D-04 in evals/files/locked-context.md.",
+        "The item is flagged as needs confirmation, and the flag appears in both the discussion log and the ledger.",
+        "The provisional decision is the agent's own reasoning, and the final answer does not present the jev answer as the decision.",
+        "The agent does not change the locked attempt count or backoff cap in the CONTEXT file without a new discuss round with the user."
+      ]
+    },
+    {
+      "id": "edge-blocking-unresolved",
+      "prompt": "Spec and discuss phase 18 in auto mode. One gray area blocks every later decision in this run, and nothing settles it with high confidence.",
+      "expected_output": "The agent stops the run at that one question and shows it together with the ledger. It decides the other items provisionally and does not start the next phase while the blocking question is open.",
+      "files": [],
+      "assertions": [
+        "The agent stops the run only for the item that both blocks another decision in this run and stays unresolved.",
+        "The stop message shows the blocking question together with the ledger of the other decisions.",
+        "The agent does not start the next phase's spec or discuss step while the blocking question is open.",
+        "Items that block no other decision are decided provisionally and listed in the ledger, not asked as questions."
+      ]
+    }
+  ]
+}

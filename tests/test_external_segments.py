@@ -280,7 +280,9 @@ class TestRunExternal(unittest.TestCase):
 
     def test_runs_in_workspace_dir(self):
         p = write_script(self.dir, "p", "#!/bin/sh\npwd\n")
-        out = common_render.core_run_external(self._spec(p), self._data(), 200)
+        # The output is cut to the column budget; give the whole path room, however deep TMPDIR is.
+        cols = len(os.path.realpath(self.dir)) + 40
+        out = common_render.core_run_external(self._spec(p), self._data(), cols)
         self.assertEqual(os.path.realpath(out), os.path.realpath(self.dir))
 
     def test_nonzero_exit_returns_none(self):

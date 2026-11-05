@@ -1,0 +1,5 @@
+e4b7c10 docs(07-01): complete the line parser plan summary
+9a1d3f2 test(07-01): cover valid, missing and repeated separators
+51c08be feat(07-01): add the line parser
+7f2e6d9 test(07-01): add the parser test fixture
+0b3a8c4 chore(07-01): scaffold the parser module

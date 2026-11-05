@@ -1,0 +1,22 @@
+[
+  {"query": "Spec and discuss phases 17 to 24 in one run, deciding the gray areas as we go.", "should_trigger": true},
+  {"query": "Run spec-phase and discuss-phase for every undiscussed phase in the roadmap.", "should_trigger": true},
+  {"query": "Use --analyze --all --batch --assumptions for phase 19 and write its context file.", "should_trigger": true},
+  {"query": "Can you spec and discuss phases 20 through 23 unattended and show me the ledger at the end?", "should_trigger": true},
+  {"query": "Chain the GSD spec step and then the discuss step for phases 12 to 15, please.", "should_trigger": true},
+  {"query": "Use the jev fast decision helper for the planning decisions in the phase 21 discussion.", "should_trigger": true},
+  {"query": "Write the SPEC and CONTEXT files for the next three undiscussed GSD phases.", "should_trigger": true},
+  {"query": "Spec and discuss phase 18 in auto mode, with the ledger of deferred decisions.", "should_trigger": true},
+  {"query": "Settle the gray areas for phase 16 with advisory answers from jev before we plan it.", "should_trigger": true},
+  {"query": "Run the spec and discuss chain over the phases listed as needing context, one at a time.", "should_trigger": true},
+  {"query": "Plan phase 12 and tell me the task breakdown for each wave.", "should_trigger": false},
+  {"query": "Execute phase 12 now that its plans are written and reviewed.", "should_trigger": false},
+  {"query": "Review my plan for phase 12 and point out the gaps in its task list.", "should_trigger": false},
+  {"query": "Write a product requirements document for a new notification feature.", "should_trigger": false},
+  {"query": "Add a new phase to the roadmap for the billing export work.", "should_trigger": false},
+  {"query": "Configure the GSD model profiles for this project's agents.", "should_trigger": false},
+  {"query": "Run gsd-autonomous to finish the remaining work on the current milestone.", "should_trigger": false},
+  {"query": "Answer this one discuss question for phase 14: which storage format do we use?", "should_trigger": false},
+  {"query": "Create a goal prompt file for finishing phases 20 to 22 in one autonomous run.", "should_trigger": false},
+  {"query": "Fix the failing test in the phase 14 verification module.", "should_trigger": false}
+]

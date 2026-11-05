@@ -1,0 +1,22 @@
+[
+  {"query": "Fold this GSD plan's commits into one commit per logical feature before I open the review.", "should_trigger": true},
+  {"query": "Turn the superpowers plan's task commits on this branch into one commit per feature.", "should_trigger": true},
+  {"query": "Install the wave-end fold into this GSD project so each wave gets folded after its merge-back.", "should_trigger": true},
+  {"query": "Which plans of phase 7 are still unfolded, and which ones already have their feature commits?", "should_trigger": true},
+  {"query": "Regroup the task commits from plan 07-01 by feature, and keep the original messages in the trailer.", "should_trigger": true},
+  {"query": "Run the fold for GSD phase 12 so every finished plan ends with one commit per feature.", "should_trigger": true},
+  {"query": "My finished plan has five small commits. Collapse them into logical feature commits with a backup tag.", "should_trigger": true},
+  {"query": "Check the fold status for phase 9 and tell me which plans still need folding.", "should_trigger": true},
+  {"query": "Fold the commits of this superpowers plan file against the base commit 3f9a0c1, please.", "should_trigger": true},
+  {"query": "The wave merged back. Can you fold the plan's commits the way the fold skill does it?", "should_trigger": true},
+  {"query": "Squash my feature branch into one commit so I can merge it cleanly into main.", "should_trigger": false},
+  {"query": "Start an interactive rebase so I can reword the messages of my last three commits.", "should_trigger": false},
+  {"query": "Push the phase branch to origin and set its upstream tracking reference.", "should_trigger": false},
+  {"query": "Open a pull request from this branch against main with a short description of the change.", "should_trigger": false},
+  {"query": "Write a conventional commit message for the staged changes in the authentication module.", "should_trigger": false},
+  {"query": "Revert the commit that broke the login page and add a note explaining why it was reverted.", "should_trigger": false},
+  {"query": "Cherry-pick the single hotfix commit from the release branch onto the main branch.", "should_trigger": false},
+  {"query": "Review the GSD plan for phase 7 and tell me what is missing from its task list.", "should_trigger": false},
+  {"query": "Set up the GSD config for this project so it uses the fast model profile for planning.", "should_trigger": false},
+  {"query": "Resolve the merge conflict in the parser file between my branch and the main branch.", "should_trigger": false}
+]

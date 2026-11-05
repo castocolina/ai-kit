@@ -1,0 +1,5 @@
+fold 07-01: refs/heads/gsd/phase-07-sample-parser
+commits: 5 -> 5
+tree: not checked
+tag: none
+outcome: 07-01 refused dirty_tree (inline)

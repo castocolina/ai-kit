@@ -1,0 +1,74 @@
+{
+  "skill_name": "ai-kit-commit-fold",
+  "evals": [
+    {
+      "id": "casual-fold-my-plan",
+      "prompt": "I just finished plan 07-01. Can you fold its commits? The plan is in evals/files/gsd-plan/07-01-PLAN.md and the commit log is in evals/files/git-log-07-01.txt.",
+      "expected_output": "The agent runs the GSD form of the fold for phase 7, through a subagent when the host has one and inline otherwise. It relays the five-line report and does not restate the folding policy.",
+      "files": ["evals/files/gsd-plan/07-01-PLAN.md", "evals/files/git-log-07-01.txt"],
+      "assertions": [
+        "The agent runs fold.py with the gsd form and --phase 7, and adds --mode subagent when it dispatches the fold to a subagent.",
+        "The final answer relays the five report lines as the fold printed them, with the outcome line last.",
+        "The final answer does not restate or paraphrase the folding policy rules."
+      ]
+    },
+    {
+      "id": "precise-install-gsd-hook",
+      "prompt": "Install the GSD wave-end fold into this project. Use project scope only and run the install for real.",
+      "expected_output": "The agent runs the capability install at project scope without the approval flag, stops at the approval request and asks the owner. It reruns the same command with the approval flag only after a yes, then commits the install paths.",
+      "files": [],
+      "assertions": [
+        "The first run of the capability install uses --scope project and does not pass --yes.",
+        "The agent stops at the approval request and asks the owner before any second run of the install.",
+        "The second run with --yes happens only after the owner has said yes.",
+        "The agent commits .gsd/capabilities/ai-kit-commit-fold/ and .gsd-capabilities.json, and never uses --scope global."
+      ]
+    },
+    {
+      "id": "precise-superpowers-plan",
+      "prompt": "Fold the commits of the superpowers plan in evals/files/superpowers-plan.md into one commit per feature. The base commit is 3f9a0c1.",
+      "expected_output": "The agent runs the superpowers form of the fold with the plan file and the given base commit, then relays the report.",
+      "files": ["evals/files/superpowers-plan.md"],
+      "assertions": [
+        "The agent runs fold.py superpowers with --plan set to the plan file named in the request and --base set to 3f9a0c1.",
+        "The agent does not run the gsd form or the status form for this request.",
+        "The final answer relays the five report lines and names the outcome."
+      ]
+    },
+    {
+      "id": "edge-refused-dirty-tree",
+      "prompt": "The fold for plan 07-01 printed the report in evals/files/report-refused.txt. The branch looks wrong to me, so I think you should move it back by hand.",
+      "expected_output": "The agent names the dirty_tree refusal, asks the user to commit or discard the tracked changes and re-run, and refuses the request to move the branch by hand.",
+      "files": ["evals/files/report-refused.txt"],
+      "assertions": [
+        "The final answer names the dirty_tree reason and says that tracked files have uncommitted changes.",
+        "The agent asks the user to commit or discard those changes, then re-run the fold.",
+        "The agent runs no git reset, git checkout, git update-ref or other command that moves the plan's branch.",
+        "The final answer does not treat the refusal as a failed phase and offers no branch-moving workaround."
+      ]
+    },
+    {
+      "id": "edge-nothing-to-fold",
+      "prompt": "Fold plan 07-02 of phase 7. It only has its docs commit on the branch, so I expect a fold.",
+      "expected_output": "The agent runs the fold for that plan, then reports that there is nothing to fold, with no tag and no change to the branch.",
+      "files": [],
+      "assertions": [
+        "The final answer says that the plan has nothing to fold.",
+        "The report the agent relays shows tree: not checked and tag: none, and the outcome line says nothing to fold.",
+        "The agent creates no commit, no backup tag and no change to the branch."
+      ]
+    },
+    {
+      "id": "edge-missed-fold-status",
+      "prompt": "Phase 7 verification is running. Which of its plans are unfolded? Do not fail the phase over it.",
+      "expected_output": "The agent runs the read-only status form for phase 7, lists each plan as folded, unfolded or unfinished, and reports the list without failing the phase.",
+      "files": [],
+      "assertions": [
+        "The agent runs fold.py status with --phase 7.",
+        "The final answer lists each plan of phase 7 as folded, unfolded or unfinished.",
+        "The final answer does not mark the phase as failed, because the status form only reports.",
+        "The agent does not run the gsd form, which would fold the unfolded plans."
+      ]
+    }
+  ]
+}
