@@ -20,6 +20,9 @@ gh pr flags (from --help, read-only; captured in tmp/p29.1/01/gh-help.txt):
   pr create -B/--base, -H/--head, -d/--draft, -t/--title, -F/--body-file, -R/--repo
   pr edit -B/--base, -F/--body-file, -t/--title, -R/--repo
   pr view --json fields, -R/--repo; pr ready, -R/--repo
+Opt-in PR fields (set with set_pr): `rollup` replaces statusCheckRollup (CheckRun and
+StatusContext shapes), `mergeable` replaces MERGEABLE, `headRefOid` replaces the head sha,
+`hold_merge` makes `pr merge` exit 0 and leave the PR OPEN (a merge queue).
 """
 
 import json
@@ -158,6 +161,7 @@ def pr_verb(argv, verb, args):
         body = open(body_file, encoding="utf-8").read() if body_file else ""
         pr = new_pr(state, head, base, value("--title", args), body, "--draft" in args)
         save(state)
+        sys.stderr.write("Warning: 1 uncommitted change\n")  # real gh warns on stderr
         print(f"https://github.com/{REPO}/pull/{pr['number']}")
         done(argv, 0)
     if verb == "list":
@@ -172,6 +176,10 @@ def pr_verb(argv, verb, args):
     if pr is None:
         fail(argv, f"fake gh: no pull request {positional[:1]}")
     if verb == "edit":
+        if state.get("fail_edit_once"):
+            state["fail_edit_once"] = False
+            save(state)
+            fail(argv, "fake gh: transient edit failure")
         if value("--base", args):
             pr["baseRefName"] = value("--base", args)
         if value("--title", args):
@@ -189,9 +197,13 @@ def pr_verb(argv, verb, args):
         data = {}
         for field in fields:
             if field == "statusCheckRollup":
-                data[field] = [{"conclusion": pr["checks"]}]
+                data[field] = pr.get("rollup") or [{"conclusion": pr["checks"]}]
             elif field == "mergeable":
-                data[field] = "MERGEABLE"
+                data[field] = pr.get("mergeable", "MERGEABLE")
+            elif field == "headRefOid":
+                data[field] = pr.get("headRefOid") or git(
+                    "--git-dir", bare_path(), "rev-parse", "--verify", "-q",
+                    f"refs/heads/{pr['headRefName']}").stdout.strip()
             elif field == "url":
                 data[field] = f"https://github.com/{REPO}/pull/{pr['number']}"
             else:
@@ -201,6 +213,9 @@ def pr_verb(argv, verb, args):
     if verb == "merge":
         if "--merge" not in args or value("--match-head-commit", args) is None:
             fail(argv, "fake gh: merge needs --merge and --match-head-commit")
+        if pr.get("hold_merge"):
+            save(state)
+            done(argv, 0)
         sha = merge_pr(state, pr, value("--match-head-commit", args))
         if sha is None:
             fail(argv, "fake gh: merge refused (not open, draft, checks, or head moved)")
@@ -368,6 +383,13 @@ def write_forge_fakes(bin_dir, state_path, log_path, gh_stack=False, signed_in=T
 def forge_state(state_path):
     """The PR state the fake keeps (a read of the JSON file)."""
     return json.loads(Path(state_path).read_text(encoding="utf-8"))
+
+
+def fail_next_edit(state_path):
+    """Make the next `gh pr edit` fail once (test setup)."""
+    state = forge_state(state_path)
+    state["fail_edit_once"] = True
+    Path(state_path).write_text(json.dumps(state), encoding="utf-8")
 
 
 def set_pr(state_path, number, **fields):

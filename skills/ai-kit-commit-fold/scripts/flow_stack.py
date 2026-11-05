@@ -10,7 +10,8 @@ are saved to the restack file, and nothing else is written. `restack --continue`
 agent's resolution (no conflict markers, only the conflicting paths changed), continues the
 rebase, runs the adapter gates and then the project's own gates with the top unit checked out,
 and only then pushes atomically, leased on the recorded `pushed` shas. Without project gates the
-resolved stack stays local and unpushed (`no_gates`). Any refused step restores every branch.
+resolved stack stays local and unpushed (`no_gates`). Any refused step restores every branch,
+except `bad_resolution`, which keeps the rebase paused so the agent can fix it and re-run.
 The gh-stack backend and the merge chain are not built here (plan 29.1-03 Task 3).
 """
 
@@ -211,11 +212,16 @@ def _rebase_units(repo, state, top, new, old):
         raise FlowError("rebase_conflict", f"{exc.detail}; every branch restored") from exc
 
 
-def _rebased(repo, above, new):
-    """(entry, new tip, new parent tip) for each restacked unit, bottom-up."""
+def _rebased(repo, above, new, old):
+    """(entry, new tip, new parent tip) for each restacked unit, bottom-up.
+
+    --update-refs leaves a unit with no commits of its own at `old`; move it to `new`."""
     out, parent = [], new
     for entry in above:
         tip = flow_git.rev(repo, f"refs/heads/{entry['branch']}")
+        if tip == old:
+            run_git(repo, "update-ref", f"refs/heads/{entry['branch']}", new, old)
+            tip = new
         out.append((entry, tip, parent))
         parent = tip
     return out
@@ -264,7 +270,7 @@ def _publish(repo, settings, record, state):
     """
     above = [find_entry(record, unit_id) for unit_id in state["units"]]
     moved_entry = find_entry(record, state["moved_unit"]) if state["moved_unit"] else None
-    rebased = _rebased(repo, above, state["new"])
+    rebased = _rebased(repo, above, state["new"], state["old"])
     refs = _push_refs(repo, rebased, moved_entry) if consented(repo) else []
     _push_or_restore(repo, settings, record, state, refs)
     _record_rebase(repo, rebased, {branch for branch, _expected, _src in refs}, moved_entry)
@@ -353,19 +359,32 @@ def _parse_notes(items):
     return notes
 
 
+def _has_marker(path):
+    """A `<<<<<<<` or `>>>>>>>` line, or a `=======` line after a `<<<<<<<` (not a heading)."""
+    opened = False
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            stripped = line.rstrip("\r\n")
+            opened = opened or stripped.startswith("<<<<<<<")
+            if stripped.startswith(_MARKERS) or (opened and stripped == "======="):
+                return True
+    return False
+
+
 def _check_resolution(repo, state, notes):
     """Refuse a resolution with a conflict marker, a change outside the conflicting files, or an
     unstaged change; then stage the conflicting paths by name."""
     top = _toplevel(repo)
     conflicts = state["conflicts"]
+    kept = [path for path in conflicts if os.path.exists(os.path.join(top, path))]
+    for path in kept:
+        if _has_marker(os.path.join(top, path)):
+            raise FlowError("bad_resolution", f"{path} still has a conflict marker")
+    if kept:
+        run_git(repo, "add", "--", *kept)
     for path in conflicts:
-        with open(os.path.join(top, path), encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                stripped = line.rstrip("\r\n")
-                if stripped.startswith(_MARKERS) or stripped == "=======":
-                    raise FlowError("bad_resolution", f"{path} still has a conflict marker")
-    if conflicts:
-        run_git(repo, "add", "--", *conflicts)
+        if path not in kept:  # resolved by deleting the file
+            run_git(repo, "rm", "--cached", "-q", "--", path)
     current = _stage_zero(repo)
     for path in sorted(set(current) | set(state["index"])):
         if path not in conflicts and current.get(path) != state["index"].get(path):
@@ -412,12 +431,16 @@ def _run_gates(repo, state, gates):
     cwd = _toplevel(repo)
     items = []
     for index, (label, argv) in enumerate(gates):
-        proc = subprocess.run(argv, cwd=cwd, capture_output=True, check=False)
-        if proc.returncode != 0:
-            items.append(f"{label} fail")
+        try:
+            proc = subprocess.run(argv, cwd=cwd, capture_output=True, check=False)
+            code, note = proc.returncode, ""
+        except OSError:
+            code, note = 127, " (not found)"
+        if code != 0:
+            items.append(f"{label} fail{note}")
             items.extend(f"{later} not run" for later, _argv in gates[index + 1:])
             _abort_and_restore(repo, state)
-            raise _GateFailure("gate_failed", f"{label} exited {proc.returncode}",
+            raise _GateFailure("gate_failed", f"{label} exited {code}{note}",
                                ["gates: " + "; ".join(items)])
         items.append(f"{label} pass")
     return "gates: " + "; ".join(items)
@@ -430,12 +453,7 @@ def _continue(repo, settings, record, args):
         raise FlowError("restack_not_paused", "no restack is paused")
     notes = _parse_notes(args.note)
     if not state.get("resolved"):
-        try:
-            _check_resolution(repo, state, notes)
-        except FlowError as exc:
-            if exc.reason == "bad_resolution":
-                _abort_and_restore(repo, state)
-            raise
+        _check_resolution(repo, state, notes)  # a refusal keeps the rebase paused for a retry
         _continue_rebase(repo, state)
     else:
         try:

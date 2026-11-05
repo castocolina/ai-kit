@@ -97,7 +97,8 @@ The adapter sends three signals, in this order. Each maps to one command:
 What the flow does at each signal:
 
 - Checkpoint: fold, then push the unit branch with its explicit refspec and lease. The first
-  push of a unit opens a draft PR against the unit's target. A later push updates the branch.
+  push of a unit opens a draft PR against its parent unit's branch while that parent is
+  unmerged, else against the unit's target. A later push updates the branch.
 - Unit finished: as a checkpoint, then the unit is complete and waits for verification.
 - Verification passed: marks the draft PR ready. A PR is never marked ready before the unit
   is finished.
@@ -140,15 +141,16 @@ redacted.
 
 `missing_field`, `unknown_field`, `bad_value`, `signal_order`, `not_verified`, `wrong_parent`,
 `no_trunk`, `no_remote`, `settings_not_ignored`, `target_branch_push`, `merged_branch_push`,
-`stale_lease`, `push_failed`, `trunk_moved`, `dirty_tree`, `not_started`, `ref_mismatch`,
-`restack_needed`, `mvp_below_unmerged`, `mvp_diverged`, `mvp_target_checked_out`, `no_gates`,
+`stale_lease`, `push_failed`, `not_descendant`, `dirty_tree`, `not_started`, `ref_mismatch`,
+`branch_missing`, `mvp_below_unmerged`, `mvp_diverged`, `mvp_target_checked_out`, `no_gates`,
 `restack_pending`, `bad_resolution`, `gate_failed`, `unknown_target`, `chain_locked`,
 `base_mismatch`, `branch_in_worktree`, `unrecorded_branch`, `not_hotfix`, `bad_checkpoint`,
-`plan_not_carried`,
+`plan_not_carried`, `no_consent`, `no_pr`, `pr_failed`, `rebase_conflict`, `restack_not_paused`,
 and every fold refusal reason, passed through unchanged.
 
 ## Exit codes
 
 - `0`: done, or nothing to do.
-- `1`: refused; nothing was changed.
+- `1`: refused. Steps finished before the refusal (a catch-up push, a fold, earlier merges)
+  stay done and are listed in the report.
 - `2`: bad input, or the command is not available in this install.

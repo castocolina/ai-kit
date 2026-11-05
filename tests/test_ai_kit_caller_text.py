@@ -52,11 +52,12 @@ FALLBACK_RULE = re.compile(
 _WRITE_METHODS = frozenset({"write_text", "write_bytes", "unlink", "rmtree", "mkdir", "makedirs"})
 # The unit flow's push consent (commit-fold's per-repository push approval) is not the jev
 # backend consent this rule guards. Only its literal flow forms are cleared: the skipped-push
-# outcome, the `fold.py consent` verbs, "push consent" and the settings key's gloss. Any other
-# consent wording, such as "no consent", "consent status" or a bare `consent` key, still counts.
+# outcome, the `fold.py consent` verbs, "push consent", the settings key's gloss and the
+# `no_consent` reason code. Any other consent wording, such as "no consent", "consent status"
+# or a bare `consent` key, still counts.
 _PUSH_CONSENT = re.compile(
     r"skipped \(no consent\)|fold\.py consent (?:grant|revoke|status)\b|\bpush consent\b"
-    r"|push approval \(`consent`\)",
+    r"|push approval \(`consent`\)|`no_consent`",
     re.IGNORECASE,
 )
 

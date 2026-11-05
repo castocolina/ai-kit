@@ -287,8 +287,11 @@ def _plan_step(args, unit):
         if (args.base is not None and parent_tip is not None
                 and not flow_git.is_ancestor(args.repo, parent_tip, args.base)):
             raise flow_record.FlowError("bad_value", "--base must descend from parent_tip")
-        checkpoint = fold_adapters.superpowers_checkpoint(
-            args.repo, args.plan, args.base or parent_tip, unit.target)
+        try:
+            checkpoint = fold_adapters.superpowers_checkpoint(
+                args.repo, args.plan, args.base or parent_tip, unit.target)
+        except FoldError as exc:
+            raise flow_record.FlowError(exc.reason, exc.detail) from exc
         checkpoint = dataclasses.replace(checkpoint, merged_refs=tuple(merged_refs),
                                          base_branch=unit.target)
         return fold_engine.fold(args.repo, checkpoint, fold_group.group_features, "inline")

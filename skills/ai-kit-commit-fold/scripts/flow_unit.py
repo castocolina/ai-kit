@@ -49,11 +49,25 @@ def catch_up(repo, settings, record):
         flow_git.push(repo, settings, record, [(entry["branch"], entry["pushed"], pending)])
         entry["pushed"] = pending
         entry["pending"] = None
-        if entry["pr"] is None:
-            entry["pr"] = flow_pr.open_draft(repo, settings, _unit_of(entry), entry, record)
-        write_record(repo, record)
+        write_record(repo, record)  # the remote moved; record it before any forge call
         lines.append(f"caught up unit {entry['id']}: pushed {pending[:12]}")
+        if entry["pr"] is None and not entry.get("mvp"):  # an MVP unit opens no PR
+            lines.extend(_pr_step(repo, settings, record, _unit_of(entry), entry))
+            write_record(repo, record)
     return lines
+
+
+def _pr_step(repo, settings, record, unit, entry):
+    """Open or update the PR after a recorded push. A forge failure becomes a report note:
+    the push stays recorded, so the next lease is right."""
+    try:
+        if entry["pr"] is None:
+            entry["pr"], notes = flow_pr.ensure_pr(repo, settings, record, unit, entry)
+            return notes
+        flow_pr.update_pr(repo, settings, unit, entry)
+        return [f"PR {entry['pr']} text updated"]
+    except FlowError as exc:
+        return [f"PR step failed: {exc.reason}: {exc.detail}"]
 
 
 def _sync(repo, settings, record):
@@ -85,6 +99,18 @@ def _switch(repo, branch, parent_tip):
     if flow_git.rev(repo, f"refs/heads/{branch}") is None:
         flow_git.run_git(repo, "branch", branch, parent_tip)
     flow_git.run_git(repo, "switch", branch)
+
+
+def _restore_branch(repo, entry):
+    """Recreate a deleted local unit branch at its pending or pushed tip, never at parent_tip
+    (a branch without the unit's commits would rewind the remote on the next push)."""
+    if flow_git.rev(repo, f"refs/heads/{entry['branch']}") is not None:
+        return
+    tip = entry.get("pending") or entry.get("pushed")
+    if tip is None:
+        raise FlowError("branch_missing",
+                        f"branch {entry['branch']} is gone and the record holds no tip for it")
+    flow_git.run_git(repo, "branch", entry["branch"], tip)
 
 
 def _local_only(repo, record, parent_tip, paths=()):
@@ -170,6 +196,7 @@ def _start(args, unit):
     existing = find_entry(record, unit.id)
     if existing is not None:
         _check_parent(repo, existing)
+        _restore_branch(repo, existing)
         _switch(repo, existing["branch"], existing["parent_tip"])
         return [*lines, f"reuses unit {unit.id}"], "nothing to do"
     parent, parent_tip = flow_git.start_point(repo, settings, record, unit.target)
@@ -209,6 +236,9 @@ def _checkpoint(args, unit):
     _sync(repo, settings, record)
     lines = catch_up(repo, settings, record) if consented(repo) else []
     _check_parent(repo, entry)
+    if flow_git.head_branch(repo) != unit.branch:
+        raise FlowError("ref_mismatch", f"HEAD is on {flow_git.head_branch(repo) or 'no branch'}"
+                                        f", not the unit branch {unit.branch}; switch to it")
     old_tip = flow_git.rev(repo, f"refs/heads/{unit.branch}")
     result = args.fold_step(merged_refs(repo, settings, record))
     if result.outcome == "refused":
@@ -227,6 +257,12 @@ def _checkpoint(args, unit):
     if args.final or signals[0] is True:
         entry["state"] = "finished"
     entry["checkpoints"] += 1
+    # MVP units too: a draft-PR fallback (mvp_below_unmerged) must still push the rewrite
+    if old_tip is not None and old_tip != new_tip and not (
+            flow_git.is_ancestor(repo, old_tip, new_tip)):
+        # the fold rewrote the branch: record the new tip as pending so a failed push can retry
+        entry["pending"] = new_tip
+        write_record(repo, record)
     outcome, notes = _publish(repo, settings, record, entry, unit)
     lines.extend(notes)
     write_record(repo, record)
@@ -270,16 +306,18 @@ def _publish(repo, settings, record, entry, unit):
             return outcome, mvp_notes
     if entry["pushed"] == new_tip:
         return "nothing to do", [*notes, "nothing to push"]
+    if entry["pushed"] and entry["pending"] != new_tip and not (
+            flow_git.is_ancestor(repo, entry["pushed"], new_tip)):
+        raise FlowError(
+            "not_descendant",
+            f"{unit.branch} at {new_tip[:12]} does not contain the pushed tip "
+            f"{entry['pushed'][:12]}; the push would rewind the remote branch")
     flow_git.push(repo, settings, record, [(unit.branch, entry["pushed"], None)])
     entry["pushed"] = new_tip
     entry["pending"] = None
+    write_record(repo, record)  # the remote moved; record it before any forge call
     notes.append(f"pushed {unit.branch} at {new_tip[:12]}")
-    if entry["pr"] is None:
-        entry["pr"], pr_notes = flow_pr.ensure_pr(repo, settings, record, unit, entry)
-        notes.extend(pr_notes)
-    else:
-        flow_pr.update_pr(repo, settings, unit, entry)
-        notes.append(f"PR {entry['pr']} text updated")
+    notes.extend(_pr_step(repo, settings, record, unit, entry))
     return "done", notes
 
 
@@ -315,6 +353,8 @@ def _ready(args, unit):
     if entry["pr"] is not None:
         flow_pr.mark_ready(repo, settings, entry)
         lines.append(f"PR {entry['pr']} marked ready")
+    else:
+        lines.append("no PR to mark ready")
     entry["state"] = "ready"
     write_record(repo, record)
     return lines, "done"

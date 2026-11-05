@@ -388,6 +388,15 @@ class TestConsent(_FlowCase):
         self.assertEqual(self.remote_sha(BRANCH), before)
         self.assertIsNotNone(self.record()["units"][0]["pending"])
 
+    def test_revoke_without_consent_writes_no_settings_file(self):
+        # T-29.1-05: revoke never creates a settings file it has not checked is ignored.
+        settings = self.repo / ".aikit" / "flow.json"
+        self.assertFalse(settings.exists())
+        code, text = self.fold("consent", "revoke")
+        self.assertEqual(code, 0, text)
+        self.assertIn("consent revoked", text)
+        self.assertFalse(settings.exists())
+
     def test_grant_then_catch_up_pushes_only_the_folded_pending_tip(self):
         unit = self.unit()
         self.fold("start", "--unit", unit)

@@ -156,6 +156,18 @@ class TestCommitFoldSkillText(unittest.TestCase):
             _missing(self.skill.replace("no_gates", "gate refusal"), ("no_gates",)), ["no_gates"]
         )
 
+    def test_pins_the_consent_and_merge_rules(self):
+        # T-29.1-16: the agent asks the owner, never self-grants, never pushes or merges alone.
+        required = (
+            "ask the owner once",
+            "Never grant push consent yourself",
+            "Never push without push consent.",
+            "Never merge a PR outside the owner-started merge chain",
+        )
+        self.assertEqual(_missing(self.skill, required), [])
+        weakened = self.skill.replace("Never grant push consent yourself", "Grant push consent")
+        self.assertEqual(_missing(weakened, required), ["Never grant push consent yourself"])
+
     def test_retired_fold_only_lines_stay_gone(self):
         # Each retired line, appended back, is found: the check is not vacuous.
         self.assertEqual(_present(self.skill, _RETIRED_LINES), [])

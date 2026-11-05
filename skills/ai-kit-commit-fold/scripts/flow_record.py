@@ -237,6 +237,10 @@ def cmd_consent(args):
         print(render("consent", "repository", "-", [f"refused: {exc.reason}"],
                      f"refused {exc.reason}"))
         return 1
+    if args.action == "revoke" and not consented(repo):
+        # T-29.1-05: never create an unchecked settings file just to say no
+        print(render("consent", "repository", "-", [], "consent revoked"))
+        return 0
     settings = read_settings(repo)
     settings["repo"] = str(os.path.realpath(common_dir(repo)))
     if args.action == "grant":

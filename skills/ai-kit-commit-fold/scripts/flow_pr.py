@@ -15,20 +15,27 @@ from flow_record import FlowError, Unit
 
 _TOKEN = re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}")
 _BACKEND_ENV = "AI_KIT_FLOW_PR_BACKEND"
+_PR_URL = re.compile(r"/pull/(\d+)\s*$", re.MULTILINE)
 
 
 def redact(text):
     return _TOKEN.sub("[redacted]", text)
 
 
-def run_gh(repo, *args):
-    """(exit code, redacted stdout+stderr) of `gh <args>` run in `repo`."""
+def run_gh_split(repo, *args):
+    """(exit code, redacted stdout, redacted stderr) of `gh <args>` run in `repo`."""
     try:
         proc = subprocess.run(["gh", *args], cwd=str(repo), capture_output=True, check=False)
     except FileNotFoundError:
-        return 127, "gh not found"
-    text = (proc.stdout + proc.stderr).decode("utf-8", "replace")
-    return proc.returncode, redact(text)
+        return 127, "gh not found", ""
+    return (proc.returncode, redact(proc.stdout.decode("utf-8", "replace")),
+            redact(proc.stderr.decode("utf-8", "replace")))
+
+
+def run_gh(repo, *args):
+    """(exit code, redacted stdout+stderr) of `gh <args>` run in `repo`."""
+    code, out, err = run_gh_split(repo, *args)
+    return code, out + err
 
 
 def pr_body(unit, entry):
@@ -64,10 +71,16 @@ def base_of(record, unit):
 
 def pr_cmd(repo, settings, *args):
     """`gh pr <args> --repo OWNER/NAME` for the primary remote's repository."""
+    code, out, err = pr_cmd_split(repo, settings, *args)
+    return code, out + err
+
+
+def pr_cmd_split(repo, settings, *args):
+    """Like pr_cmd, but (exit code, stdout, stderr)."""
     slug = github_repo(repo, primary_remote(repo, settings))
     if slug is None:
-        return 1, "no GitHub repository on the primary remote"
-    return run_gh(repo, "pr", *args, "--repo", slug)
+        return 1, "no GitHub repository on the primary remote", ""
+    return run_gh_split(repo, "pr", *args, "--repo", slug)
 
 
 def open_draft(repo, settings, unit, entry, record):
@@ -75,13 +88,14 @@ def open_draft(repo, settings, unit, entry, record):
     if not is_github(repo, primary_remote(repo, settings)):
         return None
     with _body_file(pr_body(unit, entry)) as body_path:
-        code, text = pr_cmd(repo, settings, "create", "--base", base_of(record, unit),
-                            "--head", unit.branch, "--draft", "--title", unit.title,
-                            "--body-file", body_path)
+        code, out, err = pr_cmd_split(repo, settings, "create", "--base", base_of(record, unit),
+                                      "--head", unit.branch, "--draft", "--title", unit.title,
+                                      "--body-file", body_path)
     if code != 0:
+        text = out + err
         raise FlowError("pr_failed", text.strip().splitlines()[0] if text.strip() else "gh pr")
-    number = text.strip().rsplit("/", 1)[-1]
-    return int(number) if number.isdigit() else None
+    match = _PR_URL.search(out)  # stdout only: gh warns on stderr
+    return int(match.group(1)) if match else None
 
 
 def update_pr(repo, settings, unit, entry):

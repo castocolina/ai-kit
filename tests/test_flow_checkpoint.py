@@ -78,6 +78,13 @@ class TestCheckpointPush(_PlanCase):
         self.assertEqual(self.remote_sha(PLAN_BRANCH), self.local_tip())
         self.assertEqual(len(self.pr_creates()), 1)
 
+    def test_pr_number_is_recorded_although_gh_warns_on_stderr(self):
+        self._plan_unit()
+        self.commit({"a.py": b"a\n"}, "feat: add a")
+        code, text = self.checkpoint_plan()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.record()["units"][0]["pr"], 1)
+
     def test_pr_text_follows_the_unit_after_each_checkpoint(self):
         self._plan_unit()
         self.commit({"a.py": b"a\n"}, "feat: add a")
@@ -134,6 +141,120 @@ class TestCheckpointPush(_PlanCase):
         self.assertEqual(code, 1, text)
         self.assertIn("stale_lease", text)
         self.assertEqual(self.remote_sha(PLAN_BRANCH), other)
+
+
+class TestRecordBeforeForge(_PlanCase):
+    """A push is recorded before any gh call, so a gh failure never wedges the lease."""
+
+    def test_failed_pr_edit_after_a_push_keeps_the_record_and_the_next_checkpoint_pushes(self):
+        self._plan_unit()
+        self.commit({"a.py": b"a\n"}, "feat: add a")
+        self.checkpoint_plan()
+        self.commit({"b.py": b"b\n"}, "feat: add b")
+        forge_fakes.fail_next_edit(self.state)
+        code, text = self.checkpoint_plan()
+        self.assertEqual(code, 0, text)
+        self.assertIn("PR step failed: pr_failed", text)
+        self.assertEqual(self.record()["units"][0]["pushed"], self.remote_sha(PLAN_BRANCH))
+        self.commit({"c.py": b"c\n"}, "feat: add c")
+        code, text = self.checkpoint_plan()
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("stale_lease", text)
+        self.assertEqual(self.remote_sha(PLAN_BRANCH), self.local_tip())
+
+
+class TestReadyAndBackend(_PlanCase):
+    """ready on a superpowers plan marks the PR; the gh-stack probe picks the backend."""
+
+    def test_ready_on_a_superpowers_plan_marks_the_pr_non_draft(self):
+        self._plan_unit()
+        self.commit({"a.py": b"a\n"}, "feat: add a")
+        code, text = self.checkpoint_plan("--final")
+        self.assertEqual(code, 0, text)
+        self.assertTrue(forge_fakes.forge_state(self.state)["prs"][0]["isDraft"])
+        code, text = self.fold("ready", "--plan", f.SP_PLAN)
+        self.assertEqual(code, 0, text)
+        self.assertFalse(forge_fakes.forge_state(self.state)["prs"][0]["isDraft"])
+
+    def test_backend_probe_picks_gh_stack_only_when_stack_help_exits_zero(self):
+        import os
+        from unittest import mock
+
+        import flow_pr
+
+        def runner(stack_code):
+            return lambda _repo, *args: (stack_code, "") if args[:1] == ("stack",) else (0, "")
+
+        for stack_code, expected in ((0, "gh-stack"), (1, "gh")):
+            with mock.patch.dict("os.environ"), mock.patch.object(
+                    flow_pr, "run_gh", runner(stack_code)):
+                os.environ.pop("AI_KIT_FLOW_PR_BACKEND", None)
+                self.assertEqual(flow_pr.backend(self.repo), expected)
+
+
+class TestBranchGuards(_PlanCase):
+    """A deleted or rewound local branch never rewinds the remote; HEAD must be the unit."""
+
+    def _pushed_unit_without_local_branch(self):
+        self._plan_unit()
+        self.commit({"a.py": b"a\n"}, "feat: add a")
+        self.checkpoint_plan()
+        pushed = self.remote_sha(PLAN_BRANCH)
+        f.run_git(self.repo, self.env, "switch", "-q", "main")
+        f.run_git(self.repo, self.env, "branch", "-D", PLAN_BRANCH)
+        return pushed
+
+    def test_start_recreates_a_deleted_branch_at_the_pushed_tip(self):
+        pushed = self._pushed_unit_without_local_branch()
+        code, text = self.fold("start", "--plan", f.SP_PLAN)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.local_tip(), pushed)
+        self.commit({"b.py": b"b\n"}, "feat: add b")
+        code, text = self.checkpoint_plan()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.remote_sha(PLAN_BRANCH), self.local_tip())
+
+    def test_start_refuses_a_deleted_branch_the_record_holds_no_tip_for(self):
+        self._plan_unit()
+        f.run_git(self.repo, self.env, "switch", "-q", "main")
+        f.run_git(self.repo, self.env, "branch", "-D", PLAN_BRANCH)
+        code, text = self.fold("start", "--plan", f.SP_PLAN)
+        self.assertEqual(code, 1, text)
+        self.assertIn("branch_missing", text)
+
+    def test_push_that_would_rewind_the_remote_is_refused(self):
+        pushed = self._pushed_unit_without_local_branch()
+        f.run_git(self.repo, self.env, "branch", PLAN_BRANCH, "main")
+        f.run_git(self.repo, self.env, "switch", "-q", PLAN_BRANCH)
+        self.commit({"z.py": b"z\n"}, "feat: unrelated")
+        code, text = self.checkpoint_plan()
+        self.assertEqual(code, 1, text)
+        self.assertIn("not_descendant", text)
+        self.assertEqual(self.remote_sha(PLAN_BRANCH), pushed)
+
+    def test_checkpoint_with_head_off_the_unit_branch_refuses_ref_mismatch(self):
+        self._plan_unit()
+        self.commit({"a.py": b"a\n"}, "feat: add a")
+        f.run_git(self.repo, self.env, "switch", "-q", "main")
+        before = self.local_tip()
+        code, text = self.checkpoint_plan()
+        self.assertEqual(code, 1, text)
+        self.assertIn("ref_mismatch", text)
+        self.assertEqual(self.local_tip(), before)
+
+    def test_fold_error_from_the_plan_checkpoint_becomes_a_flow_refusal(self):
+        import types
+
+        import flow_record
+        import fold
+
+        self._plan_unit()
+        f.run_git(self.repo, self.env, "switch", "-q", "--detach")
+        args = types.SimpleNamespace(repo=str(self.repo), plan=f.SP_PLAN, base=None)
+        unit = types.SimpleNamespace(id="demo-plan", target="main")
+        with self.assertRaises(flow_record.FlowError) as raised:
+            fold._plan_step(args, unit)([])
+        self.assertEqual(raised.exception.reason, "detached_head")
 
 
 class _UnitCase(_FlowCase):
@@ -472,11 +593,14 @@ class TestPrBackends(_UnitCase):
         self.commit({"a.py": b"a\n"}, "feat: add a")
         self.commit({"tests/test_a.py": b"ta\n"}, "test: cover a")
         code, text = self._checkpoint_unit("unit-a", "demo/unit-a", "main",
-                                           ["a.py", "tests/test_a.py"])
+                                           ["a.py", "tests/test_a.py"], final=True)
         self.assertEqual(code, 0, text)
         self.assertEqual(self.remote_sha("demo/unit-a"), self.ref_sha("refs/heads/demo/unit-a"))
         self.assertEqual([c for c in self.gh_calls() if c["argv"][:1] == ["pr"]], [])
         self.assertIn("PRs not supported on this remote", text)
+        code, text = self.fold("ready", "--unit", self.unit("unit-a", "demo/unit-a", "Unit A"))
+        self.assertEqual(code, 0, text)
+        self.assertIn("no PR to mark ready", text)
 
 
 class TestBottomUpReady(_UnitCase):

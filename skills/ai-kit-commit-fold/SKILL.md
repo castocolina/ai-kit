@@ -77,7 +77,8 @@ The stack and settings commands:
   read or set the remote, the target branches and the project's gates.
 - `fold.py consent grant [--add-exclude] | revoke | status`: push consent. See Push consent.
 
-A refused flow command changed nothing. Next steps for the common reasons:
+A refusal stops the command. Steps it finished before the refusal (a catch-up push, a fold,
+earlier merges) stay done, and the report lists them. Next steps for the common reasons:
 
 | Reason | Next step |
 |--------|-----------|
@@ -112,6 +113,7 @@ where the host has one, otherwise do it yourself:
    sides' entries. Never edit a file outside the conflict list.
 2. Run `fold.py restack --continue --note <path>=<how>` once, with one `--note` per resolved file.
    If a file cannot be resolved with confidence, run `fold.py restack --abort` and report it.
+   A `bad_resolution` refusal keeps the stack paused: fix the files it names, then rerun `--continue`.
 3. Read the `gates:` line of the report: it names every gate that ran (a GSD project adds
    `gsd-tools validate health`).
 4. On a `no_gates` refusal the stack stays local and unpushed. Tell the owner to set a gate with

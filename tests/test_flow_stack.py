@@ -8,6 +8,7 @@ not built yet (plan 29.1-03 Tasks 2 and 3).
 
 import argparse
 import contextlib
+import fcntl
 import io
 import json
 import os
@@ -171,6 +172,22 @@ class TestCascadeClean(_StackCase):
             self.assertEqual(self.entry(unit_id)["pushed"], self.rev(branch))
             self.assertEqual(self.remote_tip(branch), self.rev(branch))
         self.assertFalse(self.restack_file_exists())
+
+    def test_an_empty_unit_at_the_boundary_moves_with_the_cascade(self):
+        self.start_unit("unit-a", BR_A)
+        self.start_unit("unit-b", BR_B)
+        self.commit({"b.py": b"b\n"}, "feat: unit-b")
+        self.remote_commit("main", {"z.py": b"z\n"}, "feat: trunk moved")
+        code, text = self.fold("restack")
+        self.assertEqual(code, 0, text)
+        new_main = self.remote_tip("main")
+        self.assertEqual(self.rev(BR_A), new_main)
+        self.assertEqual(self.count(BR_A, BR_B), 1)
+        self.assertEqual(self.entry("unit-a")["parent_tip"], new_main)
+        self.assertEqual(self.entry("unit-b")["parent_tip"], new_main)
+        self.assertEqual(self.entry("unit-b")["parent_tip"], self.rev(BR_A))
+        code, text = self.fold("restack")
+        self.assertIn("nothing to do", text)
 
     def test_restack_with_nothing_moved_changes_no_ref_and_pushes_nothing(self):
         self.build_stack()
@@ -344,26 +361,46 @@ class TestCascadeConflict(_StackCase):
         self.assertEqual(self.status(), "")
         self.assertFalse(self.restack_file_exists())
 
-    def test_marker_left_in_a_file_refuses_bad_resolution_and_restores(self):
-        before = self.conflict()
+    def test_marker_left_in_a_file_refuses_bad_resolution_and_keeps_the_rebase_paused(self):
+        self.conflict()
         self.resolve(b"<<<<<<< ours\nboth\n=======\n>>>>>>> theirs\n")
         code, text = self.fold("restack", "--continue", "--note", "shared.txt=kept")
         self.assertEqual(code, 1, text)
         self.assertIn("bad_resolution", text)
         self.assertIn("gates: none run", text)
-        self.assertEqual(self.local_tips((BR_A, BR_B)), before)
-        self.assertEqual(self.status(), "")
+        self.assertTrue(self.restack_file_exists())
+        self.resolve()
+        self.gate(sys.executable, "-c", "pass")
+        code, text = self.fold("restack", "--continue", "--note", "shared.txt=kept")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.remote_tip(BR_A), self.rev(BR_A))
         self.assertFalse(self.restack_file_exists())
 
+    def test_a_setext_underline_is_not_a_conflict_marker(self):
+        self.conflict()
+        self.resolve(b"Install\n=======\nboth sides kept\n")
+        self.gate(sys.executable, "-c", "pass")
+        code, text = self.fold("restack", "--continue", "--note", "shared.txt=kept")
+        self.assertEqual(code, 0, text)
+
+    def test_resolving_by_deleting_the_file_continues(self):
+        self.conflict()
+        (self.repo / "shared.txt").unlink()
+        self.gate(sys.executable, "-c", "pass")
+        code, text = self.fold("restack", "--continue", "--note", "shared.txt=deleted")
+        self.assertEqual(code, 0, text)
+        self.assertIn("resolved: shared.txt (deleted)", text)
+        self.assertFalse((self.repo / "shared.txt").exists())
+        self.assertEqual(self.remote_tip(BR_A), self.rev(BR_A))
+
     def test_change_outside_the_conflicting_files_refuses_bad_resolution(self):
-        before = self.conflict()
+        self.conflict()
         self.resolve()
         (self.repo / "base.txt").write_bytes(b"edited\n")
         code, text = self.fold("restack", "--continue", "--note", "shared.txt=kept")
         self.assertEqual(code, 1, text)
         self.assertIn("bad_resolution", text)
-        self.assertEqual(self.local_tips((BR_A, BR_B)), before)
-        self.assertFalse(self.restack_file_exists())
+        self.assertTrue(self.restack_file_exists())
 
     def test_no_project_gates_keeps_the_resolved_stack_local_and_unpushed(self):
         before = self.conflict()
@@ -398,6 +435,18 @@ class TestCascadeConflict(_StackCase):
         self.assertIn(f"gates: {shlex.join(failing)} fail", text)
         self.assertEqual(self.local_tips((BR_A, BR_B)), before)
         self.assertEqual(self.remote_tip(BR_A), before[BR_A])
+        self.assertEqual(self.status(), "")
+        self.assertFalse(self.restack_file_exists())
+
+    def test_a_gate_whose_binary_is_missing_fails_and_restores_every_branch(self):
+        before = self.conflict()
+        self.resolve()
+        self.gate("ai-kit-no-such-gate-binary", "--check")
+        code, text = self.fold("restack", "--continue", "--note", "shared.txt=kept")
+        self.assertEqual(code, 1, text)
+        self.assertIn("gate_failed", text)
+        self.assertIn("ai-kit-no-such-gate-binary --check fail (not found)", text)
+        self.assertEqual(self.local_tips((BR_A, BR_B)), before)
         self.assertEqual(self.status(), "")
         self.assertFalse(self.restack_file_exists())
 
@@ -504,6 +553,12 @@ class TestMergeChain(_StackCase):
         self.assertEqual(set(self.states().values()), {"merged"})
         self.assertEqual(
             {pr["state"] for pr in forge_fakes.forge_state(self.state)["prs"]}, {"MERGED"})
+        merges = self.pr_merge_calls()
+        self.assertEqual(len(merges), 3)
+        for call in merges:
+            self.assertIn("--merge", call["argv"])
+            for flag in ("--squash", "--rebase", "--auto"):
+                self.assertNotIn(flag, call["argv"])
 
     def test_a_draft_in_the_middle_stops_the_chain_after_the_bottom_unit(self):
         forge_fakes.set_pr(self.state, 1, isDraft=False)
@@ -521,15 +576,88 @@ class TestMergeChain(_StackCase):
         self.assertIn("base_mismatch", text)
         self.assertEqual(set(self.states().values()), {"open"})
 
-    def test_a_live_lock_refuses_a_second_run(self):
-        lock = self.repo / ".git" / "ai-kit-flow.lock"
-        lock.write_text(str(os.getpid()), encoding="utf-8")
+    def test_a_held_lock_refuses_a_second_run(self):
+        fd = os.open(self.repo / ".git" / "ai-kit-flow.lock", os.O_CREAT | os.O_RDWR)
         try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             code, text = self.fold("merge-chain")
         finally:
-            lock.unlink()
+            os.close(fd)
         self.assertEqual(code, 1, text)
         self.assertIn("chain_locked", text)
+
+    def test_an_empty_or_dead_holders_lock_file_is_taken_over(self):
+        lock = self.repo / ".git" / "ai-kit-flow.lock"
+        for content in ("", "999999"):
+            lock.write_text(content, encoding="utf-8")
+            code, text = self.fold("merge-chain")
+            self.assertEqual(code, 0, text)
+            self.assertIn("stopped at unit-a: draft", text)
+            self.assertTrue(lock.read_text(encoding="utf-8").isdigit())
+
+    def pr_merge_calls(self):
+        return [c for c in host_fakes.fake_calls(self.log) if c["argv"][:2] == ["pr", "merge"]]
+
+    def test_an_unknown_until_refuses_before_any_gh_call(self):
+        self.ready(1, 2, 3)
+        for until in ("nope", "unit-x"):
+            code, text = self.fold("merge-chain", "--until", until)
+            self.assertEqual(code, 1, text)
+            self.assertIn("bad_value", text)
+        self.assertEqual(self.pr_merge_calls(), [])
+        self.assertEqual(set(self.states().values()), {"open"})
+
+    def test_no_consent_refuses_before_any_gh_call(self):
+        self.ready(1, 2, 3)
+        self.fold("consent", "revoke")
+        code, text = self.fold("merge-chain")
+        self.assertEqual(code, 1, text)
+        self.assertIn("no_consent", text)
+        self.assertEqual(self.pr_merge_calls(), [])
+        self.assertEqual(set(self.states().values()), {"open"})
+
+    def test_a_unit_without_a_pr_number_refuses_no_pr_before_any_gh_call(self):
+        self.ready(1, 2, 3)
+        self.set_pr_number("unit-b", None)
+        before = len(host_fakes.fake_calls(self.log))
+        code, text = self.fold("merge-chain")
+        self.assertEqual(code, 1, text)
+        self.assertIn("no_pr", text)
+        self.assertIn("unit-b", text)
+        self.assertEqual(len(host_fakes.fake_calls(self.log)), before)
+
+    def test_status_context_and_skipped_checks_pass_and_pending_or_failing_stop(self):
+        self.ready(1, 2, 3)
+        passing = [{"conclusion": "SKIPPED"}, {"conclusion": "NEUTRAL"}, {"state": "SUCCESS"}]
+        forge_fakes.set_pr(self.state, 1, rollup=passing)
+        forge_fakes.set_pr(self.state, 2, rollup=[{"state": "PENDING"}])
+        code, text = self.fold("merge-chain")
+        self.assertEqual(code, 0, text)
+        self.assertIn("merged: unit-a (#1)", text)
+        self.assertIn("stopped at unit-b: check pending", text)
+        forge_fakes.set_pr(self.state, 2, rollup=[{"state": "FAILURE"}])
+        _code, text = self.fold("merge-chain")
+        self.assertIn("stopped at unit-b: check failing", text)
+
+    def test_unknown_mergeability_stops_as_pending_and_conflicting_as_conflict(self):
+        self.ready(1)
+        forge_fakes.set_pr(self.state, 1, mergeable="UNKNOWN")
+        _code, text = self.fold("merge-chain")
+        self.assertIn("stopped at unit-a: mergeability pending", text)
+        forge_fakes.set_pr(self.state, 1, mergeable="CONFLICTING")
+        _code, text = self.fold("merge-chain")
+        self.assertIn("stopped at unit-a: conflict", text)
+        self.assertEqual(set(self.states().values()), {"open"})
+
+    def test_a_merge_that_leaves_the_pr_open_is_not_recorded_or_retired(self):
+        self.ready(1, 2, 3)
+        forge_fakes.set_pr(self.state, 1, hold_merge=True)
+        code, text = self.fold("merge-chain")
+        self.assertEqual(code, 0, text)
+        self.assertIn("stopped at unit-a: merge not confirmed", text)
+        self.assertEqual(set(self.states().values()), {"open"})
+        self.assertEqual(self.remote_tip(BR_A), self.rev(f"refs/heads/{BR_A}"))
+        self.assertIsNotNone(self.rev_or_none(f"refs/heads/{BR_A}"))
 
     def test_unit_id_refuses_a_stacked_unit(self):
         code, text = self.fold("merge-chain", "--unit-id", "unit-a")
@@ -593,6 +721,21 @@ class TestMergeChain(_StackCase):
         self.assertEqual(code, 0, text)
         listed = f.run_git(self.repo, self.env, "tag", "-l", "ai-kit-fold/*").split()
         self.assertEqual(listed, ["ai-kit-fold/08-01/bbbb"])
+
+    def test_a_merged_units_leftover_branches_are_cleaned_on_the_next_run(self):
+        a_tip = self.rev(f"refs/heads/{BR_A}")
+        self.ready(1)
+        code, text = self.fold("merge-chain", "--until", "unit-a")
+        self.assertEqual(code, 0, text)
+        self.assertIsNone(self.rev_or_none(f"refs/heads/{BR_A}"))
+        f.run_git(self.repo, self.env, "branch", BR_A, a_tip)
+        f.run_git(self.repo, self.env, "push", "-q", "origin", f"{a_tip}:refs/heads/{BR_A}")
+        code, text = self.fold("merge-chain")
+        self.assertEqual(code, 0, text)
+        self.assertIn("cleaned up: unit-a", text)
+        self.assertIsNone(self.rev_or_none(f"refs/heads/{BR_A}"))
+        self.assertEqual(f.run_git(self.repo, self.env, "ls-remote", "origin",
+                                   f"refs/heads/{BR_A}").strip(), "")
 
     def test_until_merges_only_the_named_unit(self):
         self.ready(1, 2, 3)
@@ -660,6 +803,20 @@ class TestMergeChainGhStack(_StackCase):
         self.assertEqual(len(stack_merges), 1)
         self.assertEqual(pr_merges, [])
 
+    def test_a_moved_pr_head_stops_the_stack_merge_before_any_stack_merge_call(self):
+        for number in (1, 2, 3):
+            forge_fakes.set_pr(self.state, number, isDraft=False)
+        forge_fakes.set_pr(self.state, 2, headRefOid="0" * 40)
+        code, text = self.fold("merge-chain")
+        self.assertEqual(code, 0, text)
+        self.assertIn("stopped at unit-b: PR head differs from the recorded pushed sha", text)
+        calls = host_fakes.fake_calls(self.log)
+        merges = [c for c in calls if c["argv"][:2] == ["stack", "merge"]]
+        self.assertEqual(len(merges), 1)
+        self.assertEqual(merges[0]["argv"][2], "1")
+        states = {e["id"]: e["state"] for e in self.record()["units"]}
+        self.assertEqual(states, {"unit-a": "merged", "unit-b": "open", "unit-c": "open"})
+
     def test_a_draft_caps_the_stack_merge_at_the_ready_prefix(self):
         forge_fakes.set_pr(self.state, 1, isDraft=False)
         code, text = self.fold("merge-chain")
@@ -707,6 +864,20 @@ class TestHotfix(_StackCase):
         self.assertEqual(self.entry("fix-1")["state"], "merged")
         code, text = self.fold("restack")
         self.assertIn("nothing to do", text)
+
+    def test_a_staging_hotfix_leaves_the_stacked_units_untouched(self):
+        self.build_stack()
+        f.run_git(self.repo, self.env, "push", "-q", "origin", "main:refs/heads/staging")
+        code, text = self.fold("settings", "set", "--target", "main", "--target", "staging")
+        self.assertEqual(code, 0, text)
+        tips = {name: self.rev(f"refs/heads/{name}") for name in (BR_A, BR_B, BR_C)}
+        stacked = [e for e in self.record()["units"] if e["kind"] == "stacked"]
+        code, text = self.fold("hotfix", "--target", "staging", "--name", "fix-s")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.rev("refs/heads/hotfix/fix-s"), self.remote_tip("staging"))
+        self.assertEqual(self.entry("fix-s")["target"], "staging")
+        self.assertEqual({n: self.rev(f"refs/heads/{n}") for n in tips}, tips)
+        self.assertEqual([e for e in self.record()["units"] if e["kind"] == "stacked"], stacked)
 
     def test_hotfix_to_an_unconfigured_target_is_refused(self):
         self.build_stack()

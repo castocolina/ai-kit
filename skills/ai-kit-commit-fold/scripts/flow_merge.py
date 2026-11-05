@@ -4,13 +4,15 @@
 checked for base and state before any merge; then the walk goes bottom-up, one `pr merge --merge
 --match-head-commit <tip>` per ready PR. After each merge the unit is recorded merged, the next
 PR is retargeted to the trunk, and the merged unit's branches and recorded backup tags are
-deleted. A draft, a pending or failing check, or a conflict stops the walk by name.
-`--unit-id` merges one recorded hotfix PR into its target and touches no stacked unit.
-Not built here: trunk fast-forward, the gh-stack single-call merge, checkout-safe branch
-cleanup for a unit checked out in another worktree.
+deleted (checkout-safe: a branch checked out in another worktree is kept and named), then the
+local trunk is fast-forwarded. A run first finishes the cleanup of any unit recorded merged whose
+branch or tags a failed earlier run left behind. A draft, a pending or failing check, or a
+conflict stops the walk by name. With the gh-stack backend one `gh stack merge` merges the ready
+prefix. `--unit-id` merges one recorded hotfix PR into its target and touches no stacked unit.
 """
 
 import contextlib
+import fcntl
 import json
 import os
 import subprocess
@@ -31,40 +33,29 @@ from flow_record import (
 )
 
 LOCK_NAME = "ai-kit-flow.lock"
-_FIELDS = "number,state,isDraft,baseRefName,headRefName,mergeable,statusCheckRollup"
-
-
-def _pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+_FIELDS = "number,state,isDraft,baseRefName,headRefName,headRefOid,mergeable,statusCheckRollup"
 
 
 @contextlib.contextmanager
-def chain_lock(repo, pid_alive=_pid_alive):
-    """Hold <git common dir>/ai-kit-flow.lock for one run; a dead holder's lock is taken over."""
+def chain_lock(repo):
+    """Hold an flock on <git common dir>/ai-kit-flow.lock for one run.
+
+    The file persists; the kernel drops the lock when the holder exits, so a lock file left by a
+    dead run is simply taken over. The pid in the file is for the refusal report only."""
     path = common_dir(repo) / LOCK_NAME
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
     try:
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
         try:
-            held = int(path.read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            held = 0
-        if held and pid_alive(held):
-            raise FlowError("chain_locked", f"another merge chain run holds {LOCK_NAME}") from None
-        path.unlink(missing_ok=True)
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(str(os.getpid()))
-    try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            held = os.read(fd, 32).decode("ascii", "replace").strip() or "unknown"
+            raise FlowError("chain_locked",
+                            f"another merge chain run (pid {held}) holds {LOCK_NAME}") from None
+        os.ftruncate(fd, 0)
+        os.write(fd, str(os.getpid()).encode("ascii"))
         yield
     finally:
-        path.unlink(missing_ok=True)
+        os.close(fd)
 
 
 def _view(repo, settings, number):
@@ -77,10 +68,11 @@ def _view(repo, settings, number):
 def _check_state(view):
     """'' when every check passed, else the stop reason."""
     for check in view.get("statusCheckRollup") or []:
-        conclusion = check.get("conclusion") or ""
-        if conclusion in ("", "PENDING", "IN_PROGRESS", "QUEUED", "EXPECTED"):
+        # CheckRun entries carry `conclusion`, StatusContext entries carry `state`.
+        outcome = check.get("conclusion") or check.get("state") or ""
+        if outcome in ("", "PENDING", "IN_PROGRESS", "QUEUED", "EXPECTED"):
             return "check pending"
-        if conclusion != "SUCCESS":
+        if outcome not in ("SUCCESS", "SKIPPED", "NEUTRAL"):
             return "check failing"
     return ""
 
@@ -91,7 +83,10 @@ def _stop_reason(view):
     checks = _check_state(view)
     if checks:
         return checks
-    if view.get("mergeable") != "MERGEABLE":
+    mergeable = view.get("mergeable")
+    if mergeable == "UNKNOWN":
+        return "mergeability pending"
+    if mergeable != "MERGEABLE":
         return "conflict"
     return ""
 
@@ -102,6 +97,21 @@ def _merge(repo, settings, entry, view):
                                 "--match-head-commit", tip)
     if code != 0:
         raise FlowError("pr_failed", text.strip().splitlines()[0] if text.strip() else "gh pr")
+
+
+def _confirmed(repo, settings, entry):
+    """True when the forge reports the PR MERGED, or its tip is in the remote trunk."""
+    if _view(repo, settings, entry["pr"]).get("state") == "MERGED":
+        return True
+    return flow_git.merged_on_remote(repo, settings, entry)
+
+
+def _confirmed_prefix(repo, settings, ready, lines):
+    for index, entry in enumerate(ready):
+        if not _confirmed(repo, settings, entry):
+            lines.append(f"stopped at {entry['id']}: merge not confirmed")
+            return ready[:index]
+    return ready
 
 
 def _fetch(repo, settings):
@@ -135,9 +145,11 @@ def _retire(repo, settings, record, entry, next_branch):
     remote trunk when none); a branch checked out in another worktree is kept and named."""
     entry["state"] = "merged"
     write_record(repo, record)
-    flow_git.delete_remote(repo, settings, record, entry["branch"])
     branch = entry["branch"]
-    remote_ref = f"refs/remotes/{primary_remote(repo, settings)}/{entry['target']}"
+    remote = primary_remote(repo, settings)
+    if flow_git.rev(repo, f"refs/remotes/{remote}/{branch}") is not None:
+        flow_git.delete_remote(repo, settings, record, branch)
+    remote_ref = f"refs/remotes/{remote}/{entry['target']}"
     lines = []
     if flow_git.rev(repo, f"refs/heads/{branch}") is not None:
         elsewhere = _worktree_of(repo, branch)
@@ -154,6 +166,23 @@ def _retire(repo, settings, record, entry, next_branch):
     for tag in entry.get("tags", []):
         if flow_git.rev(repo, f"refs/tags/{tag}") is not None:
             run_git(repo, "tag", "-d", tag)
+    return lines
+
+
+def _resume_cleanup(repo, settings, record):
+    """Retire units recorded merged whose branch or tags survive a failed earlier cleanup."""
+    remote = primary_remote(repo, settings)
+    unmerged = _unmerged(record)
+    next_branch = unmerged[0]["branch"] if unmerged else None
+    lines = []
+    for entry in record["units"]:
+        if entry["kind"] != "stacked" or entry["state"] != "merged":
+            continue
+        refs = [f"refs/heads/{entry['branch']}", f"refs/remotes/{remote}/{entry['branch']}",
+                *(f"refs/tags/{tag}" for tag in entry.get("tags", []))]
+        if any(flow_git.rev(repo, ref) is not None for ref in refs):
+            lines.extend(_retire(repo, settings, record, entry, next_branch))
+            lines.append(f"cleaned up: {entry['id']}")
     return lines
 
 
@@ -187,6 +216,8 @@ def _stack_chain(repo, settings, record, unmerged, until):
     for entry in unmerged:
         view = _view(repo, settings, entry["pr"])
         reason = _stop_reason(view)
+        if not reason and view.get("headRefOid") != entry["pushed"]:
+            reason = "PR head differs from the recorded pushed sha"  # `gh stack merge` has no pin
         if reason:
             lines.append(f"stopped at {entry['id']}: {reason}")
             break
@@ -198,10 +229,11 @@ def _stack_chain(repo, settings, record, unmerged, until):
     code, text = flow_pr.run_gh(repo, "stack", "merge", str(ready[-1]["pr"]), "--merge")
     if code != 0:
         raise FlowError("pr_failed", text.strip().splitlines()[0] if text.strip() else "gh stack")
+    _fetch(repo, settings)
+    ready = _confirmed_prefix(repo, settings, ready, lines)
     for entry in ready:
         entry["state"] = "merged"
     write_record(repo, record)
-    _fetch(repo, settings)
     rest = [e for e in unmerged if e["state"] != "merged"]
     next_branch = rest[0]["branch"] if rest else None
     targets = set()
@@ -213,9 +245,20 @@ def _stack_chain(repo, settings, record, unmerged, until):
     return lines
 
 
+def _unmerged(record):
+    return [e for e in record["units"] if e["kind"] == "stacked" and e["state"] != "merged"]
+
+
+def _need_pr(entry):
+    if entry["pr"] is None:
+        raise FlowError("no_pr", f"{entry['id']} has no PR number; open one before merge-chain")
+
+
 def _chain(repo, settings, record, until):
-    unmerged = [e for e in record["units"] if e["kind"] == "stacked" and e["state"] != "merged"]
+    unmerged = _unmerged(record)
     branches = {e["branch"] for e in unmerged}
+    for entry in unmerged:
+        _need_pr(entry)
     for entry in unmerged:
         view = _view(repo, settings, entry["pr"])
         expected = entry["parent"] if entry["parent"] in branches else entry["target"]
@@ -232,11 +275,14 @@ def _chain(repo, settings, record, until):
             lines.append(f"stopped at {entry['id']}: {reason}")
             break
         _merge(repo, settings, entry, view)
+        _fetch(repo, settings)
+        if not _confirmed(repo, settings, entry):
+            lines.append(f"stopped at {entry['id']}: merge not confirmed")
+            break
         entry["state"] = "merged"
         write_record(repo, record)
         lines.append(f"merged: {entry['id']} (#{entry['pr']})")
         targets.add(entry["target"])
-        _fetch(repo, settings)
         next_branch = None
         if index + 1 < len(unmerged):
             next_branch = unmerged[index + 1]["branch"]
@@ -255,6 +301,7 @@ def _hotfix(repo, settings, record, unit_id):
         raise FlowError("not_started", f"unit {unit_id} is not recorded")
     if entry["kind"] != "hotfix":
         raise FlowError("not_hotfix", f"{unit_id} is a stacked unit, not a hotfix")
+    _need_pr(entry)
     view = _view(repo, settings, entry["pr"])
     if view["baseRefName"] != entry["target"]:
         raise FlowError("base_mismatch", f"hotfix PR base is {view['baseRefName']}")
@@ -263,6 +310,8 @@ def _hotfix(repo, settings, record, unit_id):
         return [f"stopped at {unit_id}: {reason}"]
     _merge(repo, settings, entry, view)
     _fetch(repo, settings)
+    if not _confirmed(repo, settings, entry):
+        return [f"stopped at {unit_id}: merge not confirmed"]
     lines = _retire(repo, settings, record, entry, None)
     _fast_forward(repo, settings, {entry["target"]})
     return [f"merged: {unit_id} (#{entry['pr']})", *lines]
@@ -274,12 +323,17 @@ def cmd_merge_chain(args):
         settings, record = read_settings(repo), read_record(repo)
         if flow_stack.restack_pending(repo):
             raise FlowError("restack_pending", "fold.py restack --continue or --abort first")
+        if not consented(repo):
+            raise FlowError("no_consent", "merge-chain pushes and merges; grant consent first")
+        if args.until is not None and args.until not in {e["id"] for e in _unmerged(record)}:
+            raise FlowError("bad_value", f"--until {args.until} is not an unmerged stacked unit")
         with chain_lock(repo):
             _fetch(repo, settings)
             if args.hotfix_id:
                 lines = _hotfix(repo, settings, record, args.hotfix_id)
             else:
-                lines = _chain(repo, settings, record, args.until)
+                lines = _resume_cleanup(repo, settings, record)
+                lines.extend(_chain(repo, settings, record, args.until))
     except FlowError as exc:
         print(render("merge-chain", "-", "-", [f"refused: {exc.reason}: {exc.detail}"],
                      f"refused {exc.reason}"))
