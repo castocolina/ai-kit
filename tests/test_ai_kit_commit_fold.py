@@ -73,6 +73,43 @@ def copy_repo(source, parent):
     return copy
 
 
+FAKE_JEV_BODY = """
+import json
+import sys
+
+
+def main():
+    payload = sys.stdin.read()
+    with open(LOG, "a", encoding="utf-8") as handle:
+        handle.write(payload + "\\n")
+    items = {}
+    for item in json.loads(payload)["items"]:
+        answer = next((value for key, value in TABLE.items() if key in item["context"]),
+                      "own_reasoning")
+        if answer == "own_reasoning":
+            items[item["id"]] = {"decided_by": "own_reasoning"}
+        else:
+            column = {"choice": answer, "top": 0.9, "fallback": False, "forced": False,
+                      "model": "fake-model"}
+            items[item["id"]] = {"fake": column, "decided_by": "fake"}
+    print(json.dumps({"advisory": True, "items": items, "order": list(items)}))
+
+
+main()
+"""
+
+
+def write_fake_jev(skills_root, table, log_path):
+    """Write a fake jev client under skills_root. It logs each stdin payload to log_path and
+    answers each item with the table value of the first key (a commit-subject substring) that
+    the item's context holds, else own_reasoning. Returns the entry point's path."""
+    entry = pathlib.Path(skills_root) / "jev-fast-decision" / "scripts" / "jev_review.py"
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    header = f"TABLE = {table!r}\nLOG = {str(log_path)!r}\n"
+    entry.write_text(header + FAKE_JEV_BODY, encoding="utf-8")
+    return str(entry)
+
+
 class RepoCase(unittest.TestCase):
     """Builds shared repos once per class and gives each test a copy of them."""
 
@@ -695,6 +732,169 @@ class TestReport(unittest.TestCase):
                 self.assertLessEqual(len(lines[1]) - len("commits: "), 200)
                 self.assertNotIn("\x1b", text)
                 self.assertNotIn("\n", lines[1])
+
+
+JEV_TWO_FOLDED = [{"a.py", "tests/test_a.py"}, {"b.py", "tests/test_b.py"}]
+JEV_TABLE = {"feat: add a": "t1", "test: cover a": "t1",
+             "feat: add b": "t2", "test: cover b": "t2"}
+JEV_ITEMS = [("feat: add a", ["a.py"]), ("test: cover a", ["tests/test_a.py"]),
+             ("feat: add b", ["b.py"]), ("test: cover b", ["tests/test_b.py"])]
+MARKER = "MARKER_IN_FILE_BODY"
+OLD_CLIENT = (
+    "import sys\n"
+    "sys.stderr.write(\"jev_review.py: error: argument command: invalid choice: 'ladder'\\n\")\n"
+    "sys.exit(2)\n"
+)
+OLD_NOTE = ("jev: entry point missing; update jev-fast-decision "
+            "(re-run the ai-kit installer)")
+
+
+def _no_jev(root):
+    """Leave the copied fold skill alone: no jev-fast-decision beside it."""
+
+
+def _real_jev(root):
+    shutil.copytree(ROOT / "skills" / "jev-fast-decision", root / "skills" / "jev-fast-decision")
+
+
+def _fake_jev(table):
+    return lambda root: write_fake_jev(root / "skills", table, root / "calls.log")
+
+
+def _old_jev(root):
+    entry = root / "skills" / "jev-fast-decision" / "scripts" / "jev_review.py"
+    entry.parent.mkdir(parents=True)
+    entry.write_text(OLD_CLIENT, encoding="utf-8")
+
+
+class TestJevGrouping(RepoCase):
+    """jev proposes the feature grouping through its ladder entry point; the rules decide
+    whenever jev is missing, silent, old or wrong."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.two = build_repo(cls.tmp, cls.env, "jev-two", TWO)
+        cls.marked = build_repo(cls.tmp, cls.env, "jev-marked", [
+            ({"a.py": f"{MARKER} = 1\n".encode()}, "feat: add a", ALICE),
+            *TWO[1:],
+        ])
+        cls.keyed = build_repo(cls.tmp, cls.env, "jev-keyed", [
+            ({"a.py": b"a\n"}, "feat: add a sk-" + "x" * 30, ALICE),
+            *TWO[1:],
+        ])
+
+    def _fold_cli(self, install, fixture=None):
+        """fold.py on a copy of the fixture, from a fold skill copy whose skills dir `install`
+        prepared. Returns (process, folded path sets, the temp root)."""
+        source, base, shas = fixture or self.two
+        root = pathlib.Path(tempfile.mkdtemp(dir=self.tmp))
+        copy = root / "repo"
+        shutil.copytree(source, copy)
+        fold_py = isolated_fold(root)
+        install(root)
+        checkpoint = write_checkpoint(root / "cp.json",
+                                      **checkpoint_fields(base, shas[-1], shas[-1]))
+        proc = subprocess.run(
+            [sys.executable, str(fold_py), "fold", str(checkpoint), "--repo", str(copy)],
+            capture_output=True, text=True, env=self.env, check=False,
+        )
+        folded = [set(self.git(copy, "show", "--name-only", "--format=", sha).split())
+                  for sha in self.git(copy, "rev-list", "--reverse", f"{base}..plan").split()]
+        return proc, folded, root
+
+    def test_no_jev_installed_the_rules_decide(self):
+        proc, folded, _root = self._fold_cli(_no_jev)
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertEqual(proc.stdout.splitlines()[1], "commits: 4 -> 2 (grouping: rules)")
+        self.assertEqual(folded, JEV_TWO_FOLDED)
+
+    def test_real_jev_without_a_backend_the_rules_decide(self):
+        proc, folded, _root = self._fold_cli(_real_jev)
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertEqual(proc.stdout.splitlines()[1],
+                         "commits: 4 -> 2 (grouping: rules; jev: no answer for c0)")
+        self.assertEqual(folded, JEV_TWO_FOLDED)
+
+    def test_jev_answer_decides_the_grouping(self):
+        proc, folded, _root = self._fold_cli(_fake_jev(JEV_TABLE))
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertEqual(proc.stdout.splitlines()[1], "commits: 4 -> 2 (grouping: jev)")
+        self.assertEqual(folded, JEV_TWO_FOLDED)
+
+    def test_wrong_split_is_rejected_and_the_rules_decide(self):
+        table = {**JEV_TABLE, "test: cover a": "t2"}
+        proc, folded, _root = self._fold_cli(_fake_jev(table))
+        self.assertEqual(proc.stdout.splitlines()[1],
+                         "commits: 4 -> 2 (grouping: rules; "
+                         "jev rejected: splits a.py from its test)")
+        self.assertEqual(folded, JEV_TWO_FOLDED)
+
+    def test_partial_answer_is_rejected_and_the_rules_decide(self):
+        table = {"feat: add a": "t1", "test: cover a": "t1", "feat: add b": "t2"}
+        proc, folded, _root = self._fold_cli(_fake_jev(table))
+        self.assertEqual(proc.stdout.splitlines()[1],
+                         "commits: 4 -> 2 (grouping: rules; jev: no answer for c3)")
+        self.assertEqual(folded, JEV_TWO_FOLDED)
+
+    def test_old_client_without_the_ladder_entry_is_named(self):
+        proc, folded, _root = self._fold_cli(_old_jev)
+        self.assertEqual(proc.stdout.splitlines()[1],
+                         f"commits: 4 -> 2 (grouping: rules; {OLD_NOTE})")
+        self.assertEqual(folded, JEV_TWO_FOLDED)
+
+    def test_partition_check_names_each_refusal(self):
+        cp = fold_engine.load_checkpoint(checkpoint_fields("a" * 40, "b" * 40, "b" * 40))
+        commits = [_commit_obj("1" * 40, ["a.py"]), _commit_obj("2" * 40, ["tests/test_a.py"]),
+                   _commit_obj("3" * 40, ["b.py"]), _commit_obj("4" * 40, ["tests/test_b.py"])]
+        changed = frozenset(path for commit in commits for path in commit.paths)
+        one, two, three, four = (commit.sha for commit in commits)
+        cases = {
+            None: [(one, "t1"), (two, "t1"), (three, "t2"), (four, "t2")],
+            "commit placed twice": [(one, "t1"), (one, "t1"), (three, "t2"), (four, "t2")],
+            "commit left out": [(one, "t1"), (two, "t1"), (three, "t2")],
+            "commit not in range": [(one, "t1"), (two, "t1"), (three, "t2"), (four, "t2"),
+                                    ("9" * 40, "t2")],
+            "splits a.py from its test": [(one, "t1"), (two, "t2"), (three, "t2"), (four, "t2")],
+        }
+        for expected, assignment in cases.items():
+            with self.subTest(expected=expected):
+                self.assertEqual(
+                    fold_group.validate_partition(assignment, commits, cp, changed), expected)
+
+    def test_each_item_carries_only_subject_paths_and_titles(self):
+        proc, _folded, root = self._fold_cli(_fake_jev(JEV_TABLE), fixture=self.marked)
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        raw = (root / "calls.log").read_text(encoding="utf-8")
+        self.assertNotIn(MARKER, raw)
+        calls = [json.loads(line) for line in raw.splitlines()]
+        self.assertEqual(len(calls), len(JEV_ITEMS))
+        for call, (subject, paths) in zip(calls, JEV_ITEMS, strict=True):
+            (item,) = call["items"]
+            self.assertEqual(set(item), {"id", "type", "instructions", "context", "criteria"})
+            self.assertEqual(item["criteria"], {"t1": "Alpha feature", "t2": "Beta feature"})
+            self.assertEqual(
+                item["context"],
+                f"Commit subject: {subject}. Paths: {', '.join(paths)}. "
+                "Features: t1 = Alpha feature; t2 = Beta feature")
+
+    def test_key_shaped_subject_is_rejected_by_the_ladder_guard(self):
+        subject = "feat: add a sk-" + "x" * 30
+        commit = Commit("1" * 40, (), subject, subject.encode(), ("n", "e", "0 +0000"),
+                        ("a.py",))
+        cp = fold_engine.load_checkpoint(checkpoint_fields("a" * 40, "b" * 40, "b" * 40))
+        item = fold_group.jev_item(commit, cp.candidates, 0)
+        entry = ROOT / "skills" / "jev-fast-decision" / "scripts" / "jev_review.py"
+        proc = subprocess.run(
+            [sys.executable, str(entry), "ladder"], input=json.dumps({"items": [item]}),
+            capture_output=True, text=True, env=self.env, check=False,
+        )
+        self.assertEqual(json.loads(proc.stdout)["items"]["c0"]["reason"],
+                         "secret_pattern_context")
+        proc, folded, _root = self._fold_cli(_real_jev, fixture=self.keyed)
+        self.assertEqual(proc.stdout.splitlines()[1],
+                         "commits: 4 -> 2 (grouping: rules; jev: no answer for c0)")
+        self.assertEqual(folded, JEV_TWO_FOLDED)
 
 
 if __name__ == "__main__":
