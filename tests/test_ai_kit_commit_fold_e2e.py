@@ -12,7 +12,19 @@ import sys
 import tempfile
 import unittest
 
-from tests.fold_fixtures import ROOT, SKILL, commit, git_env, gsd_project, make_remote, run_git
+from tests import forge_fakes, host_fakes
+from tests.fold_fixtures import (
+    PHASE_DIR,
+    ROOT,
+    SKILL,
+    commit,
+    git_env,
+    gsd_plan_commits,
+    gsd_plan_text,
+    gsd_project,
+    make_remote,
+    run_git,
+)
 
 COMMAND_GRAMMAR = r"^[a-z][a-z0-9-]*( [a-z][a-z0-9-]*)*$"
 
@@ -348,6 +360,91 @@ class TestStartLifecycle(unittest.TestCase):
         proc = _gsd(plain, self.env, *self._start_command(), "--phase", "07", "--raw")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertFalse((plain / ".claude" / "settings.local.json").exists())
+
+
+@unittest.skipUnless(shutil.which("node") and GSD_TOOLS.is_file()
+                     and (ROOT / ".claude" / "scripts").is_dir(),
+                     "node or the checkout's project-local gsd-core is missing")
+class TestHookCheckpointReady(unittest.TestCase):
+    # The execute:wave:post step and the ready verb, run as hook dispatch runs them, against a
+    # fake gh. Ready is refused before VERIFICATION.md passes, then marks the PR ready.
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p29.1-ready-"))
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, ignore_errors=True)
+        home = cls.tmp / "home"
+        home.mkdir()
+        cls.env = _gsd_env(home, cls.tmp / "gsd-home")
+        cls.repo = _installed_fixture(cls.tmp / "fixture", cls.env)
+        # The discuss:pre start creates the phase branch from the trunk tip, so the trunk must hold
+        # the phase directory and the phase's commits go on the new branch (as TestStartLifecycle).
+        run_git(cls.repo, cls.env, "checkout", "-q", "main")
+        commit(cls.repo, cls.env, {f"{PHASE_DIR}/07-SEED.md": b"seed\n"},
+               "docs(07): seed phase dir on trunk")
+        run_git(cls.repo, cls.env, "push", "-q", "origin", "main")
+        run_git(cls.repo, cls.env, "branch", "-D", "gsd/phase-07-demo")
+        cls.start = _gsd(cls.repo, cls.env, "ai-kit-fold", "start", "--phase", "07", "--raw")
+        commit(cls.repo, cls.env, {f"{PHASE_DIR}/07-01-PLAN.md":
+                                   gsd_plan_text("01", ("a", "b")).encode()},
+               "docs(07): create phase plan")
+        for files, message, author in gsd_plan_commits("01", ("a", "b")):
+            commit(cls.repo, cls.env, files, message, author)
+        consent = subprocess.run(
+            [sys.executable, str(SKILL / "scripts" / "fold.py"), "consent", "grant",
+             "--add-exclude", "--repo", str(cls.repo)],
+            capture_output=True, text=True, env=cls.env, check=False)
+        if consent.returncode != 0:
+            raise RuntimeError(consent.stderr)
+        cls.state = cls.tmp / "forge.json"
+        cls.log = cls.tmp / "gh.log"
+        bin_dir = cls.tmp / "bin"
+        forge_fakes.write_forge_fakes(bin_dir, cls.state, cls.log, gh_stack=False)
+        cls.env["PATH"] = host_fakes.host_path(bin_dir)
+        wave_post = _fold_hooks(_gsd(cls.repo, cls.env, "loop", "render-hooks",
+                                     "execute:wave:post", "--raw"))
+        cls.wave_post = wave_post
+        cls.checkpoint_command = wave_post[0]["ref"]["command"] if wave_post else ""
+        cls.checkpoint_run = _gsd(cls.repo, cls.env, *cls.checkpoint_command.split(),
+                                  "--phase", "07", "--raw")
+        cls.unverified = _gsd(cls.repo, cls.env, "ai-kit-fold", "ready", "--phase", "07", "--raw")
+        cls.unverified_ready = [c["argv"] for c in host_fakes.fake_calls(cls.log)
+                                if c["argv"][:2] == ["pr", "ready"]]
+        verification = cls.repo / PHASE_DIR / "07-VERIFICATION.md"
+        verification.write_text("---\nstatus: passed\n---\n", encoding="utf-8")
+        cls.ready = _gsd(cls.repo, cls.env, "ai-kit-fold", "ready", "--phase", "07", "--raw")
+        ship = _fold_hooks(_gsd(cls.repo, cls.env, "loop", "render-hooks", "ship:pre", "--raw"))
+        cls.ship_predicate = ship[0]["check"]["predicate"] if ship else None
+        cls.ship_verdict = _json(_predicate_eval(cls.repo, cls.env, cls.ship_predicate).stdout) \
+            if ship else {}
+
+    def test_wave_post_step_folds_and_pushes_the_plan_with_a_draft_pr(self):
+        self.assertEqual(len(self.wave_post), 1)
+        self.assertRegex(self.checkpoint_command, COMMAND_GRAMMAR)
+        self.assertEqual(self.checkpoint_run.returncode, 0,
+                         self.checkpoint_run.stdout + self.checkpoint_run.stderr)
+        self.assertIn("folded", self.checkpoint_run.stdout)
+        local = run_git(self.repo, self.env, "rev-parse", "gsd/phase-07-demo").strip()
+        remote = run_git(self.repo, self.env, "ls-remote", "origin",
+                         "refs/heads/gsd/phase-07-demo").split()[0]
+        self.assertEqual(remote, local)
+        creates = [c["argv"] for c in host_fakes.fake_calls(self.log)
+                   if c["argv"][:2] == ["pr", "create"]]
+        self.assertEqual(len(creates), 1)
+        self.assertIn("--draft", creates[0])
+
+    def test_ready_is_refused_until_verification_passes_then_marks_the_pr_ready(self):
+        self.assertEqual(self.unverified.returncode, 1, self.unverified.stdout)
+        self.assertIn("not_verified", self.unverified.stdout)
+        self.assertEqual(self.unverified_ready, [])
+        self.assertEqual(self.ready.returncode, 0, self.ready.stdout + self.ready.stderr)
+        self.assertFalse(forge_fakes.forge_state(self.state)["prs"][0]["isDraft"])
+        self.assertIn(["pr", "ready", "1", "--repo", "ai-kit-fixture/demo"],
+                      [c["argv"] for c in host_fakes.fake_calls(self.log)])
+
+    def test_ship_gate_still_blocks_after_ready_with_ship_redirect(self):
+        self.assertTrue(self.ship_verdict.get("block"), self.ship_verdict)
+        self.assertIn("ship_redirect", self.ship_verdict["message"])
+        self.assertIn("fold.py merge-chain", self.ship_verdict["message"])
 
 
 if __name__ == "__main__":

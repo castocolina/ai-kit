@@ -863,6 +863,122 @@ def check_no_reset_hard(relpath, text, tree=None):
     return violations
 
 
+# SPEC R1, R5, R8 / FLOW-02, FLOW-03: the unit flow's core (flow_*.py, fold_engine.py and
+# fold_group.py) pushes only with a lease, from one site, to the primary remote, never squash,
+# rebase or auto merges, and never names a framework. Each check walks string constants (or the
+# text, for names) so a form is caught wherever it is written. The fold scripts are checked as
+# files, not as a shell; the forms they can take are pinned by TestArchNonVacuity.
+_FLOW_FORCE_FLAGS = frozenset({"--force", "-f"})
+_FLOW_MERGE_FLAGS = frozenset({"--squash", "--rebase", "--auto"})
+_FLOW_FRAMEWORK_NAME = re.compile(r"gsd|superpowers", re.IGNORECASE)
+
+
+def _str_consts(tree):
+    """(node, text) for every string constant in `tree`; empty when there is no tree."""
+    found: list[tuple[ast.Constant, str]] = []
+    for node in ast.walk(tree) if tree is not None else []:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            found.append((node, node.value))
+    return found
+
+
+def check_flow_force(relpath, text, tree=None):
+    violations = []
+    for node, value in _str_consts(tree):
+        if value in _FLOW_FORCE_FLAGS or value.startswith("--force="):
+            violations.append(f"{relpath}:{node.lineno}: forced push flag {value}")
+        elif value.startswith("+") and ":" in value:
+            violations.append(f"{relpath}:{node.lineno}: forced refspec {value}")
+    for node in ast.walk(tree) if tree is not None else []:
+        if not isinstance(node, ast.JoinedStr) or not node.values:
+            continue
+        head = node.values[0]
+        if isinstance(head, ast.Constant) and str(head.value).startswith("+"):
+            violations.append(f"{relpath}:{node.lineno}: forced refspec f-string")
+    return violations
+
+
+def check_flow_push_site(relpath, text, tree=None):
+    if os.path.basename(relpath) == "flow_git.py":
+        return []
+    return [
+        f"{relpath}:{node.lineno}: push outside flow_git.py"
+        for node, value in _str_consts(tree)
+        if value == "push"
+    ]
+
+
+def _flow_remote_allowed(relpath, tree):
+    """ids of the origin literals that are allowed: the settings default and primary_remote."""
+    allowed: set[int] = set()
+    if tree is None:
+        return allowed
+    name = os.path.basename(relpath)
+    if name == "flow_record.py":
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values, strict=True):
+                if (isinstance(key, ast.Constant) and key.value == "remote"
+                        and isinstance(value, ast.Constant)):
+                    allowed.add(id(value))
+    if name == "flow_git.py":
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "primary_remote":
+                allowed.update(id(child) for child in ast.walk(node))
+    return allowed
+
+
+def check_flow_remote(relpath, text, tree=None):
+    allowed = _flow_remote_allowed(relpath, tree)
+    violations = [
+        f"{relpath}:{node.lineno}: literal remote origin"
+        for node, value in _str_consts(tree)
+        if value == "origin" and id(node) not in allowed
+    ]
+    for node in ast.walk(tree) if tree is not None else []:
+        if not isinstance(node, ast.List) or len(node.elts) < 3:
+            continue
+        first, second, third = node.elts[:3]
+        if (isinstance(first, ast.Constant) and first.value == "git"
+                and isinstance(second, ast.Constant) and second.value == "push"
+                and isinstance(third, ast.Constant) and isinstance(third.value, str)):
+            violations.append(f"{relpath}:{node.lineno}: git push to a constant remote")
+    return violations
+
+
+def check_flow_merge_method(relpath, text, tree=None):
+    return [
+        f"{relpath}:{node.lineno}: merge flag {value}"
+        for node, value in _str_consts(tree)
+        if value in _FLOW_MERGE_FLAGS
+    ]
+
+
+def check_flow_framework_names(relpath, text, tree=None):
+    violations = []
+    for match in _FLOW_FRAMEWORK_NAME.finditer(text):
+        line = text.count("\n", 0, match.start()) + 1
+        violations.append(f"{relpath}:{line}: framework name {match.group(0)}")
+    return violations
+
+
+def _flow_core_violations(check, framework=False):
+    """One flow rule over the unit flow's code: flow_*.py, plus fold_engine and fold_group when
+    `framework` is set (the framework-name rule covers the whole fold core)."""
+    scripts = os.path.join(_REPO_ROOT, _FOLD_SKILL, "scripts")
+    extra = {"fold_engine.py", "fold_group.py"} if framework else set()
+    violations = []
+    for filename in sorted(os.listdir(scripts)):
+        if not filename.endswith(".py"):
+            continue
+        if not (filename.startswith("flow_") or filename in extra):
+            continue
+        tree, text = _read_tree(os.path.join(scripts, filename))
+        violations.extend(check(f"{_FOLD_SKILL}/scripts/{filename}", text, tree))
+    return violations
+
+
 # SPEC R9 / D-13: no test builds a path into the repo's .planning/. A repo root is a name (or
 # self/cls attribute) assigned from __file__ or from the cwd, the runner's cwd being the checkout.
 # A temp project's own .planning/ is never flagged, because its root is not a repo root.
@@ -1967,6 +2083,21 @@ class TestArchitecture(unittest.TestCase):
                 violations.extend(check_no_reset_hard(f"{_FOLD_SKILL}/{rel}", text, tree))
         self.assertEqual([], violations)
 
+    def test_flow_core_never_forces_a_push_without_a_lease(self):
+        self.assertEqual([], _flow_core_violations(check_flow_force))
+
+    def test_flow_core_has_one_push_site(self):
+        self.assertEqual([], _flow_core_violations(check_flow_push_site))
+
+    def test_flow_core_pushes_only_to_the_primary_remote(self):
+        self.assertEqual([], _flow_core_violations(check_flow_remote))
+
+    def test_flow_core_never_merges_by_squash_rebase_or_auto(self):
+        self.assertEqual([], _flow_core_violations(check_flow_merge_method))
+
+    def test_flow_core_never_names_a_framework(self):
+        self.assertEqual([], _flow_core_violations(check_flow_framework_names, framework=True))
+
     def test_agents_md_points_to_the_folding_policy(self):
         with open(os.path.join(_REPO_ROOT, "AGENTS.md"), encoding="utf-8") as fh:
             agents = fh.read()
@@ -2471,6 +2602,53 @@ class TestArchNonVacuity(unittest.TestCase):
     def test_reset_hard_allows_update_ref(self):
         argv = 'cmd = ["git", "update-ref", ref, new, old]\n'
         self.assertEqual([], check_no_reset_hard("skills/x.py", argv, ast.parse(argv)))
+
+    def test_flow_force_flags_each_form(self):
+        path = "skills/ai-kit-commit-fold/scripts/flow_git.py"
+        for source in (
+            'flag = "--force"\n',
+            'flag = "-f"\n',
+            'flag = "--force=refs/heads/x"\n',
+            'cmd = ["git", "push", remote, "+HEAD:refs/heads/unit"]\n',
+            'cmd = f"+{src}:refs/heads/{branch}"\n',
+        ):
+            with self.subTest(source=source):
+                self.assertNotEqual([], check_flow_force(path, source, ast.parse(source)))
+        compliant = 'flag = "--force-with-lease=refs/heads/b:" + sha\n'
+        self.assertEqual([], check_flow_force(path, compliant, ast.parse(compliant)))
+
+    def test_flow_push_site_flags_outside_flow_git(self):
+        path = "skills/ai-kit-commit-fold/scripts/flow_stack.py"
+        for source in ('argv = ["git", "push", remote, ref]\n', 'verb = "push"\n'):
+            with self.subTest(source=source):
+                self.assertNotEqual([], check_flow_push_site(path, source, ast.parse(source)))
+        self.assertEqual([], check_flow_push_site(
+            "skills/ai-kit-commit-fold/scripts/flow_git.py", 'verb = "push"\n',
+            ast.parse('verb = "push"\n')))
+
+    def test_flow_remote_flags_literal_origin(self):
+        path = "skills/ai-kit-commit-fold/scripts/flow_stack.py"
+        for source in ('remote = "origin"\n', 'argv = ["git", "push", "backup", ref]\n'):
+            with self.subTest(source=source):
+                self.assertNotEqual([], check_flow_remote(path, source, ast.parse(source)))
+        compliant = 'argv = ["git", "push", remote, ref]\n'
+        self.assertEqual([], check_flow_remote(path, compliant, ast.parse(compliant)))
+
+    def test_flow_merge_method_flags_each_flag(self):
+        path = "skills/ai-kit-commit-fold/scripts/flow_merge.py"
+        for flag in ("--squash", "--rebase", "--auto"):
+            with self.subTest(flag=flag):
+                source = f'argv = ["gh", "pr", "merge", "{flag}"]\n'
+                self.assertNotEqual([], check_flow_merge_method(path, source, ast.parse(source)))
+        compliant = 'argv = ["gh", "pr", "merge", "--merge", "--match-head-commit", sha]\n'
+        self.assertEqual([], check_flow_merge_method(path, compliant, ast.parse(compliant)))
+
+    def test_flow_framework_names_flags_each_name(self):
+        path = "skills/ai-kit-commit-fold/scripts/flow_unit.py"
+        for source in ("# GSD phase\n", 'label = "superpowers plan"\n', "x = 1  # SuperPowers\n"):
+            with self.subTest(source=source):
+                self.assertNotEqual([], check_flow_framework_names(path, source))
+        self.assertEqual([], check_flow_framework_names(path, "# a phase plan\n"))
 
     def test_cursor_importing_claude_is_flagged(self):
         self.assertNotEqual(

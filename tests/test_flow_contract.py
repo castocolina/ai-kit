@@ -5,6 +5,8 @@ copies it, rebinds the remote's insteadOf to the copy's bare path, writes fresh 
 state and log, and grants consent only in its own copy.
 """
 
+import contextlib
+import io
 import json
 import pathlib
 import shutil
@@ -17,6 +19,7 @@ from unittest import mock
 
 _REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO / "skills" / "ai-kit-commit-fold" / "scripts"))
+sys.path.insert(0, str(_REPO / "tools"))
 sys.path.insert(0, str(_REPO))
 
 import flow_git
@@ -944,6 +947,284 @@ class TestRemainingBehaviours(_FlowCase):
         record = {"units": [{"branch": BRANCH, "state": "merged"}]}
         flow_git.delete_remote(self.repo, settings, record, BRANCH)
         self.assertIsNone(self.remote_sha(BRANCH))
+
+    def test_start_on_a_detached_head_starts_the_unit(self):
+        # merge-chain can leave HEAD detached; start must not treat that as a git error.
+        self.grant()
+        f.run_git(self.repo, self.env, "checkout", "-q", "--detach")
+        code, text = self.fold("start", "--unit", self.unit())
+        self.assertEqual(code, 0, text)
+
+    def test_restack_on_a_detached_head_refuses_detached_head(self):
+        self.grant()
+        self.fold("start", "--unit", self.unit())
+        f.run_git(self.repo, self.env, "switch", "-q", BRANCH)
+        self.commit({"a.py": b"a\n"}, "feat: add a")
+        clone = self.dest / "trunk-clone"
+        f.run_git(self.dest, self.env, "clone", "-q", str(self.bare), str(clone))
+        f.commit(clone, self.env, {"trunk.txt": b"t\n"}, "docs: trunk moved")
+        f.run_git(clone, self.env, "push", "-q", "origin", "main")
+        f.run_git(self.repo, self.env, "checkout", "-q", "--detach")
+        code, text = self.fold("restack")
+        self.assertEqual(code, 1, text)
+        self.assertIn("detached_head", text)
+        self.assertNotIn("git_error", text)
+
+
+ADAPTER_UNITS = (("unit-x", "demo/unit-x", "x.py"), ("unit-y", "demo/unit-y", "y.py"),
+                 ("unit-z", "demo/unit-z", "z.py"))
+MERGE_VERBS = (["pr", "merge"], ["stack", "merge"])
+
+
+class TestThirdAdapterFullFlow(_FlowCase):
+    """A synthetic third system (unit and checkpoint JSON only) drives the whole flow.
+
+    The adapter is test-side code: it writes the unit and checkpoint JSON for each unit and runs
+    the same fold.py commands an owner runs. No flow code is changed for it (FLOW-10).
+    """
+
+    def setUp(self):
+        super().setUp()
+        # Plain gh for the merges: the owner-started chain merges each PR on its own.
+        forge_fakes.write_forge_fakes(self.bin, self.state, self.log, gh_stack=False)
+        self.env["PATH"] = host_fakes.host_path(self.bin)
+
+    def build_unit(self, unit_id, branch, path):
+        """start, two commits, the final checkpoint, then ready: the adapter's per-unit steps."""
+        unit = self.unit(unit_id, branch, title=f"Adapter {unit_id}")
+        code, text = self.fold("start", "--unit", unit)
+        self.assertEqual(code, 0, text)
+        stem = path[:-3]
+        self.commit({path: f"{stem}\n".encode()}, f"feat: add {stem}")
+        self.commit({f"tests/test_{stem}.py": f"t {stem}\n".encode()}, f"test: cover {stem}")
+        entry = next(e for e in self.record()["units"] if e["id"] == unit_id)
+        tip = self.ref_sha(f"refs/heads/{branch}")
+        cp = f.write_checkpoint(
+            self.dest / f"cp-{unit_id}.json", schema=1, unit=unit_id,
+            ref=f"refs/heads/{branch}", base=entry["parent_tip"], end=tip, tip=tip,
+            base_branch=entry["parent"], merged_refs=[], own_merge_subjects=[], docs_paths=[],
+            candidates=[{"id": "t1", "title": stem, "files": [path, f"tests/test_{stem}.py"]}])
+        code, text = self.fold("checkpoint", "--unit", unit, "--checkpoint", str(cp), "--final")
+        self.assertEqual(code, 0, text)
+        code, text = self.fold("ready", "--unit", unit)
+        self.assertEqual(code, 0, text)
+
+    def build_stack(self):
+        for unit_id, branch, path in ADAPTER_UNITS:
+            self.build_unit(unit_id, branch, path)
+
+    def merge_calls(self):
+        return [c["argv"] for c in self.gh_calls() if c["argv"][:2] in MERGE_VERBS]
+
+    def merge_commits_on_remote_main(self):
+        out = f.run_git(self.bare, self.env, "rev-list", "--merges", "--first-parent", "--count",
+                        self.remote_sha("main"))
+        return int(out.strip())
+
+    def test_three_unit_stack_merges_through_merge_chain(self):
+        self.grant()
+        self.build_stack()
+        self.assertEqual(self.merge_calls(), [])
+        code, text = self.fold("merge-chain")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.merge_commits_on_remote_main(), 3)
+        self.assertEqual(self.ref_sha("refs/heads/main"), self.remote_sha("main"))
+        for _unit_id, branch, _path in ADAPTER_UNITS:
+            self.assertIsNone(self.remote_sha(branch), branch)
+        self.assertEqual({e["state"] for e in self.record()["units"]}, {"merged"})
+        self.assertTrue(self.merge_calls())
+        for argv in self.merge_calls():
+            self.assertFalse({"--squash", "--rebase", "--auto"} & set(argv), argv)
+
+    def test_no_merge_call_before_the_chain_even_after_a_trunk_restack(self):
+        self.grant()
+        self.build_stack()
+        clone = self.dest / "trunk-clone"
+        f.run_git(self.dest, self.env, "clone", "-q", str(self.bare), str(clone))
+        f.commit(clone, self.env, {"trunk.txt": b"t\n"}, "docs: trunk moved")
+        f.run_git(clone, self.env, "push", "-q", "origin", "main")
+        code, text = self.fold("restack")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.merge_calls(), [], "no merge before merge-chain starts")
+        code, text = self.fold("merge-chain")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.merge_commits_on_remote_main(), 3)
+        self.assertEqual(len(self.merge_calls()), 3)
+
+
+LIVE = _REPO / "tools" / "flow_live_check.py"
+STACK_PROBE = 'if [ "$1" = "stack" ] && [ "$2" = "--help" ]; then exit 0; fi'
+
+
+class TestLiveCheckScript(unittest.TestCase):
+    """The scripted live check in fixture mode: both rounds, the gh-stack proof, forced failures.
+
+    setUpClass builds one bare remote; each test copies it and runs the script against the copy
+    with the fake gh first on PATH. No real remote or gh write happens.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.scratch = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p29.1-live-"))
+        cls.addClassCleanup(shutil.rmtree, cls.scratch, True)
+        template = cls.scratch / "template"
+        template.mkdir()
+        env = f.git_env(template / "home")
+        (template / "home").mkdir()
+        repo = f.make_repo(template, env)
+        f.make_remote(template, env, repo, github=False)
+        cls.template = template
+
+    def setUp(self):
+        self.root = pathlib.Path(tempfile.mkdtemp(prefix="case-", dir=self.scratch))
+        self.bare = self.root / "remote.git"
+        shutil.copytree(self.template / "remote.git", self.bare)
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.env = f.git_env(self.home)
+        self.env.pop("GH_TOKEN", None)
+        self.env.pop("GITHUB_TOKEN", None)
+        self.state = self.root / "forge.json"
+        self.log = self.root / "gh.log"
+        self.bin = self.root / "bin"
+        forge_fakes.write_forge_fakes(self.bin, self.state, self.log, gh_stack=True)
+        self.env["PATH"] = host_fakes.host_path(self.bin)
+        self.base_path = self.env["PATH"]
+        self.workdir = self.root / "work"
+        self.install_gh(STACK_PROBE)
+
+    def install_gh(self, *lines):
+        """A `gh` on PATH in front of the fake. The shell `lines` run first and may refuse a call.
+
+        The fake has no `stack --help` (the flow's probe seam), so STACK_PROBE answers it the way
+        an installed gh-stack does, and round 1 selects the gh-stack backend by the probe.
+        """
+        wrap = self.root / "wrap"
+        wrap.mkdir(exist_ok=True)
+        gh = wrap / "gh"
+        gh.write_text("#!/bin/sh\n" + "\n".join(lines) + f'\nexec "{self.bin / "gh"}" "$@"\n',
+                      encoding="utf-8")
+        gh.chmod(0o755)
+        self.env["PATH"] = host_fakes.host_path(wrap, self.base_path)
+
+    def run_live(self):
+        return subprocess.run(
+            [sys.executable, str(LIVE), "--fixture", str(self.bare), "--workdir",
+             str(self.workdir)],
+            capture_output=True, text=True, env=self.env, check=False)
+
+    def test_both_rounds_pass_with_one_ok_line_per_step_and_the_gh_stack_backend(self):
+        proc = self.run_live()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        lines = proc.stdout.splitlines()
+        self.assertEqual(lines[-1], "live-check: ok")
+        self.assertTrue(all(line.startswith("ok ") for line in lines[:-1]), lines)
+        for expected in ("ok gh-stack merge-chain live-1-hotfix", "ok gh-stack merge-chain",
+                         "ok gh-stack remote check", "ok gh merge-chain",
+                         "ok gh remote check"):
+            self.assertIn(expected, lines)
+        stack_verbs = [c["argv"][1] for c in host_fakes.fake_calls(self.log)
+                       if c["argv"][:1] == ["stack"] and c["argv"][1:2] != ["--help"]]
+        self.assertTrue(stack_verbs, "round 1 never called a gh stack verb")
+
+    def test_a_refused_merge_stops_the_run_at_that_step_with_exit_1(self):
+        self.install_gh(STACK_PROBE,
+                        'if [ "$2" = "merge" ]; then echo "fake gh: merge refused" >&2; exit 1; fi')
+        proc = self.run_live()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertRegex(proc.stdout, r"live-check: failed at gh-stack merge-chain")
+        self.assertNotIn("live-check: ok", proc.stdout)
+
+    def test_a_gh_stack_fallback_in_round_one_fails_the_gh_stack_proof(self):
+        self.install_gh(STACK_PROBE, 'if [ "$1" = "stack" ]; then '
+                        'echo "fake gh: stack verb refused" >&2; exit 1; fi')
+        proc = self.run_live()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("live-check: failed at gh-stack", proc.stdout)
+        self.assertIn("gh-stack fallback", proc.stdout)
+
+    def test_live_mode_without_the_owner_flag_exits_2_and_names_the_precondition(self):
+        proc = subprocess.run([sys.executable, str(LIVE), "--live"], capture_output=True,
+                              text=True, env=self.env, check=False)
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("gh auth refresh -s delete_repo", proc.stdout)
+        self.assertIn("ai-kit-flow-live-<8 hex>", proc.stdout)
+        self.assertIn("private", proc.stdout)
+
+
+class TestLiveCheckOwnership(unittest.TestCase):
+    """Repo ownership of the owner-attended run, offline: subprocess.run is patched in-process,
+    so no gh repo command runs. Only the repo this run created is deleted."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p29.1-own-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def run_live(self, codes, rounds=None):
+        """main() with the given return-code function for each gh argv; returns (rc, out, calls)."""
+        import flow_live_check  # pylint: disable=import-outside-toplevel
+
+        calls = []
+
+        def fake_run(argv, **_kwargs):
+            calls.append(list(argv))
+            return subprocess.CompletedProcess(argv, codes(argv), "", "fake gh: refused\n")
+
+        out = io.StringIO()
+        patches = [mock.patch("subprocess.run", side_effect=fake_run)]
+        if rounds is not None:
+            patches.append(mock.patch.object(flow_live_check, "_live_rounds", return_value=rounds))
+        with contextlib.ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            stack.enter_context(contextlib.redirect_stdout(out))
+            rc = flow_live_check.main(["--live", "--yes-owner-attended", "--owner", "owner-x",
+                                       "--workdir", str(self.tmp / "work")])
+        return rc, out.getvalue(), calls
+
+    @staticmethod
+    def deletes(calls):
+        return [argv for argv in calls if argv[:3] == ["gh", "repo", "delete"]]
+
+    def test_a_failed_create_makes_no_delete_call_and_exits_1(self):
+        def codes(argv):
+            return 1 if argv[:3] == ["gh", "repo", "create"] else 0
+
+        rc, out, calls = self.run_live(codes)
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.deletes(calls), [])
+        self.assertIn("failed at create", out)
+
+    def test_a_failure_after_the_create_deletes_the_created_repo_and_exits_1(self):
+        def codes(argv):
+            return 1 if argv[:3] == ["gh", "repo", "clone"] else 0
+
+        rc, _out, calls = self.run_live(codes)
+        created = next(argv[3] for argv in calls if argv[:3] == ["gh", "repo", "create"])
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.deletes(calls), [["gh", "repo", "delete", created, "--yes"]])
+
+    def test_a_successful_run_deletes_exactly_the_created_repo_and_ends_ok(self):
+        rc, out, calls = self.run_live(lambda argv: 0, rounds=0)
+        created = next(argv[3] for argv in calls if argv[:3] == ["gh", "repo", "create"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.deletes(calls), [["gh", "repo", "delete", created, "--yes"]])
+        self.assertTrue(created.startswith("owner-x/ai-kit-flow-live-"), created)
+        self.assertEqual(out.splitlines()[-1], "live-check: ok")
+
+    def test_a_failed_round_still_deletes_the_created_repo(self):
+        rc, _out, calls = self.run_live(lambda argv: 0, rounds=1)
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(self.deletes(calls)), 1)
+
+    def test_a_failing_delete_exits_1_and_names_the_repo_even_when_the_rounds_passed(self):
+        def codes(argv):
+            return 1 if argv[:3] == ["gh", "repo", "delete"] else 0
+
+        rc, out, calls = self.run_live(codes, rounds=0)
+        created = next(argv[3] for argv in calls if argv[:3] == ["gh", "repo", "create"])
+        self.assertEqual(rc, 1)
+        self.assertIn(f"live-check: cleanup failed {created}", out)
 
 
 if __name__ == "__main__":

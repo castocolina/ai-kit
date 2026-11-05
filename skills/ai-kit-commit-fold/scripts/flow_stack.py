@@ -285,7 +285,7 @@ def cascade(repo, settings, record, moved_unit=None, old_tip=None):
     """
     if _dirty(repo):
         raise FlowError("dirty_tree", "commit or discard the working tree changes first")
-    head = run_git(repo, "symbolic-ref", "--short", "-q", "HEAD").strip()
+    head = flow_git.head_branch(repo)
     if not head:
         raise FlowError("detached_head", "check out a unit branch before restacking")
     above = _unmerged_above(record, moved_unit)

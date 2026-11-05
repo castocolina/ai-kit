@@ -110,7 +110,7 @@ def _start(args, unit):
     settings, record = read_settings(repo), read_record(repo)
     _sync(repo, settings, record)
     lines = catch_up(repo, settings, record) if consented(repo) else []
-    head = flow_git.run_git(repo, "symbolic-ref", "--short", "-q", "HEAD").strip()
+    head = flow_git.head_branch(repo)
     joined = next((item for item in record["units"]
                    if item["kind"] == "hotfix" and item["branch"] == head), None)
     if joined is not None and find_entry(record, unit.id) is None:

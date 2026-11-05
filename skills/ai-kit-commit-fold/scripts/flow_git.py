@@ -35,6 +35,12 @@ def run_git(repo, *args):
     return _run(repo, *args).stdout.decode("utf-8")
 
 
+def head_branch(repo):
+    """The checked-out branch name, or '' when HEAD is detached (symbolic-ref exits 1 then)."""
+    return _run(repo, "symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.decode(
+        "utf-8").strip()
+
+
 def _rev(repo, name):
     proc = _run(repo, "rev-parse", "--verify", "-q", name, check=False)
     return proc.stdout.decode("utf-8").strip() if proc.returncode == 0 else None
