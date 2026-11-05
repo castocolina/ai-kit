@@ -2182,7 +2182,7 @@ class TestMatrix(_ClientCase):
         # typesafe error is where the item ends — never a detour through that rung.
         typesafe = JevStub(model="jev-1.13.0", script=[{"status": 503, "body": b"busy"}] * 3)
         zen = JevStub(model="jev-1.14.0")
-        with typesafe, zen:
+        with typesafe, zen, mock.patch.object(JR, "_sleep", side_effect=lambda _seconds: None):
             self.point_remote("typesafe", typesafe)
             self.point_remote("opencode", zen)
             self.enable_remote(None)  # auto; Laya stays on the closed default port

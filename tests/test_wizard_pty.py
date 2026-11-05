@@ -296,6 +296,39 @@ def _drain(fd, deadline):
     return b"".join(chunks)
 
 
+def _settle(fd, deadline, quiet=0.3):
+    """Read ``fd`` until it has been quiet for ``quiet`` seconds, EOF, or ``deadline`` (epoch
+    secs); the bytes read. A frame still flushing keeps it reading, so a key sent next lands on
+    a finished render; it never waits longer than the fixed drain it replaces."""
+    chunks = []
+    while time.time() < deadline:
+        try:
+            rlist, _, _ = select.select([fd], [], [], min(quiet, max(0.0, deadline - time.time())))
+        except (OSError, ValueError):
+            break
+        if not rlist:
+            break
+        try:
+            data = os.read(fd, 4096)
+        except OSError:
+            break
+        if not data:
+            break
+        chunks.append(data)
+    return b"".join(chunks)
+
+
+def _drain_until(fd, done, deadline):
+    """Read ``fd`` (so the child never blocks on a full PTY) until ``done()`` holds; raise
+    ``AssertionError`` at ``deadline`` (epoch secs). The bytes read."""
+    chunks = []
+    while not done():
+        if time.time() >= deadline:
+            raise AssertionError("_drain_until: the condition never held before the deadline")
+        chunks.append(_settle(fd, min(deadline, time.time() + 0.1), quiet=0.05))
+    return b"".join(chunks)
+
+
 class TestPhase1E2E(unittest.TestCase):
     """End-to-end smoke tests for Phase-1 wizard behaviour under real process spawning."""
 
@@ -557,15 +590,18 @@ class TestPhase2E2E(unittest.TestCase):
                 time.time() + _STEP_DEADLINE,
                 captured=captured,
             )
-            _drain(master_fd, time.time() + 2.0)   # let the apply worker finish
+            # the apply worker has replaced the skill, then its render settles
+            _drain_until(master_fd, lambda: os.path.islink(real_skill),
+                         time.time() + _STEP_DEADLINE)
+            _settle(master_fd, time.time() + 2.0)
             # From here the existing pick test's key sequence:
             # Enter (Choose -> Arrange, adoption gate) -> y (board) ->
             # Enter (Arrange -> Review) -> Enter (commit -> Done) -> Enter (exit).
             press_until(b"\r", b"Wire your Claude Code status line?",
                         time.time() + _STEP_DEADLINE)
-            _drain(master_fd, time.time() + 1.0)
+            _settle(master_fd, time.time() + 1.0)
             press_until(b"y", b"git_branch", time.time() + _STEP_DEADLINE)
-            _drain(master_fd, time.time() + 1.0)
+            _settle(master_fd, time.time() + 1.0)
             press_until(b"\r", b"Review & confirm", time.time() + _STEP_DEADLINE)
             press_until(b"\r", b"ai-kit is installed", time.time() + _STEP_DEADLINE)
             with contextlib.suppress(OSError):
@@ -691,7 +727,7 @@ class TestPhase2E2E(unittest.TestCase):
             )
 
             # ── Step 2c: settle before sending the gate answer ───────────────
-            _drain(master_fd, time.time() + 1.0)
+            _settle(master_fd, time.time() + 1.0)
 
             # ── Step 2d: press y — accept adoption so the board renders ──────
             # (Declining now skips the segment board straight to Review; this
@@ -959,7 +995,7 @@ class TestPhase3E2E(unittest.TestCase):
             )
 
             # ── Step 2c: settle before sending the gate answer ───────────────
-            _drain(master_fd, time.time() + 1.0)
+            _settle(master_fd, time.time() + 1.0)
 
             # ── Step 2d: press n — decline adoption (state["adopt"] = False) ─
             # Declining SKIPS the segment board and jumps straight to Review;
@@ -1107,7 +1143,7 @@ class TestPhase3E2E(unittest.TestCase):
             )
 
             # ── Step 2c: settle before sending the gate answer ───────────────
-            _drain(master_fd, time.time() + 1.0)
+            _settle(master_fd, time.time() + 1.0)
 
             # ── Step 2d: press y — proceed to the board ──────────────────────
             # adopt=True; doesn't affect what the board shows — the pre-seeded
@@ -1126,7 +1162,7 @@ class TestPhase3E2E(unittest.TestCase):
             )
 
             # Give the TUI one more short poll to finish flushing the render frame.
-            tail_board = _drain(master_fd, time.time() + 3.0)
+            tail_board = _settle(master_fd, time.time() + 3.0)
             if tail_board:
                 captured.append(tail_board)
 
@@ -1379,7 +1415,7 @@ class TestTwoHostE2E(unittest.TestCase):
         try:
             drive_until(master_fd, b"components selected",
                         time.time() + self._BOOT_DEADLINE, captured=captured)
-            _drain(master_fd, time.time() + 1.0)
+            _settle(master_fd, time.time() + 1.0)
             self._drive(master_fd, captured, decline_cursor)
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")                  # Done -> exit

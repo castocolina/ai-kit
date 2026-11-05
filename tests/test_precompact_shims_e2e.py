@@ -33,6 +33,12 @@ PI_FIXTURE = REPO / "tests" / "fixtures" / "precompact" / "pi_preparation.json"
 OC_FIXTURE = REPO / "tests" / "fixtures" / "precompact" / "opencode_messages.json"
 STUB_CLIENT = REPO / "tests" / "fixtures" / "precompact" / "stub_client.py"
 HEADER_FIRST_LINE = "<!-- ai-kit precompact v1 -->"
+# The hang tests scale the shims' timers through run_shim.mjs; TestShimDeadlinePins pins the
+# production deadlines they stand in for.
+TIME_SCALE = 0.2
+PRECOMPACT_DEADLINE_S = 10.0  # TIMEOUT_MS of both precompact shims
+TOOL_DEADLINE_S = 2.0  # TIMEOUT_MS of the pi tool-advisor and tool-reminder shims
+SCALE_ENV = {"AI_KIT_SHIM_TIME_SCALE": str(TIME_SCALE)}
 
 
 def _node_bin():
@@ -185,7 +191,7 @@ class TestShimsE2E(ShimHarnessMixin, unittest.TestCase):
                     "        'import time; time.sleep(30)'])\n"
                     "    handle.write(f'{os.getpid()} {child.pid}')\n"
                     "time.sleep(30)\n")
-                env = self._harness_env(base, {"AI_KIT_PYTHON": script})
+                env = self._harness_env(base, {"AI_KIT_PYTHON": script, **SCALE_ENV})
                 cmd = [NODE or "node", str(HARNESS), host, str(shim), str(fixture)]
                 started = time.monotonic()
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -199,8 +205,8 @@ class TestShimsE2E(ShimHarnessMixin, unittest.TestCase):
                 elapsed = time.monotonic() - started
                 try:
                     self.assertFalse(timed_out)
-                    self.assertGreaterEqual(elapsed, 9.5)
-                    self.assertLessEqual(elapsed, 11.0)
+                    self.assertGreaterEqual(elapsed, PRECOMPACT_DEADLINE_S * TIME_SCALE * 0.95)
+                    self.assertLessEqual(elapsed, PRECOMPACT_DEADLINE_S * TIME_SCALE + 1.0)
                     if host == "pi":
                         self.assertEqual(stdout.strip(), "null")
                     else:
@@ -467,12 +473,13 @@ class TestToolAdvisorShims(ShimHarnessMixin, unittest.TestCase):
                 try:
                     proc, _ = self._run_tool(shim, PI_TOOL_FIXTURE, base,
                                              extra={"PATH": self._rg_path(base),
-                                                    "AI_KIT_PYTHON": script}, timeout=8)
+                                                    "AI_KIT_PYTHON": script, **SCALE_ENV},
+                                             timeout=8)
                     elapsed = time.monotonic() - started
                     self.assertEqual(proc.returncode, 0, proc.stderr)
                     self.assertEqual(proc.stdout.strip(), "null")
-                    self.assertGreaterEqual(elapsed, 1.8)
-                    self.assertLess(elapsed, 4)
+                    self.assertGreaterEqual(elapsed, TOOL_DEADLINE_S * TIME_SCALE * 0.9)
+                    self.assertLess(elapsed, TOOL_DEADLINE_S * TIME_SCALE + 2.0)
                     pid = int(pidfile.read_text(encoding="utf-8"))
                     with self.assertRaises(ProcessLookupError):
                         os.kill(pid, 0)
@@ -644,27 +651,23 @@ class TestOpencodeTracer(ShimHarnessMixin, unittest.TestCase):
         self.assertEqual(leftovers, [])
 
     def test_opencode_messages_failure_untouched(self):
+        # The hang case also proves the hook finishes within its deadline plus 1 s (the
+        # production 10 s, scaled by TIME_SCALE).
         base = self._make_base()
         for mode in ("throw", "hang", "array"):
             with self.subTest(mode=mode):
+                started = time.monotonic()
                 proc, _env = self._run_harness("opencode", OC_SHIM, OC_FIXTURE, base,
-                                               mode=mode,
-                                               timeout=12 if mode == "hang" else 60)
+                                               mode=mode, extra=SCALE_ENV, timeout=30)
+                elapsed = time.monotonic() - started
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 result = json.loads(proc.stdout)
                 self.assertFalse(result["promptSet"])
                 expected = 2 if mode == "array" else 1
                 self.assertEqual(len(result["output"]["context"]), expected)
                 self.assertEqual(result["output"]["context"][:1], ["prior plugin context"])
-
-    def test_opencode_messages_hang_finishes_within_11s(self):
-        base = self._make_base()
-        started = time.monotonic()
-        proc, _env = self._run_harness("opencode", OC_SHIM, OC_FIXTURE, base,
-                                       mode="hang", timeout=15)
-        elapsed = time.monotonic() - started
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertLess(elapsed, 11.0)
+                if mode == "hang":
+                    self.assertLess(elapsed, PRECOMPACT_DEADLINE_S * TIME_SCALE + 1.0)
 
     def test_opencode_two_events_push_twice(self):
         base = self._make_base()
@@ -676,6 +679,25 @@ class TestOpencodeTracer(ShimHarnessMixin, unittest.TestCase):
         self.assertTrue(context[1].startswith(HEADER_FIRST_LINE))
         self.assertTrue(context[2].startswith(HEADER_FIRST_LINE))
         self.assertFalse(result["promptSet"])
+
+
+class TestShimDeadlinePins(unittest.TestCase):
+    """Static pins of the production deadlines the scaled hang tests stand in for; the scale
+    knob lives only in the harness."""
+
+    SHIMS = ((PI_SHIM, PRECOMPACT_DEADLINE_S), (OC_SHIM, PRECOMPACT_DEADLINE_S),
+             (PI_ADVISOR_SHIM, TOOL_DEADLINE_S), (PI_REMINDER_SHIM, TOOL_DEADLINE_S))
+
+    def test_production_deadlines_are_pinned(self):
+        for shim, deadline_s in self.SHIMS:
+            with self.subTest(shim=str(shim.relative_to(REPO))):
+                text = shim.read_text(encoding="utf-8")
+                self.assertEqual(re.findall(r"^const TIMEOUT_MS = (\d+);$", text, re.MULTILINE),
+                                 [str(int(deadline_s * 1000))])
+                self.assertNotIn("AI_KIT_SHIM_TIME_SCALE", text)
+
+    def test_only_the_harness_reads_the_scale(self):
+        self.assertIn("process.env.AI_KIT_SHIM_TIME_SCALE", HARNESS.read_text(encoding="utf-8"))
 
 
 def header_of(document):

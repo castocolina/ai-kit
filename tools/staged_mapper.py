@@ -11,18 +11,26 @@ The staged list comes from `git diff --cached`, which compares the index with HE
 `git commit --amend` maps only what is staged now, not the changes already in the commit being
 amended, which ran at their own commit.
 
+A data file outside the unit folders (DATA_SUFFIXES: docs, configs) is matched only in test code:
+comments and bare string statements (docstrings) are stripped with tokenize first, since they
+name a file without reading it. A code file keeps matching anywhere in a test's source: a comment
+naming a tool is often the only link to the test that covers it.
+
 shortcut: a test that reaches files only through a glob or directory walk (skills/*/SKILL.md)
 is not selected for them; the push stage's full suites cover it; upgrade if a commit-stage
 miss is ever observed. A tool that another tool loads by path is selected only when the
 loader's test names it.
 """
 import argparse
+import functools
 import importlib.util
+import io
 import os
 import re
 import statistics
 import subprocess
 import sys
+import tokenize
 from collections.abc import Collection, Mapping
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple
@@ -39,6 +47,7 @@ class Index(NamedTuple):
     modules: tuple[str, ...]  # `tests.<stem>` of every tests/test_*.py, sorted
     reach: Mapping[str, str]  # module -> own source plus the helpers it names, transitively
     corpus: str  # every tests/*.py source, concatenated
+    sources: Mapping[str, str]  # stem -> source of every tests/*.py file
 
 
 class Decision(NamedTuple):
@@ -86,6 +95,7 @@ def build_index(root: Path) -> Index:
         modules=tuple(f"tests.{stem}" for stem in modules),
         reach={f"tests.{stem}": _reach(text, helpers) for stem, text in modules.items()},
         corpus="\n".join(sources.values()),
+        sources=sources,
     )
 
 
@@ -155,14 +165,67 @@ def _is_test_module(path: str) -> bool:
             and parts[1].startswith("test_") and parts[1].endswith(".py"))
 
 
+# A staged path outside UNIT_DIRS with one of these suffixes is a data file: only test code that
+# names it selects a module (test-time audit, 2026-11-04).
+DATA_SUFFIXES = frozenset({".md", ".json", ".jsonc", ".yaml", ".yml", ".toml", ".txt"})
+_LAYOUT_TOKENS = frozenset({tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER})
+_DROPPED_TOKENS = frozenset({tokenize.COMMENT, tokenize.NL, tokenize.ENCODING})
+
+
+def _is_data_file(path: str) -> bool:
+    pure = PurePosixPath(path)
+    return bool(pure.parts) and pure.parts[0] not in UNIT_DIRS and pure.suffix in DATA_SUFFIXES
+
+
+@functools.cache
+def code_text(source: str) -> str:
+    """`source` without its comments and bare string statements (docstrings), the remaining
+    tokens joined by spaces. A source tokenize cannot read comes back whole, so it selects more."""
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (SyntaxError, tokenize.TokenError):
+        return source
+    kept: list[str] = []
+    line: list[tokenize.TokenInfo] = []
+    for tok in tokens:
+        if tok.type in _DROPPED_TOKENS:
+            continue
+        line.append(tok)
+        if tok.type in (tokenize.NEWLINE, tokenize.ENDMARKER):
+            body = [t for t in line if t.type not in _LAYOUT_TOKENS]
+            if not (body and all(t.type == tokenize.STRING for t in body)):
+                kept.extend(t.string for t in line)
+            line = []
+    return " ".join(kept)
+
+
+def _data_covering(index: Index, patterns: list[re.Pattern[str]]) -> set[str]:
+    """The modules whose code names a data file: their own source and each helper they reach,
+    both through code_text. Only a module whose full reach text matches is tokenized."""
+    helpers = {stem: text for stem, text in index.sources.items() if not stem.startswith("test_")}
+    found = set()
+    for module, reach in index.reach.items():
+        if not any(pattern.search(reach) for pattern in patterns):
+            continue
+        named = {stem: code_text(body) for stem, body in helpers.items()
+                 if re.search(_token(stem), reach)}
+        own = code_text(index.sources[module.removeprefix("tests.")])
+        if any(pattern.search(_reach(own, named)) for pattern in patterns):
+            found.add(module)
+    return found
+
+
 def covering_modules(index: Index, path: str) -> frozenset[str]:
-    """The test modules whose reach text names the unit of `path`; a staged test module
-    that still exists covers itself."""
+    """The test modules whose reach text names the unit of `path` (for a data file, their code
+    only); a staged test module that still exists covers itself."""
     patterns = [re.compile(token) for token in unit_tokens(path)]
-    found = {
-        module for module, text in index.reach.items()
-        if any(pattern.search(text) for pattern in patterns)
-    }
+    if _is_data_file(path):
+        found = _data_covering(index, patterns)
+    else:
+        found = {
+            module for module, text in index.reach.items()
+            if any(pattern.search(text) for pattern in patterns)
+        }
     own = f"tests.{PurePosixPath(path).stem}"
     if _is_test_module(path) and own in index.reach:
         found.add(own)
@@ -175,7 +238,12 @@ def _is_shared(path: str, shared: Collection[str]) -> bool:
 
 
 def _named_in_corpus(index: Index, path: str) -> bool:
-    return any(re.search(token, index.corpus) for token in unit_tokens(path))
+    """Whether any tests/*.py source names the unit of `path` (for a data file, in code)."""
+    tokens = unit_tokens(path)
+    if not _is_data_file(path):
+        return any(re.search(token, index.corpus) for token in tokens)
+    texts = [text for text in index.sources.values() if any(re.search(t, text) for t in tokens)]
+    return any(re.search(token, code_text(text)) for text in texts for token in tokens)
 
 
 def decide(root: Path, paths: Collection[str], shared: Collection[str]) -> Decision:

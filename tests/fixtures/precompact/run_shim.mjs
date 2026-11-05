@@ -14,9 +14,19 @@
 //                   settles) and the output object, calls the
 //                   `experimental.session.compacting` hook once (twice in
 //                   mode `twice`); prints `{output, promptSet}`.
+// AI_KIT_SHIM_TIME_SCALE=<factor> (hang tests only) multiplies every setTimeout delay, so a
+// hang waits a fraction of a shim's real deadline. It wraps setTimeout before the shim loads;
+// no shim reads it (TestShimDeadlinePins in tests/test_precompact_shims_e2e.py).
 // No test starts a real pi or opencode process.
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+
+const timeScale = Number(process.env.AI_KIT_SHIM_TIME_SCALE ?? "1");
+if (Number.isFinite(timeScale) && timeScale > 0 && timeScale !== 1) {
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, delay = 0, ...args) =>
+    realSetTimeout(callback, delay * timeScale, ...args);
+}
 
 const [host, shimPath, fixturePath, mode = ""] = process.argv.slice(2);
 const fixture = JSON.parse(readFileSync(fixturePath, "utf-8"));

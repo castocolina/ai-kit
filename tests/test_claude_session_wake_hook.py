@@ -4,7 +4,9 @@ wake, nothing else ever happens, and the hook always exits before its row's
 scratch env, never a copy of os.environ, and the stand-in host process keeps the
 host lookup away from any real Claude Code."""
 
+import ast
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -214,11 +216,62 @@ with open(tmp, "w", encoding="utf-8") as handle:
 os.replace(tmp, PIDS)
 time.sleep(60)
 """
+# The deadline tests run the real hook through this driver with its timers scaled down;
+# TestHookDeadlinePins pins the real 8 s deadline, 1 s child minimum and 5 s read cap.
+_SCALED_DEADLINE_S = 1.0
+_SCALED_MIN_CHILD_S = 0.2
+_SCALED_READ_CAP_S = 0.3
+_DRIVER = f"""import importlib, os, sys
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+hook = importlib.import_module("claude_session_wake")
+hook.HOOK_DEADLINE_S = {_SCALED_DEADLINE_S!r}
+hook.HOOK_MIN_CHILD_S = {_SCALED_MIN_CHILD_S!r}
+hook._session_start._STDIN_TOTAL_SECONDS = {_SCALED_READ_CAP_S!r}
+raise SystemExit(hook.main())
+"""
+
+
+def _assigned_numbers(path) -> dict[str, float]:
+    """Module-level `NAME = <number>` assignments of a source file, read with ast: importing
+    the hook would replace this process's excepthook."""
+    with open(path, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read())
+    numbers = {}
+    for node in tree.body:
+        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)):
+            continue
+        value = node.value.value
+        if isinstance(value, (int, float)):
+            numbers.update({t.id: float(value) for t in node.targets if isinstance(t, ast.Name)})
+    return numbers
+
+
+class TestHookDeadlinePins(unittest.TestCase):
+    """Static pins of the real timers that TestHookDeadline scales through _DRIVER."""
+
+    def test_real_deadline_fits_the_read_cap_and_the_registered_timeout(self):
+        hook = _assigned_numbers(_HOOK)
+        start = _assigned_numbers(os.path.join(_REPO, "tools", "hooks", "claude_session_start.py"))
+        self.assertEqual(
+            (hook["HOOK_DEADLINE_S"], hook["HOOK_MIN_CHILD_S"], start["_STDIN_TOTAL_SECONDS"]),
+            (8.0, 1.0, 5.0),
+        )
+        # a read that runs to its cap still leaves the arm child its minimum
+        self.assertGreaterEqual(
+            hook["HOOK_DEADLINE_S"] - start["_STDIN_TOTAL_SECONDS"], hook["HOOK_MIN_CHILD_S"]
+        )
+        spec = importlib.util.spec_from_file_location(
+            "setup_wake_pin", os.path.join(_REPO, "tools", "setup.py"))
+        assert spec is not None and spec.loader is not None
+        setup = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(setup)
+        row = next(row for row in setup.HOOK_REGISTRY if row.id == "session-wake")
+        self.assertLess(hook["HOOK_DEADLINE_S"], row.timeout)
 
 
 class TestHookDeadline(_HookScratch):
-    """One 8 s monotonic deadline over the stdin read and the arm child, so the
-    hook exits by itself before the row's 10 s timeout (review round 1)."""
+    """The real hook under _DRIVER: one deadline (8 s, scaled to 1 s here) over the stdin read
+    and the arm child, so the hook exits by itself before the row's 10 s timeout."""
 
     def setUp(self):
         super().setUp()
@@ -228,7 +281,9 @@ class TestHookDeadline(_HookScratch):
             shutil.copyfile(
                 os.path.join(_REPO, "tools", "hooks", name), os.path.join(hooks_dir, name)
             )
-        self.hook = os.path.join(hooks_dir, "claude_session_wake.py")
+        self.hook = os.path.join(hooks_dir, "drive_hook.py")
+        with open(self.hook, "w", encoding="utf-8") as handle:
+            handle.write(_DRIVER)
         self.pids_file = os.path.join(self.root, "pids.txt")
         shim_dir = os.path.join(self.root, "skills", "ai-kit-session-wake")
         os.makedirs(shim_dir)
@@ -292,7 +347,7 @@ class TestHookDeadline(_HookScratch):
 
         self.assertEqual(0, result.returncode)
         self.assertEqual(b"", result.stdout)
-        self.assertLess(wall, 9.0)
+        self.assertLess(wall, _SCALED_DEADLINE_S + 1.0)
         shim_pid, grand = self._wait_for_pids()
         self.assertTrue(self._dead(shim_pid), "the arm child survived the deadline")
         self.assertTrue(self._dead(grand), "the arm child's grandchild survived the deadline")
@@ -310,8 +365,8 @@ class TestHookDeadline(_HookScratch):
         stop = threading.Event()
 
         def trickle():
-            # a complete payload, then one space every 0.3 s: the read keeps the
-            # stream open until its own 5 s cap; trailing whitespace stays valid JSON
+            # a complete payload, then one space every 0.1 s: the read keeps the
+            # stream open until its own (scaled) cap; trailing whitespace stays valid JSON
             stdin_pipe.write(self._payload())
             stdin_pipe.flush()
             while not stop.is_set():
@@ -320,7 +375,7 @@ class TestHookDeadline(_HookScratch):
                     stdin_pipe.flush()
                 except (BrokenPipeError, OSError, ValueError):
                     return
-                time.sleep(0.3)
+                time.sleep(0.1)
 
         feeder = threading.Thread(target=trickle, daemon=True)
         started = time.monotonic()
@@ -339,7 +394,7 @@ class TestHookDeadline(_HookScratch):
 
         self.assertEqual(0, proc.returncode)
         self.assertEqual(b"", out)
-        self.assertLess(wall, 9.0)
+        self.assertLess(wall, _SCALED_DEADLINE_S + 1.0)
         # the read ended at its cap with the payload complete, so the child ran
         # and was killed at the deadline with its group
         shim_pid, grand = self._wait_for_pids()

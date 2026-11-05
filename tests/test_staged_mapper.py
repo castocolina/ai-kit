@@ -210,7 +210,7 @@ class CodeFormsTest(MapperCase):
         index = self.mapper.build_index(REPO_ROOT)
         self.assertIn("tests.test_cursor_status_line",
                       self.mapper.covering_modules(index, "tools/common_render.py"))
-        self.assertIn("tests.test_wizard_app",
+        self.assertIn("tests.test_wizard_app_1",
                       self.mapper.covering_modules(index, "tools/wizard_app.py"))
 
 
@@ -455,7 +455,7 @@ class RunnerStagedTest(unittest.TestCase):
 
     def test_unit_modules_run_in_process_and_uv_modules_in_one_child(self) -> None:
         code, out, popen = self.run_with_uv(
-            "tests.test_alpha", "tests.test_wizard_app", "tests.test_worktree_e2e",
+            "tests.test_alpha", "tests.test_wizard_app_1", "tests.test_worktree_e2e",
             uv="/usr/bin/uv",
         )
         self.assertEqual(code, 0, out)
@@ -464,10 +464,10 @@ class RunnerStagedTest(unittest.TestCase):
         argv = popen.call_args.args[0]
         self.assertEqual(argv[:3], ["uv", "run", "python"])
         self.assertEqual(pathlib.Path(argv[3]).name, "run_unittest_parallel.py")
-        self.assertEqual(argv[4:], ["tests.test_wizard_app"])
+        self.assertEqual(argv[4:], ["tests.test_wizard_app_1"])
         self.assertNotIn("--staged", argv)
         self.assertIs(popen.call_args.kwargs["start_new_session"], True)
-        self.assertIn("staged: under uv: tests.test_wizard_app", out)
+        self.assertIn("staged: under uv: tests.test_wizard_app_1", out)
         self.assertIn("staged: deferred to push (over the 60 s commit budget): "
                       "tests.test_worktree_e2e (no recorded time)", out)
 
@@ -475,7 +475,7 @@ class RunnerStagedTest(unittest.TestCase):
         with unittest.mock.patch.object(
             self.runner, "_run_all", side_effect=AssertionError("pool must not start")
         ):
-            code, out, popen = self.run_with_uv("tests.test_wizard_app", uv="/usr/bin/uv")
+            code, out, popen = self.run_with_uv("tests.test_wizard_app_1", uv="/usr/bin/uv")
         self.assertEqual(code, 0, out)
         popen.assert_called_once()
 
@@ -488,24 +488,24 @@ class RunnerStagedTest(unittest.TestCase):
         self.assertIn("tests.test_worktree_e2e (no recorded time); run now:", out)
 
     def test_without_uv_the_commit_is_refused_with_a_pointer(self) -> None:
-        code, out, popen = self.run_with_uv("tests.test_alpha", "tests.test_wizard_app", uv=None)
+        code, out, popen = self.run_with_uv("tests.test_alpha", "tests.test_wizard_app_1", uv=None)
         self.assertEqual(code, 1)
-        self.assertIn("staged: uv not found; the modules tests.test_wizard_app need it;"
+        self.assertIn("staged: uv not found; the modules tests.test_wizard_app_1 need it;"
                       " run make setup-env", out)
         popen.assert_not_called()
         self.assertEqual(self.ran, [])
 
     def test_a_failing_uv_child_fails_the_run(self) -> None:
-        patch = self.stand_in(self.decision("tests.test_wizard_app"))
+        patch = self.stand_in(self.decision("tests.test_wizard_app_1"))
         proc = unittest.mock.MagicMock()
-        proc.communicate.return_value = ("failed: tests.test_wizard_app\n", "")
+        proc.communicate.return_value = ("failed: tests.test_wizard_app_1\n", "")
         proc.returncode = 1
         with patch, unittest.mock.patch.object(
             self.runner.shutil, "which", lambda _name: "/usr/bin/uv"
         ), unittest.mock.patch.object(self.runner.subprocess, "Popen", return_value=proc):
             code, out = self.main("--staged", "tools/alpha.py")
         self.assertEqual(code, 1)
-        self.assertIn("failed: tests.test_wizard_app", out)
+        self.assertIn("failed: tests.test_wizard_app_1", out)
 
     def test_split_e2e_defers_unrecorded_and_over_budget_modules(self) -> None:
         table = {"tests.test_a_e2e": 60, "tests.test_b_e2e": 61}
@@ -804,6 +804,58 @@ class PushedModeTest(unittest.TestCase):
                      ["--pushed", self.OVER]):
             with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(self.runner.main(argv, cwd=self.tmp), 2)
+
+
+class DataFileTest(MapperCase):
+    """A data file outside the unit folders is selected by test code only; a comment or docstring
+    naming it selects nothing. A code file keeps matching anywhere in the source."""
+
+    def test_a_data_file_named_only_in_a_comment_or_docstring_selects_nothing(self) -> None:
+        make_tree(self.root, {
+            "tests/test_reads.py": "DOC = 'NOTES.md'\n",
+            "tests/test_comment.py": "# see NOTES.md\nX = 1\n",
+            "tests/test_docstring.py": (
+                '"""Mirrors NOTES.md."""\n\n\ndef f():\n    """Also NOTES.md."""\n    return 1\n'
+            ),
+        })
+        index = self.mapper.build_index(self.root)
+        self.assertEqual(self.mapper.covering_modules(index, "NOTES.md"),
+                         frozenset({"tests.test_reads"}))
+
+    def test_a_data_file_named_only_in_prose_is_not_an_empty_answer(self) -> None:
+        make_tree(self.root, {"tests/test_comment.py": "# see GUIDE.md\nX = 1\n"})
+        decision = self.decide(["GUIDE.md"])
+        self.assertEqual((decision.modules, decision.full_reason), ((), None))
+
+    def test_a_helper_names_a_data_file_in_code_only(self) -> None:
+        # test_alpha and test_zeta reach tests/util.py through `import util`.
+        make_tree(self.root, {"tests/util.py": "SHARED = 'shared.md'\n# also notes.md\n"})
+        index = self.mapper.build_index(self.root)
+        self.assertEqual(self.mapper.covering_modules(index, "shared.md"),
+                         frozenset({"tests.test_alpha", "tests.test_zeta"}))
+        self.assertEqual(self.mapper.covering_modules(index, "notes.md"), frozenset())
+
+    def test_a_code_file_named_only_in_a_comment_still_selects(self) -> None:
+        # TREE's test_alpha names tools/alpha.py only in its `# covers tools/alpha.py` comment.
+        self.assertEqual(self.decide(["tools/alpha.py"]).modules, ("tests.test_alpha",))
+
+    def test_code_text_drops_comments_and_docstrings_only(self) -> None:
+        source = ('"""Doc A.md."""\nX = "B.md"  # C.md\n\n\n'
+                  'def f():\n    """D.md."""\n    return 1\n')
+        text = self.mapper.code_text(source)
+        self.assertIn('"B.md"', text)
+        for gone in ("A.md", "C.md", "D.md"):
+            self.assertNotIn(gone, text)
+        self.assertEqual(self.mapper.code_text("x = (\n"), "x = (\n")  # unreadable: kept whole
+
+    def test_real_checkout_data_and_code_files(self) -> None:
+        index = self.mapper.build_index(REPO_ROOT)
+        agents = self.mapper.covering_modules(index, "AGENTS.md")
+        self.assertIn("tests.test_ai_kit_spec_runtimes_table", agents)  # it reads the real file
+        for module in ("tests.test_wizard_pty", "tests.test_ai_kit_project_rules_all_e2e"):
+            self.assertNotIn(module, agents)
+        self.assertIn("tests.test_setup",
+                      self.mapper.covering_modules(index, "tools/command_ownership.py"))
 
 
 if __name__ == "__main__":

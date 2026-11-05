@@ -24,6 +24,7 @@ Conventions parsed from the source:
 """
 
 import ast
+import functools
 import hashlib
 import importlib.util
 import io
@@ -339,16 +340,27 @@ _SEG_SIGNATURE = ["ctx", "avail", "theme"]
 _TYPED_MODEL_NAMES = {"ctx", "line_conf"}
 
 
+@functools.cache
+def _read_tree(path):
+    """``(tree, source)`` of one repo file, read and parsed once per run. Rules only read the
+    tree; the non-vacuity snippets call ast.parse themselves and never come through here."""
+    with open(path, encoding="utf-8") as handle:
+        source = handle.read()
+    return ast.parse(source, filename=path), source
+
+
+def tearDownModule():
+    # Freeing the cached trees during interpreter exit cost about 3 s; free them here instead.
+    _read_tree.cache_clear()
+
+
 def _parse(name):
     """Parse a tools/ module into an AST, attaching its banner block map.
 
     Returns ``(tree, source)`` so callers can inspect both the parse tree and
     the raw text (the banner blocks are comments and thus not in the AST).
     """
-    path = os.path.join(_TOOLS, name)
-    with open(path, encoding="utf-8") as handle:
-        source = handle.read()
-    return ast.parse(source, filename=name), source
+    return _read_tree(os.path.join(_TOOLS, name))
 
 
 def _banner_blocks(source):
@@ -1000,8 +1012,7 @@ SPAWN_PROGRAM_POSITION = {
 
 def _host_cli_names():
     """The runner's HOST_CLI_NAMES set, read with ast so the runner is never imported here."""
-    with open(_RUNNER_PATH, encoding="utf-8") as handle:
-        tree = ast.parse(handle.read(), filename=_RUNNER_PATH)
+    tree = _read_tree(_RUNNER_PATH)[0]
     for node in tree.body:
         if not isinstance(node, ast.Assign):
             continue
@@ -1172,8 +1183,7 @@ def check_no_wake_import(tree):
 
 def _parse_path(path):
     """Parse any repo file into an AST (never import or execute it)."""
-    with open(path, encoding="utf-8") as handle:
-        return ast.parse(handle.read(), filename=path)
+    return _read_tree(path)[0]
 
 
 def _iter_skill_python(rel_skill):
@@ -1414,8 +1424,7 @@ class TestArchitecture(unittest.TestCase):
                     if not filename.endswith(".py"):
                         continue
                     path = os.path.join(dirpath, filename)
-                    with open(path, encoding="utf-8") as handle:
-                        tree = ast.parse(handle.read(), filename=path)
+                    tree = _read_tree(path)[0]
                     for msg in check_no_shell_true(tree):
                         violations.append(f"{os.path.relpath(path, repo_root)}: {msg}")
         self.assertEqual([], violations)
@@ -1431,8 +1440,7 @@ class TestArchitecture(unittest.TestCase):
                         continue
                     path = os.path.join(dirpath, filename)
                     relpath = os.path.relpath(path, repo_root).replace(os.sep, "/")
-                    with open(path, encoding="utf-8") as handle:
-                        tree = ast.parse(handle.read(), filename=path)
+                    tree = _read_tree(path)[0]
                     violations.extend(check_retired_literals(relpath, tree))
                     strings = {
                         node.value
@@ -1460,8 +1468,7 @@ class TestArchitecture(unittest.TestCase):
                         continue
                     path = os.path.join(dirpath, filename)
                     relpath = os.path.relpath(path, repo_root).replace(os.sep, "/")
-                    with open(path, encoding="utf-8") as handle:
-                        tree = ast.parse(handle.read(), filename=path)
+                    tree = _read_tree(path)[0]
                     violations.extend(check_one_supervisor(relpath, tree))
                     if relpath == _SUPERVISOR_OWNER:
                         owner_count = supervisor_spawn_count(tree)
@@ -1474,8 +1481,7 @@ class TestArchitecture(unittest.TestCase):
         for filename in sorted(os.listdir(tests_root)):
             if not (filename.startswith("test_") and filename.endswith(".py")):
                 continue
-            with open(os.path.join(tests_root, filename), encoding="utf-8") as handle:
-                tree = ast.parse(handle.read(), filename=filename)
+            tree = _read_tree(os.path.join(tests_root, filename))[0]
             violations += check_main_guard_last(f"tests/{filename}", tree)
             guarded += any(_is_main_guard(node) for node in tree.body)
         self.assertEqual([], violations)
@@ -1489,8 +1495,7 @@ class TestArchitecture(unittest.TestCase):
             if not filename.endswith(".py"):
                 continue
             relpath = f"tests/{filename}"
-            with open(os.path.join(tests_root, filename), encoding="utf-8") as handle:
-                tree = ast.parse(handle.read(), filename=filename)
+            tree = _read_tree(os.path.join(tests_root, filename))[0]
             found = check_no_planning_reader(tree)
             if found and relpath in PLANNING_READER_EXCEPTIONS:
                 still_reading.add(relpath)
@@ -1512,8 +1517,7 @@ class TestArchitecture(unittest.TestCase):
             relpath = f"tests/{filename}"
             if not filename.endswith(".py") or relpath == HOST_FAKES_PATH:
                 continue
-            with open(os.path.join(tests_root, filename), encoding="utf-8") as handle:
-                tree = ast.parse(handle.read(), filename=filename)
+            tree = _read_tree(os.path.join(tests_root, filename))[0]
             violations.extend(f"{relpath} {problem}"
                               for problem in check_no_host_cli_calls(tree, names))
         self.assertEqual([], violations)
@@ -1528,8 +1532,7 @@ class TestArchitecture(unittest.TestCase):
                         continue
                     path = os.path.join(dirpath, filename)
                     relpath = os.path.relpath(path, repo_root).replace(os.sep, "/")
-                    with open(path, encoding="utf-8") as handle:
-                        src = handle.read()
+                    src = _read_tree(path)[1]
                     violations += check_broad_except_allowlist(relpath, src)
                     seen.update((relpath, func) for _, func in broad_except_sites(src))
         self.assertEqual([], violations)

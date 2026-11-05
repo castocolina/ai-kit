@@ -211,7 +211,9 @@ class TestOverlap(_Scratch):
         host.kill()
         host.wait()
         self.arm_window_open(paths)
-        fire_env = {**self.env, "FAKE_HOST_SLEEP": "5"}
+        # The first resume holds the lock 1.5 s: the second fire starts once the resume is
+        # logged and needs well under that to reach the lock.
+        fire_env = {**self.env, "FAKE_HOST_SLEEP": "1.5"}
         first = self._fire_subprocess(sid, fire_env)
         self.addCleanup(_kill, first)
         self._wait_for_resume_logged()
@@ -840,7 +842,7 @@ class TestGiveUp(_Scratch):
     def test_held_lock_skips_wake_and_the_holder_finishes(self):
         sid = uuid.uuid4().hex
         env, paths = self._gone_at_count(sid, 23)
-        helper = fakes.hold_lock(paths.lock, 2.0)
+        helper = fakes.hold_lock(paths.lock, 0.5)
         self.addCleanup(_kill, helper)
         stream = helper.stdout
         assert stream is not None
@@ -928,7 +930,7 @@ class TestDisarm(_Scratch):
     def test_disarm_waits_for_the_running_resume_lock(self):
         sid = uuid.uuid4().hex
         env, paths, _host = self._armed(sid)
-        helper = fakes.hold_lock(paths.lock, 2.0)
+        helper = fakes.hold_lock(paths.lock, 0.5)
         self.addCleanup(_kill, helper)
         stream = helper.stdout
         assert stream is not None
@@ -945,7 +947,7 @@ class TestDisarm(_Scratch):
         _out, err = proc.communicate(timeout=120)
         elapsed = time.monotonic() - started
         self.assertEqual(0, proc.returncode, err)
-        self.assertGreaterEqual(elapsed, 1.5)  # it finished only after the release
+        self.assertGreaterEqual(elapsed, 0.4)  # it finished only after the 0.5 s release
         helper.wait(timeout=60)
         self.assert_no_wake_files(env, paths)
 
@@ -983,7 +985,7 @@ class TestDisarm(_Scratch):
         sid = uuid.uuid4().hex
         env, paths, _host = self._armed(sid)
         timer, _service = units.unit_names("claude", sid)
-        helper = fakes.hold_lock(paths.lock, 2.0)
+        helper = fakes.hold_lock(paths.lock, 0.5)
         self.addCleanup(_kill, helper)
         stream = helper.stdout
         assert stream is not None

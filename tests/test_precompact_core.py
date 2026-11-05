@@ -218,17 +218,20 @@ class TestHeaderCounts(FrozenClockMixin, unittest.TestCase):
         self.assertFalse(os.path.exists(env["STUB_LOG"]), "no client process may start")
 
     def test_header_counts_property(self):
-        # Twelve chunks per trial: every trial still spans the three labels and 0-3 errors, and
-        # each stub call is a process start, so 40 chunks x 50 trials cost 24 s for no new case.
-        # The 40-chunk path is covered by test_header_counts_match_stub_labels.
+        # Twelve chunks per trial, ten trials: each stub call is a process start, and the seeded
+        # draws still span the three labels and every error count 0-3 (asserted below). The
+        # 40-chunk path is covered by test_header_counts_match_stub_labels.
         rng = random.Random(42)
         messages = self._chunk_messages(12)
         chunks = core.chunk_messages(messages)
         self.assertEqual(len(chunks), 12)
         ids = [f"c{i:04d}" for i in range(len(chunks))]
-        for _trial in range(50):
+        error_counts, labels = set(), set()
+        for _trial in range(10):
             mapping = {identifier: rng.choice(self.CYCLE) for identifier in ids}
             errored = set(rng.sample(ids, rng.randrange(0, 4)))
+            error_counts.add(len(errored))
+            labels.update(mapping.values())
             env = self.make_env(STUB_LABELS=json.dumps(mapping),
                                 STUB_ERROR_IDS=",".join(sorted(errored)))
             document = core.presummarize(messages, self.make_meta(env=env), env)
@@ -241,6 +244,8 @@ class TestHeaderCounts(FrozenClockMixin, unittest.TestCase):
                                if identifier not in errored
                                and mapping[identifier] == label)
                 self.assertEqual(counts[label], expected, (label, mapping, errored))
+        self.assertEqual(error_counts, {0, 1, 2, 3})
+        self.assertEqual(labels, set(self.CYCLE))
 
 
 class TestLowConfidencePolicy(unittest.TestCase):

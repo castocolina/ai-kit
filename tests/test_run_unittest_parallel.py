@@ -119,9 +119,20 @@ class GroupingTest(unittest.TestCase):
 
 class GroupModeTest(unittest.TestCase):
     def test_arch_group_passes(self) -> None:
-        proc = run("--group", "arch")
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertIn("1/1 modules passed", proc.stdout)
+        # A one-test tests.test_arch in a foreign folder: --group arch picks the module and runs
+        # it there. The arch tier runs the real module; running it here too only cost time.
+        runner = load_runner()
+        with tempfile.TemporaryDirectory() as tmp:
+            tests_dir = pathlib.Path(tmp) / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "__init__.py").write_text("")
+            (tests_dir / "test_arch.py").write_text(_PASSING.format(body="        pass"))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = runner.main(["--group", "arch"], pathlib.Path(tmp))
+        self.assertEqual(rc, 0, out.getvalue())
+        self.assertIn("=== tests.test_arch: ok", out.getvalue())
+        self.assertIn("1/1 modules passed", out.getvalue())
 
     def test_unknown_group_is_usage_error(self) -> None:
         self.assertEqual(run("--group", "nope").returncode, 2)
@@ -692,6 +703,10 @@ class ModuleDeadlineTest(unittest.TestCase):
         # (DeadlineCouplingTest in tests/test_cross_ai_runner_e2e.py); no module has its own.
         self.assertEqual(self.runner.MODULE_TIMEOUT_SECS, 900)
 
+    def test_the_production_stop_grace_is_pinned(self) -> None:
+        # The stop tests below scale the deadline and the grace down; this pins the real grace.
+        self.assertEqual(self.runner.MODULE_STOP_GRACE_SECS, 15)
+
     def test_grandchild_in_the_module_group_dies_with_the_module(self) -> None:
         pid_file = self.tmp / "grand.pid"
         module = self.module("test_grand", (
@@ -700,9 +715,9 @@ class ModuleDeadlineTest(unittest.TestCase):
             f"open({str(pid_file)!r}, 'w').write(str(g.pid))\n"
             "time.sleep(300)"
         ))
-        _, rc, output, _ = self.run_stopped(module, 3)
+        _, rc, output, _ = self.run_stopped(module, 1.0, grace=0.5)
         self.assertEqual(rc, 124, output)
-        self.assertIn("timed out after 3s", output)
+        self.assertIn("timed out after 1.0s", output)
         self.assertTrue(pid_gone(int(wait_for_file(pid_file))))
 
     def test_a_module_that_ignores_sigterm_is_killed_after_the_grace(self) -> None:
@@ -713,7 +728,7 @@ class ModuleDeadlineTest(unittest.TestCase):
             f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
             "time.sleep(300)"
         ))
-        _, rc, _, secs = self.run_stopped(module, 3, grace=1)
+        _, rc, _, secs = self.run_stopped(module, 1.0, grace=0.5)
         self.assertEqual(rc, 124)
         self.assertLess(secs, 30)
         self.assertTrue(pid_gone(int(wait_for_file(pid_file))))
@@ -733,7 +748,7 @@ class ModuleDeadlineTest(unittest.TestCase):
             "signal.signal(signal.SIGTERM, forward)\n"
             "owner.wait()"
         ))
-        _, rc, _, _ = self.run_stopped(module, 4, grace=5)
+        _, rc, _, _ = self.run_stopped(module, 1.0, grace=0.5)
         self.assertEqual(rc, 124)
         self.assertTrue(pid_gone(int(wait_for_file(owner_pid))))
         self.assertTrue(pid_gone(int(wait_for_file(grand_pid))))

@@ -9,7 +9,7 @@ only ever overrides which EXAMPLE segments get installed, it does not bypass the
 main install wizard). A pty gives the subprocess a genuine controlling terminal,
 so the real Textual wizard launches; scripted keystrokes walk it through its
 default "adopt everything, confirm" path (Choose -> Arrange -> gate -> Review ->
-commit -> Done -> exit), exactly the sequence `tests/test_wizard_app.py`'s
+commit -> Done -> exit), exactly the sequence `tests/test_wizard_app_2.py`'s
 `TestReviewDone.test_review_enter_commits_and_done` exercises in-process. This
 then asserts the system_memory provider lands executable under
 ~/.config/ai-kit/segments/, and renders the REAL claude-status-line.py to assert the

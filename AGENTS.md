@@ -156,6 +156,9 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   `tools/run_unittest_parallel.py --staged`, which runs only the modules that
   cover the staged files. The name index (`tools/staged_mapper.py`) is rebuilt on
   every commit; `python3 tools/staged_mapper.py --stats` shows its selectivity.
+  A staged data file outside the unit folders (`.md`, `.json`, `.jsonc`, `.yaml`,
+  `.yml`, `.toml`, `.txt`) selects only the modules whose code names it: a comment
+  or docstring that names it selects nothing. Code files match anywhere.
   Unit and arch modules run under python3; the modules that need uv (unit-uv,
   integration, and the covering e2e modules within budget) run under uv after
   them. A covering e2e module over the 60 s commit budget
@@ -188,12 +191,13 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
   share. Before this phase they took 183.9 s (2026-11-03: 24 CPUs, 9 workers,
   one-minute load 1.86 at start); after this phase and the runner self-test split
   they took 55.4 s (2026-11-04: 24 CPUs, 9 and 5 workers, share 0.40, one-minute
-  load 4.48 at start; unit and arch 34.4 s, wizard 21.0 s). The pyright (9.6 s),
-  vulture (1.9 s), check-dogfood (0.5 s) and deferred-e2e (0.0 s, no push range;
-  no e2e module is over the commit budget) times are recorded beside the subtotal,
-  never inside the 60 s figure, with `push-worst` (all six pre-push hooks timed
-  alone, deferred-e2e at its no-range worst case) as the worst-case whole push:
-  67.3 s.
+  load 4.48 at start; unit and arch 34.4 s, wizard 21.0 s); after the test-time
+  cuts, 30.7 s (2026-11-04: 9 and 7 workers, load 1.90; unit and arch 21.6 s,
+  wizard 9.0 s). The pyright (9.7 s), vulture (1.9 s), check-dogfood (0.5 s) and
+  deferred-e2e (0.0 s, no push range; no e2e module is over the commit budget)
+  times are recorded beside the subtotal, never inside the 60 s figure, with
+  `push-worst` (all six pre-push hooks timed alone, deferred-e2e at its no-range
+  worst case) as the worst-case whole push: 42.7 s.
 - Runner self-test shards: `cross-ai.mjs --self-test-list` prints every self-test
   case as `name<TAB>kind`, `logic` or `runtime` (a case that waits on or measures
   a real clock is `runtime`). `tests/cross_ai_selftest.py` deals each kind,

@@ -6,8 +6,10 @@ checkout-local gsd-core's `runtime-identity` through `node` (SPEC R7), so these 
 
 The environment is cleared to a scratch HOME/XDG and a PATH of `node` and `git` symlinks: the
 gsd-tools resolver reads `RUNTIME_DIR` and every host-home override, and `.claude/` is
-gitignored, so an inherited env could reach a gsd-tools under the real home. Each class skips
-with a reason when the checkout-local gsd-tools or `node` is absent.
+gitignored, so an inherited env could reach a gsd-tools under the real home. The `node` link is
+the real binary behind a version-manager shim: the identity probe passes node only PATH and the
+scratch HOME, where a Volta shim cannot find its toolchain. Each class skips with a reason when
+the checkout-local gsd-tools or `node` is absent.
 """
 
 from __future__ import annotations
@@ -43,6 +45,19 @@ _SKIP_REASON = (
 )
 
 
+def _real_node(node):
+    """The node binary a version-manager shim (Volta, asdf) runs, resolved under the caller's
+    env; `node` itself when it is not a shim or the lookup fails."""
+    if node is None:
+        return None
+    real = subprocess.run([node, "-e", "process.stdout.write(process.execPath)"],
+                          capture_output=True, text=True, check=False, timeout=30)
+    return real.stdout.strip() if real.returncode == 0 and real.stdout.strip() else node
+
+
+_REAL_NODE = _real_node(_NODE)
+
+
 def _scoped_env_setup(case: unittest.TestCase) -> str:
     """Patch `os.environ` to a scratch HOME/XDG and a PATH of node and git symlinks.
 
@@ -53,8 +68,7 @@ def _scoped_env_setup(case: unittest.TestCase) -> str:
     case.addCleanup(shutil.rmtree, root, True)
     bin_dir = os.path.join(root, "bin")
     os.makedirs(bin_dir)
-    for name in ("node", "git"):
-        found = shutil.which(name)
+    for name, found in (("node", _REAL_NODE), ("git", shutil.which("git"))):
         if found:
             os.symlink(found, os.path.join(bin_dir, name))
     home = os.path.join(root, "home")
@@ -170,6 +184,12 @@ class TestAgentsProbe(unittest.TestCase):
             self.assertEqual(
                 os.path.realpath(probed), os.path.realpath(_CHECKOUT_GSD_TOOLS)
             )
+            # The probe answered `ok`, so the opengsd rules apply; the scratch repo has no
+            # AGENTS.md, so both are missing. A probe that timed out marks them unverified.
+            rows = {row["id"]: row for row in json.loads(result.stdout)["workflow"]}
+            for rule in ("R18", "R19"):
+                self.assertEqual(rows[rule]["status"], "missing", msg=rows[rule])
+                self.assertNotIn("unverified", rows[rule], msg=rows[rule])
 
 if __name__ == "__main__":
     unittest.main()

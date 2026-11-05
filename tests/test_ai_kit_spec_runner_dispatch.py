@@ -638,10 +638,11 @@ class TestSpawnCleanup(_ChildTracker):
             lines: list[str] = []
             seams = RunnerSeams(print_fn=lines.append, route_fn=lambda *_a: None)
             started = time.monotonic()
-            run_custom_command(
-                CustomSpec("k", [sys.executable, script, marker], [5]), "hi", seams
-            )
-            self.assertLess(time.monotonic() - started, rd._DRAIN_S + 5)
+            with mock.patch.object(rd, "_DRAIN_S", 0.5):
+                run_custom_command(
+                    CustomSpec("k", [sys.executable, script, marker], [5]), "hi", seams
+                )
+            self.assertLess(time.monotonic() - started, 0.5 + 5)
             self.assertTrue(any("stderr still open" in line for line in lines))
             for _attempt in range(50):
                 if os.path.exists(pid_file):
@@ -674,7 +675,7 @@ class TestSpawnCleanup(_ChildTracker):
             with (
                 mock.patch.object(rd, "RUNNER_OUTER_MARGIN_S", 0),
                 mock.patch.object(rd, "_KILL_GRACE_S", 0),
-                mock.patch.object(rd, "_TERM_GRACE_S", 1),
+                mock.patch.object(rd, "_TERM_GRACE_S", 0.5),
             ):
                 result = run_runner(_spec(timeout_s=1), "hi", seams)
             self.assertTrue(result.timed_out)
@@ -702,6 +703,14 @@ class TestSpawnCleanup(_ChildTracker):
             rd._kill_recorded_groups(pgid_file, seams)
             sent = [(pgid, sig) for pgid, sig in kills if sig != 0]
             self.assertEqual(sent, [(5151, signal.SIGTERM), (5151, signal.SIGKILL)])
+
+
+class TestGracePins(unittest.TestCase):
+    """The slow-stop tests patch these graces down; the production values stay pinned here."""
+
+    def test_production_graces(self):
+        self.assertEqual((rd._TERM_GRACE_S, rd._DRAIN_S), (4, 2))
+        self.assertGreater(rd._TERM_GRACE_S, 2.5)  # above the runner's 2.5 s signal budget
 
 
 class TestRunCustomCommand(_ChildTracker):
@@ -763,11 +772,13 @@ class TestRunCustomCommand(_ChildTracker):
 
     def test_sigterm_ignored_then_sigkill(self):
         marker = _marker()
-        result = run_custom_command(CustomSpec("k", [
-            sys.executable, "-c",
-            "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)",
-            marker,
-        ], [1]), "hi")
+        with mock.patch.object(rd, "_TERM_GRACE_S", 0.5):
+            result = run_custom_command(CustomSpec("k", [
+                sys.executable, "-c",
+                "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "time.sleep(60)",
+                marker,
+            ], [1]), "hi")
         self.assertIsNotNone(result.returncode)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.marker_alive(marker))

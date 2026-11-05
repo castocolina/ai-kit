@@ -128,7 +128,9 @@ class FakeDashboard:
                 return
 
         self._server = _QuietThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        # A 0.05 s poll: the default 0.5 s makes every shutdown() wait up to half a second.
+        self._thread = threading.Thread(target=self._server.serve_forever,
+                                        kwargs={"poll_interval": 0.05}, daemon=True)
 
     @property
     def url(self) -> str:
