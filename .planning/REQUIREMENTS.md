@@ -329,6 +329,10 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   sends every decision point (gray areas, proceed-anyway gates, revision conflicts, checkpoints, review triage,
   ambiguous quota routing) through the shared jev client as an advisory item, logs each call in the run ledger, and
   decides itself when jev is absent or unsure. A fixture test pins both.
+  *(amended 2026-11-04, owner rules audit: jev comes first. Before spending reasoning on a classification or a
+  choice (is a failure real or environment noise, is a finding a real bug, which of two to four fixes, does a
+  deviation need the owner, re-run or move on), the agent asks jev, checks the answer with one cheap check, and
+  acts; a general rule, not ai-kit-only)*
 - [ ] **RULE-15**: The generated never list forbids reading or copying real credential files in any run (synthetic
   fixtures prove behaviour), executing a command string read from project config (probe only known shapes), and
   scripts that assume the working directory (they resolve the repository root themselves and search hidden planning
@@ -353,6 +357,13 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   temp dir or `./tmp/`; anything beyond a short single command in a script file; pass these rails on to further
   subagents), and the briefs that spec-review, the superpowers adapter and goal-prompt generate include it; a test
   checks the header in each generated brief.
+  *(amended 2026-11-04, owner rules audit: the header also carries (a) a jev-first block with time rules: ask jev
+  before reasoning about a classification or a choice, re-run only the failing target after a fix, run the
+  whole suite once at the end, and stop a step that passes twice its estimate and report; (b) the codegraph
+  instruction: sync the index, then explore with it before grep or Read, using the shell form when the subagent
+  has no MCP tools; (c) where the project has a real-home refusal guard, delegated executor runs export it, and
+  the close compares the modification times of the real host-config files, because prompt rails are advisory
+  and only mechanical guards hold. A general rule, not ai-kit-only)*
 - [ ] **RULE-19**: The quota playbook follows the WAKE-03 decision: on a usage limit it arms a wake at the reset
   time before stopping and removes the wake when the run ends, and every progress or resume ping gives the local
   time, the running step and when it started, in one line; a doc-contract test pins the format.
@@ -414,6 +425,30 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   removed, ignored or committed before the close, and untracked files that predate the unit are left untouched
   and only reported. *(added 2026-11-04: owner request)*
   *(amended 2026-11-04, owner: a general rule, generated into every project that uses ai-kit's project rules and stressed by ai-kit's hook advisory there, not ai-kit-only)*
+
+- [ ] **RULE-30**: The end-of-task and phase playbook says a verification item that needs a real push or a run
+  inside a host session is not owner-only: the agent does it. For a push check it folds the history first
+  (RULE-17), then pushes the unit's branch to the primary remote itself. For a host-session check it starts that
+  host (for example opencode or pi) in a herdr pane when herdr is installed, prompts it to run the check, reads
+  the result and closes the pane (RULE-29). It then marks the verification and acceptance checklists passed and
+  runs the transition. Any other push, and a push to a secondary remote, still needs the owner's consent; when
+  herdr is absent the item is reported with the exact command for the owner. A doc-contract test pins the order.
+  *(added 2026-11-04, owner rules audit: general rule, from the owner's memory)*
+- [ ] **RULE-31**: The delegation playbook says what to do when an external run fails. The runner's retry ladder
+  (same session first, then a new session, then stop and report with evidence) belongs to the runner; the agent
+  never switches harness, provider or model on its own because of a failure, and never falls back to another CLI
+  because the first hit a quota, so a silent fallback cannot spend another vendor's quota. A background run that
+  comes back killed with little output gets a short foreground probe first: the same command under a time limit
+  with its output file polled for growth. Steady growth means slow (raise the timeout); no growth or a quota or
+  authentication message means a real failure to investigate. Only then is a retry decided. A doc-contract test
+  pins the text. *(added 2026-11-04, owner rules audit: general rule, from the owner's memory)*
+- [ ] **RULE-32**: In a GSD project only, the generated rules say GSD settings change through the project-local
+  `gsd-tools` (`config-set`, and `effort sync --apply` for agent model and effort), never by hand-editing the
+  config file; the tool is run from the project root, never a global install; the agents folders the session
+  loads (including the launch folder's when working in a worktree) are synced and checked afterwards; and the
+  `claude_md_path` setting names the real AGENTS.md or AGENTS.local.md file, never a symlink. A non-GSD fixture
+  project gets none of these lines. *(added 2026-11-04, owner rules audit: general rule for GSD projects, from
+  the owner's memory)*
 
 ### Host hooks
 
@@ -783,6 +818,9 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | RULE-25 | Phase 46 | Pending |
 | RULE-28 | Phase 47 | Pending |
 | RULE-29 | Phase 47 | Pending |
+| RULE-30 | Phase 47 | Pending |
+| RULE-31 | Phase 47 | Pending |
+| RULE-32 | Phase 45.1 | Pending |
 | HOOK-01 | Phase 48 | Pending |
 | HOOK-02 | Phase 49 | Pending |
 | HOOK-03 | Phase 49 | Pending |
@@ -847,8 +885,8 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | DEF-07 | Phase 32.4 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 160 total
-- Mapped to phases: 160
+- v2.0 requirements: 163 total
+- Mapped to phases: 163
 - Unmapped: 0
 
 ---
@@ -859,3 +897,4 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 *Amended 2026-11-03 by Phase 30's spec: FLOW-04, FLOW-06, LENS-01, RULE-03, RULE-06 and JEV-04 amended; FLOW-12 (global codegraph sentence rewrite) added to Phase 30.*
 *Amended 2026-11-03 by Phase 30's discuss: FLOW-13 (ai-kit's `setup-dev` installs the flow's tools) added to Phase 30; RULE-05 amended (coupling, Phase 46).*
 *Amended 2026-11-03 by Phase 30.1's spec and discuss: WIZ-01, WIZ-03, FEAT-01, FEAT-04 and FEAT-06 amended; WIZ-04 rewritten as Cursor status-line parity and moved to the new Phase 30.2; WIZ-05 (real-render preview) added to Phase 30.1.*
+*Amended 2026-11-04 by the owner rules audit (the owner's local memory compared with the requirements): RULE-14 (jev first) and RULE-18 (jev-first block with time rules, codegraph instruction and real-home guard in every brief) amended; RULE-30 (agent closes push and host-session verification items, through herdr for host sessions), RULE-31 (failed external runs: no silent harness switch, foreground probe) and RULE-32 (GSD-only settings rules) added.*
