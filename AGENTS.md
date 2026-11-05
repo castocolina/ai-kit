@@ -294,11 +294,11 @@ unavailable or insufficient.
   model can execute it (cheap model execution), and every generated command
   is path-agnostic and portable — never a machine-specific absolute path
   baked into a plan.
-- Before closing out a plan or PR, fold related work into as few
-  logically-grouped, buildable commits as possible — apply this compaction
-  across the whole plan's history, not just each individual commit (the
-  per-commit rule in Non-Negotiable Rules above still applies to each of
-  those).
+- Before closing out a plan or PR, fold its commits by the one folding policy,
+  `skills/ai-kit-commit-fold/references/folding-policy.md` (one buildable commit
+  per logical feature; this compaction covers the whole plan's history, and the
+  per-commit rule in Non-Negotiable Rules above still applies to each folded
+  commit).
 - Update READMEs and other nested docs (submodule READMEs, diagrams,
   docstrings) after any significant feature change — stale docs are a
   defect, not a follow-up.

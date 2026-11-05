@@ -33,6 +33,7 @@ import re
 import shlex
 import subprocess
 import sys
+import textwrap
 import tokenize
 import unittest
 from typing import NamedTuple
@@ -785,6 +786,81 @@ def check_no_shell_true(tree):
     return violations
 
 
+# SPEC R1 / D-11: the one folding policy. Each rule is pinned by a stable phrase, not by Markdown
+# layout, so re-wrapping, reordering and a list turned into a paragraph keep the check green, while
+# a removed rule is named.
+_FOLD_SKILL = "skills/ai-kit-commit-fold"
+_FOLD_POLICY = os.path.join(_REPO_ROOT, _FOLD_SKILL, "references", "folding-policy.md")
+POLICY_RULES = {
+    "FOLD-1": r"one commit per logical feature",
+    "FOLD-2": r"never one squash per plan or per phase",
+    "FOLD-3": r"code with its tests and docs",
+    "FOLD-4": r"tree equals the tested tree before the branch moves",
+    "FOLD-5": r"local backup tag before the branch moves",
+    "FOLD-6": r"deleted when the unit's pr merges",
+    "FOLD-7": r"no `?reset --hard`?",
+    "FOLD-8": r"reachable from main .* never rewritten",
+    "FOLD-9": r"only with `?--force-with-lease`?",
+    "FOLD-10": r"primary remote only",
+}
+
+
+def normalize_policy(text):
+    """Lowercase, drop emphasis, headings and list markers, and collapse all whitespace."""
+    plain = text.lower().replace("*", "").replace("#", "")
+    return " ".join(re.sub(r"(?m)^\s*- ", "", plain).split())
+
+
+def missing_policy_rules(text):
+    """The rule ids whose stable phrase does not appear in the policy text."""
+    plain = normalize_policy(text)
+    return [rule for rule, phrase in POLICY_RULES.items() if not re.search(phrase, plain)]
+
+
+def drop_policy_bullet(text, rule):
+    """The policy text with one rule's single-line bullet removed."""
+    return "\n".join(line for line in text.splitlines() if f"**{rule}**" not in line)
+
+
+def reverse_policy_bullets(text):
+    """The policy text with its rule bullets in reverse order and every other line in place."""
+    lines = text.splitlines()
+    slots = [i for i, line in enumerate(lines) if re.match(r"- \*\*FOLD-\d+\*\*", line)]
+    for slot, bullet in zip(slots, [lines[i] for i in reversed(slots)], strict=True):
+        lines[slot] = bullet
+    return "\n".join(lines)
+
+
+def rewrap_policy(text):
+    """The policy text re-wrapped at 40 columns and joined into one paragraph."""
+    wrapper = textwrap.TextWrapper(width=40, break_on_hyphens=False, break_long_words=False)
+    return " ".join(wrapper.fill(text).splitlines())
+
+
+# SPEC R4 / FOLD-7: fold code and instructions never reset hard. Flags the words in text, and the
+# argv form in a list or tuple literal (`["git", "reset", "--hard", tip]`), so `update-ref` passes.
+_RESET_HARD_TEXT = re.compile(r"\breset\s+--hard\b", re.IGNORECASE)
+
+
+def check_no_reset_hard(relpath, text, tree=None):
+    violations = []
+    for match in _RESET_HARD_TEXT.finditer(text):
+        line = text.count("\n", 0, match.start()) + 1
+        violations.append(f"{relpath}:{line}: reset --hard")
+    nodes = list(ast.walk(tree)) if tree is not None else []
+    for node in nodes:
+        if not isinstance(node, (ast.List, ast.Tuple)):
+            continue
+        words = [
+            elt.value.lower()
+            for elt in node.elts
+            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+        ]
+        if "reset" in words and "--hard" in words[words.index("reset") + 1 :]:
+            violations.append(f"{relpath}:{node.lineno}: argv reset --hard")
+    return violations
+
+
 # SPEC R9 / D-13: no test builds a path into the repo's .planning/. A repo root is a name (or
 # self/cls attribute) assigned from __file__ or from the cwd, the runner's cwd being the checkout.
 # A temp project's own .planning/ is never flagged, because its root is not a repo root.
@@ -1417,7 +1493,7 @@ class TestArchitecture(unittest.TestCase):
         skills_root = os.path.join(repo_root, "skills")
         violations = []
         for skill_dir in sorted(os.listdir(skills_root)):
-            if not skill_dir.startswith("ai-kit-spec-"):
+            if not (skill_dir.startswith("ai-kit-spec-") or skill_dir == "ai-kit-commit-fold"):
                 continue
             for dirpath, _dirnames, filenames in os.walk(os.path.join(skills_root, skill_dir)):
                 for filename in filenames:
@@ -1428,6 +1504,33 @@ class TestArchitecture(unittest.TestCase):
                     for msg in check_no_shell_true(tree):
                         violations.append(f"{os.path.relpath(path, repo_root)}: {msg}")
         self.assertEqual([], violations)
+
+    def test_folding_policy_states_every_rule(self):
+        with open(_FOLD_POLICY, encoding="utf-8") as fh:
+            self.assertEqual([], missing_policy_rules(fh.read()))
+
+    def test_fold_skill_never_resets_hard(self):
+        skill_root = os.path.join(_REPO_ROOT, _FOLD_SKILL)
+        violations = []
+        for dirpath, dirnames, filenames in os.walk(skill_root):
+            dirnames[:] = sorted(d for d in dirnames if d != "__pycache__")
+            for filename in sorted(filenames):
+                path = os.path.join(dirpath, filename)
+                rel = os.path.relpath(path, skill_root).replace(os.sep, "/")
+                if rel == "references/folding-policy.md" or rel.startswith("evals/"):
+                    continue
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+                tree = _read_tree(path)[0] if filename.endswith(".py") else None
+                violations.extend(check_no_reset_hard(f"{_FOLD_SKILL}/{rel}", text, tree))
+        self.assertEqual([], violations)
+
+    def test_agents_md_points_to_the_folding_policy(self):
+        with open(os.path.join(_REPO_ROOT, "AGENTS.md"), encoding="utf-8") as fh:
+            agents = fh.read()
+        self.assertIn(f"{_FOLD_SKILL}/references/folding-policy.md", agents)
+        self.assertIn("compaction", agents)
+        self.assertNotIn("logically-grouped, buildable commits", agents)
 
     def test_rule10_retired_literals_only_in_allowlist(self):
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -1858,6 +1961,39 @@ class TestArchNonVacuity(unittest.TestCase):
         self.assertNotEqual(
             [], check_import_direction("tools/claude_host.py", ast.parse("import cursor_quota\n"))
         )
+
+    def test_policy_rule_removal_is_caught(self):
+        with open(_FOLD_POLICY, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertEqual([], missing_policy_rules(text))
+        for rule in POLICY_RULES:
+            with self.subTest(rule=rule):
+                self.assertEqual([rule], missing_policy_rules(drop_policy_bullet(text, rule)))
+
+    def test_policy_rules_survive_reordering(self):
+        with open(_FOLD_POLICY, encoding="utf-8") as fh:
+            text = fh.read()
+        reordered = reverse_policy_bullets(text)
+        self.assertNotEqual(text, reordered)
+        self.assertEqual([], missing_policy_rules(reordered))
+
+    def test_policy_rules_survive_rewrapping(self):
+        with open(_FOLD_POLICY, encoding="utf-8") as fh:
+            text = fh.read()
+        rewrapped = rewrap_policy(text)
+        self.assertNotEqual(text, rewrapped)
+        self.assertEqual([], missing_policy_rules(rewrapped))
+
+    def test_reset_hard_flags_each_form(self):
+        for source in ("git reset --hard HEAD\n", "git  reset   --HARD\n"):
+            with self.subTest(source=source):
+                self.assertNotEqual([], check_no_reset_hard("skills/x.md", source))
+        argv = 'cmd = ["git", "reset", "--hard", tip]\n'
+        self.assertNotEqual([], check_no_reset_hard("skills/x.py", argv, ast.parse(argv)))
+
+    def test_reset_hard_allows_update_ref(self):
+        argv = 'cmd = ["git", "update-ref", ref, new, old]\n'
+        self.assertEqual([], check_no_reset_hard("skills/x.py", argv, ast.parse(argv)))
 
     def test_cursor_importing_claude_is_flagged(self):
         self.assertNotEqual(
