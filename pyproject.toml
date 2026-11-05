@@ -107,6 +107,7 @@ pythonVersion = "3.12"
 typeCheckingMode = "basic"
 extraPaths = [
     "skills/_shared",
+    "skills/ai-kit-commit-fold/scripts",
     "skills/ai-kit-gsd-curated-config",
     "skills/ai-kit-gsd-spec-discuss",
     "skills/ai-kit-opencode-providers",
