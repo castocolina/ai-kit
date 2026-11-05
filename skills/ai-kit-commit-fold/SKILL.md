@@ -34,7 +34,7 @@ to the user and stop:
 | `branch_moved` | The branch is no longer at the tested tip. Re-run from its current tip. |
 | `no_base_branch` | Neither the base branch nor its origin copy resolves. Ask which base branch to use. |
 | `range_on_base_branch` | The range sits on the base branch, which is never rewritten. Do not fold. |
-| `range_on_merged_branch` | The range is on a branch whose PR has merged, which is never rewritten. Do not fold. |
+| `range_on_merged_branch` | The range is on a branch whose PR has merged, which is never rewritten. Do not fold. The script refuses it only when the caller supplies merged refs; the `gsd` and `superpowers` forms pass none, so check the PR yourself. |
 | `foreign_merge` | A merge in the range is not one of the plan's own merge-backs. Ask the user to review it. |
 | `plan_not_contiguous` | Another plan's commit sits inside this plan's run. Ask the user to review the history. |
 | `detached_head` | HEAD is not on a branch. Ask the user to check out a branch. |

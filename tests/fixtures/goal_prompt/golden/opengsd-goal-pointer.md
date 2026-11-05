@@ -74,9 +74,13 @@ DONE WHEN
 
 CLEANUP
 - Leave no stray files: commit, ignore or remove each.
-- Remove the backlog entries and directories of finished work; list the rest.
+- Act only on worktrees, branches and tags this run created and recorded in a run ledger under tmp/.
+- Anything older or not owned by this run is reported, never removed.
+- Finished work means the backlog entries and the directories of work items finished in this run. Remove those; list the rest.
+- Before any merge or removal, the porcelain form of git status must be empty in that worktree and in the main checkout.
+- Never force a merge, removal or branch delete. On a conflict or a dirty tree, stop and report.
 - Merge the working branch into the main checkout; never push.
-- Archive unmerged work of every intermediate worktree as a tag, then remove the worktree and its branch; remove this worktree last.
+- Archive the unmerged work of each worktree this run created as a tag, then remove that worktree and its branch; remove this worktree last.
 
 STOP IF
 - The same failure repeats 3 times with no progress.
@@ -155,9 +159,13 @@ DONE WHEN
 
 CLEANUP
 - Leave no stray files: commit, ignore or remove each.
-- Remove the backlog entries and directories of finished work; list the rest.
+- Act only on worktrees, branches and tags this run created and recorded in a run ledger under tmp/.
+- Anything older or not owned by this run is reported, never removed.
+- Finished work means the backlog entries and the directories of work items finished in this run. Remove those; list the rest.
+- Before any merge or removal, the porcelain form of git status must be empty in that worktree and in the main checkout.
+- Never force a merge, removal or branch delete. On a conflict or a dirty tree, stop and report.
 - Merge the working branch into the main checkout; never push.
-- Archive unmerged work of every intermediate worktree as a tag, then remove the worktree and its branch; remove this worktree last.
+- Archive the unmerged work of each worktree this run created as a tag, then remove that worktree and its branch; remove this worktree last.
 
 STOP IF
 - The same failure repeats 3 times with no progress.

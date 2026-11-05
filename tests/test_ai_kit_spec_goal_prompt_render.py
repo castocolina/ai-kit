@@ -270,8 +270,23 @@ class TestTemplateAndSections(unittest.TestCase):
         self.assertEqual(len(safety), 3)
         self.assertIn("Never print secrets. Never push. Never stage everything blindly.", safety)
         cleanup = gp_sections.cleanup_lines()
-        self.assertEqual(len(cleanup), 4)
-        self.assertEqual(cleanup[2], "Merge the working branch into the main checkout; never push.")
+        self.assertIn("Merge the working branch into the main checkout; never push.", cleanup)
+
+    def test_cleanup_lines_bound_removal_to_this_runs_own_clean_worktrees(self):
+        cleanup = gp_sections.cleanup_lines()
+        text = " ".join(cleanup)  # lines wrap in the source, so the needles span words
+        for needle in (
+            "created and recorded in a run ledger under tmp/",
+            "not owned by this run is reported, never removed",
+            "backlog entries and the directories of work items finished in this run",
+            "the porcelain form of git status must be empty in that worktree and in the main "
+            "checkout",
+            "Never force a merge, removal or branch delete",
+            "On a conflict or a dirty tree, stop and report",
+        ):
+            self.assertIn(needle, text)
+        self.assertNotIn("every intermediate worktree", text)
+        self.assertTrue(all(len(line) <= gp_sections.LINE_CAP for line in cleanup))
 
     def test_stop_lines_add_the_cross_ai_candidate_line_only_for_opengsd(self):
         opengsd = gp_sections.stop_lines(200, True)

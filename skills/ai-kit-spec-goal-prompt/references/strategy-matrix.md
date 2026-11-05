@@ -74,6 +74,13 @@ Only the `goal` strategy has two forms; loop, autonomous and plain blocks never 
   pointer form, `full_chars` in the `conditions` entry and a warning that the host's behaviour is
   unverified.
 
+## The loop block
+
+Only a `loop` strategy whose primitive is the `/loop` row is typed as `/loop 30m ...`; its label is
+that row's own availability. A schedule or wake tool (`CronCreate one-shot`, `CronCreate recurring`,
+`ScheduleWakeup`) renders a plain paragraph that names the tool as the QUOTA A wake, never an
+interval loop. An OS timer or no primitive renders the plain paragraph.
+
 ## A long objective
 
 The OBJECTIVE rule line holds at most one 200-character line. When the user's `objective` is

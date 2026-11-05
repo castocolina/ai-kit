@@ -60,8 +60,10 @@ GOAL_EVIDENCE = "exit code and count line"
 UNIT_CLAUSE = "Unit tests alone never count as done."
 OBJECTIVE_TAIL = ", each verified. Then leave the repository clean."
 OBJECTIVE_POINTER = " (full text: {path}section Full objective)"
-# Loop primitives that are typed as a `/loop` command; the rest of the loop rows fall to plain.
-LOOP_COMMANDS = ("/loop", "CronCreate one-shot", "CronCreate recurring", "ScheduleWakeup")
+# Only the `/loop` row is typed as a `/loop` command; a schedule or wake tool never becomes an
+# interval loop, and an OS timer or no primitive falls to the plain paragraph.
+LOOP_COMMAND = "/loop"
+SCHEDULE_TOOLS = ("CronCreate one-shot", "CronCreate recurring", "ScheduleWakeup")
 PLAIN_FLAG = "flagged: no goal, loop or schedule primitive"
 
 
@@ -277,10 +279,16 @@ def plain_block(path: str) -> list[str]:
 
 
 def loop_block(path: str, primitive: str | None, interval: str = "30m") -> list[str]:
-    """A `/loop` line for a command primitive; the plain paragraph for an OS timer or none."""
-    if primitive not in LOOP_COMMANDS:
-        return plain_block(path)
-    return [f"/loop {interval} {_continue(path)}; stop and report once DONE WHEN holds."]
+    """A `/loop` line only for the `/loop` row; a schedule or wake tool names itself, an OS timer
+    or none gets the plain paragraph. The block is labelled by the same row it types."""
+    if primitive == LOOP_COMMAND:
+        return [f"/loop {interval} {_continue(path)}; stop and report once DONE WHEN holds."]
+    if primitive in SCHEDULE_TOOLS:
+        return [
+            f"{_continue(path)}; stop and report once DONE WHEN holds. The {primitive} wake of "
+            "QUOTA A re-enters this session."
+        ]
+    return plain_block(path)
 
 
 def strategy_heading(strategy: Mapping[str, Any], index: int) -> str:
@@ -364,12 +372,22 @@ def safety_lines() -> list[str]:
 
 
 def cleanup_lines() -> list[str]:
+    # Each rule is its own line under LINE_CAP. No flag-like token: the OpenGSD block refuses one
+    # after line 1 (the workflow greps it), so the porcelain and force rules use words.
     return [
         "Leave no stray files: commit, ignore or remove each.",
-        "Remove the backlog entries and directories of finished work; list the rest.",
+        "Act only on worktrees, branches and tags this run created and recorded in a run ledger "
+        "under tmp/.",
+        "Anything older or not owned by this run is reported, never removed.",
+        "Finished work means the backlog entries and the directories of work items finished in "
+        "this run. Remove those; list the rest.",
+        "Before any merge or removal, the porcelain form of git status must be empty in that "
+        "worktree and in the main checkout.",
+        "Never force a merge, removal or branch delete. On a conflict or a dirty tree, stop and "
+        "report.",
         "Merge the working branch into the main checkout; never push.",
-        "Archive unmerged work of every intermediate worktree as a tag, then remove the worktree "
-        "and its branch; remove this worktree last.",
+        "Archive the unmerged work of each worktree this run created as a tag, then remove that "
+        "worktree and its branch; remove this worktree last.",
     ]
 
 

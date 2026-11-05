@@ -238,7 +238,8 @@ class TestRenderPointer(_RepoCase):
         write_plans(self.repo, [("a.md", "Plan A", None)])
         detect = make_detect(plans_scope(self.repo), [
             strategy("goal", recommended=True),
-            strategy("loop", rank=2, primitive="CronCreate recurring")])
+            # The `/loop` row is the only primitive typed as a `/loop` line (D8-2).
+            strategy("loop", rank=2, primitive="/loop")])
         result = gp_render.render(detect, plan_answers(["a.md"], objective=LONG), self.ctx())
         text = self.read(result)
         self.assertEqual(text.count("## Rails"), 1)

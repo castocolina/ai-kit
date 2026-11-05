@@ -189,16 +189,33 @@ class TestBlocks(_RepoCase):
             gp_render.render(detect, answers, self.ctx())
         self.assertFalse(Path(self.repo, "docs/superpowers/goals").exists())
 
-    def test_loop_block_uses_the_command_form_for_command_primitives(self):
-        for primitive in ("/loop", "CronCreate one-shot", "CronCreate recurring",
-                          "ScheduleWakeup"):
+    def test_loop_block_types_the_loop_command_only_for_the_loop_row(self):
+        # The strategy label comes from the primitive's own row, so only `/loop` may be typed as
+        # an interval loop; any other primitive here would carry another row's availability.
+        self.assertEqual(
+            gp_sections.loop_block(PATH, "/loop", "30m"),
+            [f"/loop 30m Continue the work described in {PATH} section Rails; "
+             "stop and report once DONE WHEN holds."],
+        )
+
+    def test_loop_block_never_pairs_a_schedule_tool_with_an_interval_loop(self):
+        # CronCreate one-shot is one wake, not a 30-minute loop (D8-2).
+        for primitive in ("CronCreate one-shot", "CronCreate recurring", "ScheduleWakeup"):
             with self.subTest(primitive=primitive):
-                lines = gp_sections.loop_block(PATH, primitive, "30m")
-                self.assertEqual(
-                    lines,
-                    [f"/loop 30m Continue the work described in {PATH} section Rails; "
-                     "stop and report once DONE WHEN holds."],
-                )
+                (paragraph,) = gp_sections.loop_block(PATH, primitive, "30m")
+                self.assertFalse(paragraph.startswith("/loop"))
+                self.assertNotIn("30m", paragraph)
+                self.assertIn(f"The {primitive} wake of QUOTA A re-enters this session", paragraph)
+
+    def test_rendered_loop_strategy_on_a_one_shot_tool_has_no_interval_loop(self):
+        write_plans(self.repo, [("a.md", "Plan A", None), ("b.md", "Plan B", None)])
+        detect = make_detect(
+            plans_scope(self.repo),
+            [strategy("loop", recommended=True, primitive="CronCreate one-shot")],
+        )
+        text = self.read(gp_render.render(detect, plan_answers(["a.md", "b.md"]), self.ctx()))
+        self.assertNotIn("/loop ", text)
+        self.assertIn("The CronCreate one-shot wake of QUOTA A re-enters this session", text)
 
     def test_loop_block_is_a_plain_paragraph_for_an_os_timer_or_no_primitive(self):
         for primitive in ("systemd user timer", None):
@@ -296,8 +313,8 @@ class TestBlocks(_RepoCase):
         write_plans(self.repo, [("a.md", "Plan A", None), ("b.md", "Plan B", None)])
         detect = make_detect(
             plans_scope(self.repo),
-            [strategy("goal", recommended=True), strategy("loop", rank=2,
-                                                          primitive="CronCreate recurring")],
+            # Only the `/loop` row is typed as `/loop`; a scheduler tool renders a plain wake line.
+            [strategy("goal", recommended=True), strategy("loop", rank=2, primitive="/loop")],
         )
         result = gp_render.render(detect, plan_answers(["a.md", "b.md"]), self.ctx())
         text = self.read(result)

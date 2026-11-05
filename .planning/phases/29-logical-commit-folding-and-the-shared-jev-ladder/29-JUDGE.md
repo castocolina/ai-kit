@@ -78,3 +78,36 @@ JDG-04 for the five skills is open: no judge produced a verdict in this run. Eve
 - ai-kit-spec-goal-prompt: pending: native-opus-xhigh fallback, run by the orchestrator (referee-one quota; referee-two and referee-three model-unavailable). Baseline: referee-one 89.6 (B) with two high findings (D6-1, D8-2), not comparable to a native-opus-xhigh judge.
 
 Human verification item (phase verification, JDG-04): run the native-opus-xhigh judge on the five final SKILL.md files, then record its verdicts here.
+
+## Fallback verdicts (native-opus-xhigh, 2026-11-04)
+
+Judge: `native-opus-xhigh`, the owner's standing fallback when the referees are down (rule of 2026-11-02).
+Fallback reason: referee-one quota stop (503, all targets skipped, session 99%); referee-two
+`grok-cli/grok-4.7-xhigh` unavailable; referee-three `anthropic/claude-opus-5-5-xhigh` unavailable.
+Rubric version 4, spec_sha `69ef37e9424c0a7ea9dd2293b559e43ec8176379`. Raw verdicts: `tmp/judge-fallback-29/`
+(round 1 at 3410359) and `tmp/judge-fallback-29/round2/` (round 2 at d2855bc), gitignored.
+
+Referee-one baselines are from another judge and are not compared; round 2 deltas are against round 1 of
+the same judge.
+
+| Skill | Round 1 | Round 2 | Delta | Critical / high | Bar |
+|---|---|---|---|---|---|
+| ai-kit-commit-fold | 104/125, 83.2 B | 103/125, 82.4 B | -1 | 0 / 0 | pass |
+| jev-fast-decision | 107/125, 85.6 B | not re-judged (unchanged) | - | 0 / 0 | pass |
+| ai-kit-gsd-spec-discuss | 111/125, 88.8 B | not re-judged (unchanged) | - | 0 / 0 | pass |
+| ai-kit-spec-execute-superpowers | 104/125, 83.2 B | not re-judged (unchanged) | - | 0 / 0 | pass |
+| ai-kit-spec-goal-prompt | 107/125, 85.6 B, 2 high | 111/125, 88.8 B | +4 | 0 / 0 | pass |
+
+Round 1 high findings on ai-kit-spec-goal-prompt, both resolved in round 2: D6-1 cleanup acted on any
+worktree (fixed 21a908d); D8-2 `/loop` labelled with a schedule tool's availability (fixed 844286f).
+
+Open medium findings (non-blocking, follow-up):
+- goal-prompt D6-2: "directories of work items finished in this run" and "remove this worktree last" are
+  still loosely scoped.
+- goal-prompt D8-3: no rule tells the run to write the run ledger it relies on, or names its file.
+- commit-fold D8-3: "check the PR yourself" is reachable only from a refusal row the gsd and superpowers
+  forms never produce; D8-4 (low): a root commit is refused as `foreign_merge`, which the table describes
+  as a merge.
+
+JDG-04 verdict: met for all five skills (no critical or high finding, grade B or better, no regression
+beyond 7 points for the same judge).
