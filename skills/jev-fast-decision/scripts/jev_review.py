@@ -12,6 +12,11 @@ then one batch per consented remote row, and returns a per-item rung trail so th
 map rungs to its own columns. The persisted remote-consent record lives here too (D-06):
 `consent grant|revoke|show <backend>` owns `${XDG_CONFIG_HOME:-~/.config}/ai-kit/jev-consent.json`.
 
+Commands: `jev_review.py [--probe | --skip-local]` screens stdin; `consent grant|revoke|show
+<backend>` manages the record; `ladder [--second-opinion]` and `detect` answer through the
+ladder caller in `jev_ladder.py`. `consent` takes `--client PATH` only to delegate through that
+caller too; `ladder` and `detect` take `--client PATH` as well.
+
 Every answer is advisory: a low-confidence, truncated or over-long-state answer carries
 `needs_fallback` so the caller reasons it out itself. Nothing here gates anything, and no
 output ever prints a key value — key sources are reported by label only.
@@ -40,7 +45,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, NamedTuple
 
-# decide.py reads this line as text and refuses a client without it (no consent gate): T-21.1-22.
+# jev_ladder.py reads this line as text; a client without it is never run (no consent gate):
+# T-21.1-22.
 CLIENT_PROTOCOL = 2
 
 # SPEC R5's check is an `assertLogs` on this logger: the consent ask has to be visible to the
@@ -539,7 +545,7 @@ def top_of(answer):
 # ─── backend adapters (the only functions allowed to name a backend) ──────────
 
 def _is_loopback(host):
-    """True for localhost and loopback IP literals only (same rule decide.py uses)."""
+    """True for localhost and loopback IP literals only (same rule as the pre-move ladder)."""
     if not host:
         return False
     if host.lower() == "localhost":
@@ -563,8 +569,9 @@ def _laya_url():
     """(endpoint, None) or (None, reason): loopback only.
 
     A non-loopback `JEV_API_URL` is skipped, never refused — it is the live skill's Zen
-    endpoint, and a shell still exporting it must keep the Laya rung, exactly as decide.py's
-    `laya_url` does today. A non-loopback `JEV_LAYA_URL`/`AI_KIT_LAYA_URL` is refused (D-08).
+    endpoint, and a shell still exporting it must keep the Laya rung, as the pre-move
+    spec-discuss ladder's `laya_url` did. A non-loopback `JEV_LAYA_URL`/`AI_KIT_LAYA_URL` is
+    refused (D-08).
     """
     for name in ("JEV_LAYA_URL", "AI_KIT_LAYA_URL"):
         raw = os.environ.get(name, "").strip()
@@ -1064,7 +1071,7 @@ def _gate_open(name):
     return name in [part.strip() for part in raw.split(",") if part.strip()]
 
 
-# ─── consent record (D-06: moved unchanged in format from decide.py 24 D-10) ───
+# ─── consent record (D-06: format unchanged from the pre-move spec-discuss ladder, 24 D-10) ───
 
 def _config_dir():
     """ai-kit's per-user config dir: ${XDG_CONFIG_HOME:-~/.config}/ai-kit."""
@@ -2007,8 +2014,13 @@ def screen(skip_local=False):
     return outcome
 
 
+CLIENT_HELP = ("path to a jev_review.py to run instead of this one (else AI_KIT_JEV_CLIENT, "
+               "then the skills roots)")
+
+
 def build_parser():
-    """The CLI: `--probe`, `--skip-local` for the screen, or `consent grant|revoke|show`."""
+    """The CLI: `--probe`, `--skip-local` for the screen, `consent grant|revoke|show`, and the
+    ladder entry points `ladder` and `detect` (their logic lives in jev_ladder.py)."""
     parser = argparse.ArgumentParser(
         prog="jev_review.py", description=(__doc__ or "").split("\n", 1)[0])
     parser.add_argument("--probe", action="store_true",
@@ -2019,13 +2031,25 @@ def build_parser():
     consent = sub.add_parser("consent", help="manage the per-user remote-consent record")
     consent.add_argument("action", choices=("grant", "revoke", "show"))
     consent.add_argument("backend", help="a remote row name from the backend table")
+    consent.add_argument("--client", default=None, help=CLIENT_HELP)
+    ladder = sub.add_parser("ladder", help='read {"items":[...]} on stdin; advisory answers')
+    ladder.add_argument("--second-opinion", action="store_true",
+                        help="skip the local rungs: every valid item goes remote only")
+    ladder.add_argument("--client", default=None, help=CLIENT_HELP)
+    detect = sub.add_parser("detect", help="report the backend table by label; never a key")
+    detect.add_argument("--client", default=None, help=CLIENT_HELP)
     return parser
 
 
 def main(argv=None):
-    """`--probe` prints the table report, `consent` edits the record, anything else screens
-    stdin. Always exit 0."""
+    """`--probe` prints the table report, `consent` edits the record, `ladder` and `detect`
+    answer through jev_ladder.py, anything else screens stdin. Always exit 0, except the
+    ladder's exit 2 for unusable stdin."""
     args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
+    if args.command in ("ladder", "detect") or (args.command == "consent" and args.client):
+        # Loaded only for these commands: the screen and --probe paths never import it.
+        import jev_ladder  # pylint: disable=import-outside-toplevel
+        return jev_ladder.main(args)
     if args.command == "consent":
         out = consent_command(args.action, args.backend)
     elif args.probe:
