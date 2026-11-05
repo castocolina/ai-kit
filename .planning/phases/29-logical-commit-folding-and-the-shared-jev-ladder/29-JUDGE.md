@@ -39,3 +39,42 @@ Human verification item: take this baseline before plan 29-16 judges the new tex
 - Skill `ai-kit-spec-goal-prompt`, lane `my-referee-two` (and replacement `my-referee-three`): same last status.
 
 The second-judge baselines are blocked by a router-side model outage on both referee-two and referee-three; no other model or native judging was used. The first-judge baselines (referee-one, table above) are complete.
+
+## Final round 1
+
+Plan 29-16 Task 1, on the final texts in the working tree (`judge/prompt-final1.txt`, tracked). Lanes launched in the background: `run_lane.sh my-referee-one final1` and `run_lane.sh my-referee-two final1` together, each probed once. Referee-three replaced the failed referee-two and was probed once. Owner rules applied: a quota failure stops that lane and is recorded, with no retry and no replacement; `omniroute-model-unavailable` is the known outage, recorded verbatim, with no 600 s retry.
+
+Lane status (last `AIKIT-XAI` line of each run, verbatim from `tmp/p29/judge/final1-<referee>.err`; `attempts=12` on each run, `cycles=0`, `tree=clean`, `action=stop`):
+
+- `my-referee-one`: `AIKIT-XAI status=quota cli=pi model=router-env/my-referee-one exit=75 cli_rc=1 elapsed=203s out=0 tree=clean action=stop route=router rule=omniroute-all-targets-skipped pattern=verified attempts=12 cycles=0 retry_after_s=600 cycle=0`; runner message `503: {"message":"Service temporarily unavailable: all targets were skipped by pre-dispatch filters (session 99% <redacted>)","type":"service_unavailable","code":"ALL_TARGETS_SKIPPED"}`. Not replaced: the quota failure stops the lane.
+- `my-referee-two`: `AIKIT-XAI status=transient cli=pi model=router-env/my-referee-two exit=75 cli_rc=1 elapsed=201s out=0 tree=clean action=stop route=router rule=omniroute-model-unavailable pattern=verified attempts=12 cycles=0 retry_after_s=600 cycle=0`; runner message `503: {"message":"Model grok-cli/grok-4.7-xhigh is unavailable","type":"server_error","code":"service_unavailable"}`. Replaced by `my-referee-three`.
+- `my-referee-three` (replacement for referee-two): `AIKIT-XAI status=transient cli=pi model=router-env/my-referee-three exit=75 cli_rc=1 elapsed=190s out=0 tree=clean action=stop route=router rule=omniroute-model-unavailable pattern=verified attempts=12 cycles=0 retry_after_s=600 cycle=0`; runner message `503: {"message":"Model anthropic/claude-opus-5-5-xhigh is unavailable","type":"server_error","code":"service_unavailable"}`.
+
+Result: no valid verdict from any lane, so no score, percent, grade, critical or high count, and no delta exists for any row. `judge/compare.py final1 ...` printed ten `pending` rows and computed no pass or fail. Each row names its lane status and the replacement, as Task 1 requires.
+
+| Skill | Judge | Score | Percent | Grade | Critical | High | Delta | Bar |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ai-kit-commit-fold | my-referee-one | - | - | - | - | - | none | pending: quota, lane stopped, no replacement |
+| ai-kit-commit-fold | my-referee-two (replacement my-referee-three) | - | - | - | - | - | none | pending: model-unavailable on both |
+| jev-fast-decision | my-referee-one | - | - | - | - | - | - | pending: quota, lane stopped, no replacement |
+| jev-fast-decision | my-referee-two (replacement my-referee-three) | - | - | - | - | - | - | pending: model-unavailable on both |
+| ai-kit-gsd-spec-discuss | my-referee-one | - | - | - | - | - | - | pending: quota, lane stopped, no replacement |
+| ai-kit-gsd-spec-discuss | my-referee-two (replacement my-referee-three) | - | - | - | - | - | - | pending: model-unavailable on both |
+| ai-kit-spec-execute-superpowers | my-referee-one | - | - | - | - | - | - | pending: quota, lane stopped, no replacement |
+| ai-kit-spec-execute-superpowers | my-referee-two (replacement my-referee-three) | - | - | - | - | - | - | pending: model-unavailable on both |
+| ai-kit-spec-goal-prompt | my-referee-one | - | - | - | - | - | - | pending: quota, lane stopped, no replacement |
+| ai-kit-spec-goal-prompt | my-referee-two (replacement my-referee-three) | - | - | - | - | - | - | pending: model-unavailable on both |
+
+Task 2 had no verdict findings to fix, so no round-2 or round-3 re-judge ran and no SKILL.md, `references/` or `evals/` file changed. Orchestrator direction (received mid-run): the native-opus-xhigh fallback is run by the orchestrator, not by this session; this session runs no native or haiku judging.
+
+## Verdict
+
+JDG-04 for the five skills is open: no judge produced a verdict in this run. Every skill is pending the native-opus-xhigh fallback, which the orchestrator runs. The orchestrator also decides the regression check, since a baseline from another judge is not comparable.
+
+- ai-kit-commit-fold: pending: native-opus-xhigh fallback, run by the orchestrator (referee-one quota; referee-two and referee-three model-unavailable). No baseline exists for this skill.
+- jev-fast-decision: pending: native-opus-xhigh fallback, run by the orchestrator (referee-one quota; referee-two and referee-three model-unavailable). Baseline: referee-one 92.0 (A), not comparable to a native-opus-xhigh judge.
+- ai-kit-gsd-spec-discuss: pending: native-opus-xhigh fallback, run by the orchestrator (referee-one quota; referee-two and referee-three model-unavailable). Baseline: referee-one 89.6 (B), not comparable to a native-opus-xhigh judge.
+- ai-kit-spec-execute-superpowers: pending: native-opus-xhigh fallback, run by the orchestrator (referee-one quota; referee-two and referee-three model-unavailable). Baseline: referee-one 89.6 (B), not comparable to a native-opus-xhigh judge.
+- ai-kit-spec-goal-prompt: pending: native-opus-xhigh fallback, run by the orchestrator (referee-one quota; referee-two and referee-three model-unavailable). Baseline: referee-one 89.6 (B) with two high findings (D6-1, D8-2), not comparable to a native-opus-xhigh judge.
+
+Human verification item (phase verification, JDG-04): run the native-opus-xhigh judge on the five final SKILL.md files, then record its verdicts here.
