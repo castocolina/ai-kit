@@ -1,4 +1,4 @@
-"""Engine tracer and report tests for ai-kit-commit-fold, on temp git repos (plan 29-01)."""
+"""Engine, guard, report and grouping tests for ai-kit-commit-fold on temp git repos."""
 
 import json
 import os
@@ -12,7 +12,15 @@ import unittest
 from unittest import mock
 
 from tests import fold_fixtures
-from tests.fold_fixtures import git_env, isolated_fold, make_repo, run_git, write_checkpoint
+from tests.fold_fixtures import (
+    git_env,
+    isolated_fold,
+    make_repo,
+    merge_no_ff,
+    run_git,
+    set_ref,
+    write_checkpoint,
+)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "skills" / "ai-kit-commit-fold" / "scripts"
@@ -37,10 +45,69 @@ WITH_DOCS = [*TWO, ({".planning/STATE.md": b"state\n"}, "docs: note state", None
 HEX12 = r"[0-9a-f]{12}"
 
 
-def checkpoint_fields(base, end, tip, docs=()):
-    return {"schema": 1, "unit": "29-01", "ref": "refs/heads/plan", "base": base, "end": end,
-            "tip": tip, "base_branch": "main", "candidates": CANDIDATES,
-            "docs_paths": list(docs)}
+def checkpoint_fields(base, end, tip, docs=(), **extra):
+    fields = {"schema": 1, "unit": "29-01", "ref": "refs/heads/plan", "base": base, "end": end,
+              "tip": tip, "base_branch": "main", "candidates": CANDIDATES,
+              "docs_paths": list(docs)}
+    fields.update(extra)
+    return fields
+
+
+def build_repo(parent, env, name, specs):
+    """A repo on main with one base commit, then branch plan with one commit per spec.
+
+    Returns (repo, base, shas).
+    """
+    repo = make_repo(os.path.join(parent, name), env)
+    base = run_git(repo, env, "rev-parse", "main").strip()
+    run_git(repo, env, "checkout", "-q", "-b", "plan")
+    shas = [fold_fixtures.commit(repo, env, files, message, author)
+            for files, message, author in specs]
+    return repo, base, shas
+
+
+def copy_repo(source, parent):
+    """A fresh copy of a class-built repo, so each test folds its own."""
+    copy = pathlib.Path(tempfile.mkdtemp(dir=parent)) / "repo"
+    shutil.copytree(source, copy)
+    return copy
+
+
+class RepoCase(unittest.TestCase):
+    """Builds shared repos once per class and gives each test a copy of them."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="ai-kit-p29-")
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, ignore_errors=True)
+        cls.env = git_env(os.path.join(cls.tmp, "home"))
+        patcher = mock.patch.dict(os.environ, cls.env)
+        patcher.start()
+        cls.addClassCleanup(patcher.stop)
+
+    def git(self, repo, *args):
+        return run_git(repo, self.env, *args).strip()
+
+    def state(self, repo):
+        """What a refusal must leave alone: the branch tip, the status and the backup tags."""
+        return (self.git(repo, "rev-parse", "plan"), self.git(repo, "status", "--porcelain"),
+                self.git(repo, "tag", "--list", "ai-kit-fold/*"))
+
+    def fold(self, repo, **fields):
+        cp = fold_engine.load_checkpoint(checkpoint_fields(**fields))
+        return fold_engine.fold(repo, cp, fold_group.group_features, "inline")
+
+    def one_byte_off(self, repo, path="a.py"):
+        """Patch the blob that the segment takes for `path` to one changed byte (a wrong fold)."""
+        blob = run_git(repo, self.env, "hash-object", "-w", "--stdin",
+                       data=b"a changed\n").strip()
+        real_entry = fold_engine._entry
+
+        def patched(repo_, end, name):
+            mode, sha = real_entry(repo_, end, name)
+            return (mode, blob) if name == path else (mode, sha)
+
+        return mock.patch.object(fold_engine, "_entry", side_effect=patched)
 
 
 class TestFoldTracer(unittest.TestCase):
@@ -52,19 +119,9 @@ class TestFoldTracer(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, cls.env)
         patcher.start()
         cls.addClassCleanup(patcher.stop)
-        cls.two = cls._build("two", TWO)
-        cls.reordered = cls._build("reordered", REORDERED)
-        cls.docs = cls._build("docs", WITH_DOCS)
-
-    @classmethod
-    def _build(cls, name, specs):
-        """A repo on main with branch plan holding one commit per spec: (repo, base, shas)."""
-        repo = make_repo(os.path.join(cls.tmp, name), cls.env)
-        base = run_git(repo, cls.env, "rev-parse", "main").strip()
-        run_git(repo, cls.env, "checkout", "-q", "-b", "plan")
-        shas = [fold_fixtures.commit(repo, cls.env, files, message, author)
-                for files, message, author in specs]
-        return repo, base, shas
+        cls.two = build_repo(cls.tmp, cls.env, "two", TWO)
+        cls.reordered = build_repo(cls.tmp, cls.env, "reordered", REORDERED)
+        cls.docs = build_repo(cls.tmp, cls.env, "docs", WITH_DOCS)
 
     def _git(self, repo, *args):
         return run_git(repo, self.env, *args).strip()
@@ -125,23 +182,15 @@ class TestFoldTracer(unittest.TestCase):
         self.assertEqual(self._git(copy, "rev-parse", "plan^{tree}"),
                          self._git(copy, "rev-parse", f"{shas[-1]}^{{tree}}"))
 
-    def test_end_before_tip_refuses_without_moving_the_ref(self):
-        copy, _base, shas, result = self._fold(self.two, end=self.two[2][1])
-        self.assertEqual(result.outcome, "refused")
-        self.assertEqual(result.reason, "tree_mismatch")
-        self.assertEqual(self._git(copy, "rev-parse", "plan"), shas[-1])
-        self.assertEqual(self._git(copy, "tag", "--list", "ai-kit-fold/*"), "")
-
-    def test_moved_branch_refuses_without_touching_the_ref(self):
-        source, base, shas = self.two
-        copy = pathlib.Path(tempfile.mkdtemp(dir=self.tmp)) / "repo"
-        shutil.copytree(source, copy)
-        run_git(copy, self.env, "update-ref", "refs/heads/plan", shas[0])
-        cp = fold_engine.load_checkpoint(checkpoint_fields(base, shas[-1], shas[-1]))
-        result = fold_engine.fold(copy, cp, fold_group.group_features, "inline")
-        self.assertEqual(result.reason, "branch_moved")
-        self.assertEqual(self._git(copy, "rev-parse", "plan"), shas[0])
-        self.assertEqual(self._git(copy, "tag", "--list", "ai-kit-fold/*"), "")
+    def test_end_before_tip_replays_the_later_commits(self):
+        copy, base, shas, result = self._fold(self.two, end=self.two[2][1])
+        self.assertEqual(result.outcome, "folded", msg=result.reason)
+        self.assertEqual(self._git(copy, "rev-list", "--count", f"{base}..plan"), "3")
+        self.assertEqual(self._git(copy, "rev-parse", "plan^{tree}"),
+                         self._git(copy, "rev-parse", f"{shas[-1]}^{{tree}}"))
+        self.assertEqual(self._git(copy, "log", "-1", "--format=%s", "plan"), "test: cover b")
+        tag = f"ai-kit-fold/29-01/{shas[-1][:12]}"
+        self.assertEqual(self._git(copy, "rev-parse", f"{tag}^{{commit}}"), shas[-1])
 
     def test_cli_prints_the_five_line_report(self):
         source, base, shas = self.two
@@ -194,6 +243,339 @@ class TestFoldTracer(unittest.TestCase):
         self.assertEqual(len(proc.stderr.splitlines()), 1, msg=proc.stderr)
 
 
+class TestFoldGuards(RepoCase):
+    """Every refusal leaves the branch, the working tree and the backup tags unchanged."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.repo, cls.base, cls.shas = build_repo(cls.tmp, cls.env, "guards", TWO)
+        cls.docs_repo, cls.docs_base, cls.docs_shas = build_repo(
+            cls.tmp, cls.env, "docs-only", [({"docs/notes.md": b"n\n"}, "docs(07-01): note", None)])
+
+    def _range(self, repo, **extra):
+        return self.fold(repo, base=self.base, end=self.shas[-1], tip=self.shas[-1], **extra)
+
+    def test_policy_missing_refuses_through_the_cli(self):
+        copy = copy_repo(self.repo, self.tmp)
+        root = pathlib.Path(tempfile.mkdtemp(dir=self.tmp))
+        scripts = root / "skills" / "x" / "scripts"
+        shutil.copytree(SCRIPTS, scripts)
+        checkpoint = write_checkpoint(root / "cp.json",
+                                      **checkpoint_fields(self.base, self.shas[-1], self.shas[-1]))
+        before = self.state(copy)
+        proc = subprocess.run(
+            [sys.executable, str(scripts / "fold.py"), "fold", str(checkpoint),
+             "--repo", str(copy)],
+            capture_output=True, text=True, env=self.env, check=False,
+        )
+        self.assertEqual(proc.returncode, 1, msg=proc.stderr)
+        self.assertEqual(proc.stdout.splitlines()[-1],
+                         "outcome: 29-01 refused policy_missing (inline)")
+        self.assertEqual(self.state(copy), before)
+
+    def test_tracked_change_refuses_staged_or_not(self):
+        for staged in (False, True):
+            with self.subTest(staged=staged):
+                copy = copy_repo(self.repo, self.tmp)
+                (copy / "a.py").write_bytes(b"dirty\n")
+                if staged:
+                    self.git(copy, "add", "a.py")
+                before = self.state(copy)
+                result = self._range(copy)
+                self.assertEqual((result.outcome, result.reason), ("refused", "dirty_tree"))
+                self.assertEqual(self.state(copy), before)
+                self.assertEqual((copy / "a.py").read_bytes(), b"dirty\n")
+
+    def test_untracked_file_does_not_refuse(self):
+        copy = copy_repo(self.repo, self.tmp)
+        (copy / "notes.txt").write_bytes(b"scratch\n")
+        result = self._range(copy)
+        self.assertEqual(result.outcome, "folded", msg=result.reason)
+        self.assertTrue((copy / "notes.txt").exists())
+
+    def test_branch_not_at_tip_refuses(self):
+        copy = copy_repo(self.repo, self.tmp)
+        self.git(copy, "checkout", "-q", "--detach")
+        set_ref(copy, self.env, "refs/heads/plan", self.shas[0])
+        self.git(copy, "checkout", "-q", "plan")
+        before = self.state(copy)
+        result = self._range(copy)
+        self.assertEqual(result.reason, "branch_moved")
+        self.assertEqual(self.state(copy), before)
+
+    def test_missing_base_branch_refuses(self):
+        copy = copy_repo(self.repo, self.tmp)
+        before = self.state(copy)
+        result = self._range(copy, base_branch="trunk")
+        self.assertEqual(result.reason, "no_base_branch")
+        self.assertEqual(self.state(copy), before)
+
+    def test_range_commit_on_local_base_branch_refuses(self):
+        copy = copy_repo(self.repo, self.tmp)
+        set_ref(copy, self.env, "refs/heads/main", self.shas[0])
+        before = self.state(copy)
+        result = self._range(copy)
+        self.assertEqual(result.reason, "range_on_base_branch")
+        self.assertEqual(self.state(copy), before)
+
+    def test_range_commit_on_remote_base_branch_refuses(self):
+        copy = copy_repo(self.repo, self.tmp)
+        set_ref(copy, self.env, "refs/remotes/origin/main", self.shas[0])
+        before = self.state(copy)
+        result = self._range(copy)
+        self.assertEqual(result.reason, "range_on_base_branch")
+        self.assertEqual(self.state(copy), before)
+
+    def test_range_commit_on_merged_branch_refuses(self):
+        copy = copy_repo(self.repo, self.tmp)
+        set_ref(copy, self.env, "refs/heads/wt-1", self.shas[1])
+        before = self.state(copy)
+        result = self._range(copy, merged_refs=["refs/heads/wt-1"])
+        self.assertEqual(result.reason, "range_on_merged_branch")
+        self.assertEqual(self.state(copy), before)
+
+    def test_pushed_unmerged_range_folds(self):
+        copy = copy_repo(self.repo, self.tmp)
+        set_ref(copy, self.env, "refs/remotes/origin/plan", self.shas[1])
+        result = self._range(copy)
+        self.assertEqual(result.outcome, "folded", msg=result.reason)
+
+    def test_base_not_an_ancestor_of_end_refuses(self):
+        copy = copy_repo(self.repo, self.tmp)
+        result = self.fold(copy, base=self.shas[2], end=self.shas[1], tip=self.shas[-1])
+        self.assertEqual(result.reason, "bad_checkpoint")
+
+    def test_end_off_the_first_parent_chain_refuses(self):
+        copy = copy_repo(self.repo, self.tmp)
+        self.git(copy, "checkout", "-q", "-b", "side", self.base)
+        side = fold_fixtures.commit(copy, self.env, {"side.py": b"s\n"}, "feat: side")
+        self.git(copy, "checkout", "-q", "plan")
+        result = self.fold(copy, base=self.base, end=side, tip=self.shas[-1])
+        self.assertEqual(result.reason, "bad_checkpoint")
+
+    def test_one_byte_wrong_segment_refuses_with_tree_mismatch(self):
+        copy = copy_repo(self.repo, self.tmp)
+        before = self.state(copy)
+        with self.one_byte_off(copy):
+            result = self._range(copy)
+        self.assertEqual(result.reason, "tree_mismatch")
+        self.assertEqual(self.state(copy), before)
+        self.assertEqual((copy / "a.py").read_bytes(), b"a\n")
+
+    def test_branch_moved_before_the_swap_deletes_the_new_tag(self):
+        copy = copy_repo(self.repo, self.tmp)
+
+        def move(repo):
+            set_ref(repo, self.env, "refs/heads/plan", self.shas[0])
+
+        with mock.patch.object(fold_engine, "_before_swap", side_effect=move):
+            result = self._range(copy)
+        self.assertEqual(result.reason, "branch_moved")
+        self.assertEqual(self.git(copy, "rev-parse", "plan"), self.shas[0])
+        self.assertEqual(self.git(copy, "tag", "--list", "ai-kit-fold/*"), "")
+
+    def test_reused_backup_tag_survives_a_moved_branch(self):
+        copy = copy_repo(self.repo, self.tmp)
+        tag = f"ai-kit-fold/29-01/{self.shas[-1][:12]}"
+        self.git(copy, "tag", tag, self.shas[-1])
+
+        def move(repo):
+            set_ref(repo, self.env, "refs/heads/plan", self.shas[0])
+
+        with mock.patch.object(fold_engine, "_before_swap", side_effect=move):
+            result = self._range(copy)
+        self.assertEqual(result.reason, "branch_moved")
+        self.assertEqual(self.git(copy, "rev-parse", tag), self.shas[-1])
+
+    def test_single_commit_range_is_nothing_to_fold(self):
+        copy = copy_repo(self.repo, self.tmp)
+        before = self.state(copy)
+        result = self.fold(copy, base=self.shas[-2], end=self.shas[-1], tip=self.shas[-1])
+        self.assertEqual(result.outcome, "nothing_to_fold")
+        self.assertEqual(self.state(copy), before)
+
+    def test_docs_only_range_is_nothing_to_fold(self):
+        copy = copy_repo(self.docs_repo, self.tmp)
+        tip = self.docs_shas[-1]
+        result = self.fold(copy, base=self.docs_base, end=tip, tip=tip)
+        self.assertEqual(result.outcome, "nothing_to_fold")
+        self.assertEqual(self.git(copy, "tag", "--list", "ai-kit-fold/*"), "")
+
+
+MERGE_SUBJECT = "chore: merge executor worktree ("
+RAW_MESSAGE = "feat: añade ü\n\nlínea 2\n"
+
+
+def _commit_obj(sha, paths):
+    return Commit(sha, (), "feat: change", b"feat: change\n", ("n", "e", "0 +0000"),
+                  tuple(paths))
+
+
+class TestFoldMerges(RepoCase):
+    """GSD's own merge-backs fold away; commits after end are replayed tree-identically."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.merge_repo, cls.merge_base, cls.merge_tip = cls._merge_repo()
+        cls.track_repo, cls.track_base, cls.track_shas = cls._tracking_repo(
+            "tracking", merge_back=False)
+        cls.after_repo, cls.after_base, cls.after_shas = cls._tracking_repo(
+            "merge-after", merge_back=True)
+
+    @classmethod
+    def _merge_repo(cls):
+        """Plan: a.py, then a merge-back of wt-1 (b.py, tests/test_b.py) from base."""
+        repo = make_repo(os.path.join(cls.tmp, "merge"), cls.env)
+        base = run_git(repo, cls.env, "rev-parse", "main").strip()
+        run_git(repo, cls.env, "checkout", "-q", "-b", "plan")
+        fold_fixtures.commit(repo, cls.env, {"a.py": b"a\n"}, "feat: add a")
+        run_git(repo, cls.env, "checkout", "-q", "-b", "wt-1", base)
+        fold_fixtures.commit(repo, cls.env, {"b.py": b"b\n"}, "feat: add b")
+        fold_fixtures.commit(repo, cls.env, {"tests/test_b.py": b"test b\n"}, "test: cover b")
+        run_git(repo, cls.env, "checkout", "-q", "plan")
+        return repo, base, merge_no_ff(repo, cls.env, "wt-1", MERGE_SUBJECT + "wt-1)")
+
+    @classmethod
+    def _tracking_repo(cls, name, merge_back):
+        """Plan: a.py, b.py, then a tracking commit; with merge_back, a merge-back of wt-2 too."""
+        repo = make_repo(os.path.join(cls.tmp, name), cls.env)
+        base = run_git(repo, cls.env, "rev-parse", "main").strip()
+        run_git(repo, cls.env, "checkout", "-q", "-b", "plan")
+        first = fold_fixtures.commit(repo, cls.env, {"a.py": b"a\n"}, "feat: add a")
+        second = fold_fixtures.commit(repo, cls.env, {"b.py": b"b\n"}, "feat: add b")
+        tracking = fold_fixtures.commit(
+            repo, cls.env, {".planning/STATE.md": b"state\n"},
+            "docs(phase-7): update tracking after wave 1", ("Bob Example", "bob@example.com"))
+        shas = [first, second, tracking]
+        if not merge_back:
+            return repo, base, shas
+        run_git(repo, cls.env, "checkout", "-q", "-b", "wt-2", second)
+        side = fold_fixtures.commit(repo, cls.env, {"x.py": b"x\n"}, "feat: add x")
+        run_git(repo, cls.env, "checkout", "-q", "plan")
+        merge = merge_no_ff(repo, cls.env, "wt-2", MERGE_SUBJECT + "wt-2)")
+        return repo, base, [*shas, side, merge]
+
+    def test_own_merge_back_folds_to_a_linear_history(self):
+        copy = copy_repo(self.merge_repo, self.tmp)
+        result = self.fold(copy, base=self.merge_base, end=self.merge_tip, tip=self.merge_tip,
+                           own_merge_subjects=[MERGE_SUBJECT])
+        self.assertEqual(result.outcome, "folded", msg=result.reason)
+        self.assertEqual((result.before, result.after), (3, 2))
+        self.assertEqual(self.git(copy, "rev-list", "--merges", f"{self.merge_base}..plan"), "")
+        self.assertEqual(self.git(copy, "rev-list", "--count", f"{self.merge_base}..plan"), "2")
+        self.assertEqual(self.git(copy, "rev-parse", "plan^{tree}"),
+                         self.git(copy, "rev-parse", f"{self.merge_tip}^{{tree}}"))
+
+    def test_foreign_merge_refuses_without_moving_the_branch(self):
+        for subjects in ([], ["chore: merge other ("]):
+            with self.subTest(own_merge_subjects=subjects):
+                copy = copy_repo(self.merge_repo, self.tmp)
+                before = self.state(copy)
+                result = self.fold(copy, base=self.merge_base, end=self.merge_tip,
+                                   tip=self.merge_tip, own_merge_subjects=subjects)
+                self.assertEqual(result.reason, "foreign_merge")
+                self.assertEqual(self.state(copy), before)
+
+    def test_tracking_commit_after_end_is_replayed_unchanged(self):
+        copy = copy_repo(self.track_repo, self.tmp)
+        _first, second, tracking = self.track_shas
+        result = self.fold(copy, base=self.track_base, end=second, tip=tracking)
+        self.assertEqual(result.outcome, "folded", msg=result.reason)
+        self.assertEqual(result.after, 3)
+        self.assertEqual(self.git(copy, "rev-parse", "plan^{tree}"),
+                         self.git(copy, "rev-parse", f"{tracking}^{{tree}}"))
+        self.assertEqual(self.git(copy, "rev-parse", "plan^^{tree}"),
+                         self.git(copy, "rev-parse", f"{second}^{{tree}}"))
+        self.assertEqual(self.git(copy, "log", "-1", "--format=%B", "plan"),
+                         self.git(copy, "log", "-1", "--format=%B", tracking))
+        self.assertEqual(self.git(copy, "log", "-1", "--format=%an <%ae>", "plan"),
+                         "Bob Example <bob@example.com>")
+
+    def test_merge_back_after_end_keeps_its_second_parent(self):
+        copy = copy_repo(self.after_repo, self.tmp)
+        _first, second, _tracking, side, merge = self.after_shas
+        result = self.fold(copy, base=self.after_base, end=second, tip=merge)
+        self.assertEqual(result.outcome, "folded", msg=result.reason)
+        self.assertEqual(self.git(copy, "rev-parse", "plan^2"), side)
+        self.assertEqual(self.git(copy, "rev-parse", "plan^{tree}"),
+                         self.git(copy, "rev-parse", f"{merge}^{{tree}}"))
+
+    def test_bad_segment_with_tracking_commit_refused(self):
+        copy = copy_repo(self.track_repo, self.tmp)
+        _first, second, tracking = self.track_shas
+        before = self.state(copy)
+        with self.one_byte_off(copy):
+            result = self.fold(copy, base=self.track_base, end=second, tip=tracking)
+        self.assertEqual(result.reason, "tree_mismatch")
+        self.assertEqual(self.state(copy), before)
+
+
+class TestFoldGrouping(unittest.TestCase):
+    """Rule grouping: shared paths and code-with-test pairs stay whole; unmatched commits place."""
+
+    @staticmethod
+    def _features(commits, candidates, docs=()):
+        fields = checkpoint_fields("a" * 40, "b" * 40, "b" * 40, docs, candidates=candidates)
+        cp = fold_engine.load_checkpoint(fields)
+        changed = frozenset(path for commit in commits for path in commit.paths)
+        return fold_group.rule_features(commits, cp, changed)
+
+    def test_shared_changed_path_merges_the_features(self):
+        candidates = [{"id": "t1", "title": "One", "files": ["a.py", "shared.py"]},
+                      {"id": "t2", "title": "Two", "files": ["b.py", "shared.py"]}]
+        commits = [_commit_obj("1" * 40, ["a.py", "shared.py"]),
+                   _commit_obj("2" * 40, ["b.py", "shared.py"])]
+        features, source, note = self._features(commits, candidates)
+        self.assertEqual(source, "rules")
+        self.assertEqual(note, "merged t1+t2: shared shared.py")
+        self.assertEqual(len(features), 1)
+        self.assertEqual(features[0].title, "One; Two")
+        self.assertEqual(features[0].paths, frozenset({"a.py", "b.py", "shared.py"}))
+
+    def test_code_file_stays_with_its_test(self):
+        candidates = [{"id": "t1", "title": "One", "files": ["x.py"]},
+                      {"id": "t2", "title": "Two", "files": ["tests/test_x.py"]}]
+        commits = [_commit_obj("1" * 40, ["x.py"]), _commit_obj("2" * 40, ["tests/test_x.py"])]
+        features, _source, note = self._features(commits, candidates)
+        self.assertEqual(note, "merged t1+t2: x.py with its test")
+        self.assertEqual(len(features), 1)
+
+    def test_unmatched_commit_joins_the_feature_holding_its_path(self):
+        candidates = [{"id": "t1", "title": "One", "files": ["a.py"]},
+                      {"id": "t2", "title": "Two", "files": ["b.py"]}]
+        commits = [_commit_obj("1" * 40, ["a.py", "util.py"]),
+                   _commit_obj("2" * 40, ["b.py"]),
+                   _commit_obj("3" * 40, ["util.py"])]
+        features, _source, note = self._features(commits, candidates)
+        self.assertEqual(note, "")
+        self.assertEqual(len(features), 2)
+        self.assertEqual(features[0].commits, ("1" * 40, "3" * 40))
+        self.assertEqual(features[1].commits, ("2" * 40,))
+
+
+class TestFoldEncoding(RepoCase):
+    """Multi-line, non-ASCII messages and paths survive the fold byte for byte."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.repo, cls.base, cls.shas = build_repo(cls.tmp, cls.env, "encoding", [
+            ({"a.py": b"a\n"}, "feat: add a", None),
+            ({"b.py": b"b\n", "docs/ñandú.md": b"nota\n"}, RAW_MESSAGE, None),
+        ])
+
+    def test_raw_message_and_non_ascii_path_survive(self):
+        copy = copy_repo(self.repo, self.tmp)
+        result = self.fold(copy, base=self.base, end=self.shas[-1], tip=self.shas[-1])
+        self.assertEqual(result.outcome, "folded", msg=result.reason)
+        last = self.git(copy, "rev-parse", "plan")
+        self.assertIn(RAW_MESSAGE, run_git(copy, self.env, "cat-file", "commit", last))
+        names = run_git(copy, self.env, "ls-tree", "-r", "-z", "--name-only", "plan").split("\0")
+        self.assertIn("docs/ñandú.md", names)
+
+
 class TestCheckpointShape(unittest.TestCase):
     def _raw(self, **changes):
         fields = checkpoint_fields("a" * 40, "b" * 40, "b" * 40)
@@ -218,6 +600,12 @@ class TestCheckpointShape(unittest.TestCase):
         with self.assertRaises(FoldError) as caught:
             fold_engine.load_checkpoint(self._raw(schema=True))
         self.assertEqual(caught.exception.reason, "bad_checkpoint")
+
+    def test_merged_refs_must_be_full_ref_names(self):
+        for bad in (["--output=/dev/null"], ["plan"]):
+            with self.subTest(merged_refs=bad), self.assertRaises(FoldError) as caught:
+                fold_engine.load_checkpoint(self._raw(merged_refs=bad))
+            self.assertEqual(caught.exception.reason, "bad_checkpoint")
 
     def test_unmatched_commits_form_one_feature_titled_with_unit(self):
         commits = [

@@ -19,8 +19,11 @@ REASONS = frozenset({
 })
 
 _SCRUBBED = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
+POLICY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "references", "folding-policy.md")
 _UNIT = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _REF = re.compile(r"refs/heads/[A-Za-z0-9._/-]{1,200}")
+_REF_ANY = re.compile(r"refs/[A-Za-z0-9._/-]{1,200}")
 _SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _TYPES = ("feat", "fix", "refactor", "perf", "test", "docs", "build", "ci", "style", "chore")
@@ -96,6 +99,13 @@ def _str_list(data, key):
     return tuple(value)
 
 
+def _ref_list(data, key):
+    refs = _str_list(data, key)
+    if not all(_REF_ANY.fullmatch(ref) for ref in refs):
+        raise _bad(f"{key} entries must be full ref names (refs/...)")
+    return refs
+
+
 def _sha(data, key, default=None):
     value = data.get(key, default)
     if not isinstance(value, str) or not _SHA.fullmatch(value):
@@ -142,7 +152,7 @@ def load_checkpoint(data):
         end=_sha(data, "end", tip),
         tip=tip,
         base_branch=base_branch,
-        merged_refs=_str_list(data, "merged_refs"),
+        merged_refs=_ref_list(data, "merged_refs"),
         own_merge_subjects=_str_list(data, "own_merge_subjects"),
         candidates=tuple(_candidate(item) for item in candidates),
         docs_paths=_str_list(data, "docs_paths"),
@@ -162,11 +172,15 @@ def _run(repo, args, data=None, env=None):
     )
 
 
+def _first_line(stderr):
+    lines = stderr.decode("utf-8", "replace").strip().splitlines()
+    return lines[0] if lines else ""
+
+
 def _git(repo, *args, data=None, env=None):
     proc = _run(repo, args, data=data, env=env)
     if proc.returncode != 0:
-        lines = proc.stderr.decode("utf-8", "replace").strip().splitlines()
-        detail = lines[0] if lines else f"git {args[0]} exited {proc.returncode}"
+        detail = _first_line(proc.stderr) or f"git {args[0]} exited {proc.returncode}"
         raise FoldError("git_error", detail)
     return proc.stdout
 
@@ -192,8 +206,7 @@ def _commit(repo, sha):
 
 
 def range_commits(repo, cp):
-    """The commits of base..end, oldest first, merges excluded."""
-    # shortcut: merges in the range are skipped, not refused, upgrade with plan 29-06's merge guard
+    """The commits of base..end, oldest first, merges excluded (own merge-backs fold away)."""
     listed = _git(repo, "rev-list", "--reverse", "--topo-order", "--no-merges",
                   f"{cp.base}..{cp.end}")
     return [_commit(repo, sha.decode()) for sha in listed.split()]
@@ -312,9 +325,107 @@ def _prove_target(repo, cp, target):
     return tree
 
 
-def _fold(repo, cp, group, mode, seen):
+def _resolved(repo, specs):
+    """The object ids of the specs that resolve; a spec that does not resolve is skipped."""
+    return [sha for sha in (_rev(repo, spec) for spec in specs) if sha]
+
+
+def _check_policy():
+    try:
+        with open(POLICY_PATH, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        text = ""
+    if not text.strip():
+        raise FoldError("policy_missing", "the folding policy text is missing or empty")
+
+
+def _count(repo, *args):
+    return int(_git(repo, "rev-list", "--count", *args).decode().strip())
+
+
+def _check_ancestry(repo, cp):
+    """base must be an ancestor of end, and end must sit on the first-parent chain of tip."""
+    proc = _run(repo, ("merge-base", "--is-ancestor", cp.base, cp.end))
+    if proc.returncode == 1:
+        raise FoldError("bad_checkpoint", "base is not an ancestor of end")
+    if proc.returncode != 0:
+        raise FoldError("git_error", _first_line(proc.stderr))
+    chain = _git(repo, "rev-list", "--first-parent", cp.tip).split()
+    if cp.end.encode() not in chain:
+        raise FoldError("bad_checkpoint", "end is not on the first-parent chain of tip")
+
+
+def _check_not_reachable(repo, cp, refs, reason):
+    """Refuse when a commit of base..tip is reachable from one of refs (SPEC R4)."""
+    if not refs:
+        return
+    span = f"{cp.base}..{cp.tip}"
+    if _count(repo, span, "--not", *refs) != _count(repo, span):
+        raise FoldError(reason, "a commit of the range is already on that branch")
+
+
+def _check_merges(repo, cp):
+    """Only GSD's own merge-backs may sit in base..end; each folds away (D-05)."""
+    for sha in _git(repo, "rev-list", "--merges", f"{cp.base}..{cp.end}").decode().split():
+        subject = _git(repo, "log", "-1", "--format=%s", sha).decode("utf-8", "replace").strip()
+        if not any(prefix and subject.startswith(prefix) for prefix in cp.own_merge_subjects):
+            raise FoldError("foreign_merge",
+                            f"merge {sha[:12]} is not one of GSD's own merge-backs")
+
+
+def _guard(repo, cp):
+    """Every refusal that must hold before any write; each leaves the repository as it was."""
+    _check_policy()
+    if _git(repo, "status", "--porcelain", "--untracked-files=no"):
+        raise FoldError("dirty_tree", "tracked files have uncommitted changes")
     if _rev(repo, cp.ref) != cp.tip:
         raise FoldError("branch_moved", f"{cp.ref} is no longer at the tested tip")
+    base_refs = _resolved(repo, (f"refs/heads/{cp.base_branch}",
+                                 f"refs/remotes/origin/{cp.base_branch}"))
+    if not base_refs:
+        raise FoldError("no_base_branch",
+                        f"neither {cp.base_branch} nor origin/{cp.base_branch} resolves")
+    _check_ancestry(repo, cp)
+    _check_not_reachable(repo, cp, base_refs, "range_on_base_branch")
+    _check_not_reachable(repo, cp, _resolved(repo, cp.merged_refs), "range_on_merged_branch")
+    _check_merges(repo, cp)
+
+
+def _segment(repo, cp, commits, features, deleted):
+    """Build the folded segment of base..end and prove it holds exactly the end tree."""
+    seg = _build(repo, cp, commits, features, deleted)
+    _prove_segment(repo, cp, seg)
+    return seg
+
+
+def _replayed(repo, cp):
+    """The commits after end on the tip's first-parent chain, oldest first."""
+    return _git(repo, "rev-list", "--reverse", "--first-parent",
+                f"{cp.end}..{cp.tip}").decode().split()
+
+
+def _replay(repo, cp, seg):
+    """Re-create each commit after end on top of the segment, tree-identical (ruling 4).
+
+    Each replayed commit keeps its tree, raw message, author and non-first parents; only its
+    first parent changes. Runs after the segment proof, so the final proof cannot pass a bad
+    segment by replaying trees that are correct on their own.
+    """
+    new = seg
+    for sha in _replayed(repo, cp):
+        commit = _commit(repo, sha)
+        tree = _git(repo, "rev-parse", f"{sha}^{{tree}}").decode().strip()
+        extra = [item for parent in commit.parents[1:] for item in ("-p", parent)]
+        name, email, date = commit.author
+        env = _env(GIT_AUTHOR_NAME=name, GIT_AUTHOR_EMAIL=email, GIT_AUTHOR_DATE=date)
+        new = _git(repo, "commit-tree", tree, "-p", new, *extra, "-F", "-",
+                   data=commit.raw_message, env=env).decode().strip()
+    return new
+
+
+def _fold(repo, cp, group, mode, seen):
+    _guard(repo, cp)
     commits = range_commits(repo, cp)
     seen["before"] = len(commits)
     if len(commits) < 2:
@@ -323,13 +434,12 @@ def _fold(repo, cp, group, mode, seen):
                       note="", mode=mode)
     changed, deleted = _changes(repo, cp)
     features, source, note = group(commits, cp, changed)
-    new = _build(repo, cp, commits, features, deleted)
-    _prove_segment(repo, cp, new)
-    # shortcut: commits after end are not replayed yet, so only end == tip passes the final
-    # proof; upgrade with plan 29-06's _replay between the segment proof and this one
+    new = _replay(repo, cp, _segment(repo, cp, commits, features, deleted))
     tree = _prove_target(repo, cp, new)
     tag = _swap(repo, cp, new)
-    return Result(unit=cp.unit, ref=cp.ref, before=len(commits), after=len(features),
+    # after: the folded features plus the non-merge commits replayed after end (merges excluded)
+    after = len(features) + _count(repo, "--no-merges", "--first-parent", f"{cp.end}..{cp.tip}")
+    return Result(unit=cp.unit, ref=cp.ref, before=len(commits), after=after,
                   tree=tree, tag=tag, outcome="folded", reason="", grouping=source,
                   note=note, mode=mode)
 

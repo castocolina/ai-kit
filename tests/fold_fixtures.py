@@ -69,6 +69,17 @@ def commit(repo, env, files, message, author=None):
     return run_git(repo, env, "rev-parse", "HEAD").strip()
 
 
+def merge_no_ff(repo, env, branch, message):
+    """Merge `branch` into the checked-out branch with a merge commit; return the merge sha."""
+    run_git(repo, env, "merge", "--no-ff", "--no-edit", "-m", message, branch)
+    return run_git(repo, env, "rev-parse", "HEAD").strip()
+
+
+def set_ref(repo, env, ref, sha):
+    """Point `ref` at `sha` (a fixture ref move; the working tree is not touched)."""
+    run_git(repo, env, "update-ref", ref, sha)
+
+
 def write_checkpoint(path, **fields):
     path = pathlib.Path(path)
     path.write_text(json.dumps(fields), encoding="utf-8")
