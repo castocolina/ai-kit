@@ -28,6 +28,7 @@ import functools
 import hashlib
 import importlib.util
 import io
+import json
 import os
 import re
 import shlex
@@ -1272,6 +1273,417 @@ def _iter_skill_python(rel_skill):
                 yield os.path.join(dirpath, filename)
 
 
+# Phase 29 ruling 2 (SPEC R9): no skill or hook reaches into another skill's folder. A reach is
+# a literal import of another skill's module, a sys.path shim onto its folder, a path string or
+# joined path segment naming its folder, or a decide.py name (deleted in Phase 29). The one
+# sanctioned reach is the installed-skill lookup: the value of a module-level JEV_ENTRY_REL
+# assignment. Only literal forms are seen (a name held in a variable and joined later is not).
+# skills/_shared/ is not a skill and is out of this rule (its reach is DIST-03's, Phase 52).
+_LOOKUP_NAME = "JEV_ENTRY_REL"
+_SYS_PATH_CALLS = frozenset({"sys.path.insert", "sys.path.append"})
+_PATH_JOINERS = frozenset(
+    {"os.path.join", "posixpath.join", "Path", "pathlib.Path", "PurePath", "pathlib.PurePath"}
+)
+_DECIDE_NAME = "decide.py"
+
+
+def skill_folders(repo_root):
+    """Every skill folder under skills/; names starting with `_` are not skills."""
+    base = os.path.join(repo_root, "skills")
+    return sorted(
+        name
+        for name in os.listdir(base)
+        if not name.startswith("_") and os.path.isdir(os.path.join(base, name))
+    )
+
+
+def skill_modules(repo_root):
+    """Top-level importable name -> skill folder: a package dir with __init__.py directly under
+    skills/<s>/, or a .py stem directly under skills/<s>/ or skills/<s>/scripts/. First owner
+    of a name wins."""
+    base = os.path.join(repo_root, "skills")
+    modules = {}
+    for skill in skill_folders(repo_root):
+        skill_dir = os.path.join(base, skill)
+        for name in sorted(os.listdir(skill_dir)):
+            path = os.path.join(skill_dir, name)
+            if os.path.isdir(path) and os.path.isfile(os.path.join(path, "__init__.py")):
+                modules.setdefault(name, skill)
+            elif name.endswith(".py"):
+                modules.setdefault(name[:-3], skill)
+        scripts = os.path.join(skill_dir, "scripts")
+        if os.path.isdir(scripts):
+            for name in sorted(os.listdir(scripts)):
+                if name.endswith(".py"):
+                    modules.setdefault(name[:-3], skill)
+    return {name: skill for name, skill in modules.items() if name.isidentifier()}
+
+
+def _lookup_value(node):
+    """The value of a module-level JEV_ENTRY_REL assignment, or None."""
+    if isinstance(node, ast.Assign) and any(
+        isinstance(t, ast.Name) and t.id == _LOOKUP_NAME for t in node.targets
+    ):
+        return node.value
+    if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) == _LOOKUP_NAME:
+        return node.value
+    return None
+
+
+def _cross_skill_skip(tree):
+    """ids of nodes the reach rule does not read: docstring strings and the whole value of each
+    module-level JEV_ENTRY_REL assignment (the sanctioned lookup)."""
+    skip = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and _is_text(first.value):
+                skip.add(id(first.value))
+    for node in tree.body:
+        value = _lookup_value(node)
+        if value is not None:
+            skip.update(id(sub) for sub in ast.walk(value))
+    return skip
+
+
+def _is_text(node):
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
+def _mentions_skill(text, other):
+    """`<other>/` at a word start: `skills/beta/x` and `../beta/x` match, `alpha-beta/` does not."""
+    return re.search(r"(?<![\w-])" + re.escape(other) + "/", text) is not None
+
+
+def _import_roots(node):
+    if isinstance(node, ast.Import):
+        names = [alias.name for alias in node.names]
+    elif node.module and not node.level:
+        names = [node.module]
+    else:
+        return []
+    return [name.split(".")[0] for name in names]
+
+
+def check_cross_skill_refs(relpath, tree, modules, skills):
+    """Ruling 2 / SPEC R9: one hit `(relpath, other skill or "decide.py", line)` per literal
+    reach into another skill: an import of its module, a sys.path call naming its folder, any
+    string holding `<other>/`, a bare folder name passed to a path join or used in a `/`
+    expression, or a decide.py name. Docstrings and the JEV_ENTRY_REL lookup are not read."""
+    parts = relpath.split("/")
+    own = parts[1] if parts[0] == "skills" and len(parts) > 2 else None
+    others = [name for name in skills if name != own]
+    skip = _cross_skill_skip(tree)
+    hits = []
+    for node in ast.walk(tree):
+        if id(node) in skip:
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for root in _import_roots(node):
+                owner = modules.get(root)
+                if owner is not None and owner != own:
+                    hits.append((relpath, owner, node.lineno))
+        if _is_text(node):
+            if _DECIDE_NAME in node.value:
+                hits.append((relpath, _DECIDE_NAME, node.lineno))
+            for other in others:
+                if _mentions_skill(node.value, other):
+                    hits.append((relpath, other, node.lineno))
+        if isinstance(node, ast.Call) and _dotted_name(node.func) in _SYS_PATH_CALLS:
+            for arg in node.args:
+                for sub in ast.walk(arg):
+                    if id(sub) in skip or not _is_text(sub):
+                        continue
+                    for other in others:
+                        if sub.value == other or _mentions_skill(sub.value, other):
+                            hits.append((relpath, other, node.lineno))
+        if isinstance(node, ast.Call) and _dotted_name(node.func) in _PATH_JOINERS:
+            candidates = node.args
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            candidates = [node.left, node.right]
+        else:
+            candidates = []
+        for cand in candidates:
+            if id(cand) not in skip and _is_text(cand) and cand.value in others:
+                hits.append((relpath, cand.value, node.lineno))
+    return hits
+
+
+def cross_skill_hits():
+    """Live scan over every skills/<s>/**/*.py (not _shared) and tools/hooks/*.py. Returns
+    `(hits, scanned file count)`."""
+    modules = skill_modules(_REPO_ROOT)
+    skills = skill_folders(_REPO_ROOT)
+    paths = []
+    for skill in skills:
+        paths.extend(_iter_skill_python(os.path.join("skills", skill)))
+    hooks = os.path.join(_REPO_ROOT, "tools", "hooks")
+    paths.extend(os.path.join(hooks, n) for n in sorted(os.listdir(hooks)) if n.endswith(".py"))
+    hits = []
+    for path in paths:
+        rel = os.path.relpath(path, _REPO_ROOT).replace(os.sep, "/")
+        hits.extend(check_cross_skill_refs(rel, _parse_path(path), modules, skills))
+    return hits, len(paths)
+
+
+# Ruling 2: the cross-skill reaches the tree already has, one key per (file, other skill) with a
+# one-line reason. Backlog 999.19 removes them (the installed-skill lookup, or vendoring that
+# survives copy installs: DIST-03). The list may only shrink: _CROSS_SKILL_FROZEN is the set it is
+# checked against, and an entry leaves both when its reference goes away.
+CROSS_SKILL_ALLOWLIST: dict[tuple[str, str], str] = {
+    (
+        "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cli.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
+    (
+        "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_build.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec after a sys.path shim onto spec-review (backlog 999.19)",
+    (
+        "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/preference_match.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec.detection after a sys.path shim onto spec-review (backlog 999.19)",
+    (
+        "skills/ai-kit-session-wake/ai-kit-session-wake.py",
+        "ai-kit-spec-review",
+    ): "sys.path shim onto the spec-review folder (backlog 999.19)",
+    (
+        "skills/ai-kit-session-wake/ai_kit_session_wake/__init__.py",
+        "ai-kit-spec-review",
+    ): "path join naming the spec-review folder for its sys.path shim (backlog 999.19)",
+    (
+        "skills/ai-kit-session-wake/ai_kit_session_wake/arm.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec.detection from the spec-review package (backlog 999.19)",
+    (
+        "skills/ai-kit-session-wake/ai_kit_session_wake/cli.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec.detection from the spec-review package (backlog 999.19)",
+    (
+        "skills/ai-kit-session-wake/ai_kit_session_wake/hosts.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec.detection from the spec-review package (backlog 999.19)",
+    (
+        "skills/ai-kit-spec-execute-gsd/ai-kit-spec-gsd.py",
+        "ai-kit-spec-review",
+    ): "sys.path shim onto the spec-review folder (backlog 999.19)",
+    (
+        "skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/adapter.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
+    (
+        "skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/cli.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
+    (
+        "skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/cross_ai_guidance.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
+    (
+        "skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/gsd_config.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
+    (
+        "skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/gsd_cross_ai.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
+    (
+        "skills/ai-kit-spec-execute-superpowers/ai-kit-spec-superpowers.py",
+        "ai-kit-spec-review",
+    ): "sys.path shim onto the spec-review folder (backlog 999.19)",
+    (
+        "skills/ai-kit-spec-execute-superpowers/ai_kit_spec_superpowers/cli.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
+    (
+        "skills/ai-kit-spec-execute-superpowers/ai_kit_spec_superpowers/dispatch_injection.py",
+        "ai-kit-spec-review",
+    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
+    (
+        "skills/ai-kit-spec-goal-prompt/scripts/gp_host.py",
+        "ai-kit-session-wake",
+    ): "WAKE_CLI names the session-wake CLI path (backlog 999.19)",
+    (
+        "skills/ai-kit-spec-goal-prompt/scripts/gp_host.py",
+        "ai-kit-spec-review",
+    ): "SPEC_CLI names the spec-review CLI path (backlog 999.19)",
+    (
+        "tools/hooks/claude_session_wake.py",
+        "ai-kit-session-wake",
+    ): "path join naming the session-wake skill folder for its CLI (backlog 999.19)",
+}
+# Written out literally on purpose: deriving this from the allowlist would make the frozen check
+# vacuous. A key added to the allowlist and missing here fails cross_skill_allowlist_problems.
+_CROSS_SKILL_FROZEN = frozenset(
+    {
+        ("skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cli.py", "ai-kit-spec-review"),
+        (
+            "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/cross_ai_build.py",
+            "ai-kit-spec-review",
+        ),
+        (
+            "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/preference_match.py",
+            "ai-kit-spec-review",
+        ),
+        ("skills/ai-kit-session-wake/ai-kit-session-wake.py", "ai-kit-spec-review"),
+        (
+            "skills/ai-kit-session-wake/ai_kit_session_wake/__init__.py",
+            "ai-kit-spec-review",
+        ),
+        ("skills/ai-kit-session-wake/ai_kit_session_wake/arm.py", "ai-kit-spec-review"),
+        ("skills/ai-kit-session-wake/ai_kit_session_wake/cli.py", "ai-kit-spec-review"),
+        ("skills/ai-kit-session-wake/ai_kit_session_wake/hosts.py", "ai-kit-spec-review"),
+        ("skills/ai-kit-spec-execute-gsd/ai-kit-spec-gsd.py", "ai-kit-spec-review"),
+        ("skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/adapter.py", "ai-kit-spec-review"),
+        ("skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/cli.py", "ai-kit-spec-review"),
+        (
+            "skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/cross_ai_guidance.py",
+            "ai-kit-spec-review",
+        ),
+        ("skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/gsd_config.py", "ai-kit-spec-review"),
+        ("skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/gsd_cross_ai.py", "ai-kit-spec-review"),
+        ("skills/ai-kit-spec-execute-superpowers/ai-kit-spec-superpowers.py", "ai-kit-spec-review"),
+        (
+            "skills/ai-kit-spec-execute-superpowers/ai_kit_spec_superpowers/cli.py",
+            "ai-kit-spec-review",
+        ),
+        (
+            "skills/ai-kit-spec-execute-superpowers/ai_kit_spec_superpowers/dispatch_injection.py",
+            "ai-kit-spec-review",
+        ),
+        ("skills/ai-kit-spec-goal-prompt/scripts/gp_host.py", "ai-kit-session-wake"),
+        ("skills/ai-kit-spec-goal-prompt/scripts/gp_host.py", "ai-kit-spec-review"),
+        ("tools/hooks/claude_session_wake.py", "ai-kit-session-wake"),
+    }
+)
+
+
+def cross_skill_allowlist_problems(allowlist):
+    """Problems with an allowlist: a key outside the frozen set, or a reason that is empty or not
+    one line. The live test separately requires every key to have a live hit."""
+    problems = []
+    for key, reason in allowlist.items():
+        if key not in _CROSS_SKILL_FROZEN:
+            problems.append(f"{key[0]} -> {key[1]}: not in the frozen set (the list only shrinks)")
+        if not reason.strip() or "\n" in reason:
+            problems.append(f"{key[0]} -> {key[1]}: reason must be one non-empty line")
+    return problems
+
+
+# Phase 29 D-13 (SPEC R9 ordering): every copy of the installed-skill lookup follows the order of
+# jev's documented table (skills/jev-fast-decision/reference.md `## Installed-skill lookup`, rows
+# 2-6). Each copy is parsed from its own text, never executed. The fold-step copy is a shell block
+# that names the fold skill as its suffix; its roots are the same five rows.
+LOOKUP_COPIES = (
+    "skills/jev-fast-decision/scripts/jev_ladder.py",
+    "skills/ai-kit-commit-fold/scripts/fold_group.py",
+    "skills/ai-kit-spec-goal-prompt/scripts/gp_host.py",
+    "tools/hooks/precompact_core.py",
+    "skills/ai-kit-commit-fold/gsd/ai-kit-commit-fold/ai-kit-fold.cjs",
+    "skills/ai-kit-spec-execute-superpowers/references/fold-step.md",
+)
+_LOOKUP_NAMES = frozenset({"JEV_ENTRY_REL", "SKILLS_ROOTS"})
+_DOC_ROOT_BRACED = re.compile(r"^\$\{(\w+):-\$HOME/([^}]+)\}/(.+)$")
+_DOC_ROOT_PLAIN = re.compile(r"^\$HOME/(.+)$")
+_JS_SKILLS_ROOTS = re.compile(r"^const SKILLS_ROOTS = (\[.*\]);$", re.MULTILINE)
+_SHELL_ROOT = re.compile(
+    r'\$\{(\w+):-\$HOME/([^}]+)\}/([^"\s]+?)/ai-kit-commit-fold'
+    r'|"\$HOME/([^"$/]+)/([^"\s]+?)/ai-kit-commit-fold"'
+)
+
+
+def documented_roots(text):
+    """reference.md `## Installed-skill lookup`, rows 2-6, as (variable or None, fallback,
+    suffix) tuples in table order. Row 1 is the caller's own root and is not compared."""
+    section = text.split("## Installed-skill lookup", 1)[1].split("\n## ", 1)[0]
+    roots = []
+    for line in section.splitlines():
+        if not line.startswith("| ") or line.startswith(("| Order", "| ---")):
+            continue
+        order, root = (cell.strip() for cell in line.strip().strip("|").split("|")[:2])
+        if order == "1":
+            continue
+        root = root.strip("`")
+        braced = _DOC_ROOT_BRACED.match(root)
+        if braced:
+            roots.append((braced.group(1), braced.group(2), braced.group(3)))
+        else:
+            fallback, suffix = _DOC_ROOT_PLAIN.match(root).group(1).rsplit("/", 1)
+            roots.append((None, fallback, suffix))
+    return roots
+
+
+def python_roots(tree):
+    """The module-level SKILLS_ROOTS literal (ast.literal_eval) as a list of tuples, or None."""
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "SKILLS_ROOTS" for t in node.targets
+        ):
+            return [tuple(row) for row in ast.literal_eval(node.value)]
+    return None
+
+
+def js_roots(text):
+    """The one `const SKILLS_ROOTS = [...];` line of a JS file, JSON-decoded, or None."""
+    match = _JS_SKILLS_ROOTS.search(text)
+    if match is None:
+        return None
+    return [tuple(row) for row in json.loads(match.group(1))]
+
+
+def shell_roots(text):
+    """The host roots of a shell block, in order: each `${VAR:-$HOME/<fallback>}/<suffix>` or
+    `"$HOME/<fallback>/<suffix>"` in front of `/ai-kit-commit-fold`."""
+    roots = []
+    for match in _SHELL_ROOT.finditer(text):
+        if match.group(1):
+            roots.append((match.group(1), match.group(2), match.group(3)))
+        else:
+            roots.append((None, match.group(4), match.group(5)))
+    return roots
+
+
+def _lookup_copy_roots(relpath):
+    path = os.path.join(_REPO_ROOT, relpath)
+    if relpath.endswith(".py"):
+        return python_roots(_parse_path(path))
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    return js_roots(text) if relpath.endswith(".cjs") else shell_roots(text)
+
+
+def lookup_drift_problems(documented, copies):
+    """Problems where a copy's roots are not the documented rows in documented order."""
+    problems = []
+    if len(documented) != 5:
+        problems.append(f"documented lookup has {len(documented)} rows, expected 5")
+    for relpath, roots in copies.items():
+        if roots is None:
+            problems.append(f"{relpath}: no SKILLS_ROOTS found")
+        elif [tuple(row) for row in roots] != [tuple(row) for row in documented]:
+            problems.append(f"{relpath}: order {roots} differs from the documented {documented}")
+    return problems
+
+
+def _assigns_lookup_name(tree):
+    """True when any assignment in the tree binds JEV_ENTRY_REL or SKILLS_ROOTS."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if any(isinstance(t, ast.Name) and t.id in _LOOKUP_NAMES for t in targets):
+            return True
+    return False
+
+
+def uncompared_lookup_files(assigners, copies):
+    """Files that assign a lookup name but are not one of the compared copies."""
+    return sorted(set(assigners) - set(copies))
+
+
 # Rule 9: the only places allowed to swallow every exception. Each is a documented
 # backstop that keeps one failure from blanking the status line or killing a TUI, or
 # (curated-config apply) from crashing a committed apply, where SPEC R13 says only warn, or
@@ -1664,6 +2076,41 @@ class TestArchitecture(unittest.TestCase):
             if func.name.startswith("seg_")
         ]
         self.assertGreater(len(seg_funcs), 5)
+
+    def test_no_cross_skill_reach_outside_the_allowlist(self):
+        """Ruling 2 / SPEC R9: every literal cross-skill reach is in the frozen allowlist, and
+        every allowlist key still has a live hit (an entry whose reference is gone fails)."""
+        hits, scanned = cross_skill_hits()
+        self.assertGreater(scanned, 0)
+        keys = {(relpath, other) for relpath, other, _line in hits}
+        listed = set(CROSS_SKILL_ALLOWLIST)
+        self.assertEqual([], sorted(keys - listed), "unlisted cross-skill reach")
+        self.assertEqual([], sorted(listed - keys), "stale allowlist entry: no live hit")
+
+    def test_cross_skill_allowlist_is_frozen(self):
+        self.assertEqual([], cross_skill_allowlist_problems(CROSS_SKILL_ALLOWLIST))
+
+    def test_lookup_copies_match_the_documented_order(self):
+        """D-13: every lookup copy lists its roots in jev's documented order."""
+        reference = os.path.join(_REPO_ROOT, "skills", "jev-fast-decision", "reference.md")
+        with open(reference, encoding="utf-8") as handle:
+            documented = documented_roots(handle.read())
+        self.assertEqual(5, len(documented))
+        copies = {relpath: _lookup_copy_roots(relpath) for relpath in LOOKUP_COPIES}
+        self.assertEqual([], lookup_drift_problems(documented, copies))
+
+    def test_every_lookup_copy_is_compared(self):
+        """Every skills/ or tools/hooks/ Python file that assigns JEV_ENTRY_REL or SKILLS_ROOTS
+        is a compared copy, so a new copy cannot escape the drift check."""
+        scanned, assigners = 0, []
+        for folder in ("skills", os.path.join("tools", "hooks")):
+            for path in _iter_skill_python(folder):
+                scanned += 1
+                if _assigns_lookup_name(_parse_path(path)):
+                    assigners.append(os.path.relpath(path, _REPO_ROOT).replace(os.sep, "/"))
+        self.assertGreater(scanned, 0)
+        self.assertGreater(len(assigners), 0)
+        self.assertEqual([], uncompared_lookup_files(assigners, LOOKUP_COPIES))
 
 
 # --------------------------------------------------------------------------- #
@@ -2442,6 +2889,99 @@ class TestArchNonVacuity(unittest.TestCase):
             [], check_no_wake_import(ast.parse("from ai_kit_session_wake import fire\n"))
         )
         self.assertEqual([], check_no_wake_import(ast.parse("import json\n")))
+
+    @staticmethod
+    def _xs_hits(source):
+        """Hits of the ruling-2 rule for a synthetic skills/alpha/x.py; beta is the other skill."""
+        modules = {"beta_pkg": "beta", "alpha_mod": "alpha"}
+        return check_cross_skill_refs(
+            "skills/alpha/x.py", ast.parse(source), modules, ["alpha", "beta"]
+        )
+
+    def test_cross_skill_rule_flags_each_form(self):
+        # One synthetic violation per form the ruling-2 rule names, with the other skill it reports.
+        forms = {
+            "import": ("import beta_pkg\n", "beta"),
+            "from import": ("from beta_pkg.sub import f\n", "beta"),
+            "sys.path.insert": (
+                'import sys\nsys.path.insert(0, os.path.join(r, "..", "beta"))\n',
+                "beta",
+            ),
+            "sys.path.append": ('import sys\nsys.path.append("../beta/scripts")\n', "beta"),
+            "path string": ('p = "../beta/scripts/x.py"\n', "beta"),
+            "os.path.join segment": ('p = os.path.join(root, "beta")\n', "beta"),
+            "Path segment": ('p = Path(root, "beta")\n', "beta"),
+            "slash expression": ('p = Path(root) / "beta"\n', "beta"),
+            "decide.py name": ('p = "scripts/decide.py"\n', "decide.py"),
+        }
+        for form, (source, other) in forms.items():
+            with self.subTest(form=form):
+                self.assertIn(other, [hit[1] for hit in self._xs_hits(source)])
+
+    def test_cross_skill_rule_allows_clean_forms(self):
+        # Own-skill import, the JEV_ENTRY_REL lookup (its value names beta/ and is exempt),
+        # a docstring naming beta/, a relative import and a stdlib import are not reaches.
+        clean = {
+            "own-skill import": "import alpha_mod\n",
+            "lookup assignment": 'JEV_ENTRY_REL = os.path.join("..", "beta", "scripts", "x.py")\n',
+            "docstring": '"""Mentions beta/scripts only in prose."""\n',
+            "relative import": "from . import sibling\n",
+            "stdlib import": "import json\n",
+        }
+        for form, source in clean.items():
+            with self.subTest(form=form):
+                self.assertEqual([], self._xs_hits(source))
+
+    def test_cross_skill_allowlist_rejects_a_new_entry(self):
+        self.assertEqual([], cross_skill_allowlist_problems(CROSS_SKILL_ALLOWLIST))
+        grown = dict(CROSS_SKILL_ALLOWLIST)
+        grown[("skills/alpha/x.py", "beta")] = "a reach added after the freeze"
+        self.assertNotEqual([], cross_skill_allowlist_problems(grown))
+        multi_line = dict(CROSS_SKILL_ALLOWLIST)
+        first = next(iter(multi_line))
+        multi_line[first] = "two\nlines"
+        self.assertNotEqual([], cross_skill_allowlist_problems(multi_line))
+
+    def test_lookup_drift_flags_a_swapped_row(self):
+        rows = [
+            ("CLAUDE_CONFIG_DIR", ".claude", "skills"),
+            (None, ".agents", "skills"),
+            ("XDG_CONFIG_HOME", ".config", "opencode/skills"),
+            ("CURSOR_CONFIG_DIR", ".cursor", "skills"),
+            ("PI_CODING_AGENT_DIR", ".pi/agent", "skills"),
+        ]
+        swapped = [rows[1], rows[0], *rows[2:]]
+        self.assertEqual([], lookup_drift_problems(rows, {"copy.py": rows}))
+        self.assertNotEqual([], lookup_drift_problems(rows, {"copy.py": swapped}))
+        # Each parser reads its own syntax back to the same rows.
+        self.assertEqual(rows, python_roots(ast.parse(f"SKILLS_ROOTS = {rows!r}\n")))
+        js_text = "const SKILLS_ROOTS = " + json.dumps([list(r) for r in rows]) + ";"
+        self.assertEqual(rows, js_roots(js_text))
+        shell_text = (
+            '  "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/ai-kit-commit-fold" \\\n'
+            '  "$HOME/.agents/skills/ai-kit-commit-fold" \\\n'
+            '  "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/ai-kit-commit-fold" \\\n'
+            '  "${CURSOR_CONFIG_DIR:-$HOME/.cursor}/skills/ai-kit-commit-fold" \\\n'
+            '  "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/skills/ai-kit-commit-fold"; do\n'
+        )
+        self.assertEqual(rows, shell_roots(shell_text))
+        doc = (
+            "## Installed-skill lookup\n\n| Order | Skills root |\n| --- | --- |\n"
+            "| 1 | the caller's own root |\n"
+            "| 2 | `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills` |\n"
+            "| 3 | `$HOME/.agents/skills` |\n\n## Next\n"
+        )
+        self.assertEqual(rows[:2], documented_roots(doc))
+
+    def test_lookup_drift_flags_an_uncompared_copy(self):
+        self.assertTrue(_assigns_lookup_name(ast.parse('JEV_ENTRY_REL = "jev/x.py"\n')))
+        self.assertTrue(_assigns_lookup_name(ast.parse("SKILLS_ROOTS: tuple = ()\n")))
+        self.assertFalse(_assigns_lookup_name(ast.parse('NAME = "x"\n')))
+        self.assertEqual(
+            ["skills/new-skill/x.py"],
+            uncompared_lookup_files(["skills/new-skill/x.py"], LOOKUP_COPIES),
+        )
+        self.assertEqual([], uncompared_lookup_files([LOOKUP_COPIES[0]], LOOKUP_COPIES))
 
 
 class TestSessionWakeIsolation(unittest.TestCase):

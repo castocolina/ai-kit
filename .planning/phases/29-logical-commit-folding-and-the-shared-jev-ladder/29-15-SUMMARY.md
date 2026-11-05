@@ -1,0 +1,155 @@
+---
+phase: 29-logical-commit-folding-and-the-shared-jev-ladder
+plan: 15
+subsystem: testing
+tags: [arch-test, cross-skill, lookup-drift, jev, caller-text, black-box]
+
+# Dependency graph
+requires:
+  - phase: 29-04
+    provides: "jev_ladder.py and the installed-skill lookup the drift rule compares"
+  - phase: 29-08
+    provides: "tests/test_jev_fast_decision.py TestEntryPointDocs lookup-table parser the drift rule mirrors"
+  - phase: 29-14
+    provides: "the caller SKILL.md, references and evals the caller-text rule reads"
+provides:
+  - "structural rule: no literal cross-skill reach outside a frozen 20-key allowlist (ruling 2, SPEC R9)"
+  - "drift rule: all six installed-skill lookup copies follow jev's documented order (D-13)"
+  - "text rule: no jev backend, consent step or probe status in any caller's prose or generated text (SPEC R10)"
+affects: [backlog 999.19]
+
+# Actuals (chars/4 over the realized diff, 56477 characters)
+actuals:
+  tokens: 14119
+  tasks: 3
+  commits: 3
+
+# Tech tracking
+tech-stack:
+  added: []
+  patterns: [frozen allowlist keyed (file, other skill) with one-line reasons, per-type parsers for lookup copies (literal_eval, JSON, shell block), black-box text scan over caller prose and builder output]
+
+key-files:
+  created:
+    - tests/test_ai_kit_caller_text.py
+  modified:
+    - tests/test_arch.py
+    - .planning/ROADMAP.md
+    - Makefile
+    - .pre-commit-config.yaml
+
+key-decisions:
+  - "Allowlist keys are the 20 keys the live scan returns, none naming jev-fast-decision, decide.py or ai-kit-commit-fold; the frozen set is a literal copy so the frozen check is not vacuous"
+  - "The structural rule sees literal forms only; a discovered path in gsd_catalog.py is not covered (jev choice T1-literal-gap, see Known Gap)"
+  - "Each lookup copy is parsed by its file type: .py by ast.literal_eval, .cjs by JSON of its one SKILLS_ROOTS line, fold-step.md by its shell block"
+  - "The fallback rule applies to caller SKILL.md files only, as the plan states; the README and golden text are scanned for forbidden terms only"
+
+patterns-established:
+  - "Every new structural rule ships a non-vacuity subtest per violation form and per clean form (TestArchNonVacuity)"
+  - "Mutation tries on live copies run in place, restore byte for byte, and are recorded"
+
+requirements-completed: [JEV-06, FLOW-01]
+
+# Metrics
+duration: "about 13 min (scope start snapshot to SUMMARY write)"
+completed: 2026-11-04
+status: complete
+plan_head_before: ab86f10a349c20b9be4a67fa3fee83279d6273b1
+plan_head_after: ea8a9f70802de6eec77f3dc303a72e4fa10f4d53
+commits: 3
+---
+
+# Phase 29 Plan 15: Black-box structural and text rules for the jev callers
+
+**Three rules now hold the JEV-06 boundary: no literal cross-skill reach outside a frozen 20-key allowlist, every installed-skill lookup copy in jev's documented order, and no backend, consent or probe name in any caller's text. All three pass on the tree and fail on their synthetic violation forms, and the lookup rule fails on a live swapped row.**
+
+## Performance
+
+- **Tasks:** 3 of 3 complete
+- **Task commits:** 3 (4c56d76, de378da, ea8a9f7); this SUMMARY is the plan's docs commit
+- **Files changed:** 5 (1 new, 4 modified)
+- **Plan base:** ab86f10; HEAD before the SUMMARY commit: ea8a9f7
+
+## Accomplishments
+
+- **Cross-skill rule** (`tests/test_arch.py`): `skill_folders`, `skill_modules`, `check_cross_skill_refs` and `cross_skill_hits`. The live scan reads 195 files (skills and tools/hooks) and returns 47 raw hits, which collapse to 20 keys. The keys are: the ai_kit_spec imports and sys.path shims of curated-config, session-wake, spec-execute-gsd and spec-execute-superpowers into spec-review; goal-prompt's `WAKE_CLI` and `SPEC_CLI` in `gp_host.py`; and the session-wake path join in `tools/hooks/claude_session_wake.py`. No decide.py hit and no jev or fold-skill hit exists.
+- **Frozen allowlist:** `CROSS_SKILL_ALLOWLIST` (20 keys, one reason line each) and the literal `_CROSS_SKILL_FROZEN` set. `cross_skill_allowlist_problems` rejects a key outside the frozen set and a reason that is empty or multi-line.
+- **Lookup drift rule:** `documented_roots`, `python_roots`, `js_roots`, `shell_roots`, `lookup_drift_problems`, `uncompared_lookup_files`, `LOOKUP_COPIES` (six copies). All six live copies match reference.md rows 2-6.
+- **Caller text test** (`tests/test_ai_kit_caller_text.py`, new): 15 case-insensitive forbidden terms. It scans the SKILL.md (required), README and references of the four callers, the two golden goal-prompt files, and three goal-prompt builder outputs. A caller SKILL.md that mentions jev must state the needs_fallback / no-answer default; all four that do pass. jev-fast-decision is exempt and is used as the positive control.
+- **Backlog:** ROADMAP `### Phase 999.19: Remove the frozen cross-skill reference allowlist` (DIST-03), inserted after 999.18 with no other edit.
+- **Generated listings:** `Makefile` and `.pre-commit-config.yaml` regenerated by `tools/gen_test_groups.py`; the diff adds only the new module.
+
+## Task Commits
+
+1. **Task 1: cross-skill rule, frozen allowlist, backlog entry** - `4c56d76` (test)
+2. **Task 2: lookup drift rule over six copies** - `de378da` (test)
+3. **Task 3: caller text test, regenerated listings** - `ea8a9f7` (test)
+
+## Files Created/Modified
+
+See `key-files` in the frontmatter. No STATE.md, no progress table, no plan checkbox and no config file was touched.
+
+## Decisions Made
+
+See `key-decisions` in the frontmatter. The allowlist reasons name the mechanism for each key (import, sys.path shim, path join, CLI path string), not a generic label.
+
+## Deviations from Plan
+
+None in the code. The plan ran in order. Process notes:
+
+- **Worktree setup:** the worktree had no `.claude/`. I copied `.claude/gsd-core` and `.claude/scripts` from the orchestrator checkout, as the brief says. Both are gitignored and were never committed.
+- **scope.py:** no earlier copy existed in the orchestrator checkout, so I wrote `tmp/p29/15/scope.py` to plan 29-01's spec. `start` ran before any edit and `selftest` printed `selftest ok`.
+- **Commit ledger written late.** Protocol 0c asks for `gsd-plan-head-before-29-15` before the first commit. I missed that and wrote it after the three commits, with the value of the base the worktree branch check verified (ab86f10). The count is measured from that base, so the numbers are right; the timing of the write was not.
+- **Lint fixes before commit:** SIM102 (two) and E501 (three) in the new rule code, and an unused `noqa` in the caller-text module (E402 is not enabled here). `ruff format` was not applied: `tests/test_arch.py` was never format-clean at base (the format diff covers code this plan did not touch), and the repo gates on `ruff check`.
+- **`.venv`:** `uv run --frozen ruff` created `.venv` in the worktree. It is gitignored.
+
+## Issues Encountered
+
+- **Shell guard refusals.** The Bash tool refused the first worktree-branch check because it combined `$(...)` with git. It also refused a `sed` whose line number was computed at run time. I ran the checks as plain commands, or as script files under `tmp/p29/15/`.
+- **Mutation tries run in place.** The rule reads repo files, so the swapped-row tries edited the real `jev_ladder.py` and `ai-kit-fold.cjs` for one test run each, then restored them byte for byte from memory. `git status` showed only `tests/test_arch.py` changed afterwards.
+
+## Known Gap (surfaced, not fixed)
+
+The literal rule does not see `skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/gsd_catalog.py`. Around lines 30-40 it finds the spec-review folder through `model_detect.resolve_ai_kit_spec_path`, inserts that folder into `sys.path` from a variable, and then calls `importlib.import_module(f"ai_kit_spec.{name}")` with a computed name. The rule sees no literal, so the test cannot list it, and a key needs a live hit, so the allowlist cannot list it either. Ruling 2 says the rule covers every cross-skill path, and this one is outside that coverage. The rule's docstring states that only literal forms are seen. Closing the gap needs either a computed-import rule (a later plan with its own non-vacuity cases) or a source change (vendoring or the installed-skill lookup). Both are structural, so they are left for a decision and are not on backlog 999.19 yet.
+
+## Verification
+
+- **Task 1 verify:** `tests.test_arch` passed (89 tests, including the 5 new cross-skill ones). Acceptance greps: the three definitions match; no allowlist key names jev-fast-decision, decide.py or ai-kit-commit-fold (the only matches are a non-vacuity snippet and an existing test line); the ROADMAP heading matches once.
+- **Task 2 verify:** `tests.test_arch` passed (93 tests). Mutation tries: the first two rows of `jev_ladder.py` `SKILLS_ROOTS`, then of `ai-kit-fold.cjs` `SKILLS_ROOTS`, were swapped one at a time; `test_lookup_copies_match_the_documented_order` failed in both runs (`tmp/p29/15/swap_try.py`, reported "mutation tries: caught"). Both files were restored and `git status` stayed clean for them.
+- **Task 3 verify:** `tests.test_ai_kit_caller_text` (10 tests), `tests.test_arch` (93) and `tests.test_gate_scope` (57) passed.
+- **`make test`** through `python3 tmp/p29/15/scope.py test` (TMPDIR set to this run's temp dir): exit 0, with no `failed:` line. Tiers: unit 84/84; the unit-uv, integration and e2e tiers 1/1, 6/6 and 24/24; `tests/test_install.sh` 45 passed, 0 failed; arch 1/1. Log: `tmp/p29/15/make-test.log`.
+- **Commit hooks:** staged-tests passed on each commit. Task 3's commit ran the full unit and arch run (shared machinery: `.pre-commit-config.yaml`), 88/88 modules.
+- **Lint:** `ruff check` clean on `tests/test_arch.py` and `tests/test_ai_kit_caller_text.py`.
+- **Scope close:** `python3 tmp/p29/15/scope.py close` after the last task commit printed `clean`, exit 0. Reported, not this run: other sessions' processes (zsh, VS Code, codegraph node, one node process whose cwd was a deleted sibling worktree). Never counted.
+
+## Known Stubs
+
+None.
+
+## Threat Flags
+
+None. The new rules and the caller-text test only read `skills/`, `tools/hooks/`, the golden fixtures and the reference text. They add no network, auth or write path.
+
+## Self-Check
+
+- FOUND: `tests/test_ai_kit_caller_text.py` (new), `tests/test_arch.py`, `.planning/ROADMAP.md`, `Makefile`, `.pre-commit-config.yaml` (modified).
+- FOUND: commits 4c56d76, de378da and ea8a9f7 are ancestors of HEAD.
+- FOUND: `git rev-list --count ab86f10..HEAD` prints 3, matching `commits: 3`.
+
+## Self-Check: PASSED
+
+## jev-fast-decision call log
+
+One call, one typed choice item, `reviewed_head` ea8a9f70802de6eec77f3dc303a72e4fa10f4d53, default ladder (no `JEV_BACKEND` pin):
+
+- **T1-literal-gap** (choice; options literal_only, extend_rule, fix_source): answer `literal_only`, top 0.93, confidence 0.89, `needs_fallback` false. Backend typesafe: the laya rung was forced (`needs_fallback` true), and the typesafe rung answered under the existing consent record dated 2026-10-14 (`consent_used`). I did not grant consent in this run. The item held repo facts only, no secrets. Did: kept the rule literal-only, as its docstring already states, and recorded the gap in Known Gap above. No allowlist entry was added, because a key needs a live hit. Request `tmp/p29/15/jev_req.json`, response `tmp/p29/15/jev_resp.json` (both gitignored).
+- Other choices in this plan (allowlist reasons, lint fixes, the `ruff format` scope) were settled from the plan text and the repo's gates, not by jev.
+
+**Note for the orchestrator:** the call went through the default ladder, so the remote rung received the item text. The earlier plan pinned `JEV_BACKEND=laya` for that reason. Pin it for repo-content calls.
+
+## Open Items for the Orchestrator
+
+- Decide the `gsd_catalog.py` gap (Known Gap): a computed-import rule in a later plan, or a source change. It is not on backlog 999.19.
+- `make test-env-matrix` was not run; it is not part of this plan's verification.
+
+*Phase: 29-logical-commit-folding-and-the-shared-jev-ladder*
