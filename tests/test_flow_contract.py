@@ -742,8 +742,8 @@ class TestOpenBehaviours(_FlowCase):
         self.assertEqual(code, 1, text)
         self.assertIn("not_started", text)
 
-    # 4. trunk_moved from sync; restack_needed from a lower-unit refold
-    def test_sync_refuses_trunk_moved_when_the_trunk_gained_a_commit(self):
+    # 4. a moved trunk cascades from sync (plan 03 Task 1); a refolded lower unit cascades above it
+    def test_start_restacks_the_stack_when_the_trunk_gained_a_commit(self):
         self.grant()
         self._start_unit("unit-a", BRANCH)
         f.run_git(self.repo, self.env, "switch", "-q", BRANCH)
@@ -753,10 +753,11 @@ class TestOpenBehaviours(_FlowCase):
         f.commit(clone, self.env, {"z.py": b"z\n"}, "feat: trunk moved")
         f.run_git(clone, self.env, "push", "-q", "origin", "main")
         code, text = self.fold("start", "--unit", self.unit("unit-b", "demo/unit-b"))
-        self.assertEqual(code, 1, text)
-        self.assertIn("trunk_moved", text)
+        self.assertEqual(code, 0, text)
+        new_main = self.remote_sha("main")
+        self.assertEqual(self.record()["units"][0]["parent_tip"], new_main)
 
-    def test_refolding_a_lower_unit_under_an_unmerged_unit_refuses_restack_needed(self):
+    def test_refolding_a_lower_unit_under_an_unmerged_unit_restacks_the_units_above(self):
         self.grant()
         self._start_unit("unit-a", BRANCH)
         f.run_git(self.repo, self.env, "switch", "-q", BRANCH)
@@ -764,8 +765,11 @@ class TestOpenBehaviours(_FlowCase):
         self._start_unit("unit-b", "demo/unit-b")
         f.run_git(self.repo, self.env, "switch", "-q", BRANCH)
         code, text = self.checkpoint(self.unit(), final=True)
-        self.assertEqual(code, 1, text)
-        self.assertIn("restack_needed", text)
+        self.assertEqual(code, 0, text)
+        unit_b = next(u for u in self.record()["units"] if u["id"] == "unit-b")
+        self.assertEqual(unit_b["parent_tip"], self.ref_sha(f"refs/heads/{BRANCH}"))
+        self.assertEqual(self.ref_sha("refs/heads/demo/unit-b"),
+                         self.ref_sha(f"refs/heads/{BRANCH}"))
 
     # 5. encodings: a non-ASCII plan title; a backup remote with a space and a non-ASCII path
     def test_non_ascii_plan_title_gives_a_valid_branch_name(self):

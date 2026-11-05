@@ -57,9 +57,7 @@ def catch_up(repo, settings, record):
 
 
 def _sync(repo, settings, record):
-    reason = flow_stack.sync(repo, settings, record)
-    if reason:
-        raise FlowError(reason, "fold.py restack")
+    flow_stack.sync(repo, settings, record)
 
 
 def _require_entry(record, unit):

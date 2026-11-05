@@ -177,7 +177,8 @@ def read_settings(repo):
     """The settings with defaults filled in. Missing, empty, unreadable or non-JSON means
     defaults with consent false."""
     defaults = {"schema": 1, "repo": None, "consent": False, "granted": None,
-                "remote": "origin", "targets": _default_targets(repo), "gates": []}
+                "remote": "origin", "targets": _default_targets(repo), "gates": [],
+                "stack_backend": "plain"}
     data = _read_json(_settings_path(repo))
     if data is None:
         return defaults
@@ -257,7 +258,7 @@ def cmd_settings(args):
     if args.action == "show":
         print(f"remote: {settings['remote']}")
         print(f"targets: {', '.join(settings['targets'])}")
-        print(f"gates: {len(settings['gates'])}")
+        print(f"gates: {'; '.join(shlex.join(gate) for gate in settings['gates']) or 'none'}")
         return 0
     try:
         _ensure_ignored(repo, False)

@@ -492,9 +492,9 @@ class TestMvp(_UnitCase):
         code, text = self._checkpoint_unit("unit-a", "demo/unit-a", "main",
                                            ["a.py"], mvp=True)
         self.assertEqual(code, 1, text)
-        # sync's trunk_moved check runs before the MVP refusals and catches a non-merge commit
-        # on the remote target first; mvp_diverged stays the second line of defence.
-        self.assertIn("trunk_moved", text)
+        # sync cascades the unit onto the moved trunk before the MVP checks (plan 03), so the
+        # tested-tip guard refuses branch_moved; mvp_diverged covers the local-target-ahead case.
+        self.assertIn("branch_moved", text)
         self.assertEqual(self.remote_sha("main"), other)
 
     def test_mvp_checkpoint_with_nothing_new_makes_no_push(self):
