@@ -80,6 +80,38 @@ class DecisionProbeTests(unittest.TestCase):
                               env=env, timeout=5, check=False)
         self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "{}", ""))
 
+    def copy_probe_away(self):
+        """The probe, its session-start import and the core copied outside the checkout."""
+        install = self.base / "elsewhere" / "tools" / "hooks"
+        install.mkdir(parents=True)
+        for name in ("claude_decision_probe.py", "claude_session_start.py", "precompact_core.py"):
+            shutil.copy(HOOKS / name, install / name)
+        return install / SCRIPT.name
+
+    def run_copied(self, script, env):
+        return subprocess.run([sys.executable, "-S", str(script)], input="", text=True,
+                              capture_output=True, env=env, timeout=8, check=False)
+
+    def test_copied_probe_jev_absent_everywhere_gives_empty(self):
+        script = self.copy_probe_away()
+        env = dict(self.env)
+        env.pop("AI_KIT_PRECOMPACT_CLIENT")
+        proc = self.run_copied(script, env)
+        self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "{}", ""))
+
+    def test_copied_probe_finds_installed_copy_control(self):
+        """Non-vacuity control: the same copy with a stub installed in HOME's skills dir
+        reports the backends, so the empty result above is absence, not a broken hook."""
+        script = self.copy_probe_away()
+        env = dict(self.env)
+        env.pop("AI_KIT_PRECOMPACT_CLIENT")
+        scripts = self.base / "home" / ".claude" / "skills" / "jev-fast-decision" / "scripts"
+        scripts.mkdir(parents=True)
+        shutil.copy(STUB, scripts / "jev_review.py")
+        proc = self.run_copied(script, env)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("hookSpecificOutput", json.loads(proc.stdout))
+
 
 if __name__ == "__main__":
     unittest.main()

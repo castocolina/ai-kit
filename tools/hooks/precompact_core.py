@@ -74,14 +74,42 @@ _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _monotonic = time.monotonic
 
 
+JEV_ENTRY_REL = os.path.join("jev-fast-decision", "scripts", "jev_review.py")
+# (config env var or None, fallback base under HOME, skills suffix). Each D-13 caller keeps
+# its own copy; the checkout's skills/ is searched before these rows.
+SKILLS_ROOTS = (("CLAUDE_CONFIG_DIR", ".claude", "skills"), (None, ".agents", "skills"),
+                ("XDG_CONFIG_HOME", ".config", "opencode/skills"),
+                ("CURSOR_CONFIG_DIR", ".cursor", "skills"),
+                ("PI_CODING_AGENT_DIR", ".pi/agent", "skills"))
+
+
+def skills_roots(env, own_root):
+    """Skills dirs in lookup order: own_root first when given, then each host's dir from
+    its config variable (or HOME plus the fallback), skipping rows with no base."""
+    roots = [own_root] if own_root else []
+    home = env.get("HOME", "")
+    for var, fallback, suffix in SKILLS_ROOTS:
+        value = env.get(var, "").strip() if var else ""
+        base = value or (os.path.join(home, fallback) if home else "")
+        if base:
+            roots.append(os.path.join(os.path.expanduser(base), suffix))
+    return roots
+
+
 def find_client(env):
-    """The 21.1 client: the env override when it names a file, else the install's copy."""
+    """The 21.1 client: the env override when it names a file, else the first installed
+    copy in skills_roots order (the checkout's skills/ first, then each host's dir)."""
     override = env.get(CLIENT_ENV)
     if override and os.path.isfile(override):
         return override
-    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-    candidate = os.path.join(root, "skills", "jev-fast-decision", "scripts", "jev_review.py")
-    return candidate if os.path.isfile(candidate) else None
+    # realpath: the hook is wired by path into the checkout, so its own skills/ is found from there.
+    own_root = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))), "skills")
+    for root in skills_roots(env, own_root):
+        candidate = os.path.join(root, JEV_ENTRY_REL)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 def client_env(parent, backend, timeout_s, config_home):
@@ -715,7 +743,7 @@ def presummarize(messages, meta, env):
     if dropped:
         chunks = chunks[len(chunks) - MAX_CHUNKS:]
     meta["skipped"]["dropped_before_classify"] = dropped
-    client = find_client(env)
+    client = find_client(env)  # env is the hook's parent env, not client_env's scrubbed copy
     if client is None:
         return None
     deadline = meta["started"] + CLASSIFY_SECONDS

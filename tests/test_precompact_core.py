@@ -1051,5 +1051,101 @@ class TestOpencodeEntry(CoreEnvMixin, unittest.TestCase):
         self.assertEqual(leftovers, [])
 
 
+class TestFindClientLookup(CoreEnvMixin, unittest.TestCase):
+    """find_client's installed-skill lookup (D-13): the override first, then the checkout's
+    skills/, then each host's skills dir, all read from the env it is given."""
+
+    def copy_hook_away(self, base):
+        """The core copied outside the checkout with no skills/ beside it, loaded by path."""
+        hooks = os.path.join(base, "elsewhere", "tools", "hooks")
+        os.makedirs(hooks)
+        target = os.path.join(hooks, "precompact_core.py")
+        shutil.copy(CORE_PATH, target)
+        spec = importlib.util.spec_from_file_location("precompact_core_elsewhere", target)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def install_stub(self, skills_dir):
+        """A copy of the stub client under <skills_dir>/jev-fast-decision/scripts/."""
+        scripts = os.path.join(skills_dir, "jev-fast-decision", "scripts")
+        os.makedirs(scripts)
+        target = os.path.join(scripts, "jev_review.py")
+        shutil.copy(STUB_PATH, target)
+        return target
+
+    def test_installed_copy_found_and_probed_from_copy_away_from_checkout(self):
+        base = tempfile.mkdtemp()
+        env = self.make_env(tmp=base)
+        env.pop("AI_KIT_PRECOMPACT_CLIENT")
+        installed = self.install_stub(os.path.join(env["HOME"], ".claude", "skills"))
+        hook = self.copy_hook_away(base)
+        self.assertEqual(hook.find_client(env), installed)
+        report = hook.run_probe(installed, env, 5.0)
+        self.assertEqual(report.get("status"), "ok")
+
+    def test_override_names_existing_file_and_wins_over_installed_copy(self):
+        base = tempfile.mkdtemp()
+        env = self.make_env(tmp=base)
+        installed = self.install_stub(os.path.join(env["HOME"], ".claude", "skills"))
+        hook = self.copy_hook_away(base)
+        self.assertEqual(env["AI_KIT_PRECOMPACT_CLIENT"], str(STUB_PATH))
+        self.assertNotEqual(hook.find_client(env), installed)
+        self.assertEqual(hook.find_client(env), str(STUB_PATH))
+
+    def test_checkout_copy_first_even_with_an_installed_copy(self):
+        base = tempfile.mkdtemp()
+        env = self.make_env(tmp=base)
+        env.pop("AI_KIT_PRECOMPACT_CLIENT")
+        self.install_stub(os.path.join(env["HOME"], ".claude", "skills"))
+        own = REPO / "skills" / "jev-fast-decision" / "scripts" / "jev_review.py"
+        self.assertEqual(os.path.realpath(core.find_client(env)), os.path.realpath(own))
+
+    def test_skills_roots_order_for_full_env_and_home_only_env(self):
+        full = {"HOME": "h", "CLAUDE_CONFIG_DIR": " c ", "XDG_CONFIG_HOME": "x",
+                "CURSOR_CONFIG_DIR": "u", "PI_CODING_AGENT_DIR": "p"}
+        self.assertEqual(core.skills_roots(full, "own"), [
+            "own", os.path.join("c", "skills"), os.path.join("h", ".agents", "skills"),
+            os.path.join("x", "opencode", "skills"), os.path.join("u", "skills"),
+            os.path.join("p", "skills")])
+        home_only = {"HOME": "h"}
+        self.assertEqual(core.skills_roots(home_only, "own"), [
+            "own", os.path.join("h", ".claude", "skills"), os.path.join("h", ".agents", "skills"),
+            os.path.join("h", ".config", "opencode", "skills"),
+            os.path.join("h", ".cursor", "skills"), os.path.join("h", ".pi", "agent", "skills")])
+        self.assertEqual(core.skills_roots({}, None), [])
+
+    def test_presummarize_with_no_client_anywhere_returns_none(self):
+        base = tempfile.mkdtemp()
+        env = self.make_env(tmp=base)
+        env.pop("AI_KIT_PRECOMPACT_CLIENT")
+        hook = self.copy_hook_away(base)
+        messages = [{"role": "user", "text": "hello", "tools": []}]
+        # Non-vacuity: the messages reach the client lookup, so None comes from the lookup.
+        self.assertTrue(hook.chunk_messages(messages))
+        self.assertIsNone(hook.presummarize(messages, self.make_meta(env=env), env))
+
+    def test_first_installed_copy_in_documented_order_wins(self):
+        base = tempfile.mkdtemp()
+        env = self.make_env(tmp=base)
+        env.pop("AI_KIT_PRECOMPACT_CLIENT")
+        agents = self.install_stub(os.path.join(env["HOME"], ".agents", "skills"))
+        self.install_stub(os.path.join(env["HOME"], ".pi", "agent", "skills"))
+        hook = self.copy_hook_away(base)
+        self.assertEqual(hook.find_client(env), agents)
+
+    def test_home_with_space_is_found_and_run(self):
+        base = tempfile.mkdtemp()
+        env = self.make_env(tmp=base)
+        env.pop("AI_KIT_PRECOMPACT_CLIENT")
+        env["HOME"] = os.path.join(base, "home with space")
+        installed = self.install_stub(os.path.join(env["HOME"], ".cursor", "skills"))
+        hook = self.copy_hook_away(base)
+        self.assertEqual(hook.find_client(env), installed)
+        self.assertIn("home with space", installed)
+        report = hook.run_probe(installed, env, 5.0)
+        self.assertEqual(report.get("status"), "ok")
+
+
 if __name__ == "__main__":
     unittest.main()

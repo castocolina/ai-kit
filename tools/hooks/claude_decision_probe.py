@@ -53,13 +53,14 @@ def main():
     """Drain the host payload, run the shared bounded probe, then emit or fail open."""
     _drain_stdin()
     core = importlib.import_module("precompact_core")
-    env = core.client_env(os.environ, None, PROBE_TIMEOUT_SECONDS,
-                          os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                                       ".never-created-config"))
-    client = core.find_client(env)
+    # Parent env: the scrubbed copy points XDG_CONFIG_HOME at a directory that is never created.
+    client = core.find_client(os.environ)
     if client is None:
         emit(None)
         return 0
+    env = core.client_env(os.environ, None, PROBE_TIMEOUT_SECONDS,
+                          os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                       ".never-created-config"))
     report = core.run_probe(client, env, PROBE_TIMEOUT_SECONDS)
     user_line, context = compose_probe(report)
     emit(context, user_line)
