@@ -42,8 +42,9 @@ _FLOW_HANDLERS = {
     "hotfix": ("flow_stack", "cmd_hotfix"),
     "restack": ("flow_stack", "cmd_restack"),
     "merge-chain": ("flow_merge", "cmd_merge_chain"),
+    "boundary": ("flow_boundary", "cmd_boundary"),
 }
-_UNIT_COMMANDS = ("start", "guard", "checkpoint", "ready", "show")
+_UNIT_COMMANDS = ("start", "guard", "checkpoint", "ready", "show", "boundary")
 _BAD_INPUT = frozenset({"bad_value", "missing_field", "unknown_field", "bad_checkpoint"})
 
 _PHASE = re.compile(r"\d+(?:\.\d+)?")
@@ -93,24 +94,30 @@ def _add_repo(parser):
     parser.add_argument("--repo", default=".", help="repository (default: current directory)")
 
 
-def _add_selector(parser):
+def _add_selector(parser, allow_next=False):
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--unit", dest="unit_file", metavar="FILE|-",
                        help="unit contract JSON, or - for stdin")
     group.add_argument("--phase", type=_phase, help="GSD phase number (GSD adapter)")
     group.add_argument("--plan", help="superpowers plan file (superpowers adapter)")
     group.add_argument("--unit-id", dest="unit_id", help="an already recorded unit")
+    if allow_next:
+        group.add_argument("--next", action="store_true",
+                           help="no unit yet: brief the top stacked unit as the previous unit")
 
 
 def _add_flow_parsers(sub):
     for name in _UNIT_COMMANDS:
         parser = sub.add_parser(name, help=f"unit flow: {name}")
-        _add_selector(parser)
+        _add_selector(parser, allow_next=name == "boundary")
         _add_repo(parser)
         if name == "checkpoint":
             parser.add_argument("--checkpoint", metavar="FILE|-", help="checkpoint JSON")
             parser.add_argument("--base", default=None, help="fold base for --plan")
             parser.add_argument("--final", action="store_true", help="unit is finished")
+        if name == "boundary":
+            parser.add_argument("--point", required=True, choices=("start", "plan", "wave"),
+                                help="start of the unit, before planning, or before wave 1")
     hotfix = sub.add_parser("hotfix", help="start a hotfix unit on a target branch")
     hotfix.add_argument("--target", required=True)
     hotfix.add_argument("--name", required=True)
@@ -359,8 +366,7 @@ def _flow(args):
         return _flow_refusal(args.command, "bad_value", "--note needs --continue; not both")
     if args.command == "checkpoint" and args.base is not None and args.plan is None:
         return _flow_refusal(args.command, "bad_value", "--base is only valid with --plan")
-    if args.command in _UNIT_COMMANDS:
-
+    if args.command in _UNIT_COMMANDS and not getattr(args, "next", False):
         try:
             _attach(args)
         except (flow_record.FlowError, FoldError) as exc:

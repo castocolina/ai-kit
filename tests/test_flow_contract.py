@@ -1079,6 +1079,21 @@ LIVE = _REPO / "tools" / "flow_live_check.py"
 STACK_PROBE = 'if [ "$1" = "stack" ] && [ "$2" = "--help" ]; then exit 0; fi'
 
 
+class TestStartBoundaryReport(_FlowCase):
+    """`start` ends its report with one boundary line; the index fakes under git_env answer it."""
+
+    def test_start_report_has_one_boundary_line_from_the_fakes(self):
+        code, text = self.fold("start", "--unit", self.unit())
+        self.assertEqual(code, 0, text)
+        boundary = [line for line in text.splitlines() if line.startswith("boundary: ")]
+        self.assertEqual(len(boundary), 1, text)
+        self.assertIn("codegraph: ran codegraph init -y", boundary[0])
+        self.assertIn("graphify: ran graphify update .", boundary[0])
+        self.assertIn("brief: .aikit/brief/SKILL.md (no previous unit)", boundary[0])
+        brief = (self.repo / ".aikit" / "brief" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("unit: unit-a\n", brief)
+
+
 class TestLiveCheckScript(unittest.TestCase):
     """The scripted live check in fixture mode: both rounds, the gh-stack proof, forced failures.
 

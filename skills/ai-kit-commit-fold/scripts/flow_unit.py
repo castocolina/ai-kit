@@ -6,6 +6,7 @@ Each command takes the argparse namespace from fold.py. `args.unit` is a flow_re
 flow_record.render: first line `flow <command> <unit>: <branch>`, last `outcome: ...`.
 """
 
+import flow_boundary
 import flow_git
 import flow_mvp
 import flow_pr
@@ -360,8 +361,31 @@ def _ready(args, unit):
     return lines, "done"
 
 
+def _briefed_unit(repo, unit, lines):
+    """The unit the boundary briefs: a joined hotfix unit when `start` joined one (30-04)."""
+    joined = next((line for line in lines if line.startswith("joins hotfix unit ")), None)
+    if joined is None:
+        return unit
+    return _unit_of(find_entry(read_record(repo), joined.rsplit(" ", 1)[1]))
+
+
+def _start_and_boundary(args, unit):
+    """`start`, then the boundary step at the unit's start; a boundary failure is one line."""
+    lines, outcome = _start(args, unit)
+    try:
+        boundary_lines, _ = flow_boundary.boundary(
+            args.repo, _briefed_unit(args.repo, unit, lines), "start",
+            phase=getattr(args, "phase", None))
+        lines.append("boundary: " + " | ".join(boundary_lines))
+    except FlowError as exc:
+        lines.append(f"boundary: skipped: {exc.reason}: {exc.detail}")
+    except OSError as exc:
+        lines.append(f"boundary: skipped: os_error: {exc}")
+    return lines, outcome
+
+
 def cmd_start(args):
-    return _run("start", args, _start)
+    return _run("start", args, _start_and_boundary)
 
 
 def cmd_guard(args):

@@ -64,6 +64,9 @@ JSON (`--unit FILE|-`) or by selector: `--phase N` for GSD, `--plan FILE` for su
 - `fold.py ready <selector>`: mark the draft PR ready for review. It refuses `signal_order` before
   the unit is finished and `not_verified` until verification has passed.
 - `fold.py show <selector>`: read-only. Prints the unit's `state:` and `pr:`.
+- `fold.py boundary <selector> --point start|plan|wave` (or `--next` before a unit exists): refresh
+  this checkout's codegraph index and graphify graph, then rewrite `.aikit/brief/SKILL.md`, the brief
+  the next agents read. `start` runs it itself.
 
 The stack and settings commands:
 

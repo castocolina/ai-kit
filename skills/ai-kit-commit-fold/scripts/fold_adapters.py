@@ -202,6 +202,27 @@ def gsd_plans(repo, phase):
     return sorted(plans)
 
 
+def _wave_of(text):
+    """The `wave:` front matter value of a PLAN.md; a missing key counts as wave 1."""
+    front = re.match(r"---\n(.*?)\n---", text, re.S)
+    found = re.search(r"^wave:\s*(\d+)\s*$", front.group(1) if front else "", re.M)
+    return int(found.group(1)) if found else 1
+
+
+def index_wave_one_done(repo, phase):
+    """True when the phase has wave-1 plans and every one of them has its SUMMARY.md (30-04)."""
+    padded = padded_phase(phase)
+    directory = phase_dir(repo, phase)
+    pattern = re.compile(rf"{re.escape(padded)}-(\d{{2}})-PLAN\.md")
+    wave_one = []
+    for name in os.listdir(directory):
+        match = pattern.fullmatch(name)
+        if match and _wave_of(_read(os.path.join(directory, name))) == 1:
+            wave_one.append(f"{padded}-{match.group(1)}")
+    return bool(wave_one) and all(
+        os.path.isfile(os.path.join(directory, f"{unit}-SUMMARY.md")) for unit in wave_one)
+
+
 def _plan_unit(scope, padded):
     match = _PLAN_SCOPE.fullmatch(scope)
     if not match:

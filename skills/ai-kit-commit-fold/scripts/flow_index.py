@@ -11,6 +11,7 @@ import contextlib
 import datetime
 import fcntl
 import functools
+import importlib
 import json
 import os
 import shutil
@@ -173,11 +174,15 @@ def ensure_excluded(top, rels):
     notes = []
     exclude = flow_record.common_dir(top) / "info" / "exclude"
     for rel in rels:
-        probe = subprocess.run(["git", "-C", top, "check-ignore", "-q", "--", f"{rel}/probe"],
+        # The directory itself, not a file inside it: codegraph's own `*` .gitignore hides the
+        # contents but leaves its `.gitignore` visible, so a probe inside would never add the entry.
+        text = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+        if f"{rel}/" in text.splitlines():
+            continue
+        probe = subprocess.run(["git", "-C", top, "check-ignore", "-q", "--", rel],
                                capture_output=True, check=False)
         if probe.returncode == 0:
             continue
-        text = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
         prefix = "\n" if text and not text.endswith("\n") else ""
         exclude.parent.mkdir(parents=True, exist_ok=True)
         with open(exclude, "a", encoding="utf-8") as handle:
@@ -369,6 +374,7 @@ def cmd_index(args):
     the one job lock; see the module docstring of `launch_runner`.
     """
     if getattr(args, "detach", False):
+        importlib.import_module("flow_brief")  # registers the brief seeding hook (30-04)
         return detach(args.repo)
     top = _top_of(args.repo)
     if top is None:

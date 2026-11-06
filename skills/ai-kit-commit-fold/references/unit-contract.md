@@ -53,6 +53,20 @@ new branch is deleted and `start` refuses `plan_not_carried`, naming the command
 owner to run; the agent stops and shows them. The record keeps their count as `carried`; a plan-file checkpoint without
 `--base` folds from above them, so the planning commits are never folded.
 
+## Boundary (`boundary`)
+
+`fold.py boundary <selector> --point start|plan|wave`, or `boundary --next --point plan` before a
+unit exists, runs the boundary step: it refreshes this checkout's code index and graph under the
+index lock shared with the worktree job, then rewrites `.aikit/brief/SKILL.md`, the brief the
+next agents read. The three points are the unit's start (`start` runs it itself, last), before
+planning, and before the first execution wave; the `wave` point is skipped once every wave-1 plan
+of the unit has its summary. A tool that is missing or fails is one report line, never a refusal.
+The report lines are `codegraph:`, `graphify:`, at most one `note:`, `brief:` and `outcome:`; the
+brief lists the previous unit's range and changed files, an explore instruction for the agents,
+and the tracked documents that mention the changed names. The brief says which documents mention
+a name, never what a document describes. A recorded unit whose branch is not HEAD is refused
+(`ref_mismatch`) before any refresh or write.
+
 ## Checkpoint JSON (`--checkpoint FILE|-`)
 
 Read this when writing a checkpoint file for `--checkpoint` or for `fold.py fold`. One JSON

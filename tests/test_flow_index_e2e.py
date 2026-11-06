@@ -129,9 +129,11 @@ class TestWorktreeHook(unittest.TestCase):
                                    "--detach", str(self.tmp / name)],
                                   env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                  for name in ("wt-a", "wt-b")]
-        for proc in procs:
+        for proc, name in zip(procs, ("wt-a", "wt-b"), strict=True):
             _, err = proc.communicate()
             self.assertEqual(proc.returncode, 0, err.decode("utf-8", "replace"))
+            # the seeded brief exists as soon as git returns, before the queued drain runs
+            self.assertTrue((self.tmp / name / ".aikit" / "brief" / "SKILL.md").is_file(), name)
         # measured, not slept: both adds return within the SPEC R6 bound
         self.assertLess(time.monotonic() - started, 1.0)
         self.settle()
