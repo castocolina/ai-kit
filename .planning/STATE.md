@@ -587,6 +587,7 @@ any order, or deferred, without blocking anything else in this milestone.
 | 261102-qrx | spec-discuss interactive path runs discuss with --analyze --all --batch | 2026-11-02 | 8e1bef6 | [261102-qrx-spec-discuss-interactive-path-runs-discu](./quick/261102-qrx-spec-discuss-interactive-path-runs-discu/) |
 | 261104-cxr | split cross-ai runner e2e self-test into logic and runtime shards | 2026-11-04 | 5109f80 | [261104-cxr-split-cross-ai-runner-e2e-self-test-into](./quick/261104-cxr-split-cross-ai-runner-e2e-self-test-into/) |
 | 261104-hzc | Apply test-time audit cuts 1-13 and the data-file mapper change | 2026-11-04 | 429bc0d | [261104-hzc-apply-test-time-audit-cuts-1-13-and-the-](./quick/261104-hzc-apply-test-time-audit-cuts-1-13-and-the-/) |
+| 261106-n8k | close the open items left by the phase 28-31 run | 2026-11-06 | 320aafc..4c68491 | [261106-n8k-close-the-open-items-left-by-the-phase-2](./quick/261106-n8k-close-the-open-items-left-by-the-phase-2/) |
 
 ### Roadmap Evolution
 
