@@ -391,7 +391,7 @@ def gsd_unit(repo, phase):
             "title": directory, "mvp": gsd_mvp(repo, phase)}
 
 
-_SPEC_LINE = re.compile(r"^\*\*Spec:\*\*\s*(.+?)\s*$", re.MULTILINE)
+_SPEC_LINE = re.compile(r"^\*\*Spec:\*\*[ \t]*(.+?)[ \t]*$", re.MULTILINE)
 _SPEC_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 
 
@@ -487,17 +487,8 @@ def _atomic_bytes(path, data):
             os.remove(temp)
 
 
-def _gsd_config(top):
-    try:
-        with open(os.path.join(top, ".planning", "config.json"), encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
 def _graphify_config(top):
-    value = _gsd_config(top).get("graphify")
+    value = _config(top).get("graphify")
     return value if isinstance(value, dict) else {}
 
 
@@ -589,9 +580,10 @@ def index_publish_copy(top, fields):
 def index_ensure_graphifyignore(top):
     """Ruling 2: add `.planning/milestones/` to the root `.graphifyignore` when it is missing."""
     path = os.path.join(top, ".graphifyignore")
-    text = _read_bytes(path).decode("utf-8") if os.path.isfile(path) else ""
+    # surrogateescape: a non-UTF-8 byte neither raises nor changes on the write back
+    text = _read_bytes(path).decode("utf-8", "surrogateescape") if os.path.isfile(path) else ""
     if _IGNORE_LINE in (line.strip() for line in text.splitlines()):
         return None
     prefix = "\n" if text and not text.endswith("\n") else ""
-    _atomic_bytes(path, (text + prefix + _IGNORE_LINE + "\n").encode("utf-8"))
+    _atomic_bytes(path, (text + prefix + _IGNORE_LINE + "\n").encode("utf-8", "surrogateescape"))
     return f"note: .graphifyignore: added {_IGNORE_LINE} (commit it)"

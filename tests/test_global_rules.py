@@ -53,6 +53,10 @@ class _ScratchHome(unittest.TestCase):
             "CODEX_HOME": os.path.join(self.home, ".codex"),
             "AI_KIT_REFUSE_REAL_HOME": "1",
         }
+        # T-30-12: every host path the code resolves lies under this scratch HOME
+        for _host, path in global_rules.global_instruction_paths(self.env):
+            self.assertTrue(os.path.realpath(path).startswith(os.path.realpath(self.home) + os.sep),
+                            path)
 
     def write_all(self, body=None):
         for path in self.paths.values():

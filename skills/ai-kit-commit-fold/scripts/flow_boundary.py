@@ -49,12 +49,15 @@ def previous_unit(record, unit_id):
 
 
 def unit_range(repo, entry):
-    """(base, end) of a recorded unit: its parent tip to its branch tip, else to its pushed tip."""
+    """(base, end) of a recorded unit: its parent tip to its branch tip, else to its pushed tip.
+    None (the brief's "range unknown") when either commit is gone, e.g. pruned after a squash."""
     base = entry.get("parent_tip")
-    if not base:
-        return None
     tip = flow_git.rev(repo, f"refs/heads/{entry['branch']}") or entry.get("pushed")
-    return (base, tip) if tip else None
+    if not base or not tip:
+        return None
+    if any(flow_git.rev(repo, f"{sha}^{{commit}}") is None for sha in (base, tip)):
+        return None
+    return (base, tip)
 
 
 def _facts(top, record, unit, point, seams):
@@ -68,7 +71,7 @@ def _facts(top, record, unit, point, seams):
         head=(flow_git.rev(top, "HEAD") or "")[:12],
         point=point,
         written=seams.now(),
-        base_branch=unit.target if unit else "main",
+        base_branch=unit.target if unit else fold_adapters.base_branch(top),
         previous=previous["id"] if previous else None,
         previous_branch=previous["branch"] if previous else "",
         unit_range=span,

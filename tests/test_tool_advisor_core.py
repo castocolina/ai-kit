@@ -453,6 +453,9 @@ class TestCodegraphSearchAdvice(unittest.TestCase):
             ({"tool": "bash", "command": "rg -t md foo"}, False),
             ({"tool": "bash", "command": "grep -rn foo tools --include '*.md'"}, False),
             ({"tool": "bash", "command": "rg foo --glob '!*.md'"}, True),
+            ({"tool": "bash", "command": "grep -rn foo --include=*.md ."}, False),
+            ({"tool": "bash", "command": "rg -n foo --glob=*.md"}, False),
+            ({"tool": "bash", "command": "rg -n foo --glob=*.py"}, True),
             ({"tool": "bash", "command": "rg foo docs/x.md src"}, True),
             ({"tool": "grep", "search_path": "tools", "glob": "*.md"}, False),
             ({"tool": "grep", "search_path": "tools"}, True),
@@ -472,6 +475,23 @@ class TestCodegraphSearchAdvice(unittest.TestCase):
                     self.assertIn("codegraph_explore", advice[0][1])
                     self.assertIn("codegraph explore", advice[0][1])
                     self.assertIn("keep rg for Markdown", advice[0][1])
+
+    def test_pi_grep_glob_decides_markdown_only(self):
+        checkout = self._checkout()
+        for tool_input, expected in (({"pattern": "foo", "glob": "*.md"}, False),
+                                     ({"pattern": "foo", "path": "tools"}, True)):
+            with self.subTest(tool_input=tool_input):
+                event = core.event_from_pi({"toolName": "grep", "input": tool_input,
+                                            "cwd": checkout})
+                self.assertEqual(bool(core.codegraph_advice(event, {"codegraph"})), expected)
+
+    def test_advice_tokens_match_the_code_exploration_rule(self):
+        rules = _load("code_exploration", os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "skills", "_shared", "ai_kit_rules_common", "code_exploration.py"))
+        for token in ("codegraph_explore", "codegraph explore"):
+            self.assertIn(token, core.CODEGRAPH_LINE)
+            self.assertIn(token, rules.RULE_CLAUSES[0])
 
     def test_no_advice_without_index_or_cli_or_on_reminder(self):
         unindexed = self._checkout(indexed=False)

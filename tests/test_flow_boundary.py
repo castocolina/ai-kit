@@ -400,6 +400,18 @@ class TestStartBoundary(unittest.TestCase):
             lines, _ = flow_unit._start_and_boundary(self.args, _unit("B", "feat/b"))
         self.assertEqual(lines[-1], "boundary: skipped: os_error: disk gone")
 
+    def test_value_error_becomes_a_skipped_line(self):
+        error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        with mock.patch.object(flow_unit, "_start", return_value=(["started"], "done")), \
+                mock.patch.object(flow_boundary, "boundary", side_effect=error):
+            lines, _ = flow_unit._start_and_boundary(self.args, _unit("B", "feat/b"))
+        self.assertTrue(lines[-1].startswith("boundary: skipped: value_error: "), lines)
+
+    def test_pruned_previous_unit_range_is_unknown_not_refused(self):
+        entry = {"parent_tip": "0" * 40, "branch": "gone/branch", "pushed": "1" * 40}
+        # read-only lookups in this checkout: neither object id exists
+        self.assertIsNone(flow_boundary.unit_range(str(_REPO), entry))
+
     def test_joined_hotfix_unit_is_the_one_briefed(self):
         record = {"schema": 1, "units": [_entry("HF", "fix/hf", "0" * 40, kind="hotfix")]}
         with mock.patch.object(flow_unit, "_start",

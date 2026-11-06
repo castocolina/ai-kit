@@ -315,7 +315,9 @@ def _positive_filters(args):
 
 def _search_scope(name, tail):
     """Return (paths, positive filters) of one bounded rg, grep or find argument list."""
-    args = _arguments(tail)
+    # `--glob=*.md` is `--glob *.md`: split the joined long form before scanning
+    args = [part for arg in _arguments(tail)
+            for part in (arg.split("=", 1) if arg.startswith("--") and "=" in arg else [arg])]
     if name == "find":
         paths = []
         for arg in args:
@@ -583,7 +585,11 @@ def event_from_pi(data):
              "path": path, "offset": tool_input.get("offset") if tool_input else None,
              "limit": tool_input.get("limit") if tool_input else None,
              "call_id": data.get("toolCallId"), "session_id": data.get("sessionId"),
-             "cwd": cwd, "single_block": True}
+             "cwd": cwd, "single_block": True,
+             # shortcut: pi's grep/find input fields (path, glob, pattern) are assumed from
+             # Claude's; absent fields leave the event as before
+             "search_path": path, "glob": tool_input.get("glob"),
+             "pattern": tool_input.get("pattern")}
     details = data.get("details")
     truncation = details.get("truncation") if isinstance(details, dict) else None
     if (isinstance(truncation, dict) and truncation.get("truncated") is True

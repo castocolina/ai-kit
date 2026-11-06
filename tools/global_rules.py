@@ -234,11 +234,6 @@ def _write_change(change: Change, directory, when, before_replace) -> tuple[bool
     return True, f"{head}: rewrote codegraph's sentence (backup {backup})"
 
 
-def drift(env) -> list[tuple[str, str]]:
-    """Hosts whose codegraph block still holds the installer's sentence."""
-    return [(c.host, c.path) for c in plan_changes(env) if c.status == "replace"]
-
-
 def summary(env) -> str:
     """The doctor row's value: which wording each file holds; never raises."""
     try:

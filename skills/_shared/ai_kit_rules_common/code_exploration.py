@@ -43,8 +43,8 @@ RULE_CLAUSES: tuple[str, ...] = (
 RULE_TEXT: str = " ".join(RULE_CLAUSES)
 
 # Indexes into RULE_CLAUSES that house rule R07 (codegraph) and R08 (graphify) carry.
-# R08 adds clause 7 (not in the plan's (2, 6)): clauses 2 and 6 name no graph.json or
-# graphify-out, and R08's signals must appear in its summary.
+# R08 adds clause 7 (not in the plan's (2, 6)) so that every signal R08 checks appears in
+# its summary.
 R07_CLAUSES: tuple[int, ...] = (0, 3)
 R08_CLAUSES: tuple[int, ...] = (2, 6, 7)
 

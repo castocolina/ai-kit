@@ -382,6 +382,8 @@ def _start_and_boundary(args, unit):
         lines.append(f"boundary: skipped: {exc.reason}: {exc.detail}")
     except OSError as exc:
         lines.append(f"boundary: skipped: os_error: {exc}")
+    except ValueError as exc:  # e.g. undecodable text; start's own change already went through
+        lines.append(f"boundary: skipped: value_error: {exc}")
     return lines, outcome
 
 

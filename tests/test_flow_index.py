@@ -251,6 +251,23 @@ class GsdCopyTests(_Base):
         second = self.refresh()
         self.assertFalse(any(line.startswith("note: .graphifyignore") for line in second))
 
+    def test_graphignore_holds_milestones_before_the_first_graphify_build(self):
+        self.enabled()
+        seen = []
+
+        def run(argv, cwd, timeout=900):
+            if argv[1:] == ["update", "."]:
+                ignore = self.repo / ".graphifyignore"
+                text = ignore.read_text("utf-8") if ignore.is_file() else ""
+                seen.append(".planning/milestones/" in text)
+            return flow_index._run_tool(argv, cwd, timeout)
+
+        config = (self.repo / ".planning" / "config.json").read_bytes()
+        flow_index.refresh(self.top, run=run, which=self.which)
+        self.assertEqual(seen, [True])
+        # T-30-06: the refresh only reads GSD's config
+        self.assertEqual((self.repo / ".planning" / "config.json").read_bytes(), config)
+
     def test_non_gsd_project_leaves_planning_and_graphignore_alone(self):
         lines = self.refresh()
         self.assertTrue(lines[1].endswith("graphify-out only (not a GSD project)"), lines)

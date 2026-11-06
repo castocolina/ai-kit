@@ -176,7 +176,7 @@ def ensure_excluded(top, rels):
     for rel in rels:
         # The directory itself, not a file inside it: codegraph's own `*` .gitignore hides the
         # contents but leaves its `.gitignore` visible, so a probe inside would never add the entry.
-        text = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+        text = exclude.read_text("utf-8", "surrogateescape") if exclude.is_file() else ""
         if f"{rel}/" in text.splitlines():
             continue
         probe = subprocess.run(["git", "-C", top, "check-ignore", "-q", "--", rel],
@@ -193,13 +193,14 @@ def ensure_excluded(top, rels):
 
 def refresh(top, run=_run_tool, which=shutil.which, clock=time.monotonic, sleep=time.sleep):
     """One refresh of `top`: codegraph line, graphify line, then the note lines."""
-    codegraph_line = codegraph_step(top, run, which)
-    graphify_line = graphify_step(top, run, which, clock, sleep)
     notes = []
+    # the ignore line goes in before the build, so the first graph already excludes milestones
     if fold_adapters.index_project(top) and which("graphify") is not None:
         note = fold_adapters.index_ensure_graphifyignore(top)
         if note:
             notes.append(note)
+    codegraph_line = codegraph_step(top, run, which)
+    graphify_line = graphify_step(top, run, which, clock, sleep)
     rels = [".codegraph", "graphify-out"]
     if fold_adapters.index_copy_applies(top):
         rels.append(".planning/graphs")

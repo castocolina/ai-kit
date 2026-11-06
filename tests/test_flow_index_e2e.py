@@ -134,8 +134,10 @@ class TestWorktreeHook(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, err.decode("utf-8", "replace"))
             # the seeded brief exists as soon as git returns, before the queued drain runs
             self.assertTrue((self.tmp / name / ".aikit" / "brief" / "SKILL.md").is_file(), name)
-        # measured, not slept: both adds return within the SPEC R6 bound
-        self.assertLess(time.monotonic() - started, 1.0)
+        # SPEC R6: git never waits for the indexing. Each fake call sleeps 1.5 s, so no job can
+        # have ended when git returns; the wall bound stays loose for a loaded parallel run.
+        self.assertFalse(any(" end " in line for line in self.log_lines()), self.log_lines())
+        self.assertLess(time.monotonic() - started, 3.0)
         self.settle()
         for name in ("wt-a", "wt-b"):
             path = self.tmp / name
@@ -151,7 +153,7 @@ class TestWorktreeHook(unittest.TestCase):
 
     def test_no_checkout_add_is_not_queued(self):
         _, elapsed = self.add_worktree("wt-first")
-        self.assertLess(elapsed, 1.0)
+        self.assertLess(elapsed, 3.0)  # loose: the git-never-waits claim is pinned above
         self.settle()
         before = sum(" queued " in line for line in self.log_lines())
         self.add_worktree("wt-no-checkout", "--no-checkout")
