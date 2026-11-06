@@ -29,6 +29,7 @@ from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widgets import Static
 
@@ -42,6 +43,52 @@ WARN = "#d29922"
 PINK = "#db61a2"
 CYAN = "#39c5cf"
 KEYCAP = "#21262d"
+HOST_CLAUDE = "#D97757"   # host band accents (D-03); each keeps >= 4.5:1 with BAND_TEXT
+HOST_CURSOR = "#8B949E"
+BAND_TEXT = "#0d1117"
+HOST_ACCENTS = {"claude": HOST_CLAUDE, "cursor": HOST_CURSOR}
+TOGGLE_ON = "[ off │●on ]"
+TOGGLE_OFF = "[ ●off │on ]"
+FOREIGN_CHOICES = ("keep", "remove", "custom")
+TOGGLE_FOREIGN = {"keep": "[ ●keep │remove │customize ]",
+                  "remove": "[ keep │●remove │customize ]",
+                  "custom": "[ keep │remove │●customize ]"}
+OUTCOME_TEXT = {
+    "wire": "wire ai-kit",
+    "update": "update ai-kit's layout",
+    "unchanged": "unchanged",
+    "remove_ours": "remove ai-kit's",
+    "keep_foreign": "keep its current status line; nothing written",
+    "remove_foreign": "remove the foreign entry, backed up; {label} shows its own default",
+    "replace_foreign": "replace the foreign entry with your ai-kit layout, backed up",
+}
+LOCKED_NOTICE = "Status line is off; press o to turn it on"
+FOREIGN_LOCKED_NOTICE = "Board is locked; press o until customize to arrange it"
+EDIT_KEYS = ("up", "down", "left", "right", "space", "tab", "shift+tab")
+DONE_DOCTOR_HINT = "d · check your AI-CLI configs (config doctor)"
+DONE_OFF_LINE = ("{label}: ai-kit's status line is off; open a new {label} session "
+                 "to see its default.")
+DONE_KEPT_LINE = "{label}: kept its current status line; nothing written to it."
+DONE_REMOVED_FOREIGN_LINE = ("{label}: removed the foreign status line; the host shows "
+                             "its own default.")
+PREVIEW_OFF_TEXT = "host default (ai-kit's status line off)"
+PREVIEW_KEEP_TEXT = "current status line kept (another tool's; no ai-kit preview)"
+PREVIEW_REMOVE_TEXT = "host default (foreign status line removed)"
+OFF_NOTE = {
+    "ours": "Off: Review removes ai-kit's entry; {label} shows its default status line. "
+            "Press o to turn it on.",
+    "unset": "Off: Review leaves {label} unchanged; it shows its default status line. "
+             "Press o to turn it on.",
+}
+FOREIGN_NOTE = {
+    "keep": "Keep: Review leaves {label}'s current status line as it is and writes nothing "
+            "to it. Press o to remove it.",
+    "remove": "Remove: Review backs up the file, asks you (default No), then removes the "
+              "foreign status line; {label} shows its own default. Press o to customize.",
+    "custom": "Customize: arrange the board, starting from ai-kit's default layout; Review "
+              "backs up the file, asks you (default No), then writes ai-kit's status line "
+              "with your layout. Press o to keep the current one.",
+}
 
 STEP_CHOOSE, STEP_ARRANGE, STEP_REVIEW, STEP_DONE = 0, 1, 2, 3
 LANE_GATE = {1: 20, 2: 30}  # Line 2 needs ≥20 rows, Line 3 needs ≥30
@@ -70,8 +117,8 @@ FOOTERS = [
     [("Continue", "Enter", True), ("Toggle", "Space", False), ("Kind", "←→", False),
      ("Move", "↑↓", False), ("This kind", "a/n", False), ("Help", "?", False)],
     [("Continue", "Enter", True), ("Back", "Esc", False), ("Move", "←→", False),
-     ("Line", "↑↓", False), ("On/off", "Space", False), ("Reset", "r", False),
-     ("Help", "?", False)],
+     ("Line", "↑↓", False), ("On/off", "Space", False), ("Status line", "o", False),
+     ("Reset", "r", False), ("Help", "?", False)],
     [("Install", "Enter", True), ("Back", "Esc", False), ("Help", "?", False)],
     [("Finish & exit", "Enter", True)],
 ]
@@ -88,13 +135,16 @@ HELP = {
                    ("↑ ↓", "Move the chip across lines (↑ off Line 1 → OFF tray)"),
                    ("Space", "Turn the focused segment on/off (off → tray)"),
                    ("Tab / ⇧Tab", "Focus the next / previous chip"),
+                   ("o", "Status line on/off; another tool's line: keep / remove / customize"),
                    ("r", "Reset the layout to defaults"),
-                   ("Enter / Esc", "Continue to Review / back to Choose"),
+                   ("Enter / Esc", "Continue to the next host or Review / back"),
                    ("q", "Quit the installer")],
     STEP_REVIEW: [("Enter", "Install / write the config"),
                   ("Esc", "Back to Arrange"), ("g", "Toggle the global rules rewrite"),
                   ("q", "Quit")],
-    STEP_DONE: [("Enter", "Finish and exit"), ("q", "Quit")],
+    STEP_DONE: [("Enter", "Finish and exit"),
+                ("d", "Check your AI-CLI configs (config doctor); Esc returns here"),
+                ("q", "Quit")],
 }
 
 
@@ -217,20 +267,17 @@ class LayoutBoard:
 
 @dataclass
 class HostPane:
-    """ONE host's Arrange state: its model/board pair and whether that host's
-    adoption gate has been answered. Grouped so the app keeps one active pane
-    instead of mirroring a model/board pair as separate attributes."""
+    """ONE host's Arrange state: its model/board pair. Grouped so the app keeps
+    one active pane instead of mirroring a model/board pair as separate attributes."""
     model: WizardModel
     board: LayoutBoard
-    answered: bool
 
 
 @dataclass
 class FlowState:
     step: int = STEP_CHOOSE
     help_open: bool = False
-    gate_done: bool = False
-    host_index: int = 0    # the detected host whose gate/board is on Arrange
+    host_index: int = 0    # the detected host whose band/board is on Arrange
     result: WizardResult | None = None
     kind: str = ""         # the active Choose tab (a KINDS entry)
     kind_cursor: dict = field(default_factory=dict)  # kind -> last cursor index in that kind
@@ -291,6 +338,48 @@ _MIN_TERMINAL_COLS: int = 40
 _MIN_TERMINAL_ROWS: int = 10
 
 
+class ForeignConfirm(ModalScreen):
+    """Review's confirmation before another tool's status-line entry is removed or
+    replaced. Default No: Enter and Esc are No; only `y` answers Yes (T-30.1-11)."""
+
+    BINDINGS = (("y", "yes", "Yes"), ("n", "no", "No"),
+                ("enter", "no", "No"), ("escape", "no", "No"))
+    DEFAULT_CSS = """
+    ForeignConfirm { align: center middle; }
+    #foreign-box { width: 76; height: auto; max-height: 90%; border: round #d29922;
+                   background: #0d1117; padding: 1 2; }
+    """
+
+    def __init__(self, host_label: str, info: dict, replace: bool) -> None:
+        super().__init__()
+        self.host_label = host_label
+        self.info = info
+        self.replace = replace
+
+    def compose(self) -> ComposeResult:
+        label = escape(self.host_label)
+        if self.replace:
+            title = f"Replace {label}'s existing status line with ai-kit's?"
+        else:
+            title = f"Remove {label}'s existing status line?"
+        backup = self.info.get("backup", "")
+        backup_line = (f"A backup was saved to {escape(backup)}." if backup
+                       else "Dry run: no backup taken; nothing will be written.")
+        lines = [f"[b]{title}[/b]",
+                 f"Entry: {escape(self.info.get('entry', ''))}",
+                 f"File: {escape(self.info.get('file', ''))}",
+                 backup_line,
+                 f"[{DIM}]y = Yes · n / Enter / Esc = No (default)[/]"]
+        with VerticalScroll(id="foreign-box"):
+            yield Static("\n".join(lines))
+
+    def action_yes(self) -> None:
+        self.dismiss(True)
+
+    def action_no(self) -> None:
+        self.dismiss(False)
+
+
 class WizardApp(App):
     ENABLE_COMMAND_PALETTE = False
     CSS = f"""
@@ -309,8 +398,11 @@ class WizardApp(App):
     .lane {{ border: round {CYAN}; height: auto; padding: 0 1; margin-bottom: 1;
             background: #0f141b; border-title-color: {CYAN}; }}
     .lane.gated {{ border: dashed {CYAN}; border-subtitle-color: {WARN}; }}
-    .lane.gate-attention {{ border: round {WARN}; background: #211803;
-                            border-title-color: {WARN}; }}
+    #band {{ height: 1; }}
+    #band-name {{ width: 1fr; }}
+    #band-toggle {{ width: auto; }}
+    #band-note {{ height: auto; }}
+    .locked {{ text-opacity: 50%; }}
     #focchip {{ border: round {PINK}; background: #1b1016; height: auto; padding: 0 1;
                margin-bottom: 1; border-title-color: {PINK}; }}
     #tray {{ border: dashed {DIM}; height: auto; padding: 0 1; margin-bottom: 1;
@@ -344,11 +436,7 @@ class WizardApp(App):
         # always SOME pane — never an index into a nonexistent first host.
         self.pane = (self.views[ctx.hosts[0].id] if ctx.hosts
                      else self._component_pane())
-        # A host already wired to ours has effectively answered its own gate;
-        # with zero hosts there is no gate at all. Otherwise the gate is re-asked
-        # on the first Arrange entry.
-        self.flow = FlowState(gate_done=not ctx.hosts or
-                              all(p.answered for p in self.views.values()))
+        self.flow = FlowState()
         self.commit = CommitState()
         self.hk = HousekeepingState(
             data=hk_data,
@@ -382,21 +470,23 @@ class WizardApp(App):
         board = LayoutBoard(lines=[[], [], []], tray=[], focus_zp=(0, 0),
                             min_rows=[0, 20, 30],
                             initial_lines=[[], [], []], initial_tray=[])
-        return HostPane(model=model, board=board, answered=True)
+        return HostPane(model=model, board=board)
 
     def _host_pane(self, host: HostView) -> HostPane:
         """One host's Arrange-state snapshot: the serialized model/board pair,
-        shared selection, and the gate's live adoption state."""
+        shared selection, and the host's live status-line state (the band toggle's
+        start state, pinned for every host)."""
         state = dict(host.state)
-        gate_done = host.status_line().get("state") == "ours"
-        if gate_done:
-            state["adopt"] = True
-            # U1/WR-06: an already-ours host skips the interactive gate, so
-            # pin the exact wiring value the pane shows here too. The commit
-            # re-reads the host's wiring and refuses to publish when it no
-            # longer matches, so a foreign command written while the wizard
-            # session is open can never be replaced unseen.
-            state["adopt_command"] = host.status_line().get("current_command")
+        sl = host.status_line()
+        state["start_state"] = sl.get("state", "unset")
+        # The wiring value the pane shows; the commit re-reads the host's wiring
+        # and refuses to publish when it no longer matches, so a command written
+        # while the wizard is open is never replaced unseen.
+        state["adopt_command"] = sl.get("current_command")
+        state["adopt"] = state["start_state"] == "ours"
+        state["foreign_ok"] = False
+        if state["start_state"] == "foreign":
+            state["foreign_choice"] = "keep"
         for ext in host.external_segments:
             state["segments"].setdefault(ext["id"], False)
         home_line = {k: min(max(int(m.get("line", 0)), 0), 2)
@@ -422,7 +512,7 @@ class WizardApp(App):
         self._build_lists_from_state(model, board)
         board.initial_lines = [list(x) for x in board.lines]
         board.initial_tray = list(board.tray)
-        return HostPane(model=model, board=board, answered=gate_done)
+        return HostPane(model=model, board=board)
 
     def _pane(self, index=None) -> HostPane:
         """The Arrange pane for host ``index`` (default: the active one). With
@@ -434,11 +524,9 @@ class WizardApp(App):
         return self.views[self.hosts[i].id]
 
     def _enter_host_arrange(self, index):
-        """Put host ``index``'s pane on the Arrange step and settle its gate:
-        the gate is re-asked only when the host is not already adopted/ours."""
+        """Put host ``index``'s pane on the Arrange step (every host pane is visited)."""
         self.flow.host_index = index
         self.pane = self._pane(index)
-        self.flow.gate_done = self.pane.answered
         self.flow.step = STEP_ARRANGE
 
     # ---- model -----------------------------------------------------------
@@ -526,6 +614,10 @@ class WizardApp(App):
 
     def _compose_arrange(self) -> ComposeResult:
         with Vertical(id="step-arrange"):
+            with Horizontal(id="band"):
+                yield Static("", id="band-name")
+                yield Static("", id="band-toggle")
+            yield Static("", id="band-note")
             with Vertical(id="board"):
                 for i in range(3):
                     lane = Static("", id=f"lane{i}",
@@ -616,9 +708,23 @@ class WizardApp(App):
         """The hosts whose status line the user is adopting, in detection order."""
         return [h for h in self.hosts if (self.views[h.id].model.state or {}).get("adopt")]
 
+    def _done_host_rows(self) -> dict:
+        """The commit's per-host outcome rows (action, ok), keyed by host id."""
+        outcome = self.commit.outcome
+        hosts = outcome.get("hosts") if isinstance(outcome, dict) else None
+        return hosts if isinstance(hosts, dict) else {}
+
+    def _removed_hosts(self) -> list[HostView]:
+        """Hosts whose status line the commit removed (ai-kit's or a confirmed foreign one)."""
+        rows = self._done_host_rows()
+        return [h for h in self.hosts
+                if (rows.get(h.id) or {}).get("action") in ("remove_ours", "remove_foreign")
+                and (rows.get(h.id) or {}).get("ok", True)]
+
     def _render_done_subtitle(self, sub_w: Static, done_failed: bool) -> None:
         ncomp = sum(1 for _c, _n, on in self.model.sel.items if on)
         adopted = self._adopted_views()
+        removed = [f"{escape(h.label)}: status line removed" for h in self._removed_hosts()]
         if self.commit.committing:
             sub_w.update(f"[{DIM}]writing your selection…[/]")
         elif done_failed:
@@ -635,9 +741,11 @@ class WizardApp(App):
                 else:
                     parts.append(f"{nseg} segments · {nlines} lines")
             lines_word = "status line" if len(adopted) == 1 else "status lines"
-            sub_w.update(f"[{DIM}]{ncomp} components · " + " · ".join(parts) +
+            sub_w.update(f"[{DIM}]{ncomp} components · " + " · ".join([*parts, *removed]) +
                          f" — your {lines_word} {'is' if len(adopted) == 1 else 'are'} "
                          "ready[/]")
+        elif removed:
+            sub_w.update(f"[{DIM}]{ncomp} components installed · " + " · ".join(removed) + "[/]")
         else:
             sub_w.update(f"[{DIM}]{ncomp} components installed · "
                          "status line left unchanged[/]")
@@ -683,14 +791,14 @@ class WizardApp(App):
 
     def _render_footer(self) -> None:
         sep = f"   [{LINE}]│[/]   "
-        if self.flow.step == STEP_ARRANGE and not self.flow.gate_done:
-            keys = [("Yes", "Y", True), ("No", "N", False), ("Back", "Esc", False)]
-        elif self.flow.step == STEP_CHOOSE and not self.hk.done:
+        if self.flow.step == STEP_CHOOSE and not self.hk.done:
             keys = [("Yes", "Y", True), ("No", "N", False)]
         else:
             keys = FOOTERS[self.flow.step]
             if self.flow.step == STEP_REVIEW and self._global_rules_on() is not None:
                 keys = [*keys[:-1], ("Global rules", "g", False), keys[-1]]
+            if self.flow.step == STEP_DONE and self.ctx.doctor is not None:
+                keys = [*keys, ("Doctor", "d", False)]
         left = sep.join(self._cap(*k) for k in keys)
         self.query_one("#footer-left", Static).update(left)
         self.query_one("#footer-q", Static).update(self._cap(*QUIT_KEY, False))
@@ -818,29 +926,6 @@ class WizardApp(App):
         col = CYAN if is_ext else (DIM if parked else FG)
         return f"[{col} on #0d1117] {label} [/]"
 
-    def _adoption_gate_markup(self, host: HostView) -> str:
-        sl = host.status_line()
-        if sl.get("state") == "foreign":
-            cmd = sl.get("current_command") or "(unknown)"
-            return (f"[b {WARN}]⚠  Existing {host.label} status line detected[/]\n"
-                    f"[{DIM}]Current:[/] {cmd}\n\n"
-                    f"[#0d1117 on {WARN}] Replace it with ai-kit?  "
-                    f"y = replace · N / Enter = keep mine [/]")
-        return (f"[b #f0f6fc]Wire your {host.label} status line?[/]\n"
-                f"[{DIM}]ai-kit can render git/model/diagnostics in your "
-                f"{host.label} status line.[/]\n\n"
-                f"[#0d1117 on {ACCENT}] Y / Enter = set it up · "
-                "n = skip (leave it unset) [/]")
-
-    def _render_adoption_gate(self, lane0: Static) -> None:
-        lane0.add_class("gate-attention")
-        lane0.border_title = (f"⚠ status line "
-                              f"({self.hosts[self.flow.host_index].label}) — action needed")
-        lane0.update(self._adoption_gate_markup(
-            self.hosts[self.flow.host_index]))
-        for wid in ("#lane1", "#lane2", "#focchip", "#tray", "#preview"):
-            self.query_one(wid, Static).update("")
-
     def _render_focus_chip(self, zones: list[list[str]]) -> None:
         fz, fp = self.board.focus_zp
         zone = zones[fz]
@@ -876,13 +961,44 @@ class WizardApp(App):
         # The preview's width is known only after layout, so it is scheduled, not drawn here.
         self.call_after_refresh(self._schedule_preview)
 
+    def _render_band(self) -> None:
+        """The host band above the board: bold host name on the host accent, the
+        on/off toggle (three states on a foreign host) at the right end (D-03)."""
+        band = self.query_one("#band")
+        band.display = bool(self.hosts)
+        if not self.hosts:
+            return
+        host = self.hosts[self.flow.host_index]
+        state = self.model.state
+        if state.get("start_state") == "foreign":
+            toggle = TOGGLE_FOREIGN[state.get("foreign_choice", "keep")]
+        else:
+            toggle = TOGGLE_ON if state.get("adopt") else TOGGLE_OFF
+        accent = HOST_ACCENTS.get(host.id, LINE)
+        for wid, text in (("#band-name", f"[b] {escape(host.label)} [/]"),
+                          ("#band-toggle", escape(toggle))):
+            widget = self.query_one(wid, Static)
+            widget.styles.background = accent
+            widget.styles.color = BAND_TEXT
+            widget.update(text)
+        start = state.get("start_state", "unset")
+        adopt = bool(state.get("adopt"))
+        if start == "foreign":
+            note = FOREIGN_NOTE[state.get("foreign_choice", "keep")]
+        elif not adopt:
+            note = OFF_NOTE[start]
+        else:
+            note = ""
+        band_note = self.query_one("#band-note", Static)
+        band_note.update(escape(note.format(label=host.label)) if note else "")
+        band_note.display = bool(note)
+        for wid in ("#board", "#focchip", "#tray"):
+            self.query_one(wid).set_class(not adopt, "locked")
+
     def _render_arrange(self) -> None:
         lane0 = self.query_one("#lane0", Static)
-        if not self.flow.gate_done:
-            self._render_adoption_gate(lane0)
-            return
-        lane0.remove_class("gate-attention")
         lane0.border_title = "Line 1"
+        self._render_band()
         host_label = self.hosts[self.flow.host_index].label if self.hosts else "no host"
         self.query_one("#tray", Static).border_title = TRAY_TITLE
         self.query_one("#preview", Static).border_title = PREVIEW_TITLE.format(host=host_label)
@@ -915,7 +1031,10 @@ class WizardApp(App):
         widget = self.query_one("#preview", Static)
         st = self._serialize_state()
         cols = widget.content_size.width or 100
-        key = (host_id, json.dumps([st["segments"], st["layout"]], sort_keys=True), cols)
+        adopt = bool(self.model.state.get("adopt"))
+        choice = self.model.state.get("foreign_choice")
+        key = (host_id, adopt, choice, json.dumps([st["segments"], st["layout"]], sort_keys=True),
+               cols)
         if key == self.preview.key:
             return
         prev_host = self.preview.key[0] if self.preview.key else None
@@ -928,6 +1047,13 @@ class WizardApp(App):
         if prev_host is not None and prev_host != host_id:
             # Never show the previous host's render under the new host's title (REVIEWS).
             widget.update(Text.from_markup(self._sample_markup()))
+        if not adopt:
+            # Off, or a foreign keep/remove: no engine call; say what Review will do.
+            text = PREVIEW_OFF_TEXT
+            if self.model.state.get("start_state") == "foreign":
+                text = PREVIEW_KEEP_TEXT if choice == "keep" else PREVIEW_REMOVE_TEXT
+            widget.update(Text.from_markup(f"[{DIM}]{escape(text)}[/]"))
+            return
         if not any(self.board.lines):
             widget.update(Text.from_markup(f"[{DIM}](all segments off)[/]\n{self._count_markup()}"))
             return
@@ -936,6 +1062,8 @@ class WizardApp(App):
     def _kick_preview(self) -> None:
         """Start one render for the current board, or mark one pending while a render runs."""
         self.preview.timer = None
+        if self.flow.step != STEP_ARRANGE:    # the user left Arrange before the debounce fired
+            return
         seq = self.preview.seq
         # Armed on every kick, so a render queued behind a stuck one still gets its deadline.
         self.set_timer(self.preview.deadline_s,
@@ -1049,27 +1177,40 @@ class WizardApp(App):
             shown.extend(block)
         return nseg, shown
 
-    def _review_what_lines(self, ncomp: int, adopted: list[HostView]) -> list[str]:
-        """What happens on Confirm: the components, then EVERY detected host's
-        outcome — each adopted host's own config + wiring file, each declined
-        host named as left untouched (SPEC R12), the honest "left unchanged"
-        line when every detected host declined, or the "no host detected" line
-        when none did."""
+    def _host_action(self, host_id: str) -> str:
+        """The action one host's outcome takes, from its live pane state: the same
+        table as setup's `_statusline_action`. Reads the board's own dirty flag, not
+        the copy-source `model.state["dirty"]` setup seeds."""
+        st = self.views[host_id].model.state
+        start = st.get("start_state", "unset")
+        on = bool(st.get("adopt"))
+        if start == "foreign":
+            if on:
+                return "replace_foreign"
+            return "remove_foreign" if st.get("foreign_choice") == "remove" else "keep_foreign"
+        if on:
+            if start != "ours":
+                return "wire"
+            forced = bool(self.ctx.state.get("_examples_forced"))
+            return "update" if (self._serialize_state(host_id)["dirty"] or forced) else "unchanged"
+        return "remove_ours" if start == "ours" else "unchanged"
+
+    def _review_what_lines(self, ncomp: int) -> list[str]:
+        """What happens on Confirm: the components, then one outcome line per detected
+        host (its action text), the doctor line when a host writes ai-kit's entry, or
+        the "no host detected" line when there is no host."""
         what = [f"[{DIM}]•[/] Symlink [bold]{ncomp}[/] components into "
                 f"~/.claude/(agents|commands|skills)/"]
-        if adopted:
-            adopted_ids = {h.id for h in adopted}
-            for host in adopted:
-                what.append(f"[{DIM}]•[/] {host.label}: write {host.config_label} "
-                            f"+ wire {host.wiring_label}")
-            for host in self.hosts:
-                if host.id not in adopted_ids:
-                    what.append(f"[{DIM}]•[/] {host.label}: left untouched")
-            what.append(f"[{DIM}]•[/] Validate with the status line doctor "
-                        "before saving")
-        elif self.hosts:
-            what.append(f"[{DIM}]•[/] Status line left unchanged (components only)")
-        else:
+        writes = ("wire", "update", "replace_foreign")
+        for host in self.hosts:
+            action = self._host_action(host.id)
+            text = OUTCOME_TEXT[action].format(label=escape(host.label))
+            if action in writes:
+                text += f" ({host.config_label} + {host.wiring_label})"
+            what.append(f"[{DIM}]•[/] {escape(host.label)}: {text}")
+        if any(self._host_action(h.id) in writes for h in self.hosts):
+            what.append(f"[{DIM}]•[/] Validate with the status line doctor before saving")
+        if not self.hosts:
             what.append(f"[{DIM}]•[/] No status-line host detected — nothing "
                         "will be written for one")
         return what
@@ -1084,7 +1225,7 @@ class WizardApp(App):
         if adopted:
             rp.update("\n".join(f"[#d6dee8]{p}[/]" for p in shown))
         self.query_one("#rev-what", Static).update(
-            "\n".join([*self._review_what_lines(ncomp, adopted),
+            "\n".join([*self._review_what_lines(ncomp),
                        *self._review_global_rules_lines()]))
         seg_note = f" · {nseg} segments" if adopted else ""
         self.query_one("#cta", Static).update(
@@ -1123,6 +1264,27 @@ class WizardApp(App):
         lines.append(f"[{DIM}]Re-run  uv run tools/setup.py  to try again.[/]")
         return lines
 
+    def _done_host_lines(self) -> list[str]:
+        """One Done line per host whose status line the commit left kept or removed."""
+        lines = []
+        for h in self.hosts:
+            row = self._done_host_rows().get(h.id) or {}
+            action = row.get("action")
+            text = None
+            if action == "remove_ours":
+                text = DONE_OFF_LINE
+            elif action == "keep_foreign":
+                text = DONE_KEPT_LINE
+            elif action == "remove_foreign" and row.get("ok", True):
+                text = DONE_REMOVED_FOREIGN_LINE
+            if text:
+                lines.append(f"[{DIM}]•[/] {text.format(label=escape(h.label))}")
+        return lines
+
+    def _done_hint_lines(self) -> list[str]:
+        """The `d` hint, shown only when a config doctor is injected (both outcomes)."""
+        return [f"[{DIM}]•[/] {DONE_DOCTOR_HINT}"] if self.ctx.doctor is not None else []
+
     def _render_done(self) -> None:
         art = self.query_one("#done-art", Static)
         nxt_w = self.query_one("#done-next", Static)
@@ -1134,7 +1296,8 @@ class WizardApp(App):
         outcome = self.commit.outcome
         if outcome is not None and not outcome.get("ok", True):
             art.update(f"[{WARN}]⚠  install incomplete[/]")
-            nxt_w.update("\n".join(self._done_failure_lines(outcome)))
+            nxt_w.update("\n".join([*self._done_failure_lines(outcome),
+                                    *self._done_hint_lines()]))
             return
         art.update(f"[{GREEN}]┌─┐ ┬[/]\n[{GREEN}]├─┤ │[/]\n[{GREEN}]┴ ┴ ┴[/] ─kit")
         adopted = self._adopted_views()
@@ -1147,11 +1310,13 @@ class WizardApp(App):
                 nxt.insert(0, f"[{DIM}]•[/] {h.done_hint}")
         else:
             nxt.append(f"[{DIM}]•[/] Want a status line? Run it again and "
-                       "choose Yes at the status-line gate.")
-        nxt_w.update("\n".join(nxt))
+                       "press o on a host pane to turn the status line on.")
+        nxt_w.update("\n".join([*self._done_host_lines(), *nxt, *self._done_hint_lines()]))
 
     # ---- input -----------------------------------------------------------
     def on_key(self, event: events.Key) -> None:
+        if len(self.screen_stack) > 1:
+            return                 # a pushed screen (the modal, the doctor) owns the key
         if event.key == "ctrl+c":
             return
         if event.character == "?":
@@ -1302,35 +1467,6 @@ class WizardApp(App):
             self.call_from_thread(self.notify, self.hk.error, severity="error")
         self.call_from_thread(self._render)
 
-    def _key_arrange_gate(self, event: events.Key) -> bool:
-        ch, k = event.character, event.key
-        host = self.hosts[self.flow.host_index]
-        if k == "escape":
-            self.flow.step = STEP_CHOOSE        # back out without answering
-            return True
-        if ch == "y":
-            self.model.state["adopt"] = True
-        elif ch == "n":
-            self.model.state["adopt"] = False
-        elif k == "enter":                 # follow the shown default
-            self.model.state["adopt"] = host.status_line().get("state") != "foreign"
-        else:
-            return False
-        self.flow.gate_done = True
-        self.pane.answered = True
-        if self.model.state["adopt"]:
-            # Pin the exact wiring value the user approved at this gate. The
-            # commit re-reads the host's wiring and refuses to publish when it
-            # no longer matches, so an approval never authorizes replacing a
-            # command the user never saw (None = the host was unset at
-            # approval time).
-            self.model.state["adopt_command"] = host.status_line().get("current_command")
-        if not self.model.state["adopt"]:
-            # Declined: nothing to arrange and the host's config files are left
-            # untouched, so skip the segment board straight to the next host.
-            self._advance_host()
-        return True
-
     def _arrange_swap_horizontal(self, direction: int) -> bool:
         z, p = self.board.focus_zp
         zone = self._zones()[z]
@@ -1343,8 +1479,29 @@ class WizardApp(App):
         self.board.focus_zp = (z, other)
         return True
 
-    def _key_arrange_board(self, event: events.Key) -> bool:
+    def _cycle_foreign_choice(self) -> None:
+        """`o` on a foreign host: keep -> remove -> custom -> keep. Only `custom` adopts
+        (writes ai-kit's line); the board is never touched, so the arrangement is kept."""
+        state = self.model.state
+        index = FOREIGN_CHOICES.index(state.get("foreign_choice", "keep"))
+        choice = FOREIGN_CHOICES[(index + 1) % len(FOREIGN_CHOICES)]
+        state["foreign_choice"] = choice
+        state["adopt"] = choice == "custom"
+
+    def _key_arrange_board(self, event: events.Key) -> bool:  # pylint: disable=too-many-return-statements
         ch, k = event.character, event.key
+        if ch == "o":
+            self.model.state["foreign_ok"] = False   # a Yes for another choice no longer counts
+            if self.model.state.get("start_state") == "foreign":
+                self._cycle_foreign_choice()
+            else:
+                self.model.state["adopt"] = not self.model.state.get("adopt")
+            return True
+        if not self.model.state.get("adopt") and (k in EDIT_KEYS or ch == "r"):
+            # A locked board (off, or a foreign keep/remove) keeps its arrangement.
+            foreign = self.model.state.get("start_state") == "foreign"
+            self.notify(FOREIGN_LOCKED_NOTICE if foreign else LOCKED_NOTICE)
+            return True
         board_keys: dict[str, Callable[[], None]] = {
             "up": lambda: self._move_chip_v("up"),
             "down": lambda: self._move_chip_v("down"),
@@ -1367,27 +1524,15 @@ class WizardApp(App):
         return False
 
     def _key_arrange(self, event: events.Key) -> bool:
-        if not self.flow.gate_done:
-            return self._key_arrange_gate(event)
         return self._key_arrange_board(event)
 
-    def _review_from_board(self) -> None:
-        """Board Enter: walk to the NEXT host's gate, or Review only once every
-        detected host has answered its own gate (23-16's host traversal)."""
-        self._advance_host()
-
     def _board_back(self) -> None:
-        """Board Esc (D-22): on a LATER host's board step back to the previous
-        host's board — its own arrangement stays intact. When no earlier host
-        actually arranged a board (first host, or every earlier one declined),
-        back out to Choose."""
-        prev = max((i for i in range(self.flow.host_index)
-                    if self.views[self.hosts[i].id].model.state.get("adopt")),
-                   default=None)
-        if prev is None:
+        """Board Esc: back to the PREVIOUS host's pane (every pane is visited, so
+        the first host's pane backs out to Choose)."""
+        if self.flow.host_index == 0 or not self.hosts:
             self.flow.step = STEP_CHOOSE
         else:
-            self._enter_host_arrange(prev)
+            self._enter_host_arrange(self.flow.host_index - 1)
 
     def _move_chip_v(self, direction: str) -> None:
         z, p = self.board.focus_zp
@@ -1430,12 +1575,6 @@ class WizardApp(App):
                 self.board.focus_zp = (nz, 0 if direction > 0 else len(tgt) - 1)
                 return
 
-    def _all_hosts_gate_done(self) -> bool:
-        """Host traversal invariant behind Review: every detected host answered
-        its own gate. False on a direct-to-Review fixture jump, so a key handler
-        can never bypass a host's gate (the two-host PTY scenario pins this)."""
-        return all(self.views[h.id].answered for h in self.hosts)
-
     def _key_review(self, event: events.Key) -> bool:  # pylint: disable=too-many-return-statements
         if event.character == "g":
             on = self._global_rules_on()
@@ -1451,35 +1590,69 @@ class WizardApp(App):
                 # call _render_review and overwrite this #cta message with the
                 # install CTA. Step stays REVIEW; the warning persists.
                 return False
-            states = self._states()
-            if self.ctx.commit is None:
-                # No commit injected (unit fixtures): keep the legacy behavior —
-                # stash the result and show the Done screen without installing.
-                self.flow.result = WizardResult(self.model.sel, states)
-                self.flow.step = STEP_DONE
-                return True
-            # Full in-UI commit: advance to Done in a "committing" state and run
-            # the real install in a worker thread (it touches files + a doctor
-            # subprocess; doing it on the event loop would freeze the UI).
-            self.commit.commit_state = states
-            self.commit.committing = True
-            self.commit.outcome = None
-            self.flow.step = STEP_DONE
-            self._run_commit()
-            return True
+            return self._confirm_or_commit()
         if event.key == "escape":
-            # Back to the last host whose BOARD the user actually arranged (an
-            # adopted host). A declined host skipped its board, so Review Esc
-            # steps to Choose instead of dropping the user onto a board they
-            # never saw.
-            adopted = [i for i, h in enumerate(self.hosts)
-                       if self.views[h.id].model.state.get("adopt")]
-            if adopted:
-                self._enter_host_arrange(adopted[-1])
+            # Back to the last host's pane (every pane is visited, so none is skipped).
+            if self.hosts:
+                self._enter_host_arrange(len(self.hosts) - 1)
             else:
                 self.flow.step = STEP_CHOOSE
             return True
         return False
+
+    def _confirm_or_commit(self) -> bool:
+        """Review Enter: the first host whose removal or replacement is not yet confirmed
+        opens its ForeignConfirm; when none is left, the commit runs."""
+        for host in self.hosts:
+            if (self._host_action(host.id) in ("remove_foreign", "replace_foreign")
+                    and not self.views[host.id].model.state.get("foreign_ok")):
+                return self._confirm_foreign(host)
+        return self._commit_now()
+
+    def _confirm_foreign(self, host: HostView) -> bool:
+        """Backup first (prepare_foreign), then the modal; a failed backup stays on Review."""
+        if self.ctx.prepare_foreign is None:
+            info: dict = {"error": "no backup helper injected; nothing will be written"}
+        else:
+            info = cast(dict, self.ctx.prepare_foreign(host.id))
+        if "error" in info:
+            self.notify(str(info["error"]), severity="error")
+            return False
+        replace = self._host_action(host.id) == "replace_foreign"
+        # After this key event finishes, so the same Enter cannot reach the new modal.
+        self.call_after_refresh(self.push_screen, ForeignConfirm(host.label, info, replace),
+                                functools.partial(self._on_foreign_answer, host.id))
+        return True
+
+    def _on_foreign_answer(self, host_id: str, yes: bool) -> None:
+        """The modal's answer: Yes authorises this host and continues; No cancels the
+        whole confirm (every host's foreign_ok is cleared, REVIEWS HIGH 3)."""
+        if yes:
+            self.views[host_id].model.state["foreign_ok"] = True
+            self._confirm_or_commit()
+        else:
+            for view in self.views.values():
+                view.model.state["foreign_ok"] = False
+        self._render()
+
+    def _commit_now(self) -> bool:
+        """Run the commit (or the legacy result when no commit is injected) and show Done."""
+        states = self._states()
+        if self.ctx.commit is None:
+            # No commit injected (unit fixtures): keep the legacy behavior —
+            # stash the result and show the Done screen without installing.
+            self.flow.result = WizardResult(self.model.sel, states)
+            self.flow.step = STEP_DONE
+            return True
+        # Full in-UI commit: advance to Done in a "committing" state and run
+        # the real install in a worker thread (it touches files + a doctor
+        # subprocess; doing it on the event loop would freeze the UI).
+        self.commit.commit_state = states
+        self.commit.committing = True
+        self.commit.outcome = None
+        self.flow.step = STEP_DONE
+        self._run_commit()
+        return True
 
     def _has_net_change(self) -> bool:
         # `_initial_enabled` is component-level state (ctx.state), not per-host:
@@ -1489,7 +1662,13 @@ class WizardApp(App):
         # which must not block committing an earlier adopted host (D-22).
         initial = self.ctx.state.get("_initial_enabled", {})
         current = {(c, n): on for c, n, on in self.model.sel.items}
-        return current != initial or bool(self._adopted_views())
+        actions = [self._host_action(h.id) for h in self.hosts]
+        # An on host with start state `ours` always runs setup's upkeep (its persist path).
+        upkeep = any(self.views[h.id].model.state.get("adopt")
+                     and self.views[h.id].model.state.get("start_state") == "ours"
+                     for h in self.hosts)
+        return (current != initial or upkeep
+                or any(a not in ("unchanged", "keep_foreign") for a in actions))
 
     def _states(self) -> dict:
         """Every host's Arrange-state serialized for the commit and the result,
@@ -1526,7 +1705,7 @@ class WizardApp(App):
             layout.append({"min_rows": board.min_rows[i], "segments": on_row + off_home})
         st["layout"] = layout
         st["adopt"] = bool(model.state.get("adopt"))
-        st["dirty"] = True
+        st["dirty"] = board.lines != board.initial_lines or board.tray != board.initial_tray
         return st
 
     @work(thread=True, exclusive=True)
@@ -1569,6 +1748,15 @@ class WizardApp(App):
             return True            # ignore keys until the install finishes
         if event.key == "enter":
             self.exit()
+            return True
+        if event.key == "d" and self.ctx.doctor is not None:
+            try:
+                screen = self.ctx.doctor()
+            except (OSError, ValueError, RuntimeError, ImportError) as exc:
+                self.notify(f"config doctor failed: {exc}", severity="error")
+                return True
+            # After this key event, so the same key cannot reach the new screen.
+            self.call_after_refresh(self.push_screen, screen)
             return True
         return False
 

@@ -214,41 +214,42 @@ class TestHousekeepingGate(unittest.IsolatedAsyncioTestCase):
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
-    """Task 1's seam contract: the flow walks detected hosts, one gate each,
-    and serializes every host's state before any commit (plan 23-16)."""
+    """Task 1's seam contract: the flow visits every detected host's pane, the band
+    toggle sets each host's status line, and every host's state is serialized
+    before any commit (plan 23-16; plan 30.1-05 replaces the gate with the band)."""
 
     TWO = ("claude", "cursor")
 
-    async def _walk(self, app, pilot, answers=("y", "y")):
+    async def _walk(self, app, pilot, answers=("o", "o")):
+        """Choose → each host's pane: ``o`` turns that host's band on (``""`` leaves it
+        off), then Enter moves to the next host's pane, or to Review after the last."""
         await pilot.pause()
-        await pilot.press("enter")                  # choose → first host gate
-        for i, ans in enumerate(answers):
-            await pilot.press(ans)                  # this host's gate
-            if app.flow.step == wa.STEP_ARRANGE:    # accepted → arrange the board
-                await pilot.press("enter")          # board → next host / review
-            del i
+        await pilot.press("enter")                  # choose → first host's pane
+        for ans in answers:
+            if ans:
+                await pilot.press(ans)              # this host's band toggle
+            await pilot.press("enter")              # pane → next host / review
         return app.flow.step
 
-    async def test_two_hosts_walk_gate_gate_review(self):
+    async def test_two_hosts_walk_pane_pane_review(self):
         app = wa.WizardApp(make_ctx(host_ids=self.TWO, sl_state="unset"))
         async with app.run_test() as pilot:
-            step = await self._walk(app, pilot, ("y", "y"))
+            step = await self._walk(app, pilot, ("o", "o"))
             self.assertEqual(step, wa.STEP_REVIEW)
             self.assertEqual([h.id for h in app.hosts], ["claude", "cursor"])
-            # Both hosts answered their OWN gate.
-            self.assertTrue(all(app.views[h.id].answered for h in app.hosts))
+            # Both hosts' bands were turned on in their own panes.
+            self.assertTrue(all(app.views[h.id].model.state["adopt"] for h in app.hosts))
 
-    async def test_decline_first_host_still_shows_second_gate(self):
+    async def test_off_first_host_still_visits_second_pane(self):
         app = wa.WizardApp(make_ctx(host_ids=self.TWO, sl_state="unset"))
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("enter")              # claude gate
-            await pilot.press("n")                  # decline claude → cursor gate
+            await pilot.press("enter")              # choose → claude's pane
+            await pilot.press("enter")              # claude left off → cursor's pane
             self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
-            self.assertFalse(app.flow.gate_done)    # the SECOND host must be asked
-            self.assertEqual(app.flow.host_index, 1)
-            lane0 = str(query_static(app, "#lane0").content)
-            self.assertIn("Cursor", lane0)          # cursor's wording, not Claude's
+            self.assertEqual(app.flow.host_index, 1)    # the SECOND host is visited
+            band = str(query_static(app, "#band-name").content)
+            self.assertIn("Cursor", band)           # cursor's band, not Claude's
 
     async def test_review_serializes_both_hosts(self):
         seen = {}
@@ -262,7 +263,7 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
         ctx = make_ctx(host_ids=self.TWO, sl_state="unset")._replace(commit=commit)
         app = wa.WizardApp(ctx)
         async with app.run_test() as pilot:
-            await self._walk(app, pilot, ("y", "y"))
+            await self._walk(app, pilot, ("o", "o"))
             await pilot.press("enter")              # review → commit
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -275,15 +276,14 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
         assert result is not None            # narrowing for the typed seam below
         self.assertEqual(sorted(result.state), ["claude", "cursor"])
 
-    async def test_review_escape_returns_to_last_adopted_host_board(self):
+    async def test_review_escape_returns_to_last_host_pane(self):
         app = wa.WizardApp(make_ctx(host_ids=self.TWO, sl_state="unset"))
         async with app.run_test() as pilot:
-            await self._walk(app, pilot, ("y", "y"))
+            await self._walk(app, pilot, ("o", "o"))
             self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             await pilot.press("escape")
             self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
-            self.assertEqual(app.flow.host_index, 1)              # the LAST adopted host
-            self.assertTrue(app.flow.gate_done)          # its board, not its gate
+            self.assertEqual(app.flow.host_index, 1)              # the LAST host's pane
 
     async def test_reedit_second_host_then_confirm_keeps_both(self):
         seen = {}
@@ -297,7 +297,7 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
         ctx = make_ctx(host_ids=self.TWO, sl_state="unset")._replace(commit=commit)
         app = wa.WizardApp(ctx)
         async with app.run_test() as pilot:
-            await self._walk(app, pilot, ("y", "y"))
+            await self._walk(app, pilot, ("o", "o"))
             await pilot.press("escape")             # back to Cursor's board
             first = app.board.lines[0][0]
             app.board.focus_zp = (0, 0)
@@ -325,7 +325,7 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
         ctx = make_ctx(host_ids=self.TWO, sl_state="unset")._replace(commit=commit)
         app = wa.WizardApp(ctx)
         async with app.run_test() as pilot:
-            await self._walk(app, pilot, ("y", "y"))
+            await self._walk(app, pilot, ("o", "o"))
             await pilot.press("enter")
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -348,10 +348,10 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
         app = wa.WizardApp(make_ctx(host_ids=self.TWO, sl_state="unset"))
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("enter")                  # choose → Claude's gate
-            await pilot.press("y")                      # adopt → Claude's board
-            await pilot.press("enter")                  # board → Cursor's gate
-            await pilot.press("y")                      # adopt → Cursor's board
+            await pilot.press("enter")                  # choose → Claude's pane
+            await pilot.press("o")                      # band on → Claude's board
+            await pilot.press("enter")                  # pane → Cursor's pane
+            await pilot.press("o")                      # band on → Cursor's board
             self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
             self.assertEqual(app.flow.host_index, 1)
             claude_first = app.views["claude"].board.lines[0][0]
@@ -362,7 +362,6 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
             await pilot.press("escape")              # back to Claude's board
             self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
             self.assertEqual(app.flow.host_index, 0)
-            self.assertTrue(app.flow.gate_done)      # its board, not its gate
             self.assertIn(claude_first, app.board.lines[0])   # arrangement intact
 
     async def test_declining_second_host_lists_it_untouched_on_review(self):
@@ -377,10 +376,10 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
         ctx = make_ctx(host_ids=self.TWO, sl_state="unset")._replace(commit=commit)
         app = wa.WizardApp(ctx)
         async with app.run_test() as pilot:
-            await self._walk(app, pilot, ("y", "n"))   # Claude adopts, Cursor declines
+            await self._walk(app, pilot, ("o", ""))    # Claude adopts, Cursor stays off
             self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             what = str(query_static(app, "#rev-what").content)
-            self.assertIn("Cursor CLI: left untouched", what)
+            self.assertIn("Cursor CLI: unchanged", what)
             await pilot.press("enter")                 # confirm
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -392,13 +391,13 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
     async def test_review_lists_each_adopted_hosts_config_and_wiring(self):
         app = wa.WizardApp(make_ctx(host_ids=self.TWO, sl_state="unset"))
         async with app.run_test() as pilot:
-            await self._walk(app, pilot, ("y", "y"))
+            await self._walk(app, pilot, ("o", "o"))
             self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             what = str(query_static(app, "#rev-what").content)
-            self.assertIn("Claude Code: write ~/.config/ai-kit/claude-statusline.toml "
-                          "+ wire settings.json", what)
-            self.assertIn("Cursor CLI: write ~/.config/ai-kit/cursor-statusline.toml "
-                          "+ wire cli-config.json", what)
+            self.assertIn("Claude Code: wire ai-kit (~/.config/ai-kit/claude-statusline.toml "
+                          "+ settings.json)", what)
+            self.assertIn("Cursor CLI: wire ai-kit (~/.config/ai-kit/cursor-statusline.toml "
+                          "+ cli-config.json)", what)
 
     async def test_cursor_failure_shown_on_done_while_claude_succeeds(self):
         def commit(selection, states):
@@ -410,7 +409,7 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
         ctx = make_ctx(host_ids=self.TWO, sl_state="unset")._replace(commit=commit)
         app = wa.WizardApp(ctx)
         async with app.run_test() as pilot:
-            await self._walk(app, pilot, ("y", "y"))
+            await self._walk(app, pilot, ("o", "o"))
             await pilot.press("enter")                  # review → commit
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -428,14 +427,14 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
 
     async def test_one_host_titles_are_host_labelled(self):
         """The formerly Claude-only strings are host-labelled (D-22): the Arrange
-        title and the gate prompt name the host even in a one-host context."""
+        title and the band name the host even in a one-host context."""
         app = wa.WizardApp(make_ctx(host_ids=("claude",), sl_state="unset"))
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("enter")                  # choose → Claude's gate
-            lane0 = str(query_static(app, "#lane0").content)
-            self.assertIn("Wire your Claude Code status line?", lane0)
-            await pilot.press("y")                      # accept → the board
+            await pilot.press("enter")                  # choose → Claude's pane
+            band = str(query_static(app, "#band-name").content)
+            self.assertIn("Claude Code", band)
+            await pilot.press("o")                      # band on → the board
             await pilot.pause()
             title = str(query_static(app, "#step-title").content)
             self.assertIn("Arrange your Claude Code status line", title)

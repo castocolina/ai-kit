@@ -28,7 +28,6 @@ class TestStructuralFidelity(unittest.IsolatedAsyncioTestCase):
         app = wa.WizardApp(make_ctx())
         async with app.run_test() as pilot:
             app.flow.step = wa.STEP_ARRANGE
-            app.flow.gate_done = True
             app._render()
             await pilot.pause()
             for wid in ("#lane0", "#lane1", "#lane2", "#focchip", "#tray", "#preview"):
@@ -38,7 +37,6 @@ class TestStructuralFidelity(unittest.IsolatedAsyncioTestCase):
         app = wa.WizardApp(make_ctx())
         async with app.run_test() as pilot:
             app.flow.step = wa.STEP_ARRANGE
-            app.flow.gate_done = True
             app._render()
             await pilot.pause()
             lane_text = " ".join(
@@ -52,7 +50,6 @@ class TestStructuralFidelity(unittest.IsolatedAsyncioTestCase):
         app = wa.WizardApp(ctx)
         async with app.run_test() as pilot:
             app.flow.step = wa.STEP_ARRANGE
-            app.flow.gate_done = True
             app._render()
             await pilot.pause()
             lane_text = " ".join(
@@ -202,75 +199,66 @@ class TestChooseTabs(unittest.IsolatedAsyncioTestCase):
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
-class TestAdoptionGate(unittest.IsolatedAsyncioTestCase):
-    """The adoption gate shown on Arrange entry."""
+class TestToggleStart(unittest.IsolatedAsyncioTestCase):
+    """The band toggle's start state on Arrange entry (plan 30.1-05: no yes/no gate)."""
 
-    async def test_unset_enter_adopts(self):
+    async def test_unset_starts_off_and_o_turns_it_on(self):
         app = wa.WizardApp(make_ctx(sl_state="unset"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")          # choose → arrange (no gate)
+            self.assertIs(app.model.state["adopt"], False)
+            await pilot.press("o")
+            self.assertIs(app.model.state["adopt"], True)
+            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
+
+    async def test_foreign_starts_at_keep_and_enter_goes_on(self):
+        app = wa.WizardApp(make_ctx(sl_state="foreign"))
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange
-            self.assertFalse(app.flow.gate_done)
-            await pilot.press("enter")          # answer gate (default Yes)
-            self.assertTrue(app.flow.gate_done)
+            self.assertIs(app.model.state["adopt"], False)
+            self.assertEqual(app.model.state["foreign_choice"], "keep")
+            await pilot.press("enter")          # every pane is visited: one host, so Review
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+
+    async def test_o_cycles_foreign_keep_remove_custom(self):
+        app = wa.WizardApp(make_ctx(sl_state="foreign"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")          # choose → arrange
+            await pilot.press("o")
+            self.assertEqual(app.model.state["foreign_choice"], "remove")
+            self.assertIs(app.model.state["adopt"], False)
+            await pilot.press("o")
+            self.assertEqual(app.model.state["foreign_choice"], "custom")
             self.assertIs(app.model.state["adopt"], True)
-            # Accepted → stays on the Arrange board (segments to arrange).
+            await pilot.press("o")
+            self.assertEqual(app.model.state["foreign_choice"], "keep")
+            self.assertIs(app.model.state["adopt"], False)
+
+    async def test_arrange_escape_returns_to_choose(self):
+        app = wa.WizardApp(make_ctx(sl_state="foreign"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")          # choose → arrange
+            await pilot.press("escape")         # first host's pane backs out to Choose
+            self.assertEqual(app.flow.step, wa.STEP_CHOOSE)
+
+    async def test_review_escape_returns_to_last_host_pane(self):
+        app = wa.WizardApp(make_ctx(sl_state="foreign"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")          # choose → arrange
+            await pilot.press("enter")          # → Review
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+            await pilot.press("escape")         # back from Review to the host's pane
             self.assertEqual(app.flow.step, wa.STEP_ARRANGE)
 
-    async def test_foreign_enter_declines_and_skips_arrange(self):
-        app = wa.WizardApp(make_ctx(sl_state="foreign"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("enter")          # choose → arrange (gate)
-            await pilot.press("enter")          # answer gate (default No for foreign)
-            self.assertTrue(app.flow.gate_done)
-            self.assertIs(app.model.state["adopt"], False)
-            # Declined → segment arrangement is skipped; jump straight to Review.
-            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
-
-    async def test_unset_n_declines_and_skips_arrange(self):
-        app = wa.WizardApp(make_ctx(sl_state="unset"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("enter")          # choose → arrange (gate)
-            await pilot.press("n")              # decline
-            self.assertIs(app.model.state["adopt"], False)
-            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
-
-    async def test_y_n_force(self):
-        app = wa.WizardApp(make_ctx(sl_state="foreign"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("enter")
-            await pilot.press("y")
-            self.assertIs(app.model.state["adopt"], True)
-            self.assertTrue(app.flow.gate_done)
-            self.assertEqual(app.flow.step, wa.STEP_ARRANGE)   # accepted → board
-
-    async def test_gate_escape_returns_to_choose(self):
-        app = wa.WizardApp(make_ctx(sl_state="foreign"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("enter")          # choose → arrange (gate)
-            await pilot.press("escape")         # back out of the gate
-            self.assertEqual(app.flow.step, wa.STEP_CHOOSE)
-            self.assertFalse(app.flow.gate_done)     # gate re-asks on next entry
-
-    async def test_review_escape_after_decline_returns_to_choose(self):
-        app = wa.WizardApp(make_ctx(sl_state="foreign"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("enter")          # choose → arrange (gate)
-            await pilot.press("n")              # decline → Review (arrange skipped)
-            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
-            await pilot.press("escape")         # back from Review
-            # Arrange was skipped, so Esc returns to Choose, not Arrange.
-            self.assertEqual(app.flow.step, wa.STEP_CHOOSE)
-
-    async def test_ours_skips_gate_at_init(self):
+    async def test_ours_starts_on(self):
         app = wa.WizardApp(make_ctx(sl_state="ours"))
-        self.assertTrue(app.flow.gate_done)
         self.assertIs(app.model.state["adopt"], True)
+        self.assertEqual(app.model.state["start_state"], "ours")
 
     async def test_ours_at_open_pins_the_shown_command_for_adoption(self):
         # U1: a host already ai-kit's when the wizard opens is adopted without

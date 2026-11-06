@@ -159,9 +159,9 @@ def _run_wizard_install(argv, env, timeout=45):
 
     try:
         _pty_read_until(master_fd, re.compile(r"\bChoose\b"), buf, timeout)
-        os.write(master_fd, b"\r")                      # choose -> arrange (gate)
+        os.write(master_fd, b"\r")                      # choose -> arrange (band)
         _pty_read_until(master_fd, re.compile(r"\bArrange\b"), buf, timeout)
-        os.write(master_fd, b"\r")                      # gate: default Yes (adopt)
+        os.write(master_fd, b"o")                       # band on (adopt)
         os.write(master_fd, b"\r")                       # arrange -> review
         _pty_read_until(master_fd, re.compile(r"\bReview\b"), buf, timeout)
         os.write(master_fd, b"\r")                      # review -> commit

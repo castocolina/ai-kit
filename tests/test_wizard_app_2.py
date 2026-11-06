@@ -106,7 +106,7 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")          # choose → arrange
-            await pilot.press("y")              # gate: adopt
+            await pilot.press("o")              # band toggle: adopt
             await pilot.press("enter")          # arrange → review
             await pilot.press("enter")          # review → commit
             self.assertEqual(app.flow.step, wa.STEP_DONE)
@@ -128,8 +128,8 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("N")              # all components off == initial
-            await pilot.press("enter")          # choose → arrange (gate)
-            await pilot.press("n")              # decline → jumps to Review
+            await pilot.press("enter")          # choose → arrange (toggle off)
+            await pilot.press("enter")          # arrange → review
             self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             await pilot.press("enter")          # review → blocked (no net change)
             self.assertEqual(app.flow.step, wa.STEP_REVIEW)
@@ -137,10 +137,10 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
                           str(query_static(app, "#cta").content))
 
     async def test_adopted_first_host_commits_even_when_last_host_declined(self):
-        # Components exactly equal to _initial_enabled; Claude adopted at its
-        # gate, Cursor declined at its gate (Cursor stays the active pane).
+        # Components exactly equal to _initial_enabled; Claude's band turned on,
+        # Cursor left off (every pane is visited; Cursor's pane stays the active one).
         # The earlier adoption is a net change on its own and must commit —
-        # the declined active pane must not strand it (D-22).
+        # the off active pane must not strand it (D-22).
         commits = []
         ctx = make_ctx(host_ids=("claude", "cursor"))._replace(
             commit=lambda selection, states: commits.append(states)
@@ -149,10 +149,10 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("N")              # components == _initial_enabled
-            await pilot.press("enter")          # choose → claude gate
-            await pilot.press("y")              # adopt Claude
-            await pilot.press("enter")          # claude arrange → cursor gate
-            await pilot.press("n")              # decline Cursor → Review
+            await pilot.press("enter")          # choose → claude pane
+            await pilot.press("o")              # turn Claude on
+            await pilot.press("enter")          # claude pane → cursor pane
+            await pilot.press("enter")          # cursor pane → Review
             self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             await pilot.press("enter")          # review → must commit, not block
             self.assertEqual(app.flow.step, wa.STEP_DONE)
@@ -164,13 +164,13 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
         app = wa.WizardApp(make_ctx(sl_state="foreign"))
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("enter")          # choose → arrange (gate)
-            await pilot.press("n")              # decline → Review (arrange skipped)
+            await pilot.press("enter")          # choose → arrange (foreign: keep)
+            await pilot.press("enter")          # arrange → review
             self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             # status-line preview panel is hidden; CTA & "what" omit segments
             self.assertFalse(query_static(app, "#rev-preview").display)
             self.assertNotIn("segments", str(query_static(app, "#cta").content))
-            self.assertIn("left unchanged",
+            self.assertIn("keep its current status line",
                           str(query_static(app, "#rev-what").content))
             await pilot.press("enter")          # commit (components are a net change)
             self.assertEqual(app.flow.step, wa.STEP_DONE)
@@ -191,7 +191,7 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")
-            await pilot.press("y")
+            await pilot.press("o")
             await pilot.press("enter")
             self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             self.assertIn("3[/] components", str(query_static(app, "#rev-what").content))
@@ -201,8 +201,8 @@ class TestReviewDone(unittest.IsolatedAsyncioTestCase):
         app = wa.WizardApp(make_ctx(sl_state="unset"))
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("enter")          # choose → arrange (gate)
-            await pilot.press("y")              # accept
+            await pilot.press("enter")          # choose → arrange
+            await pilot.press("o")              # accept: band on
             await pilot.press("enter")          # arrange → review
             self.assertEqual(app.flow.step, wa.STEP_REVIEW)
             self.assertTrue(query_static(app, "#rev-preview").display)
@@ -215,16 +215,16 @@ class TestInUICommit(unittest.IsolatedAsyncioTestCase):
     reflects the real outcome."""
 
     async def _confirm(self, commit, *, accept=True, sl_state="unset"):
-        """Drive Choose→gate→(board)→Review→confirm, wait for the commit worker,
+        """Drive Choose→(band toggle)→Review→confirm, wait for the commit worker,
         and return a snapshot dict (widgets only live inside run_test)."""
         ctx = make_ctx(sl_state=sl_state)._replace(commit=commit)
         app = wa.WizardApp(ctx)
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("enter")              # choose → arrange (gate)
-            await pilot.press("y" if accept else "n")
+            await pilot.press("enter")              # choose → arrange
             if accept:
-                await pilot.press("enter")          # arrange → review
+                await pilot.press("o")              # turn the status line on
+            await pilot.press("enter")              # arrange → review
             await pilot.press("enter")              # review → commit
             await app.workers.wait_for_complete()   # let the worker finish
             await pilot.pause()
@@ -289,15 +289,17 @@ class TestInUICommit(unittest.IsolatedAsyncioTestCase):
         self.assertIn("PreToolUse", snap["next"])
         self.assertNotIn("status line could not", snap["next"] + snap["sub"])
 
-    async def test_decline_still_commits_in_ui(self):
+    async def test_foreign_keep_still_commits_in_ui(self):
         seen = {}
 
         def commit(selection, states):
             seen["adopt"] = states["claude"]["adopt"]
+            seen["foreign_choice"] = states["claude"]["foreign_choice"]
             return {"ok": True, "adopt": states["claude"]["adopt"], "log": ""}
 
         snap = await self._confirm(commit, accept=False, sl_state="foreign")
-        self.assertIs(seen["adopt"], False)             # declined at the gate
+        self.assertIs(seen["adopt"], False)             # left at keep: nothing adopted
+        self.assertEqual(seen["foreign_choice"], "keep")
         self.assertEqual(snap["step"], wa.STEP_DONE)
         self.assertIs(snap["result"].state["claude"]["_commit_ok"], True)
 
@@ -308,7 +310,7 @@ class TestInUICommit(unittest.IsolatedAsyncioTestCase):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("enter")
-            await pilot.press("y")
+            await pilot.press("o")
             await pilot.press("enter")
             await pilot.press("enter")
             await pilot.pause()

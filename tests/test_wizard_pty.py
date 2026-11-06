@@ -597,10 +597,9 @@ class TestPhase2E2E(unittest.TestCase):
             # From here the existing pick test's key sequence:
             # Enter (Choose -> Arrange, adoption gate) -> y (board) ->
             # Enter (Arrange -> Review) -> Enter (commit -> Done) -> Enter (exit).
-            press_until(b"\r", b"Wire your Claude Code status line?",
-                        time.time() + _STEP_DEADLINE)
+            press_until(b"\r", "●off".encode(), time.time() + _STEP_DEADLINE)
             _settle(master_fd, time.time() + 1.0)
-            press_until(b"y", b"git_branch", time.time() + _STEP_DEADLINE)
+            press_until(b"o", b"git_branch", time.time() + _STEP_DEADLINE)
             _settle(master_fd, time.time() + 1.0)
             press_until(b"\r", b"Review & confirm", time.time() + _STEP_DEADLINE)
             press_until(b"\r", b"ai-kit is installed", time.time() + _STEP_DEADLINE)
@@ -640,7 +639,7 @@ class TestPhase2E2E(unittest.TestCase):
 
         The picks default to all-ON on a first run.  The confirm path in the
         re-ported single-WizardApp flow is:
-        Enter (Choose → Arrange, gate shown) → n (decline adoption, board shows)
+        Enter (Choose → Arrange, band shown) → o (band on, board shows)
         → Enter (Arrange → Review) → Enter (Review → commit → Done) → Enter
         (Done → exit; setup applies the selection).  We then assert that at least
         one known skill symlink exists under the temp CLAUDE_CONFIG_DIR/skills.
@@ -693,7 +692,7 @@ class TestPhase2E2E(unittest.TestCase):
 
         # Markers chosen from static text the re-ported app DEFINITELY renders:
         #   Choose screen → ◉ (UTF-8 bytes) — the glyph prepended to every enabled pick
-        #   Arrange gate  → "Wire your Claude Code status line?" — the unset-state gate prompt
+        #   Arrange band  → "●off" — the unset-state band toggle (Claude's pane)
         #   Arrange board → "git_branch" — a default-ON segment chip in Line 1
         #   Review screen → "Review & confirm" — the step title
         #   Done screen   → "ai-kit is installed" — the step title
@@ -724,22 +723,21 @@ class TestPhase2E2E(unittest.TestCase):
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
-            # ── Step 2b: wait for the adoption gate prompt ───────────────────
+            # ── Step 2b: wait for the Claude band (its off toggle) ───────────
             drive_until(
                 master_fd,
-                b"Wire your Claude Code status line?",
+                "●off".encode(),
                 time.time() + _SUMMARY_DEADLINE,
                 captured=captured,
             )
 
-            # ── Step 2c: settle before sending the gate answer ───────────────
+            # ── Step 2c: settle before the band toggle ───────────────────────
             _settle(master_fd, time.time() + 1.0)
 
-            # ── Step 2d: press y — accept adoption so the board renders ──────
-            # (Declining now skips the segment board straight to Review; this
-            # test asserts the board, so it accepts.)
+            # ── Step 2d: press o — turn the status line on so the board renders ──
+            # (The board is shown either way; this test asserts the on state.)
             with contextlib.suppress(OSError):
-                os.write(master_fd, b"y")
+                os.write(master_fd, b"o")
 
             # ── Step 2e: wait for the board (a default-ON segment chip) ──────
             drive_until(
@@ -878,7 +876,7 @@ class TestPhase3E2E(unittest.TestCase):
          CLAUDE_CONFIG_DIR (symlinks land there) and XDG_CONFIG_HOME (config_toml
          lands at ``$XDG_CONFIG_HOME/ai-kit/claude-statusline.toml``).
       2. Drive: Choose screen (◉ marker) → Enter (advance to Arrange) → gate
-         "Wire your Claude Code status line?" appears (state=unset) → press n (adopt=False)
+         "●off" band appears (state=unset) → Enter leaves it off (adopt=False)
          → the segment board is SKIPPED and Review shows directly
          ("Review & confirm") → Enter (Review→Done) → "ai-kit is installed" →
          Enter (Done exits).
@@ -991,25 +989,24 @@ class TestPhase3E2E(unittest.TestCase):
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
-            # ── Step 2b: wait for the adoption gate prompt ───────────────────
-            # State is "unset" on a fresh install → "Wire your Claude Code status line? [Y/n]".
+            # ── Step 2b: wait for the Claude band ────────────────────────────
+            # State is "unset" on a fresh install → the band's toggle reads "●off".
             drive_until(
                 master_fd,
-                b"Wire your Claude Code status line?",
+                "●off".encode(),
                 time.time() + self._BOARD_DEADLINE,
                 captured=captured,
             )
 
-            # ── Step 2c: settle before sending the gate answer ───────────────
+            # ── Step 2c: settle before moving on ─────────────────────────────
             _settle(master_fd, time.time() + 1.0)
 
-            # ── Step 2d: press n — decline adoption (state["adopt"] = False) ─
-            # Declining SKIPS the segment board and jumps straight to Review;
-            # there is no status line to arrange.
+            # ── Step 2d: Enter — leave the band off (state["adopt"] stays False) ─
+            # An off host writes nothing for its status line; Enter moves on to Review.
             with contextlib.suppress(OSError):
-                os.write(master_fd, b"n")
+                os.write(master_fd, b"\r")
 
-            # ── Step 3: decline lands directly on Review (board skipped) ─────
+            # ── Step 3: Enter from the pane lands on Review ──────────────────
             drive_until(
                 master_fd,
                 b"Review & confirm",
@@ -1133,24 +1130,24 @@ class TestPhase3E2E(unittest.TestCase):
             with contextlib.suppress(OSError):
                 os.write(master_fd, b"\r")
 
-            # ── Step 2b: wait for the adoption gate prompt ───────────────────
+            # ── Step 2b: wait for the Claude band ────────────────────────────
             # State is "unset" here (no statusLine command in settings.json),
-            # so the gate shows "Wire your Claude Code status line? [Y/n]".
+            # so the band's toggle reads "●off".
             drive_until(
                 master_fd,
-                b"Wire your Claude Code status line?",
+                "●off".encode(),
                 time.time() + self._BOARD_DEADLINE,
                 captured=captured,
             )
 
-            # ── Step 2c: settle before sending the gate answer ───────────────
+            # ── Step 2c: settle before the band toggle ───────────────────────
             _settle(master_fd, time.time() + 1.0)
 
-            # ── Step 2d: press y — proceed to the board ──────────────────────
+            # ── Step 2d: press o — turn the band on, proceed to the board ────
             # adopt=True; doesn't affect what the board shows — the pre-seeded
-            # off arrangement is visible regardless of the adopt choice.
+            # off arrangement is visible regardless of the toggle.
             with contextlib.suppress(OSError):
-                os.write(master_fd, b"y")
+                os.write(master_fd, b"o")
 
             # ── Step 3: wait for the board render (a default-ON segment chip) ─
             # path is OFF (pre-seeded), so git_branch is the first Line-1 chip.
@@ -1401,26 +1398,24 @@ class TestTwoHostE2E(unittest.TestCase):
         return os.path.join(base, "xdg-config", "ai-kit")
 
     def _drive(self, master_fd, captured, decline_cursor):
-        """Walk Choose -> Claude gate+board -> Cursor gate -> (board|Review).
+        """Walk Choose -> Claude's band (on) -> Cursor's band (on or left off) -> Review.
         Returns when the Done title is on screen; the caller drains/exits."""
         step = self._STEP_DEADLINE
-        _press_until(master_fd, b"\r", b"Wire your Claude Code status line?",
-                     time.time() + step, captured)          # Claude's gate
-        _press_until(master_fd, b"y", b"git_branch",
-                     time.time() + step, captured)          # Claude's board
-        _press_until(master_fd, b"\r", b"Wire your Cursor CLI status line?",
-                     time.time() + step, captured)          # Cursor's gate
-        answer = b"n" if decline_cursor else b"y"
+        _press_until(master_fd, b"\r", "●off".encode(),
+                     time.time() + step, captured)          # Choose -> Claude's pane
+        _press_until(master_fd, b"o", b"git_branch",
+                     time.time() + step, captured)          # Claude's band on, board shows
+        _press_until(master_fd, b"\r", b"Cursor CLI",
+                     time.time() + step, captured)          # Claude -> Cursor's pane
         if decline_cursor:
-            _press_until(master_fd, answer, b"Review & confirm",
-                         time.time() + step, captured)      # declined -> Review
-        else:
-            # The Cursor board render names its host in the focused-chip panel;
-            # the gate clears that panel, so this marker proves the board showed.
-            _press_until(master_fd, answer, b"Cursor CLI \xc2\xb7 inventory",
-                         time.time() + step, captured)      # Cursor's board
             _press_until(master_fd, b"\r", b"Review & confirm",
-                         time.time() + step, captured)      # Cursor board -> Review
+                         time.time() + step, captured)      # Cursor left off -> Review
+        else:
+            # The Cursor board render names its host in the focused-chip panel.
+            _press_until(master_fd, b"o", b"Cursor CLI \xc2\xb7 inventory",
+                         time.time() + step, captured)      # Cursor's band on
+            _press_until(master_fd, b"\r", b"Review & confirm",
+                         time.time() + step, captured)      # Cursor pane -> Review
         _press_until(master_fd, b"\r", b"ai-kit is installed",
                      time.time() + step, captured)          # Review -> commit -> Done
 
@@ -1466,16 +1461,14 @@ class TestTwoHostE2E(unittest.TestCase):
         output = b"".join(captured).decode("utf-8", errors="replace")
 
         self.assertEqual(exit_code, 0, msg=f"wizard exit {exit_code}:\n{output}")
-        # Both gates and both boards were shown, in Claude-then-Cursor order.
-        self.assertIn("Wire your Claude Code status line?", output)
+        # Both bands and both boards were shown, in Claude-then-Cursor order.
+        self.assertIn("[ ●off │on ]", output)            # an unset host's band, off
         self.assertIn("Arrange your Claude Code status line", output)
-        self.assertIn("Wire your Cursor CLI status line?", output)
+        self.assertIn("Cursor CLI", output)
         self.assertIn("Arrange your Cursor CLI status line", output)
-        # One Review lists each host's writes.
-        self.assertIn("Claude Code: write ~/.config/ai-kit/claude-statusline.toml",
-                      output)
-        self.assertIn("Cursor CLI: write ~/.config/ai-kit/cursor-statusline.toml",
-                      output)
+        # One Review lists each host's outcome.
+        self.assertIn("Claude Code: wire ai-kit", output)
+        self.assertIn("Cursor CLI: wire ai-kit", output)
         # Claude's settings.json points at the Claude entry.
         with open(os.path.join(base, "claude", "settings.json"),
                   encoding="utf-8") as fh:
@@ -1520,9 +1513,9 @@ class TestTwoHostE2E(unittest.TestCase):
         output = b"".join(captured).decode("utf-8", errors="replace")
 
         self.assertEqual(exit_code, 0, msg=f"wizard exit {exit_code}:\n{output}")
-        self.assertIn("Wire your Cursor CLI status line?", output)
-        # The declined host is named as left untouched on the shared Review.
-        self.assertIn("Cursor CLI: left untouched", output)
+        self.assertIn("Cursor CLI", output)
+        # The off host is named as unchanged on the shared Review.
+        self.assertIn("Cursor CLI: unchanged", output)
         # Pre-existing Cursor config files are byte-identical.
         for name, digest in before.items():
             with open(os.path.join(cursor_dir, name), "rb") as fh:

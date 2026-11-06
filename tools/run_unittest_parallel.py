@@ -101,6 +101,7 @@ INTEGRATION_MODULES = frozenset({
     "tests.test_wizard_app_1",
     "tests.test_wizard_app_2",
     "tests.test_wizard_app_3",
+    "tests.test_wizard_hostpane",
     "tests.test_wizard_pty",
 })
 # Real git worktrees, memory checks, and real `node` runs against the checkout-local
