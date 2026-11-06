@@ -14,8 +14,6 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
-                                 "ai-kit-spec-execute-gsd"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills",
                                  "ai-kit-spec-execute-superpowers"))
 
 from ai_kit_spec import cli, config_io, trust
@@ -434,17 +432,6 @@ class TestLoudConfigErrors(TrustEnvTestCase):
                             which_fn=lambda _name, **_kwargs: None, run_fn=lambda *_a, **_k: None)
         self.assertEqual(code, 2)
         self.assertIn(os.path.join(self.xdg, "ai-kit", "review-spec.toml"), err.getvalue())
-
-    def test_gsd_cli_exits_2_on_malformed_local(self):
-        from ai_kit_spec_gsd import cli as gsd_cli
-        self.write_local(b"[[reviewers]\n")
-        err = io.StringIO()
-        with redirect_stderr(err):
-            code = gsd_cli.main(["resolve-dispatch", "--cwd", self.cwd,
-                                 "--target-dir", self.cwd,
-                                 "--quota-path", os.path.join(self.cwd, "quota.json")])
-        self.assertEqual(code, 2)
-        self.assertIn(config_io.cfg_local_path(self.cwd), err.getvalue())
 
     def test_superpowers_cli_exits_2_on_malformed_local(self):
         from ai_kit_spec_superpowers import cli as superpowers_cli

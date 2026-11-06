@@ -266,11 +266,10 @@ def config_set(
     value: object,
     run_fn: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> tuple[bool, str]:
-    """Runs `config-set <key> <value> --project-dir <dir>` WITHOUT `--raw` (per RUN-11 the
-    undo log reads the prior value from the JSON result's `previousValue`, which `--raw`
-    would reduce to `key=value`). Returns `(True, stdout)` on exit 0, `(False, stderr)`
-    otherwise -- never raises on a subprocess failure, including a spawn `OSError` (a
-    missing `node`), which reads as `(False, str(exc))`."""
+    """Runs `config-set <key> <value> --project-dir <dir>` (JSON output, no `--raw`). Returns
+    `(True, stdout)` on exit 0, `(False, stderr)` otherwise -- never raises on a subprocess
+    failure, including a spawn `OSError` (a missing `node`), which reads as
+    `(False, str(exc))`."""
     try:
         result = run_fn(
             [tools.node_bin, tools.gsd_tools_path, "config-set", key, _coerce_value(value),
@@ -284,21 +283,6 @@ def config_set(
     if result.returncode == 0:
         return True, result.stdout.strip()
     return False, result.stderr.strip()
-
-
-def prior_value(output: str) -> tuple[bool, object] | None:
-    """Extracts the prior value from a `config-set` JSON result: `(True, previousValue)`
-    when the key existed, `(False, None)` when gsd-tools omitted `previousValue` (the key
-    was absent), `None` when the output is not a JSON object at all."""
-    try:
-        parsed = json.loads(output)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    if "previousValue" in parsed:
-        return True, parsed["previousValue"]
-    return False, None
 
 
 def config_get(

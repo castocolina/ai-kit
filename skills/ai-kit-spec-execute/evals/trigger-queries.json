@@ -1,0 +1,18 @@
+[
+  {"query": "Execute phase 4 of this project, it is a GSD phase and the plan is ready", "should_trigger": true},
+  {"query": "run the implementation plan in docs/superpowers/plans/ from this morning", "should_trigger": true},
+  {"query": "please implement the plan I generated with writing-plans, go ahead and run it", "should_trigger": true},
+  {"query": "execute the next phase of my roadmap, I already planned it with GSD", "should_trigger": true},
+  {"query": "start running the plan file for the payments feature, every task in order", "should_trigger": true},
+  {"query": "carry out the phase plan we wrote last week and commit each task as it finishes", "should_trigger": true},
+  {"query": "run this plan under subagent-driven development and tell me when it is done", "should_trigger": true},
+  {"query": "implement the phase 2 plan in .planning/phases, all waves please", "should_trigger": true},
+  {"query": "review the design doc for the login flow and suggest wording fixes", "should_trigger": false},
+  {"query": "write a README quick-start section for the installer package", "should_trigger": false},
+  {"query": "explain what a git worktree is and when to use one", "should_trigger": false},
+  {"query": "create a new SKILL.md for a markdown linter skill from scratch", "should_trigger": false},
+  {"query": "why does my pytest module fail with an import error on CI", "should_trigger": false},
+  {"query": "summarize last week's commits into a changelog entry", "should_trigger": false},
+  {"query": "generate a goal prompt file for phases 16 to 18 without running it", "should_trigger": false},
+  {"query": "list the providers in my opencode config and show their base URLs", "should_trigger": false}
+]

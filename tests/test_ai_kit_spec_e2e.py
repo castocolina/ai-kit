@@ -1,4 +1,4 @@
-"""Real gsd-core runs for ai-kit-spec-review and ai-kit-spec-execute-gsd: the e2e tier
+"""Real gsd-core runs for ai-kit-spec-review: the e2e tier
 (C-IN-06). Each class spawns real `node` against this checkout's own `.claude/gsd-core` on a
 scratch project with a temp HOME, and skips when node or that gsd-core is missing."""
 import os
@@ -11,10 +11,8 @@ from unittest import mock
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
-sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-execute-gsd"))
 
 from ai_kit_spec import gsd_tools
-from ai_kit_spec_gsd import cli
 
 
 def _scratch_project(parent=None):
@@ -74,19 +72,16 @@ class TestRealGsdTools(unittest.TestCase):
             self.tools, self.project, "workflow.cross_ai_timeout", 900, run_fn=self._run
         )
         self.assertTrue(ok)
-        self.assertEqual(gsd_tools.prior_value(output), (False, None))
 
         ok, output = gsd_tools.config_set(
             self.tools, self.project, "workflow.cross_ai_timeout", 600, run_fn=self._run
         )
         self.assertTrue(ok)
-        self.assertEqual(gsd_tools.prior_value(output), (True, 900))
 
         ok, output = gsd_tools.config_set(
             self.tools, self.project, "workflow.cross_ai_timeout", None, run_fn=self._run
         )
         self.assertTrue(ok)
-        self.assertEqual(gsd_tools.prior_value(output), (True, 600))
         got = gsd_tools.config_get(
             self.tools, self.project, "workflow.cross_ai_timeout", run_fn=self._run
         )
@@ -109,7 +104,6 @@ class TestRealGsdConfigSet(unittest.TestCase):
     @unittest.skipUnless(os.path.exists(_TOOLS), "checkout has no .claude/gsd-core install")
     @unittest.skipUnless(shutil.which("node"), "node not on PATH")
     def test_write_workflow_keys_round_trip_through_real_gsd_core(self):
-        import io
         import json
         import subprocess
         import tempfile
@@ -127,20 +121,14 @@ class TestRealGsdConfigSet(unittest.TestCase):
                 assert resolved is not None
                 _assert_inside(self, resolved, scratch)
                 config_json = os.path.join(scratch, ".planning", "config.json")
-                stdout = io.StringIO()
-                code = cli.main(["write-workflow-keys", "--cwd", scratch, "--run-id", "r1",
-                                 "--set", "cross_ai_execution=true"],
-                                resolve_gsd_tools_fn=lambda start: tools.gsd_tools_path,
-                                stdout=stdout)
-                self.assertEqual(code, 0)
-                self.assertEqual(json.loads(stdout.getvalue())["applied"],
-                                 ["workflow.cross_ai_execution"])
+                ok, _output = gt.config_set(tools, scratch, "workflow.cross_ai_execution", True,
+                                            run_fn=subprocess.run)
+                self.assertTrue(ok)
                 got = gt.config_get(tools, scratch, "workflow.cross_ai_execution",
                                     run_fn=subprocess.run)
                 self.assertTrue(got.found)
                 self.assertIs(got.value, True)
-                # The config.json on disk was written by gsd-tools, not by ai-kit: gsd-tools'
-                # config-new-project created it, and ai-kit only ever opened it read-only.
+                # The config.json on disk was written by gsd-tools' config-set.
                 self.assertTrue(os.path.exists(config_json))
                 with open(config_json, encoding="utf-8") as f:
                     on_disk = json.load(f)

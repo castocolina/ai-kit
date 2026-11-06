@@ -808,14 +808,13 @@ REWRITTEN = [
     "skills/ai-kit-spec-review/SKILL.md",
     "skills/ai-kit-spec-config/SKILL.md",
     "skills/ai-kit-spec-execute-superpowers/SKILL.md",
-    "skills/ai-kit-spec-execute-gsd/SKILL.md",
     "skills/ai-kit-gsd-curated-config/SKILL.md",
     "skills/ai-kit-opencode-providers/SKILL.md",
 ]
 # The canonical paragraph describes dispatch, so only the skills that do dispatch carry it.
 # curated-config and opencode-providers are checked for forbidden tokens only.
 # The superpowers adapter points at the contract instead of restating it.
-PAIR_RULE_SKILLS = [path for path in REWRITTEN[:4] if "execute-superpowers" not in path]
+PAIR_RULE_SKILLS = ["skills/ai-kit-spec-review/SKILL.md", "skills/ai-kit-spec-config/SKILL.md"]
 REFERENCES = [
     "skills/ai-kit-spec-review/references/cross-ai-dispatch.md",
     "skills/ai-kit-spec-review/references/reviewer-prompts.md",
@@ -828,13 +827,11 @@ REFERENCES = [
     "skills/ai-kit-spec-config/references/cli-model-selection.md",
     "skills/ai-kit-spec-execute-superpowers/references/escalation.md",
     "skills/ai-kit-spec-execute-superpowers/references/design-notes.md",
-    "skills/ai-kit-spec-execute-gsd/references/dispatch-notes.md",
     "skills/ai-kit-gsd-curated-config/references/runner.md",
     "skills/ai-kit-gsd-curated-config/references/v1-path.md",
 ]
 _EXEC_SKILLS = (
     "skills/ai-kit-spec-execute-superpowers/SKILL.md",
-    "skills/ai-kit-spec-execute-gsd/SKILL.md",
 )
 _CONFINEMENT_TOKENS = (
     "--codex-sandbox",

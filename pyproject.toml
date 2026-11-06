@@ -121,7 +121,6 @@ extraPaths = [
     "skills/ai-kit-session-wake",
     "skills/ai-kit-spec-config",
     "skills/ai-kit-spec-execute",
-    "skills/ai-kit-spec-execute-gsd",
     "skills/ai-kit-spec-execute-superpowers",
     "skills/ai-kit-spec-goal-prompt",
     "skills/ai-kit-spec-review",

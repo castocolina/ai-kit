@@ -28,9 +28,7 @@ read-only and still reaches that shared service.
 - `--outer-timeout <s>` replaces the GSD config lookup and the CONFIG cap as the outer deadline.
   The review lane passes it; the GSD hook does not, so the live timeout lookup below applies.
 - `--prepend-file <path>` puts that file, minus its leading `<!-- … -->` stamp lines, before
-  the prompt. `ai-kit-spec-execute-gsd`'s hook passes the guidance file
-  (`.planning/scripts/cross-ai-guidance.md`) this way, with `--no-preamble` keeping the
-  runner's own preamble off, so nothing is said twice.
+  the prompt.
 - `--codex-sandbox workspace-write` confines a codex exec target: writes stay inside the project
   dir plus `/tmp` and `$TMPDIR`, which workspace-write always allows. Whether `.git` is writable
   under it is unverified. Without the flag, codex exec runs with
@@ -63,8 +61,7 @@ So only a newly rendered or successfully upgraded active copy carries the ladder
 see what a project actually runs is the active runner's line-2 `template=<n>` header, never the
 `.new` file.
 
-`ensure-runner` renders or upgrades the project runner and, with `--guidance-file`, the guidance
-file. It never overwrites a user-edited runner, and readiness
+`ensure-runner` renders or upgrades the project runner. It never overwrites a user-edited runner, and readiness
 comes from the JSON it prints (`ready`, `runner`, `notes`), not from whether a `.new` file
 exists. A user-edited runner already on the current template is kept as-is and reported ready,
 with no `.new` file. An edited runner on an older template gets a `.new` file plus the printed

@@ -18,14 +18,6 @@ HEADER_RE = re.compile(
     rb"^// ai-kit-cross-ai generator=ai-kit-gsd-curated-config "
     rb"template=(\d+) sha256=(?P<sha>[0-9a-f]{64}|UNSTAMPED)$"
 )
-GUIDANCE_PATH = ".planning/scripts/cross-ai-guidance.md"
-GUIDANCE_HEADER_RE = re.compile(
-    rb"^<!-- ai-kit-cross-ai-guidance generator=ai-kit-gsd-curated-config "
-    rb"template=1 sha256=(?P<sha>[0-9a-f]{64}|UNSTAMPED) -->$"
-)
-_GUIDANCE_NOTICE = (
-    b"<!-- Rendered by ai-kit; edits produce a .new file on the next render. -->"
-)
 # A floor, not the current version: template 8 is the first that accepts --runtime/--model and
 # the retry config. Template 7 has neither; templates 3-6 can still fall back.
 _READY_TEMPLATE = 8
@@ -303,21 +295,6 @@ def plan_runner_upgrade(project_dir: str, template: bytes, scrub_env) -> ScriptP
     return ScriptPlan("keep-edited", path, None, existing, state, _kept_note(state, path), existing)
 
 
-def _guidance_bytes(text: str) -> bytes:
-    body = text.encode("utf-8")
-    digest = hashlib.sha256(body).hexdigest()
-    header = (
-        b"<!-- ai-kit-cross-ai-guidance generator=ai-kit-gsd-curated-config "
-        b"template=1 sha256=" + digest.encode("ascii") + b" -->"
-    )
-    return _GUIDANCE_NOTICE + b"\n" + header + b"\n" + body
-
-
-def plan_guidance(project_dir: str, text: str) -> ScriptPlan:
-    path = os.path.abspath(os.path.join(project_dir, GUIDANCE_PATH))
-    return _plan_rendered(path, _guidance_bytes(text), GUIDANCE_HEADER_RE)
-
-
 class _EnsureStep(NamedTuple):
     kind: str | None
     notes: list[str]
@@ -329,7 +306,7 @@ def _read_error(path: str, exc: OSError) -> ScriptReadError:
 
 def _error_result(runner: str | None, notes: list[str], message: str) -> dict:
     return {
-        "ready": False, "runner": runner, "guidance": None,
+        "ready": False, "runner": runner,
         "notes": notes, "error": message,
     }
 
@@ -346,33 +323,10 @@ def _write_plan(plan: ScriptPlan) -> _EnsureStep:
     return _EnsureStep(performed.kind, [performed.note] if performed.note else [])
 
 
-def _guidance_step(project_dir: str, text: str | None) -> _EnsureStep:
-    if text is None:
-        return _EnsureStep(None, [])
-    return _write_plan(plan_guidance(project_dir, text))
-
-
-def _ensure_runner_plans(
-    project_dir: str, runner_plan: ScriptPlan, guidance_text: str | None
-) -> dict:
+def _ensure_runner_plans(project_dir: str, runner_plan: ScriptPlan) -> dict:
     runner = _write_plan(runner_plan)
-    try:
-        guidance = _guidance_step(project_dir, guidance_text)
-    except (OSError, ScriptReadError, ValueError) as exc:
-        message = str(exc) or type(exc).__name__
-        note = f"runner {runner.kind} already written; guidance failed: {message}"
-        return _error_result(runner.kind, [*runner.notes, note], message)
     runner_path = os.path.abspath(os.path.join(project_dir, cross_ai.SCRIPT_PATH))
-    ready = _runner_ready(runner_path)
-    if guidance_text is not None:
-        guidance_path = os.path.abspath(os.path.join(project_dir, GUIDANCE_PATH))
-        ready = ready and os.path.isfile(guidance_path)
-    return {
-        "ready": ready,
-        "runner": runner.kind,
-        "guidance": guidance.kind,
-        "notes": runner.notes + guidance.notes,
-    }
+    return {"ready": _runner_ready(runner_path), "runner": runner.kind, "notes": runner.notes}
 
 
 def _require_project_dir(project_dir: str) -> None:
@@ -401,17 +355,15 @@ def _checked_template() -> tuple[bytes | None, str | None]:
     return template, None
 
 
-def ensure_runner(project_dir: str, guidance_text: str | None = None) -> dict:
-    """Render or upgrade the project runner; optionally write the guidance file (D-33)."""
-    if guidance_text is not None and not guidance_text.strip():
-        return _error_result(None, [], "guidance text is empty")
+def ensure_runner(project_dir: str) -> dict:
+    """Render or upgrade the project runner."""
     template, error = _checked_template()
     if template is None:
         return _error_result(None, [], error or "template unavailable")
     try:
         _require_project_dir(project_dir)
         runner_plan = plan_runner_upgrade(project_dir, template, default_scrub_env())
-        return _ensure_runner_plans(project_dir, runner_plan, guidance_text)
+        return _ensure_runner_plans(project_dir, runner_plan)
     except (OSError, ScriptReadError, ValueError) as exc:
         return _error_result(None, [], str(exc) or type(exc).__name__)
 

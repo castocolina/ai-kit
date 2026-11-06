@@ -55,7 +55,6 @@ EXIT_ROWS = ("0", "1", "2", "69", "75", "124", "127")
 LINKING = (
     REPO / "skills/ai-kit-spec-review/SKILL.md",
     REPO / "skills/ai-kit-spec-review/references/cross-ai-dispatch.md",
-    REPO / "skills/ai-kit-spec-execute-gsd/SKILL.md",
     REPO / "skills/ai-kit-spec-execute-superpowers/SKILL.md",
     REPO / "skills/ai-kit-gsd-curated-config/SKILL.md",
     REPO / "skills/ai-kit-gsd-curated-config/references/runner.md",

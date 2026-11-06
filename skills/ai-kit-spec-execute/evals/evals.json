@@ -1,0 +1,76 @@
+{
+  "skill_name": "ai-kit-spec-execute",
+  "evals": [
+    {
+      "id": "casual-run-my-gsd-phase",
+      "prompt": "hey can you just run phase 4 of this project, it's the gsd one and I'm done planning it. the project marker is evals/files/gsd-project/.planning/PROJECT.md",
+      "expected_output": "Routes the GSD phase to GSD's own /gsd-execute-phase and names no ai-kit GSD adapter.",
+      "files": [
+        "evals/files/gsd-project/.planning/PROJECT.md"
+      ],
+      "assertions": [
+        "The router names /gsd-execute-phase as the route for the GSD phase.",
+        "The answer names no ai-kit GSD adapter and runs no GSD adapter."
+      ]
+    },
+    {
+      "id": "casual-run-superpowers-plan",
+      "prompt": "run the implementation plan in evals/files/superpowers-plan/docs/superpowers/plans/2026-11-06-demo.md, the one from this morning",
+      "expected_output": "Hands the superpowers plan to the ai-kit-spec-execute-superpowers adapter and not to /gsd-execute-phase.",
+      "files": [
+        "evals/files/superpowers-plan/docs/superpowers/plans/2026-11-06-demo.md"
+      ],
+      "assertions": [
+        "The router hands the superpowers plan to the ai-kit-spec-execute-superpowers adapter.",
+        "The answer does not send the superpowers plan to /gsd-execute-phase."
+      ]
+    },
+    {
+      "id": "precise-explicit-planning-path",
+      "prompt": "Execute the plan at evals/files/gsd-project/.planning/PROJECT.md under whichever framework generated it.",
+      "expected_output": "Detects GSD from the .planning/ path marker and routes to /gsd-execute-phase.",
+      "files": [
+        "evals/files/gsd-project/.planning/PROJECT.md"
+      ],
+      "assertions": [
+        "The router reads the .planning/ path marker as evidence of a GSD plan.",
+        "The router routes to /gsd-execute-phase and names no adapter for GSD."
+      ]
+    },
+    {
+      "id": "precise-conversation-signal-wins",
+      "prompt": "I just ran superpowers writing-plans in this chat. Now execute the plan at evals/files/gsd-project/.planning/PROJECT.md.",
+      "expected_output": "The conversation signal outranks the .planning/ path and routes to the superpowers adapter.",
+      "files": [
+        "evals/files/gsd-project/.planning/PROJECT.md"
+      ],
+      "assertions": [
+        "The conversation signal superpowers outranks the .planning/ path marker.",
+        "The answer names ai-kit-spec-execute-superpowers and not /gsd-execute-phase."
+      ]
+    },
+    {
+      "id": "edge-unknown-framework-asks",
+      "prompt": "execute the plan at notes/roadmap-draft.md, I don't remember what tool wrote it",
+      "expected_output": "Asks which framework generated the plan and runs nothing.",
+      "files": [],
+      "assertions": [
+        "The router asks which framework generated the plan before it routes anything.",
+        "The router does not guess GSD or superpowers for a document with no framework marker."
+      ]
+    },
+    {
+      "id": "edge-mixed-repo-markers",
+      "prompt": "execute the next plan in this repo. Both a .planning/ folder and a docs/superpowers/plans/ folder exist here, and I gave no path.",
+      "expected_output": "Applies the documented precedence, where the GSD marker is checked first, and routes to /gsd-execute-phase.",
+      "files": [
+        "evals/files/gsd-project/.planning/PROJECT.md",
+        "evals/files/superpowers-plan/docs/superpowers/plans/2026-11-06-demo.md"
+      ],
+      "assertions": [
+        "The answer says the GSD marker is checked first in a mixed repo when no signal or path is given.",
+        "The answer routes the plan to /gsd-execute-phase."
+      ]
+    }
+  ]
+}

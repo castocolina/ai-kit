@@ -1308,11 +1308,10 @@ def check_no_host_cli_calls(tree, names):
 _WAKE_SKILL = "skills/ai-kit-session-wake"
 _PHASE25_SKILLS = (
     "skills/ai-kit-spec-review",
-    "skills/ai-kit-spec-execute-gsd",
     "skills/ai-kit-spec-execute-superpowers",
     "skills/ai-kit-cross-ai",
 )
-_PHASE25_LADDER_PKGS = frozenset({"ai_kit_spec_gsd", "ai_kit_spec_superpowers"})
+_PHASE25_LADDER_PKGS = frozenset({"ai_kit_spec_superpowers"})
 _WAKE_STATE_TOKEN = "write_resumable_state"
 
 
@@ -1604,30 +1603,6 @@ CROSS_SKILL_ALLOWLIST: dict[tuple[str, str], str] = {
         "ai-kit-spec-review",
     ): "imports ai_kit_spec.detection from the spec-review package (backlog 999.19)",
     (
-        "skills/ai-kit-spec-execute-gsd/ai-kit-spec-gsd.py",
-        "ai-kit-spec-review",
-    ): "sys.path shim onto the spec-review folder (backlog 999.19)",
-    (
-        "skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/adapter.py",
-        "ai-kit-spec-review",
-    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
-    (
-        "skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/cli.py",
-        "ai-kit-spec-review",
-    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
-    (
-        "skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/cross_ai_guidance.py",
-        "ai-kit-spec-review",
-    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
-    (
-        "skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/gsd_config.py",
-        "ai-kit-spec-review",
-    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
-    (
-        "skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/gsd_cross_ai.py",
-        "ai-kit-spec-review",
-    ): "imports ai_kit_spec from the spec-review package (backlog 999.19)",
-    (
         "skills/ai-kit-spec-execute-superpowers/ai-kit-spec-superpowers.py",
         "ai-kit-spec-review",
     ): "sys.path shim onto the spec-review folder (backlog 999.19)",
@@ -1677,15 +1652,6 @@ _CROSS_SKILL_FROZEN = frozenset(
         ("skills/ai-kit-session-wake/ai_kit_session_wake/arm.py", "ai-kit-spec-review"),
         ("skills/ai-kit-session-wake/ai_kit_session_wake/cli.py", "ai-kit-spec-review"),
         ("skills/ai-kit-session-wake/ai_kit_session_wake/hosts.py", "ai-kit-spec-review"),
-        ("skills/ai-kit-spec-execute-gsd/ai-kit-spec-gsd.py", "ai-kit-spec-review"),
-        ("skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/adapter.py", "ai-kit-spec-review"),
-        ("skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/cli.py", "ai-kit-spec-review"),
-        (
-            "skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/cross_ai_guidance.py",
-            "ai-kit-spec-review",
-        ),
-        ("skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/gsd_config.py", "ai-kit-spec-review"),
-        ("skills/ai-kit-spec-execute-gsd/ai_kit_spec_gsd/gsd_cross_ai.py", "ai-kit-spec-review"),
         ("skills/ai-kit-spec-execute-superpowers/ai-kit-spec-superpowers.py", "ai-kit-spec-review"),
         (
             "skills/ai-kit-spec-execute-superpowers/ai_kit_spec_superpowers/cli.py",
@@ -3085,7 +3051,7 @@ class TestArchNonVacuity(unittest.TestCase):
         # Phase 25 names caught only by substring (the attribute and the
         # string literal).
         flagged = (
-            "from ai_kit_spec_gsd.cli import write_resumable_state\n",
+            "from ai_kit_spec_superpowers.cli import write_resumable_state\n",
             "import ai_kit_spec.cache\n",
             "x = state.write_resumable_state\n",
             "deps.write_resumable_state_fn(path, state)\n",

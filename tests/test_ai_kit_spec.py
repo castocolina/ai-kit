@@ -5524,6 +5524,19 @@ class TestExecuteLadderScreen(unittest.TestCase):
             execute_selection.ExecuteResolveOptions(None, 0, {}, [], warn_fn),
         )
 
+    def test_resolve_execute_candidates_keeps_untagged_drops_review(self):
+        candidates = [
+            {"key": "review-only-tagged", "purpose": "review", "context_limit": 1_000_000},
+            {"key": "untagged", "context_limit": 1_000_000},
+        ]
+        result = execute_selection.resolve_execute_candidates(
+            candidates,
+            execute_selection.ExecuteResolveOptions(None, 1000, {}, []),
+        )
+        # An entry tagged purpose="review" does not match the execute purpose; an untagged
+        # entry means "no preference" and survives.
+        self.assertEqual({c["key"] for c in result}, {"untagged"})
+
     def test_purpose_none_claude_entry_is_skipped_with_a_warning(self):
         warnings = []
         candidates = [

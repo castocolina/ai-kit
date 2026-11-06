@@ -7,7 +7,6 @@ filesystem fixtures live in tempfile dirs. The real gsd-core `previousValue` con
 import importlib
 import importlib.util
 import os
-import re
 import shutil
 import stat
 import subprocess
@@ -74,17 +73,6 @@ class TestResolverOrder(unittest.TestCase):
         self.assertEqual(roots[:3], ["R/gsd-core", "R/.claude/gsd-core", "R/.codex/gsd-core"])
         self.assertEqual(roots[3:], [os.path.join(h, "gsd-core") for h in
                                      gsd_tools._host_homes(env)])
-
-    def test_skill_md_lists_project_local_roots_first_in_resolver_order(self):
-        # R17: the SKILL.md lookup text names the same local roots, in the same order,
-        # as gsd_core_roots, and before any host-home install.
-        skill = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-execute-gsd", "SKILL.md")
-        with open(skill, encoding="utf-8") as f:
-            text = f.read()
-        documented = re.findall(r"`(<root>/[^`]+)`", text)
-        self.assertEqual(documented[:3], gsd_tools.gsd_core_roots({"HOME": "H"}, "<root>")[:3])
-        first_local = text.index("`<root>/gsd-core`")
-        self.assertNotIn("$HOME", text[:first_local])
 
     def test_non_launcher_candidates_match_edge_floor_engine_candidates(self):
         env = {
@@ -199,17 +187,6 @@ class TestWrappers(unittest.TestCase):
         )
         self.assertFalse(ok)
         self.assertEqual(output, "Error: bad")
-
-    def test_prior_value_shapes(self):
-        self.assertEqual(
-            gsd_tools.prior_value('{"updated": true, "key": "k", "value": 2, "previousValue": 1}'),
-            (True, 1),
-        )
-        self.assertEqual(
-            gsd_tools.prior_value('{"updated": true, "key": "k", "value": 2}'), (False, None)
-        )
-        self.assertIsNone(gsd_tools.prior_value("k=2"))
-        self.assertIsNone(gsd_tools.prior_value("[1]"))
 
     def test_config_get_found(self):
         got = gsd_tools.config_get(

@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-execute
-description: Routes execution of an already-generated plan/phase to the framework-specific adapter (ai-kit-spec-execute-gsd or ai-kit-spec-execute-superpowers) by detecting which framework generated it. Use when the user asks to execute/run/implement a plan or phase and the generating framework isn't already known.
+description: Routes execution of an already-generated plan/phase by detecting which framework generated it: a GSD phase goes to GSD's own `/gsd-execute-phase`, a superpowers plan to the `ai-kit-spec-execute-superpowers` adapter. Use when the user asks to execute/run/implement a plan or phase and the generating framework isn't already known.
 ---
 
 # ai-kit-spec-execute
@@ -55,7 +55,7 @@ run right now (see Anti-Patterns item 1 below).
 2. Extract the plan/phase path from the user's request if explicitly provided (e.g., "execute `/path/to/plan.md`" or referencing a file path in the conversation). If no explicit path, document_path is None.
 3. Run `detect_framework(cwd, document_path=document_path, conversation_signal=CONVERSATION_SIGNAL)` from `$DETECT_FRAMEWORK_PY` (Step 0), passing `CONVERSATION_SIGNAL` through — never omit it, it is the strongest signal (see Anti-Patterns).
 4. Based on result:
-   - `"gsd"` → delegate to `ai-kit-spec-execute-gsd`.
+   - `"gsd"` → hand the plan to GSD's own `/gsd-execute-phase <phase>` (GSD runs its own executors; ai-kit adds no adapter).
    - `"superpowers"` → delegate to `ai-kit-spec-execute-superpowers` (see that skill's own SKILL.md).
    - `"unknown"` → proceed to "Error Scenarios" below.
 
@@ -76,4 +76,4 @@ run right now (see Anti-Patterns item 1 below).
 - **NEVER skip passing CONVERSATION_SIGNAL just because it's unset this turn** — it's the only signal that outranks *both* document_path and repo markers. Omit it and the old-GSD-repo-reused-for-superpowers case (Step 0 above) silently loses: `.planning/PROJECT.md` still exists on disk from prior GSD use, so the repo-marker fallback returns `"gsd"` even though the user just ran superpowers' `writing-plans` two messages ago.
 - **NEVER treat a bare filename ("plan.md") as "no document_path was given."** `_framework_from_document_path` only matches full path substrings (`.planning/` or `docs/superpowers/plans/`); a correctly-extracted but unqualified filename produces the *same* `None` result as truly having no path, silently demoting a real signal to the repo-marker fallback instead of raising it as evidence.
 - **NEVER trust repo markers in a mixed-framework repo without knowing their precedence.** If both `.planning/PROJECT.md` and `docs/superpowers/plans/` exist (e.g. a repo that migrated frameworks, or runs both), the GSD marker is checked first and wins — so a repo with leftover GSD scaffolding will route to GSD by default even for a superpowers-only session, unless CONVERSATION_SIGNAL or document_path override it first.
-- **NEVER let "unknown" fall through to a default framework.** The GSD and superpowers adapters aren't interchangeable no-ops on a wrong guess — `ai-kit-spec-execute-gsd` writes phase-completion state back into `.planning/`, so running it against a document that isn't actually a GSD phase can leave bogus `.planning/` state behind, not just produce a confusing error.
+- **NEVER let "unknown" fall through to a default framework.** The GSD and superpowers adapters aren't interchangeable no-ops on a wrong guess — `/gsd-execute-phase` writes phase-completion state back into `.planning/`, so running it against a document that isn't actually a GSD phase can leave bogus `.planning/` state behind, not just produce a confusing error.

@@ -69,7 +69,6 @@ class TestRender(unittest.TestCase):
         # PT-07: the GSD hook names files this module renders.
         from ai_kit_spec import runner_dispatch
         self.assertEqual(cross_ai.SCRIPT_PATH, runner_dispatch.PROJECT_RUNNER_PATH)
-        self.assertEqual(cross_ai_script.GUIDANCE_PATH, runner_dispatch.PROJECT_GUIDANCE_PATH)
 
     def test_runner_config_maps_artifact_fields(self):
         art = _artifact()
@@ -444,6 +443,13 @@ class TestEnsureRunner(unittest.TestCase):
             self.assertNotIn("runtime", upgraded)
             self.assertNotIn("prefer", upgraded)
 
+    def test_ensure_runner_reports_ready_without_guidance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = cross_ai_script.ensure_runner(tmp)
+            self.assertEqual(list(result), ["ready", "runner", "notes"])
+            self.assertTrue(result["ready"])
+            self.assertTrue(os.path.isfile(os.path.join(tmp, cross_ai.SCRIPT_PATH)))
+
     def test_upgrade_tracer(self):
         from ai_kit_spec.runner_dispatch import RunnerSpec, project_runner_command
 
@@ -453,31 +459,20 @@ class TestEnsureRunner(unittest.TestCase):
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "wb") as handle:
                 handle.write(old)
-            code, result = _run_ensure(
-                ["--cwd", tmp, "--guidance-file", "-"], stdin_text="GUIDE"
-            )
+            code, result = _run_ensure(["--cwd", tmp])
             self.assertEqual(code, 0)
             self.assertTrue(result["ready"])
             self.assertEqual(result["runner"], "change")
-            self.assertEqual(result["guidance"], "add")
             with open(target, "rb") as handle:
                 upgraded = handle.read()
             self.assertIn(b"template=" + _shipped_version(), upgraded.split(b"\n", 2)[1])
             upgraded_cfg = cross_ai_script.template_config(upgraded)
             self.assertEqual(upgraded_cfg["runtime"], "codex")
             self.assertNotIn("prefer", upgraded_cfg)
-            guidance = os.path.join(tmp, ".planning", "scripts", "cross-ai-guidance.md")
-            with open(guidance, "rb") as handle:
-                text = handle.read()
-            lines = text.split(b"\n")
-            self.assertTrue(lines[0].startswith(b"<!-- "))
-            self.assertTrue(lines[1].startswith(b"<!-- ai-kit-cross-ai-guidance "))
-            self.assertTrue(text.endswith(b"GUIDE"))
 
             command = project_runner_command(
                 RunnerSpec("codex", "gpt-5.6-sol", "exec", 0,
                            codex_sandbox="workspace-write"),
-                guidance=True,
             )
             assert command is not None
             tokens = command.split()
@@ -629,37 +624,6 @@ class TestEnsureRunnerStates(unittest.TestCase):
             self.assertFalse(result["ready"])
             self.assertTrue(os.path.isfile(target + ".new"))
 
-    def test_guidance_pristine_new_text_changes(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _run_ensure(["--cwd", tmp, "--guidance-file", "-"], stdin_text="one")
-            code, result = _run_ensure(
-                ["--cwd", tmp, "--guidance-file", "-"], stdin_text="two"
-            )
-            self.assertEqual((code, result["guidance"]), (0, "change"))
-            path = os.path.join(tmp, ".planning", "scripts", "cross-ai-guidance.md")
-            with open(path, "rb") as handle:
-                self.assertTrue(handle.read().endswith(b"two"))
-
-    def test_guidance_user_edited_writes_new_and_stays_ready(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _run_ensure(["--cwd", tmp, "--guidance-file", "-"], stdin_text="one")
-            path = os.path.join(tmp, ".planning", "scripts", "cross-ai-guidance.md")
-            with open(path, "ab") as handle:
-                handle.write(b"\nuser")
-            with open(path, "rb") as handle:
-                edited = handle.read()
-            code, result = _run_ensure(
-                ["--cwd", tmp, "--guidance-file", "-"], stdin_text="two"
-            )
-            self.assertEqual(code, 0)
-            self.assertTrue(result["ready"])
-            self.assertEqual(result["guidance"], "new-as-.new")
-            self.assertTrue(result["notes"])
-            with open(path, "rb") as handle:
-                self.assertEqual(handle.read(), edited)
-            self.assertTrue(os.path.isfile(path + ".new"))
-
-
 class TestEnsureRunnerErrors(unittest.TestCase):
     def test_directory_at_runner_path_exits_2(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -706,60 +670,6 @@ class TestEnsureRunnerErrors(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIsNone(result["runner"])
             self.assertIn("full", result["error"])
-
-    def test_publish_oserror_for_guidance_names_the_written_runner(self):
-        real = cross_ai_script._publish
-
-        def fail_guidance(path, data):
-            if path.endswith("cross-ai-guidance.md"):
-                raise OSError(f"cannot write {path}")
-            real(path, data)
-
-        with tempfile.TemporaryDirectory() as tmp, unittest.mock.patch.object(
-            cross_ai_script, "_publish", side_effect=fail_guidance
-        ):
-            code, result = _run_ensure(
-                ["--cwd", tmp, "--guidance-file", "-"], stdin_text="GUIDE"
-            )
-            self.assertEqual(code, 2)
-            self.assertEqual(result["runner"], "add")
-            self.assertIsNone(result["guidance"])
-            self.assertIn("cross-ai-guidance.md", result["error"])
-            self.assertFalse(result["ready"])
-
-    def test_directory_at_guidance_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            guide = os.path.join(tmp, ".planning", "scripts", "cross-ai-guidance.md")
-            os.makedirs(guide)
-            code, result = _run_ensure(
-                ["--cwd", tmp, "--guidance-file", "-"], stdin_text="GUIDE"
-            )
-            self.assertEqual(code, 2)
-            self.assertIn("cannot read", result["error"])
-            self.assertIn("cross-ai-guidance.md", result["error"])
-
-    def test_non_utf8_guidance_file_exits_2_with_json(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            guide = os.path.join(tmp, "guide.md")
-            with open(guide, "wb") as handle:
-                handle.write(b"\xff\xfe not utf-8")
-            code, result = _run_ensure(["--cwd", tmp, "--guidance-file", guide])
-            self.assertEqual(code, 2)
-            self.assertFalse(result["ready"])
-            self.assertIn(f"cannot read {guide}", result["error"])
-
-    def test_empty_guidance_rejected_before_any_write(self):
-        for text in ("", "   \n\t"):
-            with self.subTest(text=text), tempfile.TemporaryDirectory() as tmp:
-                code, result = _run_ensure(
-                    ["--cwd", tmp, "--guidance-file", "-"], stdin_text=text
-                )
-                self.assertEqual(code, 2)
-                self.assertEqual(result["error"], "guidance text is empty")
-                self.assertFalse(
-                    os.path.exists(os.path.join(tmp, ".planning", "scripts"))
-                )
-
 
 class TestApplyExecutionHookToken(unittest.TestCase):
     """C-WR-02/C-IN-05: a model the unquoted hook cannot carry degrades by name before the

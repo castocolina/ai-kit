@@ -9,7 +9,6 @@ from unittest import mock
 
 sys.path.insert(0, "skills/ai-kit-spec-review")
 sys.path.insert(0, "skills/ai-kit-spec-execute-superpowers")
-sys.path.insert(0, "skills/ai-kit-spec-execute-gsd")
 
 from ai_kit_spec.cli import main
 from ai_kit_spec.config_io import (
@@ -433,26 +432,6 @@ class TestLegacyAdapters(unittest.TestCase):
         self.assertEqual(claude[0]["runtime"], "claude")
         self.assertEqual(other[0]["runtime"], "claude")
 
-    def test_gsd_uses_legacy_native_alias_independent_of_host(self):
-        from ai_kit_spec_gsd.adapter import assemble_candidates
-
-        entry, _ = normalize_legacy_entry(
-            {"key": "opus", "model": "opus", "native_runtime": "claude"}
-        )
-        resolve = lambda cwd, env: {"policy": {"ladder": ["opus"]},
-                                    "reviewers": [dict(entry)]}
-        candidates, _ = assemble_candidates("/repo", {"OPENCODE": "1"}, resolve)
-        self.assertEqual(candidates[0]["tier"], "opus")
-        self.assertIsNone(candidates[0]["runtime"])
-
-    def test_gsd_explicit_claude_runtime_model_id_is_not_an_alias_tier(self):
-        from ai_kit_spec_gsd.adapter import assemble_candidates
-
-        resolve = lambda cwd, env: {"policy": {"ladder": ["explicit"]},
-                                    "reviewers": [{"key": "explicit", "model": "claude-opus-5-5",
-                                                   "runtime": "claude"}]}
-        candidates, _ = assemble_candidates("/repo", {}, resolve)
-        self.assertIsNone(candidates[0]["tier"])
 
 
 class TestSaveSide(unittest.TestCase):

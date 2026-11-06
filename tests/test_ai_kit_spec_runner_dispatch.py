@@ -151,14 +151,6 @@ class TestProjectRunnerCommand(unittest.TestCase):
         assert review_cmd is not None
         self.assertNotIn("codex-sandbox", review_cmd)
 
-    def test_guidance_appends_prepend_file(self):
-        spec = RunnerSpec("opencode", "p/m", "exec", 0)
-        command = rd.project_runner_command(spec, guidance=True)
-        assert command is not None
-        self.assertTrue(command.endswith(
-            "--no-preamble --prepend-file .planning/scripts/cross-ai-guidance.md"
-        ))
-
     def test_unsupported_runtime_is_none(self):
         spec = RunnerSpec("claude", "opus", "exec", 0)
         self.assertIsNone(rd.project_runner_command(spec))

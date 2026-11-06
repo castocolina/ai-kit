@@ -124,8 +124,7 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
    - **Runner models** are the pseudo-keys `script:cross-ai.runtime` (the one runtime per
      call) and `script:cross-ai.model.<runner>` (the menu of models; pick from
      `artifacts[0].choices.<runner>.candidates`; see "Cross-AI execution"). Runner ids are pi,
-     cursor, opencode and codex: copilot is not a curated runner (`plan-set` refuses it), and
-     `ai-kit-spec-execute-gsd`'s hook is the path that can name it.
+     cursor, opencode and codex; copilot is not a curated runner (`plan-set` refuses it).
      `plan-unset script:cross-ai.model.<runner>` reopens the choice for the selected runtime and
      drops any other runner from the menu.
      A pi or codex model with reasoning modes also pins its effort (`config.effort`, medium
@@ -228,12 +227,9 @@ receive `.new` on upgrade. The hook names the runner, never a raw vendor CLI str
   codex included, runs with full permissions** (codex with `--dangerously-bypass-approvals-and-sandbox`).
   It also passes no `--prepend-file`/`--no-preamble`: the runner's own preamble is the only
   guidance. Never describe a v2-configured codex target as sandboxed.
-- **v1 `apply-execution`** and **`ai-kit-spec-execute-gsd`'s hook** name one runtime and model
-  and add `--codex-sandbox workspace-write` for codex: writes stay inside the project dir plus
-  `/tmp` and `$TMPDIR` (`.git` writability unverified). Every other exec target still runs with
-  full permissions. Only `ai-kit-spec-execute-gsd`'s hook also adds `--no-preamble --prepend-file
-  .planning/scripts/cross-ai-guidance.md`, whose write-only-inside-the-project sentence is prose,
-  not a boundary.
+- **v1 `apply-execution`** names one runtime and model and adds `--codex-sandbox workspace-write`
+  for codex: writes stay inside the project dir plus `/tmp` and `$TMPDIR` (`.git` writability
+  unverified). Every other exec target still runs with full permissions.
 
 This skill never dispatches a model call: check a runner with `--print-argv` only. A live dispatch
 runs with full permissions and only when the user asks for one. When you see a dispatch's output
@@ -349,7 +345,7 @@ than `ok` comes up.
 | `plan-unset` | `key`, `--plan` (`--inventory` optional) | Decline / remove a plan entry |
 | `apply` | `--plan`, `--inventory`, `--project-dir` | Write config + runner (`--dry-run` previews) |
 | `followups` | `--plan`, `--inventory`, `--project-dir` | List, or `--approve` the listed commands |
-| `ensure-runner` | `--cwd` (`--guidance-file <path>` or `-` for stdin, optional) | Render or upgrade `.planning/scripts/cross-ai.mjs`; prints JSON `{ready, runner, guidance, notes}`, exit 0 ready, 1 not ready, 2 on error. Readiness is the `ready` field: an edited current-template runner is kept ready; an edited older one gets `.new` (`runner: "new-as-.new"`) and is not ready below template 8 (the first with `--runtime` and retry config); a foreign one is not ready. The active file's line-2 `template=` header is what runs |
+| `ensure-runner` | `--cwd` | Render or upgrade `.planning/scripts/cross-ai.mjs`; prints JSON `{ready, runner, notes}`, exit 0 ready, 1 not ready, 2 on error. Readiness is the `ready` field: an edited current-template runner is kept ready; an edited older one gets `.new` (`runner: "new-as-.new"`) and is not ready below template 8 (the first with `--runtime` and retry config); a foreign one is not ready. The active file's line-2 `template=` header is what runs |
 | v1 | `--project-dir`, except the two `detect-*-candidate` (no flags) | See `references/v1-path.md` |
 
 ## NEVER

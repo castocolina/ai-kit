@@ -215,26 +215,9 @@ def _cmd_detect_review_candidate(args, which_fn, run_fn, env_fn):
     return 0
 
 
-def _read_guidance_file(path: str) -> str:
-    if path == "-":
-        return sys.stdin.read()
-    with open(path, encoding="utf-8") as handle:
-        return handle.read()
-
-
 def _cmd_ensure_runner(args, which_fn, run_fn, env_fn):
     del which_fn, run_fn, env_fn
-    guidance = None
-    if args.guidance_file is not None:
-        try:
-            guidance = _read_guidance_file(args.guidance_file)
-        except (OSError, UnicodeDecodeError) as exc:
-            print(json.dumps({
-                "ready": False, "runner": None, "guidance": None, "notes": [],
-                "error": f"cannot read {args.guidance_file}: {exc}",
-            }))
-            return 2
-    result = cross_ai_script.ensure_runner(args.cwd, guidance)
+    result = cross_ai_script.ensure_runner(args.cwd)
     print(json.dumps(result))
     if result.get("error"):
         return 2
@@ -782,7 +765,6 @@ def _cmd_apply(args, which_fn, run_fn, env_fn) -> int:
 def _register_ensure_runner_parser(sub) -> None:
     parser = sub.add_parser("ensure-runner")
     parser.add_argument("--cwd", required=True)
-    parser.add_argument("--guidance-file", default=None)
 
 
 def _register_followups_parser(sub) -> None:
