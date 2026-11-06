@@ -2,9 +2,9 @@
 phase: "30"
 slug: "phase-boundary-index-refresh-code-exploration-rules-and-lens"
 # status lifecycle: draft (seeded by plan-phase) → validated (set by validate-phase §6)
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: "2026-11-05"
 ---
 
@@ -39,15 +39,15 @@ created: "2026-11-05"
 
 | Requirement | Behavior | Test Type | Automated Command | File Exists | Status |
 |-------------|----------|-----------|-------------------|-------------|--------|
-| FLOW-04 (R2) | init / index / sync / CLI missing / unreadable index through a recording fake | unit | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_flow_index` | ❌ W0 | ⬜ pending |
-| FLOW-04 (R3) | graphify update, GSD copy and status file, rebuild lock, non-GSD keeps no `.planning/` | unit + e2e | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_flow_index` and `--group e2e -- tests.test_flow_index_e2e` | ❌ W0 | ⬜ pending |
-| FLOW-04 (R1, R4) | three points, previous-unit range, brief contents, cap 10, whole-word case-sensitive, "mentions" | unit | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_flow_boundary tests.test_flow_brief` | ❌ W0 | ⬜ pending |
-| FLOW-04 (R5) | prompts carry the brief; stale unit id; absent-brief text | unit + e2e | `python3 tools/run_unittest_parallel.py --group e2e -- tests.test_ai_kit_commit_fold_e2e` | ✅ extend | ⬜ pending |
-| FLOW-04 (R6) | two concurrent worktree adds under 1 s, no overlapping jobs, hooks-uninstalled worktree indexed at the next boundary | e2e | `python3 tools/run_unittest_parallel.py --group e2e -- tests.test_flow_index_e2e` | ❌ W0 | ⬜ pending |
-| FLOW-06 (R7, R8) | rule clause pins, R07/R08 summaries match the rule, advisor fixtures, runbook sections and link | unit | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_rules_docs tests.test_ai_kit_project_rules_agents tests.test_tool_advisor_core` | ❌ W0 | ⬜ pending |
-| LENS-01, DESIGN-01 (R9, R10) | lens commands, lens-brief text, design-rule pins, check-dogfood lens drift | unit | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_check_dogfood tests.test_rules_docs` | ✅ extend | ⬜ pending |
-| FLOW-12 (R11) | byte diff is the sentence alone, backup, idempotent, dry run, drift row and re-apply | unit + integration | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_marked_block tests.test_global_rules tests.test_setup` | ❌ W0 | ⬜ pending |
-| FLOW-13 (R12) | fake installers: four install, one fails, exit 0, second run installs nothing, order, lock | unit | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_setup_dev` | ❌ W0 | ⬜ pending |
+| FLOW-04 (R2) | init / index / sync / CLI missing / unreadable index through a recording fake | unit | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_flow_index` | ✅ | ✅ green |
+| FLOW-04 (R3) | graphify update, GSD copy and status file, rebuild lock, non-GSD keeps no `.planning/` | unit + e2e | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_flow_index` and `--group e2e -- tests.test_flow_index_e2e` | ✅ | ✅ green |
+| FLOW-04 (R1, R4) | three points, previous-unit range, brief contents, cap 10, whole-word case-sensitive, "mentions" | unit | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_flow_boundary tests.test_flow_brief` | ✅ | ✅ green |
+| FLOW-04 (R5) | prompts carry the brief; stale unit id; absent-brief text | unit + e2e | `python3 tools/run_unittest_parallel.py --group e2e -- tests.test_ai_kit_commit_fold_e2e` | ✅ | ✅ green |
+| FLOW-04 (R6) | two concurrent worktree adds return before any index job ends (fake 1.5 s per call; loose 3 s wall bound since 0d7a35a), no overlapping jobs, hooks-uninstalled worktree indexed at the next boundary | e2e | `python3 tools/run_unittest_parallel.py --group e2e -- tests.test_flow_index_e2e` | ✅ | ✅ green |
+| FLOW-06 (R7, R8) | rule clause pins, R07/R08 summaries match the rule, advisor fixtures, runbook sections and link | unit | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_rules_docs tests.test_ai_kit_project_rules_agents tests.test_tool_advisor_core` | ✅ | ✅ green |
+| LENS-01, DESIGN-01 (R9, R10) | lens commands, lens-brief text, design-rule pins, check-dogfood lens drift | unit | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_check_dogfood tests.test_rules_docs` | ✅ | ✅ green |
+| FLOW-12 (R11) | byte diff is the sentence alone, backup, idempotent, dry run, drift row and re-apply | unit + integration | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_marked_block tests.test_global_rules tests.test_setup` | ✅ | ✅ green |
+| FLOW-13 (R12) | fake installers: four install, one fails, exit 0, second run installs nothing, order, lock | unit | `python3 tools/run_unittest_parallel.py --group unit -- tests.test_setup_dev` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -55,11 +55,11 @@ created: "2026-11-05"
 
 ## Wave 0 Requirements
 
-- [ ] `tests/index_fakes.py`, `tests/test_flow_index.py`, `tests/test_flow_index_e2e.py`
-- [ ] `tests/test_flow_boundary.py`, `tests/test_flow_brief.py`
-- [ ] `tests/test_rules_docs.py`
-- [ ] `tests/test_marked_block.py`, `tests/test_global_rules.py`
-- [ ] `tests/test_setup_dev.py`
+- [x] `tests/index_fakes.py`, `tests/test_flow_index.py`, `tests/test_flow_index_e2e.py`
+- [x] `tests/test_flow_boundary.py`, `tests/test_flow_brief.py`
+- [x] `tests/test_rules_docs.py`
+- [x] `tests/test_marked_block.py`, `tests/test_global_rules.py`
+- [x] `tests/test_setup_dev.py`
 
 Fast-test rules: no `time.sleep`; wait on a lock or an injected clock/deadline; detached jobs start through an injectable `popen`; every tool call goes through an injectable runner.
 
@@ -76,11 +76,19 @@ Fast-test rules: no `time.sleep`; wait on a lock or an injected clock/deadline; 
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 70s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 70s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-11-06 (orchestrator, Nyquist audit: 0 gaps)
+
+## Validation Audit 2026-11-06
+
+| Metric | Count |
+|---|---|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |

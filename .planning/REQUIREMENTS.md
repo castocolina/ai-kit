@@ -46,14 +46,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   *(amended 2026-11-03, 29.1 spec: still a unit branch, fast-forwarded into its target and pushed after each checkpoint with no PR, only
   when nothing unmerged sits below the unit; otherwise the flow refuses with a named reason and stays on the PR
   path)*
-- [ ] **FLOW-04**: At every phase boundary, on the current branch, the codegraph index is synced, the graphify
+- [x] **FLOW-04**: At every phase boundary, on the current branch, the codegraph index is synced, the graphify
   graph is rebuilt, and the next phase's brief lists the new or changed symbols to hook into and the documents
   that mention them, so its researcher, planner and executor know what to attach to and which docs to update;
   none of this depends on commits to main.
   *(amended 2026-11-03, 30 spec: the step runs for every unit inside the unit-flow engine, at the unit's start, before its planning and before its first execution wave, on the unit's own branch; codegraph and graphify are created or refreshed automatically whenever their CLI is installed; the brief also lists removed symbols and searches tracked documents outside `.planning/`)*
 - [x] **FLOW-05**: ai-kit's own GSD config is set for this flow (branch per phase, the boundary step above) through
   the project's `gsd-tools`.
-- [ ] **FLOW-06**: ai-kit's own AGENTS.md, the current house rules and the tool-advisor hook's advice (the generated
+- [x] **FLOW-06**: ai-kit's own AGENTS.md, the current house rules and the tool-advisor hook's advice (the generated
   rules block carries the same rule once RULE-03 builds it)
   tell agents to explore code with codegraph when it is indexed, and keep graphify for GSD's discovery of
   documents and planning next to code (verified 2026-11-02: codegraph indexes no Markdown; graphify does, but
@@ -87,7 +87,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   it merges into the trunk of an open stack, the unmerged stack is rebased onto the updated trunk and pushed with
   `--force-with-lease`, and a conflict restores every branch and stops. *(added 2026-11-03, 29.1 spec)*
   *(amended 2026-11-03, 29.1 D-07: a conflict is first resolved by an agent keeping both sides' intent, GSD's planning files merged by content, and the gates run on the result; every branch is restored and the flow stops only when the resolution or the gates fail; the report names every resolved file and how)*
-- [ ] **FLOW-12**: ai-kit's setup (`tools/setup.py`, headless and in the wizard) finds codegraph's installer block
+- [x] **FLOW-12**: ai-kit's setup (`tools/setup.py`, headless and in the wizard) finds codegraph's installer block
   (`<!-- CODEGRAPH_START -->` … `<!-- CODEGRAPH_END -->`) in every global instruction file codegraph's installer
   writes (Claude, Codex, Gemini, opencode) and replaces only its "skip CodeGraph entirely — indexing is the user's
   decision" sentence with ai-kit's rule (create the index with `codegraph init -y` when the CLI is installed and
@@ -96,7 +96,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   note when the file, block or sentence is missing; the config doctor reports the installer's wording when it is
   back and install re-applies ai-kit's; tests use synthetic files in a scratch HOME only. The marked-block editor is
   shared with JEV-04. *(added 2026-11-03, 30 spec)*
-- [ ] **FLOW-13**: ai-kit's `make setup-dev` runs `setup-env`, installs the pre-commit hooks including the
+- [x] **FLOW-13**: ai-kit's `make setup-dev` runs `setup-env`, installs the pre-commit hooks including the
   `post-checkout` stage, and installs each missing flow tool (the codegraph and graphify CLIs, pre-commit, gh, the
   gh-stack extension) through a guarded step: an installed tool is left alone, a tool that cannot install is
   reported by name with its manual command, the target still succeeds and the flow degrades without that tool;
@@ -614,7 +614,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### Design rule
 
-- [ ] **DESIGN-01**: ai-kit's own AGENTS.md states the owner's design rule: Simple is not the same as easy. Prefer the simple design over the complex one, but never recommend the
+- [x] **DESIGN-01**: ai-kit's own AGENTS.md states the owner's design rule: Simple is not the same as easy. Prefer the simple design over the complex one, but never recommend the
   easier option when it gives the user less value only to skip a few steps that are not hard, and never ship
   a half-done feature or mediocre value to keep a change small. Ponytail decides how the code is built (reuse the
   components and helpers that already exist and well-known design patterns before writing anything from scratch,
@@ -628,7 +628,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### Lens skills
 
-- [ ] **LENS-01**: ai-kit's own GSD config wires lens skills to GSD agents through the project's `gsd-tools`:
+- [x] **LENS-01**: ai-kit's own GSD config wires lens skills to GSD agents through the project's `gsd-tools`:
   `impeccable` to the UI researcher, UI checker and UI auditor (for hierarchy, color, copy and accessibility of
   the TUI; its web code guidance does not apply), `ponytail` to the planner and plan checker, and `ponytail-review`
   to the code reviewer. Skills are named as `global:` entries (plugin skills as `global:<plugin>:<skill>`), never
@@ -728,16 +728,16 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | FLOW-01 | Phase 29 | Complete |
 | FLOW-02 | Phase 29.1 | Complete |
 | FLOW-03 | Phase 29.1 | Complete |
-| FLOW-04 | Phase 30 | Pending |
+| FLOW-04 | Phase 30 | Complete |
 | FLOW-05 | Phase 29.1 | Complete |
-| FLOW-06 | Phase 30 | Pending |
+| FLOW-06 | Phase 30 | Complete |
 | FLOW-07 | Phase 29.1 | Complete |
 | FLOW-08 | Phase 32.4 | Pending |
 | FLOW-09 | Phase 32.4 | Pending |
 | FLOW-10 | Phase 29.1 | Complete |
 | FLOW-11 | Phase 29.1 | Complete |
-| FLOW-12 | Phase 30 | Pending |
-| FLOW-13 | Phase 30 | Pending |
+| FLOW-12 | Phase 30 | Complete |
+| FLOW-13 | Phase 30 | Complete |
 | RMV-01 | Phase 31 | Pending |
 | RMV-02 | Phase 31 | Pending |
 | RMV-03 | Phase 31 | Pending |
@@ -866,9 +866,9 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | FEAT-04 | Phase 54 | Pending |
 | FEAT-05 | Phase 54 | Pending |
 | FEAT-06 | Phase 30.1 | Pending |
-| DESIGN-01 | Phase 30 | Pending |
+| DESIGN-01 | Phase 30 | Complete |
 | DESIGN-02 | Phase 45.1 | Pending |
-| LENS-01 | Phase 30 | Pending |
+| LENS-01 | Phase 30 | Complete |
 | LENS-02 | Phase 42 | Pending |
 | LENS-03 | Phase 44 | Pending |
 | WIZ-01 | Phase 30.1 | Pending |

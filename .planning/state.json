@@ -21,7 +21,7 @@
     {
       "number": "30",
       "name": "Phase-boundary index refresh and code-exploration rules",
-      "status": "pending"
+      "status": "complete"
     },
     {
       "number": "30.1",
@@ -191,8 +191,8 @@
   ],
   "next": {
     "command": "/gsd-progress --next",
-    "label": "Advance to the next step (plan phase 30)",
-    "reason": "Phase 4 of 37 — needs a plan"
+    "label": "Advance to the next step (plan phase 30.1)",
+    "reason": "Phase 5 of 37 — needs a plan"
   },
-  "updated_at": "2026-11-05T12:01:49.404Z"
+  "updated_at": "2026-11-06T09:21:56.266Z"
 }

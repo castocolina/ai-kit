@@ -109,7 +109,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 28: Fast, environment-proof gates** - Commit runs only the covering tests; push runs the full suites fast with fakes only (completed 2026-11-04)
 - [x] **Phase 29: Logical-commit folding and the shared jev ladder** - Each finished GSD or superpowers plan becomes logical-feature commits; every caller chains jev as a black box (completed 2026-11-04)
 - [x] **Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)** - Stacked branches, a push per plan, chained PRs and an owner-started merge chain (completed 2026-11-05)
-- [ ] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph sync, graphify rebuild and a changed-symbols brief at every phase boundary
+- [x] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph sync, graphify rebuild and a changed-symbols brief at every phase boundary (completed 2026-11-06)
 - [ ] **Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)** - One card per component kind, host-styled status-line panes, config doctor reachable from the wizard
 - [ ] **Phase 30.2: Cursor status-line parity (INSERTED)** - Cursor status line brought back to the approved proof of concept and to Claude's look where the data allows
 - [ ] **Phase 31: Removals and small defects** - Three skills and rtk gone, seven small known defects fixed *(amended 2026-11-03, 31 spec: seven items per DEF-01)*
@@ -291,7 +291,21 @@ Plans:
   8. With the five flow tools missing and fake installers in a scratch HOME, `make setup-dev` installs the four that can install, reports the one that cannot and exits 0, and a worktree made with hooks uninstalled is still indexed at the next boundary point. *(amended 2026-11-03, 30 D-04: added, FLOW-13 and the resilient-indexing rule)*
   9. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04). *(amended 2026-11-03, 30 spec: added, renumbered 9 after FLOW-12 and FLOW-13; the superpowers adapter changes to carry the brief)*
 
-**Plans**: TBD
+**Plans**: 7/7 plans complete
+
+Plans:
+**Wave 1**
+- [x] 30-01-PLAN.md — index engine: `fold.py index` (codegraph, graphify, GSD copy), the post-checkout worktree hook with a detached runner, shared fakes, ai-kit's `.graphifyignore`
+- [x] 30-02-PLAN.md — one code-exploration rule in AGENTS.md and R07/R08, the graphify runbook, the design rule, the setup-dev Commands line
+- [x] 30-03-PLAN.md — setup rewrites codegraph's global sentence (headless flag, wizard Review item, doctor drift row) through a shared marked-block editor
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 30-04-PLAN.md — `fold.py boundary` and the unit brief: start, planning and wave-1 points, document mentions, worktree brief seeding
+- [x] 30-05-PLAN.md — tool advisor codegraph advice (Bash, Grep, Glob) and `make setup-dev` with guarded tool installs
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 30-06-PLAN.md — GSD delivery: execute:wave:pre step, plan:pre planner contribution, lens wiring and lens brief, check-dogfood drift, judge set
+- [x] 30-07-PLAN.md — superpowers delivery: wave-point boundary in the start block, the unit brief in every implementer brief
 
 ### Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)
 
@@ -816,7 +830,7 @@ Plans:
 | 28. Fast, environment-proof gates | 9/9 | Complete    | 2026-11-04 |
 | 29. Logical-commit folding and the shared jev ladder | 16/16 | Complete    | 2026-11-04 |
 | 29.1. Stacked phase branches, chained PRs and the merge chain | 6/6 | Complete    | 2026-11-05 |
-| 30. Phase-boundary index refresh and code-exploration rules | 0/TBD | Not started | - |
+| 30. Phase-boundary index refresh and code-exploration rules | 7/7 | Complete    | 2026-11-06 |
 | 30.1. Setup wizard, component cards and host status-line panes | 0/TBD | Not started | - |
 | 30.2. Cursor status-line parity | 0/TBD | Not started | - |
 | 31. Removals and small defects | 0/TBD | Not started | - |
