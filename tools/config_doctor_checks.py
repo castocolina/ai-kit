@@ -17,6 +17,7 @@ from typing import NamedTuple, cast
 
 import config_doctor_appliers
 import config_doctor_readers
+import global_rules
 
 UNKNOWN = config_doctor_readers.UNKNOWN
 
@@ -256,9 +257,7 @@ def _apply_opencode_share_mode(ctx, target, dry):
     except (ValueError, TypeError):
         return {
             "ok": False,
-            "reason": (
-                "refused: spliced JSONC failed self-validation, no write performed"
-            ),
+            "reason": ("refused: spliced JSONC failed self-validation, no write performed"),
         }
     if not dry:
         config_doctor_appliers.atomic_write_text(path, spliced)
@@ -483,8 +482,7 @@ def read_codex_memories_durations(ctx):
     rollout = _nested(ctx, "memories", "max_rollout_age_days", default=30)
     idle = _nested(ctx, "memories", "min_rollout_idle_hours", default=6)
     return (
-        f"max_unused_days={unused}, max_rollout_age_days={rollout}, "
-        f"min_rollout_idle_hours={idle}"
+        f"max_unused_days={unused}, max_rollout_age_days={rollout}, min_rollout_idle_hours={idle}"
     )
 
 
@@ -529,12 +527,8 @@ def read_cursor_sandbox_json(ctx):
         return "type=workspace_readwrite"
     if state != CONFIG_STATE_OK or not isinstance(data, dict):
         return UNKNOWN
-    stype = config_doctor_readers.get_nested(
-        data, "type", default="workspace_readwrite"
-    )
-    net = config_doctor_readers.get_nested(
-        data, "networkPolicy", "default", default="deny"
-    )
+    stype = config_doctor_readers.get_nested(data, "type", default="workspace_readwrite")
+    net = config_doctor_readers.get_nested(data, "networkPolicy", "default", default="deny")
     return f"type={stype}, networkPolicy.default={net}"
 
 
@@ -581,6 +575,11 @@ def read_rtk_cursor_integration(ctx):
 
 _CODEX_SOURCE = "https://learn.chatgpt.com/docs/config-file/config-reference"
 _CURSOR_CONFIG_SOURCE = "https://cursor.com/docs/cli/reference/configuration"
+
+
+def read_codegraph_global_sentence(ctx):
+    """Which wording each global instruction file holds; never raises."""
+    return global_rules.summary(ctx.env)
 
 
 CONFIG_DOCTOR_ROWS = [
@@ -731,7 +730,7 @@ CONFIG_DOCTOR_ROWS = [
         why=(
             "Full documented action set and defaults: read, edit, glob, grep, "
             "bash, task, skill, lsp, question, webfetch, websearch default "
-            'allow; doom_loop and external_directory default ask. A non-dict '
+            "allow; doom_loop and external_directory default ask. A non-dict "
             '"permission" value degrades to unknown rather than a guessed '
             "per-action default. Apply: yes, security-relevant."
         ),
@@ -788,8 +787,7 @@ CONFIG_DOCTOR_ROWS = [
         check="sandbox_mode",
         read=read_codex_sandbox_mode,
         recommended=(
-            '"workspace-write" + approval_policy = "on-request" (or the newer '
-            "granular object form)"
+            '"workspace-write" + approval_policy = "on-request" (or the newer granular object form)'
         ),
         confidence="MEDIUM",
         why=(
@@ -879,8 +877,7 @@ CONFIG_DOCTOR_ROWS = [
         check="history.persistence",
         read=read_codex_history_persistence,
         recommended=(
-            '"none" only if the user wants it (privacy trade-off) — never '
-            "auto-recommended"
+            '"none" only if the user wants it (privacy trade-off) — never auto-recommended'
         ),
         confidence="HIGH",
         why=(
@@ -942,8 +939,7 @@ CONFIG_DOCTOR_ROWS = [
         check="sandbox.json (separate file)",
         read=read_cursor_sandbox_json,
         recommended=(
-            '"workspace_readonly" or a scoped networkPolicy, analogous to '
-            "Claude Code row 3"
+            '"workspace_readonly" or a scoped networkPolicy, analogous to Claude Code row 3'
         ),
         confidence="HIGH",
         why=(
@@ -1018,10 +1014,7 @@ CONFIG_DOCTOR_ROWS = [
         read=read_cursor_attribution,
         recommended="leave as-is or disable per privacy preference",
         confidence="HIGH",
-        why=(
-            'Adds a "Made with Cursor" trailer/footer to commits/PRs. '
-            "Apply: yes, low-stakes."
-        ),
+        why=('Adds a "Made with Cursor" trailer/footer to commits/PRs. Apply: yes, low-stakes.'),
         source=_CURSOR_CONFIG_SOURCE,
     ),
     # Source is a repo-relative citation to Phase 03 D-02, not an external URL.
@@ -1041,6 +1034,23 @@ CONFIG_DOCTOR_ROWS = [
             "Apply: None in this wave."
         ),
         source=".planning/milestones/v1.0-phases/03-tool-substitution-awareness-hook/03-CONTEXT.md",
+        reads_section_file=False,
+    ),
+    CheckRow(
+        id="codegraph-global-sentence",
+        runtime="cross",
+        scope="global",
+        check="codegraph sentence in the global instruction files",
+        read=read_codegraph_global_sentence,
+        recommended="ai-kit wording",
+        confidence="MEDIUM",
+        why=(
+            "Sourced from codegraph 1.6.2's installer source (marker block and sentence in "
+            "installer/instructions-template.js); a later codegraph may move the block or "
+            "reword the sentence. Apply: rewrites only the in-block sentence, backup first."
+        ),
+        source="tools/global_rules.py",
+        apply=config_doctor_appliers.apply_codegraph_global_sentence,
         reads_section_file=False,
     ),
 ]

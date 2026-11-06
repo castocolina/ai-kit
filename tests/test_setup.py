@@ -3082,7 +3082,7 @@ class TestHeadlessMainDispatch(unittest.TestCase):
         self.assertEqual(rc, 0)
         headless_mock.assert_called_once_with(
             mock.ANY, False, None, False, False, examples_flag="all",
-            replace_existing=False)
+            replace_existing=False, with_global_rules=False)
 
     def test_headless_propagates_the_nonzero_exit_code(self):
         with mock.patch.object(setup, "cmd_install_headless", return_value=1):

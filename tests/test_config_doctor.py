@@ -929,7 +929,7 @@ class TestCrossRuntimeRow(_ScratchRuntimes):
 
 
 class TestFullCatalogRegression(_ScratchRuntimes):
-    def test_five_sections_twenty_five_rows(self):
+    def test_five_sections_twenty_six_rows(self):
         _write_full_catalog_tree(self)
         env = self._env()
         env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
@@ -940,13 +940,13 @@ class TestFullCatalogRegression(_ScratchRuntimes):
         )
         env["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
         catalog = checks.build_catalog(env, runner=subprocess.run)
-        self.assertEqual(len(checks.CONFIG_DOCTOR_ROWS), 25)
+        self.assertEqual(len(checks.CONFIG_DOCTOR_ROWS), 26)
         self.assertEqual(
             self._runtimes(catalog),
             ["claude", "opencode", "codex", "cursor", "cross"],
         )
         total = sum(len(section["rows"]) for section in catalog["sections"])
-        self.assertEqual(total, 25)
+        self.assertEqual(total, 26)
         for section in catalog["sections"]:
             for row in section["rows"]:
                 display = row["current_display"]

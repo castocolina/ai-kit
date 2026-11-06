@@ -821,8 +821,22 @@ class WizardApp(App):
                 + (", ".join(by_cat[cat]) if by_cat[cat] else f"[{DIM}](none)[/]")
                 for cat in cats]
         ncomp = sum(1 for cat, _n, on in self.model.sel.items
-                    if on and cat != "hooks")
+                    if on and cat not in ("hooks", "global rules"))
         return rows, ncomp
+
+    def _review_global_rules_lines(self) -> list[str]:
+        """Review's global-rules bullet and per-file preview, shown only while the
+        item is on (Phase 30, D-11). Previews live in ctx.state, never in per-host meta."""
+        rules = self.ctx.state.get("_global_rules")
+        on = any(cat == "global rules" and name == "codegraph sentence" and flag
+                 for cat, name, flag in self.model.sel.items)
+        if not rules or not on:
+            return []
+        count = len(rules["changes"])
+        lines = [f"[{DIM}]•[/] Rewrite codegraph's sentence in {count} global "
+                 "instruction files (backup first)"]
+        lines.extend(f"[{DIM}]{escape(line)}[/]" for line in rules["preview"])
+        return lines
 
     def _review_status_blocks(self, adopted: list[HostView]) -> tuple[int, list[str]]:
         """(on-line segment count, preview blocks) over the ADOPTED hosts only —
@@ -874,7 +888,8 @@ class WizardApp(App):
         if adopted:
             rp.update("\n".join(f"[#d6dee8]{p}[/]" for p in shown))
         self.query_one("#rev-what", Static).update(
-            "\n".join(self._review_what_lines(ncomp, adopted)))
+            "\n".join([*self._review_what_lines(ncomp, adopted),
+                       *self._review_global_rules_lines()]))
         seg_note = f" · {nseg} segments" if adopted else ""
         self.query_one("#cta", Static).update(
             f"▸ [bold #7ee2a0]Install ai-kit[/]  [{DIM}]{ncomp} components"

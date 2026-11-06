@@ -15,6 +15,8 @@ import stat
 import tempfile
 import tomllib
 
+import global_rules
+
 KIND_CODE = "code"
 KIND_STRING = "string"
 KIND_COMMENT = "comment"
@@ -334,9 +336,7 @@ def _find_top_level_key_span(text, key_name):
                 colon = _skip_insignificant(text, kinds, str_end, n)
                 if colon < n and text[colon] == ":" and key == key_name:
                     value = colon + 1
-                    while value < n and (
-                        kinds[value] == KIND_COMMENT or text[value].isspace()
-                    ):
+                    while value < n and (kinds[value] == KIND_COMMENT or text[value].isspace()):
                         value += 1
                     if value < n and kinds[value] == KIND_STRING:
                         value_end = _string_end(kinds, value, n)
@@ -404,3 +404,12 @@ def set_jsonc_value(text, key_path, new_value):
         return '{\n  "' + key_name + '": ' + dumped + "\n}\n"
     open_i, close_i = find_object_span(text, brace)
     return _jsonc_insert_key(text, key_name, dumped, open_i, close_i)
+
+
+def apply_codegraph_global_sentence(ctx, _target, dry):
+    """Re-apply ai-kit wording where codegraph's installer wrote its sentence back (D-11)."""
+    ok, lines = global_rules.apply(ctx.env, dry)
+    if not ok:
+        reason = next((line for line in lines if "failed" in line), "write failed")
+        return {"ok": False, "reason": reason, "lines": lines}
+    return {"ok": True, "current_display": global_rules.summary(ctx.env), "lines": lines}

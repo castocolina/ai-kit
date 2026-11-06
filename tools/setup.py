@@ -3538,10 +3538,33 @@ def _statusline_hosts_present(paths):
     return tuple(statusline_hosts_detected(paths))
 
 
+GLOBAL_RULES_ITEM: tuple[str, str] = ("global rules", "codegraph sentence")
+
+
+def _global_rules_review(rules_env):
+    """The Review item for codegraph's sentence (Phase 30, D-11): None when no
+    global file holds it, else the replace Changes and their preview lines."""
+    if rules_env is None:
+        return None
+    global_rules = _sibling("global_rules")
+    changes = [c for c in global_rules.plan_changes(rules_env) if c.status == "replace"]
+    if not changes:
+        return None
+    return {"changes": changes, "preview": global_rules.preview_lines(changes)}
+
+
+def _global_rules_items(review):
+    """Selection items and initial state of the global-rules item: pre-checked,
+    not installed yet (so confirming the default is a real write)."""
+    if not review:
+        return [], {}
+    return [[*GLOBAL_RULES_ITEM, True]], {GLOBAL_RULES_ITEM: False}
+
+
 def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
     paths, entries, installed, wizard_app_mod, hosts=None,
     stale=None, predecessor_cands=None, pi_predecessor_cands=(), pi_stale=(),
-    replace_cands=(),
+    replace_cands=(), rules_review=None,
 ):
     """Construct the host-keyed WizardContext for launch_wizard (extracted for
     testability): the component selection/meta/housekeeping plus one HostView
@@ -3581,6 +3604,9 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
     hook_items, hook_initial = _hook_selection_items(paths)
     sel.items.extend([list(item) for item in hook_items])
     initial_enabled.update(hook_initial)
+    rules_items, rules_initial = _global_rules_items(rules_review)
+    sel.items.extend([list(item) for item in rules_items])
+    initial_enabled.update(rules_initial)
 
     if hosts is None:
         hosts = _statusline_hosts_present(paths)
@@ -3608,9 +3634,12 @@ def _build_wizard_context(  # pylint: disable=too-many-locals,too-many-arguments
                     for label, _path, _target, name in replace_cands],
     }
 
+    state = {"_initial_enabled": initial_enabled}
+    if rules_review is not None:
+        state["_global_rules"] = rules_review
     return wizard_app_mod.WizardContext(
         selection=sel,
-        state={"_initial_enabled": initial_enabled},
+        state=state,
         component_meta=component_meta,
         housekeeping=housekeeping,
         hosts=host_views,
@@ -3756,7 +3785,22 @@ def _commit_host_statusline(paths, host, host_state, dry, examples_flag):
     return {"ok": bool(host_ok), "adopt": adopt, "log": hbuf.getvalue()}
 
 
-def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
+def _commit_global_rules(rules_env, rules_review, selection, dry):
+    """Apply the global-rules rewrite the user reviewed, only while its item is on.
+    Returns (ok, log); the files written are those still equal to the reviewed bytes."""
+    if rules_review is None or rules_env is None:
+        return True, ""
+    on = any(cat == GLOBAL_RULES_ITEM[0] and name == GLOBAL_RULES_ITEM[1] and flag
+             for cat, name, flag in cast(Selection, selection).items)
+    if not on:
+        return True, ""
+    global_rules = _sibling("global_rules")
+    ok, lines = global_rules.apply(rules_env, dry, reviewed=rules_review["changes"])
+    return ok, "".join(line + "\n" for line in lines)
+
+
+def _make_wizard_commit(  # pylint: disable=too-many-arguments
+        paths, entries, dry, counts, examples_flag=None, *, rules_env=None, rules_review=None):
     """Build the ``commit`` callable the wizard runs IN-UI on Review-confirm.
 
     It performs the real install — component symlinks, then, per host the user
@@ -3787,10 +3831,11 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
             hosts_out[host] = _commit_host_statusline(
                 paths, host, host_state, dry, examples_flag)
         adopt_any = any(o["adopt"] for o in hosts_out.values())
-        ok = bool(hooks_ok) and all(o["ok"] for o in hosts_out.values())
+        rules_ok, rules_log = _commit_global_rules(rules_env, rules_review, selection, dry)
+        ok = bool(hooks_ok) and all(o["ok"] for o in hosts_out.values()) and rules_ok
         host_log = "\n".join(o["log"] for o in hosts_out.values() if o["log"])
         return {"ok": ok, "adopt": adopt_any,
-                "log": component_log + (host_log + "\n" if host_log else ""),
+                "log": component_log + rules_log + (host_log + "\n" if host_log else ""),
                 "hosts": hosts_out}
     return commit
 
@@ -3798,6 +3843,7 @@ def _make_wizard_commit(paths, entries, dry, counts, examples_flag=None):
 def _make_apply_housekeeping(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     paths, entries, stale, predecessor_cands, dry, counts,
     pi_predecessor_cands=(), pi_stale=(), replace_cands=(), log_sink=None,
+    rules_review=None,
 ):
     """Build the apply_housekeeping(prune, repoint) callable the wizard runs
     IN-UI right after its housekeeping gate is answered (before Choose becomes
@@ -3860,10 +3906,11 @@ def _make_apply_housekeeping(  # pylint: disable=too-many-arguments,too-many-pos
                 for name in precheck:
                     default["skills"].add(name)
                 hook_items, hook_initial = _hook_selection_items(paths)
+                rules_items, rules_initial = _global_rules_items(rules_review)
                 sel = Selection(
                     [(cat, name, name in default[cat])
                      for cat in CATEGORIES
-                     for name, _ in entries[cat]] + hook_items
+                     for name, _ in entries[cat]] + hook_items + rules_items
                 )
                 initial_enabled = {
                     (cat, name): (name in installed[cat])
@@ -3871,6 +3918,7 @@ def _make_apply_housekeeping(  # pylint: disable=too-many-arguments,too-many-pos
                     for name, _ in entries[cat]
                 }
                 initial_enabled.update(hook_initial)
+                initial_enabled.update(rules_initial)
         finally:
             # Even when a later move raises, the log captured so far (with the
             # backup destinations of the moves that succeeded) reaches the
@@ -3944,21 +3992,25 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
     # assembly — never a copied Claude-only dict (D-22). A status-line host with
     # no state here is not offered at all: an empty hosts tuple means the flow
     # simply never reaches Arrange, not a new UI state.
+    rules_env = os.environ
+    rules_review = _global_rules_review(rules_env)
     ctx = _build_wizard_context(paths, entries, installed, wizard_app,
                                 stale=stale, predecessor_cands=predecessor_cands,
                                 pi_predecessor_cands=pi_predecessor_cands,
-                                pi_stale=pi_stale, replace_cands=replace_cands)
+                                pi_stale=pi_stale, replace_cands=replace_cands,
+                                rules_review=rules_review)
     # The real install (component symlinks + doctor-validated status-line write +
     # settings.json wiring) now runs INSIDE the wizard on Review-confirm, so the
     # Done screen reflects the actual result. Inject the commit + housekeeping
     # callables here, where paths/entries/dry/counts are in scope.
     hk_log: list[str] = []
     ctx = ctx._replace(
-        commit=_make_wizard_commit(paths, entries, dry, counts, examples_flag=examples_flag),
+        commit=_make_wizard_commit(paths, entries, dry, counts, examples_flag=examples_flag,
+                                   rules_env=rules_env, rules_review=rules_review),
         apply_housekeeping=_make_apply_housekeeping(
             paths, entries, stale, predecessor_cands, dry, counts,
             pi_predecessor_cands=pi_predecessor_cands, pi_stale=pi_stale,
-            replace_cands=replace_cands, log_sink=hk_log),
+            replace_cands=replace_cands, log_sink=hk_log, rules_review=rules_review),
     )
     try:
         # curl | bash inherits the script pipe as fd 0; Textual reads keys from
@@ -4413,9 +4465,21 @@ def _headless_replace(paths, entries, skills_flag, dry, counts):
         return None
 
 
+def _headless_apply_global_rules(env, dry):
+    """--with-global-rules: rewrite codegraph's sentence in the four global files.
+
+    Prints one line per file (and the preview under --dry-run); False when a backup or
+    write failed. Skips (missing file, no block) are not failures."""
+    global_rules = _sibling("global_rules")
+    ok, lines = global_rules.apply(env, dry)
+    for line in lines:
+        print(line)
+    return ok
+
+
 def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         env, dry, skills_flag, with_statusline, with_hooks, examples_flag=None,
-        replace_existing=False):
+        replace_existing=False, with_global_rules=False):
     """The --headless counterpart to cmd_install: no Textual, no tty, no
     require_tty gate. Bare (all flags falsy) is a pure no-op -- 'nothing
     touched unless asked' (and nothing fetched -- see the plan's sync note;
@@ -4454,6 +4518,8 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     chosen, requested, replaced, only_invalid_skills) = 14 of 15 max-locals
     (`with_statusline` is re-normalized in place, never a second local);
     6 branches of 12; 3 returns of 6."""
+    # The --with-global-rules parameter is one local over the budget note above.
+    # pylint: disable=too-many-locals
     paths, entries = _headless_paths_and_entries(env)
     if paths is None:
         return 1
@@ -4493,6 +4559,8 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
         ok = False
     if examples_flag is not None and not _headless_install_examples(
             paths, examples_flag, dry):
+        ok = False
+    if with_global_rules and not _headless_apply_global_rules(env, dry):
         ok = False
 
     only_invalid_skills = (skills_flag is not None and not chosen
@@ -4765,6 +4833,9 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
                         help="(--headless only) bare wires rows marked on below; "
                              "=<id[:host],...> wires exactly those rows additively: "
                              + "; ".join(hook_description(i) for i in HOOK_IDS))
+    parser.add_argument("--with-global-rules", action="store_true",
+                        help="(--headless only) rewrite codegraph's \"user decides\" sentence "
+                             "in the global instruction files (backup first; --dry-run previews)")
     parser.add_argument("--hooks", default=None, metavar="<id[:host],...>",
                         help="(uninstall only) remove only these hooks")
     parser.add_argument(
@@ -4775,8 +4846,9 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
              "linking the repo copy.")
     args = parser.parse_args(argv)
     if (args.skills is not None or args.with_statusline
-            or args.with_hooks is not False) and not args.headless:
-        parser.error("--skills/--with-statusline/--with-hooks require --headless")
+            or args.with_hooks is not False or args.with_global_rules) and not args.headless:
+        parser.error("--skills/--with-statusline/--with-hooks/--with-global-rules "
+                     "require --headless")
     if isinstance(args.with_hooks, str):
         tokens = [t for t in re.split(r"[,\s]+", args.with_hooks.strip()) if t]
         if not tokens:
@@ -4839,7 +4911,8 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
             return cmd_install_headless(
                 env, dry, args.skills, args.with_statusline, args.with_hooks,
                 examples_flag=args.examples,
-                replace_existing=args.replace_existing)
+                replace_existing=args.replace_existing,
+                with_global_rules=args.with_global_rules)
         ensure_rich_runtime(env)              # may re-exec; must be BEFORE open_tty
         tty = cast("_StdTty", require_tty(open_tty()))  # fail-closed (FR-W.1/B)
         try:

@@ -6,14 +6,26 @@ The wizard is a faithful port of docs/wizard-redesign/prototypes/mockup-textual.
 parts run in parallel; the Textual guard and the Static helper live in
 tests/wizard_app_common.py.
 """
+import os
+import shutil
+import sys
+import tempfile
 import threading
 import unittest
+from unittest import mock
 
 from tests.wizard_app_common import HAVE_TEXTUAL, query_static
+from tools import setup as setup_mod
 from tools import wizard_app as wa
 
 if HAVE_TEXTUAL:
     from tests.wizard_fixtures import make_ctx
+
+_TOOLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+# The module setup.py's _sibling() loads, so mock.patch below reaches the same object.
+import global_rules
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
@@ -451,6 +463,177 @@ class TestHostTraversal(unittest.IsolatedAsyncioTestCase):
         result = app.flow.result
         assert result is not None            # narrowing for the typed seam below
         self.assertEqual(result.state, {})
+
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestGlobalRulesReview(unittest.IsolatedAsyncioTestCase):
+    """Phase 30 D-11: the global-rules item shows its bullet and preview on Review only while on."""
+
+    PREVIEW = [
+        "claude /x/CLAUDE.md: replace codegraph's sentence",
+        "  - old sentence",
+        "  + new sentence",
+    ]
+
+    def _ctx(self, on):
+        ctx = make_ctx(host_ids=())
+        # Selection rows are mutable lists at runtime; SelectionLike types them as tuples.
+        ctx.selection.items.append(["global rules", "codegraph sentence", on])  # pyright: ignore[reportArgumentType]
+        rules = {"changes": ["a", "b", "c", "d"], "preview": self.PREVIEW}
+        return ctx._replace(state={**ctx.state, "_global_rules": rules})
+
+    async def _to_review(self, app, pilot):
+        await pilot.pause()
+        for _ in range(6):
+            if app.flow.step == wa.STEP_REVIEW:
+                break
+            await pilot.press("enter")
+            await pilot.pause()
+        return app.flow.step
+
+    async def test_review_shows_bullet_and_preview_when_on(self):
+        app = wa.WizardApp(self._ctx(True))
+        async with app.run_test() as pilot:
+            self.assertEqual(await self._to_review(app, pilot), wa.STEP_REVIEW)
+            what = str(query_static(app, "#rev-what").content)
+            self.assertIn("Rewrite codegraph's sentence in 4 global instruction files", what)
+            self.assertIn("replace codegraph's sentence", what)
+
+    async def test_review_hides_bullet_when_off(self):
+        app = wa.WizardApp(self._ctx(False))
+        async with app.run_test() as pilot:
+            self.assertEqual(await self._to_review(app, pilot), wa.STEP_REVIEW)
+            what = str(query_static(app, "#rev-what").content)
+            self.assertNotIn("Rewrite codegraph's sentence", what)
+
+
+def _rules_body():
+    # The installer sentence sits inside the block (rewritten) and once outside it (kept).
+    return (
+        b"prefix\r\n" + global_rules.START + b"\r\n" + global_rules.INSTALLER_SENTENCE
+        + b"\r\n" + global_rules.END + b"\r\n" + global_rules.INSTALLER_SENTENCE
+        + b" tail \xc3\xa9"
+    )
+
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestWizardBuilders(unittest.TestCase):
+    """The global-rules item through every wizard route; uv tier, the wizard module needs rich."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="ai-kit-p30-")
+        self.addCleanup(shutil.rmtree, self.home, True)
+        codex = os.path.join(self.home, ".codex")
+        self.paths = {
+            "claude": os.path.join(self.home, ".claude", "CLAUDE.md"),
+            "codex": os.path.join(codex, "AGENTS.md"),
+            "gemini": os.path.join(self.home, ".gemini", "GEMINI.md"),
+            "opencode": os.path.join(self.home, ".config", "opencode", "AGENTS.md"),
+        }
+        self.env = {
+            "PATH": os.environ.get("PATH", ""),
+            "HOME": self.home,
+            "XDG_STATE_HOME": os.path.join(self.home, "state"),
+            "XDG_CONFIG_HOME": os.path.join(self.home, ".config"),
+            "CLAUDE_CONFIG_DIR": os.path.join(self.home, ".claude"),
+            "CODEX_HOME": codex,
+            "AI_KIT_REFUSE_REAL_HOME": "1",
+        }
+        self.item = setup_mod.GLOBAL_RULES_ITEM
+
+    def write_all(self):
+        for path in self.paths.values():
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as fh:
+                fh.write(_rules_body())
+
+    def read(self, host):
+        with open(self.paths[host], "rb") as fh:
+            return fh.read()
+
+    def inputs(self):
+        categories = setup_mod.CATEGORIES
+        entries = {cat: [] for cat in categories}
+        installed = {cat: set() for cat in categories}
+        return setup_mod.resolve_paths(self.env), entries, installed
+
+    def commit(self, review, selection_on):
+        selection = setup_mod.Selection([(*self.item, selection_on)])
+        entries = {cat: [] for cat in setup_mod.CATEGORIES}
+        commit = setup_mod._make_wizard_commit(
+            None, entries, False, {}, rules_env=self.env, rules_review=review)
+        return commit, selection
+
+    def test_no_review_without_a_replace(self):
+        self.assertIsNone(setup_mod._global_rules_review(self.env))
+        self.assertEqual(setup_mod._global_rules_items(None), ([], {}))
+
+    def test_review_and_item_when_a_block_holds_the_installer_sentence(self):
+        self.write_all()
+        review = setup_mod._global_rules_review(self.env)
+        assert review is not None
+        self.assertEqual(len(review["changes"]), 4)
+        items, initial = setup_mod._global_rules_items(review)
+        self.assertEqual(items, [[*self.item, True]])
+        self.assertEqual(initial, {self.item: False})
+
+    def test_context_keeps_the_item_for_zero_one_and_two_hosts(self):
+        self.write_all()
+        review = setup_mod._global_rules_review(self.env)
+        paths, entries, installed = self.inputs()
+        for hosts in ((), ("claude",), ("claude", "cursor")):
+            with self.subTest(hosts=hosts):
+                ctx = setup_mod._build_wizard_context(
+                    paths, entries, installed, wa, hosts=hosts, rules_review=review)
+                self.assertEqual(len(ctx.hosts), len(hosts))
+                self.assertIn(self.item, [(c, n) for c, n, _on in ctx.selection.items])
+                self.assertFalse(ctx.state["_initial_enabled"][self.item])
+                self.assertIs(ctx.state["_global_rules"], review)
+                self.assertTrue(ctx.state["_global_rules"]["preview"])
+
+    def test_context_without_a_review_has_no_item_and_no_state(self):
+        paths, entries, installed = self.inputs()
+        plain = setup_mod._build_wizard_context(paths, entries, installed, wa, hosts=())
+        self.assertNotIn("_global_rules", plain.state)
+        self.assertNotIn(self.item, [(c, n) for c, n, _on in plain.selection.items])
+
+    def test_housekeeping_selection_keeps_the_item(self):
+        self.write_all()
+        review = setup_mod._global_rules_review(self.env)
+        paths, entries, _installed = self.inputs()
+        housekeeping = setup_mod._make_apply_housekeeping(
+            paths, entries, [], [], False, {}, rules_review=review)
+        result = housekeeping(False, False)
+        self.assertIn(self.item, [(c, n) for c, n, _on in result["selection"].items])
+
+    def test_commit_applies_only_when_the_item_is_on(self):
+        self.write_all()
+        review = setup_mod._global_rules_review(self.env)
+        assert review is not None
+        commit_off, sel_off = self.commit(review, False)
+        commit_on, sel_on = self.commit(review, True)
+        with mock.patch.object(setup_mod, "_commit_components", return_value=("", True)), \
+                mock.patch.object(global_rules, "apply", return_value=(True, ["done"])) as apply:
+            off = commit_off(sel_off, None)
+            apply.assert_not_called()
+            on = commit_on(sel_on, None)
+        apply.assert_called_once()
+        self.assertIs(apply.call_args.kwargs["reviewed"], review["changes"])
+        self.assertTrue(off["ok"] and on["ok"])
+        self.assertIn("done", on["log"])
+
+    def test_commit_keeps_a_file_changed_after_review(self):
+        self.write_all()
+        review = setup_mod._global_rules_review(self.env)
+        with open(self.paths["claude"], "ab") as fh:
+            fh.write(b"edited")
+        commit, selection = self.commit(review, True)
+        with mock.patch.object(setup_mod, "_commit_components", return_value=("", True)):
+            outcome = commit(selection, None)
+        self.assertTrue(outcome["ok"])  # a reviewed-set skip is a note, not a failure
+        self.assertIn("changed since it was reviewed", outcome["log"])
+        self.assertTrue(self.read("claude").endswith(b"edited"))
+        self.assertIn(global_rules.AIKIT_SENTENCE, self.read("gemini"))
 
 
 if __name__ == "__main__":  # pragma: no cover

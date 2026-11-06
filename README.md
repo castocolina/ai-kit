@@ -574,6 +574,13 @@ nothing is touched unless explicitly requested:
   ids (comma-separated, with optional `:host` selectors). Claude Code settings
   are wired per event; pi extensions and opencode plugins use symlinks. Absent
   hosts are skipped. The pre-summary fails open without blocking compaction.
+- `--with-global-rules` — rewrites codegraph's "indexing is the user's decision"
+  sentence inside its `<!-- CODEGRAPH_START -->` block in the four global
+  instruction files (Claude `CLAUDE.md`, Codex `AGENTS.md`, Gemini `GEMINI.md`,
+  opencode `AGENTS.md`). Only that sentence changes; each file is backed up first
+  to `${XDG_STATE_HOME:-~/.local/state}/ai-kit/backups/global-rules/`. A bare
+  `--headless` never touches these files, and `--dry-run` only previews the change.
+  The config doctor row `codegraph-global-sentence` reports which wording each file holds.
 - `--examples=all|none|<ids>` — the same pre-existing flag `install.sh` and
   the interactive wizard use for bundled example segments; it works
   identically here, with or without `--headless`.
