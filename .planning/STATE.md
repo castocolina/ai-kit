@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: 31
-current_phase_name: Removals and small defects
-status: executing
-stopped_at: Phase 30.2 complete, ready to plan Phase 31
-last_updated: "2026-11-06T16:36:39.399Z"
+current_phase: 32
+current_phase_name: Re-judge baseline
+status: planning
+stopped_at: Phase 31 complete, ready to plan Phase 32
+last_updated: "2026-11-06T18:19:59.959Z"
 last_activity: 2026-11-06
-last_activity_desc: Phase 30.2 complete
-state_head: 9ead908f1e0d04ce313490dd9f9b2a469a0fed27
+last_activity_desc: Phase 31 complete
+state_head: 0fcb4e29653207c08678b0dc4dae652ea7561922
 progress:
   total_phases: 37
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 55
-  completed_plans: 49
-  percent: 16
+  completed_plans: 55
+  percent: 19
 ---
 
 # Project State
@@ -25,22 +25,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 30.2 — Cursor status-line parity (INSERTED)
+**Current focus:** Phase 31 — Removals and small defects
 
 ## Current Position
 
-Phase: 31 (Removals and small defects) — READY TO EXECUTE
+Phase: 32 — Re-judge baseline
 Plan: Not started
-Status: Ready to execute
-Last activity: 2026-11-06 — Phase 30.2 complete
+Status: Ready to plan
+Last activity: 2026-11-06 — Phase 31 complete
 
-Progress: [██░░░░░░░░] 16%
+Progress: [██░░░░░░░░] 19%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 203
+- Total plans completed: 209
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -88,6 +88,7 @@ Progress: [██░░░░░░░░] 16%
 | 30 | 7 | - | - |
 | 30.1 | 6 | - | - |
 | 30.2 | 5 | - | - |
+| 31 | 6 | - | - |
 
 **Recent Trend:**
 
@@ -677,7 +678,7 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 ## Session Continuity
 
 Last session: 2026-11-03T19:08:45.122Z
-Stopped at: Phase 30.2 complete, ready to plan Phase 31
+Stopped at: Phase 31 complete, ready to plan Phase 32
 Resume file: .planning/phases/31-removals-and-small-defects/31-CONTEXT.md
 
 ## Operator Next Steps

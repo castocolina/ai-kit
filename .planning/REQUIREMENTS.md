@@ -104,14 +104,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### Removals
 
-- [ ] **RMV-01**: `ai-kit-spec-execute-gsd` is gone with its tests, test-list entries, README and doc mentions; the
+- [x] **RMV-01**: `ai-kit-spec-execute-gsd` is gone with its tests, test-list entries, README and doc mentions; the
   execute router hands GSD plans back to `/gsd-execute-phase`, and the installer removes the stale installed link.
   The code only it used goes too: the runner guidance prepend (`project_runner_command(guidance=True)`,
   `PROJECT_GUIDANCE_PATH`), the `cross-ai-guidance.md` file curated-config still writes, and
   `gsd_tools.prior_value`.
-- [ ] **RMV-02**: `ai-kit-opencode-providers` is gone; its stale-provider scan lives on in spec-config.
-- [ ] **RMV-03**: `mermaid-audit` is gone with every reference.
-- [ ] **RMV-04**: rtk appears in no tool list, guidance text, house rule (today one house rule recommends it),
+- [x] **RMV-02**: `ai-kit-opencode-providers` is gone; its stale-provider scan lives on in spec-config.
+- [x] **RMV-03**: `mermaid-audit` is gone with every reference.
+- [x] **RMV-04**: rtk appears in no tool list, guidance text, house rule (today one house rule recommends it),
   AGENTS.md section (today Tools and Stack mentions it), config-doctor advice or usage-metrics source; a test fails
   on an rtk mention outside history files. *(amended 2026-11-03, 31 spec: the ban covers recommending, installing or
   wiring rtk; usage-metrics keeps reading rtk data that already exists, as optional input, and nothing deletes
@@ -664,7 +664,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### Defects and housekeeping
 
-- [ ] **DEF-01**: The small known defects are fixed: wake and cross-ai skills missing from pi's install, the
+- [x] **DEF-01**: The small known defects are fixed: wake and cross-ai skills missing from pi's install, the
   nonexistent pi environment variables in the interactive guide, the Phase 25.1 edge floor, goal-prompt detect with
   file indirection, a stale routing docstring, a drift test between hand-copied runtime lists and the runtime
   table, and the AGENTS.md link to a gitignored file (seven items; the path-length test and the no-git e2e test
@@ -738,14 +738,14 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | FLOW-11 | Phase 29.1 | Complete |
 | FLOW-12 | Phase 30 | Complete |
 | FLOW-13 | Phase 30 | Complete |
-| RMV-01 | Phase 31 | Pending |
-| RMV-02 | Phase 31 | Pending |
-| RMV-03 | Phase 31 | Pending |
-| RMV-04 | Phase 31 | Pending |
+| RMV-01 | Phase 31 | Complete |
+| RMV-02 | Phase 31 | Complete |
+| RMV-03 | Phase 31 | Complete |
+| RMV-04 | Phase 31 | Complete |
 | JDG-01 | Phase 32 | Pending |
 | JDG-02 | Phase 32 | Pending |
 | JDG-03 | Phase 32.4 | Pending |
-| JDG-04 | Phase 32 | Pending |
+| JDG-04 | Phase 31, Phase 32 | Pending |
 | JDG-05 | Phase 32 | Pending |
 | JDG-06 | Phase 32 | Pending |
 | JDG-07 | Phase 32 | Pending |
@@ -876,7 +876,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | WIZ-03 | Phase 30.1 | Complete |
 | WIZ-04 | Phase 30.2 | Complete |
 | WIZ-05 | Phase 30.1 | Complete |
-| DEF-01 | Phase 31 | Pending |
+| DEF-01 | Phase 31 | Complete |
 | DEF-02 | Phase 32.3 | Pending |
 | DEF-03 | Phase 32.4 | Pending |
 | DEF-04 | Phase 32.4 | Pending |

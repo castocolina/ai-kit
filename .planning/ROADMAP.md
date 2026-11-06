@@ -112,7 +112,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph sync, graphify rebuild and a changed-symbols brief at every phase boundary (completed 2026-11-06)
 - [x] **Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)** - One card per component kind, host-styled status-line panes, config doctor reachable from the wizard (completed 2026-11-06)
 - [x] **Phase 30.2: Cursor status-line parity (INSERTED)** - Cursor status line brought back to the approved proof of concept and to Claude's look where the data allows (completed 2026-11-06)
-- [ ] **Phase 31: Removals and small defects** - Three skills and rtk gone, seven small known defects fixed *(amended 2026-11-03, 31 spec: seven items per DEF-01)*
+- [x] **Phase 31: Removals and small defects** - Three skills and rtk gone, seven small known defects fixed *(amended 2026-11-03, 31 spec: seven items per DEF-01)* (completed 2026-11-06)
 - [ ] **Phase 32: Re-judge baseline** - One current-judge report for every kept skill, plus strict frontmatter and text checks
 - [ ] **Phase 32.1: Batch 1, general small skills** - cst-refactor, markdown-to-pdf, jev-fast-decision, spec-review-fixer and usage-metrics reach the bar
 - [ ] **Phase 32.2: Batch 2, spec review family** - spec-review, checklist, spec-config and spec-execute reach the bar
@@ -374,19 +374,19 @@ Plans:
   *(amended 2026-11-03, 31 spec: code anchors corrected — only the `prior_value` and execute-gsd SKILL.md cases of `tests/test_ai_kit_spec_gsd_tools.py` go, since it tests the kept `gsd_tools`; the guidance file is written by curated-config `cross_ai_script.py` and `cli.py --guidance-file`, not `cross_ai_build.py`; `.pre-commit-config.yaml` also lists the removed tests; criterion 3's rtk test exempts usage-metrics' rtk reader, which keeps reading existing data; the installer fix also covers alias spellings and checkout runs (DEF-01 amended))*
   5. Every SKILL.md this phase adds or materially changes meets the judge bar (JDG-04): new-shape evals and tests, no critical or high finding or grade B or better, no regression beyond judge variation.
 
-**Plans**: 6 plans
+**Plans**: 6/6 plans complete
 Plans:
 **Wave 1**
-- [ ] 31-01-PLAN.md — execute router hands GSD plans to `/gsd-execute-phase`; `ai-kit-spec-execute-gsd` and the guidance code it alone used removed (R1, R2)
-- [ ] 31-02-PLAN.md — spec-config's `check-providers` reports stale opencode providers with a read-only JSONC fallback (R5)
-- [ ] 31-03-PLAN.md — installer compares resolved paths, uses its own checkout, headless installs prune dead links (R6, R8)
-- [ ] 31-04-PLAN.md — check-dogfood edge-floor guard with 25.1/30.1 rows, goal-prompt `@file:`, routing docstring, runtime-list drift test (R10-R13)
+- [x] 31-01-PLAN.md — execute router hands GSD plans to `/gsd-execute-phase`; `ai-kit-spec-execute-gsd` and the guidance code it alone used removed (R1, R2)
+- [x] 31-02-PLAN.md — spec-config's `check-providers` reports stale opencode providers with a read-only JSONC fallback (R5)
+- [x] 31-03-PLAN.md — installer compares resolved paths, uses its own checkout, headless installs prune dead links (R6, R8)
+- [x] 31-04-PLAN.md — check-dogfood edge-floor guard with 25.1/30.1 rows, goal-prompt `@file:`, routing docstring, runtime-list drift test (R10-R13)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 31-05-PLAN.md — `ai-kit-opencode-providers` and `mermaid-audit` removed; the last docstrings naming the GSD adapter reworded; pi variable wording; curated-config evals (R3, R4, R9, R1 completion)
+- [x] 31-05-PLAN.md — `ai-kit-opencode-providers` and `mermaid-audit` removed; the last docstrings naming the GSD adapter reworded; pi variable wording; curated-config evals (R3, R4, R9, R1 completion)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 31-06-PLAN.md — rtk removed everywhere with a tracked-file ban, R05 retired, doctor row gone; AGENTS.md link test (R7, R14)
+- [x] 31-06-PLAN.md — rtk removed everywhere with a tracked-file ban, R05 retired, doctor row gone; AGENTS.md link test (R7, R14)
 
 ### Phase 32: Re-judge baseline
 
@@ -862,7 +862,7 @@ Plans:
 | 30. Phase-boundary index refresh and code-exploration rules | 7/7 | Complete    | 2026-11-06 |
 | 30.1. Setup wizard, component cards and host status-line panes | 6/6 | Complete    | 2026-11-06 |
 | 30.2. Cursor status-line parity | 5/5 | Complete    | 2026-11-06 |
-| 31. Removals and small defects | 0/TBD | Not started | - |
+| 31. Removals and small defects | 6/6 | Complete    | 2026-11-06 |
 | 32. Re-judge baseline | 0/TBD | Not started | - |
 | 32.1. Batch 1, general small skills | 0/TBD | Not started | - |
 | 32.2. Batch 2, spec review family | 0/TBD | Not started | - |

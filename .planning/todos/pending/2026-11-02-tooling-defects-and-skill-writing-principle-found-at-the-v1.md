@@ -56,18 +56,18 @@ Checklist:
 
 ### Tooling defects found during the v1.3 close-out
 
-- [ ] *(folded into Phase 31, 2026-11-03, 31-SPEC R10)* `edge_floor.py check` on the committed Phase 25.1 SPEC returns `ok:false` (floor 48 rows, table 47; the
+- [x] *(folded into Phase 31, 2026-11-03; closed 2026-11-06, 31-SPEC R10)* `edge_floor.py check` on the committed Phase 25.1 SPEC returns `ok:false` (floor 48 rows, table 47; the
   encoding case R9 is missing).
-- [ ] *(folded into Phase 31, 2026-11-03, 31-SPEC R11)* `goal_prompt.py detect --gsd-cmd` parses output as JSON only; real GSD workflows use `@file:` indirection
+- [x] *(folded into Phase 31, 2026-11-03; closed 2026-11-06, 31-SPEC R11)* `goal_prompt.py detect --gsd-cmd` parses output as JSON only; real GSD workflows use `@file:` indirection
   for large outputs, which it does not handle.
-- [ ] *(folded into Phase 31, 2026-11-03, 31-SPEC R12)* Stale docstring at `skills/ai-kit-spec-review/ai_kit_spec/routing.py:49` ("until Phases 20-22").
+- [x] *(folded into Phase 31, 2026-11-03; closed 2026-11-06, 31-SPEC R12)* Stale docstring at `skills/ai-kit-spec-review/ai_kit_spec/routing.py:49` ("until Phases 20-22").
 - [ ] Error bodies seen in real runs with no dedicated row in the runner's error catalogue:
   provider_not_configured, `Policy budget exceeded` (429), data_inspection_failed (400),
   context_length_exceeded (400), the Zhipu plan-not-open code 1311, and the 502/503
   "Connection capacity reached for <member>" body (now generic transient).
 - [ ] The Claude matcher in the runner reads stderr only; if `claude -p` prints a usage limit on stdout the lane
   is classified as a crash without a class. Verify on the next real limit and fix.
-- [ ] *(folded into Phase 31, 2026-11-03, 31-SPEC R8)* Cause found: link paths compared as strings (alias spellings) and checkout runs using `~/.local/share/ai-kit`. ai-kit-session-wake and the other ai-kit-* skills are not installed in pi although setup marks them for
+- [x] *(folded into Phase 31, 2026-11-03; closed 2026-11-06, 31-SPEC R8)* Cause found: link paths compared as strings (alias spellings) and checkout runs using `~/.local/share/ai-kit`. ai-kit-session-wake and the other ai-kit-* skills are not installed in pi although setup marks them for
   pi (observed in a live pi session: 29 skills listed, none of the ai-kit-* wake or cross-ai ones). Find out
   why.
 - [ ] The StopFailure hook of session-wake does not record the payload; to capture the real body of the next
@@ -77,14 +77,14 @@ Checklist:
   sections) but are still marked unverified in the runner data; flipping them changes behaviour and the
   pinned template, so it is a separate change. `model_cooldown` also lasted from 2 minutes to over 2 hours
   in real logs while its row is transient.
-- [ ] *(folded into Phase 31, 2026-11-03, 31-SPEC R9)* Correction: pi 1.3.0 sets `PI_PROVIDER` and `PI_MODEL` for the agent's own bash-tool commands only; `!` and RPC bash commands never get them. pi exports only PI_CODING_AGENT; the Phase 22 guide expects PI_PROVIDER and PI_MODEL (they do not exist).
+- [x] *(folded into Phase 31, 2026-11-03; closed 2026-11-06, 31-SPEC R9)* Correction: pi 1.3.0 sets `PI_PROVIDER` and `PI_MODEL` for the agent's own bash-tool commands only; `!` and RPC bash commands never get them. pi exports only PI_CODING_AGENT; the Phase 22 guide expects PI_PROVIDER and PI_MODEL (they do not exist).
 - [ ] Fix-up idea: the OmniRoute container logs do not contain the router error codes the catalogue matches
   on; the full bodies live in its database. Decide whether to match on the log wording that does exist
   ("all N active accounts cooling down for model X (reset after ...)").
-- [ ] *(folded into Phase 31, 2026-11-03, 31-SPEC R13)* Runtime lists copied by hand with no test that compares them with the runtime table: the runner-capable
+- [x] *(folded into Phase 31, 2026-11-03; closed 2026-11-06, 31-SPEC R13)* Runtime lists copied by hand with no test that compares them with the runtime table: the runner-capable
   list, the host list, the host-binary map and the error text of the plan editor. The JavaScript template list
   is only tested as a superset. Add one drift test (found by the v1.3 audit).
-- [ ] *(folded into Phase 31, 2026-11-03, 31-SPEC R14)* The project `AGENTS.md` links `.claude/cli-environment.md`, but that file is gitignored, so the link
+- [x] *(folded into Phase 31, 2026-11-03; closed 2026-11-06, 31-SPEC R14)* The project `AGENTS.md` links `.claude/cli-environment.md`, but that file is gitignored, so the link
   dangles in a clean checkout. Either track the file or remove the link (found by the v1.3 audit).
 - [ ] One goal-prompt test depends on the length of the checkout path because of a separate test of the
   tool-substitution hook; it passes only from a short path. Make the pair independent of path length
