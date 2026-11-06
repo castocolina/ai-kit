@@ -46,7 +46,8 @@
     "cross_ai_command": "node .planning/scripts/cross-ai.mjs",
     "cross_ai_timeout": 1800,
     "plan_review_convergence": true,
-    "_auto_chain_active": false
+    "_auto_chain_active": false,
+    "ui_review": true
   },
   "review": {
     "reviewer_instances": {
@@ -101,6 +102,8 @@
       "skills/jev-fast-decision"
     ],
     "gsd-code-reviewer": [
+      "global:ponytail:ponytail-review",
+      ".planning/lens-brief",
       "skills/jev-fast-decision"
     ],
     "gsd-debugger": [
@@ -128,7 +131,9 @@
       "skills/jev-fast-decision"
     ],
     "gsd-executor": [
-      "skills/jev-fast-decision"
+      "skills/jev-fast-decision",
+      ".planning/lens-brief",
+      ".aikit/brief"
     ],
     "gsd-framework-selector": [
       "skills/jev-fast-decision"
@@ -149,13 +154,20 @@
       "skills/jev-fast-decision"
     ],
     "gsd-phase-researcher": [
-      "skills/jev-fast-decision"
+      "skills/jev-fast-decision",
+      ".planning/lens-brief",
+      ".aikit/brief"
     ],
     "gsd-plan-checker": [
+      "global:ponytail:ponytail",
+      ".planning/lens-brief",
       "skills/jev-fast-decision"
     ],
     "gsd-planner": [
-      "skills/jev-fast-decision"
+      "global:ponytail:ponytail",
+      ".planning/lens-brief",
+      "skills/jev-fast-decision",
+      ".aikit/brief"
     ],
     "gsd-project-researcher": [
       "skills/jev-fast-decision"
@@ -170,12 +182,18 @@
       "skills/jev-fast-decision"
     ],
     "gsd-ui-auditor": [
+      "global:impeccable",
+      ".planning/lens-brief",
       "skills/jev-fast-decision"
     ],
     "gsd-ui-checker": [
+      "global:impeccable",
+      ".planning/lens-brief",
       "skills/jev-fast-decision"
     ],
     "gsd-ui-researcher": [
+      "global:impeccable",
+      ".planning/lens-brief",
       "skills/jev-fast-decision"
     ],
     "gsd-verifier": [
@@ -223,5 +241,10 @@
   "graphify": {
     "enabled": true,
     "auto_update": true
+  },
+  "agent_skills_security": {
+    "trusted_global_roots": [
+      "~/.agents/skills"
+    ]
   }
 }

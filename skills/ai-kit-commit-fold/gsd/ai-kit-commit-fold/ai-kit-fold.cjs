@@ -9,7 +9,7 @@ const { spawnSync } = require('node:child_process');
 const SKILLS_ROOTS = [["CLAUDE_CONFIG_DIR", ".claude", "skills"], [null, ".agents", "skills"], ["XDG_CONFIG_HOME", ".config", "opencode/skills"], ["CURSOR_CONFIG_DIR", ".cursor", "skills"], ["PI_CODING_AGENT_DIR", ".pi/agent", "skills"]];
 
 // Verb -> fold.py subcommand. `run` keeps its own fold.py form (see argvFor); `ship` is handled here.
-const VERBS = { run: 'gsd', start: 'start', guard: 'guard', checkpoint: 'checkpoint', ready: 'ready' };
+const VERBS = { run: 'gsd', start: 'start', guard: 'guard', checkpoint: 'checkpoint', ready: 'ready', 'boundary-plan': 'boundary', 'boundary-wave': 'boundary' };
 const PHASE = /^\d+(\.\d+)?$/;
 
 // A capability copy has no skills root of its own, so the lookup starts at the host dirs.
@@ -40,6 +40,7 @@ function parse(args) {
 
 function argvFor(script, verb, phase, cwd) {
   if (verb === 'run') return [script, 'gsd', '--phase', phase, '--repo', cwd, '--mode', 'inline'];
+  if (verb === 'boundary-plan' || verb === 'boundary-wave') return [script, 'boundary', '--phase', phase, '--point', verb === 'boundary-plan' ? 'plan' : 'wave', '--repo', cwd];
   return [script, VERBS[verb], '--phase', phase, '--repo', cwd];
 }
 
@@ -68,7 +69,7 @@ function setBaseRefForWorktrees(cwd, tools) {
 function route({ args, cwd }) {
   const parsed = parse(args);
   if (!parsed) {
-    process.stderr.write('usage: gsd-tools ai-kit-fold <run|start|guard|checkpoint|ready|ship> --phase <N>\n');
+    process.stderr.write('usage: gsd-tools ai-kit-fold <run|start|guard|checkpoint|ready|ship|boundary-plan|boundary-wave> --phase <N>\n');
     process.exitCode = 2;
     return;
   }

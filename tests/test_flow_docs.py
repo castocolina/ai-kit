@@ -105,8 +105,6 @@ _RETIRED_LINES = (
     "Never push, force-push or open a PR",
     "pushing or opening PRs",
     "GSD runs `ai-kit-fold run`",
-    "execute:wave:pre",
-    "plan:pre",
     "verify:post",
 )
 
@@ -139,14 +137,25 @@ class TestCommitFoldSkillText(unittest.TestCase):
     def test_names_gsd_hook_points_and_orchestrator_commands(self):
         required = (
             "discuss:pre",
+            "plan:pre",
+            "execute:wave:pre",
             "execute:wave:post",
             "ship:pre",
             "ai-kit-fold guard --phase",
             "ai-kit-fold ready --phase",
+            "ai-kit-fold boundary-plan --phase",
+            "ai-kit-fold boundary-wave",
+            "GSD delegates before any wave hook runs",
         )
         self.assertEqual(_missing(self.skill, required), [])
         self.assertEqual(
             _missing(self.skill.replace("ship:pre", "ship"), ("ship:pre",)), ["ship:pre"]
+        )
+        # Non-vacuity: the cross-AI sentence is the one the orchestrator step relies on.
+        without_reason = self.skill.replace("GSD delegates before any wave hook runs", "")
+        self.assertEqual(
+            _missing(without_reason, ("GSD delegates before any wave hook runs",)),
+            ["GSD delegates before any wave hook runs"],
         )
 
     def test_names_restack_resolution_and_no_gates(self):

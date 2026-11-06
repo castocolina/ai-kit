@@ -273,10 +273,20 @@ def _gate(blocking: bool = True, command: str = "node .claude/gsd-core/bin/gsd-t
             "check": {"predicate": {"kind": "command-exit-zero", "command": command}}}
 
 
+_BOUNDARY_TEXT = ("ai-kit unit flow (boundary before planning): run node "
+                  ".claude/gsd-core/bin/gsd-tools.cjs ai-kit-fold boundary-plan --phase <N>.")
+
+
+def _contribution(into: str = "planner", text: str = _BOUNDARY_TEXT) -> dict:
+    return {"capId": "ai-kit-commit-fold", "kind": "contribution", "into": into,
+            "fragment": {"inline": text}, "onError": "skip"}
+
+
 def _healthy_hooks() -> dict:
     return {"discuss:pre": [_step("ai-kit-fold start")],
+            "execute:wave:pre": [_step("ai-kit-fold boundary-wave")],
             "execute:wave:post": [_step("ai-kit-fold checkpoint")],
-            "ship:pre": [_gate()], "plan:pre": [], "execute:wave:pre": [], "verify:post": []}
+            "ship:pre": [_gate()], "plan:pre": [_contribution()], "verify:post": []}
 
 
 class _FakeGsd:
@@ -336,9 +346,21 @@ class TestFlowConfig(unittest.TestCase):
                 "step command 'ai-kit-fold run' is not 'ai-kit-fold checkpoint'"),
             "non-blocking ship gate": (_FakeGsd(hooks={**hooks, "ship:pre": [_gate(False)]}),
                                        "ship:pre: gate is not blocking"),
-            "entry at plan:pre": (
-                _FakeGsd(hooks={**hooks, "plan:pre": [_step("ai-kit-fold start")]}),
-                "plan:pre lists a ai-kit-commit-fold entry"),
+            "step at plan:pre": (
+                _FakeGsd(hooks={**hooks, "plan:pre": [_step("ai-kit-fold boundary-plan")]}),
+                "entry kind step is not contribution"),
+            "contribution into checker": (
+                _FakeGsd(hooks={**hooks, "plan:pre": [_contribution(into="checker")]}),
+                "contribution is not into planner"),
+            "contribution without boundary-plan": (
+                _FakeGsd(hooks={**hooks, "plan:pre": [_contribution(text="ai-kit unit flow")]}),
+                "contribution does not run ai-kit-fold boundary-plan"),
+            "missing execute:wave:pre step": (
+                _FakeGsd(hooks={**hooks, "execute:wave:pre": []}),
+                "execute:wave:pre: expected one ai-kit-commit-fold step, found 0"),
+            "entry at verify:post": (
+                _FakeGsd(hooks={**hooks, "verify:post": [_step("ai-kit-fold start")]}),
+                "verify:post lists a ai-kit-commit-fold entry"),
         }
         for label, (fake, fragment) in cases.items():
             with self.subTest(drift=label):
@@ -354,6 +376,123 @@ class TestFlowConfig(unittest.TestCase):
         self.addCleanup(shutil.rmtree, empty, True)
         self.assertEqual(check_dogfood.check_flow_config(empty, boom),
                          ([], ["flow config not checked: no project-local gsd-core"]))
+
+
+_LENS_BRIEF = """# ai-kit lens brief (synthetic)
+
+## Expected lenses
+
+- gsd-ui-researcher: global:impeccable
+- gsd-ui-checker: global:impeccable
+- gsd-ui-auditor: global:impeccable
+- gsd-planner: global:ponytail:ponytail
+- gsd-plan-checker: global:ponytail:ponytail
+- gsd-code-reviewer: global:ponytail:ponytail-review
+
+## If a lens did not load
+
+Continue without it and name it.
+
+## Unit brief
+
+Synthetic text for the three unit-brief agents.
+"""
+_LENS = ".planning/lens-brief"
+_JEV = "skills/jev-fast-decision"
+_BRIEF = ".aikit/brief"
+_LENS_SKILLS = {
+    "gsd-ui-researcher": ["global:impeccable", _LENS, _JEV],
+    "gsd-ui-checker": ["global:impeccable", _LENS, _JEV],
+    "gsd-ui-auditor": ["global:impeccable", _LENS, _JEV],
+    "gsd-planner": ["global:ponytail:ponytail", _LENS, _JEV, _BRIEF],
+    "gsd-plan-checker": ["global:ponytail:ponytail", _LENS, _JEV],
+    "gsd-code-reviewer": ["global:ponytail:ponytail-review", _LENS, _JEV],
+    "gsd-phase-researcher": [_JEV, _LENS, _BRIEF],
+    "gsd-executor": [_JEV, _LENS, _BRIEF],
+}
+
+
+class _LensFake:
+    """Answers the three config-get calls check_lens_wiring makes; anything else fails the test."""
+
+    def __init__(self, skills=None, roots=None, review="true"):
+        self.skills = dict(_LENS_SKILLS) if skills is None else skills
+        self.roots = ["~/.agents/skills"] if roots is None else roots
+        self.review = review
+
+    def __call__(self, root, *args):
+        if args == ("config-get", "agent_skills"):
+            out = json.dumps(self.skills)
+        elif args == ("config-get", "agent_skills_security.trusted_global_roots"):
+            out = json.dumps(self.roots)
+        elif args == ("config-get", "workflow.ui_review", "--raw"):
+            out = self.review
+        else:
+            raise AssertionError(f"unexpected gsd-tools call {args}")
+        return subprocess.CompletedProcess(args=list(args), returncode=0, stdout=out)
+
+
+class TestLensWiring(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        tools = self.root / check_dogfood.GSD_TOOLS_REL
+        tools.parent.mkdir(parents=True)
+        tools.write_text("", encoding="utf-8")
+        brief = self.root / check_dogfood.LENS_BRIEF_REL
+        brief.parent.mkdir(parents=True)
+        brief.write_text(_LENS_BRIEF, encoding="utf-8")
+
+    def check(self, fake):
+        return check_dogfood.check_lens_wiring(self.root, fake)
+
+    def test_healthy_wiring_has_no_problem(self):
+        self.assertEqual(self.check(_LensFake()), ([], []))
+
+    def test_missing_lens_brief_is_only_a_note(self):
+        (self.root / check_dogfood.LENS_BRIEF_REL).unlink()
+
+        def boom(root, *args):
+            raise AssertionError("gsd-tools must not run without the lens brief")
+
+        self.assertEqual(self.check(boom), ([], [
+            "lens wiring not checked: no .planning/lens-brief/SKILL.md"]))
+
+    def test_each_drift_form_is_one_named_problem(self):
+        cases = {
+            "lens missing": (_LensFake({**_LENS_SKILLS, "gsd-ui-checker": [_LENS, _JEV]}),
+                             "gsd-ui-checker: lens global:impeccable is not in its list"),
+            "lens not first": (_LensFake({**_LENS_SKILLS, "gsd-planner": [
+                _JEV, "global:ponytail:ponytail", _LENS, _BRIEF]}),
+                "gsd-planner: lens global:ponytail:ponytail is not first"),
+            "lens brief not after lens": (_LensFake({**_LENS_SKILLS, "gsd-ui-auditor": [
+                "global:impeccable", _JEV, _LENS]}),
+                "gsd-ui-auditor: .planning/lens-brief is not right after the lens"),
+            "jev missing": (_LensFake({**_LENS_SKILLS, "gsd-plan-checker": [
+                "global:ponytail:ponytail", _LENS]}),
+                "gsd-plan-checker: skills/jev-fast-decision is missing"),
+            "absolute entry": (_LensFake({**_LENS_SKILLS, "gsd-code-reviewer": [
+                "global:ponytail:ponytail-review", _LENS, _JEV, "/home/x/skill"]}),
+                "entry /home/x/skill is an absolute path"),
+            "brief missing": (_LensFake({**_LENS_SKILLS, "gsd-executor": [_JEV, _LENS]}),
+                              "gsd-executor: .aikit/brief is missing"),
+            "lens brief after brief": (_LensFake({**_LENS_SKILLS, "gsd-phase-researcher": [
+                _JEV, _BRIEF, _LENS]}),
+                "gsd-phase-researcher: .planning/lens-brief is not before .aikit/brief"),
+            "unlisted global entry": (_LensFake({**_LENS_SKILLS, "gsd-debugger": [
+                "global:x", _JEV]}),
+                "gsd-debugger: global entry global:x is not in the lens brief"),
+            "trusted roots": (_LensFake(roots=["/home/u/.agents/skills"]),
+                              "trusted_global_roots is ['/home/u/.agents/skills']"),
+            "ui_review off": (_LensFake(review="false"),
+                              "workflow.ui_review is false, not true"),
+        }
+        for label, (fake, fragment) in cases.items():
+            with self.subTest(drift=label):
+                problems, _notes = self.check(fake)
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn(fragment, problems[0])
 
 
 def missing_guard_tests(test_ids) -> list[str]:

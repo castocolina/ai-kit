@@ -139,13 +139,24 @@ Install the fold into a GSD project with the project's own gsd-tools:
    Ask the owner.
 2. After a yes, run the same command with `--yes`, then commit `.gsd/capabilities/ai-kit-commit-fold/`
    and `.gsd-capabilities.json`. A fresh clone repeats `--yes`. Never use `--scope global`.
+3. Hand the unit brief to GSD's agents: for each of gsd-phase-researcher, gsd-planner and gsd-executor,
+   read `node .claude/gsd-core/bin/gsd-tools.cjs config-get agent_skills.<agent>` without `--raw` (raw
+   prints a one-entry list as a bare string; a missing key fails or prints nothing, so count it as `[]`),
+   append `".aikit/brief"` when it is absent, and write the whole list back with
+   `config-set agent_skills.<agent> '<json list>'`. config-set replaces the array, so keep every existing
+   entry in order.
 
 ## GSD hooks
 
 The installed capability registers these GSD hook points:
 
 - `discuss:pre` step: `ai-kit-fold start`. It creates the unit's branch before the phase's first
-  commit.
+  commit, then runs the boundary (index refresh and brief) for the unit's start.
+- `plan:pre` contribution: text the planner acts on; GSD runs no command at `plan:pre`. It tells the
+  planner to run `gsd-tools ai-kit-fold boundary-plan --phase N` first, and to put the `Unit brief:`
+  line in every plan's `<objective>`.
+- `execute:wave:pre` step: `ai-kit-fold boundary-wave`. It runs the boundary before the first
+  execution wave and skips once wave 1 is finished.
 - `execute:wave:post` step: `ai-kit-fold checkpoint`. After each wave's merge-back it folds the
   finished plans and pushes the branch, under push consent.
 - `ship:pre` gate (blocking): `ai-kit-fold ship`. It always refuses GSD's own ship: `not_ready`
@@ -154,8 +165,11 @@ The installed capability registers these GSD hook points:
 
 GSD dispatches no flow command at three points, so run these yourself, as numbered instructions:
 
-1. Before plan-phase, when discuss was skipped: `gsd-tools ai-kit-fold start --phase N`.
-2. Before execute-phase: `gsd-tools ai-kit-fold guard --phase N`. On `wrong_parent`, stop.
+1. Before plan-phase: `gsd-tools ai-kit-fold boundary-plan --phase N` (run `gsd-tools ai-kit-fold start --phase N`
+   first when discuss was skipped).
+2. Before execute-phase: `gsd-tools ai-kit-fold guard --phase N`. On `wrong_parent`, stop. When the run
+   delegates plans to a cross-AI executor, also run `gsd-tools ai-kit-fold boundary-wave --phase N` first:
+   GSD delegates before any wave hook runs.
 3. After the verifier reports `passed`: `gsd-tools ai-kit-fold ready --phase N`.
 
 When the `start` step's report ends `refused`, stop before the next planning commit and show the

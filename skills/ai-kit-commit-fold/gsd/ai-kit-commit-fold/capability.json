@@ -1,9 +1,9 @@
 {
   "id": "ai-kit-commit-fold",
   "role": "feature",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "title": "ai-kit commit fold",
-  "description": "Folds each finished plan of a phase into logical-feature commits after every wave.",
+  "description": "Starts each unit and runs its boundary step, folds each finished plan after every wave, and points GSD's ship at the unit flow.",
   "tier": "full",
   "requires": [],
   "engines": {"gsd": ">=1.6.0"},
@@ -24,6 +24,13 @@
       "onError": "skip"
     },
     {
+      "point": "execute:wave:pre",
+      "ref": {"command": "ai-kit-fold boundary-wave"},
+      "produces": [],
+      "consumes": [],
+      "onError": "skip"
+    },
+    {
       "point": "execute:wave:post",
       "ref": {"command": "ai-kit-fold checkpoint"},
       "produces": [],
@@ -31,7 +38,18 @@
       "onError": "skip"
     }
   ],
-  "contributions": [],
+  "contributions": [
+    {
+      "point": "plan:pre",
+      "into": "planner",
+      "fragment": {
+        "inline": "ai-kit unit flow (boundary before planning): before anything else, run node .claude/gsd-core/bin/gsd-tools.cjs ai-kit-fold boundary-plan --phase <this phase's number> from the project root. It refreshes the codegraph index and the graphify graph on this branch and rewrites .aikit/brief/SKILL.md. Read that brief after the SPEC and CONTEXT; locked decisions win. If the command is missing or fails, continue and say so in your return. In every PLAN.md you write, put this line inside <objective>, because a cross-AI executor gets only the plan's objective and tasks: Unit brief: read .aikit/brief/SKILL.md after the SPEC and CONTEXT; if it is missing, says no brief, or names another unit, say so and continue."
+      },
+      "produces": [],
+      "consumes": [],
+      "onError": "skip"
+    }
+  ],
   "gates": [
     {
       "point": "ship:pre",

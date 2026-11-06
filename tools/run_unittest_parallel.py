@@ -150,7 +150,7 @@ COMMIT_E2E_BUDGET_SECS = 60
 # command. A module missing from this table is over the budget.
 E2E_RECORDED_SECS = {
     "tests.test_flow_index_e2e": 9,
-    "tests.test_ai_kit_commit_fold_e2e": 1,
+    "tests.test_ai_kit_commit_fold_e2e": 15,
     "tests.test_ai_kit_gsd_curated_config_matrix": 1,
     "tests.test_ai_kit_gsd_spec_discuss_e2e": 1,
     "tests.test_ai_kit_project_rules_all_e2e": 1,

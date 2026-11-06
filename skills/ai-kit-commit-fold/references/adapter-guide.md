@@ -13,7 +13,7 @@ ai-kit: GSD and superpowers. A third system uses the same two inputs (`--unit` a
 Mapping: a GSD phase is one unit; each finished plan of the phase is one checkpoint. The
 phase's last plan is the unit-finished signal. The adapter's unit id is the phase number.
 
-GSD dispatches three hook points that the flow uses:
+GSD dispatches these hook points that the flow uses:
 
 1. `discuss:pre` step: `ai-kit-fold start --phase N`. It creates the unit's branch on the
    stack top and checks it out before the phase's first commit. Phase-directory commits made
@@ -25,12 +25,18 @@ GSD dispatches three hook points that the flow uses:
    refuses `not_ready` until the unit's state is `ready`, then `ship_redirect`, which tells the
    owner to run `fold.py merge-chain`. The gate reads the state with `fold.py show`. The
    install prompt does not show gates, so this gate is named here and in `SKILL.md`.
+4. `execute:wave:pre` step: `ai-kit-fold boundary-wave --phase N`. It runs the unit boundary
+   (index refresh and brief) before the first execution wave; it skips once wave 1 is finished.
+5. `plan:pre` contribution into `planner`: text the planner acts on. It tells the planner to run
+   `gsd-tools ai-kit-fold boundary-plan --phase N` first.
 
 GSD does not dispatch the flow at three points, so the orchestrator runs these commands itself
 as numbered instructions:
 
 - `gsd-tools ai-kit-fold start --phase N`, before plan-phase when discuss was skipped. GSD's
-  `plan:pre` point has no command arm, only skill and agent arms, so a step cannot run there.
+  `plan:pre` point has no command arm, only skill and agent arms, so a step cannot run there. A
+  capability can contribute planner text there instead, which is how ai-kit asks the planner to run
+  `boundary-plan` first.
 - `gsd-tools ai-kit-fold guard --phase N`, before execute-phase. GSD's `execute:wave:pre` point
   dispatches contributions and steps only and never evaluates a gate, so a guard cannot run
   there. The guard refuses `wrong_parent` when the unit's recorded parent tip is not the merge

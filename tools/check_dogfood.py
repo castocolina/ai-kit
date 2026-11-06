@@ -240,14 +240,17 @@ def check_no_write(root: Path, run: GuardRun | None = None) -> tuple[list[str], 
 
 GSD_TOOLS_REL = ".claude/gsd-core/bin/gsd-tools.cjs"
 FLOW_CAP = "ai-kit-commit-fold"
-# point -> (hook kind, the text the hook must run). Only the points GSD dispatches with a step
-# or gate that can start or guard the unit; FLOW_EMPTY_POINTS must hold no entry at all.
+# point -> (hook kind, the text the hook must run). GSD dispatches commands at steps and gates;
+# a contribution is text the planner acts on, so its expected text is a command the planner runs.
+# FLOW_EMPTY_POINTS must hold no entry at all.
 FLOW_EXPECT = {
     "discuss:pre": ("step", "ai-kit-fold start"),
+    "plan:pre": ("contribution", "ai-kit-fold boundary-plan"),
+    "execute:wave:pre": ("step", "ai-kit-fold boundary-wave"),
     "execute:wave:post": ("step", "ai-kit-fold checkpoint"),
     "ship:pre": ("gate", "ai-kit-fold ship"),
 }
-FLOW_EMPTY_POINTS = ("plan:pre", "execute:wave:pre", "verify:post")
+FLOW_EMPTY_POINTS = ("verify:post",)
 
 FlowRun = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -289,7 +292,8 @@ def _sub_command(hook: dict, *keys: str) -> object:
 
 def _hook_text(hook: dict) -> str:
     return f"{_sub_command(hook, 'ref', 'command') or ''} " \
-           f"{_sub_command(hook, 'check', 'predicate', 'command') or ''}"
+           f"{_sub_command(hook, 'check', 'predicate', 'command') or ''} " \
+           f"{_sub_command(hook, 'fragment', 'inline') or ''}"
 
 
 def _fold_entries(hooks: list[dict]) -> list[dict]:
@@ -314,6 +318,10 @@ def _check_point(point: str, hooks: list[dict] | None) -> list[str]:
          f"step command {command!r} is not {expected!r}"),
         (kind != "gate" or expected in _hook_text(hook), f"gate does not run {expected}"),
         (kind != "gate" or hook.get("blocking") is True, "gate is not blocking"),
+        (kind != "contribution" or hook.get("into") == "planner",
+         "contribution is not into planner"),
+        (kind != "contribution" or expected in _hook_text(hook),
+         f"contribution does not run {expected}"),
     ]
     failed = [message for ok, message in checks if not ok]
     return [f"{point}: {failed[0]}"] if failed else []
@@ -354,6 +362,96 @@ def check_flow_config(root: Path, run: FlowRun = _run_gsd) -> tuple[list[str], l
     return problems, []
 
 
+LENS_BRIEF_REL = ".planning/lens-brief/SKILL.md"
+LENS_BRIEF_ENTRY = ".planning/lens-brief"
+BRIEF_ENTRY = ".aikit/brief"
+BRIEF_AGENTS = ("gsd-phase-researcher", "gsd-planner", "gsd-executor")
+JEV_ENTRY = "skills/jev-fast-decision"
+TRUSTED_ROOTS = ["~/.agents/skills"]
+_LENS_LINE = re.compile(r"^- (gsd-[\w-]+): (\S+)$")
+
+
+def _expected_lenses(brief: str) -> dict[str, str]:
+    """agent -> lens entry, from the brief's `## Expected lenses` list only."""
+    lenses, in_section = {}, False
+    for line in brief.splitlines():
+        if line.startswith("## "):
+            in_section = line.strip() == "## Expected lenses"
+        match = _LENS_LINE.match(line) if in_section else None
+        if match:
+            lenses[match.group(1)] = match.group(2)
+    return lenses
+
+
+def _lens_problem(agent: str, lens: str, entries: list) -> str | None:
+    if lens not in entries:
+        return f"{agent}: lens {lens} is not in its list"
+    if entries[0] != lens:
+        return f"{agent}: lens {lens} is not first"
+    if entries[1:2] != [LENS_BRIEF_ENTRY]:
+        return f"{agent}: {LENS_BRIEF_ENTRY} is not right after the lens"
+    return None
+
+
+def _brief_problem(agent: str, entries: list) -> str | None:
+    if LENS_BRIEF_ENTRY not in entries:
+        return f"{agent}: {LENS_BRIEF_ENTRY} is missing"
+    if BRIEF_ENTRY not in entries:
+        return f"{agent}: {BRIEF_ENTRY} is missing"
+    if entries.index(LENS_BRIEF_ENTRY) > entries.index(BRIEF_ENTRY):
+        return f"{agent}: {LENS_BRIEF_ENTRY} is not before {BRIEF_ENTRY}"
+    return None
+
+
+def _list_problem(agent: str, lens: str | None, entries: list) -> str | None:
+    """The first named problem in one agent's list, or None."""
+    problem = _lens_problem(agent, lens, entries) if lens is not None else None
+    if problem is None and JEV_ENTRY not in entries:
+        problem = f"{agent}: {JEV_ENTRY} is missing"
+    if problem is None and agent in BRIEF_AGENTS:
+        problem = _brief_problem(agent, entries)
+    return problem
+
+
+def check_lens_wiring(root: Path, run: FlowRun = _run_gsd) -> tuple[list[str], list[str]]:
+    """(problems, notes) for the lens and unit-brief wiring in agent_skills (read-only: config-get
+    only). `run` is the test seam."""
+    brief_file = root / LENS_BRIEF_REL
+    if not brief_file.is_file():
+        return [], [f"lens wiring not checked: no {LENS_BRIEF_REL}"]
+    if not (root / GSD_TOOLS_REL).is_file():
+        return [], ["lens wiring not checked: no project-local gsd-core"]
+    lenses = _expected_lenses(brief_file.read_text(encoding="utf-8"))
+    skills = _parse_json(run(root, "config-get", "agent_skills").stdout)
+    if not isinstance(skills, dict):
+        return ["agent_skills printed no JSON object"], []
+    problems = []
+    for agent in sorted({*lenses, *BRIEF_AGENTS}):
+        entries = skills.get(agent)
+        if not isinstance(entries, list):
+            problems.append(f"{agent}: no agent_skills list")
+            continue
+        problem = _list_problem(agent, lenses.get(agent), entries)
+        if problem:
+            problems.append(problem)
+    for agent, entries in skills.items():
+        for entry in entries if isinstance(entries, list) else []:
+            if isinstance(entry, str) and entry.startswith("/"):
+                problems.append(f"{agent}: entry {entry} is an absolute path")
+            if isinstance(entry, str) and entry.startswith("global:") \
+                    and lenses.get(agent) != entry:
+                problems.append(f"{agent}: global entry {entry} is not in the lens brief")
+    # No --raw: raw prints a one-element array as its bare string, not as JSON.
+    roots_out = run(root, "config-get", "agent_skills_security.trusted_global_roots").stdout
+    roots = _parse_json(roots_out)
+    if roots != TRUSTED_ROOTS:
+        problems.append(f"trusted_global_roots is {roots!r}, not {TRUSTED_ROOTS!r}")
+    review = run(root, "config-get", "workflow.ui_review", "--raw").stdout.strip()
+    if review != "true":
+        problems.append(f"workflow.ui_review is {review or 'unset'}, not true")
+    return problems, []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--root", type=Path, default=REPO_ROOT,
@@ -370,6 +468,8 @@ def main(argv: list[str] | None = None) -> int:
     problems, notes = check_runner_copy(root, args.template)
     flow_problems, flow_notes = check_flow_config(root)
     problems, notes = problems + flow_problems, notes + flow_notes
+    lens_problems, lens_notes = check_lens_wiring(root)
+    problems, notes = problems + lens_problems, notes + lens_notes
     if not args.skip_no_write:
         write_problems, write_notes = check_no_write(root)
         problems, notes = problems + write_problems, notes + write_notes

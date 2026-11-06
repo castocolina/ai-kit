@@ -44,9 +44,11 @@ def _gsd(repo, env, *args):
                           capture_output=True, text=True, check=False)
 
 
-def _fixture(root, env):
-    """A phase-07 fixture project with the checkout's project-local gsd-core copied in."""
-    repo = gsd_project(root, env, "sequential", [{"plan": "01", "stems": ("a", "b")}])
+def _fixture(root, env, summary=True):
+    """A phase-07 fixture project with the checkout's project-local gsd-core copied in.
+    `summary=False` leaves plan 01 without its SUMMARY.md, so wave 1 is not finished."""
+    repo = gsd_project(root, env, "sequential",
+                       [{"plan": "01", "stems": ("a", "b"), "summary": summary}])
     for part in (".claude/gsd-core", ".claude/scripts"):
         shutil.copytree(ROOT / part, repo / part, symlinks=True)
     return repo
@@ -244,9 +246,9 @@ class TestShipGate(unittest.TestCase):
         self.assertIn("usage", extra.stderr)
 
 
-def _installed_fixture(root, env):
+def _installed_fixture(root, env, summary=True):
     """A phase-07 fixture with a bare origin and the capability installed (tests read the hooks)."""
-    repo = _fixture(root, env)
+    repo = _fixture(root, env, summary)
     make_remote(root, env, repo)
     shutil.copytree(SKILL, pathlib.Path(env["HOME"]) / ".claude" / "skills" / "ai-kit-commit-fold",
                     ignore=shutil.ignore_patterns("__pycache__"), dirs_exist_ok=True)
@@ -286,17 +288,267 @@ class TestHookPoints(unittest.TestCase):
         self.assertEqual(wave[0]["kind"], "step")
         self.assertEqual(wave[0]["ref"], {"command": "ai-kit-fold checkpoint"})
 
-    def test_plan_pre_wave_pre_and_verify_post_list_no_fold_entry(self):
-        for point in ("plan:pre", "execute:wave:pre", "verify:post"):
-            with self.subTest(point=point):
-                self.assertEqual(self.points[point].returncode, 0, self.points[point].stderr)
-                self.assertEqual(_fold_hooks(self.points[point]), [])
+    def test_plan_pre_lists_the_boundary_contribution_for_the_planner(self):
+        self.assertEqual(self.points["plan:pre"].returncode, 0, self.points["plan:pre"].stderr)
+        hooks = _fold_hooks(self.points["plan:pre"])
+        self.assertEqual(len(hooks), 1)
+        self.assertEqual(hooks[0]["kind"], "contribution")
+        self.assertEqual(hooks[0]["into"], "planner")
+        text = hooks[0]["fragment"]["inline"]
+        self.assertIn("gsd-tools.cjs ai-kit-fold boundary-plan --phase", text)
+        self.assertIn("<objective>", text)
+        self.assertIn("Unit brief: read .aikit/brief/SKILL.md", text)
+
+    def test_execute_wave_pre_lists_the_boundary_step(self):
+        self.assertEqual(self.points["execute:wave:pre"].returncode, 0,
+                         self.points["execute:wave:pre"].stderr)
+        hooks = _fold_hooks(self.points["execute:wave:pre"])
+        self.assertEqual(len(hooks), 1)
+        self.assertEqual(hooks[0]["kind"], "step")
+        self.assertEqual(hooks[0]["ref"], {"command": "ai-kit-fold boundary-wave"})
+
+    def test_verify_post_lists_no_fold_entry(self):
+        self.assertEqual(self.points["verify:post"].returncode, 0,
+                         self.points["verify:post"].stderr)
+        self.assertEqual(_fold_hooks(self.points["verify:post"]), [])
 
     def test_step_commands_match_the_dispatch_grammar(self):
-        for point in ("discuss:pre", "execute:wave:post"):
+        for point in ("discuss:pre", "execute:wave:pre", "execute:wave:post"):
             with self.subTest(point=point):
                 command = _fold_hooks(self.points[point])[0]["ref"]["command"]
                 self.assertRegex(command, COMMAND_GRAMMAR)
+
+
+@unittest.skipUnless(shutil.which("node") and GSD_TOOLS.is_file()
+                     and (ROOT / ".claude" / "scripts").is_dir(),
+                     "node or the checkout's project-local gsd-core is missing")
+class TestBoundaryDispatch(unittest.TestCase):
+    # The router's boundary verbs as GSD runs them: unfinished wave 1 writes the brief, a
+    # finished wave 1 skips, and an unknown verb is a usage error naming both boundary verbs.
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p30-boundary-"))
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, ignore_errors=True)
+        home = cls.tmp / "home"
+        home.mkdir()
+        cls.env = _gsd_env(home, cls.tmp / "gsd-home")
+        cls.open = _installed_fixture(cls.tmp / "open", cls.env, summary=False)
+        cls.plan = _gsd(cls.open, cls.env, "ai-kit-fold", "boundary-plan", "--phase", "7", "--raw")
+        cls.plan_brief = _brief_text(cls.open)
+        cls.wave = _gsd(cls.open, cls.env, "ai-kit-fold", "boundary-wave", "--phase", "7", "--raw")
+        cls.wave_brief = _brief_text(cls.open)
+        cls.unknown = _gsd(cls.open, cls.env, "ai-kit-fold", "boundary-nope", "--phase", "7")
+        cls.done = _installed_fixture(cls.tmp / "done", cls.env)
+        cls.done_wave = _gsd(cls.done, cls.env, "ai-kit-fold", "boundary-wave", "--phase", "7",
+                             "--raw")
+        cls.done_brief = _brief_text(cls.done)
+
+    def test_plan_verb_writes_the_plan_point(self):
+        self.assertEqual(self.plan.returncode, 0, self.plan.stderr)
+        self.assertIn("point: plan", self.plan_brief)
+
+    def test_wave_verb_on_unfinished_wave_one_writes_the_wave_point(self):
+        self.assertEqual(self.wave.returncode, 0, self.wave.stderr)
+        self.assertIn("flow boundary", self.wave.stdout)
+        self.assertIn("point: wave", self.wave_brief)
+
+    def test_wave_verb_on_finished_wave_one_skips_and_writes_no_wave_brief(self):
+        self.assertEqual(self.done_wave.returncode, 0, self.done_wave.stderr)
+        self.assertIn("wave 1 finished: boundary skipped", self.done_wave.stdout)
+        self.assertNotIn("point: wave", self.done_brief)
+
+    def test_unknown_verb_is_a_usage_error_naming_both_boundary_verbs(self):
+        self.assertEqual(self.unknown.returncode, 2)
+        self.assertIn("boundary-plan", self.unknown.stderr)
+        self.assertIn("boundary-wave", self.unknown.stderr)
+
+
+LENS = ".planning/lens-brief"
+JEV = "skills/jev-fast-decision"
+UNIT_BRIEF = ".aikit/brief"
+BRIEF_AGENTS = ("gsd-phase-researcher", "gsd-planner", "gsd-executor")
+LENS_SETS = {
+    "gsd-ui-researcher": ["global:impeccable", LENS, JEV],
+    "gsd-ui-checker": ["global:impeccable", LENS, JEV],
+    "gsd-ui-auditor": ["global:impeccable", LENS, JEV],
+    "gsd-planner": ["global:ponytail:ponytail", LENS, JEV, UNIT_BRIEF],
+    "gsd-plan-checker": ["global:ponytail:ponytail", LENS, JEV],
+    "gsd-code-reviewer": ["global:ponytail:ponytail-review", LENS, JEV],
+    "gsd-phase-researcher": [JEV, LENS, UNIT_BRIEF],
+    "gsd-executor": [JEV, LENS, UNIT_BRIEF],
+}
+SYNTHETIC_LENS_BRIEF = (
+    "# lens brief (synthetic)\n\n## Expected lenses\n\n- gsd-planner: global:ponytail:ponytail\n\n"
+    "## If a lens did not load\n\nContinue without it.\n\n## Design rule\n\nSimple is not easy.\n\n"
+    "## Unit brief\n\nFor gsd-phase-researcher, gsd-planner and gsd-executor only: say no unit "
+    "brief was found.\n")
+
+
+def _wire_lenses(repo, env):
+    """The eight arrays, the trusted roots and ui_review, set through config-set as wire.sh does,
+    plus a synthetic lens brief in the fixture (never the repository's .planning/)."""
+    for agent, entries in LENS_SETS.items():
+        _gsd(repo, env, "config-set", f"agent_skills.{agent}", json.dumps(entries))
+    _gsd(repo, env, "config-set", "agent_skills_security.trusted_global_roots",
+         '["~/.agents/skills"]')
+    _gsd(repo, env, "config-set", "workflow.ui_review", "true")
+    brief = repo / ".planning" / "lens-brief" / "SKILL.md"
+    brief.parent.mkdir(parents=True, exist_ok=True)
+    brief.write_text(SYNTHETIC_LENS_BRIEF, encoding="utf-8")
+
+
+def _render(repo, env, agent):
+    return _gsd(repo, env, "query", "agent-skills", agent)
+
+
+def _entries(proc):
+    """A config-get list (the JSON form); a failed read or empty output counts as []."""
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return []
+    return json.loads(proc.stdout)
+
+
+def _brief_install_step(repo, env):
+    """The commit-fold SKILL.md step, as written: read each list, append the brief entry when it is
+    absent, write the whole list back."""
+    for agent in BRIEF_AGENTS:
+        entries = _entries(_gsd(repo, env, "config-get", f"agent_skills.{agent}"))
+        if UNIT_BRIEF not in entries:
+            entries.append(UNIT_BRIEF)
+        _gsd(repo, env, "config-set", f"agent_skills.{agent}", json.dumps(entries))
+
+
+def _brief_lists(repo, env):
+    return {agent: _entries(_gsd(repo, env, "config-get", f"agent_skills.{agent}"))
+            for agent in BRIEF_AGENTS}
+
+
+def _skill_section(heading, next_heading):
+    text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    start = text.index(heading)
+    return text[start:text.index(next_heading, start)]
+
+
+@unittest.skipUnless(shutil.which("node") and GSD_TOOLS.is_file()
+                     and (ROOT / ".claude" / "scripts").is_dir(),
+                     "node or the checkout's project-local gsd-core is missing")
+class TestAgentSkills(unittest.TestCase):
+    # The rendered agent-skills blocks of an unfinished fixture after one boundary-wave run.
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p30-skills-"))
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, ignore_errors=True)
+        home = cls.tmp / "home"
+        home.mkdir()
+        cls.env = _gsd_env(home, cls.tmp / "gsd-home")
+        cls.repo = _installed_fixture(cls.tmp / "fixture", cls.env, summary=False)
+        _wire_lenses(cls.repo, cls.env)
+        cls.wave = _gsd(cls.repo, cls.env, "ai-kit-fold", "boundary-wave", "--phase", "7", "--raw")
+        cls.blocks = {agent: _render(cls.repo, cls.env, agent) for agent in BRIEF_AGENTS}
+        cls.checker = _render(cls.repo, cls.env, "gsd-ui-checker")
+        cls.trusted = _gsd(cls.repo, cls.env, "config-get",
+                           "agent_skills_security.trusted_global_roots")
+
+    def test_each_brief_agent_renders_the_unit_brief_and_the_lens_brief(self):
+        self.assertEqual(self.wave.returncode, 0, self.wave.stderr)
+        for agent, proc in self.blocks.items():
+            with self.subTest(agent=agent):
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertIn("@.aikit/brief/SKILL.md", proc.stdout)
+                self.assertIn("@.planning/lens-brief/SKILL.md", proc.stdout)
+
+    def test_planner_reads_the_lens_brief_right_after_its_lens(self):
+        lines = self.blocks["gsd-planner"].stdout.splitlines()
+        lens_at = next(i for i, line in enumerate(lines) if "ponytail:ponytail" in line)
+        self.assertEqual(lines[lens_at + 1], "- @.planning/lens-brief/SKILL.md")
+
+    def test_a_missing_lens_still_renders_and_keeps_the_lens_brief_line(self):
+        self.assertEqual(self.checker.returncode, 0, self.checker.stderr)
+        self.assertIn("@.planning/lens-brief/SKILL.md", self.checker.stdout)
+
+    def test_trusted_roots_are_the_literal_tilde_path(self):
+        self.assertEqual(self.trusted.returncode, 0, self.trusted.stderr)
+        self.assertEqual(json.loads(self.trusted.stdout), ["~/.agents/skills"])
+
+
+@unittest.skipUnless(shutil.which("node") and GSD_TOOLS.is_file()
+                     and (ROOT / ".claude" / "scripts").is_dir(),
+                     "node or the checkout's project-local gsd-core is missing")
+class TestMissingBrief(unittest.TestCase):
+    # With the unit brief removed the renders still succeed, and the no-brief file is written again.
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p30-nobrief-"))
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, ignore_errors=True)
+        home = cls.tmp / "home"
+        home.mkdir()
+        cls.env = _gsd_env(home, cls.tmp / "gsd-home")
+        cls.repo = _installed_fixture(cls.tmp / "fixture", cls.env, summary=False)
+        _wire_lenses(cls.repo, cls.env)
+        _gsd(cls.repo, cls.env, "ai-kit-fold", "boundary-wave", "--phase", "7", "--raw")
+        brief = cls.repo / ".aikit" / "brief" / "SKILL.md"
+        brief.unlink()
+        cls.blocks = {agent: _render(cls.repo, cls.env, agent) for agent in BRIEF_AGENTS}
+        cls.rewritten = _gsd(cls.repo, cls.env, "ai-kit-fold", "boundary-wave", "--phase", "7",
+                             "--raw")
+        cls.brief_text = _brief_text(cls.repo)
+
+    def test_each_brief_agent_still_renders_with_the_lens_brief_line(self):
+        for agent, proc in self.blocks.items():
+            with self.subTest(agent=agent):
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertIn("@.planning/lens-brief/SKILL.md", proc.stdout)
+
+    def test_every_boundary_run_writes_the_brief_again(self):
+        self.assertEqual(self.rewritten.returncode, 0, self.rewritten.stderr)
+        self.assertIn("point: wave", self.brief_text)
+
+
+@unittest.skipUnless(shutil.which("node") and GSD_TOOLS.is_file()
+                     and (ROOT / ".claude" / "scripts").is_dir(),
+                     "node or the checkout's project-local gsd-core is missing")
+class TestBriefInstallStep(unittest.TestCase):
+    # The commit-fold SKILL.md step run as written, on a project whose lists were not pre-supplied.
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-p30-install-"))
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, ignore_errors=True)
+        home = cls.tmp / "home"
+        home.mkdir()
+        cls.env = _gsd_env(home, cls.tmp / "gsd-home")
+        cls.repo = _installed_fixture(cls.tmp / "fixture", cls.env, summary=False)
+        _gsd(cls.repo, cls.env, "config-set", "agent_skills.gsd-planner", '["skills/x"]')
+        _brief_install_step(cls.repo, cls.env)
+        cls.first = _brief_lists(cls.repo, cls.env)
+        _brief_install_step(cls.repo, cls.env)
+        cls.second = _brief_lists(cls.repo, cls.env)
+        cls.wave = _gsd(cls.repo, cls.env, "ai-kit-fold", "boundary-wave", "--phase", "7", "--raw")
+        cls.blocks = {agent: _render(cls.repo, cls.env, agent) for agent in BRIEF_AGENTS}
+        cls.section = _skill_section("## GSD install", "## GSD hooks")
+
+    def test_the_step_appends_the_brief_and_keeps_existing_entries(self):
+        self.assertEqual(self.first, {"gsd-phase-researcher": [UNIT_BRIEF],
+                                      "gsd-planner": ["skills/x", UNIT_BRIEF],
+                                      "gsd-executor": [UNIT_BRIEF]})
+
+    def test_running_the_step_twice_changes_nothing(self):
+        self.assertEqual(self.first, self.second)
+
+    def test_each_brief_agent_renders_the_unit_brief_after_one_boundary_wave(self):
+        self.assertEqual(self.wave.returncode, 0, self.wave.stderr)
+        for agent, proc in self.blocks.items():
+            with self.subTest(agent=agent):
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertIn("@.aikit/brief/SKILL.md", proc.stdout)
+
+    def test_the_skill_section_names_the_step_it_runs(self):
+        self.assertIn("config-get agent_skills.<agent>", self.section)
+        self.assertIn('".aikit/brief"', self.section)
+
+
+def _brief_text(repo):
+    brief = repo / ".aikit" / "brief" / "SKILL.md"
+    return brief.read_text(encoding="utf-8") if brief.is_file() else ""
 
 
 @unittest.skipUnless(shutil.which("node") and GSD_TOOLS.is_file()
