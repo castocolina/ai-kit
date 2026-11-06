@@ -54,6 +54,29 @@ out="$(env -i HOME="$CLONEHOME" PATH="$PATH" bash "$CLONE/tools/install.sh" inst
 check "LOCAL clone resolves+exports INSTALL_DIR from script location (no AI_KIT_DIR)" \
   bash -c '[ "'"$out"'" = "CLONE_SETUP install | '"$CLONE"'" ]'
 
+# --- 1c. an AI_KIT_DIR given through an alias reaches setup.py resolved -----
+# The bootstrapper sits beside no setup.py, so it runs in bootstrap mode; the
+# dry run of a non-git kit prints the fetch plan and fetches nothing.
+BOOT="$WORK/boot"; mkdir -p "$BOOT"
+cp "$INSTALL_SH" "$BOOT/install.sh"
+KITREAL="$WORK/kitreal"; mkdir -p "$KITREAL/tools"
+cat > "$KITREAL/tools/setup.py" <<'PY'
+import os
+print("ALIAS_SETUP " + os.environ.get("AI_KIT_DIR", ""))
+PY
+KITLINK="$WORK/kitlink"; ln -s "$KITREAL" "$KITLINK"
+KITRESOLVED="$(cd "$KITREAL" && pwd -P)"
+out="$(env -i HOME="$WORK" PATH="$PATH" AI_KIT_DIR="$KITLINK" bash "$BOOT/install.sh" --dry-run 2>/dev/null | grep '^ALIAS_SETUP ')"
+check "AI_KIT_DIR given through an alias is exported to setup.py as its pwd -P path" \
+  test "$out" = "ALIAS_SETUP $KITRESOLVED"
+
+# --- 1d. an empty HOME fails in install.sh before $HOME is expanded -----------
+hout="$(env -i HOME= PATH="$PATH" AI_KIT_DIR="$FIXTURE" AI_KIT_SKIP_FETCH=1 bash "$INSTALL_SH" install --dry-run 2>&1)"
+hrc=$?
+check "empty HOME makes install.sh exit 1" test "$hrc" -eq 1
+check "empty HOME message names HOME" \
+  test "$hout" = "error: HOME is unset or empty; set HOME to your home directory"
+
 # --- 2. convenience flags are TRANSLATED to setup.py subcommands ------------
 # The Makefile and the curl one-liner pass --doctor/--check/--reconfigure/
 # --uninstall; setup.py wants the bare subcommand, so the bootstrapper maps

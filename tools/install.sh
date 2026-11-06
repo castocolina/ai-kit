@@ -46,6 +46,10 @@ set -euo pipefail
 
 REPO_SLUG="${AI_KIT_REPO:-castocolina/ai-kit}"
 REPO_BRANCH="${AI_KIT_BRANCH:-main}"
+if [ -z "${HOME:-}" ]; then
+  echo "error: HOME is unset or empty; set HOME to your home directory" >&2
+  exit 1
+fi
 INSTALL_DIR="${AI_KIT_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/ai-kit}"
 # An explicit branch request (env now, or --branch in normalize_args) is the ONLY
 # thing that switches an existing clone; the default `main` does not count (D-21).
@@ -284,6 +288,9 @@ main() {
   fi
   [ -f "$INSTALL_DIR/tools/setup.py" ] || die "tools/setup.py missing under $INSTALL_DIR"
   ensure_python
+  # Resolve an alias spelling (a symlinked AI_KIT_DIR) to its physical path, so
+  # setup.py compares resolved paths. pwd -P is portable (no readlink -f on macOS).
+  if [ -d "$INSTALL_DIR" ]; then INSTALL_DIR="$(cd "$INSTALL_DIR" && pwd -P)"; fi
   # Hand the resolved location to setup.py so its resolve_paths() finds
   # claude-status-line.py / the sample under the SAME checkout we just resolved —
   # critical for a LOCAL clone, where INSTALL_DIR isn't the ~/.local/share default.

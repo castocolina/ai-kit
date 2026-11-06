@@ -15,7 +15,7 @@ set --headless / --skills=all|name1,name2 / --with-statusline[=claude,cursor] /
 --with-hooks (the last three require --headless).
 
 Env overrides (mirrors install.sh):
-  AI_KIT_DIR        install location (default: ${XDG_DATA_HOME:-~/.local/share}/ai-kit)
+  AI_KIT_DIR        install location (default: the checkout holding this script)
   CLAUDE_CONFIG_DIR Claude config dir (default: ~/.claude)
   CURSOR_CONFIG_DIR Cursor config dir (default: ~/.cursor)
   XDG_CONFIG_HOME   config base       (default: ~/.config)
@@ -102,7 +102,7 @@ def _config_doctor_checks():
 
 def resolve_paths(env):
     """Resolve every path the installer touches, mirroring install.sh's env
-    precedence: AI_KIT_DIR > XDG_DATA_HOME/ai-kit; CLAUDE_CONFIG_DIR > ~/.claude;
+    precedence: AI_KIT_DIR > the checkout holding this script; CLAUDE_CONFIG_DIR > ~/.claude;
     CURSOR_CONFIG_DIR > ~/.cursor; XDG_CONFIG_HOME/ai-kit > ~/.config/ai-kit.
 
     The Cursor *config* pair (`cursor_config_dir`/`cursor_cli_config`, D-21) is the
@@ -113,9 +113,8 @@ def resolve_paths(env):
     so the two can legitimately disagree when XDG_CONFIG_HOME is set without
     CURSOR_CONFIG_DIR."""
     home = env.get("HOME", "")
-    install_dir = env.get("AI_KIT_DIR") or os.path.join(
-        env.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share"), "ai-kit"
-    )
+    install_dir = (env.get("AI_KIT_DIR")
+                   or os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
     pi_dir = env.get("PI_CODING_AGENT_DIR") or os.path.join(home, ".pi", "agent")
     backups_dir = _sibling("config_doctor_appliers").backups_root(env)
@@ -1185,9 +1184,15 @@ def select_examples(examples, flag, tty):
 
 
 def _is_inside(path, root):
-    """True when path equals root or is nested under it (string test, mirrors
-    install.sh is_inside on absolute paths)."""
-    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+    """True when path (its parent resolved, its leaf kept) lies in root, both
+    resolved, compared by path components (so ai-kit is not inside ai-kit-old).
+    The leaf is not followed, so a symlink inside the kit is not taken out of it."""
+    leaf = os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+    real_root = os.path.realpath(root)
+    try:
+        return leaf == real_root or os.path.commonpath([leaf, real_root]) == real_root
+    except ValueError:
+        return False
 
 
 def installed_links(claude_dir, install_dir):
@@ -1205,7 +1210,7 @@ def installed_links(claude_dir, install_dir):
                 if not os.path.islink(link):
                     continue
                 target = os.readlink(link)
-                if _is_inside(target, install_dir):
+                if _is_inside(os.path.join(os.path.dirname(link), target), install_dir):
                     found[name] = target
         out[cat] = found
     return out
@@ -1387,7 +1392,7 @@ def link_one(link_path, target, dry, counts, install_dir=None):
         cur = os.readlink(link_path)
         if cur == target:
             return
-        if _is_inside(cur, install_dir):
+        if _is_inside(os.path.join(os.path.dirname(link_path), cur), install_dir):
             counts["relinked"] += 1
             if not dry:
                 os.remove(link_path)
@@ -1408,10 +1413,12 @@ def link_one(link_path, target, dry, counts, install_dir=None):
 
 
 def unlink_one(link_path, dry, counts):
-    """Remove one ai-kit symlink (caller has already confirmed ownership)."""
+    """Remove one ai-kit symlink (caller has already confirmed ownership). A link
+    that vanishes between detection and removal is counted gone, not an error."""
     counts["unlinked"] += 1
     if not dry and os.path.lexists(link_path):
-        os.remove(link_path)
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(link_path)
 
 
 def _backup_stamp():
@@ -1486,6 +1493,14 @@ def apply_stale_prune(claude_dir, stale, dry, counts):
         counts["unlinked"] -= 1
 
 
+def _prune_headless(root, stale, dry, counts):
+    """Headless prune: one warn line per dead ai-kit link (sorted), then remove them."""
+    for item in sorted(stale):
+        print(f"warn: removing dead ai-kit link {item} (entry removed upstream)",
+              file=sys.stderr)
+    apply_stale_prune(root, stale, dry, counts)
+
+
 def prune_stale(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     claude_dir, install_dir, present, tty, dry, counts,
 ):
@@ -1503,12 +1518,22 @@ def prune_stale(  # pylint: disable=too-many-arguments,too-many-positional-argum
         _tty_write(tty, banner)
         if not ask_yes_no(tty, "prune them?", default=False):
             return stale  # offered, declined
+        apply_stale_prune(claude_dir, stale, dry, counts)
     else:
-        for item in stale:
-            print(f"warn: removing dead ai-kit link {item} (entry removed upstream)",
-                  file=sys.stderr)
-    apply_stale_prune(claude_dir, stale, dry, counts)
+        _prune_headless(claude_dir, stale, dry, counts)
     return stale
+
+
+def _headless_prune_roots(paths, entries, dry, counts):
+    """Headless installs and reconfigures prune dead ai-kit links first: the claude
+    root, then the pi root when it exists (its skills/ items only, as the wizard
+    filters). Never creates the pi dir."""
+    present = {cat: {n for n, _ in entries[cat]} for cat in CATEGORIES}
+    prune_stale(paths.claude_dir, paths.install_dir, present, None, dry, counts)
+    if os.path.isdir(paths.pi_dir):
+        pi_stale = [i for i in stale_link_candidates(paths.pi_dir, paths.install_dir, present)
+                    if i.startswith("skills/")]
+        _prune_headless(paths.pi_dir, pi_stale, dry, counts)
 
 
 def predecessor_candidates(claude_dir, install_dir, entries):
@@ -1534,7 +1559,7 @@ def predecessor_candidates(claude_dir, install_dir, entries):
             if not os.path.islink(link):
                 continue
             old = os.readlink(link)
-            if _is_inside(old, install_dir):
+            if _is_inside(os.path.join(os.path.dirname(link), old), install_dir):
                 continue                       # already a current ai-kit link
             if os.path.exists(link):
                 continue                       # live target: foreign content, replace path's job
@@ -2933,7 +2958,8 @@ def unwire_hook_rows(paths, rows, dry, counts):
             continue
         link_path = hook_link_path(paths, row)
         if link_path is not None and os.path.islink(link_path) and _is_inside(
-                os.readlink(link_path), paths.install_dir):
+                os.path.join(os.path.dirname(link_path), os.readlink(link_path)),
+                paths.install_dir):
             try:
                 unlink_one(link_path, dry, counts)
             except OSError as exc:
@@ -2974,7 +3000,8 @@ def hook_installed_hosts(paths, hook_id):
             continue
         link_path = hook_link_path(paths, row)
         if link_path is not None and os.path.islink(link_path) and _is_inside(
-                os.readlink(link_path), paths.install_dir):
+                os.path.join(os.path.dirname(link_path), os.readlink(link_path)),
+                paths.install_dir):
             installed.add(row.host)
     return installed
 
@@ -4747,8 +4774,9 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
         env, dry, skills_flag, with_statusline, with_hooks, examples_flag=None,
         replace_existing=False, with_global_rules=False):
     """The --headless counterpart to cmd_install: no Textual, no tty, no
-    require_tty gate. Bare (all flags falsy) is a pure no-op -- 'nothing
-    touched unless asked' (and nothing fetched -- see the plan's sync note;
+    require_tty gate. Bare (all flags falsy) only prunes dead ai-kit links (claude
+    root, then the pi root when it exists) and links or wires nothing -- 'nothing
+    linked unless asked' (and nothing fetched -- see the plan's sync note;
     this function never syncs the repo, headless or not). --skills links
     additively (apply_additive_skills, never unlinks). --with-statusline/
     --with-hooks independently opt into wiring those, reusing the existing
@@ -4789,10 +4817,10 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
     paths, entries = _headless_paths_and_entries(env)
     if paths is None:
         return 1
-
-    # --- deliberate omission: no prune_stale/predecessor_candidates call here.
-    # See the plan's "Out of scope" section -- their behavior contradicts
-    # "nothing touched unless asked." A future --prune-stale flag plugs in here.
+    counts = new_counts()
+    # Headless installs prune dead ai-kit links (claude root, then pi root) before
+    # linking; the wizard asks first.
+    _headless_prune_roots(paths, entries, dry, counts)
 
     # Re-normalized in place (not a new local): main() already resolved
     # `--with-statusline=<hosts>` at command entry, so this is the host list to
@@ -4803,14 +4831,14 @@ def cmd_install_headless(  # pylint: disable=too-many-arguments,too-many-positio
                  or with_hooks or examples_flag is not None)
     if requested:
         migrate_statusline(paths, dry)
-    counts = new_counts()
-    replaced = (_headless_replace(paths, entries, skills_flag, dry, counts)
+    replaced =(_headless_replace(paths, entries, skills_flag, dry, counts)
                 if replace_existing else set())
     ok, chosen = _headless_link_skills(skills_flag, entries, paths.claude_dir,
                                        dry, counts, replaced=frozenset(replaced or ()))
     ok = ok and replaced is not None
-    # Only a run that named --skills touches the pi root; bare --headless and
-    # hooks/statusline-only runs leave every pi link exactly as it was.
+    # Only a run that named --skills links into the pi root; bare --headless and
+    # hooks/statusline-only runs only prune its dead ai-kit links (above) and leave
+    # every other pi link as it was.
     if chosen is not None and not _headless_sync_pi(paths, entries, dry,
                                                     counts, chosen,
                                                     replaced=frozenset(replaced or ())):
@@ -5114,7 +5142,8 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
     )
     parser.add_argument("--headless", action="store_true",
                          help="non-interactive install/reconfigure: no wizard, "
-                              "no tty required. Bare form links/wires nothing; "
+                              "no tty required. "
+                              "Bare form only prunes dead ai-kit links and links/wires nothing; "
                               "combine with --skills/--with-statusline/--with-hooks/"
                               "--examples.")
     parser.add_argument("--skills", default=None, metavar="all|name1,name2",
@@ -5179,6 +5208,9 @@ def main(argv=None):  # pylint: disable=too-many-return-statements,too-many-bran
     if args.headless and args.config_doctor:
         parser.error("--headless and --config-doctor cannot be combined")
     env = os.environ
+    if not env.get("HOME", ""):
+        print("error: HOME is unset or empty; set HOME to your home directory", file=sys.stderr)
+        return 2
     if args.with_statusline is not False:
         # Host selection is validated at command entry: nothing — no migration,
         # no replacement, no link, no hook, no example, no config write — has

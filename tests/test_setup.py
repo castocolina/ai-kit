@@ -894,16 +894,17 @@ class TestResolvePaths(unittest.TestCase):
     def test_defaults(self):
         env = {"HOME": "/home/u"}
         p = setup.resolve_paths(env)
-        self.assertEqual(p.install_dir, "/home/u/.local/share/ai-kit")
+        repo = os.path.realpath(_REPO_ROOT)
+        self.assertEqual(p.install_dir, repo)
         self.assertEqual(p.claude_dir, "/home/u/.claude")
         self.assertEqual(p.settings, "/home/u/.claude/settings.json")
         self.assertEqual(p.config_dir, "/home/u/.config/ai-kit")
         self.assertEqual(p.config_toml, "/home/u/.config/ai-kit/claude-statusline.toml")
         self.assertEqual(
-            p.sample, "/home/u/.local/share/ai-kit/tools/claude-statusline.toml.sample")
-        self.assertEqual(p.status_line, "/home/u/.local/share/ai-kit/tools/claude-status-line.py")
+            p.sample, os.path.join(repo, "tools", "claude-statusline.toml.sample"))
+        self.assertEqual(p.status_line, os.path.join(repo, "tools", "claude-status-line.py"))
         self.assertEqual(p.statusline_doctor,
-                         "/home/u/.local/share/ai-kit/tools/statusline-doctor.py")
+                         os.path.join(repo, "tools", "statusline-doctor.py"))
 
     def test_env_overrides(self):
         env = {
@@ -919,10 +920,11 @@ class TestResolvePaths(unittest.TestCase):
         self.assertEqual(p.claude_dir, "/cfg/claude")
         self.assertEqual(p.config_dir, "/xdg/config/ai-kit")
 
-    def test_xdg_data_home_without_ai_kit_dir(self):
+    def test_xdg_data_home_does_not_move_the_kit(self):
+        # A checkout run uses its own checkout; XDG_DATA_HOME only locates the bootstrap clone.
         env = {"HOME": "/home/u", "XDG_DATA_HOME": "/xdg/data"}
         p = setup.resolve_paths(env)
-        self.assertEqual(p.install_dir, "/xdg/data/ai-kit")
+        self.assertEqual(p.install_dir, os.path.realpath(_REPO_ROOT))
 
     def test_categories_constant(self):
         self.assertEqual(setup.CATEGORIES, ("agents", "commands", "skills"))
@@ -7121,6 +7123,283 @@ class TestPreviewTitle(unittest.TestCase):
                          "preview — {host} (real renderer, sample data)")
         self.assertEqual(wizard_app.PREVIEW_TITLE.format(host="Cursor CLI"),
                          "preview — Cursor CLI (real renderer, sample data)")
+
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_KIT_ITEMS = ("agents", "commands", "skills", "tools", "examples", "cursor-agents")
+_KIT_IGNORE = ("__pycache__", "ai-kit-spec-execute-gsd", "ai-kit-opencode-providers",
+               "mermaid-audit")
+
+
+def _copy_kit(dest):
+    """A real kit copy holding only the top-level folders setup.py reads (plan 31-03)."""
+    os.makedirs(dest)
+    for name in _KIT_ITEMS:
+        src = os.path.join(_REPO_ROOT, name)
+        if os.path.isdir(src):
+            shutil.copytree(src, os.path.join(dest, name), symlinks=True,
+                            ignore=shutil.ignore_patterns(*_KIT_IGNORE))
+
+
+class TestIsInsidePathComponents(unittest.TestCase):
+    def test_compares_path_components_and_keeps_the_leaf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = os.path.join(tmp, "ai-kit")
+            old = os.path.join(tmp, "ai-kit-old")
+            os.makedirs(os.path.join(kit, "skills", "x"))
+            os.makedirs(os.path.join(old, "skills", "x"))
+            outside = os.path.join(tmp, "outside")
+            os.makedirs(outside)
+            os.symlink(outside, os.path.join(kit, "skills", "ext"))
+            self.assertTrue(setup._is_inside(os.path.join(kit, "skills", "x"), kit))
+            self.assertTrue(setup._is_inside(kit, kit))
+            self.assertFalse(setup._is_inside(os.path.join(old, "skills", "x"), kit))
+            # the symlinked leaf is not followed out of the kit
+            self.assertTrue(setup._is_inside(os.path.join(kit, "skills", "ext"), kit))
+
+    def test_alias_of_the_root_and_dangling_leaf_are_inside(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = os.path.join(tmp, "kit")
+            os.makedirs(os.path.join(kit, "skills"))
+            alias = os.path.join(tmp, "alias")
+            os.symlink(kit, alias)
+            self.assertTrue(setup._is_inside(os.path.join(alias, "skills", "x"), kit))
+            self.assertTrue(setup._is_inside(os.path.join(alias, "skills", "gone"), kit))
+            self.assertTrue(setup._is_inside(os.path.join(kit, "skills", "x"), alias))
+
+    def test_relative_link_target_resolves_against_the_link_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = os.path.join(tmp, "kit")
+            os.makedirs(os.path.join(kit, "skills", "alpha"))
+            claude = os.path.join(tmp, "claude")
+            os.makedirs(os.path.join(claude, "skills"))
+            os.symlink(os.path.relpath(os.path.join(kit, "skills", "alpha"),
+                                       os.path.join(claude, "skills")),
+                       os.path.join(claude, "skills", "alpha"))
+            self.assertIn("alpha", setup.installed_links(claude, kit)["skills"])
+
+
+class TestResolvedKitPaths(unittest.TestCase):
+    """An alias spelling of the kit or of the home is the same folder (SPEC R8, D-05)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="ai-kit-p31-")
+        cls.kit = os.path.join(cls.tmp, "kit")
+        _copy_kit(cls.kit)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _case_dir(self):
+        return tempfile.mkdtemp(prefix="case-", dir=self.tmp)
+
+    def _install(self, script, kit_dir, home):
+        env = {"PATH": os.environ.get("PATH", ""), "HOME": home,
+               "AI_KIT_DIR": kit_dir, "AI_KIT_REFUSE_REAL_HOME": "1",
+               "XDG_CACHE_HOME": os.path.join(home, ".cache"),
+               "XDG_CONFIG_HOME": os.path.join(home, ".config")}
+        return subprocess.run(
+            [sys.executable, script, "install", "--headless", "--skills", "all"],
+            env=env, capture_output=True, text=True, check=False)
+
+    def test_alias_reinstall_finds_no_foreign_links_and_links_pi_skills(self):
+        base = self._case_dir()
+        home = os.path.join(base, "home")
+        os.makedirs(os.path.join(home, ".pi", "agent"))
+        kit_alias = os.path.join(base, "kit-alias")
+        os.symlink(self.kit, kit_alias)
+        home_alias = os.path.join(base, "home-alias")
+        os.symlink(home, home_alias)
+        script = os.path.join(self.kit, "tools", "setup.py")
+        first = self._install(script, kit_alias, home)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = self._install(script, self.kit, home_alias)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertNotIn("points outside ai-kit", second.stderr)
+        pi_skills = os.path.join(home, ".pi", "agent", "skills")
+        for name in ("ai-kit-cross-ai", "ai-kit-session-wake", "jev-fast-decision"):
+            self.assertEqual(
+                os.path.realpath(os.path.join(pi_skills, name)),
+                os.path.realpath(os.path.join(self.kit, "skills", name)), name)
+
+
+class TestCheckoutRun(unittest.TestCase):
+    """A run of a checkout's setup.py without AI_KIT_DIR links that checkout (SPEC R8)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="ai-kit-p31-")
+        cls.kit = os.path.join(cls.tmp, "kit")
+        _copy_kit(cls.kit)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _env(self, home):
+        return {"PATH": os.environ.get("PATH", ""), "HOME": home,
+                "AI_KIT_REFUSE_REAL_HOME": "1",
+                "XDG_CACHE_HOME": os.path.join(home, ".cache"),
+                "XDG_CONFIG_HOME": os.path.join(home, ".config")}
+
+    def test_checkout_run_links_into_its_own_checkout(self):
+        home = tempfile.mkdtemp(prefix="home-", dir=self.tmp)
+        script = os.path.join(self.kit, "tools", "setup.py")
+        proc = subprocess.run([sys.executable, script, "install", "--headless",
+                               "--skills", "all"],
+                              env=self._env(home), capture_output=True, text=True, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        skills = os.path.join(home, ".claude", "skills")
+        links = [n for n in os.listdir(skills) if os.path.islink(os.path.join(skills, n))]
+        self.assertTrue(links)
+        kit_real = os.path.realpath(self.kit)
+        for name in links:
+            target = os.path.realpath(os.path.join(skills, name))
+            self.assertTrue(target == kit_real or target.startswith(kit_real + os.sep), name)
+
+    def test_empty_or_unset_home_fails_first_with_its_own_message(self):
+        base = tempfile.mkdtemp(prefix="home-", dir=self.tmp)
+        script = os.path.join(self.kit, "tools", "setup.py")
+        for env in ({**self._env(""), "HOME": ""},
+                    {k: v for k, v in self._env("").items() if k != "HOME"}):
+            proc = subprocess.run([sys.executable, script, "install", "--headless",
+                                   "--skills", "all"],
+                                  env=env, capture_output=True, text=True, check=False)
+            self.assertEqual(proc.returncode, 2, proc.stderr)
+            self.assertEqual(proc.stderr.strip(),
+                             "error: HOME is unset or empty; set HOME to your home directory")
+            self.assertNotIn("AI_KIT_REFUSE_REAL_HOME", proc.stderr)
+        self.assertEqual(os.listdir(base), [])
+
+
+_DEAD_NAMES = ("ai-kit-spec-execute-gsd", "ai-kit-opencode-providers", "mermaid-audit")
+
+
+def _prune_warns(stderr):
+    return [ln for ln in stderr.splitlines() if "removing dead ai-kit link" in ln]
+
+
+class TestHeadlessPrune(unittest.TestCase):
+    """Headless install and reconfigure remove dead ai-kit links, one warning each (R6, D-04)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="ai-kit-p31-")
+        cls.kit = os.path.join(cls.tmp, "kit")
+        _copy_kit(cls.kit)
+        cls.script = os.path.join(cls.kit, "tools", "setup.py")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="home-", dir=self.tmp)
+        self.claude = os.path.join(self.home, ".claude", "skills")
+        self.pi = os.path.join(self.home, ".pi", "agent", "skills")
+        os.makedirs(self.claude)
+
+    def _seed_dead(self, root):
+        os.makedirs(root, exist_ok=True)
+        for name in _DEAD_NAMES:
+            os.symlink(os.path.join(self.kit, "skills", name), os.path.join(root, name))
+
+    def _run(self, *args):
+        env = {"PATH": os.environ.get("PATH", ""), "HOME": self.home,
+               "AI_KIT_REFUSE_REAL_HOME": "1", "AI_KIT_DIR": self.kit,
+               "XDG_CACHE_HOME": os.path.join(self.home, ".cache"),
+               "XDG_CONFIG_HOME": os.path.join(self.home, ".config")}
+        return subprocess.run([sys.executable, self.script, *args], env=env,
+                              capture_output=True, text=True, check=False)
+
+    def _expected(self):
+        return [f"warn: removing dead ai-kit link skills/{n} (entry removed upstream)"
+                for n in sorted(_DEAD_NAMES)]
+
+    def test_bare_install_prunes_claude_then_pi_dead_links(self):
+        self._seed_dead(self.claude)
+        self._seed_dead(self.pi)
+        proc = self._run("install", "--headless")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(_prune_warns(proc.stderr), self._expected() * 2)
+        for root in (self.claude, self.pi):
+            for name in _DEAD_NAMES:
+                self.assertFalse(os.path.lexists(os.path.join(root, name)), name)
+
+    def test_skills_all_install_prunes_the_same_links(self):
+        self._seed_dead(self.claude)
+        self._seed_dead(self.pi)
+        proc = self._run("install", "--headless", "--skills", "all")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(_prune_warns(proc.stderr), self._expected() * 2)
+
+    def test_reconfigure_prunes_the_same_links(self):
+        self._seed_dead(self.claude)
+        proc = self._run("reconfigure", "--headless")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(_prune_warns(proc.stderr), self._expected())
+        self.assertFalse(os.path.lexists(os.path.join(self.claude, "mermaid-audit")))
+
+    def test_neighbours_of_a_dead_link_survive(self):
+        self._seed_dead(self.claude)
+        outside = os.path.join(self.tmp, "outside")
+        os.makedirs(outside, exist_ok=True)
+        os.symlink(outside, os.path.join(self.claude, "foreign-thing"))
+        os.makedirs(os.path.join(self.claude, "realdir"))
+        live = os.path.join(self.claude, "ai-kit-cross-ai")
+        os.symlink(os.path.join(self.kit, "skills", "ai-kit-cross-ai"), live)
+        proc = self._run("install", "--headless")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(_prune_warns(proc.stderr), self._expected())
+        self.assertEqual(os.readlink(os.path.join(self.claude, "foreign-thing")), outside)
+        self.assertTrue(os.path.isdir(os.path.join(self.claude, "realdir")))
+        self.assertFalse(os.path.islink(os.path.join(self.claude, "realdir")))
+        self.assertEqual(os.path.realpath(live),
+                         os.path.realpath(os.path.join(self.kit, "skills", "ai-kit-cross-ai")))
+
+    def test_no_dead_links_prints_no_warning(self):
+        os.symlink(os.path.join(self.kit, "skills", "ai-kit-cross-ai"),
+                   os.path.join(self.claude, "ai-kit-cross-ai"))
+        proc = self._run("install", "--headless")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(_prune_warns(proc.stderr), [])
+
+    def test_missing_pi_dir_is_skipped_and_never_created(self):
+        self._seed_dead(self.claude)
+        proc = self._run("install", "--headless")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(_prune_warns(proc.stderr), self._expected())
+        self.assertFalse(os.path.exists(os.path.join(self.home, ".pi")))
+
+    def test_odd_link_name_is_removed_and_printed_as_stored(self):
+        odd = "odd name é"
+        os.symlink(os.path.join(self.kit, "skills", odd), os.path.join(self.claude, odd))
+        proc = self._run("install", "--headless")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(_prune_warns(proc.stderr),
+                         [f"warn: removing dead ai-kit link skills/{odd} (entry removed upstream)"])
+        self.assertFalse(os.path.lexists(os.path.join(self.claude, odd)))
+
+    def test_link_vanishing_before_removal_counts_as_gone(self):
+        self._seed_dead(self.claude)
+        env = {"PATH": os.environ.get("PATH", ""), "HOME": self.home,
+               "AI_KIT_DIR": self.kit, "AI_KIT_REFUSE_REAL_HOME": "1",
+               "XDG_CACHE_HOME": os.path.join(self.home, ".cache"),
+               "XDG_CONFIG_HOME": os.path.join(self.home, ".config")}
+        real_remove = os.remove
+
+        def vanishing(path, *args, **kwargs):
+            if os.path.basename(path) == "mermaid-audit":
+                real_remove(path)  # gone between detection and removal
+                raise FileNotFoundError(path)
+            return real_remove(path, *args, **kwargs)
+
+        with mock.patch.object(setup.os, "remove", side_effect=vanishing):
+            rc = setup.cmd_install_headless(env, False, None, False, False)
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.lexists(os.path.join(self.claude, "mermaid-audit")))
 
 
 if __name__ == "__main__":
