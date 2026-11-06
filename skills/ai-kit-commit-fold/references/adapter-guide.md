@@ -30,6 +30,12 @@ GSD dispatches these hook points that the flow uses:
 5. `plan:pre` contribution into `planner`: text the planner acts on. It tells the planner to run
    `gsd-tools ai-kit-fold boundary-plan --phase N` first.
 
+A step's `ref.command` (`ai-kit-fold checkpoint`) is a gsd-tools command family, not a program on
+PATH: GSD's step dispatch runs it as `gsd-tools ai-kit-fold checkpoint --phase N --raw`. Checking
+PATH for `ai-kit-fold` finds nothing and skips the fold. The command module looks for `fold.py`
+in the host skills dirs first, then in the project's `.claude/skills`, `.agents/skills` and
+`skills/` (ai-kit's own checkout).
+
 GSD does not dispatch the flow at three points, so the orchestrator runs these commands itself
 as numbered instructions:
 

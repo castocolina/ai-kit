@@ -21,8 +21,14 @@ function skillsRoots(env = process.env) {
   });
 }
 
-function findFold(env = process.env) {
-  for (const root of skillsRoots(env)) {
+// Project dirs come after the host dirs: a project-scope skill install, then ai-kit's own source
+// tree, so the capability works in a checkout whose skill is not installed in any host dir.
+function projectRoots(cwd) {
+  return cwd ? [path.join(cwd, '.claude', 'skills'), path.join(cwd, '.agents', 'skills'), path.join(cwd, 'skills')] : [];
+}
+
+function findFold(env = process.env, cwd = null) {
+  for (const root of [...skillsRoots(env), ...projectRoots(cwd)]) {
     const script = path.join(root, 'ai-kit-commit-fold', 'scripts', 'fold.py');
     if (fs.existsSync(script)) return script;
   }
@@ -46,7 +52,7 @@ function argvFor(script, verb, phase, cwd) {
 
 // The ship:pre gate: GSD's own ship is always blocked; it is pointed at the unit flow.
 function ship(phase, cwd) {
-  const script = findFold();
+  const script = findFold(process.env, cwd);
   const show = script ? spawnSync('python3', [script, 'show', '--phase', phase, '--repo', cwd], { cwd, encoding: 'utf8' }) : null;
   const match = show && show.status === 0 ? /^state:\s*(\S+)/m.exec(show.stdout || '') : null;
   const state = match ? match[1] : null;
@@ -77,7 +83,7 @@ function route({ args, cwd }) {
     ship(parsed.phase, cwd);
     return;
   }
-  const script = findFold();
+  const script = findFold(process.env, cwd);
   if (!script) {
     process.stdout.write('ai-kit-fold: fold script not found in any skills dir\n');
     process.stdout.write(`outcome: phase-${parsed.phase} nothing folded (install ai-kit-commit-fold) (inline)\n`);

@@ -16,7 +16,7 @@ in `references/adapter-guide.md`.
 
 - `SKILL.md`: how to run the fold, the unit flow, push consent, cascade conflicts and the GSD hooks.
 - `fold.py boundary` (`--point start|plan|wave`): one unit boundary run (index refresh and the unit brief); `fold.py index` refreshes the codegraph index and the graphify graph.
-- GSD hook points: `discuss:pre` step `ai-kit-fold start`, `plan:pre` planner contribution (`ai-kit-fold boundary-plan`), `execute:wave:pre` step `ai-kit-fold boundary-wave`, `execute:wave:post` step `ai-kit-fold checkpoint`, `ship:pre` gate `ai-kit-fold ship`.
+- GSD hook points: `discuss:pre` step `ai-kit-fold start`, `plan:pre` planner contribution (`ai-kit-fold boundary-plan`), `execute:wave:pre` step `ai-kit-fold boundary-wave`, `execute:wave:post` step `ai-kit-fold checkpoint`, `ship:pre` gate `ai-kit-fold ship`. Each step command is a gsd-tools command family (`gsd-tools ai-kit-fold checkpoint --phase N --raw`), not a program on PATH; the module finds `fold.py` in the host skills dirs, then in the project's `.claude/skills`, `.agents/skills` and `skills/`.
 - `references/unit-contract.md`, `references/adapter-guide.md`: the neutral unit contract and the adapters.
 - `scripts/`: the engine (`fold.py` entry point, `fold_engine.py`, `fold_adapters.py`, `fold_group.py`).
 - `references/folding-policy.md`: the policy text; each rule is pinned by a doc-contract check in `tests/test_arch.py`.

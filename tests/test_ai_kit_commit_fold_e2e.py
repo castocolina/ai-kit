@@ -102,6 +102,21 @@ class TestCapabilityE2E(unittest.TestCase):
         cls.missing_head = run_git(cls.missing, cls.missing_env, "rev-parse", "HEAD").strip()
         cls.missing_run = _gsd(cls.missing, cls.missing_env, "ai-kit-fold", "run", "--phase", "7",
                                "--raw")
+        # ai-kit's own checkout: no host dir holds the skill, the project's skills/ tree does. The
+        # wave:post step is rendered and run the way GSD dispatches it: gsd-tools <ref.command>.
+        cls.local = _fixture(cls.tmp / "local", cls.missing_env)
+        shutil.copytree(SKILL, cls.local / "skills" / "ai-kit-commit-fold",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        with (cls.local / ".git" / "info" / "exclude").open("a", encoding="utf-8") as exclude:
+            exclude.write("skills/\n")
+        _gsd(cls.local, cls.missing_env, "capability", "install", str(BUNDLE),
+             "--scope", "project", "--yes")
+        local_hooks = _json(_gsd(cls.local, cls.missing_env, "loop", "render-hooks",
+                                 "execute:wave:post", "--raw").stdout)["activeHooks"]
+        cls.local_command = next(hook["ref"]["command"] for hook in local_hooks
+                                 if hook.get("capId") == "ai-kit-commit-fold")
+        cls.local_run = _gsd(cls.local, cls.missing_env, *cls.local_command.split(),
+                             "--phase", "7", "--raw")
 
     def test_install_without_yes_is_refused_and_names_the_command_module(self):
         self.assertEqual(self.install_no_yes.returncode, 1)
@@ -138,6 +153,13 @@ class TestCapabilityE2E(unittest.TestCase):
         self.assertIn("fold script not found", self.missing_run.stdout)
         head = run_git(self.missing, self.env, "rev-parse", "HEAD").strip()
         self.assertEqual(head, self.missing_head)
+
+    def test_wave_post_step_finds_the_fold_in_the_project_skills_tree(self):
+        self.assertRegex(self.local_command, COMMAND_GRAMMAR)
+        output = self.local_run.stdout + self.local_run.stderr
+        self.assertNotIn("fold script not found", output)
+        # fold.py itself answered: no unit was started in this fixture, so it refuses by name.
+        self.assertIn("outcome: phase-07 refused not_started", self.local_run.stdout, output)
 
     def test_skills_roots_with_a_full_env_list_the_five_host_dirs(self):
         env = {"HOME": "/h", "CLAUDE_CONFIG_DIR": "/cc", "XDG_CONFIG_HOME": "/xdg",

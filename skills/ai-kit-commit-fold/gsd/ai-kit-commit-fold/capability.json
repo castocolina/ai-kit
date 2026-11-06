@@ -1,7 +1,7 @@
 {
   "id": "ai-kit-commit-fold",
   "role": "feature",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "title": "ai-kit commit fold",
   "description": "Starts each unit and runs its boundary step, folds each finished plan after every wave, and points GSD's ship at the unit flow.",
   "tier": "full",
