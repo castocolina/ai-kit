@@ -1476,8 +1476,10 @@ def stale_link_candidates(claude_dir, install_dir, present):
             if name in keep:
                 continue
             link = os.path.join(claude_dir, cat, name)
-            # only stale if its target no longer resolves (entry removed upstream)
-            if os.path.exists(link):
+            # stale if the target no longer resolves, or (skills) the folder has no
+            # SKILL.md: only gitignored bytecode is left after an upstream removal
+            marker = os.path.join(link, "SKILL.md") if cat == "skills" else link
+            if os.path.exists(marker):
                 continue
             stale.append(f"{cat}/{name}")
     return stale

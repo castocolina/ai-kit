@@ -7375,6 +7375,21 @@ class TestHeadlessPrune(unittest.TestCase):
         self.assertEqual(os.path.realpath(live),
                          os.path.realpath(os.path.join(self.kit, "skills", "ai-kit-cross-ai")))
 
+    def test_bytecode_only_skill_folder_counts_as_removed(self):
+        stub = os.path.join(self.kit, "skills", "ai-kit-bytecode-only")
+        os.makedirs(os.path.join(stub, "__pycache__"))
+        self.addCleanup(shutil.rmtree, stub, ignore_errors=True)
+        with open(os.path.join(stub, "__pycache__", "x.pyc"), "wb") as fh:
+            fh.write(b"\0")
+        os.symlink(stub, os.path.join(self.claude, "ai-kit-bytecode-only"))
+        proc = self._run("install", "--headless")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            _prune_warns(proc.stderr),
+            ["warn: removing dead ai-kit link skills/ai-kit-bytecode-only"
+             " (entry removed upstream)"])
+        self.assertFalse(os.path.lexists(os.path.join(self.claude, "ai-kit-bytecode-only")))
+
     def test_no_dead_links_prints_no_warning(self):
         os.symlink(os.path.join(self.kit, "skills", "ai-kit-cross-ai"),
                    os.path.join(self.claude, "ai-kit-cross-ai"))
