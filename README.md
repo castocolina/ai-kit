@@ -70,10 +70,11 @@ Adding or removing skills/commands/agents needs no change to the script — entr
 ### The install wizard
 
 After the repo is fetched, `install.sh` launches `tools/setup.py` — a
-full-screen **Textual** wizard with two surfaces: an **install-picks screen**
-(choose which skills, commands, agents, and example segments to install) and a
-**2-D layout board** (arrange status-line segments visually instead of
-hand-editing TOML). You can also reach it directly:
+full-screen **Textual** wizard with four steps: **Choose** (one tab per kind of
+component: skills, commands, agents, example segments, and the hooks group),
+**Arrange** (one pane per detected status-line host, each with a 2-D layout
+board that arranges status-line segments visually instead of hand-editing TOML),
+**Review & confirm**, and **✓ ai-kit is installed** (Done). You can also reach it directly:
 
 ```bash
 uv run tools/setup.py            # interactive install
@@ -111,59 +112,83 @@ The precompact row wires Claude's `PreCompact` producer and compact
 opencode plugin when those host directories exist. The review counts hook rows
 separately from components.
 
-#### Install-picks screen keybindings
+#### Choose keys
+
+The Choose step has one tab per component kind, each with its items and a
+selected count. Move between tabs with `←`/`→`, then move through the items
+with `↑`/`↓`.
 
 | Key | Action |
 |---|---|
-| `space` | Toggle the focused pick on (◉) / off (◯) |
-| `a` | Select all |
-| `n` | Select none |
-| `tab` | Go to the Layout Board |
-| `enter` | Go to the summary / confirm |
-| `q` / `esc` | Cancel — abort, nothing installed |
+| `←` / `→` | Switch to the previous / next kind (tab) |
+| `↑` / `↓` | Move the highlight inside the kind |
+| `space` | Install / skip the highlighted component |
+| `a` / `n` | Select all / none of this kind |
+| `A` / `N` | Select all / none of every kind |
+| `enter` | Continue to Arrange |
+| `?` | Help |
+| `q` | Quit the installer, nothing installed |
 
-#### Layout Board keybindings
+#### Arrange keys (one pane per host)
 
-The board shows segments as chips (`[>seg<]` = focused). Active segments sit
-on numbered lines; inactive ones drop into an **off-tray** (disabled). Moving
-a chip up from the top line sends it to the off-tray; moving a tray chip down
-re-activates it onto line 1.
+Arrange has one pane per detected status-line host, Claude Code first, then the
+Cursor CLI. Each pane's band names its host and carries the `o` on/off toggle.
+The board shows segments as chips (`[>chip<]` = focused). Active segments sit
+on numbered lines; inactive ones drop into an **OFF tray**. Moving a chip up
+from Line 1 sends it to the tray; Space on a tray chip brings it back.
 
 | Key | Action |
 |---|---|
-| `←` / `h` | Move chip left (reorder within a line) |
-| `→` / `l` | Move chip right (reorder within a line) |
-| `↑` / `k` | Move chip up (or off → off-tray from top line) |
-| `↓` / `j` | Move chip down (or tray → line 1) |
-| `space` | Toggle focused segment active / off-tray |
-| `n` | Focus next chip |
-| `p` | Focus previous chip |
-| `tab` / `esc` | Back to install-picks |
-| `enter` | Go to the summary / confirm |
+| `←` / `→` | Reorder the focused chip within its line |
+| `↑` / `↓` | Move the chip across lines (↑ off Line 1 goes to the OFF tray) |
+| `space` | Turn the focused segment on / off (off goes to the tray) |
+| `tab` / `shift+tab` | Focus the next / previous chip |
+| `o` | Host status line on / off; another tool's line: keep / remove / customize |
+| `r` | Reset the layout to defaults |
+| `enter` / `esc` | Continue to the next host or Review / back |
+| `q` | Quit the installer |
 
-#### Summary screen
+#### The host toggle `o`
 
-`enter` / `y` confirms and writes `~/.config/ai-kit/claude-statusline.toml`
-(doctor-validated; auto-reverts a bad write). `q` / `esc` aborts. An empty
-selection triggers a confirm modal ("install nothing?") defaulting to No
-(`y` to proceed, `n` / `esc` / `q` to go back).
+- **ai-kit's own line, or no line yet.** `o` turns the host on or off. Off locks
+  the board, and Review removes ai-kit's entry from a host that has one (an
+  unset host stays unchanged). The pane says so: `Off: Review removes ai-kit's
+  entry; …` or `Off: Review leaves … unchanged; …`.
+- **Another tool's status line (foreign).** The pane starts in *keep* and `o`
+  cycles three states:
+  - **keep current** (the start state): Review leaves the file as it is and
+    writes nothing to that host.
+  - **remove**: Review backs up the file, then removes the foreign entry. The
+    host shows its own default status line.
+  - **customize**: the board unlocks, starting from ai-kit's default layout.
+    Review backs up the file, then writes ai-kit's status line.
 
-**Per-host status-line flow.** The wizard walks every detected status-line
-host in order — Claude Code first, then the Cursor CLI — and asks each host
-its own adoption gate ("Wire your Claude Code status line?", "Wire your
-Cursor CLI status line?") before showing that host's layout board ("Arrange
-your <host> status line"). `Esc` on a later host's board steps back to the
-previous host's board with its arrangement intact. One Review then lists
-every host's writes (each adopted host's TOML plus its wiring file), and Done
-reports each host's outcome — one host's failure never blocks the other.
-Each host has its own config file: `~/.config/ai-kit/claude-statusline.toml`
-and `~/.config/ai-kit/cursor-statusline.toml`. **Declining a host at its gate
-skips its board and leaves that host untouched** — its TOML is never created
-and its CLI config (`settings.json` / `cli-config.json`) stays byte-identical.
+  Remove and customize change the file only after a backup to
+  `~/.local/state/ai-kit/backups/<host>/` and a default-No confirmation on
+  Review. A JSONC `cli-config.json` is left untouched with a warning.
 
-The board's **live preview** uses a representative fixture — it cannot show
-your live session's model/context/cost during a standalone wizard run, so it
-displays realistic sample values.
+**Live preview.** Each pane's preview is a real render of the host's sample
+payload, titled `live preview — <host> (sample data)`. When the render is not
+available, it falls back to sample text with a note. The sample values are not
+your live session's model, context or cost.
+
+#### Review and Done
+
+**Review & confirm** lists the components to install per kind, the global
+rules item (toggle it with `g`), and one outcome line per host, such as
+`Claude Code: wire ai-kit`, `Cursor CLI: remove ai-kit's`, or
+`Cursor CLI: keep its current status line; nothing written`. `enter` installs
+and writes the config, `esc` goes back to Arrange. A host you left off and
+unset is not written.
+
+**✓ ai-kit is installed** shows one outcome line per host, for example
+`Cursor CLI: status line removed`. `d` opens the config doctor (`esc` returns
+to Done), and `enter` finishes and exits.
+
+**Per-host status-line files.** Each host has its own config file:
+`~/.config/ai-kit/claude-statusline.toml` and
+`~/.config/ai-kit/cursor-statusline.toml`. One host's failure never blocks the
+other host.
 
 **What the wizard does not cover.** Adding/removing lines and editing
 per-segment min-width gates must be done by hand-editing the TOML (see
@@ -661,7 +686,20 @@ permission settings across whichever of those runtimes have a config file on
 this machine, plus a cross-runtime `rtk`-Cursor-integration check. A handful of
 rows can be applied one at a time, each behind an explicit confirm screen that
 shows the literal resulting config for security-relevant settings; there is no
-bulk-apply.
+bulk-apply. The same doctor opens from the wizard's Done screen with `d`.
+
+Every runtime-config apply (Claude `settings.json`, `opencode.jsonc`, Codex
+`config.toml`) refuses a file it cannot parse, and backs the file up first to
+`~/.local/state/ai-kit/backups/<runtime>/<file name>.<UTC timestamp>.bak` (the
+newest 10 per file are kept). This is a different name from the skill backups'
+`<name>.bak-<timestamp>/` described above. A missing target and a dry run take no backup.
+The global-rules applier (`codegraph-global-sentence`) keeps its own backups
+under `~/.local/state/ai-kit/backups/global-rules/`.
+
+The row `claude-playwright-mcp-browser` is shown only when the Playwright plugin
+is enabled. Its apply sets `env.PLAYWRIGHT_MCP_EXECUTABLE_PATH` to the flatpak
+Chrome wrapper. That the variable reaches the MCP process and that the browser
+launches headed are inferred, not verified, until the Phase 54 live check.
 
 ## Layout
 

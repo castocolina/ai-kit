@@ -20,12 +20,14 @@ in ``test_setup.py`` and is not duplicated here.
 import contextlib
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import pty
 import re
 import select
 import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -1366,17 +1368,11 @@ def _press_until(master_fd, key, marker, deadline, captured):
                 raise
 
 
-class TestTwoHostE2E(unittest.TestCase):
-    """The real ``uv run --script tools/setup.py install`` wizard, run under a
-    PTY in a scratch HOME with BOTH host config dirs present.
-
-    Scenario A adopts both hosts: after Done, Claude's settings.json points at
-    the Claude entry, Cursor's cli-config.json carries a {type: command} entry
-    pointing at the Cursor entry, and both host TOMLs exist.
-    Scenario B declines Cursor at its gate: every pre-existing Cursor config
-    file stays byte-identical and no cursor-statusline.toml is materialized,
-    while Claude is wired. Every matcher is an exact screen title or prompt.
-    """
+class _TwoHostRunMixin:
+    """Spawn, drive bookends, kill-on-failure and cleanup shared by the two-host
+    PTY scenarios: the real ``uv run --script tools/setup.py install`` wizard,
+    run under a PTY in a scratch HOME with BOTH host config dirs present.
+    Each subclass supplies ``_drive`` (the keys that walk the wizard to Done)."""
 
     _BOOT_DEADLINE = 45.0
     _STEP_DEADLINE = 120.0
@@ -1396,6 +1392,52 @@ class TestTwoHostE2E(unittest.TestCase):
 
     def _ai_kit_config_dir(self, base):
         return os.path.join(base, "xdg-config", "ai-kit")
+
+    def _drive(self, master_fd, captured, decline_cursor):
+        """Walk the wizard from Choose to the Done title (overridden per scenario)."""
+        raise NotImplementedError
+
+    def _run_and_exit(self, env, captured, decline_cursor):
+        """Spawn the real wizard, drive it to Done and a clean exit; return the
+        child's exit code. The child is always waited (never orphaned): a failed
+        drive kills it first, so the wait cannot block on a stuck process."""
+        uv = _uv_cmd()
+        pid, master_fd = spawn_pty(
+            [uv, "run", "--script", SETUP, "install"], env)
+        exit_code = None
+        try:
+            drive_until(master_fd, b"components selected",
+                        time.time() + self._BOOT_DEADLINE, captured=captured)
+            _settle(master_fd, time.time() + 1.0)
+            self._drive(master_fd, captured, decline_cursor)
+            with contextlib.suppress(OSError):
+                os.write(master_fd, b"\r")                  # Done -> exit
+            tail = _drain(master_fd, time.time() + self._DRAIN_DEADLINE)
+            captured.append(tail)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.kill(pid, signal.SIGKILL)
+            raise
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(master_fd)
+            with contextlib.suppress(ChildProcessError, OSError):
+                _, status = os.waitpid(pid, 0)
+                exit_code = os.WEXITSTATUS(status)
+        return exit_code
+
+
+class TestTwoHostE2E(_TwoHostRunMixin, unittest.TestCase):
+    """The real ``uv run --script tools/setup.py install`` wizard, run under a
+    PTY in a scratch HOME with BOTH host config dirs present.
+
+    Scenario A adopts both hosts: after Done, Claude's settings.json points at
+    the Claude entry, Cursor's cli-config.json carries a {type: command} entry
+    pointing at the Cursor entry, and both host TOMLs exist.
+    Scenario B declines Cursor at its gate: every pre-existing Cursor config
+    file stays byte-identical and no cursor-statusline.toml is materialized,
+    while Claude is wired. Every matcher is an exact screen title or prompt.
+    """
 
     def _drive(self, master_fd, captured, decline_cursor):
         """Walk Choose -> Claude's band (on) -> Cursor's band (on or left off) -> Review.
@@ -1418,30 +1460,6 @@ class TestTwoHostE2E(unittest.TestCase):
                          time.time() + step, captured)      # Cursor pane -> Review
         _press_until(master_fd, b"\r", b"ai-kit is installed",
                      time.time() + step, captured)          # Review -> commit -> Done
-
-    def _run_and_exit(self, env, captured, decline_cursor):
-        """Spawn the real wizard, drive it to Done and a clean exit; return the
-        child's exit code. The child is always waited (never orphaned)."""
-        uv = _uv_cmd()
-        pid, master_fd = spawn_pty(
-            [uv, "run", "--script", SETUP, "install"], env)
-        exit_code = None
-        try:
-            drive_until(master_fd, b"components selected",
-                        time.time() + self._BOOT_DEADLINE, captured=captured)
-            _settle(master_fd, time.time() + 1.0)
-            self._drive(master_fd, captured, decline_cursor)
-            with contextlib.suppress(OSError):
-                os.write(master_fd, b"\r")                  # Done -> exit
-            tail = _drain(master_fd, time.time() + self._DRAIN_DEADLINE)
-            captured.append(tail)
-        finally:
-            with contextlib.suppress(OSError):
-                os.close(master_fd)
-            with contextlib.suppress(ChildProcessError, OSError):
-                _, status = os.waitpid(pid, 0)
-                exit_code = os.WEXITSTATUS(status)
-        return exit_code
 
     def test_both_hosts_adopted_wire_both(self):
         """Scenario A: adopting both hosts wires both CLI configs and writes
@@ -1530,6 +1548,88 @@ class TestTwoHostE2E(unittest.TestCase):
             claude_settings = json.load(fh)
         self.assertTrue(claude_settings["statusLine"]["command"].endswith(
             os.path.join("tools", "claude-status-line.py")))
+
+
+def _load_setup_module():
+    """Load tools/setup.py by path (stdlib-only) for the pre-wiring writer."""
+    spec = importlib.util.spec_from_file_location("setup_for_pty", SETUP)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _statusline_of(path):
+    """The parsed ``statusLine`` of a JSON file; absent file or key counts as None."""
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh).get("statusLine")
+
+
+class TestToggleOffE2E(_TwoHostRunMixin, unittest.TestCase):
+    """R3 acceptance through the real installer under a PTY: Cursor's status line
+    is wired by ai-kit, the board's toggle is turned off, Review confirms and the
+    Done screen reports the removal. Afterwards cli-config.json has no statusLine,
+    every other key keeps its value, and Claude's statusLine is unchanged."""
+
+    _CLAUDE_PREVIEW = "live preview — Claude Code (sample data)".encode()
+    _CURSOR_PREVIEW = "live preview — Cursor CLI (sample data)".encode()
+    _OFF_NOTE = b"Off: Review removes ai-kit's entry"
+    _REVIEW_LINE = b"Cursor CLI: remove ai-kit's"
+    _DONE_LINE = b"Cursor CLI: status line removed"
+
+    def _drive(self, master_fd, captured, decline_cursor):
+        step = self._STEP_DEADLINE
+        _press_until(master_fd, b"\r", self._CLAUDE_PREVIEW,
+                     time.time() + step, captured)          # Choose -> Claude's pane
+        _press_until(master_fd, b"\r", self._CURSOR_PREVIEW,
+                     time.time() + step, captured)          # Claude -> Cursor's pane
+        _settle(master_fd, time.time() + 1.0)
+        # One keypress, one write: a re-sent "o" would flip the toggle back on.
+        os.write(master_fd, b"o")
+        drive_until(master_fd, self._OFF_NOTE, time.time() + step,
+                    captured=captured)                      # Cursor's band is off
+        _press_until(master_fd, b"\r", self._REVIEW_LINE,
+                     time.time() + step, captured)          # Cursor pane -> Review
+        _press_until(master_fd, b"\r", self._DONE_LINE,
+                     time.time() + step, captured)          # Review -> commit -> Done
+
+    def test_cursor_toggle_off_removes_ai_kit_entry(self):
+        base = self._scratch_base()
+        os.makedirs(os.path.join(base, "claude"))
+        cursor_dir = os.path.join(base, "cursor")
+        os.makedirs(cursor_dir)
+        env = _two_host_env(base)
+        env["AI_KIT_REFUSE_REAL_HOME"] = "1"
+        for key in _HOST_ROOT_KEYS:
+            self.assertTrue(env[key].startswith(base + os.sep),
+                            msg=f"{key} escapes the scratch HOME: {env[key]}")
+
+        cli_config = os.path.join(cursor_dir, "cli-config.json")
+        with open(cli_config, "w", encoding="utf-8") as fh:
+            fh.write('{"editor": {"vimMode": true}}')
+        # ai-kit's entry comes from the real writer, never hand-copied.
+        setup = _load_setup_module()
+        paths = setup.resolve_paths(env)
+        setup.wire_statusline_cursor(paths.cursor_cli_config,
+                                     paths.cursor_status_line, False, False)
+        self.assertEqual(setup.detect_statusline_cursor(paths)["state"], "ours")
+
+        claude_path = os.path.join(base, "claude", "settings.json")
+        claude_before = _statusline_of(claude_path)
+
+        captured: list[bytes] = []
+        exit_code = self._run_and_exit(env, captured, False)
+        output = b"".join(captured).decode("utf-8", errors="replace")
+
+        self.assertEqual(exit_code, 0, msg=f"wizard exit {exit_code}:\n{output}")
+        self.assertIn("Cursor CLI: remove ai-kit's", output)
+        with open(cli_config, encoding="utf-8") as fh:
+            config = json.load(fh)
+        self.assertNotIn("statusLine", config)
+        self.assertEqual(config.get("editor"), {"vimMode": True})
+        self.assertEqual(_statusline_of(claude_path), claude_before)
 
 
 class TestEveryPtyEnvIsolatesHostRoots(unittest.TestCase):
