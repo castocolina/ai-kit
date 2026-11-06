@@ -1,7 +1,8 @@
 """The boundary step (plan 30-04): refresh the indexes, then rewrite the unit brief.
 
 `fold.py boundary` runs it at a unit's start (`start` calls it), before planning and before the
-first execution wave. It never commits and never edits a file outside the checkout's brief.
+first execution wave. It never commits. It writes the brief, the index files, `.git/info/exclude`
+(`.aikit/`), and a `.graphifyignore` line it reports as `note:`; the owner commits that line.
 """
 
 import datetime
@@ -115,7 +116,7 @@ def boundary(repo, unit, point, phase=None, seams=None):
             lines.append(f"index: lock held past {seams.lock_deadline_s} s; indexes not "
                          "refreshed, retried at the next point")
         facts = _facts(top, record, unit, point, seams)
-        flow_index.ensure_excluded(top, [".aikit"])
+        lines += flow_index.ensure_excluded(top, [".aikit"])
         flow_brief.write_brief(top, flow_brief.render(facts))
     lines.append(f"brief: {flow_brief.BRIEF_REL.as_posix()} ({_summary(facts)})")
     notes = [line[len("note: "):] for line in lines if line.startswith("note: ")]

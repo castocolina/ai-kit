@@ -1,6 +1,6 @@
 ---
 name: ai-kit-commit-fold
-description: "Folds a finished GSD or superpowers plan's commits into one commit per logical feature (backup tag, tree-equality check), and runs ai-kit's unit flow for stacked phase branches: start a unit branch, fold and push its checkpoints under push consent, mark its draft PR ready, restack, start a hotfix unit, run the owner's merge chain, install the GSD hooks. Use when a plan's task commits should be regrouped or tidied into feature commits, or when a GSD phase or superpowers plan in a repo using the unit flow needs its branch started, pushed, readied, restacked or merged, even without the word fold. Not for squashing a branch, interactive rebases, a plain git push or gh pr create outside a recorded unit, or an ordinary hotfix commit."
+description: "Folds a finished GSD or superpowers plan's commits into one commit per logical feature (backup tag, tree-equality check), reports which plans are still unfolded, and runs ai-kit's unit flow for stacked phase branches: start a unit branch, run the unit boundary (codegraph and graphify refresh, unit brief), fold and push checkpoints under push consent, mark the draft PR ready, restack, start a hotfix unit, run the owner's merge chain, install the GSD hooks. Use when a plan's task commits should be regrouped into feature commits, when asked which plans are unfolded, before plan-phase or execute-phase of a GSD phase in a unit-flow repo, or when a GSD phase or superpowers plan there needs its branch started, briefed, pushed, readied, restacked or merged, even without the word fold. Not for squashing a branch, interactive rebases, a plain git push or gh pr create outside a recorded unit, a bare codegraph or graphify run, or an ordinary hotfix commit."
 ---
 
 # ai-kit-commit-fold
@@ -66,7 +66,10 @@ JSON (`--unit FILE|-`) or by selector: `--phase N` for GSD, `--plan FILE` for su
 - `fold.py show <selector>`: read-only. Prints the unit's `state:` and `pr:`.
 - `fold.py boundary <selector> --point start|plan|wave` (or `--next` before a unit exists): refresh
   this checkout's codegraph index and graphify graph, then rewrite `.aikit/brief/SKILL.md`, the brief
-  the next agents read. `start` runs it itself.
+  the next agents read. `start` runs it itself. It also adds `.aikit/` to `.git/info/exclude` and
+  reports that as a `note:`. A `note:` naming `.graphifyignore` means the boundary added
+  `.planning/milestones/` to it: commit that file on the unit branch before the next checkpoint, or
+  the checkpoint refuses `dirty_tree`; never discard it.
 
 The stack and settings commands:
 
@@ -102,7 +105,7 @@ The flow pushes branches and opens PRs only with push consent, which is granted 
 1. Before the first push, ask the owner once. Name what is pushed (the unit branches, to the remote,
    with their PRs) and the revoke command, `fold.py consent revoke`.
 2. Never grant push consent yourself. Run `fold.py consent grant` only after the owner says yes.
-   `--add-exclude` also adds `.aikit/` to `.git/info/exclude`; use it only when the owner asks.
+   `--add-exclude` also adds `.aikit/` to `.git/info/exclude`; use it only when the owner asks. A boundary (and so `start`) already adds it and reports the `note:`.
 3. Without push consent the flow still folds locally and lists each skipped push as
    `skipped: <unit> push <branch>`; the outcome is `skipped (no consent)`. When push consent is
    granted later, the skipped checkpoints are pushed in stack order.

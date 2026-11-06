@@ -19,23 +19,20 @@ Do NOT load it otherwise.
 
 Each rule is stated here; other places point back to it.
 
-- **Never** persist `$EXCLUDED_KEYS_JSON` wholesale as `excluded_keys`: a same-wave `"quota"`
-  exclusion would read as permanent (Step 2; `references/state-management.md`).
-- **Never** call `resolve-injection` with `--exclude-keys-json` alone, omitting
-  `--excluded-reasons-json`: prior-wave permanent reasons then read `"no_usable_dispatch"` (Step 2).
-- **Never** read `key`/`runtime` off an injection result before checking `$INJECTION_MODE`:
-  `quota_exhausted` and `no_candidate` carry neither (Step 2).
+- **Never** persist `$EXCLUDED_KEYS_JSON` wholesale as `excluded_keys`: a same-wave `"quota"` exclusion would read as permanent (Step 2; `references/state-management.md`).
+- **Never** call `resolve-injection` with `--exclude-keys-json` alone, omitting `--excluded-reasons-json`: prior-wave permanent reasons then read `"no_usable_dispatch"` (Step 2).
+- **Never** read `key`/`runtime` off an injection result before checking `$INJECTION_MODE`: `quota_exhausted` and `no_candidate` carry neither (Step 2).
 - **Never** put `$INJECTION_RUNTIME` into an exclusion set: a runtime id is not a ladder key (Step 3).
 - **Never** fold `$ESCALATION_EXCLUDE_JSON` into `$EXCLUDED_KEYS_JSON`: it marks healthy,
   never-tried candidates excluded only for a capability floor (Step 3; `references/escalation.md`).
 - **Never** let a fix-loop round overwrite `$REPORT_FILE`: `REPORT_MODE` is `write` at most once per
   task, `append` after, and every prompt after the first says APPEND (Step 3).
-- **Never** parse the implementer status out of `$REPORT_FILE`, only from
-  `$DISPATCH_RESULT_JSON["stdout"]` (Step 3).
+- **Never** parse the implementer status out of `$REPORT_FILE`, only from `$DISPATCH_RESULT_JSON["stdout"]` (Step 3).
 - **Never switch harness, provider or model** after a failed or unusable run.
   **Never re-resolve to another candidate after a failed dispatch.** Do not re-run `resolve-injection`
   to recover; re-dispatch only the persisted injection after its one-shot wait (Step 3; ai-kit-cross-ai sections 6 and 8).
 - **Never** run `trust-local` without the user's explicit yes, or ask twice in one run (Step 2).
+- **Never** run `fold.py boundary --next` during a run: it rewrites this unit's `.aikit/brief/SKILL.md` as `unit: next` and has no `--repo` (Step 1).
 
 The `Agent` tool and the one-shot `CronCreate` at `retry_after_s` are Claude Code tools. On another
 host, use its own subagent mechanism (or STOP and tell the user to resume by hand) and the
@@ -104,7 +101,7 @@ mechanism; if not, STOP and tell the user (nothing to delegate to). Follow its o
 (workspace, ledger, plan read, pre-flight scan). `$CWD`, `$PLAN_FILE`, `$TASK_N`, and `$BRIEF_FILE`
 are values it already holds at each task's implementer dispatch — read them, never invent them.
 
-Before the first task, start the plan's unit: **MANDATORY: read [`references/start-step.md`](references/start-step.md) in full and run its block once** (`fold.py start --plan`; it handles every refusal). superpowers' planning skills commit the spec and plan before this step; `start` carries those local-only commits onto the unit branch, so they stay in its PR and below `FOLD_BASE`. superpowers writes the plan before this skill runs, so the plan writer is briefed by the instruction-file rule (run `python3 <fold skill>/scripts/fold.py boundary --next --point plan`, with the fold skill found as in `references/start-step.md`, then hand `.aikit/brief/SKILL.md` to the plan writer).
+Before the first task, start the plan's unit: **MANDATORY: read [`references/start-step.md`](references/start-step.md) in full and run its block once** (`fold.py start --plan`; it handles every refusal). superpowers' planning skills commit the spec and plan before this step; `start` carries those local-only commits onto the unit branch, so they stay in its PR and below `FOLD_BASE`. The plan already exists when this skill runs, so this skill never briefs a plan writer and never runs `fold.py boundary --next` (see NEVER): that command rewrites the same `.aikit/brief/SKILL.md` as `unit: next`, replacing the wave brief the start block just wrote for this unit, and without `--repo` it writes into whatever checkout the shell is in. A project that briefs its superpowers plan writer does that before the plan exists, from its own instruction file.
 
 After the Task paths block prints `SCALARS`, record the start commit once (later tasks keep it):
 `[ -n "$FOLD_BASE" ] || printf 'FOLD_BASE=%s\n' "$(git -C "$CWD" rev-parse HEAD)" | tee -a "$SCALARS"`;
@@ -245,7 +242,9 @@ never the runner's lane file:
 if [ -n "$RESUME_STATE_PATH" ]; then rm -f -- "$RESUME_STATE_PATH"; fi
 ```
 
-**`mode == "native"`:** this host's own subagent mechanism, unchanged. The native brief carries the same unit-brief line that `references/dispatch-external-cli.md` puts in the `<objective>`. On Claude Code, pass `model` as
+Every implementer brief, native or `external_cli`, starts with this unit-brief line before the task text: `Unit brief: read .aikit/brief/SKILL.md in $CWD after the plan and spec; it lists the previous unit's changed files and the documents that mention them. If it is missing, says no brief, or names another unit, say so and continue.`
+
+**`mode == "native"`:** this host's own subagent mechanism, unchanged. The native brief carries the same unit-brief line above. On Claude Code, pass `model` as
 the `Agent` tool's `model` parameter (omit it when empty) and record the returned agent identity;
 fix-loop rounds 1–3 resume that same agent. Its round 4/5 model bump follows that skill's own rule (a
 more capable model) and happens before the round's dispatch, after a review returned findings. On any other host the native case is

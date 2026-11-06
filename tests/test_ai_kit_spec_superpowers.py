@@ -2989,8 +2989,10 @@ class TestUnitBriefDelivery(unittest.TestCase):
     BRIEF_LINE = ("Unit brief: read .aikit/brief/SKILL.md in $CWD after the plan and spec; "
                   "it lists the previous unit's changed files and the documents that mention them. "
                   "If it is missing, says no brief, or names another unit, say so and continue.")
-    PLAN_WRITER = ("python3 <fold skill>/scripts/fold.py boundary --next --point plan")
-    HAND_OFF = " then hand `.aikit/brief/SKILL.md` to the plan writer"
+    NEVER_NEXT = "**Never** run `fold.py boundary --next` during a run"
+    NEVER_NEXT_REASON = "rewrites this unit's `.aikit/brief/SKILL.md`"
+    NO_PLAN_WRITER = "this skill never briefs a plan writer"
+    OBJECTIVE_LINE = "the unit-brief line from `SKILL.md` Step 3"
     NATIVE_LINE = "The native brief carries the same unit-brief line"
     START_PROSE = "`start` already runs the boundary for the unit's start"
     WAVE_PROSE = "this second run is the one before the first task"
@@ -3005,9 +3007,10 @@ class TestUnitBriefDelivery(unittest.TestCase):
             ("start-step.md", start_step, self.START_PROSE),
             ("start-step.md", start_step, self.WAVE_PROSE),
             ("start-step.md", start_step, self.NEVER_STOPS),
-            ("dispatch-external-cli.md", dispatch, self.BRIEF_LINE),
-            ("SKILL.md", skill, self.PLAN_WRITER),
-            ("SKILL.md", skill, self.HAND_OFF),
+            ("dispatch-external-cli.md", dispatch, self.OBJECTIVE_LINE),
+            ("SKILL.md", skill, self.BRIEF_LINE),
+            ("SKILL.md", skill, self.NO_PLAN_WRITER),
+            ("SKILL.md", skill, self.NEVER_NEXT),
             ("SKILL.md", skill, self.NATIVE_LINE),
         ]
 
@@ -3019,13 +3022,14 @@ class TestUnitBriefDelivery(unittest.TestCase):
     def test_every_implementer_brief_points_at_the_unit_brief(self):
         text = (_SUPER_REFS / "dispatch-external-cli.md").read_text(encoding="utf-8")
         objective = text[text.index("## Compose"):text.index("## Status contract")]
-        self.assertIn(self.BRIEF_LINE, objective)
-        self.assertIn(".aikit/brief/SKILL.md", objective)
+        self.assertIn(self.OBJECTIVE_LINE, objective)
+        self.assertIn(self.BRIEF_LINE, _super_text())
 
-    def test_skill_states_how_the_plan_writer_is_briefed(self):
+    def test_skill_forbids_boundary_next_during_a_run(self):
         text = _super_text()
-        self.assertIn(self.PLAN_WRITER, text)
-        self.assertIn(self.HAND_OFF, text)
+        self.assertIn(self.NEVER_NEXT, text)
+        self.assertIn(self.NEVER_NEXT_REASON, text)
+        self.assertIn(self.NO_PLAN_WRITER, text)
         self.assertIn(self.NATIVE_LINE, text)
 
     def test_each_pinned_string_is_required(self):

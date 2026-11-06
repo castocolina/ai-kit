@@ -152,6 +152,25 @@ class TestBoundaryBrief(_StackedFixture):
         self.assertEqual(recorder.calls, [])  # no tool found, so nothing ran
 
 
+class TestAikitExcludeIsReported(unittest.TestCase):
+    """The boundary adds `.aikit/` to `.git/info/exclude` and reports it once."""
+
+    def test_first_boundary_reports_the_exclude_and_the_next_one_does_not(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = os.path.join(tmp, "repo")
+            os.makedirs(repo)
+            _git(repo, "init", "-q", "-b", "main")
+            _commit(repo, "README.md", "base\n", "base")
+            _git(repo, "checkout", "-q", "-b", "feat/b")
+            flow_record.write_record(repo, {"schema": 1, "units": []})
+            unit = _unit("B", "feat/b")
+            first, _ = flow_boundary.boundary(repo, unit, "start", seams=_seams(_Recorder()))
+            second, _ = flow_boundary.boundary(repo, unit, "plan", seams=_seams(_Recorder()))
+        exclude_note = "ignored .aikit/ in .git/info/exclude"
+        self.assertTrue(any(exclude_note in line for line in first), first)
+        self.assertFalse(any(exclude_note in line for line in second), second)
+
+
 class TestBranchBinding(_StackedFixture):
     def test_recorded_unit_on_another_branch_is_refused_before_any_write(self):
         _git(self.repo, "checkout", "-q", "main")

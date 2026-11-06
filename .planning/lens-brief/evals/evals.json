@@ -1,0 +1,49 @@
+{
+  "skill_name": "lens-brief",
+  "evals": [
+    {
+      "id": "missing-lens-reported-by-entry",
+      "prompt": "You are gsd-planner in phase 12. Your agent_skills block lists `- Load the ponytail:ponytail skill via the Skill tool before proceeding (plugin-provided)`, but the Skill call returned an error and no ponytail text. Plan the phase and give your return.",
+      "expected_output": "The agent reads the lens-brief sections for its lens, sees that the Skill call failed, names the lens as `lens not loaded: global:ponytail:ponytail` in its return, and continues planning without the lens.",
+      "files": [],
+      "assertions": [
+        "The return contains the exact line `lens not loaded: global:ponytail:ponytail`.",
+        "The agent does not treat the Skill-tool line in its block as a loaded lens.",
+        "The agent continues with the plan instead of stopping."
+      ]
+    },
+    {
+      "id": "missing-unit-brief-reported-and-run-continues",
+      "prompt": "You are gsd-executor for phase 30 plan 30-06. Your agent_skills block lists `.planning/lens-brief` and `skills/jev-fast-decision`, but no `.aikit/brief` entry, and no file was written there. Start executing the plan.",
+      "expected_output": "The agent reads the Unit brief section, finds no `@.aikit/brief/SKILL.md` entry after this file, reports `no unit brief found` in its return, and continues executing the plan.",
+      "files": [],
+      "assertions": [
+        "The return says no unit brief was found, using the words `no unit brief found`.",
+        "The agent does not invent a unit brief or read a file it was not given.",
+        "The agent continues executing the plan after reporting."
+      ]
+    },
+    {
+      "id": "plan-checker-flags-scope-cut-against-design-rule",
+      "prompt": "You are gsd-plan-checker. The plan under review adds CSV export to the usage dashboard. To keep the diff small it drops the error state for a failed export, so a failed export shows nothing. Review the plan and give your findings.",
+      "expected_output": "The agent flags the dropped error state as a blocker, cites AGENTS.md's Design rule in the finding, and does not praise the smaller diff.",
+      "files": [],
+      "assertions": [
+        "The finding is a blocker that names the dropped error state.",
+        "The finding cites AGENTS.md's Design rule.",
+        "The agent does not present the smaller diff as a positive for this plan."
+      ]
+    },
+    {
+      "id": "brief-names-another-unit-is-reported",
+      "prompt": "You are gsd-planner for phase 30. Your `.aikit/brief/SKILL.md` is loaded and its first line names unit `2026-11-04-other-feature`, not phase 30. Plan phase 30 and give your return.",
+      "expected_output": "The agent does not follow the brief's unit as its own, reports in its return the unit the brief names, and continues planning phase 30.",
+      "files": [],
+      "assertions": [
+        "The return names the unit the brief names, `2026-11-04-other-feature`.",
+        "The agent does not use the other unit's brief as the basis for phase 30's plan.",
+        "The agent continues with the plan instead of stopping."
+      ]
+    }
+  ]
+}

@@ -51,7 +51,7 @@ stdout fallback, never what the CLI does to the file.) On a fix round, also appe
 findings verbatim inside the `<objective>` (the digest hashes only the objective, so a changed
 finding set is a new task; the round start in `SKILL.md` Step 3 has already run).
 
-Inside the `<objective>`, put this line before the task text, so every implementer reads the unit brief: `Unit brief: read .aikit/brief/SKILL.md in $CWD after the plan and spec; it lists the previous unit's changed files and the documents that mention them. If it is missing, says no brief, or names another unit, say so and continue.`
+Inside the `<objective>`, put the unit-brief line from `SKILL.md` Step 3 (it names `.aikit/brief/SKILL.md`) before the task text, so every implementer reads the unit brief.
 
 ## Status contract
 
