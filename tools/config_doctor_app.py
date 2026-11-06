@@ -2,6 +2,10 @@
 
 Own separate module (D-06). Imports nothing from setup.py, wizard_app.py, or
 config_doctor_checks.py — driven entirely through ConfigDoctorContext.
+
+``ConfigDoctorScreen`` holds the whole doctor (table, detail panel, per-row
+confirm). ``ConfigDoctorApp`` makes it the base screen for ``--config-doctor``;
+the setup wizard pushes the same screen on ``d`` (D-13, R5).
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from typing import ClassVar, NamedTuple
 from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Static
 
 # Palette lifted verbatim from tools/wizard_app.py:27-36
@@ -25,6 +29,8 @@ WARN = "#d29922"
 PINK = "#db61a2"
 CYAN = "#39c5cf"
 KEYCAP = "#21262d"
+
+EMPTY_CATALOG_TEXT = "no rows: no config check applies to the AI CLIs found here."
 
 
 class ConfigDoctorContext(NamedTuple):
@@ -129,22 +135,30 @@ class ConfirmApplyScreen(ModalScreen):
             self.dismiss({"ok": False})
 
 
-class ConfigDoctorApp(App):
-    ENABLE_COMMAND_PALETTE = False
+class ConfigDoctorScreen(Screen):
+    """The doctor's table, detail panel and per-row confirm (D-13, R5).
+
+    One implementation for both hosts: ``ConfigDoctorApp`` makes it the base
+    screen (Esc exits the app); the setup wizard pushes it (Esc dismisses it).
+    Its CSS travels with the Screen, so a host App without it still draws the
+    detail panel's border.
+    """
+
     BINDINGS: ClassVar[list] = [
-        ("q", "quit", "Quit"),
         ("a", "apply_row", "Apply"),
+        ("escape", "close", "Back"),
     ]
-    CSS = f"""
-    Screen {{ background: #0d1117; }}
+    DEFAULT_CSS = f"""
+    ConfigDoctorScreen {{ background: #0d1117; }}
     #header {{ height: 1; color: {ACCENT}; text-style: bold; padding: 0 1; }}
     #catalog-table {{ height: 1fr; }}
     #detail {{ height: auto; color: {DIM}; padding: 1 1; border-top: solid {LINE}; }}
     """
 
-    def __init__(self, ctx: ConfigDoctorContext) -> None:
+    def __init__(self, ctx: ConfigDoctorContext, exit_hint: str = "q quits.") -> None:
         super().__init__()
         self.ctx = ctx
+        self.exit_hint = exit_hint
         self._rows_by_id: dict = {}
 
     def compose(self) -> ComposeResult:
@@ -160,9 +174,7 @@ class ConfigDoctorApp(App):
         sections = catalog.get("sections") or []
         if not sections:
             table.display = False
-            self.query_one("#detail", Static).update(
-                "No supported AI-CLI config file was found on this machine."
-            )
+            self.query_one("#detail", Static).update(f"{EMPTY_CATALOG_TEXT} {self.exit_hint}")
             return
         first_id = None
         for section in sections:
@@ -214,10 +226,18 @@ class ConfigDoctorApp(App):
             return
         if self.ctx.apply is None or not row.get("apply_eligible"):
             return
-        self.push_screen(
+        self.app.push_screen(
             ConfirmApplyScreen(row=row, ctx=self.ctx),
             self._on_apply_dismissed,
         )
+
+    def action_close(self) -> None:
+        # Over another screen (the wizard) Esc pops back to it; as the base
+        # screen of --config-doctor it exits the app.
+        if len(self.app.screen_stack) > 1:
+            self.dismiss(None)
+        else:
+            self.app.exit()
 
     def _on_apply_dismissed(self, result) -> None:
         if not isinstance(result, dict) or not result.get("ok"):
@@ -242,6 +262,18 @@ class ConfigDoctorApp(App):
         if row is not None:
             row["current_display"] = str(display)
             self._show_detail(row_id)
+
+
+class ConfigDoctorApp(App):
+    ENABLE_COMMAND_PALETTE = False
+    BINDINGS: ClassVar[list] = [("q", "quit", "Quit")]
+
+    def __init__(self, ctx: ConfigDoctorContext) -> None:
+        super().__init__()
+        self.ctx = ctx
+
+    def get_default_screen(self) -> Screen:
+        return ConfigDoctorScreen(self.ctx)
 
 
 # ---------------------------------------------------------------------------

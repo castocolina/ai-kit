@@ -96,6 +96,7 @@ UNIT_UV_MODULES = frozenset({"tests.test_framework_profiles"})
 INTEGRATION_MODULES = frozenset({
     "tests.test_config_doctor",
     "tests.test_config_doctor_pty",
+    "tests.test_doctor_screen",
     # the wizard view tests, split in three so they run in parallel (quick 261104-hzc)
     "tests.test_wizard_app_1",
     "tests.test_wizard_app_2",
