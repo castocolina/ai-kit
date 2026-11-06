@@ -588,6 +588,18 @@ class TestCursorModelMaxAndDims(unittest.TestCase):
             re.sub(r"\x1b\[[0-9;]*m", "", cast(str, text)), "🤖 Synthetic Model · high"
         )
 
+    def test_param_summary_suffix_is_not_duplicated(self):
+        def shown(display_name, summary):
+            raw = {"model": {"display_name": display_name, "param_summary": summary}}
+            return cursor_payload.core_payload_fields(raw).model_name
+
+        # Live Cursor 2026.10.22 name already ends with the context and effort.
+        self.assertEqual(shown("GPT-5.6 Sol 272K High", "272K High"), "GPT-5.6 Sol 272K High")
+        self.assertEqual(shown("GPT-5.6 Sol 272K High", " 272k  high "), "GPT-5.6 Sol 272K High")
+        self.assertEqual(shown("Synthetic Model High", "high"), "Synthetic Model High")
+        self.assertEqual(shown("Synthetic Model", "high"), "Synthetic Model · high")
+        self.assertEqual(shown("", "high"), "high")
+
     def test_cursor_zero_rows_render_the_width_alone(self):
         ctx, theme = self._ctx()
         ctx.cols = 116

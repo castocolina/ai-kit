@@ -42,7 +42,10 @@ def core_payload_fields(raw: dict[str, Any]) -> PayloadFields:
     name = name if isinstance(name, str) else ""
     summary = model.get("param_summary")
     if isinstance(summary, str) and summary.strip():
-        name += f" · {summary.strip()}" if name else summary.strip()
+        # Live Cursor display names already end with the context/effort (`... 272K High`).
+        squash = "".join(name.split()).casefold()
+        if not squash.endswith("".join(summary.split()).casefold()):
+            name += f" · {summary.strip()}" if name else summary.strip()
     model_id = model.get("id")
     model_id = model_id if isinstance(model_id, str) and model_id else "unknown"
     directory = workspace.get("current_dir") or raw.get("cwd") or "."
