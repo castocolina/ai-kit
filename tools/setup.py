@@ -1778,7 +1778,7 @@ HOOK_REGISTRY = (
         matcher=None, script="tools/hooks/cursor_session_start.py",
         default=True, experimental=False, verdict=None, timeout=None),
     HookRow(
-        id="tool-advisor", host="claude", event="PreToolUse", matcher="Bash|Read",
+        id="tool-advisor", host="claude", event="PreToolUse", matcher="Bash|Read|Grep|Glob",
         script="tools/hooks/claude_tool_advisor.py", default=True,
         experimental=False, verdict=None, timeout=3),
     HookRow(

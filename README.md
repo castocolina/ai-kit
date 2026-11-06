@@ -564,7 +564,7 @@ nothing is touched unless explicitly requested:
   | Id | What it does | Hosts | Default |
   |---|---|---|---|
   | `session-briefing` | Installed-tool briefing to user/model | Claude Code, Cursor | on |
-  | `tool-advisor` | Advice for grep/cat/sed/find and large reads | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
+  | `tool-advisor` | Advice for grep/cat/sed/find, large reads, and code searches (Bash, Grep, Glob) in a codegraph-indexed checkout | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
   | `tool-reminder` | Output-size reminder with a better installed tool | Claude Code, pi; Cursor gap; opencode gap pending S-OC | on |
   | `decision-probe` | Reports usable decision backends | Claude Code | off |
   | `precompact` | Decision-system pre-summary before compaction | Claude Code, pi, experimental opencode | Per recorded host verdict |
@@ -686,6 +686,7 @@ user's own `python3` with no dependencies. The lint/type toolchain below is
 
 ```bash
 make dev        # uv sync + install pre-commit hooks (sets up the dev env)
+make setup-dev  # uv sync, the missing flow tools (pre-commit, gh, gh-stack, codegraph, graphify) and the hooks, each guarded; never upgrades, always exits 0 (dev and setup-env stay strict)
 make test       # full suite in parallel, one subprocess per module, through tools/run_unittest_parallel.py (system python3 for the unit group)
 make lint       # shellcheck + py-compile hooks (pre-commit, all files)
 make validate   # the full quality gate (see below)

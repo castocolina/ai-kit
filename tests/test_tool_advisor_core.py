@@ -11,6 +11,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -407,6 +408,151 @@ class LiveEvidenceCheckerTests(unittest.TestCase):
     def test_usage_error_exits_2(self):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(self.checker.main(["a", "b"]), 2)
+
+
+class TestCodegraphSearchAdvice(unittest.TestCase):
+    """SPEC R7 / D-09: code searches in a codegraph-indexed checkout get one codegraph line."""
+
+    def _checkout(self, indexed=True):
+        root = tempfile.mkdtemp(prefix="codegraph-advice-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        os.makedirs(os.path.join(root, "tools"))
+        os.mkdir(os.path.join(root, ".git"))
+        if indexed:
+            os.mkdir(os.path.join(root, ".codegraph"))
+        return root
+
+    def _sandbox(self):
+        root = tempfile.mkdtemp(prefix="codegraph-sandbox-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        runtime = os.path.join(root, "runtime")
+        os.mkdir(runtime, 0o700)
+        env = {"HOME": os.path.join(root, "home"),
+               "XDG_CONFIG_HOME": os.path.join(root, "config"),
+               "XDG_CACHE_HOME": os.path.join(root, "cache"),
+               "XDG_STATE_HOME": os.path.join(root, "state"),
+               "XDG_RUNTIME_DIR": runtime, "AI_KIT_REFUSE_REAL_HOME": "1"}
+        os.makedirs(env["HOME"])
+        bin_dir = os.path.join(root, "bin")
+        os.mkdir(bin_dir)
+        executable = os.path.join(bin_dir, "codegraph")
+        with open(executable, "w", encoding="utf-8") as handle:
+            handle.write("#!/bin/sh\nexit 0\n")
+        os.chmod(executable, 0o700)
+        env["PATH"] = bin_dir
+        return root, env
+
+    def test_search_shapes_in_indexed_checkout(self):
+        checkout = self._checkout()
+        cases = (
+            ({"tool": "bash", "command": "rg -n foo ."}, True),
+            ({"tool": "bash", "command": "grep -rn foo tools"}, True),
+            ({"tool": "bash", "command": "find . -name '*.py'"}, True),
+            ({"tool": "bash", "command": "rg foo"}, True),
+            ({"tool": "bash", "command": "rg foo docs --glob '*.md'"}, False),
+            ({"tool": "bash", "command": "rg -t md foo"}, False),
+            ({"tool": "bash", "command": "grep -rn foo tools --include '*.md'"}, False),
+            ({"tool": "bash", "command": "rg foo --glob '!*.md'"}, True),
+            ({"tool": "bash", "command": "rg foo docs/x.md src"}, True),
+            ({"tool": "grep", "search_path": "tools", "glob": "*.md"}, False),
+            ({"tool": "grep", "search_path": "tools"}, True),
+            ({"tool": "grep"}, True),
+            ({"tool": "glob", "pattern": "**/*.md"}, False),
+            ({"tool": "glob", "pattern": "**/*.py"}, True),
+            ({"tool": "read", "path": "x.py"}, False),
+        )
+        for fields, expected in cases:
+            with self.subTest(fields=fields):
+                event = dict(fields, kind="advisor", cwd=checkout)
+                advice = core.codegraph_advice(event, {"codegraph"})
+                self.assertEqual(bool(advice), expected)
+                if advice:
+                    self.assertEqual(advice[0][0], "codegraph-search")
+                    self.assertLessEqual(len(advice[0][1]), 160)
+                    self.assertIn("codegraph_explore", advice[0][1])
+                    self.assertIn("codegraph explore", advice[0][1])
+                    self.assertIn("keep rg for Markdown", advice[0][1])
+
+    def test_no_advice_without_index_or_cli_or_on_reminder(self):
+        unindexed = self._checkout(indexed=False)
+        indexed = self._checkout()
+        event = {"tool": "grep", "search_path": "tools", "kind": "advisor"}
+        self.assertEqual(core.codegraph_advice(dict(event, cwd=unindexed), {"codegraph"}), [])
+        self.assertEqual(core.codegraph_advice(dict(event, cwd=indexed), set()), [])
+        reminder = {"tool": "bash", "command": "rg x", "kind": "reminder", "cwd": indexed}
+        self.assertEqual(core.codegraph_advice(reminder, {"codegraph"}), [])
+
+    def test_nested_unindexed_worktree_gets_no_advice(self):
+        indexed = self._checkout()
+        nested = os.path.join(indexed, ".claude", "worktrees", "w")
+        os.makedirs(os.path.join(nested, "tools"))
+        with open(os.path.join(nested, ".git"), "w", encoding="utf-8") as handle:
+            handle.write("gitdir: somewhere\n")
+        event = {"tool": "grep", "search_path": "tools", "kind": "advisor"}
+        self.assertEqual(core.codegraph_advice(dict(event, cwd=nested), {"codegraph"}), [])
+        subdir = os.path.join(indexed, "tools")
+        self.assertEqual(core.codegraph_advice(dict(event, cwd=subdir), {"codegraph"}),
+                         [("codegraph-search", core.CODEGRAPH_LINE)])
+
+    def test_frequency_and_dedupe_through_advise(self):
+        _root, env = self._sandbox()
+        checkout = self._checkout()
+        shown = []
+        session_id = uuid.uuid4().hex
+        for index in range(1, 22):
+            event = {"kind": "advisor", "tool": "grep", "search_path": "tools", "cwd": checkout,
+                     "session_id": session_id, "call_id": f"call-{index}"}
+            if core.advise(event, env) is not None:
+                shown.append(index)
+        self.assertEqual(shown, [1, 11, 21])
+        once = {"kind": "advisor", "tool": "grep", "search_path": "tools", "cwd": checkout,
+                "session_id": uuid.uuid4().hex, "call_id": "same-call"}
+        self.assertIsNotNone(core.advise(once, env))
+        self.assertIsNone(core.advise(once, env))
+
+    def test_two_threads_share_the_frequency_count(self):
+        _root, env = self._sandbox()
+        checkout = self._checkout()
+
+        def make_event(session_id, call_id):
+            return {"kind": "advisor", "tool": "grep", "search_path": "tools", "cwd": checkout,
+                    "session_id": session_id, "call_id": call_id}
+
+        sequential_session = uuid.uuid4().hex
+        sequential = sum(
+            1 for index in range(40)
+            if core.advise(make_event(sequential_session, f"seq-{index}"), env) is not None)
+        self.assertEqual(sequential, 4)
+
+        threaded_session = uuid.uuid4().hex
+        shown = []
+        shown_lock = threading.Lock()
+
+        def worker(start):
+            for index in range(start, start + 20):
+                event = make_event(threaded_session, f"thread-{index}")
+                if core.advise(event, env) is not None:
+                    with shown_lock:
+                        shown.append(index)
+
+        threads = [threading.Thread(target=worker, args=(start,)) for start in (0, 20)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(len(shown), sequential)
+
+    def test_claude_grep_through_hook_process(self):
+        checkout = self._checkout()
+        _root, env = self._sandbox()
+        payload = {"tool_name": "Grep", "tool_input": {"pattern": "def x", "path": "tools"},
+                   "cwd": checkout, "session_id": uuid.uuid4().hex, "tool_use_id": "t1"}
+        completed = subprocess.run(
+            [sys.executable, os.path.join(_HOOKS, "claude_tool_advisor.py")],
+            input=json.dumps(payload).encode("utf-8"), env=env, capture_output=True,
+            check=False, timeout=30)
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("codegraph_explore", completed.stdout.decode("utf-8"))
 
 
 if __name__ == "__main__":

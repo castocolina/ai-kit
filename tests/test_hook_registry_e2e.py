@@ -63,7 +63,7 @@ class HookRegistryE2E(unittest.TestCase):
         self.assertEqual(set(data["hooks"]), {"PreToolUse"})
         entries = data["hooks"]["PreToolUse"]
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]["matcher"], "Bash|Read")
+        self.assertEqual(entries[0]["matcher"], "Bash|Read|Grep|Glob")
         command = "python3 -S " + shlex.quote(os.path.join(
             link, "tools", "hooks", "claude_tool_advisor.py"))
         self.assertEqual(entries[0]["hooks"], [{"type": "command", "command": command,

@@ -9,6 +9,7 @@ import math
 import os
 import re
 import shlex
+import shutil
 import stat
 import sys
 
@@ -34,6 +35,15 @@ LEGACY_NAMES = {"grep": "grep", "cat": "cat", "sed-range": "sed",
                 "sed-edit": "sed", "find": "find"}
 _ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _RANGE_RE = re.compile(r"^(\d+)(?:,(\d+))?p$")
+CODEGRAPH_LINE = ("ai-kit advice: this checkout is codegraph-indexed: explore code with "
+                  "codegraph_explore (or codegraph explore in a shell); keep rg for Markdown.")
+# Search options that take a value (rg, grep and find); the value is skipped, never a path.
+_VALUE_FLAGS = frozenset({
+    "-g", "--glob", "--iglob", "-t", "--type", "--include", "--exclude", "-e", "--regexp",
+    "-f", "-m", "-A", "-B", "-C", "--max-count", "--context", "-name", "-iname", "-type",
+    "-maxdepth"})
+_FILTER_FLAGS = frozenset({"-g", "--glob", "--iglob", "-t", "--type", "--include",
+                           "-name", "-iname"})
 
 
 def unquote(token):
@@ -154,7 +164,10 @@ def installed_tools(env):
     """Return detected modern substitution names installed on this invocation's PATH."""
     detect = importlib.import_module("detect")
     result = detect.detect_substitutions(env.get("PATH", ""))
-    return {pair["modern"] for pair in result["pairs"] if pair["installed"]}
+    names = {pair["modern"] for pair in result["pairs"] if pair["installed"]}
+    if shutil.which("codegraph", path=env.get("PATH", "")):
+        names.add("codegraph")
+    return names
 
 
 def _arguments(tokens):
@@ -294,6 +307,93 @@ def output_size(texts):
     return lines, chars
 
 
+def _positive_filters(args):
+    """Values of the search filter options that are not negated with a leading `!`."""
+    return [args[index + 1] for index, arg in enumerate(args[:-1])
+            if arg in _FILTER_FLAGS and not args[index + 1].startswith("!")]
+
+
+def _search_scope(name, tail):
+    """Return (paths, positive filters) of one bounded rg, grep or find argument list."""
+    args = _arguments(tail)
+    if name == "find":
+        paths = []
+        for arg in args:
+            if arg.startswith(("-", "(", "!")):
+                break
+            paths.append(arg)
+        return paths, _positive_filters(args)
+    positional, has_pattern, index = [], False, 0
+    while index < len(args):
+        arg = args[index]
+        if arg in _VALUE_FLAGS:
+            has_pattern = has_pattern or arg in ("-e", "--regexp", "-f")
+            index += 2
+            continue
+        if not arg.startswith("-"):
+            positional.append(arg)
+        index += 1
+    return (positional if has_pattern else positional[1:]), _positive_filters(args)
+
+
+def _is_markdown(value):
+    return value in ("md", "markdown") or value.endswith((".md", ".mdx"))
+
+
+def _markdown_only(paths, filters):
+    """Markdown-only means the positive filters decide when present, else the path scopes."""
+    if filters:
+        return all(_is_markdown(value) for value in filters)
+    return bool(paths) and all(_is_markdown(path) for path in paths)
+
+
+def _is_code_search(event):
+    tool = event.get("tool")
+    if tool == "bash":
+        command = event.get("command")
+        if not isinstance(command, str):
+            return False
+        for name, tail in _command_words(_command_tokens(command)):
+            if name in ("rg", "grep", "find"):
+                paths, filters = _search_scope(name, tail)
+                if not _markdown_only(paths, filters):
+                    return True
+        return False
+    if tool == "grep":
+        paths = [path for path in [event.get("search_path")] if isinstance(path, str) and path]
+        filters = [value for value in (event.get("glob"), event.get("type"))
+                   if isinstance(value, str) and value and not value.startswith("!")]
+        return not _markdown_only(paths, filters)
+    if tool == "glob":
+        pattern = event.get("pattern")
+        return isinstance(pattern, str) and bool(pattern) and not _markdown_only([pattern], [])
+    return False
+
+
+def codegraph_advice(event, installed):
+    """Point a code search in a codegraph-indexed checkout at codegraph (advisor events only)."""
+    if event.get("kind", "advisor") != "advisor" or "codegraph" not in installed:
+        return []
+    if not _is_code_search(event):
+        return []
+    start = event.get("cwd")
+    if not isinstance(start, str) or not start:
+        start = os.getcwd()
+    return [("codegraph-search", CODEGRAPH_LINE)] if indexed_checkout(start) else []
+
+
+def indexed_checkout(start_dir):
+    """True when the checkout (first directory up holding `.git`) holds `.codegraph/`."""
+    current = os.path.realpath(start_dir)
+    while True:
+        if os.path.exists(os.path.join(current, ".git")):
+            return os.path.isdir(os.path.join(current, ".codegraph"))
+        parent = os.path.dirname(current)
+        if parent == current:
+            return False
+        current = parent
+
+
 def event_from_claude(payload, kind):
     """Map a Claude payload to the host-neutral advisor event."""
     tool_input = payload.get("tool_input") if isinstance(payload, dict) else None
@@ -303,7 +403,10 @@ def event_from_claude(payload, kind):
              "command": tool_input.get("command"), "path": tool_input.get("file_path"),
              "offset": tool_input.get("offset"), "limit": tool_input.get("limit"),
              "session_id": payload.get("session_id") if isinstance(payload, dict) else None,
-             "call_id": payload.get("tool_use_id") if isinstance(payload, dict) else None}
+             "call_id": payload.get("tool_use_id") if isinstance(payload, dict) else None,
+             "cwd": payload.get("cwd") if isinstance(payload, dict) else None,
+             "pattern": tool_input.get("pattern"), "search_path": tool_input.get("path"),
+             "glob": tool_input.get("glob"), "type": tool_input.get("type")}
     if kind == "reminder":
         response = payload.get("tool_response") if isinstance(payload, dict) else None
         response = response if isinstance(response, dict) else {}
@@ -382,12 +485,13 @@ def with_state(env, session_id, update):
 
 
 def _candidate_advice(event, installed):
+    items = []
     if event.get("tool") == "bash":
-        return bash_advice(event.get("command"), installed)
-    if event.get("tool") == "read":
+        items = bash_advice(event.get("command"), installed)
+    elif event.get("tool") == "read":
         item = read_report(event.get("path"), event.get("offset"), event.get("limit"), installed)
-        return [item] if item else []
-    return []
+        items = [item] if item else []
+    return items + codegraph_advice(event, installed)
 
 
 def advise(event, env):
@@ -479,7 +583,7 @@ def event_from_pi(data):
              "path": path, "offset": tool_input.get("offset") if tool_input else None,
              "limit": tool_input.get("limit") if tool_input else None,
              "call_id": data.get("toolCallId"), "session_id": data.get("sessionId"),
-             "single_block": True}
+             "cwd": cwd, "single_block": True}
     details = data.get("details")
     truncation = details.get("truncation") if isinstance(details, dict) else None
     if (isinstance(truncation, dict) and truncation.get("truncated") is True

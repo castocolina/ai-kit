@@ -96,7 +96,7 @@ class TestRegistryShape(unittest.TestCase):
         self.assertEqual((claude["tool-advisor"].event,
                           claude["tool-advisor"].matcher,
                           claude["tool-advisor"].timeout),
-                         ("PreToolUse", "Bash|Read", 3))
+                         ("PreToolUse", "Bash|Read|Grep|Glob", 3))
         self.assertEqual((claude["tool-reminder"].event,
                           claude["tool-reminder"].matcher,
                           claude["tool-reminder"].timeout),
