@@ -9,6 +9,7 @@ writer this project did not have before; 04-RESEARCH.md Common Pitfall 1).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -499,7 +500,10 @@ def backup_before_write(path, backups_dir, label, keep=BACKUP_KEEP, now=None):
         if os.path.exists(tmp):
             os.unlink(tmp)
     os.chmod(new_path, 0o600)
-    prune_backups(folder, basename, keep, exclude=new_path)
+    # Best effort: the new backup is already on disk, so a prune error must not read as
+    # "backup failed" and block every later write.
+    with contextlib.suppress(OSError):
+        prune_backups(folder, basename, keep, exclude=new_path)
     return new_path
 
 

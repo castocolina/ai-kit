@@ -3779,11 +3779,22 @@ def _unwire_host(paths, host, dry):
     return unwire_statusline_cursor(paths.cursor_cli_config, paths.cursor_status_line, dry)
 
 
-def _prepare_foreign(paths, host, dry=False):
+def _same_bytes(path_a, path_b):
+    """True when both files read and hold identical bytes; any read error is False."""
+    try:
+        with open(path_a, "rb") as fa, open(path_b, "rb") as fb:
+            return fa.read() == fb.read()
+    except OSError:
+        return False
+
+
+def _prepare_foreign(paths, host, dry=False, cache=None):
     """Back up a foreign status line BEFORE the Review confirmation (D-08), through
     the doctor's one backup helper. Returns ``{"entry", "file", "backup"}`` or
     ``{"error"}``; a dry prepare takes no backup (``backup`` is ``""``). Never prints:
-    the wizard is on screen while this runs."""
+    the wizard is on screen while this runs. With a ``cache`` dict, a repeat call
+    reuses the host's earlier result while the file still equals its backup, so a
+    declined confirm does not take (and prune toward) a new backup per Enter."""
     detect = _detect_for(paths, host)
     if detect["state"] != "foreign":
         return {"error": "no foreign status line to back up"}
@@ -3791,6 +3802,9 @@ def _prepare_foreign(paths, host, dry=False):
     if host == "cursor" and _cursor_config_read(path)[0] in ("jsonc", "bad"):
         return {"error": f"{path} holds JSONC comments or cannot be parsed; "
                          "ai-kit leaves it untouched"}
+    prior = (cache or {}).get(host)
+    if prior and prior["backup"] and _same_bytes(path, prior["backup"]):
+        return prior
     backup = ""
     if not dry:
         try:
@@ -3798,7 +3812,10 @@ def _prepare_foreign(paths, host, dry=False):
                 path, paths.backups_dir, host)
         except OSError as exc:
             return {"error": f"backup failed: {exc}"}
-    return {"entry": detect["current_command"] or "(unknown)", "file": path, "backup": backup}
+    info = {"entry": detect["current_command"] or "(unknown)", "file": path, "backup": backup}
+    if cache is not None:
+        cache[host] = info
+    return info
 
 
 def _remove_statusline_entry(paths, host, dry, approved):
@@ -3862,6 +3879,15 @@ def _commit_host_statusline(paths, host, host_state, dry, examples_flag):
                 f"(approved {approved!r}, found {fresh!r}) — not replacing a "
                 "command you never approved; re-run the wizard to review it\n")
             return {"ok": False, "adopt": adopt, "log": hbuf.getvalue(), "action": action}
+    backup = host_state.get("foreign_backup")
+    if (not dry and backup and action in ("replace_foreign", "remove_foreign")
+            and not _same_bytes(
+                paths.settings if host == "claude" else paths.cursor_cli_config, backup)):
+        # The backup the user confirmed must still be the file about to be overwritten;
+        # otherwise restoring it would lose whatever changed in between.
+        hbuf.write(f"error: {host} config changed after the backup you confirmed "
+                   f"({backup}) — not overwriting it; re-run the wizard to review it\n")
+        return {"ok": False, "adopt": adopt, "log": hbuf.getvalue(), "action": action}
     host_ok = True
     try:
         with contextlib.redirect_stdout(hbuf), contextlib.redirect_stderr(hbuf):
@@ -4118,7 +4144,7 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
             pi_predecessor_cands=pi_predecessor_cands, pi_stale=pi_stale,
             replace_cands=replace_cands, log_sink=hk_log, rules_review=rules_review),
         doctor=_make_doctor_factory(env, dry=dry),
-        prepare_foreign=functools.partial(_prepare_foreign, paths, dry=dry),
+        prepare_foreign=functools.partial(_prepare_foreign, paths, dry=dry, cache={}),
     )
     # An explicit --examples is the authority for the clean-reconfigure rule (the
     # wizard's Review and the commit read this one key; REVIEWS HIGH 4).
@@ -4130,8 +4156,12 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
             result = wizard_app.run_wizard(ctx)
     except wizard_app.WizardCrash as exc:
         reason = exc.args[0] if exc.args else exc
-        print(f"error: wizard failed — {reason}", file=sys.stderr)
-        sys.exit(2)
+        result = getattr(exc, "result", None)
+        if result is None:
+            print(f"error: wizard failed — {reason}", file=sys.stderr)
+            sys.exit(2)
+        # The commit already ran: keep its log and result, only the screen after it failed.
+        print(f"warning: the wizard screen failed after the install — {reason}", file=sys.stderr)
     finally:
         # The housekeeping log (every `moved <path> -> <dest>` backup line)
         # reaches the user on confirm, abort and crash alike — but only once
@@ -4792,6 +4822,22 @@ def _config_doctor_ctx(env):
     return _sibling("config_doctor_app").ConfigDoctorContext(catalog=catalog, apply=apply)
 
 
+def _as_dry_run(ctx):
+    """The doctor context with every apply forced to a preview whose result says so:
+    a dry applier still reports the target as ``current_display``, and the doctor
+    would otherwise show that unwritten value as the machine's current state."""
+    base = ctx.apply
+
+    def dry_apply(row_id, _dry):
+        res = base(row_id, True)
+        if isinstance(res, dict) and res.get("ok"):
+            shown = res.get("current_display", res.get("after"))
+            if shown is not None:
+                res = {**res, "current_display": f"{shown} (dry run, not written)"}
+        return res
+    return ctx._replace(apply=dry_apply)
+
+
 def _make_doctor_factory(env, dry=False):
     """The factory the wizard calls on `d`: a fresh ConfigDoctorScreen per call
     (D-13). With `dry` (an install --dry-run) every confirmed apply is a preview
@@ -4800,9 +4846,8 @@ def _make_doctor_factory(env, dry=False):
         ctx = _config_doctor_ctx(env)
         hint = "Esc returns to Done."
         if dry:
-            base = ctx.apply
-            ctx = ctx._replace(apply=lambda row_id, _dry: base(row_id, True))
-            hint = "Esc returns to Done. Dry run: applies are previews; nothing is written."
+            ctx = _as_dry_run(ctx)
+            hint ="Esc returns to Done. Dry run: applies are previews; nothing is written."
         return _sibling("config_doctor_app").ConfigDoctorScreen(ctx, exit_hint=hint)
     return factory
 

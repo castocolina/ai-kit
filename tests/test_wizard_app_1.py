@@ -69,6 +69,39 @@ class TestStructuralFidelity(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn(seg, box, f"segment {seg!r} leaked onto Choose")
 
 
+def _luminance(hex_color):
+    """WCAG relative luminance of a #rrggbb colour."""
+    def channel(c):
+        c /= 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestHostBand(unittest.IsolatedAsyncioTestCase):
+    """WIZ-02: each pane's band is its host accent with bold name text at >= 4.5:1 contrast."""
+
+    def test_band_text_contrast_on_each_accent(self):
+        text = _luminance(wa.BAND_TEXT)
+        for host, accent in wa.HOST_ACCENTS.items():
+            with self.subTest(host=host):
+                hi, lo = sorted((_luminance(accent), text), reverse=True)
+                self.assertGreaterEqual((hi + 0.05) / (lo + 0.05), 4.5)
+        self.assertEqual(wa.HOST_ACCENTS, {"claude": "#D97757", "cursor": "#8B949E"})
+
+    async def test_each_pane_band_uses_its_accent_and_bold_name(self):
+        app = wa.WizardApp(make_ctx(host_ids=("claude", "cursor")))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            for host in ("claude", "cursor"):
+                await pilot.press("enter")          # Choose -> Claude pane -> Cursor pane
+                await pilot.pause()
+                name = query_static(app, "#band-name")
+                self.assertTrue(str(name.content).startswith("[b]"))
+                self.assertEqual(name.styles.background.hex.upper(), wa.HOST_ACCENTS[host])
+
+
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestChooseNameColumn(unittest.TestCase):
     """The 30-cell name column never runs into the description (UI-SPEC name column)."""

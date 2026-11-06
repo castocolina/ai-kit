@@ -469,6 +469,42 @@ class TestPrepareForeign(ToggleCase):
                 self.assertEqual(read_json(path)["statusLine"]["command"], "other.sh")
 
 
+class TestForeignBackupBinding(ToggleCase):
+    def test_repeat_prepare_reuses_the_backup_while_the_file_is_unchanged(self):
+        path = self.seed("claude", {"theme": "dark", "statusLine": FOREIGN})
+        cache = {}
+        first = setup._prepare_foreign(self.paths, "claude", cache=cache)
+        again = setup._prepare_foreign(self.paths, "claude", cache=cache)
+        self.assertEqual(again["backup"], first["backup"])
+        self.assertEqual(len(os.listdir(os.path.join(self.paths.backups_dir, "claude"))), 1)
+        write_json(path, {"theme": "light", "statusLine": FOREIGN})   # the file moved on
+        fresh = setup._prepare_foreign(self.paths, "claude", cache=cache)
+        self.assertNotEqual(fresh["backup"], first["backup"])
+
+    def test_commit_refuses_when_the_file_differs_from_the_confirmed_backup(self):
+        path = self.seed("claude", {"theme": "dark", "statusLine": FOREIGN})
+        backup = setup._prepare_foreign(self.paths, "claude")["backup"]
+        write_json(path, {"theme": "light", "statusLine": FOREIGN})   # same command, other bytes
+        after_edit = read_bytes(path)
+        for choice, extra in (("custom", {"adopt": True}), ("remove", {"adopt": False})):
+            with self.subTest(choice=choice):
+                result = self.commit("claude", dict(
+                    start_state="foreign", foreign_choice=choice, adopt_command="my-line.sh",
+                    foreign_ok=True, foreign_backup=backup, **extra))
+                self.assertFalse(result["ok"])
+                self.assertIn("changed after the backup you confirmed", result["log"])
+                self.assertEqual(read_bytes(path), after_edit)
+
+    def test_commit_proceeds_when_the_file_still_equals_the_backup(self):
+        path = self.seed("claude", {"theme": "dark", "statusLine": FOREIGN})
+        backup = setup._prepare_foreign(self.paths, "claude")["backup"]
+        result = self.commit("claude", {"adopt": False, "start_state": "foreign",
+                                        "foreign_choice": "remove", "adopt_command": "my-line.sh",
+                                        "foreign_ok": True, "foreign_backup": backup})
+        self.assertTrue(result["ok"], result["log"])
+        self.assertNotIn("statusLine", read_json(path))
+
+
 class TestToggleEdges(ToggleCase):
     def test_missing_host_file_off_writes_nothing_and_on_creates_the_entry(self):
         self.assertTrue(self.commit("claude", {"adopt": False, "start_state": "unset"})["ok"])

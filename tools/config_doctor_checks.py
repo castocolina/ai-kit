@@ -647,15 +647,22 @@ def _configured_env_value(data):
     return value if isinstance(value, str) else ""
 
 
+def _playwright_problem(data):
+    """True when the browser Playwright would launch is missing. A configured variable
+    wins over the default path: the plugin launches that path instead (R7, amended)."""
+    configured = _configured_env_value(data)
+    return not _is_executable(configured or PLAYWRIGHT_DEFAULT_CHROME)
+
+
 def read_claude_playwright_browser(ctx):
-    if _is_executable(PLAYWRIGHT_DEFAULT_CHROME):
-        return f"ok: Chrome at {PLAYWRIGHT_DEFAULT_CHROME}"
     data = ctx.data if isinstance(ctx.data, dict) else {}
     configured = _configured_env_value(data)
-    if _is_executable(configured):
-        return f"ok: {PLAYWRIGHT_ENV_KEY} names {configured}"
     if configured:
+        if _is_executable(configured):
+            return f"ok: {PLAYWRIGHT_ENV_KEY} names {configured}"
         return f"problem: {PLAYWRIGHT_ENV_KEY} names no executable at {configured}"
+    if _is_executable(PLAYWRIGHT_DEFAULT_CHROME):
+        return f"ok: Chrome at {PLAYWRIGHT_DEFAULT_CHROME}"
     return f"problem: no Chrome at {PLAYWRIGHT_DEFAULT_CHROME}; {PLAYWRIGHT_ENV_KEY} unset"
 
 
@@ -663,12 +670,7 @@ def _playwright_apply_when(ctx):
     """True only for a problem row whose flatpak wrapper exists (D-15, R7)."""
     if not isinstance(ctx.data, dict):
         return False
-    variable_ok = _is_executable(_configured_env_value(ctx.data))
-    return (
-        not _is_executable(PLAYWRIGHT_DEFAULT_CHROME)
-        and not variable_ok
-        and _is_executable(PLAYWRIGHT_FLATPAK_CHROME)
-    )
+    return _playwright_problem(ctx.data) and _is_executable(PLAYWRIGHT_FLATPAK_CHROME)
 
 
 def _apply_claude_playwright_chrome(ctx, _target, dry):
@@ -681,9 +683,7 @@ def _apply_claude_playwright_chrome(ctx, _target, dry):
 
     def compute(_text, parsed):
         data = dict(parsed) if parsed is not None else {}
-        if _is_executable(PLAYWRIGHT_DEFAULT_CHROME) or _is_executable(
-            _configured_env_value(data)
-        ):
+        if not _playwright_problem(data):
             return {"ok": False, "reason": "refused: nothing to fix; nothing was written"}
         env_block = data.get("env", {})
         if not isinstance(env_block, dict):
@@ -1185,8 +1185,9 @@ CONFIG_DOCTOR_ROWS = [
         confidence="MEDIUM",
         why=(
             "The Playwright MCP plugin launches Chrome from the default path "
-            f"{PLAYWRIGHT_DEFAULT_CHROME}; on this machine Chrome is a flatpak, so the row "
-            f"offers {PLAYWRIGHT_ENV_KEY} pointing at its wrapper. The plugin detection "
+            f"{PLAYWRIGHT_DEFAULT_CHROME}. Where that path is missing and Chrome is installed as "
+            f"a flatpak ({PLAYWRIGHT_FLATPAK_CHROME} exists), the row offers "
+            f"{PLAYWRIGHT_ENV_KEY} pointing at its wrapper. The plugin detection "
             "(enabledPlugins) is inferred from settings.json, and the variable reaching the "
             "MCP process and a headed launch are inferred until the Phase 54 live check. "
             "Apply: yes, writes only that one env key, backed up first."

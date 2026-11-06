@@ -102,6 +102,11 @@ class TestBackupHelper(unittest.TestCase):
         self.assertIn("other.json.20260101T100000000000Z.bak", names)
         self.assertIn("notes.txt", names)
 
+    def test_prune_failure_does_not_fail_the_backup(self):
+        with mock.patch.object(appliers, "prune_backups", side_effect=PermissionError("ro")):
+            path = appliers.backup_before_write(self.target, self.backups_dir, "claude")
+        self.assertTrue(os.path.isfile(path))
+
     def test_backup_is_byte_identical(self):
         with open(self.target, "rb") as handle:
             before = handle.read()
@@ -412,6 +417,19 @@ class TestPlaywrightRow(_Scratch):
         self.assertIn(missing, row["current_display"])
         self.assertTrue(row["apply_eligible"])
 
+    def test_configured_missing_path_is_a_problem_even_with_default_chrome(self):
+        _make_executable(self.default_chrome)
+        missing = os.path.join(self.root, "gone", "chrome")
+        self.set_settings(self.enabled({"env": {checks.PLAYWRIGHT_ENV_KEY: missing}}))
+        row = self.catalog_row()
+        self.assertTrue(row["current_display"].startswith("problem"), row["current_display"])
+        self.assertIn(missing, row["current_display"])
+        self.assertTrue(row["apply_eligible"])
+        result = checks.apply_row(ROW_ID, self.ctx(), dry=False)
+        self.assertTrue(result["ok"], result)
+        with open(self.settings, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["env"][checks.PLAYWRIGHT_ENV_KEY], self.wrapper)
+
     def test_wrapper_missing_offers_no_apply_and_direct_apply_refuses(self):
         os.remove(self.wrapper)
         self.set_settings(self.enabled())
@@ -484,6 +502,7 @@ class TestPlaywrightRow(_Scratch):
         row = self.catalog_row()
         self.assertEqual(row["confidence"], "MEDIUM")
         self.assertIn("inferred", row["why"])
+        self.assertNotIn("on this machine", row["why"])
         self.assertIn("the variable reaching the MCP process and a headed launch", row["why"])
         self.assertIn("Phase 54 live check", row["why"])
 

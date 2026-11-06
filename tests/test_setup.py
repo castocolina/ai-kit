@@ -4063,6 +4063,30 @@ class TestLaunchWizardCrash(unittest.TestCase):
         self.assertEqual(cm.exception.code, 2)
         self.assertIn("error", err.getvalue().lower())
 
+    def test_crash_after_the_commit_keeps_the_log_and_the_result(self):
+        fake_mod = self._make_fake_wizard_module()
+        result = mock.MagicMock()
+        result.state = {"claude": {"_commit_ok": True, "_commit_log": "wired claude"}}
+
+        def _crash_after_commit(_ctx):
+            crash = fake_mod.WizardCrash(KeyError("id"))
+            crash.result = result
+            raise crash
+
+        fake_mod.run_wizard = _crash_after_commit
+        sys.modules["wizard_app"] = fake_mod
+        paths = self._make_paths()
+        entries = {cat: [] for cat in setup.CATEGORIES}
+        installed = {cat: set() for cat in setup.CATEGORIES}
+        fake_tty = mock.MagicMock()
+        fake_tty.isatty.return_value = True
+        with mock.patch.object(setup.sys, "stderr", new_callable=io.StringIO) as err:
+            returned = setup.launch_wizard(paths, entries, installed, fake_tty, False,
+                                           setup.new_counts())
+        self.assertIs(returned, result)
+        self.assertIn("wired claude", err.getvalue())
+        self.assertIn("failed after the install", err.getvalue())
+
     def test_hook_only_failure_terminal_warning(self):
         fake_mod = self._make_fake_wizard_module()
         result = mock.MagicMock()
@@ -4103,6 +4127,27 @@ class TestLaunchWizardCrash(unittest.TestCase):
             setup.launch_wizard(paths, entries, installed, fake_tty, False,
                                 setup.new_counts())
         self.assertEqual(err.getvalue(), "")
+
+
+class TestDoctorDryRunWrapper(unittest.TestCase):
+    def test_dry_apply_marks_the_shown_value_as_not_written(self):
+        import collections
+
+        ctx_type = collections.namedtuple("Ctx", "catalog apply")
+        seen = []
+
+        def base(row_id, dry):
+            seen.append((row_id, dry))
+            if row_id == "bad":
+                return {"ok": False, "reason": "refused"}
+            return {"ok": True, "after": 3650} if row_id == "after" else \
+                {"ok": True, "current_display": "3650"}
+        ctx = setup._as_dry_run(ctx_type({}, base))
+        self.assertEqual(ctx.apply("a", False)["current_display"], "3650 (dry run, not written)")
+        self.assertEqual(ctx.apply("after", False)["current_display"],
+                         "3650 (dry run, not written)")
+        self.assertEqual(ctx.apply("bad", False), {"ok": False, "reason": "refused"})
+        self.assertTrue(all(dry for _row, dry in seen))      # every call was forced dry
 
 
 class TestUserSegmentDiscovery(unittest.TestCase):

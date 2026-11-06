@@ -1841,6 +1841,8 @@ _BROAD_EXCEPT_BACKSTOPS = frozenset(
         (_CURATED_APPLY, "_execute_apply"),
         ("tools/wizard_app.py", "_apply_housekeeping"),
         ("tools/wizard_app.py", "_run_commit"),
+        # (post-install UI) a doctor bug after the install notifies instead of crashing Done.
+        ("tools/wizard_app.py", "_key_done"),
         ("tools/common_render.py", "core_safe_build"),
         ("tools/common_render.py", "core_render_checked"),
         ("tools/statusline-doctor.py", "cmd_doctor"),

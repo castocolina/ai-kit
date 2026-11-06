@@ -98,6 +98,7 @@ LANE_GATE = {1: 20, 2: 30}  # Line 2 needs ≥20 rows, Line 3 needs ≥30
 PREVIEW_TITLE = "live preview — {host} (sample data)"
 TRAY_TITLE = "OFF (Space turns a chip on → its home line)"
 PREVIEW_FALLBACK_NOTE = "sample text, render unavailable"
+PREVIEW_RENDERING_NOTE = "sample text, rendering…"
 
 # Choose shows one tab per component kind; global rules is not a tab (ruling 1), it is
 # toggled on Review with `g`. Empty copy is the UI-SPEC "nothing to install" body (ruling 5).
@@ -107,10 +108,10 @@ NOTHING_TO_INSTALL = ("nothing to install: no skill, agent, command or hook is i
                       "from this checkout. Enter continues to the status-line panes.")
 GLOBAL_RULES_NOTHING = ("global rules: nothing to change (no global instruction file holds "
                         "codegraph's installer sentence)")
-# Renderer output is untrusted: keep SGR colour, drop OSC, other CSI and C0 controls.
+# Renderer output is untrusted: keep SGR colour, drop OSC, other CSI, C0 and C1 controls.
 _OSC_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 _CSI_NON_SGR_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-ln-~]")
-_C0_RE = re.compile(r"[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f]")
+_C0_RE = re.compile(r"[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f-\x9f]")
 
 # footer key-bar per step: (label, cap, primary?)  — order matches the HTML
 FOOTERS = [
@@ -219,8 +220,7 @@ class WizardResult(NamedTuple):
     state: dict
 
 
-# Injected by setup.py in plans 04 and 05 (doctor run and foreign-status-line preparation);
-# documented here so the context shape is fixed before those plans land.
+# Injected by setup.py: the config doctor screen factory and the foreign-status-line backup.
 DoctorFactoryFn = Callable[..., object]
 PrepareForeignFn = Callable[..., object]
 
@@ -246,9 +246,10 @@ class WizardContext(NamedTuple):
     # {"selection", "initial_enabled"}. Runs IN-UI once the housekeeping gate is
     # answered. None → legacy no-op (fine when housekeeping is empty).
     apply_housekeeping: ApplyHousekeepingFn | None = None
-    # Plans 04 and 05: doctor(...) runs the status-line doctor for one host; prepare_foreign
-    # prepares a foreign status line for keep / remove / customize. Unused until then.
-    doctor: DoctorFactoryFn | None = None
+    # doctor() -> Screen: a fresh config doctor screen, pushed by Done's `d`.
+    # prepare_foreign(host_id) -> {"entry", "file", "backup"} | {"error"}: backs up a foreign
+    # status line before the remove / customize confirmation (never called for keep).
+    doctor:DoctorFactoryFn | None = None
     prepare_foreign: PrepareForeignFn | None = None
 
 
@@ -285,7 +286,10 @@ class FlowState:
     help_open: bool = False
     host_index: int = 0    # the detected host whose band/board is on Arrange
     result: WizardResult | None = None
-    kind: str = ""         # the active Choose tab (a KINDS entry)
+    # Set before a deferred modal push, cleared by its answer: a key already queued behind the
+    # push cannot open a second modal (the screen_stack guard is still false until then).
+    modal_pending: bool = False
+    kind: str = ""       # the active Choose tab (a KINDS entry)
     kind_cursor: dict = field(default_factory=dict)  # kind -> last cursor index in that kind
 
 
@@ -337,7 +341,10 @@ class WizardCrash(Exception):
     so callers can distinguish a crash from a clean user abort (None result).
 
     The original exception is available as __cause__ (via ``raise … from``).
+    ``result`` is the WizardResult when the commit had already run, else None.
     """
+
+    result: WizardResult | None = None
 
 
 # Minimum terminal dimensions required to enter the alternate screen.
@@ -1212,7 +1219,7 @@ class WizardApp(App):
         if out:
             return self._preview_text(out)
         if out is None:                                 # still rendering
-            return Text.from_markup(samples)
+            return Text.from_markup(f"{samples}\n[{DIM}]{PREVIEW_RENDERING_NOTE}[/]")
         return Text.from_markup(f"{samples}\n[{DIM}]{PREVIEW_FALLBACK_NOTE}[/]")
 
     def _apply_review_preview(self, host_id, key, out) -> None:
@@ -1634,6 +1641,8 @@ class WizardApp(App):
                 return False       # no item in this checkout: `g` is not consumed
             self.model.sel.set_category(GLOBAL_RULES_CAT, not on)
             return True
+        if self.flow.modal_pending:
+            return True            # a confirm modal is on its way
         if event.key == "enter":
             if not self._has_net_change():
                 self.query_one("#cta", Static).update(
@@ -1672,15 +1681,19 @@ class WizardApp(App):
             return False
         replace = self._host_action(host.id) == "replace_foreign"
         # After this key event finishes, so the same Enter cannot reach the new modal.
+        self.flow.modal_pending = True
         self.call_after_refresh(self.push_screen, ForeignConfirm(host.label, info, replace),
-                                functools.partial(self._on_foreign_answer, host.id))
+                                functools.partial(self._on_foreign_answer, host.id,
+                                                  str(info.get("backup") or "")))
         return True
 
-    def _on_foreign_answer(self, host_id: str, yes: bool) -> None:
+    def _on_foreign_answer(self, host_id: str, backup: str, yes: bool) -> None:
         """The modal's answer: Yes authorises this host and continues; No cancels the
         whole confirm (every host's foreign_ok is cleared, REVIEWS HIGH 3)."""
+        self.flow.modal_pending = False
         if yes:
             self.views[host_id].model.state["foreign_ok"] = True
+            self.views[host_id].model.state["foreign_backup"] = backup   # the commit re-checks it
             self._confirm_or_commit()
         else:
             for view in self.views.values():
@@ -1795,20 +1808,27 @@ class WizardApp(App):
         self.commit.committing = False
         self.call_from_thread(self._render)
 
+    def _on_doctor_closed(self, _result: object) -> None:
+        self.flow.modal_pending = False
+
     def _key_done(self, event: events.Key) -> bool:
         if self.commit.committing:
             return True            # ignore keys until the install finishes
+        if self.flow.modal_pending:
+            return True            # the doctor screen is on its way
         if event.key == "enter":
             self.exit()
             return True
         if event.key == "d" and self.ctx.doctor is not None:
             try:
                 screen = self.ctx.doctor()
-            except (OSError, ValueError, RuntimeError, ImportError) as exc:
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # UI boundary after the install: a doctor bug must not crash the wizard.
                 self.notify(f"config doctor failed: {exc}", severity="error")
                 return True
             # After this key event, so the same key cannot reach the new screen.
-            self.call_after_refresh(self.push_screen, screen)
+            self.flow.modal_pending = True
+            self.call_after_refresh(self.push_screen, screen, self._on_doctor_closed)
             return True
         return False
 
@@ -1839,5 +1859,7 @@ def run_wizard(ctx: WizardContext) -> WizardResult | None:
     app.run()
     exc = getattr(app, "_exception", None)  # private Textual 8.x attr; getattr degrades safely
     if exc is not None:                     # Textual swallows; re-signal as crash
-        raise WizardCrash(exc) from exc
+        crash = WizardCrash(exc)
+        crash.result = app.flow.result      # a crash after the commit keeps what was installed
+        raise crash from exc
     return app.flow.result

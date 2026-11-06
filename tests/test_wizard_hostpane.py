@@ -398,6 +398,28 @@ class TestForeignConfirm(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls), 1)
         self.assertIs(calls[0]["claude"]["foreign_ok"], True)
         self.assertEqual(calls[0]["claude"]["foreign_choice"], "remove")
+        self.assertEqual(calls[0]["claude"]["foreign_backup"], self.INFO["backup"])
+
+    async def test_two_queued_enters_push_one_modal_and_one_backup(self):
+        from textual import events
+
+        prepared, calls = [], []
+        app = self._app(lambda host_id: prepared.append(host_id) or dict(self.INFO),
+                        _recorder(calls))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.press("o")
+            await pilot.press("enter")                  # → Review
+            app.post_message(events.Key("enter", "\r"))  # both queued before the deferred push
+            app.post_message(events.Key("enter", "\r"))
+            await pilot.pause()
+            self.assertEqual(prepared, ["claude"])
+            self.assertEqual(len(app.screen_stack), 2)
+            await pilot.press("n")
+            await pilot.pause()
+            self.assertFalse(app.flow.modal_pending)
+        self.assertEqual(calls, [])
 
     async def test_prepare_error_shows_notice_and_stays_on_review(self):
         calls = []
@@ -496,6 +518,16 @@ class TestDoneDoctor(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIn("config doctor failed: boom", _notices(app))
             self.assertEqual(app.flow.step, wa.STEP_DONE)
+
+        def odd():
+            raise KeyError("id")
+        app = self._app(doctor=odd)
+        async with app.run_test() as pilot:
+            await self._to_done(app, pilot, keys=("o",))
+            await pilot.press("d")
+            await pilot.pause()
+            self.assertTrue(app.is_running)
+            self.assertIn("config doctor failed: 'id'", _notices(app))
 
     async def test_without_a_doctor_there_is_no_hint_and_d_is_not_consumed(self):
         app = self._app(doctor=None)

@@ -496,6 +496,33 @@ class TestRealPreview(unittest.IsolatedAsyncioTestCase):
             await _settle(app, pilot)
             self.assertEqual(len(calls), before, calls)
 
+    async def test_review_says_rendering_while_the_render_runs(self):
+        release = threading.Event()
+        arrange_done = []
+
+        def slow(segments, layout=None, cols=None):  # pylint: disable=unused-argument
+            if arrange_done:
+                release.wait(5)                     # Review's render blocks
+            return "RED"
+        app = self._app(types.SimpleNamespace(render_preview=slow))
+        app.preview.debounce_s = 0.01
+        try:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("enter")          # Arrange
+                await _settle(app, pilot)
+                arrange_done.append(1)
+                await pilot.press("enter")          # Review
+                await pilot.pause()
+                plain = _preview_plain(app, "#rev-preview")
+                self.assertIn(wa.PREVIEW_RENDERING_NOTE, plain)
+                self.assertNotIn(wa.PREVIEW_FALLBACK_NOTE, plain)
+                release.set()
+                await _settle(app, pilot)
+                self.assertNotIn(wa.PREVIEW_RENDERING_NOTE, _preview_plain(app, "#rev-preview"))
+        finally:
+            release.set()
+
     async def test_review_without_renderer_shows_samples_and_note(self):
         app = self._app(None)
         async with app.run_test() as pilot:
@@ -531,6 +558,10 @@ class TestPreviewEscapes(unittest.TestCase):
         self.assertTrue(any("color(2)" in str(span.style) for span in text.spans))
         self.assertNotIn("\x1b", text.plain)
         self.assertNotIn("\x07", text.plain)
+
+    def test_c1_controls_are_stripped(self):
+        text = wa.WizardApp._preview_text("a\x9b2Jb\x9d0;t\x07c\x85d\x9fe")
+        self.assertEqual(text.plain, "a2Jb0;tcde")
 
 
 def _edge_app(engine, debounce_s=0.01, deadline_s=2.0):
