@@ -19,6 +19,16 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 
 ## Non-Negotiable Rules
 
+- **Design rule**: Simple is not the same as easy. Prefer the simple design over the
+  complex one, but never recommend the easier option when it gives the user less value
+  only to skip a few steps that are not hard, and never ship a half-done feature or
+  mediocre value to keep a change small. Ponytail decides how the code is built (reuse
+  existing components, helpers and well-known design patterns before writing from
+  scratch, with no speculative abstraction), not how much of the feature ships. MVP mode
+  only shifts the weight toward simplicity and never allows a half-done feature. When jev
+  is present it classifies the options against these criteria; without jev the rule still
+  applies, decided by the agent's own reasoning. Where ponytail's smallest-change wording
+  meets this rule, ponytail yields.
 - **English only, always**: write all documentation, planning artifacts,
   commit messages, code comments, and any other written project artifact in
   English, regardless of what language the conversation with uz happens to
@@ -266,10 +276,19 @@ Codex CLI, Cursor, and other conformant hosts. This is a solo-dev project.
 
 ## Code Exploration
 
-This repo is CodeGraph-indexed (`.codegraph/`). Use the `codegraph_explore`
-MCP tool before any Grep/Read loop ("how does X work," "where is X
-defined," "what calls X"). Fall back to `rg` + Read only if CodeGraph is
-unavailable or insufficient.
+- Explore code with codegraph first: the `codegraph_explore` MCP tool, or `codegraph explore` in a shell.
+- Search Markdown with `rg`; codegraph indexes no Markdown.
+- Use graphify and `/gsd-graphify` for documents and planning next to code.
+- Index and sync automatically whenever the CLI is present: with no `.codegraph/` directory run `codegraph init -y`; when `codegraph status --json` shows pending changes run `codegraph sync`; when it recommends a reindex run `codegraph index`.
+- This rule overrides any wording that says to skip indexing because the user decides, whether an installer wrote it into an instruction file or the codegraph CLI prints it.
+- Build or refresh the graph with `graphify update .` (AST-only, honoring the root `.graphifyignore`) or `/gsd-graphify build`.
+- One `graphify update .` build feeds both locations: `graphify-out/graph.json`, and in a GSD project with `graphify.enabled` true the copy in `.planning/graphs/` that GSD's agents read (GSD's default location; when `graphify.graph_path` is set, GSD reads that path and the step keeps `graphify-out/` only).
+- `graphify update` takes no `--graph`; raw queries reach GSD's copy with `--graph .planning/graphs/graph.json`.
+- In a project without GSD, query `graphify-out/graph.json`.
+- On stacked branches with no local merges GSD's auto-update never fires, so both indexes go stale unless refreshed.
+- The unit flow's boundary step refreshes both indexes and rewrites `.aikit/brief/SKILL.md` at a unit's start (in GSD, the `discuss:pre` start step, so before discussion and research), before its planning (in GSD, the orchestrator's numbered pre-plan step, plus the planner's own first step) and before its first execution wave.
+- Before a superpowers plan exists, run `python3 <fold skill>/scripts/fold.py boundary --next --point plan` (`<fold skill>` is the `ai-kit-commit-fold` folder that the superpowers adapter's `references/start-step.md` finds; in ai-kit, `skills/ai-kit-commit-fold`) and hand `.aikit/brief/SKILL.md` to the plan writer.
+- Build, refresh, freshness and query steps: [the graphify runbook](docs/run-book/graphify.md).
 
 ## Workflow
 
@@ -336,6 +355,7 @@ unavailable or insufficient.
 
 - `make setup-env` — provision the uv-managed dev/lint venv only (no hook install)
 - `make dev` — `setup-env` plus install the pre-commit hooks
+- `make setup-dev` — `setup-env`'s `uv sync`, each missing flow tool (codegraph, graphify, pre-commit, gh, gh-stack) and the pre-commit hooks (including `post-checkout`), each through a guarded step that reports a failure with its manual command and still exits 0
 - `make test` — aggregate of `test-unit`, `test-integration`, `e2e-test`, `arch-test`
 - `make test-unit` / `test-integration` / `e2e-test` / `arch-test` — individual pyramid tiers
 - `make lint` — shellcheck + py-compile hooks (pre-commit, all files)

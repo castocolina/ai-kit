@@ -21,6 +21,7 @@ from ai_kit_rules_common.classification import (
     CONDITION_OPENGSD,
     CONDITION_STACK_DETECTED,
 )
+from ai_kit_rules_common.code_exploration import R07_SUMMARY, R08_SUMMARY
 from ai_kit_rules_common.tool_catalog import (
     PARALLEL_TEST_COUNT_FLAGS,
     PARALLEL_TEST_FORMS,
@@ -138,10 +139,7 @@ RULES: tuple[dict, ...] = (
         "criticality": CRITICALITY_MEDIUM,
         "condition": condition_tool_presence("codegraph"),
         "signals": ("codegraph", "codegraph_explore", ".codegraph"),
-        "summary": (
-            "When `.codegraph/` is present, prefer the codegraph_explore "
-            "MCP tool over ad hoc Read/Grep for codebase exploration."
-        ),
+        "summary": R07_SUMMARY,
     },
     {
         "id": "R08",
@@ -149,11 +147,7 @@ RULES: tuple[dict, ...] = (
         "criticality": CRITICALITY_MEDIUM,
         "condition": condition_tool_presence("graphify"),
         "signals": ("graphify", "graph.json", "graphify-out"),
-        "summary": (
-            "When graphify is present, agents should use it for doc-aware "
-            "indexing and trigger re-indexing proactively rather than "
-            "relying solely on its hook."
-        ),
+        "summary": R08_SUMMARY,
     },
     {
         "id": "R09",

@@ -2542,5 +2542,16 @@ class TestParallelTestTable(unittest.TestCase):
         self.assertEqual(hardcoded_worker_counts(near, go_rows, []), [near])
 
 
+class TestRuleClauses(unittest.TestCase):
+    def test_each_clause_is_one_sentence_and_none_repeats(self):
+        from ai_kit_rules_common.code_exploration import RULE_CLAUSES
+
+        for clause in RULE_CLAUSES:
+            with self.subTest(clause=clause[:40]):
+                self.assertTrue(clause.endswith("."))
+                self.assertNotIn("\n", clause)
+        self.assertEqual(len(set(RULE_CLAUSES)), len(RULE_CLAUSES))
+
+
 if __name__ == "__main__":
     unittest.main()
