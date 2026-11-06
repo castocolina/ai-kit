@@ -137,6 +137,8 @@ E2E_MODULES = frozenset({
     "tests.test_staged_commit_e2e",
     # real gsd-core runs of the fold capability in a temp fixture project (29-12)
     "tests.test_ai_kit_commit_fold_e2e",
+    # real gsd-tools and real git worktrees for the index step (30-01)
+    "tests.test_flow_index_e2e",
 })
 # Commit budget (SPEC R1, amended 2026-11-03): an e2e module recorded above this runs at push, not
 # at commit. It equals SPEC R3's push target for the two test hooks (the 2026-11-02 e2e run split
@@ -147,6 +149,7 @@ COMMIT_E2E_BUDGET_SECS = 60
 # are this machine's times and are not scaled by CPU count. Refresh on a quiet machine with that
 # command. A module missing from this table is over the budget.
 E2E_RECORDED_SECS = {
+    "tests.test_flow_index_e2e": 9,
     "tests.test_ai_kit_commit_fold_e2e": 1,
     "tests.test_ai_kit_gsd_curated_config_matrix": 1,
     "tests.test_ai_kit_gsd_spec_discuss_e2e": 1,

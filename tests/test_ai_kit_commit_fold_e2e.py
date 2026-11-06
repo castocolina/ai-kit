@@ -399,7 +399,7 @@ class TestHookCheckpointReady(unittest.TestCase):
         cls.log = cls.tmp / "gh.log"
         bin_dir = cls.tmp / "bin"
         forge_fakes.write_forge_fakes(bin_dir, cls.state, cls.log, gh_stack=False)
-        cls.env["PATH"] = host_fakes.host_path(bin_dir)
+        cls.env["PATH"] = host_fakes.host_path(bin_dir, cls.env["PATH"])
         wave_post = _fold_hooks(_gsd(cls.repo, cls.env, "loop", "render-hooks",
                                      "execute:wave:post", "--raw"))
         cls.wave_post = wave_post

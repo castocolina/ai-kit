@@ -8,6 +8,7 @@ Usage:
   fold.py status --phase N [--repo DIR]
   fold.py start|guard|checkpoint|ready|show <unit selector> [--repo DIR]   (unit flow, plan 29.1-01)
   fold.py hotfix | restack | merge-chain | consent | settings | gsd-health   (unit flow)
+  fold.py index [--repo DIR]   (refresh the codegraph index and graphify graph; exit 0)
 
 Exit 0 when folded or nothing to fold, 1 when refused, 2 for an unreadable or invalid checkpoint.
 The status subcommand is read-only and always exits 0.
@@ -22,6 +23,7 @@ import re
 import sys
 
 import flow_git
+import flow_index
 import flow_record
 import fold_adapters
 import fold_engine
@@ -75,6 +77,14 @@ def build_parser():
     status = sub.add_parser("status", help="list each plan of a phase as folded or not")
     status.add_argument("--phase", required=True, type=_phase)
     _add_common(status)
+    index = sub.add_parser("index", help="refresh the codegraph index and graphify graph")
+    index.add_argument("--repo", default=".", help="repository (default: current directory)")
+    mode = index.add_mutually_exclusive_group()
+    mode.add_argument("--detach", action="store_true",
+                      help="post-checkout hook: queue a new worktree for a detached runner")
+    mode.add_argument("--drain", action="store_true", help="run queued index jobs")
+    index.add_argument("--lock-fd", type=int, default=None,
+                       help="with --drain: the job lock is already held through this fd")
     _add_flow_parsers(sub)
     return parser
 
@@ -369,8 +379,10 @@ def _gsd_health(args):
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    if args.command == "index" and args.lock_fd is not None and not args.drain:
+        parser.error("--lock-fd needs --drain")
     handlers = {"fold": _fold_checkpoint, "gsd": _gsd, "superpowers": _superpowers,
-                "status": _status, "gsd-health": _gsd_health}
+                "status": _status, "gsd-health": _gsd_health, "index": flow_index.cmd_index}
     if args.command in _FLOW_HANDLERS:
         return _flow(args)
     if args.command not in handlers:

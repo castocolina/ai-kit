@@ -522,7 +522,7 @@ class TestMergeChain(_StackCase):
         self.log = self.dest / "gh.log"
         self.bin = self.dest / "bin"
         forge_fakes.write_forge_fakes(self.bin, self.state, self.log, gh_stack=False)
-        self.env["PATH"] = host_fakes.host_path(self.bin)
+        self.env["PATH"] = host_fakes.host_path(self.bin, self.env["PATH"])
         self.build_stack()
         for unit_id, branch, base in (("unit-a", BR_A, "main"), ("unit-b", BR_B, BR_A),
                                       ("unit-c", BR_C, BR_B)):
@@ -763,7 +763,7 @@ class TestMergeChainGhStack(_StackCase):
         self.log = self.dest / "gh.log"
         self.bin = self.dest / "bin"
         forge_fakes.write_forge_fakes(self.bin, self.state, self.log, gh_stack=True)
-        self.env["PATH"] = host_fakes.host_path(self.bin)
+        self.env["PATH"] = host_fakes.host_path(self.bin, self.env["PATH"])
         self.build_stack()
         gh = str(self.bin / "gh")
         for branch, base in ((BR_A, "main"), (BR_B, BR_A), (BR_C, BR_B)):

@@ -69,7 +69,7 @@ class _FlowCase(unittest.TestCase):
         self.log = self.dest / "gh.log"
         self.bin = self.dest / "bin"
         forge_fakes.write_forge_fakes(self.bin, self.state, self.log, gh_stack=True)
-        self.env["PATH"] = host_fakes.host_path(self.bin)
+        self.env["PATH"] = host_fakes.host_path(self.bin, self.env["PATH"])
 
     def fold(self, *args, env=None):
         proc = subprocess.run(
@@ -1010,7 +1010,7 @@ class TestThirdAdapterFullFlow(_FlowCase):
         super().setUp()
         # Plain gh for the merges: the owner-started chain merges each PR on its own.
         forge_fakes.write_forge_fakes(self.bin, self.state, self.log, gh_stack=False)
-        self.env["PATH"] = host_fakes.host_path(self.bin)
+        self.env["PATH"] = host_fakes.host_path(self.bin, self.env["PATH"])
 
     def build_unit(self, unit_id, branch, path):
         """start, two commits, the final checkpoint, then ready: the adapter's per-unit steps."""
@@ -1111,7 +1111,7 @@ class TestLiveCheckScript(unittest.TestCase):
         self.log = self.root / "gh.log"
         self.bin = self.root / "bin"
         forge_fakes.write_forge_fakes(self.bin, self.state, self.log, gh_stack=True)
-        self.env["PATH"] = host_fakes.host_path(self.bin)
+        self.env["PATH"] = host_fakes.host_path(self.bin, self.env["PATH"])
         self.base_path = self.env["PATH"]
         self.workdir = self.root / "work"
         self.install_gh(STACK_PROBE)

@@ -1849,6 +1849,9 @@ _BROAD_EXCEPT_BACKSTOPS = frozenset(
         # (pushed-tests) from skipping an over-budget e2e module at push: any failure of the
         # proof or the mapper runs every over-budget module, so the catch-all is the fail-safe.
         ("tools/run_unittest_parallel.py", "_pushed_modules"),
+        # (queue-checkout) the post-checkout seed hook is arbitrary code; its failure only logs,
+        # and the outer detach suppresses everything, so a git worktree add never fails (30-01).
+        ("skills/ai-kit-commit-fold/scripts/flow_index.py", "_queue_checkout"),
     }
 )
 
@@ -1928,6 +1931,10 @@ _START_NEW_SESSION_ALLOWED = frozenset(
         # check-dogfood runs its three guard tests in one child session so a timeout stops the
         # whole group; it supervises tests, not a cross-AI run (28-04).
         "tools/check_dogfood.py",
+        # the index job runner (30-01) is detached from the git hook that starts it, so it must
+        # outlive that hook's process group; it runs index jobs, not a cross-AI run, and it is
+        # the only other start_new_session caller.
+        "skills/ai-kit-commit-fold/scripts/flow_index.py",
     }
 )
 _SUPERVISOR_OWNER = "skills/ai-kit-spec-review/ai_kit_spec/runner_dispatch.py"

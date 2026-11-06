@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import unicodedata
 
 from fold_engine import Candidate, Checkpoint, FoldError, range_commits
@@ -410,3 +411,140 @@ def adapter_gates(repo):
         return []
     fold_py = os.path.join(os.path.dirname(os.path.realpath(__file__)), "fold.py")
     return [("gsd-tools validate health", ["python3", fold_py, "gsd-health", "--repo", top])]
+
+
+# ---- the index step's project copy (30-01): GSD's graphs copy, rebuild lock, ignore line ----
+# flow_index calls these through generic names; the flow core never names a framework.
+_GRAPHS_DIR = (".planning", "graphs")
+_IGNORE_LINE = ".planning/milestones/"
+
+
+def _read_bytes(path):
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+def _atomic_bytes(path, data):
+    # copied from flow_record._atomic_write_json; bytes variant
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    fd, temp = tempfile.mkstemp(dir=directory, prefix=f".{os.path.basename(path)}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    finally:
+        if os.path.exists(temp):
+            os.remove(temp)
+
+
+def _gsd_config(top):
+    try:
+        with open(os.path.join(top, ".planning", "config.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _graphify_config(top):
+    value = _gsd_config(top).get("graphify")
+    return value if isinstance(value, dict) else {}
+
+
+def _graph_path_set(top):
+    value = _graphify_config(top).get("graph_path")
+    return isinstance(value, str) and value.strip() != ""
+
+
+def index_project(top):
+    """D-16: a GSD project is `.planning/PROJECT.md` plus config.json or the project-local tools."""
+    planning = os.path.join(top, ".planning")
+    if not os.path.isfile(os.path.join(planning, "PROJECT.md")):
+        return False
+    return (os.path.isfile(os.path.join(planning, "config.json"))
+            or os.path.isfile(os.path.join(top, ".claude", "gsd-core", "bin", "gsd-tools.cjs")))
+
+
+def index_copy_applies(top):
+    """The copy into `.planning/graphs/` applies: GSD, graphify enabled, no graph_path."""
+    return (index_project(top) and _graphify_config(top).get("enabled") is True
+            and not _graph_path_set(top))
+
+
+def index_copy_skip_reason(top):
+    if not index_project(top):
+        return "not a GSD project"
+    if _graphify_config(top).get("enabled") is not True:
+        return "graphify.enabled is not true"
+    return "graphify.graph_path is set"
+
+
+def _lock_pid(top):
+    try:
+        with open(os.path.join(top, *_GRAPHS_DIR, ".rebuild.lock"), encoding="utf-8") as handle:
+            pid = int(handle.read().strip())
+    except (OSError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def index_lock_wait(top, clock, sleep, deadline_s=120):
+    """The live holder's pid when GSD's rebuild lock is still held at the deadline, else None.
+
+    The lock is read only: GSD's rebuilder writes its pid there, then builds into graphify-out/.
+    """
+    start = clock()
+    while True:
+        pid = _lock_pid(top)
+        if pid is None or not _alive(pid):
+            return None
+        if clock() - start >= deadline_s:
+            return pid
+        sleep(1)
+
+
+def index_lock_line(pid, stage):
+    """The held-lock report line; stage is `build` (before the build) or `copy` (before it)."""
+    return (f"graphify: GSD's rebuild lock is held by pid {pid}; "
+            f"{stage} skipped, retried at the next point")
+
+
+def index_write_status(top, fields):
+    _atomic_bytes(os.path.join(top, *_GRAPHS_DIR, ".last-build-status.json"),
+                  (json.dumps(fields, indent=1, sort_keys=True) + "\n").encode("utf-8"))
+
+
+def index_publish_copy(top, fields):
+    """Copy the fresh graphify-out files into `.planning/graphs/`, then write the status file."""
+    built = os.path.join(top, "graphify-out")
+    graphs = os.path.join(top, *_GRAPHS_DIR)
+    for name in ("graph.json", "graph.html", "GRAPH_REPORT.md"):
+        if os.path.isfile(os.path.join(built, name)):
+            _atomic_bytes(os.path.join(graphs, name), _read_bytes(os.path.join(built, name)))
+    snapshot = _read_bytes(os.path.join(built, "graph.json"))
+    _atomic_bytes(os.path.join(graphs, ".last-build-snapshot.json"), snapshot)
+    index_write_status(top, fields)
+
+
+def index_ensure_graphifyignore(top):
+    """Ruling 2: add `.planning/milestones/` to the root `.graphifyignore` when it is missing."""
+    path = os.path.join(top, ".graphifyignore")
+    text = _read_bytes(path).decode("utf-8") if os.path.isfile(path) else ""
+    if _IGNORE_LINE in (line.strip() for line in text.splitlines()):
+        return None
+    prefix = "\n" if text and not text.endswith("\n") else ""
+    _atomic_bytes(path, (text + prefix + _IGNORE_LINE + "\n").encode("utf-8"))
+    return f"note: .graphifyignore: added {_IGNORE_LINE} (commit it)"
