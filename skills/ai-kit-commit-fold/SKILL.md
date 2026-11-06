@@ -55,12 +55,16 @@ JSON (`--unit FILE|-`) or by selector: `--phase N` for GSD, `--plan FILE` for su
 `flow <command> <unit>:` and its last line is `outcome:`.
 
 - `fold.py start <selector>`: create the unit's branch on the stack top, or reuse it. Run it before
-  the unit's first commit.
+  the unit's first commit. Re-running it on a recorded unit (a re-discuss) reuses an open, finished
+  or ready unit, recreating a deleted branch at its recorded tip. A merged unit, or a finished or
+  ready one whose branch cannot be reused, is reported with exit 0 and nothing changes; an open one
+  still refuses `wrong_parent` or `branch_missing`.
 - `fold.py guard <selector>`: read-only. It refuses `wrong_parent` when the unit's recorded parent
   tip is not the merge base of its branch and its parent.
 - `fold.py checkpoint <selector> [--checkpoint FILE|-] [--base REV] [--final]`: fold the
   checkpoint's commits, push the branch, and open the draft PR at the first push. `--final` marks the
-  unit finished. `--base` is valid only with `--plan`.
+  unit finished. `--base` is valid only with `--plan`. An unrecorded unit is started first when HEAD
+  is on its branch; elsewhere it refuses `not_started`.
 - `fold.py ready <selector>`: mark the draft PR ready for review. It refuses `signal_order` before
   the unit is finished and `not_verified` until verification has passed.
 - `fold.py show <selector>`: read-only. Prints the unit's `state:` and `pr:`.
@@ -181,9 +185,11 @@ report to the owner.
 ## Missed folds
 
 A GSD hook can be skipped. Phase verification runs `fold.py status --phase N` (read-only: it lists
-each plan as folded, unfolded or unfinished). For a phase with a started unit, fold an unfolded plan
-with `gsd-tools ai-kit-fold checkpoint --phase N`: only `checkpoint` pushes under push consent and,
-once every plan has its SUMMARY, marks the unit finished. Use `fold.py gsd --phase N` only where no unit was started.
+each plan as folded, unfolded or unfinished). Fold an unfolded plan with
+`gsd-tools ai-kit-fold checkpoint --phase N`: only `checkpoint` pushes under push consent and, once
+every plan has its SUMMARY, marks the unit finished. A never-started unit is started by that
+checkpoint when HEAD is on the phase branch, so `ready` works afterwards. Use `fold.py gsd --phase N`
+only off a unit branch, in a repository without the unit flow.
 
 ## Grouping
 

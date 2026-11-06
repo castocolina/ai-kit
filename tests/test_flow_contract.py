@@ -766,7 +766,88 @@ class TestOpenBehaviours(_FlowCase):
         self._trunk({f"{f.PHASE_DIR}/07-plan.md": b"p\n"})
         code, text = self.fold("checkpoint", "--phase", "07")
         self.assertEqual(code, 1, text)
-        self.assertIn("not_started", text)
+        self.assertIn("HEAD is not on gsd/phase-07-demo", text)
+
+    def test_checkpoint_by_phase_on_its_branch_without_a_record_starts_the_unit(self):
+        # A phase discussed before the discuss:pre hook existed: HEAD is on its branch, no record.
+        self.grant()
+        self._trunk({f"{f.PHASE_DIR}/07-plan.md": b"p\n"})
+        trunk = self.ref_sha("refs/heads/main")
+        f.run_git(self.repo, self.env, "switch", "-q", "-c", "gsd/phase-07-demo")
+        self.commit({"a.py": b"a\n"}, "feat: phase 07")
+        code, text = self.fold("checkpoint", "--phase", "07")
+        self.assertEqual(code, 0, text)
+        self.assertIn("started unit phase-07 on main", text)
+        units = self.record()["units"]
+        self.assertEqual([(u["id"], u["parent"], u["parent_tip"], u["checkpoints"])
+                          for u in units], [("phase-07", "main", trunk, 1)])
+
+    def test_checkpoint_on_an_unrecorded_branch_off_the_stack_top_refuses_wrong_parent(self):
+        self.grant()
+        self._trunk({f"{f.PHASE_DIR}/07-plan.md": b"p\n"})
+        f.run_git(self.repo, self.env, "switch", "-q", "-c", "gsd/phase-07-demo")
+        self.commit({"a.py": b"a\n"}, "feat: phase 07")
+        self._trunk({"z.py": b"z\n"}, "feat: trunk moved past the phase branch")
+        f.run_git(self.repo, self.env, "switch", "-q", "gsd/phase-07-demo")
+        code, text = self.fold("checkpoint", "--phase", "07")
+        self.assertEqual(code, 1, text)
+        self.assertIn("wrong_parent", text)
+        self.assertEqual(flow_record.read_record(self.repo)["units"], [])
+
+    # re-discuss: start (the discuss:pre step) on a recorded unit never blocks the discussion
+    def _started_phase(self):
+        self.grant()
+        self._trunk({f"{f.PHASE_DIR}/07-plan.md": b"p\n"})
+        code, text = self.fold("start", "--phase", "07")
+        self.assertEqual(code, 0, text)
+        self.commit({"a.py": b"a\n"}, "feat: phase 07")
+        f.run_git(self.repo, self.env, "switch", "-q", "main")
+
+    def test_rediscuss_of_an_open_unit_reuses_it(self):
+        self._started_phase()
+        code, text = self.fold("start", "--phase", "07")
+        self.assertEqual(code, 0, text)
+        self.assertIn("reuses unit phase-07", text)
+        self.assertEqual(f.run_git(self.repo, self.env, "branch", "--show-current").strip(),
+                         "gsd/phase-07-demo")
+        self.assertEqual(len(self.record()["units"]), 1)
+
+    def test_rediscuss_of_a_finished_unit_reuses_its_branch(self):
+        self._started_phase()
+        self._write_record(lambda data: data["units"][0].update(state="finished"))
+        code, text = self.fold("start", "--phase", "07")
+        self.assertEqual(code, 0, text)
+        self.assertIn("reuses unit phase-07", text)
+        self.assertEqual(self.record()["units"][0]["state"], "finished")
+
+    def test_rediscuss_of_a_merged_unit_with_its_branch_gone_reports_and_stays(self):
+        self._started_phase()
+        self._write_record(lambda data: data["units"][0].update(state="merged"))
+        f.run_git(self.repo, self.env, "branch", "-D", "gsd/phase-07-demo")
+        before = self.record()
+        code, text = self.fold("start", "--phase", "07")
+        self.assertEqual(code, 0, text)
+        self.assertIn("unit phase-07 is merged; this run stays on main; nothing changed", text)
+        self.assertEqual(f.run_git(self.repo, self.env, "branch", "--show-current").strip(),
+                         "main")
+        self.assertEqual(self.record(), before)
+
+    def test_rediscuss_of_a_ready_unit_whose_branch_is_unrecoverable_reports_and_stays(self):
+        self._started_phase()
+        self._write_record(lambda data: data["units"][0].update(state="ready"))
+        f.run_git(self.repo, self.env, "branch", "-D", "gsd/phase-07-demo")
+        code, text = self.fold("start", "--phase", "07")
+        self.assertEqual(code, 0, text)
+        self.assertIn("is ready and its branch cannot be reused (branch_missing)", text)
+        self.assertEqual(f.run_git(self.repo, self.env, "branch", "--show-current").strip(),
+                         "main")
+
+    def test_rediscuss_of_an_open_unit_whose_branch_is_gone_still_refuses(self):
+        self._started_phase()
+        f.run_git(self.repo, self.env, "branch", "-D", "gsd/phase-07-demo")
+        code, text = self.fold("start", "--phase", "07")
+        self.assertEqual(code, 1, text)
+        self.assertIn("branch_missing", text)
 
     # 4. a moved trunk cascades from sync (plan 03 Task 1); a refolded lower unit cascades above it
     def test_start_restacks_the_stack_when_the_trunk_gained_a_commit(self):

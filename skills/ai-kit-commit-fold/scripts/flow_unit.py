@@ -183,6 +183,25 @@ def _run(command, args, body):
     return 0
 
 
+def _reuse(repo, entry, head):
+    """Re-running start on a recorded unit (a re-discuss): an open unit is reused and checked
+    out; a finished or ready one too while its branch still checks out, else it is only
+    reported; a merged one is only reported. A report changes nothing and stays on HEAD."""
+    stay = f"stays on {head or 'the detached HEAD'}; nothing changed"
+    if entry["state"] == "merged":
+        return [f"unit {entry['id']} is merged; this run {stay}"]
+    try:
+        _check_parent(repo, entry)
+        _restore_branch(repo, entry)
+    except FlowError as exc:
+        if entry["state"] == "open":
+            raise
+        return [f"unit {entry['id']} is {entry['state']} and its branch cannot be reused "
+                f"({exc.reason}); this run {stay}"]
+    _switch(repo, entry["branch"], entry["parent_tip"])
+    return [f"reuses unit {entry['id']}"]
+
+
 def _start(args, unit):
     repo = args.repo
     if unit is None:
@@ -197,10 +216,7 @@ def _start(args, unit):
         return [*lines, f"joins hotfix unit {joined['id']}"], "done"
     existing = find_entry(record, unit.id)
     if existing is not None:
-        _check_parent(repo, existing)
-        _restore_branch(repo, existing)
-        _switch(repo, existing["branch"], existing["parent_tip"])
-        return [*lines, f"reuses unit {unit.id}"], "nothing to do"
+        return [*lines, *_reuse(repo, existing, head)], "nothing to do"
     parent, parent_tip = flow_git.start_point(repo, settings, record, unit.target)
     if parent_tip is None:
         raise FlowError("no_trunk", f"{parent} does not resolve to a commit")
@@ -231,12 +247,26 @@ def _guard(args, unit):
     return [], "nothing to do"
 
 
+def _start_unrecorded(args, unit):
+    """Start an unrecorded unit with start's own rules when HEAD is already on its branch (a
+    phase discussed before the discuss:pre hook existed); anywhere else it stays not_started."""
+    if unit is None or find_entry(read_record(args.repo), unit.id) is not None:
+        return []
+    if flow_git.head_branch(args.repo) != unit.branch:
+        raise FlowError("not_started", f"unit {unit.id} is not recorded and HEAD is not on "
+                                       f"{unit.branch}; run start with the same selector (it "
+                                       f"creates or checks out the branch), then re-run checkpoint")
+    lines, _outcome = _start(args, unit)
+    return lines
+
+
 def _checkpoint(args, unit):
     repo = args.repo
+    started = _start_unrecorded(args, unit)
     settings, record = read_settings(repo), read_record(repo)
     entry = _require_entry(record, unit)
     _sync(repo, settings, record)
-    lines = catch_up(repo, settings, record) if consented(repo) else []
+    lines = [*started, *(catch_up(repo, settings, record) if consented(repo) else [])]
     _check_parent(repo, entry)
     if flow_git.head_branch(repo) != unit.branch:
         raise FlowError("ref_mismatch", f"HEAD is on {flow_git.head_branch(repo) or 'no branch'}"

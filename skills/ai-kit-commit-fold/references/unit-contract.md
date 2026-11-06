@@ -54,6 +54,10 @@ new branch is deleted and `start` refuses `plan_not_carried`, naming the command
 owner to run; the agent stops and shows them. The record keeps their count as `carried`; a plan-file checkpoint without
 `--base` folds from above them, so the planning commits are never folded.
 
+`start` on a recorded unit (a re-discuss) is safe to repeat: an open unit is reused and checked
+out; a `finished` or `ready` unit too while its branch still checks out, otherwise the report
+says so; a `merged` unit is only reported. A report exits 0, changes nothing and stays on HEAD.
+
 ## Boundary (`boundary`)
 
 `fold.py boundary <selector> --point start|plan|wave`, or `boundary --next --point plan` before a
@@ -102,7 +106,9 @@ refuses `bad_checkpoint`. A checkpoint whose `ref` is not the unit's branch refu
 The adapter sends three signals, in this order. Each maps to one command:
 
 1. **Checkpoint reached**: `checkpoint --unit FILE --checkpoint FILE`. The flow folds the
-   checkpoint's commits into logical commits and pushes the unit branch.
+   checkpoint's commits into logical commits and pushes the unit branch. A unit with no record
+   is started first, under `start`'s rules, when HEAD is already on its branch; anywhere else the
+   checkpoint refuses `not_started`.
 2. **Unit finished**: `checkpoint --unit FILE --checkpoint FILE --final`. The same fold and
    push as a checkpoint; the unit is marked `finished`.
 3. **Verification passed**: `ready --unit FILE`. The flow marks the unit's draft PR ready

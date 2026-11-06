@@ -158,8 +158,9 @@ class TestCapabilityE2E(unittest.TestCase):
         self.assertRegex(self.local_command, COMMAND_GRAMMAR)
         output = self.local_run.stdout + self.local_run.stderr
         self.assertNotIn("fold script not found", output)
-        # fold.py itself answered: no unit was started in this fixture, so it refuses by name.
-        self.assertIn("outcome: phase-07 refused not_started", self.local_run.stdout, output)
+        # fold.py itself answered: the never-started unit's implicit start needs a remote, and
+        # this fixture has none (TestWavePostStartsAnUnrecordedPhase covers the started case).
+        self.assertIn("outcome: phase-07 refused no_remote", self.local_run.stdout, output)
 
     def test_skills_roots_with_a_full_env_list_the_five_host_dirs(self):
         env = {"HOME": "/h", "CLAUDE_CONFIG_DIR": "/cc", "XDG_CONFIG_HOME": "/xdg",
@@ -719,6 +720,39 @@ class TestHookCheckpointReady(unittest.TestCase):
         self.assertTrue(self.ship_verdict.get("block"), self.ship_verdict)
         self.assertIn("ship_redirect", self.ship_verdict["message"])
         self.assertIn("fold.py merge-chain", self.ship_verdict["message"])
+
+
+@unittest.skipUnless(shutil.which("node") and GSD_TOOLS.is_file()
+                     and (ROOT / ".claude" / "scripts").is_dir(),
+                     "node or the checkout's project-local gsd-core is missing")
+class TestWavePostStartsAnUnrecordedPhase(unittest.TestCase):
+    # A phase discussed before the discuss:pre hook existed: HEAD is on its branch, nothing is
+    # recorded. The rendered wave:post step starts the unit itself, then folds; no consent, no push.
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ai-kit-wave-post-start-"))
+        cls.addClassCleanup(shutil.rmtree, cls.tmp, ignore_errors=True)
+        home = cls.tmp / "home"
+        home.mkdir()
+        cls.env = _gsd_env(home, cls.tmp / "gsd-home")
+        cls.repo = _installed_fixture(cls.tmp / "fixture", cls.env)
+        cls.hooks = _fold_hooks(_gsd(cls.repo, cls.env, "loop", "render-hooks",
+                                     "execute:wave:post", "--raw"))
+        command = cls.hooks[0]["ref"]["command"].split() if cls.hooks else ["missing"]
+        cls.step_run = _gsd(cls.repo, cls.env, *command, "--phase", "07", "--raw")
+
+    def test_the_rendered_step_starts_the_unit_then_folds_without_pushing(self):
+        output = self.step_run.stdout + self.step_run.stderr
+        self.assertEqual(len(self.hooks), 1)
+        self.assertEqual(self.step_run.returncode, 0, output)
+        self.assertIn("started unit phase-07 on main", self.step_run.stdout)
+        self.assertIn("folded", self.step_run.stdout)
+        self.assertIn("skipped (no consent)", self.step_run.stdout)
+        sys.path.insert(0, str(SKILL / "scripts"))
+        import flow_record  # pylint: disable=import-outside-toplevel
+        units = flow_record.read_record(self.repo)["units"]
+        self.assertEqual([(u["id"], u["parent"], u["checkpoints"]) for u in units],
+                         [("phase-07", "main", 1)])
 
 
 if __name__ == "__main__":

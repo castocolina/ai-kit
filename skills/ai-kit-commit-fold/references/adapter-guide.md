@@ -20,7 +20,8 @@ GSD dispatches these hook points that the flow uses:
    only locally before it stay on the unit branch (`unit-contract.md`, "Start and local
    planning commits").
 2. `execute:wave:post` step: `ai-kit-fold checkpoint --phase N`. After each wave it folds the
-   finished plans and pushes the unit branch.
+   finished plans and pushes the unit branch. A phase nobody started (discussed before this hook
+   was installed) is started here when HEAD is on its branch; otherwise it refuses `not_started`.
 3. `ship:pre` gate (blocking): `ai-kit-fold ship`. It always refuses GSD's own ship. It
    refuses `not_ready` until the unit's state is `ready`, then `ship_redirect`, which tells the
    owner to run `fold.py merge-chain`. The gate reads the state with `fold.py show`. The
