@@ -147,7 +147,7 @@ def rebind(root, env, repo, bare):
         ["git", "-C", str(repo), "config", "--local", "--name-only", "--get-regexp",
          r"^url\..*\.insteadof$"],
         capture_output=True, env=env, check=False,
-    ).stdout.decode("utf-8").split()
+    ).stdout.decode("utf-8").splitlines()  # one key per line; a key may hold a space
     for key in listed:
         run_git(repo, env, "config", "--local", "--unset-all", key)
     _bare_insteadof(repo, env, bare, FIXTURE_URL)
