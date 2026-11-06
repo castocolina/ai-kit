@@ -292,6 +292,7 @@ class TestAdapterSkillText(unittest.TestCase):
         phrase = "carries those local-only commits onto the unit branch"
         flat = " ".join(self.sp.split())
         self.assertIn(phrase, flat)
+        self.assertIn("the spec on the plan's `**Spec:**` line", flat)  # the carry rule
         # Non-vacuity: the text without the gap sentence no longer carries it.
         self.assertNotIn(phrase, flat.replace(phrase, ""))
 

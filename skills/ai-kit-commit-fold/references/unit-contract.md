@@ -43,7 +43,8 @@ An unknown key, a missing required key or a bad value refuses the call (`unknown
 ## Start and local planning commits
 
 `start` creates the unit branch on the stack top and checks it out. With `--plan` or `--phase`
-the adapter also names the unit's plan paths. When HEAD has commits that touch those paths and
+the adapter also names the unit's plan paths: for `--plan`, the plan file and the spec its
+`**Spec:**` line names (when that file is in the repo); for `--phase`, the phase directory. When HEAD has commits that touch those paths and
 that no remote branch and no recorded unit holds (a plan committed only locally), `start` keeps
 them on the unit branch: the branch starts at HEAD when HEAD sits on the stack top with only
 such plan commits between; otherwise only those plan commits are cherry-picked onto the stack

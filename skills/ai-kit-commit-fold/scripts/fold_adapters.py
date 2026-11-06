@@ -391,6 +391,32 @@ def gsd_unit(repo, phase):
             "title": directory, "mvp": gsd_mvp(repo, phase)}
 
 
+_SPEC_LINE = re.compile(r"^\*\*Spec:\*\*\s*(.+?)\s*$", re.MULTILINE)
+_SPEC_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+
+
+def superpowers_spec_path(repo, plan_file):
+    """The repo-relative path on the plan's `**Spec:**` header line (bare, `code` or a markdown
+    link; repo-relative first, then plan-relative), or None when there is none, the file is
+    missing or the path leaves the repo."""
+    try:
+        match = _SPEC_LINE.search(_read(os.path.join(repo, plan_file)))
+    except FoldError:
+        return None
+    if match is None:
+        return None
+    value = match.group(1)
+    link = _SPEC_LINK.search(value)
+    value = (link.group(1) if link else value.split()[0]).strip("`")
+    top = os.path.realpath(repo)
+    for base in (top, os.path.dirname(os.path.join(top, plan_file))):
+        candidate = os.path.realpath(os.path.join(base, value))
+        rel = os.path.relpath(candidate, top)
+        if os.path.isfile(candidate) and rel != ".." and not rel.startswith(".." + os.sep):
+            return rel
+    return None
+
+
 def superpowers_unit_contract(repo, plan_file):
     """The contract dict of a superpowers plan: branch plan/<slug> from the plan title."""
     text = _read(os.path.join(repo, plan_file))

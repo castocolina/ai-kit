@@ -348,7 +348,10 @@ def _attach(args):
         args.unit = _load_contract(args, fold_adapters.superpowers_unit_contract(args.repo,
                                                                                  args.plan))
         args.fold_step = _plan_step(args, args.unit)
-        args.plan_paths = (os.path.relpath(os.path.join(args.repo, args.plan), args.repo),)
+        # The planning commits: the plan file and the spec its **Spec:** line names.
+        spec = fold_adapters.superpowers_spec_path(args.repo, args.plan)
+        args.plan_paths = (os.path.relpath(os.path.join(args.repo, args.plan), args.repo),
+                           *((spec,) if spec else ()))
 
 
 def _flow(args):

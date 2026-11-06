@@ -124,7 +124,8 @@ def _local_only(repo, record, parent_tip, paths=()):
 
 def _carry(repo, record, unit, start, paths):
     """Switch to the unit branch (created when new), keeping the local-only commits that touch
-    the plan paths (start --plan / --phase). Returns (report lines, carried commit count).
+    the plan paths (start --plan: the plan file and the spec its **Spec:** line names; --phase:
+    the phase directory). Returns (report lines, carried commit count).
 
     Every commit between parent_tip and HEAD is a local-only plan commit: the branch starts at
     HEAD. Otherwise only the plan commits are cherry-picked onto parent_tip from a clean tree

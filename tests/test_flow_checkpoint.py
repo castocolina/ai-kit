@@ -20,6 +20,8 @@ from tests import forge_fakes
 from tests.test_flow_contract import BRANCH, _FlowCase
 
 PLAN_BRANCH = "plan/demo-plan"
+SP_SPEC = "docs/superpowers/specs/2026-11-04-demo-design.md"
+SP_SPEC_NAME = "docs/specs/d.md"
 FAKE_TOKEN = "ghp_" + "A" * 36  # token-shaped, never real
 
 
@@ -35,6 +37,37 @@ class TestFlowScriptsImport(unittest.TestCase):
         args = fold.build_parser().parse_args(["checkpoint", "--unit", "-"])
         self.assertEqual(args.command, "checkpoint")
         self.assertEqual(args.unit_file, "-")
+
+
+class TestSuperpowersSpecPath(unittest.TestCase):
+    """The plan's **Spec:** line names the spec file start carries with the plan."""
+
+    def setUp(self):
+        import fold_adapters
+
+        self.spec_path = fold_adapters.superpowers_spec_path
+        self.repo = pathlib.Path(tempfile.mkdtemp(prefix="spec-path-"))
+        self.addCleanup(shutil.rmtree, self.repo)
+        (self.repo / "docs" / "plans").mkdir(parents=True)
+        (self.repo / "docs" / "specs").mkdir()
+        (self.repo / SP_SPEC_NAME).write_text("# spec\n", encoding="utf-8")
+
+    def _plan(self, line):
+        (self.repo / "docs/plans/p.md").write_text(f"# P\n\n{line}\n", encoding="utf-8")
+        return self.spec_path(str(self.repo), "docs/plans/p.md")
+
+    def test_bare_code_and_link_forms_resolve_repo_relative(self):
+        for line in (f"**Spec:** {SP_SPEC_NAME}", f"**Spec:** `{SP_SPEC_NAME}`",
+                     f"**Spec:** [design]({SP_SPEC_NAME})"):
+            self.assertEqual(self._plan(line), SP_SPEC_NAME, line)
+
+    def test_plan_relative_path_resolves(self):
+        self.assertEqual(self._plan("**Spec:** ../specs/d.md"), SP_SPEC_NAME)
+
+    def test_missing_line_missing_file_and_outside_paths_give_none(self):
+        self.assertIsNone(self._plan("**Goal:** none"))
+        self.assertIsNone(self._plan("**Spec:** docs/specs/absent.md"))
+        self.assertIsNone(self._plan("**Spec:** ../../../../etc/hostname"))
 
 
 class _PlanCase(_FlowCase):
@@ -398,6 +431,36 @@ class TestStartKeepsLocalPlan(_FlowCase):
                          PLAN_BRANCH)
         self.assertEqual(self.ref_sha("refs/heads/main"), plan_commit)
         f.run_git(self.repo, self.env, "merge-base", "--is-ancestor", wip, "main")
+
+    def _spec_then_plan(self, between=None):
+        """superpowers' order: the spec committed alone, then the plan naming it (**Spec:**)."""
+        f.run_git(self.repo, self.env, "switch", "-q", "main")
+        self.commit({SP_SPEC: b"# Demo design\n"}, "docs: add demo design spec")
+        if between:
+            self.commit(between, "wip: unrelated local work")
+        text = f.SP_PLAN_TEXT.replace("\n\n", f"\n\n**Spec:** `{SP_SPEC}`\n\n", 1)
+        return self.commit({f.SP_PLAN: text.encode()}, "docs: add plan (local)")
+
+    def test_separately_committed_spec_is_carried_with_the_plan(self):
+        self.grant()
+        plan_commit = self._spec_then_plan()
+        code, text = self.fold("start", "--plan", f.SP_PLAN)
+        self.assertEqual(code, 0, text)
+        self.assertIn("carried 2 local commit(s) from main", text)
+        self.assertEqual(self.ref_sha("HEAD"), plan_commit)
+        self.assertTrue((self.repo / SP_SPEC).is_file())
+        self.assertEqual(self.record()["units"][0]["carried"], 2)
+
+    def test_spec_is_cherry_picked_with_the_plan_and_unrelated_work_stays_off(self):
+        self.grant()
+        self._spec_then_plan(between={"wip.py": b"wip\n"})
+        code, text = self.fold("start", "--plan", f.SP_PLAN)
+        self.assertEqual(code, 0, text)
+        self.assertIn("carried 2 local commit(s) from main by cherry-pick", text)
+        self.assertEqual(self._log(PLAN_BRANCH)[:3],
+                         ["docs: add plan (local)", "docs: add demo design spec", "chore: base"])
+        self.assertTrue((self.repo / SP_SPEC).is_file())
+        self.assertFalse((self.repo / "wip.py").exists())
 
     def test_plan_that_cannot_be_carried_cleanly_refuses_and_changes_nothing(self):
         self.grant()

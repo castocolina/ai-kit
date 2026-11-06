@@ -57,9 +57,10 @@ commits.
 The `ai-kit-spec-execute-superpowers` skill runs these commands, in this order:
 
 1. Step 1, before the first task: `fold.py start --plan <plan file>`. The unit's branch is
-   created on the stack top and checked out, or reused when it already sits there. The plan
-   file and the other local-only planning commits stay on the unit branch, below the fold
-   range; `plan_not_carried` names the commands for the owner to run; stop and show them.
+   created on the stack top and checked out, or reused when it already sits there. The
+   local-only commits that touch the plan file or the spec on its `**Spec:**` line stay on the
+   unit branch, below the fold range; `plan_not_carried` names the commands for the owner to
+   run; stop and show them.
 2. Step 5, after the final review passes: `fold.py checkpoint --plan <plan file> --base "$FOLD_BASE" --final`.
    The flow report is relayed verbatim. A refusal changes nothing.
 3. After the final review: `fold.py ready --plan <plan file>`, once verification has passed.
@@ -69,7 +70,9 @@ without that skill, follows the same three commands.
 
 Planning commits: superpowers' brainstorming and writing-plans skills commit the spec and the
 plan before Step 1, and ai-kit owns no hook in them. `start` carries those local-only commits
-onto the unit branch, so the PR holds them and `FOLD_BASE` (HEAD after `start`) sits above them.
+onto the unit branch, so the PR holds them and `FOLD_BASE` (HEAD after `start`) sits above them:
+each local-only commit that touches the plan file or the spec named on the plan's `**Spec:**`
+line, even when the spec was committed on its own. Other local-only commits stay off the unit.
 
 ## Adding a third system
 

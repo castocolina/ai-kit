@@ -7,7 +7,9 @@ The block finds the fold skill's `scripts/fold.py`, runs `fold.py start --plan` 
 plan's unit branch on the stack top and checks it out, or reuses it) and checks that the plan file
 is still in the tree. superpowers' planning skills commit the spec and plan before this step;
 `start` carries those local-only commits onto the unit branch, so they stay in its PR and below
-`FOLD_BASE`.
+`FOLD_BASE`. It carries each local-only commit that touches the plan file or the spec named on the
+plan's `**Spec:**` line, even when the spec was committed on its own; other local-only commits
+stay off the unit.
 
 ## The block
 
