@@ -600,6 +600,43 @@ class TestEffortTable(unittest.TestCase):
             self.assertEqual(count, n, level)
 
 
+class TestIconTables(unittest.TestCase):
+    """D-07/R2: the pencil joins the wide and VS16 tables; icons measure two cells (30.2-03)."""
+
+    def test_pencil_is_two_cells_with_vs16_and_hourglass_is_wide(self):
+        self.assertEqual(common_types.util_icon("✏", "~"), "✏️ ~")
+        self.assertEqual(common_types.util_visible_width("✏️ ~"), 4)
+        self.assertEqual(common_types.util_char_width("✏"), 2)
+        self.assertEqual(common_types.util_char_width("⌛"), 2)
+
+    def test_shared_segments_lead_with_their_icon(self):
+        self.assertTrue(strip(common_segments.seg_model(_data(), 200, THEME)).startswith("🤖 "))
+        self.assertTrue(
+            strip(common_segments.seg_alt_term_dimensions(_data(cols=116, lines=40), 200, THEME))
+            .startswith("📐 ")
+        )
+        self.assertEqual(
+            strip(common_segments.seg_git_dirty(_data(dirty="modified"), 200, THEME)), "✏️ ~"
+        )
+        self.assertIsNone(common_segments.seg_git_dirty(_data(dirty="clean"), 200, THEME))
+
+
+class TestWidthAloneDimensions(unittest.TestCase):
+    """R8: a row count of zero or less renders the width alone; a positive count renders WxH."""
+
+    def test_zero_and_negative_rows_render_width_alone(self):
+        for lines in (0, -1):
+            with self.subTest(lines=lines):
+                out = common_segments.seg_alt_term_dimensions(
+                    _data(cols=116, lines=lines), 200, THEME
+                )
+                self.assertEqual(strip(out), "📐 116")
+
+    def test_positive_rows_render_width_by_height(self):
+        out = common_segments.seg_alt_term_dimensions(_data(cols=116, lines=40), 200, THEME)
+        self.assertEqual(strip(out), "📐 116×40")
+
+
 class TestCooperativeBuilders(unittest.TestCase):
     def test_branch_content_then_self_hide(self):
         self.assertIn("main", common_segments.seg_git_branch(_data(branch="main"), 50, THEME))
@@ -741,7 +778,7 @@ class TestCooperativeBuilders(unittest.TestCase):
     def test_dimensions_content_then_self_hide(self):
         self.assertEqual(
             strip(common_segments.seg_alt_term_dimensions(_data(cols=120, lines=40), 200, THEME)),
-            "120×40",
+            "📐 120×40",
         )
         self.assertIsNone(
             common_segments.seg_alt_term_dimensions(_data(cols=120, lines=40), 3, THEME)
@@ -920,7 +957,7 @@ class TestCooperativeBuilders(unittest.TestCase):
         self.assertIn("7d: 13%", roomy)
 
     def test_model_and_clock(self):
-        self.assertEqual(strip(common_segments.seg_model(_data(), 200, THEME)), "Opus 4.8")
+        self.assertEqual(strip(common_segments.seg_model(_data(), 200, THEME)), "🤖 Opus 4.8")
         self.assertEqual(strip(common_segments.seg_alt_time_clock(_data(), 200, THEME)), "⏰ 14:30")
 
     def test_todo_truncates_and_hides(self):
@@ -2105,7 +2142,9 @@ class TestSegPathProjectRoot(unittest.TestCase):
             home="/home/u",
         )
         out = common_segments.seg_path(ctx, 80, THEME)
-        self.assertEqual(strip(out), common_types.util_display_dir("/home/u/proj", "/home/u"))
+        self.assertEqual(
+            strip(out), "📂 " + common_types.util_display_dir("/home/u/proj", "/home/u")
+        )
 
     def test_falls_back_to_cwd_outside_a_repo(self):
         ctx = _data(in_repo=False, work_dir="/home/u/scratch", home="/home/u")
@@ -2349,8 +2388,8 @@ class TestProcRssLinux(unittest.TestCase):
             mock.patch.object(os.path, "isdir", return_value=True),
             mock.patch.object(os, "getppid", return_value=10),
             mock.patch.object(claude_probes, "probe_comm_via_proc", side_effect=comm.get),
-            mock.patch.object(claude_probes, "probe_ppid_via_proc", side_effect=ppid.get),
-            mock.patch.object(claude_probes, "probe_rss_kb_via_proc", side_effect=lambda p: 5000),
+            mock.patch.object(common_probe, "probe_ppid_via_proc", side_effect=ppid.get),
+            mock.patch.object(common_probe, "probe_rss_kb_via_proc", side_effect=lambda p: 5000),
         ):
             self.assertIsNone(claude_probes.probe_rss_bytes())
 
@@ -2361,9 +2400,9 @@ class TestProcRssLinux(unittest.TestCase):
             mock.patch.object(os.path, "isdir", return_value=True),
             mock.patch.object(os, "getppid", return_value=10),
             mock.patch.object(claude_probes, "probe_comm_via_proc", side_effect=comm.get),
-            mock.patch.object(claude_probes, "probe_ppid_via_proc", side_effect=ppid.get),
+            mock.patch.object(common_probe, "probe_ppid_via_proc", side_effect=ppid.get),
             mock.patch.object(
-                claude_probes,
+                common_probe,
                 "probe_rss_kb_via_proc",
                 side_effect=lambda p: 204800 if p == 11 else 5000,
             ),
@@ -2380,8 +2419,8 @@ class TestProcRssMacOS(unittest.TestCase):
             mock.patch.object(os.path, "isdir", return_value=False),
             mock.patch.object(os, "getppid", return_value=10),
             mock.patch.object(claude_probes, "probe_comm_via_ps", side_effect=comm.get),
-            mock.patch.object(claude_probes, "probe_ppid_via_ps", side_effect=ppid.get),
-            mock.patch.object(claude_probes, "probe_rss_kb_via_ps", side_effect=rss.get),
+            mock.patch.object(common_probe, "probe_ppid_via_ps", side_effect=ppid.get),
+            mock.patch.object(common_probe, "probe_rss_kb_via_ps", side_effect=rss.get),
         ):
             self.assertEqual(claude_probes.probe_rss_bytes(), 307200 * 1024)
 
@@ -3216,6 +3255,37 @@ class TestRampFromConfig(unittest.TestCase):
         self.assertEqual(cfg.ramps, {})
 
 
+class TestTranscriptAgeShared(unittest.TestCase):
+    """D-06/R3: one transcript-age segment in common_segments, rendered the same on both hosts."""
+
+    NOW = 1_700_000_000
+
+    def _transcript(self, directory, name="t.jsonl", age=300):
+        path = os.path.join(directory, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("{}\n")
+        os.utime(path, (self.NOW - age, self.NOW - age))
+        return path
+
+    def _probe_ctx(self, transcript_path="", host=None):
+        return common_render.Context(
+            raw={}, line_conf=None, theme=None, cols=80, lines=0, dim_assumed=False,
+            t_start=None, model_name="", model_id="", work_dir="", home="", clock="",
+            context_pct=0, context_max=0, host=host, transcript_path=transcript_path,
+        )
+
+    def test_shared_segment_renders_the_probe_age(self):
+        # The segment is common_segments.seg_alt_time_ago; the hourglass icon leads it (30.2-03).
+        plain = mock.Mock(c=lambda spec: "")
+        with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as tmp:
+            path = self._transcript(tmp)
+            with mock.patch("common_probe.time.time", return_value=self.NOW):
+                neutral = common_probe.probe_transcript_ago(self._probe_ctx(path))
+                segment = common_segments.seg_alt_time_ago(self._probe_ctx(path), 200, plain)
+        self.assertEqual(neutral, common_types.fmt_ago(300))
+        self.assertEqual(segment, "⌛ " + neutral + common_types.RESET)
+
+
 class TestTranscriptAgeProbe(unittest.TestCase):
     """Shared transcript-age probe (D-06): one memoized age, the value Claude's segment shows."""
 
@@ -3234,15 +3304,6 @@ class TestTranscriptAgeProbe(unittest.TestCase):
             t_start=None, model_name="", model_id="", work_dir="", home="", clock="",
             context_pct=0, context_max=0, host=host, transcript_path=transcript_path,
         )
-
-    def test_matches_claude_segment_probe(self):
-        with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as tmp:
-            path = self._transcript(tmp)
-            with mock.patch("common_probe.time.time", return_value=self.NOW):
-                neutral = common_probe.probe_transcript_ago(self._probe_ctx(path))
-                claude = claude_probes.probe_ago(self._probe_ctx("", mock.Mock(transcript=path)))
-        self.assertEqual(neutral, common_types.fmt_ago(300))
-        self.assertEqual(neutral, claude)
 
     def test_empty_or_missing_path_gives_empty_string(self):
         with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as tmp:

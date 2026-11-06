@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from claude_payload import core_claude_data
 from claude_probes import (
-    probe_ago,
     probe_chat_compaction,
     probe_chat_size,
     probe_effort_auto,
@@ -173,13 +172,6 @@ def seg_todo(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     if state == "pending":
         return util_icon("⏸", f"{theme.c('GREY')}{text}{RESET}")
     return None
-
-
-def seg_alt_time_ago(ctx: "Context", avail: int, theme: "Theme") -> str | None:
-    ago = probe_ago(ctx)
-    if not ago:
-        return None
-    return util_first_fitting([f"{theme.c('WHITE')}{ago}{RESET}"], avail)
 
 
 def seg_effort(ctx: "Context", avail: int, theme: "Theme") -> str | None:

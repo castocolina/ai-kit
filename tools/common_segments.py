@@ -5,7 +5,7 @@ import math
 import time
 from typing import TYPE_CHECKING
 
-from common_probe import probe_git_for
+from common_probe import probe_git_for, probe_transcript_ago
 from common_types import (
     CONTEXT_BAR_CELLS,
     RESET,
@@ -39,7 +39,7 @@ def seg_path(ctx: "Context", avail: int, theme: "Theme") -> str | None:
                  else util_two_state_cap(snap.root_name, 30, 20))
     else:
         shown = util_display_dir(ctx.work_dir, ctx.home)
-    return f"{theme.c('BLUE')}{shown}{RESET}"  # floor
+    return util_icon("📂", f"{theme.c('BLUE')}{shown}{RESET}")  # floor
 
 
 def seg_git_branch(ctx: "Context", avail: int, theme: "Theme") -> str | None:
@@ -57,7 +57,7 @@ def seg_git_branch(ctx: "Context", avail: int, theme: "Theme") -> str | None:
 
 def seg_git_dirty(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     mark = util_dirty_mark(probe_git_for(ctx).dirty, theme)
-    return util_first_fitting([mark], avail) if mark else None
+    return util_first_fitting([util_icon("✏", mark)], avail) if mark else None
 
 
 def seg_alt_git_worktree(ctx: "Context", avail: int, theme: "Theme") -> str | None:
@@ -80,7 +80,9 @@ def seg_model(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     name = ctx.model_name or ctx.model_id
     if not name:
         return None
-    return util_first_fitting([f"{theme.c('CYAN')}{name}{RESET}"], avail)
+    if ctx.model_max:  # D-05: after param_summary, which the name already carries
+        name += " · max"
+    return util_first_fitting([util_icon("🤖", f"{theme.c('CYAN')}{name}{RESET}")], avail)
 
 
 def seg_alt_time_clock(ctx: "Context", avail: int, theme: "Theme") -> str | None:
@@ -112,7 +114,17 @@ def seg_slowest(ctx: "Context", avail: int, theme: "Theme") -> str | None:
 
 def seg_alt_term_dimensions(ctx: "Context", avail: int, theme: "Theme") -> str | None:
     mark = "?" if ctx.dim_assumed else ""
-    return util_first_fitting([f"{ctx.cols}×{ctx.lines}{mark}"], avail)
+    # R8: a row count of 0 or less is no measurement; the width stands alone.
+    size = f"{ctx.cols}×{ctx.lines}" if ctx.lines > 0 else f"{ctx.cols}"
+    return util_first_fitting([util_icon("📐", f"{size}{mark}")], avail)
+
+
+def seg_alt_time_ago(ctx: "Context", avail: int, theme: "Theme") -> str | None:
+    # Shared by both hosts (D-06).
+    ago = probe_transcript_ago(ctx)
+    if not ago:
+        return None
+    return util_first_fitting([util_icon("⌛", f"{theme.c('WHITE')}{ago}{RESET}")], avail)
 
 
 def seg_context(ctx: "Context", avail: int, theme: "Theme") -> str | None:

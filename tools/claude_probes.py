@@ -3,21 +3,18 @@
 
 import json
 import os
-import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, cast
 
 from claude_payload import core_claude_data
 from common_probe import (
+    probe_ancestor_rss_bytes,
     probe_comm_via_proc,
     probe_comm_via_ps,
+    probe_has_proc,
     probe_memo,
-    probe_ppid_via_proc,
-    probe_ppid_via_ps,
-    probe_rss_kb_via_proc,
-    probe_rss_kb_via_ps,
 )
-from common_types import fmt_ago, util_safe_session
+from common_types import util_safe_session
 
 if TYPE_CHECKING:
     from common_render import Context
@@ -45,31 +42,22 @@ def probe_effort_setting_is_auto(work_dir: str, home: str) -> bool:
     return True
 
 
+def probe_is_claude(pid: int) -> bool | None:
+    """True when pid's comm is `claude`, False otherwise, None when unreadable.
+
+    Read through /proc, else `ps -o comm=`. `ps` can return a full path on macOS, so
+    compare the basename."""
+    name = probe_comm_via_proc(pid) if probe_has_proc() else probe_comm_via_ps(pid)
+    if name is None:
+        return None
+    return os.path.basename(name) == "claude"
+
+
 def probe_rss_bytes() -> int | None:
     """Resident memory (bytes) of the ancestor `claude` process, or None.
 
-    Cross-platform via a capability probe: Linux /proc, else `ps`. Walk up the parent
-    chain (bounded) and return RSS only on a `claude` match."""
-    use_proc = os.path.isdir("/proc")
-    comm_of = probe_comm_via_proc if use_proc else probe_comm_via_ps
-    ppid_of = probe_ppid_via_proc if use_proc else probe_ppid_via_ps
-    rss_kb_of = probe_rss_kb_via_proc if use_proc else probe_rss_kb_via_ps
-
-    pid = os.getppid()
-    for _ in range(8):
-        name = comm_of(pid)
-        if name is None:
-            return None
-        # `ps -o comm=` can return a full path on macOS; normalize here so both
-        # backends compare the same bare name.
-        if os.path.basename(name) == "claude":
-            kb = rss_kb_of(pid)
-            return kb * 1024 if kb is not None else None
-        parent = ppid_of(pid)
-        if parent is None or parent in (0, pid):
-            return None
-        pid = parent
-    return None
+    The shared ancestor walk (common_probe) with Claude's `claude` matcher, 8 deep."""
+    return probe_ancestor_rss_bytes(probe_is_claude, 8)
 
 
 def probe_transcript_bytes(path: str) -> int | None:
@@ -237,16 +225,6 @@ def probe_current_todo(path: str | None, session: str | None = None,
             if got is not None:
                 return got
     return probe_todo_from_transcript(path)
-
-
-def probe_ago(ctx: "Context") -> str:
-    """Memoized human-readable age of the transcript file, or ''."""
-    def _compute() -> str:
-        t = core_claude_data(ctx).transcript
-        if t and os.path.isfile(t):
-            return fmt_ago(int(time.time()) - int(os.path.getmtime(t)))
-        return ""
-    return probe_memo(ctx, "ago", _compute)
 
 
 def probe_effort_auto(ctx: "Context") -> bool:

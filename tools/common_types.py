@@ -348,7 +348,7 @@ _ANSI_RE = re.compile(r"\033\[[0-9;]*m")
 # BMP symbols we render that terminals draw 2 cells wide (east_asian_width
 # misclassifies these as narrow). Add a codepoint here if a new wide BMP glyph
 # is introduced in a segment.
-_WIDE_BMP = {0x23F0, 0x23F1, 0x23F8, 0x26A1}  # ⏰ ⏱ ⏸ ⚡
+_WIDE_BMP = {0x23F0, 0x23F1, 0x23F8, 0x26A1, 0x270F}  # ⏰ ⏱ ⏸ ⚡ ✏
 
 
 def util_char_width(ch: str) -> int:
@@ -395,7 +395,7 @@ def util_two_state_cap(s: str, high: int, low: int) -> str:
 # terminals. Forcing VS16 (emoji presentation) makes them render wide everywhere
 # so the single-space util_icon gap is always one clean column. ⏰ (U+23F0) is
 # already EAW=W, so it is intentionally absent.
-_ICON_VS16 = {"⏱", "⏸", "⚡"}  # ⏱ ⏸ ⚡
+_ICON_VS16 = {"⏱", "⏸", "⚡", "✏"}  # ⏱ ⏸ ⚡ ✏
 
 
 def util_icon(glyph: str, text: str) -> str:

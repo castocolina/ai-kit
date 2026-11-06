@@ -10,12 +10,14 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime
 from typing import Any, cast
 from unittest import mock
 
 from tests.cursor_fakes import run_like_cursor
 from tools.cursor_quota import (
     QuotaResult,
+    core_quota_state,
     core_synthetic_cache,
     probe_cache_paths,
     probe_write_cache,
@@ -30,6 +32,7 @@ import claude_host
 import common_config
 import common_fmt
 import common_probe
+import common_segments
 import common_types
 import cursor_host
 import cursor_payload
@@ -223,7 +226,7 @@ class TestCursorStatusLine(unittest.TestCase):
             narrow = cursor_segments._colored(
                 cursor_segments.Gauge("47%", 47, (0, 100_000), 40, "ok", False), theme
             )
-        self.assertIn("inc ", cast(str, wide))
+        self.assertIn("inc: ", cast(str, wide))
         self.assertIn("-47%", cast(str, wide))
         self.assertIn(theme.c("YELLOW"), cast(str, wide))
         self.assertIn(" ≈", cast(str, wide))
@@ -242,7 +245,7 @@ class TestCursorStatusLine(unittest.TestCase):
         self.assertFalse(cursor_host.SEGMENTS["cursor_api"])
         context, theme = self._context(self._quota())
         api = cursor_segments.seg_cursor_api(context, 100, theme)
-        self.assertIn("api ", cast(str, api))
+        self.assertIn("api: ", cast(str, api))
         fixed = cursor_segments.seg_cursor_extra(context, 100, theme)
         self.assertIn("$5.20/$20.00", cast(str, fixed))
         self.assertIn("≈", cast(str, fixed))
@@ -269,7 +272,7 @@ class TestCursorStatusLine(unittest.TestCase):
         wide = cursor_segments.seg_cursor_included(stale_ctx, 100, stale_theme)
         narrow = cursor_segments._colored(
             cursor_segments.Gauge("47%", 47, (0, 100_000), 40, "stale", False), stale_theme
-        )
+        ) + cursor_segments._marker("stale", False)
         self.assertIn("≈ stale", cast(str, wide))
         self.assertIn("≈*", cast(str, narrow))
         for state in (
@@ -296,20 +299,22 @@ class TestCursorStatusLine(unittest.TestCase):
         self.assertIsNone(cursor_segments.seg_cursor_included(extra, 100, extra_theme))
         self.assertIsNotNone(cursor_segments.seg_cursor_extra(extra, 100, extra_theme))
 
-    def test_reset_is_local_time_and_weekly_window(self):
+    def test_reset_is_local_date_without_time_of_day(self):
+        # D-04: the reset shows the local date and no clock time, in any zone.
         weekly = self._quota(included_window=(93_600_000, 698_400_000))
         window = cast(tuple[int, int], weekly.included_window)
         self.assertEqual(window[0], window[1] - 7 * 86400 * 1000)
         ctx, theme = self._context(weekly)
-        with mock.patch.dict(os.environ, {"TZ": "UTC"}):
-            time.tzset()
-            utc = cursor_segments.seg_cursor_reset(ctx, 100, theme)
-        with mock.patch.dict(os.environ, {"TZ": "Asia/Tokyo"}):
-            time.tzset()
-            tokyo = cursor_segments.seg_cursor_reset(ctx, 100, theme)
+        end_ms = cast(int, cursor_segments._cycle_end(weekly))
+        for zone in ("UTC", "Asia/Tokyo"):
+            with mock.patch.dict(os.environ, {"TZ": zone}):
+                time.tzset()
+                text = cast(str, cursor_segments.seg_cursor_reset(ctx, 100, theme))
+                expected = datetime.fromtimestamp(end_ms / 1000).strftime("%b %d")
+            self.assertIn(f"↺ {expected} (", text)
+            self.assertNotIn(":", text)
+            self.assertIn("≈", text)
         time.tzset()
-        self.assertNotEqual(utc, tokyo)
-        self.assertIn("≈", cast(str, utc))
 
     def test_config_namespace_provider_namespace_and_no_network_render(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -417,7 +422,315 @@ class TestCursorStatusLine(unittest.TestCase):
             env["AI_KIT_CURSOR_CONFIG_FILE"] = str(config_path)
             result = self._run_entry(SYNTHETIC, env)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue(result.stdout.splitlines()[0].startswith("extra "))
+            self.assertTrue(result.stdout.splitlines()[0].startswith("🪙 extra: "))
+
+
+NOW = 1_762_000_000.0
+# A bold SGR span (parameter list holding 1) up to the next reset.
+_BOLD_SPAN = re.compile(r"\x1b\[(?:[0-9]+;)*1(?:;[0-9]+)*m(.*?)\x1b\[0m")
+
+
+class TestCursorQuotaShape(unittest.TestCase):
+    """Claude's quota shape on Cursor: folded reset, days left, extra-spend alert (30.2-03)."""
+
+    _context = TestCursorStatusLine._context
+    _quota = staticmethod(TestCursorStatusLine._quota)
+
+    @staticmethod
+    def _plain(text: str) -> str:
+        return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+    @staticmethod
+    def _end(seconds: float) -> int:
+        return int((NOW + seconds) * 1000)
+
+    @staticmethod
+    def _bold_spans(ctx: Context, theme: Any) -> list[str]:
+        with mock.patch("cursor_segments.time.time", return_value=NOW):
+            return _BOLD_SPAN.findall(cast(str, cursor_segments.seg_cursor_extra(ctx, 400, theme)))
+
+    def _reset(self, end_ms: int) -> str:
+        ctx, theme = self._context(QuotaResult(state="ok", cycle_end_ms=end_ms))
+        with mock.patch("cursor_segments.time.time", return_value=NOW):
+            return self._plain(cast(str, cursor_segments.seg_cursor_reset(ctx, 400, theme)))
+
+    def test_wide_target_and_narrow_tiers_on_the_synthetic_cache(self):
+        quota = core_quota_state(core_synthetic_cache(NOW), NOW)
+        ctx, theme = self._context(quota)
+        end_ms = cast(tuple[int, int], quota.included_window)[1]
+        date = datetime.fromtimestamp(end_ms / 1000).strftime("%b %d")
+        with mock.patch("cursor_segments.time.time", return_value=NOW):
+            parts = [
+                cursor_segments.seg_cursor_included(ctx, 400, theme),
+                cursor_segments.seg_cursor_api(ctx, 400, theme),
+                cursor_segments.seg_cursor_extra(ctx, 400, theme),
+            ]
+            joined = " | ".join(self._plain(cast(str, part)) for part in parts)
+            self.assertEqual(
+                joined,
+                f"⚡️ inc: +42% (↺ {date}, 17d) ≈ | ⚡️ api: +18% ≈ | 🪙 extra: +$2.50/$20.00 ≈",
+            )
+            narrow_width = common_types.util_visible_width("⚡️ inc: +42% ≈")
+            narrow = cursor_segments.seg_cursor_included(ctx, narrow_width, theme)
+            unsigned = cursor_segments.seg_cursor_included(ctx, narrow_width - 1, theme)
+        self.assertEqual(self._plain(cast(str, narrow)), "⚡️ inc: +42% ≈")
+        self.assertEqual(self._plain(cast(str, unsigned)), "⚡️ inc: 42% ≈")
+
+    def test_days_left_adjacency(self):
+        cases = {23 * 3600: "1d", 25 * 3600: "2d", 24 * 3600: "1d", 24 * 3600 + 60: "2d", 0: "0d"}
+        for seconds, expected in cases.items():
+            self.assertIn(f"({expected})", self._reset(self._end(seconds)), seconds)
+
+    def test_passed_reset_on_a_stale_result_shows_zero_days(self):
+        end = self._end(-3600)
+        quota = QuotaResult(
+            state="stale",
+            cycle_start_ms=0,
+            cycle_end_ms=end,
+            included_pct=42.0,
+            included_window=(0, end),
+            od_kind="fixed",
+            od_used_usd=2.5,
+            od_ceiling_usd=20.0,
+        )
+        ctx, theme = self._context(quota)
+        with mock.patch("cursor_segments.time.time", return_value=NOW):
+            reset = self._plain(cast(str, cursor_segments.seg_cursor_reset(ctx, 400, theme)))
+            included = self._plain(cast(str, cursor_segments.seg_cursor_included(ctx, 400, theme)))
+        self.assertIn("(0d) ≈ stale", reset)
+        self.assertIn(", 0d) ≈ stale", included)
+        self.assertNotIn("-", reset)
+
+    def test_weekly_plan_folds_the_weekly_end_and_the_reset_keeps_the_monthly_end(self):
+        weekly_end = self._end(3 * 86400)
+        monthly_end = self._end(17 * 86400)
+        quota = QuotaResult(
+            state="ok",
+            cycle_start_ms=self._end(-13 * 86400),
+            cycle_end_ms=monthly_end,
+            included_pct=42.0,
+            included_window=(self._end(-4 * 86400), weekly_end),
+            included_period="weekly",
+            od_kind="unavailable",
+        )
+        ctx, theme = self._context(quota)
+        with mock.patch("cursor_segments.time.time", return_value=NOW):
+            included = self._plain(cast(str, cursor_segments.seg_cursor_included(ctx, 400, theme)))
+            reset = self._plain(cast(str, cursor_segments.seg_cursor_reset(ctx, 400, theme)))
+        weekly_date = datetime.fromtimestamp(weekly_end / 1000).strftime("%b %d")
+        monthly_date = datetime.fromtimestamp(monthly_end / 1000).strftime("%b %d")
+        self.assertIn(f"(↺ {weekly_date}, 3d)", included)
+        self.assertIn(f"↺ {monthly_date} (17d)", reset)
+
+    def test_render_is_idempotent_for_the_same_payload_and_clock(self):
+        ctx, theme = self._context(core_quota_state(core_synthetic_cache(NOW), NOW))
+        with mock.patch("cursor_segments.time.time", return_value=NOW):
+            first = cursor_segments.seg_cursor_included(ctx, 400, theme)
+            second = cursor_segments.seg_cursor_included(ctx, 400, theme)
+        self.assertEqual(first, second)
+
+    def test_alert_colours_only_the_amount(self):
+        ctx, theme = self._context(core_quota_state(core_synthetic_cache(NOW), NOW))
+        with mock.patch("cursor_segments.time.time", return_value=NOW):
+            ctx.line_conf = ctx.line_conf._replace(
+                host_knobs={"cursor": {"extra_alert": True, "extra_alert_usd": 0.0}}
+            )
+            raw = cast(str, cursor_segments.seg_cursor_extra(ctx, 400, theme))
+            spans = _BOLD_SPAN.findall(raw)
+            self.assertEqual(len(spans), 1)
+            self.assertEqual(self._plain(spans[0]), "$2.50")
+            self.assertEqual(self._plain(raw), "🪙 extra: +$2.50/$20.00 ≈")
+            ctx.line_conf = ctx.line_conf._replace(
+                host_knobs={"cursor": {"extra_alert": True, "extra_alert_usd": 5.0}}
+            )
+            self.assertEqual(self._bold_spans(ctx, theme), [])
+            ctx.line_conf = ctx.line_conf._replace(host_knobs=None)
+            self.assertEqual(self._bold_spans(ctx, theme), [])
+
+    def test_unlimited_extra_bolds_the_amount_on_an_override(self):
+        quota = QuotaResult(state="ok", od_kind="unlimited", od_used_usd=2.5, fetched_at=1000)
+        ctx, theme = self._context(quota)
+        with mock.patch("cursor_segments.time.time", return_value=NOW):
+            ctx.line_conf = ctx.line_conf._replace(
+                host_knobs={"cursor": {"extra_alert": True, "extra_alert_usd": 0.0}}
+            )
+            raw = cast(str, cursor_segments.seg_cursor_extra(ctx, 400, theme))
+            spans = _BOLD_SPAN.findall(raw)
+            self.assertEqual([self._plain(span) for span in spans], ["$2.50"])
+
+
+class TestCursorModelMaxAndDims(unittest.TestCase):
+    """D-05/R6/R8 on Cursor: the max marker follows param_summary; zero rows drop the `×0`."""
+
+    _context = TestCursorStatusLine._context
+    _quota = staticmethod(TestCursorStatusLine._quota)
+
+    def _ctx(self):
+        ctx, theme = self._context(self._quota())
+        ctx.model_name = "Synthetic Model · high"
+        return ctx, theme
+
+    def test_max_mode_appends_the_marker_after_param_summary(self):
+        ctx, theme = self._ctx()
+        ctx.model_max = True
+        text = common_segments.seg_model(ctx, 200, theme)
+        self.assertEqual(
+            re.sub(r"\x1b\[[0-9;]*m", "", cast(str, text)),
+            "🤖 Synthetic Model · high · max",
+        )
+
+    def test_max_mode_false_adds_nothing(self):
+        ctx, theme = self._ctx()
+        ctx.model_max = False
+        text = common_segments.seg_model(ctx, 200, theme)
+        self.assertEqual(
+            re.sub(r"\x1b\[[0-9;]*m", "", cast(str, text)), "🤖 Synthetic Model · high"
+        )
+
+    def test_cursor_zero_rows_render_the_width_alone(self):
+        ctx, theme = self._ctx()
+        ctx.cols = 116
+        ctx.lines = 0
+        text = re.sub(r"\x1b\[[0-9;]*m", "", cast(str, common_segments.seg_alt_term_dimensions(
+            ctx, 200, theme)))
+        self.assertEqual(text, "📐 116")
+        self.assertNotIn("×0", text)
+
+
+def _quota_ending(days, included=42.0, used=2.5):
+    """A fresh Cursor quota whose cycle (and included window) ends `days` after NOW."""
+    end = int((NOW + days * 86400) * 1000)
+    start = int((NOW - 13 * 86400) * 1000)
+    return QuotaResult(
+        state="ok",
+        cycle_start_ms=start,
+        cycle_end_ms=end,
+        included_pct=included,
+        api_pct=18.0,
+        included_window=(start, end),
+        od_kind="fixed",
+        od_used_usd=used,
+        od_ceiling_usd=20.0,
+    )
+
+
+def _cursor_render_context(home, raw, quota):
+    """Build a Cursor render context the way the entry does, with one quota read."""
+    config = cfg_default_config(cursor_host.SPEC)
+    theme = core_build_theme(config, cursor_host.HOST)
+    with mock.patch("cursor_payload.probe_read_quota", return_value=quota):
+        ctx = cursor_payload.core_cursor_context(raw, config, theme, {"HOME": home}, None)
+    return ctx, theme
+
+
+def _cursor_raw(home, max_mode):
+    return {
+        "model": {"display_name": "Synthetic Model", "id": "m1", "param_summary": "high",
+                  "max_mode": max_mode},
+        "workspace": {"current_dir": home},
+        "render_width_chars": 120,
+        "transcript_path": "",
+    }
+
+
+class TestCursorSingleCacheRead(unittest.TestCase):
+    """R5 (30.2-03): the render reads the quota cache once; segments never re-read it, so a
+    cache refresh between two reads cannot mix values inside one render."""
+
+    def test_segments_render_from_the_one_read_and_never_reread_the_cache(self):
+        with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as home:
+            first_read = _quota_ending(17, included=42.0, used=2.5)
+            refreshed = _quota_ending(17, included=10.0, used=9.0)
+            config = cfg_default_config(cursor_host.SPEC)
+            theme = core_build_theme(config, cursor_host.HOST)
+            # Each call to the cache-only reader would return the refreshed value.
+            with mock.patch(
+                "cursor_payload.probe_read_quota", side_effect=[first_read, refreshed]
+            ) as reader:
+                ctx = cursor_payload.core_cursor_context(
+                    _cursor_raw(home, False), config, theme, {"HOME": home}, None
+                )
+                with mock.patch("cursor_segments.time.time", return_value=NOW):
+                    first = [
+                        cursor_segments.seg_cursor_included(ctx, 400, theme),
+                        cursor_segments.seg_cursor_api(ctx, 400, theme),
+                        cursor_segments.seg_cursor_extra(ctx, 400, theme),
+                        cursor_segments.seg_cursor_reset(ctx, 400, theme),
+                    ]
+                    second = [
+                        cursor_segments.seg_cursor_included(ctx, 400, theme),
+                        cursor_segments.seg_cursor_api(ctx, 400, theme),
+                        cursor_segments.seg_cursor_extra(ctx, 400, theme),
+                        cursor_segments.seg_cursor_reset(ctx, 400, theme),
+                    ]
+            self.assertEqual(reader.call_count, 1)
+        plain = " | ".join(
+            re.sub(r"\x1b\[[0-9;]*m", "", cast(str, part)) for part in first if part
+        )
+        self.assertIn("42%", plain)
+        self.assertIn("$2.50", plain)
+        self.assertNotIn("10%", plain)
+        self.assertNotIn("$9.00", plain)
+        self.assertEqual(first, second)
+
+
+class TestCursorDaysAndMaxPerRender(unittest.TestCase):
+    """R6 (30.2-03): days left and the max marker come from one render's payload and cache;
+    two renders with different inputs share no state."""
+
+    @staticmethod
+    def _render(ctx, theme):
+        return {
+            "model": _plain(common_segments.seg_model(ctx, 200, theme)),
+            "reset": _plain(cursor_segments.seg_cursor_reset(ctx, 200, theme)),
+        }
+
+    def test_days_and_max_come_from_each_renders_own_payload_and_cache(self):
+        with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as home:
+            ctx_a, theme = _cursor_render_context(
+                home, _cursor_raw(home, True), _quota_ending(17)
+            )
+            ctx_b, _theme_b = _cursor_render_context(
+                home, _cursor_raw(home, False), _quota_ending(3)
+            )
+            with mock.patch("cursor_segments.time.time", return_value=NOW):
+                first_a = self._render(ctx_a, theme)
+                only_b = self._render(ctx_b, theme)
+                second_a = self._render(ctx_a, theme)
+        self.assertEqual(first_a["model"], "🤖 Synthetic Model · high · max")
+        self.assertIn("(17d)", first_a["reset"])
+        self.assertEqual(only_b["model"], "🤖 Synthetic Model · high")
+        self.assertIn("(3d)", only_b["reset"])
+        self.assertNotIn("17d", only_b["reset"])
+        self.assertEqual(first_a, second_a)
+        self.assertIsNot(ctx_a.probe_cache, ctx_b.probe_cache)
+
+
+class TestCursorTranscriptAge(unittest.TestCase):
+    """D-06/R3: the Cursor host renders the same shared transcript-age segment (30.2-03)."""
+
+    NOW = 1_700_000_000
+    _context = TestCursorStatusLine._context
+    _quota = staticmethod(TestCursorStatusLine._quota)
+
+    def test_cursor_renders_the_shared_age_of_its_transcript(self):
+        plain = mock.Mock(c=lambda spec: "")
+        with tempfile.TemporaryDirectory(prefix="ai-kit-p302-") as tmp:
+            path = os.path.join(tmp, "t.jsonl")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("{}\n")
+            os.utime(path, (self.NOW - 300, self.NOW - 300))
+            ctx, _theme = self._context(self._quota())
+            ctx.transcript_path = path
+            with mock.patch("common_probe.time.time", return_value=self.NOW):
+                text = common_segments.seg_alt_time_ago(ctx, 200, plain)
+        self.assertEqual(text, "⌛ " + common_types.fmt_ago(300) + common_types.RESET)
+
+    def test_absent_transcript_hides_the_segment(self):
+        plain = mock.Mock(c=lambda spec: "")
+        ctx, _theme = self._context(self._quota())
+        ctx.transcript_path = os.path.join(tempfile.gettempdir(), "ai-kit-p302-missing.jsonl")
+        self.assertIsNone(common_segments.seg_alt_time_ago(ctx, 200, plain))
 
 
 AGENT_EXE = "/scratch/.local/share/cursor-agent/versions/2026.10.22/node"
