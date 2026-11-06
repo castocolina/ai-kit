@@ -14,10 +14,11 @@
     {
       "id": "casual-just-apply-it",
       "prompt": "just apply it, whatever the recommendation is, I trust it",
-      "expected_output": "Applies the recommended plan through the apply step and reports what was written, without inventing choices the user never made.",
+      "expected_output": "Runs the recommendation, shows every dry-run add, change and remove row by its full key, then ends the turn and asks before applying: 'just apply it' never skips the plan review or the dry run.",
       "files": [],
       "assertions": [
-        "The answer applies the recommendation through the plan and apply steps and reports the changed keys.",
+        "The answer shows the dry run, one full dotted key per row, before any apply step.",
+        "The answer asks the user and waits before applying, and does not pass --force.",
         "The answer does not invent a choice that the inventory did not produce."
       ]
     },

@@ -1,6 +1,6 @@
 ---
 name: ai-kit-spec-execute
-description: Routes execution of an already-generated plan/phase by detecting which framework generated it: a GSD phase goes to GSD's own `/gsd-execute-phase`, a superpowers plan to the `ai-kit-spec-execute-superpowers` adapter. Use when the user asks to execute/run/implement a plan or phase and the generating framework isn't already known.
+description: "Routes execution of an already-generated plan/phase by detecting which framework generated it - a GSD phase goes to GSD's own `/gsd-execute-phase`, a superpowers plan to the `ai-kit-spec-execute-superpowers` adapter. Use when the user asks to execute/run/implement a plan or phase and the generating framework isn't already known. Not for writing or reviewing plans, or when the user already invoked `/gsd-execute-phase` or the superpowers adapter directly."
 ---
 
 # ai-kit-spec-execute
@@ -62,10 +62,10 @@ run right now (see Anti-Patterns item 1 below).
 ## Error Scenarios
 
 **If detect_framework() raises an exception or returns unexpected value:**
-- `detect_framework()` itself has no `raise` in its body — its only I/O is `isfile`/`isdir` on two fixed paths — so an exception here means something upstream broke (bad `cwd`, a permission error walking to `.planning/` or `docs/superpowers/plans/`, a malformed `CONVERSATION_SIGNAL` value from the caller), not an ordinary "framework unclear" case
+- The CLI fails with `IndexError` when `cwd` is missing, and `detect_framework()` raises for a non-string `cwd` or a truthy non-string `document_path`; a non-string signal is ignored. A permission error does not raise: `isfile`/`isdir` return False, so detection silently falls through to the next signal. A misspelled `CONVERSATION_SIGNAL` (anything but lowercase `gsd` or `superpowers`) is silently ignored the same way. Pass the signal exactly, and check the printed result against it before routing; a mismatch means the signal was dropped
 - Log the error (include cwd, document_path, CONVERSATION_SIGNAL) and fix the underlying cause before retrying, rather than treating it as equivalent to "unknown"
 - Ask user: "I couldn't determine whether this plan is a GSD phase or a superpowers plan. Did you generate it with GSD's planning skills or superpowers' writing-plans?"
-- Once clarified, route to the appropriate adapter
+- Once clarified, route to `/gsd-execute-phase` or the superpowers adapter
 
 **If result is "unknown" (no framework markers detected):**
 - ASK (do not guess): "Which framework generated this plan — GSD or superpowers?"
@@ -76,4 +76,4 @@ run right now (see Anti-Patterns item 1 below).
 - **NEVER skip passing CONVERSATION_SIGNAL just because it's unset this turn** — it's the only signal that outranks *both* document_path and repo markers. Omit it and the old-GSD-repo-reused-for-superpowers case (Step 0 above) silently loses: `.planning/PROJECT.md` still exists on disk from prior GSD use, so the repo-marker fallback returns `"gsd"` even though the user just ran superpowers' `writing-plans` two messages ago.
 - **NEVER treat a bare filename ("plan.md") as "no document_path was given."** `_framework_from_document_path` only matches full path substrings (`.planning/` or `docs/superpowers/plans/`); a correctly-extracted but unqualified filename produces the *same* `None` result as truly having no path, silently demoting a real signal to the repo-marker fallback instead of raising it as evidence.
 - **NEVER trust repo markers in a mixed-framework repo without knowing their precedence.** If both `.planning/PROJECT.md` and `docs/superpowers/plans/` exist (e.g. a repo that migrated frameworks, or runs both), the GSD marker is checked first and wins — so a repo with leftover GSD scaffolding will route to GSD by default even for a superpowers-only session, unless CONVERSATION_SIGNAL or document_path override it first.
-- **NEVER let "unknown" fall through to a default framework.** The GSD and superpowers adapters aren't interchangeable no-ops on a wrong guess — `/gsd-execute-phase` writes phase-completion state back into `.planning/`, so running it against a document that isn't actually a GSD phase can leave bogus `.planning/` state behind, not just produce a confusing error.
+- **NEVER let "unknown" fall through to a default framework.** `/gsd-execute-phase` and the superpowers adapter aren't interchangeable no-ops on a wrong guess — `/gsd-execute-phase` writes phase-completion state back into `.planning/`, so running it against a document that isn't actually a GSD phase can leave bogus `.planning/` state behind, not just produce a confusing error.

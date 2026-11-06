@@ -21,6 +21,9 @@ sys.path.insert(0, os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-review"))
 from ai_kit_spec import cli, config_io, trust
 
 SKILL_MD = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-config", "SKILL.md")
+CHECK_ONLY_MD = os.path.join(
+    _REPO_ROOT, "skills", "ai-kit-spec-config", "references", "check-only.md"
+)
 EVALS_JSON = os.path.join(_REPO_ROOT, "skills", "ai-kit-spec-config", "evals", "evals.json")
 UNCONFIRMED = (
     " (unconfirmed: config file only; built-in, login and environment providers not checked)"
@@ -294,7 +297,13 @@ class TestSpecConfigStep(unittest.TestCase):
     def test_skill_runs_check_providers_in_both_branches(self):
         with open(SKILL_MD, encoding="utf-8") as handle:
             text = handle.read()
-        self.assertGreaterEqual(text.count("check-providers --cwd"), 2)
+        with open(CHECK_ONLY_MD, encoding="utf-8") as handle:
+            check_only = handle.read()
+        # setup runs it from SKILL.md; --check-only runs it from the reference SKILL.md links
+        self.assertIn("check-providers --cwd", text)
+        self.assertIn("check-providers --cwd", check_only)
+        self.assertIn("(references/check-only.md)", text)
+        self.assertLessEqual(len(text.splitlines()), 500)
         lines = text.splitlines()
         never = lines.index("## NEVER")
         section_end = next(i for i in range(never + 1, len(lines)) if lines[i].startswith("#"))
