@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: "30.1"
-current_phase_name: Setup wizard, component cards and host status-line panes
-status: executing
-stopped_at: Phase 30 complete, ready to plan Phase 30.1
-last_updated: "2026-11-06T09:39:50.036Z"
+current_phase: "30.2"
+current_phase_name: Cursor status-line parity
+status: planning
+stopped_at: Phase 30.1 complete, ready to plan Phase 30.2
+last_updated: "2026-11-06T11:59:50.740Z"
 last_activity: 2026-11-06
-last_activity_desc: Phase 30 complete, transitioned to Phase 30.1
-state_head: c4e726ef437f093657f9522b6adc00668e1bf68a
+last_activity_desc: Phase 30.1 complete
+state_head: a252bd3baf31d0c0d1e4c7dbd7e4dc0c3b2e4173
 progress:
   total_phases: 37
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 44
-  completed_plans: 38
-  percent: 11
+  completed_plans: 44
+  percent: 14
 ---
 
 # Project State
@@ -25,22 +25,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 30 — phase-boundary-index-refresh-code-exploration-rules-and-lens
+**Current focus:** Phase 30.1 — setup-wizard-component-cards-and-host-status-line-panes
 
 ## Current Position
 
-Phase: 30.1 (Setup wizard, component cards and host status-line panes) — READY TO EXECUTE
+Phase: 30.2 — Cursor status-line parity
 Plan: Not started
-Status: Ready to execute
-Last activity: 2026-11-06 — Phase 30 complete, transitioned to Phase 30.1
+Status: Ready to plan
+Last activity: 2026-11-06 — Phase 30.1 complete
 
-Progress: [█░░░░░░░░░] 11%
+Progress: [█░░░░░░░░░] 14%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 192
+- Total plans completed: 198
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -86,6 +86,7 @@ Progress: [█░░░░░░░░░] 11%
 | 29 | 16 | - | - |
 | 29.1 | 6 | - | - |
 | 30 | 7 | - | - |
+| 30.1 | 6 | - | - |
 
 **Recent Trend:**
 
@@ -675,7 +676,7 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 ## Session Continuity
 
 Last session: 2026-11-03T19:08:45.122Z
-Stopped at: Phase 30 complete, ready to plan Phase 30.1
+Stopped at: Phase 30.1 complete, ready to plan Phase 30.2
 Resume file: .planning/phases/31-removals-and-small-defects/31-CONTEXT.md
 
 ## Operator Next Steps

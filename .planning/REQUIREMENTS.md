@@ -589,7 +589,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### Features and live checks
 
-- [ ] **FEAT-01**: The config doctor is reachable from the setup wizard, reusing the existing engine and screen. *(amended 2026-11-03, 30.1 spec: `d` on Done opens the doctor screen, one class shared with `--config-doctor`; every doctor apply refuses a file it cannot parse and backs the file up first, keeping the last 10 backups per file)*
+- [x] **FEAT-01**: The config doctor is reachable from the setup wizard, reusing the existing engine and screen. *(amended 2026-11-03, 30.1 spec: `d` on Done opens the doctor screen, one class shared with `--config-doctor`; every doctor apply refuses a file it cannot parse and backs the file up first, keeping the last 10 backups per file)*
 - [ ] **FEAT-02**: The pinned Cursor subagents link per file (never a directory) into a project's `.cursor/agents`
   with a `--skills`-style selection (`all` or names; an unknown name exits 1 naming it); a link never overwrites a
   non-ai-kit file and removal touches only ai-kit's own links; docs say where the agents are linked and why not
@@ -608,7 +608,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 - [ ] **FEAT-05**: The owner decides whether each of the two June ideas is ported or dropped: external status-line
   segments, and the loop-polish branch's icon and install flag. The evidence is each archived branch's diff against
   the split status line; the decision is recorded in Phase 54, and a port lands on the split status line with tests.
-- [ ] **FEAT-06**: The owner decides whether the config doctor gets a row for the Playwright MCP Chrome path. The
+- [x] **FEAT-06**: The owner decides whether the config doctor gets a row for the Playwright MCP Chrome path. The
   evidence is the backlog 999.1 note and where the Playwright MCP looks for Chrome in a scratch home; the decision
   is recorded in Phase 30.1, and an added row uses the existing engine and its confidence labels. *(amended 2026-11-03, 30.1 spec: decided — a Claude row reports the plugin's missing default Chrome (`/opt/google/chrome/chrome`) and whether `env.PLAYWRIGHT_MCP_EXECUTABLE_PATH` is set and exists; its apply writes `/var/lib/flatpak/exports/bin/com.google.Chrome` there in `~/.claude/settings.json` through the doctor's atomic writer with a backup; the variable reaching the MCP process and a headed launch stay inferred until Phase 54)*
 
@@ -644,12 +644,12 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 
 ### Setup wizard
 
-- [ ] **WIZ-01**: The wizard's first screen splits components into one card per kind (skills, agents, commands,
+- [x] **WIZ-01**: The wizard's first screen splits components into one card per kind (skills, agents, commands,
   hooks), each card shown only when that kind has something to install, so adding more kinds does not crowd
   one list. *(amended 2026-11-03, 30.1 D-01: the cards are tabs, one card on screen, ←→ switches kind)*
-- [ ] **WIZ-02**: The Claude status-line pane keeps today's layout with an orange accent background and the words
+- [x] **WIZ-02**: The Claude status-line pane keeps today's layout with an orange accent background and the words
   "Claude Code" in bold.
-- [ ] **WIZ-03**: The Cursor status-line pane uses a gray accent and an on/off toggle: off keeps Cursor's own
+- [x] **WIZ-03**: The Cursor status-line pane uses a gray accent and an on/off toggle: off keeps Cursor's own
   default status line (removing ai-kit's entry if setup had wired it), on wires ai-kit's. *(amended 2026-11-03, 30.1 spec: the toggle is on both host panes and replaces the yes/no gate; it starts at what is wired now; off removes whatever entry is wired, ai-kit's or another tool's, so the host default shows — a foreign one only after it is shown, backed up and confirmed; on wires ai-kit's, keeping today's replace confirmation for a foreign entry)* *(amended 2026-11-06, owner decision, 30.1 D-06: another tool's entry gets three states on its pane: keep current (the default; nothing written), remove so the host shows its own built-in default ("the default that Claude shows when it has no status line", the owner's clarification), or customize with ai-kit, starting from ai-kit's default arrangement; the last two only after it is shown, backed up and confirmed)*
 - [ ] **WIZ-04**: The Cursor status line matches Claude's on the aspects the hosts share, starting from the Cursor
   status-line proof of concept as the visual reference: every Cursor segment shows its icon in the real render
@@ -658,7 +658,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   calculation, finding the Cursor CLI process by its program path and labelled unverified until a live Cursor
   session confirms it; the quota segments use Claude's ramp and window format wherever Cursor's data allows, each
   real data difference flagged visibly, never faked; `alt_term_dimensions` never shows a 0 row count. *(amended 2026-11-03, 30.2 SPEC and discuss: the process is found by its command line or program path; an extra-spend alert is set from the wizard with a toggle and a threshold; with the Cursor CLI installed an owner-attended live run from the branch tip closes Phase 23's S7, otherwise a labelled sample-data render stands in, and nothing installs Cursor)* *(rewritten 2026-11-03, 30.1 spec: the owner's complaint was the Cursor preview not matching Claude's, not disabled chips — the old wording, absent unshowable segments and switched-off ones in the tray, already holds in code; moved to Phase 30.2)*
-- [ ] **WIZ-05**: The wizard's status-line board preview is a real render through each host's own renderer and
+- [x] **WIZ-05**: The wizard's status-line board preview is a real render through each host's own renderer and
   sample payload, at the preview panel's width, titled with the host on screen; the tray title does not call
   switched-off segments disabled. *(added 2026-11-03, 30.1 spec)*
 
@@ -860,22 +860,22 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | JEV-05 | Phase 54 | Pending |
 | JEV-06 | Phase 29 | Complete |
 | JEV-07 | Phase 34 | Pending |
-| FEAT-01 | Phase 30.1 | Pending |
+| FEAT-01 | Phase 30.1 | Complete |
 | FEAT-02 | Phase 54 | Pending |
 | FEAT-03 | Phase 54 | Pending |
 | FEAT-04 | Phase 54 | Pending |
 | FEAT-05 | Phase 54 | Pending |
-| FEAT-06 | Phase 30.1 | Pending |
+| FEAT-06 | Phase 30.1 | Complete |
 | DESIGN-01 | Phase 30 | Complete |
 | DESIGN-02 | Phase 45.1 | Pending |
 | LENS-01 | Phase 30 | Complete |
 | LENS-02 | Phase 42 | Pending |
 | LENS-03 | Phase 44 | Pending |
-| WIZ-01 | Phase 30.1 | Pending |
-| WIZ-02 | Phase 30.1 | Pending |
-| WIZ-03 | Phase 30.1 | Pending |
+| WIZ-01 | Phase 30.1 | Complete |
+| WIZ-02 | Phase 30.1 | Complete |
+| WIZ-03 | Phase 30.1 | Complete |
 | WIZ-04 | Phase 30.2 | Pending |
-| WIZ-05 | Phase 30.1 | Pending |
+| WIZ-05 | Phase 30.1 | Complete |
 | DEF-01 | Phase 31 | Pending |
 | DEF-02 | Phase 32.3 | Pending |
 | DEF-03 | Phase 32.4 | Pending |

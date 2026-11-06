@@ -110,7 +110,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 29: Logical-commit folding and the shared jev ladder** - Each finished GSD or superpowers plan becomes logical-feature commits; every caller chains jev as a black box (completed 2026-11-04)
 - [x] **Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)** - Stacked branches, a push per plan, chained PRs and an owner-started merge chain (completed 2026-11-05)
 - [x] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph sync, graphify rebuild and a changed-symbols brief at every phase boundary (completed 2026-11-06)
-- [ ] **Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)** - One card per component kind, host-styled status-line panes, config doctor reachable from the wizard
+- [x] **Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)** - One card per component kind, host-styled status-line panes, config doctor reachable from the wizard (completed 2026-11-06)
 - [ ] **Phase 30.2: Cursor status-line parity (INSERTED)** - Cursor status line brought back to the approved proof of concept and to Claude's look where the data allows
 - [ ] **Phase 31: Removals and small defects** - Three skills and rtk gone, seven small known defects fixed *(amended 2026-11-03, 31 spec: seven items per DEF-01)*
 - [ ] **Phase 32: Re-judge baseline** - One current-judge report for every kept skill, plus strict frontmatter and text checks
@@ -322,19 +322,19 @@ Plans:
   5. The config doctor opens from the wizard, reusing `ConfigDoctorApp` and the existing engine with no second implementation. *(amended 2026-11-03, 30.1 spec: `d` on Done, Esc back to Done, one screen class; every apply refuses an unparseable file and backs up first)*
   6. A recorded owner decision says whether the config doctor gets a Playwright MCP Chrome path row; an added row uses the existing engine and its confidence labels. *(amended 2026-11-03, 30.1 spec: decided — the row and its apply write `env.PLAYWRIGHT_MCP_EXECUTABLE_PATH` to the flatpak Chrome wrapper in a scratch `settings.json` with a backup)*
 
-**Plans**: 6 plans
+**Plans**: 6/6 plans complete
 Plans:
 **Wave 1**
-- [ ] 30.1-01-PLAN.md — doctor applies refuse unparseable files and back up first (newest 10 kept); Playwright MCP browser row (wave 1)
-- [ ] 30.1-02-PLAN.md — config doctor body becomes one Screen shared by `--config-doctor` and the wizard (wave 1)
-- [ ] 30.1-03-PLAN.md — Choose tabs per kind, Review per card, global rules on `g`, real-render preview titled per host (wave 1)
+- [x] 30.1-01-PLAN.md — doctor applies refuse unparseable files and back up first (newest 10 kept); Playwright MCP browser row (wave 1)
+- [x] 30.1-02-PLAN.md — config doctor body becomes one Screen shared by `--config-doctor` and the wizard (wave 1)
+- [x] 30.1-03-PLAN.md — Choose tabs per kind, Review per card, global rules on `g`, real-render preview titled per host (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 30.1-04-PLAN.md — setup commit for the toggle (remove ours, keep foreign, backup-first foreign remove/replace), doctor factory injection (wave 2)
-- [ ] 30.1-05-PLAN.md — host band and `o` toggle replace the gate (three states on a foreign host), locked off board, Review outcomes, foreign modal, `d` on Done (wave 2)
+- [x] 30.1-04-PLAN.md — setup commit for the toggle (remove ours, keep foreign, backup-first foreign remove/replace), doctor factory injection (wave 2)
+- [x] 30.1-05-PLAN.md — host band and `o` toggle replace the gate (three states on a foreign host), locked off board, Review outcomes, foreign modal, `d` on Done (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 30.1-06-PLAN.md — PTY toggle-off scenario, README wizard rewrite, mockup superseded note, orchestrator `uv run` capture (wave 3)
+- [x] 30.1-06-PLAN.md — PTY toggle-off scenario, README wizard rewrite, mockup superseded note, orchestrator `uv run` capture (wave 3)
 **UI hint**: yes
 
 ### Phase 30.2: Cursor status-line parity (INSERTED)
@@ -843,7 +843,7 @@ Plans:
 | 29. Logical-commit folding and the shared jev ladder | 16/16 | Complete    | 2026-11-04 |
 | 29.1. Stacked phase branches, chained PRs and the merge chain | 6/6 | Complete    | 2026-11-05 |
 | 30. Phase-boundary index refresh and code-exploration rules | 7/7 | Complete    | 2026-11-06 |
-| 30.1. Setup wizard, component cards and host status-line panes | 0/TBD | Not started | - |
+| 30.1. Setup wizard, component cards and host status-line panes | 6/6 | Complete    | 2026-11-06 |
 | 30.2. Cursor status-line parity | 0/TBD | Not started | - |
 | 31. Removals and small defects | 0/TBD | Not started | - |
 | 32. Re-judge baseline | 0/TBD | Not started | - |
