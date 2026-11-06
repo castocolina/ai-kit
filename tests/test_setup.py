@@ -2401,8 +2401,9 @@ class TestCmdInstall(unittest.TestCase):
         # status line (matching first-run all-on + adopt behaviour) WITHOUT the
         # Textual TUI. After Task 10 the statusLine wiring + recipe copy are gated
         # on the wizard's adopt decision via persist_statusline — not pre-wizard.
-        def _apply_defaults(paths, entries, installed, tty, dry, counts, examples_flag=None):
-            del examples_flag
+        def _apply_defaults(paths, entries, installed, tty, dry, counts, examples_flag=None,
+                            env=None):
+            del examples_flag, env
             default = setup._default_selection(entries, installed)
             setup.apply_selection(default, entries, paths.claude_dir, dry, counts)
             state = {"segments": dict(_claude_segments()),
@@ -2421,8 +2422,9 @@ class TestCmdInstall(unittest.TestCase):
         # Task 10 constraint 1: a wizard run that does NOT adopt (components-only)
         # must write no claude-statusline.toml and never touch settings.json statusLine —
         # because cmd_install no longer wires the status line pre-wizard.
-        def _components_only(paths, entries, installed, tty, dry, counts, examples_flag=None):
-            del examples_flag
+        def _components_only(paths, entries, installed, tty, dry, counts, examples_flag=None,
+                             env=None):
+            del examples_flag, env
             default = setup._default_selection(entries, installed)
             setup.apply_selection(default, entries, paths.claude_dir, dry, counts)
             # no persist_statusline call — adopt is implicitly False
@@ -4507,6 +4509,66 @@ class TestWizardHousekeeping(unittest.TestCase):
             setup.launch_wizard(paths, entries, installed, _FakeTty(), dry,
                                 setup.new_counts())
         return captured["ctx"], setup.new_counts()
+
+    def _capture(self, dry=False, examples_flag=None):
+        """launch_wizard with the scratch env passed and run_wizard captured."""
+        paths = self._paths()
+        entries = setup.enumerate_entries(paths.install_dir)
+        installed = setup.installed_links(paths.claude_dir, paths.install_dir)
+        wa = _import_wizard_app()
+        captured = {}
+
+        def _fake_run(ctx):
+            captured["ctx"] = ctx
+            return None
+
+        class _FakeTty:
+            def isatty(self):
+                return True
+
+        with mock.patch.object(wa, "run_wizard", _fake_run), \
+                mock.patch.object(setup, "stdin_on_tty",
+                                  return_value=contextlib.nullcontext()):
+            setup.launch_wizard(paths, entries, installed, _FakeTty(), dry,
+                                setup.new_counts(), examples_flag=examples_flag,
+                                env=self.env)
+        return captured["ctx"]
+
+    def test_launch_wizard_hands_over_doctor_and_foreign_callables(self):
+        ctx = self._capture()
+        self.assertTrue(callable(ctx.doctor))
+        self.assertTrue(callable(ctx.prepare_foreign))
+        self.assertIs(ctx.state["_examples_forced"], False)
+        self.assertIn("error", ctx.prepare_foreign("claude"))
+
+    def test_launch_wizard_examples_flag_sets_examples_forced(self):
+        self.assertIs(self._capture(examples_flag=True).state["_examples_forced"], True)
+
+    def test_dry_launch_foreign_prepare_takes_no_backup(self):
+        paths = self._paths()
+        os.makedirs(paths.claude_dir, exist_ok=True)
+        with open(paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"statusLine": {"type": "command", "command": "my-line.sh"}}, handle)
+        out = self._capture(dry=True).prepare_foreign("claude")
+        self.assertEqual(out["entry"], "my-line.sh")
+        self.assertEqual(out["backup"], "")
+        self.assertFalse(os.path.exists(paths.backups_dir))
+
+    def test_doctor_factory_builds_a_fresh_screen_and_dry_apply_writes_nothing(self):
+        paths = self._paths()
+        os.makedirs(paths.claude_dir, exist_ok=True)
+        with open(paths.settings, "w", encoding="utf-8") as handle:
+            json.dump({"cleanupPeriodDays": 5}, handle)
+        with open(paths.settings, "rb") as handle:
+            before = handle.read()
+        first = self._capture().doctor()
+        second = self._capture().doctor()
+        self.assertIsNot(first, second)
+        dry_screen = self._capture(dry=True).doctor()
+        dry_screen.ctx.apply("claude-retention", False)
+        with open(paths.settings, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+        self.assertFalse(os.path.exists(paths.backups_dir))
 
     def _make_selection(self, skills_on, skills_off):
         return setup.Selection(

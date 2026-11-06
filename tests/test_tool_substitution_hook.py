@@ -404,7 +404,7 @@ class TestWiring(unittest.TestCase):
         # 23-16's per-host commit: the component outcome PLUS one outcome per
         # host, so one host's rejection never hides the other's result.
         self.assertEqual(set(result), {"ok", "adopt", "log", "hosts"})
-        self.assertEqual(set(result["hosts"]["claude"]), {"ok", "adopt", "log"})
+        self.assertEqual(set(result["hosts"]["claude"]), {"ok", "adopt", "log", "action"})
         with open(paths.settings, encoding="utf-8") as handle:
             data = json.load(handle)
         ours = [

@@ -24,6 +24,7 @@ Env overrides (mirrors install.sh):
 import argparse
 import contextlib
 import copy
+import functools
 import importlib.util
 import io
 import json
@@ -117,8 +118,7 @@ def resolve_paths(env):
     )
     claude_dir = env.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
     pi_dir = env.get("PI_CODING_AGENT_DIR") or os.path.join(home, ".pi", "agent")
-    state_base = env.get("XDG_STATE_HOME") or os.path.join(home, ".local", "state")
-    backups_dir = os.path.join(state_base, "ai-kit", "backups")
+    backups_dir = _sibling("config_doctor_appliers").backups_root(env)
     cursor_dir = env.get("CURSOR_CONFIG_DIR") or os.path.join(home, ".cursor")
     config_base = env.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
     opencode_dir = (env.get("OPENCODE_CONFIG_DIR") or
@@ -3746,44 +3746,141 @@ def _commit_components(paths, entries, selection, dry, counts):
     return buf.getvalue(), hooks_ok
 
 
+def _statusline_action(host_state, examples_forced=False):
+    """The one host action table (D-06 as amended 2026-11-06): what the commit
+    does to a host, decided by its toggle, start state and board. The wizard's
+    Review text uses the same rule, so Review and commit never disagree.
+    A state without `start_state` counts as `unset`; without `dirty` it counts
+    as dirty, so a legacy state never skips a write."""
+    host_state = host_state or {}
+    start = host_state.get("start_state") or "unset"
+    if host_state.get("adopt"):
+        if start == "unset":
+            return "wire"
+        if start == "ours":
+            dirty = host_state.get("dirty", True)
+            return "update" if (dirty or examples_forced) else "unchanged"
+        return "replace_foreign"
+    if start == "ours":
+        return "remove_ours"
+    if start == "foreign":
+        return ("remove_foreign" if host_state.get("foreign_choice") == "remove"
+                else "keep_foreign")
+    return "unchanged"
+
+
+def _unwire_host(paths, host, dry):
+    """Remove ai-kit's own wiring from ONE host and nothing else (R3, D-07)."""
+    if host == "claude":
+        return unwire_statusline(paths.settings, paths.install_dir, dry)
+    return unwire_statusline_cursor(paths.cursor_cli_config, paths.cursor_status_line, dry)
+
+
+def _prepare_foreign(paths, host, dry=False):
+    """Back up a foreign status line BEFORE the Review confirmation (D-08), through
+    the doctor's one backup helper. Returns ``{"entry", "file", "backup"}`` or
+    ``{"error"}``; a dry prepare takes no backup (``backup`` is ``""``). Never prints:
+    the wizard is on screen while this runs."""
+    detect = _detect_for(paths, host)
+    if detect["state"] != "foreign":
+        return {"error": "no foreign status line to back up"}
+    path = paths.settings if host == "claude" else paths.cursor_cli_config
+    if host == "cursor" and _cursor_config_read(path)[0] in ("jsonc", "bad"):
+        return {"error": f"{path} holds JSONC comments or cannot be parsed; "
+                         "ai-kit leaves it untouched"}
+    backup = ""
+    if not dry:
+        try:
+            backup = _sibling("config_doctor_appliers").backup_before_write(
+                path, paths.backups_dir, host)
+        except OSError as exc:
+            return {"error": f"backup failed: {exc}"}
+    return {"entry": detect["current_command"] or "(unknown)", "file": path, "backup": backup}
+
+
+def _remove_statusline_entry(paths, host, dry, approved):
+    """Remove a foreign statusLine so the host shows its own default (D-06, owner
+    decision 2026-11-06). The entry it pops is compared with `approved` in the same
+    read; a mismatch (or an entry already gone) refuses. Writes no ai-kit line and
+    touches no other key. Returns False on a refusal or a failed write."""
+    if host == "claude":
+        path = paths.settings
+        state, data = _read_json_checked(path)
+        if state == JSON_STATE_UNREADABLE:
+            _warn_hook_config(path, "cannot parse as a JSON object; statusLine left as is")
+            return False
+        if state != JSON_STATE_OK or data is None:
+            return True
+        current = _statusline_command(data.get("statusLine"))
+    else:
+        path = paths.cursor_cli_config
+        data = _cursor_config_for_write(path)
+        if data is None:
+            return False
+        if not data:
+            return True
+        current = _cursor_write_state(data, paths.cursor_status_line)[1]
+    if current != approved:
+        print(f"error: {host} status-line command changed after approval "
+              f"(approved {approved!r}, found {current!r}) — not removing a "
+              "command you never approved; re-run the wizard to review it")
+        return False
+    data.pop("statusLine", None)
+    return _commit_unwire(path, data, dry, "would remove the foreign statusLine")
+
+
 def _commit_host_statusline(paths, host, host_state, dry, examples_flag):
-    """ONE host's status-line commit: its own offline-validated config write and
-    its own wiring, with its diagnostics captured into its OWN log string
-    (T-23-53: a rejected Cursor candidate never blocks Claude and a declined
-    host is never written at all). Returns ``{"ok", "adopt", "log"}``."""
+    """ONE host's status-line commit, by `_statusline_action`: its own
+    offline-validated write or removal, with its diagnostics captured into its
+    OWN log string (T-23-53: a rejected Cursor candidate never blocks Claude and
+    a host the user left alone is never written at all). Returns ``{"ok",
+    "adopt", "log", "action"}``."""
     host_state = host_state or {}
     adopt = bool(host_state.get("adopt"))
+    action = _statusline_action(host_state, examples_forced=examples_flag is not None)
+    if action == "keep_foreign" or (action == "unchanged" and not adopt):
+        # Owner decision 2026-11-06: nothing is written, no backup, no re-read.
+        return {"ok": True, "adopt": adopt, "log": "", "action": action}
     hbuf = io.StringIO()
+    if action in ("replace_foreign", "remove_foreign") and not host_state.get("foreign_ok"):
+        hbuf.write(f"error: {host} foreign status line was not confirmed on Review; "
+                   "nothing written\n")
+        return {"ok": False, "adopt": adopt, "log": hbuf.getvalue(), "action": action}
+    if not dry and "adopt_command" in host_state:
+        # The gate approved ONE exact wiring value; publish or remove only while
+        # the host's live wiring still IS that value. A mismatch means another
+        # process changed the command after approval — the toggle is not blanket
+        # overwrite permission for a command the user never saw.
+        approved = host_state.get("adopt_command")
+        fresh = _detect_for(paths, host).get("current_command")
+        if fresh != approved:
+            hbuf.write(
+                f"error: {host} status-line command changed after approval "
+                f"(approved {approved!r}, found {fresh!r}) — not replacing a "
+                "command you never approved; re-run the wizard to review it\n")
+            return {"ok": False, "adopt": adopt, "log": hbuf.getvalue(), "action": action}
     host_ok = True
-    if adopt:
-        if not dry and "adopt_command" in host_state:
-            # The gate approved ONE exact wiring value; publish only while the
-            # host's live wiring still IS that value. A mismatch means another
-            # process changed the command after approval — adoption is not
-            # blanket overwrite permission for a command the user never saw.
-            approved = host_state.get("adopt_command")
-            fresh = _detect_for(paths, host).get("current_command")
-            if fresh != approved:
-                hbuf.write(
-                    f"error: {host} status-line command changed after approval "
-                    f"(approved {approved!r}, found {fresh!r}) — not replacing a "
-                    "command you never approved; re-run the wizard to review it\n")
-                return {"ok": False, "adopt": adopt, "log": hbuf.getvalue()}
-        try:
-            with contextlib.redirect_stdout(hbuf), contextlib.redirect_stderr(hbuf):
+    try:
+        with contextlib.redirect_stdout(hbuf), contextlib.redirect_stderr(hbuf):
+            if action == "remove_ours":
+                host_ok = _unwire_host(paths, host, dry)
+            elif action == "remove_foreign":
+                host_ok = _remove_statusline_entry(
+                    paths, host, dry, host_state.get("adopt_command"))
+            else:
                 known_ext_ids = _commit_known_ext_ids(
                     paths, host, host_state, examples_flag, dry)
                 host_ok = persist_statusline(
                     paths, host_state, adopt, dry, tty=None,
                     assume_overwrite=True, known_ext_ids=known_ext_ids,
                     host=host)
-        except OSError as exc:
-            # A filesystem failure on THIS host (unwritable config directory,
-            # failed candidate temp file, …) records that host's failed outcome
-            # and must not abort the loop — the other hosts still commit (D-22).
-            host_ok = False
-            hbuf.write(f"error: {host} status-line commit failed: {exc}\n")
-    return {"ok": bool(host_ok), "adopt": adopt, "log": hbuf.getvalue()}
+    except OSError as exc:
+        # A filesystem failure on THIS host (unwritable config directory,
+        # failed candidate temp file, …) records that host's failed outcome
+        # and must not abort the loop — the other hosts still commit (D-22).
+        host_ok = False
+        hbuf.write(f"error: {host} status-line commit failed: {exc}\n")
+    return {"ok": bool(host_ok), "adopt": adopt, "log": hbuf.getvalue(), "action": action}
 
 
 def _commit_global_rules(rules_env, rules_review, selection, dry):
@@ -3822,8 +3919,12 @@ def _make_wizard_commit(  # pylint: disable=too-many-arguments
     note, …) are captured per host into the returned outcome's ``log`` string;
     the caller prints it AFTER the app exits. Returns
     ``{"ok": bool, "adopt": bool, "log": str, "hosts": {host: {"ok", "adopt",
-    "log"}}}`` — the component-level keys keep the single-host shape, ``hosts``
-    carries the per-host outcome the Done screen and ``cmd_install`` consume."""
+    "log", "action"}}}`` — the component-level keys keep the single-host shape,
+    ``hosts`` carries the per-host outcome the Done screen and ``cmd_install``
+    consume. ``action`` is the host's ``_statusline_action`` name (``wire``,
+    ``update``, ``unchanged``, ``remove_ours``, ``keep_foreign``,
+    ``remove_foreign``, ``replace_foreign``); a host the toggle leaves alone is
+    never written, whatever its action."""
     def commit(selection, states):
         component_log, hooks_ok = _commit_components(
             paths, entries, selection, dry, counts)
@@ -3932,7 +4033,7 @@ def _make_apply_housekeeping(  # pylint: disable=too-many-arguments,too-many-pos
 
 
 def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
-    paths, entries, installed, tty, dry, counts, examples_flag=None,
+    paths, entries, installed, tty, dry, counts, examples_flag=None, env=None,
 ):
     """Build the engine context and run the Textual wizard.  Applies the chosen
     selection on confirm; a None result (abort) leaves everything as-is.
@@ -4005,6 +4106,7 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
     # Done screen reflects the actual result. Inject the commit + housekeeping
     # callables here, where paths/entries/dry/counts are in scope.
     hk_log: list[str] = []
+    env = os.environ if env is None else env
     ctx = ctx._replace(
         commit=_make_wizard_commit(paths, entries, dry, counts, examples_flag=examples_flag,
                                    rules_env=rules_env, rules_review=rules_review),
@@ -4012,7 +4114,12 @@ def launch_wizard(  # pylint: disable=too-many-arguments,too-many-positional-arg
             paths, entries, stale, predecessor_cands, dry, counts,
             pi_predecessor_cands=pi_predecessor_cands, pi_stale=pi_stale,
             replace_cands=replace_cands, log_sink=hk_log, rules_review=rules_review),
+        doctor=_make_doctor_factory(env, dry=dry),
+        prepare_foreign=functools.partial(_prepare_foreign, paths, dry=dry),
     )
+    # An explicit --examples is the authority for the clean-reconfigure rule (the
+    # wizard's Review and the commit read this one key; REVIEWS HIGH 4).
+    ctx.state["_examples_forced"] = examples_flag is not None
     try:
         # curl | bash inherits the script pipe as fd 0; Textual reads keys from
         # fd 0, so redirect it onto the controlling terminal for the run.
@@ -4070,7 +4177,7 @@ def cmd_install(env, tty, dry, examples_flag=None):
     # pre-UI terminal prompts here) now happen INSIDE the wizard's housekeeping
     # gate — see launch_wizard / _build_wizard_context / _make_apply_housekeeping.
     result = launch_wizard(paths, entries, installed, tty, dry, counts,
-                           examples_flag=examples_flag)
+                           examples_flag=examples_flag, env=env)
 
     # Example external segments (system_memory, …). Aborting the wizard
     # (result is None) is a full no-op — nothing further is installed. On a
@@ -4658,26 +4765,43 @@ def cmd_config_doctor(env, tty, dry):
         )
         sys.exit(2)
 
-    config_doctor_app = _sibling("config_doctor_app")
-    config_doctor_checks = _sibling("config_doctor_checks")
+    ctx = _config_doctor_ctx(env)
+    with stdin_on_tty():
+        _sibling("config_doctor_app").run_config_doctor(ctx)
+    return 0
 
+
+def _config_doctor_ctx(env):
+    """The Config Doctor's catalog and apply closure for this env, shared by
+    `--config-doctor` and the wizard's `d` key (D-13). The catalog is built on
+    each call; the apply closure runs `apply_row`, which goes through plan 01's
+    guarded apply (it re-reads the target right before the replace)."""
+    config_doctor_checks = _sibling("config_doctor_checks")
     catalog = config_doctor_checks.build_catalog(env)
     apply_ctx = config_doctor_checks.ReadContext(data=None, env=env, runner=None)
 
     def apply(row_id, dry):
-        # TOCTOU: this closure does NOT re-read-and-re-diff the target file
-        # immediately before writing. A window exists between build_catalog's
-        # read and this write if the user hand-edits the file in another
-        # terminal mid-session. Accepted, documented limitation for this
-        # wave (04-RESEARCH.md Common Threat Patterns; 04-03-PLAN.md Task 2
-        # <reversibility>) — not an oversight. Atomicity is with respect to
-        # the value this closure itself computed.
+        # TOCTOU: the closure itself does not re-read the file; the guarded apply
+        # does, between backup and replace. Atomicity is with respect to the
+        # value this closure itself computed.
         return config_doctor_checks.apply_row(row_id, apply_ctx, dry)
 
-    ctx = config_doctor_app.ConfigDoctorContext(catalog=catalog, apply=apply)
-    with stdin_on_tty():
-        config_doctor_app.run_config_doctor(ctx)
-    return 0
+    return _sibling("config_doctor_app").ConfigDoctorContext(catalog=catalog, apply=apply)
+
+
+def _make_doctor_factory(env, dry=False):
+    """The factory the wizard calls on `d`: a fresh ConfigDoctorScreen per call
+    (D-13). With `dry` (an install --dry-run) every confirmed apply is a preview
+    and the exit hint says so, so the dry run writes nothing."""
+    def factory():
+        ctx = _config_doctor_ctx(env)
+        hint = "Esc returns to Done."
+        if dry:
+            base = ctx.apply
+            ctx = ctx._replace(apply=lambda row_id, _dry: base(row_id, True))
+            hint = "Esc returns to Done. Dry run: applies are previews; nothing is written."
+        return _sibling("config_doctor_app").ConfigDoctorScreen(ctx, exit_hint=hint)
+    return factory
 
 
 # ---------------------------------------------------------------------------

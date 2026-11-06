@@ -1475,7 +1475,8 @@ class TestApplyRows(_ScratchRuntimes):
     def test_cmd_config_doctor_injects_apply_closure(self):
         with open(os.path.join(_TOOLS_DIR, "setup.py"), encoding="utf-8") as handle:
             text = handle.read()
-        start = text.find("def cmd_config_doctor")
+        # The closure moved to _config_doctor_ctx (D-13: shared with the wizard's d key).
+        start = text.find("def _config_doctor_ctx")
         self.assertGreater(start, 0)
         nxt = text.find("\ndef ", start + 1)
         body = text[start:nxt]
