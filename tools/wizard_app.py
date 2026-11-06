@@ -18,7 +18,6 @@ from __future__ import annotations
 import contextlib
 import functools
 import json
-import math
 import re
 import shutil
 from collections.abc import Callable
@@ -431,8 +430,12 @@ class WizardApp(App):
     #band-name {{ width: 1fr; }}
     #band-toggle {{ width: auto; }}
     #band-note {{ height: auto; }}
-    #alert-row {{ height: auto; }}
-    #alert-usd {{ width: 12; }}
+    #alert-row {{ height: auto; margin-bottom: 1; }}
+    #alert-head {{ height: auto; }}
+    #alert-label, #alert-toggle {{ width: auto; margin-right: 2; }}
+    #alert-usd {{ width: 14; height: 1; border: none; padding: 0 1; margin-right: 2; }}
+    #alert-limit {{ width: 1fr; height: auto; }}
+    #alert-msg {{ height: auto; color: {DIM}; }}
     .locked {{ text-opacity: 50%; }}
     #focchip {{ border: round {PINK}; background: #1b1016; height: auto; padding: 0 1;
                margin-bottom: 1; border-title-color: {PINK}; }}
@@ -650,13 +653,14 @@ class WizardApp(App):
                 yield Static("", id="band-name")
                 yield Static("", id="band-toggle")
             yield Static("", id="band-note")
-            with Horizontal(id="alert-row"):
-                yield Static(ALERT_LABEL, id="alert-label")
-                yield Static("", id="alert-toggle")
-                yield Static("", id="alert-limit")
-                box = Input(id="alert-usd", placeholder="Cursor limit", max_length=10)
-                box.can_focus = False   # Tab must not reach the box (only `e` enables it)
-                yield box
+            with Vertical(id="alert-row"):
+                with Horizontal(id="alert-head"):
+                    yield Static(ALERT_LABEL, id="alert-label")
+                    yield Static("", id="alert-toggle")
+                    box = Input(id="alert-usd", placeholder="Cursor limit", max_length=10)
+                    box.can_focus = False   # Tab must not reach the box (only `e` enables it)
+                    yield box
+                    yield Static("", id="alert-limit")
                 yield Static(ALERT_HINT, id="alert-msg")
             with Vertical(id="board"):
                 for i in range(3):
@@ -1110,7 +1114,7 @@ class WizardApp(App):
         text = event.value.strip()
         keys = self.model.state["host_keys"]["cursor"]
         msg = self.query_one("#alert-msg", Static)
-        if text and not (ALERT_AMOUNT_RE.fullmatch(text) and math.isfinite(float(text))):
+        if text and not ALERT_AMOUNT_RE.fullmatch(text):   # ASCII digits: always finite
             msg.update(escape(ALERT_BAD_INPUT))
             self.notify(ALERT_BAD_INPUT, severity="error")
             return

@@ -604,6 +604,21 @@ class TestExtraSpendAlert(unittest.IsolatedAsyncioTestCase):
             self.assertIn(_ALERT_LIMIT, str(query_static(app, "#alert-limit").content))
             self.assertIn(wa.TOGGLE_ON, str(query_static(app, "#alert-toggle").content))
 
+    async def test_every_alert_widget_is_laid_out_on_screen(self):
+        # A row of width-less Statics once gave the label the whole width: nothing else showed.
+        app = _alert_app()
+        async with app.run_test(size=(80, 40)) as pilot:
+            await pilot.pause()
+            await pilot.press("enter", "enter")
+            await pilot.pause()
+            for wid in ("#alert-label", "#alert-toggle", "#alert-usd", "#alert-limit",
+                        "#alert-msg"):
+                with self.subTest(widget=wid):
+                    region = app.query_one(wid).region
+                    self.assertGreater(region.width, 0)
+                    self.assertGreater(region.height, 0)
+                    self.assertLessEqual(region.right, 80)
+
     async def test_limit_text_falls_back_to_unknown_without_an_engine_callable(self):
         app = _alert_app(limit=None)
         async with app.run_test() as pilot:
@@ -671,6 +686,17 @@ class TestAlertInputGuard(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(box.value, "")
             self.assertFalse(box.can_focus)
             self.assertIsNot(app.focused, box)
+
+    async def test_empty_enter_clears_an_existing_override(self):
+        app = _alert_app({"cursor": {"extra_alert": True, "extra_alert_usd": 7.0}})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter", "enter", "e")
+            box = app.query_one("#alert-usd", Input)
+            box.value = ""
+            await pilot.press("enter")
+            self.assertIsNone(app.model.state["host_keys"]["cursor"]["extra_alert_usd"])
+            self.assertFalse(box.can_focus)
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")

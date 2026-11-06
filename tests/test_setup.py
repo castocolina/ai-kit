@@ -6842,6 +6842,14 @@ class TestPatchHostKeys(unittest.TestCase):
         self.assertEqual(out, "[cursor]\nextra_alert = false\nextra_alert_usd = 5.50\n\n"
                               "[segments]\n")
 
+    def test_a_live_header_wins_over_an_earlier_commented_one(self):
+        # The shipped sample ends with a commented `# [cursor]` block (review WR-01).
+        text = "# [cursor]\n# extra_alert = true\n\n[cursor]\nextra_alert = true\n"
+        out = setup.patch_host_keys(text, "cursor", {"extra_alert": False})
+        self.assertEqual(out, "# [cursor]\n# extra_alert = true\n\n[cursor]\nextra_alert = false\n")
+        import tomllib  # pylint: disable=import-outside-toplevel
+        self.assertEqual(tomllib.loads(out)["cursor"], {"extra_alert": False})
+
     def test_none_comments_out_a_live_line_and_never_appends(self):
         text = "[cursor]\nextra_alert = true\nextra_alert_usd = 5.00\n"
         out = setup.patch_host_keys(text, "cursor", {"extra_alert": True, "extra_alert_usd": None})
@@ -6892,8 +6900,8 @@ class TestCursorLimitText(unittest.TestCase):
             self._write_cache(tmp, cq.core_synthetic_cache(self.NOW - 120))
             text = setup.cursor_limit_text(self._env(tmp), self.NOW)
             popen.assert_not_called()
-        age = setup._sibling("common_types").fmt_ago(120)
-        self.assertEqual(text, f"Cursor spend limit: $20.00 (ai-kit quota cache, {age} old; "
+        # fmt_ago already ends in "ago" ("2m 0s ago"), so nothing is appended after it.
+        self.assertEqual(text, "Cursor spend limit: $20.00 (ai-kit quota cache, read 2m 0s ago; "
                                "inferred ≈)")
 
     def test_unlimited_and_disabled_texts(self):
@@ -7015,6 +7023,25 @@ class TestHostKeysPersist(unittest.TestCase):
         self.assertTrue(ok)
         save.assert_not_called()
 
+    def test_only_the_changed_key_is_handed_to_the_save(self):
+        """Flipping the toggle alone never rewrites a hand-written override (review WR-02)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cursor_seed(tmp)
+            with open(cfg, "a", encoding="utf-8") as handle:
+                handle.write("\n[cursor]\nextra_alert = true\nextra_alert_usd = 20  # my cap\n")
+            keys = setup.current_host_keys(cfg, "cursor")
+            keys["cursor"]["extra_alert"] = False
+            state = {
+                "segments": setup.current_segments(cfg, "cursor"),
+                "layout": setup.current_layout(cfg, "cursor"),
+                "dirty": False,
+                "host_keys": keys,
+            }
+            with mock.patch.object(setup, "save_statusline_config", return_value=True) as save:
+                setup._persist_layout(self._cursor_paths(tmp), state, dry=False,  # pylint: disable=protected-access
+                                      host="cursor")
+        self.assertEqual(save.call_args.kwargs["host_keys"], {"cursor": {"extra_alert": False}})
+
 
 class TestInventoryCursorKeys(unittest.TestCase):
     """D-01: a Cursor entry's own wording (cursor_description, cursor_sample) reaches the wizard."""
@@ -7039,6 +7066,17 @@ class TestInventoryCursorKeys(unittest.TestCase):
         self.assertEqual(claude["alt_time_ago"]["description"], "claude wording")
         self.assertEqual(claude["alt_time_ago"]["sample"], "claude sample")
         self.assertEqual(cursor["shared"]["description"], "shared wording")
+
+    def test_real_inventory_labels_cursor_sources_as_unverified_or_inferred(self):
+        # T-30.2-10: no wizard text claims more than its source (AGENTS.md rule).
+        path = os.path.join(os.path.dirname(__file__), "..", "tools", "segments_inventory.toml")
+        cursor = setup.load_segment_inventory(path, "cursor")
+        for key in ("alt_time_ago", "alt_process_memory"):
+            with self.subTest(key=key):
+                self.assertIn("unverified on Cursor", cursor[key]["description"])
+        for key in ("cursor_included", "cursor_api", "cursor_extra", "cursor_reset"):
+            with self.subTest(key=key):
+                self.assertIn("inferred, ≈", cursor[key]["description"])
 
     def test_wording_note_for_the_transcript_age_segment(self):
         self.assertEqual(setup._SEGMENT_NOTES["alt_time_ago"],  # pylint: disable=protected-access

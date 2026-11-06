@@ -547,15 +547,18 @@ def patch_host_keys(text, table, values):  # pylint: disable=too-many-locals
     """Surgically set the host scalars `values` ({key: bool | float | None}) under
     the `[table]` header of `text`'s raw TOML (D-03, D-12), like `patch_segments`.
 
-    A live or commented key line is rewritten in place; a commented `# [table]`
-    header is uncommented in place; a missing key is inserted after the table's
-    last key line; a missing table is appended. A `None` value (no override)
+    A live or commented key line is rewritten in place; a live `[table]` header wins
+    over a commented one, which is uncommented in place only when no live one
+    exists; a missing key is inserted after the last rewritten key line (else right
+    after the header); a missing table is appended. A `None` value (no override)
     comments out a live key line and never appends. Every other byte is kept.
     Returns the input unchanged when no line changes."""
     if not values:
         return text
     lines = text.splitlines(keepends=True)
-    start = next((i for i, line in enumerate(lines) if _header_name(line) == table), None)
+    headers = [i for i, line in enumerate(lines) if _header_name(line) == table]
+    start = next((i for i in headers if not lines[i].lstrip().startswith("#")),
+                 headers[0] if headers else None)
     if start is None:
         live = {k: v for k, v in values.items() if v is not None}
         if not live:
@@ -631,7 +634,7 @@ def cursor_limit_text(env, now):
         fetched = quota.fetched_at if quota.fetched_at is not None else now
         age = _sibling("common_types").fmt_ago(max(0, now - fetched))
         return (f"Cursor spend limit: ${quota.od_ceiling_usd:.2f} "
-                f"(ai-kit quota cache, {age} old; inferred ≈)")
+                f"(ai-kit quota cache, read {age}; inferred ≈)")
     if quota.od_kind == "unlimited":
         return "Cursor spend limit: none (unlimited on Cursor) — set an override to alert"
     if quota.od_kind == "disabled":
@@ -3385,8 +3388,10 @@ def _persist_layout(paths, state, dry, known_ext_ids=None, host="claude"):  # py
     layout = state["layout"] if state["layout"] != current_layout(cfg, host) \
         else None
     current = current_host_keys(cfg, host)
-    key_changes = {t: dict(v) for t, v in (state.get("host_keys") or {}).items()
-                   if t in current and v != current[t]}
+    # Only the keys that changed: an untouched key keeps its own bytes (AGENTS.md).
+    key_changes = {t: {k: val for k, val in v.items() if val != current[t].get(k)}
+                   for t, v in (state.get("host_keys") or {}).items() if t in current}
+    key_changes = {t: v for t, v in key_changes.items() if v}
     if not (seg_changes or layout is not None or key_changes):
         return True   # nothing to write — already up-to-date
     # D-19: hand the publish primitive this host's entry too, so validation is

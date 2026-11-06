@@ -384,6 +384,11 @@ class TestHostKnobs(unittest.TestCase):
         errors = doctor.validate_config_file(self.path, self.env, cursor_host.HOST)
         self.assertIn("unknown [cursor] key: foo", errors)
 
+    def test_doctor_check_reports_a_non_table_cursor_without_raising(self):
+        self._toml("cursor = 5\n")
+        errors = doctor.validate_config_file(self.path, self.env, cursor_host.HOST)
+        self.assertIn("[cursor] must be a table", " ".join(errors))
+
     def test_claude_config_with_cursor_table_gives_no_cursor_error(self):
         self._toml("[cursor]\nextra_alert_usd = -1\n")
         errors = doctor.validate_config_file(self.path, self.env)
