@@ -76,6 +76,8 @@ installed."
 - **Never re-derive the write target at Step 3** — use what Step 2 already resolved and announced (consistency guarantee).
 - **Never translate literal identifiers** — `purpose` values (REVIEW/EXECUTE), model ids, catalog keys, CLI/runtime names, and field labels stay in their literal, invariant form regardless of what language the rest of this conversation is in. Narrate and explain in the user's own language, but never garble an identifier a user or this skill needs to match against config values by translating it.
 - **Never run `trust-local` (the trusting form) without the user's explicit yes** — not even for the `./.aikit/review-spec.toml` this wizard just wrote. Show `trust-local --cwd <project root> --show` first so the user consents after seeing each reviewer's argv; until then the file stays inactive.
+- **Never read or print opencode's `auth.json` or any `apiKey`** — the stale-provider report
+  reads provider names only, and a key value never belongs in a reply.
 
 ### Step 1 — Detect
 
@@ -124,6 +126,15 @@ it and print the `trust-local --cwd <project root> --show` command for the
 user to run later — `--check-only` never runs the trusting `trust-local`
 form, because that writes a trust record.
 
+Then run the stale-provider report (read-only; exits 0 whatever it finds, so it never stops setup):
+```bash
+python3 "$TOOLS_PY" check-providers --cwd "$(pwd)"
+```
+Show its lines to the user as they are. A `warning:` line is a finding to relay, not an error.
+Keep the certainty the line states: a warning ending `(unconfirmed: ...)`, a
+`served providers: config file only; ...` line or a `served providers: not checked: ...` line is
+shown with that wording, never upgraded to "verified" or called "stale".
+
 This makes live probe calls to each configured CLI (same mechanism as
 dispatch time), but "no writes" means nothing is persisted to ai-kit's
 caches or config: the throwaway `--quota-path` keeps quota rows out of the
@@ -140,6 +151,14 @@ python3 "$TOOLS_PY" detect-runtimes --save "$RUNTIMES_JSON"
 (re-running detection here is cheap and keeps this step's logic linear —
 `--save` persists via `cache_write_json`, so `ai-kit-spec-review` doesn't
 have to re-detect next session.)
+
+Then run the stale-provider report (read-only; exits 0 whatever it finds, so it never stops setup):
+```bash
+python3 "$TOOLS_PY" check-providers --cwd "$(pwd)"
+```
+Show its lines to the user as they are, with the same certainty rules as the `--check-only`
+branch: a warning is relayed, and an `(unconfirmed: ...)`, `config file only` or `not checked`
+line is never upgraded to "verified" or called "stale".
 
 ### Step 2 — Ask
 

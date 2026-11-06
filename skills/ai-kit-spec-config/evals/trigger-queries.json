@@ -1,0 +1,18 @@
+[
+  {"query": "Set up my cross-AI reviewers so the review runs against two different models.", "should_trigger": true},
+  {"query": "Configure .aikit/review-spec.toml for this project with my installed CLIs.", "should_trigger": true},
+  {"query": "Check which reviewer CLIs are available here before I write any config.", "should_trigger": true},
+  {"query": "Run the cross-AI review setup wizard and ask me which reviewers to use.", "should_trigger": true},
+  {"query": "My review-spec has an opencode reviewer that opencode no longer serves, can you check it?", "should_trigger": true},
+  {"query": "Write my reviewer config to the global review-spec file, asking me first.", "should_trigger": true},
+  {"query": "Set up reviewers in --check-only mode so nothing is written to disk.", "should_trigger": true},
+  {"query": "Which providers does my opencode review config reference that are no longer listed?", "should_trigger": true},
+  {"query": "Write a unit test for the parser in the markdown-to-pdf skill.", "should_trigger": false},
+  {"query": "Create a new SKILL.md for a changelog generator from scratch.", "should_trigger": false},
+  {"query": "Explain how git rebase differs from git merge in simple terms.", "should_trigger": false},
+  {"query": "Update the README for the status line with the new quota gauge bands.", "should_trigger": false},
+  {"query": "Run the full make test suite and summarise the failing modules.", "should_trigger": false},
+  {"query": "Plan the next GSD phase for the usage metrics dashboard feature.", "should_trigger": false},
+  {"query": "Refactor the Cursor status line module to reduce duplicated code.", "should_trigger": false},
+  {"query": "Draft a commit message for the removal of the providers skill folder.", "should_trigger": false}
+]

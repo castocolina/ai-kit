@@ -1,0 +1,4 @@
+[[reviewers]]
+key = "oc-gone"
+runtime = "opencode"
+model = "gone/model-x"

@@ -1,0 +1,67 @@
+{
+  "skill_name": "ai-kit-spec-config",
+  "evals": [
+    {
+      "id": "casual-set-up-reviewers",
+      "prompt": "Set up my cross-AI reviewers for this project.",
+      "expected_output": "Runs detection first, then the check-providers report, and asks which reviewers to use before writing any config.",
+      "files": [],
+      "assertions": [
+        "Runs detect-runtimes before asking any reviewer question",
+        "Runs check-providers after detection and shows its lines without blocking setup"
+      ]
+    },
+    {
+      "id": "casual-check-only",
+      "prompt": "Just check which reviewers are available, and do not change anything.",
+      "expected_output": "Runs the --check-only path: detection, a quota probe on a throwaway path, and check-providers, with no writes to config or caches.",
+      "files": [],
+      "assertions": [
+        "Keeps the run read-only and removes its scratch path before stopping",
+        "Runs check-providers in the --check-only branch and relays its lines"
+      ]
+    },
+    {
+      "id": "precise-global-write",
+      "prompt": "Write my reviewer config to the global review-spec file in the ai-kit config directory, not the project.",
+      "expected_output": "Asks before writing the global file, and runs check-providers after detection in the normal setup branch.",
+      "files": [],
+      "assertions": [
+        "Asks for explicit confirmation before writing the global review-spec file",
+        "Runs check-providers --cwd after detect-runtimes --save in the normal branch"
+      ]
+    },
+    {
+      "id": "precise-stale-opencode-provider-warning",
+      "prompt": "Run setup. My local review-spec has an opencode reviewer on gone/model-x, and the live opencode listing no longer includes gone.",
+      "expected_output": "Shows the check-providers warning line naming the provider and the file, and continues setup without stopping on it.",
+      "files": [
+        "evals/files/stale-opencode/review-spec.toml"
+      ],
+      "assertions": [
+        "Shows the check-providers warning line naming the provider and the file",
+        "Does not block or stop setup because of the warning"
+      ]
+    },
+    {
+      "id": "edge-opencode-not-installed-config-fallback",
+      "prompt": "opencode is not installed on this machine, but my opencode.jsonc defines a provider called mine, and a reviewer uses mine/m.",
+      "expected_output": "Reports the served providers as config file only, keeps the unconfirmed qualifier on any warning, and does not call the provider stale.",
+      "files": [],
+      "assertions": [
+        "Keeps the unconfirmed qualifier and does not call the provider stale",
+        "Reports the served-providers line as config file only, not as a live listing"
+      ]
+    },
+    {
+      "id": "edge-existing-local-config-replace",
+      "prompt": "There is already a ./.aikit/review-spec.toml in this project. Set up my reviewers again.",
+      "expected_output": "Asks before replacing the existing local config, and still runs check-providers as part of the setup.",
+      "files": [],
+      "assertions": [
+        "Asks before replacing the existing local review-spec file",
+        "Runs check-providers during setup even when the local config already exists"
+      ]
+    }
+  ]
+}

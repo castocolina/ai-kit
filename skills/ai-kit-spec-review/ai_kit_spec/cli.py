@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
-from ai_kit_spec import routing, trust
+from ai_kit_spec import provider_check, routing, trust
 from ai_kit_spec.cache import (
     cache_is_stale,
     cache_read_json,
@@ -161,6 +161,12 @@ def _register_cache_detect_parsers(sub: argparse._SubParsersAction) -> None:
             "catalog; else detect and --save to PATH"
         ),
     )
+    p_check_providers = sub.add_parser(
+        "check-providers",
+        help="report opencode providers configured but no longer served (read-only)")
+    p_check_providers.add_argument(
+        "--cwd", default=None,
+        help="project dir holding .aikit/review-spec.toml; defaults to the process cwd")
 
 
 
@@ -410,6 +416,13 @@ def _cmd_cache_path(args: argparse.Namespace, deps: CliDeps) -> int:
 def _cmd_detect_tools(args: argparse.Namespace, deps: CliDeps) -> int:
     print(json.dumps(detect_tool_availability(which_fn=deps.which_fn)))
     return 0
+
+def _cmd_check_providers(args: argparse.Namespace, deps: CliDeps) -> int:
+    cwd = args.cwd or os.getcwd()
+    for line in provider_check.check_providers_report(deps, deps.env_fn(), cwd):
+        print(line)
+    return 0
+
 
 def _cmd_detect_current_runtime(args: argparse.Namespace, deps: CliDeps) -> int:
     print(json.dumps({"host": detect_current_runtime(deps.env_fn())}))
@@ -992,6 +1005,7 @@ _COMMANDS = {
     "detect-tools": _cmd_detect_tools,
     "detect-current-runtime": _cmd_detect_current_runtime,
     "detect-runtimes": _cmd_detect_runtimes,
+    "check-providers": _cmd_check_providers,
     "fetch-model-catalog": _cmd_fetch_model_catalog,
     "confirm-catalog-entry": _cmd_confirm_catalog_entry,
     "apply-heuristic-correction": _cmd_apply_heuristic_correction,
