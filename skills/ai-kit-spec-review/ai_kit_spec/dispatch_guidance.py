@@ -1,5 +1,5 @@
 """Shared cross-AI/native-dispatch reinforcement prose -- ONE place, reused by every
-ai-kit-spec-execute-* framework adapter (ai-kit-spec-execute-gsd today, ai-kit-spec-execute-
+ai-kit-spec-execute-* framework adapter (the GSD flow today, ai-kit-spec-execute-
 superpowers later), instead of each adapter re-inventing its own version of the same ideas.
 
 These functions NEVER edit the target framework's own workflow/skill prose (gsd-core,

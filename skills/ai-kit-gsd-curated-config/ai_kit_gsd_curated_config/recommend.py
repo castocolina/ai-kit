@@ -322,7 +322,9 @@ def _pi_slot(ctx: PlanCtx, tiers: tuple[str, ...]) -> tuple[list, list]:
     else:
         why = (
             "opt-in session steer: no candidate, because the session provider is unknown "
-            "(PI_PROVIDER is unset; run inventory inside the pi session); plan-unset it"
+            "(PI_PROVIDER is unset: pi sets it only for commands its agent runs through its "
+            "own bash tool, not for `!` commands or RPC bash; have the pi agent run inventory); "
+            "plan-unset it"
         )
     entry = make_entry(
         ctx,

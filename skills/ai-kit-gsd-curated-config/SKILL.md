@@ -130,8 +130,10 @@ python3 "$ENTRYPOINT" plan-unset <key> --plan "$WORK/plan.json"
      A pi or codex model with reasoning modes also pins its effort (`config.effort`, medium
      or the nearest mode); the runner passes it as pi `--thinking` / codex effort.
    - **pi session steer** (`model_profile_overrides.pi.sonnet`, pi hosts only): the
-     candidates are the bare model ids the session provider serves (`PI_PROVIDER`, which
-     `inventory` reads inside a pi session). `plan-set` refuses any other value, `--force`
+     candidates are the bare model ids the session provider serves (`PI_PROVIDER`). pi sets
+     `PI_PROVIDER` and `PI_MODEL` only for commands the pi agent runs through its own bash tool,
+     not for `!` commands or RPC bash, so `inventory` reads them only when the pi agent runs it.
+     `plan-set` refuses any other value, `--force`
      included, and so do `apply --dry-run` and `apply` when the value was written into
      the plan by hand, because gsd-core's hook writes it into every request of the
      project's pi session; with no candidate, decline it with `plan-unset`.

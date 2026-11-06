@@ -7127,8 +7127,7 @@ class TestPreviewTitle(unittest.TestCase):
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _KIT_ITEMS = ("agents", "commands", "skills", "tools", "examples", "cursor-agents")
-_KIT_IGNORE = ("__pycache__", "ai-kit-spec-execute-gsd", "ai-kit-opencode-providers",
-               "mermaid-audit")
+_KIT_IGNORE = ("__pycache__",)
 
 
 def _copy_kit(dest):
@@ -7274,7 +7273,8 @@ class TestCheckoutRun(unittest.TestCase):
         self.assertEqual(os.listdir(base), [])
 
 
-_DEAD_NAMES = ("ai-kit-spec-execute-gsd", "ai-kit-opencode-providers", "mermaid-audit")
+# Synthetic names for links whose skill no longer exists in the kit (no real skill is named).
+_DEAD_NAMES = ("ai-kit-retired-alpha", "ai-kit-retired-beta", "ai-kit-retired-gamma")
 
 
 def _prune_warns(stderr):
@@ -7340,7 +7340,7 @@ class TestHeadlessPrune(unittest.TestCase):
         proc = self._run("reconfigure", "--headless")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(_prune_warns(proc.stderr), self._expected())
-        self.assertFalse(os.path.lexists(os.path.join(self.claude, "mermaid-audit")))
+        self.assertFalse(os.path.lexists(os.path.join(self.claude, "ai-kit-retired-gamma")))
 
     def test_neighbours_of_a_dead_link_survive(self):
         self._seed_dead(self.claude)
@@ -7391,7 +7391,7 @@ class TestHeadlessPrune(unittest.TestCase):
         real_remove = os.remove
 
         def vanishing(path, *args, **kwargs):
-            if os.path.basename(path) == "mermaid-audit":
+            if os.path.basename(path) == "ai-kit-retired-gamma":
                 real_remove(path)  # gone between detection and removal
                 raise FileNotFoundError(path)
             return real_remove(path, *args, **kwargs)
@@ -7399,7 +7399,7 @@ class TestHeadlessPrune(unittest.TestCase):
         with mock.patch.object(setup.os, "remove", side_effect=vanishing):
             rc = setup.cmd_install_headless(env, False, None, False, False)
         self.assertEqual(rc, 0)
-        self.assertFalse(os.path.lexists(os.path.join(self.claude, "mermaid-audit")))
+        self.assertFalse(os.path.lexists(os.path.join(self.claude, "ai-kit-retired-gamma")))
 
 
 if __name__ == "__main__":

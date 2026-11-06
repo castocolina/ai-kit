@@ -1,8 +1,8 @@
 """Builds the `workflow.cross_ai_command` string for execution delegation (D-26, D-27).
 
 The command is the project-local runner hook from `ai_kit_spec.runner_dispatch`, not a
-direct CLI invocation. Mirrors `ai_kit_spec_gsd/gsd_cross_ai.py`'s thin-wrapper pattern
-(return `None`, never raise) -- this module does NOT import from `ai_kit_spec_gsd`, a
+direct CLI invocation. Mirrors the GSD flow's thin-wrapper pattern
+(return `None`, never raise) -- this module does NOT import from the GSD flow's package, a
 sibling skill with its own install-root resolution, not a dependency of this skill.
 
 The `sys.path`-injection-via-`model_detect.resolve_ai_kit_spec_path` pattern this module uses

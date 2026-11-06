@@ -1,0 +1,18 @@
+[
+  {"query": "set up my .planning/config.json for this GSD project with the curated flow", "should_trigger": true},
+  {"query": "configure GSD config fast, pick models per tier and wire my skills to the agents", "should_trigger": true},
+  {"query": "set up a cross-AI execution runner and render cross-ai.mjs for this project", "should_trigger": true},
+  {"query": "run ensure-runner and merge the cross-ai.mjs.new file the runner left behind", "should_trigger": true},
+  {"query": "wire my installed skills to the GSD executor and planner agents in the config", "should_trigger": true},
+  {"query": "migrate this project's GSD config from the v1 flow to the v2 curated flow", "should_trigger": true},
+  {"query": "pick the pi sonnet steer candidate for model_profile_overrides from inventory", "should_trigger": true},
+  {"query": "set cross-AI review for GSD plans and choose a reviewer order for my runtimes", "should_trigger": true},
+  {"query": "write a SKILL.md for a new skill that summarizes meeting notes", "should_trigger": false},
+  {"query": "review this design document for missing requirements before planning starts", "should_trigger": false},
+  {"query": "write a README for my personal dotfiles repository with a quick start", "should_trigger": false},
+  {"query": "rename the variables in this Python module so they read more clearly", "should_trigger": false},
+  {"query": "draft a commit message for the staged changes in my working tree", "should_trigger": false},
+  {"query": "explain how the Kubernetes horizontal pod autoscaler decides when to scale", "should_trigger": false},
+  {"query": "generate a Mermaid sequence diagram of the login flow for the docs folder", "should_trigger": false},
+  {"query": "execute phase four of my project plan and report the commits it made", "should_trigger": false}
+]

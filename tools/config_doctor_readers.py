@@ -86,8 +86,8 @@ def _classify_step(text, kinds, i, n, mode):
 def _classify(text: str) -> list[str]:
     """Classify every character from offset 0 (neutral seed).
 
-    Ported from the jsonc_edit module in the ai-kit-opencode-providers skill
-    (read-only helpers only; no surgical-edit machinery).
+    Read-only port of the JSONC scanner; its drift-tested read-only copy is
+    skills/ai-kit-spec-review/ai_kit_spec/jsonc_read.py.
     """
     n = len(text)
     kinds = [KIND_CODE] * n
@@ -106,8 +106,8 @@ def _classify(text: str) -> list[str]:
 def strip_jsonc_comments(text: str) -> str:
     """Replace comment characters with spaces; leave strings and code intact.
 
-    Ported from the jsonc_edit module in the ai-kit-opencode-providers skill
-    (``strip_jsonc_comments``; read-only, not imported).
+    Read-only port of the JSONC scanner (``strip_jsonc_comments``); its drift-tested
+    read-only copy is skills/ai-kit-spec-review/ai_kit_spec/jsonc_read.py.
     """
     kinds = _classify(text)
     chars = list(text)
@@ -120,8 +120,9 @@ def strip_jsonc_comments(text: str) -> str:
 def code_indices(text: str, start: int, end: int) -> list[int]:
     """CODE-state, non-whitespace positions in ``[start, end)``.
 
-    Ported from the jsonc_edit module in the ai-kit-opencode-providers skill
-    (``code_indices`` — required internally by ``strip_trailing_commas``).
+    Read-only port of the JSONC scanner (``code_indices``, required internally by
+    ``strip_trailing_commas``); its drift-tested read-only copy is
+    skills/ai-kit-spec-review/ai_kit_spec/jsonc_read.py.
     """
     kinds = _classify(text)
     out: list[int] = []
@@ -137,8 +138,8 @@ def code_indices(text: str, start: int, end: int) -> list[int]:
 def strip_trailing_commas(text: str) -> str:
     """Replace trailing commas before ``}`` or ``]`` with a space.
 
-    Ported from the jsonc_edit module in the ai-kit-opencode-providers skill
-    (``strip_trailing_commas``; read-only, not imported).
+    Read-only port of the JSONC scanner (``strip_trailing_commas``); its drift-tested
+    read-only copy is skills/ai-kit-spec-review/ai_kit_spec/jsonc_read.py.
     """
     indices = code_indices(text, 0, len(text))
     chars = list(text)

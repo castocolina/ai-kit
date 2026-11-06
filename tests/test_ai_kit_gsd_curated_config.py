@@ -471,7 +471,7 @@ class TestApplyCriticalAgentsCli(unittest.TestCase):
 
 
 class TestResolveAiKitSpecPath(unittest.TestCase):
-    """model_detect.resolve_ai_kit_spec_path -- mirrors ai-kit-spec-execute-gsd/SKILL.md's own
+    """model_detect.resolve_ai_kit_spec_path -- mirrors the GSD execute flow's own
     Step 0 multi-candidate resolution pattern for the SAME sibling skill."""
 
     def test_plugin_root_candidate_wins_when_present(self):

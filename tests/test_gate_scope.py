@@ -36,7 +36,7 @@ SHIPPED_SUBDIRS = ("tools", "skills", "tests")
 PRE_WIDEN_RUFF_FILES = (
     r"^((tools|tests)/.*|skills/ai-kit-spec-review/ai-kit-spec-review|"
     r"skills/ai-kit-spec-execute/.*|"
-    r"skills/ai-kit-opencode-providers/.*|skills/ai-kit-usage-metrics/.*|"
+    r"skills/ai-kit-usage-metrics/.*|"
     r"skills/ai-kit-project-rules-agents/.*|skills/ai-kit-project-rules-makefile/.*|"
     r"skills/ai-kit-project-rules-precommit/.*|skills/ai-kit-project-rules-arch/.*|"
     r"skills/ai-kit-project-rules-docker/.*|skills/ai-kit-project-rules-cicd/.*|"

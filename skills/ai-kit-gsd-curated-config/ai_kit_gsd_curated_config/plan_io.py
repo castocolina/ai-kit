@@ -538,7 +538,8 @@ def pi_sonnet_value_problem(inv: dict, value) -> str | None:
         return (
             f"{PI_SONNET_KEY}: no candidate from the session provider "
             "(PI_PROVIDER was unset when inventory ran, or the provider serves no listed "
-            "model); run inventory inside the pi session, or plan-unset it"
+            "model: pi sets it only for commands its agent runs through its own bash tool, "
+            "not for `!` commands or RPC bash); have the pi agent run inventory, or plan-unset it"
         )
     if value not in allowed:
         return (

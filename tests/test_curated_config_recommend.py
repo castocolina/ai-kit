@@ -2865,6 +2865,46 @@ class TestReconcileComposition(unittest.TestCase):
         self.assertEqual(bytes_a, bytes_b)
 
 
+class TestPiSessionVariableWording(unittest.TestCase):
+    """pi sets PI_PROVIDER and PI_MODEL only for its agent's bash tool (pi 1.3.0; Phase 31 R9)."""
+
+    SKILL_MD = "skills/ai-kit-gsd-curated-config/SKILL.md"
+    RECOMMEND = "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/recommend.py"
+    PLAN_IO = "skills/ai-kit-gsd-curated-config/ai_kit_gsd_curated_config/plan_io.py"
+    FORBIDDEN = ("inside the pi session", "inside a pi session")
+
+    @staticmethod
+    def _read(rel):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, rel), encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_skill_steer_paragraph_names_both_paths(self):
+        text = self._read(self.SKILL_MD)
+        start = text.index("**pi session steer**")
+        paragraph = text[start:text.index("**Trusted roots**", start)]
+        phrases = ("PI_PROVIDER", "PI_MODEL", "own bash tool", "not for `!` commands or RPC bash")
+        for phrase in phrases:
+            self.assertIn(phrase, paragraph)
+
+    def test_recommend_message_names_the_bash_tool(self):
+        text = self._read(self.RECOMMEND)
+        self.assertIn("PI_PROVIDER is unset", text)
+        self.assertIn("plan-unset", text)
+        self.assertIn("own bash tool", text)
+
+    def test_plan_io_message_names_the_bash_tool(self):
+        text = self._read(self.PLAN_IO)
+        self.assertRegex(text, r"PI_PROVIDER was unset[\s\S]*plan-unset")
+        self.assertIn("own bash tool", text)
+
+    def test_old_phrasings_are_gone(self):
+        for rel in (self.SKILL_MD, self.RECOMMEND, self.PLAN_IO):
+            text = self._read(rel)
+            for phrase in self.FORBIDDEN:
+                self.assertNotIn(phrase, text, rel)
+
+
 if __name__ == "__main__":
     unittest.main()
 

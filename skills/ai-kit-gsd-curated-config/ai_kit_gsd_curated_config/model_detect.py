@@ -5,7 +5,7 @@ only shells out to the already-live-verified pipeline
 (`skills/ai-kit-spec-review/ai_kit_spec/detection.py`'s `build_runtimes_snapshot`) and reshapes
 its output into a plain `{cli_name: [model_id, ...]}` pool for `preference_match.py` to consume.
 
-`resolve_ai_kit_spec_path` mirrors `ai-kit-spec-execute-gsd/SKILL.md`'s own Step 0 multi-
+`resolve_ai_kit_spec_path` mirrors the GSD execute flow's own Step 0 multi-
 candidate resolution pattern (`CLAUDE_PLUGIN_ROOT`-relative, then `~/.claude/skills/<name>`,
 then a sibling-of-this-skill's-own-directory fallback). It prefers the sibling-of-this-skill
 copy first, because an installed copy under `~/.claude/skills` or a plugin root may point at

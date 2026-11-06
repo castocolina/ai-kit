@@ -2014,9 +2014,9 @@ def _read_json_checked(path):
 def _atomic_write_json(path, data):
     """Atomically write JSON with indent=2 + trailing newline.
 
-    Adapted from skills/ai-kit-opencode-providers/ai_kit_opencode_providers/atomic_write.py
-    rather than imported (a tools/ module importing a skills/ package would be a
-    layering violation). Fresh files get mode 0o600 — the mode both hosts' own
+    Temp file plus os.replace, kept here rather than imported (a tools/ module
+    importing a skills/ package would be a layering violation). Fresh files get
+    mode 0o600 — the mode both hosts' own
     config files were measured to carry — rather than a umask-derived mode
     (os.umask is process-global and not thread-safe; this runs on a Textual
     worker thread). An existing target's real mode is copied, never overwritten.

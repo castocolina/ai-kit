@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Entrypoint shim for ai-kit-session-wake (D-01).
 
-Mirrors skills/ai-kit-spec-execute-gsd/ai-kit-spec-gsd.py's trick (running a
+Mirrors the GSD execute flow's trick (running a
 script directly puts its OWN directory on sys.path[0], making
 ai_kit_session_wake importable regardless of the caller's cwd) and inserts the
 SIBLING skills/ai-kit-spec-review/ directory on sys.path so the package's

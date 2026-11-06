@@ -79,6 +79,8 @@ expect: pi starts in the Phase 22 checkout with the curated-config skill availab
 
 ### S2 (REQUIRED) — Record session environment names
 
+> Correction (2026-11-06, Phase 31): pi 1.3.0 sets `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_PROVIDER`, `PI_MODEL` and `PI_REASONING_LEVEL` only for commands the pi agent runs through its own bash tool; `!` commands and RPC bash commands never get them (pi `docs/environment-variables.md`).
+
 In pi's bash tool, run the guard first, then:
 
 ```bash

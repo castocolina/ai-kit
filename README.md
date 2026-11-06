@@ -28,7 +28,6 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`ai-kit-spec-review-checklist`](skills/ai-kit-spec-review-checklist/SKILL.md) | skill | Audit-only reviewer for design/plan documents. Framework-aware (EARS, RFC-2119, Given/When/Then, OpenSpec, Spec Kit, GSD, …). |
 | [`ai-kit-spec-review-fixer`](skills/ai-kit-spec-review-fixer/SKILL.md) | skill | Fixer that addresses each finding from a `ai-kit-spec-review-checklist` report, in place. |
 | [`cst-refactor`](skills/cst-refactor/SKILL.md) | skill | LibCST-based Python codemod helper — multi-file renames and signature changes that survive comments and formatting. |
-| [`mermaid-audit`](skills/mermaid-audit/SKILL.md) | skill | Render and review Mermaid diagrams embedded in Markdown — syntax, layout, **color palette, node shapes, and aspect ratio**; emits ready-to-paste `classDef` fixes and ships a consensus eval that checks the rules are reproducible across agents. |
 | [`markdown-to-pdf`](skills/markdown-to-pdf/SKILL.md) | skill | Convert a Markdown document with embedded mermaid diagrams into a **PDF** (or a **marp** slide deck) — every ` ```mermaid ` block is auto-rendered with `mmdc` and embedded; auto-selects the best installed backend (Typst/Pandoc, LaTeX, WeasyPrint, Chromium) and never auto-installs. |
 | [`ai-kit-cross-ai`](skills/ai-kit-cross-ai/SKILL.md) | skill | Canonical guide to calling, waiting for and chaining the cross-AI runner, with the caller-owned hard tier and never switching harness, provider or model. |
 | [`ai-kit-session-wake`](skills/ai-kit-session-wake/SKILL.md) | skill | Arms, checks and disarms a per-session systemd user-timer wake that resumes this exact session id after the orchestrating agent stalls on its own usage limit or its process dies. Not for cross-AI subprocess limits. |
@@ -36,7 +35,6 @@ command, and agent into `~/.claude/`, and points your status line at the bundled
 | [`ai-kit-spec-config`](skills/ai-kit-spec-config/SKILL.md) | skill | Wizard for the reviewer config: picks (runtime, model) pairs, writes `review-spec.toml`; a runtime outside the runner table is a trust-gated custom command. |
 | [`ai-kit-spec-execute`](skills/ai-kit-spec-execute/SKILL.md) | skill | Router: detects which framework (GSD, superpowers, …) generated a plan/phase, then hands a GSD phase to GSD's own `/gsd-execute-phase` and a superpowers plan to `ai-kit-spec-execute-superpowers`. |
 | [`ai-kit-spec-execute-superpowers`](skills/ai-kit-spec-execute-superpowers/SKILL.md) | skill | Resolves a live-quota-checked (runtime, model) pair for each task of a superpowers implementation plan and injects it at `superpowers:subagent-driven-development`'s implementer-dispatch point, leaving that harness's TDD enforcement, review and fix-loop intact and, after the final review, folds the finished plan into one commit per logical feature through `ai-kit-commit-fold` (push and PR stay with ai-kit's unit flow). Not for `superpowers:executing-plans`. |
-| [`ai-kit-opencode-providers`](skills/ai-kit-opencode-providers/SKILL.md) | skill | List and remove config-based custom opencode providers from `opencode.jsonc` without hand-editing JSONC or touching `auth.json`; `remove` scans each reviewer's `runtime`, legacy `cli` and `model`. |
 | [`ai-kit-project-rules-agents`](skills/ai-kit-project-rules-agents/SKILL.md) | skill | Checks an AGENTS.md/CLAUDE.md file against ai-kit's own 20-rule house ruleset, then wraps `/agent-md-refactor` to remediate gaps. |
 | [`ai-kit-project-rules-makefile`](skills/ai-kit-project-rules-makefile/SKILL.md) | skill | Checks a target repo's Makefile target shape — validate-<category> alias chain, recipe length, Docker build-before-up, shellcheck threshold. Detects and reports only. |
 | [`ai-kit-project-rules-precommit`](skills/ai-kit-project-rules-precommit/SKILL.md) | skill | Checks Makefile↔pre-commit parity (both directions), classifies pre-commit tooling into the 6-category taxonomy, and flags enable-everything configs, missing Duplicate-code/Dead-code tooling, and ruff/golangci-lint anti-patterns. Detects and reports only. |
@@ -99,7 +97,7 @@ There is no plain-menu fallback, and the wizard itself never falls back to
 headless defaults — this is deliberate. A separate, explicit
 `setup.py install --headless` exists for CI and containers (see [Headless
 install](#headless-install-ci--containers--no-tty) below); it is opt-in per
-piece and defaults to doing nothing, so it is not a "headless defaults" mode.
+piece, and a bare run only removes dead ai-kit links, so it is not a "headless defaults" mode.
 A clean `Ctrl-C`, `q`, or `esc` abort leaves the original config intact.
 
 The picks screen includes a **HOOKS** group with one row per hook knob:
@@ -564,9 +562,10 @@ git clone -b feat/x https://github.com/castocolina/ai-kit && cd ai-kit && make i
 ### Headless install (CI / containers / no TTY)
 
 `python3 tools/setup.py install --headless` skips the interactive wizard
-entirely — no TTY, no Textual. Bare `--headless` links and wires nothing (a
-pure no-op). Combine with the flags below to opt into specific pieces —
-nothing is touched unless explicitly requested:
+entirely — no TTY, no Textual. Bare `--headless` links and wires nothing; it only removes dead ai-kit links
+(links into the kit whose target was removed upstream) in the claude and pi skills roots, one `warn:`
+line each. Combine with the flags below to opt into specific pieces — nothing else is touched unless
+explicitly requested:
 
 - `--skills all` — link every skill (or `--skills name1,name2` for a subset).
   Additive only: never unlinks a skill already present from a prior run. A

@@ -1,0 +1,8 @@
+{
+  "model_profile": "balanced",
+  "workflow": {
+    "research": true,
+    "plan_check": true
+  },
+  "note": "synthetic fixture written by the v1 flow"
+}

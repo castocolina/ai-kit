@@ -1,5 +1,5 @@
 """CLI entrypoint for ai-kit-spec-execute-superpowers -- invoked via the ai-kit-spec-superpowers.py
-shim. Mirrors ai_kit_spec_gsd.cli's own subcommand pattern (Plan 2) so Task 4's SKILL.md gives an
+shim. Mirrors the GSD flow's own CLI subcommand pattern (Plan 2) so Task 4's SKILL.md gives an
 executing agent one concrete, runnable command for every operation: resolve-injection (live-quota
 candidate resolution), dispatch-task (the actual write-capable dispatch, which preserves an
 implementer-authored report file rather than overwriting it with stdout -- CRITICAL finding),
@@ -8,7 +8,7 @@ resume-exclusions (computes what's safe to PERSIST as a resumable-state exclusio
 permanently excluding a merely quota-exhausted candidate -- CRITICAL finding),
 write-resumable-state. There is no native dispatch subcommand -- that mode is dispatched in-process
 via the Agent tool, by Task 4's SKILL.md directly, never subprocess-invoked here (same
-native/cross-AI split ai_kit_spec_gsd.cli already uses). No separate prepare-tooling subcommand
+native/cross-AI split the GSD flow's CLI already uses). No separate prepare-tooling subcommand
 either (removed a prior revision, CRITICAL finding) -- dispatch-task already computes and passes
 tooling guidance inputs itself; a standalone subcommand whose output nothing read was dead code
 invoking a subcommand that never actually existed."""

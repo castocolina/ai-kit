@@ -31,10 +31,8 @@ def atomic_write_json(path, data):
     """Atomically write JSON with indent=2 + trailing newline.
 
     Adapted from tools/setup.py::_atomic_write_json (lines 1383-1423) rather
-    than imported. That function itself was adapted from the atomic_write
-    module in the ai-kit-opencode-providers skill rather than imported (a
-    tools/ module importing a skills/ package would be a layering
-    violation). Fresh files get mode 0o600 — the mode both
+    than imported (a tools/ module importing a skills/ package would be a
+    layering violation). Fresh files get mode 0o600 — the mode both
     hosts' own config files were measured to carry — rather than a
     umask-derived mode. An existing target's real mode is copied, never
     overwritten. Unlink-then-re-raise on OSError is the durability contract
@@ -149,9 +147,8 @@ def atomic_write_text(path, text):
         pass
 
 
-# JSONC surgical helpers, ported VERBATIM from the jsonc_edit module in the
-# ai-kit-opencode-providers skill (_classify lines 30-88, _skip_insignificant
-# 91-94, _string_end 97-101, _skip_value 104-134, find_object_span 137-152,
+# JSONC surgical helpers, ported VERBATIM from the JSONC scanner (_classify lines 30-88,
+# _skip_insignificant 91-94, _string_end 97-101, _skip_value 104-134, find_object_span 137-152,
 # significant_indices 251-272). Format-mechanics only — no "provider"-
 # specific logic. Cited rather than imported (a tools/ module importing a
 # skills/ package would be a layering violation; tools/setup.py:1383-1394,

@@ -30,8 +30,7 @@ def _ensure_private_dir(directory: str) -> None:
 def _atomic_write_text(path: str, text: str) -> None:
     """Atomically write `text` to `path`.
 
-    Skeleton ported from the sibling skill
-    `skills/ai-kit-opencode-providers` `atomic_write.py`
+    Skeleton ported from a sibling skill's atomic-write helper
     (`write_preserving_mode`: temp file, fsync, chmod, os.replace, dir fsync).
     Mode-preservation pre-check ported from
     `tools/config_doctor_appliers.py::atomic_write_text` (lines 109-134):

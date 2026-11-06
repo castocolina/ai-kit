@@ -468,23 +468,9 @@ class TestRegistryIdsInTable(unittest.TestCase):
         finally:
             sys.path.remove(curated_path)
         ids = set(detection.RUNTIMES)
-        self.assertLessEqual(set(cross_ai.RUNNER_IDS), ids)
-        self.assertNotIn("copilot", cross_ai.RUNNER_IDS)
         self.assertNotIn("copilot", cross_ai.DEFAULT_PREFER)
         self.assertLessEqual(set(cross_ai_build.REVIEWER_SLUGS), ids)
         self.assertLessEqual(set(preference_match._RUNTIME_ORDER), ids)
-
-    def test_runner_template_keys_use_table_ids(self):
-        path = os.path.join(
-            os.path.dirname(__file__), "..", "skills", "ai-kit-spec-review",
-            "references", "cross-ai.mjs",
-        )
-        with open(path, encoding="utf-8") as handle:
-            source = handle.read()
-        block = source.split("const RUNTIMES = {", 1)[1].split("};", 1)[0]
-        runtime_ids = set(re.findall(r"^  ([\w-]+): \{", block, re.MULTILINE))
-        self.assertTrue(runtime_ids)
-        self.assertLessEqual(runtime_ids, set(detection.RUNTIMES))
 
     def test_gsd_lane_runtimes_map_to_table_ids(self):
         from ai_kit_gsd_curated_config.gsd_catalog import _parse_review_lanes
@@ -809,10 +795,9 @@ REWRITTEN = [
     "skills/ai-kit-spec-config/SKILL.md",
     "skills/ai-kit-spec-execute-superpowers/SKILL.md",
     "skills/ai-kit-gsd-curated-config/SKILL.md",
-    "skills/ai-kit-opencode-providers/SKILL.md",
 ]
 # The canonical paragraph describes dispatch, so only the skills that do dispatch carry it.
-# curated-config and opencode-providers are checked for forbidden tokens only.
+# curated-config is checked for forbidden tokens only.
 # The superpowers adapter points at the contract instead of restating it.
 PAIR_RULE_SKILLS = ["skills/ai-kit-spec-review/SKILL.md", "skills/ai-kit-spec-config/SKILL.md"]
 REFERENCES = [

@@ -1,6 +1,6 @@
 {
   "name": "ai-kit",
-  "description": "Personal kit of agent skills and slash commands by uz, with a one-line installer that symlinks them into Claude Code. Includes a spec/plan review-and-fix workflow, a commit-message helper, a LibCST refactor helper, a Mermaid diagram auditor, and a responsive status line.",
+  "description": "Personal kit of agent skills and slash commands by uz, with a one-line installer that symlinks them into Claude Code. Includes a spec/plan review-and-fix workflow, a commit-message helper, a LibCST refactor helper, and a responsive status line.",
   "version": "0.2.0",
   "author": {
     "name": "Uzer Zer0",

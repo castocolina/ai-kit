@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """Extract ```mermaid fences from Markdown and render them with mmdc.
 
-The fence-extraction + mmdc-render mechanism (regex + subprocess call) is ADAPTED
-from skills/mermaid-audit/scripts/audit_mermaid.py — the canonical origin — into a
-small string-based API (find_fences / render_one / render_all). It is not a verbatim
-copy of the origin's file-path `extract()` / `render()` functions. Kept stdlib-only
-and self-contained per the markdown-to-pdf design (FR-6.4): the same proven
-mechanism, not a divergent re-implementation.
+The fence-extraction + mmdc-render mechanism (regex + subprocess call) is exposed as a
+small string-based API (find_fences / render_one / render_all). Kept stdlib-only
+and self-contained per the markdown-to-pdf design (FR-6.4).
 """
 import os
 import re

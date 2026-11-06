@@ -44,12 +44,12 @@ def run(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
 class RunUnittestParallelTest(unittest.TestCase):
     # A fast real module keeps these CLI checks cheap; the arch module is covered by its own run.
     def test_all_pass_exits_zero(self) -> None:
-        proc = run("tests.test_mermaid_style")
+        proc = run("tests.test_ai_kit_spec_execute_router")
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertIn("1/1 modules passed", proc.stdout)
 
     def test_one_failure_exits_nonzero_and_names_it(self) -> None:
-        proc = run("tests.test_mermaid_style", "tests.no_such_module")
+        proc = run("tests.test_ai_kit_spec_execute_router", "tests.no_such_module")
         self.assertEqual(proc.returncode, 1, proc.stdout)
         self.assertIn("failed: tests.no_such_module", proc.stdout)
 
@@ -179,7 +179,7 @@ class GroupModeTest(unittest.TestCase):
     def test_runs_from_a_foreign_cwd(self) -> None:
         # Modules resolve against the repo root, not the caller's cwd (C-WR-07).
         with tempfile.TemporaryDirectory() as tmp:
-            proc = run("tests.test_mermaid_style", cwd=tmp)
+            proc = run("tests.test_ai_kit_spec_execute_router", cwd=tmp)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("1/1 modules passed", proc.stdout)
 

@@ -1,0 +1,67 @@
+{
+  "skill_name": "ai-kit-gsd-curated-config",
+  "evals": [
+    {
+      "id": "casual-configure-gsd-fast",
+      "prompt": "quick one: set up my .planning/config.json for this GSD project, I don't want to answer a pile of questions",
+      "expected_output": "Runs the v2 flow (inventory, recommend, plan edits, apply) without the full gsd-settings interrogation, and asks no more than the required choices.",
+      "files": [],
+      "assertions": [
+        "The answer runs the v2 flow of inventory, recommend, plan, apply rather than the full gsd-settings interrogation.",
+        "The answer asks only the choices it cannot resolve itself and does not ask a long list of questions."
+      ]
+    },
+    {
+      "id": "casual-just-apply-it",
+      "prompt": "just apply it, whatever the recommendation is, I trust it",
+      "expected_output": "Applies the recommended plan through the apply step and reports what was written, without inventing choices the user never made.",
+      "files": [],
+      "assertions": [
+        "The answer applies the recommendation through the plan and apply steps and reports the changed keys.",
+        "The answer does not invent a choice that the inventory did not produce."
+      ]
+    },
+    {
+      "id": "precise-claude-rigorous-cross-ai",
+      "prompt": "Claude host, rigorous profile. I want cross-AI review and a cross-AI execution runner for this project. Render the runner and wire it into the config.",
+      "expected_output": "Sets the rigorous profile on a Claude host with cross-AI review and execution, renders the runner through the cross-AI build step, and records the change in the plan before apply.",
+      "files": [],
+      "assertions": [
+        "The answer sets the cross-AI review and execution runner through the plan rather than by hand-editing config.json.",
+        "The answer renders the runner through the cross-AI build step and names the runner file it writes."
+      ]
+    },
+    {
+      "id": "precise-opencode-routers-no-catalog",
+      "prompt": "I run opencode and only have routers, no scored model catalog. Pick the models for each tier and wire the installed skills to the GSD agents.",
+      "expected_output": "Chooses router-backed models per tier without a scored catalog, and wires installed skills to the GSD agents through the plan.",
+      "files": [],
+      "assertions": [
+        "The answer chooses models per tier from the routers available and does not claim a scored catalog ranking.",
+        "The answer wires the installed skills to the GSD agents through the plan before apply."
+      ]
+    },
+    {
+      "id": "edge-v1-written-config",
+      "prompt": "this project was configured with the v1 flow last month. Move it to v2 without losing the choices I already made. The v1 config is evals/files/v1-project/.planning/config.json.",
+      "expected_output": "Reads the existing v1 config as the starting point, keeps the user's earlier choices visible in the plan, and only then applies the v2 changes.",
+      "files": [
+        "evals/files/v1-project/.planning/config.json"
+      ],
+      "assertions": [
+        "The answer reads the existing v1 config first and keeps the earlier choices visible in the plan.",
+        "The answer applies v2 changes only after the plan shows them, and names any key it would overwrite."
+      ]
+    },
+    {
+      "id": "edge-pi-provider-unset-outside-bash-tool",
+      "prompt": "I'm on pi and ran inventory from a shell with the bang prefix in pi. The session steer candidates came back empty. Why, and what do I do?",
+      "expected_output": "Explains that pi sets PI_PROVIDER and PI_MODEL only for commands the pi agent runs through its own bash tool, not for bang commands or RPC bash, and tells the user to have the pi agent run inventory through its own bash tool.",
+      "files": [],
+      "assertions": [
+        "The answer says pi sets PI_PROVIDER and PI_MODEL only for commands the pi agent runs through its own bash tool, not for bang commands or RPC bash.",
+        "The answer tells the user to have the pi agent run inventory through its own bash tool, or to plan-unset the steer."
+      ]
+    }
+  ]
+}

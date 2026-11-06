@@ -4,7 +4,7 @@ Read-only: each review-spec and catalog file is read once and nothing is written
 prints provider ids and the reviewer/catalog model reference only; it never opens opencode's
 auth.json and never prints a key or an apiKey value. Stdlib only.
 
-Ported from the ai-kit-opencode-providers scan (`cross_reference.py`) with the substring match
+Ported from the retired opencode-providers scan (`cross_reference.py`) with the substring match
 replaced by a provider-id match on the model id's provider part.
 """
 

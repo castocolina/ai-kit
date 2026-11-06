@@ -163,12 +163,12 @@ def compute_resume_exclusions(tried: list, reasons: dict, prior_excluded_keys: l
 
 
 def assemble_candidates(cwd: str, env: dict, cfg_resolve_fn=cfg_resolve) -> tuple:
-    """Reads the SAME shared candidate roster ai_kit_spec_gsd.adapter.assemble_candidates reads
+    """Reads the SAME shared candidate roster that the GSD flow's assemble_candidates reads
     (review-spec.toml's [[reviewers]], design spec Section 4) -- the "superpowers has no config
     surface" constraint (Global Constraints) is about a superpowers-specific config file like
     GSD's .planning/config.json, which genuinely doesn't exist; it is not about this shared
     roster, which every ai-kit-spec-execute-* adapter reads identically. Duplicated here (not
-    imported from ai_kit_spec_gsd.adapter) to keep the two sibling adapters independent -- neither
+    imported from the GSD flow's adapter) to keep the two sibling adapters independent -- neither
     should import the other's package. `task_affinity`/`context_limit`/`purpose` come back `None`
     for a pre-2026-09-02 ai-kit-spec-config output (Global Constraints) -- `.get()`, never
     `KeyError`."""

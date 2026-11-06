@@ -2,8 +2,7 @@
 
 Every function takes an explicit `env: dict` and never reads `os.environ`
 directly, matching `tools/config_doctor_checks.py::resolve_runtime_config_paths`.
-Precedence style ported from the sibling skill
-`skills/ai-kit-opencode-providers` `config_paths.py`
+Precedence style ported from a sibling skill's path module
 (not imported — skill packages do not cross-import).
 """
 
