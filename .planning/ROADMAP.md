@@ -317,12 +317,24 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Run under `uv run` with a scratch HOME, the first screen shows one card per component kind (skills, agents, commands, hooks); a kind with nothing to install shows no card, and toggling and the Review counts work per card.
   2. The Claude status-line pane keeps today's layout with an orange accent background and "Claude Code" in bold; the Cursor pane uses a gray accent.
-  3. ~~The Cursor pane has a toggle that keeps Cursor's own default status line; confirming with it on leaves the scratch `cli-config.json` without ai-kit's status line.~~ *(amended 2026-11-03, 30.1 spec: the state was backwards and the toggle is on both hosts)* Both host panes have an on/off toggle that starts at what is wired now; confirming with it off leaves the scratch host config without any `statusLine` (a foreign one removed only after it is shown, backed up and confirmed), and with it on wires ai-kit's.
+  3. ~~The Cursor pane has a toggle that keeps Cursor's own default status line; confirming with it on leaves the scratch `cli-config.json` without ai-kit's status line.~~ *(amended 2026-11-03, 30.1 spec: the state was backwards and the toggle is on both hosts)* Both host panes have an on/off toggle that starts at what is wired now; confirming with it off leaves the scratch host config without any `statusLine` (a foreign one removed only after it is shown, backed up and confirmed), and with it on wires ai-kit's. *(amended 2026-11-06, owner decision, 30.1 D-06: a foreign entry gets three states instead, keep current (the default; the scratch host config stays byte-identical), remove (no `statusLine` afterwards, so the host shows its own default) or customize with ai-kit (ai-kit's entry), the last two after it is shown, backed up and confirmed)*
   4. ~~Cursor's board shows no chip for a segment the Cursor status line cannot show, while a segment that is only switched off stays in the tray.~~ *(amended 2026-11-03, 30.1 spec: parity moved to Phase 30.2 as WIZ-04)* Each host's board preview is a real render through that host's renderer, titled with the host on screen, and the tray title does not say "disabled" (WIZ-05).
   5. The config doctor opens from the wizard, reusing `ConfigDoctorApp` and the existing engine with no second implementation. *(amended 2026-11-03, 30.1 spec: `d` on Done, Esc back to Done, one screen class; every apply refuses an unparseable file and backs up first)*
   6. A recorded owner decision says whether the config doctor gets a Playwright MCP Chrome path row; an added row uses the existing engine and its confidence labels. *(amended 2026-11-03, 30.1 spec: decided — the row and its apply write `env.PLAYWRIGHT_MCP_EXECUTABLE_PATH` to the flatpak Chrome wrapper in a scratch `settings.json` with a backup)*
 
-**Plans**: TBD
+**Plans**: 6 plans
+Plans:
+**Wave 1**
+- [ ] 30.1-01-PLAN.md — doctor applies refuse unparseable files and back up first (newest 10 kept); Playwright MCP browser row (wave 1)
+- [ ] 30.1-02-PLAN.md — config doctor body becomes one Screen shared by `--config-doctor` and the wizard (wave 1)
+- [ ] 30.1-03-PLAN.md — Choose tabs per kind, Review per card, global rules on `g`, real-render preview titled per host (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 30.1-04-PLAN.md — setup commit for the toggle (remove ours, keep foreign, backup-first foreign remove/replace), doctor factory injection (wave 2)
+- [ ] 30.1-05-PLAN.md — host band and `o` toggle replace the gate (three states on a foreign host), locked off board, Review outcomes, foreign modal, `d` on Done (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 30.1-06-PLAN.md — PTY toggle-off scenario, README wizard rewrite, mockup superseded note, orchestrator `uv run` capture (wave 3)
 **UI hint**: yes
 
 ### Phase 30.2: Cursor status-line parity (INSERTED)
