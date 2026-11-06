@@ -129,6 +129,7 @@ Live checks on 2026-11-03 (scratch HOME, `AI_KIT_REFUSE_REAL_HOME=1`, scripts in
     - Current: 25.1 fails (missing `encoding R9`); no test runs the engine on committed SPECs.
     - Target: 25.1's Edge Coverage gains the missing row marked `(added …)`; a test runs `edge_floor.py check` on every SPEC under `.planning/phases/` (the current milestone) and skips with a named reason when node or the engine is missing; the five other failing archived SPECs stay as they are, recorded as history.
     - Acceptance: `edge_floor.py check` on 25.1 returns `ok:true`; the new test passes on the tree and fails on a fixture SPEC with a row removed.
+    - *(amended 2026-11-06, planning: no test may read `.planning/` (`tests/test_arch.py` `check_no_planning_reader`, no exceptions), so the guard over the committed SPECs runs in `make check-dogfood` (`tools/check_dogfood.py`, part of `make validate` and a pre-push hook), and its logic is unit-tested on fixture SPECs, including the row-removed failing fixture and the named skip; a SPEC with no Edge Coverage section yet is a named note, not a failure; the 30.1 SPEC, which fails the engine by one row (`encoding R3`), gets that row in the same change. Planning ruling the owner may override.)*
 
 11. **goal-prompt detect reads gsd-core's `@file:` output**: every gsd-tools query goal-prompt parses accepts an `@file:<path>` reply.
     - Current: `_gsd_json` runs `json.loads` on the raw stdout, so a large roadmap fails as "did not print JSON".
@@ -191,7 +192,7 @@ Live checks on 2026-11-03 (scratch HOME, `AI_KIT_REFUSE_REAL_HOME=1`, scripts in
 
 ## Acceptance Criteria
 
-- [ ] Tracked-file searches outside `.planning/`, `docs/prds/` and `docs/superpowers/` find no name of the three removed skills.
+- [ ] Tracked-file searches outside `.planning/`, `docs/prds/` and `docs/superpowers/` find no name of the three removed skills. *(amended 2026-11-06, planning: `tests/fixtures/archived/` (byte copies of archived planning data, pinned by an arch rule) also counts as history for these searches; the package name is matched as a whole word (`ai_kit_spec_gsd\b`), so the kept `tests/test_ai_kit_spec_gsd_tools.py` does not match. Planning ruling the owner may override.)*
 - [ ] The execute router sends a GSD plan to `/gsd-execute-phase` (pinned by a test).
 - [ ] No guidance prepend, `PROJECT_GUIDANCE_PATH`, `--guidance-file` or `prior_value` remains; the runner template is unchanged.
 - [ ] spec-config prints the stale-provider warnings with the right source label in both run modes, never a key.

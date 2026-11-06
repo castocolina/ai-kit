@@ -4,16 +4,16 @@ milestone: v2.0
 milestone_name: Skill Refactor
 current_phase: 31
 current_phase_name: Removals and small defects
-status: planning
+status: executing
 stopped_at: Phase 30.2 complete, ready to plan Phase 31
-last_updated: "2026-11-06T16:26:32.427Z"
+last_updated: "2026-11-06T16:36:39.399Z"
 last_activity: 2026-11-06
 last_activity_desc: Phase 30.2 complete
-state_head: be53c050f12ef14bdc832145b596c33a7d697f09
+state_head: 9ead908f1e0d04ce313490dd9f9b2a469a0fed27
 progress:
   total_phases: 37
   completed_phases: 6
-  total_plans: 49
+  total_plans: 55
   completed_plans: 49
   percent: 16
 ---
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-11-02)
 
 ## Current Position
 
-Phase: 31 — Removals and small defects
+Phase: 31 (Removals and small defects) — READY TO EXECUTE
 Plan: Not started
-Status: Ready to plan
+Status: Ready to execute
 Last activity: 2026-11-06 — Phase 30.2 complete
 
 Progress: [██░░░░░░░░] 16%

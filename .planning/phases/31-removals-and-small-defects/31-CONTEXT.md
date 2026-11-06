@@ -108,6 +108,9 @@ Downstream agents MUST read `31-SPEC.md` before planning or implementing. Requir
 - **D-08: The edge-floor guard lives in the e2e tier** (it needs node and the checkout-local gsd-core engine), with a
   named skip when either is missing; it checks every SPEC under `.planning/phases/` in sorted order.
   - Own reasoning (listed, not objected to).
+  - *Amended 2026-11-06 (planning): the guard lives in `tools/check_dogfood.py` (`make check-dogfood`), not an e2e
+    test, because `check_no_planning_reader` forbids any test reading `.planning/`; its logic is unit-tested on
+    fixture SPECs (see 31-SPEC.md R10 amendment). Planning ruling the owner may override.*
 - **D-09: goal-prompt gets one small `@file:` helper** used by `_gsd_json` and every other place goal-prompt parses
   gsd-tools output; it mirrors `resolveAtFileOutput` (prefix check, read the path, then parse).
   - Own reasoning.
