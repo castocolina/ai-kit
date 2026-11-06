@@ -278,17 +278,33 @@ class TestToggleMatrix(ToggleCase):
                 self.assertEqual(read_bytes(toml), toml_before)
 
     def test_examples_flag_forces_update_on_a_clean_ours_host(self):
-        # Only the action is asserted: the scratch install has no bundled example
-        # to add, so the TOML bytes do not change here (the write path still runs).
-        current = self.ours_on_disk("claude")
-        state = adopt_state(self.paths, "claude", start_state="ours",
-                            adopt_command=current, dirty=False)
-        with mock.patch.dict(os.environ, {"CC_AI_KIT_EXTERNAL_DIR": self.paths.segments_dir}):
-            result = setup._commit_host_statusline(self.paths, "claude", state,
-                                                   dry=False, examples_flag="all")
+        # The scratch install bundles the repo's one example. The wizard's first wire
+        # declines it (`system_memory = false`); a clean reconfigure with an explicit
+        # --examples=all must win over that toggle and rewrite the TOML.
+        bundled = os.path.join(self.env["AI_KIT_DIR"], "examples", "segments")
+        os.makedirs(bundled)
+        shutil.copy2(os.path.join(_TOOLS_DIR, "..", "examples", "segments", "system_memory"),
+                     bundled)
+        segments = dict(setup.current_segments(self.paths.sample, "claude"))
+        segments["system_memory"] = False
+        layout = setup.current_layout(self.paths.sample, "claude")
+        layout[2]["segments"].append("system_memory")
+        state = adopt_state(self.paths, "claude", segments=segments, layout=layout)
+        self.assertEqual(self.commit("claude", state)["action"], "wire")
+        toml = self.toml_path("claude")
+        before = read_bytes(toml)
+        with open(toml, "rb") as handle:
+            self.assertIs(tomllib.load(handle)["segments"]["system_memory"], False)
+        current = setup.detect_statusline(self.paths)["current_command"]
+        clean = dict(state, start_state="ours", adopt_command=current, dirty=False)
+        result = setup._commit_host_statusline(self.paths, "claude", clean,
+                                               dry=False, examples_flag="all")
         self.assertTrue(result["ok"], result["log"])
         self.assertEqual(result["action"], "update")
-        self.assertTrue(os.path.isfile(self.toml_path("claude")))
+        self.assertNotEqual(read_bytes(toml), before)
+        with open(toml, "rb") as handle:
+            self.assertIs(tomllib.load(handle)["segments"].get("system_memory", True), True)
+        self.assertIs(segments["system_memory"], False)  # the caller's state is not mutated
 
     def test_clean_upkeep_recreates_a_deleted_toml_and_keeps_the_wiring(self):
         current = self.ours_on_disk("claude")

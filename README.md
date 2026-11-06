@@ -168,7 +168,8 @@ from Line 1 sends it to the tray; Space on a tray chip brings it back.
   Review. A JSONC `cli-config.json` is left untouched with a warning.
 
 **Live preview.** Each pane's preview is a real render of the host's sample
-payload, titled `live preview — <host> (sample data)`. When the render is not
+payload, titled `live preview — <host> (sample data)`; Review's status-line box
+shows the same render for each host you turn on. When the render is not
 available, it falls back to sample text with a note. The sample values are not
 your live session's model, context or cost.
 

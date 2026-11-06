@@ -363,9 +363,9 @@ def _preview_title(app):
     return query_static(app, "#preview").border_title or ""
 
 
-def _preview_plain(app):
-    """The #preview text without markup, whether Textual kept a Text or the markup str."""
-    content = query_static(app, "#preview").content
+def _preview_plain(app, wid="#preview"):
+    """A preview's text without markup, whether Textual kept a Text or the markup str."""
+    content = query_static(app, wid).content
     return content.plain if hasattr(content, "plain") else str(content)
 
 
@@ -475,6 +475,36 @@ class TestRealPreview(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("CURSOR-RENDER", _preview_plain(app))
         finally:
             release.set()
+
+    async def test_review_shows_the_real_render_not_samples(self):
+        calls = []
+        app = self._app(_render_fake(calls))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")          # Arrange
+            await _settle(app, pilot)
+            await pilot.press("enter")          # Review
+            await _settle(app, pilot)
+            self.assertEqual(app.flow.step, wa.STEP_REVIEW)
+            plain = _preview_plain(app, "#rev-preview")
+            self.assertIn("RED", plain)
+            self.assertNotIn(wa.PREVIEW_FALLBACK_NOTE, plain)
+            sample = app._sample(app.board.lines[0][0], app.model)
+            self.assertNotIn(sample, plain)     # the static inventory sample is gone
+            before = len(calls)
+            app._render_review()                # an unchanged board renders no second time
+            await _settle(app, pilot)
+            self.assertEqual(len(calls), before, calls)
+
+    async def test_review_without_renderer_shows_samples_and_note(self):
+        app = self._app(None)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")
+            await _settle(app, pilot)
+            await pilot.press("enter")
+            await _settle(app, pilot)
+            self.assertIn(wa.PREVIEW_FALLBACK_NOTE, _preview_plain(app, "#rev-preview"))
 
     async def test_resize_rerenders_at_new_width(self):
         calls = []

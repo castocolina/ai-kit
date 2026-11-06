@@ -3702,18 +3702,21 @@ def _commit_known_ext_ids(paths, host, state, examples_flag, dry):
     (it wins over the wizard's toggles, mirroring ``resolve_example_selection``)
     while no flag falls back to the host's own ``state["segments"]`` toggles.
 
-    Returns the ``known_ext_ids`` set to persist with (empty when nothing was
-    discovered)."""
+    Returns ``(known_ext_ids, segments)``: the set to persist with (empty when nothing
+    was discovered) and the host's segment toggles to persist, where an explicit flag
+    has replaced the wizard's toggle for every discovered example."""
     known = {e["id"] for e in _discover_user_segments(_provider_dir(paths, host))}
+    segments = dict(state.get("segments") or {})
     examples_dir = os.path.join(paths.install_dir, "examples", "segments")
     examples = discover_example_segments(examples_dir)
     if examples and not dry:
         install_example_segments(examples, paths.config_dir,
                                 provider_dir=host_config(host).provider_dir)
     if not examples:
-        return known
+        return known, segments
     if examples_flag is not None:
         desired_ids = {e["id"] for e in resolve_example_selection(examples_flag, examples)}
+        segments.update({e["id"]: e["id"] in desired_ids for e in examples})
     else:
         desired_ids = {
             e["id"] for e in examples if (state.get("segments") or {}).get(e["id"], False)
@@ -3722,7 +3725,7 @@ def _commit_known_ext_ids(paths, host, state, examples_flag, dry):
         e["id"] for e in examples
         if e["id"] not in known and e["id"] not in desired_ids
     }
-    return known | newly_installed_desired_off
+    return known | newly_installed_desired_off, segments
 
 
 def _commit_components(paths, entries, selection, dry, counts):
@@ -3868,10 +3871,10 @@ def _commit_host_statusline(paths, host, host_state, dry, examples_flag):
                 host_ok = _remove_statusline_entry(
                     paths, host, dry, host_state.get("adopt_command"))
             else:
-                known_ext_ids = _commit_known_ext_ids(
+                known_ext_ids, segments = _commit_known_ext_ids(
                     paths, host, host_state, examples_flag, dry)
                 host_ok = persist_statusline(
-                    paths, host_state, adopt, dry, tty=None,
+                    paths, {**host_state, "segments": segments}, adopt, dry, tty=None,
                     assume_overwrite=True, known_ext_ids=known_ext_ids,
                     host=host)
     except OSError as exc:

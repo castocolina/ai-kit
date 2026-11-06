@@ -165,6 +165,12 @@ def _pad(s: str, n: int) -> str:
     return s if len(s) >= n else s + " " * (n - len(s))
 
 
+def _name_cell(s: str, n: int) -> str:
+    """A fixed n-cell name column: a longer name ends in "…", and one space
+    always separates it from the description that follows."""
+    return _pad(s if len(s) < n else s[:n - 2] + "…", n)
+
+
 class SelectionLike(Protocol):
     """Component picker injected by setup.py (structural — no import from setup)."""
     items: list[tuple[str, str, bool]]
@@ -316,6 +322,9 @@ class PreviewState:  # pylint: disable=too-many-instance-attributes
     deadline_s: float = 2.0
     running: bool = False
     pending: bool = False
+    # Review's real render per host: host id -> (board/width key, output); output None while
+    # the render runs, "" when it failed or no renderer exists.
+    review: dict[str, tuple[str, str | None]] = field(default_factory=dict)
 
 
 class WizardCrash(Exception):
@@ -877,7 +886,7 @@ class WizardApp(App):
     def _choose_component_row(self, cat: str, name: str, selected: bool, focused: bool) -> str:
         glyph = f"[{GREEN}]◉[/]" if selected else f"[{DIM}]◯[/]"
         gut = f"[{PINK}]▌[/]" if focused else " "
-        nm = _pad(name, 30)
+        nm = escape(_name_cell(name, 30))
         row = (f"{gut} {glyph} [{'#f0f6fc' if focused else FG}]{nm}[/]"
                f"[{DIM}]{self._component_desc(cat, name)}[/]")
         return f"[on #161b22]{row}[/]" if focused else row
@@ -1011,6 +1020,8 @@ class WizardApp(App):
         await super()._on_resize(event)
         if self.flow.step == STEP_ARRANGE:
             self.set_timer(0.05, self._schedule_preview)  # after the screen takes the new size
+        elif self.flow.step == STEP_REVIEW:
+            self.set_timer(0.05, self._rekey_review)      # re-keys Review's render on width
 
     def _count_markup(self) -> str:
         pane = self._pane()
@@ -1078,12 +1089,13 @@ class WizardApp(App):
         st = self._serialize_state()
         cols = self.query_one("#preview", Static).content_size.width or 100
         self.preview.running = True
-        self._render_preview_job(seq, host.id, st["segments"], st["layout"], cols)
+        self._render_preview_job(host.id, st["segments"], st["layout"], cols,
+                                 functools.partial(self._apply_preview, seq, host.id))
 
-    @work(thread=True, exclusive=True, group="preview")
-    def _render_preview_job(self, seq, host_id, segments, layout, cols) -> None:
+    @work(thread=True, group="preview")
+    def _render_preview_job(self, host_id, segments, layout, cols, done) -> None:
         """Worker: the host's renderer, off the UI thread. Any failure is None (a concrete
-        tuple, so no broad except); the result lands on the UI thread only if still current."""
+        tuple, so no broad except); `done(out)` runs on the UI thread and drops stale results."""
         host = next(h for h in self.hosts if h.id == host_id)
         try:
             out = cast(Any, host.engine).render_preview(segments, layout=layout, cols=cols)
@@ -1091,7 +1103,7 @@ class WizardApp(App):
             out = None
         # The app may have exited while the render ran; quitting does not wait for it.
         with contextlib.suppress(RuntimeError):
-            self.call_from_thread(self._apply_preview, seq, host_id, out)
+            self.call_from_thread(done, out)
 
     def _apply_preview(self, seq, host_id, out) -> None:
         self.preview.running = False
@@ -1162,20 +1174,60 @@ class WizardApp(App):
         lines.extend(f"[{DIM}]{escape(line)}[/]" for line in rules["preview"])
         return lines
 
-    def _review_status_blocks(self, adopted: list[HostView]) -> tuple[int, list[str]]:
+    def _review_status_blocks(self, adopted: list[HostView]) -> tuple[int, list[Text]]:
         """(on-line segment count, preview blocks) over the ADOPTED hosts only —
         a declined host skips the whole status-line section. A multi-host Review
         labels each host's first block so two panes can never read as one line."""
         nseg = 0
-        shown: list[str] = []
+        shown: list[Text] = []
         for host in adopted:
-            pane = self.views[host.id]
-            nseg += sum(len(line) for line in pane.board.lines)
-            block = self._preview_lines(pane)
-            if len(self.hosts) > 1 and block:
-                block = [f"[{DIM}]{host.label} —[/]" + block[0], *block[1:]]
-            shown.extend(block)
+            nseg += sum(len(line) for line in self.views[host.id].board.lines)
+            block = self._review_host_preview(host)
+            if len(self.hosts) > 1:
+                block = Text.assemble(Text(f"{host.label} — ", style=DIM), block)
+            shown.append(block)
         return nseg, shown
+
+    def _review_host_preview(self, host: HostView) -> Text:
+        """One adopted host's Review preview: the same real render as Arrange's board
+        preview (WIZ-05), started off the UI thread on first sight of a board/width.
+        Samples stand in while it runs; a failed or missing renderer adds the note."""
+        pane = self.views[host.id]
+        samples = "\n".join(f"[#d6dee8]{p}[/]" for p in self._preview_lines(pane))
+        if not any(pane.board.lines):
+            return Text.from_markup(samples)            # "(all segments off)": nothing to render
+        st = self._serialize_state(host.id)
+        cols = self.query_one("#rev-preview", Static).content_size.width or 100
+        key = json.dumps([st["segments"], st["layout"], cols], sort_keys=True)
+        cached = self.preview.review.get(host.id)
+        if cached is None or cached[0] != key:
+            if callable(getattr(host.engine, "render_preview", None)):
+                cached = self.preview.review[host.id] = (key, None)
+                self._render_preview_job(
+                    host.id, st["segments"], st["layout"], cols,
+                    functools.partial(self._apply_review_preview, host.id, key))
+            else:
+                cached = self.preview.review[host.id] = (key, "")
+        out = cached[1]
+        if out:
+            return self._preview_text(out)
+        if out is None:                                 # still rendering
+            return Text.from_markup(samples)
+        return Text.from_markup(f"{samples}\n[{DIM}]{PREVIEW_FALLBACK_NOTE}[/]")
+
+    def _apply_review_preview(self, host_id, key, out) -> None:
+        cached = self.preview.review.get(host_id)
+        if cached is None or cached[0] != key:          # the board or width changed since
+            return
+        self.preview.review[host_id] = (key, out or "")
+        if self.flow.step == STEP_REVIEW:
+            self._render_review()
+            # New content can add a scrollbar and narrow the box: re-key once laid out.
+            self.call_after_refresh(self._rekey_review)
+
+    def _rekey_review(self) -> None:
+        if self.flow.step == STEP_REVIEW:
+            self._render_review()
 
     def _host_action(self, host_id: str) -> str:
         """The action one host's outcome takes, from its live pane state: the same
@@ -1223,7 +1275,7 @@ class WizardApp(App):
         rp.display = bool(adopted)
         nseg, shown = self._review_status_blocks(adopted)
         if adopted:
-            rp.update("\n".join(f"[#d6dee8]{p}[/]" for p in shown))
+            rp.update(Text("\n").join(shown))
         self.query_one("#rev-what", Static).update(
             "\n".join([*self._review_what_lines(ncomp),
                        *self._review_global_rules_lines()]))

@@ -70,6 +70,29 @@ class TestStructuralFidelity(unittest.IsolatedAsyncioTestCase):
 
 
 @unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
+class TestChooseNameColumn(unittest.TestCase):
+    """The 30-cell name column never runs into the description (UI-SPEC name column)."""
+
+    def test_long_name_ends_in_ellipsis_and_one_space(self):
+        cell = wa._name_cell("ai-kit-spec-execute-superpowers", 30)
+        self.assertEqual(cell, "ai-kit-spec-execute-superpow… ")
+        self.assertEqual(wa._name_cell("ai-kit-project-rules-precommit", 30)[-2:], "… ")
+
+    def test_name_that_fits_is_padded_with_its_full_text(self):
+        self.assertEqual(wa._name_cell("ai-kit-project-rules-makefile", 30),
+                         "ai-kit-project-rules-makefile ")
+        self.assertEqual(wa._name_cell("cst-refactor", 30), "cst-refactor".ljust(30))
+
+    def test_row_keeps_a_gap_before_the_description(self):
+        ctx = make_ctx()
+        ctx.component_meta["ai-kit-spec-execute-superpowers"] = "Runs a plan"
+        row = wa.WizardApp(ctx)._choose_component_row(
+            "skills", "ai-kit-spec-execute-superpowers", True, False)
+        self.assertIn("superpow… [/]", row)
+        self.assertNotIn("superpowersRuns", row)
+
+
+@unittest.skipUnless(HAVE_TEXTUAL, "textual not installed (run under uv)")
 class TestChooseTabs(unittest.IsolatedAsyncioTestCase):
     """Choose (step 0): one tab per kind that has items, one card on screen (D-01, D-02)."""
 
