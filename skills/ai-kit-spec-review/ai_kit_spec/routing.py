@@ -45,8 +45,8 @@ _REFRESHED: set[str] = set()
 def host_can_select(runtime, model, host) -> bool:
     """Whether the host has a verified per-call selector for this model.
 
-    Verified only for Claude Code aliases on Claude Code. Every other host is
-    session-default-only until Phases 20-22 (R3).
+    Per-call selection is verified only for runtimes whose `RUNTIMES` row has
+    native selectors (today claude); every other host is session-default-only.
     """
     return (
         isinstance(runtime, str)

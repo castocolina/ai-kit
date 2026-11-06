@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
@@ -792,6 +793,31 @@ class TestOpencodePrivateDirUsesTheGivenEnv(unittest.TestCase):
             self.assertTrue(cwds)
             self.assertEqual({os.path.dirname(cwd) for cwd in cwds}, {base})
             self.assertEqual(os.listdir(decoy), [])
+
+
+class TestHostCanSelectDocstring(unittest.TestCase):
+    """The docstring names its selector source (RUNTIMES) and no phase; the claim holds."""
+
+    def test_docstring_names_runtimes_and_no_phase_in_plain_ascii(self):
+        doc = routing.host_can_select.__doc__ or ""
+        self.assertNotIn("Phase", doc)
+        self.assertIn("RUNTIMES", doc)
+        self.assertTrue(doc.isascii())
+
+    def test_only_claude_has_native_selectors_in_the_table(self):
+        from ai_kit_spec.detection import RUNTIMES
+
+        selectors = {rid for rid, row in RUNTIMES.items() if row.native_selectors}
+        self.assertEqual(selectors, {"claude"})
+
+    def test_without_native_selectors_every_host_is_session_default_only(self):
+        from ai_kit_spec.detection import CLAUDE_MODEL_ALIASES, RUNTIMES
+
+        empty = {rid: types.SimpleNamespace(native_selectors=()) for rid in RUNTIMES}
+        model = next(iter(CLAUDE_MODEL_ALIASES))
+        with mock.patch("ai_kit_spec.routing.RUNTIMES", empty):
+            for host in RUNTIMES:
+                self.assertFalse(routing.host_can_select(host, model, host), host)
 
 
 if __name__ == "__main__":

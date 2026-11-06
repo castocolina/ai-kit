@@ -7,7 +7,8 @@ flows leave the live `.planning/config.json*` and runner files untouched (they r
 process under the test runner's baseline env and tripwire). It prints only relative paths, test
 ids and short reasons, never file contents or hashes. When the project has a gsd-core, it also
 checks the GSD flow config (branch per phase, healthy, the capability and its hook points)
-through read-only gsd-tools calls.
+through read-only gsd-tools calls. It also runs the edge-floor check on every current phase SPEC
+that has an Edge Coverage section.
 """
 from __future__ import annotations
 
@@ -452,6 +453,61 @@ def check_lens_wiring(root: Path, run: FlowRun = _run_gsd) -> tuple[list[str], l
     return problems, []
 
 
+EDGE_FLOOR_REL = "skills/ai-kit-gsd-spec-discuss/scripts/edge_floor.py"
+EDGE_ENGINE_REL = ".claude/gsd-core/bin/lib/edge-probe.cjs"
+_EDGE_SECTION = re.compile(r"^## Edge Coverage", re.MULTILINE)
+
+
+def _run_floor(root: Path, spec_rel: str) -> subprocess.CompletedProcess[str]:
+    """This checkout's edge-floor script against the checked root's engine (argv list, no shell)."""
+    return subprocess.run([sys.executable, str(REPO_ROOT / EDGE_FLOOR_REL), "check",
+                           str(root / spec_rel), "--engine", str(root / EDGE_ENGINE_REL)],
+                          cwd=root, capture_output=True, text=True, timeout=120, check=False)
+
+
+def _drift_problem(rel: str, stdout: str) -> str:
+    result = _parse_json(stdout)
+    missing = result.get("missing") if isinstance(result, dict) else None
+    if not isinstance(missing, list):
+        return f"edge floor drift: {rel} missing (unreadable result)"
+    rows = ", ".join(" ".join(str(part) for part in item)
+                     for item in missing if isinstance(item, list))
+    return f"edge floor drift: {rel} missing {rows or 'no rows listed'}"
+
+
+def check_edge_floors(root: Path, run: FlowRun = _run_floor,
+                      which: Callable[[str], str | None] = shutil.which,
+                      ) -> tuple[list[str], list[str]]:
+    """(problems, notes): the edge-floor check on each phase SPEC that has an Edge Coverage section,
+    in sorted path order. A SPEC without that section is a note, never a problem."""
+    phases = root / ".planning" / "phases"
+    if not which("node"):
+        return [], ["edge floors not checked: node not found"]
+    if not (root / EDGE_ENGINE_REL).is_file():
+        return [], ["edge floors not checked: no project-local gsd-core engine"]
+    if not phases.is_dir():
+        return [], ["edge floors not checked: no .planning/phases"]
+    problems, notes = [], []
+    for phase_dir in sorted(path for path in phases.iterdir() if path.is_dir()):
+        spec = phase_dir / f"{phase_dir.name.split('-', 1)[0]}-SPEC.md"
+        if not spec.is_file():
+            continue
+        rel = spec.relative_to(root).as_posix()
+        if not _EDGE_SECTION.search(spec.read_text(encoding="utf-8", errors="replace")):
+            notes.append(f"edge floor for {rel} not checked: no Edge Coverage section")
+            continue
+        try:
+            proc = run(root, rel)
+        except (OSError, subprocess.SubprocessError):
+            notes.append(f"edge floor for {rel} not checked: engine failed closed")
+            continue
+        if proc.returncode == 1:
+            problems.append(_drift_problem(rel, proc.stdout))
+        elif proc.returncode != 0:
+            notes.append(f"edge floor for {rel} not checked: engine failed closed")
+    return problems, notes
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--root", type=Path, default=REPO_ROOT,
@@ -470,6 +526,8 @@ def main(argv: list[str] | None = None) -> int:
     problems, notes = problems + flow_problems, notes + flow_notes
     lens_problems, lens_notes = check_lens_wiring(root)
     problems, notes = problems + lens_problems, notes + lens_notes
+    edge_problems, edge_notes = check_edge_floors(root)
+    problems, notes = problems + edge_problems, notes + edge_notes
     if not args.skip_no_write:
         write_problems, write_notes = check_no_write(root)
         problems, notes = problems + write_problems, notes + write_notes

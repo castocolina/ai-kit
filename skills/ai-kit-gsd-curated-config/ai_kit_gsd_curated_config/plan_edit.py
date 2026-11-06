@@ -371,7 +371,7 @@ def _assert_runner_target(call: EditCall, runner_id: str) -> None:
     )
     if bad:
         raise PlanEditError(
-            f"script target {runner_id} is not one of pi, cursor, opencode, codex, "
+            f"script target {runner_id} is not one of {', '.join(cross_ai.RUNNER_IDS)}, "
             "is the host, or is not installed"
         )
 

@@ -609,5 +609,80 @@ class TestCli(unittest.TestCase):
         self.assertIn("--work-set", json.loads(err)["error"])
 
 
+class TestGsdAtFileReply(unittest.TestCase):
+    """A gsd-tools reply that starts with `@file:` names the file that holds its JSON."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        fx.git_init(self.repo)
+        self.skills = self.root / "skills"
+        for rel in (WAKE_REL, SPEC_REL, JEV_REL):
+            fx.write(self.skills, rel, "# stand-in sibling CLI; never executed\n")
+        self.host_run = FakeRun(host_routes())
+        self.seams = cli_seams(self.host_run, str(self.skills))
+        prompt = mock.patch("builtins.input", side_effect=AssertionError("must never prompt"))
+        prompt.start()
+        self.addCleanup(prompt.stop)
+        fx.opengsd_project(self.repo, PHASES)
+        self.host_run.routes += [
+            (("query", "runtime-identity"), 0, json.dumps(fx.identity_json(True))),
+        ]
+        ops = fx.phase_op_json(self.repo, PHASES)
+        self.host_run.routes += [
+            (("query", "init.phase-op", number), 0, json.dumps(doc))
+            for number, doc in ops.items()
+        ]
+
+    def call(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = goal_prompt.main(list(argv), self.seams)
+        return code, out.getvalue(), err.getvalue()
+
+    def detect_with_roadmap_reply(self, reply):
+        self.host_run.routes.insert(0, (("query", "roadmap.analyze"), 0, reply))
+        return self.call("detect", "--repo", str(self.repo),
+                         "--gsd-cmd", "node tools/gsd-tools.cjs",
+                         "--work-set", "phases:16-17")
+
+    def test_at_file_roadmap_reply_is_read_from_the_named_file(self):
+        roadmap = self.root / "roadmap-big.json"
+        roadmap.write_text(json.dumps(fx.roadmap_json(PHASES)), encoding="utf-8")
+        code, out, err = self.detect_with_roadmap_reply(f"@file:{roadmap}\n")
+        self.assertEqual(code, 0, err)
+        numbers = [p["number"] for p in json.loads(out)["scope"]["phases"]]
+        self.assertEqual(numbers, ["16", "16.1", "17"])
+
+    def test_bad_at_file_replies_fail_with_the_existing_roadmap_error(self):
+        message = "the --gsd-cmd roadmap query failed or did not print JSON"
+        bad_file = self.root / "not-json.txt"
+        bad_file.write_text("plain words, not JSON", encoding="utf-8")
+        replies = {
+            "missing file": f"@file:{self.root / 'missing.json'}",
+            "empty path": "@file:",
+            "unreadable JSON": f"@file:{bad_file}",
+            "prefix not at start": f"note @file:{bad_file}",
+        }
+        for label, reply in replies.items():
+            with self.subTest(label):
+                code, out, err = self.detect_with_roadmap_reply(reply)
+                self.assertEqual(code, 2)
+                self.assertEqual(out, "")
+                self.assertEqual(json.loads(err)["error"], message)
+
+    def test_load_reply_reads_the_file_once_and_plain_json_parses_as_before(self):
+        payload = self.root / "payload.json"
+        payload.write_text(json.dumps({"phases": []}), encoding="utf-8")
+        with mock.patch("builtins.open", wraps=open) as opener:
+            parsed = goal_prompt._load_gsd_reply(f"@file:{payload}")
+        self.assertEqual(parsed, {"phases": []})
+        self.assertEqual(opener.call_count, 1)
+        self.assertEqual(goal_prompt._load_gsd_reply('{"a": 1}'), {"a": 1})
+
+
 if __name__ == "__main__":
     unittest.main()

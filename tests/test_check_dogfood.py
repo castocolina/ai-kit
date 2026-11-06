@@ -6,6 +6,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,12 @@ assert _SPEC is not None and _SPEC.loader is not None
 check_dogfood = importlib.util.module_from_spec(_SPEC)
 sys.modules["check_dogfood"] = check_dogfood
 _SPEC.loader.exec_module(check_dogfood)
+
+_EDGE_SPEC = importlib.util.spec_from_file_location(
+    "edge_floor", REPO_ROOT / "skills" / "ai-kit-gsd-spec-discuss" / "scripts" / "edge_floor.py")
+assert _EDGE_SPEC is not None and _EDGE_SPEC.loader is not None
+edge_floor = importlib.util.module_from_spec(_EDGE_SPEC)
+_EDGE_SPEC.loader.exec_module(edge_floor)
 
 TEMPLATE = REPO_ROOT / "skills" / "ai-kit-spec-review" / "references" / "cross-ai.mjs"
 RUNNER_REL = ".planning/scripts/cross-ai.mjs"
@@ -493,6 +500,131 @@ class TestLensWiring(unittest.TestCase):
                 problems, _notes = self.check(fake)
                 self.assertEqual(len(problems), 1, problems)
                 self.assertIn(fragment, problems[0])
+
+
+def _fixture_spec(requirements: list[str], rows: list[tuple[str, str, str]]) -> str:
+    """A phase SPEC: numbered **bold** requirements, then an Edge Coverage table of `rows`."""
+    numbered = "\n".join(f"{n}. **{title}** body text" for n, title in enumerate(requirements, 1))
+    table = "\n".join(f"| {cat} | {req} | ✅ covered | {reason} |" for cat, req, reason in rows)
+    return (f"# Fixture SPEC\n\n## Requirements\n\n{numbered}\n\n## Edge Coverage\n\n"
+            "| Category | Requirement | Status | Resolution / Reason |\n"
+            "|----------|-------------|--------|---------------------|\n"
+            f"{table}\n")
+
+
+_EDGE_ONLY_SPEC = "## Edge Coverage\n\n| Category | Requirement |\n"
+
+
+class TestEdgeFloors(unittest.TestCase):
+    def _root(self, specs: dict[str, str], engine: bool = True) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        for rel, text in specs.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        if engine:
+            engine_path = root / check_dogfood.EDGE_ENGINE_REL
+            engine_path.parent.mkdir(parents=True, exist_ok=True)
+            engine_path.write_text("// fake engine\n", encoding="utf-8")
+        return root
+
+    @staticmethod
+    def _fake_run(results: dict[str, tuple[int, str]]):
+        calls: list[str] = []
+
+        def run(root: Path, spec_rel: str) -> subprocess.CompletedProcess[str]:
+            calls.append(spec_rel)
+            code, out = results[spec_rel]
+            return subprocess.CompletedProcess(args=[], returncode=code, stdout=out, stderr="")
+
+        return run, calls
+
+    def test_drift_is_named_and_order_is_sorted(self):
+        one = ".planning/phases/01-a/01-SPEC.md"
+        two = ".planning/phases/02-b/02-SPEC.md"
+        root = self._root({
+            one: _EDGE_ONLY_SPEC,
+            two: _EDGE_ONLY_SPEC,
+            ".planning/phases/02-b/02-UI-SPEC.md": _EDGE_ONLY_SPEC,
+            ".planning/phases/03-c/.keep": "",
+        })
+        run, calls = self._fake_run({
+            one: (0, '{"ok": true}'),
+            two: (1, '{"ok": false, "missing": [["encoding", "R2"]]}'),
+        })
+        problems, notes = check_dogfood.check_edge_floors(root, run=run,
+                                                          which=lambda _name: "/usr/bin/node")
+        self.assertEqual(problems,
+                         [f"edge floor drift: {two} missing encoding R2"])
+        self.assertEqual(notes, [])
+        self.assertEqual(calls, [one, two])
+
+    def test_spec_without_edge_section_is_a_note_and_never_runs(self):
+        rel = ".planning/phases/01-a/01-SPEC.md"
+        root = self._root({rel: "# In progress\n\n## Requirements\n\n1. **x** y\n"})
+        run, calls = self._fake_run({})
+        problems, notes = check_dogfood.check_edge_floors(root, run=run,
+                                                          which=lambda _name: "/usr/bin/node")
+        self.assertEqual(problems, [])
+        self.assertEqual(notes,
+                         [f"edge floor for {rel} not checked: no Edge Coverage section"])
+        self.assertEqual(calls, [])
+
+    def test_engine_failure_is_a_named_skip_not_ok(self):
+        rel = ".planning/phases/01-a/01-SPEC.md"
+        root = self._root({rel: _EDGE_ONLY_SPEC})
+        run, _calls = self._fake_run({rel: (2, "")})
+        problems, notes = check_dogfood.check_edge_floors(root, run=run,
+                                                          which=lambda _name: "/usr/bin/node")
+        self.assertEqual(problems, [])
+        self.assertEqual(notes, [f"edge floor for {rel} not checked: engine failed closed"])
+
+    def test_missing_prerequisites_are_named_notes(self):
+        rel = ".planning/phases/01-a/01-SPEC.md"
+        cases = {
+            "node not found": (self._root({rel: _EDGE_ONLY_SPEC}), lambda _name: None,
+                               "edge floors not checked: node not found"),
+            "no engine": (self._root({rel: _EDGE_ONLY_SPEC}, engine=False),
+                          lambda _name: "/usr/bin/node",
+                          "edge floors not checked: no project-local gsd-core engine"),
+            "no phases": (self._root({}), lambda _name: "/usr/bin/node",
+                          "edge floors not checked: no .planning/phases"),
+        }
+        for label, (root, which, note) in cases.items():
+            with self.subTest(label):
+                run, calls = self._fake_run({})
+                problems, notes = check_dogfood.check_edge_floors(root, run=run, which=which)
+                self.assertEqual((problems, notes, calls), ([], [note], []))
+
+    def test_real_engine_passes_full_table_and_names_a_removed_row(self):
+        engine = _real_edge_engine()
+        if engine is None or shutil.which("node") is None:
+            self.skipTest("node or the gsd-core edge-probe.cjs engine not installed")
+        titles = ["alpha rule", "beta rule"]
+        bare = _fixture_spec(titles, [])
+        floor = edge_floor.run_engine(engine, edge_floor.requirements(bare))
+        rows = [(item["category"], item["requirement_id"], "covered by fixture")
+                for item in floor["items"]]
+        full = _fixture_spec(titles, rows)
+        root = self._root({".planning/phases/01-a/01-SPEC.md": full}, engine=False)
+        link = root / ".claude" / "gsd-core" / "bin"
+        link.mkdir(parents=True)
+        os.symlink(os.path.dirname(engine), link / "lib")
+        rel = ".planning/phases/01-a/01-SPEC.md"
+        self.assertEqual(check_dogfood.check_edge_floors(root)[0], [])
+        removed = rows[0]
+        partial = _fixture_spec(titles, rows[1:])
+        (root / rel).write_text(partial, encoding="utf-8")
+        problems, _notes = check_dogfood.check_edge_floors(root)
+        self.assertEqual(len(problems), 1)
+        self.assertIn(f"{removed[0]} {removed[1]}", problems[0])
+
+
+def _real_edge_engine() -> str | None:
+    """The edge-probe.cjs engine that edge_floor.find_engine resolves for this checkout, or None."""
+    return edge_floor.find_engine(os.environ, str(REPO_ROOT), None)
 
 
 def missing_guard_tests(test_ids) -> list[str]:

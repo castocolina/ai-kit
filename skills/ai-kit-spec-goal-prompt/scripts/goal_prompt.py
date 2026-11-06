@@ -245,6 +245,22 @@ def _gsd_tokens(text: str | None) -> list[str]:
     return tokens
 
 
+def _load_gsd_reply(out: str) -> Any:
+    """Parse a gsd-tools reply; a reply that starts with `@file:` names a file holding the JSON
+    (gsd-core writes large replies there). Raises ValueError on any failure."""
+    if not out.startswith("@file:"):
+        return json.loads(out)
+    path = out[len("@file:"):].strip()
+    if not path:
+        raise ValueError("@file: reply names no file")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError as error:
+        raise ValueError(str(error)) from error
+    return json.loads(text)
+
+
 def _gsd_json(args: argparse.Namespace, seams: CliSeams, tokens: Sequence[str],
               query: Sequence[str]) -> Any:
     """One read-only query through the host seam; None on any failure."""
@@ -252,7 +268,7 @@ def _gsd_json(args: argparse.Namespace, seams: CliSeams, tokens: Sequence[str],
     if rc != 0:
         return None
     try:
-        return json.loads(out)
+        return _load_gsd_reply(out)
     except ValueError:
         return None
 
