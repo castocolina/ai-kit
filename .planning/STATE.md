@@ -2,20 +2,20 @@
 gsd_state_version: "1.0"
 milestone: v2.0
 milestone_name: Skill Refactor
-current_phase: "30.2"
-current_phase_name: Cursor status-line parity
-status: executing
-stopped_at: Phase 30.1 complete, ready to plan Phase 30.2
-last_updated: "2026-11-06T12:53:02.587Z"
+current_phase: 31
+current_phase_name: Removals and small defects
+status: planning
+stopped_at: Phase 30.2 complete, ready to plan Phase 31
+last_updated: "2026-11-06T16:26:32.427Z"
 last_activity: 2026-11-06
-last_activity_desc: Phase 30.1 complete
-state_head: f99eaf67b3a3042d26f22aace5f548008a726b75
+last_activity_desc: Phase 30.2 complete
+state_head: be53c050f12ef14bdc832145b596c33a7d697f09
 progress:
   total_phases: 37
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 49
-  completed_plans: 44
-  percent: 14
+  completed_plans: 49
+  percent: 16
 ---
 
 # Project State
@@ -25,22 +25,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-02)
 
 **Core value:** ai-kit must never corrupt uz's AI-CLI configuration and must never claim more certainty than it has
-**Current focus:** Phase 30.1 — setup-wizard-component-cards-and-host-status-line-panes
+**Current focus:** Phase 30.2 — Cursor status-line parity (INSERTED)
 
 ## Current Position
 
-Phase: 30.2 (Cursor status-line parity) — READY TO EXECUTE
+Phase: 31 — Removals and small defects
 Plan: Not started
-Status: Ready to execute
-Last activity: 2026-11-06 — Phase 30.1 complete
+Status: Ready to plan
+Last activity: 2026-11-06 — Phase 30.2 complete
 
-Progress: [█░░░░░░░░░] 14%
+Progress: [██░░░░░░░░] 16%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 198
+- Total plans completed: 203
 - Average duration: ~36 min
 - Total execution time: ~1h 59min
 
@@ -87,6 +87,7 @@ Progress: [█░░░░░░░░░] 14%
 | 29.1 | 6 | - | - |
 | 30 | 7 | - | - |
 | 30.1 | 6 | - | - |
+| 30.2 | 5 | - | - |
 
 **Recent Trend:**
 
@@ -676,7 +677,7 @@ The v1.3 close used `override_closeout`. These items were NOT acknowledged throu
 ## Session Continuity
 
 Last session: 2026-11-03T19:08:45.122Z
-Stopped at: Phase 30.1 complete, ready to plan Phase 30.2
+Stopped at: Phase 30.2 complete, ready to plan Phase 31
 Resume file: .planning/phases/31-removals-and-small-defects/31-CONTEXT.md
 
 ## Operator Next Steps

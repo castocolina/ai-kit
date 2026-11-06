@@ -651,7 +651,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
   "Claude Code" in bold.
 - [x] **WIZ-03**: The Cursor status-line pane uses a gray accent and an on/off toggle: off keeps Cursor's own
   default status line (removing ai-kit's entry if setup had wired it), on wires ai-kit's. *(amended 2026-11-03, 30.1 spec: the toggle is on both host panes and replaces the yes/no gate; it starts at what is wired now; off removes whatever entry is wired, ai-kit's or another tool's, so the host default shows — a foreign one only after it is shown, backed up and confirmed; on wires ai-kit's, keeping today's replace confirmation for a foreign entry)* *(amended 2026-11-06, owner decision, 30.1 D-06: another tool's entry gets three states on its pane: keep current (the default; nothing written), remove so the host shows its own built-in default ("the default that Claude shows when it has no status line", the owner's clarification), or customize with ai-kit, starting from ai-kit's default arrangement; the last two only after it is shown, backed up and confirmed)*
-- [ ] **WIZ-04**: The Cursor status line matches Claude's on the aspects the hosts share, starting from the Cursor
+- [x] **WIZ-04**: The Cursor status line matches Claude's on the aspects the hosts share, starting from the Cursor
   status-line proof of concept as the visual reference: every Cursor segment shows its icon in the real render
   and the wizard preview (the five shared segments `path`, `git_dirty`, `model`, `alt_time_ago`,
   `alt_term_dimensions` with the same icon on both hosts); a Cursor process-memory segment uses Claude's
@@ -874,7 +874,7 @@ rounds 1-9) and `.planning/research/2026-11-02-next-milestone/`. "The owner" is 
 | WIZ-01 | Phase 30.1 | Complete |
 | WIZ-02 | Phase 30.1 | Complete |
 | WIZ-03 | Phase 30.1 | Complete |
-| WIZ-04 | Phase 30.2 | Pending |
+| WIZ-04 | Phase 30.2 | Complete |
 | WIZ-05 | Phase 30.1 | Complete |
 | DEF-01 | Phase 31 | Pending |
 | DEF-02 | Phase 32.3 | Pending |

@@ -111,7 +111,7 @@ creates (`new:`), and the docs it must update (`docs:`). They were found with `c
 - [x] **Phase 29.1: Stacked phase branches, chained PRs and the merge chain (INSERTED)** - Stacked branches, a push per plan, chained PRs and an owner-started merge chain (completed 2026-11-05)
 - [x] **Phase 30: Phase-boundary index refresh, code-exploration rules and lens wiring** - codegraph sync, graphify rebuild and a changed-symbols brief at every phase boundary (completed 2026-11-06)
 - [x] **Phase 30.1: Setup wizard, component cards and host status-line panes (INSERTED)** - One card per component kind, host-styled status-line panes, config doctor reachable from the wizard (completed 2026-11-06)
-- [ ] **Phase 30.2: Cursor status-line parity (INSERTED)** - Cursor status line brought back to the approved proof of concept and to Claude's look where the data allows
+- [x] **Phase 30.2: Cursor status-line parity (INSERTED)** - Cursor status line brought back to the approved proof of concept and to Claude's look where the data allows (completed 2026-11-06)
 - [ ] **Phase 31: Removals and small defects** - Three skills and rtk gone, seven small known defects fixed *(amended 2026-11-03, 31 spec: seven items per DEF-01)*
 - [ ] **Phase 32: Re-judge baseline** - One current-judge report for every kept skill, plus strict frontmatter and text checks
 - [ ] **Phase 32.1: Batch 1, general small skills** - cst-refactor, markdown-to-pdf, jev-fast-decision, spec-review-fixer and usage-metrics reach the bar
@@ -353,7 +353,12 @@ Plans:
   7. With the Cursor CLI installed and logged in, an owner-attended live Cursor run from the phase branch tip is recorded and closes Phase 23's S7 visual check; without it, the check and the wizard render Cursor's sample data through the real renderer, labelled sample data; nothing installs Cursor. *(added 2026-11-03, 30.2 SPEC R11 and D-08)* *(amended 2026-11-06, owner: the orchestrator runs the live Cursor check once at verification and records what ran and the `cli-config.json` modified time before and after)*
   8. The extra-spend alert (amount in bold red) fires when extra spend reaches its threshold; the threshold defaults to the spend limit set on Cursor's platform (read from ai-kit's Cursor quota cache, labelled inferred), the wizard shows that limit read-only with an optional dollar override stored in the Cursor TOML, invalid values are refused, and with no limit and no override there is no alert. *(added 2026-11-03, 30.2 SPEC R12 and D-03; amended 2026-11-06, owner: read the limit from Cursor instead of typing it, 30.2 D-12)*
 
-**Plans**: TBD
+**Plans**: 5/5 plans complete
+- [x] 30.2-01-PLAN.md
+- [x] 30.2-02-PLAN.md
+- [x] 30.2-03-PLAN.md
+- [x] 30.2-04-PLAN.md
+- [x] 30.2-05-PLAN.md
 
 ### Phase 31: Removals and small defects
 
@@ -844,7 +849,7 @@ Plans:
 | 29.1. Stacked phase branches, chained PRs and the merge chain | 6/6 | Complete    | 2026-11-05 |
 | 30. Phase-boundary index refresh and code-exploration rules | 7/7 | Complete    | 2026-11-06 |
 | 30.1. Setup wizard, component cards and host status-line panes | 6/6 | Complete    | 2026-11-06 |
-| 30.2. Cursor status-line parity | 0/TBD | Not started | - |
+| 30.2. Cursor status-line parity | 5/5 | Complete    | 2026-11-06 |
 | 31. Removals and small defects | 0/TBD | Not started | - |
 | 32. Re-judge baseline | 0/TBD | Not started | - |
 | 32.1. Batch 1, general small skills | 0/TBD | Not started | - |
