@@ -350,8 +350,8 @@ Plans:
   4. Cursor's quota segments use Claude's ramp and window format where Cursor's data allows; each real data difference (one monthly billing cycle, no hourly window) is flagged visibly on the line or in the doctor, never filled with invented values.
   5. `alt_term_dimensions` never shows a 0 row count on Cursor.
   6. Cursor's inventory samples match its renderer (no borrowed Claude samples), so the wizard's fallback preview agrees with the real render.
-  7. With the Cursor CLI installed and logged in, an owner-attended live Cursor run from the phase branch tip is recorded and closes Phase 23's S7 visual check; without it, the check and the wizard render Cursor's sample data through the real renderer, labelled sample data; nothing installs Cursor. *(added 2026-11-03, 30.2 SPEC R11 and D-08)*
-  8. The extra-spend alert (amount in bold red) is set from the wizard with a toggle and a dollar threshold, stored in the Cursor TOML, invalid values refused. *(added 2026-11-03, 30.2 SPEC R12 and D-03)*
+  7. With the Cursor CLI installed and logged in, an owner-attended live Cursor run from the phase branch tip is recorded and closes Phase 23's S7 visual check; without it, the check and the wizard render Cursor's sample data through the real renderer, labelled sample data; nothing installs Cursor. *(added 2026-11-03, 30.2 SPEC R11 and D-08)* *(amended 2026-11-06, owner: the orchestrator runs the live Cursor check once at verification and records what ran and the `cli-config.json` modified time before and after)*
+  8. The extra-spend alert (amount in bold red) fires when extra spend reaches its threshold; the threshold defaults to the spend limit set on Cursor's platform (read from ai-kit's Cursor quota cache, labelled inferred), the wizard shows that limit read-only with an optional dollar override stored in the Cursor TOML, invalid values are refused, and with no limit and no override there is no alert. *(added 2026-11-03, 30.2 SPEC R12 and D-03; amended 2026-11-06, owner: read the limit from Cursor instead of typing it, 30.2 D-12)*
 
 **Plans**: TBD
 
