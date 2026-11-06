@@ -339,15 +339,19 @@ class TestAdapterSkillText(unittest.TestCase):
         assert match is not None, "no setup block"
         block = "\n".join(line[3:] for line in match.group(1).splitlines()).replace(
             "<absolute path of THIS SKILL.md>", str(_SPEC_DISCUSS))
-        with tempfile.TemporaryDirectory() as home:
+        # REPO is the git toplevel of the cwd; run in a scratch repo so the check holds where the
+        # checkout has no .git (the Docker e2e image copies the tree without it).
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as proj:
             env = {"PATH": os.environ.get("PATH", ""), "HOME": home}
-            proc = subprocess.run(["bash", "-c", block], cwd=_REPO, env=env, text=True,
+            subprocess.run(["git", "init", "-q", proj], env=env, check=True, timeout=60)
+            proc = subprocess.run(["bash", "-c", block], cwd=proj, env=env, text=True,
                                   capture_output=True, check=False, timeout=60)
+            want_repo = os.path.realpath(proj)
         lines = dict(line.split("=", 1) for line in proc.stdout.splitlines())
         self.assertEqual(lines["S"], str(_SPEC_DISCUSS.parent / "scripts"), proc.stderr)
         self.assertEqual(lines["FOLD_PY"],
                          str(_REPO / "skills" / "ai-kit-commit-fold" / "scripts" / "fold.py"))
-        self.assertEqual(lines["REPO"], str(_REPO))
+        self.assertEqual(os.path.realpath(lines["REPO"]), want_repo)
 
 
 if __name__ == "__main__":
