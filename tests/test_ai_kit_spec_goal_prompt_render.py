@@ -278,7 +278,8 @@ class TestTemplateAndSections(unittest.TestCase):
         for needle in (
             "created and recorded in a run ledger under tmp/",
             "not owned by this run is reported, never removed",
-            "backlog entries and the directories of work items finished in this run",
+            "done in the backlog's Done list, with the date and what delivered it",
+            "delete no entry or directory",
             "the porcelain form of git status must be empty in that worktree and in the main "
             "checkout",
             "Never force a merge, removal or branch delete",
@@ -286,6 +287,7 @@ class TestTemplateAndSections(unittest.TestCase):
         ):
             self.assertIn(needle, text)
         self.assertNotIn("every intermediate worktree", text)
+        self.assertNotIn("Remove those", text)  # finished backlog entries move to Done (2026-11-06)
         self.assertTrue(all(len(line) <= gp_sections.LINE_CAP for line in cleanup))
 
     def test_stop_lines_add_the_cross_ai_candidate_line_only_for_opengsd(self):

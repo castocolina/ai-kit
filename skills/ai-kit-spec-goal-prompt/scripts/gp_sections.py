@@ -379,8 +379,8 @@ def cleanup_lines() -> list[str]:
         "Act only on worktrees, branches and tags this run created and recorded in a run ledger "
         "under tmp/.",
         "Anything older or not owned by this run is reported, never removed.",
-        "Finished work means the backlog entries and the directories of work items finished in "
-        "this run. Remove those; list the rest.",
+        "Mark each backlog entry finished in this run done in the backlog's Done list, with the "
+        "date and what delivered it; delete no entry or directory; list the rest.",
         "Before any merge or removal, the porcelain form of git status must be empty in that "
         "worktree and in the main checkout.",
         "Never force a merge, removal or branch delete. On a conflict or a dirty tree, stop and "
