@@ -3,8 +3,8 @@
 ## Cursor quota is inferred from an undocumented Dashboard API and marked with ≈.
 ## Providers: ~/.config/ai-kit/segments-cursor (AI_KIT_CURSOR_EXTERNAL_DIR).
 ## Cursor config overrides use AI_KIT_CURSOR_CONFIG_FILE, AI_KIT_CURSOR_SEGMENT_<KEY>,
-## AI_KIT_CURSOR_GIT_CACHE_TTL, AI_KIT_CURSOR_EXTERNAL_DIR and
-## AI_KIT_CURSOR_EXTERNAL_CACHE_TTL. Provider subprocesses receive
+## AI_KIT_CURSOR_GIT_CACHE_TTL, AI_KIT_CURSOR_EXTERNAL_DIR, AI_KIT_CURSOR_EXTERNAL_CACHE_TTL,
+## AI_KIT_CURSOR_EXTRA_ALERT and AI_KIT_CURSOR_EXTRA_ALERT_USD. Provider subprocesses receive
 ## AI_KIT_CURSOR_PROVIDER_COLS/ID/LINE/POSITION.
 
 # [segments]
@@ -17,11 +17,13 @@
 # cursor_included = true
 # cursor_api = false
 # cursor_extra = true
-# cursor_reset = true
-# render_time = false
-# slowest = false
+# cursor_reset = false
+# render_time = true
+# slowest = true
 # alt_time_clock = false
 # alt_term_dimensions = false
+# alt_time_ago = false
+# alt_process_memory = false
 
 ## Uncomment and edit all [[line]] blocks to replace the default layout.
 # [[line]]
@@ -32,4 +34,10 @@
 # segments = ["model", "context", "cursor_included", "cursor_api", "cursor_extra", "cursor_reset"]
 # [[line]]
 # min_rows = 0
-# segments = ["render_time", "slowest", "alt_time_clock", "alt_term_dimensions"]
+# segments = ["render_time", "slowest", "alt_time_clock", "alt_term_dimensions", "alt_time_ago", "alt_process_memory"]
+
+## The extra-spend amount turns bold red when spend reaches your Cursor spend limit (read from Cursor's dashboard data, inferred).
+## Set extra_alert_usd only to alert at another amount; leave it commented to use the Cursor limit.
+# [cursor]
+# extra_alert = true
+# extra_alert_usd = 20.0

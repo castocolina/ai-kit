@@ -19,15 +19,5 @@
   "context_window": { "context_window_size": 200000, "used_percentage": 23 },
   "session_name": "sample session",
   "vim": { "mode": "normal" },
-  "worktree": { "name": "sample", "path": "." },
-  "cost": {
-    "total_lines_added": 128,
-    "total_lines_removed": 42,
-    "total_cost_usd": 0.1234,
-    "total_duration_ms": 754000,
-    "total_api_duration_ms": 98000
-  },
-  "rate_limits": {
-    "five_hour": { "used_percentage": 41, "resets_at": 1750000000 }
-  }
+  "worktree": { "name": "sample", "path": "." }
 }

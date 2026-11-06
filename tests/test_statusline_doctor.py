@@ -569,6 +569,17 @@ class TestCursorDoctor(unittest.TestCase):
         self.assertIn("unknown segment key: effort", err.getvalue())
         self.assertEqual(rc_claude, 0)
 
+    def test_check_cursor_accepts_alt_process_memory_key(self):
+        # 30.2 plan 01 left alt_process_memory without a Cursor SEGMENTS key; plan 04 adds it
+        path = os.path.join(self.tmp, "cursor-memory.toml")
+        with open(path, "w") as f:
+            f.write("[segments]\nalt_process_memory = true\n")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rc_cursor = doctor.cmd_check(path, self.env, cursor_host.HOST)
+        self.assertNotIn("unknown segment key", err.getvalue())
+        self.assertEqual(rc_cursor, 0, err.getvalue())
+
     def test_print_config_cursor_lists_cursor_segments_dir(self):
         import json
 

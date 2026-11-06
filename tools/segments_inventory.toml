@@ -7,7 +7,7 @@
 [path]
 description = "Working directory, ~-relative"
 sample = "~/proj"
-icon = ""
+icon = "📂"
 line = 0
 hosts = ["claude", "cursor"]
 
@@ -21,7 +21,7 @@ hosts = ["claude", "cursor"]
 [git_dirty]
 description = "Working-tree dirty marker"
 sample = "~"
-icon = ""
+icon = "✏"
 line = 0
 hosts = ["claude", "cursor"]
 
@@ -42,16 +42,18 @@ hosts = ["claude"]
 [model]
 description = "Active model name"
 sample = "Opus"
-icon = ""
+icon = "🤖"
 line = 1
 hosts = ["claude", "cursor"]
+cursor_sample = "Sample Model · high"
 
 [alt_time_ago]
-description = "Time since the session's first message"
+description = "Time since the last transcript write"
 sample = "12m ago"
-icon = ""
+icon = "⌛"
 line = 2
-hosts = ["claude"]
+hosts = ["claude", "cursor"]
+cursor_description = "Time since the last transcript write (unverified on Cursor until a live Cursor run shows the transcript file)"
 
 [alt_time_clock]
 description = "Current wall-clock time"
@@ -112,7 +114,7 @@ hosts = ["claude", "cursor"]
 [alt_term_dimensions]
 description = "Terminal size (cols×lines)"
 sample = "120×40"
-icon = ""
+icon = "📐"
 line = 2
 hosts = ["claude", "cursor"]
 
@@ -135,7 +137,8 @@ description = "Agent process memory (RSS)"
 sample = "428M"
 icon = "🧮"
 line = 2
-hosts = ["claude"]
+hosts = ["claude", "cursor"]
+cursor_description = "Cursor CLI process memory (RSS), found by command line or program path (unverified on Cursor until a live Cursor run confirms it)"
 
 [alt_h_rate_limit]
 description = "5-hour rate-limit bucket (time-only reset)"
@@ -151,40 +154,38 @@ icon = "⚡"
 line = 2
 hosts = ["claude"]
 
-# ── Cursor-only built-ins (D-04/D23-C4) ────────────────────────────────────
-# These entries list hosts = ["cursor"] and carry cursor_line (the Cursor
-# host's own layout row). Claude-shaped segments above list hosts =
-# ["claude"]; shared segments will gain ["claude","cursor"] only after the
-# Cursor oracle records them, never by inference.
+# Cursor-only built-ins list hosts = ["cursor"] and carry cursor_line. Shared entries
+# list both hosts; cursor_description and cursor_sample hold the Cursor wording and
+# sample where they differ (30.2 D-01, D-09).
 
 [cursor_included]
-description = "Cursor included-quota use, this cycle"
-sample = "inc 42%"
-icon = ""
+description = "Included-quota use against the billing cycle elapsed (one billing cycle, no 5-hour or 7-day window; inferred, ≈)"
+sample = "inc: +42% (↺ Nov 23, 17d) ≈"
+icon = "⚡"
 line = 1
 hosts = ["cursor"]
 cursor_line = 1
 
 [cursor_api]
-description = "Cursor API-rate use, this cycle"
-sample = "api 18%"
-icon = ""
+description = "API-rate use against the billing cycle elapsed (inferred, ≈)"
+sample = "api: +18% ≈"
+icon = "⚡"
 line = 1
 hosts = ["cursor"]
 cursor_line = 1
 
 [cursor_extra]
-description = "Cursor on-demand spend against its cap"
-sample = "extra $2.50/$20.00"
-icon = ""
+description = "On-demand (extra) spend against its cap; the amount turns bold red when spend reaches your Cursor spend limit or the override set here (inferred, ≈)"
+sample = "extra: +$2.50/$20.00 ≈"
+icon = "🪙"
 line = 1
 hosts = ["cursor"]
 cursor_line = 1
 
 [cursor_reset]
-description = "Cursor cycle reset moment"
-sample = "↺ Nov 20"
-icon = ""
+description = "Billing-cycle reset date and days left (inferred, ≈)"
+sample = "Nov 23 (17d) ≈"
+icon = "↺"
 line = 1
 hosts = ["cursor"]
 cursor_line = 1

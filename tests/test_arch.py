@@ -3267,14 +3267,15 @@ class TestSegmentInventory(unittest.TestCase):
     """Segment inventory: coverage, line-mirror, and icon-mirror (Task 7)."""
 
     # Reviewed mirror of the seg_* inline glyphs; "" means no static icon.
+    # 30.2 D-07: path, git_dirty, model, alt_time_ago and alt_term_dimensions carry icons.
     EXPECTED_ICONS = {
-        "path": "",
+        "path": "📂",
         "git_branch": "🌿",
-        "git_dirty": "",
+        "git_dirty": "✏",
         "alt_git_worktree": "⎇",
         "todo": "📝",
-        "model": "",
-        "alt_time_ago": "",
+        "model": "🤖",
+        "alt_time_ago": "⌛",
         "alt_time_clock": "⏰",
         "effort": "🧠",
         "lines": "📃",
@@ -3283,7 +3284,7 @@ class TestSegmentInventory(unittest.TestCase):
         "alt_time_api": "📡",
         "render_time": "⏱",
         "slowest": "🐌",
-        "alt_term_dimensions": "",
+        "alt_term_dimensions": "📐",
         "context": "📊",
         "chat_size": "💾",
         "alt_process_memory": "🧮",
@@ -3293,12 +3294,12 @@ class TestSegmentInventory(unittest.TestCase):
     # Icon single-sourcing into the inventory is DEFERRED per the PRD; until then
     # the inventory icon is hand-mirrored and this test pins it to the reviewed map.
 
-    # Cursor-only built-ins reviewed against the Cursor oracle vocabulary (D-04).
+    # Cursor-only built-ins reviewed against the Cursor oracle vocabulary (D-04, 30.2 D-07).
     EXPECTED_CURSOR_ICONS = {
-        "cursor_included": "",
-        "cursor_api": "",
-        "cursor_extra": "",
-        "cursor_reset": "",
+        "cursor_included": "⚡",
+        "cursor_api": "⚡",
+        "cursor_extra": "🪙",
+        "cursor_reset": "↺",
     }
 
     def _line_index(self, layout, key):

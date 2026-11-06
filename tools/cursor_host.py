@@ -21,16 +21,28 @@ SEGMENTS = {
     "cursor_included": True,
     "cursor_api": False,
     "cursor_extra": True,
-    "cursor_reset": True,
-    "render_time": False,
-    "slowest": False,
+    "cursor_reset": False,
+    "render_time": True,
+    "slowest": True,
     "alt_time_clock": False,
     "alt_term_dimensions": False,
+    "alt_time_ago": False,
+    "alt_process_memory": False,
 }
 LAYOUT = [
     Line(0, ["path", "git_branch", "alt_git_worktree", "git_dirty"]),
     Line(0, ["model", "context", "cursor_included", "cursor_api", "cursor_extra", "cursor_reset"]),
-    Line(0, ["render_time", "slowest", "alt_time_clock", "alt_term_dimensions"]),
+    Line(
+        0,
+        [
+            "render_time",
+            "slowest",
+            "alt_time_clock",
+            "alt_term_dimensions",
+            "alt_time_ago",
+            "alt_process_memory",
+        ],
+    ),
 ]
 PINNED = {"path", "context"}
 # `extra_alert_usd` None: no override, the alert uses the Cursor spend limit (D-12).

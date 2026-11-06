@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import unittest
 from datetime import datetime
 from typing import Any, cast
@@ -952,6 +953,358 @@ class TestCursorProcessMemory(unittest.TestCase):
         with self._fake_proc(table, 200, reads):
             self.assertIsNone(cursor_probes.probe_cursor_rss_bytes())
         self.assertLessEqual(len(set(reads)), 12)
+
+
+ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+INVENTORY_PATH = ROOT / "tools" / "segments_inventory.toml"
+SAMPLE_PAYLOAD_PATH = ROOT / "tests" / "fixtures" / "sample-input-cursor.json"
+SAMPLE_TOML_PATH = ROOT / "tools" / "cursor-statusline.toml.sample"
+SAMPLE_PAYLOAD = json.loads(SAMPLE_PAYLOAD_PATH.read_text(encoding="utf-8"))
+REAL_CAPTURES = (
+    ROOT / "tests/fixtures/cursor/payload_synthetic.json",
+    ROOT / "tests/fixtures/cursor/payload_poc_redacted.json",
+)
+
+
+def _key_paths(node, prefix=""):
+    """Dotted key paths of a JSON object, top level and nested."""
+    paths: set[str] = set()
+    if isinstance(node, dict):
+        for key, value in node.items():
+            path = f"{prefix}.{key}" if prefix else key
+            paths.add(path)
+            paths |= _key_paths(value, path)
+    return paths
+
+
+def _inventory():
+    return tomllib.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
+
+
+def _strip_icon(text, icon):
+    """ANSI-free text without the leading icon, its optional VS16 and one space."""
+    text = ANSI_SGR.sub("", text)
+    if text.startswith(icon):
+        text = text[len(icon) :]
+        if text.startswith("️"):
+            text = text[1:]
+        if text.startswith(" "):
+            text = text[1:]
+    return text
+
+
+def _mask_parts(text):
+    """Mask the parts that depend on the clock: reset dates, day counts and clock times."""
+    text = re.sub(r"[A-Z][a-z]{2} \d{2}", "<date>", text)
+    text = re.sub(r"\d+d\)", "<N>d)", text)
+    return re.sub(r"\d{2}:\d{2}", "<clock>", text)
+
+
+class TestCursorSampleFixture(unittest.TestCase):
+    """30.2 D-09 / R10: the sample payload carries only Cursor payload fields."""
+
+    def test_sample_keys_are_real_cursor_capture_keys(self):
+        fields: set[str] = set()
+        for capture in REAL_CAPTURES:
+            fields |= _key_paths(json.loads(capture.read_text(encoding="utf-8")))
+        self.assertFalse(_key_paths(SAMPLE_PAYLOAD) - fields)
+
+    def test_claude_only_keys_are_absent(self):
+        # design §5.1 excludes these two Claude-only keys from the Cursor payload
+        self.assertNotIn("cost", SAMPLE_PAYLOAD)
+        self.assertNotIn("rate_limits", SAMPLE_PAYLOAD)
+
+
+class TestCursorSampleParity(unittest.TestCase):
+    """30.2 D-09 / R10: each compared Cursor entry renders the sample the inventory ships.
+
+    Compared: the Cursor-only entries (hosts == ["cursor"]) and every shared entry that
+    carries cursor_sample. A shared entry without cursor_sample keeps its host-neutral sample.
+    """
+
+    _environment = TestCursorStatusLine._environment
+
+    def _cursor_context(self, root):
+        env = self._environment(root)
+        config = cfg_default_config(cursor_host.SPEC)
+        theme = core_build_theme(config, cursor_host.HOST)
+        ctx = cursor_host.HOST.build_context(SAMPLE_PAYLOAD, config, theme, env, None)
+        return ctx, theme
+
+    def test_compared_entries_render_their_sample(self):
+        compared = {
+            key: entry
+            for key, entry in _inventory().items()
+            if "cursor" in entry["hosts"]
+            and (entry["hosts"] == ["cursor"] or "cursor_sample" in entry)
+        }
+        self.assertTrue(compared)
+        with tempfile.TemporaryDirectory() as temporary, mock.patch("time.time", return_value=NOW):
+            ctx, theme = self._cursor_context(pathlib.Path(temporary))
+            for key, entry in compared.items():
+                with self.subTest(key=key):
+                    rendered = cursor_host.BUILDERS[key](ctx, 400, theme)
+                    self.assertTrue(rendered, f"{key} renders nothing on the sample payload")
+                    sample = entry.get("cursor_sample", entry["sample"])
+                    self.assertEqual(
+                        _mask_parts(_strip_icon(rendered or "", entry["icon"])),
+                        _mask_parts(_strip_icon(sample, entry["icon"])),
+                    )
+
+
+class TestSegmentIconParity(unittest.TestCase):
+    """30.2 D-07 / R2: every inventory entry renders with the icon the inventory lists."""
+
+    _environment = TestCursorStatusLine._environment
+
+    @staticmethod
+    def _expected_prefix(key, entry):
+        # git_branch keeps its existing leading "[" before the icon
+        return ("[" if key == "git_branch" else "") + entry["icon"]
+
+    @staticmethod
+    def _seed_probes(ctx, transcript):
+        """Seed the per-render probes so no segment touches git, /proc or the real transcript."""
+        ctx.probe_cache["git"] = common_types.GitSnapshot(
+            in_repo=True, branch="main", dirty="modified", is_worktree=True,
+            wt_name="wt", root_name="", root_path="",
+        )
+        ctx.probe_cache["ago"] = "5m 0s ago"
+        ctx.probe_cache["rss"] = 1048576
+        ctx.transcript_path = str(transcript)
+        ctx.t_start = time.perf_counter()
+        ctx.slowest = ("path", 1000)
+
+    def test_cursor_entries_start_with_their_icon(self):
+        inventory = _inventory()
+        with tempfile.TemporaryDirectory() as temporary, mock.patch("time.time", return_value=NOW):
+            root = pathlib.Path(temporary)
+            env = self._environment(root)
+            transcript = root / "transcript.jsonl"
+            transcript.write_text("{}\n", encoding="utf-8")
+            config = cfg_default_config(cursor_host.SPEC)
+            theme = core_build_theme(config, cursor_host.HOST)
+            ctx = cursor_host.HOST.build_context(SAMPLE_PAYLOAD, config, theme, env, None)
+            self._seed_probes(ctx, transcript)
+            for key, entry in inventory.items():
+                if "cursor" not in entry["hosts"]:
+                    continue
+                with self.subTest(key=key):
+                    rendered = cursor_host.BUILDERS[key](ctx, 400, theme)
+                    self.assertTrue(rendered, f"{key} renders nothing on the sample payload")
+                    plain = ANSI_SGR.sub("", rendered or "")
+                    self.assertTrue(plain.startswith(self._expected_prefix(key, entry)), plain)
+
+    def test_claude_entries_start_with_their_icon(self):
+        from tests import test_status_line  # the Claude context helper, reused not copied
+
+        inventory = _inventory()
+        golden = json.loads((ROOT / "tests/fixtures/golden/inputs_full.json").read_text("utf-8"))
+        case = golden[0]
+        self.assertEqual(case["name"], "full-wide-200x50")
+        raw = case["raw"]
+        with tempfile.TemporaryDirectory() as temporary:
+            transcript = pathlib.Path(temporary) / "transcript.jsonl"
+            transcript.write_text("{}\n", encoding="utf-8")
+            # _data hard-codes raw={}, so the golden raw fields go through its keyword overrides
+            ctx = test_status_line._data(
+                cols=case["cols"], lines=case["lines"],
+                model_name=raw["model"]["display_name"], model_id=raw["model"]["id"],
+                work_dir=raw["workspace"]["current_dir"],
+                context_pct=raw["context_window"]["used_percentage"],
+                context_max=raw["context_window"]["context_window_size"],
+                effort=raw["effort"]["level"],
+                added=raw["cost"]["total_lines_added"],
+                removed=raw["cost"]["total_lines_removed"],
+                cost=raw["cost"]["total_cost_usd"],
+                total_ms=raw["cost"]["total_duration_ms"],
+                api_ms=raw["cost"]["total_api_duration_ms"],
+                rate_limits=raw["rate_limits"],
+                in_repo=True, is_worktree=True, wt_name="wt", dirty="modified",
+                ago="5m 0s ago", mem_bytes=1048576, t_start=time.perf_counter(),
+                slowest=("path", 1000), todo_state="in_progress", todo_text="write tests",
+            )
+            ctx.transcript_path = str(transcript)
+            for key, entry in inventory.items():
+                if "claude" not in entry["hosts"]:
+                    continue
+                with self.subTest(key=key):
+                    rendered = claude_host.BUILDERS[key](ctx, 400, ctx.theme)
+                    self.assertTrue(rendered, f"{key} renders nothing on the default payload")
+                    plain = ANSI_SGR.sub("", rendered or "")
+                    self.assertTrue(plain.startswith(self._expected_prefix(key, entry)), plain)
+
+    def test_shared_keys_have_the_same_icon_on_both_hosts(self):
+        inventory = _inventory()
+        for key, entry in inventory.items():
+            if entry["hosts"] == ["claude", "cursor"]:
+                with self.subTest(key=key):
+                    self.assertEqual(entry["icon"], inventory[key]["icon"])
+                    self.assertTrue(entry["icon"], f"{key} has no icon")
+
+
+class TestCursorNoInventedValues(unittest.TestCase):
+    """30.2 D-07 / R7: no Cursor render shows a Claude window, a 0 row count or a default."""
+
+    _environment = TestCursorStatusLine._environment
+    _context = TestCursorStatusLine._context
+    _quota = staticmethod(TestCursorStatusLine._quota)
+    _chain = TestCursorProcessMemory._chain
+
+    def _fake_proc(self, table, parent, reads, **kwargs):
+        """The process-memory fake, reused by import (pyright needs the explicit self cast)."""
+        return TestCursorProcessMemory._fake_proc(cast(Any, self), table, parent, reads, **kwargs)
+
+    @staticmethod
+    def _memory_render(ctx, theme):
+        """A full Cursor render with only alt_process_memory enabled, as plain text."""
+        config = cfg_default_config(cursor_host.SPEC)
+        cfg = config._replace(
+            layout=[common_types.Line(min_rows=0, segments=["alt_process_memory"])],
+            segments={key: key == "alt_process_memory" for key in config.segments},
+        )
+        return ANSI_SGR.sub("", "".join(core_render(ctx, cursor_host.HOST, cfg=cfg)))
+
+    def test_no_cursor_ancestor_shows_no_memory(self):
+        table = self._chain(
+            {"cmd": "/usr/bin/bash", "exe": "/usr/bin/bash", "ppid": 1, "rss": 45056}
+        )
+        ctx, theme = self._context(self._quota())
+        with self._fake_proc(table, 200, []):
+            self.assertIsNone(cursor_segments.seg_alt_process_memory(ctx, 400, theme))
+            ctx, _theme = self._context(self._quota())
+            self.assertNotIn("🧮", self._memory_render(ctx, theme))
+
+    def test_cursor_agent_ancestor_shows_its_memory_once(self):
+        table = self._chain(
+            {"cmd": "node /opt/x/index.js", "exe": AGENT_EXE, "ppid": 1, "rss": 45056}
+        )
+        ctx, theme = self._context(self._quota())
+        with self._fake_proc(table, 200, []):
+            rss = cursor_probes.probe_cursor_rss_bytes()
+            assert rss is not None, "the fake agent chain must match"
+            expected = common_types.fmt_bytes(rss)
+            text = self._memory_render(ctx, theme)
+        self.assertEqual(text.count("🧮"), 1)
+        self.assertIn(f"🧮 {expected}", text)
+
+    def _run_all_segments(self, payload_path, env):
+        for key in cursor_host.SEGMENTS:
+            env[f"AI_KIT_CURSOR_SEGMENT_{key.upper()}"] = "true"
+        return subprocess.run(
+            [sys.executable, "-S", str(ENTRY)],
+            input=payload_path.read_text(encoding="utf-8"),
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+            timeout=10,
+        )
+
+    def test_fixtures_never_render_claude_windows_or_zero_counts(self):
+        payloads = (*REAL_CAPTURES, SAMPLE_PAYLOAD_PATH)
+        with tempfile.TemporaryDirectory() as temporary:
+            for payload in payloads:
+                with self.subTest(payload=payload.name):
+                    env = self._environment(pathlib.Path(temporary))
+                    result = self._run_all_segments(payload, env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    for banned in ("5h:", "7d:", "×0"):
+                        self.assertNotIn(banned, result.stdout)
+
+    def test_empty_cache_shows_no_quota_and_no_percent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            home = root / "home"
+            empty_cache = root / "empty-cache"
+            home.mkdir()
+            empty_cache.mkdir()
+            env = {
+                "HOME": str(home),
+                "XDG_CONFIG_HOME": str(root / "xdg"),
+                "XDG_CACHE_HOME": str(empty_cache),
+                "PATH": os.defpath,
+            }
+            result = self._run_all_segments(SAMPLE_PAYLOAD_PATH, env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for banned in ("inc:", "api:", "extra", "5h:", "7d:"):
+            self.assertNotIn(banned, result.stdout)
+
+
+class TestCursorTomlSample(unittest.TestCase):
+    """30.2 D-09 / D-12: the TOML sample lists the defaults and the commented [cursor] block."""
+
+    def test_segment_block_lists_every_default_in_order(self):
+        text = SAMPLE_TOML_PATH.read_text(encoding="utf-8")
+        block = text.split("# [segments]", 1)[1].split("## Uncomment", 1)[0]
+        pairs = re.findall(r"^# (\w+) = (true|false)$", block, re.MULTILINE)
+        self.assertEqual(
+            pairs, [(key, str(value).lower()) for key, value in cursor_host.SEGMENTS.items()]
+        )
+
+    def test_header_names_the_alert_overrides_and_the_cursor_block_is_commented(self):
+        text = SAMPLE_TOML_PATH.read_text(encoding="utf-8")
+        header = text.split("# [segments]", 1)[0]
+        self.assertIn("AI_KIT_CURSOR_EXTRA_ALERT", header)
+        self.assertIn("AI_KIT_CURSOR_EXTRA_ALERT_USD", header)
+        for line in ("# [cursor]", "# extra_alert = true", "# extra_alert_usd = 20.0"):
+            self.assertIn(line, text.splitlines())
+        tomllib.loads(text)  # the all-comment sample parses
+
+    def test_uncommenting_the_switch_alone_sets_extra_alert_without_an_override(self):
+        lines = SAMPLE_TOML_PATH.read_text(encoding="utf-8").splitlines()
+        uncommented = [
+            line[2:] if line in ("# [cursor]", "# extra_alert = true") else line for line in lines
+        ]
+        parsed = tomllib.loads("\n".join(uncommented))
+        self.assertEqual(parsed["cursor"], {"extra_alert": True})
+
+
+class TestCursorDefaults(unittest.TestCase):
+    """30.2 D-09 / R9: Cursor's defaults equal Claude's on every shared key."""
+
+    _environment = TestCursorStatusLine._environment
+
+    def test_shared_keys_have_equal_defaults(self):
+        shared = set(claude_host.SEGMENTS) & set(cursor_host.SEGMENTS)
+        self.assertTrue(shared)
+        for key in sorted(shared):
+            with self.subTest(key=key):
+                self.assertEqual(cursor_host.SEGMENTS[key], claude_host.SEGMENTS[key])
+
+    def test_cursor_only_defaults(self):
+        segments = cursor_host.SEGMENTS
+        self.assertTrue(segments["cursor_included"])
+        self.assertFalse(segments["cursor_api"])
+        self.assertTrue(segments["cursor_extra"])
+        self.assertFalse(segments["cursor_reset"])
+
+    def test_new_keys_are_off_on_both_hosts(self):
+        for host in (claude_host.SEGMENTS, cursor_host.SEGMENTS):
+            for key in ("alt_process_memory", "alt_time_ago", "alt_term_dimensions"):
+                with self.subTest(key=key):
+                    self.assertFalse(host[key])
+
+    def test_layout_appends_the_two_new_keys_to_the_diagnostics_row(self):
+        row = cursor_host.LAYOUT[2].segments
+        self.assertEqual(row[-2:], ["alt_time_ago", "alt_process_memory"])
+
+    def test_no_config_loads_exactly_the_defaults(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            env = self._environment(pathlib.Path(temporary))
+            cfg = cfg_load_config(env, cursor_host.SPEC)
+        self.assertEqual(cfg.segments, cursor_host.SEGMENTS)
+
+    def test_explicit_switch_wins_over_the_default(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            env = self._environment(pathlib.Path(temporary))
+            config_dir = pathlib.Path(env["XDG_CONFIG_HOME"]) / "ai-kit"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            (config_dir / "cursor-statusline.toml").write_text(
+                "[segments]\ncursor_reset = true\n", encoding="utf-8"
+            )
+            cfg = cfg_load_config(env, cursor_host.SPEC)
+        self.assertTrue(cfg.segments["cursor_reset"])
 
 
 if __name__ == "__main__":
