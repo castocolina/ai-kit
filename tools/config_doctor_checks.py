@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import tomllib
 from collections.abc import Callable
 from typing import NamedTuple, cast
 
@@ -47,6 +48,8 @@ class CheckRow(NamedTuple):
     reads_section_file: bool = True
     apply_target: object = None
     security_relevant: bool = False
+    visible: object = None
+    apply_when: object = None
 
 
 class ReadContext(NamedTuple):
@@ -129,7 +132,8 @@ def evaluate_row(row, ctx):
         "recommended_value": row.recommended,
         "recommended_display": str(row.recommended),
         "confidence": row.confidence,
-        "apply_eligible": row.apply is not None,
+        "apply_eligible": row.apply is not None
+        and (row.apply_when is None or bool(row.apply_when(ctx))),
         "why": row.why,
         "source": row.source,
         "apply_target": row.apply_target,
@@ -197,37 +201,62 @@ def _apply_claude_retention(ctx, target, dry):
             "reason": "refused: cleanupPeriodDays 0 is never writable",
         }
     path = _claude_settings_path(ctx)
-    state, parsed = config_doctor_readers.read_json_checked(path)
-    data = dict(parsed) if state == CONFIG_STATE_OK and isinstance(parsed, dict) else {}
-    before = data.get("cleanupPeriodDays")
-    data["cleanupPeriodDays"] = target
-    if not dry:
-        config_doctor_appliers.atomic_write_json(path, data)
-    return {"ok": True, "before": before, "after": target, "current_display": str(target)}
+
+    def compute(_text, parsed):
+        data = dict(parsed) if parsed is not None else {}
+        before = data.get("cleanupPeriodDays")
+        data["cleanupPeriodDays"] = target
+        return data, {
+            "ok": True,
+            "before": before,
+            "after": target,
+            "current_display": str(target),
+        }
+
+    return config_doctor_appliers.apply_guarded(
+        path,
+        compute,
+        dry,
+        parse=json.loads,
+        kind="a JSON object",
+        write=config_doctor_appliers.atomic_write_json,
+        backups_dir=config_doctor_appliers.backups_root(ctx.env),
+        label="claude",
+    )
 
 
 def _apply_claude_sandbox_enabled(ctx, target, dry):
     path = _claude_settings_path(ctx)
-    state, parsed = config_doctor_readers.read_json_checked(path)
-    data = dict(parsed) if state == CONFIG_STATE_OK and isinstance(parsed, dict) else {}
-    # Normalize a present-but-non-dict "sandbox" value (e.g. {"sandbox": "x"})
-    # to {} rather than letting it flow through: dict.setdefault only inserts
-    # when the key is ABSENT, so a stray non-dict value would otherwise
-    # survive setdefault unchanged and crash the next line's .get() call.
-    existing_sandbox = data.get("sandbox")
-    sandbox = dict(existing_sandbox) if isinstance(existing_sandbox, dict) else {}
-    data["sandbox"] = sandbox
-    before = sandbox.get("enabled")
-    sandbox["enabled"] = target
-    if not dry:
-        config_doctor_appliers.atomic_write_json(path, data)
-    return {
-        "ok": True,
-        "before": before,
-        "after": target,
-        "current_display": str(target),
-        "literal_resulting_config": data,
-    }
+
+    def compute(_text, parsed):
+        data = dict(parsed) if parsed is not None else {}
+        # Normalize a present-but-non-dict "sandbox" value (e.g. {"sandbox": "x"})
+        # to {} rather than letting it flow through: dict.setdefault only inserts
+        # when the key is ABSENT, so a stray non-dict value would otherwise
+        # survive setdefault unchanged and crash the next line's .get() call.
+        existing_sandbox = data.get("sandbox")
+        sandbox = dict(existing_sandbox) if isinstance(existing_sandbox, dict) else {}
+        data["sandbox"] = sandbox
+        before = sandbox.get("enabled")
+        sandbox["enabled"] = target
+        return data, {
+            "ok": True,
+            "before": before,
+            "after": target,
+            "current_display": str(target),
+            "literal_resulting_config": data,
+        }
+
+    return config_doctor_appliers.apply_guarded(
+        path,
+        compute,
+        dry,
+        parse=json.loads,
+        kind="a JSON object",
+        write=config_doctor_appliers.atomic_write_json,
+        backups_dir=config_doctor_appliers.backups_root(ctx.env),
+        label="claude",
+    )
 
 
 def _parse_jsonc_text(text):
@@ -239,34 +268,35 @@ def _parse_jsonc_text(text):
 
 def _apply_opencode_share_mode(ctx, target, dry):
     path = _opencode_config_path(ctx)
-    if os.path.isfile(path):
-        with open(path, encoding="utf-8") as handle:
-            text = handle.read()
-    else:
-        text = "{\n}\n"
-    before = None
-    try:
-        parsed = _parse_jsonc_text(text)
-        if isinstance(parsed, dict):
-            before = parsed.get("share")
-    except (ValueError, TypeError):
-        before = None
-    spliced = config_doctor_appliers.set_jsonc_value(text, ("share",), target)
-    try:
-        _parse_jsonc_text(spliced)
-    except (ValueError, TypeError):
-        return {
-            "ok": False,
-            "reason": ("refused: spliced JSONC failed self-validation, no write performed"),
+
+    def compute(text, parsed):
+        source = "{\n}\n" if text is None else text
+        before = parsed.get("share") if parsed is not None else None
+        spliced = config_doctor_appliers.set_jsonc_value(source, ("share",), target)
+        try:
+            _parse_jsonc_text(spliced)
+        except (ValueError, TypeError):
+            return {
+                "ok": False,
+                "reason": ("refused: spliced JSONC failed self-validation, no write performed"),
+            }
+        return spliced, {
+            "ok": True,
+            "before": before,
+            "after": target,
+            "current_display": str(target),
         }
-    if not dry:
-        config_doctor_appliers.atomic_write_text(path, spliced)
-    return {
-        "ok": True,
-        "before": before,
-        "after": target,
-        "current_display": str(target),
-    }
+
+    return config_doctor_appliers.apply_guarded(
+        path,
+        compute,
+        dry,
+        parse=_parse_jsonc_text,
+        kind="a JSONC object",
+        write=config_doctor_appliers.atomic_write_text,
+        backups_dir=config_doctor_appliers.backups_root(ctx.env),
+        label="opencode",
+    )
 
 
 def _toml_table_span(text, table_name):
@@ -330,31 +360,42 @@ def _toml_dump_value(value):
 
 def _apply_codex_history_persistence(ctx, target, dry):
     path = _codex_config_path(ctx)
-    if os.path.isfile(path):
-        with open(path, encoding="utf-8") as handle:
-            text = handle.read()
-    else:
-        text = ""
-    state, data = config_doctor_readers.read_toml_checked(path)
-    before = None
-    if state == CONFIG_STATE_OK and isinstance(data, dict):
-        history = data.get("history")
-        if isinstance(history, dict):
-            before = history.get("persistence")
-    new_text = _upsert_toml_table_key(text, "history", "persistence", target)
-    if not dry:
-        ok = config_doctor_appliers.write_toml_region_replace(path, new_text)
-        if not ok:
+
+    def compute(text, parsed):
+        source = "" if text is None else text
+        before = None
+        if parsed is not None and isinstance(parsed.get("history"), dict):
+            before = parsed["history"].get("persistence")
+        new_text = _upsert_toml_table_key(source, "history", "persistence", target)
+        try:
+            tomllib.loads(new_text)
+        except tomllib.TOMLDecodeError:
             return {
                 "ok": False,
-                "reason": "refused: TOML write failed self-validation, no write committed",
+                "reason": "refused: spliced TOML failed self-validation, no write performed",
             }
-    return {
-        "ok": True,
-        "before": before,
-        "after": target,
-        "current_display": str(target),
-    }
+        return new_text, {
+            "ok": True,
+            "before": before,
+            "after": target,
+            "current_display": str(target),
+        }
+
+    def write(target_path, new_text):
+        # write_toml_region_replace is the backstop: it validates again before the replace.
+        if not config_doctor_appliers.write_toml_region_replace(target_path, new_text):
+            raise OSError("TOML write failed self-validation")
+
+    return config_doctor_appliers.apply_guarded(
+        path,
+        compute,
+        dry,
+        parse=tomllib.loads,
+        kind="a TOML table",
+        write=write,
+        backups_dir=config_doctor_appliers.backups_root(ctx.env),
+        label="codex",
+    )
 
 
 def _nested(ctx, *keys, default=UNKNOWN):
@@ -580,6 +621,87 @@ _CURSOR_CONFIG_SOURCE = "https://cursor.com/docs/cli/reference/configuration"
 def read_codegraph_global_sentence(ctx):
     """Which wording each global instruction file holds; never raises."""
     return global_rules.summary(ctx.env)
+
+
+# Playwright MCP browser row (30.1 R7, D-15). Paths are distro-standard install
+# locations named by the SPEC; tests patch these constants to scratch paths.
+PLAYWRIGHT_PLUGIN_ID = "playwright@claude-plugins-official"
+PLAYWRIGHT_ENV_KEY = "PLAYWRIGHT_MCP_EXECUTABLE_PATH"
+PLAYWRIGHT_DEFAULT_CHROME = "/opt/google/chrome/chrome"
+PLAYWRIGHT_FLATPAK_CHROME = "/var/lib/flatpak/exports/bin/com.google.Chrome"
+
+
+def _is_executable(path):
+    return bool(path) and os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def _playwright_enabled(ctx):
+    data = ctx.data if isinstance(ctx.data, dict) else {}
+    plugins = data.get("enabledPlugins")
+    return isinstance(plugins, dict) and plugins.get(PLAYWRIGHT_PLUGIN_ID) is True
+
+
+def _configured_env_value(data):
+    env_block = data.get("env")
+    value = env_block.get(PLAYWRIGHT_ENV_KEY) if isinstance(env_block, dict) else None
+    return value if isinstance(value, str) else ""
+
+
+def read_claude_playwright_browser(ctx):
+    if _is_executable(PLAYWRIGHT_DEFAULT_CHROME):
+        return f"ok: Chrome at {PLAYWRIGHT_DEFAULT_CHROME}"
+    data = ctx.data if isinstance(ctx.data, dict) else {}
+    configured = _configured_env_value(data)
+    if _is_executable(configured):
+        return f"ok: {PLAYWRIGHT_ENV_KEY} names {configured}"
+    if configured:
+        return f"problem: {PLAYWRIGHT_ENV_KEY} names no executable at {configured}"
+    return f"problem: no Chrome at {PLAYWRIGHT_DEFAULT_CHROME}; {PLAYWRIGHT_ENV_KEY} unset"
+
+
+def _playwright_apply_when(ctx):
+    """True only for a problem row whose flatpak wrapper exists (D-15, R7)."""
+    if not isinstance(ctx.data, dict):
+        return False
+    variable_ok = _is_executable(_configured_env_value(ctx.data))
+    return (
+        not _is_executable(PLAYWRIGHT_DEFAULT_CHROME)
+        and not variable_ok
+        and _is_executable(PLAYWRIGHT_FLATPAK_CHROME)
+    )
+
+
+def _apply_claude_playwright_chrome(ctx, _target, dry):
+    # apply_target is display-only: the row tuple is built at import and tests patch
+    # the constant, so the applier reads PLAYWRIGHT_FLATPAK_CHROME at call time.
+    wrapper = PLAYWRIGHT_FLATPAK_CHROME
+    if not _is_executable(wrapper):
+        return {"ok": False, "reason": f"refused: {wrapper} is not executable; nothing was written"}
+    path = _claude_settings_path(ctx)
+
+    def compute(_text, parsed):
+        data = dict(parsed) if parsed is not None else {}
+        if _is_executable(PLAYWRIGHT_DEFAULT_CHROME) or _is_executable(
+            _configured_env_value(data)
+        ):
+            return {"ok": False, "reason": "refused: nothing to fix; nothing was written"}
+        env_block = data.get("env", {})
+        if not isinstance(env_block, dict):
+            return {"ok": False, "reason": "refused: env is not an object; nothing was written"}
+        before = _configured_env_value(data) or None
+        data["env"] = {**env_block, PLAYWRIGHT_ENV_KEY: wrapper}
+        return data, {"ok": True, "before": before, "after": wrapper, "current_display": wrapper}
+
+    return config_doctor_appliers.apply_guarded(
+        path,
+        compute,
+        dry,
+        parse=json.loads,
+        kind="a JSON object",
+        write=config_doctor_appliers.atomic_write_json,
+        backups_dir=config_doctor_appliers.backups_root(ctx.env),
+        label="claude",
+    )
 
 
 CONFIG_DOCTOR_ROWS = [
@@ -1053,7 +1175,34 @@ CONFIG_DOCTOR_ROWS = [
         apply=config_doctor_appliers.apply_codegraph_global_sentence,
         reads_section_file=False,
     ),
+    CheckRow(
+        id="claude-playwright-mcp-browser",
+        runtime="claude",
+        scope="user",
+        check="Playwright MCP browser path",
+        read=read_claude_playwright_browser,
+        recommended="ok",
+        confidence="MEDIUM",
+        why=(
+            "The Playwright MCP plugin launches Chrome from the default path "
+            f"{PLAYWRIGHT_DEFAULT_CHROME}; on this machine Chrome is a flatpak, so the row "
+            f"offers {PLAYWRIGHT_ENV_KEY} pointing at its wrapper. The plugin detection "
+            "(enabledPlugins) is inferred from settings.json, and the variable reaching the "
+            "MCP process and a headed launch are inferred until the Phase 54 live check. "
+            "Apply: yes, writes only that one env key, backed up first."
+        ),
+        source="@playwright/mcp README (PLAYWRIGHT_MCP_EXECUTABLE_PATH); 30.1-SPEC R7",
+        apply=_apply_claude_playwright_chrome,
+        # apply_target is display-only; the applier reads the constant at call time.
+        apply_target=PLAYWRIGHT_FLATPAK_CHROME,
+        visible=_playwright_enabled,
+        apply_when=_playwright_apply_when,
+    ),
 ]
+
+
+def _row_visible(row, ctx):
+    return row.visible is None or bool(row.visible(ctx))
 
 
 def build_catalog(env, runner=None):
@@ -1070,7 +1219,7 @@ def build_catalog(env, runner=None):
         matching = [row for row in CONFIG_DOCTOR_ROWS if row.runtime == runtime]
         ctx_data = None if state == CONFIG_STATE_UNREADABLE else data
         ctx = ReadContext(data=ctx_data, env=env, runner=runner)
-        rows = [evaluate_row(row, ctx) for row in matching]
+        rows = [evaluate_row(row, ctx) for row in matching if _row_visible(row, ctx)]
         if not rows:
             continue
         sections.append({"runtime": runtime, "config_path": path, "rows": rows})

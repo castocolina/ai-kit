@@ -537,6 +537,8 @@ class DriftTest(unittest.TestCase):
         "CONFIG_FILE": "not an env var: the suffix of the prefix-built <prefix>CONFIG_FILE, "
                        "dropped through HOST_CONFIG_ENV_PREFIXES",
         "RUNBOOK_RELATIVE_PATH": "not an env var: a module constant name",
+        "PLAYWRIGHT_MCP_EXECUTABLE_PATH": "not an env var: a settings.json key read from the "
+                                          "claude env block, never the process environment",
         "PUPPETEER_CACHE_DIR": "approved forward: Puppeteer's browser cache",
         "UV_CACHE_DIR": "approved forward: uv's package cache",
         "UV_PYTHON_INSTALL_DIR": "approved forward: uv's Python installs",

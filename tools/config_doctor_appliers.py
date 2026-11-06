@@ -11,11 +11,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import tempfile
 import tomllib
+from datetime import UTC, datetime
 
 import global_rules
+
+BACKUP_KEEP = 10
 
 KIND_CODE = "code"
 KIND_STRING = "string"
@@ -407,9 +411,182 @@ def set_jsonc_value(text, key_path, new_value):
 
 
 def apply_codegraph_global_sentence(ctx, _target, dry):
-    """Re-apply ai-kit wording where codegraph's installer wrote its sentence back (D-11)."""
+    """Re-apply ai-kit wording where codegraph's installer wrote its sentence back (D-11).
+
+    Keeps its own backup under backups/global-rules/ (Phase 30 R11): it is the one
+    applier exempt from the shared apply_guarded path (D-14).
+    """
     ok, lines = global_rules.apply(ctx.env, dry)
     if not ok:
         reason = next((line for line in lines if "failed" in line), "write failed")
         return {"ok": False, "reason": reason, "lines": lines}
     return {"ok": True, "current_display": global_rules.summary(ctx.env), "lines": lines}
+
+
+# Guarded apply (D-14, D-08, D-09): every doctor applier except the Phase 30
+# codegraph sentence goes through apply_guarded. Backups are uniform per
+# runtime under backups_root(env)/<runtime>/ (plan ruling 4).
+
+
+def backups_root(env):
+    """Backup root under XDG state (D-08); same formula as setup.resolve_paths."""
+    state_home = env.get("XDG_STATE_HOME") or os.path.join(env.get("HOME", ""), ".local", "state")
+    return os.path.join(state_home, "ai-kit", "backups")
+
+
+def prune_backups(folder, basename, keep, exclude):
+    """Delete this file's backups beyond the newest `keep` (D-09); return deleted paths.
+
+    Only names matching `<basename>.<stamp>[-n].bak` are candidates. `exclude` is
+    counted first and never deleted, so the backup just taken survives by path,
+    not by sort order.
+    """
+    if not os.path.isdir(folder):
+        return []
+    pattern = re.compile(rf"^{re.escape(basename)}\.\d{{8}}T\d{{12}}Z(-\d+)?\.bak$")
+    paths = [os.path.join(folder, name) for name in os.listdir(folder) if pattern.match(name)]
+    paths.sort(key=lambda p: (os.stat(p).st_mtime_ns, os.path.basename(p)), reverse=True)
+    ordered = [p for p in paths if p == exclude] + [p for p in paths if p != exclude]
+    kept = 0
+    deleted = []
+    for path in ordered:
+        if path == exclude or kept < keep:
+            kept += 1
+            continue
+        os.remove(path)
+        deleted.append(path)
+    return deleted
+
+
+def _claim_backup_name(tmp, folder, basename, stamp):
+    """Hard-link the temp copy to a fresh name; numbered suffix on collision."""
+    suffix = 0
+    while True:
+        tail = "" if suffix == 0 else f"-{suffix}"
+        candidate = os.path.join(folder, f"{basename}.{stamp}{tail}.bak")
+        try:
+            os.link(tmp, candidate)
+            return candidate
+        except FileExistsError:
+            suffix += 1
+
+
+def backup_before_write(path, backups_dir, label, keep=BACKUP_KEEP, now=None):
+    """Copy `path` to `<backups_dir>/<label>/<name>.<UTC stamp>.bak`; return the new path.
+
+    A missing `path` needs no backup and returns "". Raises OSError on any failure,
+    so a failed backup aborts the write (D-08).
+    """
+    if not os.path.isfile(path):
+        return ""
+    if not os.path.isabs(backups_dir):
+        raise OSError(f"backups dir is not absolute: {backups_dir}")
+    folder = os.path.join(backups_dir, label)
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    basename = os.path.basename(path)
+    moment = (now or datetime.now(UTC)).astimezone(UTC)
+    stamp = moment.strftime("%Y%m%dT%H%M%S%fZ")
+    with open(path, "rb") as src:
+        payload = src.read()
+    fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        new_path = _claim_backup_name(tmp, folder, basename, stamp)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    os.chmod(new_path, 0o600)
+    prune_backups(folder, basename, keep, exclude=new_path)
+    return new_path
+
+
+def _read_bytes_or_none(path):
+    if not os.path.isfile(path):
+        return None
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+def _refuse_unparseable(path, kind):
+    return {
+        "ok": False,
+        "reason": (
+            f"refused: {path} was not changed: it cannot be parsed as {kind}. "
+            "Nothing was written; fix the file by hand, then run the check again"
+        ),
+    }
+
+
+def apply_guarded(  # pylint: disable=too-many-arguments
+    path,
+    compute,
+    dry,
+    *,
+    parse,
+    kind,
+    write,
+    backups_dir,
+    label,
+    before_replace=None,
+):
+    """Parse check, backup, re-read and compare, atomic write (D-14, R6).
+
+    `compute(text_or_None, parsed_or_None)` returns `(payload, result)` or a
+    refusal dict. A dry run returns `result` without a backup or a write.
+    `before_replace` is a test hook that runs between the backup and the re-read.
+    """
+    raw = _read_bytes_or_none(path)
+    text = None
+    parsed = None
+    if raw is not None:
+        try:
+            text = raw.decode("utf-8")
+            parsed = parse(text)
+            if not isinstance(parsed, dict):
+                raise TypeError("not an object")
+        except (ValueError, TypeError):
+            return _refuse_unparseable(path, kind)
+    outcome = compute(text, parsed)
+    if isinstance(outcome, dict):
+        return outcome
+    payload, result = outcome
+    if dry:
+        return result
+    return _commit_guarded(
+        path,
+        raw,
+        payload,
+        result,
+        backups_dir=backups_dir,
+        label=label,
+        before_replace=before_replace,
+        write=write,
+    )
+
+
+def _commit_guarded(  # pylint: disable=too-many-arguments
+    path, raw, payload, result, *, backups_dir, label, before_replace, write
+):
+    """Backup, test hook, re-read compare, then the write; refusals keep the target."""
+    try:
+        backup = backup_before_write(path, backups_dir, label)
+    except OSError as exc:
+        return {"ok": False, "reason": f"refused: backup failed ({exc}); nothing was written"}
+    if before_replace is not None:
+        before_replace()
+    if _read_bytes_or_none(path) != raw:
+        return {
+            "ok": False,
+            "reason": (
+                f"refused: {path} changed since it was read; nothing was written "
+                f"(backup kept at {backup})"
+            ),
+        }
+    try:
+        write(path, payload)
+    except OSError as exc:
+        return {"ok": False, "reason": f"refused: write failed ({exc}); backup kept at {backup}"}
+    return {**result, "backup": backup}

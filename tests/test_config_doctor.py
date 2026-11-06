@@ -940,7 +940,7 @@ class TestFullCatalogRegression(_ScratchRuntimes):
         )
         env["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
         catalog = checks.build_catalog(env, runner=subprocess.run)
-        self.assertEqual(len(checks.CONFIG_DOCTOR_ROWS), 26)
+        self.assertEqual(len(checks.CONFIG_DOCTOR_ROWS), 27)
         self.assertEqual(
             self._runtimes(catalog),
             ["claude", "opencode", "codex", "cursor", "cross"],
