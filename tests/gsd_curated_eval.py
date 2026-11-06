@@ -62,7 +62,7 @@ from ai_kit_spec import gsd_tools
 from ai_kit_spec.vendor import infer_vendor_from_model
 
 from tests.test_curated_config_apply_e2e import (
-    GSD_CORE_PREFIXES,
+    GSD_CORE_MIN_TEXT,
     _config_set_keys,
     _golden_bundle,
     _real_apply,
@@ -128,15 +128,13 @@ WHY_INFORMATIONAL = (
 _TIERS = ("opus", "sonnet", "haiku")
 _HEX16 = re.compile(r"\b[0-9a-f]{16}\b")
 
-# The gsd-core lines whose live tables this phase verified come from `GSD_CORE_PREFIXES`, imported
-# from tests/test_curated_config_apply_e2e.py so the two guards cannot drift. R-7: the
-# checkout-local install is gitignored and shared by every worktree, so its version is a fact of
-# the moment, not of the plan. `MODEL_PROFILES` and `AGENT_TO_PHASE_TYPE` were byte-identical
-# between the 1.16.0 these plans were written against and the 1.17.0 now in this checkout (same 35
-# agent keys, empty symmetric difference), checked once on 2026-10-17; the matrix test re-checks
-# only key parity of the installed tables. Anything else is refused with a reason rather than
-# silently graded against a table nobody checked, because 19-05..19-10 evidence rows name the
-# version they used and are only comparable across one.
+# The gsd-core version rule comes from `GSD_CORE_MIN_VERSION`, imported from
+# tests/test_curated_config_apply_e2e.py so the two guards cannot drift. R-7: the checkout-local
+# install is gitignored and shared by every worktree, so its version is a fact of the moment, not
+# of the plan. `MODEL_PROFILES` and `AGENT_TO_PHASE_TYPE` were byte-identical between 1.16.0 and
+# 1.17.0 (2026-10-17) and value-equal again in 1.20.0 (2026-11-06). Any release at or above
+# 1.16.0 runs: the matrix re-checks the installed tables' key parity, and a real table change
+# fails its rows instead of skipping them. An older release is refused with a reason.
 
 
 def product_module(name: str):
@@ -2460,7 +2458,7 @@ def gsd_run_reason(node_bin: str | None, tools_path: str) -> str:
     if not gsd_core_line_supported(version):
         return (
             f"checkout-local gsd-core is {version or 'unknown'}; "
-            f"need one of {', '.join(GSD_CORE_PREFIXES)}"
+            f"need {GSD_CORE_MIN_TEXT} or newer"
         )
     return ""
 

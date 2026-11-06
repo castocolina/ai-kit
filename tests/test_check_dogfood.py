@@ -124,7 +124,7 @@ class TestRunnerCopy(unittest.TestCase):
 
 
 _ID_A, _ID_B, _ID_APPLY = check_dogfood.GUARD_TESTS
-_SKIP_REASON = "checkout-local gsd-core is 1.18.0; need one of 1.16., 1.17."
+_SKIP_REASON = "checkout-local gsd-core is 1.15.0; need 1.16.0 or newer"
 
 
 def _line(test_id: str, status: str = "ok") -> str:

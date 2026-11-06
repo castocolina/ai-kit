@@ -1266,20 +1266,27 @@ class TestLabels(unittest.TestCase):
 
 class TestVersionGuard(unittest.TestCase):
     def test_supported_lines(self) -> None:
-        for version in ("1.16.0", "1.17.0"):
+        """At or above the oldest verified line runs, including releases newer than any known
+        one; older or unparsable versions are refused."""
+        for version in ("1.16.0", "1.17.0", "1.20.0", "1.21.0", "1.99.3", "2.0.0", "1.30.0-rc.1"):
             self.assertTrue(ev.gsd_core_line_supported(version), version)
-        for version in (None, "", "1.15.0", "2.0.0", "1.16"):
+        for version in (None, "", "1.15.9", "0.9.0", "1.16", "1.x.0", "latest"):
             self.assertFalse(ev.gsd_core_line_supported(version), version)
+
+    def test_an_older_version_is_refused_with_a_named_reason(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".cjs") as tools, \
+                mock.patch.object(ev.gsd_tools, "gsd_core_version", return_value="1.15.0"):
+            reason = ev.gsd_run_reason("node", tools.name)
+        self.assertEqual(reason, "checkout-local gsd-core is 1.15.0; need 1.16.0 or newer")
 
     def test_run_reason_names_the_blocker(self) -> None:
         self.assertEqual(ev.gsd_run_reason(None, "/tools"), "no node executable")
         missing = os.path.join(tempfile.gettempdir(), "xai-absent-gsd-tools.cjs")
         self.assertIn("no checkout-local gsd-tools", ev.gsd_run_reason("node", missing))
 
-    def test_guard_prefixes_are_the_verified_lines(self) -> None:
-        """The helper and the apply e2e tier share one prefix tuple, and it names the two
-        lines this phase verified (1.16.0 and the 1.17.0 now in this checkout)."""
-        self.assertEqual(ev.GSD_CORE_PREFIXES, ("1.16.", "1.17."))
+    def test_guard_minimum_is_the_oldest_verified_line(self) -> None:
+        """The helper and the apply e2e tier share one minimum, the oldest verified line."""
+        self.assertEqual(ev.GSD_CORE_MIN_TEXT, "1.16.0")
         self.assertTrue(callable(ev.gsd_tools.gsd_core_version))
 
 

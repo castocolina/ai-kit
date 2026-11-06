@@ -1,7 +1,7 @@
 """E2E tier: real node apply through checkout-local gsd-core under a scratch HOME/GSD_HOME.
 
 Skips when node or `.claude/gsd-core/bin/gsd-tools.cjs` is missing or gsd-core is not on a
-verified line (`GSD_CORE_PREFIXES`).
+release at or above the oldest verified line (`GSD_CORE_MIN_VERSION`).
 """
 from __future__ import annotations
 
@@ -57,14 +57,22 @@ from tests.test_curated_config_skills import add_plugin, add_skill
 # shared install moved under them - the curated-config-relevant tables (`MODEL_PROFILES`,
 # `AGENT_TO_PHASE_TYPE`, `config-new-project`'s key copying) were byte-equivalent between the two
 # when checked once on 2026-10-17; tests.test_ai_kit_gsd_curated_config_matrix re-checks only the
-# installed tables' key parity, and any 1.17.x passes this guard. An unlisted line skips rather than
-# silently grading against a table nobody checked.
-GSD_CORE_PREFIXES = ("1.16.", "1.17.")
+# installed tables' key parity. 1.20.0 was checked on 2026-11-06 (quick task 261106-n8k): both
+# tables value-equal to the 1.16.0 fixture (35 agents), this module plus the matrix 0 skipped.
+# Rule (owner, 2026-11-06): any release at or above the oldest verified line runs, so a gsd-core
+# upgrade runs the guard and a real incompatibility fails it instead of skipping it. An older or
+# unparsable version still skips with a named reason.
+GSD_CORE_MIN_VERSION = (1, 16, 0)
+GSD_CORE_MIN_TEXT = ".".join(str(part) for part in GSD_CORE_MIN_VERSION)
 
 
 def gsd_core_line_supported(version: str | None) -> bool:
-    """Whether `version` is on one of the verified gsd-core lines."""
-    return bool(version) and any(version.startswith(prefix) for prefix in GSD_CORE_PREFIXES)
+    """Whether `version` (`X.Y.Z`, an optional `-pre` suffix) is at or above the oldest verified
+    gsd-core line."""
+    core = (version or "").split("-", 1)[0].split(".")
+    if len(core) != 3 or not all(part.isdigit() for part in core):
+        return False
+    return tuple(int(part) for part in core) >= GSD_CORE_MIN_VERSION
 
 
 def _sha256(path) -> str:
@@ -163,7 +171,7 @@ def _gsd16_or_skip(test_case: unittest.TestCase) -> str:
     version = gsd_tools.gsd_core_version(str(tools))
     if not gsd_core_line_supported(version):
         test_case.skipTest(
-            f"checkout-local gsd-core is {version}; need one of {', '.join(GSD_CORE_PREFIXES)}"
+            f"checkout-local gsd-core is {version}; need {GSD_CORE_MIN_TEXT} or newer"
         )
     return node_bin
 

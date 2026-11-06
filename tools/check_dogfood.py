@@ -44,9 +44,9 @@ GUARD_TESTS = (
     "tests.test_curated_config_apply_e2e.TestRealApply.test_apply_golden_plan",
 )
 APPLY_GUARD = GUARD_TESTS[2]
-# shortcut: the golden-plan apply skips while the checkout-local gsd-core is outside
-# GSD_CORE_PREFIXES (1.18.0 on 2026-11-03), so apply writes to the live project are unguarded
-# until that table-parity check lands (backlog 999.18); the run prints a warning each time.
+# The golden-plan apply skips only when the checkout-local gsd-core is older than
+# GSD_CORE_MIN_VERSION (tests/test_curated_config_apply_e2e.py); the run then prints an
+# unguarded-apply warning.
 
 GuardRun = Callable[[], tuple[int | None, str, list[str]]]
 

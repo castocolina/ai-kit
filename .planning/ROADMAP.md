@@ -900,6 +900,7 @@ v2.0 requirements cover these entries (kept here until `/gsd-review-backlog` rem
 999.2 (HOOK-04), 999.5 (RUN-03), 999.7 (FEAT-02), 999.8 (JEV-05), 999.9 and 999.10 (JEV-01), 999.11 (DEF-04),
 999.12 (RUN-04), 999.14 (DIST-02), 999.15 (RUN-01, RUN-07, RUN-08, EXE-07; no new skill), 999.16 (RULE-01), 999.17 (EXE-03, JEV-06). The Playwright MCP Chrome path row in 999.1 is the FEAT-06 owner decision. The whole-tree layering suite once named 999.3 is ARCH-01 (Phase 52).
 999.13 is dropped as written (see REQUIREMENTS.md Out of Scope). 999.6 stays open (secondary runtime).
+Finished entries move to **Done** at the end of this section, with the date and what delivered them.
 
 ### Phase 999.1: Config Doctor reachable from the setup wizard (BACKLOG)
 
@@ -1231,27 +1232,6 @@ Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
 
-### Phase 999.18: Run the curated-config apply no-write guard on the gsd-core line in use (BACKLOG)
-
-**Goal:** [Captured for future planning] Make the live-project `apply` no-write guard of
-`make check-dogfood` (Phase 28, plan 28-04) actually run. It skips today because the checkout-local
-gsd-core is 1.18.0 and `GSD_CORE_PREFIXES` in `tests/test_curated_config_apply_e2e.py` lists only
-`1.16.` and `1.17.`, so `TestRealApply.test_apply_golden_plan` and the resolve-model matrix
-(`tests/test_ai_kit_gsd_curated_config_matrix.py`) skip, and `check-dogfood` prints
-`no-write guard: 3 attempted, 2 executed, 1 skipped` with an unguarded-apply warning on every push.
-Re-check the curated-config tables of the gsd-core line in use (`MODEL_PROFILES`,
-`AGENT_TO_PHASE_TYPE`, `config-new-project`'s key copying) against 1.17.0 the way the constant's
-comment describes, then widen `GSD_CORE_PREFIXES` and its pin in `tests/test_gsd_curated_eval.py`
-together, so the guard reports `3 attempted, 3 executed, 0 skipped`. If the tables differ, adapt the
-curated-config skill first; never widen the prefixes without the check. Found by the Phase 28
-cross-AI review, cycle 3 (2026-11-03).
-**Requirements:** (none yet)
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /gsd-review-backlog when ready)
-
 ### Phase 999.19: Remove the frozen cross-skill reference allowlist (BACKLOG)
 
 **Goal:** [Captured for future planning] Remove every reference in `tests/test_arch.py`
@@ -1268,3 +1248,14 @@ its key is deleted from both sets. Found by Phase 29's structural rule (ruling 2
 Plans:
 
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Done
+
+#### Phase 999.18: Run the curated-config apply no-write guard on the gsd-core line in use (DONE 2026-11-06)
+
+**Goal:** Make the live-project `apply` no-write guard of `make check-dogfood` (Phase 28, plan 28-04)
+actually run instead of skipping on a gsd-core line outside `GSD_CORE_PREFIXES`.
+**Delivered by:** quick task 261106-n8k (2026-11-06). The 1.20.0 `MODEL_PROFILES` and
+`AGENT_TO_PHASE_TYPE` are value-equal to the 1.16.0 fixture; the prefix allowlist became a minimum-version
+rule (`GSD_CORE_MIN_VERSION`, 1.16.0 or newer runs), so a gsd-core upgrade runs the guard and a real
+incompatibility fails it. `check-dogfood` reports `3 attempted, 3 executed, 0 skipped`.
